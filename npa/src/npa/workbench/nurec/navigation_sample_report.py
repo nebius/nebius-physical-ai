@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import argparse
-from html import escape
-import json
 from pathlib import Path
 import shutil
+import subprocess
 import tempfile
 
 from npa.workbench.nurec.navigation_assets import materialize, publish
@@ -22,39 +21,50 @@ def _copy_evidence(source, output, names):
             shutil.copyfile(path, output / name)
 
 
-def _html(summary):
-    result = "Passed" if summary["passed"] else "Did not pass"
-    rate = summary.get("success_rate")
-    rate_text = "Unavailable" if rate is None else f"{rate:.1%}"
-    rows = {
-        "Held-out navigation success": rate_text,
-        "Held-out cases": summary.get("episodes", 0),
-        "Required success": "80%",
+def _metrics(summary):
+    status = "Passed" if summary["passed"] else "Did not pass"
+    if not summary["evaluation_complete"]:
+        status = "Incomplete evaluation"
+    rate = summary["success_rate"]
+    return {
+        "Quality gate": status,
+        "Held-out navigation success": "Unavailable" if rate is None else f"{rate:.1%}",
+        "Held-out cases": summary["episodes"],
+        "Required success": f"{summary['minimum_success_rate']:.0%}",
         "Training iterations": summary["iterations"],
         "Scan frames integrated": summary["integration_frames"],
-        "Excluded scan frames used for validation": summary["validation_frames"],
+        "Held-out scan frames": summary["validation_frames"],
+        "Policy observations": summary["sensor_mode"],
     }
-    table = "".join(
-        f"<tr><th>{escape(key)}</th><td>{escape(str(value))}</td></tr>"
-        for key, value in rows.items()
+
+
+def _write_html(summary, evaluation, result, path):
+    from npa.workflows.navigation.preview import scored_rollout_group
+    from npa.workflows.preview_html import write_preview
+
+    groups = (
+        []
+        if result is None
+        else [
+            scored_rollout_group(
+                evaluation, result, title="Held-out navigation · scored focal episode"
+            )
+        ]
     )
-    links = "".join(
-        f'<li><a href="{name}">{name}</a></li>' for name in summary["files"]
+    write_preview(
+        path,
+        title="Public scan → navigation policy",
+        metrics=_metrics(summary),
+        summary=(
+            "Public RGB-D office capture, measured collision geometry and native Isaac training. "
+            "Evaluation uses held-out goals in the reconstructed training scene. It does not "
+            "establish transfer to unseen buildings or a physical robot. "
+            + summary["attribution"]
+        ),
+        groups=groups,
+        details=summary,
+        allow_empty_media=result is None,
     )
-    video = (
-        '<video controls preload="metadata" src="rollout.mp4"></video>'
-        if "rollout.mp4" in summary["files"]
-        else ""
-    )
-    return f"""<!doctype html><html lang="en"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Public scan to navigation</title><style>
-body{{font:17px/1.55 system-ui;margin:40px auto;padding:0 20px;max-width:950px;color:#172b3a;background:#f8fafc}}
-video{{width:100%;max-height:650px;background:#111;border-radius:12px}}table{{border-collapse:collapse;width:100%}}th,td{{padding:10px;text-align:left;border-bottom:1px solid #cdd5df}}a{{color:#075bb5}}
-</style><h1>Public scan → navigation policy</h1><p><strong>{result}</strong></p>
-<p>Full public TUM RGB-D office capture, measured collision geometry, native Isaac navigation training and held-out resets.</p>
-{video}<table>{table}</table><p>Evaluation uses held-out goals in the reconstructed training scene. It does not establish transfer to unseen buildings, camera-conditioned control, or a physical robot. The policy observes static range rays.</p>
-<h2>Evidence</h2><ul>{links}</ul><p>{escape(summary["attribution"])}</p></html>"""
 
 
 def build_report(
@@ -81,11 +91,13 @@ def build_report(
         evaluation = sealed_input(evaluation_path, work / "evaluation")
         output = work / "report"
         output.mkdir()
-        summary = _summarize(scan, training, evaluation)
+        from npa.workbench.nurec.navigation_sample_evidence import measured_summary
+
+        summary, result = measured_summary(scan, training, evaluation)
         _evidence_files(scan, training, evaluation, output)
         summary["files"] = sorted(path.name for path in output.iterdir())
         write_json(output / "summary.json", summary)
-        (output / "index.html").write_text(_html(summary))
+        _write_html(summary, evaluation, result, output / "index.html")
         publish(output, output_path)
         return summary
 
@@ -105,28 +117,6 @@ def _evidence_files(scan, training, evaluation, output):
     )
 
 
-def _summarize(scan, training, evaluation):
-    from npa.workbench.nurec.navigation_sample import ATTRIBUTION
-
-    reconstruction = json.loads((scan / "reconstruction.json").read_text())
-    learning = json.loads((training / "training.json").read_text())
-    scored = evaluation / "evaluation.json"
-    result = json.loads(scored.read_text()) if scored.is_file() else {}
-    if result and result.get("checkpoint_sha256") != learning["checkpoint_sha256"]:
-        raise ValueError("report evaluation checkpoint differs from training")
-    return {
-        "schema": "npa.navigation.sample_report.v1",
-        "passed": result.get("passed") is True,
-        "success_rate": result.get("success_rate"),
-        "episodes": len(result.get("episodes", [])),
-        "iterations": learning["iterations"],
-        "checkpoint_sha256": learning["checkpoint_sha256"],
-        "integration_frames": reconstruction["integration_frames"],
-        "validation_frames": reconstruction["validation_frames"],
-        "attribution": ATTRIBUTION,
-    }
-
-
 def evaluate_report(
     input_path: str, output_path: str, reconstruction_path: str, report_path: str
 ) -> dict:
@@ -140,7 +130,7 @@ def evaluate_report(
     Returns:
         Native evaluation report after the unchanged quality gate passes.
     Raises:
-        RuntimeError: Native execution or the existing 80% success gate fails.
+        RuntimeError: Native execution or the configured success gate fails.
         ValueError: Evidence or provenance is invalid.
         OSError: Artifact staging or publication fails.
     """
@@ -148,7 +138,7 @@ def evaluate_report(
 
     try:
         result = run_stage("evaluate", input_path, output_path)
-    except RuntimeError as error:
+    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as error:
         try:
             build_report(reconstruction_path, output_path, input_path, report_path)
         except (ValueError, OSError) as report_error:

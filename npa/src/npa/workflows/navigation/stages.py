@@ -163,6 +163,17 @@ def _carry_inputs(source, output, recipe, stage):
     if stage == "evaluate":
         for name in ("training.json", "policy.pt", "agent.json"):
             shutil.copy2(source / name, output / name)
+    _carry_scan_lineage(source, output)
+
+
+def _carry_scan_lineage(source, output):
+    record, evidence = source / "scan-lineage.json", source / "scan"
+    if not record.exists() and not evidence.exists():
+        return
+    if not record.is_file() or not evidence.is_dir():
+        raise ValueError("scan lineage and supporting evidence must travel together")
+    shutil.copy2(record, output / record.name)
+    shutil.copytree(evidence, output / "scan")
 
 
 def _record_failure(output, stage):

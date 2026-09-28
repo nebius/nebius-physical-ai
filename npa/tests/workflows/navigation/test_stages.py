@@ -6,9 +6,27 @@ from types import SimpleNamespace
 
 import pytest
 import yaml
+import shutil
 
 from npa.workflows.navigation import artifacts, stages
 from npa.workflows.navigation.native import task_adapter
+
+
+@pytest.mark.parametrize("stage", ["train", "evaluate"])
+def test_stage_carries_scan_lineage_with_the_checkpoint(
+    raw_bundle, recipe, tmp_path, stage
+):
+    source = tmp_path / "with-scan"
+    shutil.copytree(raw_bundle, source)
+    artifacts.write_json(source / "scan-lineage.json", {"source_sha256": "fixture"})
+    artifacts.write_json(source / "scan/capture.json", {"capture": "fixture"})
+    for name in ("training.json", "policy.pt", "agent.json"):
+        (source / name).write_bytes(b"fixture")
+    output = tmp_path / "stage-output"
+    output.mkdir()
+    stages._carry_inputs(source, output, recipe, stage)
+    for name in ("scan-lineage.json", "scan/capture.json"):
+        assert (output / name).read_bytes() == (source / name).read_bytes()
 
 
 @pytest.fixture

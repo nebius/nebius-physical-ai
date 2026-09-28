@@ -48,3 +48,28 @@ def test_preview_refuses_empty_media_and_nonfinite_points(tmp_path):
     with pytest.raises(ValueError, match="JSON compliant"):
         write_preview(output, title="Demo", summary="", metrics={}, groups=groups)
     assert not output.exists()
+
+
+def test_incomplete_report_embeds_safe_measured_details_without_fabricated_media(
+    tmp_path,
+):
+    output = tmp_path / "index.html"
+    details = {
+        "status": "failed",
+        "source": "</pre><script>bad()</script>",
+        "token": "@@DATA@@",
+    }
+    write_preview(
+        output,
+        title="Incomplete",
+        summary="No accepted evaluation",
+        metrics={},
+        groups=[],
+        details=details,
+        allow_empty_media=True,
+    )
+    html = output.read_text()
+    assert "&lt;/pre&gt;&lt;script&gt;" in html
+    assert "@@DATA@@" in html
+    assert "</pre><script>bad()" not in html
+    assert "data:image/jpeg;base64," not in html

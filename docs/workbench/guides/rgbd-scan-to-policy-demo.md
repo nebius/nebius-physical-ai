@@ -51,7 +51,7 @@ image. Source overlay staging supplies this checkout's adapters.
    probes. Bind the scene, cases, image, source and controls into one recipe.
 6. Train with 4,000 concurrent robots and 500 PPO iterations, then reload the
    exact checkpoint and evaluate 4,000 held-out resets for 300 control steps.
-7. Publish the actual rollout video, measurements and HTML report. The unchanged
+7. Publish the actual rollout frames, optional video, measurements and HTML report. The unchanged
    80% success gate determines success. A losing candidate remains a failed run;
    its completed evaluation is still available in the report.
 
@@ -69,9 +69,19 @@ is checked again. Neither download nor conversion silently samples fewer frames.
 npa workbench workflow demo view real-to-sim '<run-id>' --project '<project-alias>'
 ```
 
-The report is at `reports/index.html` beneath the run prefix. Download the whole
-`reports/` directory to keep its video and evidence links working offline.
-`reports/summary.json` is the machine-readable result. Separate run prefixes
+The report is at `reports/index.html` beneath the run prefix. That single file
+embeds actual scored-episode thumbnails and measured evidence; it works offline
+without downloading the full dataset or installing a video encoder. The focal
+robot preview ends at its scored terminal step. Later observer motion remains
+in the original recordings and is excluded from the scored preview. Playback
+is a sampled-frame slideshow, and the cohort success rate covers every held-out
+robot, not only the pictured one.
+
+`reports/summary.json` is the machine-readable result. The report verifies the
+actual checkpoint bytes, sealed recipe and held-out case identities, derived
+success rate, configured threshold and carried reconstruction lineage before
+presenting the result. Incomplete native evaluations receive an explicit failure
+report without fabricated media or success measurements. Separate run prefixes
 retain the complete capture, reconstruction, measured reset support, native
 physics, trained weights, isolation controls and evaluation evidence.
 

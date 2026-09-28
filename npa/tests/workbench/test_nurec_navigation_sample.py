@@ -4,6 +4,7 @@ import io
 import json
 from pathlib import Path
 import tarfile
+import shutil
 
 import numpy as np
 import pytest
@@ -128,18 +129,8 @@ def _published_reports(tmp_path, passed):
         {"integration_frames": 1984, "validation_frames": 501},
     )
     write_json(scan / "capture.json", {"public": "test-fixture"})
-    write_json(
-        trained / "training.json", {"iterations": 500, "checkpoint_sha256": "a" * 64}
-    )
-    write_json(
-        scored / "evaluation.json",
-        {
-            "checkpoint_sha256": "a" * 64,
-            "success_rate": 0.9 if passed else 0.0,
-            "passed": passed,
-            "episodes": [{"success": passed}],
-        },
-    )
+    recipe, binding = _training_fixture(scan, trained)
+    _evaluation_fixture(trained, scored, recipe, binding, passed)
     destinations = [
         tmp_path / name
         for name in ("scan-published", "train-published", "eval-published")
@@ -150,18 +141,121 @@ def _published_reports(tmp_path, passed):
     return [str(path) for path in destinations]
 
 
+def _training_fixture(scan, trained):
+    from npa.workflows.navigation.reference_bundle import _recipe
+    from npa.workflows.navigation.reference_scene import cases as reference_cases
+
+    (trained / "scene.usdz").write_bytes(b"synthetic-contract-only-scene")
+    recipe = _recipe(
+        trained, "registry.example.invalid/isaac@sha256:" + "b" * 64, 500, 3, 2
+    )
+    recipe.update(reference_cases(2), minimum_success_rate=0.65)
+    write_json(trained / "recipe.json", recipe)
+    (trained / "policy.pt").write_bytes(b"synthetic-contract-only-checkpoint")
+    evidence = trained / "scan"
+    evidence.mkdir()
+    for name in ("capture.json", "reconstruction.json"):
+        shutil.copyfile(scan / name, evidence / name)
+    for name in ("provenance.json", "physics_validation.json", "cases.json"):
+        write_json(evidence / name, {"synthetic_fixture": name})
+    write_json(
+        evidence / "cases.json",
+        {name: recipe[name] for name in ("train_cases", "eval_cases", "probe")},
+    )
+    hashes = {path.name: sha256(path) for path in evidence.iterdir()}
+    hashes["scene.usdz"] = recipe["scene_sha256"]
+    write_json(
+        trained / "scan-lineage.json",
+        {
+            "schema": "npa.navigation.scan_handoff.v1",
+            "source_sha256": hashes,
+            "recipe_sha256": sha256(trained / "recipe.json"),
+        },
+    )
+    binding = {name: recipe[name] for name in ("task", "image", "adapter_sha256")}
+    binding["source_bundle_sha256"] = recipe["source_bundle_sha256"]
+    binding.update(
+        recipe_sha256=sha256(trained / "recipe.json"),
+        checkpoint_sha256=sha256(trained / "policy.pt"),
+        runtime={
+            "scene_sha256": recipe["scene_sha256"],
+            "reference_controller": {"sha256": recipe["reference_controller_sha256"]},
+        },
+    )
+    write_json(
+        trained / "training.json",
+        {
+            **binding,
+            "schema": "npa.navigation.training.v1",
+            "iterations": 500,
+            "heldout_used_for_training": False,
+        },
+    )
+    return recipe, binding
+
+
+def _evaluation_fixture(trained, scored, recipe, binding, passed):
+    from PIL import Image
+    from npa.workflows.navigation.contract import Recipe
+    from npa.workflows.navigation.runtime import _case_digest
+
+    for name in ("policy.pt", "recipe.json"):
+        shutil.copyfile(trained / name, scored / name)
+    distance = 0.1 if passed else 3.0
+    episodes = [
+        {
+            "case_id": case["id"],
+            "seed": case["seed"],
+            "steps": 1,
+            "goal_distance_m": distance,
+            "success": passed,
+        }
+        for case in recipe["eval_cases"]
+    ]
+    write_json(
+        scored / "evaluation.json",
+        {
+            **binding,
+            "schema": "npa.navigation.evaluation.v1",
+            "success_rate": float(passed),
+            "passed": passed,
+            "episodes": episodes,
+            "evaluation_inputs_sha256": _case_digest(Recipe.model_validate(recipe)),
+            "policy_loaded": True,
+        },
+    )
+    rows = [
+        {
+            "step": step,
+            "simulation_seconds": step * 0.1,
+            "goal_distance_m": distance if step == 1 else 4.0,
+        }
+        for step in range(4)
+    ]
+    write_json(
+        scored / "rendered-rollout/frames.json",
+        {"robot_index": 0, "renderer": "isaac-replicator-rgb", "frames": rows},
+    )
+    for row in rows:
+        Image.new("RGB", (32, 24), (row["step"] * 50, 10, 70)).save(
+            scored / "rendered-rollout" / f"{row['step']:06d}.png"
+        )
+
+
 @pytest.mark.parametrize("passed", [True, False])
 def test_report_uses_actual_evaluation_and_preserves_failure(tmp_path, passed):
     scan, training, evaluation = _published_reports(tmp_path, passed)
     output = tmp_path / "report"
     value = report.build_report(scan, evaluation, training, str(output))
     assert value["passed"] is passed
-    assert value["success_rate"] == (0.9 if passed else 0.0)
+    assert value["success_rate"] == float(passed)
     page = (output / "index.html").read_text()
-    assert (
-        "<strong>Passed</strong>" if passed else "<strong>Did not pass</strong>"
-    ) in page
+    assert ("<dd>Passed</dd>" if passed else "<dd>Did not pass</dd>") in page
     assert "unseen buildings" in page
+    assert "65%" in page and "80%" not in page
+    assert "data:image/jpeg;base64," in page
+    assert 'src="rollout.mp4"' not in page and 'href="' not in page
+    assert "Step 2" not in page
     assert (output / "evaluation.json").is_file()
 
 
@@ -172,3 +266,77 @@ def test_report_refuses_a_different_checkpoint(tmp_path):
     write_json(Path(evaluation) / "evaluation.json", value)
     with pytest.raises(ValueError, match="checksum"):
         report.build_report(scan, evaluation, training, str(tmp_path / "report"))
+
+
+def _reseal(root):
+    write_json(
+        root / "checksums.json",
+        {
+            path.relative_to(root).as_posix(): sha256(path)
+            for path in root.rglob("*")
+            if path.is_file() and path.name != "checksums.json"
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["checkpoint-bytes", "cohort", "rate", "gate", "training-scan"]
+)
+def test_report_checks_relationships_even_when_each_bundle_is_sealed(
+    tmp_path, mutation
+):
+    scan, training, evaluation = _published_reports(tmp_path, True)
+    training, evaluation = Path(training), Path(evaluation)
+    result = json.loads((evaluation / "evaluation.json").read_text())
+    if mutation == "checkpoint-bytes":
+        (training / "policy.pt").write_bytes(b"another-checkpoint")
+    elif mutation == "cohort":
+        result["episodes"][0]["seed"] += 1
+    elif mutation == "rate":
+        result["success_rate"] = 0.9
+    elif mutation == "gate":
+        result["passed"] = False
+    else:
+        write_json(training / "scan/capture.json", {"another": "capture"})
+    write_json(evaluation / "evaluation.json", result)
+    _reseal(training)
+    _reseal(evaluation)
+    with pytest.raises(ValueError):
+        report.build_report(
+            scan, str(evaluation), str(training), str(tmp_path / "report")
+        )
+
+
+def test_incomplete_evaluation_produces_honest_offline_failure_report(tmp_path):
+    scan, training, evaluation = _published_reports(tmp_path, True)
+    evaluation = Path(evaluation)
+    (evaluation / "evaluation.json").rename(evaluation / "evaluation.incomplete.json")
+    write_json(evaluation / "failure.json", {"status": "failed"})
+    _reseal(evaluation)
+    output = tmp_path / "report"
+    summary = report.build_report(scan, str(evaluation), training, str(output))
+    assert summary["passed"] is False and summary["evaluation_complete"] is False
+    page = (output / "index.html").read_text()
+    assert "Incomplete evaluation" in page
+    assert "data:image/jpeg;base64," not in page
+    assert (output / "evaluation.incomplete.json").exists()
+
+
+def test_native_process_failure_keeps_the_original_failure_and_attempts_html(
+    monkeypatch,
+):
+    import subprocess
+    from npa.workflows.navigation import stages
+
+    failure = subprocess.CalledProcessError(1, ["native-fixture"])
+    calls = []
+
+    def fail(*_arguments):
+        raise failure
+
+    monkeypatch.setattr(stages, "run_stage", fail)
+    monkeypatch.setattr(report, "build_report", lambda *args: calls.append(args))
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        report.evaluate_report("training", "evaluation", "scan", "reports")
+    assert caught.value is failure
+    assert calls == [("scan", "evaluation", "training", "reports")]

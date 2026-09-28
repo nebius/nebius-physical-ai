@@ -7,6 +7,7 @@ from html import escape
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 
 from PIL import Image
 
@@ -32,7 +33,14 @@ def image_preview(image: Image.Image, *, width: int = 480) -> str:
 
 
 def write_preview(
-    path: Path, *, title: str, summary: str, metrics: dict, groups: list
+    path: Path,
+    *,
+    title: str,
+    summary: str,
+    metrics: dict,
+    groups: list,
+    details: dict | None = None,
+    allow_empty_media: bool = False,
 ) -> None:
     """Write independent image timelines with inert embedded data and escaped text.
 
@@ -42,6 +50,8 @@ def write_preview(
         summary: Scope and limitations of the preview.
         metrics: Measured scalar values safe for a portable report.
         groups: Timeline dictionaries containing title, note, and frames.
+        details: Optional measured summary displayed as inert, escaped JSON.
+        allow_empty_media: Explicitly allow a report describing missing or failed media.
 
     Returns:
         None.
@@ -50,19 +60,45 @@ def write_preview(
         ValueError: A group contains no frames or JSON contains nonfinite values.
         OSError: The destination cannot be written.
     """
-    if not groups or any(not group["frames"] for group in groups):
+    if (not groups and not allow_empty_media) or any(
+        not group["frames"] for group in groups
+    ):
         raise ValueError("preview requires actual media in every timeline")
+    body = _document(title, summary, metrics, groups, details)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body, encoding="utf-8")
+
+
+def _document(title, summary, metrics, groups, details):
     encoded = json.dumps(groups, allow_nan=False, separators=(",", ":"))
     encoded = encoded.replace("<", "\\u003c").replace("&", "\\u0026")
     values = "".join(
         f"<div><dt>{escape(str(key))}</dt><dd>{escape(str(value))}</dd></div>"
         for key, value in metrics.items()
     )
-    body = _DOCUMENT.replace("@@TITLE@@", escape(title))
-    body = body.replace("@@SUMMARY@@", escape(summary)).replace("@@METRICS@@", values)
-    body = body.replace("@@DATA@@", encoded)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    replacements = {
+        "TITLE": escape(title),
+        "SUMMARY": escape(summary),
+        "METRICS": values,
+        "DATA": encoded,
+        "DETAILS": _details(details),
+    }
+    return re.sub(
+        r"@@(TITLE|SUMMARY|METRICS|DATA|DETAILS)@@",
+        lambda match: replacements[match[1]],
+        _DOCUMENT,
+    )
+
+
+def _details(value):
+    if value is None:
+        return ""
+    document = escape(json.dumps(value, indent=2, sort_keys=True, allow_nan=False))
+    return (
+        "<details><summary>Measured evidence</summary><pre>"
+        + document
+        + "</pre></details>"
+    )
 
 
 _DOCUMENT = """<!doctype html>
@@ -80,9 +116,10 @@ input[type=range]{flex:1;min-width:180px}button{background:#334155;color:white;p
 figure{margin:0}img{width:100%;height:auto;border-radius:6px;object-fit:contain}figcaption{padding:6px;color:#cbd5e1}
 canvas{width:100%;max-width:800px;aspect-ratio:2/1;background:#0b1020;touch-action:none;border-radius:6px}
 small{color:#cbd5e1}footer{margin:32px 0;font-size:.85rem;color:#94a3b8}
-pre{white-space:pre-wrap;overflow-wrap:anywhere}dd{overflow-wrap:anywhere}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.85rem}details{padding:20px;background:#182235;border-radius:12px}
+dd{overflow-wrap:anywhere}
 </style></head><body><h1>@@TITLE@@</h1><p>@@SUMMARY@@</p><dl>@@METRICS@@</dl>
-<main id="timelines"></main><footer>Compact previews derived from this run's outputs. Full resolution data, calibration, provenance and reports remain in the run artifacts. This file works offline and makes no network requests.</footer>
+<main id="timelines"></main>@@DETAILS@@<footer>Compact previews derived from this run's outputs. Full resolution data, calibration, provenance and reports remain in the run artifacts. This file works offline and makes no network requests.</footer>
 <script id="preview-data" type="application/json">@@DATA@@</script><script>
 const groups = JSON.parse(document.getElementById('preview-data').textContent);
 
