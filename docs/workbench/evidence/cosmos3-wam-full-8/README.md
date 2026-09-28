@@ -56,7 +56,8 @@ partial attempt. An early visualization worker also accessed shared storage
 during part of training. These are observed results under those recorded
 conditions. Separate, unprofiled 200-update repetitions provide the primary
 scaling comparison; the [three-run eight-GPU baseline](../cosmos3-wam-timing-8/README.md)
-is now measured, while the two-node comparison is still pending. The separate
+and the [completed two-node comparison](../cosmos3-wam-scaling/README.md)
+now establish measured scaling. The separate
 [full quality curve](../cosmos3-wam-quality-8/README.md) now contains 500 trials
 for each saved checkpoint. Update 1,500 first exceeded the predeclared 90%
 target, scoring 92.8%; the final checkpoint scored 95.0%. The original training

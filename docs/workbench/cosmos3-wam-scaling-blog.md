@@ -350,9 +350,11 @@ archival, evaluation and idle reservations are outside these training totals.
 
 ## Profile compute, communication and checkpoint I/O
 
-Each saved checkpoint occupies about 177.3 GB. On eight GPUs, the first
-checkpoint-bearing iteration took 406.75 seconds; its disk window recorded
-177.9 GB of writes over 397.2 seconds, about 448 MB/s. On sixteen GPUs, the
+Each saved checkpoint occupies about 177.3 GB. On eight GPUs, the four
+checkpoint-bearing iterations took 412.94, 404.54, 404.40 and 404.61 seconds.
+The [recorded disk and GPU windows](evidence/cosmos3-wam-checkpoint-io/README.md)
+at updates 1,000 and 1,500 show sustained writes during training pauses.
+On sixteen GPUs, the
 four checkpoint-bearing iterations took **444.94, 459.33, 434.85 and 439.85
 seconds**. These are complete iteration durations, not isolated write times.
 The controller-local SSD and its NFS export are part of the measured setup;
