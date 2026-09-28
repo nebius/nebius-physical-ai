@@ -23,12 +23,14 @@ import yaml
 from npa.orchestration.npa_workflow import build_plan, load_spec
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.run_state import (
+    RunManifest,
     RunStateStore,
     RuntimeRunState,
     runtime_key,
 )
 from npa.orchestration.npa_workflow.runtime import (
     CANCELLATION_VERIFY_ATTEMPTS,
+    IMAGE_IDENTITY_VERSION,
     MAX_TERMINAL_PLAN_MIGRATIONS,
     SCHEDULER_OBSERVATION_SCHEMA,
     SCHEDULER_OBSERVATION_SOURCE,
@@ -36,15 +38,190 @@ from npa.orchestration.npa_workflow.runtime import (
     RuntimeOptions,
     SkyPilotWaveExecutor,
     WaveAttempt,
+    _claims_for_steps,
+    _expected_image_identity,
+    _image_identity,
+    _loaded_image_identity,
     _record_reached_running,
+    _reference_set_identity,
+    _resource_profiles_for_steps,
+    _selection_reference_identity,
+    _wave_image_references,
     plan_fingerprint,
     run_workflow_runtime,
     s3_artifact_exists,
     s3_trigger_waiter,
     wave_key,
 )
-from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+from npa.orchestration.npa_workflow.skypilot_render import (
+    SkypilotRenderOptions,
+    build_skypilot_task_doc,
+)
 from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+
+def test_wave_attempt_persists_exact_rendered_claim_names() -> None:
+    steps = [
+        SimpleNamespace(
+            resources_profile={
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "volumes": [
+                                {
+                                    "persistentVolumeClaim": {
+                                        "claimName": "run-workspace"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        )
+    ]
+    claims = _claims_for_steps(steps)
+    attempt = WaveAttempt(
+        key="wave",
+        states=["train"],
+        kind="serial",
+        persistent_volume_claims=list(claims),
+    )
+
+    record = attempt.to_dict()
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+
+    assert claims == ("run-workspace",)
+    assert record["persistent_volume_claims"] == ["run-workspace"]
+    assert restored.persistent_volume_claims == ["run-workspace"]
+
+
+def test_wave_attempt_round_trip_preserves_resource_and_image_evidence() -> None:
+    reference = "registry.example/npa@sha256:" + "a" * 64
+    attempt = WaveAttempt(
+        key="wave",
+        states=["train"],
+        kind="serial",
+        image_digest=_selection_reference_identity(
+            "b" * 64, [reference], [["train", "", reference]]
+        ),
+        image_identity_version=IMAGE_IDENTITY_VERSION,
+        image_selection_sha256="b" * 64,
+        image_bindings=[["train", "", reference]],
+        image_references=[reference],
+        resource_profiles={"train": {"accelerators": "B200:1", "cpus": 16}},
+    )
+
+    record = attempt.to_dict()
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+
+    assert restored.resource_profiles == attempt.resource_profiles
+    assert restored.image_references == [reference]
+    assert restored.image_selection_sha256 == "b" * 64
+    assert restored.image_bindings == attempt.image_bindings
+    assert record["image_identity"]["reference_set_sha256"] == _reference_set_identity(
+        [reference]
+    )
+    identity = record["image_identity"]
+    assert identity["version"] == IMAGE_IDENTITY_VERSION
+    assert identity["all_references_content_addressed"] is True
+    attempt.image_references = ["registry.example/npa:mutable"]
+    mutable = attempt.to_dict()["image_identity"]
+    assert mutable["all_references_content_addressed"] is False
+    legacy = WaveAttempt(
+        key="legacy", states=["train"], kind="serial", image_digest="c" * 64
+    ).to_dict()["image_identity"]
+    assert legacy["kind"] == "legacy_digest_pin_set"
+    assert "reference_set_sha256" not in legacy
+    tampered = json.loads(json.dumps(record))
+    tampered["image_identity"]["references"] = ["registry.example/other:tag"]
+    with pytest.raises(NpaWorkflowError, match="image bindings differ from references"):
+        SkyPilotWaveExecutor._attempt_from_record(
+            tampered, steps=[], kind="serial", group=""
+        )
+
+
+@pytest.mark.parametrize("invalid", [None, "", 1, {}, []])
+def test_image_identity_rejects_invalid_reference_members(invalid) -> None:
+    reference = "registry.example/image:tag"
+    record = {
+        "immutable_identity": {"image_digest": _reference_set_identity([reference])},
+        "image_identity": {
+            "version": IMAGE_IDENTITY_VERSION,
+            "references": [reference, invalid],
+        },
+    }
+    with pytest.raises(NpaWorkflowError, match="must be nonempty strings"):
+        _loaded_image_identity(record)
+
+
+def test_resource_snapshot_matches_rendered_environment_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = GATE_LOOP_SPEC.replace(
+        "    memory: 16Gi", "    memory: 16Gi\n    accelerators: B200:1"
+    )
+    spec = load_spec(_write_spec(tmp_path, source))
+    step = build_plan(
+        spec, run_id="resource-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+    options = SkypilotRenderOptions(
+        gpu_accelerator_overrides={"B200:1": "nvidia.com/gpu:B200:1"}
+    )
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_ACCELERATOR", "H200:1")
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_MEMORY", "96Gi")
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://source-role/" + "d" * 64)
+    rendered = build_skypilot_task_doc(
+        spec, step, run_id="resource-evidence", options=options
+    )["resources"]
+    expected = {
+        key: value
+        for key, value in rendered.items()
+        if key not in {"image_id", "image_login_config"}
+    }
+    snapshots = _resource_profiles_for_steps(spec, [step], options, "resource-evidence")
+
+    assert snapshots[step.state] == expected
+    assert snapshots[step.state]["accelerators"] == "H200:1"
+    assert snapshots[step.state]["memory"] == "96+"
+
+
+def test_resolved_image_identity_includes_inline_image_and_rejects_legacy(
+    tmp_path: Path,
+) -> None:
+    source = GATE_LOOP_SPEC.replace(
+        "    memory: 16Gi", "    memory: 16Gi\n    image: repo/image@sha256:" + "a" * 64
+    )
+    spec = load_spec(_write_spec(tmp_path, source))
+    step = build_plan(
+        spec, run_id="image-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+    options = SkypilotRenderOptions()
+
+    references = _wave_image_references(spec, [step], options, "image-evidence")
+    resolved = _expected_image_identity(
+        spec, [step], options, IMAGE_IDENTITY_VERSION, "image-evidence"
+    )
+    changed_spec = load_spec(_write_spec(tmp_path, source.replace("a" * 64, "c" * 64)))
+    changed_step = build_plan(
+        changed_spec, run_id="image-evidence", assume_decision="promote_checkpoint"
+    ).steps[0]
+
+    assert references == ("repo/image@sha256:" + "a" * 64,)
+    assert resolved != _image_identity(options)
+    assert resolved != _expected_image_identity(
+        changed_spec,
+        [changed_step],
+        options,
+        IMAGE_IDENTITY_VERSION,
+        "image-evidence",
+    )
+    with pytest.raises(NpaWorkflowError, match="IMMUTABLE_IDENTITY_MISMATCH"):
+        _expected_image_identity(spec, [step], options, "", "image-evidence")
 
 
 def _typed_running_observation(
@@ -459,12 +636,17 @@ class FakeStatus:
 class MemoryStore(RunStateStore):
     """RunStateStore backed by a dict (mirrors the injected reader/writer seam)."""
 
-    def __init__(self, objects: dict[str, bytes] | None = None) -> None:
+    def __init__(
+        self,
+        objects: dict[str, bytes] | None = None,
+        *,
+        prefix: str = "unit-prefix",
+    ) -> None:
         self.objects: dict[str, bytes] = objects if objects is not None else {}
         self.write_calls: list[str] = []
         super().__init__(
             bucket="unit-bucket",
-            prefix="unit-prefix",
+            prefix=prefix,
             reader=self._read_obj,
             writer=self._write_obj,
             artifact_lister=self._list_obj,
@@ -1066,6 +1248,164 @@ def test_runtime_persists_exact_submitted_workflow_yaml(tmp_path: Path) -> None:
 
     assert report.status == "succeeded"
     assert store.objects["unit-prefix/workflow.yaml"] == workflow_yaml
+
+
+def _completed_runtime_prefix(tmp_path: Path):
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    objects: dict[str, bytes] = {}
+    first_store = MemoryStore(objects)
+    first_executor = _executor(spec, run_id="cpu-run", store=first_store)
+    first_yaml = GATE_LOOP_SPEC.encode("utf-8")
+
+    first = run_workflow_runtime(
+        spec,
+        run_id="cpu-run",
+        executor=first_executor,
+        state_store=first_store,
+        options=first_executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=first_yaml,
+    )
+    assert first.status == "succeeded"
+    return spec, objects
+
+
+def test_runtime_rejects_foreign_run_on_shared_prefix_before_any_write(
+    tmp_path: Path,
+) -> None:
+    spec, objects = _completed_runtime_prefix(tmp_path)
+    snapshot = dict(objects)
+
+    second_store = MemoryStore(objects)
+    second_submitter = FakeSubmitter()
+    second_executor = _executor(
+        spec,
+        run_id="gpu-run",
+        store=second_store,
+        submitter=second_submitter,
+    )
+    with pytest.raises(NpaWorkflowError, match="already belongs.*cpu-run"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=second_executor,
+            state_store=second_store,
+            options=second_executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert second_submitter.calls == []
+    assert second_store.write_calls == []
+    assert objects == snapshot
+
+
+def test_runtime_allows_a_new_run_with_a_distinct_prefix(tmp_path: Path) -> None:
+    spec, objects = _completed_runtime_prefix(tmp_path)
+    snapshot = dict(objects)
+    other_store = MemoryStore(objects, prefix="gpu-prefix")
+    other_executor = _executor(spec, run_id="gpu-run", store=other_store)
+    other = run_workflow_runtime(
+        spec,
+        run_id="gpu-run",
+        executor=other_executor,
+        state_store=other_store,
+        options=other_executor.options,
+        decision_reader=_decision_reader(["promote_checkpoint"]),
+        workflow_yaml=b"different workflow source",
+    )
+    assert other.status == "succeeded"
+    assert objects["gpu-prefix/workflow.yaml"] == b"different workflow source"
+    assert {key: objects[key] for key in snapshot} == snapshot
+
+
+def test_runtime_rejects_foreign_manifest_owner_when_runtime_is_absent(
+    tmp_path: Path,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    store.write_manifest(
+        RunManifest(
+            workflow=spec.name,
+            run_id="cpu-run",
+            api_version=spec.api_version,
+        )
+    )
+    snapshot = dict(store.objects)
+    store.write_calls.clear()
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    with pytest.raises(NpaWorkflowError, match="run manifest.*unique config.prefix"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == snapshot
+
+
+@pytest.mark.parametrize(
+    "manifest_bytes",
+    [b"[1]", b'{"workflow":"example"}', b'{"run_id":"cpu-run"}'],
+)
+def test_runtime_rejects_corrupt_manifest_before_any_write(
+    tmp_path: Path,
+    manifest_bytes: bytes,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    key = "unit-prefix/npa-workflow/manifest.json"
+    store = MemoryStore({key: manifest_bytes})
+    snapshot = dict(store.objects)
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    with pytest.raises(NpaWorkflowError, match="durable run manifest is corrupt"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"different workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == snapshot
+
+
+def test_runtime_prefix_guard_propagates_storage_read_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    store = MemoryStore()
+    submitter = FakeSubmitter()
+    executor = _executor(spec, run_id="gpu-run", store=store, submitter=submitter)
+
+    def fail_read() -> RuntimeRunState | None:
+        raise PermissionError("state read denied")
+
+    monkeypatch.setattr(store, "read_runtime_state", fail_read)
+    with pytest.raises(PermissionError, match="state read denied"):
+        run_workflow_runtime(
+            spec,
+            run_id="gpu-run",
+            executor=executor,
+            state_store=store,
+            options=executor.options,
+            workflow_yaml=b"workflow source",
+        )
+
+    assert submitter.calls == []
+    assert store.write_calls == []
+    assert store.objects == {}
 
 
 def test_runtime_uses_executor_ledger_store_for_exact_workflow_yaml(
@@ -1964,17 +2304,106 @@ def _completed_replay_case(
     return spec, store
 
 
+def _completed_replay_with_provider_traps(spec, store, mocker, render_options=None):
+    submitter = FakeSubmitter()
+    provider = mocker.Mock(side_effect=AssertionError("unexpected provider call"))
+    checker = mocker.Mock(return_value=True)
+    resumed = _executor(
+        spec,
+        run_id="rt-completed-replay-identity",
+        submitter=submitter,
+        status_fn=provider,
+        reconcile_fn=provider,
+        name_lookup_fn=provider,
+        options=RuntimeOptions(poll_seconds=0, resume=True),
+        output_checker=checker,
+        store=store,
+        render_options=render_options,
+    )
+    resumed._cancel = provider
+    report = run_workflow_runtime(
+        spec,
+        run_id="rt-completed-replay-identity",
+        executor=resumed,
+        options=resumed.options,
+    )
+    provider.assert_not_called()
+    assert submitter.calls == []
+    return report, checker
+
+
+@pytest.mark.parametrize("changed_image", [False, True])
+def test_completed_replay_validates_current_rendered_image(
+    tmp_path, mocker, changed_image
+):
+    spec, store = _completed_replay_case(tmp_path)
+    wave = store.read_runtime_state().waves[-1]
+    assert wave["image_identity"]["version"] == IMAGE_IDENTITY_VERSION
+    assert wave["image_identity"]["references"] == ["cr.example/x@sha256:" + "c" * 64]
+    options = SkypilotRenderOptions(
+        image_overrides={
+            "*": "cr.example/x@sha256:" + ("d" if changed_image else "c") * 64
+        }
+    )
+    assert not options.image_digest_pins
+    report, checker = _completed_replay_with_provider_traps(
+        spec, store, mocker, options
+    )
+    if changed_image:
+        assert report.status == "failed"
+        assert "IMMUTABLE_IDENTITY_MISMATCH (image_digest)" in report.error
+        checker.assert_not_called()
+    else:
+        assert report.status == "succeeded"
+        checker.assert_called()
+        assert report.waves[-1]["replayed"]
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing",
+        "malformed",
+        "unknown-version",
+        "missing-references",
+        "changed-reference",
+    ],
+)
+def test_completed_replay_rejects_invalid_image_metadata_before_outputs(
+    tmp_path, mocker, corruption
+):
+    spec, store = _completed_replay_case(tmp_path)
+    state = store.read_runtime_state()
+    wave = state.waves[-1]
+    if corruption == "missing":
+        wave.pop("image_identity")
+    elif corruption == "malformed":
+        wave["image_identity"] = ["invalid"]
+    elif corruption == "unknown-version":
+        wave["image_identity"]["version"] = "unsupported-image-protocol"
+    elif corruption == "missing-references":
+        wave["image_identity"].pop("references")
+    else:
+        wave["image_identity"]["references"] = ["cr.example/x@sha256:" + "d" * 64]
+    store.write_runtime_state(state)
+    report, checker = _completed_replay_with_provider_traps(spec, store, mocker)
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH (image_digest)" in report.error
+    checker.assert_not_called()
+    assert store.read_runtime_state().waves == state.waves
+
+
 @pytest.mark.parametrize(
     ("identity_field", "identity_function"),
     [
         ("workflow_sha256", "_workflow_identity"),
         ("source_sha256", "_source_identity"),
-        ("image_digest", "_image_identity"),
+        ("image_digest", "_expected_image_identity"),
     ],
 )
 @pytest.mark.parametrize(
     ("recorded_identity", "expected_identity_missing"),
-    [("changed", False), ("", False), ("", True), ("changed", True)],
+    [("changed", False), ("", False), ("", True), ("changed", True), ("same", True)],
 )
 @pytest.mark.parametrize("outputs_exist", [True, False])
 def test_completed_replay_requires_current_immutable_identity(
@@ -1991,9 +2420,10 @@ def test_completed_replay_requires_current_immutable_identity(
     spec, store = _completed_replay_case(tmp_path)
     persisted = store.read_runtime_state()
     assert persisted is not None
-    persisted.waves[-1]["immutable_identity"][identity_field] = (
-        "d" * 64 if recorded_identity else ""
-    )
+    if recorded_identity != "same":
+        persisted.waves[-1]["immutable_identity"][identity_field] = (
+            "d" * 64 if recorded_identity else ""
+        )
     store.write_runtime_state(persisted)
     if expected_identity_missing:
         monkeypatch.setattr(runtime_module, identity_function, lambda *_args: "")
@@ -2238,6 +2668,84 @@ def test_long_run_id_preserves_retry_attempt_suffix(tmp_path: Path) -> None:
 
     assert len(name) <= 60
     assert name.endswith("-a3")
+
+
+def test_long_job_names_bind_complete_run_wave_and_iteration(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    prefix = "example-evaluation-run-" + "x" * 42
+    names = set()
+    for run_suffix, sequence, state, iteration in (
+        ("1", 1, "diagnose", None),
+        ("2", 1, "diagnose", None),
+        ("1", 2, "diagnose", None),
+        ("1", 1, "publish", None),
+        ("1", 1, "diagnose", 2),
+        ("1", 1, "diagnose", 3),
+    ):
+        executor = _executor(spec, run_id=f"{prefix}{run_suffix}")
+        executor._sequence = sequence
+        step = SimpleNamespace(state=state, iteration=iteration)
+        name = executor._job_name(
+            [step],
+            group="",
+            attempt=WaveAttempt(key="wave", states=[state], kind="serial"),
+        )
+        assert len(name) <= 60
+        assert "-h" in name
+        discriminator = name.rsplit("-h", maxsplit=1)[1]
+        assert len(discriminator) == 16
+        int(discriminator, 16)
+        names.add(name)
+
+    assert len(names) == 6
+
+
+def test_short_job_name_remains_readable_and_byte_compatible(tmp_path: Path) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    executor = _executor(spec, run_id="short-run")
+    executor._sequence = 1
+    step = SimpleNamespace(state="diagnose", iteration=None)
+
+    name = executor._job_name(
+        [step],
+        group="",
+        attempt=WaveAttempt(key="wave", states=[step.state], kind="serial"),
+    )
+
+    assert name == "short-run-01-diagnose"
+
+
+def test_resume_preserves_recorded_pre_hash_long_job_name(tmp_path: Path) -> None:
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    step = next(iter(build_plan(spec, run_id="legacy-long-run").steps))
+    key = wave_key([step], group="", sequence_number=1)
+    legacy_name = "example-legacy-job-" + "x" * 41
+    observed = []
+
+    def reconcile(name: str, *, job_id: str = "") -> ManagedJobEvidence:
+        observed.append((name, job_id))
+        return ManagedJobEvidence("found", job_id=job_id, status="SUCCEEDED")
+
+    executor = _executor(spec, run_id="legacy-long-run", reconcile_fn=reconcile)
+    executor.ledger.record(
+        WaveAttempt(
+            key=key,
+            states=[step.state],
+            kind="serial",
+            job_id="41",
+            job_name=legacy_name,
+            status="running",
+            sky_status="RUNNING",
+            logical_launch_id="legacy-logical-launch",
+        )
+    )
+
+    adopted = executor._reconcile_in_flight(key, [step], kind="serial", group="")
+
+    assert adopted is not None and adopted.job_name == legacy_name
+    assert observed == [(legacy_name, "41")]
 
 
 def test_parallel_job_name_fingerprints_exact_batch_membership(tmp_path: Path) -> None:
@@ -4601,6 +5109,80 @@ def test_runtime_refresh_failure_invalidates_prior_submit_proof(
     runtime_sdk_submission.job.assert_called_once()
 
 
+def _terminal_supervisor_run(tmp_path, mocker, statuses, *, outputs=True, retries=0):
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    mocker.patch(
+        "npa.orchestration.skypilot.job_blockers.inspect_job_blockers",
+        return_value=JobBlockerReport(job_id="1"),
+    )
+    spec = load_spec(_write_spec(tmp_path, GATE_LOOP_SPEC))
+    gate = next(
+        step
+        for step in build_plan(
+            spec, run_id="rt-terminal", assume_decision="promote_checkpoint"
+        ).steps
+        if step.state == "gate"
+    )
+    store, submitter = MemoryStore(), FakeSubmitter()
+    executor = _executor(
+        spec,
+        run_id="rt-terminal",
+        store=store,
+        submitter=submitter,
+        status_fn=FakeStatus(statuses),
+        output_checker=lambda _uri: outputs,
+        options=RuntimeOptions(poll_seconds=0, retries=retries),
+    )
+    return executor, gate, store, submitter
+
+
+@pytest.mark.parametrize(
+    ("terminal", "outputs", "action"),
+    [
+        ("FAILED", False, "terminalize"),
+        ("FAILED_SETUP", False, "terminalize"),
+        ("CANCELLED", False, "terminalize"),
+        ("SUCCEEDED", False, "terminalize"),
+        ("SUCCEEDED", True, "reuse_completed_wave"),
+    ],
+)
+def test_terminal_supervisor_replaces_stale_live_advice(
+    tmp_path, mocker, terminal, outputs, action
+):
+    executor, gate, store, submitter = _terminal_supervisor_run(
+        tmp_path, mocker, ["PENDING", "RUNNING", terminal], outputs=outputs
+    )
+    if action == "terminalize":
+        with pytest.raises(NpaWorkflowError):
+            executor.execute(gate)
+    else:
+        executor.execute(gate)
+    event = SupervisorLedger(store).latest()
+    assert event["phase"] == "attempt_terminal"
+    assert event["recovery"]["action"] == action
+    assert "Continue observing" not in event["recovery"]["remediation"]
+    assert store.read_runtime_state().waves[-1]["recovery_decision"] == action
+    assert len(submitter.calls) == 1
+
+
+def test_terminal_advice_preserves_explicit_payload_retry(tmp_path, mocker):
+    executor, gate, store, submitter = _terminal_supervisor_run(
+        tmp_path,
+        mocker,
+        ["PENDING", "FAILED", "PENDING", "SUCCEEDED"],
+        retries=1,
+    )
+    executor.execute(gate)
+    attempts = store.read_runtime_state().waves
+    assert [row["status"] for row in attempts] == ["failed", "succeeded"]
+    assert [row["recovery_decision"] for row in attempts] == [
+        "terminalize",
+        "reuse_completed_wave",
+    ]
+    assert len(submitter.calls) == 2
+
+
 def test_runtime_supervisor_stops_configuration_retry_immediately(
     tmp_path: Path, mocker
 ) -> None:
@@ -4660,6 +5242,9 @@ def test_runtime_supervisor_stops_configuration_retry_immediately(
     ]
     assert executor.attempts[0].error_category == "actionable_configuration"
     assert executor.attempts[0].recovery_decision == "cancel_and_terminalize"
+    assert executor.attempts[0].resource_profiles == {
+        "gate": {"cloud": "kubernetes", "cpus": "4+", "memory": "16+"}
+    }
 
 
 def test_runtime_supervisor_recovers_transient_once_without_duplicate(
@@ -5504,6 +6089,35 @@ def _assert_reuse_blocked(case, executor, match="output-reuse", *, decision=None
     return blocked
 
 
+@pytest.mark.parametrize("changed_image", [False, True])
+def test_crashed_output_reuse_validates_current_rendered_image(
+    tmp_path, mocker, runtime_sdk_submission, changed_image
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    checker = mocker.Mock(return_value=True)
+    resumed = _reuse_executor(case, output_checker=checker)
+    identity = case[3]["image_identity"]
+    assert identity["version"] == IMAGE_IDENTITY_VERSION
+    assert identity["references"] == ["cr.example/x@sha256:" + "c" * 64]
+    legacy_digest = _image_identity(resumed.render_options)
+    assert case[3]["immutable_identity"]["image_digest"] != legacy_digest
+    if changed_image:
+        resumed.render_options = SkypilotRenderOptions(
+            image_overrides={"*": "cr.example/x@sha256:" + "d" * 64}
+        )
+        assert not resumed.render_options.image_digest_pins
+        _assert_reuse_blocked(case, resumed, match="identity")
+        checker.assert_not_called()
+    else:
+        assert resumed.execute(case[1])["status"] == "ok"
+        checker.assert_called()
+        assert resumed.attempts[-1].sky_status == "CANCELLED"
+        assert resumed.attempts[-1].cancellation_state == "verified"
+    assert resumed.attempts[-1].attempt == case[3]["attempt"]
+    assert resumed._submitter.calls == []
+    assert resumed._status_fn.calls == []
+
+
 @pytest.mark.parametrize("crash_before_runtime_record", [True, False])
 @pytest.mark.parametrize("terminal_status", ["CANCELLED", "FAILED", "SUCCEEDED"])
 def test_resume_reuses_output_complete_wave_after_driver_crash(
@@ -5733,7 +6347,18 @@ def test_resume_blocks_runtime_identity_mismatch_during_output_reuse(
     state = case[2].read_runtime_state()
     state.waves[-1]["immutable_identity"][field] = "d" * 64
     case[2].write_runtime_state(state)
-    _assert_reuse_blocked(case, _reuse_executor(case), "runtime output-reuse identity")
+    checker = mocker.Mock(return_value=True)
+    resumed = _reuse_executor(case, output_checker=checker)
+    if field == "image_digest":
+        with pytest.raises(NpaWorkflowError, match="versioned image.*identity"):
+            resumed.execute(case[1])
+        assert resumed.attempts == []
+        assert case[2].read_runtime_state().waves == state.waves
+    else:
+        _assert_reuse_blocked(case, resumed, "runtime output-reuse identity")
+    checker.assert_not_called()
+    assert resumed._submitter.calls == []
+    assert resumed._status_fn.calls == []
 
 
 def test_resume_skips_well_formed_nonreuse_cancellation_event(
@@ -5760,7 +6385,7 @@ def test_resume_skips_well_formed_nonreuse_cancellation_event(
     attempt = resumed._attempt_from_record(
         record, steps=[case[1]], kind="serial", group=""
     )
-    assert not resumed._resume_durable_output_reuse(attempt)
+    assert not resumed._resume_durable_output_reuse(attempt, [case[1]])
 
 
 @pytest.mark.parametrize("unrelated_suffix", ["unrelated", "same-prefix"])
@@ -5981,3 +6606,133 @@ def test_output_reuse_error_type_restores_legacy_and_current_records(error_type)
     )
     assert restored.output_reuse_error_type == (error_type or "")
     assert restored.to_dict()["output_reuse_error_type"] == (error_type or "")
+
+
+def _parallel_image_replay_spec():
+    document = yaml.safe_load(_image_selection_replay_spec())
+    document["initial"] = "image-wave"
+    document["states"]["image-wave"] = {
+        "parallel": ["caption", "export"],
+        "terminal": True,
+    }
+    document["states"]["caption"].pop("next", None)
+    document["states"]["export"].pop("terminal", None)
+    return yaml.safe_dump(document)
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_parallel_replay_binds_selection_even_when_reference_set_is_unchanged(
+    tmp_path, changed
+):
+    references = list(_image_pin_bindings().values())
+    initial = _image_selection_options(
+        {"*": references[0], "workbench.token_factory.caption": references[1]}
+    )
+    selected = (
+        _image_selection_options(
+            {"workbench.token_factory.caption": references[0], "*": references[1]}
+        )
+        if changed
+        else initial
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_parallel_image_replay_spec()
+    )
+    steps = build_plan(spec, run_id="rt-completed-replay-identity").steps
+    assert _wave_image_references(spec, steps, initial, "binding-check") == (
+        _wave_image_references(spec, steps, selected, "binding-check")
+    )
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=selected
+    )
+    assert report.status == ("failed" if changed else "succeeded")
+    assert submitter.calls == []
+    if changed:
+        assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    else:
+        assert len(report.waves) == 1 and report.waves[0]["replayed"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["legacy-reference-set", "unversioned-v3", "selection", "references", "bindings"],
+)
+def test_completed_replay_rejects_incomplete_or_tampered_image_binding(
+    tmp_path, mutation
+):
+    selected = _image_selection_options(
+        {"*": next(iter(_image_pin_bindings().values()))}
+    )
+    spec, store = _completed_replay_case(tmp_path, render_options=selected)
+    state = store.read_runtime_state()
+    record = state.waves[-1]
+    identity = record["image_identity"]
+    if mutation == "legacy-reference-set":
+        identity["version"] = "npa.workflow.image-reference-set.v1"
+        record["immutable_identity"]["image_digest"] = _reference_set_identity(
+            identity["references"]
+        )
+        identity.pop("selection_sha256")
+    elif mutation == "unversioned-v3":
+        record.pop("image_identity")
+        record["immutable_identity"]["image_digest"] = _image_identity(selected)
+    elif mutation == "selection":
+        identity["selection_sha256"] = "c" * 64
+        record["immutable_identity"]["image_digest"] = _selection_reference_identity(
+            identity["selection_sha256"], identity["references"], identity["bindings"]
+        )
+    elif mutation == "bindings":
+        identity["bindings"][0][0] = "different-state"
+        record["immutable_identity"]["image_digest"] = _selection_reference_identity(
+            identity["selection_sha256"], identity["references"], identity["bindings"]
+        )
+    else:
+        identity["references"] = ["registry.example/another@sha256:" + "c" * 64]
+    store.write_runtime_state(state)
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=selected
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_completed_replay_binds_catalog_assignments_with_unchanged_image_set(
+    tmp_path, monkeypatch, changed
+):
+    document = yaml.safe_load(_parallel_image_replay_spec())
+    for state in ("caption", "export"):
+        document["resources"][state] = {
+            **document["resources"]["cpu"],
+            "image": f"tool://catalog-{state}",
+        }
+        document["states"][state]["resources"] = state
+    references = list(_image_pin_bindings().values())
+    catalog = dict(zip(("catalog-caption", "catalog-export"), references))
+    monkeypatch.setattr(
+        "npa.deploy.images.container_image_for_tool",
+        lambda tool, **_kwargs: catalog[tool],
+    )
+    options = _image_selection_options({})
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=options, spec_text=yaml.safe_dump(document)
+    )
+    original = store.read_runtime_state().waves[-1]["image_identity"]
+    if changed:
+        catalog.update(zip(catalog, reversed(references)))
+    steps = build_plan(spec, run_id="rt-completed-replay-identity").steps
+    assert (
+        list(_wave_image_references(spec, steps, options, "catalog-check"))
+        == (original["references"])
+    )
+    assert _image_identity(options) == original["selection_sha256"]
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=options
+    )
+    assert report.status == ("failed" if changed else "succeeded")
+    assert submitter.calls == []
+    if changed:
+        assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    else:
+        assert report.waves[0]["replayed"]

@@ -6,6 +6,11 @@ These `npa.workflow/v0.0.1` YAML files compose Workbench operations into a state
 graph. NPA validates the graph, renders SkyPilot tasks, and manages run-scoped
 artifacts. Start with a runbook that matches the result you want.
 
+Kubernetes GPU profiles accept a string such as `RTXPRO6000:2` or a single-entry
+mapping such as `{RTXPRO6000: 2}`. Both preserve the count when resolving the
+cluster's GPU product name. Select one GPU request before submitting a Kubernetes
+profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide.md#durable-run-supervision-and-recovery).
+
 ## Choose a starting point
 
 | Goal | Spec and runbook |
@@ -15,6 +20,7 @@ artifacts. Start with a runbook that matches the result you want.
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
+| Evaluate a BEHAVIOR 2026 policy | [Workflow](testing/behavior-challenge-eval.yaml) · [rules and runtime prerequisites](../docs/workbench/behavior-challenge.md) — GPU validation pending |
 | Run a live π0.5 robot pickup in Antioch | [OpenPI live pickup](partners/antioch/openpi-live-pickup.md) — pretrained-policy inference, physical success checks, and native recording |
 | Collect Antioch trajectories and train ACT | [Antioch ACT workflow](partners/antioch/antioch-offline-policy-train.yaml) — completed dataset → LeRobot training; [runbook](partners/antioch/README.md#dataset-based-act-training) |
 | Fine-tune XR1 on Antioch robot demonstrations | [Antioch pipeline](partners/antioch/README.md) — physical demonstrations, Nebius S3, NPA credential storage, attached evaluation with the pinned Antioch SDK, and measured policy results |
@@ -57,6 +63,9 @@ npa workbench workflow list \
 
 See [run lifecycle](../docs/run-lifecycle.md) for launch, monitoring, interrupted
 submissions, and safe resume, and [teardown](../docs/teardown.md) for cleanup.
+The [workflow guide](../docs/workbench/npa-workflow-guide.md) explains relative
+and absolute ledger prefixes. Runtime resume preserves the recorded ledger
+location and verifies its storage access before launch.
 
 ### Runtime choices
 
@@ -72,6 +81,46 @@ with the selected images' installed dependencies. Other workflows default to
 false; `NPA_SRC_OVERLAY=1` is an operator override. Keep the checkout available
 during submission. The [authoring guide](../docs/workbench/npa-workflow-guide.md)
 explains the full source and image contract.
+
+### Isolated controller diagnostics
+
+Pass the run's `--isolated-config-dir` to workflow status, logs, and cancellation.
+Status uses that controller's Kubernetes configuration for pod, event, and node
+diagnostics, and retains the same controller in suggested log commands. It does
+not require the operator's ambient Kubernetes configuration to match the run.
+
+### Failed-attempt diagnostics
+
+Python stages that create useful local evidence before failing can publish an
+explicit allowlist with `npa.workflows.attempt_diagnostics.publish_failed_attempt`.
+The helper writes immutable, attempt-scoped originals, verifies their full-byte
+readback, and writes the `failed` receipt last. It never writes a success or
+qualification result.
+
+```python
+from npa.workflows.attempt_diagnostics import publish_failed_attempt
+
+publish_failed_attempt(
+    "s3://example-bucket/diagnostics",
+    run_id="demo",
+    stage="evaluate",
+    attempt_id="attempt-1",
+    exit_code=1,
+    files={"worker.log": "/workspace/run/worker.log"},
+)
+```
+
+Choose and redact every file explicitly. The helper does not discover a
+directory or decide whether a log can contain credentials. Use a new
+`attempt_id` for each execution; existing diagnostic objects are never
+overwritten. The helper includes `run_id` in the object prefix. An interrupted
+call may be retried with the same identifiers and exact file bytes; it accepts
+existing identical objects and rejects different bytes. An immutable attempt
+manifest reserves the full file set before any original is published, so competing
+retries cannot add files to the same attempt. A completed receipt is checked
+before any writes. Its original files must still pass readback verification.
+Publish closed files from caller-controlled directories: final-component symlinks
+and nonregular files are rejected, while parent directories are trusted.
 
 ## Layout
 
@@ -143,6 +192,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Spec | Notes |
 | --- | --- |
+| [`behavior-comet-native-full-training.yaml`](testing/behavior-comet-native-full-training.yaml) | Portable real OpenPI native training reference: same-entrypoint CPU input preflight → direct native GPU updates → complete FP32 TrainState/optimizer milestones with provider readback and durable resume ([guide](../docs/workbench/comet-native-full-training.md)); exact private inputs remain operator supplied |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |
 | [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | [`isaac-arena-evaluation-b200.yaml`](testing/isaac-arena-evaluation-b200.yaml) | Four-seed Arena zero-action state regression on B200; completed scored episodes and hash-bound reports, with no visual claim ([guide](../docs/workbench/isaac-arena.md)) |

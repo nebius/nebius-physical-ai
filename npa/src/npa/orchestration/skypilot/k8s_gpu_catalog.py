@@ -1538,11 +1538,47 @@ def wait_for_kubernetes_accelerators(
         sleeper(min(poll_interval, remaining))
 
 
+def accelerator_spec(value: object) -> str:
+    """Return one concrete accelerator request for Kubernetes preflight.
+
+    Args:
+        value: A string request or a resolved single-entry accelerator mapping.
+
+    Returns:
+        A concrete accelerator request, or an empty string when absent.
+
+    Raises:
+        ValueError: The mapping contains alternatives rather than one request.
+    """
+
+    if not isinstance(value, Mapping):
+        return str(value or "").strip()
+    if not value:
+        return ""
+    if len(value) != 1:
+        raise ValueError(
+            "Kubernetes submit requires one concrete accelerator; multi-key "
+            "accelerator mappings are SkyPilot alternatives and cannot be "
+            "preflighted before SkyPilot selects one"
+        )
+    name, count = next(iter(value.items()))
+    return f"{str(name).strip()}:{count}"
+
+
 def spec_accelerators(resources: object) -> list[str]:
     """Return the distinct Kubernetes accelerator specs declared by a spec's profiles.
 
     Only ``cloud: kubernetes`` profiles are considered; Nebius VM profiles are
     validated against the VM catalog instead.
+
+    Args:
+        resources: Workflow resource profiles, after resolving configuration.
+
+    Returns:
+        Distinct requests with each declared accelerator quantity preserved.
+
+    Raises:
+        ValueError: A Kubernetes profile declares unselected alternatives.
     """
 
     found: list[str] = []
@@ -1554,7 +1590,7 @@ def spec_accelerators(resources: object) -> list[str]:
         cloud = str(profile.get("cloud") or "").strip().casefold()
         if cloud not in {"kubernetes", "k8s"}:
             continue
-        accelerator = str(profile.get("accelerators") or "").strip()
+        accelerator = accelerator_spec(profile.get("accelerators"))
         if accelerator and accelerator not in found:
             found.append(accelerator)
     return found
