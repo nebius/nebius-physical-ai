@@ -98,8 +98,14 @@ overrides are included even when the preflight pin map is empty. Older
 value-only or pin-only identities cannot prove this complete selection and
 require a new run ID.
 
-**Upgrade note:** the v3 image-selection identity deliberately rejects v1/v2
-records with `IMMUTABLE_IDENTITY_MISMATCH`; it does not migrate their identity
+For each wave with rendered images, a versioned composite binds that v3
+selection fingerprint to the exact resolved references. The ledger retains the
+references, their separate set hash, and whether every reference is content
+addressed. Swapping selector assignments cannot hide behind an unchanged set of
+resolved images; a catalog-image change also changes the composite identity.
+
+**Upgrade note:** earlier value-only, pin-only, and reference-set-only identity
+records cannot prove this binding and deliberately fail with `IMMUTABLE_IDENTITY_MISMATCH`; it does not migrate their identity
 in place. Before deploying this controller version, let existing runs finish,
 or keep their original controller/source/image version available to resume
 them. Start new-version work under a new run ID only after the old attempt is

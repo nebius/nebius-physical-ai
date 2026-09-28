@@ -45,6 +45,7 @@ from npa.orchestration.npa_workflow.runtime import (
     _record_reached_running,
     _reference_set_identity,
     _resource_profiles_for_steps,
+    _selection_reference_identity,
     _wave_image_references,
     plan_fingerprint,
     run_workflow_runtime,
@@ -103,8 +104,9 @@ def test_wave_attempt_round_trip_preserves_resource_and_image_evidence() -> None
         key="wave",
         states=["train"],
         kind="serial",
-        image_digest=_reference_set_identity([reference]),
+        image_digest=_selection_reference_identity("b" * 64, [reference]),
         image_identity_version=IMAGE_IDENTITY_VERSION,
+        image_selection_sha256="b" * 64,
         image_references=[reference],
         resource_profiles={"train": {"accelerators": "B200:1", "cpus": 16}},
     )
@@ -116,6 +118,10 @@ def test_wave_attempt_round_trip_preserves_resource_and_image_evidence() -> None
 
     assert restored.resource_profiles == attempt.resource_profiles
     assert restored.image_references == [reference]
+    assert restored.image_selection_sha256 == "b" * 64
+    assert record["image_identity"]["reference_set_sha256"] == _reference_set_identity(
+        [reference]
+    )
     identity = record["image_identity"]
     assert identity["version"] == IMAGE_IDENTITY_VERSION
     assert identity["all_references_content_addressed"] is True
@@ -180,7 +186,7 @@ def test_resource_snapshot_matches_rendered_environment_overrides(
     assert snapshots[step.state]["memory"] == "96+"
 
 
-def test_resolved_image_identity_includes_inline_image_and_keeps_legacy(
+def test_resolved_image_identity_includes_inline_image_and_rejects_legacy(
     tmp_path: Path,
 ) -> None:
     source = GATE_LOOP_SPEC.replace(
@@ -210,9 +216,8 @@ def test_resolved_image_identity_includes_inline_image_and_keeps_legacy(
         IMAGE_IDENTITY_VERSION,
         "image-evidence",
     )
-    assert _expected_image_identity(spec, [step], options, "", "image-evidence") == (
-        _image_identity(options)
-    )
+    with pytest.raises(NpaWorkflowError, match="IMMUTABLE_IDENTITY_MISMATCH"):
+        _expected_image_identity(spec, [step], options, "", "image-evidence")
 
 
 def _typed_running_observation(
@@ -6428,3 +6433,83 @@ def test_output_reuse_error_type_restores_legacy_and_current_records(error_type)
     )
     assert restored.output_reuse_error_type == (error_type or "")
     assert restored.to_dict()["output_reuse_error_type"] == (error_type or "")
+
+
+def _parallel_image_replay_spec():
+    document = yaml.safe_load(_image_selection_replay_spec())
+    document["initial"] = "image-wave"
+    document["states"]["image-wave"] = {
+        "parallel": ["caption", "export"],
+        "terminal": True,
+    }
+    document["states"]["caption"].pop("next", None)
+    document["states"]["export"].pop("terminal", None)
+    return yaml.safe_dump(document)
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_parallel_replay_binds_selection_even_when_reference_set_is_unchanged(
+    tmp_path, changed
+):
+    references = list(_image_pin_bindings().values())
+    initial = _image_selection_options(
+        {"*": references[0], "workbench.token_factory.caption": references[1]}
+    )
+    selected = (
+        _image_selection_options(
+            {"workbench.token_factory.caption": references[0], "*": references[1]}
+        )
+        if changed
+        else initial
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_parallel_image_replay_spec()
+    )
+    steps = build_plan(spec, run_id="rt-completed-replay-identity").steps
+    assert _wave_image_references(spec, steps, initial, "binding-check") == (
+        _wave_image_references(spec, steps, selected, "binding-check")
+    )
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=selected
+    )
+    assert report.status == ("failed" if changed else "succeeded")
+    assert submitter.calls == []
+    if changed:
+        assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    else:
+        assert len(report.waves) == 1 and report.waves[0]["replayed"]
+
+
+@pytest.mark.parametrize(
+    "mutation", ["legacy-reference-set", "selection", "references"]
+)
+def test_completed_replay_rejects_incomplete_or_tampered_image_binding(
+    tmp_path, mutation
+):
+    selected = _image_selection_options(
+        {"*": next(iter(_image_pin_bindings().values()))}
+    )
+    spec, store = _completed_replay_case(tmp_path, render_options=selected)
+    state = store.read_runtime_state()
+    record = state.waves[-1]
+    identity = record["image_identity"]
+    if mutation == "legacy-reference-set":
+        identity["version"] = "npa.workflow.image-reference-set.v1"
+        record["immutable_identity"]["image_digest"] = _reference_set_identity(
+            identity["references"]
+        )
+        identity.pop("selection_sha256")
+    elif mutation == "selection":
+        identity["selection_sha256"] = "c" * 64
+        record["immutable_identity"]["image_digest"] = _selection_reference_identity(
+            identity["selection_sha256"], identity["references"]
+        )
+    else:
+        identity["references"] = ["registry.example/another@sha256:" + "c" * 64]
+    store.write_runtime_state(state)
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=selected
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []

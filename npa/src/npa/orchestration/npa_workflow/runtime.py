@@ -248,7 +248,7 @@ def _image_identity(render_options: SkypilotRenderOptions) -> str:
     return hashlib.sha256(digest_material.encode("utf-8")).hexdigest()
 
 
-IMAGE_IDENTITY_VERSION = "npa.workflow.image-reference-set.v1"
+IMAGE_IDENTITY_VERSION = "npa.workflow.image-selection-references.v1"
 
 
 def _wave_image_references(
@@ -265,6 +265,22 @@ def _wave_image_references(
 def _reference_set_identity(references: Sequence[str]) -> str:
     """Hash a canonical image-reference set without claiming content identity."""
     payload = json.dumps(sorted(set(references)), separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _selection_reference_identity(
+    selection_sha256: str, references: Sequence[str]
+) -> str:
+    """Bind complete v3 selection inputs to the effective images of one wave."""
+    payload = json.dumps(
+        {
+            "schema": IMAGE_IDENTITY_VERSION,
+            "selection_sha256": selection_sha256,
+            "references": sorted(set(references)),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -288,8 +304,9 @@ def _image_identity_record(attempt: "WaveAttempt") -> dict[str, Any]:
         }
     return {
         "version": attempt.image_identity_version,
-        "kind": "resolved_reference_set",
-        "reference_set_sha256": attempt.image_digest,
+        "kind": "selection_and_resolved_references",
+        "selection_sha256": attempt.image_selection_sha256,
+        "reference_set_sha256": _reference_set_identity(attempt.image_references),
         "references": list(attempt.image_references),
         "all_references_content_addressed": bool(attempt.image_references)
         and all(_is_content_addressed_image(item) for item in attempt.image_references),
@@ -306,7 +323,11 @@ def _loaded_image_identity(
     if not version:
         return "", []
     if version != IMAGE_IDENTITY_VERSION:
-        raise NpaWorkflowError(f"unsupported image identity version: {version}")
+        raise NpaWorkflowError(
+            f"IMMUTABLE_IDENTITY_MISMATCH: unsupported image identity version: {version}; "
+            "resume with the original controller/source/image, or use a new run ID "
+            "after the original attempt is terminal"
+        )
     raw_references = identity.get("references")
     if not isinstance(raw_references, list) or not raw_references:
         raise NpaWorkflowError("versioned image identity requires references")
@@ -316,8 +337,19 @@ def _loaded_image_identity(
     if references != sorted(set(references)):
         raise NpaWorkflowError("versioned image references are not canonical")
     digest = str((record.get("immutable_identity") or {}).get("image_digest") or "")
-    if _reference_set_identity(references) != digest:
+    selection = identity.get("selection_sha256")
+    if (
+        not isinstance(selection, str)
+        or len(selection) != 64
+        or any(char not in "0123456789abcdef" for char in selection)
+    ):
+        raise NpaWorkflowError(
+            "versioned image selection identity is missing or invalid"
+        )
+    if _reference_set_identity(references) != identity.get("reference_set_sha256"):
         raise NpaWorkflowError("versioned image reference-set identity differs")
+    if _selection_reference_identity(selection, references) != digest:
+        raise NpaWorkflowError("versioned image selection/reference identity differs")
     return version, references
 
 
@@ -328,13 +360,20 @@ def _expected_image_identity(
     version: str,
     run_id: str,
 ) -> str:
-    """Recompute a versioned image identity or the explicit legacy identity."""
-    if not version:
-        return _image_identity(render_options)
-    if version != IMAGE_IDENTITY_VERSION:
-        raise NpaWorkflowError(f"unsupported image identity version: {version}")
+    """Recompute a complete binding without upgrading weaker recorded evidence."""
     references = _wave_image_references(spec, steps, render_options, run_id)
-    return _reference_set_identity(references)
+    selection = _image_identity(render_options)
+    if not selection:
+        return ""
+    if not version and not references:
+        return selection
+    if version != IMAGE_IDENTITY_VERSION:
+        raise NpaWorkflowError(
+            "IMMUTABLE_IDENTITY_MISMATCH: missing or unsupported image identity "
+            "version; resume with the original controller/source/image, or use "
+            "a new run ID after the original attempt is terminal"
+        )
+    return _selection_reference_identity(selection, references)
 
 
 @dataclass
@@ -458,6 +497,7 @@ class WaveAttempt:
     source_sha256: str = ""
     image_digest: str = ""
     image_identity_version: str = ""
+    image_selection_sha256: str = ""
     image_references: list[str] = field(default_factory=list)
     infrastructure_recovery_count: int = 0
     infrastructure_recovery_limit: int = 1
@@ -942,6 +982,9 @@ class SkyPilotWaveExecutor:
                 source_sha256=str(immutable.get("source_sha256") or ""),
                 image_digest=str(immutable.get("image_digest") or ""),
                 image_identity_version=image_version,
+                image_selection_sha256=str(
+                    (replayed.get("image_identity") or {}).get("selection_sha256") or ""
+                ),
                 image_references=image_references,
                 replayed=True,
             )
@@ -1298,6 +1341,9 @@ class SkyPilotWaveExecutor:
                 (record.get("immutable_identity") or {}).get("image_digest") or ""
             ),
             image_identity_version=image_version,
+            image_selection_sha256=str(
+                (record.get("image_identity") or {}).get("selection_sha256") or ""
+            ),
             image_references=image_references,
             infrastructure_recovery_count=int(recovery_record.get("used") or 0),
             infrastructure_recovery_limit=int(recovery_record.get("limit") or 1),
@@ -2116,7 +2162,10 @@ class SkyPilotWaveExecutor:
         if references:
             attempt.image_identity_version = IMAGE_IDENTITY_VERSION
             attempt.image_references = list(references)
-            attempt.image_digest = _reference_set_identity(references)
+            attempt.image_selection_sha256 = _image_identity(self.render_options)
+            attempt.image_digest = _selection_reference_identity(
+                attempt.image_selection_sha256, references
+            )
         else:
             attempt.image_digest = _image_identity(self.render_options)
         from npa.orchestration.npa_workflow.launch_recovery import _check_consumption
