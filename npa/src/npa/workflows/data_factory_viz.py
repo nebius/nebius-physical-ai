@@ -1158,11 +1158,11 @@ def _input_entity(frame: Path, root: Path) -> str:
 
 
 def _grouped_images(root: Path) -> dict[str, list[Path]]:
-    """Group images under ``root`` by their immediate parent directory name."""
+    """Keep each relative modality/camera directory in a separate entity."""
     groups: dict[str, list[Path]] = {}
     for frame in _image_files(root):
         parent = frame.parent
-        name = "frames" if parent == root else parent.name
+        name = "frames" if parent == root else parent.relative_to(root).as_posix()
         groups.setdefault(name, []).append(frame)
     return groups
 

@@ -203,6 +203,15 @@ the missing `sudo`, the 64 MB `/dev/shm` — see the troubleshooting table in
 `skills/workflows/neural-reconstruction/SKILL.md`. Most are already handled
 automatically; the table tells you which.
 
+Native object-centric captures can store their SfM points in a LiDAR component,
+such as `virtual_lidar`, instead of a `PointCloudsComponent`. The stock native
+initializer supports one camera for those captures. When no camera selection is
+provided, Workbench uses the derived rig's reference camera and emits a warning
+listing the excluded cameras. Select a camera explicitly with `--camera-id` to
+make that scope part of the command. An explicit multi-camera selection is never
+silently narrowed. Converted captures with a verified point-cloud inventory keep
+their existing multi-camera initialization path.
+
 ## Dig deeper
 
 - **Skill:** `skills/workflows/neural-reconstruction/SKILL.md` — recipe selection,
