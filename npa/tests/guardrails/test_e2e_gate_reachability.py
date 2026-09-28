@@ -98,6 +98,9 @@ MANUAL_GATES = {
     ),
     "NPA_BURST_E2E_IMAGE": "operator supplies the exact immutable burst validation image",
     "NPA_E2E_BURST": "full burst GPU coverage is an explicitly selected live suite",
+    "NPA_BYOF_ROBOMIMIC_LIVE_B200": (
+        "robomimic B200 training requires operator runtime approval and exact private selectors"
+    ),
     "NPA_BYOF_LIVE_CONTAINER": "BYOF executes third-party source only after operator review",
     "NPA_BYOF_LIVE_GPU": "BYOF GPU mutation requires a reviewed onboarding target",
     "NPA_BYOF_GYMNASIUM_ROBOTICS_LIVE_GPU": (
@@ -109,6 +112,9 @@ MANUAL_GATES = {
         "LIBERO qualification consumes an accepted immutable candidate image and one reserved B200"
     ),
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
+    "NPA_BYOF_ROBOTWIN_LIVE": (
+        "RoboTwin mutation requires the manager-owned STRICT RTX PRO runtime context and operator license decisions"
+    ),
     "NPA_ANTIOCH_ACCEPT_TERMS": (
         "Antioch live validation requires the operator's own runtime terms acceptance"
     ),
@@ -121,6 +127,12 @@ MANUAL_GATES = {
         "read-only completed Wan worker verification requires operator-selected private run artifacts and generation controls"
     ),
     "NPA_BYOF_LIVE_UBUNTU": "BYOF Ubuntu mutation is a dedicated onboarding acceptance",
+    "NPA_HABITAT_SIM_IMAGE_LIVE": (
+        "the dedicated Habitat renderer requires an operator-authorized exact image and RTX run"
+    ),
+    "NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT": (
+        "an owner-only receipt binds the exact image, pod, workflow, storage, and STRICT RTX target"
+    ),
     # Not merely operator-selected: an automated runner *must not* reach this
     # suite. It needs a token entitled to the gated Lightricks/LTX-2.5
     # repository, which Lightricks grants only after a human accepts its terms
@@ -217,6 +229,55 @@ def test_pr218_mutation_gates_are_runner_reachable_not_manual() -> None:
     ):
         assert gate in runner_text
         assert gate not in MANUAL_GATES
+
+
+def test_robotwin_hard_gate_reaches_the_workload_only_through_normal_submit() -> None:
+    path = E2E / "test_byof_onboarding_live_e2e.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_live_robotwin_build_push_run_and_artifacts"
+    )
+    assignments = {
+        target.id: value
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+        for value in (node.value,)
+    }
+    base_command = assignments.get("base_cmd")
+    assert isinstance(base_command, ast.List)
+    constant_argv = [
+        item.value
+        for item in base_command.elts
+        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+    ]
+    command_index = constant_argv.index("workbench")
+    assert ["workbench", "workflow", "submit"] == constant_argv[
+        command_index : command_index + 3
+    ]
+    assert constant_argv.count("--secret-env") == 3
+    assert not any(
+        isinstance(node, ast.Name) and node.id == "BYOF_RUNNER"
+        for node in ast.walk(function)
+    )
+    launch_calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "subprocess"
+        and node.func.attr == "run"
+    ]
+    assert len(launch_calls) == 1
+    assert launch_calls[0].args
+    assert isinstance(launch_calls[0].args[0], ast.Name)
+    assert launch_calls[0].args[0].id == "base_cmd"
 
 
 def test_fleet_storage_verification_has_an_opt_in_daily_runner() -> None:

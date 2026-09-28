@@ -152,6 +152,7 @@ LIBERO_SIGSTORE_PUBLICATION_REFERRERS = (
 CONTAINER_IMAGE_NAMES = {
     "antioch": "npa-antioch",
     "openpi": "npa-openpi",
+    "habitat-sim": "npa-habitat-sim",
     "lerobot": "npa-lerobot",
     "sim2real-control": "npa-sim2real-control",
     "lerobot-policy": "npa-lerobot-policy",
@@ -176,6 +177,7 @@ CONTAINER_IMAGE_NAMES = {
     "sonic-mujoco": "npa-sonic-mujoco",
     "retargeting": "npa-retargeting",
     "robocasa": "npa-robocasa",
+    "robomimic": "npa-robomimic",
     "envgen": "npa-envgen",
     "reference-policy": "npa-reference-policy",
     "lerobot-vlm-rl": "npa-lerobot-vlm-rl",
@@ -197,6 +199,7 @@ CONTAINER_IMAGE_NAMES = {
     "mjlab": "npa-mjlab",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
+    "robotwin": "npa-robotwin",
     "libero": "npa-libero",
 }
 
@@ -222,9 +225,11 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "cosmos-evaluator",
         "content-agents",
         "ncore",
+        "robotwin",
         "libero",
         "fiftyone",
         "groot",
+        "habitat-sim",
         "gymnasium-robotics",
         "isaac-lab",
         "isaac-arena",
@@ -232,6 +237,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "rerun-viewer",
         "sim2real-control",
         "envgen",
+        "robomimic",
     }
 )
 
@@ -272,6 +278,8 @@ RESTRICTED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     }
 )
 RESTRICTED_DERIVED_IMAGES: frozenset[str] = frozenset()
+# A pending source-delivery proof is not a permanent upstream license restriction.
+PENDING_REDISTRIBUTION_TOOLS: frozenset[str] = frozenset()
 
 # Compatibility exports for installed callers. New code uses the general names.
 OMNIVERSE_RESTRICTED_TOOLS = RESTRICTED_PUBLICATION_TOOLS
@@ -283,17 +291,19 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # smoke, but has not been published or anonymously pulled from the public mirror.
 #
 # This is a different question from `RESTRICTED_PUBLICATION_TOOLS`, and conflating
-# them would be wrong in both directions: these are not restricted (the licensing
-# work is done and the answer was "public"), they are simply unproven. Publishing
+# them would be wrong in both directions: these target public delivery but remain
+# unproven. Publishing
 # an image whose payload scan and GPU smoke have never run would hand out a claim
 # we have not earned, so publish_public refuses them by name rather than relying
 # on the push failing because the tag happens not to exist.
 #
 # Remove a tool from this set in the same change that records its accepted image
 # digest and its payload-scan/GPU evidence — not before.
+# Independent OSS catalog additions stay quarantined as soon as their image
+# names are registered. An absent tool is not added to the publication inventory.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {"openpi", "curobo", "ncore", "libero", "sam3"}
-)
+) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
 # A development candidate may use the trusted full-SHA builder before it has
 # earned a supported release tag.  Keep this state separate from the canonical
@@ -303,11 +313,15 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
 # Compatibility view used by publication callers and public imports. Derive it
-# from the two canonical validation-state inventories; never maintain it
+# from the canonical validation-state inventories; never maintain it
 # independently.
 PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
-    UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+    UNVALIDATED_PUBLICATION_TOOLS
+    | VALIDATION_CANDIDATE_TOOLS
+    | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
 )
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported
@@ -428,6 +442,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "retargeting": "0.1.1",
     "envgen": "0.1.2-sim2real-coherent-20260904",
     "robocasa": "0.1.0",
+    "robomimic": "0.1.0-neutral-unbuilt",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "loop-eval": "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -455,10 +470,19 @@ SUPPORTED_TOOL_VERSIONS = {
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
     "ncore": "59c698d206da92b406a4f72619fce3b3a2c64bfd-unbuilt",
+    "robotwin": "2.0-curobo-v0.7.8-rtfetch-unbuilt",
     "libero": "public-neutral-bootstrap-unbuilt",
     "nebius-cli": "0.12.254",
     "terraform": "~> 0.5.201",
     "terraform-cli": "1.13.3",
+}
+
+# Tags for publication-quarantined candidates that are intentionally not part
+# of the installed package's supported release inventory. Keeping these out of
+# ``SUPPORTED_TOOL_VERSIONS`` preserves its exact pyproject mirror while still
+# giving planning and private qualification a fail-closed, visibly unbuilt tag.
+UNBUILT_CANDIDATE_TOOL_VERSIONS: dict[str, str] = {
+    "habitat-sim": "0.3.3-public-unbuilt",
 }
 
 
@@ -2099,8 +2123,23 @@ def sonic_image_variants() -> dict[str, dict[str, Any]]:
 
 
 def supported_tool_version(tool: str) -> str:
+    """Return the configured version, with an unbuilt-candidate fallback.
+
+    Args:
+        tool: Tool name; SONIC resolves its active image metadata.
+    Returns:
+        Project version, otherwise the unbuilt-candidate or supported pin.
+    Raises:
+        RuntimeError: Unknown tool or unsupported SONIC manifest format.
+        OSError: Project TOML or SONIC metadata cannot be read.
+        ValueError: Invalid TOML/JSON or unusable SONIC image metadata.
+        KeyError, TypeError, AttributeError: Required metadata is malformed.
+        ImportError: Neither the standard nor fallback TOML loader exists.
+    """
     if tool == "sonic":
         return str(_default_sonic_image()["tag"])
+    if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        return NEUTRAL_UNBUILT_DISPLAY_TAGS[tool]
 
     try:
         import tomllib
@@ -2112,7 +2151,12 @@ def supported_tool_version(tool: str) -> str:
         if pyproject.is_file():
             with pyproject.open("rb") as handle:
                 data = tomllib.load(handle)
-            return str(data["tool"]["npa"]["supported-tools"][tool])
+            configured = data["tool"]["npa"]["supported-tools"]
+            if tool in configured:
+                return str(configured[tool])
+            break
+    if tool in UNBUILT_CANDIDATE_TOOL_VERSIONS:
+        return UNBUILT_CANDIDATE_TOOL_VERSIONS[tool]
     try:
         return SUPPORTED_TOOL_VERSIONS[tool]
     except KeyError as exc:
@@ -2305,11 +2349,32 @@ def container_image_for_tool(
     made otherwise-public workloads depend on private registry credentials.
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
-    if tool == "ncore" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+    if (
+        tool == "robomimic"
+        and tool in PUBLICATION_QUARANTINE_TOOLS
+        and is_public_registry(resolved_registry)
+        and not re.fullmatch(r"dev-[0-9a-f]{40}", tag or "")
+    ):
         raise ValueError(
-            "NCore has no accepted release image. Supply the validated immutable "
-            "image with --image-override workbench.nurec.convert_colmap=IMAGE@sha256:DIGEST "
-            "or explicitly select a dev-<full-source-sha> tag for validation."
+            "robomimic remains publication-quarantined for releases; "
+            "select an explicit dev-<full-source-sha> for validation"
+        )
+    if (
+        tool in {"ncore", "robomimic"}
+        and tool in PUBLICATION_QUARANTINE_TOOLS
+        and not tag
+    ):
+        display_tool = "NCore" if tool == "ncore" else tool
+        raise ValueError(
+            f"{display_tool} has no accepted release image. Supply the validated immutable "
+            "private image with --image-override TOOL_REF=IMAGE@sha256:DIGEST or "
+            "explicitly select a dev-<full-source-sha> tag in an operator-private "
+            "registry for validation."
+        )
+    if tool == "robotwin" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+        raise ValueError(
+            f"{tool!r} has no accepted release image. Supply a validated immutable "
+            "image or explicitly select a dev-<full-source-sha> tag for validation."
         )
     if tool == "sonic":
         entry = sonic_image_entry(
@@ -2342,6 +2407,13 @@ def container_image_for_tool(
                 if is_public_registry(resolved_registry)
                 else supported_tool_version(tool)
             )
+    if tool in PENDING_REDISTRIBUTION_TOOLS and is_public_registry(resolved_registry):
+        raise ValueError(
+            f"{tool!r} has pending corresponding-source closure and no accepted "
+            "public image. Use only a separately byte-qualified operator-private "
+            "image after its source/delivery gates pass; see "
+            "docs/workbench/byof-habitat-sim.md."
+        )
     if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
         raise ValueError(
             f"{tool!r} is not publicly redistributable and is never distributed from a "
@@ -2386,6 +2458,10 @@ def build_and_push_command(image: str) -> str:
     image_name = repository.rsplit(":", 1)[0] if ":" in repository else repository
     tool = tool_for_image_name(image_name)
     if not tool:
+        return ""
+    if tool in UNBUILT_CANDIDATE_TOOL_VERSIONS:
+        # Quarantined candidates require their dedicated, reviewed build and
+        # byte-scan transaction; never suggest the generic push shortcut.
         return ""
     if tool == "ncore":
         # The generic recipe omits the mandatory source revision and would build
@@ -2509,6 +2585,11 @@ def development_image_for_tool(
     image_variant: str | None = None,
 ) -> str:
     """Return an official public development reference for redistributable bytes."""
+    if tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        raise ValueError(
+            f"{tool!r} remains publication-quarantined and has no official "
+            "public development image"
+        )
     if not is_publicly_redistributable(tool):
         raise ValueError(
             f"{tool!r} is restricted/build-your-own and cannot be pushed to "
@@ -2567,23 +2648,64 @@ def is_official_public_image(image: str) -> bool:
     )
 
 
+def _public_registry_refusals() -> frozenset[str]:
+    """Unify refusal membership without conflating permanent and pending reasons."""
+    return (
+        RESTRICTED_PUBLICATION_TOOLS
+        | RESTRICTED_DERIVED_IMAGES
+        | PENDING_REDISTRIBUTION_TOOLS
+        | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    )
+
+
 def is_publicly_redistributable(tool: str) -> bool:
     """Whether a tool image may be published to a public/anonymous registry.
 
-    ``False`` for any tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
+    ``False`` while redistribution or source delivery is pending, including
+    neutral candidates without exact-byte eligibility, or for any
+    tool in ``RESTRICTED_PUBLICATION_TOOLS`` — images that bake a
     runtime we may not redistribute, which are licensed for internal-R&D /
     build-your-own use only. See the set's comment for current membership.
+
+    Args:
+        tool: Canonical tool or derived image name.
+
+    Returns:
+        False for any permanent or pending public-registry refusal.
+
+    Raises:
+        None for a canonical string tool name.
     """
-    return tool not in RESTRICTED_PUBLICATION_TOOLS
+    return tool not in _public_registry_refusals()
 
 
 def restricted_image_names() -> list[str]:
-    """Return every image name excluded from public registries."""
-    return sorted(RESTRICTED_PUBLICATION_TOOLS | RESTRICTED_DERIVED_IMAGES)
+    """Return every permanent or pending public-registry refusal in stable order.
+
+    Args:
+        None.
+
+    Returns:
+        Sorted names from the same refusal union used by the public predicate.
+
+    Raises:
+        None.
+    """
+    return sorted(_public_registry_refusals())
 
 
 def omniverse_restricted_image_names() -> list[str]:
-    """Compatibility alias for :func:`restricted_image_names`."""
+    """Compatibility alias for :func:`restricted_image_names`.
+
+    Args:
+        None.
+
+    Returns:
+        All permanent and pending public-registry refusal names, sorted.
+
+    Raises:
+        None.
+    """
     return restricted_image_names()
 
 

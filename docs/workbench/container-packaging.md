@@ -10,6 +10,25 @@ NCore development images use the [attested OCI publication path](ncore-oci-publi
 to preserve the exact buildx index through local gates and anonymous readback.
 NCore remains quarantined pending its independent RTX acceptance.
 
+RoboTwin's `npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` entry is a
+zero-vendor-payload bootstrap with a working neutral build. It pins an official Ubuntu
+22.04 linux/amd64 manifest plus a signed immutable Jammy snapshot with 84 exact
+binary packages, 63 corresponding source packages, and a complete-empty public
+Python application lock. RoboTwin, CuRobo, CUDA/cuDNN, simulator/Python
+application runtime, assets, caches, credentials, and outputs stay runtime-side.
+Customer-authorized delivery now installs the locked closure and runs the pinned
+upstream seed search/replay. A retained development digest completed one RTX
+operator workload; see its [evidence scope](byof-robotwin.md#retained-operator-evidence-and-readiness).
+The trusted public development workflow requires its exact native content policy,
+complete-byte and payload scans, security gates, and public corresponding-source
+annex before push. Supported release quarantine remains while the public BYOF
+CLI and normal-submit worker bridge are blocked. The bounded
+operator statement is `noncommercial` validation/evaluation, not a general use
+grant; public artifacts use exact-revision payload probes, while gated artifacts
+require the customer's runtime-only credential and an exact entitlement probe
+before provisioning. The default planned cache is customer-isolated,
+node-local ephemeral storage, with durable reuse still unapproved.
+
 ## SkyPilot worker bootstrap contract
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
@@ -76,7 +95,9 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
+| `npa-habitat-sim` | `habitat-sim/Dockerfile.bootstrap` | neutral runtime-fetch job; `workflow.habitat_sim.smoke`; release validation pending |
 | `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
+| `npa-robotwin` | `robotwin/Dockerfile` | neutral development bootstrap; supported release quarantined; CPU refusal verified |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
@@ -201,6 +222,15 @@ SSH host keys, forwards orchestrator arguments, and records the same
 `skypilot-0.12.2-v1` OCI attestation. Ad-hoc means the solution is not a catalog
 image; it does not exempt its runtime bytes from the worker bootstrap contract.
 
+Habitat-Sim uses a neutral runtime-fetch bootstrap image with exact corresponding
+Ubuntu package sources. Its public development digest and successful one-RTX
+standard-workflow validation are recorded in the
+[image catalog](container-image-catalog.md#habitat-sim-development-image).
+Supported release selection remains in `UNVALIDATED_PUBLICATION_TOOLS`.
+The official CC BY Skokloster scene is runtime data, never an image input.
+A rebuild must pass its own exact-image publication and capability gates;
+previous digest evidence does not automatically validate changed image bytes.
+
 ## Packaging tiers
 
 Every Dockerfile must declare one of:
@@ -240,7 +270,7 @@ Strongly recommended for `service` images:
 
 The workbench is open source, and images should be pullable widely — but "widely"
 has a license boundary that the contract encodes in a `redistribution` field per
-image (`public` | `restricted`), enforced by
+image (`public` | `restricted` | `unvalidated`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
 - **`public`** — Every shipped component has reviewed permission for public
@@ -279,6 +309,12 @@ image (`public` | `restricted`), enforced by
   Review the [SSPL's distribution and service provisions](https://www.mongodb.com/legal/licensing/server-side-public-license)
   separately; an image's redistribution classification does not decide whether
   an operator's service use meets its obligations.
+
+- **`unvalidated`** — The intended packaging shape is recorded, but complete
+  corresponding-source closure, built-byte verification, or both remain
+  unproved. An `unvalidated` image is not eligible for public publication or
+  anonymous pull claims; keep it quarantined until the missing evidence passes.
+
 - **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
   image may be built and run by the operator who owns the registry (internal R&D,
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
@@ -293,6 +329,12 @@ image (`public` | `restricted`), enforced by
   expressly listed as redistributable by their included SDK terms. Both current
   releases are bound to exact public development digests with accepted real-GPU
   evidence.
+
+- **`unvalidated`** — no restricted payload is asserted, but the complete exact
+  selected-byte base/package/wheel/license closure has not yet been accepted.
+  This fail-closed state is private and publication-quarantined; it becomes
+  `public` or `restricted` only after exact built-byte evidence supports that
+  decision.
 
 ## Manual gate audit (2026-08-16)
 
@@ -616,6 +658,38 @@ build hook.
 4. SONIC variants: `npa/src/npa/deploy/sonic_image_manifest.json`.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.
+
+### Neutral robomimic candidate
+
+`npa-robomimic` is a quarantined example of a split runtime boundary. The
+published development image bakes pinned MIT robomimic source and the neutral Debian closure
+on a digest-pinned Python base; its complete Python dependency map is fetched
+at runtime. It must contain no
+torch, torchvision, Triton, NVIDIA/CUDA runtime, weight, data, populated cache,
+credential, or output. `scan_image_robomimic_payload.py` must inspect every
+layer and OCI history for each build and publication.
+
+Its packaging class is `public` for the neutral bootstrap. The image delivers
+locked Debian and CPython source archives with the retained package notices.
+The trusted public development workflow verifies the archives against all
+distributed Debian package versions, including earlier versions in parent
+layers, and runs the robomimic payload scan before and after pushing.
+
+The CUDA-capable Python environment is a customer-owned runtime boundary. The
+bootstrap may fetch the exact inventory from its declared official endpoints
+only after the customer entitlement and credential checks, then independently
+verify installed files and `RECORD` before publishing a private runtime tree;
+it never accepts terms or logs the credential. Public PyPI/PyTorch requests are
+anonymous, while credentials are bound to their approved vendor origin. This
+packaging split does not supply distribution, use, or service rights. The
+producer-bound development image passed its publication gates, anonymous blob
+readback, and managed B200 smoke. Its separately declared supplemental runtime
+also completed full Lift training and rollout evaluation on RTX PRO 6000; this
+does not replace the committed standard runtime contract. See the
+[development qualification and immutable digest](container-image-catalog.md#intentionally-not-published-as-separate-images).
+The tool remains in `UNVALIDATED_PUBLICATION_TOOLS` and
+`PUBLICATION_QUARANTINE_TOOLS` until a supported release is explicitly accepted;
+it has no supported public release row or default-image promotion.
 
 ## Platform scope
 

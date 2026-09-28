@@ -1317,6 +1317,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
     ),
     SubmitLiveCase(
+        "habitat-sim-smoke.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "Habitat-Sim supported image selection remains quarantined; the separately "
+            "recorded development digest is not this workflow default"
+        ),
+        notes=(
+            "One-state pinned Skokloster Castle RGB/depth traversal with Bullet "
+            "and headless NVIDIA EGL; never schedule this renderer on B200."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-libero.yaml",
         "multi",
         plan_only=True,
@@ -1361,6 +1374,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-robotwin.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "RoboTwin's public worker bridge is disabled pending independently "
+            "attested customer authorization; the separate operator runner owns "
+            "exact-digest RTX qualification"
+        ),
+        secret_envs=(
+            "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "The workflow validates and plans, but normal submit refuses before "
+            "provider calls. Operator-only evidence covers SAPIEN/Vulkan, task "
+            "success, HDF5 actions, decoded MP4 frames, immutable runtime assets, "
+            "and the exact pod image digest. It does not enable this worker path."
+        ),
     ),
     SubmitLiveCase(
         "robocasa-smoke.yaml",
@@ -1435,6 +1469,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-robomimic.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "the neutral image is quarantined and the dependent CUDA runtime-use "
+            "decision plus exact one-B200 training gate remain deferred"
+        ),
+        notes=(
+            "Plans pinned robomimic Lift PH low-dimensional BC training, disjoint "
+            "held-out validation, checkpoint reload, and held-out action inference; "
+            "no live acceptance is claimed."
+        ),
     ),
     SubmitLiveCase(
         "byof-open-dreamer.yaml",

@@ -230,7 +230,7 @@ def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None
     )
     script = step["run"]
     assert script.index("docker buildx prune --all --force") < script.index(
-        'docker save --output "$RUNNER_TEMP/${TOOL}.tar"'
+        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar"'
     )
     assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
 
@@ -274,7 +274,7 @@ def test_prepublication_secret_scan_is_not_filtered_to_critical() -> None:
     script = secret["run"]
     assert (
         secret["env"]["DOCKER_SOCKET"]
-        == "${{ steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}"
+        == "${{ steps.robotwin-docker.outputs.sock || steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}"
     )
     assert 'docker_socket_path="${DOCKER_SOCKET#unix://}"' in script
     assert '-v "$docker_socket_path:/var/run/docker.sock"' in script
@@ -369,7 +369,8 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
         in post_push
     )
     assert (
-        'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"'
+        in post_push
     )
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
@@ -534,7 +535,7 @@ def test_every_prepublication_trivy_scan_uses_the_selected_image_store() -> None
     assert len(scans) == 3
     for step in scans:
         assert step["env"]["DOCKER_SOCKET"] == (
-            "${{ steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}"
+            "${{ steps.robotwin-docker.outputs.sock || steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}"
         )
         assert '-v "$docker_socket_path:/var/run/docker.sock"' in step["run"]
         assert 'docker_socket_path="${DOCKER_SOCKET#unix://}"' in step["run"]
