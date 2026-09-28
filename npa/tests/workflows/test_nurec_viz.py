@@ -61,6 +61,7 @@ def _nurec_run(root: Path) -> Path:
         json.dumps(
             {
                 "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+                "dataset_revision": "2521064a3af6ab1c1caa2ba1b01ddde7eecded69",
                 "scene": "struktur28",
                 "variant": "auto",
                 "shard_count": 4,
@@ -121,7 +122,23 @@ def test_nurec_preview_embeds_actual_media_and_metric_scope(tmp_path: Path) -> N
     assert "test/psnr" in content and "31.2" in content
     assert "not paired with source image indices" in content
     assert "collision geometry" in content
+    assert "Creative Commons Attribution 4.0" in content
+    assert "creativecommons.org/licenses/by/4.0/" in content
     assert str(run) not in content
+
+
+def test_custom_capture_is_not_mislabeled_as_the_public_sample(tmp_path):
+    from npa.workbench.nurec.preview import write_nurec_preview
+
+    run = _nurec_run(tmp_path / "run")
+    (run / "ncore" / "manifest.json").write_text(
+        json.dumps({"dataset_id": "private/example"})
+    )
+    output = tmp_path / "index.html"
+    write_nurec_preview(run, output)
+    content = output.read_text()
+    assert "Creative Commons Attribution" not in content
+    assert "private/example" not in content
 
 
 def test_nurec_preview_fails_without_actual_novel_renders(tmp_path: Path) -> None:
