@@ -1,0 +1,440 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: field-failure-reference-demo
+  executionMode: runtime
+  description: Public scan reconstruction, native baseline training, mixed warehouse/office replay,
+    development-only selection and sealed final route comparison. Real PPO and GPU physical controls;
+    quality failure retains the baseline and publishes an HTML report. No deployment or unseen-layout
+    transfer claim.
+config:
+  bucket: example-bucket
+  prefix: rl-improvement/{{run.id}}
+  source_overlay: true
+  navigation_image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6
+  reconstruction_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
+  baseline_iterations: 1500
+  candidate_iterations: 1500
+  num_envs: 4000
+  episode_steps: 300
+  output_root: s3://{{config.bucket}}/{{config.prefix}}
+  cohort_seed: 71000000
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 32Gi
+    image: '{{config.reconstruction_image}}'
+  isaac:
+    cloud: kubernetes
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 64Gi
+    image: '{{config.navigation_image}}'
+initial: sample
+states:
+  sample:
+    description: Fetch and hash-verify the full public calibrated TUM office capture.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workbench.nurec.navigation_sample
+      - --output-path
+      - '{{config.output_root}}/sample'
+    outputs:
+    - uri: '{{config.output_root}}/sample/completion.json'
+    next: sample-surface
+  sample-surface:
+    description: Reconstruct the measured capture and validate withheld depth before generating reset
+      cases.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workbench.nurec.navigation_sample_stages
+      - reconstruct
+      - --input-path
+      - '{{config.output_root}}/sample'
+      - --output-path
+      - '{{config.output_root}}/sample-surface'
+    outputs:
+    - uri: '{{config.output_root}}/sample-surface/reconstruction.json'
+    - uri: '{{config.output_root}}/sample-surface/surface.npz'
+    inputs:
+    - uri: '{{config.output_root}}/sample/completion.json'
+    next: sample-cases
+  sample-cases:
+    description: Derive supported reset footprints from the measured surface without filling unknown
+      space.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workbench.nurec.navigation_sample_stages
+      - cases
+      - --input-path
+      - '{{config.output_root}}/sample-surface'
+      - --output-path
+      - '{{config.output_root}}/sample-cases'
+      - --num-envs
+      - '{{config.num_envs}}'
+    outputs:
+    - uri: '{{config.output_root}}/sample-cases/cases.json'
+    - uri: '{{config.output_root}}/sample-cases/support.json'
+    inputs:
+    - uri: '{{config.output_root}}/sample-surface/reconstruction.json'
+    - uri: '{{config.output_root}}/sample-surface/surface.npz'
+    next: prepare
+  prepare:
+    description: Freeze train/development/final cohorts and publish automatic baseline and replay
+      inputs.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - prepare
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+      - --navigation-image
+      - '{{config.navigation_image}}'
+      - --sample-path
+      - '{{config.output_root}}/sample'
+      - --cases-path
+      - '{{config.output_root}}/sample-cases'
+      - --reconstruction-image
+      - '{{config.reconstruction_image}}'
+      - --baseline-iterations
+      - '{{config.baseline_iterations}}'
+      - --candidate-iterations
+      - '{{config.candidate_iterations}}'
+      - --num-envs
+      - '{{config.num_envs}}'
+      - --episode-steps
+      - '{{config.episode_steps}}'
+      - --cohort-seed
+      - '{{config.cohort_seed}}'
+    outputs:
+    - uri: '{{config.output_root}}/reference-plan.json'
+    - uri: '{{config.output_root}}/baseline-input/completion.json'
+    next: baseline
+    inputs:
+    - uri: '{{config.output_root}}/sample/completion.json'
+    - uri: '{{config.output_root}}/sample-cases/cases.json'
+    - uri: '{{config.output_root}}/sample-cases/support.json'
+  baseline:
+    description: Train the actual public warehouse baseline with native physical controls.
+    resources: isaac
+    run:
+      argv:
+      - python3
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - baseline
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+      - --navigation-image
+      - '{{config.navigation_image}}'
+    outputs:
+    - uri: '{{config.output_root}}/baseline-training/completion.json'
+    next: seal
+    inputs:
+    - uri: '{{config.output_root}}/baseline-input/completion.json'
+  seal:
+    description: Bind the fresh baseline checkpoint to the sealed full public replay bundle.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - seal
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/bundle-reference.json'
+    next: validate
+    inputs:
+    - uri: '{{config.output_root}}/baseline-training/completion.json'
+    - uri: '{{config.output_root}}/reference-plan.json'
+  validate:
+    description: Verify public captures, exact baseline bytes and held-out separation.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - validate
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/validated.json'
+    next: reconstruct
+    inputs:
+    - uri: '{{config.output_root}}/bundle-reference.json'
+  reconstruct:
+    description: Reconstruct public scan geometry and compose separated baseline replay regions.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - reconstruct
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/reconstruction.json'
+    next: train
+    inputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/validated.json'
+  train:
+    description: Continue real PPO on every baseline route and office route with before/after diagnostic
+      replays.
+    resources: isaac
+    run:
+      argv:
+      - python3
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - train
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/training.json'
+    next: development-baseline
+    inputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/reconstruction.json'
+  development-baseline:
+    description: Measure baseline on frozen development cases only.
+    resources: isaac
+    run:
+      argv:
+      - python3
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - development-baseline
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/development-baseline.json'
+    next: development-candidate
+    inputs:
+    - uri: '{{config.output_root}}/bundle-reference.json'
+    - uri: '{{config.output_root}}/reference-plan.json'
+  development-candidate:
+    description: Measure candidate on the same development cohort.
+    resources: isaac
+    run:
+      argv:
+      - python3
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - development-candidate
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/development-candidate.json'
+    next: select
+    inputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/training.json'
+    - uri: '{{config.output_root}}/reference-plan.json'
+  select:
+    description: Require actual development improvement and quality before consuming the final cohort.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - select
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/selection.json'
+    next: baseline-evaluate
+    inputs:
+    - uri: '{{config.output_root}}/development-baseline.json'
+    - uri: '{{config.output_root}}/development-candidate.json'
+  baseline-evaluate:
+    description: Evaluate exact baseline on the previously frozen final route cohort.
+    resources: isaac
+    run:
+      argv:
+      - python3
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - baseline-evaluate
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/baseline-evaluation.json'
+    next: candidate-evaluate
+    inputs:
+    - uri: '{{config.output_root}}/selection.json'
+    - uri: '{{config.output_root}}/loop/{{run.id}}/validated.json'
+  candidate-evaluate:
+    description: Evaluate the development-selected candidate on identical final cases.
+    resources: isaac
+    run:
+      argv:
+      - python3
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - candidate-evaluate
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/candidate-evaluation.json'
+    next: compare
+    inputs:
+    - uri: '{{config.output_root}}/selection.json'
+    - uri: '{{config.output_root}}/loop/{{run.id}}/training.json'
+  compare:
+    description: Reverify paired evidence with unchanged per-case safety regression gates.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - compare
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/decision.json'
+    next: report
+    inputs:
+    - uri: '{{config.output_root}}/loop/{{run.id}}/baseline-evaluation.json'
+    - uri: '{{config.output_root}}/loop/{{run.id}}/candidate-evaluation.json'
+  report:
+    description: Publish standalone factual HTML and fail distinctly when policy quality did not
+      pass.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workflows.field_failure.reference_demo
+      - report
+      - --output-root
+      - '{{config.output_root}}'
+      - --run-id
+      - '{{run.id}}'
+    outputs:
+    - uri: '{{config.output_root}}/reports/index.html'
+    - uri: '{{config.output_root}}/reports/result.json'
+    terminal: true
+    inputs:
+    - uri: '{{config.output_root}}/selection.json'
+    - uri: '{{config.output_root}}/loop/{{run.id}}/decision.json'

@@ -132,15 +132,44 @@ def _execute(request, stage, source, output, protocol):
 
 def _diagnostic_replay(request, source, protocol, checkpoint, root, name):
     recipe = json.loads((source / "recipe.json").read_text())
-    if len(recipe["train_cases"]) != recipe["num_envs"]:
-        raise ValueError("native replay requires one declared training case per robot")
+    count = recipe["num_envs"]
+    if len(recipe["train_cases"]) % count:
+        raise ValueError("native replay requires complete robot-sized case batches")
+    batches = [
+        recipe["train_cases"][start : start + count]
+        for start in range(0, len(recipe["train_cases"]), count)
+    ]
+    reports = [
+        _replay_batch(
+            request,
+            source,
+            protocol,
+            checkpoint,
+            root,
+            f"{name}-{index}",
+            recipe,
+            cases,
+        )
+        for index, cases in enumerate(batches)
+    ]
+    if len(reports) == 1:
+        return reports[0]
+    return {
+        "scope": "training-exposed diagnostic",
+        "used_for_promotion": False,
+        "checkpoint_sha256": reports[0]["checkpoint_sha256"],
+        "success_rate": sum(r["success_rate"] for r in reports) / len(reports),
+        "episodes": [episode for report in reports for episode in report["episodes"]],
+        "batches": reports,
+    }
+
+
+def _replay_batch(request, source, protocol, checkpoint, root, name, recipe, cases):
+    recipe = dict(recipe)
     replay = root / (name + "-replay-input")
     shutil.copytree(source, replay)
     recipe["initial_checkpoint"] = None
-    recipe["train_cases"], recipe["eval_cases"] = (
-        recipe["eval_cases"],
-        recipe["train_cases"],
-    )
+    recipe["train_cases"], recipe["eval_cases"] = recipe["eval_cases"], cases
     (replay / "recipe.json").write_text(json.dumps(recipe, allow_nan=False))
     _initialize(replay, protocol, checkpoint)
     output = root / (name + "-replay-output")

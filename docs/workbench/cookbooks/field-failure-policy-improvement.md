@@ -1,5 +1,10 @@
 # Field failure to navigation policy improvement
 
+For automatic public sample preparation, real baseline training, mixed-scene
+replay, development selection, and an HTML report, use the
+[public RL improvement demo](public-rl-improvement-demo.md). The operator-owned
+adapter and sealed-bundle interface below remains available for custom data.
+
 [Workflow](../../../workflows/testing/field-failure-policy-improvement.yaml) ·
 [Readiness](../../../workflows/testing/field-failure-policy-improvement.readiness.json)
 

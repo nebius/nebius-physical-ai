@@ -70,7 +70,14 @@ def _reconstruct_capture(request, protocol, capture, root, index):
         scene_file="scene.usdz",
         scene_sha256=_digest((prepared / "scene.usdz").read_bytes()),
     )
+    from npa.workflows.navigation.reference_replay import apply_replay
+
+    replay = apply_replay(source, prepared, recipe)
     (prepared / "recipe.json").write_text(json.dumps(recipe, allow_nan=False))
+    if replay is not None:
+        from npa.workflows.navigation.contract import read_recipe
+
+        read_recipe(prepared)
     # Assembly seals the report's bytes, so retain its original serialization.
     shutil.copyfile(scene / "reconstruction.json", prepared / "reconstruction.json")
     shutil.copyfile(scene / "provenance.json", prepared / "assembly.json")
@@ -83,4 +90,5 @@ def _reconstruct_capture(request, protocol, capture, root, index):
         "scenario_id": capture["scenario_id"],
         "reconstruction": reconstruction,
         "assembly": assembly,
+        "baseline_replay": replay,
     }
