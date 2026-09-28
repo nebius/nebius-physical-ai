@@ -734,9 +734,9 @@ def _nonterminal_jobs(sky_bin: str = "") -> tuple[list[str], str, str]:
 
     from npa.orchestration.skypilot._bin import SkyPilotNotInstalledError
     from npa.orchestration.skypilot.cleanup import (
-        NONTERMINAL_JOB_STATUSES,
         _all_jobs,
         _job_statuses,
+        is_terminal_managed_job_status,
     )
 
     try:
@@ -746,7 +746,7 @@ def _nonterminal_jobs(sky_bin: str = "") -> tuple[list[str], str, str]:
         nonterminal = sorted(
             job_id
             for job_id, status in _job_statuses(snapshot.jobs).items()
-            if status in NONTERMINAL_JOB_STATUSES
+            if not is_terminal_managed_job_status(status)
         )
         state = (
             "verified_empty"

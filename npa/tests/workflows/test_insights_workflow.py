@@ -63,6 +63,18 @@ def test_insights_smoke_validates_and_is_cpu_only() -> None:
         assert state.resources == "cpu"
 
 
+def test_insights_smoke_declares_the_append_only_store_prefix() -> None:
+    spec = load_spec(SMOKE)
+    plan = build_plan(spec, run_id="sharded-proof")
+    steps = {step.state: step for step in plan.steps}
+    store = "s3://example-bucket/insights-smoke/sharded-proof/store/"
+    expected = [{"uri": store, "schema": "npa.insights.store.v1"}]
+
+    assert steps["ingest"].outputs == expected
+    assert steps["compare"].inputs == expected
+    assert steps["dashboard"].inputs == expected
+
+
 def test_new_insights_toolrefs_render() -> None:
     for tool_ref in (
         "workbench.insights.record",
