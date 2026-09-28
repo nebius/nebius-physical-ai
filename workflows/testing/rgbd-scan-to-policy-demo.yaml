@@ -192,7 +192,7 @@ states:
     resources: rtx
     run:
       argv:
-      - python3
+      - /opt/npa/sim/venv/bin/python
       - -c
       - import sys; from npa.workflows.navigation.stages import run_stage; run_stage(*sys.argv[1:])
       - train
@@ -207,7 +207,7 @@ states:
     resources: rtx
     run:
       argv:
-      - python3
+      - /opt/npa/sim/venv/bin/python
       - -m
       - npa.workbench.nurec.navigation_sample_report
       - --input-path
