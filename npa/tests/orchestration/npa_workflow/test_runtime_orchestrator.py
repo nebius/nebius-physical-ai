@@ -224,7 +224,6 @@ def test_resolved_image_identity_includes_inline_image_and_rejects_legacy(
         _expected_image_identity(spec, [step], options, "", "image-evidence")
 
 
-
 def _parallel_image_replay_spec():
     document = yaml.safe_load(_image_selection_replay_spec())
     document["initial"] = "image-wave"
