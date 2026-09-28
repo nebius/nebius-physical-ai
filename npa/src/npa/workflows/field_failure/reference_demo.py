@@ -127,6 +127,7 @@ def main(argv=None):
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--sample-path")
     parser.add_argument("--cases-path")
+    parser.add_argument("--scene-path")
     parser.add_argument("--navigation-image")
     parser.add_argument("--reconstruction-image")
     parser.add_argument("--baseline-iterations", type=int, default=1500)

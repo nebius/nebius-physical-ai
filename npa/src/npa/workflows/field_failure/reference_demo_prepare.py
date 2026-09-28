@@ -14,6 +14,7 @@ from npa.workflows.field_failure.reference_demo_inputs import (
     reference_metrics,
 )
 from npa.workflows.navigation.artifacts import materialize, publish
+from npa.workflows.field_failure.reference_demo_cohorts import freeze_balanced_cohorts
 
 
 def prepare_reference(args):
@@ -30,19 +31,7 @@ def prepare_reference(args):
     with tempfile.TemporaryDirectory(prefix="npa-rl-reference-") as temporary:
         root = Path(temporary)
         capture = materialize(args.sample_path, root / "capture")
-        scan_cases = _measured_cases(args.cases_path, root / "cases", capture)
-        baseline = root / "baseline"
-        cohorts = prepare_warehouse(
-            baseline,
-            image=args.navigation_image,
-            iterations=args.baseline_iterations,
-            count=args.num_envs,
-            steps=args.episode_steps,
-            cohort_seed=args.cohort_seed,
-        )
-        protocol = capture_recipe(
-            capture, scan_cases, baseline, iterations=args.candidate_iterations
-        )
+        baseline, cohorts, protocol = _prepare_inputs(args, root, capture)
         plan = _publish_inputs(args, root, baseline, capture, protocol)
         plan.update(
             cohorts=cohorts,
@@ -58,6 +47,29 @@ def prepare_reference(args):
         return plan
 
 
+def _prepare_inputs(args, root, capture):
+    from npa.workflows.navigation.artifacts import write_json
+
+    scan_cases, support = _measured_cases(args.cases_path, root / "cases", capture)
+    office, source_identity = _measured_scene(args.scene_path, root / "scene", support)
+    baseline = root / "baseline"
+    prepare_warehouse(
+        baseline,
+        image=args.navigation_image,
+        iterations=args.baseline_iterations,
+        count=args.num_envs,
+        steps=args.episode_steps,
+        cohort_seed=args.cohort_seed,
+    )
+    cohorts = freeze_balanced_cohorts(baseline, scan_cases, office)
+    cohorts["geometry"].update(source_identity)
+    write_json(baseline / "cohorts.json", cohorts)
+    protocol = capture_recipe(
+        capture, scan_cases, baseline, iterations=args.candidate_iterations
+    )
+    return baseline, cohorts, protocol
+
+
 def _measured_cases(source, target, capture):
     from npa.workbench.nurec.navigation_assets import materialize as scan_materialize
     from npa.workbench.nurec.navigation_publication import verify_publication
@@ -69,7 +81,31 @@ def _measured_cases(source, target, capture):
     support = json.loads((target / "support.json").read_text())
     if support["capture_sha256"] != file_sha256(capture / "capture.json"):
         raise ValueError("measured reset cases belong to another capture")
-    return json.loads((target / "cases.json").read_text())
+    return json.loads((target / "cases.json").read_text()), support
+
+
+def _measured_scene(source, target, support):
+    from npa.workbench.nurec.navigation_assets import materialize as scan_materialize
+    from npa.workbench.nurec.navigation_publication import verify_publication
+    from npa.workflows.navigation.artifacts import file_sha256
+
+    scan_materialize(source, target)
+    verify_publication(target)
+    assembly = json.loads((target / "provenance.json").read_text())
+    reconstruction = json.loads((target / "reconstruction.json").read_text())
+    if (
+        assembly["capture_manifest_sha256"] != support["capture_sha256"]
+        or reconstruction["surface_sha256"] != support["surface_sha256"]
+        or file_sha256(target / "scene.usdz") != assembly["scene_sha256"]
+    ):
+        raise ValueError(
+            "frozen office geometry and supported cases have different capture provenance"
+        )
+    return target / "scene.usdz", {
+        "capture_manifest_sha256": support["capture_sha256"],
+        "surface_sha256": support["surface_sha256"],
+        "assembly_provenance_sha256": file_sha256(target / "provenance.json"),
+    }
 
 
 def _publish_inputs(args, root, baseline, capture, protocol):
@@ -160,8 +196,8 @@ def _bundle(plan, checkpoint):
         ],
         "held_out": [
             {
-                "scenario_id": "fresh-warehouse-final-routes",
-                "group_id": "warehouse-final-routes",
+                "scenario_id": "balanced-known-layout-final-routes",
+                "group_id": "office-and-warehouse-final-routes",
                 "asset": plan["final"],
                 "seeds": plan["final_seeds"],
             }

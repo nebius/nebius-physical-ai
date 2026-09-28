@@ -130,24 +130,29 @@ def apply_replay(source, prepared, recipe):
         scene,
         translation=replay["office_translation_m"],
     )
+    _verify_frozen_geometry(scene, replay, evidence)
     office_cases = translated_cases(
         recipe["train_cases"], replay["office_translation_m"]
     )
-    recipe["train_cases"] = [
-        case
-        for pair in zip(replay["train_cases"], office_cases, strict=True)
-        for case in pair
-    ]
+    recipe["train_cases"] = _training_order(office_cases, replay)
     recipe["eval_cases"] = replay["development_cases"]
+    _verify_frozen_routes(recipe, replay)
     recipe["probe"] = replay["probe"]
     recipe["scene_sha256"] = evidence["scene_sha256"]
     evidence.update(
         warehouse_routes=len(replay["train_cases"]),
         office_routes=len(office_cases),
-        scope="training replay only",
+        scope="known office and warehouse layouts; new routes evaluated separately",
     )
     write_json(prepared / "replay-composition.json", evidence)
     return evidence
+
+
+def _training_order(office_cases, replay):
+    regions = (office_cases, replay["train_cases"])
+    if replay["schema"] == "npa.navigation.replay.v1":
+        regions = tuple(reversed(regions))
+    return [case for pair in zip(*regions, strict=True) for case in pair]
 
 
 def _validate_replay(source, replay):
@@ -159,8 +164,48 @@ def _validate_replay(source, replay):
         "development_cases",
         "probe",
     }
-    if set(replay) != expected or replay["schema"] != "npa.navigation.replay.v1":
+    if replay.get("schema") == "npa.navigation.replay.v2":
+        expected.update({"frozen_geometry", "frozen_routes"})
+    if set(replay) != expected or replay["schema"] not in {
+        "npa.navigation.replay.v1",
+        "npa.navigation.replay.v2",
+    }:
         raise ValueError("invalid native replay contract")
     scene = source / "replay.usdz"
     if scene.is_symlink() or file_sha256(scene) != replay["scene_sha256"]:
         raise ValueError("baseline replay scene hash differs")
+
+
+def _verify_frozen_geometry(scene, replay, evidence):
+    if "frozen_geometry" not in replay:
+        return
+    from npa.workflows.navigation.reference_identity import collision_identity
+
+    expected = replay["frozen_geometry"]
+    actual = collision_identity(scene)
+    if (
+        actual != expected["collision_identity"]
+        or evidence["warehouse_sha256"] != expected["warehouse_sha256"]
+        or evidence["office_translation_m"] != expected["office_translation_m"]
+    ):
+        raise ValueError(
+            "reconstructed collision geometry differs from the pre-learning freeze"
+        )
+    evidence.update(
+        collision_identity=actual,
+        frozen_geometry_matched=True,
+        pre_learning_scene_sha256=expected["scene_sha256"],
+    )
+
+
+def _verify_frozen_routes(recipe, replay):
+    if "frozen_routes" not in replay:
+        return
+    import hashlib
+    from npa.workflows.navigation.contract import Case
+
+    for cohort, key in (("training", "train_cases"), ("development", "eval_cases")):
+        rows = [Case.model_validate(row).model_dump() for row in recipe[key]]
+        digest = hashlib.sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()
+        if digest != replay["frozen_routes"][cohort]:
+            raise ValueError("replay routes differ from the pre-learning freeze")

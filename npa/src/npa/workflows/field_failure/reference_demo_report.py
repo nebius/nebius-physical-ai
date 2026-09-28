@@ -25,7 +25,10 @@ def publish_report(args, *, selection=None):
     if selection is None:
         selection, _ = _read(args.output_root + "/selection.json")
         final, _ = _read(args.output_root + "/loop/" + args.run_id + "/decision.json")
-    report = result_summary(plan, selection, final)
+    from npa.workflows.field_failure.reference_demo_regions import final_regions
+
+    regional = None if final is None else final_regions(args, plan, final)
+    report = result_summary(plan, selection, final, regional)
     from npa.workflows.field_failure.reference_demo_media import preview_groups
 
     groups = preview_groups(args, final)
@@ -39,13 +42,14 @@ def publish_report(args, *, selection=None):
     return report
 
 
-def result_summary(plan, selection, final):
+def result_summary(plan, selection, final, regional=None):
     """Derive readiness only from actual development selection and final comparison.
 
     Args:
         plan: Frozen public reference cohort manifest and recipe schedule.
         selection: Measured development eligibility.
         final: Actual final comparison or None when development blocked it.
+        regional: Hash-bound final regional metrics, or None before final evaluation.
     Returns:
         Public summary with no credentials, storage locations or infrastructure names.
     Raises:
@@ -53,7 +57,11 @@ def result_summary(plan, selection, final):
     """
     scores = None if final is None else final["metrics"]["success"]
     quality = bool(
-        final and final["promote_checkpoint"] and scores["candidate_mean"] >= 0.8
+        final
+        and final["promote_checkpoint"]
+        and scores["candidate_mean"] >= 0.8
+        and regional
+        and regional["passed"]
     )
     return {
         "schema": "npa.field-failure.reference-result.v1",
@@ -71,14 +79,15 @@ def result_summary(plan, selection, final):
                 "success_rate_gain",
                 "reasons",
                 "final_cohort_consumed",
+                "regional",
             )
         },
-        "final": _final_summary(final, scores),
+        "final": _final_summary(final, scores, regional),
         "cohorts": plan["cohorts"],
         "robots": plan["num_envs"],
         "baseline_iterations": plan["baseline_iterations"],
         "candidate_iterations": plan["candidate_iterations"],
-        "scope": "Public scan reconstruction with baseline warehouse replay; new warehouse routes in a known layout.",
+        "scope": "Balanced office adaptation and warehouse retention: new routes in both known public layouts. The focal rendered episode is an office route; aggregate scores cover both regions.",
         "limitations": [
             "Range observations; camera-conditioned navigation is not qualified.",
             "New-site transfer and private robot integration are not established.",
@@ -87,7 +96,7 @@ def result_summary(plan, selection, final):
     }
 
 
-def _final_summary(final, scores):
+def _final_summary(final, scores, regional):
     if scores is None:
         return None
     return {
@@ -97,6 +106,7 @@ def _final_summary(final, scores):
         "episodes_per_policy": final["episodes_per_policy"],
         "regressions": len(final["regressions"]),
         "comparison_recommendation": final["recommendation"],
+        "regional": regional,
     }
 
 
@@ -160,4 +170,23 @@ def _display_metrics(report):
         metrics[name.title() + " success"] = (
             f"Baseline {before:.2%} → candidate {after:.2%} ({after - before:+.2%})"
         )
+        _display_regions(metrics, name, values["regional"])
     return metrics
+
+
+def _display_regions(metrics, cohort, regional):
+    if regional is None:
+        metrics[cohort.title() + " region checks"] = "Missing; quality cannot pass"
+        return
+    metrics[cohort.title() + " warehouse retention"] = (
+        "Passed" if regional["warehouse_retention_passed"] else "Failed"
+    )
+    for name, scores in regional["regions"].items():
+        before, after = (
+            scores["baseline_success_rate"],
+            scores["candidate_success_rate"],
+        )
+        count = scores["episodes_per_policy"]
+        metrics[cohort.title() + " · " + name + " success"] = (
+            f"Baseline {before:.2%} → candidate {after:.2%} ({count:,} routes each)"
+        )

@@ -55,34 +55,46 @@ negative result and missing observation remain historical evidence.
 
 ## Development and final evaluation
 
-Warehouse training, development, and final route cohorts have different
-physical resets with disjoint identifiers and seeds. Their hashes are frozen
-in `reference-plan.json` before baseline training. Final cases are outside the
-learner's prepared input and never select a candidate.
+Both development and final evaluation contain 4,000 routes: 2,000 measured
+office routes and 2,000 warehouse routes each. Continuation retains all 4,000
+training routes per region. Train, development, and final have different
+physical resets with disjoint identifiers and seeds. The composite collision
+geometry, region assignments, case identifiers, seeds, and case hashes are frozen
+in `reference-plan.json` before baseline training. Reconstruction verifies exact
+world-space collision triangles against that freeze, independently of USD ZIP
+metadata or mesh ordering. Final routes are outside the learner's prepared
+input and never select a candidate.
 
 The candidate must reach 80% development success, improve by at least one
 percentage point, and avoid an aggregate increase in contacts or physical
-failures. Failure publishes `reports/index.html` and stops before final
+failures. Each region must retain its success rate and avoid increased mean
+contacts, physical failures, or goal-distance regression beyond 0.25 metres.
+Office gains cannot conceal warehouse regression. Failure publishes
+`reports/index.html` and stops before final
 evaluation. Change the training recipe and run a new development experiment;
 do not adjust final cases or lower quality gates to produce a passing demo.
 
 An eligible candidate and baseline run on all 4,000 frozen final routes. The
 existing comparison requires actual success improvement and enforces its
-per-case safety and goal-distance regression limits. Completed simulation can
+per-case safety and goal-distance regression limits. Final promotion also
+requires 80% overall success and the explicit per-region retention checks.
+Completed simulation can
 still fail policy quality. The workflow exits unsuccessfully on failed quality
 after publishing its evidence. No stage deploys a policy.
 
-Open `reports/index.html` for an offline page with scores, training settings,
-cohort hashes, and limitations. `reports/result.json` is its structured result.
+Open `reports/index.html` for an offline page with overall and per-region
+scores, warehouse retention, training settings, cohort hashes, and limitations.
+The first, focal episode is an office adaptation route; its embedded scored
+frames illustrate one route, while measured aggregate scores cover both regions.
+`reports/result.json` is its structured result.
 Native baseline, diagnostic replay, development, and final artifacts retain
 rendered rollouts, checkpoints, learning curves, physical controls, and measured
 episode trajectories.
 
 ## Scope
 
-This demo evaluates new warehouse routes in a known layout while learning from
-a public office reconstruction. It is a baseline-retention experiment, not
-evidence of unseen-site transfer. The policy consumes range observations.
+This demo evaluates adaptation and retention on new routes in both known
+public layouts. It does not establish unseen-site transfer. The policy consumes range observations.
 Camera-conditioned navigation, private robot integration, and adaptation to
 customer raw failure logs require separate integration and qualification.
 

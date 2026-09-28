@@ -71,10 +71,12 @@ def cohort_manifest(cohorts):
         ValueError: Cohorts reuse case identifiers, seeds or physical resets.
     """
     import hashlib
+    from npa.workflows.navigation.contract import Case
 
     identities, seeds, physical = set(), set(), set()
     result = {}
     for name, rows in cohorts.items():
+        rows = [Case.model_validate(row).model_dump() for row in rows]
         for row in rows:
             reset = json.dumps(
                 {key: row[key] for key in ("position_m", "goal_m", "heading_rad")},
@@ -108,17 +110,29 @@ def capture_recipe(capture, scan_cases, baseline, *, iterations=1500):
     count = baseline_recipe["num_envs"]
     if len(scan_cases["train_cases"]) != count:
         raise ValueError("office and baseline replay require equal route populations")
+    manifest = json.loads((baseline / "cohorts.json").read_text())
+    development = json.loads((baseline / "development-cases.json").read_text())
     recipe = copy.deepcopy(baseline_recipe)
-    recipe.update(scan_cases, iterations=iterations, initial_checkpoint=None)
+    recipe.update(
+        train_cases=scan_cases["train_cases"],
+        eval_cases=development,
+        iterations=iterations,
+        initial_checkpoint=None,
+    )
     write_json(capture / "recipe.json", recipe)
     shutil.copyfile(baseline / "scene.usdz", capture / "replay.usdz")
     replay = {
-        "schema": "npa.navigation.replay.v1",
+        "schema": "npa.navigation.replay.v2",
         "scene_sha256": baseline_recipe["scene_sha256"],
         "office_translation_m": [50.0, 0.0, 0.0],
         "train_cases": baseline_recipe["train_cases"],
-        "development_cases": baseline_recipe["eval_cases"],
+        "development_cases": development,
         "probe": baseline_recipe["probe"],
+        "frozen_geometry": manifest["geometry"],
+        "frozen_routes": {
+            name: manifest["cohorts"][name]["sha256"]
+            for name in ("training", "development")
+        },
     }
     write_json(capture / "replay.json", replay)
     return {
@@ -152,11 +166,12 @@ def evaluation_bundle(baseline, output, *, final):
     from npa.workflows.navigation.contract import read_recipe
 
     output.mkdir()
-    shutil.copyfile(baseline / "scene.usdz", output / "scene.usdz")
+    shutil.copyfile(baseline / "composite.usdz", output / "scene.usdz")
     recipe = json.loads((baseline / "recipe.json").read_text())
     recipe["initial_checkpoint"] = None
-    if final:
-        recipe["eval_cases"] = json.loads((baseline / "final-cases.json").read_text())
+    recipe["scene_sha256"] = file_sha256(output / "scene.usdz")
+    label = "final" if final else "development"
+    recipe["eval_cases"] = json.loads((baseline / (label + "-cases.json")).read_text())
     write_json(output / "recipe.json", recipe)
     read_recipe(output)
     return recipe

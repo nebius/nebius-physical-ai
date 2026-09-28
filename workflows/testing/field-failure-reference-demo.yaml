@@ -112,6 +112,33 @@ states:
     inputs:
     - uri: '{{config.output_root}}/sample-surface/reconstruction.json'
     - uri: '{{config.output_root}}/sample-surface/surface.npz'
+    next: sample-scene
+  sample-scene:
+    description: Assemble measured collision geometry before freezing balanced evaluation cohorts.
+    resources: cpu
+    run:
+      argv:
+      - /bin/bash
+      - -euc
+      - |
+        usd_site="$(mktemp -d)"
+        trap 'rm -rf "$usd_site"' EXIT
+        /opt/npa/venv/bin/python -m pip install --no-deps --target "$usd_site" usd-core==26.8
+        export PYTHONPATH="${PYTHONPATH:+${PYTHONPATH}:}${usd_site}"
+        /opt/npa/venv/bin/python "$@"
+      - rl-demo
+      - -m
+      - npa.workbench.nurec.navigation_scene
+      - --input-path
+      - '{{config.output_root}}/sample-surface'
+      - --output-path
+      - '{{config.output_root}}/sample-scene'
+    inputs:
+    - uri: '{{config.output_root}}/sample-surface/reconstruction.json'
+    - uri: '{{config.output_root}}/sample-surface/surface.npz'
+    outputs:
+    - uri: '{{config.output_root}}/sample-scene/scene.usdz'
+    - uri: '{{config.output_root}}/sample-scene/provenance.json'
     next: prepare
   prepare:
     description: Freeze train/development/final cohorts and publish automatic baseline and replay
@@ -141,6 +168,8 @@ states:
       - '{{config.output_root}}/sample'
       - --cases-path
       - '{{config.output_root}}/sample-cases'
+      - --scene-path
+      - '{{config.output_root}}/sample-scene'
       - --reconstruction-image
       - '{{config.reconstruction_image}}'
       - --baseline-iterations
@@ -161,6 +190,8 @@ states:
     - uri: '{{config.output_root}}/sample/completion.json'
     - uri: '{{config.output_root}}/sample-cases/cases.json'
     - uri: '{{config.output_root}}/sample-cases/support.json'
+    - uri: '{{config.output_root}}/sample-scene/scene.usdz'
+    - uri: '{{config.output_root}}/sample-scene/provenance.json'
   baseline:
     description: Train the actual public warehouse baseline with native physical controls.
     resources: isaac

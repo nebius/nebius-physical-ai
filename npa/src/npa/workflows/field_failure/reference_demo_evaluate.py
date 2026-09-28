@@ -60,14 +60,22 @@ def _verify_development(report, plan, policy):
     seeds = [row["seed"] for row in report["episodes"]]
     if sorted(seeds) != sorted(plan["development_seeds"]):
         raise ValueError("development evaluation differs from its frozen cohort")
+    if report["runtime"]["scene_sha256"] != plan["cohorts"]["geometry"]["scene_sha256"]:
+        raise ValueError("development scene differs from the pre-learning freeze")
+    if (
+        report["evaluation_inputs_sha256"]
+        != plan["cohorts"]["cohorts"]["development"]["sha256"]
+    ):
+        raise ValueError("development case bytes differ from the pre-learning freeze")
 
 
-def development_decision(baseline, candidate):
+def development_decision(baseline, candidate, regions):
     """Separate development eligibility from final policy promotion and runtime success.
 
     Args:
         baseline: Native baseline development report.
         candidate: Native candidate report on the identical cohort.
+        regions: Precommitted balanced region identities from the reference plan.
     Returns:
         Eligibility, actual quality measurements and failure explanations.
     Raises:
@@ -77,8 +85,12 @@ def development_decision(baseline, candidate):
         raise ValueError("development arms used different evaluation cases")
     if baseline["checkpoint_sha256"] == candidate["checkpoint_sha256"]:
         raise ValueError("development candidate is the unchanged baseline")
+    from npa.workflows.field_failure.reference_demo_regions import region_comparison
+
+    regional = region_comparison(baseline["episodes"], candidate["episodes"], regions)
+    _verify_success_rates(baseline, candidate)
     gain = candidate["success_rate"] - baseline["success_rate"]
-    reasons = []
+    reasons = list(regional["reasons"])
     if candidate["success_rate"] < 0.8:
         reasons.append("candidate development success is below 80%")
     if gain < 0.01:
@@ -95,6 +107,7 @@ def development_decision(baseline, candidate):
         "baseline_success_rate": baseline["success_rate"],
         "candidate_success_rate": candidate["success_rate"],
         "success_rate_gain": gain,
+        "regional": regional,
         "reasons": reasons,
         "selected_checkpoint_sha256": candidate["checkpoint_sha256"]
         if not reasons
@@ -102,6 +115,17 @@ def development_decision(baseline, candidate):
         "final_cohort_consumed": False,
         "deployment_authorized": False,
     }
+
+
+def _verify_success_rates(*reports):
+    for report in reports:
+        actual = sum(row["success"] for row in report["episodes"]) / len(
+            report["episodes"]
+        )
+        if actual != report["success_rate"]:
+            raise ValueError(
+                "development summary differs from actual episode successes"
+            )
 
 
 def select_candidate(args):
@@ -118,7 +142,10 @@ def select_candidate(args):
     """
     before, _ = _read(args.output_root + "/development-baseline.json")
     after, _ = _read(args.output_root + "/development-candidate.json")
-    decision = development_decision(before, after)
+    plan, _ = _read(args.output_root + "/reference-plan.json")
+    decision = development_decision(
+        before, after, plan["cohorts"]["regions"]["development"]
+    )
     _publish(args.output_root + "/selection.json", decision)
     if not decision["eligible"]:
         from npa.workflows.field_failure.reference_demo_report import publish_report
