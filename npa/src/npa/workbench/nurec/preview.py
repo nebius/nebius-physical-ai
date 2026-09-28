@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 
 from PIL import Image
-import yaml
 
 from npa.workflows.preview_html import image_preview, write_preview
 
@@ -38,24 +37,16 @@ def _group(title: str, images: list[Path], note: str) -> dict:
 
 
 def _quality(path: Path) -> dict:
-    if not path.is_file():
-        return {"NRE quality metrics": "unavailable"}
-    metrics = yaml.safe_load(path.read_text(encoding="utf-8"))
-    values = {}
-    pending = [("", metrics)]
-    while pending:
-        prefix, value = pending.pop()
-        if isinstance(value, dict):
-            pending.extend(
-                (f"{prefix}/{key}".strip("/"), item) for key, item in value.items()
-            )
-        elif prefix.lower() in {"test/psnr", "test/ssim", "test/lpips"}:
-            if (
-                isinstance(value, (int, float))
-                and not isinstance(value, bool)
-                and math.isfinite(value)
-            ):
-                values[prefix] = round(value, 6)
+    from npa.workbench.nurec.nurec import parse_metrics_yaml
+
+    # Use the native parser so aggregated NRE 26.04 values and earlier flat
+    # metrics have the same meaning in the report and reconstruction result.
+    values = {
+        name: round(value, 6)
+        for name, value in parse_metrics_yaml(path).items()
+        if name in {"test/psnr", "test/ssim", "test/lpips"}
+        and math.isfinite(value)
+    }
     return values or {"NRE quality metrics": "unavailable"}
 
 
@@ -122,8 +113,7 @@ def write_nurec_preview(root: Path, output: Path) -> dict:
 
     Raises:
         ValueError: Capture frames or novel renders are missing.
-        OSError: An output image or metrics document cannot be read.
-        yaml.YAMLError: NRE's metrics document is malformed.
+        OSError: An output image cannot be read.
     """
     capture = _images(root / "input")
     novel = _images(root / "novel_views")

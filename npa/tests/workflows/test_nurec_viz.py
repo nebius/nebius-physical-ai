@@ -141,6 +141,39 @@ def test_custom_capture_is_not_mislabeled_as_the_public_sample(tmp_path):
     assert "private/example" not in content
 
 
+def test_nurec_preview_displays_native_aggregated_metrics(tmp_path: Path) -> None:
+    from npa.workbench.nurec.preview import write_nurec_preview
+
+    run = _nurec_run(tmp_path / "run")
+    native_metrics = (
+        Path(__file__).parents[1] / "fixtures/nurec/nre-26.04-metrics.yaml"
+    )
+    (run / "reconstruction/metrics.yaml").write_bytes(native_metrics.read_bytes())
+    output = tmp_path / "index.html"
+    write_nurec_preview(run, output)
+    content = output.read_text()
+    for name, value in (
+        ("test/psnr", "31.012009"),
+        ("test/ssim", "0.832237"),
+        ("test/lpips", "0.268025"),
+    ):
+        assert name in content and value in content
+    assert "NRE quality metrics" not in content
+
+
+def test_nurec_preview_does_not_display_invalid_aggregated_metrics(tmp_path):
+    from npa.workbench.nurec.preview import _quality
+
+    metrics = tmp_path / "metrics.yaml"
+    metrics.write_text(
+        "aggregated_metrics:\n"
+        "  test/psnr: {value: .inf}\n"
+        "  test/ssim: {value: true}\n"
+        "  test/lpips: {value: .nan}\n"
+    )
+    assert _quality(metrics) == {"NRE quality metrics": "unavailable"}
+
+
 def test_nurec_preview_fails_without_actual_novel_renders(tmp_path: Path) -> None:
     from npa.workbench.nurec.preview import write_nurec_preview
 
