@@ -139,7 +139,7 @@ def test_wave_attempt_round_trip_preserves_resource_and_image_evidence() -> None
     assert "reference_set_sha256" not in legacy
     tampered = json.loads(json.dumps(record))
     tampered["image_identity"]["references"] = ["registry.example/other:tag"]
-    with pytest.raises(NpaWorkflowError, match="reference-set identity differs"):
+    with pytest.raises(NpaWorkflowError, match="image bindings differ from references"):
         SkyPilotWaveExecutor._attempt_from_record(
             tampered, steps=[], kind="serial", group=""
         )
