@@ -38,7 +38,7 @@
     },
     "source_image": {
       "status": "blocked",
-      "reason": "Select immutable compatible runtimes and verified adapter/source inventories. The measured native reference requires the reviewed combined metric-reconstruction, shared-scene-navigation and field-loop source distribution; this contribution alone lacks its cross-PR imports. Default images remain unresolved placeholders.",
+      "reason": "Select immutable compatible runtimes and verified adapter/source inventories. This checkout includes the combined metric-reconstruction, shared-scene-navigation and field-loop adapters. The operator-adapter specification still requires explicit runtime images; its default images remain unresolved placeholders. The separately configured public reference is available through workflow demo run rl-improvement.",
       "evidence": []
     },
     "target_runtime": {
