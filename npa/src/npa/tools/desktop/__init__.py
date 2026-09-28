@@ -44,6 +44,7 @@ def _configuration(action: str, options: dict) -> dict:
 def _chat_assets():
     names = [
         "chat_setup.py",
+        "codex_executable.py",
         "chat_auth.py",
         "chat_login.html",
         "chat_login.css",

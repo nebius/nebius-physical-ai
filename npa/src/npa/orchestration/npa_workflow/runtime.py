@@ -64,7 +64,12 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     render_skypilot_steps_yaml,
 )
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, StateSpec
-from npa.orchestration.npa_workflow.supervisor import PreflightEvidence, RecoveryAction
+from npa.orchestration.npa_workflow.supervisor import (
+    SUPERVISOR_EVENT_PHASES,
+    PreflightEvidence,
+    RecoveryAction,
+    SupervisorEventPhase,
+)
 from npa.orchestration.npa_workflow.waves import split_into_batches
 from npa.orchestration.skypilot.launch_transaction import logical_launch_identity
 from npa.verification import sanitize_reason
@@ -86,9 +91,6 @@ TERMINAL_FAIL = frozenset(
 )
 SCHEDULER_OBSERVATION_SCHEMA = "npa.skypilot.managed-job-observation.v1"
 SCHEDULER_OBSERVATION_SOURCE = "exact_managed_job_status"
-_SUPERVISOR_EVENT_PHASES = frozenset(
-    {"decision", "cancellation", "recovery_reserved", "launch", "attempt_terminal"}
-)
 _SUPERVISOR_RECOVERY_ACTIONS = frozenset(action.value for action in RecoveryAction)
 
 DEFAULT_POLL_SECONDS = 30
@@ -337,6 +339,7 @@ class WaveAttempt:
     operator_remedy: str = ""
     primary_error: str = ""
     reconciliation_error: str = ""
+    output_reuse_error_type: str = ""
     cancellation_state: str = "not_applicable"
     cancellation_error: str = ""
     credential_names: list[str] = field(default_factory=list)
@@ -388,6 +391,7 @@ class WaveAttempt:
             "operator_remedy": self.operator_remedy,
             "primary_error": self.primary_error,
             "reconciliation_error": self.reconciliation_error,
+            "output_reuse_error_type": self.output_reuse_error_type,
             "cancellation": {
                 "state": self.cancellation_state,
                 "error": self.cancellation_error,
@@ -1055,6 +1059,7 @@ class SkyPilotWaveExecutor:
             operator_remedy=str(record.get("operator_remedy") or ""),
             primary_error=str(record.get("primary_error") or ""),
             reconciliation_error=str(record.get("reconciliation_error") or ""),
+            output_reuse_error_type=str(record.get("output_reuse_error_type") or ""),
             cancellation_state=str(cancel_record.get("state") or "not_applicable"),
             cancellation_error=str(cancel_record.get("error") or ""),
             credential_names=list((record.get("credentials") or {}).get("names") or []),
@@ -1106,7 +1111,9 @@ class SkyPilotWaveExecutor:
             self._validate_output_reuse_identity(attempt, event)
             terminal_status = self._output_reuse_terminal_status(attempt, event)
         except Exception as exc:  # noqa: BLE001 - history uncertainty fails closed
-            return self._block_output_reuse(attempt, sanitize_reason(exc))
+            return self._block_output_reuse(
+                attempt, sanitize_reason(exc), error_type=type(exc).__name__
+            )
 
         # Exact provider terminality remains factual when object access fails.
         attempt.recovery_decision = "reuse_completed_wave"
@@ -1117,16 +1124,21 @@ class SkyPilotWaveExecutor:
             self._validate_output_reuse_artifacts(attempt, event)
         except Exception as exc:  # noqa: BLE001 - storage uncertainty fails closed
             return self._block_output_reuse(
-                attempt, f"declared output revalidation failed: {sanitize_reason(exc)}"
+                attempt,
+                f"declared output revalidation failed: {sanitize_reason(exc)}",
+                error_type=type(exc).__name__,
             )
         self._complete_output_reuse(attempt)
         return True
 
-    def _block_output_reuse(self, attempt: WaveAttempt, reason: str) -> bool:
+    def _block_output_reuse(
+        self, attempt: WaveAttempt, reason: str, *, error_type: str = ""
+    ) -> bool:
         reason = f"wave {attempt.key}: durable output-reuse blocked: {reason}"
         attempt.status = "failed"
         attempt.error_category = "controller"
         attempt.error = reason
+        attempt.output_reuse_error_type = sanitize_reason(error_type)
         attempt.reconciliation_error = reason
         # Unreadable history cannot manufacture a completion claim.
         if attempt.recovery_decision != "reuse_completed_wave":
@@ -1178,7 +1190,7 @@ class SkyPilotWaveExecutor:
         decisions = []
         for event in events:
             phase = event.get("phase")
-            if phase not in _SUPERVISOR_EVENT_PHASES:
+            if phase not in SUPERVISOR_EVENT_PHASES:
                 raise ValueError("immutable output-reuse event has an unknown phase")
             if phase not in {"decision", "cancellation"}:
                 continue
@@ -1208,6 +1220,7 @@ class SkyPilotWaveExecutor:
         attempt.error = ""
         attempt.error_category = ""
         attempt.reconciliation_error = ""
+        attempt.output_reuse_error_type = ""
         attempt.operator_remedy = ""
         attempt.supervisor_blocks_cancellation = False
 
@@ -1340,6 +1353,7 @@ class SkyPilotWaveExecutor:
         attempt.error_category = ""
         attempt.primary_error = ""
         attempt.reconciliation_error = ""
+        attempt.output_reuse_error_type = ""
         attempt.operator_remedy = ""
         attempt.supervisor_blocks_cancellation = False
         attempt.reconciliation.append(
@@ -2653,9 +2667,9 @@ class RuntimeLedger:
             from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
 
             phase = (
-                "attempt_terminal"
+                SupervisorEventPhase.ATTEMPT_TERMINAL.value
                 if attempt.status in {"succeeded", "failed"}
-                else "launch"
+                else SupervisorEventPhase.LAUNCH.value
             )
             SupervisorLedger(self.store).record(
                 {

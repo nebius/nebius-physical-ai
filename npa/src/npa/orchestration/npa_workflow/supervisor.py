@@ -22,6 +22,27 @@ from npa.verification import sanitize_reason
 SUPERVISOR_SCHEMA_VERSION = "npa.workflow.supervisor.v1"
 
 
+class SupervisorEventPhase(str, Enum):
+    """Persisted phases shared by supervisor producers and recovery readers.
+
+    Args:
+        None.
+    Returns:
+        A stable wire value for a supervisor event.
+    Raises:
+        ValueError: An unknown phase is converted to this enum.
+    """
+
+    DECISION = "decision"
+    CANCELLATION = "cancellation"
+    RECOVERY_RESERVED = "recovery_reserved"
+    LAUNCH = "launch"
+    ATTEMPT_TERMINAL = "attempt_terminal"
+
+
+SUPERVISOR_EVENT_PHASES = frozenset(phase.value for phase in SupervisorEventPhase)
+
+
 class FailureClass(str, Enum):
     NONE = "none"
     ACTIONABLE_CONFIGURATION = "actionable_configuration"
@@ -579,7 +600,7 @@ class WorkflowRunSupervisor:
         decision = decide_recovery(identity, observation, context)
         base: dict[str, Any] = {
             "recorded_at": utc_now(),
-            "phase": "decision",
+            "phase": SupervisorEventPhase.DECISION.value,
             "attempt_identity": identity.to_dict(),
             "observation": observation.to_dict(),
             "classification": decision.failure_class.value,
@@ -605,7 +626,7 @@ class WorkflowRunSupervisor:
             result = {
                 **base,
                 "recorded_at": utc_now(),
-                "phase": "cancellation",
+                "phase": SupervisorEventPhase.CANCELLATION.value,
                 "cancellation": cancellation,
             }
             cancel_status = str(cancellation.get("status") or "").lower()
@@ -630,7 +651,7 @@ class WorkflowRunSupervisor:
             result = {
                 **base,
                 "recorded_at": utc_now(),
-                "phase": "cancellation",
+                "phase": SupervisorEventPhase.CANCELLATION.value,
                 "cancellation": cancellation,
             }
             cancel_status = str(cancellation.get("status") or "").lower()
@@ -658,7 +679,7 @@ class WorkflowRunSupervisor:
                 cancellation_event = {
                     **base,
                     "recorded_at": utc_now(),
-                    "phase": "cancellation",
+                    "phase": SupervisorEventPhase.CANCELLATION.value,
                     "cancellation": cancellation,
                 }
                 cancellation_event["event_uri"] = self.ledger.record(cancellation_event)
@@ -684,7 +705,11 @@ class WorkflowRunSupervisor:
             result = {
                 **base,
                 "recorded_at": utc_now(),
-                "phase": "recovery_reserved" if deferred else "launch",
+                "phase": (
+                    SupervisorEventPhase.RECOVERY_RESERVED.value
+                    if deferred
+                    else SupervisorEventPhase.LAUNCH.value
+                ),
                 "new_attempt_identity": launched.to_dict(),
             }
             result["event_uri"] = self.ledger.record(result)

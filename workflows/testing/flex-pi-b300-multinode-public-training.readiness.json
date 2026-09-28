@@ -1,0 +1,59 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "d20febcdb72d275976d3905b514d033ec7e3d0dbf62fa85ed835dd934773bd59",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec resolve the explicit CUDA graph policy through the maintained four-GPU toolRef.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/flex-pi-b300-multinode-public-training.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/flex-pi-b300-multinode-public-training.yaml --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The resolved default retains microbatch one, 24 accumulation steps and the pinned upstream YAM model/loss and exact disjoint episode split; microbatch three is a separately qualified tuning option.",
+      "evidence": [
+        "npa/src/npa/workbench/flex_pi/training_sources.json",
+        "npa/src/npa/workbench/flex_pi/training_split.json"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Configure and prove owner storage for each run.",
+      "evidence": [
+        "docs/workbench/flex-pi.md#public-yam-training"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Exact immutable public inputs require usable-payload verification before GPU allocation.",
+      "evidence": [
+        "docs/workbench/flex-pi.md#public-yam-training"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Use the published r2 image with the current source overlay; record both identities.",
+      "evidence": [
+        "docs/workbench/flex-pi.md#public-yam-training"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Four one-GPU B300 nodes require their own collective, profile/resume, complete epoch and validation acceptance; single-node evidence does not qualify this topology.",
+      "evidence": [
+        "docs/workbench/flex-pi.md#public-yam-training"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Public source files and reproducible split are pinned by immutable revisions and SHA-256.",
+      "evidence": [
+        "npa/src/npa/workbench/flex_pi/training_sources.json"
+      ]
+    }
+  }
+}
