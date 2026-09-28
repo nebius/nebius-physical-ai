@@ -5969,3 +5969,15 @@ def test_output_reuse_persists_sanitized_exception_type(
     assert resumed.execute(case[1])["status"] == "ok"
     assert resumed._submitter.calls == []
     assert case[2].read_runtime_state().waves[-1]["output_reuse_error_type"] == ""
+
+
+@pytest.mark.parametrize("error_type", ["PermissionError", "ValueError", None])
+def test_output_reuse_error_type_restores_legacy_and_current_records(error_type):
+    record = {"key": "wave-1", "attempt": 1}
+    if error_type is not None:
+        record["output_reuse_error_type"] = error_type
+    restored = SkyPilotWaveExecutor._attempt_from_record(
+        record, steps=[], kind="serial", group=""
+    )
+    assert restored.output_reuse_error_type == (error_type or "")
+    assert restored.to_dict()["output_reuse_error_type"] == (error_type or "")
