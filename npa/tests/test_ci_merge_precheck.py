@@ -100,6 +100,20 @@ def test_conflicts_are_rejected_without_starting_a_merge(
     assert _git(repository, "status", "--porcelain") == ""
 
 
+def test_legacy_merge_tree_handles_unrelated_histories(repository: Path) -> None:
+    base = _git(repository, "rev-parse", "HEAD")
+    tree = _git(repository, "write-tree")
+    unrelated = subprocess.check_output(
+        ["git", "commit-tree", tree, "-m", "unrelated root"],
+        cwd=repository,
+        text=True,
+    ).strip()
+
+    merged_tree = ci_merge_precheck._legacy_merge_tree(repository, base, unrelated)
+
+    assert merged_tree == tree
+
+
 def test_wrong_fingerprint_after_conflict_resolution_is_rejected(
     repository: Path,
 ) -> None:

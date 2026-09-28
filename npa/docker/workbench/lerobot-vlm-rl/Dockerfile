@@ -25,6 +25,8 @@ COPY docker/workbench/common/sim2real-control-requirements.txt \
 COPY docker/workbench/common/sim2real-genesis-requirements.txt \
     /opt/npa/sim2real-genesis-requirements.txt
 
+# Envgen registers /opt/npa/src through npa-exact-source.pth, so the build
+# smoke deliberately proves imports work without an editable child install.
 RUN test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && find /opt/npa/src /opt/npa/workflows -type d -exec chmod a+rx {} + \
     && find /opt/npa/src /opt/npa/workflows -type f -exec chmod a+r {} + \

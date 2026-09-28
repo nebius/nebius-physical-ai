@@ -47,6 +47,45 @@ def test_default_selection_records_every_status_exclusion() -> None:
     assert all(result.skipped and result.skip_reason for result in selection.excluded)
 
 
+def test_needs_image_update_exclusions_can_only_shrink() -> None:
+    from npa.smoke.manifest import load_manifest
+
+    reviewed_baseline = {
+        "antioch",
+        "cosmos-curate",
+        "cosmos-evaluator",
+        "cosmos3",
+        "cosmos3-ray-serve",
+        "curobo",
+        "genesis",
+        "gymnasium-robotics",
+        "isaac-arena",
+        "isaac-lab",
+        "lerobot",
+        "lerobot-vlm-rl",
+        "libero",
+        "loop-eval",
+        "ncore",
+        "openpi",
+        "reference-policy",
+        "robocasa",
+        "robotwin",
+        "sam3",
+        "sonic",
+        "wan2-2",
+    }
+    current = {
+        name
+        for name, spec in load_manifest().items()
+        if spec.golden_eval.status == "needs-image-update"
+    }
+
+    assert current <= reviewed_baseline, (
+        "new default batch exclusions need explicit review: "
+        f"{sorted(current - reviewed_baseline)}"
+    )
+
+
 def test_iter_containers_tools_only_matches_image_names() -> None:
     from npa.smoke.manifest import load_manifest
 

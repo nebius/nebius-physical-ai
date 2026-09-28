@@ -272,6 +272,15 @@ Required for all workbench images:
    set `allowPrivilegeEscalation: false`, and use `RuntimeDefault` seccomp
    (detection-training is the reference template).
 
+A digest pin records exact ancestry; it does not imply a clean-source rebuild.
+`detection-training` currently chains from a previously accepted
+`npa-detection-training` digest, and `lancedb` shares that accepted detector
+foundation. Those rebuilds therefore retain and extend every ancestor layer.
+Treat this as an explicit release-lineage tradeoff: keep the parent digest and
+reason visible in the Dockerfile, scan the complete built image rather than only
+its final filesystem, and move to an independent reproducible foundation when
+one is available.
+
 Strongly recommended for `service` images:
 
 - `HEALTHCHECK` against `/health` (or documented probe path)

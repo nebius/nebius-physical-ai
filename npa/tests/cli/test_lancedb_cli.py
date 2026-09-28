@@ -240,6 +240,8 @@ def test_lancedb_container_creates_and_mounts_local_storage(
         )
 
     monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(lancedb_deploy.os, "getuid", lambda: 1000)
+    monkeypatch.setattr(lancedb_deploy.os, "getgid", lambda: 1000)
     monkeypatch.setattr(lancedb_deploy.subprocess, "run", fake_run)
 
     container_id = lancedb_deploy._run_container(
@@ -263,7 +265,7 @@ def test_lancedb_container_creates_and_mounts_local_storage(
         "--mount",
         f"type=bind,source={storage_path},target=/data/lancedb",
     ] == command[command.index("--mount") : command.index("--mount") + 2]
-    assert command[command.index("--user") + 1] == f"{os.getuid()}:{os.getgid()}"
+    assert command[command.index("--user") + 1] == "1000:1000"
     assert "LANCEDB_STORAGE_PATH=/data/lancedb" in command
     assert "HOME=/data/lancedb" in command
     assert not any(token.startswith("AWS_ACCESS_KEY_ID=") for token in command)
@@ -277,6 +279,8 @@ def test_lancedb_container_refuses_unwritable_local_storage(
     from npa.cli.workbench.lancedb import deploy as lancedb_deploy
 
     monkeypatch.setattr(lancedb_deploy, "storage_env", lambda: {})
+    monkeypatch.setattr(lancedb_deploy.os, "getuid", lambda: 1000)
+    monkeypatch.setattr(lancedb_deploy.os, "getgid", lambda: 1000)
     monkeypatch.setattr(
         lancedb_deploy.tempfile,
         "mkstemp",

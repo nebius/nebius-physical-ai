@@ -3,7 +3,8 @@
 
 set -euo pipefail
 
-snapshot="${1:?usage: install_workflow_runtime_prereqs.sh UBUNTU_SNAPSHOT}"
+snapshot="${1:?usage: install_workflow_runtime_prereqs.sh UBUNTU_SNAPSHOT [LINUX_LIBC_DEV_VERSION]}"
+linux_libc_dev_override="${2:-}"
 if [ "$(id -u)" -ne 0 ]; then
   echo "workflow runtime prerequisites must be installed as root" >&2
   exit 1
@@ -27,6 +28,9 @@ case "${ID}:${VERSION_ID}" in
     exit 1
     ;;
 esac
+if [ -n "${linux_libc_dev_override}" ]; then
+  linux_libc_dev_version="${linux_libc_dev_override}"
+fi
 
 apt-get update
 # NVIDIA's Genesis-derived base contains development packages whose declared

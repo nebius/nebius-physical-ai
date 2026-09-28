@@ -402,7 +402,10 @@ def test_non_candidate_quarantined_images_are_not_reported_as_runnable() -> None
     # the acceptance workload that promotes them. Every other quarantined
     # release must stay out of the runnable default batch.
     for name in PUBLICATION_QUARANTINE_TOOLS - VALIDATION_CANDIDATE_TOOLS:
-        assert specs[name].golden_eval.status == "needs-image-update", name
+        assert specs[name].golden_eval.status in {
+            "blocked-on-upstream",
+            "needs-image-update",
+        }, name
 
 
 def test_runnable_defaults_exist_in_shared_serverless_project() -> None:
@@ -419,6 +422,14 @@ def test_runnable_defaults_exist_in_shared_serverless_project() -> None:
             f"{name}: serverless GPU {gpu!r} is not offered in the shared "
             f"golden-eval project; choose one of {sorted(available)}"
         )
+
+
+def test_shared_serverless_fallback_is_the_smallest_available_preset() -> None:
+    from npa.smoke.serverless_runner import DEFAULT_SERVERLESS_GPU
+
+    # L40S remains a valid operator-selected target, but it is not offered in
+    # the shared project used by the golden-eval sweep.
+    assert DEFAULT_SERVERLESS_GPU == "h200"
 
 
 def test_openpi_serverless_gpu_matches_its_runtime_assertion() -> None:

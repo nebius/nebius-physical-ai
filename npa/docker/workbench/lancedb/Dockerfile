@@ -4,7 +4,8 @@
 ARG NPA_CUDA_BASE=ghcr.io/nebius/nebius-physical-ai/npa-detection-training@sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9
 FROM ${NPA_CUDA_BASE}
 
-ARG UBUNTU_SNAPSHOT=20260820T000000Z
+ARG UBUNTU_SNAPSHOT=20260910T000000Z
+ARG LINUX_LIBC_DEV_VERSION=6.8.0-139.139
 
 # The base drops to a non-root user; build steps need root, and the image drops
 # back to the ubuntu user before runtime (below).
@@ -24,7 +25,8 @@ COPY --chmod=0755 docker/workbench/common/configure_ubuntu_snapshot.sh \
   /usr/local/bin/configure-ubuntu-snapshot
 COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
   /usr/local/bin/install-workflow-runtime-prereqs
-RUN /usr/local/bin/install-workflow-runtime-prereqs "${UBUNTU_SNAPSHOT}"
+RUN /usr/local/bin/install-workflow-runtime-prereqs \
+      "${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}"
 
 # Only the CLIP embedding dependency is unique to this image; the FastAPI +
 # lancedb + pyarrow + pillow + boto3 stack comes from the shared base.

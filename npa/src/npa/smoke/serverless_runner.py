@@ -30,9 +30,10 @@ from npa.serverless_common import (
 
 from npa.smoke.manifest import UNLIMITED_SERVERLESS_ERROR, container
 
-# Nebius AI Jobs always require a GPU preset, even for CPU-only workloads. Use
-# the smallest generally compatible platform available in the shared golden-eval
-# project when a manifest entry does not need a more specific accelerator.
+# Nebius AI Jobs always require a GPU preset, even for CPU-only workloads. L40S
+# is a valid public CLI target but is not offered in the shared golden-eval
+# project; H200 is its smallest generally compatible preset. Manifest entries
+# should still pin a different offered accelerator when their runtime needs one.
 DEFAULT_SERVERLESS_GPU = "h200"
 _TERMINAL_OK = {"completed", "succeeded", "success"}
 

@@ -30,7 +30,18 @@ def _supports_merge_tree_write_tree(root: Path) -> bool:
 
 def _legacy_merge_tree(root: Path, base: str, head: str) -> str:
     """Create a virtual merge tree with the plumbing available in Git 2.34."""
-    merge_bases = _git(root, "merge-base", "--all", base, head).splitlines()
+    merge_base_result = subprocess.run(
+        ["git", "merge-base", "--all", base, head],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    # `git merge-base` uses status 1 (with no output) for unrelated histories.
+    # That is a valid zero-base input to merge-recursive, not a subprocess error.
+    if merge_base_result.returncode not in {0, 1}:
+        merge_base_result.check_returncode()
+    merge_bases = merge_base_result.stdout.strip().splitlines()
     with tempfile.TemporaryDirectory(prefix="npa-merge-tree-") as directory:
         snapshot = Path(directory)
         work_tree = snapshot / "worktree"

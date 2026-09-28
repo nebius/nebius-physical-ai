@@ -54,9 +54,9 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
-The current source inventory has **56 packaging entries** (47 redistribution-eligible
-and nine restricted) and **47 mapped tools**: 25 public-release members, two
-restricted tools, and 20 quarantined tools. These counts come from
+The current source inventory has **60 packaging entries** (51 redistribution-eligible
+and nine restricted) and **51 mapped tools**: 26 public-release members, two
+restricted tools, and 23 quarantined tools. These counts come from
 `packaging-contract.yaml` and `npa.deploy.images`;
 the seven restricted PAIDF images have no mapped tool entry. These counts do not
 constitute acceptance of the quarantined images.
