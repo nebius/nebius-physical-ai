@@ -8,8 +8,12 @@ import shutil
 import subprocess
 import tempfile
 
-from npa.workbench.nurec.navigation_assets import materialize, publish
+from npa.workbench.nurec.navigation_assets import materialize
 from npa.workbench.nurec.navigation_publication import verify_publication
+from npa.workbench.nurec.navigation_sample_publication import (
+    evaluation_exists,
+    publish_report,
+)
 from npa.workflows.navigation.artifacts import materialize as sealed_input
 from npa.workflows.navigation.artifacts import write_json
 
@@ -83,6 +87,15 @@ def build_report(
         ValueError: Required evidence or artifact integrity is invalid.
         OSError: Evidence staging or report publication fails.
     """
+    summary, _ = _build_report(
+        reconstruction_path, evaluation_path, training_path, output_path
+    )
+    return summary
+
+
+def _build_report(
+    reconstruction_path, evaluation_path, training_path, output_path, *, complete=False
+):
     with tempfile.TemporaryDirectory(prefix="npa-scan-report-") as temporary:
         work = Path(temporary)
         scan = materialize(reconstruction_path, work / "scan")
@@ -94,12 +107,20 @@ def build_report(
         from npa.workbench.nurec.navigation_sample_evidence import measured_summary
 
         summary, result = measured_summary(scan, training, evaluation)
+        if complete and (
+            result is None
+            or (evaluation / "failure.json").exists()
+            or (evaluation / "evaluation.incomplete.json").exists()
+        ):
+            raise ValueError(
+                "existing native evaluation is incomplete; use a fresh run"
+            )
         _evidence_files(scan, training, evaluation, output)
         summary["files"] = sorted(path.name for path in output.iterdir())
         write_json(output / "summary.json", summary)
         _write_html(summary, evaluation, result, output / "index.html")
-        publish(output, output_path)
-        return summary
+        publish_report(output, output_path)
+        return summary, result
 
 
 def _evidence_files(scan, training, evaluation, output):
@@ -136,6 +157,15 @@ def evaluate_report(
     """
     from npa.workflows.navigation.stages import run_stage
 
+    if evaluation_exists(output_path):
+        _, result = _build_report(
+            reconstruction_path, output_path, input_path, report_path, complete=True
+        )
+        if not result["passed"]:
+            raise RuntimeError(
+                "held-out navigation success is below minimum_success_rate; evidence published"
+            )
+        return result
     try:
         result = run_stage("evaluate", input_path, output_path)
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as error:

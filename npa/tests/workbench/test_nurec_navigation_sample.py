@@ -340,3 +340,87 @@ def test_native_process_failure_keeps_the_original_failure_and_attempts_html(
         report.evaluate_report("training", "evaluation", "scan", "reports")
     assert caught.value is failure
     assert calls == [("scan", "evaluation", "training", "reports")]
+
+
+@pytest.mark.parametrize("report_committed", [False, True])
+def test_retry_reuses_bound_native_evaluation_after_report_failure(
+    tmp_path, monkeypatch, report_committed
+):
+    from npa.workflows.navigation import stages
+
+    scan, training, completed = _published_reports(tmp_path, True)
+    evaluation, output = tmp_path / "evaluation", tmp_path / "report"
+    native_calls = []
+
+    def native(stage, source, destination):
+        native_calls.append((stage, source, destination))
+        shutil.copytree(completed, destination)
+        return json.loads((Path(completed) / "evaluation.json").read_text())
+
+    original = report.publish_report
+
+    def interrupted(directory, destination):
+        if report_committed:
+            original(directory, destination)
+        raise OSError("report transport interrupted")
+
+    monkeypatch.setattr(stages, "run_stage", native)
+    monkeypatch.setattr(report, "publish_report", interrupted)
+    with pytest.raises(OSError, match="transport interrupted"):
+        report.evaluate_report(training, str(evaluation), scan, str(output))
+    native_bytes = {p.name: p.read_bytes() for p in evaluation.iterdir() if p.is_file()}
+    monkeypatch.setattr(report, "publish_report", original)
+    result = report.evaluate_report(training, str(evaluation), scan, str(output))
+    assert result["passed"] is True and len(native_calls) == 1
+    assert (output / "index.html").is_file()
+    assert native_bytes == {
+        p.name: p.read_bytes() for p in evaluation.iterdir() if p.is_file()
+    }
+
+
+def test_recovered_losing_evaluation_retains_report_and_quality_failure(
+    tmp_path, monkeypatch
+):
+    from npa.workflows.navigation import stages
+
+    scan, training, evaluation = _published_reports(tmp_path, False)
+    monkeypatch.setattr(stages, "run_stage", lambda *args: pytest.fail("reran native"))
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="below minimum_success_rate"):
+            report.evaluate_report(training, evaluation, scan, str(tmp_path / "report"))
+    assert "Did not pass" in (tmp_path / "report/index.html").read_text()
+
+
+@pytest.mark.parametrize(
+    "damage", ["missing-seal", "partial", "checkpoint", "recipe", "conflicting-failure"]
+)
+def test_occupied_native_output_requires_complete_matching_evidence(
+    tmp_path, monkeypatch, damage
+):
+    from npa.workflows.navigation import stages
+
+    scan, training, evaluation = _published_reports(tmp_path, True)
+    root = Path(evaluation)
+    if damage == "missing-seal":
+        (root / "checksums.json").unlink()
+    elif damage == "partial":
+        (root / "evaluation.json").rename(root / "evaluation.incomplete.json")
+        write_json(root / "failure.json", {"status": "failed"})
+        _reseal(root)
+    elif damage == "checkpoint":
+        (root / "policy.pt").write_bytes(b"another-checkpoint")
+        _reseal(root)
+    elif damage == "recipe":
+        recipe = json.loads((root / "recipe.json").read_text())
+        recipe["iterations"] += 1
+        write_json(root / "recipe.json", recipe)
+        _reseal(root)
+    else:
+        write_json(root / "failure.json", {"status": "failed"})
+        _reseal(root)
+    monkeypatch.setattr(stages, "run_stage", lambda *args: pytest.fail("reran native"))
+    before = {p.name: p.read_bytes() for p in root.iterdir() if p.is_file()}
+    with pytest.raises((ValueError, OSError)):
+        report.evaluate_report(training, evaluation, scan, str(tmp_path / "report"))
+    assert not (tmp_path / "report").exists()
+    assert before == {p.name: p.read_bytes() for p in root.iterdir() if p.is_file()}

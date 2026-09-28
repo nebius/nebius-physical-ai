@@ -94,6 +94,12 @@ report without fabricated media or success measurements. Separate run prefixes
 retain the complete capture, reconstruction, measured reset support, native
 physics, trained weights, isolation controls and evaluation evidence.
 
+If evaluation completed but HTML publication was interrupted, retrying the final
+stage verifies and reuses that exact sealed evaluation; it does not run the policy
+again. Matching partial report uploads can finish without replacing existing
+bytes. Incomplete or conflicting native output requires a fresh run, and a
+completed evaluation below the success threshold remains failed on every retry.
+
 The range-based navigation policy is evaluated on held-out goals in its
 reconstructed training scene. A passing result does not establish unseen-site
 transfer, four-camera policy learning, or physical-robot performance. Use the
