@@ -2,6 +2,7 @@
 
 import copy
 import io
+import json
 from pathlib import Path
 import shutil
 from types import SimpleNamespace
@@ -14,7 +15,7 @@ from npa.workflows.field_failure import artifacts, reference_demo as demo
 from npa.workflows.field_failure import reference_demo_publication as publication
 from npa.workflows.field_failure.native_artifacts import _archive
 from npa.workflows.field_failure.reference_demo_inputs import reference_metrics
-from npa.workflows.navigation.artifacts import publish, write_json
+from npa.workflows.navigation.artifacts import materialize, publish, write_json
 from npa.workflows.navigation.contract import read_recipe
 
 
@@ -47,6 +48,92 @@ class MemoryStorage:
                 path = Path(target) / name[len(uri.rstrip("/")) + 1 :]
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(data)
+
+
+@pytest.fixture
+def baseline_publication(tmp_path, monkeypatch):
+    from npa.workflows.field_failure.reference_demo_inputs import prepare_warehouse
+
+    storage = MemoryStorage({})
+    monkeypatch.setattr(StorageClient, "from_environment", lambda: storage)
+    image = "registry.example.invalid/native@sha256:" + "a" * 64
+    source = tmp_path / "baseline-input"
+    prepare_warehouse(source, image=image, count=4, iterations=1500, steps=300)
+    (source / "final-cases.json").unlink()
+    args = SimpleNamespace(
+        stage="baseline",
+        output_root="s3://fixture/public/baseline",
+        navigation_image=image,
+    )
+    prefix = args.output_root + "/baseline-input"
+    publish(source, prefix)
+    monkeypatch.setenv("NPA_TASK_IMAGE", image)
+    return SimpleNamespace(args=args, storage=storage, source=source, prefix=prefix)
+
+
+def test_baseline_consumes_completed_s3_attempt_before_native_training(
+    baseline_publication, monkeypatch, tmp_path
+):
+    from npa.workflows.navigation import stages
+
+    fixture, calls = baseline_publication, []
+    expected_recipe = (fixture.source / "recipe.json").read_bytes()
+    expected_scene = (fixture.source / "scene.usdz").read_bytes()
+    assert fixture.prefix + "/recipe.json" not in fixture.storage.objects
+
+    def native(stage, source, output):
+        calls.append(stage)
+        assert (source / "recipe.json").read_bytes() == expected_recipe
+        assert (source / "scene.usdz").read_bytes() == expected_scene
+        assert not (source / "final-cases.json").exists()
+        recipe = read_recipe(source)
+        assert recipe.iterations == 1500 and recipe.episode_steps == 300
+        (output / "policy.pt").write_bytes(b"synthetic native boundary checkpoint")
+        report = {"fixture": "native training boundary", "iterations": 1500}
+        write_json(output / "training.json", report)
+        return report
+
+    monkeypatch.setattr(stages, "_native", native)
+    report = demo.run_reference_stage(fixture.args)
+    assert calls == ["train"] and report["iterations"] == 1500
+    prepared = materialize(
+        fixture.args.output_root + "/baseline-prepared", tmp_path / "prepared"
+    )
+    trained = materialize(
+        fixture.args.output_root + "/baseline-training", tmp_path / "trained"
+    )
+    assert (prepared / "recipe.json").read_bytes() == expected_recipe
+    assert (trained / "recipe.json").read_bytes() == expected_recipe
+    assert (trained / "scene.usdz").read_bytes() == expected_scene
+
+
+@pytest.mark.parametrize(
+    "fault",
+    ["missing-completion", "missing-claim", "claim-mismatch", "recipe", "scene"],
+)
+def test_baseline_rejects_incomplete_or_tampered_input_before_native_training(
+    baseline_publication, monkeypatch, fault
+):
+    from npa.workflows.navigation import stages
+
+    fixture, calls = baseline_publication, []
+    objects, prefix = fixture.storage.objects, fixture.prefix
+    completion = json.loads(objects[prefix + "/completion.json"])
+    if fault.startswith("missing-"):
+        del objects[prefix + "/" + fault.removeprefix("missing-") + ".json"]
+    elif fault == "claim-mismatch":
+        changed = {**completion, "attempt": "attempts/" + "f" * 32}
+        objects[prefix + "/claim.json"] = json.dumps(changed).encode()
+    else:
+        attempt = prefix + "/" + completion["attempt"]
+        name = "recipe.json" if fault == "recipe" else "scene.usdz"
+        objects[attempt + "/" + name] += b"\nchanged"
+    monkeypatch.setattr(stages, "_native", lambda *args: calls.append(args))
+    with pytest.raises(ValueError, match="incomplete|immutable|original local"):
+        demo.run_reference_stage(fixture.args)
+    assert calls == []
+    assert not any("/baseline-prepared/" in name for name in objects)
+    assert not any("/baseline-training/" in name for name in objects)
 
 
 @pytest.fixture

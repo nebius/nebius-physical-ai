@@ -1,6 +1,8 @@
 """Execute one declarative public RL demo stage using the native workflow components."""
 
 import argparse
+from pathlib import Path
+import tempfile
 
 from npa.workflows.field_failure.artifacts import _read
 
@@ -64,13 +66,18 @@ def _preparation_stage(args):
 
 
 def _baseline(args):
+    from npa.workflows.navigation.artifacts import materialize
     from npa.workflows.navigation.stages import prepare, run_stage
 
-    prepare(
-        args.output_root + "/baseline-input",
-        args.output_root + "/baseline-prepared",
-        args.navigation_image,
-    )
+    with tempfile.TemporaryDirectory(prefix="npa-reference-baseline-") as temporary:
+        source = materialize(
+            args.output_root + "/baseline-input", Path(temporary) / "input"
+        )
+        prepare(
+            str(source),
+            args.output_root + "/baseline-prepared",
+            args.navigation_image,
+        )
     return run_stage(
         "train",
         args.output_root + "/baseline-prepared",
