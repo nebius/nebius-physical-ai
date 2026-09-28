@@ -742,7 +742,11 @@ def build_run_rrd(
             written_uri = _publish(
                 str(out_path), output_uri, storage_client=active_storage
             )
-        if html_preview and effective_app_id == "neural-reconstruction":
+        if (
+            html_preview
+            and effective_app_id == "neural-reconstruction"
+            and _has_nurec_outputs(local)
+        ):
             from npa.workbench.nurec.preview import write_nurec_preview
 
             preview_path = Path(tmp) / "index.html"
@@ -800,6 +804,14 @@ def build_run_rrd(
         **inventory_proof,
         **preview_result,
     }
+
+
+def _has_nurec_outputs(local):
+    return (
+        (local / "ncore" / "manifest.json").is_file()
+        or (local / "reconstruction" / "metrics.yaml").is_file()
+        or bool(_image_files(local / "novel_views"))
+    )
 
 
 def _publish_nurec_preview(payload, rrd_uri, storage):

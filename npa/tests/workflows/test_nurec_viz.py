@@ -154,6 +154,18 @@ def test_nurec_preview_refuses_to_replace_existing_report():
     assert result["html_preview_uri"] == "s3://example-bucket/run/reports/index.html"
 
 
+def test_shared_visualizer_does_not_require_nurec_media_for_input_only_runs(tmp_path):
+    run = tmp_path / "run"
+    _write_image(run / "input" / "source.png", (10, 20, 30))
+    output = tmp_path / "reports" / "sim2real.rrd"
+    result = build_run_rrd(
+        str(run), str(output), app_id="neural-reconstruction", html_preview=True
+    )
+    assert result["status"] == "completed"
+    assert "html_preview_uri" not in result
+    assert not output.with_name("index.html").exists()
+
+
 def test_recording_bytes_carry_the_nurec_run_entities(tmp_path: Path) -> None:
     pytest.importorskip("rerun")
     run = _nurec_run(tmp_path / "neural-reconstruction-toro-20260731t170500z")
