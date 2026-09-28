@@ -6698,4 +6698,3 @@ def test_output_reuse_error_type_restores_legacy_and_current_records(error_type)
     )
     assert restored.output_reuse_error_type == (error_type or "")
     assert restored.to_dict()["output_reuse_error_type"] == (error_type or "")
-
