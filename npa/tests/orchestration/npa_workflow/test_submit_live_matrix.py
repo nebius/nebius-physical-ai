@@ -407,6 +407,27 @@ def test_groot_case_truthfully_describes_offline_configurable_training() -> None
     assert "not closed-loop or physical-robot task evidence" in case.notes
 
 
+def test_robotwin_case_is_plan_only_until_worker_authorization_exists() -> None:
+    case = next(
+        item for item in SUBMIT_LIVE_MATRIX if item.spec == "byof-robotwin.yaml"
+    )
+
+    assert case.tier == "multi"
+    assert case.plan_only
+    assert not case.runtime
+    assert set(case.secret_envs) == {
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    }
+    assert "public worker bridge is disabled" in case.plan_only_justification
+    assert (
+        "independently attested customer authorization" in case.plan_only_justification
+    )
+    assert "normal submit refuses before provider calls" in case.notes
+    assert "Operator-only evidence" in case.notes
+
+
 @pytest.mark.parametrize(
     "name", ["sim2real-two-step.yaml", "sim2real-two-step-agent.yaml"]
 )

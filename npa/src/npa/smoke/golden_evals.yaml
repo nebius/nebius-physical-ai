@@ -34,6 +34,29 @@
 format: npa_golden_evals_v1
 
 containers:
+  robotwin:
+    image: npa-robotwin
+    dockerfile: npa/docker/workbench/robotwin/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Fail-closed zero-vendor-payload bootstrap for an independently gated
+        RoboTwin bimanual data-collection workflow.
+    safety:
+      runs_as: ubuntu
+      base_image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+      network: none during refusal check
+      external_fetch: []
+      notes: >-
+        CPU refusal and byte-absence packaging evidence only. The image is
+        unbuilt and publication-quarantined; no SAPIEN, Vulkan, RTX, task-success,
+        HDF5, video, or frame capability is claimed.
+    golden_eval:
+      kind: container-smoke
+      command: bash /opt/npa/robotwin/smoke.sh
+      gpu: none
+      timeout_seconds: 120
+      status: needs-image-update
   gymnasium-robotics:
     image: npa-gymnasium-robotics
     internal: true
@@ -363,6 +386,42 @@ containers:
       timeout_seconds: 1800
       status: gpu-gated
 
+  habitat-sim:
+    image: npa-habitat-sim
+    dockerfile: npa/docker/workbench/habitat-sim/Dockerfile.bootstrap
+    physical_ai:
+      useful: true
+      role: >-
+        Renders a genuine Skokloster Castle RGB/depth traversal with Bullet
+        physics and headless EGL on an RTX-class renderer.
+    safety:
+      runs_as: ubuntu
+      base_image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+      network: official Ubuntu, GitHub, PyPI and Meta runtime fetch; operator S3 output
+      external_fetch: [official-ubuntu-runtime, github-codeload-runtime, pypi-runtime, official-meta-habitat-test-scene-runtime, s3-runtime]
+      notes: >-
+        Neutral runtime-fetch bootstrap; supported release validation is pending.
+        Accompanying source covers inherited and installed Ubuntu components.
+        Required scans must prove Habitat, scientific/native runtime, scene,
+        cache, credential, output, CUDA, and NVIDIA driver payload absence. The CC BY 4.0 scene must be hash-verified and attributed
+        after runtime fetch. These requirements are not accepted image/live proof.
+    golden_eval:
+      kind: container-smoke
+      command: >-
+        test -n "$NPA_WORKFLOW_RUN_ID" &&
+        test -n "$NPA_RENDERED_PLAN_SHA256" &&
+        test -n "$NPA_TASK_IMAGE" &&
+        test -n "$NPA_HABITAT_GOLDEN_OUTPUT_URI" &&
+        python3 -m npa.workflows.habitat_sim_smoke
+        --output-dir /tmp/npa-habitat-sim-golden
+        --output-uri "$NPA_HABITAT_GOLDEN_OUTPUT_URI"
+        --run-id "$NPA_WORKFLOW_RUN_ID"
+        --plan-sha256 "$NPA_RENDERED_PLAN_SHA256"
+      artifact: /tmp/npa-habitat-sim-golden/habitat-sim-smoke.json
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: 1800
+      status: blocked-on-upstream
   genesis:
     image: npa-genesis
     dockerfile: npa/docker/workbench/genesis/Dockerfile
@@ -1151,6 +1210,33 @@ containers:
       gpu: optional
       timeout_seconds: 600
       status: ready
+
+  robomimic:
+    image: npa-robomimic
+    dockerfile: npa/docker/workbench/robomimic/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Trains a low-dimensional behavior-cloning policy on official Lift PH
+        demonstrations and reloads it for held-out action inference.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.11.16-slim-bookworm (digest pinned)
+      network: none in the neutral image; dataset fetch is deferred to an authorized gate
+      external_fetch: [operator-prepared-cuda-runtime, official-lift-ph-dataset, s3]
+      notes: >-
+        Quarantined Phase A candidate. The image contains pinned MIT source and
+        non-CUDA dependencies only. The command below proves missing-runtime
+        refusal without writing a cache; it is not the physical-AI capability
+        acceptance. CUDA runtime use and the exact-digest B200 gate remain
+        separately blocked.
+    golden_eval:
+      kind: entrypoint-smoke
+      command: robomimic-entrypoint assert-refusal
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 120
+      status: blocked-on-upstream
 
   wan2-2:
     image: npa-wan2-2

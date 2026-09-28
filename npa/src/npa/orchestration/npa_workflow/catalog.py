@@ -101,6 +101,8 @@ _BYOF_REPO_ARGV = [
     "{{config.capability_name}}",
     "--smoke-artifact-name",
     "{{config.smoke_artifact_name}}",
+    "--runtime-context-env",
+    "{{config.runtime_context_env}}",
     "--libero-qualified-candidate-image",
     "{{config.libero_qualified_candidate_image}}",
     "--yaml",
@@ -126,6 +128,7 @@ _BYOF_REPO_ARGV = [
 _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
+    "runtime_context_env": "",
     "source_prune_path": "",
     "libero_qualified_candidate_image": "",
 }
@@ -153,7 +156,27 @@ _CONTENT_AGENTS_PIPELINE = [
 
 _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
 
+_HABITAT_SIM_SMOKE = ["python3", "-m", "npa.workflows.habitat_sim_smoke"]
+
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workflow.habitat_sim.smoke": ToolEntry(
+        name="workflow.habitat_sim.smoke",
+        description=(
+            "Render the pinned official Skokloster scene with RGB, depth, Bullet, "
+            "and real navigation on one RTX PRO 6000 Blackwell."
+        ),
+        argv_template=[
+            *_HABITAT_SIM_SMOKE,
+            "--output-dir",
+            "{{config.output_dir}}",
+            "--output-uri",
+            "{{config.output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--plan-sha256",
+            "{{config.plan_sha256}}",
+        ],
+    ),
     "workbench.encord.push": ToolEntry(
         name="workbench.encord.push",
         description="Register S3 media with Encord SaaS or explicitly upload a copy.",
@@ -1796,6 +1819,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
+            "--runtime-context-env",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
@@ -2234,6 +2258,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
+            "--runtime-context-env",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),

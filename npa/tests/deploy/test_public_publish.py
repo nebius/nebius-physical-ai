@@ -16,10 +16,10 @@ monkeypatch a synthetic restricted catalog tool in, proving the mechanism still 
 
 from __future__ import annotations
 
-import json
 import copy
 import hashlib
 import http.client
+import json
 import re
 import subprocess
 import urllib.error
@@ -34,6 +34,7 @@ from npa.deploy import images
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
     PUBLICATION_QUARANTINE_TOOLS,
     RESTRICTED_DERIVED_IMAGES,
     RESTRICTED_PUBLICATION_TOOLS,
@@ -49,6 +50,7 @@ from npa.deploy.images import (
 from npa.deploy.publish_public import (
     PublishItem,
     _pin_publication_sources as REAL_PUBLICATION_SOURCE_PIN,
+    _valid_content_agents_rigid_physics,
     build_publish_plan,
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
     verify_gpu_accepted_publication_source as REAL_GPU_ACCEPTANCE_GATE,
@@ -95,6 +97,70 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         "verify_gpu_accepted_publication_source",
         lambda item: (True, "test fixture: GPU acceptance gate verified"),
     )
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("mass_or_density", "friction"),
+    [(5e-324, 0.1), (1, 2.0)],
+)
+def test_content_agents_gate_accepts_finite_physics_boundaries(
+    mass_or_density: int | float, friction: float
+) -> None:
+    rigid = {
+        "rigid_body": True,
+        "collision": True,
+        "fixed": False,
+        "mass_or_density": mass_or_density,
+        "friction": friction,
+    }
+
+    assert _valid_content_agents_rigid_physics(rigid)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mass_or_density", float("nan")),
+        ("mass_or_density", float("inf")),
+        ("mass_or_density", float("-inf")),
+        ("mass_or_density", True),
+        ("mass_or_density", False),
+        ("mass_or_density", "1.0"),
+        ("mass_or_density", "not-a-number"),
+        ("mass_or_density", 0),
+        ("mass_or_density", -1),
+        ("mass_or_density", _MISSING),
+        ("friction", float("nan")),
+        ("friction", float("inf")),
+        ("friction", float("-inf")),
+        ("friction", True),
+        ("friction", False),
+        ("friction", "0.5"),
+        ("friction", "not-a-number"),
+        ("friction", 0.09),
+        ("friction", 2.01),
+        ("friction", _MISSING),
+    ],
+)
+def test_content_agents_gate_rejects_invalid_physics_evidence(
+    field: str, value: object
+) -> None:
+    rigid = {
+        "rigid_body": True,
+        "collision": True,
+        "fixed": False,
+        "mass_or_density": 1.0,
+        "friction": 0.5,
+    }
+    if value is _MISSING:
+        rigid.pop(field)
+    else:
+        rigid[field] = value
+
+    assert not _valid_content_agents_rigid_physics(rigid)
 
 
 @pytest.mark.parametrize("tool", ["cosmos3-serving", "detection-training"])
@@ -314,9 +380,12 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     assert not {"cosmos3-serving", "sonic-mujoco"} & RESTRICTED_DERIVED_IMAGES
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset(
-        {"openpi", "curobo", "ncore", "libero", "sam3"}
+    assert UNVALIDATED_PUBLICATION_TOOLS == (
+        frozenset({"openpi", "curobo", "ncore", "libero", "sam3"})
+        | ({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
     )
+    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset()
+    assert is_publicly_redistributable("robomimic")
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
         "lingbot-world",
@@ -399,6 +468,9 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
     assert "npa-curobo" not in names
     assert "curobo" not in publicly_publishable_tools()
     assert images.SUPPORTED_TOOL_VERSIONS["curobo"].endswith("-unbuilt")
+    assert "npa-robotwin" not in names
+    assert "robotwin" not in publicly_publishable_tools()
+    assert images.SUPPORTED_TOOL_VERSIONS["robotwin"].endswith("-unbuilt")
     for item in plan:
         assert item.target_ref.startswith("ghcr.io/example/workbench/")
 
@@ -554,6 +626,7 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
             set(RESTRICTED_PUBLICATION_TOOLS)
             | set(UNVALIDATED_PUBLICATION_TOOLS)
             | set(VALIDATION_CANDIDATE_TOOLS)
+            | set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
         )
     )
     for item in plan:
@@ -634,6 +707,35 @@ def test_the_restriction_mechanism_still_exists() -> None:
     ), "the restricted class must remain enforced"
 
 
+def test_public_refusal_union_preserves_pending_and_permanent_reasons() -> None:
+    expected = (
+        images.RESTRICTED_PUBLICATION_TOOLS
+        | images.RESTRICTED_DERIVED_IMAGES
+        | images.PENDING_REDISTRIBUTION_TOOLS
+    )
+    assert restricted_image_names() == sorted(expected)
+    assert images.omniverse_restricted_image_names() == sorted(expected)
+    assert all(not is_publicly_redistributable(name) for name in expected)
+    assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
+    assert "habitat-sim" not in images.RESTRICTED_PUBLICATION_TOOLS
+    assert "habitat-sim" in images.PUBLICATION_QUARANTINE_TOOLS
+    assert "habitat-sim" not in publicly_publishable_tools()
+
+
+def test_public_refusal_union_covers_derived_members_without_policy_reclassification(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        images, "RESTRICTED_DERIVED_IMAGES", frozenset({"inert-derived"})
+    )
+    assert not is_publicly_redistributable("inert-derived")
+    assert "inert-derived" in restricted_image_names()
+    assert images.omniverse_restricted_image_names() == restricted_image_names()
+    assert is_publicly_redistributable("foxglove-embed")
+    assert "inert-derived" not in images.RESTRICTED_PUBLICATION_TOOLS
+    assert "inert-derived" not in images.PENDING_REDISTRIBUTION_TOOLS
+
+
 def test_selector_matches_packaging_contract_classification() -> None:
     """Every image the packaging contract marks ``restricted`` must resolve to a
     tool that the selector also treats as non-public (kept in sync).
@@ -656,6 +758,19 @@ def test_selector_matches_packaging_contract_classification() -> None:
             # A future non-canonical restricted image must map to a
             # restricted canonical tool
             assert tool in RESTRICTED_PUBLICATION_TOOLS, image_name
+
+
+def test_selector_refuses_unvalidated_neutral_redistribution() -> None:
+    """A neutral proposal is not public before its exact-byte license closure."""
+
+    contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    contract_unvalidated = {
+        name
+        for name, entry in contract["images"].items()
+        if entry.get("redistribution") == "unvalidated"
+    }
+    assert contract_unvalidated == set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+    assert all(not is_publicly_redistributable(tool) for tool in contract_unvalidated)
 
 
 # --- Resolution guard: a restricted tool must never resolve from a public registry ----
@@ -735,6 +850,11 @@ def test_oss_tools_resolve_from_the_public_release_normally() -> None:
         "lerobot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
     )
     assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-lerobot:")
+
+
+def test_robotwin_quarantine_blocks_implicit_public_image_resolution() -> None:
+    with pytest.raises(ValueError, match="robotwin.*no accepted release image"):
+        container_image_for_tool("robotwin", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
 
 
 # --------------------------------------------------------------------------------------
