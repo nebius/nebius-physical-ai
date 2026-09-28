@@ -1,18 +1,18 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "83d948ef9daf11fc7d6bbcb205cddfc93379e93776819501322f3ccd5c7e1d50",
+  "workflow_sha256": "334c0fbd208bd220f4d931133a4c0d3466ccce2fd0e8bf72a0ecc2a7c74b8746",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec succeeded; the capture/validate stages completed the full supplied public warehouse workload. The default procedural known-wall-depth check remains unrun.",
+      "reason": "Schema validation and plan-spec exited 0 for this exact workflow revision with its offline preview stage. These checks did not launch GPUs. Historical full public warehouse execution is retained separately and does not qualify the changed workflow.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-capture.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/multicamera-rgbd-capture.yaml --run-id preview --json"
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Real Replicator captured 265 poses with four 1280x720 RGB-D cameras; a separate CPU worker decoded every artifact and verified calibration, synchronized native times, world points and source-attributed fused clouds. Earlier native preparation was reused unchanged and reverified.",
+      "status": "unverified",
+      "reason": "The historical capture/validate run measured 265 poses and 1,060 RGB-D views with independent decoded validation, as recorded in native-validation.json. The added offline preview and current source distribution require a fresh complete run before this workflow revision is qualified.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd.py",
         "npa/tests/workflows/test_isaac_rgbd_runtime.py",

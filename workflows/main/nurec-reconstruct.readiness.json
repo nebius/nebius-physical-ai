@@ -1,20 +1,18 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "12f80d0a169f442fe13d4ed61cfc7143f17d58734315f88d4acff4e98bb92dae",
+  "workflow_sha256": "10fec3b0eac920781ddc9a79e047e78a669284844bbb157a662f264658f0ad62",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "All four promoted-path CLI checks exited 0 on September 9, 2026: schema validation, plan-spec, scheduler preview, and submit --plan-only. These checks did not launch GPU work.",
+      "reason": "Schema validation and plan-spec exited 0 for this exact workflow revision after source overlay, dataset revision pinning and offline preview were added. These checks did not launch GPU work. Earlier scheduler-preview and plan-only results apply to the historical revision only.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/main/nurec-reconstruct.yaml --json",
-        "npa workbench workflow plan-spec workflows/main/nurec-reconstruct.yaml --run-id nurec-promotion --json",
-        "npa workbench workflow run-spec workflows/main/nurec-reconstruct.yaml --run-id nurec-promotion --plan-only --scheduler-plan --json",
-        "npa workbench workflow submit workflows/main/nurec-reconstruct.yaml --run-id nurec-promotion --plan-only"
+        "npa workbench workflow plan-spec workflows/main/nurec-reconstruct.yaml --run-id preview --json"
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "The promoted YAML parses identically to the saved September 8, 2026 multi-pod workflow. Real input, GPU training, rig-offset rendering, and decoded run artifacts were verified for the default sample.",
+      "status": "unverified",
+      "reason": "This revision adds source staging, a pinned public dataset revision and an offline preview stage. Historical reconstruction, rig-offset rendering and decoded artifact evidence is retained in the guide, but does not qualify the complete changed workflow until a fresh run finishes.",
       "evidence": [
         "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
       ]
@@ -29,8 +27,8 @@
       ]
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "The completed run consumed the default public PhysicalAI-NuRec-PPISP struktur28 capture and published the NCore sequence across pods. Other dataset or scene overrides need separate checks.",
+      "status": "unverified",
+      "reason": "Historical runs consumed the public PhysicalAI-NuRec-PPISP struktur28 capture. The current workflow pins the dataset revision; fresh cross-pod fetch and complete reconstruction of this exact revision remain required.",
       "evidence": [
         "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
       ]
@@ -44,14 +42,14 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The completed run used the NRE image digest recorded in the guide. A new run must stage its intended NPA source and verify the selected vendor image; the catalog still uses the existing 26.04 tag.",
+      "reason": "Historical runs used the NRE image identity recorded in the guide. This workflow still selects the vendor 26.04 tag and now stages source; verify the actual image and staged revision for each fresh run.",
       "evidence": [
         "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The completed run used one RTX PRO 6000 Blackwell GPU. A future target needs RT cores, healthy SkyPilot workers, and the declared shared-memory and bootstrap configuration; L40S was not tested in this run.",
+      "reason": "Historical RTX PRO 6000 Blackwell runs are documented in the guide. This changed workflow still requires a fresh healthy RTX target with its declared shared-memory and bootstrap configuration; those past runs do not validate this revision or an L40S target.",
       "evidence": [
         "docs/workbench/guides/neural-reconstruction.md#promotion-evidence"
       ]

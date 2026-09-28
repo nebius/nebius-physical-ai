@@ -22,7 +22,7 @@ The launcher stages the installed source automatically for every run.
 
 ```bash
 npa workbench workflow demo list
-npa workbench health preflight --project <project> --checks s3,nebius
+npa workbench health preflight --project '<project>' --checks s3,nebius
 ```
 
 For NuRec, also run `npa workbench health access --capability nurec` before
@@ -32,10 +32,10 @@ destinations, image access, source staging, and the requested GPU product.
 ## Run a demo
 
 ```bash
-npa workbench workflow demo run real-to-sim --project <project> --infra k8s/<rtx-context>
-npa workbench workflow demo run synthetic-data --project <project> --infra k8s/<rtx-context>
-npa workbench workflow demo run rl-improvement --project <project> --infra k8s/<rtx-context>
-npa workbench workflow demo run nurec --project <project> --infra k8s/<rtx-context>
+npa workbench workflow demo run real-to-sim --project '<project>' --infra 'k8s/<rtx-context>'
+npa workbench workflow demo run synthetic-data --project '<project>' --infra 'k8s/<rtx-context>'
+npa workbench workflow demo run rl-improvement --project '<project>' --infra 'k8s/<rtx-context>'
+npa workbench workflow demo run nurec --project '<project>' --infra 'k8s/<rtx-context>'
 ```
 
 Select one command, or use separate terminals to run independent demos. The
@@ -58,9 +58,9 @@ ID printed by the command. The launcher does not add a per-stage time limit.
 ## View, inspect, and resume
 
 ```bash
-npa workbench workflow demo view synthetic-data <run-id> --project <project>
-npa workbench workflow status <run-id> --project <project>
-npa workbench workflow logs <run-id> --project <project>
+npa workbench workflow demo view synthetic-data '<run-id>' --project '<project>'
+npa workbench workflow status '<run-id>' --project '<project>'
+npa workbench workflow logs '<run-id>' --project '<project>'
 ```
 
 `demo view` downloads only the compact, self-contained `reports/index.html` and
@@ -72,8 +72,8 @@ independent review; the HTML is a visual summary.
 Resume an interrupted execution with its exact recorded identity:
 
 ```bash
-npa workbench workflow demo run synthetic-data --project <project> \
-  --infra k8s/<rtx-context> --resume-run <run-id>
+npa workbench workflow demo run synthetic-data --project '<project>' \
+  --infra 'k8s/<rtx-context>' --resume-run '<run-id>'
 ```
 
 The existing workflow engine verifies immutable inputs, source, images, and
@@ -93,5 +93,5 @@ must establish its own result before being described as effective. This demo
 packaging change is pending fresh full GPU qualification; earlier recordings
 do not validate the new launcher or training protocol.
 
-To stop a run, use `npa workbench workflow cancel <run-id> --project <project>`.
+To stop a run, use `npa workbench workflow cancel '<run-id>' --project '<project>'`.
 Cancel and verify terminal status before removing dedicated infrastructure.

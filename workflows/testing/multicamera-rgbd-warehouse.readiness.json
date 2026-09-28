@@ -1,18 +1,18 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "88f05b2cd4948dae34004616a81a7c720906b5028a97560fa7e7dd4298714934",
+  "workflow_sha256": "b5e25d497a698e0d64f7bcd789922aecc1d9cf07cd995e570f70630c04e1f1a4",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec succeeded. Native preparation succeeded separately; the corrected standard capture/validate workflow passed for the complete immutable public warehouse input.",
+      "reason": "Schema validation and plan-spec exited 0 for this exact workflow revision with its offline preview stage. These checks did not launch GPUs. Historical full public warehouse execution is retained separately and does not qualify the changed workflow.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-warehouse.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/multicamera-rgbd-warehouse.yaml --run-id preview --json"
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Real Replicator captured 265 poses with four 1280x720 RGB-D cameras; a separate CPU worker decoded every artifact and verified calibration, synchronized native times, world points and source-attributed fused clouds. Earlier native preparation was reused unchanged and reverified.",
+      "status": "unverified",
+      "reason": "The historical capture/validate run measured 265 poses and 1,060 RGB-D views with independent decoded validation, as recorded in native-validation.json. The added offline preview and current source distribution require a fresh complete run before this workflow revision is qualified.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd.py",
         "npa/tests/workflows/test_isaac_rgbd_runtime.py",
@@ -30,8 +30,8 @@
       ]
     },
     "worker_input": {
-      "status": "verified",
-      "reason": "Native collection published 2,034 hashed public warehouse files and an exact Kit MDL descriptor. The corrected capture reverified that immutable input and every rendered frame passed independent decoded validation. Other scenes or calibrations require separate checks.",
+      "status": "unverified",
+      "reason": "Historical native collection published 2,034 hashed public warehouse files and an exact Kit MDL descriptor. The current self-preparing workflow must freshly verify its collected inputs; those historical artifacts remain evidence for the earlier run only.",
       "evidence": [
         "docs/workbench/evidence/multicamera-rgbd/native-validation.json"
       ]
