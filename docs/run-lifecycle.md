@@ -44,6 +44,16 @@ run instead of as an `ImagePullBackOff` on the cluster. If complete-path
 planning itself fails, `preflight-images` exits before any registry or
 Kubernetes probe; it never reports that failure as `images: none`.
 
+### Image override compatibility
+
+**Compatibility note:** an `--image-override` selector that matches no toolRef
+now fails before preparation, credential resolution, or staging, including with
+preflight disabled. Older versions silently ignored it. Scope shared override
+sets to each workflow; use an exact toolRef, a family prefix such as
+`workbench.fiftyone` (without glob characters), or bare `*`. Selectors for
+unselected decision branches remain valid because matching uses every state in
+the workflow. Library rendering and planning enforce the same contract.
+
 ### Quota is arithmetic, and it is checked first
 
 The plan treats `compute.disk.size.network-ssd` as a **byte allowance**,
@@ -88,14 +98,6 @@ Multi-tool workflows can pin distinct validated images with repeatable
 `--image-override TOOL_REF=IMAGE`. An exact tool override beats the optional
 global `--image` fallback, and the rendered task uses the digest that preflight
 verified.
-
-**Compatibility note:** an `--image-override` selector that matches no toolRef
-now fails before preparation, credential resolution, or staging, including with
-preflight disabled. Older versions silently ignored it. Scope shared override
-sets to each workflow; use an exact toolRef, a family prefix such as
-`workbench.fiftyone` (without glob characters), or bare `*`. Selectors for
-unselected decision branches remain valid because matching uses every state in
-the workflow. Library rendering and planning enforce the same contract.
 
 Reordering selector or digest-pin mappings preserves the selected images and
 permits completed-wave replay. Exact tool selectors take precedence over family
