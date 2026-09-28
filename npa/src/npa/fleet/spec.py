@@ -647,9 +647,9 @@ def _boolean_from(data: dict[str, Any], field_name: str, *, default: bool) -> bo
 
 
 def _optional_boolean_from(data: dict[str, Any], field_name: str) -> bool | None:
-    """Return a strictly typed optional boolean from a parsed mapping."""
+    """Preserve null as automatic selection for an optional boolean field."""
 
-    if field_name not in data:
+    if data.get(field_name) is None:
         return None
     return _boolean_from(data, field_name, default=False)
 

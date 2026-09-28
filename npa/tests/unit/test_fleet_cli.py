@@ -144,7 +144,7 @@ def test_single_gpu_preset_auto_disables_gpu_cluster() -> None:
     assert cluster.resolved_enable_gpu_cluster() is False
 
 
-@pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None])
+@pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
 @pytest.mark.parametrize(
     "field_path",
     [
@@ -163,7 +163,7 @@ def test_single_gpu_preset_auto_disables_gpu_cluster() -> None:
         ("projects", 0, "object_storage", "enabled"),
     ],
 )
-def test_fleet_boolean_fields_reject_non_booleans(
+def test_fleet_boolean_fields_validate_declared_types(
     field_path: tuple[str | int, ...], invalid_value: object
 ) -> None:
     data = _base_mapping()
@@ -174,8 +174,55 @@ def test_fleet_boolean_fields_reject_non_booleans(
         target = target[key]
     target[field_path[-1]] = invalid_value
 
+    if invalid_value is None and field_path[-1] == "enable_gpu_cluster":
+        cluster = spec_from_mapping(data).projects[0].clusters[0]
+        assert cluster.enable_gpu_cluster is None
+        return
     with pytest.raises(FleetSpecError, match="must be a boolean"):
         spec_from_mapping(data)
+
+
+@pytest.mark.parametrize(
+    "inherited,platform,preset,expected",
+    [
+        (True, "gpu-rtx6000", "1gpu-24vcpu-218gb", False),
+        (False, "gpu-h200-sxm", "8gpu-128vcpu-1600gb", True),
+    ],
+)
+@pytest.mark.parametrize("null_location", ["defaults", "cluster"])
+def test_fleet_plan_preserves_null_gpu_cluster_auto_selection(
+    tmp_path: Path,
+    inherited: bool,
+    platform: str,
+    preset: str,
+    expected: bool,
+    null_location: str,
+) -> None:
+    data = _base_mapping()
+    data["defaults"].update(
+        enable_gpu_cluster=inherited,
+        gpu_nodes={"count": 1, "platform": platform, "preset": preset},
+        infiniband_fabric="fabric-a",
+    )
+    data["projects"] = [{"name": "a", "clusters": [{"name": "automatic"}]}]
+    target = data["defaults"]
+    if null_location == "cluster":
+        target = data["projects"][0]["clusters"][0]
+    target["enable_gpu_cluster"] = None
+    path = tmp_path / "fleet.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["fleet", "plan", "--spec", str(path), "--output", "json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert (
+        json.loads(result.output)["projects"][0]["clusters"][0]["enable_gpu_cluster"]
+        is expected
+    )
+    cluster = load_spec(path).projects[0].clusters[0]
+    assert cluster.enable_gpu_cluster is None
+    assert f"enable_gpu_cluster = {str(expected).lower()}" in render_tfvars(cluster)
 
 
 def test_fleet_boolean_fields_preserve_merged_boolean_values() -> None:
