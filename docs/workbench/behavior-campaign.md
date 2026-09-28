@@ -10,6 +10,33 @@ compute on a wider evaluation. The library accepts any nonempty subset of the
 official 100-task registry, including all 100 tasks, so the same contracts scale
 without changing case-selection rules.
 
+## Scope and validation status
+
+This is an evaluation and training pipeline. It does not provide a winning
+policy, a published BEHAVIOR runtime image, or an official challenge submission.
+Operators supply licensed assets, an authorized runtime, and a pinned policy.
+
+| Capability | Evidence and boundary |
+| --- | --- |
+| Fixed policy evaluation and resumable campaigns | Completed GPU panels with original metrics, decoded videos, and verified recovery/publication paths. |
+| Comet training and selected checkpoint serving | Real training, checkpoint restoration, and fresh-process action parity. Lower training loss has not established better task performance. |
+| Comet TRAIN recording | Five verified episodes, including one complete task success. Recorded data does not itself authorize a training cohort. |
+| Native TRAIN semantic recording | Experimental, explicitly enabled with `--native-train-trace` and a source-bound admission. End-to-end collection is not yet qualified. |
+| Alternative execution, conditional replanning, and semantic monitors | Experimental research components. No improved candidate has been promoted; monitors are not enabled by the standard evaluator. |
+
+The managed policy defaults to its `native` execution variant. Alternative
+execution requires `--policy-execution-variant`; TRAIN recorders require their
+own flags and admissions. Neither recorder is permitted on DEV or REPORT.
+The reference workflow retains placeholder runtime and storage settings until
+the operator supplies and verifies them.
+
+The latest complete ten-case DEV comparison used BEHAVIOR v3.9.3: released
+Native RLC scored mean Q **0.60** with **4/10 successes**; the selected trained
+candidate scored **0.2667** with **0/10 successes**. The candidate regressed.
+REPORT remains sealed, and policy memory compliance with the contest limit
+remains unverified. Earlier dated reports describe separate experiments and
+must not be pooled into this comparison.
+
 ## What a campaign freezes
 
 `freeze_policy_identity()` requires immutable checkpoint and serving artifacts.

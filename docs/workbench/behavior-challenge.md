@@ -7,6 +7,21 @@ SkyPilot. A separately served policy receives RGB, depth, and robot
 proprioception and returns robot actions over WebSocket. This workflow evaluates
 a fixed policy; policy serving uses pinned upstream implementations.
 
+## Current scope
+
+The [campaign guide](behavior-campaign.md#scope-and-validation-status) is the
+current entry point for reusable evaluation, training, and recording support.
+It distinguishes completed live validation from experimental components.
+The pipeline has not produced a promoted competitive policy or an official
+submission. The runtime image and licensed payloads remain operator supplied.
+
+The results below are dated experiment records, not one combined leaderboard.
+The latest complete v3.9.3 DEV comparison is documented in the campaign guide;
+its released Native baseline scored Q=0.60 and 4/10 successes, while the trained
+candidate regressed to Q=0.2667 and 0/10 successes.
+
+## Earlier experiments
+
 The [September 21 recovery experiment plan](behavior-recovery-experiments-2026-09-21.md)
 records the fixed-weight execution comparisons and stock-anchored training
 recipe. Its completed picking-up-trash development panels use the same frozen

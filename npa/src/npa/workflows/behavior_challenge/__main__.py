@@ -42,7 +42,11 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--policy-trained-input-root", type=Path)
     parser.add_argument("--train-experience", action="store_true")
     parser.add_argument("--train-experience-depth", action="store_true")
-    parser.add_argument("--native-train-trace", action="store_true")
+    parser.add_argument(
+        "--native-train-trace",
+        action="store_true",
+        help="Experimental audit-only Native TRAIN recording; requires admission",
+    )
     parser.add_argument("--native-train-admission", type=Path)
     parser.add_argument("--policy-specialist-equivalence-receipt", type=Path)
     parser.add_argument("--policy-specialist-equivalence-sha256")
@@ -59,6 +63,7 @@ def _add_policy_arguments(parser: argparse.ArgumentParser) -> None:
             "native-stage-transition-refresh",
         ),
         default="native",
+        help="Use native execution by default; other variants are experimental",
     )
 
 
