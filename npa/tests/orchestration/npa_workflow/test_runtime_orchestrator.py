@@ -2588,6 +2588,53 @@ def test_persistent_status_errors_cancel_the_job_and_fail(tmp_path: Path) -> Non
     assert report.waves[0]["cancellation"]["state"] == "requested"
 
 
+@pytest.mark.parametrize("recovered_status", ["RUNNING", "SUCCEEDED", "UNAVAILABLE"])
+def test_resume_after_status_outage_reconciles_original_job_without_resubmission(
+    tmp_path: Path, recovered_status: str
+) -> None:
+    spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
+    store = MemoryStore()
+    first = _executor(spec, store=store, status_fn=BoomStatus(failures=99))
+    failed = run_workflow_runtime(
+        spec, run_id="rt-1", executor=first, options=first.options
+    )
+    original = failed.waves[0]
+    assert failed.status == "failed"
+    assert original["job_id"] == "1"
+    assert original["recovery_decision"] == "block_relaunch"
+    reconciled = []
+
+    def reconcile(name: str, *, job_id: str = ""):
+        reconciled.append((name, job_id))
+        return SimpleNamespace(
+            outcome="unavailable" if recovered_status == "UNAVAILABLE" else "found",
+            job_id=job_id,
+            status=recovered_status,
+            workload_observable=True,
+        )
+
+    submitter = FakeSubmitter()
+    resumed = _executor(
+        spec,
+        store=store,
+        submitter=submitter,
+        reconcile_fn=reconcile,
+        options=RuntimeOptions(poll_seconds=0, max_wait_seconds=60, resume=True),
+    )
+    report = run_workflow_runtime(
+        spec, run_id="rt-1", executor=resumed, options=resumed.options
+    )
+    assert reconciled[0] == (original["job_name"], original["job_id"])
+    assert report.waves[0]["job_id"] == original["job_id"]
+    assert all(call["job_name"] != original["job_name"] for call in submitter.calls)
+    if recovered_status == "UNAVAILABLE":
+        assert report.status == "failed"
+        assert submitter.calls == []
+    else:
+        assert report.status == "succeeded"
+        assert report.waves[0]["adopted"] is True
+
+
 def test_unknown_status_result_is_counted_as_a_failed_query(tmp_path: Path) -> None:
     spec = load_spec(_write_spec(tmp_path, FANOUT_SPEC))
     cancels: list[dict[str, Any]] = []
@@ -5883,3 +5930,42 @@ def test_recovery_compares_output_uris_and_retains_invalid_declarations(
         {"schema": "missing-uri"},
     ]
     assert ledger.outputs_not_from_succeeded_waves(outputs) == ["s3://example/new/", ""]
+
+
+@pytest.mark.parametrize("boundary", ["history", "outputs"])
+@pytest.mark.parametrize("error_class", [PermissionError, ValueError])
+def test_output_reuse_persists_sanitized_exception_type(
+    tmp_path, mocker, monkeypatch, runtime_sdk_submission, boundary, error_class
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    executor = _reuse_executor(case)
+    with monkeypatch.context() as failing:
+        target, name = (
+            (case[2], "list_artifacts")
+            if boundary == "history"
+            else (executor, "_output_checker")
+        )
+        failing.setattr(
+            target,
+            name,
+            mocker.Mock(
+                side_effect=error_class("access token=synthetic-sensitive-value")
+            ),
+        )
+        with pytest.raises(NpaWorkflowError, match="output-reuse"):
+            executor.execute(case[1])
+    blocked = case[2].read_runtime_state().waves[-1]
+    assert blocked["output_reuse_error_type"] == error_class.__name__
+    assert "synthetic-sensitive-value" not in json.dumps(blocked)
+    events = SupervisorLedger(case[2]).events(case[3]["logical_launch_id"])
+    terminal = [event for event in events if event["phase"] == "attempt_terminal"]
+    assert terminal[-1]["attempt"]["output_reuse_error_type"] == error_class.__name__
+    assert "synthetic-sensitive-value" not in json.dumps(events)
+    assert executor._submitter.calls == []
+    if boundary == "outputs":
+        assert blocked["sky_status"] == "CANCELLED"
+        assert blocked["cancellation"]["state"] == "verified"
+    resumed = _reuse_executor(case)
+    assert resumed.execute(case[1])["status"] == "ok"
+    assert resumed._submitter.calls == []
+    assert case[2].read_runtime_state().waves[-1]["output_reuse_error_type"] == ""
