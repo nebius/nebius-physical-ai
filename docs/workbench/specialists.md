@@ -4,6 +4,10 @@ The [matched repair benchmark](../../npa/examples/specialists/repair_benchmark/R
 compares Astra alone with Astra coordinating routed Token Factory specialists
 on the same three code repairs and native Workbench workflow. It retains all
 three pairs and accounts for coordinator, router, worker and recovery usage.
+The [September 27 results](specialists-matched-repair-experiment.md) passed every
+arm and reduced median model cost by 74.8% conservatively. Speed was mixed:
+2.5% shorter median elapsed time, but a slower mean after a delegation failure.
+The same report describes the resulting ownership-receipt fix.
 
 The [multi-model repair campaign](specialists-multimodel-repair.md) shows Flash
 and full GLM making production code changes and verifying six-case MuJoCo/LeRobot

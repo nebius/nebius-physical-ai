@@ -10,6 +10,10 @@ These are known regressions from a public ancestor, not newly discovered bugs.
 Current source provides the calibrated reference. Candidate changes stay in
 disposable copies. No private repository or routing service is required.
 
+The [September 27 measured report](../../../../docs/workbench/specialists-matched-repair-experiment.md)
+retains all six arms, including recovery costs and mixed timing results. It also
+records a delegation-lock fix made after the measured snapshot was frozen.
+
 ## Fixed comparison
 
 [`protocol.json`](protocol.json) declares three counterbalanced pairs before
