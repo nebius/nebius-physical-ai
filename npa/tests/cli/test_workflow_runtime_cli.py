@@ -2160,8 +2160,9 @@ def test_cli_denied_recorded_prefix_stops_before_update_or_launch(
         captured.update(kwargs)
         return SimpleNamespace()
 
-    monkeypatch.setattr(
-        workflow_cli, "_execution_target_preflight", REAL_EXECUTION_TARGET_PREFLIGHT
+    # Share the fixture's patch manager so teardown restores the real preflight.
+    mocker.patch.object(
+        workflow_cli, "_execution_target_preflight", new=REAL_EXECUTION_TARGET_PREFLIGHT
     )
     monkeypatch.setattr(execution_preflight, "resolve_execution_target", resolve)
     monkeypatch.setattr(
