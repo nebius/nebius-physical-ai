@@ -13,8 +13,8 @@
 # container. Without a system python3, rsync, passwordless sudo for the runtime user and
 # the system interpreter first on PATH, provisioning fails with
 # "Failed to get ssh user for pod ...: container not found (ray-node)" — the exact
-# failure the Isaac Lab image hit on npa-rtxpro-mk8s (see
-# ../isaac-lab/Dockerfile.k8s-prereqs for the live bisection).
+# failure the Isaac Lab image hit on a live Kubernetes GPU cluster. The canonical Isaac
+# installer records the bisection; an unsafe repair derivative is deliberately not retained.
 #
 # The SONIC base already ships python3/python3-pip, so this adds the remaining three
 # ingredients. Group membership (never a recursive chmod) keeps the layer tiny, and the

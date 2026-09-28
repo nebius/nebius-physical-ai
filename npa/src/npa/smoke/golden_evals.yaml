@@ -1429,7 +1429,10 @@ containers:
       base_image: npa-genesis
       network: none
       external_fetch: [pypi]
-      notes: Build py_compiles sim2real_envgen; no open ports.
+      notes: >-
+        Build py_compiles sim2real_envgen; the golden eval removes PYTHONPATH and
+        proves the exact source plus compatibility shim remain readable to the
+        non-root runtime user. No open ports.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_sim2real_envgen_functional

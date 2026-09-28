@@ -55,6 +55,7 @@ from npa.deploy.publish_public import (
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
     verify_gpu_accepted_publication_source as REAL_GPU_ACCEPTANCE_GATE,
     verify_ltx_publication_source as REAL_LTX_PUBLICATION_GATE,
+    verify_publication_provenance_labels as REAL_PROVENANCE_LABEL_GATE,
     verify_wan_publication_source as REAL_WAN_PUBLICATION_GATE,
 )
 
@@ -96,6 +97,11 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         publish_public,
         "verify_gpu_accepted_publication_source",
         lambda item: (True, "test fixture: GPU acceptance gate verified"),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "verify_publication_provenance_labels",
+        lambda item: (True, "test fixture: provenance label gate verified"),
     )
 
 
@@ -288,6 +294,93 @@ def test_publication_accepts_exact_digest_bootstrap_attestation(monkeypatch) -> 
     )
     assert ok
     assert digest in detail
+
+
+@pytest.mark.parametrize(
+    "label_key",
+    ["npa.base_image", "NPA.BASE_IMAGE", " npa.base_image "],
+)
+def test_publication_refuses_operator_base_image_provenance_label(
+    monkeypatch, label_key: str
+) -> None:
+    from npa.deploy import publish_public
+
+    digest = "sha256:" + "e" * 64
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {
+            "config": {
+                "Labels": {label_key: "registry.operator.example/private/base:tag"}
+            }
+        },
+    )
+
+    ok, detail = REAL_PROVENANCE_LABEL_GATE(
+        PublishItem(
+            tool="envgen",
+            source_ref=f"source.example/npa-envgen@{digest}",
+            target_ref="target.example/npa-envgen:release",
+        )
+    )
+
+    assert not ok
+    assert "npa.base_image" in detail
+    assert "operator registry path" in detail
+
+
+def test_publication_accepts_registry_neutral_base_image_provenance(
+    monkeypatch,
+) -> None:
+    from npa.deploy import publish_public
+
+    digest = "sha256:" + "f" * 64
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: {
+            "config": {
+                "Labels": {
+                    "npa.base.image": "npa-envgen",
+                    "org.opencontainers.image.revision": "a" * 40,
+                }
+            }
+        },
+    )
+
+    ok, detail = REAL_PROVENANCE_LABEL_GATE(
+        PublishItem(
+            tool="envgen",
+            source_ref=f"source.example/npa-envgen@{digest}",
+            target_ref="target.example/npa-envgen:release",
+        )
+    )
+
+    assert ok
+    assert detail == "no operator-specific base-image provenance label"
+
+
+def test_preflight_runs_provenance_label_gate_for_every_image(monkeypatch) -> None:
+    from npa.deploy import publish_public
+
+    item = PublishItem(
+        tool="cosmos",
+        source_ref="source.example/npa-cosmos@sha256:" + "a" * 64,
+        target_ref="target.example/npa-cosmos:release",
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda ref, **_: (True, "ok")
+    )
+    checked: list[PublishItem] = []
+
+    def gate(candidate: PublishItem) -> tuple[bool, str]:
+        checked.append(candidate)
+        return True, "clean"
+
+    monkeypatch.setattr(publish_public, "verify_publication_provenance_labels", gate)
+
+    assert publish_public.preflight_sources([item]) == []
+    assert checked == [item]
 
 
 @pytest.mark.parametrize("tool", ["cosmos"])

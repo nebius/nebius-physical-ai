@@ -52,7 +52,8 @@ resources:
               securityContext:
                 runAsNonRoot: true
                 privileged: false
-                allowPrivilegeEscalation: false
+                # SkyPilot's non-root bootstrap invokes passwordless sudo.
+                allowPrivilegeEscalation: true
                 capabilities:
                   drop: [ALL]
 initial: byof-run

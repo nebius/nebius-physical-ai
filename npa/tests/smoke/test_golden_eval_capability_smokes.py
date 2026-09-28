@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib.util import find_spec
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -19,6 +20,48 @@ def test_sim2real_envgen_raw_generation_passes() -> None:
 
     result = check_raw_env_generation()
     assert result.ok, result.detail
+
+
+def test_sim2real_envgen_runtime_readability_probe_is_non_root_and_drops_pythonpath(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.smoke import test_sim2real_envgen_functional as envgen_smoke
+
+    observed: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        observed["args"] = args
+        observed["environment"] = kwargs["env"]
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout="/opt/npa/compat/tetgen.py | /opt/npa/src/npa/workflows/sim2real_envgen.py\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(envgen_smoke.os, "geteuid", lambda: 1000)
+    monkeypatch.setenv("PYTHONPATH", "/operator/overlay")
+    monkeypatch.setattr(envgen_smoke.subprocess, "run", fake_run)
+
+    result = envgen_smoke.check_non_root_runtime_readability()
+
+    assert result.ok, result.detail
+    assert observed["args"][:2] == [envgen_smoke.sys.executable, "-c"]
+    assert "PYTHONPATH" not in observed["environment"]
+    assert "uid=1000" in result.detail
+
+
+def test_sim2real_envgen_runtime_readability_probe_rejects_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.smoke import test_sim2real_envgen_functional as envgen_smoke
+
+    monkeypatch.setattr(envgen_smoke.os, "geteuid", lambda: 0)
+
+    result = envgen_smoke.check_non_root_runtime_readability()
+
+    assert not result.ok
+    assert "unexpectedly ran as root" in result.detail
 
 
 def test_cosmos3_reason_cache_wiring_passes() -> None:

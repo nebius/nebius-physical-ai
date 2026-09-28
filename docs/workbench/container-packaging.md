@@ -272,6 +272,15 @@ Required for all workbench images:
    set `allowPrivilegeEscalation: false`, and use `RuntimeDefault` seccomp
    (detection-training is the reference template).
 
+Do not serialize the build-time base reference into OCI config. In particular,
+the retired `npa.base_image` label exposed operator registry paths when
+`BASE_IMAGE` selected a private or staging parent. A repository-wide guard scans
+every `Dockerfile*` variant and rejects that key. The public-release preflight
+also reads each exact-digest OCI config and refuses the label, including when it
+was inherited from an ancestor image. Registry-neutral lineage labels such as
+`npa.base.image="npa-envgen"` may name a logical public foundation without copying
+its resolved registry reference.
+
 A digest pin records exact ancestry; it does not imply a clean-source rebuild.
 `detection-training` currently chains from a previously accepted
 `npa-detection-training` digest, and `lancedb` shares that accepted detector

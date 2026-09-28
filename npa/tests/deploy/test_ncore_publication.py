@@ -705,6 +705,11 @@ def test_preflight_calls_ncore_gate_after_quarantine_is_lifted(monkeypatch):
     monkeypatch.setattr(images, "PUBLICATION_QUARANTINE_TOOLS", frozenset())
     monkeypatch.setattr(publish, "_crane_manifest_readable", lambda ref: (True, "ok"))
     monkeypatch.setattr(
+        publish,
+        "verify_publication_provenance_labels",
+        lambda item: (True, "ok"),
+    )
+    monkeypatch.setattr(
         publish, "verify_bootstrap_publication_source", lambda item: (True, "ok")
     )
     monkeypatch.setattr(

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 
 import pytest
 
@@ -131,6 +132,61 @@ def _dockerfile_instructions(text: str) -> list[str]:
     if current:
         instructions.append(" ".join(current))
     return instructions
+
+
+def _declares_operator_base_image_label(text: str) -> bool:
+    """Detect the retired label without confusing it with safe provenance keys."""
+
+    key = r'(?:npa\.base_image|"npa\.base_image"|\'npa\.base_image\')'
+    assignment = re.compile(rf"(?<!\S){key}\s*=", re.IGNORECASE)
+    legacy_first_key = re.compile(rf"^{key}\s+", re.IGNORECASE)
+    for instruction in _dockerfile_instructions(text):
+        directive, separator, body = instruction.partition(" ")
+        if not separator or directive.upper() != "LABEL":
+            continue
+        if assignment.search(body) or legacy_first_key.search(body):
+            return True
+    return False
+
+
+@pytest.mark.parametrize(
+    ("dockerfile", "expected"),
+    (
+        ('LABEL npa.base_image="${BASE_IMAGE}"', True),
+        ('LABEL "npa.base_image" = "${BASE_IMAGE}"', True),
+        ("LABEL 'npa.base_image' ${BASE_IMAGE}", True),
+        (
+            (
+                'LABEL npa.tool="envgen" \\\n'
+                '      npa.base_image="registry.example/operator/base:tag"'
+            ),
+            True,
+        ),
+        ('LABEL npa.base.image="npa-envgen"', False),
+        ('LABEL description="do not serialize npa.base_image values"', False),
+        ('ARG npa.base_image="${BASE_IMAGE}"', False),
+    ),
+)
+def test_operator_base_image_label_guard_recognizes_only_label_keys(
+    dockerfile: str, expected: bool
+) -> None:
+    assert _declares_operator_base_image_label(dockerfile) is expected
+
+
+def test_no_workbench_dockerfile_serializes_operator_base_image_references() -> None:
+    """OCI config must not disclose the registry path used by a trusted builder."""
+
+    checked: list[str] = []
+    for dockerfile in sorted(DOCKER_ROOT.rglob("Dockerfile*")):
+        checked.append(str(dockerfile.relative_to(DOCKER_ROOT)))
+        assert not _declares_operator_base_image_label(
+            dockerfile.read_text(encoding="utf-8")
+        ), (
+            f"{dockerfile}: npa.base_image exposes the selected base reference in "
+            "the public OCI config; use a registry-neutral provenance label instead"
+        )
+
+    assert checked, "guard did not inspect any workbench Dockerfiles"
 
 
 def test_openssh_install_layers_do_not_bake_reusable_host_keys() -> None:
