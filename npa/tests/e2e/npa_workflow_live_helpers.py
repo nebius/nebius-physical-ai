@@ -303,6 +303,12 @@ def seed_live_workflow_inputs(
 
     from npa.clients.project_credentials import s3_client_for_project
 
+    if spec_name == "field-failure-policy-improvement.yaml":
+        pytest.skip(
+            "Navigation requires operator failure data and sealed adapters. Use "
+            "test_field_failure_policy_live_e2e.py with NPA_FIELD_FAILURE_LIVE_CONFIG."
+        )
+
     if spec_name == "xr1-antioch-finetune.yaml":
         pytest.skip(
             "XR1 requires an operator-collected, sealed Antioch dataset, pinned model assets, "

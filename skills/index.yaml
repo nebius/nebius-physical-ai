@@ -1044,6 +1044,9 @@ skills:
       - type: workflow_yaml
         paths:
           - workflows/main/sim2real.yaml
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/field-failure-policy-improvement.yaml
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
