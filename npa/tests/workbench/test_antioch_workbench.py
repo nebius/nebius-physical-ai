@@ -6,6 +6,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 from typing import Any
+from unittest.mock import Mock
 
 import numpy as np
 import pytest
@@ -131,6 +132,50 @@ def test_current_antioch_phases_map_to_durable_status(
     phase: str, expected: str
 ) -> None:
     assert _local_status(phase, "") == expected
+
+
+@pytest.mark.parametrize("phase", ["completed", "finished", "errored"])
+def test_errored_scenario_is_never_reported_as_completed(phase):
+    assert _local_status(phase, "errored") == "failed"
+
+
+def test_scenario_cli_preserves_literal_strings_and_typed_scalar_values(tmp_path):
+    cli = AntiochCli("antioch")
+    cli._run = Mock(return_value=Mock(payload=[{"scenario_run_id": "safe-run"}]))
+    prompt = 'Inspect aisle "A"; $(literal text)'
+    result = cli.submit_scenario(
+        tmp_path,
+        "warehouse_patrol",
+        scenario_case="tracking",
+        parameters={
+            "view": "overview",
+            "prompt": prompt,
+            "speed": 0.8,
+            "frames": 75,
+            "record": False,
+        },
+    )
+    assert result == {"scenario_run_id": "safe-run"}
+    assert cli._run.call_args.args[0] == [
+        "scenario",
+        "run",
+        "--scenario",
+        "warehouse_patrol",
+        "--case",
+        "tracking",
+        "--set",
+        "frames=75",
+        "--set",
+        "prompt=" + prompt,
+        "--set",
+        "record=false",
+        "--set",
+        "speed=0.8",
+        "--set",
+        "view=overview",
+        "--detach",
+        "--json",
+    ]
 
 
 def test_collection_fails_closed_for_legacy_state_without_dataset_metadata() -> None:
@@ -610,6 +655,85 @@ class FakeCli:
 
     def rerun(self, *args, **kwargs):  # noqa: ANN002, ANN003, ANN201
         return {"suite_run_id": "suite-rerun", "invocation_id": "invoke-rerun"}
+
+
+@pytest.fixture
+def scenario_recovery(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    request = _submit().model_copy(
+        update={
+            "suite": "",
+            "scenario": "warehouse_patrol",
+            "scenario_case": "tracking",
+            "parameters": {"speed": 0.8, "frames": 75, "record": True, "view": "wide"},
+            "expected_cli_version": "0.4.288",
+        }
+    )
+    manager = AntiochManager(storage=MemoryStorage())
+    cli = FakeCli()
+    cli.submit_scenario = Mock(
+        side_effect=[
+            AntiochCliError("staging interrupted", retryable=True),
+            {"scenario_run_id": "scenario-safe", "invocation_id": "invoke-safe"},
+        ]
+    )
+    monkeypatch.setattr(manager, "_cli", lambda *args: cli)
+    monkeypatch.setattr(
+        "npa.workbench.antioch.manager.stage_project",
+        lambda *args, **kwargs: (tmp_path, object(), "c" * 64),
+    )
+    with pytest.raises(AntiochOperationError, match="staging interrupted"):
+        manager.submit(request)
+    resume = ResumeRequest(
+        output_path=request.output_path,
+        workflow_run=request.workflow_run,
+        state_id=request.state_id,
+    )
+    return manager, request, resume, cli
+
+
+def test_reconcile_preserves_overrides_while_submission_is_owned(scenario_recovery):
+    manager, request, resume, cli = scenario_recovery
+    record = manager._record_for(resume)
+    owned, acquired = manager.states.acquire_submission(record, "active-owner")
+    assert acquired
+    result = manager.reconcile(resume)
+    assert result.submission_owner == owned.submission_owner
+    assert result.parameters == request.parameters
+    assert result.scenario_case == request.scenario_case
+    assert result.expected_cli_version == request.expected_cli_version
+    assert cli.submit_scenario.call_count == 1
+
+
+def test_reconcile_replays_original_scenario_after_lease_expiry(scenario_recovery):
+    manager, request, resume, cli = scenario_recovery
+    record = manager._record_for(resume)
+    manager.states.update(
+        record,
+        submission_owner="old-owner",
+        submission_lease_expires_at="2000-01-01T00:00:00Z",
+    )
+    recovered = manager.reconcile(resume)
+    assert recovered.remote_id == "scenario-safe"
+    assert recovered.request_sha256 == record.request_sha256
+    assert cli.submit_scenario.call_args.kwargs == {
+        "scenario_case": request.scenario_case,
+        "parameters": request.parameters,
+    }
+    assert manager.submit(request).remote_id == "scenario-safe"
+    assert cli.submit_scenario.call_count == 2
+
+
+def test_legacy_missing_overrides_fail_before_an_altered_remote_submit(
+    scenario_recovery,
+):
+    manager, _, resume, cli = scenario_recovery
+    record = manager._record_for(resume)
+    manager.states.update(record, parameters={}, scenario_case="")
+    with pytest.raises(AntiochOperationError) as caught:
+        manager.reconcile(resume)
+    assert caught.value.error_type == "submission_request_unavailable"
+    assert "retry submit with the original" in str(caught.value)
+    assert cli.submit_scenario.call_count == 1
 
 
 def test_idempotent_retry_restart_reconcile_and_cancel(

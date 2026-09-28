@@ -216,8 +216,13 @@ jobs:
 
       - name: Reclaim unused hosted-runner SDK space
         run: |
+          set -euo pipefail
           # CUDA images and Trivy's exports must coexist on this disposable runner.
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc
+          # These trees are disjoint; delete them concurrently so runner-image
+          # size does not add several serial minutes to every matrix entry.
+          printf '%s\0' \
+            /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc | \
+            xargs -0 -r -n1 -P4 sudo rm -rf --
           df -h /
 
       - name: Scan the exact inventory entry

@@ -123,7 +123,7 @@ def test_live_acceptance_parses_stdout_and_retains_stderr(monkeypatch, tmp_path)
     stdout = (recovery / "cli-stdout.txt").read_text()
     stderr = (recovery / "cli-stderr.txt").read_text()
     assert json.loads(stdout)["completed"] == 8
-    assert "command diagnostics were separated from JSON stdout" in stderr
+    assert "command diagnostics were removed from JSON stdout" in stderr
     assert "command diagnostics" not in stdout
     with pytest.raises(json.JSONDecodeError):
         json.loads((recovery / "cli-output.txt").read_text())

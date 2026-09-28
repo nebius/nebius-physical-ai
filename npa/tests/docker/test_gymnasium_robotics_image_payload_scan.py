@@ -1,0 +1,253 @@
+from __future__ import annotations
+
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import subprocess
+import tarfile
+import textwrap
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[3]
+SCANNER = ROOT / "npa/scripts/scan_image_gymnasium_robotics_payload.py"
+WORKFLOW = ROOT / ".github/workflows/publish-public-images.yml"
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "manifest-bytes", "duplicate", "config-digest"]
+)
+def test_workflow_authenticates_manifest_before_reading_config(
+    tmp_path: Path, mutation: str | None
+) -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    start = text.index('            metadata_manifest="$RUNNER_TEMP/')
+    end = text.index("            expected_layer_diff_ids_json=", start)
+    fragment = textwrap.dedent(text[start:end])
+    expected_config = "b" * 64
+    manifest = json.dumps(
+        {
+            "config": {
+                "digest": "invalid"
+                if mutation == "config-digest"
+                else f"sha256:{expected_config}"
+            }
+        }
+    ).encode()
+    digest = hashlib.sha256(manifest).hexdigest()
+    if mutation == "manifest-bytes":
+        manifest += b" "
+    with tarfile.open(tmp_path / "gymnasium-robotics.tar", "w") as archive:
+        for _ in range(2 if mutation == "duplicate" else 1):
+            member = tarfile.TarInfo(f"blobs/sha256/{digest}")
+            member.size = len(manifest)
+            archive.addfile(member, io.BytesIO(manifest))
+    result = subprocess.run(
+        [
+            "bash",
+            "-euo",
+            "pipefail",
+            "-c",
+            fragment + 'printf "%s" "$expected_config_sha256"',
+        ],
+        env={
+            **os.environ,
+            "TOOL": "gymnasium-robotics",
+            "RUNNER_TEMP": str(tmp_path),
+            "metadata_image_digest": f"sha256:{digest}",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if mutation is None:
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == expected_config
+    else:
+        assert result.returncode != 0
+        assert result.stdout == ""
+
+
+def test_scanner_covers_config_all_layers_whiteouts_and_rootfs_entries() -> None:
+    text = SCANNER.read_text(encoding="utf-8")
+    whitespace_independent_text = "".join(text.split())
+    assert "_zip_central_filename_bytes(path,info)" in whitespace_independent_text
+    assert 'layer_names=entry.get("Layers")' in whitespace_independent_text
+    assert (
+        "ifnotisinstance(layer_names,list)ornotlayer_names:"
+        in whitespace_independent_text
+    )
+    assert "iflen(layer_names)>MAX_ORDERED_LAYERS:" in whitespace_independent_text
+    assert (
+        "_validated_tar_members(path,content,max_members="
+        "MAX_NESTED_ARCHIVE_MEMBERS)" in whitespace_independent_text
+    )
+    for token in (
+        '"manifest.json"',
+        '_scan_decoded_member_bytes("exact image config", config_raw)',
+        "_docker_save_config_digest(config_name) != config_digest",
+        're.fullmatch(r"([0-9a-f]{64})\\.json", config_name)',
+        're.fullmatch(r"blobs/sha256/([0-9a-f]{64})", config_name)',
+        'config_rootfs.get("diff_ids") != layer_diff_ids',
+        '_scan_raw_blob_bytes(f"raw layer bytes: {layer_name}", raw)',
+        '_scan_raw_blob_bytes("complete Docker-save archive", archive_bytes)',
+        "_scan_archive_representation_bytes(",
+        "_validate_zip_compressed_stream(path, info, content[data_start:data_end])",
+        "stream.unused_data",
+        'f"decoded member: {path}"',
+        'f"raw archive member: {path}"',
+        "_whiteout_metadata(layer, item, path, layer_name)",
+        'leaf == ".wh..wh..opq"',
+        'leaf.startswith(".wh.")',
+        "rootfs[path] = content",
+        'kind = "symlink" if item.issym() else "hardlink"',
+        "zipfile.is_zipfile(io.BytesIO(content))",
+        "compression_kind = next(",
+        "is_tar = _looks_like_tar(content)",
+        "MAX_NESTED_ARCHIVE_MEMBERS = 10_000",
+        "MAX_OCI_DESCRIPTOR_GRAPH_VISITS = MAX_DOCKER_SAVE_OUTER_MEMBERS",
+        "_bind_docker_save_oci_graph(",
+        "_oci_manifest_candidates(",
+        "unreferenced OCI graph blobs",
+        "Docker-save OCI runnable manifest does not bind manifest.json config",
+        "Docker-save OCI runnable manifest does not bind manifest.json layers",
+        "graph_budget.reserve(label)",
+        "graph_budget.validated_blobs.get(digest)",
+        "nonzero tar link body",
+        "max(disk_entries, total_entries) > MAX_NESTED_ARCHIVE_MEMBERS",
+        "_validated_zip_infos(path, content, budget=budget)",
+        "_validate_zip_data_descriptor(path, descriptor, info)",
+        "zip local filename does not match central directory",
+        "unsupported zip extra field",
+        "zip local descriptor metadata is not zero",
+        'struct.unpack("<3L", fields)',
+        "_nested_archive_members(",
+        "nested_budget=nested_budget",
+        "allowed_system_wheel_path=",
+        '"requirements.lock": "30d48e4b2bfcf0c590b47ed569393104dd759476d720a608aa9f441cd9976e4a"',
+        "KNOWN_FORBIDDEN_CONTENT_SHA256",
+        "forbidden upstream/runtime byte",
+        "six-boundary runtime delivery classification changed",
+        "runtime artifact closure is incomplete",
+        "neutral image corresponding-source closure is incomplete",
+        "final image must declare the non-root ubuntu user",
+        '"unresolved_findings": 0',
+        '"upstream_runtime_payload_count": 0',
+        '"shadow_asset_count": 0',
+        '"runtime_cache_entry_count": 0',
+        '"whiteout_metadata_sha256"',
+        '"release_authorized": False',
+    ):
+        assert token in text
+
+
+def test_product_scan_is_staged_before_push_and_after_exact_pull() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    assert text.count("scan_image_gymnasium_robotics_payload.py") == 2
+    before_push = text.index("scan_image_gymnasium_robotics_payload.py")
+    push = text.index('docker push "$IMAGE"')
+    after_pull = text.rindex("scan_image_gymnasium_robotics_payload.py")
+    assert before_push < push < after_pull
+    for gate in (
+        "Generate pre-publication SBOM",
+        "Attest exact pushed digest provenance",
+        "Attest exact pushed digest SBOM",
+        "--scanners vuln,secret,license",
+        'anonymous_config="$(mktemp -d)"',
+    ):
+        assert gate in text
+
+
+def test_neutral_payload_scan_is_verified_before_development_image_push() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    source_gate = text.index(
+        "Require Gymnasium neutral payload scan before development push"
+    )
+    push = text.index('docker push "$IMAGE"')
+    assert source_gate < push
+    for token in (
+        '--metadata-file "$RUNNER_TEMP/${TOOL}-build-metadata.json"',
+        '.["containerimage.digest"]',
+        'payload="$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"',
+        '.status == "passed"',
+        ".distributed_blob_scan_complete == true",
+        ".accepted_manifest_present == false",
+        ".release_authorized == false",
+    ):
+        assert token in text
+    first_scan = text.index(
+        "npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py"
+    )
+    first_step = text.rfind("      - name:", 0, first_scan)
+    first_step_text = text[first_step:first_scan]
+    assert 'if [ "$TOOL" = gymnasium-robotics ]; then' in first_step_text
+    assert 'metadata_config_digest="$(jq -er' in first_step_text
+    assert "containerimage.digest" in first_step_text
+    assert '"blobs/sha256/${metadata_image_digest#sha256:}"' in first_step_text
+    assert "sha256sum --check --status" in first_step_text
+    first_output = text.index(
+        '"$RUNNER_TEMP/${TOOL}-gymnasium-payload.json"', first_scan
+    )
+    first_invocation = text[first_scan:first_output]
+    assert '--expected-config-sha256 "$expected_config_sha256"' in first_invocation
+    assert (
+        '--expected-layer-diff-ids-json "$expected_layer_diff_ids_json"'
+        in first_invocation
+    )
+    pushed_scan = text.rindex(
+        "npa/.venv/bin/python npa/scripts/scan_image_gymnasium_robotics_payload.py"
+    )
+    pushed_output = text.index(
+        '"$RUNNER_TEMP/${TOOL}-pushed-gymnasium-payload.json"', pushed_scan
+    )
+    pushed_invocation = text[pushed_scan:pushed_output]
+    assert 'expected_config_sha256="${GYMNASIUM_CONFIG_DIGEST#sha256:}"' in text
+    assert '--expected-config-sha256 "$expected_config_sha256"' in pushed_invocation
+    assert (
+        '--expected-layer-diff-ids-json "$expected_layer_diff_ids_json"'
+        in pushed_invocation
+    )
+    gym_gate = text[source_gate:push]
+    assert "--arg config_sha256" not in gym_gate
+    assert "--argjson expected_layer_diff_ids" not in gym_gate
+
+
+def test_runtime_fetch_contract_replaces_public_source_archive_gate() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    start = text.index("Require Gymnasium payload-free runtime-fetch contract")
+    push = text.index('docker push "$IMAGE"')
+    gate = text[start:push]
+    assert "npa.deploy.runtime_fetch_contract" in gate
+    assert "runtime-fetch-manifest.json" in gate
+    assert "source-lock.json" in gate
+    assert "corresponding-source.lock.json" in gate
+    assert "gymnasium_robotics_image_manifest.json" not in gate
+
+
+def test_trusted_workflow_allows_neutral_development_selection_before_build() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+    build = text.index("docker buildx build")
+    assert "pre-registration candidate has no build authority" not in text
+    assert "Require Gymnasium neutral payload scan before development push" in text
+    assert build > text.index("Resolve immutable public development plan")
+
+
+def test_future_runtime_stage_proves_the_non_root_user_before_switching() -> None:
+    dockerfile = (
+        ROOT / "npa/docker/workbench/gymnasium-robotics/Dockerfile"
+    ).read_text(encoding="utf-8")
+    proof = dockerfile.index('RUN test "$(id -u ubuntu)" = 1000')
+    user = dockerfile.index("USER ubuntu")
+    assert proof < user
+
+
+def test_dockerfile_never_copies_runtime_or_upstream_payload() -> None:
+    dockerfile = (
+        ROOT / "npa/docker/workbench/gymnasium-robotics/Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "COPY --from=" not in dockerfile
+    assert "/opt/venv" not in dockerfile
+    assert ".whl" not in dockerfile
+    assert "runtime-bootstrap.py" in dockerfile

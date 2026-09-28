@@ -9,9 +9,11 @@ Every pull request has one automatic candidate workflow. PRs
 run the complete eight-shard Python 3.12 coverage suite, Cypress, focused
 Python 3.10/3.14 compatibility checks, lint, docs drift, guardrails, security
 regressions, secret scanning, and confidentiality scanning. Cross-subsystem
-coverage must pass before queue admission. Full shards include smoke and CLI
-install tests without duplicate subsystem jobs. Only narrowly recognized prose
-edits skip runtime suites; those retain smoke and every documentation,
+coverage must pass before queue admission. Full shards include smoke tests;
+the browser job runs the Python 3.12 CLI install check before compatibility
+tests, without duplicate subsystem jobs. Trusted test selection shares the
+secret-scanning runner so it adds no separate scheduling dependency. Only
+narrowly recognized prose edits skip runtime suites; those retain smoke and every documentation,
 repository, and security gate. See `CONTRIBUTING.md` for the trusted-base selector,
 which uses the base's merge-candidate policy for both events during rollout.
 The queue verifies successful, less-than-24-hour PR evidence for the identical

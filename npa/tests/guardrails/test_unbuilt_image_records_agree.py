@@ -4,8 +4,9 @@
 different guard reads:
 
 * ``images.UNVALIDATED_PUBLICATION_TOOLS`` — what ``publish_public`` refuses;
-* ``SUPPORTED_TOOL_VERSIONS`` — a tag ending ``-unbuilt``, so a tag that has
-  never been produced cannot be mistaken for one that has;
+* the supported or quarantined-candidate version inventory — normally a tag
+  ending ``-unbuilt``; neutral bootstrap display sentinels stay outside the
+  accepted ``SUPPORTED_TOOL_VERSIONS`` inventory;
 * ``blackwell-dc-images.json`` — ``validation: pending-build``;
 * ``golden_evals.yaml`` — a golden eval that is not ``ready``.
 
@@ -19,14 +20,20 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 
 import yaml
 
 from npa.deploy.images import (
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
+    NEUTRAL_UNBUILT_DISPLAY_TAGS,
     PUBLICATION_QUARANTINE_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
+    UNBUILT_CANDIDATE_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
+    supported_tool_version,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -39,6 +46,11 @@ PENDING_BUILD = "pending-build"
 #: publication - the byte evidence is only half of what publication claims.
 PENDING_GPU = "pending-gpu"
 UNPROVEN_STATES = frozenset({PENDING_BUILD, PENDING_GPU})
+
+
+def _declared_versions() -> dict[str, str]:
+    assert set(SUPPORTED_TOOL_VERSIONS).isdisjoint(UNBUILT_CANDIDATE_TOOL_VERSIONS)
+    return SUPPORTED_TOOL_VERSIONS | UNBUILT_CANDIDATE_TOOL_VERSIONS
 
 
 def _blackwell_images() -> dict[str, dict[str, object]]:
@@ -60,9 +72,10 @@ def _image_name(tool: str) -> str:
 def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
     blackwell = _blackwell_images()
     containers = _golden_eval_containers()
+    versions = _declared_versions()
 
     for tool in sorted(UNVALIDATED_PUBLICATION_TOOLS):
-        version = str(SUPPORTED_TOOL_VERSIONS.get(tool, ""))
+        version = str(versions.get(tool, ""))
         assert version.endswith(UNBUILT_TAG_SUFFIX), (
             f"{tool} is unvalidated for publication but its tag {version!r} does "
             f"not end in {UNBUILT_TAG_SUFFIX}; a tag that reads as a release is "
@@ -97,7 +110,7 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
 
     stale = sorted(
         tool
-        for tool, version in SUPPORTED_TOOL_VERSIONS.items()
+        for tool, version in _declared_versions().items()
         if str(version).endswith(UNBUILT_TAG_SUFFIX)
         and tool not in UNVALIDATED_PUBLICATION_TOOLS
     )
@@ -108,9 +121,38 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
     )
 
 
+def test_neutral_unbuilt_candidate_has_no_ordinary_supported_tag() -> None:
+    assert "robomimic" in UNVALIDATED_PUBLICATION_TOOLS
+    assert "robomimic" not in NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    assert set(NEUTRAL_UNBUILT_DISPLAY_TAGS) == set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+    containers = _golden_eval_containers()
+    for tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        assert tool not in SUPPORTED_TOOL_VERSIONS
+        assert supported_tool_version(tool).endswith("-unbuilt")
+        assert containers[tool]["golden_eval"]["status"] != "ready"
+
+
+def test_capability_listing_accepts_neutral_unbuilt_display_sentinel() -> None:
+    script = REPO_ROOT / "npa" / "scripts" / "run_golden_evals.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "list", "--capabilities"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    robomimic = next(
+        line for line in completed.stdout.splitlines() if line.startswith("robomimic ")
+    )
+    assert "0.1.0-neutral-unbuilt" in robomimic
+
+
 def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
     assert PUBLICATION_QUARANTINE_TOOLS == (
-        UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+        UNVALIDATED_PUBLICATION_TOOLS
+        | VALIDATION_CANDIDATE_TOOLS
+        | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
     )
     for tool in VALIDATION_CANDIDATE_TOOLS:
         version = str(SUPPORTED_TOOL_VERSIONS[tool])

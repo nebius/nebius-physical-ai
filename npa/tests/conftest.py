@@ -65,6 +65,10 @@ _AMBIENT_CREDENTIAL_ENV_VARS = (
     "HF_TOKEN",
     "HUGGING_FACE_HUB_TOKEN",
     "FOXGLOVE_API_TOKEN",
+    "ENCORD_SSH_KEY",
+    "ENCORD_SSH_KEY_B64",
+    "ENCORD_SSH_KEY_FILE",
+    "ENCORD_DOMAIN",
     "ANTIOCH_TOKEN",
     "NEBIUS_TOKEN_FACTORY_KEY",
     "TYPESAFE_API_KEY",
@@ -137,6 +141,13 @@ _AMBIENT_INFRA_TARGET_ENV_VARS = (
     "NPA_BYOF_KUBECONFIG",
     "NPA_BYOF_CLUSTER_NAME",
     "NPA_SKYPILOT_BIN",
+    "NPA_FLEX_PI_NODE_COUNT",
+    "NPA_FLEX_PI_HOST_ID",
+    "NPA_FLEX_PI_SESSION",
+    "NPA_FLEX_PI_PHASE",
+    "SKYPILOT_NODE_RANK",
+    "SKYPILOT_NODE_IPS",
+    "SKYPILOT_NUM_NODES",
     # Nebius CLI profile selectors. Product code prepends `--profile <name>` to
     # the argv it builds whenever either is set, so an operator who has selected
     # a profile (the normal state on a machine that actually runs npa) shifts
