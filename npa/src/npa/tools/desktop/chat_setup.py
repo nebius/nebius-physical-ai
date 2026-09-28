@@ -69,6 +69,8 @@ def _services(config):
         _UNITS / "npa-codex-server.service",
         _unit(
             [
+                str(_ROOT / "venv/bin/python"),
+                str(_ROOT / "codex_executable.py"),
                 config["binary"],
                 "-c",
                 "features.code_mode_host=true",
