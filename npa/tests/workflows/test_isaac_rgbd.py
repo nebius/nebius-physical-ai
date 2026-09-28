@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from npa.clients.storage import StoragePreconditionFailed
 from npa.workflows.isaac_rgbd import (
     contract,
     dataset,
@@ -465,7 +466,7 @@ class _MemoryStorage:
     def put_bytes_conditional(self, payload, uri, *, if_none_match, content_type):
         assert if_none_match and content_type in {"application/json", "text/html"}
         if uri in self.objects:
-            raise ValueError("already committed")
+            raise StoragePreconditionFailed("already committed")
         self.objects[uri] = payload
         self.writes.append(uri)
 
@@ -538,6 +539,91 @@ def test_failed_html_publication_does_not_commit_validation(
             prefix + "/manifest.json", report_uri, tmp_path / "staged", storage
         )
     assert report_uri not in storage.objects
+
+
+@pytest.mark.parametrize("committed_before_interruption", [False, True])
+def test_validation_retry_preserves_identical_objects_after_interruption(
+    captured, tmp_path, monkeypatch, committed_before_interruption
+):
+    root, manifest = captured
+    storage = _MemoryStorage()
+    prefix = "s3://test-bucket/run/capture"
+    report_uri = "s3://test-bucket/run/validation.json"
+    preview_uri = "s3://test-bucket/run/reports/index.html"
+    transport._publish(root, manifest, prefix, storage)
+    original = storage.put_bytes_conditional
+
+    def interrupt(payload, uri, **kwargs):
+        if uri == report_uri:
+            if committed_before_interruption:
+                original(payload, uri, **kwargs)
+            raise OSError("validation publication interrupted")
+        return original(payload, uri, **kwargs)
+
+    monkeypatch.setattr(storage, "put_bytes_conditional", interrupt)
+    with pytest.raises(OSError, match="interrupted"):
+        transport.validate_s3(
+            prefix + "/manifest.json", report_uri, tmp_path / "first", storage
+        )
+    retained = dict(storage.objects)
+    assert preview_uri in retained
+    assert (report_uri in retained) is committed_before_interruption
+    monkeypatch.setattr(storage, "put_bytes_conditional", original)
+    report = transport.validate_s3(
+        prefix + "/manifest.json", report_uri, tmp_path / "retry", storage
+    )
+    assert json.loads(storage.objects[report_uri]) == report
+    assert all(storage.objects[uri] == data for uri, data in retained.items())
+    assert storage.writes.count(preview_uri) == storage.writes.count(report_uri) == 1
+
+
+@pytest.mark.parametrize("conflict", ["reports/index.html", "validation.json"])
+def test_validation_retry_rejects_conflicting_bytes_without_overwrite(
+    captured, tmp_path, conflict
+):
+    root, manifest = captured
+    storage = _MemoryStorage()
+    prefix = "s3://test-bucket/run"
+    transport._publish(root, manifest, prefix + "/capture", storage)
+    transport.validate_s3(
+        prefix + "/capture/manifest.json",
+        prefix + "/validation.json",
+        tmp_path / "first",
+        storage,
+    )
+    storage.objects[prefix + "/" + conflict] = b"different committed bytes"
+    retained, writes = dict(storage.objects), list(storage.writes)
+    with pytest.raises(ValueError, match="differs; use a fresh report prefix"):
+        transport.validate_s3(
+            prefix + "/capture/manifest.json",
+            prefix + "/validation.json",
+            tmp_path / "retry",
+            storage,
+        )
+    assert storage.objects == retained and storage.writes == writes
+
+
+@pytest.mark.parametrize("identical", [False, True])
+def test_preview_race_accepts_only_identical_concurrent_publication(identical):
+    storage = _MemoryStorage()
+
+    def concurrent_writer(payload, uri, **kwargs):
+        storage.objects[uri] = payload if identical else b"concurrent conflict"
+        raise StoragePreconditionFailed("concurrent writer committed")
+
+    storage.put_bytes_conditional = concurrent_writer
+    uri = "s3://test-bucket/run/reports/index.html"
+    if identical:
+        transport._publish_report_bytes(
+            storage, b"preview", uri, content_type="text/html"
+        )
+    else:
+        with pytest.raises(ValueError, match="differs"):
+            transport._publish_report_bytes(
+                storage, b"preview", uri, content_type="text/html"
+            )
+    assert storage.objects[uri] == (b"preview" if identical else b"concurrent conflict")
+    assert storage.writes == []
 
 
 def test_input_bundle_download_is_hashed_and_never_falls_back(rig_request, tmp_path):

@@ -7,7 +7,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
-from npa.clients.storage import StorageClient
+from npa.clients.storage import StorageClient, StoragePreconditionFailed
 
 from .contract import _contained, _json_bytes, _read_json, _relative, validate_request
 from .dataset import _validate_header, _verify_files, validate_dataset
@@ -95,8 +95,8 @@ def validate_s3(input_path, output_path, root, storage=None):
         Measured validation report, bound to the downloaded manifest SHA256.
 
     Raises:
-        ValueError: Any dataset or path contract fails.
-        StorageError: Storage operations fail, including an existing report.
+        ValueError: A dataset contract fails or existing report bytes differ.
+        StorageError: Storage operations fail.
         OSError: Downloaded data cannot be decoded.
     """
     from .contract import _sha256
@@ -114,10 +114,10 @@ def validate_s3(input_path, output_path, root, storage=None):
     report = validate_dataset(root, manifest)
     report["manifest_sha256"] = _sha256(root / "manifest.json")
     report["preview"] = _publish_preview(root, manifest, report, destination, storage)
-    storage.put_bytes_conditional(
+    _publish_report_bytes(
+        storage,
         _json_bytes(report),
         destination,
-        if_none_match=True,
         content_type="application/json",
     )
     return report
@@ -130,7 +130,19 @@ def _publish_preview(root, manifest, report, destination, storage):
     path = root / "preview.html"
     sampling = write_capture_preview(root, manifest, report, path)
     uri = destination.rsplit("/", 1)[0] + "/reports/index.html"
-    storage.put_bytes_conditional(
-        path.read_bytes(), uri, if_none_match=True, content_type="text/html"
-    )
+    _publish_report_bytes(storage, path.read_bytes(), uri, content_type="text/html")
     return {"uri": uri, "sha256": _sha256(path), **sampling}
+
+
+def _publish_report_bytes(storage, payload, uri, *, content_type):
+    try:
+        storage.put_bytes_conditional(
+            payload, uri, if_none_match=True, content_type=content_type
+        )
+    except StoragePreconditionFailed:
+        # A retry or concurrent writer may have committed these exact bytes.
+        existing = storage.read_bytes_with_etag(uri)
+        if existing is None or existing[0] != payload:
+            raise ValueError(
+                "existing RGB-D report differs; use a fresh report prefix"
+            ) from None
