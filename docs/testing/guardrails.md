@@ -2,7 +2,7 @@
 
 This repository has additive no-GPU guardrails for PRs:
 
-- `confidentiality scan`: scans the PR diff and tracked tree with regexes sourced from the required `CUSTOMER_DENYLIST` GitHub Actions secret and, when configured, the supplemental `INFRA_DENYLIST` secret. Local operator runs may provide the same regexes through `${PATTERN_ENV}_FILE` or `~/.config/npa/<lowercase-pattern-env>.regex`. The workflow prints only redacted file locations and fails closed when the required customer source is absent.
+- `confidentiality scan`: always scans added PR lines with the public Nebius infrastructure patterns, then scans the diff and tracked tree with regexes sourced from the required `CUSTOMER_DENYLIST` GitHub Actions secret and, when configured, the supplemental `INFRA_DENYLIST` secret. Fork and Dependabot PRs cannot read Actions secrets, so their private scan is skipped only after the public scan passes; ordinary same-repository PRs still fail closed when the required customer source is absent. Local operator runs may provide the private regexes through `${PATTERN_ENV}_FILE` or `~/.config/npa/<lowercase-pattern-env>.regex`. The workflow prints only redacted file locations.
 - `harness guardrails`: runs static three-tier workbench contracts, pytest collection protection, GPU-skip lint, and SkyPilot teardown lint.
 
 Recommended branch-protection policy is an admin decision. The confidentiality scan and harness guardrails are designed to be merge-blocking checks; the local registry check is informational until it can run from an environment with registry reachability.
