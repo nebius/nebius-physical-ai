@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
@@ -68,9 +69,17 @@ CONFIGURATION_REASON_CODES = frozenset(
         "AUTHENTICATION",
         "AUTHORIZATION",
         "CHECKPOINT_INCOMPATIBLE",
+        "STORAGE_QUOTA_EXCEEDED",
+        "STORAGE_PROVISIONING_FAILED",
     }
 )
-CAPACITY_REASON_CODES = frozenset({"CAPACITY_OR_QUOTA", "GANG_CAPACITY_UNAVAILABLE"})
+CAPACITY_REASON_CODES = frozenset(
+    {
+        "CAPACITY_OR_QUOTA",
+        "GANG_CAPACITY_UNAVAILABLE",
+        "STORAGE_CAPACITY_UNAVAILABLE",
+    }
+)
 TRANSIENT_REASON_CODES = CAPACITY_REASON_CODES | frozenset(
     {
         "NODE_NOT_READY",
@@ -82,6 +91,13 @@ TRANSIENT_REASON_CODES = CAPACITY_REASON_CODES | frozenset(
         "SERVERLESS_TRANSPORT",
         "SERVERLESS_CAPACITY",
         "CONTROLLER_UNAVAILABLE",
+    }
+)
+_STORAGE_ADMISSION_REASON_CODES = frozenset(
+    {
+        "STORAGE_QUOTA_EXCEEDED",
+        "STORAGE_CAPACITY_UNAVAILABLE",
+        "STORAGE_PROVISIONING_FAILED",
     }
 )
 PAYLOAD_REASON_CODES = frozenset(
@@ -515,8 +531,24 @@ class SupervisorLedger:
             ),
         )
 
-    def latest(self) -> dict[str, Any] | None:
+    def latest(self, *, run_id: str = "") -> dict[str, Any] | None:
+        """Return the newest event, optionally restricted to one exact run.
+
+        Args:
+            run_id: Exact workflow run identity, or empty for all events.
+        Returns:
+            The newest matching event, or ``None`` when no event matches.
+        Raises:
+            None.
+        """
         events = self.events()
+        if run_id:
+            events = [
+                event
+                for event in events
+                if isinstance(event.get("attempt_identity"), dict)
+                and event["attempt_identity"].get("run_id") == run_id
+            ]
         return events[-1] if events else None
 
 
@@ -664,6 +696,86 @@ def _primary_blocker(blockers: list[dict[str, Any]]) -> dict[str, Any]:
     return blockers[0]
 
 
+def _blocker_inspection_arguments(
+    *, job_id: str, context: str, claim_names: Sequence[str], started_at: str
+) -> dict[str, Any]:
+    arguments: dict[str, Any] = {"job_id": job_id, "context": context}
+    if claim_names and started_at:
+        arguments.update(claim_names=claim_names, event_not_before=started_at)
+    return arguments
+
+
+def _admitted_blocker_payload(
+    blocker: object, *, claim_names: Sequence[str], started_at: str
+) -> dict[str, Any] | None:
+    code = str(getattr(blocker, "reason_code", "") or "")
+    source = str(getattr(blocker, "source", "") or "")
+    event_timestamp = str(getattr(blocker, "event_timestamp", "") or "")
+    namespace = str(getattr(blocker, "namespace", "") or "")
+    resource_uid = str(getattr(blocker, "resource_uid", "") or "")
+    temporally_bound = bool(getattr(blocker, "temporally_bound", False))
+    if code in _STORAGE_ADMISSION_REASON_CODES and not _storage_blocker_is_bound(
+        blocker,
+        claim_names=claim_names,
+        started_at=started_at,
+        source=source,
+        namespace=namespace,
+        resource_uid=resource_uid,
+        event_timestamp=event_timestamp,
+        temporally_bound=temporally_bound,
+    ):
+        return None
+    return {
+        "reason_code": code,
+        "reason": str(getattr(blocker, "reason", "") or ""),
+        "message": sanitize_reason(getattr(blocker, "message", "")),
+        "source": source,
+        "namespace": namespace,
+        "resource_uid": resource_uid,
+        "event_timestamp": event_timestamp,
+        "temporally_bound": temporally_bound,
+    }
+
+
+def _storage_blocker_is_bound(
+    blocker: object,
+    *,
+    claim_names: Sequence[str],
+    started_at: str,
+    source: str,
+    namespace: str,
+    resource_uid: str,
+    event_timestamp: str,
+    temporally_bound: bool,
+) -> bool:
+    expected_pods = {f"pvc/{name}" for name in claim_names}
+    return bool(
+        source == "kubernetes_pvc_event"
+        and temporally_bound
+        and namespace
+        and resource_uid
+        and claim_names
+        and started_at
+        and _timestamp_at_or_after(event_timestamp, started_at)
+        and str(getattr(blocker, "pod", "") or "") in expected_pods
+    )
+
+
+def _admitted_blockers(
+    report: object, *, claim_names: Sequence[str], started_at: str
+) -> list[dict[str, Any]]:
+    return [
+        payload
+        for blocker in getattr(report, "blockers", []) or []
+        if (
+            payload := _admitted_blocker_payload(
+                blocker, claim_names=claim_names, started_at=started_at
+            )
+        )
+        is not None
+    ]
+
+
 class SkyPilotSupervisorAdapter:
     runtime = "skypilot"
     # SkyPilot provider creation remains inside the runtime's existing
@@ -680,12 +792,28 @@ class SkyPilotSupervisorAdapter:
         launcher: Callable[[AttemptIdentity, CheckpointValidation], AttemptIdentity]
         | None = None,
         context: str = "",
+        claim_names: Sequence[str] = (),
+        attempt_started_at: str = "",
     ) -> None:
+        from npa.orchestration.skypilot.job_blockers import (
+            is_valid_persistent_volume_claim_name,
+        )
+
         self._lookup = lookup
         self._blockers = blocker_inspector
         self._canceller = canceller
         self._launcher = launcher
         self._context = context
+        self._claim_names = tuple(
+            sorted(
+                {
+                    item
+                    for item in claim_names
+                    if is_valid_persistent_volume_claim_name(item)
+                }
+            )
+        )
+        self._attempt_started_at = str(attempt_started_at).strip()
 
     def observe(self, identity: AttemptIdentity) -> BackendObservation:
         from npa.orchestration.skypilot.workflow import lookup_managed_job
@@ -731,15 +859,18 @@ class SkyPilotSupervisorAdapter:
             from npa.orchestration.skypilot.job_blockers import inspect_job_blockers
 
             inspect = self._blockers or inspect_job_blockers
-            report = inspect(job_id=observed_id, context=self._context)
-            for blocker in getattr(report, "blockers", []) or []:
-                blocker_payload.append(
-                    {
-                        "reason_code": str(getattr(blocker, "reason_code", "") or ""),
-                        "reason": str(getattr(blocker, "reason", "") or ""),
-                        "message": sanitize_reason(getattr(blocker, "message", "")),
-                    }
-                )
+            inspect_arguments = _blocker_inspection_arguments(
+                job_id=observed_id,
+                context=self._context,
+                claim_names=self._claim_names,
+                started_at=self._attempt_started_at,
+            )
+            report = inspect(**inspect_arguments)
+            blocker_payload = _admitted_blockers(
+                report,
+                claim_names=self._claim_names,
+                started_at=self._attempt_started_at,
+            )
             if blocker_payload:
                 selected = _primary_blocker(blocker_payload)
                 reason = selected["reason_code"]
@@ -1011,6 +1142,25 @@ def _immutable_identity_matches(
     )
 
 
+def _timestamp_at_or_after(observed: str, boundary: str) -> bool:
+    def parse(value: str) -> datetime | None:
+        try:
+            result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if result.tzinfo is None:
+            return None
+        return result.astimezone(timezone.utc)
+
+    observed_at = parse(str(observed or "").strip())
+    boundary_at = parse(str(boundary or "").strip())
+    return bool(
+        observed_at is not None
+        and boundary_at is not None
+        and observed_at >= boundary_at
+    )
+
+
 def _configuration_remediation(code: str) -> str:
     if code.startswith("IMAGE_"):
         return "Fix the exact image reference or exact-registry pull credentials, then start a new run or explicitly resume after preflight."
@@ -1018,6 +1168,10 @@ def _configuration_remediation(code: str) -> str:
         return "Create the referenced Secret or ConfigMap and verify the rendered pod config before resuming."
     if code in {"ACCELERATOR_MISMATCH", "IMPOSSIBLE_GPU_SHAPE"}:
         return "Resolve the advertised accelerator and request a per-node GPU shape the target can satisfy."
+    if code == "STORAGE_QUOTA_EXCEEDED":
+        return "Increase the applicable storage quota or reduce the exact rendered claim request, then explicitly start or resume; automatic retry is disabled."
+    if code == "STORAGE_PROVISIONING_FAILED":
+        return "Correct the exact rendered claim or storage-class configuration, then explicitly start or resume; automatic retry is disabled."
     return "Correct the recorded configuration and re-run preflight; automatic retry is disabled."
 
 
