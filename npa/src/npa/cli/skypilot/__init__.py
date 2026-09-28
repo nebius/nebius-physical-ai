@@ -592,9 +592,9 @@ def bind_controller_cmd(
         )
         if rebind:
             from npa.orchestration.skypilot.cleanup import (
-                NONTERMINAL_JOB_STATUSES,
                 _all_jobs,
                 _job_statuses,
+                is_terminal_managed_job_status,
             )
 
             snapshot = _all_jobs(
@@ -605,7 +605,7 @@ def bind_controller_cmd(
             active = sorted(
                 job_id
                 for job_id, status in _job_statuses(snapshot.jobs).items()
-                if status in NONTERMINAL_JOB_STATUSES
+                if not is_terminal_managed_job_status(status)
             )
             if active:
                 raise ClusterOwnerIdentityMismatchError(

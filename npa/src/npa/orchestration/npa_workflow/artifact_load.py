@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import logging
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 from urllib.parse import quote, urlencode
+
+from npa.verification import sanitize_failure_reason
 
 
 FINAL_RERUN_KEY = "reports/sim2real.rrd"
@@ -76,7 +78,12 @@ def _parse_s3_uri(uri: str) -> tuple[str, str]:
     return bucket_and_key[0], bucket_and_key[1]
 
 
-def discover_final_rerun_artifact(run_prefix_uri: str, *, client: Any) -> str:
+def discover_final_rerun_artifact(
+    run_prefix_uri: str,
+    *,
+    client: Any,
+    diagnostic_secrets: Sequence[str] = (),
+) -> str:
     """Discover a final Rerun object strictly below one exact workflow prefix."""
 
     bucket, prefix = _parse_s3_uri(run_prefix_uri)
@@ -84,9 +91,10 @@ def discover_final_rerun_artifact(run_prefix_uri: str, *, client: Any) -> str:
     try:
         client.s3.head_object(Bucket=bucket, Key=exact_key)
         return f"s3://{bucket}/{exact_key}"
-    except Exception:  # noqa: BLE001 - fall back to final-report discovery
+    except Exception as exc:  # noqa: BLE001 - fall back to final-report discovery
         logger.debug(
-            "Exact PAIDF Rerun object is unavailable; listing reports", exc_info=True
+            "Exact PAIDF Rerun object is unavailable; listing reports: %s",
+            sanitize_failure_reason(exc, secrets=diagnostic_secrets),
         )
     report_prefix = f"{prefix.rstrip('/')}/reports/"
     try:
@@ -98,9 +106,10 @@ def discover_final_rerun_artifact(run_prefix_uri: str, *, client: Any) -> str:
             if str(item.get("Key") or "").endswith(".rrd")
         )
     except Exception as exc:  # noqa: BLE001 - include provider detail, never credentials
+        safe_reason = sanitize_failure_reason(exc, secrets=diagnostic_secrets)
         raise ArtifactLoadError(
             f"Could not discover a final Rerun artifact below "
-            f"s3://{bucket}/{report_prefix}: {exc}"
+            f"s3://{bucket}/{report_prefix}: {safe_reason}"
         ) from exc
     if not keys:
         raise ArtifactLoadError(
@@ -450,15 +459,22 @@ def _persist_artifact_load_result(
 
 
 def _discover_handoff_artifact(
-    run_prefix_uri: str, storage_client: Any, retry: str
+    run_prefix_uri: str,
+    storage_client: Any,
+    retry: str,
+    diagnostic_secrets: Sequence[str],
 ) -> tuple[str, ArtifactLoadResult | None]:
     try:
         return discover_final_rerun_artifact(
-            run_prefix_uri, client=storage_client
+            run_prefix_uri,
+            client=storage_client,
+            diagnostic_secrets=diagnostic_secrets,
         ), None
     except ArtifactLoadError as exc:
         return "", ArtifactLoadResult(
-            status="partial", detail=str(exc), retry_command=retry
+            status="partial",
+            detail=sanitize_failure_reason(exc, secrets=diagnostic_secrets),
+            retry_command=retry,
         )
 
 
@@ -492,8 +508,8 @@ def _agent_connection(
     record: dict[str, Any],
     base_url: str,
     http_request: Callable[..., Any] | None,
+    auth: tuple[str, str],
 ) -> _AgentConnection:
-    auth = runtime.load_auth_secret(str(record.get("auth_secret_path") or ""))
     verify = runtime.record_tls_verify(record)
     if http_request is None:
         import httpx
@@ -610,13 +626,20 @@ def _complete_agent_handoff(
 
 
 def _partial_agent_handoff(
-    artifact_uri: str, agent_name: str, retry: str, error: Exception
+    artifact_uri: str,
+    agent_name: str,
+    retry: str,
+    error: Exception,
+    diagnostic_secrets: Sequence[str],
 ) -> ArtifactLoadResult:
     return ArtifactLoadResult(
         status="partial",
         artifact_uri=artifact_uri,
         agent_name=agent_name,
-        detail=f"workflow succeeded; artifact load/verification is incomplete: {error}",
+        detail=(
+            "workflow succeeded; artifact load/verification is incomplete: "
+            + sanitize_failure_reason(error, secrets=diagnostic_secrets)
+        ),
         retry_command=retry,
     )
 
@@ -630,10 +653,17 @@ def _load_final_artifact_into_agent(
     agent_name: str,
     http_request: Callable[..., Any] | None,
     runtime: _ArtifactLoadRuntime,
+    credential_values: Mapping[str, str] | None = None,
 ) -> ArtifactLoadResult:
     retry = _retry_command(run_id, project, agent_name)
+    diagnostic_secrets = tuple(
+        str(value) for value in (credential_values or {}).values() if value
+    )
     artifact_uri, discovery_failure = _discover_handoff_artifact(
-        run_prefix_uri, storage_client, retry
+        run_prefix_uri,
+        storage_client,
+        retry,
+        diagnostic_secrets,
     )
     if discovery_failure is not None:
         return _persist_artifact_load_result(
@@ -643,13 +673,28 @@ def _load_final_artifact_into_agent(
     if not selected or not base_url:
         result = _unavailable_agent_result(project, run_id, artifact_uri, selected)
         return _persist_artifact_load_result(runtime, project, run_id, result)
+    agent_diagnostic_secrets = diagnostic_secrets
     try:
-        connection = _agent_connection(runtime, record, base_url, http_request)
+        auth = runtime.load_auth_secret(str(record.get("auth_secret_path") or ""))
+        agent_diagnostic_secrets = (*diagnostic_secrets, *auth)
+        connection = _agent_connection(
+            runtime,
+            record,
+            base_url,
+            http_request,
+            auth,
+        )
         result = _complete_agent_handoff(
             connection, run_id, artifact_uri, selected, retry
         )
     except Exception as exc:  # noqa: BLE001 - optional post-success side effect
-        result = _partial_agent_handoff(artifact_uri, selected, retry, exc)
+        result = _partial_agent_handoff(
+            artifact_uri,
+            selected,
+            retry,
+            exc,
+            agent_diagnostic_secrets,
+        )
     return _persist_artifact_load_result(runtime, project, run_id, result)
 
 
@@ -661,6 +706,7 @@ def load_final_artifact_into_agent(
     storage_client: Any,
     agent_name: str = "",
     http_request: Callable[..., Any] | None = None,
+    credential_values: Mapping[str, str] | None = None,
 ) -> ArtifactLoadResult:
     """Load the final workflow recording, returning partial on agent errors.
 
@@ -671,6 +717,7 @@ def load_final_artifact_into_agent(
         storage_client: The authorized storage client used for final discovery.
         agent_name: An optional configured agent name to select explicitly.
         http_request: An optional HTTP transport used for agent requests.
+        credential_values: Explicit credential values to redact from diagnostics.
 
     Returns:
         A verified result, or a partial result describing recoverable handoff failure.
@@ -686,4 +733,5 @@ def load_final_artifact_into_agent(
         agent_name=agent_name,
         http_request=http_request,
         runtime=_artifact_load_runtime(),
+        credential_values=credential_values,
     )
