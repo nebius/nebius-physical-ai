@@ -415,9 +415,9 @@ def test_nurec_case_is_registered_in_the_live_submit_matrix() -> None:
     assert case is not None, "nurec-reconstruct.yaml is missing from SUBMIT_LIVE_MATRIX"
     assert case.tier == "gpu"
     assert "NGC_API_KEY" in case.secret_envs, "the nre-ga container needs an NGC key"
-    assert "HF_TOKEN" in case.secret_envs, "the PhysicalAI capture needs an HF token"
-    # A ~14 GB image pull plus 30k training steps needs more than the tier default.
-    assert case.max_wait_seconds >= 3600
+    assert "HF_TOKEN" not in case.secret_envs, "the pinned PPISP capture is public"
+    # Keep the native full training budget without adding a matrix deadline.
+    assert case.max_wait_seconds == 0
 
 
 def test_live_e2e_test_exists_and_asserts_the_definition_of_done() -> None:
