@@ -271,6 +271,7 @@ def test_runtime_storage_live_requires_fresh_owned_isolation_root(
 
     permissive = tmp_path / "permissive"
     permissive.mkdir(mode=0o755)
+    permissive.chmod(0o755)
     with pytest.raises(ValueError, match="owner-only"):
         argv._owned_empty_isolation_root(str(permissive))
 

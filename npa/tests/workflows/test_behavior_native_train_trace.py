@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import time
+import signal
 from types import SimpleNamespace
 
 import pytest
@@ -964,7 +964,7 @@ def _policy_server_fixture(tmp_path):
         (source / "native_train_policy_server.py").read_bytes()
     )
     (stage / "rlc_server.py").write_text(
-        """import argparse,asyncio\nNATIVE_EXECUTION='native'\ndef parser():\n p=argparse.ArgumentParser();p.add_argument('--execution-variant',default='native');p.add_argument('--source-root');p.add_argument('--checkpoint');p.add_argument('--port',type=int);p.add_argument('--upstream-commit');return p\ndef _policy_source(*a): pass\nclass P:\n def reset(self): pass\ndef _load_stock_policy(a): return P(),None\nasync def _serve(*a):\n while True: await asyncio.sleep(1)\n"""
+        """import argparse,asyncio\nNATIVE_EXECUTION='native'\ndef parser():\n p=argparse.ArgumentParser();p.add_argument('--execution-variant',default='native');p.add_argument('--source-root');p.add_argument('--checkpoint');p.add_argument('--port',type=int);p.add_argument('--upstream-commit');return p\ndef _policy_source(*a): pass\nclass P:\n def reset(self): pass\ndef _load_stock_policy(a): return P(),None\nasync def _serve(*a):\n print('POLICY_READY', flush=True)\n while True: await asyncio.sleep(1)\n"""
     )
     (stage / "train_official_q.py").write_text("OFFICIAL_Q_SOURCE={}\n")
     (stage / "native_train_arrays.py").write_text(
@@ -1020,7 +1020,15 @@ def test_policy_server_sigterm_writes_terminal_in_real_subprocess(tmp_path):
             str(config),
         ],
         cwd=stage,
+        stdout=subprocess.PIPE,
+        text=True,
     )
-    time.sleep(0.2)
-    _stop_policy(process)
+    try:
+        assert process.stdout is not None
+        assert process.stdout.readline() == "POLICY_READY\n"
+    finally:
+        _stop_policy(process)
+        if process.stdout is not None:
+            process.stdout.close()
+    assert process.returncode == 128 + signal.SIGTERM
     assert json.loads((root / "terminal.json").read_text())["action_count"] == 1
