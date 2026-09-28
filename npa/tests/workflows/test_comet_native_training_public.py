@@ -567,6 +567,9 @@ def test_portable_preflight_entrypoint_restores_runtime_and_runs_bound_python(
 ):
     import sys
 
+    # This fixture copies executable bytes, not the standard library. Bind the
+    # test interpreter's library explicitly, including for relocatable uv Python.
+    monkeypatch.setenv("PYTHONHOME", sys.base_prefix)
     python_bytes = Path(sys.executable).read_bytes()
     receipt = _locked_runtime_receipt(
         python_bytes, base_relative=".local/python/bin/python"
