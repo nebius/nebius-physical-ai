@@ -172,6 +172,45 @@ def test_remote_error_without_retryable_is_non_retryable(
     assert raised.value.retryable is False
 
 
+@pytest.mark.parametrize(
+    "retryable_value,expected", [(True, True), (False, False), ("false", False)]
+)
+def test_remote_retryability_reaches_cli_failure_envelope(
+    monkeypatch: pytest.MonkeyPatch, retryable_value: object, expected: bool
+) -> None:
+    def respond(url: str, **kwargs: object) -> httpx.Response:
+        assert url == "https://antioch.invalid/cancel"
+        return httpx.Response(
+            503,
+            json={"detail": {"message": "capacity", "retryable": retryable_value}},
+        )
+
+    monkeypatch.setattr(antioch_sdk.httpx, "post", respond)
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "antioch",
+            "cancel",
+            "--endpoint",
+            "https://antioch.invalid",
+            "--output-path",
+            "s3://safe/run",
+            "--workflow-run",
+            "run-1",
+            "--state-id",
+            "simulate",
+            "--output",
+            "json",
+        ],
+    )
+    assert result.exit_code == 1
+    error = json.loads(result.stderr)["error"]
+    assert error["message"] == "capacity"
+    assert error["retryable"] is expected
+    assert error["terminal"] is not expected
+
+
 def test_submit_metadata_is_required_and_non_cartpole_values_are_preserved() -> None:
     with pytest.raises(ValidationError):
         SubmitRequest(
