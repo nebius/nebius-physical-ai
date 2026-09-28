@@ -5455,3 +5455,42 @@ def test_recovery_compares_output_uris_and_retains_invalid_declarations(
         {"schema": "missing-uri"},
     ]
     assert ledger.outputs_not_from_succeeded_waves(outputs) == ["s3://example/new/", ""]
+
+
+@pytest.mark.parametrize("boundary", ["history", "outputs"])
+@pytest.mark.parametrize("error_class", [PermissionError, ValueError])
+def test_output_reuse_persists_sanitized_exception_type(
+    tmp_path, mocker, monkeypatch, runtime_sdk_submission, boundary, error_class
+):
+    case = _crashed_output_reuse_case(tmp_path, mocker, runtime_sdk_submission)
+    executor = _reuse_executor(case)
+    with monkeypatch.context() as failing:
+        target, name = (
+            (case[2], "list_artifacts")
+            if boundary == "history"
+            else (executor, "_output_checker")
+        )
+        failing.setattr(
+            target,
+            name,
+            mocker.Mock(
+                side_effect=error_class("access token=synthetic-sensitive-value")
+            ),
+        )
+        with pytest.raises(NpaWorkflowError, match="output-reuse"):
+            executor.execute(case[1])
+    blocked = case[2].read_runtime_state().waves[-1]
+    assert blocked["output_reuse_error_type"] == error_class.__name__
+    assert "synthetic-sensitive-value" not in json.dumps(blocked)
+    events = SupervisorLedger(case[2]).events(case[3]["logical_launch_id"])
+    terminal = [event for event in events if event["phase"] == "attempt_terminal"]
+    assert terminal[-1]["attempt"]["output_reuse_error_type"] == error_class.__name__
+    assert "synthetic-sensitive-value" not in json.dumps(events)
+    assert executor._submitter.calls == []
+    if boundary == "outputs":
+        assert blocked["sky_status"] == "CANCELLED"
+        assert blocked["cancellation"]["state"] == "verified"
+    resumed = _reuse_executor(case)
+    assert resumed.execute(case[1])["status"] == "ok"
+    assert resumed._submitter.calls == []
+    assert case[2].read_runtime_state().waves[-1]["output_reuse_error_type"] == ""
