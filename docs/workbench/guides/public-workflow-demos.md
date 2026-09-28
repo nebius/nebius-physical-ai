@@ -29,6 +29,39 @@ For NuRec, also run `npa workbench health access --capability nurec` before
 starting the GPU workload. Standard workflow submission checks exact storage
 destinations, image access, source staging, and the requested GPU product.
 
+The NuRec GPU pod pulls its NVIDIA image using the operator-managed Kubernetes
+Secret `ngc-nvcr-imagepullsecret` in the workload namespace (`default` for these
+demos). Create it once on your chosen cluster after configuring your NGC key.
+Workbench submission checks this Secret but does not create it. From the
+installed checkout, this command sends the saved key directly to Kubernetes
+through stdin, without putting it in command arguments or a temporary file:
+
+```bash
+set -o pipefail
+npa/.venv/bin/python - <<'PY' | kubectl --kubeconfig '<kubeconfig-path>' --context '<rtx-context>' --namespace default create -f -
+import base64
+import json
+from npa.clients.config import resolve_credentials
+
+key = resolve_credentials().ngc_api_key
+if not key:
+    raise SystemExit("Configure your NGC key first.")
+auth = base64.b64encode(f"$oauthtoken:{key}".encode()).decode()
+config = json.dumps({"auths": {"nvcr.io": {"auth": auth}}})
+print(json.dumps({
+    "apiVersion": "v1", "kind": "Secret",
+    "metadata": {"name": "ngc-nvcr-imagepullsecret", "namespace": "default"},
+    "type": "kubernetes.io/dockerconfigjson",
+    "stringData": {".dockerconfigjson": config},
+}))
+PY
+```
+
+`create` refuses to overwrite an existing Secret. If your operator already
+provisioned it, proceed to the demo command; its image preflight verifies access.
+For a different workload namespace, change both namespace values above to match
+your SkyPilot configuration.
+
 ## Run a demo
 
 ```bash
