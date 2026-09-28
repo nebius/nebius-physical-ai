@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import shutil
 import tarfile
 from pathlib import Path, PurePosixPath
@@ -471,6 +472,26 @@ def _bundle(rows: dict[str, bytes], executable: set[str] | None = None) -> bytes
     return stream.getvalue()
 
 
+def _preflight_execution_probe():
+    return b"""import argparse, hashlib, json, sys
+from pathlib import Path
+parser = argparse.ArgumentParser()
+parser.add_argument('operation')
+parser.add_argument('--workflow-input-contract', type=Path)
+parser.add_argument('--output', type=Path)
+args, _ = parser.parse_known_args()
+contract = json.loads(args.workflow_input_contract.read_text())
+result = {
+    'schema': 'npa.behavior.comet-native-input-preflight.v1',
+    'status': 'real_overlay_config_dataset_verified_before_policy_initialization',
+    'workflow_inputs': contract,
+    'executed_python': sys.executable,
+    'executed_python_sha256': hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
+}
+args.output.write_text(json.dumps(result) + '\\n')
+"""
+
+
 def _portable_archives(python_bytes, runtime_receipt):
     runtime = _bundle(
         {
@@ -480,14 +501,13 @@ def _portable_archives(python_bytes, runtime_receipt):
         },
         {".local/python/bin/python", "work/locked-venv/bin/python"},
     )
-    stub = b"import argparse,json\nfrom pathlib import Path\np=argparse.ArgumentParser();p.add_argument('operation');p.add_argument('--workflow-input-contract',type=Path);p.add_argument('--output',type=Path);a,_=p.parse_known_args();c=json.loads(a.workflow_input_contract.read_text());a.output.write_text(json.dumps({'schema':'npa.behavior.comet-native-input-preflight.v1','status':'real_overlay_config_dataset_verified_before_policy_initialization','workflow_inputs':c})+'\\n')\n"
     archives = {
         "openpi": _bundle(
             {"bundle/packages/openpi-client/src/openpi_client/__init__.py": b""}
         ),
         "worker": _bundle(
             {
-                "bundle/workflows/implementations/behavior-comet12/train_comet_native.py": stub
+                "bundle/workflows/implementations/behavior-comet12/train_comet_native.py": _preflight_execution_probe()
             }
         ),
         "dataset": _bundle(
@@ -585,6 +605,8 @@ def test_portable_preflight_entrypoint_restores_runtime_and_runs_bound_python(
     args = _portable_args(
         tmp_path, python_bytes, receipt, admission, manifest, bindings
     )
+    _bind_fixture_standard_library(monkeypatch, sys.base_prefix)
+    ambient_pythonhome = os.environ.get("PYTHONHOME")
     result = workflow.run(args)
     published = json.loads(storage.objects["s3://example/run/preflight/receipt.json"])
     assert result["runtime"]["schema"] == "npa.behavior.runtime-ready.v2"
@@ -592,6 +614,24 @@ def test_portable_preflight_entrypoint_restores_runtime_and_runs_bound_python(
         archives["worker"]
     )
     assert (args.workspace / "preflight.log").is_file()
+    assert published["executed_python"] == str(
+        args.home / args.scientific_python_relative
+    )
+    assert published["executed_python_sha256"] == _sha(python_bytes)
+    assert os.environ.get("PYTHONHOME") == ambient_pythonhome
+
+
+def _bind_fixture_standard_library(monkeypatch, prefix):
+    original = workflow._environment
+
+    def environment(*args):
+        result = original(*args)
+        # This fixture copies real interpreter bytes, not an entire Python distribution.
+        # uv-managed interpreters need their matching stdlib after relocation.
+        result["PYTHONHOME"] = prefix
+        return result
+
+    monkeypatch.setattr(workflow, "_environment", environment)
 
 
 def test_restart_publishes_complete_saved_milestone_without_retraining(
