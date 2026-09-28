@@ -44,13 +44,12 @@ def _quality(path: Path) -> dict:
     values = {
         name: round(value, 6)
         for name, value in parse_metrics_yaml(path).items()
-        if name in {"test/psnr", "test/ssim", "test/lpips"}
-        and math.isfinite(value)
+        if name in {"test/psnr", "test/ssim", "test/lpips"} and math.isfinite(value)
     }
     return values or {"NRE quality metrics": "unavailable"}
 
 
-def _timelines(capture, novel, validation):
+def _timelines(capture, novel, validation, validation_root):
     groups = [
         _group(
             "Input capture",
@@ -63,15 +62,32 @@ def _timelines(capture, novel, validation):
             "NRE renders from a nonzero rig offset. These views are not paired with source image indices.",
         ),
     ]
-    if validation:
-        groups.append(
-            _group(
-                "Reconstruction validation",
-                validation,
-                "NRE's validation renders. Quality measurements below come from NRE validation, not from the novel-view slideshow.",
-            )
-        )
+    groups.extend(_validation_timelines(validation, validation_root))
     return groups
+
+
+def _validation_timelines(images, root):
+    modalities = {
+        "pred_rgb": "Predicted RGB",
+        "pred_distance": "Predicted distance",
+        "pred_opacity": "Predicted opacity",
+    }
+    grouped = {
+        title: [] for title in [*modalities.values(), "Unclassified validation output"]
+    }
+    for path in images:
+        modality = path.relative_to(root).parts[0]
+        title = modalities.get(modality, "Unclassified validation output")
+        grouped[title].append(path)
+    return [
+        _group(
+            "Reconstruction validation · " + title,
+            paths,
+            "NRE validation outputs grouped by their recorded modality. Distance and opacity are diagnostic visualizations, not RGB photographs. Quality measurements come from NRE validation, not from the novel-view slideshow.",
+        )
+        for title, paths in grouped.items()
+        if paths
+    ]
 
 
 def _public_sample_credit(root):
@@ -130,7 +146,7 @@ def write_nurec_preview(root: Path, output: Path) -> dict:
         title="Neural reconstruction",
         metrics={**counts, **_quality(root / "reconstruction" / "metrics.yaml")},
         summary="Real photographs reconstructed into a renderable Gaussian scene. Each timeline samples up to 32 actual output images; playback is a slideshow, not a new video. Gaussian appearance alone does not establish collision geometry or navigation readiness.",
-        groups=_timelines(capture, novel, validation),
+        groups=_timelines(capture, novel, validation, root / "reconstruction" / "val"),
         details=_public_sample_credit(root),
     )
     return {"image_counts": counts, "maximum_preview_images_per_group": 32}

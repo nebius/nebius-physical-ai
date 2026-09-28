@@ -145,9 +145,7 @@ def test_nurec_preview_displays_native_aggregated_metrics(tmp_path: Path) -> Non
     from npa.workbench.nurec.preview import write_nurec_preview
 
     run = _nurec_run(tmp_path / "run")
-    native_metrics = (
-        Path(__file__).parents[1] / "fixtures/nurec/nre-26.04-metrics.yaml"
-    )
+    native_metrics = Path(__file__).parents[1] / "fixtures/nurec/nre-26.04-metrics.yaml"
     (run / "reconstruction/metrics.yaml").write_bytes(native_metrics.read_bytes())
     output = tmp_path / "index.html"
     write_nurec_preview(run, output)
@@ -159,6 +157,41 @@ def test_nurec_preview_displays_native_aggregated_metrics(tmp_path: Path) -> Non
     ):
         assert name in content and value in content
     assert "NRE quality metrics" not in content
+
+
+def test_nurec_validation_preview_separates_recorded_modalities(tmp_path):
+    import re
+    from npa.workbench.nurec.preview import write_nurec_preview
+
+    run = _nurec_run(tmp_path / "run")
+    validation = run / "reconstruction" / "val"
+    for modality, color in (
+        ("pred_rgb", (10, 20, 30)),
+        ("pred_distance", (40, 50, 60)),
+        ("pred_opacity", (70, 80, 90)),
+    ):
+        for index in range(2):
+            _write_image(validation / modality / "cam_00" / f"{index:06d}.png", color)
+    output = tmp_path / "index.html"
+    counts = write_nurec_preview(run, output)
+    data = re.search(
+        r'<script id="preview-data" type="application/json">(.*?)</script>',
+        output.read_text(),
+        re.S,
+    )[1]
+    groups = json.loads(data)[2:]
+    assert [group["title"].split(" · ")[1] for group in groups] == [
+        "Predicted RGB",
+        "Predicted distance",
+        "Predicted opacity",
+        "Unclassified validation output",
+    ]
+    assert [len(group["frames"]) for group in groups] == [2, 2, 2, 1]
+    assert counts["image_counts"]["validation images"] == 7
+    for group in groups:
+        for frame in group["frames"]:
+            assert frame["images"][0]["label"] == group["title"]
+        assert "diagnostic visualizations, not RGB photographs" in group["note"]
 
 
 def test_nurec_preview_does_not_display_invalid_aggregated_metrics(tmp_path):
