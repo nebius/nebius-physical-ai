@@ -2402,6 +2402,15 @@ def container_image_for_tool(
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
     public_registry = is_public_registry(resolved_registry)
+    # Some newly registered workflows need a stable, visibly unbuilt reference
+    # for validation and planning before any runnable release exists.  Keep this
+    # exception narrower than the publication quarantine: only the implicit
+    # checked-in sentinel may resolve.  An explicit use of that tag still goes
+    # through the fail-closed consumption gate below, and workflow submission
+    # requires a separately supplied exact-digest image.
+    public_unbuilt_planning_ref = (
+        public_registry and tag is None and tool in UNBUILT_CANDIDATE_TOOL_VERSIONS
+    )
     if (
         tool == "robomimic"
         and tool in PUBLICATION_QUARANTINE_TOOLS
@@ -2448,7 +2457,12 @@ def container_image_for_tool(
     # quarantined variants. Its tool-level release metadata remains stale for
     # publication purposes, but consumption must defer to ``sonic_image_entry``
     # instead of hiding the active host-mounted and MuJoCo runtime-fetch images.
-    if tool in PUBLICATION_QUARANTINE_TOOLS and public_registry and tool != "sonic":
+    if (
+        tool in PUBLICATION_QUARANTINE_TOOLS
+        and public_registry
+        and tool != "sonic"
+        and not public_unbuilt_planning_ref
+    ):
         if tag is None:
             # Centralize the actionable error shared by direct release-tag callers.
             public_release_tag_for_tool(tool)
@@ -2498,11 +2512,14 @@ def container_image_for_tool(
             resolved_tag = tag or "neutral-unbuilt"
         else:
             image_name = CONTAINER_IMAGE_NAMES[tool]
-            resolved_tag = tag or (
-                public_release_tag_for_tool(tool)
-                if public_registry
-                else supported_tool_version(tool)
-            )
+            if tag:
+                resolved_tag = tag
+            elif public_unbuilt_planning_ref:
+                resolved_tag = supported_tool_version(tool)
+            elif public_registry:
+                resolved_tag = public_release_tag_for_tool(tool)
+            else:
+                resolved_tag = supported_tool_version(tool)
     if (
         tool == "ncore"
         and public_registry

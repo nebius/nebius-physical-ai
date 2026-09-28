@@ -8,6 +8,7 @@ import pytest
 from npa.deploy.images import (
     DEFAULT_CONTAINER_REGISTRY,
     SUPPORTED_TOOL_VERSIONS,
+    UNBUILT_CANDIDATE_TOOL_VERSIONS,
     development_image_for_tool,
     container_image_for_tool,
     default_vlm_image,
@@ -75,7 +76,14 @@ def test_quarantined_public_release_metadata_fails_closed(tool: str) -> None:
         public_release_tag_for_tool(tool)
 
 
-@pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS - {"sonic"}))
+@pytest.mark.parametrize(
+    "tool",
+    sorted(
+        PUBLICATION_QUARANTINE_TOOLS
+        - {"sonic"}
+        - UNBUILT_CANDIDATE_TOOL_VERSIONS.keys()
+    ),
+)
 def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> None:
     with pytest.raises(ValueError, match="quarantined|no accepted release"):
         container_image_for_tool(tool)
@@ -87,6 +95,20 @@ def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> Non
     else:
         with pytest.raises(ValueError, match="quarantined|no accepted release"):
             container_image_for_tool(tool, tag=configured_tag)
+
+
+@pytest.mark.parametrize(
+    "tool",
+    sorted(PUBLICATION_QUARANTINE_TOOLS & UNBUILT_CANDIDATE_TOOL_VERSIONS.keys()),
+)
+def test_unbuilt_public_planning_sentinel_is_not_a_consumable_release(
+    tool: str,
+) -> None:
+    display_tag = UNBUILT_CANDIDATE_TOOL_VERSIONS[tool]
+
+    assert container_image_for_tool(tool).endswith(f":{display_tag}")
+    with pytest.raises(ValueError, match="quarantined"):
+        container_image_for_tool(tool, tag=display_tag)
 
 
 def test_sonic_public_resolution_uses_active_variant_manifest() -> None:
@@ -120,7 +142,7 @@ def test_sonic_public_tag_cannot_override_active_manifest_with_stale_release() -
 def test_quarantined_tools_retain_explicit_candidate_paths(tool: str) -> None:
     sha = "a" * 40
     assert container_image_for_tool(tool, tag=f"dev-{sha}").endswith(f":dev-{sha}")
-    custom_tag = f"dev-{sha}" if tool == "ncore" else None
+    custom_tag = f"dev-{sha}" if tool in {"ncore", "robomimic", "robotwin"} else None
     assert container_image_for_tool(
         tool, registry="registry.example/operator", tag=custom_tag
     ).startswith("registry.example/operator/")
