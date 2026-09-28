@@ -145,6 +145,11 @@ npa/.venv/bin/python npa/scripts/run_byof_repo.py \
   --cleanup
 ```
 
+This generic direct CLI/script route is not an authorization boundary. RoboTwin
+therefore refuses it: only normal `npa workbench workflow submit` may validate
+the manager context, start the CPU outer launcher, and enter RoboTwin's internal
+worker bridge.
+
 SDK: `npa.sdk.workbench.byof.run(...)` / `plan_argv(...)`.
 YAML toolRef: `workbench.byof.repo` → `npa workbench byof run ...`.
 
@@ -158,6 +163,26 @@ Wan's mandatory verified RRD). Worker markers are injected automatically.
 The outer run ID and lower-level worker run ID are separate provenance fields.
 Image builds and other host-orchestrated BYOF workloads must run from the
 operator entrypoint above, before workflow submission.
+
+RoboTwin is the explicit exception: its immutable workflow allocates a CPU-only
+outer launcher, not a capability worker. The validated internal bridge then
+requests exactly one STRICT RTX PRO 6000 workload. Generic worker markers do not
+replace that authorization or route RoboTwin into the prebuilt capability path.
+
+For a checked-in solution that needs manager resource authorization, set
+`config.runtime_context_env` only to its documented environment-variable name
+and pass the value through the workflow's secret environment channel. The
+public CLI equivalent is `--runtime-context-env <variable-name>`. If exact
+runtime terms instead require customer authorization, use the solution's
+separate documented customer-entitlement secret and bind it to customer, run,
+exact runtime manifest, activity, terms and expiry; never add legal-acceptance
+booleans to the manager context. Never put either context value, decisions,
+credentials, private registry/storage identities, or local file paths in a
+workflow or command line. The generic runner remains unchanged when the option
+is absent. A solution that selects these channels must validate every required
+owner-only value before source access, registry resolution, image work, or
+workload submission; a credential or private registry alone is not
+authorization.
 
 Workloads:
 

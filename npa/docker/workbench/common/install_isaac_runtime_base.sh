@@ -163,12 +163,17 @@ else
 fi
 
 if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
-  # SkyPilot's in-pod Kubernetes bootstrap needs a SYSTEM python3 plus rsync, an SSH
-  # client/server, and passwordless sudo; without all of them provisioning fails with
-  # `container not found ("ray-node")`. Guarded by
+  # SkyPilot's in-pod Kubernetes bootstrap needs a SYSTEM python3, its early file-transfer
+  # package set, an SSH client/server, and passwordless sudo. Baking the early packages
+  # keeps worker startup independent of a live APT index. Guarded by
   # npa/tests/guardrails/test_workbench_image_k8s_prereqs.py.
   apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip rsync openssh-client openssh-server sudo netcat-openbsd
+    python3 python3-venv python3-pip \
+    curl fuse netcat-openbsd rsync wget \
+    openssh-client openssh-server sudo
+  for package in curl fuse netcat-openbsd rsync wget; do
+    test "$(dpkg-query -W -f='${db:Status-Abbrev}' "$package")" = 'ii ' || exit 1
+  done
   printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user
   chmod 0440 /etc/sudoers.d/99-npa-runtime-user
   install -d -m 0755 /run/sshd

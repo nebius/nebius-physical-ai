@@ -24,6 +24,7 @@ MAX_PROFILE_NODES = 32
 API_VERSION = "npa.workflow/v0.0.1"
 API_VERSION_BETA = "npa.workflow/v0.0.1-beta"
 SUPPORTED_API_VERSIONS = frozenset({API_VERSION, API_VERSION_BETA})
+_STATE_RUN_FIELDS = frozenset({"shell", "argv"})
 
 
 @dataclass
@@ -112,6 +113,21 @@ class NpaWorkflowSpec:
         return str(self.metadata.get("name") or "unnamed")
 
 
+def _validate_state_run_fields(name: str, run: Mapping[str, Any]) -> None:
+    """Reject fields that a state command would otherwise silently discard."""
+
+    unknown = set(run) - _STATE_RUN_FIELDS
+    if not unknown:
+        return
+    fields = ", ".join(sorted(repr(field) for field in unknown))
+    placement = ""
+    if {"inputs", "outputs"}.intersection(unknown):
+        placement = "; state inputs/outputs belong beside run, not inside it"
+    raise NpaWorkflowError(
+        f"state {name!r}: run has unknown field(s): {fields}{placement}"
+    )
+
+
 def load_spec(path: str | Path) -> NpaWorkflowSpec:
     import yaml
 
@@ -178,6 +194,11 @@ def _parse_document(data: dict[str, Any]) -> NpaWorkflowSpec:
 def _parse_state(
     name: str, entry: dict[str, Any], config: dict[str, Any] | None = None
 ) -> StateSpec:
+    terminal = _state_boolean(name, entry, "terminal")
+    writes_decision = _state_boolean(
+        name, entry, "writesDecision", alias="writes_decision"
+    )
+
     loop = None
     loop_raw = entry.get("loop")
     if loop_raw is not None:
@@ -205,6 +226,7 @@ def _parse_state(
     if run_raw is not None:
         if not isinstance(run_raw, dict):
             raise NpaWorkflowError(f"state {name}: run must be a mapping")
+        _validate_state_run_fields(name, run_raw)
         run = RunSpec(
             shell=str(run_raw.get("shell") or ""),
             argv=[str(item) for item in (run_raw.get("argv") or [])],
@@ -307,14 +329,45 @@ def _parse_state(
         inputs=inputs,
         outputs=outputs,
         resources=str(entry.get("resources") or "default"),
-        terminal=bool(entry.get("terminal")),
-        writes_decision=bool(
-            entry.get("writesDecision") or entry.get("writes_decision")
-        ),
+        terminal=terminal,
+        writes_decision=writes_decision,
         multi_node_mode=str(
             entry.get("multiNodeMode") or entry.get("multi_node_mode") or "forbidden"
         ),
     )
+
+
+def _state_boolean(
+    state_name: str,
+    entry: dict[str, Any],
+    field_name: str,
+    *,
+    alias: str | None = None,
+) -> bool:
+    """Parse a state boolean without coercing malformed scalar values."""
+
+    field_names = (field_name,) if alias is None else (field_name, alias)
+    for candidate in field_names:
+        if candidate in entry and not isinstance(entry[candidate], bool):
+            value = entry[candidate]
+            raise NpaWorkflowError(
+                f"state {state_name}: {candidate} must be a boolean, "
+                f"got {type(value).__name__}"
+            )
+    if (
+        alias is not None
+        and field_name in entry
+        and alias in entry
+        and entry[field_name] != entry[alias]
+    ):
+        raise NpaWorkflowError(
+            f"state {state_name}: {field_name} and {alias} must agree when both are set"
+        )
+    if field_name in entry:
+        return entry[field_name]
+    if alias is not None and alias in entry:
+        return entry[alias]
+    return False
 
 
 def _positive_int(

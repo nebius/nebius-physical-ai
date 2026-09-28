@@ -20,7 +20,7 @@ import {SharedOwners} from './shared-owners.mjs';
 const configPath = process.argv[2];
 const config = JSON.parse(readFileSync(configPath));
 const ipc = new CodexIPC(config.codexHome);
-const app = new AppServer(config.binary, config.codexHome);
+const app = new AppServer(config.binary, config.codexHome, config.native_python);
 const store = new SessionStore(config.codexHome);
 const ownThreads = new Map();
 const approvals = new Map();

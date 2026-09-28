@@ -87,9 +87,13 @@ def partial_runtime(tmp_path, runtime_sdk_submission):
     case.status = lambda job_id: SimpleNamespace(
         status=case.terminal if job_id == "41" else "SUCCEEDED"
     )
-    case.options = RuntimeOptions(
-        poll_seconds=0, preflight_evidence=_supervisor_preflight()
-    )
+    # Durable recovery receipts carry only the redacted credential-access
+    # marker; the other checks remain ordinary pass evidence.
+    recovery_preflight = {
+        **_supervisor_preflight(),
+        "credentials_access": "<redacted>",
+    }
+    case.options = RuntimeOptions(poll_seconds=0, preflight_evidence=recovery_preflight)
     case.check = lambda uri: case.output
     return case
 
@@ -374,6 +378,40 @@ def test_failed_reserved_successor_is_adopted_when_observable(
     assert adopted.infrastructure_recovery_count == 1
     assert len(case.launches) == 1 and len(case.cancels) == 1
     assert len(_reservation_events(case)) == 1
+
+
+def test_adopted_reserved_successor_retains_reuse_provider_status(
+    partial_runtime, monkeypatch
+):
+    from npa.orchestration.skypilot import job_blockers
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+
+    case = partial_runtime
+    original = _crash_with_successor_intent(case, monkeypatch, posted=True)
+    successor = original.attempts[-1]
+    case.output = True
+    case.lookup = lambda name, job_id="": ManagedJobEvidence(
+        "found", job_id="42", status="RUNNING"
+    )
+    statuses = iter(["PENDING", "CANCELLED"])
+    case.status = lambda _job_id: SimpleNamespace(status=next(statuses))
+    monkeypatch.setattr(
+        job_blockers,
+        "inspect_job_blockers",
+        lambda *_args, **_kwargs: JobBlockerReport(
+            job_id="42", unready_nodes=["worker (NodeNotReady)"]
+        ),
+    )
+
+    executor = _driver(case, options=replace(case.options, resume=True))
+
+    assert executor.execute(case.gate)["status"] == "ok"
+    adopted = executor.attempts[-1]
+    assert adopted.logical_launch_id == successor.logical_launch_id
+    assert adopted.status == "succeeded"
+    assert adopted.sky_status == "CANCELLED"
+    assert adopted.cancellation_state == "verified"
+    assert len(case.launches) == 1 and len(case.cancels) == 2
 
 
 @pytest.mark.parametrize("outcome", ["absent", "unavailable", "partial"])
