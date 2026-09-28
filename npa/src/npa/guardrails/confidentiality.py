@@ -334,12 +334,21 @@ def _ncore_disposition_indexes(
     return candidates
 
 
-def should_skip_unconfigured_fork_pull_request(
+def should_skip_unconfigured_untrusted_pull_request(
     pattern_env: str,
     *,
     environ: Mapping[str, str] = os.environ,
 ) -> bool:
-    """Return True when a fork PR workflow cannot access repository secrets."""
+    """Return whether an untrusted PR cannot access repository secrets.
+
+    Args:
+        pattern_env: Secret-backed denylist environment variable.
+        environ: Workflow environment used to locate and classify the event.
+    Returns:
+        True for fork or Dependabot PRs without the requested secret.
+    Raises:
+        None.
+    """
 
     if environ.get(pattern_env, "").strip():
         return False
@@ -354,6 +363,10 @@ def should_skip_unconfigured_fork_pull_request(
         event = json.loads(Path(event_path).read_text(encoding="utf-8"))
     except OSError:
         return False
+
+    actor = environ.get("GITHUB_ACTOR") or (event.get("sender") or {}).get("login")
+    if actor == "dependabot[bot]":
+        return True
 
     pull_request = event.get("pull_request") or {}
     head_repo = (pull_request.get("head") or {}).get("repo") or {}
@@ -418,11 +431,11 @@ def main(argv: list[str] | None = None) -> int:
     if (
         not args.built_in_nebius_infra
         and (args.tree or args.diff_range or args.stdin_source)
-        and should_skip_unconfigured_fork_pull_request(args.pattern_env)
+        and should_skip_unconfigured_untrusted_pull_request(args.pattern_env)
     ):
         print(
-            "confidentiality scan skipped on fork pull request "
-            f"({args.pattern_env} secrets are unavailable to fork workflows)"
+            "private confidentiality scan skipped on untrusted pull request "
+            f"({args.pattern_env} secrets are unavailable)"
         )
         return 0
 

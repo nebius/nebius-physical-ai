@@ -255,9 +255,9 @@ def test_native_check_is_an_executed_gate_with_separate_private_dependencies():
         if isinstance(step.get("uses"), str)
         and re.fullmatch(r"actions/setup-python@[0-9a-f]{40}", step["uses"])
     )
-    assert (
-        setup["with"]["python-version"]
-        == "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore') && '3.12' || '3.11' }}"
+    assert setup["with"]["python-version"] == (
+        "${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || "
+        "matrix.tool == 'libero') && '3.12' || '3.11' }}"
     )
     for name, job in publish["jobs"].items():
         if name == "build-development":
