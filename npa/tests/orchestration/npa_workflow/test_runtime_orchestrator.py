@@ -224,6 +224,137 @@ def test_resolved_image_identity_includes_inline_image_and_rejects_legacy(
         _expected_image_identity(spec, [step], options, "", "image-evidence")
 
 
+
+def _parallel_image_replay_spec():
+    document = yaml.safe_load(_image_selection_replay_spec())
+    document["initial"] = "image-wave"
+    document["states"]["image-wave"] = {
+        "parallel": ["caption", "export"],
+        "terminal": True,
+    }
+    document["states"]["caption"].pop("next", None)
+    document["states"]["export"].pop("terminal", None)
+    return yaml.safe_dump(document)
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_parallel_replay_binds_selection_even_when_reference_set_is_unchanged(
+    tmp_path, changed
+):
+    references = list(_image_pin_bindings().values())
+    initial = _image_selection_options(
+        {"*": references[0], "workbench.token_factory.caption": references[1]}
+    )
+    selected = (
+        _image_selection_options(
+            {"workbench.token_factory.caption": references[0], "*": references[1]}
+        )
+        if changed
+        else initial
+    )
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=initial, spec_text=_parallel_image_replay_spec()
+    )
+    steps = build_plan(spec, run_id="rt-completed-replay-identity").steps
+    assert _wave_image_references(spec, steps, initial, "binding-check") == (
+        _wave_image_references(spec, steps, selected, "binding-check")
+    )
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=selected
+    )
+    assert report.status == ("failed" if changed else "succeeded")
+    assert submitter.calls == []
+    if changed:
+        assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    else:
+        assert len(report.waves) == 1 and report.waves[0]["replayed"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["legacy-reference-set", "unversioned-v3", "selection", "references", "bindings"],
+)
+def test_completed_replay_rejects_incomplete_or_tampered_image_binding(
+    tmp_path, mutation
+):
+    selected = _image_selection_options(
+        {"*": next(iter(_image_pin_bindings().values()))}
+    )
+    spec, store = _completed_replay_case(tmp_path, render_options=selected)
+    state = store.read_runtime_state()
+    record = state.waves[-1]
+    identity = record["image_identity"]
+    if mutation == "legacy-reference-set":
+        identity["version"] = "npa.workflow.image-reference-set.v1"
+        record["immutable_identity"]["image_digest"] = _reference_set_identity(
+            identity["references"]
+        )
+        identity.pop("selection_sha256")
+    elif mutation == "unversioned-v3":
+        record.pop("image_identity")
+        record["immutable_identity"]["image_digest"] = _image_identity(selected)
+    elif mutation == "selection":
+        identity["selection_sha256"] = "c" * 64
+        record["immutable_identity"]["image_digest"] = _selection_reference_identity(
+            identity["selection_sha256"], identity["references"], identity["bindings"]
+        )
+    elif mutation == "bindings":
+        identity["bindings"][0][0] = "different-state"
+        record["immutable_identity"]["image_digest"] = _selection_reference_identity(
+            identity["selection_sha256"], identity["references"], identity["bindings"]
+        )
+    else:
+        identity["references"] = ["registry.example/another@sha256:" + "c" * 64]
+    store.write_runtime_state(state)
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=selected
+    )
+    assert report.status == "failed"
+    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    assert submitter.calls == []
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_completed_replay_binds_catalog_assignments_with_unchanged_image_set(
+    tmp_path, monkeypatch, changed
+):
+    document = yaml.safe_load(_parallel_image_replay_spec())
+    for state in ("caption", "export"):
+        document["resources"][state] = {
+            **document["resources"]["cpu"],
+            "image": f"tool://catalog-{state}",
+        }
+        document["states"][state]["resources"] = state
+    references = list(_image_pin_bindings().values())
+    catalog = dict(zip(("catalog-caption", "catalog-export"), references))
+    monkeypatch.setattr(
+        "npa.deploy.images.container_image_for_tool",
+        lambda tool, **_kwargs: catalog[tool],
+    )
+    options = _image_selection_options({})
+    spec, store = _completed_replay_case(
+        tmp_path, render_options=options, spec_text=yaml.safe_dump(document)
+    )
+    original = store.read_runtime_state().waves[-1]["image_identity"]
+    if changed:
+        catalog.update(zip(catalog, reversed(references)))
+    steps = build_plan(spec, run_id="rt-completed-replay-identity").steps
+    assert (
+        list(_wave_image_references(spec, steps, options, "catalog-check"))
+        == (original["references"])
+    )
+    assert _image_identity(options) == original["selection_sha256"]
+    report, submitter = _resume_completed_case(
+        spec, store, True, render_options=options
+    )
+    assert report.status == ("failed" if changed else "succeeded")
+    assert submitter.calls == []
+    if changed:
+        assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
+    else:
+        assert report.waves[0]["replayed"]
+
+
 def _typed_running_observation(
     *,
     wave_key: str,
@@ -6607,132 +6738,3 @@ def test_output_reuse_error_type_restores_legacy_and_current_records(error_type)
     assert restored.output_reuse_error_type == (error_type or "")
     assert restored.to_dict()["output_reuse_error_type"] == (error_type or "")
 
-
-def _parallel_image_replay_spec():
-    document = yaml.safe_load(_image_selection_replay_spec())
-    document["initial"] = "image-wave"
-    document["states"]["image-wave"] = {
-        "parallel": ["caption", "export"],
-        "terminal": True,
-    }
-    document["states"]["caption"].pop("next", None)
-    document["states"]["export"].pop("terminal", None)
-    return yaml.safe_dump(document)
-
-
-@pytest.mark.parametrize("changed", [False, True])
-def test_parallel_replay_binds_selection_even_when_reference_set_is_unchanged(
-    tmp_path, changed
-):
-    references = list(_image_pin_bindings().values())
-    initial = _image_selection_options(
-        {"*": references[0], "workbench.token_factory.caption": references[1]}
-    )
-    selected = (
-        _image_selection_options(
-            {"workbench.token_factory.caption": references[0], "*": references[1]}
-        )
-        if changed
-        else initial
-    )
-    spec, store = _completed_replay_case(
-        tmp_path, render_options=initial, spec_text=_parallel_image_replay_spec()
-    )
-    steps = build_plan(spec, run_id="rt-completed-replay-identity").steps
-    assert _wave_image_references(spec, steps, initial, "binding-check") == (
-        _wave_image_references(spec, steps, selected, "binding-check")
-    )
-    report, submitter = _resume_completed_case(
-        spec, store, True, render_options=selected
-    )
-    assert report.status == ("failed" if changed else "succeeded")
-    assert submitter.calls == []
-    if changed:
-        assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
-    else:
-        assert len(report.waves) == 1 and report.waves[0]["replayed"]
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    ["legacy-reference-set", "unversioned-v3", "selection", "references", "bindings"],
-)
-def test_completed_replay_rejects_incomplete_or_tampered_image_binding(
-    tmp_path, mutation
-):
-    selected = _image_selection_options(
-        {"*": next(iter(_image_pin_bindings().values()))}
-    )
-    spec, store = _completed_replay_case(tmp_path, render_options=selected)
-    state = store.read_runtime_state()
-    record = state.waves[-1]
-    identity = record["image_identity"]
-    if mutation == "legacy-reference-set":
-        identity["version"] = "npa.workflow.image-reference-set.v1"
-        record["immutable_identity"]["image_digest"] = _reference_set_identity(
-            identity["references"]
-        )
-        identity.pop("selection_sha256")
-    elif mutation == "unversioned-v3":
-        record.pop("image_identity")
-        record["immutable_identity"]["image_digest"] = _image_identity(selected)
-    elif mutation == "selection":
-        identity["selection_sha256"] = "c" * 64
-        record["immutable_identity"]["image_digest"] = _selection_reference_identity(
-            identity["selection_sha256"], identity["references"], identity["bindings"]
-        )
-    elif mutation == "bindings":
-        identity["bindings"][0][0] = "different-state"
-        record["immutable_identity"]["image_digest"] = _selection_reference_identity(
-            identity["selection_sha256"], identity["references"], identity["bindings"]
-        )
-    else:
-        identity["references"] = ["registry.example/another@sha256:" + "c" * 64]
-    store.write_runtime_state(state)
-    report, submitter = _resume_completed_case(
-        spec, store, True, render_options=selected
-    )
-    assert report.status == "failed"
-    assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
-    assert submitter.calls == []
-
-
-@pytest.mark.parametrize("changed", [False, True])
-def test_completed_replay_binds_catalog_assignments_with_unchanged_image_set(
-    tmp_path, monkeypatch, changed
-):
-    document = yaml.safe_load(_parallel_image_replay_spec())
-    for state in ("caption", "export"):
-        document["resources"][state] = {
-            **document["resources"]["cpu"],
-            "image": f"tool://catalog-{state}",
-        }
-        document["states"][state]["resources"] = state
-    references = list(_image_pin_bindings().values())
-    catalog = dict(zip(("catalog-caption", "catalog-export"), references))
-    monkeypatch.setattr(
-        "npa.deploy.images.container_image_for_tool",
-        lambda tool, **_kwargs: catalog[tool],
-    )
-    options = _image_selection_options({})
-    spec, store = _completed_replay_case(
-        tmp_path, render_options=options, spec_text=yaml.safe_dump(document)
-    )
-    original = store.read_runtime_state().waves[-1]["image_identity"]
-    if changed:
-        catalog.update(zip(catalog, reversed(references)))
-    steps = build_plan(spec, run_id="rt-completed-replay-identity").steps
-    assert (
-        list(_wave_image_references(spec, steps, options, "catalog-check"))
-        == (original["references"])
-    )
-    assert _image_identity(options) == original["selection_sha256"]
-    report, submitter = _resume_completed_case(
-        spec, store, True, render_options=options
-    )
-    assert report.status == ("failed" if changed else "succeeded")
-    assert submitter.calls == []
-    if changed:
-        assert "IMMUTABLE_IDENTITY_MISMATCH" in report.error
-    else:
-        assert report.waves[0]["replayed"]
