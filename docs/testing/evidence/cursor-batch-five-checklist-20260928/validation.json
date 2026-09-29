@@ -1,0 +1,75 @@
+{
+  "head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6",
+  "gates": [
+    {
+      "gate": "precheck",
+      "exit_code": 0,
+      "seconds": 2.96,
+      "command": [
+        "make",
+        "precheck",
+        "PYTHON=<checkout>/npa/.venv/bin/python"
+      ],
+      "tested_head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6"
+    },
+    {
+      "gate": "full",
+      "exit_code": 0,
+      "seconds": 919.36,
+      "command": [
+        "make",
+        "test",
+        "PYTHON=<checkout>/npa/.venv/bin/python"
+      ],
+      "tested_head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6"
+    },
+    {
+      "gate": "docs",
+      "exit_code": 0,
+      "seconds": 84.22,
+      "command": [
+        "make",
+        "docs-check",
+        "PYTHON=<checkout>/npa/.venv/bin/python"
+      ],
+      "tested_head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6"
+    },
+    {
+      "gate": "confidentiality",
+      "exit_code": 0,
+      "seconds": 0.09,
+      "command": [
+        "<checkout>/npa/.venv/bin/python",
+        "-m",
+        "npa.guardrails.confidentiality",
+        "--repo-root",
+        ".",
+        "--diff-range",
+        "origin/main..HEAD",
+        "--built-in-nebius-infra"
+      ],
+      "tested_head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6"
+    }
+  ],
+  "base": "eb5d1dbdfce2692b8a6a09ad5abce3408bb6cd95",
+  "logs": {
+    "precheck": {
+      "raw_sha256": "42b8272adb9f3d0f923cbba5496420580eb18c5bf885bfd5f8cbb67d7813939c",
+      "published_sha256": "2b37639ca44816e1631f174d727c3b65afb021cbe7b9e5602f2245935586d2f0"
+    },
+    "full": {
+      "raw_sha256": "0638550dd4ce6c67e8d00e187f8f26212b53f45962df114bd8ba6a86f3a6def7",
+      "published_sha256": "75bf8bdd791812525a6331d4cc6d5a71911215516f067b6b65abbaeffdcf304d"
+    },
+    "docs": {
+      "raw_sha256": "a8839a8395bd9bda7ef48ec46a5c6e3c10a7e7a3811c25118214c3be46969086",
+      "published_sha256": "93cf3c8ed9460b2e1d4961e834b0abac573255298b57eccb3d9c7ef90c03b212"
+    },
+    "confidentiality": {
+      "raw_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8",
+      "published_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+    }
+  },
+  "scope": "Repository make test with standard live/GPU/e2e exclusions; eight pytest workers using --dist=loadfile. Current-head GitHub CI independently runs its required suites. No new GPU run is claimed.",
+  "full_summary": "33880 passed, 156 skipped, 1 xpassed, 458 warnings in 916.89s (0:15:16)"
+}

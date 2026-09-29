@@ -1,0 +1,387 @@
+{
+  "generated_at": "2026-09-29T00:33:13.865597+00:00",
+  "base": "eb5d1dbdfce2692b8a6a09ad5abce3408bb6cd95",
+  "integration": {
+    "base": "eb5d1dbdfce2692b8a6a09ad5abce3408bb6cd95",
+    "ordered_prs": [
+      {
+        "pr": 635,
+        "pr_head": "36de4ac3e6c7543c005cd0a37600f67a0899d129",
+        "squash_head": "23184eea8fed11a84375a81d79dcdf9df9213c1d",
+        "tree": "94c7cfa0451ebf3c2c75b1c9b120073f2c3a43eb"
+      },
+      {
+        "pr": 637,
+        "pr_head": "3063171b4e293d584c98a6ec803fd3e378304f42",
+        "squash_head": "bac63114f080b1aa9282938ea4d80aed51219581",
+        "tree": "0c57b54da6b20afbf8fc2bf36fb7a91a0491ebf9"
+      },
+      {
+        "pr": 638,
+        "pr_head": "0d41a1c675adb3f0a75c41f0a588cb2ea0b578d3",
+        "squash_head": "30c5d0bde527b216f98ea5034b886b1d0ba0fcc6",
+        "tree": "0c7787c723d4a8680709b94b98cd91ec0f647ef9"
+      },
+      {
+        "pr": 639,
+        "pr_head": "619d4f1a08022a7e786fe81f49a4c54a1ce30b8e",
+        "squash_head": "2ad012e01bc2e8064afc440267d0d5c2fa117a32",
+        "tree": "445c83a9864d49a37b08abe6f8fcb130ceccdf6b"
+      },
+      {
+        "pr": 641,
+        "pr_head": "9116e957f2db3ce057d2a88e7cd9932008c062c8",
+        "squash_head": "cfd98644f1961838aea5e81a03aece4667d59c5a",
+        "tree": "451c459b05793377abd7d585dd2c522922ec0ab9"
+      },
+      {
+        "pr": 643,
+        "pr_head": "0dfdd2068ed58154646a83ce0e752bcdbe531fce",
+        "squash_head": "f187c6c8261ae8994592f24d8d4718747131c68c",
+        "tree": "5e68567b75faaa0551905a42f00769533adc038e"
+      },
+      {
+        "pr": 644,
+        "pr_head": "b3ad9671a9387dd16bf91e6ac4fc0739d339e9a8",
+        "squash_head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6",
+        "tree": "9cd8b20445762a855297acfabdd953faeec9f09d"
+      }
+    ],
+    "head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6",
+    "tree": "9cd8b20445762a855297acfabdd953faeec9f09d"
+  },
+  "github_checks": [
+    {
+      "pr": 635,
+      "head": "36de4ac3e6c7543c005cd0a37600f67a0899d129",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 24,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 637,
+      "head": "3063171b4e293d584c98a6ec803fd3e378304f42",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 24,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 638,
+      "head": "0d41a1c675adb3f0a75c41f0a588cb2ea0b578d3",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 24,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 639,
+      "head": "619d4f1a08022a7e786fe81f49a4c54a1ce30b8e",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 24,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 641,
+      "head": "9116e957f2db3ce057d2a88e7cd9932008c062c8",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 24,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 643,
+      "head": "0dfdd2068ed58154646a83ce0e752bcdbe531fce",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 24,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    },
+    {
+      "pr": 644,
+      "head": "b3ad9671a9387dd16bf91e6ac4fc0739d339e9a8",
+      "state": "OPEN",
+      "mergeable": "MERGEABLE",
+      "merge_state": "CLEAN",
+      "checks": 24,
+      "failed": [],
+      "pending": [],
+      "required": {
+        "gitleaks": true,
+        "scan": true,
+        "security-regression": true
+      },
+      "ready": true
+    }
+  ],
+  "reviews": [
+    {
+      "pr": 635,
+      "head": "36de4ac3e6c7543c005cd0a37600f67a0899d129",
+      "review_url": "https://github.com/nebius/nebius-physical-ai/pull/635#pullrequestreview-5346224368",
+      "state": "COMMENTED"
+    },
+    {
+      "pr": 637,
+      "head": "3063171b4e293d584c98a6ec803fd3e378304f42",
+      "review_url": "https://github.com/nebius/nebius-physical-ai/pull/637#pullrequestreview-5346224701",
+      "state": "COMMENTED"
+    },
+    {
+      "pr": 638,
+      "head": "0d41a1c675adb3f0a75c41f0a588cb2ea0b578d3",
+      "review_url": "https://github.com/nebius/nebius-physical-ai/pull/638#pullrequestreview-5346224994",
+      "state": "COMMENTED"
+    },
+    {
+      "pr": 639,
+      "head": "619d4f1a08022a7e786fe81f49a4c54a1ce30b8e",
+      "review_url": "https://github.com/nebius/nebius-physical-ai/pull/639#pullrequestreview-5346225379",
+      "state": "COMMENTED"
+    },
+    {
+      "pr": 641,
+      "head": "9116e957f2db3ce057d2a88e7cd9932008c062c8",
+      "review_url": "https://github.com/nebius/nebius-physical-ai/pull/641#pullrequestreview-5346225671",
+      "state": "COMMENTED"
+    },
+    {
+      "pr": 643,
+      "head": "0dfdd2068ed58154646a83ce0e752bcdbe531fce",
+      "review_url": "https://github.com/nebius/nebius-physical-ai/pull/643#pullrequestreview-5346225983",
+      "state": "COMMENTED"
+    },
+    {
+      "pr": 644,
+      "head": "b3ad9671a9387dd16bf91e6ac4fc0739d339e9a8",
+      "review_url": "https://github.com/nebius/nebius-physical-ai/pull/644#pullrequestreview-5346226322",
+      "state": "COMMENTED"
+    }
+  ],
+  "linux_validation": {
+    "head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6",
+    "gates": [
+      {
+        "gate": "precheck",
+        "exit_code": 0,
+        "seconds": 2.96,
+        "command": [
+          "make",
+          "precheck",
+          "PYTHON=<checkout>/npa/.venv/bin/python"
+        ],
+        "tested_head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6"
+      },
+      {
+        "gate": "full",
+        "exit_code": 0,
+        "seconds": 919.36,
+        "command": [
+          "make",
+          "test",
+          "PYTHON=<checkout>/npa/.venv/bin/python"
+        ],
+        "tested_head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6"
+      },
+      {
+        "gate": "docs",
+        "exit_code": 0,
+        "seconds": 84.22,
+        "command": [
+          "make",
+          "docs-check",
+          "PYTHON=<checkout>/npa/.venv/bin/python"
+        ],
+        "tested_head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6"
+      },
+      {
+        "gate": "confidentiality",
+        "exit_code": 0,
+        "seconds": 0.09,
+        "command": [
+          "<checkout>/npa/.venv/bin/python",
+          "-m",
+          "npa.guardrails.confidentiality",
+          "--repo-root",
+          ".",
+          "--diff-range",
+          "origin/main..HEAD",
+          "--built-in-nebius-infra"
+        ],
+        "tested_head": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6"
+      }
+    ],
+    "base": "eb5d1dbdfce2692b8a6a09ad5abce3408bb6cd95",
+    "logs": {
+      "precheck": {
+        "raw_sha256": "42b8272adb9f3d0f923cbba5496420580eb18c5bf885bfd5f8cbb67d7813939c",
+        "published_sha256": "2b37639ca44816e1631f174d727c3b65afb021cbe7b9e5602f2245935586d2f0"
+      },
+      "full": {
+        "raw_sha256": "0638550dd4ce6c67e8d00e187f8f26212b53f45962df114bd8ba6a86f3a6def7",
+        "published_sha256": "75bf8bdd791812525a6331d4cc6d5a71911215516f067b6b65abbaeffdcf304d"
+      },
+      "docs": {
+        "raw_sha256": "a8839a8395bd9bda7ef48ec46a5c6e3c10a7e7a3811c25118214c3be46969086",
+        "published_sha256": "93cf3c8ed9460b2e1d4961e834b0abac573255298b57eccb3d9c7ef90c03b212"
+      },
+      "confidentiality": {
+        "raw_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8",
+        "published_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+      }
+    },
+    "scope": "Repository make test with standard live/GPU/e2e exclusions; eight pytest workers using --dist=loadfile. Current-head GitHub CI independently runs its required suites. No new GPU run is claimed.",
+    "full_summary": "33880 passed, 156 skipped, 1 xpassed, 458 warnings in 916.89s (0:15:16)"
+  },
+  "prior_proof": "https://github.com/nebius/nebius-physical-ai/blob/2fca824c6a7f46871a7665f0f6c8d2ae55bb6cc8/docs/testing/evidence/cursor-batch-five-followup-20260928/README.md",
+  "workflow_production_unchanged_since_prior_full_validation": true,
+  "new_work": [
+    "Correct contradictory legacy-identity compatibility in the workflow guide.",
+    "Document concrete separate-controller rollout for existing versus new runs.",
+    "Move shared documentation into #641 to preserve conflict-free ordered squash merges.",
+    "Incorporate current main #760 and #761 in all seven PRs.",
+    "Record each supplied-review disposition as an attributable GitHub COMMENT review."
+  ],
+  "review_policy": {
+    "independent_ai_review": "Claude Code reviewed the workflow production code; Codex checked documentation and base integration.",
+    "human_approval_required_by_current_rules": false,
+    "human_approval_fabricated": false,
+    "required_checks": [
+      "gitleaks",
+      "scan",
+      "security-regression"
+    ],
+    "active_rules": [
+      "merge_queue",
+      "required_signatures"
+    ],
+    "rules_changed": false
+  },
+  "rollout": {
+    "selected_policy": "Keep unfinished runs on the original controller/source/image; use a separate upgraded controller for new work.",
+    "existing_controllers_changed": false,
+    "claims_no_active_jobs_globally": false,
+    "rewrite_saved_identities": false,
+    "replacement_requires_terminal_or_verified_exact_cancellation": true
+  },
+  "merged_or_enqueued": false,
+  "new_gpu_execution": false,
+  "test_process_cleanup": {
+    "driver_exit": 0,
+    "all_descendants_reaped": true,
+    "raw_log_sha256": "cce14174d013ce68dc3ef509552a1f16b0323a60f35cc9032464ca569c337877"
+  },
+  "latest_main_compatibility": {
+    "integration_head": "71d6ec4f97fe16cf158cfb4c6b1398701aeba405",
+    "main_base": "3ca7a94c79f1fdc5a0d44c2ad50f1af6dd9b6245",
+    "tests": [
+      "npa/tests/cli/test_agent_leisaac_episodes.py",
+      "npa/tests/smoke/test_golden_eval_manifest.py"
+    ],
+    "exit_code": 0,
+    "seconds": 14.63,
+    "log_sha256": "ad6d0190936f33e50f41b86d80fb0e442e9b84a1b40ef5130ddefb68fe480f59",
+    "checkout_clean_after": true,
+    "test_summary": "353 passed, 2 warnings in 13.95s",
+    "ordered_integration": {
+      "base": "3ca7a94c79f1fdc5a0d44c2ad50f1af6dd9b6245",
+      "ordered_prs": [
+        {
+          "pr": 635,
+          "pr_head": "36de4ac3e6c7543c005cd0a37600f67a0899d129",
+          "squash_head": "329c991684a5ff58da4c1094d8fffdf7c8fcb88c",
+          "tree": "d03b63d01c0526b69dd9cd99a370c617942c6475"
+        },
+        {
+          "pr": 637,
+          "pr_head": "3063171b4e293d584c98a6ec803fd3e378304f42",
+          "squash_head": "280117fc53714fa82ede5dfebab932b684bd7d85",
+          "tree": "113621de7c69362918bb90affea8c941f76bb002"
+        },
+        {
+          "pr": 638,
+          "pr_head": "0d41a1c675adb3f0a75c41f0a588cb2ea0b578d3",
+          "squash_head": "cccf6aacacc0191ee5c39393c1b3deb19c7858c5",
+          "tree": "b2a86184ac5701ba0970cbe4928d39b44306577f"
+        },
+        {
+          "pr": 639,
+          "pr_head": "619d4f1a08022a7e786fe81f49a4c54a1ce30b8e",
+          "squash_head": "56c61c794ae5a8195af86ee0c7450c487b46d93e",
+          "tree": "7c7471c69d25f43b267352a15c1008385289e731"
+        },
+        {
+          "pr": 641,
+          "pr_head": "9116e957f2db3ce057d2a88e7cd9932008c062c8",
+          "squash_head": "83c5066fc85470f6069302fcbe39dc32792e6045",
+          "tree": "8a5517044165dc71259a9d9ee42c9178ecc34db3"
+        },
+        {
+          "pr": 643,
+          "pr_head": "0dfdd2068ed58154646a83ce0e752bcdbe531fce",
+          "squash_head": "72c2ecd00475ebe6062916d43e83315c4c95a76c",
+          "tree": "2d687c93e80ba85b223c37b3e6a0980aa04ea527"
+        },
+        {
+          "pr": 644,
+          "pr_head": "b3ad9671a9387dd16bf91e6ac4fc0739d339e9a8",
+          "squash_head": "71d6ec4f97fe16cf158cfb4c6b1398701aeba405",
+          "tree": "d68f594cefc2ac770cb6ff2b496a3f48b08e8803"
+        }
+      ],
+      "head": "71d6ec4f97fe16cf158cfb4c6b1398701aeba405",
+      "tree": "d68f594cefc2ac770cb6ff2b496a3f48b08e8803"
+    },
+    "scope": "After the full-suite base was frozen, main added #762/#763 in separate modules. All seven PRs also merge cleanly onto that newer base, and both changed modules pass on the combined tree. This does not claim another full-suite execution."
+  }
+}

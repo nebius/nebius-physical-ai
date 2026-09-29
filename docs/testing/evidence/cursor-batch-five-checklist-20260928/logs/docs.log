@@ -1,0 +1,2 @@
+NPA_BIN="${NPA_BIN:-$(bin=$(command -v <checkout>/npa/.venv/bin/python 2>/dev/null) && [ -x "$(dirname "$bin")/npa" ] && printf '%s' "$(dirname "$bin")/npa" || true)}" bash scripts/build_docs.sh --check
+docs/cli is up to date.

@@ -1,0 +1,44 @@
+[
+  {
+    "pr": 635,
+    "head": "36de4ac3e6c7543c005cd0a37600f67a0899d129",
+    "review_url": "https://github.com/nebius/nebius-physical-ai/pull/635#pullrequestreview-5346224368",
+    "state": "COMMENTED"
+  },
+  {
+    "pr": 637,
+    "head": "3063171b4e293d584c98a6ec803fd3e378304f42",
+    "review_url": "https://github.com/nebius/nebius-physical-ai/pull/637#pullrequestreview-5346224701",
+    "state": "COMMENTED"
+  },
+  {
+    "pr": 638,
+    "head": "0d41a1c675adb3f0a75c41f0a588cb2ea0b578d3",
+    "review_url": "https://github.com/nebius/nebius-physical-ai/pull/638#pullrequestreview-5346224994",
+    "state": "COMMENTED"
+  },
+  {
+    "pr": 639,
+    "head": "619d4f1a08022a7e786fe81f49a4c54a1ce30b8e",
+    "review_url": "https://github.com/nebius/nebius-physical-ai/pull/639#pullrequestreview-5346225379",
+    "state": "COMMENTED"
+  },
+  {
+    "pr": 641,
+    "head": "9116e957f2db3ce057d2a88e7cd9932008c062c8",
+    "review_url": "https://github.com/nebius/nebius-physical-ai/pull/641#pullrequestreview-5346225671",
+    "state": "COMMENTED"
+  },
+  {
+    "pr": 643,
+    "head": "0dfdd2068ed58154646a83ce0e752bcdbe531fce",
+    "review_url": "https://github.com/nebius/nebius-physical-ai/pull/643#pullrequestreview-5346225983",
+    "state": "COMMENTED"
+  },
+  {
+    "pr": 644,
+    "head": "b3ad9671a9387dd16bf91e6ac4fc0739d339e9a8",
+    "review_url": "https://github.com/nebius/nebius-physical-ai/pull/644#pullrequestreview-5346226322",
+    "state": "COMMENTED"
+  }
+]

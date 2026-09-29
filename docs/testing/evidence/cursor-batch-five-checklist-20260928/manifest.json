@@ -1,0 +1,45 @@
+{
+  "files": {
+    "README.md": {
+      "sha256": "8d18991b305b5e7d6815580c71ff3ec08d82d8b5076a3504f76aeb718da311d2",
+      "bytes": 6042
+    },
+    "github-checks.json": {
+      "sha256": "0ee9e786306b293afd8c48032dc698200f89c7bc3b391477773e0b55646fcdb8",
+      "bytes": 2348
+    },
+    "logs/confidentiality.log": {
+      "sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8",
+      "bytes": 64
+    },
+    "logs/docs.log": {
+      "sha256": "93cf3c8ed9460b2e1d4961e834b0abac573255298b57eccb3d9c7ef90c03b212",
+      "bytes": 227
+    },
+    "logs/full.log": {
+      "sha256": "75bf8bdd791812525a6331d4cc6d5a71911215516f067b6b65abbaeffdcf304d",
+      "bytes": 99056
+    },
+    "logs/latest-main-compatibility.log": {
+      "sha256": "f66f5a88faf251167f5040ed602fbbeaa83354f96a02a6f044ee72c98952283f",
+      "bytes": 1871
+    },
+    "logs/precheck.log": {
+      "sha256": "2b37639ca44816e1631f174d727c3b65afb021cbe7b9e5602f2245935586d2f0",
+      "bytes": 1569
+    },
+    "report.json": {
+      "sha256": "5af8f163fa6af8422d2075772227312dc1e1ab43a6692aad413497feeac818ab",
+      "bytes": 13076
+    },
+    "reviews.json": {
+      "sha256": "16a704bd1e77f0efd66cc85afbf2e2bc9e389c728e438ad08b7d87ba30e3eb6f",
+      "bytes": 1466
+    },
+    "validation.json": {
+      "sha256": "1aa9d6ea4bdf3c9dbb97ca0421f1c997e516e2592b18d1db5992f61d066697ea",
+      "bytes": 2449
+    }
+  },
+  "integration": "961eabfc7660c13ae29bd90e7b52e96e5e68e0e6"
+}
