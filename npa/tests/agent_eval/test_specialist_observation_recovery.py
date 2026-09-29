@@ -6,6 +6,8 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import hashlib
 import json
+import os
+from pathlib import Path
 import sqlite3
 import subprocess
 import sys
@@ -119,7 +121,7 @@ def test_default_policy_hash_remains_compatible_and_flag_is_strict(team):
             Operation(argv=["true"], description="Observe", observation_only=invalid)
 
 
-def test_additive_migration_keeps_old_receipts_unclassified(tmp_path):
+def _legacy_journal(tmp_path):
     directory = tmp_path / "old"
     directory.mkdir(mode=0o700)
     path = directory / "tasks.sqlite"
@@ -131,6 +133,11 @@ def test_additive_migration_keeps_old_receipts_unclassified(tmp_path):
             "INSERT INTO calls VALUES('old','call','digest','started',NULL)"
         )
     path.chmod(0o600)
+    return directory
+
+
+def test_additive_migration_keeps_old_receipts_unclassified(tmp_path):
+    directory = _legacy_journal(tmp_path)
     with ThreadPoolExecutor(max_workers=4) as pool:
         stores = list(pool.map(lambda _: TaskStore(directory), range(4)))
     for store in stores:
@@ -142,6 +149,52 @@ def test_additive_migration_keeps_old_receipts_unclassified(tmp_path):
                 "classification": None,
             }
         ]
+
+
+def _start_journal_initializer(directory):
+    script = """
+import sys
+from pathlib import Path
+from npa.agent_backend.specialists.store import TaskStore
+print('ready', flush=True)
+input()
+store = TaskStore(Path(sys.argv[1]))
+assert store._calls('old')[0]['classification'] is None
+with store._connection() as connection:
+    assert connection.execute('PRAGMA journal_mode').fetchone()[0] == 'wal'
+print('initialized', flush=True)
+"""
+    environment = {**os.environ, "PYTHONPATH": str(Path(__file__).parents[2] / "src")}
+    return subprocess.Popen(
+        [sys.executable, "-c", script, str(directory)],
+        env=environment,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+
+def test_separate_processes_initialize_one_legacy_journal(tmp_path):
+    directory = _legacy_journal(tmp_path)
+    children = []
+    try:
+        for _ in range(4):
+            children.append(_start_journal_initializer(directory))
+        for child in children:
+            assert child.stdout.readline().strip() == "ready"
+        for child in children:
+            child.stdin.write("initialize\n")
+            child.stdin.flush()
+        for child in children:
+            output, errors = child.communicate(timeout=60)
+            assert child.returncode == 0, errors
+            assert output.strip() == "initialized"
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.terminate()
+            child.wait()
 
 
 def test_dismissal_is_failed_idempotent_and_does_not_release_task(team, monkeypatch):

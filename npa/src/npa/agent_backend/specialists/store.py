@@ -57,8 +57,20 @@ class TaskStore:
         self.directory = private_directory(directory)
         self.path = self.directory / "tasks.sqlite"
         _private_file(self.path)
-        with self._connection() as connection:
-            connection.executescript(_SCHEMA)
+        self._initialize()
+
+    def _initialize(self):
+        import fcntl
+
+        path = self.directory / "journal-initialize.lock"
+        _private_file(path)
+        descriptor = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+        with os.fdopen(descriptor, "r+") as lock:
+            # SQLite's journal-mode transition can bypass its ordinary busy timeout.
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            with self._connection() as connection:
+                connection.execute("PRAGMA journal_mode=WAL")
+                connection.executescript(_SCHEMA)
 
     @contextmanager
     def _connection(self, phase="task_journal"):
@@ -66,7 +78,6 @@ class TaskStore:
         try:
             connection = sqlite3.connect(self.path, timeout=30)
             connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA journal_mode=WAL")
             with connection:
                 yield connection
         except sqlite3.Error as error:
