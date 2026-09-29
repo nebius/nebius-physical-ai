@@ -2450,9 +2450,10 @@ def container_image_for_tool(
             f"docs/workbench/container-packaging.md."
         )
     # SONIC has a capability-aware manifest with independently accepted and
-    # quarantined variants. Its tool-level release metadata remains stale for
-    # publication purposes, but consumption must defer to ``sonic_image_entry``
-    # instead of hiding the active host-mounted and MuJoCo runtime-fetch images.
+    # quarantined image packages. Defer its tool-level decision until after
+    # resolving the variant, then gate the selected package below. This keeps
+    # the independently accepted npa-sonic-mujoco release usable without
+    # exempting the quarantined npa-sonic release from consumption policy.
     if (
         tool in PUBLICATION_QUARANTINE_TOOLS
         and public_registry
@@ -2477,11 +2478,23 @@ def container_image_for_tool(
         )
         image_name = str(entry["name"])
         active_tag = str(entry["tag"])
+        candidate_tag = re.fullmatch(r"dev-[0-9a-f]{40}", tag or "") is not None
+        release_status = str(entry.get("public_release_status") or "quarantined")
+        if public_registry and not candidate_tag and release_status != "active":
+            reason = str(
+                entry.get("public_release_quarantine_reason")
+                or "the selected public release has not passed current image policy"
+            )
+            raise ValueError(
+                f"SONIC image variant {entry['id']!r} resolves to quarantined "
+                f"public release {image_name}:{active_tag} (status "
+                f"{release_status!r}): {reason}"
+            )
         if (
             public_registry
             and tag is not None
             and tag != active_tag
-            and re.fullmatch(r"dev-[0-9a-f]{40}", tag) is None
+            and not candidate_tag
         ):
             raise ValueError(
                 f"Public tag {tag!r} does not match active SONIC image variant "

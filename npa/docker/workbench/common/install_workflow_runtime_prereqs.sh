@@ -21,7 +21,7 @@ case "${ID}:${VERSION_ID}" in
     linux_libc_dev_version="5.15.0-190.200"
     ;;
   ubuntu:24.04)
-    linux_libc_dev_version="6.8.0-138.138"
+    linux_libc_dev_version="6.8.0-139.139"
     ;;
   *)
     echo "unsupported workflow runtime base: ${ID}:${VERSION_ID}" >&2

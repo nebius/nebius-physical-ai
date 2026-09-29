@@ -5,6 +5,7 @@ import re
 
 import pytest
 
+from npa.deploy import images as deploy_images
 from npa.deploy.images import (
     DEFAULT_CONTAINER_REGISTRY,
     SUPPORTED_TOOL_VERSIONS,
@@ -121,20 +122,40 @@ def test_unaccepted_default_stays_blocked_without_quarantine_membership(
         container_image_for_tool(tool)
 
 
-def test_sonic_public_resolution_uses_active_variant_manifest() -> None:
+def test_sonic_public_resolution_rejects_quarantined_canonical_variant() -> None:
     expected_tag = (
         "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
 
-    assert container_image_for_tool("sonic", gpu_target="gpu-rtx6000") == (
-        f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic:{expected_tag}"
-    )
-    assert (
+    with pytest.raises(ValueError, match="quarantined public release") as excinfo:
         container_image_for_tool(
             "sonic", gpu_target="gpu-rtx6000", workload="isaac-render"
         )
-        == f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic:{expected_tag}"
+    assert expected_tag in str(excinfo.value)
+    assert "operator-controlled image" in str(excinfo.value)
+
+
+def test_sonic_variant_quarantine_does_not_depend_on_tool_level_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(deploy_images, "PUBLICATION_QUARANTINE_TOOLS", frozenset())
+
+    with pytest.raises(ValueError, match="quarantined public release"):
+        container_image_for_tool("sonic", gpu_target="gpu-rtx6000")
+
+
+def test_sonic_public_resolution_keeps_exact_candidate_and_mujoco_paths() -> None:
+    sha = "a" * 40
+    assert container_image_for_tool(
+        "sonic", gpu_target="gpu-rtx6000", tag=f"dev-{sha}"
+    ) == (f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic:dev-{sha}")
+
+    assert container_image_for_tool("sonic-mujoco") == (
+        f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic-mujoco:0.2.0-runtime"
     )
+    assert container_image_for_tool(
+        "sonic", image_variant="sonic-mujoco-runtime-fetch", workload="mujoco-eval"
+    ) == (f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic-mujoco:0.2.0-runtime")
 
 
 @pytest.mark.parametrize("variant", ["sonic-l40s-baked", "sonic-mujoco-h100-mvp"])
@@ -144,7 +165,7 @@ def test_sonic_quarantined_variants_still_fail_closed(variant: str) -> None:
 
 
 def test_sonic_public_tag_cannot_override_active_manifest_with_stale_release() -> None:
-    with pytest.raises(ValueError, match="active SONIC image variant"):
+    with pytest.raises(ValueError, match="quarantined public release"):
         container_image_for_tool("sonic", tag="0.1.2")
 
 

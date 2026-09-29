@@ -71,6 +71,16 @@ def test_cosmos3_reason_cache_wiring_passes() -> None:
     assert result.ok, result.detail
 
 
+def test_lancedb_bdd100k_dhash_runtime_passes() -> None:
+    from npa.smoke.test_lancedb_functional import check_bdd100k_dhash_runtime
+
+    result = check_bdd100k_dhash_runtime()
+
+    assert result.ok, result.detail
+    assert "Pillow=12." in result.detail
+    assert "dhash=0" in result.detail
+
+
 def test_lerobot_vlm_rl_signal_step_passes() -> None:
     from unittest.mock import MagicMock, patch
 

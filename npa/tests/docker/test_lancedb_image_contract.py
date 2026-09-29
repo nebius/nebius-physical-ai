@@ -34,6 +34,9 @@ def test_lancedb_nonroot_entrypoint_and_healthcheck_are_runnable() -> None:
     for source in runtime_sources:
         assert any(source in line for line in runtime_copy_lines)
     assert "LANCEDB_SMOKE_ENTRYPOINT=/entrypoint.sh" in text
+    assert "LANCEDB_SMOKE_UDF_MODULE=npa_lancedb_bdd100k_udfs" in text
+    assert "from npa_lancedb_bdd100k_udfs import _dhash_bytes" in text
+    assert "_dhash_bytes(data.getvalue()) == 0" in text
     assert "/readyz" in text
     assert text.index("USER ubuntu") < text.index("HEALTHCHECK")
 
@@ -45,6 +48,13 @@ def test_lancedb_dependency_overlay_is_consistent() -> None:
     verify = text.index("python -m pip check")
 
     assert install < remove_unused_spin < verify
+
+    requirements = (ROOT / "npa/docker/workbench/lancedb/requirements.txt").read_text(
+        encoding="utf-8"
+    )
+    assert "npa-detection-training parent" in requirements
+    assert "npa-workbench-cuda-base" not in requirements
+    assert "pillow==12.3.0" in requirements
 
 
 def test_lancedb_preserves_the_parent_header_security_refresh() -> None:

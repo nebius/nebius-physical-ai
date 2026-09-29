@@ -28,10 +28,10 @@ COPY --chmod=0755 docker/workbench/common/install_workflow_runtime_prereqs.sh \
 RUN /usr/local/bin/install-workflow-runtime-prereqs \
       "${UBUNTU_SNAPSHOT}" "${LINUX_LIBC_DEV_VERSION}"
 
-# Only the CLIP embedding dependency is unique to this image; the FastAPI +
-# lancedb + pyarrow + pillow + boto3 stack comes from the shared base. Local
-# deploy maps the process to the host uid/gid, so every runtime source remains
-# readable when that uid differs from the image's named ubuntu user.
+# The FastAPI + lancedb + pyarrow + boto3 stack comes from the shared base.
+# Reassert the direct Pillow 12 runtime contract alongside the CLIP dependency.
+# Local deploy maps the process to the host uid/gid, so every runtime source
+# remains readable when that uid differs from the image's named ubuntu user.
 COPY --chmod=0644 docker/workbench/lancedb/requirements.txt /app/requirements.txt
 # The inherited scientific-build helper is not used at runtime and caps click
 # below the version required by the pinned Hugging Face closure.
@@ -50,7 +50,13 @@ COPY --chmod=0644 src/npa/smoke/test_lancedb_functional.py /app/smoke_functional
 COPY --chmod=0755 docker/workbench/lancedb/entrypoint.sh /entrypoint.sh
 # The smoke starts uvicorn against the flattened server module in /app.
 ENV LANCEDB_SMOKE_APP=npa_lancedb_server:app \
-    LANCEDB_SMOKE_ENTRYPOINT=/entrypoint.sh
+    LANCEDB_SMOKE_ENTRYPOINT=/entrypoint.sh \
+    LANCEDB_SMOKE_UDF_MODULE=npa_lancedb_bdd100k_udfs
+
+# The BDD100K dHash implementation requires Pillow 12's flattened-pixel API.
+# Prove the inherited dependency and the exact copied UDF together so a parent
+# image change cannot leave the service healthy while breaking import/backfill.
+RUN python -c "import io; from PIL import Image; from npa_lancedb_bdd100k_udfs import _dhash_bytes; data=io.BytesIO(); Image.new('L', (9, 8), 0).save(data, format='PNG'); assert _dhash_bytes(data.getvalue()) == 0"
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /app

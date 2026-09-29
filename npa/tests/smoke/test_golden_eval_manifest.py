@@ -432,6 +432,18 @@ def test_shared_serverless_fallback_is_the_smallest_available_preset() -> None:
     assert DEFAULT_SERVERLESS_GPU == "h200"
 
 
+def test_cpu_only_smokes_pin_their_shared_project_platform_explicitly() -> None:
+    """CPU-only payloads must not inherit a silently changing GPU cost default."""
+
+    for name, spec in load_manifest().items():
+        if spec.golden_eval.gpu != "none":
+            continue
+        assert spec.golden_eval.serverless_gpu == "h200", (
+            f"{name}: CPU-only serverless smoke must explicitly pin the smallest "
+            "offered shared-project platform"
+        )
+
+
 def test_openpi_serverless_gpu_matches_its_runtime_assertion() -> None:
     spec = load_manifest()["openpi"]
     assert spec.golden_eval.serverless_gpu == "rtx6000"

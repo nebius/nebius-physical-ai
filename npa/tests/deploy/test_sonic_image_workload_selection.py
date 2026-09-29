@@ -98,14 +98,12 @@ def test_explicit_variant_is_still_checked_against_the_workload() -> None:
 
 
 def test_container_image_for_tool_threads_the_workload() -> None:
-    public_ref = container_image_for_tool(
-        "sonic",
-        gpu_target="gpu-rtx6000",
-        workload=ISAAC_RENDER,
-    )
-    assert public_ref.startswith(
-        "ghcr.io/nebius/nebius-physical-ai/npa-sonic:cuda13-b300-"
-    )
+    with pytest.raises(ValueError, match="quarantined public release"):
+        container_image_for_tool(
+            "sonic",
+            gpu_target="gpu-rtx6000",
+            workload=ISAAC_RENDER,
+        )
 
     ref = container_image_for_tool(
         "sonic",
@@ -114,6 +112,13 @@ def test_container_image_for_tool_threads_the_workload() -> None:
         workload=MUJOCO_EVAL,
     )
     assert "npa-sonic-mujoco" in ref
+
+    public_mujoco_ref = container_image_for_tool(
+        "sonic",
+        gpu_target="gpu-b200",
+        workload=MUJOCO_EVAL,
+    )
+    assert public_mujoco_ref.endswith("/npa-sonic-mujoco:0.2.0-runtime")
 
     with pytest.raises(ValueError, match="serves workload"):
         container_image_for_tool(
