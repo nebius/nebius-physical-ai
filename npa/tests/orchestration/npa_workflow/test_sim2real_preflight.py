@@ -33,6 +33,8 @@ def _config(**overrides):
 
 
 def test_static_preflight_checks_hf_models_and_hosted_model_before_submission():
+    from npa.workbench.model_access import gated_hf_repos
+
     checked = []
     hosted = []
 
@@ -50,13 +52,43 @@ def test_static_preflight_checks_hf_models_and_hosted_model_before_submission():
         ),
     )
 
-    assert checked == ["nvidia/Cosmos-Transfer2.5-2B"]
+    # The gate mirrors the sim2real capability's single source of truth rather
+    # than a hardcoded repo, so the pinned Predict2.5 tokenizer and Cosmos
+    # Guardrail dependencies of Stage 3 are verified before launch.
+    expected = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+    assert checked == expected
+    assert "nvidia/Cosmos-Transfer2.5-2B" in checked
+    assert "nvidia/Cosmos-Predict2.5-2B" in checked
+    assert "nvidia/Cosmos-Guardrail1" in checked
     assert "nvidia/Cosmos-Reason2-8B" not in checked
     assert hosted == ["nvidia/Cosmos3-Super-Reasoner"]
     rendered = "\n".join(item for item, _ in issues)
     assert "Cosmos-Transfer2.5-2B" in rendered
     assert "AWS_ACCESS_KEY_ID" in rendered
     assert "AWS_SECRET_ACCESS_KEY" in rendered
+
+
+def test_static_preflight_surfaces_unaccepted_transfer_dependencies():
+    # Regression: an operator with Cosmos-Transfer2.5-2B accepted but the pinned
+    # Predict2.5 tokenizer (or Cosmos Guardrail) unaccepted previously passed
+    # this preflight and only failed inside Stage 3. The gate must report those
+    # repos before any GPU work.
+    denied_repo = "nvidia/Cosmos-Predict2.5-2B"
+
+    def validate(_token, repo):
+        return SimpleNamespace(ok=repo != denied_repo, error="403 gated")
+
+    issues = static_prerequisites(
+        _config(),
+        requested_secret_envs=["HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=validate,
+        token_factory_validator=lambda _key, _model: SimpleNamespace(ok=True),
+    )
+
+    rendered = "\n".join(item for item, _ in issues)
+    assert denied_repo in rendered
+    assert "Hugging Face access failed" in rendered
 
 
 def test_archived_reason3_config_key_does_not_change_canonical_hosted_probe():

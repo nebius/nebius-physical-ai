@@ -1,0 +1,15 @@
+/* Keep the shared workspace login readable in Safari and installed web apps. */
+:root { color-scheme: dark; font: 16px system-ui, sans-serif; background: #171717; color: #f5f5f5; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100svh; display: grid; place-items: center; padding: max(24px, env(safe-area-inset-top)) 24px max(24px, env(safe-area-inset-bottom)); }
+main { width: min(100%, 380px); }
+img { border-radius: 16px; }
+h1 { font-size: 28px; letter-spacing: -0.04em; margin-bottom: 8px; }
+p { line-height: 1.5; color: #b5b5b5; }
+label { display: block; margin: 20px 0; }
+input, button { width: 100%; border-radius: 10px; padding: 14px; font: inherit; }
+input { display: block; margin-top: 8px; border: 1px solid #545454; background: #242424; color: inherit; }
+button { border: 0; font-weight: 600; background: #e7f2ed; color: #172a26; cursor: pointer; }
+button:disabled { opacity: 0.6; }
+#error { color: #ffb4ac; }
+.hint { font-size: 13px; margin-top: 28px; }

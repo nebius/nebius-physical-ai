@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
 import yaml
@@ -153,6 +155,38 @@ def _assert_configure_provision_dry_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from npa import provisioning_preflight
+    from npa.provisioning_preflight import (
+        ExistingCapacity,
+        PreflightCheck,
+        QuotaObservation,
+    )
+
+    # This smoke exercises the documented CLI, not operator/provider discovery.
+    # Dry-run planning still reads capacity and quota unless both seams are bound.
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "discover_existing_capacity",
+        lambda **_kwargs: ExistingCapacity(
+            check=PreflightCheck(
+                name="existing_cluster_resources",
+                status="unknown",
+                reason="synthetic smoke inventory is intentionally unknown",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        provisioning_preflight,
+        "read_provider_quotas",
+        lambda _tenant, _region, names: {
+            name: QuotaObservation(
+                name=name,
+                state="unknown",
+                reason="synthetic smoke quota is intentionally unknown",
+            )
+            for name in names
+        },
+    )
     npa_home = tmp_path / ".npa"
     monkeypatch.setattr(config, "CONFIG_PATH", npa_home / "config.yaml")
     monkeypatch.setattr(credentials, "CREDENTIALS_PATH", npa_home / "credentials.yaml")
@@ -201,8 +235,53 @@ def _assert_configure_provision_dry_run(
     payload = json.loads(provision.output)
     assert payload["status"] == "unknown"
     assert payload["preflight"]["decision"] == "unknown"
+    assert payload["preflight"]["quotas"]
+    assert any(quota["required"] > 0 for quota in payload["preflight"]["quotas"])
+    for quota in payload["preflight"]["quotas"]:
+        assert quota["used"] is None and quota["limit"] is None
+        assert quota["status"] == ("unknown" if quota["required"] > 0 else "ready")
+    assert any(
+        check["name"] == "existing_cluster_resources" and check["status"] == "unknown"
+        for check in payload["preflight"]["checks"]
+    )
     assert "s3:dry-run ensure writable bucket ci-bucket" in payload["actions"]
     assert any(
         action.startswith("k8s:dry-run terraform apply deploy/cluster")
         for action in payload["actions"]
     )
+
+
+def test_configure_provision_smoke_never_discovers_or_executes_provider(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from npa.clients import nebius
+    from npa.cluster.api import MK8sClient
+
+    provider_bin = tmp_path / "bin"
+    provider_bin.mkdir()
+    provider = provider_bin / "nebius"
+    provider.write_text("#!/bin/sh\nexit 97\n")
+    provider.chmod(0o700)
+    monkeypatch.setenv("PATH", str(provider_bin) + os.pathsep + os.environ["PATH"])
+    assert shutil.which("nebius") == str(provider)
+    attempts: list[str] = []
+
+    def reject_capacity(*_args, **_kwargs):
+        attempts.append("capacity")
+        raise AssertionError("smoke attempted real capacity discovery")
+
+    def reject_quotas(*_args, **_kwargs):
+        attempts.append("quota")
+        raise AssertionError("smoke attempted real quota discovery")
+
+    def reject_execution(*_args, **_kwargs):
+        attempts.append("subprocess")
+        raise AssertionError("smoke attempted external execution")
+
+    monkeypatch.setattr(MK8sClient, "get_cluster", reject_capacity)
+    monkeypatch.setattr(nebius, "list_quota_allowances", reject_quotas)
+    monkeypatch.setattr(subprocess, "Popen", reject_execution)
+    _assert_configure_provision_dry_run(CliRunner(), tmp_path, monkeypatch)
+    # Discovery converts exceptions into unknown observations, so a raising
+    # sentinel alone would miss an attempted call. Assert the record separately.
+    assert attempts == []

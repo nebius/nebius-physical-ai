@@ -870,7 +870,7 @@ def _verify_terminal_rrd_media(
     """Prove a preserved RRD contains each candidate's exact video and disposition."""
 
     try:
-        from rerun.recording import load_recording
+        from npa.viz.recordings import load_recording
     except ImportError as exc:  # pragma: no cover - rerun is a runtime dependency
         raise DataFactoryVizError(
             "rerun recording loader is required to verify an existing RRD"

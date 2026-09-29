@@ -74,6 +74,7 @@ change hits most.
 | `test_paidf_image_tags_match_code` | The PAIDF guide builds tags that differ from what submit pulls. Regenerate the guide's build commands from `npa/src/npa/deploy/images.py`. |
 | `test_public_runtime_registry_defaults` | A supported workload inherited a generic build/private registry, emitted an unqualified first-party image, or attached credentials to the official public release. Keep repository-owned defaults on `ghcr.io/nebius/nebius-physical-ai`; require an explicit scoped override for custom bytes. |
 | `test_default_cluster_fits_quickstart` | The default cluster can no longer schedule the documented quickstart. Raise the preset or lower the spec's requests. |
+| `test_workflow_readiness_records` | A readiness record is malformed, orphaned, or no longer matches its adjacent workflow SHA-256. Review the workflow-byte changes and reassess every affected claim before updating the digest; never mechanically preserve or upgrade evidence statuses. |
 
 ## Secrets, Confidentiality, And Consent
 
@@ -85,7 +86,8 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | `test_ncore_attribution` / `test_ncore_source_attribution` | NCore's exact CPython notice, immutable dual-archive proof, Git path/mode boundary, diff line mapping, or source disposition drifted. Restore the exact provenance-bound contract; never add a general exemption or hide raw findings. |
 | `test_security_source` | Source scanner output, inventory, ignore handling or stable finding identity is incomplete. Restore fail-closed scanning; run the real scanner workload in `docs/security/merge-security-gate.md`. |
 | `test_security_gate` | A regression comparison, snapshot boundary or dependency report check failed. Preserve duplicate detection and reject incomplete reports or source paths outside the snapshot. |
-| `test_image_security_gate` | The required security check stopped waiting for image scans, lost PR/merge-queue coverage, duplicated automatic runs, or changed existing alert identity. Restore the reusable workflow dependency, fail-closed result checks, distinct concurrency group, and reporting configuration. |
+| `test_security_install` | Scanner bootstrap no longer retries transient download failures or rejects permanent HTTP/checksum failures before extraction. Exercise real curl against a local HTTP fixture and preserve the pinned checksum. A hosted 504 during scanner installation is a transport failure; rerun its failed jobs after recovery, without retrying or suppressing security findings. |
+| `test_image_security_gate` | The required security check stopped waiting for image scans, lost PR/merge-queue coverage, duplicated automatic runs, or changed existing alert identity. Restore full PR image validation or trusted identical-tree queue evidence, fail-closed result checks, distinct concurrency groups, and reporting configuration. |
 | `test_security_scan_input` | The manual image-scan input became shell syntax. Pass it through a step environment variable and quote that variable in the command. |
 | `test_agent_secret_guard` | A secret path became tracked, `.gitignore` stopped covering agent/cursor secrets, or a literal secret or live IP landed in agent files. Remove it and rotate. |
 | `test_agent_no_hardcoded_data` | Agent or insights source embeds run names, answers, or infra endpoints. Resolve them from live tool observations instead. |
@@ -100,6 +102,7 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | Guardrail | Fix when it fails |
 |---|---|
 | `test_workbench_image_k8s_prereqs` | An image lacks what SkyPilot needs on Kubernetes (python3, rsync, sudo with NOPASSWD, or the Isaac group/PATH rules). Update the Dockerfile and the shared install script together. |
+| `test_isaac_skypilot_apt_closure` | An Isaac image omits an early SkyPilot transfer package or accepts a missing or removed package. Install `curl`, `fuse`, `netcat-openbsd`, `rsync`, and `wget` in both Isaac build paths, and require installed status for every package. |
 | `test_unbuilt_image_records_agree` | The four files that record whether an image is built disagree. Make them agree; do not mark an image built that is not. |
 | `test_trivy_policy` | `trivy.yaml` no longer matches the current nested schema. Update the config. |
 | `test_public_release_workflows` | The single public GHCR channel drifted: development tags must be immutable full-SHA references, all pre-publication gates must precede the push, promotion must remain exact-digest-bound, failed-build cleanup must refuse shared digests, and release health must stay anonymous/read-only. Restore those contracts in the public publication workflows; never recreate a private candidate channel. |
@@ -124,8 +127,8 @@ the current surface, never to recreate the old one.
 
 | Guardrail | Fix when it fails |
 |---|---|
-| `test_ci_concurrency` | A validation job bypasses the shared runner pools, evicts waiting PR work, occupies merge completion capacity, or holds a child slot from a reusable caller. Restore the slot and queue contract documented in `CONTRIBUTING.md`. |
-| `test_ci_workflows` | A workflow lacks the shared concurrency template, duplicates feature-branch runs, drops a PR Python compatibility version or its early regression check, or makes mypy blocking. Restore those contracts. |
+| `test_ci_concurrency` | A validation workflow introduces a shared job lock, a matrix parallelism cap, or a workflow group that can serialize unrelated candidates or collide with its caller. Restore independent job scheduling and per-candidate workflow groups as documented in `CONTRIBUTING.md`. |
+| `test_ci_workflows` | A workflow lacks per-candidate supersession, duplicates feature-branch runs, drops a PR Python compatibility version or its early regression check, or makes mypy blocking. Restore those contracts. |
 | `test_daily_vm_network` | Daily SSH access loses host-key verification or isolated staging cleanup, requests unnecessary identity permissions, or adds a PR trigger. Restore pinned host keys, direct SSH, per-run private directories, and cleanup on failure. |
 | `test_e2e_gate_reachability` | A new `NPA_*` e2e gate has no runner mapping. Wire it into `scripts/dev-vm-daily-tests.sh` or record a reviewed manual reason. |
 | `test_terraform_provisioner_shell` | Bash embedded in the agent Terraform is not syntactically valid, or an SSH wait is unbounded. Check the heredocs. |
