@@ -77,6 +77,33 @@ The action space is **absolute TCP pose in the robot root frame (XYZ metres,
 XYZW quaternion) plus +1 open / -1 close**. It is not joint torque, joint target,
 or an arbitrary robot's policy action space.
 
+## Native validation
+
+A complete run on one NVIDIA RTX PRO 6000 Blackwell Server Edition used Isaac
+Lab 3.0.0b2.post1 and three paired reset seeds per condition. The unchanged
+physical acceptance checks produced:
+
+| Condition | Accepted / attempted |
+|---|---:|
+| Nominal | 0 / 3 |
+| Displaced object | 2 / 3 |
+| Double mass | 1 / 3 |
+| Lower friction | 0 / 3 |
+
+This validates collection and selective export, not a reliable demonstration
+controller across all conditions. All nine rejected attempts remain in the
+collection and report. Qualify a task-specific controller before collecting a
+training dataset; these three seeds do not establish generalization.
+
+The [sanitized execution evidence](../evidence/physical-augmentation-rtx.json)
+records the measured physics, native validity checks, source hashes, and
+independent dataset/video/Rerun readback. All 936 exported state/action pairs
+matched their source arrays; all three videos decoded at 640 × 480 and 50 fps;
+all 54 dynamic Rerun entities passed inspection. The preview below is an actual
+frame from an accepted displaced-object demonstration.
+
+![Accepted displaced-object lift](../evidence/physical-augmentation-rtx-preview.png)
+
 ## Adapting a reconstructed scene
 
 A Lyra-exported mesh or Gaussian reconstruction supplies visual geometry; it

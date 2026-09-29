@@ -1,0 +1,574 @@
+{
+  "accepted": 3,
+  "artifact_audit": {
+    "collected_module_hashes_match_export_and_validated_checkout": true,
+    "decoded_videos": [
+      {
+        "height": 480,
+        "nb_read_frames": "317",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-000.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "027b942468a5d32ba528485339a7b2b5a6cfa638b358d4b95a643ab071af0627",
+        "width": 640
+      },
+      {
+        "height": 480,
+        "nb_read_frames": "315",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-001.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "d1ef5db3331cfc1471c183772c321bb0d97a9a658148e13f57b8abb223fb8af5",
+        "width": 640
+      },
+      {
+        "height": 480,
+        "nb_read_frames": "304",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-002.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "322afd1232a00773ee2f952e82fbf051007f77df2e5e4cd9b59194842324c6e9",
+        "width": 640
+      }
+    ],
+    "exported_actions_and_states_match_source": true,
+    "lerobot_rows": 936,
+    "rerun_application_id": "npa-franka-rl",
+    "rerun_cli_verify_passed": true,
+    "rerun_dynamic_entities": 54,
+    "rerun_entity_rows_match_report": true,
+    "rerun_gripper_values_and_timelines_match_source": true,
+    "rerun_recording_id_matches_run": true,
+    "rerun_static_provenance_matches_export": true,
+    "uploaded_report_checksums_verified": true,
+    "workflow_artifact_discovery_contains_declared_recording": true
+  },
+  "artifact_sha256": {
+    "accepted-provenance.json": "2c50c6a282d41dd6366c5eaddec9ed027d558063736a8b44ac1ef364facb4a82",
+    "demonstrations.rrd": "a062ed644da6ba928e74347497cecefb34cd6ef146e00cccbc28907879ab4b8d",
+    "report.json": "6e7f4071d220c7a9cd3bae0534c39e67e91967e98d8e435de0f0578e6892d50b"
+  },
+  "attempted": 12,
+  "attempts": [
+    {
+      "attempt": 0,
+      "condition": "displaced",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.544517993927002,
+        0.0604032538831234,
+        0.021999526768922806
+      ],
+      "length": 317,
+      "longest_hold_steps": 30,
+      "seed": 42,
+      "success": true,
+      "terminated": false
+    },
+    {
+      "attempt": 1,
+      "condition": "displaced",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.524918794631958,
+        0.061873678117990494,
+        0.021999552845954895
+      ],
+      "length": 600,
+      "longest_hold_steps": 0,
+      "seed": 43,
+      "success": false,
+      "terminated": false
+    },
+    {
+      "attempt": 2,
+      "condition": "displaced",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.5458241701126099,
+        0.08315888047218323,
+        0.021999569609761238
+      ],
+      "length": 315,
+      "longest_hold_steps": 30,
+      "seed": 44,
+      "success": true,
+      "terminated": false
+    },
+    {
+      "attempt": 0,
+      "condition": "heavy",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.5045179724693298,
+        -0.019596733152866364,
+        0.021999530494213104
+      ],
+      "length": 304,
+      "longest_hold_steps": 30,
+      "seed": 42,
+      "success": true,
+      "terminated": false
+    },
+    {
+      "attempt": 1,
+      "condition": "heavy",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.48491889238357544,
+        -0.018126463517546654,
+        0.021999593824148178
+      ],
+      "length": 600,
+      "longest_hold_steps": 0,
+      "seed": 43,
+      "success": false,
+      "terminated": false
+    },
+    {
+      "attempt": 2,
+      "condition": "heavy",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.5058242082595825,
+        0.0031588689889758825,
+        0.02199954353272915
+      ],
+      "length": 600,
+      "longest_hold_steps": 0,
+      "seed": 44,
+      "success": false,
+      "terminated": false
+    },
+    {
+      "attempt": 0,
+      "condition": "nominal",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.5045179724693298,
+        -0.01959671638906002,
+        0.02199954353272915
+      ],
+      "length": 600,
+      "longest_hold_steps": 0,
+      "seed": 42,
+      "success": false,
+      "terminated": false
+    },
+    {
+      "attempt": 1,
+      "condition": "nominal",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.48491889238357544,
+        -0.018126463517546654,
+        0.021999593824148178
+      ],
+      "length": 600,
+      "longest_hold_steps": 0,
+      "seed": 43,
+      "success": false,
+      "terminated": false
+    },
+    {
+      "attempt": 2,
+      "condition": "nominal",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.5058242082595825,
+        0.003158859210088849,
+        0.021999582648277283
+      ],
+      "length": 600,
+      "longest_hold_steps": 0,
+      "seed": 44,
+      "success": false,
+      "terminated": false
+    },
+    {
+      "attempt": 0,
+      "condition": "slippery",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.5045179724693298,
+        -0.01959671638906002,
+        0.02199954353272915
+      ],
+      "length": 600,
+      "longest_hold_steps": 0,
+      "seed": 42,
+      "success": false,
+      "terminated": false
+    },
+    {
+      "attempt": 1,
+      "condition": "slippery",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.48491889238357544,
+        -0.018126463517546654,
+        0.021999593824148178
+      ],
+      "length": 600,
+      "longest_hold_steps": 0,
+      "seed": 43,
+      "success": false,
+      "terminated": false
+    },
+    {
+      "attempt": 2,
+      "condition": "slippery",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.5058242082595825,
+        0.003158859210088849,
+        0.021999582648277283
+      ],
+      "length": 600,
+      "longest_hold_steps": 0,
+      "seed": 44,
+      "success": false,
+      "terminated": false
+    }
+  ],
+  "conditions": {
+    "displaced": {
+      "accepted": 2,
+      "attempts": 3
+    },
+    "heavy": {
+      "accepted": 1,
+      "attempts": 3
+    },
+    "nominal": {
+      "accepted": 0,
+      "attempts": 3
+    },
+    "slippery": {
+      "accepted": 0,
+      "attempts": 3
+    }
+  },
+  "container_image": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46",
+  "controller": "measured-state-cartesian-lift-v6",
+  "hardware": {
+    "count": 1,
+    "driver": "580.173.02",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+  },
+  "limitations": [
+    "Public procedural Franka cube-lift scene; no customer assets used.",
+    "Scripted controller observes simulator state; no learned world action model.",
+    "Three paired reset seeds per condition demonstrate execution, not generalization.",
+    "Reconstructed scenes require a robot/task adapter and calibrated physical properties.",
+    "No physical-robot transfer or policy improvement was measured."
+  ],
+  "native_captures": {
+    "displaced": {
+      "control_dt": 0.02,
+      "gripper_servo": {
+        "effort_limit_n": 20.0,
+        "native_velocity_fraction": 0.25
+      },
+      "physics": {
+        "composed_physics": {
+          "collision_enabled": true,
+          "collision_prims": 1,
+          "dynamic": true,
+          "gravity_enabled": true,
+          "source": "composed USD schema"
+        },
+        "mass_kg": [
+          [
+            0.10000000149011612
+          ]
+        ],
+        "material_static_dynamic_restitution": [
+          [
+            [
+              1.0,
+              1.0,
+              0.0
+            ]
+          ]
+        ],
+        "object_geometry": "procedural 5cm collision-bearing cube"
+      },
+      "physics_solver": {
+        "external_forces_every_iteration": true,
+        "type": "TGS"
+      },
+      "runtime_version": "3.0.0b2.post1",
+      "simulation_validity_checks": 1310,
+      "tcp_contract": {
+        "body": "panda_hand",
+        "offset_m": [
+          0.0,
+          0.0,
+          0.107
+        ]
+      },
+      "tool_frame_checked": true
+    },
+    "heavy": {
+      "control_dt": 0.02,
+      "gripper_servo": {
+        "effort_limit_n": 20.0,
+        "native_velocity_fraction": 0.25
+      },
+      "physics": {
+        "composed_physics": {
+          "collision_enabled": true,
+          "collision_prims": 1,
+          "dynamic": true,
+          "gravity_enabled": true,
+          "source": "composed USD schema"
+        },
+        "mass_kg": [
+          [
+            0.20000000298023224
+          ]
+        ],
+        "material_static_dynamic_restitution": [
+          [
+            [
+              1.0,
+              1.0,
+              0.0
+            ]
+          ]
+        ],
+        "object_geometry": "procedural 5cm collision-bearing cube"
+      },
+      "physics_solver": {
+        "external_forces_every_iteration": true,
+        "type": "TGS"
+      },
+      "runtime_version": "3.0.0b2.post1",
+      "simulation_validity_checks": 1582,
+      "tcp_contract": {
+        "body": "panda_hand",
+        "offset_m": [
+          0.0,
+          0.0,
+          0.107
+        ]
+      },
+      "tool_frame_checked": true
+    },
+    "nominal": {
+      "control_dt": 0.02,
+      "gripper_servo": {
+        "effort_limit_n": 20.0,
+        "native_velocity_fraction": 0.25
+      },
+      "physics": {
+        "composed_physics": {
+          "collision_enabled": true,
+          "collision_prims": 1,
+          "dynamic": true,
+          "gravity_enabled": true,
+          "source": "composed USD schema"
+        },
+        "mass_kg": [
+          [
+            0.10000000149011612
+          ]
+        ],
+        "material_static_dynamic_restitution": [
+          [
+            [
+              1.0,
+              1.0,
+              0.0
+            ]
+          ]
+        ],
+        "object_geometry": "procedural 5cm collision-bearing cube"
+      },
+      "physics_solver": {
+        "external_forces_every_iteration": true,
+        "type": "TGS"
+      },
+      "runtime_version": "3.0.0b2.post1",
+      "simulation_validity_checks": 1878,
+      "tcp_contract": {
+        "body": "panda_hand",
+        "offset_m": [
+          0.0,
+          0.0,
+          0.107
+        ]
+      },
+      "tool_frame_checked": true
+    },
+    "slippery": {
+      "control_dt": 0.02,
+      "gripper_servo": {
+        "effort_limit_n": 20.0,
+        "native_velocity_fraction": 0.25
+      },
+      "physics": {
+        "composed_physics": {
+          "collision_enabled": true,
+          "collision_prims": 1,
+          "dynamic": true,
+          "gravity_enabled": true,
+          "source": "composed USD schema"
+        },
+        "mass_kg": [
+          [
+            0.10000000149011612
+          ]
+        ],
+        "material_static_dynamic_restitution": [
+          [
+            [
+              0.25,
+              0.25,
+              0.0
+            ]
+          ]
+        ],
+        "object_geometry": "procedural 5cm collision-bearing cube"
+      },
+      "physics_solver": {
+        "external_forces_every_iteration": true,
+        "type": "TGS"
+      },
+      "runtime_version": "3.0.0b2.post1",
+      "simulation_validity_checks": 1878,
+      "tcp_contract": {
+        "body": "panda_hand",
+        "offset_m": [
+          0.0,
+          0.0,
+          0.107
+        ]
+      },
+      "tool_frame_checked": true
+    }
+  },
+  "physical_robot_tested": false,
+  "policy_improvement_measured": false,
+  "preview": {
+    "accepted_episode": 0,
+    "condition": "displaced",
+    "file": "physical-augmentation-rtx-preview.png",
+    "frame_index": 316,
+    "sha256": "3551af90116b45a5ed88b83c7d2185050900e352ed280a7ac13e20eecb77ac90",
+    "source_video": "lerobot/videos/observation.images.workspace/chunk-000/file-000.mp4"
+  },
+  "recipe": {
+    "action_names": [
+      "tcp_x_m",
+      "tcp_y_m",
+      "tcp_z_m",
+      "qx",
+      "qy",
+      "qz",
+      "qw",
+      "gripper"
+    ],
+    "action_semantics": "absolute TCP pose in robot root frame, xyzw; gripper +1 open/-1 close",
+    "alignment": "rgb[t], state[t], action[t], next_state[t]; timestamps are simulation time",
+    "conditions": {
+      "displaced": {
+        "friction": 1.0,
+        "mass_kg": 0.1,
+        "offset_xy_m": [
+          0.04,
+          0.08
+        ]
+      },
+      "heavy": {
+        "friction": 1.0,
+        "mass_kg": 0.2,
+        "offset_xy_m": [
+          0.0,
+          0.0
+        ]
+      },
+      "nominal": {
+        "friction": 1.0,
+        "mass_kg": 0.1,
+        "offset_xy_m": [
+          0.0,
+          0.0
+        ]
+      },
+      "slippery": {
+        "friction": 0.25,
+        "mass_kg": 0.1,
+        "offset_xy_m": [
+          0.0,
+          0.0
+        ]
+      }
+    },
+    "controller": "measured-state-cartesian-lift-v6",
+    "episode_steps": 600,
+    "episodes_per_condition": 3,
+    "gripper_servo": {
+      "effort_limit_n": 20.0,
+      "native_velocity_fraction": 0.25
+    },
+    "physical_robot_tested": false,
+    "physics_solver": {
+      "external_forces_every_iteration": true,
+      "type": "TGS"
+    },
+    "schema": "npa.physical-augmentation.recipe.v1",
+    "seed": 42,
+    "simulation_validity": {
+      "checks": [
+        "finite measured state",
+        "native hard joint position limits",
+        "native simulator joint velocity limits",
+        "unit pose quaternions"
+      ],
+      "failure_action": "abort stage and retain first-fault evidence",
+      "position_allowance": "native joint velocity limit times physics timestep",
+      "quaternion_norm_tolerance": 0.0001,
+      "rounding_epsilon_multiplier": 4,
+      "sampling": "post-physics control-step, before reward and automatic reset",
+      "schema": "npa.manipulation-validity.v1",
+      "task_domain": "absolute object XYZ relative to environment origin <= half scene spacing",
+      "task_domain_exit": "ordinary episode failure, zero terminal reward, revoke earlier success",
+      "velocity_allowance": "floating-point rounding only"
+    },
+    "success": {
+      "hold_steps": 30,
+      "lift_m": 0.1,
+      "max_speed_m_s": 0.03,
+      "max_tcp_distance_m": 0.06,
+      "max_xy_drift_m": 0.04
+    },
+    "task": "Isaac-Lift-Cube-Franka-IK-Abs-v0",
+    "tcp_contract": {
+      "body": "panda_hand",
+      "offset_m": [
+        0.0,
+        0.0,
+        0.107
+      ]
+    }
+  },
+  "schema": "npa.physical-augmentation.evidence.v1",
+  "source_revision": {
+    "adapter/isaac_lab_lerobot.py": "0d4ad5a574fa8c43542d1688c06fbee48024a2df3c03ce8034631e156eba5679",
+    "viz/adapters/lerobot_to_rerun.py": "eb0957acc3c5297077907cb2f2ebdadfe84a7ab0e58c2d3be705516aeb19ab22",
+    "workflows/franka_rl_recording.py": "0f9a36655f52a11f5cf69caa0691d9d7625a63b31cfd4b25684edc45c4a34da5",
+    "workflows/franka_rl_validity.py": "353f88accae8b990281810945cf5fdc4b204908319987503a9aa3df4e3286ab0",
+    "workflows/physical_augmentation.py": "68835c132390a9b5ac5f2c7394a586daf30253e25bb6fac72d236e62aa700d83",
+    "workflows/physical_augmentation_contract.py": "2a6d60ff9b04b08afcac1ee1ee1c83e64fc7057712b1d0598cd5041f17c83574",
+    "workflows/physical_augmentation_report.py": "5e40c35f3298418f76a93bf2dca18710f9ee972a6fc67bd1d63e73c309baf0d2",
+    "workflows/physical_augmentation_runtime.py": "64e90a3e7c3da5cbdaaa82e45c7ff3abeb7d5c9eeaff8cfb86195ffdc61953c5",
+    "workflows/physical_augmentation_servo.py": "d94aff2c973da2c51a7a6422075edffc537f13b48f6b9c14f5cbe6c04fde5d68"
+  },
+  "validated_implementation_commit": "733009dbbedacf80504b5246b3fa85eda08d2952",
+  "validation_environment": "Standard Workbench/SkyPilot Kubernetes runtime with a private GPU runtime/shader cache volume; experiment and implementation unchanged.",
+  "workflow": "workflows/testing/physical-augmentation.yaml",
+  "workflow_stages": {
+    "collect": "SUCCEEDED",
+    "prepare": "SUCCEEDED",
+    "report": "SUCCEEDED"
+  }
+}
