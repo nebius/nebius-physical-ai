@@ -35,7 +35,7 @@ The same image also receives cuda13-b300-${TAG} for existing consumers.
 unless you explicitly build/push that exact suffix. Set DOCKER_CONTEXT to use
 a remote Docker daemon. GPU capability still requires per-image validation.
 FA4 is the default. --attention-backend fa2 instead builds the separate
-cuda13-blackwell-fa2-${TAG} image (legacy alias cuda13-b300-fa2-${TAG}).
+cuda13-blackwell-fa2-${TAG} image. This new SM120 variant has no B300 alias.
 FA2 is source-compiled for SM120 by default; FA2_CUDA_ARCHS overrides that list.
 FA2_NVCC_THREADS controls compiler parallelism (default 4); use 1 on a build
 host with limited memory. It does not change runtime attention settings.
@@ -120,7 +120,10 @@ if [ "$PUSH" -eq 1 ] && [ -z "$REGISTRY" ]; then
 fi
 
 LOCAL_IMAGE="npa-base:cuda13-blackwell-${BACKEND_PREFIX}${TAG}"
-LEGACY_IMAGE="npa-base:cuda13-b300-${BACKEND_PREFIX}${TAG}"
+LEGACY_IMAGE=""
+if [ "$ATTENTION_BACKEND" = fa4 ]; then
+  LEGACY_IMAGE="npa-base:cuda13-b300-${TAG}"
+fi
 BUILD_ARGS=(
   build
   --build-arg "BUILD_TS=${TAG}"
@@ -134,13 +137,19 @@ BUILD_ARGS=(
   --build-arg "TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"
   --build-arg "REQUIRE_TORCH_ARCHS=${REQUIRE_TORCH_ARCHS}"
   -t "$LOCAL_IMAGE"
-  -t "$LEGACY_IMAGE"
 )
+if [ -n "$LEGACY_IMAGE" ]; then
+  BUILD_ARGS+=(-t "$LEGACY_IMAGE")
+fi
 
+LEGACY_REGISTRY_IMAGE=""
 if [ -n "$REGISTRY" ]; then
   REGISTRY_IMAGE="${REGISTRY}/npa-base:cuda13-blackwell-${BACKEND_PREFIX}${TAG}"
-  LEGACY_REGISTRY_IMAGE="${REGISTRY}/npa-base:cuda13-b300-${BACKEND_PREFIX}${TAG}"
-  BUILD_ARGS+=(-t "$REGISTRY_IMAGE" -t "$LEGACY_REGISTRY_IMAGE")
+  BUILD_ARGS+=(-t "$REGISTRY_IMAGE")
+  if [ -n "$LEGACY_IMAGE" ]; then
+    LEGACY_REGISTRY_IMAGE="${REGISTRY}/npa-base:cuda13-b300-${TAG}"
+    BUILD_ARGS+=(-t "$LEGACY_REGISTRY_IMAGE")
+  fi
 else
   REGISTRY_IMAGE=""
   LEGACY_REGISTRY_IMAGE=""
@@ -153,14 +162,21 @@ else
 fi
 
 echo "Built: $LOCAL_IMAGE"
-echo "Compatibility alias: $LEGACY_IMAGE"
+if [ -n "$LEGACY_IMAGE" ]; then
+  echo "Compatibility alias: $LEGACY_IMAGE"
+fi
 if [ -n "$REGISTRY_IMAGE" ]; then
   echo "Tagged: $REGISTRY_IMAGE"
-  echo "Compatibility alias: $LEGACY_REGISTRY_IMAGE"
+  if [ -n "$LEGACY_REGISTRY_IMAGE" ]; then
+    echo "Compatibility alias: $LEGACY_REGISTRY_IMAGE"
+  fi
 fi
 
 if [ "$PUSH" -eq 1 ]; then
   for IMAGE in "$REGISTRY_IMAGE" "$LEGACY_REGISTRY_IMAGE"; do
+    if [ -z "$IMAGE" ]; then
+      continue
+    fi
     if [ -n "$DOCKER_CONTEXT" ]; then
       docker --context "$DOCKER_CONTEXT" push "$IMAGE"
     else

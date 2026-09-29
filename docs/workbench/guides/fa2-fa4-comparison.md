@@ -30,10 +30,9 @@ docker image inspect "$FA4_IMAGE" "$FA2_IMAGE" --format '{{.Id}} {{json .RepoTag
 
 Both are local images until explicitly published. The FA4 build remains the
 default. The FA2 variant's `FA2_CUDA_ARCHS=120` default is specific to the RTX
-comparison; it does not qualify that extension on B200/B300. The legacy entrypoint
-also accepts `--attention-backend fa2`, with the separate
-`cuda13-b300-fa2-<suffix>` compatibility tag. Existing FA4 tags are never reused
-for FA2.
+comparison; it does not qualify that extension on B200/B300. The legacy build
+entrypoint also accepts `--attention-backend fa2` and emits the canonical FA2 tag.
+This new variant has no B300 alias. Existing FA4 tags are never reused for FA2.
 
 FA2 compilation can require substantial host RAM. On a smaller build host,
 prefix the FA2 build command with `FA2_NVCC_THREADS=1` to reduce compiler

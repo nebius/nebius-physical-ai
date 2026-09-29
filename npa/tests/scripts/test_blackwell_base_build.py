@@ -160,13 +160,14 @@ def test_fa2_has_separate_local_and_registry_tags(directory, docker_calls):
     calls = _calls(docker_calls)
     assert _tags(calls[0]) == [
         f"npa-base:cuda13-blackwell-fa2-{SUFFIX}",
-        f"npa-base:cuda13-b300-fa2-{SUFFIX}",
         f"registry.example/team/npa-base:cuda13-blackwell-fa2-{SUFFIX}",
-        f"registry.example/team/npa-base:cuda13-b300-fa2-{SUFFIX}",
     ]
     assert "ATTENTION_BACKEND=fa2" in calls[0]
     assert "FA2_CUDA_ARCHS=120" in calls[0]
-    assert all("-fa2-" in call[-1] for call in calls[1:])
+    assert calls[1:] == [
+        ["push", f"registry.example/team/npa-base:cuda13-blackwell-fa2-{SUFFIX}"]
+    ]
+    assert "b300" not in result.stdout
 
 
 @pytest.mark.parametrize(

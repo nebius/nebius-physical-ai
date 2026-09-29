@@ -40,6 +40,8 @@ checker and benchmark workers.
 Set `FA2_NVCC_THREADS=1` when compiling on a host with limited RAM; the default
 is upstream's four compiler threads. This affects build memory and throughput,
 not the GPU kernel configuration or attention benchmark iteration count.
+The new FA2 variant uses only its canonical tag; it has no historical B300
+alias to preserve and makes no B300 qualification claim.
 
 See [FA2/FA4 comparison and inference tile experiments](../../../../../docs/workbench/guides/fa2-fa4-comparison.md)
 for correctness checks, full SDXL generations and repeated timing. The FA2

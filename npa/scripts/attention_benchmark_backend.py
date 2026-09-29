@@ -8,6 +8,7 @@ import re
 import subprocess
 
 FA_COMMIT = "eed1971f5132630dc296fe37601e834d4b57a248"
+FA4_VERSION = "4.0.0b33.dev10+geed1971"
 
 
 def attention_backend(backend, tile=None):
@@ -49,12 +50,15 @@ def attention_backend(backend, tile=None):
 
 def _tiled_inference(tile):
     import torch
-    from flash_attn.cute.interface import _flash_attn_fwd
 
-    if os.getenv("NPA_FLASH_ATTN_COMMIT") != FA_COMMIT:
+    if (
+        os.getenv("NPA_FLASH_ATTN_COMMIT") != FA_COMMIT
+        or metadata.version("flash-attn-4") != FA4_VERSION
+    ):
         raise RuntimeError("Experimental tiles require the exact pinned FA4 source")
     if tuple(tile) not in ((64, 64), (64, 128), (128, 64), (128, 128)):
         raise ValueError("Unqualified tile candidate")
+    from flash_attn.cute.interface import _flash_attn_fwd
 
     def forward(query, key, value, *, causal=False):
         if torch.is_grad_enabled() or any(t.requires_grad for t in (query, key, value)):

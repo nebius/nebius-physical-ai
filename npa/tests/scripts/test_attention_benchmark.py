@@ -55,6 +55,7 @@ def test_experimental_tiles_refuse_training(backend, monkeypatch):
     )
     monkeypatch.setitem(sys.modules, "flash_attn.cute.interface", interface)
     monkeypatch.setenv("NPA_FLASH_ATTN_COMMIT", backend.FA_COMMIT)
+    monkeypatch.setattr(backend.metadata, "version", lambda name: backend.FA4_VERSION)
     function = backend._tiled_inference((64, 64))
     query = torch.ones(1, 4, 2, 64, requires_grad=True)
     with pytest.raises(ValueError, match="inference-only"):
@@ -197,3 +198,27 @@ def test_provenance_fingerprints_the_actual_benchmark_sources(backend):
     assert "fa4_sdxl_model.json" in fingerprints
     assert "attention_benchmark_backend.py" in fingerprints
     assert all(len(value) == 64 for value in fingerprints.values())
+
+
+def test_tile_guard_checks_installed_package_not_just_image_environment(
+    backend, monkeypatch
+):
+    pytest.importorskip("torch")
+    monkeypatch.setenv("NPA_FLASH_ATTN_COMMIT", backend.FA_COMMIT)
+    monkeypatch.setattr(backend.metadata, "version", lambda name: "4.0.0-different")
+    with pytest.raises(RuntimeError, match="exact pinned"):
+        backend._tiled_inference((64, 64))
+
+
+def test_tile_guard_rejects_other_blackwell_architectures(backend, monkeypatch):
+    torch = pytest.importorskip("torch")
+    monkeypatch.setenv("NPA_FLASH_ATTN_COMMIT", backend.FA_COMMIT)
+    monkeypatch.setattr(backend.metadata, "version", lambda name: backend.FA4_VERSION)
+    monkeypatch.setattr(torch.cuda, "get_device_capability", lambda device: (10, 0))
+    interface = ModuleType("flash_attn.cute.interface")
+    interface._flash_attn_fwd = lambda *a, **k: pytest.fail("Cannot launch on B200")
+    monkeypatch.setitem(sys.modules, "flash_attn.cute.interface", interface)
+    function = backend._tiled_inference((64, 64))
+    tensor = SimpleNamespace(requires_grad=False, is_cuda=True, device="cuda")
+    with torch.inference_mode(), pytest.raises(ValueError, match="SM120"):
+        function(tensor, tensor, tensor)
