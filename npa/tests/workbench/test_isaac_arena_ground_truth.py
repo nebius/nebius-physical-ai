@@ -66,6 +66,32 @@ def test_opened_door_requires_real_progress_and_success_in_same_episode(tmp_path
     assert len(result["files"][0]["sha256"]) == 64
 
 
+@pytest.mark.parametrize("value", [0.0, 1.0, np.float32(1), np.complex128(1)])
+def test_success_dataset_rejects_non_boolean_numeric_types(tmp_path, value):
+    _write_episode(tmp_path, trace=[0.2, 0.4, 0.81])
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        episode = dataset["data/demo_0"]
+        del episode["success"]
+        episode.create_dataset("success", data=[value])
+        episode.attrs["success"] = bool(value)
+
+    with pytest.raises(IsaacArenaError, match="success flag must be a scalar boolean"):
+        _validate(tmp_path)
+
+
+@pytest.mark.parametrize("value", [True, False, np.int8(0), np.int64(1), np.uint64(1)])
+def test_success_dataset_preserves_boolean_and_binary_integer_types(tmp_path, value):
+    _write_episode(tmp_path, trace=[0.2, 0.4, 0.81], success=bool(value))
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        episode = dataset["data/demo_0"]
+        del episode["success"]
+        episode.create_dataset("success", data=[value])
+        episode.attrs["success"] = value
+
+    result = _validate(tmp_path, successes=int(value), required=False)
+    assert result["episodes"][0]["success"] is bool(value)
+
+
 @pytest.mark.parametrize(
     "trace,reason",
     [
