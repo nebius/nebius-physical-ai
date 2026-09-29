@@ -156,6 +156,18 @@ according to the operator's retention policy. Do not destroy shared services.
 The [readiness record](../testing/video-variant-sweep.readiness.json) separates
 planning and component checks from a completed GPU workflow run.
 
+A procedural live test ran two concurrent Transfer workers on RTX PRO 6000 GPUs.
+Both generated 121-frame videos with conditioning and content guardrails enabled.
+Paired review accepted one clip at 0.85 and rejected the other at 0.30 against the
+unchanged 0.80 threshold. Operator-driven Postgres/MLflow commit and replay,
+accepted-only S3 publication, and next-run inventory creation passed. These
+results use the explicitly selected MiniMax model. Cosmos3 validation remains
+blocked by model availability. The separate GPU test harness failed to render
+its empty terminal after generation completed; the reference ends with the executable publication stage, and
+all its waves are covered by rendering tests. The complete reference DAG,
+including connectivity from its CPU pods to tracking services, remains
+unverified.
+
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_video_sweep.py -q
 NPA_INTEGRATION_E2E=1 NPA_VIDEO_SWEEP_REASONER_MODEL=MiniMaxAI/MiniMax-M3 \

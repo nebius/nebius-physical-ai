@@ -24,14 +24,16 @@ from npa.workflows.video_sweep import (
 from npa.workflows.video_sweep.__main__ import main
 
 
-def test_workflow_partitions_before_review_and_tracking_before_publication():
+def test_workflow_partitions_before_review_and_tracking_before_publication(monkeypatch):
     from npa.orchestration.npa_workflow import load_spec
     from npa.orchestration.npa_workflow.skypilot_render import (
+        render_skypilot_steps_yaml,
         tool_image_key,
         tool_pip_extra,
     )
     from npa.orchestration.npa_workflow.waves import build_wave_plan
 
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source/npa")
     root = Path(__file__).resolve().parents[3]
     spec = load_spec(root / "workflows/testing/video-variant-sweep.yaml")
     waves = build_wave_plan(spec, run_id="test").waves
@@ -46,6 +48,11 @@ def test_workflow_partitions_before_review_and_tracking_before_publication():
     assert tool_image_key("workflow.video_sweep.generate") == "cosmos2-transfer"
     assert tool_image_key("workflow.video_sweep.review") is None
     assert tool_pip_extra("workflow.video_sweep.lineage") == "video-sweep"
+    for wave in waves:
+        rendered = render_skypilot_steps_yaml(
+            spec, wave.steps, run_id="test", execution=wave.kind
+        )
+        assert "npa.workflows.video_sweep" in rendered
 
 
 @pytest.mark.parametrize("status", [307, 401, 500])

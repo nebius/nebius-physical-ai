@@ -21,15 +21,17 @@
   "prerequisites": {
     "output_storage": {
       "status": "verified",
-      "reason": "Project-scoped S3 probe and real object create/read/conditional-replay/conflict tests passed. Exact deployment destinations still require submit preflight.",
+      "reason": "Project-scoped S3 probe, conditional artifact replay/conflict checks, and publication of one accepted generated clip passed. Deployment destinations still require submit preflight.",
       "evidence": [
         "test_private_s3_artifact_roundtrip"
       ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "Procedural clips were decoded locally. Deployment requires operator-supplied source and variant inventories at worker-readable URIs.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Two concurrent Transfer workers read the exact procedural source snapshots from private S3 and produced distinct 121-frame variants with the requested seeds.",
+      "evidence": [
+        "Procedural SkyPilot generation wave: two complete worker receipts; both videos fully decoded."
+      ]
     },
     "credentials": {
       "status": "blocked",
@@ -41,16 +43,18 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The selected public Transfer release passed image pull preflight. The worker must also receive this submitted NPA source overlay.",
+      "reason": "The selected public Transfer release passed pull preflight and real concurrent GPU execution with the submitted NPA source overlay.",
       "evidence": [
         "workflow preflight-images"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Live Postgres/MLflow commit and replay passed on isolated services. Complete GPU execution and worker connectivity to deployment tracking services remain unverified.",
+      "reason": "Two concurrent RTX PRO 6000 workers generated real videos. Operator-driven paired review accepted one at 0.85 and rejected one at 0.30 with threshold 0.80; Postgres/MLflow commit/replay and accepted-only S3 publication passed. The trimmed GPU harness then failed on an empty terminal state. The complete reference DAG and in-pod tracking-service connectivity remain unverified.",
       "evidence": [
-        "test_postgres_and_mlflow_commit_and_replay"
+        "Procedural live run: two generated variants, two tracked reviews, one published clip and next-run source inventory.",
+        "test_postgres_and_mlflow_commit_and_replay",
+        "test_workflow_partitions_before_review_and_tracking_before_publication"
       ]
     }
   }
