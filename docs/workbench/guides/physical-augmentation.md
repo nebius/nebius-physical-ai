@@ -11,8 +11,10 @@ evidence of improved robot-policy performance.
 ## Run
 
 Use a configured project with writable S3 storage and an RTX-capable cluster.
-The workflow uses the pinned Isaac Lab runtime-fetch image and the existing
-LeRobot image. B200 cannot supply the required RTX camera rendering.
+All stages use the pinned Isaac Lab runtime-fetch image. Preparation and export
+use its CPU Python environment, including the LeRobot-format writer and Rerun;
+only collection fetches and launches Isaac. B200 cannot supply the required RTX
+camera rendering.
 
 ```bash
 npa workbench workflow validate-spec workflows/testing/physical-augmentation.yaml
