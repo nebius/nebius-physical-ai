@@ -7,6 +7,7 @@ from http.server import HTTPServer
 import importlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from threading import Thread
@@ -94,6 +95,8 @@ def _checkout_fixture(modules, tmp_path, monkeypatch):
         (repository / "npa/src" / target).write_text("value = 'reference'\n")
     (repository / "README.md").write_text("Complete checkout fixture\n")
     _git_commit(repository, "Reference fixes")
+    shutil.copytree(repository / "npa/src", tmp_path / "source")
+    (tmp_path / "source/operator_reference.py").write_text("uncommitted = True\n")
     monkeypatch.setattr(modules.prepare, "REPOSITORY", repository)
     (tmp_path / "tests").mkdir()
     return baseline
@@ -108,6 +111,9 @@ def test_independent_checkouts_run_their_own_source_without_sibling_edits(
     for workspace in (first, second):
         modules.prepare._candidate(tmp_path, workspace, target, baseline, True)
         assert (workspace / "README.md").is_file()
+        assert (
+            workspace / "npa/src/operator_reference.py"
+        ).read_text() == "uncommitted = True\n"
         assert (workspace / "npa/src" / target).read_text() == "value = 'historical'\n"
         assert (workspace / "npa/src" / sibling).read_text() == "value = 'reference'\n"
     (first / "npa/src" / target).write_text("value = 'repair'\n")

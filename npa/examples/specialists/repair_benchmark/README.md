@@ -110,6 +110,8 @@ Model workers within a hybrid arm execute concurrently.
 Pass `--workspace-layout independent-checkout` during preparation to give every
 lane in both arms its own complete detached Workbench checkout. Native operations
 import that lane's source tree; they cannot see another lane's edits or outputs.
+Each checkout's runtime source is copied from the same frozen working-tree
+reference, including any operator changes present during preparation.
 Only the assigned repair file is writable through the agent tools. Tests and
 verifiers remain immutable, and the final integration check combines all patches
 against the neutral frozen reference. The default `overlay` layout keeps a shared

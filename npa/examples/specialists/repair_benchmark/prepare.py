@@ -106,6 +106,9 @@ def _clone_workspace(workspace):
 def _candidate(root, workspace, target, baseline, independent_checkout=False):
     if independent_checkout:
         _clone_workspace(workspace)
+        # Keep the runtime reference identical even when the operator checkout is dirty.
+        shutil.rmtree(workspace / "npa/src")
+        shutil.copytree(root / "source", workspace / "npa/src")
     path = workspace / "npa/src" / target
     path.parent.mkdir(parents=True, exist_ok=True)
     contents = subprocess.check_output(
