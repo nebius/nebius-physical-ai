@@ -784,6 +784,60 @@ def tool_requires_staged_npa_source(tool_ref: str) -> bool:
     return tool_image_key(tool_ref) in IMAGE_TOOLS_REQUIRING_STAGED_NPA_SOURCE
 
 
+def _validate_image_override_syntax(options: SkypilotRenderOptions) -> None:
+    for raw_selector in options.image_overrides:
+        selector = str(raw_selector)
+        if selector != "*" and any(char in selector for char in "*?["):
+            raise NpaWorkflowRenderError(
+                f"image override selector {selector!r} uses unsupported glob syntax; "
+                "use an exact toolRef, a boundary-safe family prefix without glob "
+                "characters, or the bare '*' selector"
+            )
+
+
+def _image_override_matches(selector: str, tool_ref: str) -> bool:
+    return tool_ref == selector or tool_ref.startswith(selector + ".")
+
+
+def validate_image_override_selectors(
+    spec: NpaWorkflowSpec,
+    options: SkypilotRenderOptions,
+) -> None:
+    """Reject selectors that cannot affect any toolRef in the complete workflow.
+
+    Args:
+        spec: Complete workflow, including currently unselected branches.
+        options: Image overrides to validate before rendering or submission.
+
+    Returns:
+        None.
+
+    Raises:
+        NpaWorkflowRenderError: A selector uses glob syntax or matches no toolRef.
+    """
+
+    _validate_image_override_syntax(options)
+    tool_refs = tuple(
+        state.tool_ref for state in spec.states.values() if state.tool_ref
+    )
+    unmatched = [
+        str(raw_selector)
+        for raw_selector in options.image_overrides
+        if str(raw_selector) != "*"
+        and not any(
+            _image_override_matches(str(raw_selector), ref) for ref in tool_refs
+        )
+    ]
+    if unmatched:
+        available = ", ".join(sorted(set(tool_refs))) or "none"
+        raise NpaWorkflowRenderError(
+            "image override selector(s) matched no workflow toolRef: "
+            f"{', '.join(repr(selector) for selector in unmatched)}; use an exact "
+            "toolRef, a boundary-safe family prefix without glob characters, or "
+            f"the bare '*' selector. Available toolRefs: {available}"
+        )
+
+
 def resolve_task_image(
     tool_ref: str,
     resources: Mapping[str, Any],
@@ -792,6 +846,7 @@ def resolve_task_image(
 ) -> str:
     """Resolve a fully-qualified image ref for one planned step."""
 
+    _validate_image_override_syntax(options)
     if tool_ref in options.image_overrides:
         resolved = str(options.image_overrides[tool_ref] or "").strip()
     else:
@@ -801,9 +856,9 @@ def resolve_task_image(
         for prefix in options.image_overrides:
             if prefix == "*":
                 continue
-            if (tool_ref == prefix or tool_ref.startswith(prefix + ".")) and len(
-                prefix
-            ) > len(best_override):
+            if _image_override_matches(prefix, tool_ref) and len(prefix) > len(
+                best_override
+            ):
                 best_override = prefix
         if best_override:
             resolved = str(options.image_overrides[best_override] or "").strip()
@@ -2049,6 +2104,7 @@ def plan_images(
 ) -> list[str]:
     """Return the distinct container images a plan's steps will pull, in order."""
 
+    validate_image_override_selectors(spec, options)
     images: list[str] = []
     for step in steps:
         scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
@@ -2076,6 +2132,7 @@ def plan_image_pull_secrets(
     Kubernetes secret cannot prove that VM execution path can pull the image.
     """
 
+    validate_image_override_selectors(spec, options)
     paths: dict[str, list[tuple[str, ...] | None]] = {}
     for step in steps:
         task = build_scheduler_task(spec, step, run_id=run_id)
@@ -2121,8 +2178,56 @@ def build_skypilot_task_doc(
     run_id: str,
     options: SkypilotRenderOptions,
 ) -> dict[str, Any]:
-    """Build one SkyPilot task document from a planned step."""
+    """Validate image selectors and build one SkyPilot task document.
 
+    Args:
+        spec: Complete workflow, including unselected decision branches.
+        step: Planned step to render.
+        run_id: Identity shared by the workflow's tasks.
+        options: Container selection and rendering options.
+    Returns:
+        The SkyPilot task document for the selected step.
+    Raises:
+        NpaWorkflowRenderError: Selectors or task resources cannot be rendered.
+    """
+    validate_image_override_selectors(spec, options)
+    return _build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
+
+
+def build_skypilot_task_docs(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> list[dict[str, Any]]:
+    """Validate all workflow image selectors once and render a batch of tasks.
+
+    Args:
+        spec: Complete workflow, including unselected decision branches.
+        steps: Planned steps in the required document order.
+        run_id: Identity shared by the workflow's tasks.
+        options: Container selection and rendering options.
+    Returns:
+        One SkyPilot task document for each selected step, in input order.
+    Raises:
+        NpaWorkflowRenderError: Selectors or task resources cannot be rendered.
+    """
+    validate_image_override_selectors(spec, options)
+    return [
+        _build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
+        for step in steps
+    ]
+
+
+def _build_skypilot_task_doc(
+    spec: NpaWorkflowSpec,
+    step: PlanStep,
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> dict[str, Any]:
+    """Render a step after its caller validates the complete workflow selectors."""
     scheduler_task = build_scheduler_task(spec, step, run_id=run_id)
     tool_ref = str(scheduler_task.get("tool_ref") or "")
     immutable_narrow_image = tool_ref == HABITAT_SIM_TOOL_REF
@@ -2625,14 +2730,14 @@ def _render_docs(
     execution: str,
     name: str = "",
 ) -> str:
+    task_docs = build_skypilot_task_docs(spec, steps, run_id=run_id, options=options)
     header = {
         "name": name or spec.name,
         "execution": execution,
     }
     docs: list[dict[str, Any]] = [header]
     seen: set[str] = set()
-    for step in steps:
-        doc = build_skypilot_task_doc(spec, step, run_id=run_id, options=options)
+    for doc in task_docs:
         task_name = str(doc.get("name") or "")
         # Serial pipelines may legitimately repeat a task name (an unrolled loop
         # body re-runs the same state), so only JobGroups — whose tasks run at the

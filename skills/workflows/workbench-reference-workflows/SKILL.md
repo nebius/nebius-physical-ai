@@ -81,6 +81,16 @@ evidence; report recovery must not change eligibility or consume final cases.
 
 ## Current Reference YAMLs
 
+For a first BEHAVIOR DEV evaluation, use
+[the one-file onboarding guide](../../../docs/workbench/challenge-onboarding.md)
+and `npa workbench workflow challenge init`, `check`, and `prepare`.
+The helper materializes the canonical evaluation workflow and preserves the ten
+prescribed cases. A local `ready-to-prepare` result does not prove GPU readiness.
+The simulator runtime, licensed assets and task-configured policy remain
+operator prerequisites. Keep generated kits private; use the campaign path from
+the outset for durable case recovery. Other challenges are not supported by
+this helper yet.
+
 The retired catalog path is machine-checked by
 `npa/tests/guardrails/test_skypilot_catalog_retirement.py`, so a raw template
 cannot quietly reappear there.

@@ -1281,6 +1281,9 @@ skills:
     when_to_use: "Reference npa.workflow specs, runner scripts, cookbooks, customer-adaptable pipeline implementations, and guarded tool-specific YAML examples that are not authoring surfaces."
     path: skills/workflows/workbench-reference-workflows/SKILL.md
     smoke:
+      - type: cli_help
+        args: ["workbench", "workflow", "challenge", "prepare", "--help"]
+        contains: "prescribed DEV cases"
       - type: workflow_yaml
         paths:
           - workflows/testing/cosmos-fetch.yaml

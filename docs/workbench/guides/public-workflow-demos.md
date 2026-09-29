@@ -118,7 +118,9 @@ put storage credentials in a browser URL. Use `--no-open` on a remote terminal
 to print the local report path. Preserve the full S3 artifacts for training and
 independent review; the HTML is a visual summary.
 
-Resume an interrupted execution with its exact recorded identity:
+Keep the original installed checkout until each run finishes. Resume with that
+checkout, the same project and runtime target, and the exact recorded run ID.
+A newer driver may reject the previous run's saved source or image identity.
 
 ```bash
 npa workbench workflow demo run synthetic-data --project '<project>' \
