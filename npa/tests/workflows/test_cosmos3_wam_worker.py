@@ -320,6 +320,19 @@ def test_firewall_installs_ipv6_default_deny_and_restores_both_families(
         assert rules_path.read_text() == f"# synthetic {family}-save\n"
         assert rules_path.stat().st_mode & 0o777 == 0o600
         assert f"ExecStart=/usr/sbin/{family}-restore {rules_path}" in unit
+    for service in (
+        "slurmctld.service",
+        "slurmd.service",
+        "slurmdbd.service",
+        "nfs-server.service",
+        "rpcbind.service",
+        "rpcbind.socket",
+    ):
+        dropin = etc / "systemd/system" / f"{service}.d/wam-firewall.conf"
+        assert dropin.read_text() == (
+            "[Unit]\nRequires=wam-slurm-firewall.service\n"
+            "After=wam-slurm-firewall.service\n"
+        )
 
 
 def test_ipv6_filter_failure_cannot_report_success(tmp_path, monkeypatch):

@@ -43,9 +43,11 @@ this completed comparison and the linked quality records supply final status.
 
 ## Reproduce from committed data
 
-The reducer uses `math.fsum` for elapsed-time aggregation so Python versions
-with different built-in float summation produce the same committed JSON bytes.
-The documented reducer command is exercised against all six committed runs in CI.
+The producer and reducer use `math.fsum` for elapsed-time aggregation so Python
+versions with different built-in float summation preserve throughput receipts.
+CI exercises the documented reducer command against all six committed runs and
+reconstructs native numeric log records from each CSV to verify the producer
+work summaries byte-for-byte. These regressions pass on Python 3.10/3.11/3.12/3.14.
 
 From the repository root, choose a fresh output path in `WAM_SCALING_REPORT`:
 

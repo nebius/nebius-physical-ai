@@ -33,8 +33,9 @@ All numeric sources, hashes and figure reproduction commands are linked.
 A one-GPU FP32-plus-EMA attempt exhausted memory before its first optimizer
 update even at one sample per step; this does not establish the minimum GPU
 count. Two GPUs remain untested. A later [four-GPU run](../evidence/cosmos3-wam-live-training-4/README.md)
-passed NCCL and initial optimizer updates; its full schedule, timings and quality
-were pending at capture. The
+passed NCCL and optimizer updates, then was cancelled at observed update 535 when
+the requested extension was clarified as four nodes of eight GPUs. It contributes
+no completed scaling or quality result. The
 [runtime evidence](../evidence/cosmos3-wam-b200-runtime.json) and
 [validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json)
 keep those limits explicit. Both bootstraps install FFmpeg and the launcher
@@ -54,7 +55,10 @@ gradient accumulation for the scaling comparison:
 | 2 | 16 | 8 | 2 | 64 | 2 | 2,048 |
 | 4 | 32 | 8 | 4 | 64 | 1 | 2,048 |
 
-The 8/16-GPU configurations were measured; 32 GPUs are a static plan. Native
+The 8/16-GPU configurations were measured. The [32-GPU extension](../evidence/cosmos3-wam-plan-32/README.md)
+passed NPA Soperator planning and source preflight but is blocked on reserved
+capacity. Its deployment changes from native Slurm to Soperator, so qualify and
+disclose runtime differences before attributing differences to GPU count. Native
 upstream uses 128 samples/rank on two nodes; 64 permits the same nominal global
 batch across this entire comparison. The model retains its 74,000-token cap,
 selective activation checkpointing, BF16 compute, learning rate 5e-5, 500-step

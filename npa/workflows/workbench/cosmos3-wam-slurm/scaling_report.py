@@ -62,7 +62,8 @@ def _read(directory):
     if (
         measurement["schema"] != "npa.cosmos3.wam-measurement.v1"
         or measurement["status"] != "measured"
-        or (measurement["nodes"], measurement["gpus"]) not in ((1, 4), (1, 8), (2, 16))
+        or (measurement["nodes"], measurement["gpus"])
+        not in ((1, 4), (1, 8), (2, 16), (4, 32))
         or len(measurement["hardware"]["gpu_names"])
         != measurement["gpus"] // measurement["nodes"]
         or measurement["warmup_steps_excluded"] != 50
@@ -174,7 +175,9 @@ def _summarize(directories):
     }
     result = {
         "schema": "npa.cosmos3.wam-repeated-scaling.v1",
-        "status": "scaling_measured" if "16" in groups else "baseline_measured",
+        "status": "scaling_measured"
+        if any(key in groups for key in ("16", "32"))
+        else "baseline_measured",
         "comparison_contract": baseline["comparison_contract"],
         "hardware": baseline["hardware"],
         "groups": groups,
@@ -190,6 +193,10 @@ def _summarize(directories):
     if "4" in groups:
         result["comparisons_vs_4_gpus"] = {
             key: _comparison(groups, 4, int(key)) for key in groups if key != "4"
+        }
+    if "32" in groups:
+        result["comparisons_vs_8_gpus"] = {
+            key: _comparison(groups, 8, int(key)) for key in groups if int(key) > 8
         }
     return result
 

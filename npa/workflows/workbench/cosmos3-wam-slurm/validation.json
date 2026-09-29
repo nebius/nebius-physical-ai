@@ -282,6 +282,24 @@
     "fixed_window_device_samples": 480,
     "timing_repetitions_completed": 0,
     "policy_quality_measured": false,
-    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/evidence.json"
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/evidence.json",
+    "status": "operator-cancelled-wrong-topology",
+    "last_observed_update": 535,
+    "checkpoint_500_retained": true,
+    "excluded_from_scaling": true,
+    "cancellation_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/cancellation.json"
+  },
+  "thirty_two_gpu_extension": {
+    "nodes": 4,
+    "gpus_per_node": 8,
+    "gpus": 32,
+    "status": "blocked-reserved-capacity",
+    "npa_plan_passed": true,
+    "source_preflight_passed": true,
+    "deployed": false,
+    "execution_validated": false,
+    "protocol": "benchmark-protocol-32.json",
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-plan-32/preflight.json",
+    "deployment_attempt": "rejected-before-provider-mutation-by-STRICT-capacity-gate"
   }
 }

@@ -43,7 +43,7 @@ def _work_metrics(log, warmup, steps):
     result = {
         "measured_tokens": sum(tokens),
         "mean_tokens_per_optimizer_step": statistics.mean(tokens),
-        "tokens_per_second": sum(tokens) / sum(seconds),
+        "tokens_per_second": sum(tokens) / math.fsum(seconds),
         "timers_overlap": "VAE encoding is included in prepare_data; do not sum them",
     }
     names = ("vae_rank_mean", "vae_rank_max", "prepare_rank_mean", "prepare_rank_max")
@@ -177,7 +177,7 @@ def _summarize(run, warmup):
         "step_p50_seconds": statistics.median(values),
         "step_p95_seconds": statistics.quantiles(values, n=100, method="inclusive")[94],
         "train_process_seconds": elapsed,
-        "training_gpu_hours": sum(
+        "training_gpu_hours": math.fsum(
             node["train_process_seconds"] * settings["gpus"] / settings["nodes"]
             for node in nodes
         )

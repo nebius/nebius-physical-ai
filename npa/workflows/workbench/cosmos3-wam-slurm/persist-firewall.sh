@@ -18,7 +18,7 @@ sudo tee /etc/systemd/system/wam-slurm-firewall.service >/dev/null <<'UNIT'
 Description=Restore dedicated Slurm network rules
 DefaultDependencies=no
 After=local-fs.target
-Before=network-pre.target slurmctld.service slurmd.service nfs-server.service
+Before=network-pre.target slurmctld.service slurmd.service slurmdbd.service nfs-server.service
 Wants=network-pre.target
 
 [Service]
@@ -30,5 +30,18 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 UNIT
+# Ordering alone does not prevent a service from starting after restore fails.
+for service in slurmctld slurmd slurmdbd nfs-server rpcbind rpcbind.socket; do
+    case "$service" in
+        *.socket) unit="$service" ;;
+        *) unit="$service.service" ;;
+    esac
+    sudo install -d -m 755 "/etc/systemd/system/$unit.d"
+    sudo tee "/etc/systemd/system/$unit.d/wam-firewall.conf" >/dev/null <<'DEPENDENCY'
+[Unit]
+Requires=wam-slurm-firewall.service
+After=wam-slurm-firewall.service
+DEPENDENCY
+done
 sudo systemctl daemon-reload
 sudo systemctl enable wam-slurm-firewall.service

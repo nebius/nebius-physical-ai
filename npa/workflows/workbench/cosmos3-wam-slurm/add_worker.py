@@ -38,6 +38,36 @@ def _validate(args):
     return root
 
 
+def _partition(config, controller, worker):
+    lines = [line for line in config.splitlines() if line.startswith("PartitionName=")]
+    if len(lines) != 1:
+        raise ValueError("expected exactly one recipe partition")
+    pattern = rf"(?<!\S)Nodes={re.escape(controller)}(?=\s|$)"
+    updated, count = re.subn(pattern, f"Nodes={controller},{worker}", lines[0])
+    if count != 1:
+        raise ValueError("partition must contain the controller exactly once")
+    return config.replace(lines[0], updated)
+
+
+def _accounting_host(config, address):
+    lines = [
+        line
+        for line in config.splitlines()
+        if line.lstrip().startswith("AccountingStorageHost")
+    ]
+    if len(lines) != 1:
+        raise ValueError("expected exactly one accounting host setting")
+    pattern = (
+        r"(?m)^([ \t]*AccountingStorageHost[ \t]*=[ \t]*)localhost([ \t]*(?:#.*)?)$"
+    )
+    updated, count = re.subn(
+        pattern, lambda match: f"{match[1]}{address}{match[2]}", config
+    )
+    if count != 1:
+        raise ValueError("accounting host must be the recipe's localhost setting")
+    return updated
+
+
 def _configuration(args):
     config = Path("/etc/slurm/slurm.conf").read_text()
     node_lines = [line for line in config.splitlines() if line.startswith("NodeName=")]
@@ -47,6 +77,9 @@ def _configuration(args):
     if args.worker_name == controller:
         raise ValueError("second worker must have a distinct hostname")
     fields = dict(item.split("=", 1) for item in node_lines[0].split())
+    if fields["NodeName"] != controller:
+        raise ValueError("configured controller differs from this host")
+    _private_address(fields["NodeAddr"])
     shape = " ".join(
         f"{key}={value}"
         for key, value in fields.items()
@@ -54,12 +87,8 @@ def _configuration(args):
     )
     worker = f"NodeName={args.worker_name} NodeAddr={args.worker_address} {shape} State=UNKNOWN"
     config = config.replace(node_lines[0], node_lines[0] + "\n" + worker)
-    config = config.replace(
-        f"Nodes={controller} ", f"Nodes={controller},{args.worker_name} "
-    )
-    config = config.replace(
-        "AccountingStorageHost=localhost", f"AccountingStorageHost={fields['NodeAddr']}"
-    )
+    config = _partition(config, controller, args.worker_name)
+    config = _accounting_host(config, fields["NodeAddr"])
     return config, {
         "controller_name": controller,
         "controller_address": fields["NodeAddr"],
@@ -84,7 +113,8 @@ def _export(root, peers):
     export = f"{root} {peers['worker_address']}(rw,sync,no_subtree_check,root_squash)\n"
     path = Path("/etc/exports.d/wam-slurm.exports")
     path.parent.mkdir(exist_ok=True)
-    path.write_text(export)
+    with path.open("x") as stream:
+        stream.write(export)
     _run("systemctl", "enable", "--now", "nfs-server")
     _run("exportfs", "-ra")
     _run(

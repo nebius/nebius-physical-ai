@@ -33,6 +33,31 @@ def test_documented_command_reproduces_committed_scaling_bytes(tmp_path):
     assert output.read_bytes() == (evidence / "repeated-scaling.json").read_bytes()
 
 
+@pytest.mark.parametrize("gpus", [8, 16])
+@pytest.mark.parametrize("repeat", [1, 2, 3])
+def test_producer_work_metrics_reproduce_committed_bytes(gpus, repeat):
+    directory = (
+        ROOT / f"docs/workbench/evidence/cosmos3-wam-timing-{gpus}/repeat-{repeat}"
+    )
+    expected = json.loads((directory / "measurement.json").read_text())["work"]
+    with (directory / "iteration-series.csv").open() as stream:
+        rows = list(csv.DictReader(stream))
+    log = "\n".join(
+        f"{row['step']} : iter_speed {row['iteration_seconds']} seconds per iteration"
+        f" | Loss: {row['loss']} | {row['tokens']} tokens per iteration (0 tokens/s)"
+        f" | vae_encode {row['vae_rank_mean_seconds']}s/iter avg (0%),"
+        f" max {row['vae_rank_max_seconds']}s (0%)"
+        f" | prepare_data {row['prepare_rank_mean_seconds']}s/iter avg (0%),"
+        f" max {row['prepare_rank_max_seconds']}s"
+        for row in rows
+    )
+    spec = importlib.util.spec_from_file_location("wam_producer", RECIPE / "report.py")
+    producer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(producer)
+    actual = producer._work_metrics(log, 50, 200)
+    assert json.dumps(actual, sort_keys=True) == json.dumps(expected, sort_keys=True)
+
+
 def _module():
     spec = importlib.util.spec_from_file_location(
         "wam_scaling_report", RECIPE / "scaling_report.py"
@@ -216,3 +241,28 @@ def test_four_gpu_report_rejects_eight_device_receipt(tmp_path):
     )
     with pytest.raises(ValueError, match="requires completed"):
         _module()._read(four)
+
+
+@pytest.mark.parametrize("include_sixteen", [False, True])
+def test_thirty_two_gpu_comparison_uses_fourfold_capacity(tmp_path, include_sixteen):
+    module = _module()
+    original = _campaign(tmp_path)
+    baseline = module._summarize(original)
+    runs = original if include_sixteen else original[:3]
+    extension = [_run(tmp_path, 32, i, value) for i, value in enumerate((3, 4, 5))]
+    result = module._summarize([*runs, *extension])
+    assert result["status"] == "scaling_measured"
+    assert result["groups"]["8"] == baseline["groups"]["8"]
+    assert result["comparison"] == (baseline["comparison"] if include_sixteen else None)
+    comparison = result["comparisons_vs_8_gpus"]["32"]
+    assert comparison["speedup_vs_8_gpus"] == 3
+    assert comparison["scaling_efficiency"] == 0.75
+    assert comparison["token_throughput_speedup"] == 3
+    assert comparison["token_work_ratio"] == 1
+
+
+def test_thirty_two_gpu_report_requires_four_nodes(tmp_path):
+    run = _run(tmp_path, 32, 0, 4)
+    _change(run, lambda report: report.update(nodes=2))
+    with pytest.raises(ValueError, match="requires completed"):
+        _module()._read(run)

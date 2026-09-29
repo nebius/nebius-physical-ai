@@ -1,5 +1,13 @@
 # Four-B200 WAM execution proof
 
+**Cancelled after topology correction.** The requested extension is four nodes
+with eight B200s each (32 GPUs), not four active GPUs. This attempt stopped at
+observed update 535; checkpoint 500 was retained. All 16 owned queued/running
+jobs were cancelled, the queue was verified empty, and both owned workers are
+stopped. [The cancellation receipt](cancellation.json) supersedes the pending
+status in the immutable startup capture below. No completed timing or quality
+result from this attempt enters the scaling comparison.
+
 ![Four active training GPUs and four idle GPUs on the retained VM](training-snapshot.png)
 
 On September 29, 2026, the pinned native WAM trainer completed initial optimizer

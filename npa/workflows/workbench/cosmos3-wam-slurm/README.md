@@ -35,11 +35,14 @@ happened afterward; this does not establish exact threshold crossing or a
 quality improvement from GPU count with one training seed.
 
 The measured deployment uses native Slurm 23.11.4 on dedicated reserved GPU
-VMs, with controller, accounting and NFS on the first worker. Soperator remains
-an unvalidated alternative. A subsequent [four-GPU execution check](../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/README.md)
-passed NCCL and initial optimizer updates; its full schedule and performance
-measurements remain pending. Two GPUs are untested and 32 GPUs remain a static
-plan. [validation.json](validation.json) records these boundaries.
+VMs, with controller, accounting and NFS on the first worker. Soperator has passed
+planning and pinned-source preflight, but has not been deployed for this recipe.
+A subsequent [four-GPU execution check](../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/README.md)
+was cancelled at observed update 535 after correcting the requested topology to
+**four nodes, eight B200s per node, 32 GPUs total**. Its checkpoint 500 is retained;
+it is excluded from scaling and quality results. Two GPUs are untested. The
+[32-GPU plan](../../../../docs/workbench/evidence/cosmos3-wam-plan-32/README.md)
+is blocked on reserved capacity and has no GPU execution result.
 
 [Sixteen-rank InfiniBand proof](../../../../docs/workbench/evidence/cosmos3-wam-collective-16/README.md),
 [process-attributed live training](../../../../docs/workbench/evidence/cosmos3-wam-live-training-16/README.md),
@@ -97,8 +100,10 @@ reserved B200 platform currently offers one- and eight-GPU VMs in the campaign
 project. Running on four devices of an exclusive eight-GPU host still retains
 the whole VM allocation. Report active training GPU-hours and provisioned
 capacity separately. The [four-rank process proof and GPU telemetry](../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/README.md)
-establish initial native training with these settings. Full four-GPU completion,
-timing repetitions and policy quality remain pending in that captured record.
+establish initial native training with these settings. The attempt was cancelled
+after the operator clarified the requested four-node topology. It did not finish
+the schedule, timing repeats or policy evaluations. See the appended cancellation
+receipt; the original capture is retained unchanged.
 
 ## Files and settings
 
@@ -197,8 +202,14 @@ operator user with sudo. Accounting credentials are generated on the VM and
 written with mode 0600. The dedicated IPv4 firewall permits SSH, established
 connections, loopback and the worker's own address. IPv6 permits SSH, loopback,
 established connections and ICMPv6, denying new Slurm/NFS connections;
-`persist-firewall.sh` saves both families for reboot. IPv6 hardening was added
-after the measured campaign; see the scope note in [native-cluster.md](native-cluster.md).
+`persist-firewall.sh` saves both families for reboot. Required, ordered systemd
+dependencies prevent Slurm, accounting, NFS and rpcbind from starting when either
+restore fails. The [real systemd activation check](../../../../docs/workbench/evidence/cosmos3-wam-firewall/README.md)
+injects both failures in a disposable container. This hardening postdates the
+measured campaign; it is not a GPU-cluster reboot qualification. See
+[native-cluster.md](native-cluster.md) for the original runtime scope.
+`add_worker.py` requires unambiguous node, partition and accounting-host targets
+before writing configuration, and refuses to overwrite an existing NFS export.
 Multi-node joining additionally requires private peer
 addresses, shared Munge credentials and a common filesystem. This research
 deployment colocates the controller on a worker; it has no controller failover.
@@ -271,7 +282,10 @@ path without changing the pinned payload or disabling guardrails. See the
 Record download time separately from model loading and trial execution.
 
 After training, use `evaluate.py --shared-root PATH --run-dir RUN --step 500
---output-dir OUTPUT` inside an exclusive eight-GPU Slurm allocation. Repeat for
+--output-dir OUTPUT` inside an exclusive eight-GPU Slurm allocation. Run only one
+evaluation per host: fixed HTTP ports 8000–8007 and rendezvous ports 31000–31007
+are part of this dedicated-host launcher; concurrent evaluations are unsupported.
+Repeat for
 steps 1000, 1500 and 2000. It defaults to eight policy servers, eight simulator
 environments per server, all ten tasks, fifty trials per task and seed 42.
 `--workers` selects one to eight visible GPUs; `--trials`, `--envs` and `--seed`
@@ -384,7 +398,12 @@ batch, seed and hardware contracts, and every timing from update 52 to 200.
 It verifies CSV hashes and recomputes timing/token summaries before comparison;
 duplicate directories or byte-identical copied reports cannot supply repeats.
 It reads saved reports without rehashing archived checkpoint payloads or
-overwriting the original measurements.
+overwriting the original measurements. Both producer and reducer use `math.fsum`
+for elapsed-time totals so Python floating-point summation changes do not alter
+receipts. Compatibility tests reproduce the six committed producer work summaries
+and the documented reducer output. Supplying three matching 32-GPU reports adds
+`comparisons_vs_8_gpus`, using the fourfold GPU ratio for efficiency and preserving
+the existing eight-to-sixteen comparison.
 
 The result retains each run's mean, median and p95, then reports the mean and
 sample standard deviation of the three run means. That deviation describes
@@ -425,7 +444,8 @@ use `npa soperator destroy` after the same cancellation and archival checks.
 npa/.venv/bin/python -m pytest \
   npa/tests/workflows/test_cosmos3_wam_slurm.py \
   npa/tests/workflows/test_cosmos3_wam_scaling_report.py \
-  npa/tests/workflows/test_cosmos3_wam_worker.py -q
+  npa/tests/workflows/test_cosmos3_wam_worker.py \
+  npa/tests/workflows/test_cosmos3_wam_add_worker.py -q
 ```
 
 The opt-in live test runs real one- and two-node jobs from a Slurm login. It
