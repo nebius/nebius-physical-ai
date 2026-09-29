@@ -151,6 +151,10 @@ def test_fresh_metadata_agent_access_and_inventory(deployment):
     assert identity["credential_config"] == "/root/.nebius/config.yaml"
     assert isinstance(resources, dict) and not resources.get("error")
     hashes = _deployed_source_hashes(project, name, evidence)
+    _record_result(evidence, manifest, hashes, access_seconds, resources_seconds)
+
+
+def _record_result(evidence, manifest, hashes, access_seconds, resources_seconds):
     _write_evidence(
         evidence,
         "result.json",
