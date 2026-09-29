@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -158,6 +159,121 @@ def test_check_hallucination_rejects_an_out_of_range_threshold(tmp_path: Path) -
         hal.check_hallucination(
             clip_id="c", original_video=clip, augmented_video=clip, threshold=1.5
         )
+
+
+@pytest.mark.parametrize("passed", [True, False])
+def test_upstream_hallucination_result_requires_a_boolean_verdict(passed: bool) -> None:
+    result = hal._parse_upstream_result(
+        {
+            "clip_id": "upstream-clip",
+            "passed": passed,
+            "threshold": 0.73,
+            "score": 0.41,
+            "total_frames": 8,
+            "total_hallucinated_dynamic_pixels": 5,
+            "total_augmented_dynamic_pixels": 12,
+        },
+        clip_id="requested-clip",
+        params={"threshold": 0.68},
+    )
+
+    assert result is not None
+    assert result.passed is passed
+    assert result.score == 0.41
+    assert result.threshold == 0.73
+
+
+@pytest.mark.parametrize("passed", ["false", 0, 1, None, [], {}])
+def test_upstream_hallucination_result_falls_back_on_malformed_verdicts(
+    passed: Any,
+) -> None:
+    result = hal._parse_upstream_result(
+        {"passed": passed, "score": 1.0, "threshold": 0.5},
+        clip_id="clip",
+        params={"threshold": 0.5},
+    )
+
+    assert result is None
+
+
+@pytest.fixture
+def upstream_hallucination_payload(monkeypatch, tmp_path):
+    calls = []
+
+    def install(payload):
+        class Processor:
+            def __init__(self, **kwargs):
+                self.params = kwargs["params"]
+
+            def process(self, clip_id, original, augmented):
+                calls.append((clip_id, original, augmented))
+                return payload
+
+        monkeypatch.setattr(hal, "ensure_upstream_importable", lambda: tmp_path)
+        monkeypatch.setitem(
+            sys.modules,
+            "checks.hallucination.processor",
+            SimpleNamespace(HallucinationProcessor=Processor),
+        )
+        return calls
+
+    return install
+
+
+@pytest.mark.parametrize("payload", [{"passed": "false"}, {"passed": None}, {}])
+def test_invalid_upstream_verdict_runs_pixel_check(
+    monkeypatch, tmp_path, upstream_hallucination_payload, payload
+):
+    calls = upstream_hallucination_payload({**payload, "score": 1.0})
+    original, augmented = tmp_path / "original.mp4", tmp_path / "augmented.mp4"
+    original.touch()
+    augmented.touch()
+    static = np.zeros((24, 24), dtype=np.uint8)
+    invented = static.copy()
+    invented[8:16, 8:16] = 255
+    monkeypatch.setattr(hal, "_probe_size", lambda path: static.shape)
+
+    def decode(path, height, width):
+        yield static
+        yield static if path == original else invented
+
+    monkeypatch.setattr(hal, "_iter_gray_frames", decode)
+    result = hal.check_hallucination(
+        clip_id="clip",
+        original_video=original,
+        augmented_video=augmented,
+        blur_ksize=1,
+        morph_k=1,
+    )
+
+    assert calls == [("clip", str(original), str(augmented))]
+    assert result.engine == hal.ENGINE_PORT
+    assert result.passed is False
+    assert result.score == 0.0
+    assert result.total_frames == 2
+    assert result.total_hallucinated_dynamic_pixels == 64
+
+
+@pytest.mark.parametrize("passed", [True, False])
+def test_valid_upstream_verdict_is_preserved_without_rechecking_pixels(
+    monkeypatch, tmp_path, upstream_hallucination_payload, passed
+):
+    calls = upstream_hallucination_payload({"passed": passed, "score": 0.8})
+    clip = tmp_path / "clip.mp4"
+    clip.touch()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("a valid upstream result must not execute the fallback")
+
+    monkeypatch.setattr(hal, "_run_port", forbidden)
+    result = hal.check_hallucination(
+        clip_id="clip", original_video=clip, augmented_video=clip
+    )
+
+    assert calls == [("clip", str(clip), str(clip))]
+    assert result.engine == hal.ENGINE_UPSTREAM
+    assert result.passed is passed
+    assert result.score == 0.8
 
 
 # ---------------------------------------------------------------------------
@@ -657,6 +773,45 @@ def test_attribute_verifier_builds_begin_middle_end_contact_sheet(
         assert image.size == (192, 48)
 
 
+def test_source_relative_change_crop_excludes_source_restored_foreground() -> None:
+    from PIL import Image
+
+    size = (160, 120)
+    source_surface = (190, 190, 190)
+    changed_surface = (225, 45, 20)
+    source_foreground = (35, 125, 65)
+    protected_foreground = (52, 30, 108, 90)
+    reference = Image.new("RGB", size, color=source_surface)
+    reference.paste(source_foreground, protected_foreground)
+    generated = Image.new("RGB", size, color=changed_surface)
+    generated.paste(source_foreground, protected_foreground)
+
+    crop = av._source_relative_change_crop(
+        generated=generated,
+        reference=reference,
+        np=np,
+    )
+    pixels = np.asarray(crop)
+
+    # The largest verified rectangle may sit on any side of the protected
+    # source-derived foreground, but it must contain only the changed surface.
+    assert crop.width < generated.width or crop.height < generated.height
+    assert crop.width * crop.height < generated.width * generated.height
+    assert np.all(pixels == np.asarray(changed_surface))
+
+
+def test_source_relative_change_crop_fails_when_no_material_change_exists() -> None:
+    from PIL import Image
+
+    reference = Image.new("RGB", (128, 96), color=(190, 190, 190))
+    with pytest.raises(CosmosEvaluatorError, match="too small"):
+        av._source_relative_change_crop(
+            generated=reference.copy(),
+            reference=reference,
+            np=np,
+        )
+
+
 class FakeTokenFactory:
     """Records requests and replays scripted replies."""
 
@@ -851,6 +1006,53 @@ def test_verify_attributes_scores_a_matching_answer(
     assert [check.variable for check in result.checks] == ["cloth_color", "lighting"]
 
 
+def test_verify_attributes_requires_reference_for_source_relative_change(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "generated.mp4"
+    video.write_bytes(b"not-decoded-before-validation")
+
+    with pytest.raises(CosmosEvaluatorError, match="reference videos"):
+        av.verify_attributes(
+            clip_id="clip-0",
+            video=video,
+            selected_variables={"background": "terracotta"},
+            evidence_mode="source-relative-change",
+        )
+
+
+def test_verify_attributes_records_a_per_variable_vlm_override(tmp_path: Path) -> None:
+    frame = tmp_path / "frame.png"
+    frame.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    client = FakeTokenFactory(
+        [
+            _question_json("cloth_color", "blue", "red"),
+            "A",
+            _question_json("lighting", "warm lamp light", "bright daylight"),
+            "A",
+        ]
+    )
+
+    result = av.verify_attributes(
+        clip_id="clip-0",
+        frame=frame,
+        selected_variables={"cloth_color": "blue", "lighting": "warm lamp light"},
+        variable_options=APPEARANCE_OPTIONS,
+        client=client,
+        vlm_model="surface-vlm",
+        variable_vlm_models={"lighting": "lighting-vlm"},
+    )
+
+    assert result.passed is True
+    assert result.variable_vlm_models == {"lighting": "lighting-vlm"}
+    assert [check.vlm_model for check in result.checks] == [
+        "surface-vlm",
+        "lighting-vlm",
+    ]
+    assert client.requests[1]["model"] == "surface-vlm"
+    assert client.requests[3]["model"] == "lighting-vlm"
+
+
 def test_verify_attributes_records_a_failing_check_without_dropping_the_batch(
     tmp_path: Path,
 ) -> None:
@@ -975,7 +1177,11 @@ def test_evaluate_run_grades_every_local_variant(tmp_path: Path) -> None:
     _write_variant(
         augment,
         "clip-a",
-        {"cloth_color": "blue", "prompt": "ignored"},
+        {
+            "cloth_color": "blue",
+            "prompt": "ignored",
+            "negative_prompt": "also an instruction, not a requested attribute",
+        },
         conditioned=False,
     )
     _write_variant(augment, "clip-b", {"cloth_color": "red"}, conditioned=False)
@@ -1004,8 +1210,9 @@ def test_evaluate_run_grades_every_local_variant(tmp_path: Path) -> None:
     assert result.score == 1.0
     assert result.passed is True
     assert [clip.clip_id for clip in result.clips] == ["clip-a", "clip-b"]
-    # `prompt` is an instruction, not a visual attribute, so it is never asked about.
+    # Prompt instructions are not visual attributes, so they are never asked about.
     assert "prompt" not in result.clips[0].variables
+    assert "negative_prompt" not in result.clips[0].variables
     # Without a source clip the hallucination check is skipped, and says so.
     assert any("hallucination" in reason for reason in result.clips[0].skipped)
 
@@ -1361,6 +1568,9 @@ def test_empty_independent_selection_is_a_truthful_quality_rejection(
 
     selection = tmp_path / "selection"
     selection.mkdir()
+    attempt = selection / "_attempts" / "fence-1"
+    attempt.mkdir(parents=True)
+    (attempt / "selection.json").write_text("{}", encoding="utf-8")
     (selection / "manifest.json").write_text(
         json.dumps(
             {
@@ -1448,6 +1658,43 @@ def test_input_conditioned_variant_without_a_source_fails_closed(
     assert result.passed is False
     assert result.clips[0].score == 0.0
     assert any("source clip" in reason for reason in result.clips[0].skipped)
+
+
+def test_evaluate_run_routes_the_lighting_vlm_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import npa.workbench.cosmos_evaluator.evaluate as evaluator
+
+    augment = tmp_path / "cosmos_augmented"
+    _write_variant(augment, "clip-a", {"lighting": "bright"}, conditioned=False)
+    attribute = av.AttributeVerificationResult(
+        clip_id="clip-a",
+        passed=True,
+        total_checks=1,
+        passed_checks=1,
+        failed_checks=0,
+        score=1.0,
+        question_model="llm",
+        vlm_model="surface-vlm",
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_verify_attributes(**kwargs: Any) -> av.AttributeVerificationResult:
+        captured.update(kwargs)
+        return attribute
+
+    monkeypatch.setattr(evaluator, "verify_attributes", fake_verify_attributes)
+    result = evaluator.evaluate_run(
+        augment_uri=str(augment),
+        output_uri=str(tmp_path / "grade"),
+        vlm_model="surface-vlm",
+        attribute_lighting_vlm_model="lighting-vlm",
+        storage=object(),
+    )
+
+    assert result.attribute_lighting_vlm_model == "lighting-vlm"
+    assert captured["vlm_model"] == "surface-vlm"
+    assert captured["variable_vlm_models"] == {"lighting": "lighting-vlm"}
 
 
 def test_required_appearance_failure_rejects_an_input_conditioned_variant(

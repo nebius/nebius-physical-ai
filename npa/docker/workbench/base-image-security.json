@@ -40,5 +40,11 @@
     "image": "python:3.11.16-slim-trixie@sha256:9534e5a8e315485d4061ed659af0fd78a284c015f9b73661b41d6bab25604534",
     "purge_linux_libc_dev": false,
     "upgrade_os": true
+  },
+  {
+    "name": "nvidia-cuda-13-0-1-cudnn-devel-ubuntu22-04",
+    "image": "nvidia/cuda:13.0.1-cudnn-devel-ubuntu22.04@sha256:6ff9753ccda37b8f8d711831310d661afd310254148c35ea29f0cca141c499d7",
+    "purge_linux_libc_dev": true,
+    "upgrade_os": false
   }
 ]

@@ -8,6 +8,7 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
+import typer
 from typer.testing import CliRunner
 import yaml
 
@@ -234,6 +235,101 @@ def test_submit_remaps_the_spec_accelerator_onto_the_cluster_name(
     )
 
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+def test_submit_remaps_single_accelerator_mapping(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+) -> None:
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["resources"]["gpu"]["accelerators"] = {"RTXPRO6000": 1}
+    path = tmp_path / "mapping-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+
+    overrides = workflow_cli._resolve_submit_accelerators(
+        path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=True
+    )
+
+    assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+def test_submit_rejects_mapping_alternatives_before_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["resources"]["gpu"]["accelerators"] = {"RTXPRO6000": 1, "H100": 1}
+    path = tmp_path / "mapping-alternatives.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+    daemon_calls: list[object] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        lambda **kwargs: daemon_calls.append(kwargs),
+    )
+
+    with pytest.raises(typer.Exit):
+        workflow_cli._resolve_submit_accelerators(
+            path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=True
+        )
+
+    assert daemon_calls == []
+    assert "SkyPilot alternatives" in capsys.readouterr().err
+
+
+def _two_gpu_inventory():
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    return KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        2,
+        2,
+        ("RTXPRO6000",),
+        {},
+        nodes=(
+            KubernetesGpuNode(
+                "unit-node",
+                True,
+                True,
+                ("RTXPRO6000",),
+                2,
+                2,
+                0,
+                2,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
+            ),
+        ),
+    )
+
+
+def test_gang_preflight_uses_single_mapping_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: _two_gpu_inventory(),
+    )
+    spec = SimpleNamespace(
+        states={"train": SimpleNamespace(name="train", resources="gpu")},
+        resources={"gpu": {"accelerators": {"RTXPRO6000": 2}}},
+        config={},
+    )
+
+    row = workflow_cli._preflight_submit_gang_capacity(spec, context="unit-context")[0]
+
+    assert row["accelerator"] == "RTXPRO6000:2"
 
 
 def test_submit_accelerator_readiness_uses_resolved_config_overrides(
@@ -842,6 +938,108 @@ def test_pullable_images_pass(
     )
 
     assert "1 image(s) pullable" in capsys.readouterr().err
+
+
+def test_submit_image_preflight_checks_transition_free_spec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    spec_path = REPO_ROOT / "workflows" / "testing" / "vlm-eval-single.yaml"
+    observed: dict[str, object] = {}
+
+    def pull(images, **_kwargs):
+        observed["images"] = list(images)
+        return [ImagePullCheck(image=image, status="ok") for image in images]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        pull,
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        lambda **_kwargs: [],
+    )
+
+    assert (
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+            assume_decision="",
+            enabled=True,
+        )
+        == {}
+    )
+    assert observed["images"]
+
+
+def test_submit_image_preflight_keys_partial_contract_pins_by_requested_image(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    pull_only_image = "registry.example.invalid/operator/npa-retargeting:release"
+    contracted_image = "registry.example.invalid/operator/npa-cosmos-curate:release"
+    immutable_image = (
+        "registry.example.invalid/operator/npa-cosmos-curate@sha256:" + "a" * 64
+    )
+    monkeypatch.setattr(
+        workflow_cli,
+        "_plan_preflight_image_requirements",
+        lambda *_args, **_kwargs: (
+            [pull_only_image, contracted_image],
+            {},
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        lambda images, **_kwargs: [
+            ImagePullCheck(image=image, status="ok") for image in images
+        ],
+    )
+
+    def partial_contracts(*, bind_requested_images=False, **_kwargs):
+        assert bind_requested_images is True
+        return [
+            {
+                "_requested_image": contracted_image,
+                "image": immutable_image,
+                "state": "compatible",
+            }
+        ]
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "_preflight_image_bootstrap_contracts",
+        partial_contracts,
+    )
+
+    assert workflow_cli._preflight_submit_images(
+        spec_path,
+        options=object(),
+        assume_decision="",
+        enabled=True,
+    ) == {contracted_image: immutable_image}
+
+
+def test_submit_image_preflight_defers_image_resolution_value_error(
+    monkeypatch: pytest.MonkeyPatch, spec_path: Path
+) -> None:
+    def unsupported_image(*_args, **_kwargs):
+        raise ValueError("synthetic unsupported image")
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "_plan_preflight_image_requirements",
+        unsupported_image,
+    )
+
+    assert (
+        workflow_cli._preflight_submit_images(
+            spec_path,
+            options=object(),
+            assume_decision="",
+            enabled=True,
+        )
+        == {}
+    )
 
 
 def test_image_preflight_plans_with_submit_config_overrides(

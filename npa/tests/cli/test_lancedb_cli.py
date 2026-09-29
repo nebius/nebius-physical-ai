@@ -249,6 +249,75 @@ def test_lancedb_create_table_schema_validation(tmp_path: Path) -> None:
     assert "--schema does not exist" in result.output
 
 
+def test_lancedb_create_table_sends_schema_for_zero_row_table(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    create_module = importlib.import_module("npa.cli.workbench.lancedb.create_table")
+    schema = {"fields": [{"name": "id", "type": "string", "nullable": False}]}
+    schema_path = tmp_path / "schema.json"
+    schema_path.write_text(json.dumps(schema), encoding="utf-8")
+    seen = {}
+
+    def fake_request(method: str, endpoint: str, path: str, **kwargs):
+        seen.update({"method": method, "path": path, **kwargs})
+        return {"status": "created", "table": "empty", "rows": 0}
+
+    monkeypatch.setattr(create_module, "request_json", fake_request)
+
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "create-table",
+            "--endpoint",
+            "http://localhost:8686",
+            "--table",
+            "empty",
+            "--schema",
+            str(schema_path),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/tables/empty"
+    assert seen["payload"]["schema"] == schema
+    assert seen["payload"]["rows"] == []
+
+
+def test_lancedb_create_table_requires_input_or_schema() -> None:
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "create-table",
+            "--endpoint",
+            "http://localhost:8686",
+            "--table",
+            "empty",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "--input-path with rows or --schema is required" in result.output
+
+
+def test_lancedb_create_table_rejects_s3_input() -> None:
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "create-table",
+            "--endpoint",
+            "http://localhost:8686",
+            "--table",
+            "remote",
+            "--input-path",
+            "s3://example/data.json",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Server-side S3 import is not implemented" in result.output
+
+
 def test_lancedb_query_top_k_default(monkeypatch: pytest.MonkeyPatch) -> None:
     query_module = importlib.import_module("npa.cli.workbench.lancedb.query")
     seen = {}
@@ -413,3 +482,67 @@ def test_lancedb_end_to_end_deploy_table_query() -> None:
         for idx in range(10)
     ]
     assert len(json.dumps(payload)) > 0
+
+
+def _assert_kubernetes_storage_manifest(output: str, storage_path: str) -> None:
+    """Check canonical paths and credentials in the actual CLI manifest output."""
+    from npa.workbench import service_kubernetes
+
+    payload = json.loads(output)
+    container = payload["manifests"][0]["spec"]["template"]["spec"]["containers"][0]
+    env = container["env"]
+    assert [entry for entry in env if entry["name"] == "LANCEDB_STORAGE_PATH"] == [
+        {"name": "LANCEDB_STORAGE_PATH", "value": storage_path}
+    ]
+    credentials = [
+        entry
+        for entry in env
+        if entry["name"] in service_kubernetes.STORAGE_SECRET_ENVS
+    ]
+    if storage_path.startswith("s3://"):
+        assert len(credentials) == 2
+        for entry in credentials:
+            assert entry["valueFrom"]["secretKeyRef"] == {
+                "name": "npa-lancedb-storage",
+                "key": entry["name"],
+            }
+            assert "value" not in entry
+    else:
+        assert credentials == []
+
+
+@pytest.mark.parametrize("storage_path", ["s3://example-bucket/review", "/data/review"])
+def test_lancedb_kubernetes_dry_run_binds_storage_without_exposing_keys(
+    monkeypatch: pytest.MonkeyPatch, storage_path: str
+) -> None:
+    """Exercise the real CLI-to-manifest boundary without contacting Kubernetes."""
+    from npa.workbench import service_kubernetes
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "placeholder-access-value")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "placeholder-secret-value")
+    monkeypatch.delenv("LANCEDB_TOKEN", raising=False)
+    for name in ("apply", "ensure_storage_secret", "wait_available"):
+        monkeypatch.setattr(
+            service_kubernetes,
+            name,
+            lambda *args, **kwargs: pytest.fail("dry-run must not deploy resources"),
+        )
+
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "kubernetes",
+            "--storage-path",
+            storage_path,
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    _assert_kubernetes_storage_manifest(result.output, storage_path)
+    assert "placeholder-access-value" not in result.output
+    assert "placeholder-secret-value" not in result.output

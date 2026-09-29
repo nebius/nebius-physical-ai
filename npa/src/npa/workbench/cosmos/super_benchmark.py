@@ -37,7 +37,9 @@ SUPPORTED_GPU_FAMILIES = ("B200", "H200")
 PRIMARY_SUITE = "primary"
 B200_FULL_SUITE = "b200-full"
 H200_SINGLE_GPU_SUITE = "h200-single-gpu"
-SUITE_CHOICES = (PRIMARY_SUITE, B200_FULL_SUITE, H200_SINGLE_GPU_SUITE)
+B200_SINGLE_GPU_SUITE = "b200-single-gpu"
+SINGLE_GPU_SUITES = (H200_SINGLE_GPU_SUITE, B200_SINGLE_GPU_SUITE)
+SUITE_CHOICES = (PRIMARY_SUITE, B200_FULL_SUITE, *SINGLE_GPU_SUITES)
 UPSTREAM_METHOD_REVISION = "532bffd4c2b2ec08909a92d5bc0b3bab4e911b2b"
 UPSTREAM_B200_RECORD_SHA256 = (
     "18cf5ae1d118e07f3f2111b56a3e02c76eb9282d847a78005c6ca060f8106221"
@@ -203,21 +205,30 @@ def benchmark_cells(
                 "the b200-full suite fixes exactly 24 measured attempts per cell"
             )
         return B200_FULL_CELLS
-    if selected_suite == H200_SINGLE_GPU_SUITE:
-        if family != "H200":
-            raise Cosmos3SuperBenchmarkError(
-                "the h200-single-gpu suite requires the H200 GPU family"
-            )
-        if selected_topologies != SINGLE_GPU_TOPOLOGY_ORDER:
-            raise Cosmos3SuperBenchmarkError(
-                "the h200-single-gpu suite fixes topologies to 1x1"
-            )
-        if attempts != 24:
-            raise Cosmos3SuperBenchmarkError(
-                "the h200-single-gpu suite fixes exactly 24 measured attempts"
-            )
-        return H200_SINGLE_GPU_CELLS
+    if selected_suite in SINGLE_GPU_SUITES:
+        return _single_gpu_cells(selected_suite, selected_topologies, attempts, family)
+    if any(name not in TOPOLOGY_ORDER for name in selected_topologies):
+        raise Cosmos3SuperBenchmarkError(
+            "the primary suite requires eight-GPU topologies; use a single-GPU suite"
+        )
     return tuple(BenchmarkCell(name, name) for name in selected_topologies)
+
+
+def _single_gpu_cells(
+    suite: str, topologies: tuple[str, ...], attempts: int, family: str
+) -> tuple[BenchmarkCell, ...]:
+    required_family = suite.split("-", 1)[0].upper()
+    if family != required_family:
+        raise Cosmos3SuperBenchmarkError(
+            f"the {suite} suite requires the {required_family} GPU family"
+        )
+    if topologies != SINGLE_GPU_TOPOLOGY_ORDER:
+        raise Cosmos3SuperBenchmarkError(f"the {suite} suite fixes topologies to 1x1")
+    if attempts != 24:
+        raise Cosmos3SuperBenchmarkError(
+            f"the {suite} suite fixes exactly 24 measured attempts"
+        )
+    return (BenchmarkCell(f"{family}_TP1_1GPU", "1x1"),)
 
 
 def _normalize_gpu_family(value: str) -> str:
@@ -233,8 +244,8 @@ def _normalize_gpu_family(value: str) -> str:
 def _schema_version(
     gpu_family: str, *, attempt: bool = False, suite: str = PRIMARY_SUITE
 ) -> str:
-    if suite == H200_SINGLE_GPU_SUITE and not attempt:
-        return "npa.cosmos3-super.h200-single-gpu-validation.v1"
+    if suite in SINGLE_GPU_SUITES and not attempt:
+        return f"npa.cosmos3-super.{gpu_family.lower()}-single-gpu-validation.v1"
     suffix = "attempt" if attempt else "benchmark"
     return f"npa.cosmos3-super.{gpu_family.lower()}-{suffix}.v1"
 
@@ -326,11 +337,11 @@ def benchmark_plan(
                 "paper_reproduction": False,
                 "paper_cell": None,
                 "claim": (
-                    "one H200, one TP-1 service, sequential requests; not the "
+                    f"one {family}, one TP-1 service, sequential requests; not the "
                     "paper's eight-replica 8x1 node cell"
                 ),
             }
-            if parse_suite(suite) == H200_SINGLE_GPU_SUITE
+            if parse_suite(suite) in SINGLE_GPU_SUITES
             else {
                 "kind": "eight-gpu-node-benchmark",
                 "paper_reproduction": True,
@@ -1121,11 +1132,6 @@ def run_benchmark(
     plan["run_id"] = run_id
     if dry_run:
         return plan
-    if os.environ.get("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE") != "YES":
-        raise Cosmos3SuperBenchmarkError(
-            "set NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE=YES for this run after "
-            "reviewing the vLLM-Omni container's NVIDIA runtime terms"
-        )
     family = _normalize_gpu_family(gpu_family)
     gpu = _require_gpu_family(family, expected_count=int(plan["gpu"]["node_gpu_count"]))
     prompt, negative, prompt_hashes = _load_anchor_prompts()
@@ -1277,9 +1283,9 @@ def run_benchmark(
             "comparisons": derive_suite_comparisons(cells),
             "completed_at": _utc_now(),
             "measurement_claim": (
-                "single-GPU H200 TP-1 functional/performance validation; technical "
+                f"single-GPU {family} TP-1 functional/performance validation; technical "
                 "validity only; not eight-GPU node throughput or the paper's 8x1 cell"
-                if parse_suite(suite) == H200_SINGLE_GPU_SUITE
+                if parse_suite(suite) in SINGLE_GPU_SUITES
                 else "technical validity only; semantic quality was not measured"
             ),
             "artifact_uri": artifact_uri,
@@ -1313,6 +1319,7 @@ __all__ = [
     "ATTEMPT_SCHEMA_VERSION",
     "B200_FULL_CELLS",
     "B200_FULL_SUITE",
+    "B200_SINGLE_GPU_SUITE",
     "H200_SINGLE_GPU_CELLS",
     "H200_SINGLE_GPU_SUITE",
     "BenchmarkCell",

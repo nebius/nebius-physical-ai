@@ -332,3 +332,61 @@ def test_inactive_physics_observation_cannot_claim_rendering_is_frozen(capture, 
     _write_sidecar(video.parent, payload)
     with pytest.raises(IsaacArenaError, match="did not advance between real actions"):
         verify_capture_evidence(video.parent, video, task_motion=motion)
+
+
+def test_requested_film_profile_rejects_standard_capture(capture):
+    video, _, motion, _ = capture
+    with pytest.raises(IsaacArenaError, match="requested profile"):
+        verify_capture_evidence(
+            video.parent,
+            video,
+            task_motion=motion,
+            expected_steps=20,
+            expected_profile="film",
+        )
+
+
+def test_film_profile_requires_native_resolution(capture):
+    from npa.workbench.isaac_arena.capture_profiles import (
+        capture_profile,
+        render_settings,
+    )
+
+    video, payload, motion, _ = capture
+    payload["rendering"].update(
+        profile="film",
+        minimum_settling_renders=32,
+        settings=render_settings(capture_profile("film")),
+    )
+    for row in payload["physics_freeze_checks"]:
+        row.update(
+            render_calls=33, settling_render_calls=32, consecutive_ready_render_calls=33
+        )
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="native profile resolution"):
+        verify_capture_evidence(
+            video.parent,
+            video,
+            task_motion=motion,
+            expected_steps=20,
+            expected_profile="film",
+        )
+
+
+def test_film_profile_rejects_standard_settling(capture):
+    from npa.workbench.isaac_arena.capture_profiles import (
+        capture_profile,
+        render_settings,
+    )
+
+    video, payload, motion, _ = capture
+    payload["rendering"].update(
+        profile="film",
+        minimum_settling_renders=32,
+        settings=render_settings(capture_profile("film")),
+    )
+    _write_sidecar(video.parent, payload)
+    with pytest.raises(IsaacArenaError, match="freeze"):
+        verify_capture_evidence(
+            video.parent, video, task_motion=motion, expected_steps=20
+        )

@@ -1,4 +1,4 @@
-"""Enforce the real-components skill for the Physical AI Data Factory blueprint.
+"""Enforce real components in the NVIDIA-derived PAIDF VDA workflow.
 
 Fails if the blueprint uses a known-stub toolRef, if a run.shell stage isn't a
 real command/module call, or if the augment stage isn't the real Cosmos execute.
@@ -6,6 +6,8 @@ real command/module call, or if the augment stage isn't the real Cosmos execute.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import pathlib
 import re
 
@@ -22,8 +24,8 @@ from npa.cli.agent_workflow import (
     generate_sim2real_staged_yaml,
 )
 
-BLUEPRINT = resolve_npa_workflow_spec("physical-ai-data-factory.yaml")
-assert BLUEPRINT is not None, "physical-ai-data-factory.yaml not found in any spec root"
+BLUEPRINT = resolve_npa_workflow_spec("nvidia-paidf-vda-cosmos-transfer25.yaml")
+assert BLUEPRINT is not None, "NVIDIA-derived PAIDF VDA spec not found"
 
 NUREC_BLUEPRINT = resolve_npa_workflow_spec("nurec-reconstruct.yaml")
 assert NUREC_BLUEPRINT is not None, "nurec-reconstruct.yaml not found in any spec root"
@@ -43,7 +45,12 @@ KNOWN_STUB_TOOLREFS = {
     "workbench.fiftyone.launch_app",  # echo hook
     "workbench.sim2real.write_decision",  # demo stub
 }
-REAL_RUN_MARKERS = ("npa workbench", "data_factory_stages", "data_factory_viz")
+REAL_RUN_MARKERS = (
+    "npa workbench",
+    "data_factory_stages",
+    "data_factory_viz",
+    "paidf_upstream",
+)
 
 
 def _states() -> dict:
@@ -59,6 +66,10 @@ def _memory_gi(value: object) -> int:
     match = re.fullmatch(r"(\d+)Gi", str(value))
     assert match is not None, f"expected Gi memory value, got {value!r}"
     return int(match.group(1))
+
+
+def test_blueprint_requires_runtime_decision_execution() -> None:
+    assert _spec()["metadata"]["executionMode"] == "runtime"
 
 
 def test_blueprint_uses_no_stub_toolrefs() -> None:
@@ -150,6 +161,60 @@ def test_blueprint_run_shell_stages_are_real() -> None:
         )
 
 
+def test_blueprint_records_official_upstream_boundary_first() -> None:
+    spec = _spec()
+    state = spec["states"]["record-upstream"]
+    command = " ".join(str(item) for item in state["run"]["argv"])
+
+    assert spec["initial"] == "record-upstream"
+    assert "paidf_upstream" in command
+    assert "write_upstream_contract" in command
+    assert state["outputs"] == [
+        {
+            "uri": "{{config.upstream_contract_uri}}",
+            "schema": "npa.paidf.upstream.v1",
+        }
+    ]
+
+
+def test_blueprint_overlays_reviewed_source_on_baked_component_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        render_skypilot_yaml,
+    )
+
+    monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
+    monkeypatch.setenv(
+        "NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa/reviewed-source"
+    )
+    spec = load_spec(BLUEPRINT)
+    plan = build_plan(
+        spec, run_id="overlay-contract", assume_decision="promote_checkpoint"
+    )
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="overlay-contract",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    tasks = [
+        task
+        for task in yaml.safe_load_all(rendered)
+        if task and (task.get("resources") or {}).get("image_id")
+    ]
+
+    assert tasks
+    assert all(task["envs"]["NPA_SRC_OVERLAY"] == "1" for task in tasks)
+    assert all(
+        task["envs"]["NPA_SRC_S3_URI"]
+        == "s3://example-bucket/npa-src/npa/reviewed-source"
+        for task in tasks
+    )
+
+
 def test_augment_runs_real_cosmos_transfer() -> None:
     spec = _spec()
     states = _states()
@@ -166,6 +231,20 @@ def test_augment_runs_real_cosmos_transfer() -> None:
     description = states["augment"]["description"].lower()
     assert "input/conditioning.mp4" in description
     assert "no bundled or geometric fallback" in description
+    assert spec["config"]["prompt_policy"] == "source-fidelity-v3"
+    assert spec["config"]["input_conditioning_policy"] == "source-fidelity-v3"
+    generate_argv = states["generate-configs"]["run"]["argv"]
+    assert generate_argv[-1] == "{{config.prompt_policy}}"
+
+
+def test_readiness_record_is_bound_to_exact_workflow_bytes() -> None:
+    readiness_path = BLUEPRINT.with_suffix(".readiness.json")
+    readiness = json.loads(readiness_path.read_text(encoding="utf-8"))
+
+    assert (
+        readiness["workflow_sha256"]
+        == hashlib.sha256(BLUEPRINT.read_bytes()).hexdigest()
+    )
 
 
 def test_input_conditioned_cosmos_toolref_fails_closed_without_input() -> None:
@@ -203,6 +282,8 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
         "--appearance-blur-ksize",
         "--appearance-max-dimension",
         "--attribute-sample-policy",
+        "--attribute-evidence-mode",
+        "--attribute-lighting-vlm-model",
     ):
         assert option in argv
 
@@ -218,6 +299,17 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
     ]
     assert states["grade"]["next"] == "quality-disposition"
     assert states["annotate-augmented"]["needs"] == ["require-accepted-quality"]
+    selected_batch = "{{config.selection_uri}}iteration-{{loop.grade}}/"
+    assert (
+        states["annotate-augmented"]["params"]["augmented_frames_uri"] == selected_batch
+    )
+    assert states["cosmos-curate"]["params"]["augment_uri"] == selected_batch
+    assert states["curate"]["params"]["augment_uri"] == selected_batch
+    assert states["curate"]["params"]["lance_uri"] == selected_batch
+    assert (
+        "selection_uri='{{config.selection_uri}}iteration-{{loop.grade}}/'"
+        in states["finalize"]["run"]["shell"]
+    )
     disposition = states["quality-disposition"]
     disposition_command = " ".join(disposition["run"]["argv"])
     assert disposition["writesDecision"] is True
@@ -245,6 +337,9 @@ def test_evaluate_runs_the_real_cosmos_evaluator() -> None:
     assert _spec()["config"]["temporal_consistency_mode"] == "advisory"
     assert float(_spec()["config"]["appearance_fidelity_threshold"]) >= 0.8
     assert _spec()["config"]["appearance_fidelity_mode"] == "advisory"
+    assert _spec()["config"]["attribute_evidence_mode"] == "source-relative-change"
+    assert _spec()["config"]["caption_model"] == "google/gemma-3-27b-it"
+    assert _spec()["config"]["attribute_lighting_vlm_model"] == "MiniMaxAI/MiniMax-M3"
     assert "protected_chroma_regions_json" in _spec()["config"]
     assert _spec()["config"]["protected_luma_max_delta"] == "32"
     assert _spec()["config"]["protected_feather_pixels"] == "12"
@@ -301,11 +396,58 @@ def test_quality_gate_reads_the_evaluator_report() -> None:
 
 
 def test_gpu_resource_has_headroom_for_multi_variant_fanout() -> None:
-    gpu = _spec()["resources"]["gpu"]
-    assert int(gpu["cpus"]) >= 16, "4-way Cosmos fan-out needs CPU headroom"
+    document = _spec()
+    gpu = document["resources"]["gpu"]
+    assert int(document["config"]["augment_cpus"]) >= 16, (
+        "the default 4-way Cosmos fan-out needs CPU headroom"
+    )
+    assert gpu["cpus"] == "{{config.augment_cpus}}"
     assert _memory_gi(gpu["memory"]) >= 128, (
         "4-way Cosmos fan-out OOMs with the old 16Gi profile"
     )
+
+
+def test_single_gpu_augment_cpu_request_can_fit_existing_cluster_headroom(
+    tmp_path: pathlib.Path,
+) -> None:
+    from npa.orchestration.npa_workflow.spec import resolve_resource_profile
+
+    raw = _spec()
+    raw["config"]["augment_cpus"] = "12"
+    path = tmp_path / "single-gpu-existing-cluster.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    spec = load_spec(path)
+    resolved = resolve_resource_profile(
+        "gpu", spec.resources["gpu"], config=spec.config, run={"id": "capacity"}
+    )
+
+    assert resolved["cpus"] == "12"
+    assert resolved["accelerators"] == "RTXPRO6000:1"
+
+
+def test_cpu_stage_request_can_fit_existing_cluster_headroom(
+    tmp_path: pathlib.Path,
+) -> None:
+    from npa.orchestration.npa_workflow.spec import resolve_resource_profile
+
+    raw = _spec()
+    assert raw["resources"]["cpu"] == {
+        "cloud": "kubernetes",
+        "cpus": "{{config.cpu_cpus}}",
+        "memory": "{{config.cpu_memory}}",
+    }
+    assert raw["config"]["cpu_cpus"] == "4"
+    assert raw["config"]["cpu_memory"] == "16Gi"
+
+    raw["config"].update(cpu_cpus="1", cpu_memory="4Gi")
+    path = tmp_path / "capacity-constrained-existing-cluster.yaml"
+    path.write_text(yaml.safe_dump(raw), encoding="utf-8")
+    spec = load_spec(path)
+    resolved = resolve_resource_profile(
+        "cpu", spec.resources["cpu"], config=spec.config, run={"id": "capacity"}
+    )
+
+    assert resolved == {"cloud": "kubernetes", "cpus": "1", "memory": "4Gi"}
 
 
 def test_optional_sam2_config_is_validated_before_provisioning(

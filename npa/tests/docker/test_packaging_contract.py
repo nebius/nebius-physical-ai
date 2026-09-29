@@ -12,6 +12,7 @@ import yaml
 
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
+    RESTRICTED_PUBLICATION_TOOLS,
     SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS,
     SKYPILOT_BOOTSTRAP_RUNTIME_PROBED_TOOLS,
 )
@@ -40,13 +41,26 @@ def _cmds(dockerfile_text: str) -> list[str]:
     return re.findall(r"(?im)^\s*CMD\s+(.+?)\s*$", dockerfile_text)
 
 
+def _named_provenance_source(options: str, source: str) -> str | None:
+    """Map one bound provenance-context source to its path beneath ``npa/``."""
+
+    if "--from=npa-source-provenance" not in options.split():
+        return None
+    if not source.startswith("/inputs/"):
+        return None
+    relative = source.removeprefix("/inputs/")
+    if not relative or ".." in Path(relative).parts:
+        return None
+    return relative
+
+
 def _runtime_commands(dockerfile_text: str) -> list[str]:
     """ENTRYPOINT preferred; bare CMD is accepted for service images."""
     return _entrypoints(dockerfile_text) or _cmds(dockerfile_text)
 
 
 def _build_contract_text(dockerfile: Path) -> str:
-    """Include copied common installers that materially construct the image."""
+    """Include common installers and explicitly copied runtime package locks."""
 
     text = dockerfile.read_text(encoding="utf-8")
     parts = [text]
@@ -54,7 +68,40 @@ def _build_contract_text(dockerfile: Path) -> str:
     for script in sorted(common.glob("*.sh")):
         if script.name in text:
             parts.append(script.read_text(encoding="utf-8"))
+    # A lock-driven install need not repeat package names in the Dockerfile.
+    # Only a COPY instruction counts: an adjacent lock or a comment is not
+    # evidence that its packages participate in constructing the image.
+    instructions = _normalize_dockerfile(text)
+    if re.search(
+        r"(?im)^COPY\s+(?:--\S+\s+)*\S*/apt-runtime\.lock\s+\S+\s*$",
+        instructions,
+    ):
+        parts.append(
+            (dockerfile.parent / "apt-runtime.lock").read_text(encoding="utf-8")
+        )
     return "\n".join(parts)
+
+
+@pytest.mark.parametrize("copied", [True, False])
+def test_build_contract_includes_only_copied_runtime_lock(
+    tmp_path: Path, copied: bool
+) -> None:
+    dockerfile = tmp_path / "Dockerfile"
+    copy = "COPY --from=build /opt/build/apt-runtime.lock /tmp/runtime.lock\n"
+    dockerfile.write_text("FROM ubuntu\n" + (copy if copied else "# " + copy))
+    (tmp_path / "apt-runtime.lock").write_text(
+        "packages:\n  - {binary: openssh-server, version: pinned}\n"
+    )
+    assert ("openssh-server" in _build_contract_text(dockerfile)) is copied
+
+
+def test_build_contract_refuses_missing_copied_runtime_lock(tmp_path: Path) -> None:
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM ubuntu\nCOPY --from=build /opt/build/apt-runtime.lock /tmp/runtime.lock\n"
+    )
+    with pytest.raises(FileNotFoundError):
+        _build_contract_text(dockerfile)
 
 
 def _normalize_dockerfile(dockerfile_text: str) -> str:
@@ -313,12 +360,27 @@ def test_declared_skypilot_images_enforce_the_versioned_build_contract() -> None
         script = dockerfile.parent / Path(entrypoint_path).name
         if not script.is_file():
             copy_match = re.search(
-                rf"(?im)^COPY\s+(?:--\S+\s+)*(?P<src>\S+)\s+"
+                rf"(?im)^COPY\s+(?P<options>(?:--\S+\s+)*)(?P<src>\S+)\s+"
                 rf"{re.escape(entrypoint_path)}\s*$",
                 _normalize_dockerfile(dockerfile_text),
             )
             if copy_match:
-                script = ROOT / "npa" / copy_match.group("src")
+                source_value = copy_match.group("src")
+                source = Path(
+                    _named_provenance_source(copy_match.group("options"), source_value)
+                    or source_value
+                )
+                assert not source.is_absolute() and ".." not in source.parts, name
+                # Workbench images use either npa/ or docker/workbench/ as
+                # their build context. Require one unambiguous source file.
+                candidates = [
+                    (context / source).resolve()
+                    for context in (ROOT / "npa", WORKBENCH_DOCKER)
+                    if (context / source).is_file()
+                ]
+                assert len(candidates) == 1, f"{name}: ambiguous or missing COPY source"
+                script = candidates[0]
+                assert script.is_relative_to(WORKBENCH_DOCKER.resolve()), name
         assert script.is_file(), f"{name}: entrypoint source not found: {script}"
         entrypoint_text = script.read_text(encoding="utf-8")
         assert (
@@ -334,6 +396,35 @@ def test_packaged_skypilot_attestation_inventory_matches_contract() -> None:
         if item.get("skypilot_bootstrap_contract")
     }
     assert SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS == declared
+
+
+def test_robomimic_is_public_neutral_with_release_quarantine() -> None:
+    entry = _load_contract()["images"]["robomimic"]
+    assert entry["dockerfile"] == "robomimic/Dockerfile"
+    assert entry["tier"] == "job"
+    assert entry["redistribution"] == "public"
+    assert entry["skypilot_bootstrap_contract"] == "skypilot-0.12.2-v1"
+    notes = entry["notes"].lower()
+    for boundary in (
+        "torch",
+        "cuda",
+        "weight",
+        "dataset",
+        "runtime cache",
+        "credential",
+        "output",
+        "read-only",
+        "quarantined",
+    ):
+        assert boundary in notes
+    declared_count = re.search(r"(\d+)-entry hash lock", notes)
+    assert declared_count is not None
+    lock = WORKBENCH_DOCKER / "robomimic" / "baked-requirements.lock"
+    observed_count = sum(
+        bool(re.match(r"^[A-Za-z0-9_.-]+==", line))
+        for line in lock.read_text(encoding="utf-8").splitlines()
+    )
+    assert int(declared_count.group(1)) == observed_count
 
 
 def test_runtime_probed_bootstrap_inventory_matches_exact_derived_sources() -> None:
@@ -824,19 +915,73 @@ def test_no_image_bakes_eula_acceptance(image_name: str) -> None:
     )
 
 
-@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
-def test_no_image_builds_from_an_nvcr_base(image_name: str) -> None:
-    """No workbench image may pull from NVIDIA's credentialed registry.
+def _assert_restricted_nvcr_parent(
+    image_name: str,
+    entry: Mapping,
+    bases: list[str],
+    restricted_tools: frozenset[str] | set[str] = RESTRICTED_PUBLICATION_TOOLS,
+) -> None:
+    """Only reviewed, exact PAIDF parents may enter operator-private recipes."""
+    from npa.workflows.paidf_upstream import upstream_contract
 
-    An nvcr.io base both bakes proprietary content and makes the build depend on an NGC
-    login, so build-your-own stops working for anyone without NGC credentials.
-    """
+    roles = {
+        "paidf-detection-sky": "detection-and-tracking-rfdetr",
+        "paidf-captioning-sky": "captioning",
+        "paidf-visual-qa-sky": "visual-qa",
+        "paidf-attribute-search-sky": "event-and-person-attribute-search",
+    }
+    vendor_bases = [base for base in bases if "nvcr.io" in base]
+    declared = entry.get("restricted_parent_image")
+    if not vendor_bases and not declared:
+        return
+    assert image_name in roles, f"{image_name}: unreviewed NGC parent"
+    assert entry.get("redistribution") == "restricted", image_name
+    assert image_name in restricted_tools, f"{image_name}: missing restricted inventory"
+    parents = upstream_contract("event-video-generation")["npa_integration"][
+        "components"
+    ]["reference_runtime_images"]
+    expected = next(
+        ref
+        for ref in parents
+        if ref.startswith(f"nvcr.io/nvidia/paidf-{roles[image_name]}-service@")
+    )
+    assert re.fullmatch(r"nvcr\.io/[^@]+@sha256:[0-9a-f]{64}", expected)
+    assert declared == expected, f"{image_name}: unreviewed parent digest"
+    assert vendor_bases == [expected], f"{image_name}: parent differs from provenance"
+
+
+@pytest.mark.parametrize("image_name", sorted(_load_contract()["images"]))
+def test_nvcr_parents_require_exact_restricted_contract(image_name: str) -> None:
+    """Public recipes exclude NGC; private exceptions remain exact and inventoried."""
     contract = _load_contract()
     text = (WORKBENCH_DOCKER / contract["images"][image_name]["dockerfile"]).read_text(
         encoding="utf-8"
     )
-    for base in _base_image_refs(_normalize_dockerfile(text)):
-        assert "nvcr.io" not in base, f"{image_name}: builds FROM {base}"
+    _assert_restricted_nvcr_parent(
+        image_name,
+        contract["images"][image_name],
+        _base_image_refs(_normalize_dockerfile(text)),
+    )
+
+
+@pytest.mark.parametrize("mutation", ["wrong-digest", "public", "missing-inventory"])
+def test_restricted_nvcr_parent_rejects_unsafe_contract_mutations(
+    mutation: str,
+) -> None:
+    name = "paidf-detection-sky"
+    entry = deepcopy(_load_contract()["images"][name])
+    bases = [entry["restricted_parent_image"]]
+    restricted = set(RESTRICTED_PUBLICATION_TOOLS)
+    if mutation == "wrong-digest":
+        entry["restricted_parent_image"] = bases[0] = bases[0].split("@")[0] + (
+            "@sha256:" + "0" * 64
+        )
+    elif mutation == "public":
+        entry["redistribution"] = "public"
+    else:
+        restricted.remove(name)
+    with pytest.raises(AssertionError):
+        _assert_restricted_nvcr_parent(name, entry, bases, restricted)
 
 
 def test_packaging_doc_exists() -> None:

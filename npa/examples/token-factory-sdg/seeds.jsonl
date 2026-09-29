@@ -1,0 +1,6 @@
+{"id":"paraphrase-red","prompt":"Create a training pair asking for a concise paraphrase of: Put the red cube into the blue tray. Preserve both colors and the action."}
+{"id":"logic-red","prompt":"Create a reasoning training pair about drawing balls without replacement from a box containing two red and three blue balls. Ask how many draws guarantee a red ball, and explain the worst-case ordering."}
+{"id":"paraphrase-green","prompt":"Create a training pair asking for a concise paraphrase of: Place the green cylinder on the yellow shelf. Preserve both colors and the action."}
+{"id":"logic-green","prompt":"Create a reasoning training pair about drawing balls without replacement from a box containing three green and four yellow balls. Ask how many draws guarantee a green ball, and explain the worst-case ordering."}
+{"id":"paraphrase-orange","prompt":"Create a training pair asking for a concise paraphrase of: Move the orange cone beside the purple box. Preserve both colors and the spatial relationship."}
+{"id":"logic-orange","prompt":"Create a reasoning training pair about drawing balls without replacement from a box containing four orange and five purple balls. Ask how many draws guarantee an orange ball, and explain the worst-case ordering."}

@@ -611,3 +611,36 @@ def test_private_key_redactor_fails_closed_linearly_for_truncated_blocks(
     assert "synthetic-key" not in sanitized
     assert "BEGIN PRIVATE KEY" not in sanitized
     assert sanitized.count("\n") == message.count("\n")
+
+
+def test_quoted_secret_redaction_does_not_rescan_the_remaining_line() -> None:
+    from npa.diagnostic_redaction import _redact_secret_assignments
+
+    class CountedSearch(str):
+        searched_characters = 0
+
+        def find(self, sub: str, start: int = 0, end: int | None = None) -> int:
+            stop = len(self) if end is None else end
+            self.searched_characters += stop - start
+            return super().find(sub, start, stop)
+
+    message = CountedSearch(
+        ", ".join(f'token="SYNTH-QUOTED-{index}"' for index in range(500))
+    )
+    sanitized = _redact_secret_assignments(message)
+
+    assert sanitized.count('token="<redacted>"') == 500
+    assert "SYNTH-QUOTED" not in sanitized
+    assert message.searched_characters <= len(message)
+
+
+@pytest.mark.parametrize("tail", ["\\", "\\\nretry: preserve", "\\\r\nretry: preserve"])
+def test_quoted_secret_redaction_preserves_escaped_line_endings(tail: str) -> None:
+    from npa.verification import redact_failure_text
+
+    message = 'token="SYNTH-SECRET' + tail
+    sanitized = redact_failure_text(message, secrets=())
+
+    assert "SYNTH-SECRET" not in sanitized
+    if "\n" in tail:
+        assert sanitized.endswith("\nretry: preserve")

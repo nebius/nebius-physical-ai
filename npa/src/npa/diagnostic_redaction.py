@@ -58,29 +58,28 @@ _KNOWN_TOKEN_PATTERNS = tuple(
 
 def _quoted_secret_end(text: str, start: int) -> tuple[int, bool]:
     quote = text[start]
-    line_end = text.find("\n", start + 1)
-    if line_end < 0:
-        line_end = len(text)
     fallback_end = -1
     index = start + 1
-    while index < line_end:
+    while index < len(text) and text[index] != "\n":
         if text[index] == "\\":
+            if index + 1 < len(text) and text[index + 1] == "\n":
+                return index + 1, False
             index += 2
             continue
         if text[index] != quote:
             index += 1
             continue
         tail = index + 1
-        while tail < line_end and text[tail] in " \t":
+        while tail < len(text) and text[tail] in " \t":
             tail += 1
-        if tail == line_end or text[tail] in ",;)}]":
+        if tail == len(text) or text[tail] in ",;)}]\n":
             return index + 1, True
         if tail > index + 1:
             fallback_end = index + 1
         index += 1
     if fallback_end >= 0:
         return fallback_end, True
-    return line_end, False
+    return min(index, len(text)), False
 
 
 def _unquoted_secret_end(text: str, start: int) -> int:

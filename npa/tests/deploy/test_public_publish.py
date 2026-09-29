@@ -16,10 +16,10 @@ monkeypatch a synthetic restricted catalog tool in, proving the mechanism still 
 
 from __future__ import annotations
 
-import json
 import copy
 import hashlib
 import http.client
+import json
 import re
 import subprocess
 import urllib.error
@@ -34,6 +34,8 @@ from npa.deploy import images
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
+    PUBLICATION_QUARANTINE_TOOLS,
     RESTRICTED_DERIVED_IMAGES,
     RESTRICTED_PUBLICATION_TOOLS,
     UNVALIDATED_PUBLICATION_TOOLS,
@@ -48,6 +50,7 @@ from npa.deploy.images import (
 from npa.deploy.publish_public import (
     PublishItem,
     _pin_publication_sources as REAL_PUBLICATION_SOURCE_PIN,
+    _valid_content_agents_rigid_physics,
     build_publish_plan,
     verify_bootstrap_publication_source as REAL_BOOTSTRAP_PUBLICATION_GATE,
     verify_gpu_accepted_publication_source as REAL_GPU_ACCEPTANCE_GATE,
@@ -94,6 +97,70 @@ def _avoid_registry_attestation_reads_in_unrelated_publish_tests(monkeypatch) ->
         "verify_gpu_accepted_publication_source",
         lambda item: (True, "test fixture: GPU acceptance gate verified"),
     )
+
+
+_MISSING = object()
+
+
+@pytest.mark.parametrize(
+    ("mass_or_density", "friction"),
+    [(5e-324, 0.1), (1, 2.0)],
+)
+def test_content_agents_gate_accepts_finite_physics_boundaries(
+    mass_or_density: int | float, friction: float
+) -> None:
+    rigid = {
+        "rigid_body": True,
+        "collision": True,
+        "fixed": False,
+        "mass_or_density": mass_or_density,
+        "friction": friction,
+    }
+
+    assert _valid_content_agents_rigid_physics(rigid)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mass_or_density", float("nan")),
+        ("mass_or_density", float("inf")),
+        ("mass_or_density", float("-inf")),
+        ("mass_or_density", True),
+        ("mass_or_density", False),
+        ("mass_or_density", "1.0"),
+        ("mass_or_density", "not-a-number"),
+        ("mass_or_density", 0),
+        ("mass_or_density", -1),
+        ("mass_or_density", _MISSING),
+        ("friction", float("nan")),
+        ("friction", float("inf")),
+        ("friction", float("-inf")),
+        ("friction", True),
+        ("friction", False),
+        ("friction", "0.5"),
+        ("friction", "not-a-number"),
+        ("friction", 0.09),
+        ("friction", 2.01),
+        ("friction", _MISSING),
+    ],
+)
+def test_content_agents_gate_rejects_invalid_physics_evidence(
+    field: str, value: object
+) -> None:
+    rigid = {
+        "rigid_body": True,
+        "collision": True,
+        "fixed": False,
+        "mass_or_density": 1.0,
+        "friction": 0.5,
+    }
+    if value is _MISSING:
+        rigid.pop(field)
+    else:
+        rigid[field] = value
+
+    assert not _valid_content_agents_rigid_physics(rigid)
 
 
 @pytest.mark.parametrize("tool", ["cosmos3-serving", "detection-training"])
@@ -296,12 +363,29 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
     npa-sonic:0.1.2-rtfetch-rc5, 125,655 entries, 16 allowlisted paths, VERDICT clean.
     """
     assert RESTRICTED_PUBLICATION_TOOLS == frozenset(
-        {"cosmos3-super-benchmark", "cosmos3-nano-video"}
+        {
+            "cosmos3-nano-video",
+            "cosmos3-super-benchmark",
+            "paidf-anomalygen-sky",
+            "paidf-attribute-search-sky",
+            "paidf-captioning-sky",
+            "paidf-detection-sky",
+            "paidf-event-video-sky",
+            "paidf-image-edit-sky",
+            "paidf-visual-qa-sky",
+        }
     )
     assert RESTRICTED_DERIVED_IMAGES == frozenset()
+    assert not {"cosmos3-serving", "sonic-mujoco"} & RESTRICTED_PUBLICATION_TOOLS
+    assert not {"cosmos3-serving", "sonic-mujoco"} & RESTRICTED_DERIVED_IMAGES
     for tool in ("isaac-lab", "sonic", "groot", "cosmos3-serving", "sonic-mujoco"):
         assert is_publicly_redistributable(tool), tool
-    assert UNVALIDATED_PUBLICATION_TOOLS == frozenset({"openpi", "curobo", "ncore"})
+    assert UNVALIDATED_PUBLICATION_TOOLS == (
+        frozenset({"openpi", "curobo", "ncore", "libero", "sam3"})
+        | ({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
+    )
+    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset()
+    assert is_publicly_redistributable("robomimic")
     assert set(images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS) == {
         "diffusers",
         "lingbot-world",
@@ -313,6 +397,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         "detection-training",
         "isaac-arena",
         "openarm",
+        "flex-pi",
         "sonic-mujoco",
     }
 
@@ -352,7 +437,18 @@ def test_public_set_includes_the_oss_tools() -> None:
     assert public == (
         set(CONTAINER_IMAGE_NAMES)
         - RESTRICTED_PUBLICATION_TOOLS
-        - images.PUBLICATION_QUARANTINE_TOOLS
+        - PUBLICATION_QUARANTINE_TOOLS
+    )
+
+
+def test_libero_neutral_candidate_remains_unvalidated_and_out_of_release_plan() -> None:
+    assert is_publicly_redistributable("libero") is True
+    assert "libero" in UNVALIDATED_PUBLICATION_TOOLS
+    assert "libero" in images.PUBLICATION_QUARANTINE_TOOLS
+    plan = build_publish_plan(target_registry="ghcr.io/example/workbench")
+    assert "libero" not in {item.tool for item in plan}
+    assert images.SUPPORTED_TOOL_VERSIONS["libero"] == (
+        "public-neutral-bootstrap-unbuilt"
     )
 
 
@@ -372,6 +468,9 @@ def test_publish_plan_now_includes_the_isaac_images() -> None:
     assert "npa-curobo" not in names
     assert "curobo" not in publicly_publishable_tools()
     assert images.SUPPORTED_TOOL_VERSIONS["curobo"].endswith("-unbuilt")
+    assert "npa-robotwin" not in names
+    assert "robotwin" not in publicly_publishable_tools()
+    assert images.SUPPORTED_TOOL_VERSIONS["robotwin"].endswith("-unbuilt")
     for item in plan:
         assert item.target_ref.startswith("ghcr.io/example/workbench/")
 
@@ -426,8 +525,8 @@ def test_publish_plan_promotes_dev_sha_to_release_tag() -> None:
     }
     assert accepted_shas
     # Five Sim2Real roles share a source, as do the three native model images.
-    # Arena and the other accepted images retain their distinct exact sources.
-    assert len(set(accepted_shas.values())) == 13
+    # Arena, flex-pi, and the other accepted images retain distinct exact sources.
+    assert len(set(accepted_shas.values())) == 14
     for item in plan:
         source_image = item.source_ref.rsplit("/", 1)[-1]
         target_image = item.target_ref.rsplit("/", 1)[-1]
@@ -459,6 +558,7 @@ def test_accepted_images_use_distinct_exact_development_sources_and_digests() ->
         "sam2",
         "openarm",
         "alpamayo2-super",
+        "flex-pi",
     ):
         entry = manifest[tool]
         assert by_tool[tool].source_ref.endswith(f":dev-{entry['development_sha']}")
@@ -516,10 +616,7 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
     # having no built/validated artifact to publish. Both are subtracted from the
     # contract-derived total rather than hardcoded, so adding a freely
     # redistributable image does not silently drift this gate.
-    assert len(plan) == len(publicly_publishable_tools()) - len(
-        set(publicly_publishable_tools())
-        & (set(UNVALIDATED_PUBLICATION_TOOLS) | set(VALIDATION_CANDIDATE_TOOLS))
-    )
+    assert len(plan) == len(publicly_publishable_tools())
     # And, since the Isaac re-architecture emptied the restricted set: every image the repo
     # builds and has validated is publishable. This is the assertion that would catch a
     # tool silently dropping out of the plan, which the derived equality above cannot.
@@ -529,6 +626,7 @@ def test_publish_plan_targets_public_registry_by_default() -> None:
             set(RESTRICTED_PUBLICATION_TOOLS)
             | set(UNVALIDATED_PUBLICATION_TOOLS)
             | set(VALIDATION_CANDIDATE_TOOLS)
+            | set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
         )
     )
     for item in plan:
@@ -574,13 +672,25 @@ def test_contract_marks_active_isaac_images_public_and_runtime_fetch() -> None:
     assert "runtime-fetch" in mujoco["notes"]
 
 
-def test_the_restriction_mechanism_covers_operator_private_wrapper() -> None:
-    """The general refusal API covers the operator-private benchmark wrapper."""
+def test_the_restriction_mechanism_still_exists() -> None:
+    """The general refusal API covers every restricted PAIDF compatibility runtime."""
     assert hasattr(images, "OMNIVERSE_RESTRICTED_TOOLS")
     assert hasattr(images, "OMNIVERSE_RESTRICTED_DERIVED_IMAGES")
-    assert restricted_image_names() == ["cosmos3-nano-video", "cosmos3-super-benchmark"]
+    assert restricted_image_names() == [
+        "cosmos3-nano-video",
+        "cosmos3-super-benchmark",
+        "paidf-anomalygen-sky",
+        "paidf-attribute-search-sky",
+        "paidf-captioning-sky",
+        "paidf-detection-sky",
+        "paidf-event-video-sky",
+        "paidf-image-edit-sky",
+        "paidf-visual-qa-sky",
+    ]
     assert "cosmos3-nano-video" not in publicly_publishable_tools()
     assert not is_publicly_redistributable("cosmos3-nano-video")
+    assert not is_publicly_redistributable("paidf-anomalygen-sky")
+    assert "paidf-anomalygen-sky" not in publicly_publishable_tools()
     for symbol in (
         "is_publicly_redistributable",
         "restricted_image_names",
@@ -595,6 +705,35 @@ def test_the_restriction_mechanism_covers_operator_private_wrapper() -> None:
             "classes"
         ]
     ), "the restricted class must remain enforced"
+
+
+def test_public_refusal_union_preserves_pending_and_permanent_reasons() -> None:
+    expected = (
+        images.RESTRICTED_PUBLICATION_TOOLS
+        | images.RESTRICTED_DERIVED_IMAGES
+        | images.PENDING_REDISTRIBUTION_TOOLS
+    )
+    assert restricted_image_names() == sorted(expected)
+    assert images.omniverse_restricted_image_names() == sorted(expected)
+    assert all(not is_publicly_redistributable(name) for name in expected)
+    assert "habitat-sim" not in images.PENDING_REDISTRIBUTION_TOOLS
+    assert "habitat-sim" not in images.RESTRICTED_PUBLICATION_TOOLS
+    assert "habitat-sim" in images.PUBLICATION_QUARANTINE_TOOLS
+    assert "habitat-sim" not in publicly_publishable_tools()
+
+
+def test_public_refusal_union_covers_derived_members_without_policy_reclassification(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        images, "RESTRICTED_DERIVED_IMAGES", frozenset({"inert-derived"})
+    )
+    assert not is_publicly_redistributable("inert-derived")
+    assert "inert-derived" in restricted_image_names()
+    assert images.omniverse_restricted_image_names() == restricted_image_names()
+    assert is_publicly_redistributable("foxglove-embed")
+    assert "inert-derived" not in images.RESTRICTED_PUBLICATION_TOOLS
+    assert "inert-derived" not in images.PENDING_REDISTRIBUTION_TOOLS
 
 
 def test_selector_matches_packaging_contract_classification() -> None:
@@ -619,6 +758,19 @@ def test_selector_matches_packaging_contract_classification() -> None:
             # A future non-canonical restricted image must map to a
             # restricted canonical tool
             assert tool in RESTRICTED_PUBLICATION_TOOLS, image_name
+
+
+def test_selector_refuses_unvalidated_neutral_redistribution() -> None:
+    """A neutral proposal is not public before its exact-byte license closure."""
+
+    contract = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    contract_unvalidated = {
+        name
+        for name, entry in contract["images"].items()
+        if entry.get("redistribution") == "unvalidated"
+    }
+    assert contract_unvalidated == set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+    assert all(not is_publicly_redistributable(tool) for tool in contract_unvalidated)
 
 
 # --- Resolution guard: a restricted tool must never resolve from a public registry ----
@@ -698,6 +850,11 @@ def test_oss_tools_resolve_from_the_public_release_normally() -> None:
         "lerobot", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY
     )
     assert ref.startswith(DEFAULT_PUBLIC_CONTAINER_REGISTRY + "/npa-lerobot:")
+
+
+def test_robotwin_quarantine_blocks_implicit_public_image_resolution() -> None:
+    with pytest.raises(ValueError, match="robotwin.*no accepted release image"):
+        container_image_for_tool("robotwin", registry=DEFAULT_PUBLIC_CONTAINER_REGISTRY)
 
 
 # --------------------------------------------------------------------------------------
@@ -1106,14 +1263,30 @@ def test_accepted_release_plan_partitions_published_and_pending_tools() -> None:
         target_registry="ghcr.io/nebius/nebius-physical-ai"
     )
 
-    assert not manifest["publication_pending"]
     assert len(plan) == len(manifest["releases"])
-    assert set(manifest["releases"]) | set(manifest["publication_pending"]) == set(
-        publicly_publishable_tools()
-    )
+    assert set(manifest["releases"]) == set(publicly_publishable_tools())
+    assert set(manifest["publication_pending"]) == {"antioch"}
     for item in plan:
         recorded = manifest["releases"][item.tool]["published_digest"]
         assert item.source_ref.endswith(f"@{recorded}")
+
+
+def test_release_manifest_delegates_redistribution_classification(monkeypatch) -> None:
+    original = images.is_publicly_redistributable
+    classified: list[str] = []
+
+    def classify(tool: str) -> bool:
+        classified.append(tool)
+        return original(tool)
+
+    images.public_release_manifest.cache_clear()
+    monkeypatch.setattr(images, "is_publicly_redistributable", classify)
+    try:
+        images.public_release_manifest()
+    finally:
+        images.public_release_manifest.cache_clear()
+
+    assert set(classified) == set(CONTAINER_IMAGE_NAMES)
 
 
 def test_verify_accepted_releases_compares_anonymous_live_and_recorded_digests(
@@ -1510,6 +1683,365 @@ def test_wan_live_trivy_gate_fails_closed_without_scanner_runtime(
         publish_public._scan_wan_trivy_exact_digest(
             "source.example/npa-wan2-2@sha256:" + "1" * 64
         )
+
+
+# --------------------------------------------------------------------------------------
+# Exact-digest secret severity
+#
+# Trivy applies ``--severity`` to every enabled scanner at once. The gate used to ask for
+# CRITICAL and get back a report whose ``Class: secret`` rows were present and empty --
+# indistinguishable from an image with no secrets. A pinned scan of one real workbench
+# image reported 0 secret findings under the CRITICAL filter and 3 HIGH ``private-key``
+# findings for the same bytes under all severities.
+#
+# The fake scanner below therefore APPLIES the severity filter the way Trivy does,
+# including dropping the section key when nothing survives. A fake that ignored the flag
+# would pass against the blind gate too and would prove nothing about the argv contract.
+# --------------------------------------------------------------------------------------
+
+
+def _severity_filtered_trivy(report: dict, *, record: list[list[str]] | None = None):
+    """Return a fake scanner that filters like Trivy, honouring the real flags."""
+
+    def run(args, **_kwargs):
+        if record is not None:
+            record.append(list(args))
+        requested = set()
+        if "--severity" in args:
+            requested = {
+                part.strip().upper()
+                for part in args[args.index("--severity") + 1].split(",")
+                if part.strip()
+            }
+        scanners = set()
+        if "--scanners" in args:
+            scanners = {
+                part.strip()
+                for part in args[args.index("--scanners") + 1].split(",")
+                if part.strip()
+            }
+        results = []
+        for result in report.get("Results", []):
+            kept = {
+                key: value
+                for key, value in result.items()
+                if key not in ("Vulnerabilities", "Secrets")
+            }
+            for section, scanner in (
+                ("Vulnerabilities", "vuln"),
+                ("Secrets", "secret"),
+            ):
+                if scanner not in scanners:
+                    continue
+                surviving = [
+                    finding
+                    for finding in result.get(section) or []
+                    if not requested
+                    or str(finding.get("Severity") or "UNKNOWN").upper() in requested
+                ]
+                # Trivy omits the section entirely when the filter empties it.
+                if surviving:
+                    kept[section] = surviving
+            results.append(kept)
+        payload = {key: value for key, value in report.items() if key != "Results"} | {
+            "Results": results
+        }
+        return subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    return run
+
+
+def _secret_report(severity: str, count: int = 3) -> dict:
+    """A report shaped like the real one: empty-able secret rows plus OS packages."""
+
+    return {
+        "SchemaVersion": 2,
+        "ArtifactType": "container_image",
+        "Results": [
+            {
+                "Target": "example (ubuntu 24.04)",
+                "Class": "os-pkgs",
+                "Type": "ubuntu",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-unfixed-critical",
+                        "Severity": "CRITICAL",
+                        "FixedVersion": "",
+                    },
+                    {
+                        "VulnerabilityID": "CVE-high-noise",
+                        "Severity": "HIGH",
+                        "FixedVersion": "9.9.9",
+                    },
+                ],
+            }
+        ]
+        + [
+            {
+                "Target": f"secret-row-{index}",
+                "Class": "secret",
+                "Secrets": [
+                    {
+                        "RuleID": "private-key",
+                        "Category": "AsymmetricPrivateKey",
+                        "Severity": severity,
+                        "Title": "Asymmetric Private Key",
+                    }
+                ],
+            }
+            for index in range(count)
+        ],
+    }
+
+
+def test_exact_digest_scan_requests_every_secret_severity(monkeypatch) -> None:
+    """The scanner must not be asked to pre-filter findings to CRITICAL."""
+
+    from npa.deploy import publish_public
+
+    invoked: list[list[str]] = []
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        _severity_filtered_trivy({"Results": []}, record=invoked),
+    )
+
+    publish_public._scan_trivy_exact_digest(
+        "source.example/image@sha256:" + "1" * 64, subject="Control"
+    )
+
+    (argv,) = invoked
+    assert "secret" in argv[argv.index("--scanners") + 1].split(",")
+    requested = argv[argv.index("--severity") + 1].split(",")
+    assert {"UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"} == set(requested)
+    # The exact-image binding must survive the severity change.
+    assert argv[argv.index("--platform") + 1] == "linux/amd64"
+    assert argv[-1] == "source.example/image@sha256:" + "1" * 64
+
+
+@pytest.mark.parametrize("severity", ["HIGH", "MEDIUM", "LOW", "UNKNOWN"])
+def test_exact_digest_scan_rejects_secrets_below_critical(
+    monkeypatch, severity: str
+) -> None:
+    """A private key the scanner ranks below CRITICAL must still block publication."""
+
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        _severity_filtered_trivy(_secret_report(severity)),
+    )
+
+    with pytest.raises(RuntimeError, match=r"found 3 secret findings"):
+        publish_public._scan_trivy_exact_digest(
+            "source.example/image@sha256:" + "1" * 64, subject="Control"
+        )
+
+
+def test_exact_digest_secret_rejection_reports_counts_without_content(
+    monkeypatch,
+) -> None:
+    """The rejection reaches CI logs, so it carries counts and no matched bytes."""
+
+    from npa.deploy import publish_public
+
+    report = _secret_report("HIGH", count=2)
+    report["Results"][1]["Secrets"][0]["Match"] = "-----BEGIN PRIVATE KEY-----"
+    report["Results"][1]["Secrets"][0]["Code"] = {"Lines": [{"Content": "sensitive"}]}
+    report["Results"][2]["Secrets"][0]["Severity"] = "MEDIUM"
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess, "run", _severity_filtered_trivy(report)
+    )
+
+    with pytest.raises(RuntimeError) as raised:
+        publish_public._scan_trivy_exact_digest(
+            "source.example/image@sha256:" + "1" * 64, subject="Control"
+        )
+
+    message = str(raised.value)
+    assert "found 2 secret findings (HIGH=1, MEDIUM=1)" in message
+    assert "PRIVATE KEY" not in message
+    assert "sensitive" not in message
+    assert "secret-row" not in message
+
+
+def test_exact_digest_scan_keeps_critical_vulnerability_policy(monkeypatch) -> None:
+    """All-severity reports must not change the CRITICAL vulnerability accounting."""
+
+    from npa.deploy import publish_public
+
+    report = _secret_report("HIGH", count=0)
+    report["Results"][0]["Vulnerabilities"].extend(
+        [
+            {
+                "VulnerabilityID": "CVE-medium",
+                "Severity": "MEDIUM",
+                "FixedVersion": "1",
+            },
+            {"VulnerabilityID": "CVE-unknown", "Severity": "UNKNOWN"},
+            {
+                "VulnerabilityID": "CVE-unfixed-critical-2",
+                "Severity": "CRITICAL",
+                "FixedVersion": "",
+            },
+        ]
+    )
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess, "run", _severity_filtered_trivy(report)
+    )
+
+    assert publish_public._scan_trivy_exact_digest(
+        "source.example/image@sha256:" + "1" * 64, subject="Control"
+    ) == {
+        "critical_total": 2,
+        "critical_with_fix": 0,
+        "critical_unfixed": 2,
+        "secrets": 0,
+    }
+
+
+def test_exact_digest_scan_still_rejects_fixable_critical_vulnerabilities(
+    monkeypatch,
+) -> None:
+    """The pre-existing vulnerability gate must keep biting under all severities."""
+
+    from npa.deploy import publish_public
+
+    report = _secret_report("HIGH", count=0)
+    report["Results"][0]["Vulnerabilities"][0]["FixedVersion"] = "2.1.0"
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess, "run", _severity_filtered_trivy(report)
+    )
+
+    with pytest.raises(RuntimeError, match="1 fixed CRITICAL vulnerabilities"):
+        publish_public._scan_trivy_exact_digest(
+            "source.example/image@sha256:" + "1" * 64, subject="Control"
+        )
+
+
+@pytest.mark.parametrize(
+    ("stdout", "message"),
+    [
+        ("", "unparsable JSON"),
+        ("not json at all", "unparsable JSON"),
+        ('{"Results": "surprise"}', "invalid JSON"),
+        ('{"SchemaVersion": 2}', "invalid JSON"),
+        ('{"Results": ["not-a-result"]}', "result entry is invalid"),
+        ('{"Results": [{"Secrets": {"RuleID": "private-key"}}]}', "unreadable Secrets"),
+        ('{"Results": [{"Secrets": ["private-key"]}]}', "unreadable Secrets"),
+        ('{"Results": [{"Secrets": "private-key"}]}', "unreadable Secrets"),
+        ('{"Results": [{"Vulnerabilities": "CVE-1"}]}', "unreadable Vulnerabilities"),
+        ('{"Results": [{"Vulnerabilities": [null]}]}', "unreadable Vulnerabilities"),
+    ],
+)
+def test_exact_digest_scan_fails_closed_on_unreadable_report(
+    monkeypatch, stdout: str, message: str
+) -> None:
+    """An unexpected report shape must block publication, never drop a finding."""
+
+    from npa.deploy import publish_public
+
+    monkeypatch.setattr(publish_public.shutil, "which", lambda _: "/usr/bin/trivy")
+    monkeypatch.setattr(
+        publish_public.subprocess,
+        "run",
+        lambda args, **_kwargs: subprocess.CompletedProcess(
+            args, 0, stdout=stdout, stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=message):
+        publish_public._scan_trivy_exact_digest(
+            "source.example/image@sha256:" + "1" * 64, subject="Control"
+        )
+
+
+def test_secret_findings_block_the_publisher_before_any_copy(monkeypatch) -> None:
+    """A rejected image must leave preflight as a failure and never be copied.
+
+    The recorded vulnerability totals are set to match this fixture exactly, so
+    every other part of the gate agrees. Before the severity fix that made the
+    whole gate return ok for an image carrying three HIGH private keys, which is
+    what this test exists to prevent.
+    """
+
+    from npa.deploy import publish_public
+
+    accepted = copy.deepcopy(images.wan_accepted_image_manifest())
+    digest = accepted["oci_digest"]
+    accepted["vulnerability_scan"] |= {
+        "critical_total": 1,
+        "critical_with_fix": 0,
+        "critical_unfixed": 1,
+        "secrets": 0,
+    }
+    monkeypatch.setattr(
+        publish_public.images, "wan_accepted_image_manifest", lambda: accepted
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_digest", lambda ref, **_: (True, digest)
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_crane_json",
+        lambda args: (
+            {"config": {}, "layers": [{}]}
+            if args[0] == "manifest"
+            else {"architecture": "amd64", "os": "linux"}
+        ),
+    )
+    monkeypatch.setattr(
+        publish_public,
+        "_github_attestation_predicates",
+        lambda **_: set(accepted["attestations"]["required_predicates"]),
+    )
+    monkeypatch.setattr(
+        publish_public, "_crane_manifest_readable", lambda *_a, **_k: (True, "ok")
+    )
+    monkeypatch.setattr(publish_public.shutil, "which", lambda name: f"/usr/bin/{name}")
+    # The module-wide fixture stubs this gate out for the unrelated publish tests;
+    # reaching the scanner through preflight is the whole point here.
+    monkeypatch.setattr(
+        publish_public, "verify_wan_publication_source", REAL_WAN_PUBLICATION_GATE
+    )
+
+    def refuse_copy(*_args, **_kwargs):
+        raise AssertionError("a rejected image must never be copied")
+
+    monkeypatch.setattr(publish_public, "_crane_copy", refuse_copy)
+
+    scanner = _severity_filtered_trivy(_secret_report("HIGH"))
+
+    def run(args, **kwargs):
+        if args[0] == "/usr/bin/trivy":
+            return scanner(args, **kwargs)
+        # The separate payload scan is not what is under test here.
+        return subprocess.CompletedProcess(
+            args, 0, stdout=json.dumps({"status": "pass", "findings": []}), stderr=""
+        )
+
+    monkeypatch.setattr(publish_public.subprocess, "run", run)
+
+    item = PublishItem(
+        tool="wan2-2",
+        source_ref="ghcr.io/nebius/nebius-physical-ai/npa-wan2-2@" + digest,
+        target_ref="ghcr.io/nebius/nebius-physical-ai/npa-wan2-2:accepted",
+    )
+    ok, detail = REAL_WAN_PUBLICATION_GATE(item)
+    assert not ok, f"gate accepted an image carrying private keys: {detail}"
+    assert "3 secret findings (HIGH=3)" in detail
+
+    failures = publish_public.preflight_sources([item])
+    assert [reason for _item, reason in failures], "rejected image reached the copy set"
+    assert "secret findings" in failures[0][1]
 
 
 def test_wan_publication_gate_refuses_digest_not_bound_to_gpu_proofs(

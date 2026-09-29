@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
-from npa.clients.serverless import EndpointNotFoundError
+from npa.clients.serverless import AuthError, EndpointNotFoundError, JobInfo
 from npa.deploy.images import container_image_for_tool, sonic_image_variant_for_gpu
 
 
@@ -790,6 +790,146 @@ def test_sonic_status_endpoint_required() -> None:
 
     assert result.exit_code == 1
     assert "requires --project-id" in result.output
+
+
+def _sonic_serverless_status_result():
+    return runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "status",
+            "--runtime",
+            "serverless",
+            "--job-id",
+            "job-1",
+            "--project-id",
+            "project-1",
+            "--output-format",
+            "json",
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ("queue_status", "classification", "seconds", "hint_prefix"),
+    [
+        ("waiting_for_capacity", "capacity", 492, "Platform may be at capacity"),
+        ("scheduled", "scheduled", 5, "Job is scheduled and waiting to start"),
+    ],
+)
+def test_sonic_status_serverless_preserves_queued_status_and_classification(
+    mocker,
+    queue_status,
+    classification,
+    seconds,
+    hint_prefix,
+) -> None:
+    """Existing status pollers keep seeing queued; queue details remain additive."""
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="queued",
+        queued_for_seconds=seconds,
+    )
+    client.classify_queue_state.return_value = queue_status
+    mocker.patch("npa.cli.workbench.sonic.status.ServerlessClient", return_value=client)
+    result = _sonic_serverless_status_result()
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "queued"
+    assert payload["raw_status"] == "queued"
+    assert payload["queue_state_classification"] == classification
+    assert payload["queued_for_seconds"] == seconds
+    assert payload["hint"].startswith(hint_prefix)
+    assert payload["project_id"] == "project-1"
+    assert payload["runtime"] == "serverless"
+
+
+def test_sonic_status_serverless_reports_failure_diagnostics_with_log_tail(
+    mocker,
+) -> None:
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="failed",
+        pending_reason="PAYLOAD_EXIT_NONZERO",
+    )
+    client.classify_queue_state.return_value = "failed"
+    client.get_job_logs.return_value = "Traceback: RuntimeError boom"
+    mocker.patch("npa.cli.workbench.sonic.status.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "status",
+            "--runtime",
+            "serverless",
+            "--job-id",
+            "job-1",
+            "--project-id",
+            "project-1",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert payload["pending_reason"] == "PAYLOAD_EXIT_NONZERO"
+    assert payload["log_tail"] == "Traceback: RuntimeError boom"
+    assert payload["log_tail_source"] == "job_logs"
+    assert "log_fetch_error" not in payload
+    client.get_job_logs.assert_called_once_with("job-1", "project-1", tail=40)
+
+
+def test_sonic_status_serverless_reports_log_fetch_error_without_hiding_true_status(
+    mocker,
+) -> None:
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="failed",
+        log_tail="cached provider message",
+    )
+    client.classify_queue_state.return_value = "failed"
+    client.get_job_logs.side_effect = AuthError("403 forbidden")
+    mocker.patch("npa.cli.workbench.sonic.status.ServerlessClient", return_value=client)
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "sonic",
+            "status",
+            "--runtime",
+            "serverless",
+            "--job-id",
+            "job-1",
+            "--project-id",
+            "project-1",
+            "--output-format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert payload["log_tail"] == "cached provider message"
+    assert payload["log_fetch_error"] == {
+        "error_type": "AuthError",
+        "message": "403 forbidden",
+    }
 
 
 def test_sonic_list_returns_models() -> None:
