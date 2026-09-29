@@ -607,6 +607,25 @@ def test_health_view_orbit_requires_a_boolean(
         assert health["view_orbit"] is expected_value
 
 
+@pytest.mark.parametrize("stream_ready", [False, None, "true", 1])
+def test_explicit_stream_readiness_cannot_fall_back_to_legacy_true(
+    stream_ready,
+) -> None:
+    manifest = _normalized()
+    payload = _health_payload(
+        manifest,
+        schema="npa.leisaac.health.v1",
+        readiness_field="webrtc_ready",
+        readiness_value=True,
+    )
+    payload["stream_ready"] = stream_ready
+
+    health, reason = validate_health(manifest, payload)
+
+    assert health is None
+    assert status_payload(manifest, health, reason=reason)["available"] is False
+
+
 def test_v2_manifest_and_health_bind_task_environment_dataset_and_recorder() -> None:
     manifest, reason = normalize_manifest(
         _manifest_v2(), expected_run_id="leisaac-live-1"
