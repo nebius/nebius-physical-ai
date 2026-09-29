@@ -119,6 +119,9 @@ def _digest(path):
 
 
 def _nodes(run, settings):
+    devices_per_host = settings["gpus"] // settings["nodes"]
+    if settings["gpus"] % settings["nodes"] or devices_per_host not in (4, 8):
+        raise ValueError("expected four or eight B200 GPUs on every node")
     preflight = json.loads((run / "distributed-preflight.json").read_text())
     if (
         preflight["status"],
@@ -141,8 +144,8 @@ def _nodes(run, settings):
         names = node["hardware"]["gpu_names"]
         if node["rank"] != rank or node["returncode"] != 0:
             raise ValueError("every allocated node must finish successfully")
-        if len(names) != 8 or any("B200" not in name for name in names):
-            raise ValueError("expected eight B200 GPUs on every node")
+        if len(names) != devices_per_host or any("B200" not in name for name in names):
+            raise ValueError("GPU evidence differs from the planned count or product")
         if (
             not math.isfinite(node["train_process_seconds"])
             or node["train_process_seconds"] <= 0
@@ -174,7 +177,10 @@ def _summarize(run, warmup):
         "step_p50_seconds": statistics.median(values),
         "step_p95_seconds": statistics.quantiles(values, n=100, method="inclusive")[94],
         "train_process_seconds": elapsed,
-        "training_gpu_hours": sum(node["train_process_seconds"] * 8 for node in nodes)
+        "training_gpu_hours": sum(
+            node["train_process_seconds"] * settings["gpus"] / settings["nodes"]
+            for node in nodes
+        )
         / 3600,
         "checkpoint_manifest_sha256": digest,
         "quality_measured": False,
@@ -193,7 +199,13 @@ def _compare(report, baseline):
         raise ValueError("profile runs cannot be used for throughput comparisons")
     if report["comparison_contract"] != baseline["comparison_contract"]:
         raise ValueError("dataset/model/steps/batch/seed differ from baseline")
-    if report["hardware"] != baseline["hardware"] or baseline["gpus"] != 8:
+    hardware = dict(
+        report["hardware"], gpu_names=sorted(set(report["hardware"]["gpu_names"]))
+    )
+    expected = dict(
+        baseline["hardware"], gpu_names=sorted(set(baseline["hardware"]["gpu_names"]))
+    )
+    if hardware != expected or baseline["gpus"] != 8:
         raise ValueError("baseline must use the same runtime and eight B200 GPUs")
     speedup = baseline["step_mean_seconds"] / report["step_mean_seconds"]
     report.update(

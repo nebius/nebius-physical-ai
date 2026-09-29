@@ -81,6 +81,22 @@ arithmetic fails before files are written. `--steps` is required: the launcher
 adds no wall-time, spend, or automatic cancellation limit. The 2,000-step
 example follows upstream LIBERO-10's training schedule.
 
+## Four-GPU experiment
+
+Use `--nodes 1 --gpus-per-node 4` to allocate four B200s on one host. The
+launcher starts exactly four ranks, shards the model across those ranks and
+checks that only four B200 devices are visible. With the default sample cap
+of 64 and nominal batch of 2,048, gradient accumulation is eight. Eight GPUs
+per node remains the default. Source, precision, optimizer, seed and dataset
+settings are unchanged.
+
+This option specifies active training devices, not the cloud VM shape. The
+reserved B200 platform currently offers one- and eight-GPU VMs in the campaign
+project. Running on four devices of an exclusive eight-GPU host still retains
+the whole VM allocation. Report active training GPU-hours and provisioned
+capacity separately. The existing 8/16-GPU evidence does not validate four-GPU
+completion; publish a separate measured record after the new run succeeds.
+
 ## Files and settings
 
 | File | Purpose |

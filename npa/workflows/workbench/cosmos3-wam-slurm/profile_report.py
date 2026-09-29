@@ -148,7 +148,7 @@ def _main(args):
     job = args.run_dir / "output/cosmos3_wam/libero_10" / settings["name"]
     profiles = {}
     for node in range(settings["nodes"]):
-        rank = 8 * node
+        rank = settings.get("gpus_per_node", 8) * node
         receipt = json.loads((args.run_dir / f"node-{node}.finished.json").read_text())
         if receipt["returncode"] != 0:
             raise ValueError("profiled training did not finish successfully")

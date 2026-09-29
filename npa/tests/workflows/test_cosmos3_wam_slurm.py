@@ -537,7 +537,7 @@ def test_profile_can_reanalyze_without_overwriting_the_recorded_summary(tmp_path
     ]
 
 
-def _completed_nodes(run, nodes):
+def _completed_nodes(run, nodes, gpus_per_node=8):
     for rank in range(nodes):
         (run / f"node-{rank}.log").write_text("Worker log\n")
         (run / f"node-{rank}.finished.json").write_text(
@@ -550,7 +550,7 @@ def _completed_nodes(run, nodes):
                     "returncode": 0,
                     "train_process_seconds": 200,
                     "hardware": {
-                        "gpu_names": ["NVIDIA B200"] * 8,
+                        "gpu_names": ["NVIDIA B200"] * gpus_per_node,
                         "torch": "fixture",
                         "cuda": "fixture",
                     },
@@ -562,19 +562,20 @@ def _completed_nodes(run, nodes):
             {
                 "status": "passed",
                 "backend": "nccl",
-                "world_size": 8 * nodes,
+                "world_size": gpus_per_node * nodes,
                 "hosts": nodes,
             }
         )
     )
 
 
-def _completed_run(tmp_path, nodes=1):
+def _completed_run(tmp_path, nodes=1, gpus_per_node=8):
     recipe = _load("recipe")
     args = _args(tmp_path, nodes)
+    args.gpus_per_node = gpus_per_node
     recipe._plan(args)
     run = args.run_dir
-    _completed_nodes(run, nodes)
+    _completed_nodes(run, nodes, gpus_per_node)
     (run / "node-0.log").write_text(
         "\n".join(
             f"{step} : iter_speed {seconds} seconds per iteration | Loss: 0.2"
@@ -706,7 +707,7 @@ def test_worker_failure_is_recorded_after_real_launcher_boundary(tmp_path, monke
     monkeypatch.setenv("MASTER_ADDR", "rank-zero")
     monkeypatch.setattr(recipe, "_verify_inputs", lambda *_: None)
     monkeypatch.setattr(
-        recipe, "_verify_gpus", lambda: {"gpu_names": ["NVIDIA B200"] * 8}
+        recipe, "_verify_gpus", lambda count: {"gpu_names": ["NVIDIA B200"] * count}
     )
     commands = []
 
@@ -785,3 +786,80 @@ def test_policy_readiness_never_follows_http_redirects():
             server.shutdown()
             thread.join()
     assert requests == ["/info"]
+
+
+def test_four_gpu_plan_keeps_work_fixed_and_launches_only_four_ranks(
+    tmp_path, monkeypatch
+):
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+
+    recipe = _load("recipe")
+    args = _args(tmp_path)
+    args.gpus_per_node = 4
+    recipe._plan(args)
+    settings = json.loads((args.run_dir / "run.json").read_text())
+    config = tomllib.loads((args.run_dir / "train.toml").read_text())
+    assert settings["gpus"] == 4
+    assert settings["gradient_accumulation"] == 8
+    assert settings["global_batch"] == 2048
+    assert config["model"]["parallelism"]["data_parallel_shard_degree"] == 4
+    assert config["trainer"]["grad_accum_iter"] == 8
+    script = (args.run_dir / "train.sbatch").read_text()
+    assert "#SBATCH --gpus-per-node=4" in script
+    assert "--gpus-per-task=4" in script
+    monkeypatch.setenv("MASTER_ADDR", "rank-zero")
+    assert "--nproc_per_node=4" in recipe._training_argv(settings, args.run_dir, 0)
+    assert recipe._environment(settings, args.run_dir)["NPA_WAM_GPUS_PER_NODE"] == "4"
+
+
+@pytest.mark.parametrize("visible", [4, 8])
+def test_four_gpu_run_rejects_accidental_eight_gpu_visibility(monkeypatch, visible):
+    cuda = SimpleNamespace(
+        device_count=lambda: visible, get_device_name=lambda _: "NVIDIA B200"
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "torch",
+        SimpleNamespace(
+            cuda=cuda, __version__="fixture", version=SimpleNamespace(cuda="fixture")
+        ),
+    )
+    recipe = _load("recipe")
+    if visible == 4:
+        assert len(recipe._verify_gpus(4)["gpu_names"]) == 4
+    else:
+        with pytest.raises(ValueError, match="exactly 4"):
+            recipe._verify_gpus(4)
+
+
+@pytest.mark.parametrize(
+    "identities,world",
+    [
+        ([("host", n) for n in range(4)], 4),
+        ([("host", n) for n in (0, 1, 2, 2)], 4),
+        ([("host", n) for n in (0, 1, 2, 4)], 4),
+        ([("host", n) for n in range(8)], 8),
+    ],
+)
+def test_four_gpu_collective_requires_exact_local_rank_placement(identities, world):
+    check = _load("distributed_preflight")._verify_placement
+    if identities == [("host", n) for n in range(4)]:
+        assert check(identities, world, 4) == 1
+    else:
+        with pytest.raises(RuntimeError):
+            check(identities, world, 4)
+
+
+def test_four_gpu_report_counts_active_devices_and_compares_runtime(tmp_path):
+    reporter = _load("report")
+    report = reporter._summarize(_completed_run(tmp_path / "four", gpus_per_node=4), 50)
+    baseline = reporter._summarize(_completed_run(tmp_path / "eight"), 50)
+    assert report["training_gpu_hours"] == pytest.approx(4 * 200 / 3600)
+    reporter._compare(report, baseline)
+    assert report["speedup_vs_8_gpus"] == 1
+    baseline["hardware"]["torch"] = "different-runtime"
+    with pytest.raises(ValueError, match="same runtime"):
+        reporter._compare(report, baseline)

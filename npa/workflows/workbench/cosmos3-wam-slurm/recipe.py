@@ -28,16 +28,19 @@ def _settings(args):
     for value in (args.nodes, args.steps, args.samples_per_rank, args.global_batch):
         if value <= 0:
             raise ValueError("nodes, steps and batch sizes must be positive")
-    microbatch = 8 * args.nodes * args.samples_per_rank
+    if args.gpus_per_node not in (4, 8):
+        raise ValueError("gpus per node must be four or eight")
+    microbatch = args.gpus_per_node * args.nodes * args.samples_per_rank
     if args.global_batch % microbatch:
         raise ValueError(
-            "global batch must be divisible by 8 * nodes * samples per rank"
+            "global batch must be divisible by GPUs per node * nodes * samples per rank"
         )
     return {
         "schema": "npa.cosmos3.wam-slurm.v1",
         "name": args.name,
         "nodes": args.nodes,
-        "gpus": 8 * args.nodes,
+        "gpus": args.gpus_per_node * args.nodes,
+        "gpus_per_node": args.gpus_per_node,
         "steps": args.steps,
         "samples_per_rank": args.samples_per_rank,
         "global_batch": args.global_batch,
@@ -72,7 +75,7 @@ def _batch_script(settings, run):
 #SBATCH --job-name={settings["name"]}
 #SBATCH --nodes={settings["nodes"]}
 #SBATCH --ntasks-per-node=1
-#SBATCH --gpus-per-node=8
+#SBATCH --gpus-per-node={settings["gpus_per_node"]}
 #SBATCH --cpus-per-task=128
 #SBATCH --exclusive
 #SBATCH --output={shlex.quote(str(run / "slurm-%j.out"))}
@@ -84,7 +87,7 @@ export MASTER_PORT="${{MASTER_PORT:-29500}}"
 # Slurm 23.11 exports CPU-only TRES that conflicts with --gpus-per-task.
 unset SLURM_TRES_PER_TASK
 exec srun --ntasks={settings["nodes"]} --ntasks-per-node=1 \\
-    --cpus-per-task=128 --gpus-per-task=8 --gpu-bind=none --kill-on-bad-exit=1 {command}
+    --cpus-per-task=128 --gpus-per-task={settings["gpus_per_node"]} --gpu-bind=none --kill-on-bad-exit=1 {command}
 """
 
 
@@ -130,6 +133,7 @@ def _environment(settings, run):
         WANDB_MODE="disabled",
         TZ="UTC",
         NPA_WAM_RUN_DIR=str(run),
+        NPA_WAM_GPUS_PER_NODE=str(settings["gpus_per_node"]),
         LIBERO_ROOT=str(root / "data/libero_10"),
         BASE_CHECKPOINT_PATH=str(root / "base-dcp"),
         WAN_VAE_PATH=str(root / "vae/Wan2.2_VAE.pth"),
@@ -148,7 +152,9 @@ def _native_options(settings, run):
         + json.dumps(str(Path(settings["shared_root"]) / "tokenizer")),
     ]
     if settings["profile"]:
-        ranks = ",".join(str(rank * 8) for rank in range(settings["nodes"]))
+        ranks = ",".join(
+            str(rank * settings["gpus_per_node"]) for rank in range(settings["nodes"])
+        )
         options += [
             "trainer.profiling.enable_profiling=true",
             "trainer.profiling.profile_freq=100",
@@ -165,7 +171,7 @@ def _training_argv(settings, run, rank):
         python,
         "-m",
         "torch.distributed.run",
-        "--nproc_per_node=8",
+        f"--nproc_per_node={settings['gpus_per_node']}",
         f"--nnodes={settings['nodes']}",
         f"--node_rank={rank}",
         f"--master_addr={os.environ['MASTER_ADDR']}",
@@ -221,14 +227,16 @@ def _verify_video_runtime(root):
             raise ValueError(f"incompatible decoded camera frame: {camera}")
 
 
-def _verify_gpus():
+def _verify_gpus(expected):
     import torch
 
     names = [
         torch.cuda.get_device_name(index) for index in range(torch.cuda.device_count())
     ]
-    if len(names) != 8 or any("B200" not in name for name in names):
-        raise ValueError("each Slurm task must see exactly eight NVIDIA B200 GPUs")
+    if len(names) != expected or any("B200" not in name for name in names):
+        raise ValueError(
+            f"each Slurm task must see exactly {expected} NVIDIA B200 GPUs"
+        )
     return {"gpu_names": names, "torch": torch.__version__, "cuda": torch.version.cuda}
 
 
@@ -271,7 +279,7 @@ def _run_node(args):
     ):
         raise ValueError("Slurm allocation differs from the planned topology")
     _verify_inputs(settings, run)
-    hardware = _verify_gpus()
+    hardware = _verify_gpus(settings["gpus_per_node"])
     env = _environment(settings, run)
     command = _training_argv(settings, run, rank)
     record = {
@@ -308,6 +316,7 @@ def _parser():
     plan.add_argument("--run-dir", type=Path, required=True)
     plan.add_argument("--name", required=True)
     plan.add_argument("--nodes", type=int, required=True)
+    plan.add_argument("--gpus-per-node", type=int, choices=(4, 8), default=8)
     plan.add_argument("--steps", type=int, required=True)
     plan.add_argument("--samples-per-rank", type=int, default=64)
     plan.add_argument("--global-batch", type=int, default=2048)

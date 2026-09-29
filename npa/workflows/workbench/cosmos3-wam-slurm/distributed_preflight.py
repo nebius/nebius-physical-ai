@@ -6,6 +6,21 @@ from pathlib import Path
 import socket
 
 
+def _verify_placement(identities, world, devices_per_host):
+    if devices_per_host not in (4, 8):
+        raise RuntimeError("expected four or eight devices per host")
+    hosts = {host for host, _ in identities}
+    expected = set(range(devices_per_host))
+    if world % devices_per_host or len(hosts) != world // devices_per_host:
+        raise RuntimeError("rank host count differs from the planned topology")
+    if len(identities) != world or len(set(identities)) != world:
+        raise RuntimeError("ranks do not cover distinct devices per host")
+    for host in hosts:
+        if {device for name, device in identities if name == host} != expected:
+            raise RuntimeError("local ranks differ from the planned GPU count")
+    return len(hosts)
+
+
 def _check():
     import torch
     import torch.distributed as distributed
@@ -20,13 +35,13 @@ def _check():
     identity = (socket.gethostname(), int(os.environ["LOCAL_RANK"]))
     identities = [None] * world
     distributed.all_gather_object(identities, identity)
-    hosts = {host for host, _ in identities}
-    if len(hosts) != world // 8 or len(set(identities)) != world:
-        raise RuntimeError("ranks do not cover eight distinct devices per host")
+    hosts = _verify_placement(
+        identities, world, int(os.environ["NPA_WAM_GPUS_PER_NODE"])
+    )
     if rank == 0:
         report = {
             "world_size": world,
-            "hosts": len(hosts),
+            "hosts": hosts,
             "backend": "nccl",
             "all_reduce_sum": value.item(),
             "status": "passed",

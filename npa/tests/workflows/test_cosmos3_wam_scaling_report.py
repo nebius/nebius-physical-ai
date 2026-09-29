@@ -54,9 +54,9 @@ def _measurement(gpus, duration, series_hash):
             "samples_per_rank": 64,
             "sources": {"framework": "fixture-revision"},
         },
-        "hardware": {"gpu_names": ["NVIDIA B200"] * 8, "torch": "fixture"},
+        "hardware": {"gpu_names": ["NVIDIA B200"] * min(gpus, 8), "torch": "fixture"},
         "gpus": gpus,
-        "nodes": gpus // 8,
+        "nodes": max(1, gpus // 8),
         "warmup_steps_excluded": 50,
         "measured_steps": 149,
         "step_mean_seconds": duration,
@@ -190,3 +190,29 @@ def test_invalid_iteration_rows_cannot_be_aggregated(tmp_path, replacement):
     )
     with pytest.raises(ValueError):
         _module()._summarize(runs)
+
+
+def test_four_gpu_extension_preserves_original_comparison(tmp_path):
+    module = _module()
+    original = _campaign(tmp_path)
+    baseline = module._summarize(original)
+    four = [_run(tmp_path, 4, i, value) for i, value in enumerate((22, 24, 26))]
+    result = module._summarize([*original, *four])
+    assert result["comparison"] == baseline["comparison"]
+    assert result["groups"]["8"] == baseline["groups"]["8"]
+    assert result["groups"]["16"] == baseline["groups"]["16"]
+    comparisons = result["comparisons_vs_4_gpus"]
+    assert comparisons["8"]["speedup_vs_4_gpus"] == 2
+    assert comparisons["8"]["scaling_efficiency"] == 1
+    assert comparisons["16"]["speedup_vs_4_gpus"] == pytest.approx(24 / 7)
+    assert comparisons["16"]["scaling_efficiency"] == pytest.approx(6 / 7)
+    assert comparisons["8"]["token_work_ratio"] == 1
+
+
+def test_four_gpu_report_rejects_eight_device_receipt(tmp_path):
+    four = _run(tmp_path, 4, 0, 24)
+    _change(
+        four, lambda report: report["hardware"].update(gpu_names=["NVIDIA B200"] * 8)
+    )
+    with pytest.raises(ValueError, match="requires completed"):
+        _module()._read(four)

@@ -62,8 +62,9 @@ def _read(directory):
     if (
         measurement["schema"] != "npa.cosmos3.wam-measurement.v1"
         or measurement["status"] != "measured"
-        or measurement["gpus"] not in (8, 16)
-        or measurement["nodes"] * 8 != measurement["gpus"]
+        or (measurement["nodes"], measurement["gpus"]) not in ((1, 4), (1, 8), (2, 16))
+        or len(measurement["hardware"]["gpu_names"])
+        != measurement["gpus"] // measurement["nodes"]
         or measurement["warmup_steps_excluded"] != 50
         or contract["steps"] != 200
         or contract["profile"] is not False
@@ -131,25 +132,29 @@ def _matching_records(directories):
         raise ValueError("duplicate timing measurement; copied reports are not repeats")
     baseline = records[0]["measurement"]
     for record in records:
-        for key in ("comparison_contract", "hardware"):
-            if record["measurement"][key] != baseline[key]:
-                raise ValueError(
-                    "timing repetitions have different protocol or hardware"
-                )
+        measured = record["measurement"]
+        if measured["comparison_contract"] != baseline["comparison_contract"]:
+            raise ValueError("timing repetitions have different protocol or hardware")
+        hardware = dict(measured["hardware"])
+        hardware["gpu_names"] = sorted(set(hardware["gpu_names"]))
+        expected = dict(baseline["hardware"])
+        expected["gpu_names"] = sorted(set(expected["gpu_names"]))
+        if hardware != expected:
+            raise ValueError("timing repetitions have different protocol or hardware")
     return records, baseline
 
 
-def _comparison(groups):
-    if "16" not in groups:
+def _comparison(groups, baseline_gpus=8, candidate_gpus=16):
+    if str(candidate_gpus) not in groups:
         return None
-    baseline, candidate = groups["8"], groups["16"]
+    baseline, candidate = groups[str(baseline_gpus)], groups[str(candidate_gpus)]
     speedup = (
         baseline["replicate_step_means_seconds"]["mean"]
         / candidate["replicate_step_means_seconds"]["mean"]
     )
     return {
-        "speedup_vs_8_gpus": speedup,
-        "scaling_efficiency": speedup / 2,
+        f"speedup_vs_{baseline_gpus}_gpus": speedup,
+        "scaling_efficiency": speedup / (candidate_gpus / baseline_gpus),
         "token_throughput_speedup": candidate["pooled_tokens_per_second"]
         / baseline["pooled_tokens_per_second"],
         "token_work_ratio": candidate["measured_tokens"] / baseline["measured_tokens"],
@@ -167,7 +172,7 @@ def _summarize(directories):
         key: _group(value)
         for key, value in sorted(grouped.items(), key=lambda item: int(item[0]))
     }
-    return {
+    result = {
         "schema": "npa.cosmos3.wam-repeated-scaling.v1",
         "status": "scaling_measured" if "16" in groups else "baseline_measured",
         "comparison_contract": baseline["comparison_contract"],
@@ -182,6 +187,11 @@ def _summarize(directories):
             "iterations. Full-schedule duration, allocation time and quality are separate."
         ),
     }
+    if "4" in groups:
+        result["comparisons_vs_4_gpus"] = {
+            key: _comparison(groups, 4, int(key)) for key in groups if key != "4"
+        }
+    return result
 
 
 if __name__ == "__main__":

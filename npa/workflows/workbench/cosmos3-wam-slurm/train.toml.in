@@ -10,7 +10,7 @@ wandb_mode = "disabled"
 precision = "bfloat16"
 max_num_tokens_after_packing = 74000
 [model.parallelism]
-data_parallel_shard_degree = 8
+data_parallel_shard_degree = @GPUS_PER_NODE@
 data_parallel_replicate_degree = @NODES@
 context_parallel_shard_degree = 1
 [model.activation_checkpointing]
