@@ -1981,13 +1981,25 @@ def build_run_manifest(
     """
 
     first = clips[0] if clips else {}
-    input_conditioned = _provenance_boolean(first, "input_conditioned", default=False)
-    content_guardrails_enabled = _provenance_boolean(
-        first, "content_guardrails_enabled", default=True
+    # Validate every variant before aggregation: all() must not hide a malformed
+    # later value after an earlier false value short-circuits the summary.
+    provenance = [
+        {
+            "input_conditioned": _provenance_boolean(
+                clip, "input_conditioned", default=False
+            ),
+            "content_guardrails_enabled": _provenance_boolean(
+                clip, "content_guardrails_enabled", default=True
+            ),
+        }
+        for clip in clips
+    ]
+    input_conditioned = bool(provenance) and all(
+        item["input_conditioned"] for item in provenance
     )
-    for clip in clips[1:]:
-        _provenance_boolean(clip, "input_conditioned", default=False)
-        _provenance_boolean(clip, "content_guardrails_enabled", default=True)
+    content_guardrails_enabled = bool(provenance) and all(
+        item["content_guardrails_enabled"] for item in provenance
+    )
     variant_failures = list(failures or [])
     frames = [f for c in clips for f in c.get("frames", [])]
     manifest = {
@@ -2036,6 +2048,7 @@ def build_run_manifest(
         "inference_seed": first.get("inference_seed"),
         "variants": [
             {
+                **provenance[index],
                 "clip": c.get("clip", ""),
                 "variant_index": int(c.get("variant_index", index) or 0),
                 "variables": c.get("variables", {}),
