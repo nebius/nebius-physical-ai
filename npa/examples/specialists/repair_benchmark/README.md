@@ -124,6 +124,9 @@ same agent. This tests filesystem isolation on one host, not separate VMs or clo
 job isolation. Checkout preparation is outside measured task latency; record its
 time and disk use separately. Do not compare a new cohort with an older one as a
 causal test of the layout itself.
+Frozen-input audits before each arm also sit outside the task timer. Report the
+between-arm gaps and whole-sequence elapsed time alongside per-task results;
+full-checkout integrity checking is part of running the experiment.
 
 ## Cost and evidence
 

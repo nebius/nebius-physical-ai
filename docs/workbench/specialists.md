@@ -4,15 +4,21 @@ The [matched repair benchmark](../../npa/examples/specialists/repair_benchmark/R
 compares Astra alone with Astra coordinating routed Token Factory specialists
 on the same three code repairs and native Workbench workflow. It retains all
 three pairs and accounts for coordinator, router, worker and recovery usage.
+The [September 29 independent-checkout results](specialists-independent-experiment.md)
+give every lane a complete Workbench copy: all six arms passed, with 72.5% lower
+conservative median model cost and 15.4% shorter median task time. Hybrid was
+faster in all three pairs, although the last pair differed by only 2.8 seconds.
+The report separately accounts for preparation and between-run audit overhead.
+This small experiment compares hybrid with Astra alone; it does not establish
+that changing the checkout layout caused the improvement.
+
 The [September 28 coordination results](specialists-coordination-experiment.md)
-retain two new cohorts: all 12 arms passed, with 73.7% lower conservative median
-model cost and 2.5–4.2% shorter median elapsed time. The hybrid was faster in four
-of six pairs. No live lock refusal or model handoff occurred, so these runs do
-not establish a performance benefit from either recovery policy. A separate
-process-contention test proves that a refused delegation queues nothing and
-retrying after release creates exactly one durable task. The earlier
-[September 27 results](specialists-matched-repair-experiment.md) retain the
-delegation failure that motivated the fix.
+retain the preceding twelve runs and a separate process-contention test: a
+refused delegation queues nothing, and identical retries after release create
+one durable task. The [September 27 results](specialists-matched-repair-experiment.md)
+retain the delegation failure that motivated the fix. No live lock refusal or
+model handoff occurred in the newer cohorts, so their performance benefit remains
+unmeasured.
 
 The [multi-model repair campaign](specialists-multimodel-repair.md) shows Flash
 and full GLM making production code changes and verifying six-case MuJoCo/LeRobot
@@ -45,6 +51,13 @@ controller installation outside those editable workspaces. Copy
 configuration location and adjust the workspace directories. The example gives
 GLM a Cosmos role and DeepSeek V4 a Sim2Real role. Model availability depends on
 your Token Factory account; verify exact IDs before running.
+
+Separate checkouts let roles edit and run concurrently on one host; a VM per
+specialist is not required. Give each role separate run and output locations.
+Keep per-profile ownership locks: they protect one role from duplicate workers
+or competing takeovers without serializing the other roles. Separate files do
+not make shared cloud submissions or artifact publication independent; those
+operations still need stable run identities and explicit reconciliation.
 
 ```bash
 npa/.venv/bin/python -m npa workbench health preflight --checks token_factory --json
@@ -242,6 +255,9 @@ contains private task/checkpoint data; do not publish it as review evidence.
 
 Every model or tool node ends at a synchronous LangGraph checkpoint. A separate
 SQLite journal records a tool call before execution and its result afterwards.
+Journal initialization briefly locks its journal-mode and schema setup so workers
+can start concurrently against a new or older database. This lock is released
+before task execution; profile ownership remains separate.
 On restart, completed tool receipts are reused even if the graph checkpoint was
 interrupted. If a call started but has no result, the task enters
 `needs_attention`; the runtime does not automatically repeat the effect.
