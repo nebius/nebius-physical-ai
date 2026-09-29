@@ -482,3 +482,67 @@ def test_lancedb_end_to_end_deploy_table_query() -> None:
         for idx in range(10)
     ]
     assert len(json.dumps(payload)) > 0
+
+
+def _assert_kubernetes_storage_manifest(output: str, storage_path: str) -> None:
+    """Check canonical paths and credentials in the actual CLI manifest output."""
+    from npa.workbench import service_kubernetes
+
+    payload = json.loads(output)
+    container = payload["manifests"][0]["spec"]["template"]["spec"]["containers"][0]
+    env = container["env"]
+    assert [entry for entry in env if entry["name"] == "LANCEDB_STORAGE_PATH"] == [
+        {"name": "LANCEDB_STORAGE_PATH", "value": storage_path}
+    ]
+    credentials = [
+        entry
+        for entry in env
+        if entry["name"] in service_kubernetes.STORAGE_SECRET_ENVS
+    ]
+    if storage_path.startswith("s3://"):
+        assert len(credentials) == 2
+        for entry in credentials:
+            assert entry["valueFrom"]["secretKeyRef"] == {
+                "name": "npa-lancedb-storage",
+                "key": entry["name"],
+            }
+            assert "value" not in entry
+    else:
+        assert credentials == []
+
+
+@pytest.mark.parametrize("storage_path", ["s3://example-bucket/review", "/data/review"])
+def test_lancedb_kubernetes_dry_run_binds_storage_without_exposing_keys(
+    monkeypatch: pytest.MonkeyPatch, storage_path: str
+) -> None:
+    """Exercise the real CLI-to-manifest boundary without contacting Kubernetes."""
+    from npa.workbench import service_kubernetes
+
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "placeholder-access-value")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "placeholder-secret-value")
+    monkeypatch.delenv("LANCEDB_TOKEN", raising=False)
+    for name in ("apply", "ensure_storage_secret", "wait_available"):
+        monkeypatch.setattr(
+            service_kubernetes,
+            name,
+            lambda *args, **kwargs: pytest.fail("dry-run must not deploy resources"),
+        )
+
+    result = runner.invoke(
+        lancedb_app,
+        [
+            "deploy",
+            "--runtime",
+            "kubernetes",
+            "--storage-path",
+            storage_path,
+            "--dry-run",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    _assert_kubernetes_storage_manifest(result.output, storage_path)
+    assert "placeholder-access-value" not in result.output
+    assert "placeholder-secret-value" not in result.output

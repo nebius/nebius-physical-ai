@@ -39,7 +39,9 @@ def roots(tmp_path):
         yield
 
 
-def oci_fixture(*, artifact=False, nested=True, marker=None, padding=False):
+def oci_fixture(
+    *, artifact=False, nested=True, marker=None, padding=False, revision=None
+):
     """Two ancestor layers, one whiteout, and a BuildKit attestation manifest."""
     blobs = {}
 
@@ -87,7 +89,14 @@ def oci_fixture(*, artifact=False, nested=True, marker=None, padding=False):
                 },
                 "config": {
                     "User": "1000",
-                    "Labels": {"review": tagged("config", "neutral")},
+                    "Labels": {
+                        "review": tagged("config", "neutral"),
+                        **(
+                            {"org.opencontainers.image.revision": revision}
+                            if revision
+                            else {}
+                        ),
+                    },
                 },
                 "history": [{"created_by": tagged("history", "synthetic build")}],
             }

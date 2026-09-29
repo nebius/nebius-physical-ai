@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!antioch.yaml
+!src/
+!src/**
+**/__pycache__
+**/*.pyc
