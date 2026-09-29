@@ -90,7 +90,7 @@ def test_build_run_rrd_from_local_run(tmp_path: Path) -> None:
         check=False,
     )
     assert verified.returncode == 0, verified.stderr
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     assert load_recording(out).application_id() == "physical-ai-data-factory"
 
@@ -183,7 +183,7 @@ def test_rejected_rrd_component_stats_include_actual_augmented_media(
     assert "source/original/video" in component_stats
     assert "augmented/iteration-1/candidate-a/disposition" in component_stats
     assert "Blueprint" in component_stats
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     assert load_recording(out).application_id() == "physical-ai-data-factory"
 

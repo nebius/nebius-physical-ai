@@ -16,6 +16,7 @@ from npa.deploy.images import (
     development_tag,
     execution_container_registry,
     registry_from_env,
+    supported_tool_version,
 )
 
 
@@ -117,8 +118,9 @@ def test_validation_candidates_require_an_explicit_development_tag() -> None:
 
 
 def test_unbuilt_lanes_keep_their_fail_closed_sentinel_resolution() -> None:
-    for tool in sorted(UNVALIDATED_PUBLICATION_TOOLS - {"ncore"}):
-        version = SUPPORTED_TOOL_VERSIONS[tool]
+    explicit_tag_tools = {"ncore", "robomimic", "robotwin"}
+    for tool in sorted(UNVALIDATED_PUBLICATION_TOOLS - explicit_tag_tools):
+        version = supported_tool_version(tool)
         assert version.endswith("-unbuilt")
         assert container_image_for_tool(
             tool, registry="registry.example/team"

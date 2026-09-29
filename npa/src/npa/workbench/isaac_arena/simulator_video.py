@@ -10,49 +10,40 @@ from typing import Any
 import numpy as np
 
 from .simulator_phases import phase_scope, record_readiness
+from .capture_profiles import (
+    STARTUP_RENDER_SETTINGS as _STARTUP_RENDER_SETTINGS,
+    CAPTURE_RENDER_SETTINGS as _CAPTURE_RENDER_SETTINGS,
+    capture_profile,
+    capture_settings,
+    render_settings,
+    simulator_capture_profile,
+)
 
 
 _PLAY_SIMULATIONS = "/app/player/playSimulations"
 _PHYSICS_CLOCK = "native_physx_step_events_since_capture_setup"
-_STARTUP_RENDER_SETTINGS = {
-    # Kit reads renderer availability while registering its render modes. These
-    # settings must also be present in AppLauncher's ``--kit_args``; changing
-    # them only after SimulationApp starts cannot switch the registered mode.
-    "/persistent/rtx/modes/rt/enabled": True,
-    "/persistent/rtx/modes/rt2/enabled": False,
-    "/persistent/rtx/modes/pt/enabled": False,
-}
-_CAPTURE_RENDER_SETTINGS = {
-    "/rtx/rendermode": "RaytracedLighting",
-    # Legacy RTX maps TAA to its supported temporal anti-aliasing path. It
-    # suppresses the severe single-frame grain observed with spatial-only FXAA
-    # without relying on the unsupported DLAA selection, which Isaac Sim 6
-    # silently remaps to TAA. The simulator is frozen while temporal history
-    # settles, and the separate verifier still requires task-bound motion.
-    "/rtx/post/aa/op": 1,
-    "/rtx/post/dlss/execMode": 2,
-    "/rtx-transient/dldenoiser/enabled": True,
-    "/rtx-transient/dlssg/enabled": False,
-    "/rtx/ecoMode/enabled": False,
-    # Pin native lighting quality instead of inheriting the interactive
-    # renderer's low sample defaults. Temporal settling alone left severe
-    # grain in a completed episode and failed the unchanged motion gate.
-    "/rtx/directLighting/sampledLighting/samplesPerPixel": 32,
-    "/rtx/indirectDiffuse/fetchSampleCount": 32,
-    "/rtx/reflections/sampledLighting/samplesPerPixel": 16,
-}
+# Keep the standard constants available to existing evidence readers.
 _RENDER_SETTINGS = {**_STARTUP_RENDER_SETTINGS, **_CAPTURE_RENDER_SETTINGS}
-_MINIMUM_SETTLING_RENDERS = 8
+_MINIMUM_SETTLING_RENDERS = capture_profile().settling_renders
 
 
-def legacy_rtx_kit_args() -> str:
-    """Return ordered Kit startup arguments for the stable legacy RTX mode."""
+def legacy_rtx_kit_args(video_profile: str = "standard") -> str:
+    """Return ordered Kit startup arguments for the selected native profile.
+
+    Args:
+        video_profile: Supported capture profile selector.
+    Returns:
+        Kit arguments declaring the exact renderer and sample settings.
+    Raises:
+        IsaacArenaError: The selector is unsupported.
+    """
 
     def encode(value: Any) -> str:
         return str(value).lower() if type(value) is bool else str(value)
 
     return " ".join(
-        f"--{key}={encode(value)}" for key, value in _RENDER_SETTINGS.items()
+        f"--{key}={encode(value)}"
+        for key, value in render_settings(capture_profile(video_profile)).items()
     )
 
 
@@ -166,10 +157,11 @@ def _assert_physics_unchanged(before: dict, after: dict) -> None:
 
 
 def _rendering_settings_readback(settings: Any) -> dict[str, Any]:
-    actual = {key: settings.get(key) for key in _RENDER_SETTINGS}
+    required = render_settings(simulator_capture_profile())
+    actual = {key: settings.get(key) for key in required}
     if any(
         type(actual[key]) is not type(expected) or actual[key] != expected
-        for key, expected in _RENDER_SETTINGS.items()
+        for key, expected in required.items()
     ):
         raise RuntimeError(
             "Arena video renderer does not match its required capture settings: "
@@ -183,7 +175,7 @@ def _apply_rendering_settings(settings: Any) -> None:
     # settings are consumed. Reassert the deterministic capture renderer at
     # the actual capture boundary and reject unsupported settings before a
     # single render is attempted.
-    for key, value in _CAPTURE_RENDER_SETTINGS.items():
+    for key, value in capture_settings(simulator_capture_profile()).items():
         settings.set(key, value)
     _rendering_settings_readback(settings)
 
@@ -202,7 +194,8 @@ def _rendering_evidence(settings: Any) -> dict[str, Any]:
         "dlss_execution_mode": "quality",
         "dl_denoiser_enabled": True,
         "frame_generation_enabled": False,
-        "minimum_settling_renders": _MINIMUM_SETTLING_RENDERS,
+        "minimum_settling_renders": simulator_capture_profile().settling_renders,
+        "profile": simulator_capture_profile().name,
         "stochastic_accumulation": False,
         "readback_phase": "after_final_accepted_render",
         "settings": actual,
@@ -270,7 +263,7 @@ def _ready_capture_frame(env: Any, context: Any) -> tuple[np.ndarray, int, int]:
         # The first ready frame establishes the temporal-history baseline. Only
         # subsequent consecutive ready renders count as TAA settling.
         settling_renders = max(0, consecutive_ready_renders - 1)
-        if settling_renders >= _MINIMUM_SETTLING_RENDERS:
+        if settling_renders >= simulator_capture_profile().settling_renders:
             return frame.copy(), renders, settling_renders
 
 
@@ -477,13 +470,21 @@ def configure_video_capture(env_cfg: Any) -> None:
 
     if env_cfg.recorders is None:
         raise RuntimeError("Arena video capture requires the task's metric recorder")
-    env_cfg.sim.render.carb_settings.update(_CAPTURE_RENDER_SETTINGS)
+    profile = simulator_capture_profile()
+    required = capture_settings(profile)
+    env_cfg.sim.render.carb_settings.update(required)
+    if profile.resolution is not None:
+        # Arena's renderer-backed recorder owns its dimensions independently
+        # of the interactive viewer configuration.
+        env_cfg.video_recorder.window_width, env_cfg.video_recorder.window_height = (
+            profile.resolution
+        )
     # Isaac Lab applies this native Replicator bridge after raw Carb settings;
     # make both configuration paths request the same supported temporal mode.
     env_cfg.sim.render.antialiasing_mode = "TAA"
     env_cfg.sim.render.dlss_mode = 2
     env_cfg.sim.render.enable_dl_denoiser = True
-    env_cfg.sim.render.samples_per_pixel = _CAPTURE_RENDER_SETTINGS[
+    env_cfg.sim.render.samples_per_pixel = required[
         "/rtx/directLighting/sampledLighting/samplesPerPixel"
     ]
     env_cfg.recorders.npa_video = RecorderTermCfg(class_type=_capture_recorder_type())

@@ -74,6 +74,7 @@ change hits most.
 | `test_paidf_image_tags_match_code` | The PAIDF guide builds tags that differ from what submit pulls. Regenerate the guide's build commands from `npa/src/npa/deploy/images.py`. |
 | `test_public_runtime_registry_defaults` | A supported workload inherited a generic build/private registry, emitted an unqualified first-party image, or attached credentials to the official public release. Keep repository-owned defaults on `ghcr.io/nebius/nebius-physical-ai`; require an explicit scoped override for custom bytes. |
 | `test_default_cluster_fits_quickstart` | The default cluster can no longer schedule the documented quickstart. Raise the preset or lower the spec's requests. |
+| `test_workflow_readiness_records` | A readiness record is malformed, orphaned, or no longer matches its adjacent workflow SHA-256. Review the workflow-byte changes and reassess every affected claim before updating the digest; never mechanically preserve or upgrade evidence statuses. |
 
 ## Secrets, Confidentiality, And Consent
 
@@ -101,6 +102,7 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | Guardrail | Fix when it fails |
 |---|---|
 | `test_workbench_image_k8s_prereqs` | An image lacks what SkyPilot needs on Kubernetes (python3, rsync, sudo with NOPASSWD, or the Isaac group/PATH rules). Update the Dockerfile and the shared install script together. |
+| `test_isaac_skypilot_apt_closure` | An Isaac image omits an early SkyPilot transfer package or accepts a missing or removed package. Install `curl`, `fuse`, `netcat-openbsd`, `rsync`, and `wget` in both Isaac build paths, and require installed status for every package. |
 | `test_unbuilt_image_records_agree` | The four files that record whether an image is built disagree. Make them agree; do not mark an image built that is not. |
 | `test_trivy_policy` | `trivy.yaml` no longer matches the current nested schema. Update the config. |
 | `test_public_release_workflows` | The single public GHCR channel drifted: development tags must be immutable full-SHA references, all pre-publication gates must precede the push, promotion must remain exact-digest-bound, failed-build cleanup must refuse shared digests, and release health must stay anonymous/read-only. Restore those contracts in the public publication workflows; never recreate a private candidate channel. |

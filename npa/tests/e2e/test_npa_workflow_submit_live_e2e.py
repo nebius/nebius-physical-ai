@@ -828,7 +828,7 @@ def _assert_recorded_curation(text, raw, relative):
 
 
 def _assert_transfer_recording(client, bucket, prefix, folder, variants, read_json):
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     path = folder / "final.rrd"
     client.download_file(bucket, prefix + "reports/sim2real.rrd", str(path))

@@ -58,6 +58,78 @@ def test_h200_plan_changes_only_hardware_identity() -> None:
         assert h200[key] == b200[key]
 
 
+def test_b200_single_gpu_preserves_h200_workload_and_validation_scope(
+    tmp_path: Path,
+) -> None:
+    plans = [
+        benchmark.benchmark_plan(
+            output_path=str(tmp_path / "results"),
+            topologies="1x1",
+            gpu_family=family,
+            suite=f"{family.lower()}-single-gpu",
+        )
+        for family in ("H200", "B200")
+    ]
+    h200, b200 = plans
+    for field in ("model", "runtime_image", "workload", "seeds", "topologies"):
+        assert b200[field] == h200[field]
+    assert b200["gpu"] == {"family": "B200", "node_gpu_count": 1}
+    assert b200["validation_scope"]["paper_reproduction"] is False
+    assert b200["cells"][0]["measured_attempts"] == 24
+    assert b200["cells"][0]["name"] == "B200_TP1_1GPU"
+    assert b200["schema_version"] == "npa.cosmos3-super.b200-single-gpu-validation.v1"
+
+
+@pytest.mark.parametrize("topology", ["1x1"])
+def test_primary_refuses_a_single_gpu_paper_claim(
+    topology: str, tmp_path: Path
+) -> None:
+    with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match="eight-GPU"):
+        benchmark.benchmark_plan(
+            output_path=str(tmp_path / "results"), topologies=topology
+        )
+
+
+@pytest.mark.parametrize(
+    "overrides", [{"gpu_family": "H200"}, {"attempts": 23}, {"topologies": "8x1"}]
+)
+def test_b200_single_gpu_rejects_contract_drift(
+    overrides: dict, tmp_path: Path
+) -> None:
+    options = dict(
+        output_path=str(tmp_path / "results"),
+        topologies="1x1",
+        gpu_family="B200",
+        suite="b200-single-gpu",
+        attempts=24,
+    )
+    options.update(overrides)
+    with pytest.raises(benchmark.Cosmos3SuperBenchmarkError):
+        benchmark.benchmark_plan(**options)
+
+
+def test_live_benchmark_needs_no_npa_acceptance_but_still_checks_gpu(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE", raising=False)
+    observed = []
+
+    def require_gpu(family, *, expected_count):
+        observed.append((family, expected_count))
+        raise benchmark.Cosmos3SuperBenchmarkError("GPU validation boundary reached")
+
+    monkeypatch.setattr(benchmark, "_require_gpu_family", require_gpu)
+    with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match="GPU validation"):
+        benchmark.run_benchmark(
+            output_path=str(tmp_path / "results"),
+            topologies="1x1",
+            gpu_family="B200",
+            suite="b200-single-gpu",
+        )
+    assert observed == [("B200", 1)]
+
+
 def test_h200_single_gpu_plan_is_tp1_and_explicitly_not_a_paper_cell() -> None:
     plan = benchmark.benchmark_plan(
         output_path="s3://example-bucket/h200-single/",
@@ -100,9 +172,11 @@ def test_h200_single_gpu_plan_is_tp1_and_explicitly_not_a_paper_cell() -> None:
         ({"attempts": 23}, "exactly 24"),
     ],
 )
-def test_h200_single_gpu_suite_rejects_scope_drift(kwargs: dict, message: str) -> None:
+def test_h200_single_gpu_suite_rejects_scope_drift(
+    kwargs: dict, message: str, tmp_path: Path
+) -> None:
     options = {
-        "output_path": "/tmp/results",
+        "output_path": str(tmp_path / "results"),
         "topologies": "1x1",
         "attempts": 24,
         "gpu_family": "H200",
@@ -176,9 +250,11 @@ def test_public_prompt_asset_normalizes_only_terminal_newline() -> None:
         ({"topologies": "1x8,8x1"}, "fixes topologies"),
     ],
 )
-def test_full_suite_rejects_contract_drift(kwargs: dict, message: str) -> None:
+def test_full_suite_rejects_contract_drift(
+    kwargs: dict, message: str, tmp_path: Path
+) -> None:
     options = {
-        "output_path": "/tmp/results",
+        "output_path": str(tmp_path / "results"),
         "topologies": "1x8,2x4,4x2,8x1",
         "attempts": 24,
         "suite": "b200-full",
@@ -188,17 +264,17 @@ def test_full_suite_rejects_contract_drift(kwargs: dict, message: str) -> None:
         benchmark.benchmark_plan(**options)
 
 
-def test_plan_rejects_unqualified_gpu_family() -> None:
+def test_plan_rejects_unqualified_gpu_family(tmp_path: Path) -> None:
     with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match="choose from"):
         benchmark.benchmark_plan(
-            output_path="/tmp/results", topologies="1x8", gpu_family="H100"
+            output_path=str(tmp_path / "results"), topologies="1x8", gpu_family="H100"
         )
 
 
-def test_plan_rejects_uneven_service_distribution() -> None:
+def test_plan_rejects_uneven_service_distribution(tmp_path: Path) -> None:
     with pytest.raises(benchmark.Cosmos3SuperBenchmarkError, match="divide evenly"):
         benchmark.benchmark_plan(
-            output_path="/tmp/results", topologies="8x1", attempts=23
+            output_path=str(tmp_path / "results"), topologies="8x1", attempts=23
         )
 
 

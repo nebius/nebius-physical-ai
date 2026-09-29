@@ -2558,6 +2558,29 @@ def _s3_error_code(exc: BaseException) -> tuple[str, int]:
     return code, status
 
 
+_S3_METADATA_NAME = re.compile(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+")
+
+
+def _normalized_s3_metadata(value: object) -> dict[str, str]:
+    """Normalize case-insensitive S3 user metadata without hiding ambiguity."""
+    if not isinstance(value, dict):
+        raise RoboCasaError("RoboCasa S3 object metadata response is invalid")
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        if (
+            not isinstance(key, str)
+            or _S3_METADATA_NAME.fullmatch(key) is None
+            or not isinstance(item, str)
+            or any(character in item for character in "\r\n\0")
+        ):
+            raise RoboCasaError("RoboCasa S3 object metadata response is invalid")
+        canonical = key.lower()
+        if canonical in normalized:
+            raise RoboCasaError("RoboCasa S3 object metadata response is ambiguous")
+        normalized[canonical] = item
+    return normalized
+
+
 def _s3_head_object(s3: Any, bucket: str, key: str) -> dict[str, Any] | None:
     try:
         response = s3.head_object(Bucket=bucket, Key=key)
@@ -2582,12 +2605,12 @@ def _require_s3_object(
     byte_count: int,
 ) -> None:
     head = _s3_head_object(s3, bucket, key)
-    metadata = head.get("Metadata", {}) if head is not None else {}
-    if (
-        head is None
-        or not isinstance(metadata, dict)
-        or metadata.get(digest_key) != digest
-        or int(head.get("ContentLength", -1)) != byte_count
+    if head is None:
+        raise RoboCasaError(f"RoboCasa S3 object identity mismatch: {key}")
+    metadata = _normalized_s3_metadata(head.get("Metadata"))
+    if metadata.get(digest_key.lower()) != digest or (
+        type(head.get("ContentLength")) is not int
+        or head["ContentLength"] != byte_count
     ):
         raise RoboCasaError(f"RoboCasa S3 object identity mismatch: {key}")
     try:

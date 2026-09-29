@@ -3020,11 +3020,14 @@ class _TransactionalFakeS3:
         *,
         objects: dict[str, tuple[bytes, dict[str, str]]] | None = None,
         fail_copy_number: int | None = None,
+        head_metadata_case: str = "preserve",
     ) -> None:
         self.objects = dict(objects or {})
         self.fail_copy_number = fail_copy_number
+        self.head_metadata_case = head_metadata_case
         self.copy_count = 0
         self.events: list[tuple[str, str]] = []
+        self.head_keys: list[str] = []
 
     def list_objects_v2(self, *, Prefix, MaxKeys, **_kwargs):
         keys = sorted(key for key in self.objects if key.startswith(Prefix))
@@ -3040,6 +3043,19 @@ class _TransactionalFakeS3:
             body, metadata = self.objects[Key]
         except KeyError as exc:
             raise _S3NotFound() from exc
+        self.head_keys.append(Key)
+        if self.head_metadata_case == "title":
+            metadata = {key.title(): value for key, value in metadata.items()}
+        elif self.head_metadata_case == "alternating":
+            metadata = {
+                "".join(
+                    character.upper() if index % 2 else character.lower()
+                    for index, character in enumerate(key)
+                ): value
+                for key, value in metadata.items()
+            }
+        else:
+            assert self.head_metadata_case == "preserve"
         return {
             "ContentLength": len(body),
             "Metadata": dict(metadata),
@@ -3144,6 +3160,67 @@ def test_upload_output_resumes_same_commit_after_partial_copy(
     assert "runs/resume/_NPA_COMPLETE.json" in s3.objects
     assert sum(kind == "claim" for kind, _key in s3.events) == 1
     assert sum(kind == "commit" for kind, _key in s3.events) == 1
+
+
+@pytest.mark.parametrize("head_metadata_case", ["title", "alternating"])
+def test_upload_output_normalizes_provider_metadata_casing_across_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    head_metadata_case: str,
+) -> None:
+    (tmp_path / "a.bin").write_bytes(b"a")
+    (tmp_path / "b.bin").write_bytes(b"b")
+    s3 = _TransactionalFakeS3(
+        fail_copy_number=2,
+        head_metadata_case=head_metadata_case,
+    )
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+    result = {"ok": True}
+    uri = "s3://bucket/runs/cased-metadata"
+
+    with pytest.raises(OSError, match="injected copy failure"):
+        capabilities.upload_output(tmp_path, uri, result)
+    s3.fail_copy_number = None
+    capabilities.upload_output(tmp_path, uri, result)
+    capabilities.upload_output(tmp_path, uri, result)
+
+    expected = {
+        "runs/cased-metadata/_NPA_CLAIM.json",
+        "runs/cased-metadata/_NPA_COMPLETE.json",
+        "runs/cased-metadata/a.bin",
+        "runs/cased-metadata/b.bin",
+    }
+    assert expected <= set(s3.head_keys)
+    assert sum(kind == "stage" for kind, _key in s3.events) == 4
+    assert sum(kind == "claim" for kind, _key in s3.events) == 1
+    assert sum(kind == "commit" for kind, _key in s3.events) == 1
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"content-sha256": "digest", "Content-Sha256": "digest"},
+        {1: "digest"},
+        {"content-sha256": b"digest"},
+        {"invalid key": "digest"},
+        {"content-sha256": "digest\n"},
+    ],
+)
+def test_s3_object_verification_rejects_ambiguous_or_malformed_metadata(
+    metadata: dict[object, object],
+) -> None:
+    s3 = _TransactionalFakeS3(objects={"object": (b"x", metadata)})
+
+    with pytest.raises(RoboCasaError, match="metadata response is"):
+        capabilities._require_s3_object(
+            s3,
+            "bucket",
+            "object",
+            digest_key="content-sha256",
+            digest="digest",
+            content_sha256=hashlib.sha256(b"x").hexdigest(),
+            byte_count=1,
+        )
 
 
 def test_upload_output_rejects_different_commit_after_claim(

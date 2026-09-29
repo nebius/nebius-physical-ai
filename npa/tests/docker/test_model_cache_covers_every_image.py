@@ -10,6 +10,7 @@ new cache-shaped variable has to be either redirected or explicitly excused.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -56,6 +57,7 @@ EXCUSED: dict[str, str] = {
     "NPA_ISAAC_CACHE_DIR": "Isaac wheel closure (warm-isaac-cache.yaml)",
     "NPA_LTX_RUNTIME_CACHE": "CUDA wheel closure",
     "NPA_WAN_RUNTIME_CACHE": "CUDA wheel closure",
+    "NPA_ANTIOCH_RUNTIME_CACHE": "Antioch CLI/simulator closure, not model weights",
     # Per-tool data mounts that the VM deploy already bind-mounts from the host,
     # so they outlive the container by their own mechanism.
     "COSMOS_DATA_HOME": "host-mounted data dir (deploy_cosmos)",
@@ -120,6 +122,10 @@ EXCUSED_EMPTY_DIRS = {
     "fiftyone-data": "dataset app state",
     "openpi-cache": "fallback when no durable cache is configured; redirected when one is",
     "leisaac-cache": "fallback when no durable cache is configured; redirected when one is",
+    "runtime-cache": "Antioch CLI/simulator scratch cache in its CPU service pod",
+    "private": "memory-backed owner-only Antioch credentials copied from Secrets",
+    "state": "sanitized Antioch controller/relay counters and stop signal",
+    "runtime": "ephemeral Antioch project and supported CLI supervisor state",
     "isaac-cache": "Isaac wheel closure; warm-isaac-cache.yaml is its shared volume",
     "tmp": "scratch space",
     "shm": "/dev/shm, sized for the renderer",
@@ -130,19 +136,39 @@ EXCUSED_EMPTY_DIRS = {
 SRC_ROOT = Path(__file__).resolve().parents[2] / "src" / "npa"
 
 
+def _declared_empty_dir_volumes(source: Path) -> dict[str, str]:
+    """Find literal pod-volume dictionaries without treating policy vocabulary as one."""
+
+    tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+    found: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        literal_keys = {
+            key.value: value
+            for key, value in zip(node.keys, node.values)
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        }
+        if "emptyDir" not in literal_keys:
+            continue
+        name = literal_keys.get("name")
+        volume_name = (
+            name.value
+            if isinstance(name, ast.Constant) and isinstance(name.value, str)
+            else None
+        )
+        key = volume_name or f"<unnamed in {source.name}>"
+        found[key] = source.relative_to(SRC_ROOT).as_posix()
+    return found
+
+
 def test_no_new_pod_local_cache_volume_appears_unnoticed() -> None:
-    named = re.compile(r'\{\s*"name":\s*"([\w.-]+)",\s*\n?\s*"emptyDir"', re.M)
     found: dict[str, str] = {}
     for source in SRC_ROOT.rglob("*.py"):
         text = source.read_text(encoding="utf-8")
         if '"emptyDir"' not in text:
             continue
-        for name in named.findall(text):
-            found[name] = source.relative_to(SRC_ROOT).as_posix()
-        if not named.findall(text):
-            found[f"<unnamed in {source.name}>"] = source.relative_to(
-                SRC_ROOT
-            ).as_posix()
+        found.update(_declared_empty_dir_volumes(source))
 
     unaccounted = {
         name: where for name, where in found.items() if name not in EXCUSED_EMPTY_DIRS
