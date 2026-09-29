@@ -106,6 +106,11 @@ separate image validation requirements.
 The AnyIO floor is 4.14.2 for ordinary installs and the application lock, covering
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
 and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
+
+OAuthlib's floor is 4.0.0 for ordinary installs and both application/CI locks,
+covering [revocation callback injection](https://github.com/oauthlib/oauthlib/security/advisories/GHSA-hj66-6f7g-4r5v)
+and [PKCE timing disclosure](https://github.com/oauthlib/oauthlib/security/advisories/GHSA-xpv3-w29h-x7cv).
+
 `.github/dependabot.yml` checks application declarations, scanner, browser, and
 Actions dependencies daily and proposes version updates in one cross-ecosystem
 `dependencies` PR. The generated `npa/ci/requirements.txt` body is sealed against
