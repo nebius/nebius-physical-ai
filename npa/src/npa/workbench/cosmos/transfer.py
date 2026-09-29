@@ -1985,6 +1985,9 @@ def build_run_manifest(
     content_guardrails_enabled = _provenance_boolean(
         first, "content_guardrails_enabled", default=True
     )
+    for clip in clips[1:]:
+        _provenance_boolean(clip, "input_conditioned", default=False)
+        _provenance_boolean(clip, "content_guardrails_enabled", default=True)
     variant_failures = list(failures or [])
     frames = [f for c in clips for f in c.get("frames", [])]
     manifest = {

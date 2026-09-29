@@ -1030,6 +1030,37 @@ def test_write_run_manifest_rejects_malformed_provenance_before_upload(
     assert uploads == []
 
 
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+def test_write_run_manifest_checks_provenance_on_later_clips(field: str) -> None:
+    class NoUploadStorage:
+        def upload_file(self, _local: str, _uri: str) -> str:
+            pytest.fail("invalid later-clip provenance reached publication")
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        tx.write_run_manifest(
+            [{"clip": "aug-0"}, {"clip": "aug-1", field: "false"}],
+            "s3://bucket/run/augment/",
+            storage_client=NoUploadStorage(),
+        )
+
+
+def test_build_run_manifest_preserves_first_clip_defaults_for_mixed_variants() -> None:
+    manifest = tx.build_run_manifest(
+        [
+            {"clip": "aug-0"},
+            {
+                "clip": "aug-1",
+                "input_conditioned": True,
+                "content_guardrails_enabled": False,
+            },
+        ]
+    )
+
+    assert manifest["variant_count"] == 2
+    assert manifest["input_conditioned"] is False
+    assert manifest["content_guardrails_enabled"] is True
+
+
 def test_multi_variant_publish_writes_one_clip_per_combo(
     tmp_path: Path, monkeypatch
 ) -> None:
