@@ -535,6 +535,104 @@ def test_rendered_gpu_fallback_route_is_zero_token_and_confirmation_bound(
         sys.modules.pop(module_name, None)
 
 
+def _render_test_deployment() -> dict[str, str]:
+    return {
+        "deployment_id": "npa-agent-render-test",
+        "deployment_name": "agent",
+        "project_alias": "smoke",
+        "runtime_namespace": "smoke/agent",
+        "repository": "nebius/nebius-physical-ai",
+        "branch": "render-test",
+        "commit": "synthetic-commit",
+        "source_tree": "synthetic-tree",
+        "short_commit": "synthetic",
+        "workspace_label": "NPA Workbench",
+        "bootstrap_timestamp": "2026-01-01T00:00:00Z",
+    }
+
+
+def _gpu_fallback_request() -> dict[str, object]:
+    return {
+        "gpu_family": "rtx-pro",
+        "gpu_product": "RTXPRO6000",
+        "gpu_count": 1,
+        "image": "registry.example/npa@sha256:synthetic",
+        "image_digest": "sha256:synthetic",
+        "sm": "sm_120",
+        "rt_cores_required": True,
+        "backend": "kubernetes",
+        "model": "policy-a",
+        "workload_tier": "render",
+        "execution_mode": "train",
+        "boot_disk_count": 1,
+        "boot_disk_size_bytes": 1023 * 1024**3,
+        "pool": "on-demand",
+    }
+
+
+def _assert_malformed_success_preserves_state(module, attempt, payload) -> None:
+    tracked_state = copy.deepcopy(module._load_state())
+    tracked_confirmation = module._peek_agent_confirm_token()
+    malformed_values = ("false", "true", 0, 1, None, [], {}, [False])
+    for malformed in malformed_values:
+        with pytest.raises(
+            module.HTTPException, match="success must be a boolean"
+        ) as raised:
+            attempt({**payload, "success": malformed})
+        assert raised.value.status_code == 400
+        assert module._load_state() == tracked_state
+        assert module._peek_agent_confirm_token() == tracked_confirmation
+
+
+def test_rendered_gpu_fallback_requires_literal_boolean_success(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr(
+        agent_module,
+        "build_deployment_manifest",
+        lambda **_kwargs: _render_test_deployment(),
+    )
+    module_name = "npa_rendered_gpu_fallback_boolean_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "gpu-fallback-boolean-state.json"
+    module._STATE_STORE = None
+    request = _gpu_fallback_request()
+    candidate = {**request, "pool": "preemptible"}
+    payload = {
+        "logical_allocation": "strict-boolean-allocation",
+        "request": request,
+        "failure": {"code": "quota_exhausted"},
+        "evidence": {"source": "scheduler"},
+        "preemptible_candidate": candidate,
+    }
+    attempt = next(
+        route.endpoint
+        for route in module.app.router.routes
+        if getattr(route, "path", "") == "/agent/gpu-allocation/attempt"
+    )
+    try:
+        first = attempt(payload)
+        second = attempt(payload)
+        assert first["allocation"]["qualifying_attempts"] == 1
+        assert second["allocation"]["qualifying_attempts"] == 2
+
+        prompt = attempt({**payload, "success": False})
+        assert prompt["allocation"]["qualifying_attempts"] == 3
+        assert prompt["allocation"]["status"] == "awaiting-consent"
+        assert prompt["needs_confirmation"] is True
+
+        _assert_malformed_success_preserves_state(module, attempt, payload)
+
+        succeeded = attempt({**payload, "success": True})
+        assert succeeded["decision"]["reason"] == "allocation_succeeded"
+        assert succeeded["allocation"]["qualifying_attempts"] == 0
+        assert succeeded["allocation"]["status"] == "succeeded"
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_gpu_decline_preserves_unrelated_pending_confirmation(
     monkeypatch, tmp_path
 ) -> None:

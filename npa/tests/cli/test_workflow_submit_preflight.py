@@ -1655,6 +1655,50 @@ def test_paidf_input_selectors_conflict_before_preflight() -> None:
     assert "missing prerequisites" not in result.output
 
 
+@pytest.fixture
+def paidf_input_submit_ready(monkeypatch, mocker):
+    _mock_sky_bin_ok(monkeypatch)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://artifacts/npa-src/npa")
+    monkeypatch.setenv("HF_TOKEN", "synthetic-hf-token")
+    monkeypatch.setattr(workflow_cli, "_adopt_npa_kubeconfig", lambda _: True)
+    mocker.patch.object(workflow_cli, "_verify_submit_controller_owner")
+    mocker.patch.object(workflow_cli, "_preflight_submit_images", return_value={})
+    mocker.patch.object(workflow_cli, "_enforce_workflow_access")
+    mocker.patch(
+        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access"
+    )
+
+
+def test_paidf_listing_diagnosis_reaches_submit_without_private_error_text(
+    monkeypatch, mocker, paidf_input_submit_ready
+):
+    from botocore.exceptions import ClientError
+    from npa.workflows import data_factory_input as dfi
+
+    monkeypatch.setattr(dfi.shutil, "which", lambda name: f"/test-bin/{name}")
+    storage = mocker.Mock()
+    storage.s3.get_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey"}}, "GetObject"
+    )
+    storage.s3.get_paginator.return_value.paginate.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "private/capture.mp4"}},
+        "ListObjectsV2",
+    )
+    mocker.patch(
+        "npa.clients.storage.StorageClient.from_environment", return_value=storage
+    )
+    launch = mocker.patch.object(workflow_cli, "_run_npa_workflow_runtime")
+
+    result = _submit("--skip-preflight", "--var", "bucket=artifacts")
+
+    assert result.exit_code == 1, result.output
+    assert "ClientError (AccessDenied)" in result.output
+    assert "private/capture.mp4" not in result.output
+    storage.s3.get_paginator.return_value.paginate.assert_called_once()
+    storage.download_path.assert_not_called()
+    launch.assert_not_called()
+
+
 def test_paidf_lerobot_selector_is_planned_without_object_store_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
