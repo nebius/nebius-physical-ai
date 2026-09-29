@@ -11,9 +11,10 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Graph fetches the complete public capture, reconstructs measured surfaces, derives supported resets, verifies native physics, trains, evaluates and writes HTML. Native success is separately unverified.",
+      "reason": "The complete public scan workflow qualified at source 39a662651: one measured collision scene, 4,000 robots, 500 PPO updates and 3,415/4,000 successful held-out routes (85.375%), above the unchanged 80% gate. Independent native controls, trajectory audits, full readback and original offline report checks passed. New-site, physical-robot and camera-policy transfer remain outside this qualification.",
       "evidence": [
-        "docs/workbench/guides/rgbd-scan-to-policy-demo.md"
+        "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
+        "docs/workbench/evidence/public-demos/real-to-sim.json"
       ]
     }
   },
@@ -25,10 +26,11 @@
     },
     "worker_input": {
       "status": "verified",
-      "reason": "Fresh official archive downloaded with the expected hash; complete conversion, TSDF reconstruction, measured cases and USDZ assembly completed locally. 1984 integration frames,501 held-out frames,80703 depth rays,99.903% coverage,94.118% within10cm,15941 supported reset pairs. This is CPU input qualification.",
+      "reason": "The public TUM capture was fetched with its expected archive hash and consumed by the complete workflow. Measured reconstruction used 1,984 integration frames and 501 withheld depth frames; 501 native PhysX rays verified the 921,561-triangle collision scene. Future input overrides require their own geometry and calibration checks.",
       "evidence": [
         "npa/tests/workbench/test_nurec_navigation_sample.py",
-        "docs/workbench/guides/rgbd-scan-to-policy-demo.md"
+        "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
+        "docs/workbench/evidence/public-demos/real-to-sim.json"
       ]
     },
     "credentials": {
@@ -38,13 +40,17 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "Digest-pinned existing SONIC and Isaac images with staged source; the new combined graph has not yet been qualified on native workers.",
-      "evidence": []
+      "reason": "The completed source 39a662651 run binds actual native image, source-overlay, recipe and checkpoint hashes. A future operator must verify the selected image and source. Observed robot/actuator hashes after load do not establish full vendor asset closure pinned before load.",
+      "evidence": [
+        "docs/workbench/evidence/public-demos/real-to-sim.json"
+      ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "RTX PRO6000 native physics,4000-robot PPO and held-out evaluation must run through this combined workflow. Existing component results do not qualify a fresh revision.",
-      "evidence": []
+      "reason": "The full 4,000-robot, 500-update run and 4,000-case evaluation qualified on RTX PRO 6000 Blackwell with process-bound GPU evidence. Each new target still requires its own GPU/runtime/scratch health checks.",
+      "evidence": [
+        "docs/workbench/evidence/public-demos/real-to-sim.json"
+      ]
     }
   }
 }

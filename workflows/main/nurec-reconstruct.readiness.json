@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The full public demo completed at source 2eb77537d3b09374b8c31457c634d8c1ab036c12: pinned NCore input, 30000 checkpoint steps, USDZ, 38 rig-offset novel views, native metrics and decoded Rerun. Complete native readback and actual demo view passed. The receipt preserves the original HTML and identifies the subsequent CPU metric-display correction. Collision geometry and navigation readiness are outside this Gaussian reconstruction qualification.",
+      "reason": "The full public demo completed at source 39a662651f6b46db0ce57dbff5fb9828c9d22643: pinned NCore input, 30,000 checkpoint steps, USDZ, 38 rig-offset novel views, native metrics and decoded Rerun. All 216 published objects passed independent readback; actual demo view fetched byte-identical canonical native HTML with no presentation repair. Collision geometry and navigation readiness are outside this Gaussian reconstruction qualification.",
       "evidence": [
         "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
         "docs/workbench/evidence/public-demos/nurec.json"
@@ -30,7 +30,7 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The pinned public sample was freshly prepared and consumed by the full demo at source 2eb77537d. Its hashes and decoded outputs are qualified in the receipt. Future sample overrides require their own input checks.",
+      "reason": "The pinned public sample was freshly prepared and consumed by the full demo at source 39a662651. Its hashes and decoded outputs are qualified in the receipt. Future sample overrides require their own input checks.",
       "evidence": [
         "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
         "docs/workbench/evidence/public-demos/nurec.json"
@@ -46,7 +46,7 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The receipt binds actual native worker image digests and staged source to revision 2eb77537d. Each future run must verify its selected image and intended source before execution.",
+      "reason": "The receipt binds actual native worker image digests and staged source to revision 39a662651. Each future run must verify its selected image and intended source before execution.",
       "evidence": [
         "docs/workbench/guides/neural-reconstruction.md#promotion-evidence",
         "docs/workbench/evidence/public-demos/nurec.json"

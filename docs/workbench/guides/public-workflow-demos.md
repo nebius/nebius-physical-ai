@@ -140,12 +140,13 @@ The earlier scan-trained candidate scored 0/4,000 on the held-out warehouse;
 that negative result remains historical evidence. The new replay experiment
 must establish its own result before being described as effective.
 
-The SDG and NuRec demo commands have full GPU qualification, complete artifact
-readback, and offline report checks recorded in the
-[source-bound measurements](../evidence/public-demos/README.md). Each receipt
-identifies the exact native source revision and report bytes. Scan-to-policy and
-RL improvement still require qualifying policy results; execution and physics
-checks alone do not establish useful navigation or improvement over a baseline.
+The scan-to-policy, SDG, and NuRec demos have full GPU qualification, complete
+artifact readback, and offline report checks recorded in the
+[source-bound measurements](../evidence/public-demos/README.md). Scan navigation
+succeeded on 3,415/4,000 held-out routes (85.375%) in the reconstructed public
+office. Each receipt identifies the exact native source revision and report
+bytes. RL improvement still requires a qualifying final comparison; execution
+and physics checks alone do not establish improvement over a baseline.
 
 To stop a run, use `npa workbench workflow cancel '<run-id>' --project '<project>'`.
 Cancel and verify terminal status before removing dedicated infrastructure.

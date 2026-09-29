@@ -4,7 +4,7 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Schema validation and plan-spec exited 0 for this exact workflow revision with its offline preview stage. These checks did not launch GPUs. Historical full public warehouse execution is retained separately and does not qualify the changed workflow.",
+      "reason": "Schema validation and plan-spec exited 0 for this exact workflow revision with its offline preview stage. Full source-bound public warehouse execution and output qualification are recorded separately.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/multicamera-rgbd-warehouse.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/multicamera-rgbd-warehouse.yaml --run-id preview --json"
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Fresh preparation, capture and validation completed through the common demo command at source 2eb77537d3b09374b8c31457c634d8c1ab036c12. Independent full readback verified 4505 capture artifacts, 1060 views and 976895672 metric-depth pixels and fused colored points. The actual demo view downloaded the canonical HTML and offline desktop/mobile checks passed. This establishes calibrated sensor capture along a scripted route, not autonomous navigation.",
+      "reason": "Fresh preparation, capture and validation completed through the common demo command at source 39a662651f6b46db0ce57dbff5fb9828c9d22643. Independent full readback verified 4505 capture artifacts, 1060 views and 976895672 metric-depth pixels and fused colored points. The actual demo view downloaded the canonical HTML and offline desktop/mobile checks passed. This establishes calibrated sensor capture along a scripted route, not autonomous navigation.",
       "evidence": [
         "npa/tests/workflows/test_isaac_rgbd.py",
         "npa/tests/workflows/test_isaac_rgbd_runtime.py",
@@ -25,7 +25,7 @@
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "The completed reference proved immutable publication and independent readback of 4,506 objects. A new run must replace the example bucket with operator-owned writable storage and a fresh prefix.",
+      "reason": "The completed source-bound demo proved immutable publication and independent readback of 6,562 objects. A new run must supply operator-owned writable storage and a fresh prefix.",
       "evidence": [
         "docs/workbench/evidence/multicamera-rgbd/native-validation.json",
         "docs/workbench/evidence/public-demos/synthetic-data.json"
@@ -33,10 +33,11 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "The pinned public sample was freshly prepared and consumed by the full demo at source 2eb77537d. Its hashes and decoded outputs are qualified in the receipt. Future sample overrides require their own input checks.",
+      "reason": "The versioned public warehouse was freshly prepared and consumed at source 39a662651; all 2,034 prepared input files were hash-verified. This is per-run input-byte evidence, not an immutable upstream revision claim. Future overrides require their own checks.",
       "evidence": [
         "docs/workbench/evidence/multicamera-rgbd/native-validation.json",
-        "docs/workbench/evidence/public-demos/synthetic-data.json"
+        "docs/workbench/evidence/public-demos/synthetic-data.json",
+        "docs/workbench/evidence/public-demos/synthetic-data-attribution.json"
       ]
     },
     "credentials": {
@@ -49,7 +50,7 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The receipt binds actual native worker image digests and staged source to revision 2eb77537d. Each future run must verify its selected image and intended source before execution.",
+      "reason": "The receipt binds actual native worker image digests and staged source to revision 39a662651. Each future run must verify its selected image and intended source before execution.",
       "evidence": [
         "docs/workbench/evidence/multicamera-rgbd/native-validation.json",
         "docs/workbench/evidence/public-demos/synthetic-data.json"
