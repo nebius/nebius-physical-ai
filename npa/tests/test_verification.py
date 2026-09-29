@@ -546,6 +546,24 @@ def test_workflow_state_redactor_preserves_token_counters() -> None:
     assert redact_text(message) == message
 
 
+def test_token_counter_key_matching_does_not_copy_remaining_suffixes() -> None:
+    from npa.diagnostic_redaction import _has_secret_key_marker
+
+    class CountedKey(str):
+        copied_characters = 0
+
+        def __getitem__(self, index):
+            if isinstance(index, slice):
+                self.copied_characters += len(range(*index.indices(len(self))))
+            return super().__getitem__(index)
+
+    key = CountedKey("tokenizer_" * 2_000)
+
+    assert not _has_secret_key_marker(key)
+    assert key.copied_characters <= len(key)
+    assert _has_secret_key_marker(key + "password")
+
+
 @pytest.mark.parametrize(
     "key",
     [

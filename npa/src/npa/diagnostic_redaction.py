@@ -114,9 +114,9 @@ def _has_secret_key_marker(key: str) -> bool:
         search_from = 0
         while (start := key.find(marker, search_from)) >= 0:
             end = start + len(marker)
-            suffix = key[end:]
             if marker == "token" and (
-                suffix == "s" or suffix.startswith(("s_", "s-", "izer"))
+                (end + 1 == len(key) and key[end] == "s")
+                or key.startswith(("s_", "s-", "izer"), end)
             ):
                 search_from = start + 1
                 continue
