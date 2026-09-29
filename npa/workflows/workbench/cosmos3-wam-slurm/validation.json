@@ -271,5 +271,17 @@
     "infrastructure_errors": 0,
     "full_500_trial_evaluation": false,
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-final-visual-16/evidence.json"
+  },
+  "four_gpu_live_execution": {
+    "completed_full_schedule": false,
+    "native_training_updates_observed": true,
+    "observed_update": 6,
+    "processes_attributed": 4,
+    "nodes": 1,
+    "provisioned_vm_gpus": 8,
+    "fixed_window_device_samples": 480,
+    "timing_repetitions_completed": 0,
+    "policy_quality_measured": false,
+    "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/evidence.json"
   }
 }

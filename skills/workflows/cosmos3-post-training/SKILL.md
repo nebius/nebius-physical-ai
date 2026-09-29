@@ -79,7 +79,11 @@ pending campaign status without rewriting those bytes.
 The reserved two-node run has sixteen-rank NCCL/InfiniBand proof, attributed
 training processes and full-run telemetry. Native Slurm was tested; Soperator
 remains an unvalidated deployment alternative. One FP32-plus-EMA B200 failed
-before its first update; two/four GPUs were not measured and 32 GPUs are plan-only.
+before its first update. Four active B200s subsequently passed NCCL and initial
+optimizer updates on an exclusive eight-GPU VM; see
+`docs/workbench/evidence/cosmos3-wam-live-training-4/README.md`. Full four-GPU
+duration, scaling and quality are pending in that record. Distinguish four active
+training GPUs from eight provisioned GPUs. Two GPUs are untested; 32 are plan-only.
 Current upstream LIBERO already describes two-node training; avoid claiming
 that all public Cosmos3 recipes stop at one node.
 

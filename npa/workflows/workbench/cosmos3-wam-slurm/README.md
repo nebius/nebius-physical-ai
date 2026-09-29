@@ -36,8 +36,10 @@ quality improvement from GPU count with one training seed.
 
 The measured deployment uses native Slurm 23.11.4 on dedicated reserved GPU
 VMs, with controller, accounting and NFS on the first worker. Soperator remains
-an unvalidated alternative. Two/four GPUs were not measured; 32 GPUs remain a
-static plan. [validation.json](validation.json) records these boundaries.
+an unvalidated alternative. A subsequent [four-GPU execution check](../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/README.md)
+passed NCCL and initial optimizer updates; its full schedule and performance
+measurements remain pending. Two GPUs are untested and 32 GPUs remain a static
+plan. [validation.json](validation.json) records these boundaries.
 
 [Sixteen-rank InfiniBand proof](../../../../docs/workbench/evidence/cosmos3-wam-collective-16/README.md),
 [process-attributed live training](../../../../docs/workbench/evidence/cosmos3-wam-live-training-16/README.md),
@@ -94,8 +96,9 @@ This option specifies active training devices, not the cloud VM shape. The
 reserved B200 platform currently offers one- and eight-GPU VMs in the campaign
 project. Running on four devices of an exclusive eight-GPU host still retains
 the whole VM allocation. Report active training GPU-hours and provisioned
-capacity separately. The existing 8/16-GPU evidence does not validate four-GPU
-completion; publish a separate measured record after the new run succeeds.
+capacity separately. The [four-rank process proof and GPU telemetry](../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/README.md)
+establish initial native training with these settings. Full four-GPU completion,
+timing repetitions and policy quality remain pending in that captured record.
 
 ## Files and settings
 

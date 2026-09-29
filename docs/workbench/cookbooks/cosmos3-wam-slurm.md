@@ -32,7 +32,9 @@ All numeric sources, hashes and figure reproduction commands are linked.
 
 A one-GPU FP32-plus-EMA attempt exhausted memory before its first optimizer
 update even at one sample per step; this does not establish the minimum GPU
-count. Two and four GPUs were not tested. The
+count. Two GPUs remain untested. A later [four-GPU run](../evidence/cosmos3-wam-live-training-4/README.md)
+passed NCCL and initial optimizer updates; its full schedule, timings and quality
+were pending at capture. The
 [runtime evidence](../evidence/cosmos3-wam-b200-runtime.json) and
 [validation record](../../../npa/workflows/workbench/cosmos3-wam-slurm/validation.json)
 keep those limits explicit. Both bootstraps install FFmpeg and the launcher
