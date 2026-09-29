@@ -90,6 +90,7 @@ Treat every failure here as blocking. Do not add an exemption to make one pass.
 | `test_image_security_gate` | The required security check stopped waiting for image scans, lost PR/merge-queue coverage, duplicated automatic runs, or changed existing alert identity. Restore full PR image validation or trusted identical-tree queue evidence, fail-closed result checks, distinct concurrency groups, and reporting configuration. |
 | `test_security_scan_input` | The manual image-scan input became shell syntax. Pass it through a step environment variable and quote that variable in the command. |
 | `test_agent_secret_guard` | A secret path became tracked, `.gitignore` stopped covering agent/cursor secrets, or a literal secret or live IP landed in agent files. Remove it and rotate. |
+| `test_agent_credential_provenance_isolation` | Non-live tests inherited agent credential provenance and could reach a provider. Keep `NPA_NEBIUS_CREDENTIAL_SOURCE` in the shared environment scrub; set explicit fixture provenance only after isolation runs. |
 | `test_agent_no_hardcoded_data` | Agent or insights source embeds run names, answers, or infra endpoints. Resolve them from live tool observations instead. |
 | `test_access_key_list_safety` | Docs or code request secret-bearing access-key list JSON. Use a `--format jsonpath=...` projection. |
 | `test_isaac_eula_plumbing` | Isaac consent uses something other than the single run-scoped mechanism. Use the scoped `ACCEPT_EULA` plumbing. |
