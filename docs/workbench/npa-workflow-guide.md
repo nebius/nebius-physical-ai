@@ -34,7 +34,20 @@ npa workbench workflow preflight-images "$workflow_spec" \
 ```
 
 Review the resolved GPU shape, image, and output prefix. Image preflight may
-create and delete a temporary probe pod. Then run the workload:
+create and delete a temporary probe pod.
+
+Image preflight follows SkyPilot's resource override behavior. `--infra` replaces
+the declared target for a single task. SkyPilot ignores that override for
+multi-task YAML and JobGroups, while runtime workflows can also launch singleton
+waves. Preflight therefore checks both declared and selected pull authorities
+for a workflow with multiple reachable tasks, including parallel and mutually
+exclusive decision branches. Set an explicit cloud on every resource profile;
+a missing cloud cannot be certified through an override that SkyPilot may ignore.
+Kubernetes resource regions must agree with the complete selected context.
+This conservative check can require operator registry access even when a
+particular runtime execution uses only singleton Kubernetes waves.
+
+Then run the workload:
 
 ```bash
 npa workbench workflow submit "$workflow_spec" \

@@ -65,18 +65,6 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 
 ## Examples
 
-Image preflight follows SkyPilot's resource override behavior. `--infra` replaces
-the declared target for a single task. SkyPilot ignores that override for
-multi-task YAML and JobGroups, while runtime workflows can also launch singleton
-waves. Preflight therefore checks both declared and selected pull authorities
-for a workflow with multiple reachable tasks, including parallel and mutually
-exclusive decision branches. Set
-an explicit cloud on every resource profile; a missing cloud cannot be certified
-through an override that SkyPilot may ignore. Kubernetes resource regions must
-agree with the selected context. This conservative check can require operator
-registry access even when a particular runtime execution uses only singleton
-Kubernetes waves.
-
 ```bash
 npa workbench workflow --help
 npa workbench workflow prepare-run --help
