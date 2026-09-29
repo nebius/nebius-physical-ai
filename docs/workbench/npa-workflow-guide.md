@@ -296,12 +296,27 @@ declared S3 output evidence
 is authoritative, and any live prior attempt is cancelled by exact provider ID
 with terminal verification.
 
-New runtime attempts record a versioned identity for the canonical set of image
-references resolved after overrides and digest pins. The record states whether
-every reference is content-addressed with `@sha256:`. A hash over a mutable tag
-identifies that reference string; it is not evidence of the image bytes. Older,
-unversioned attempts retain their legacy digest-pin-set comparison alongside the
-exact workflow and source identities.
+New runtime attempts with rendered images record
+`npa.workflow.image-selection-references.v1`. This identity binds the complete
+v3 image selection (reference-to-digest pins, override selectors, registry, GPU
+target, and variant) to each state's tool and resolved image reference. The
+record also retains the canonical reference set and whether every reference is
+content-addressed with `@sha256:`. A hash over a mutable tag identifies that
+reference string; it is not evidence of the image bytes.
+
+Completed replay, durable output reuse, and supervised recovery reject older
+value-only, pin-only, reference-set-only, or unversioned image-bearing records
+that cannot prove this binding. They do not fall back to the old digest-pin-set
+comparison or rewrite saved identities. Ordinary in-flight provider adoption
+remains a separate legacy path; it is not a migration mechanism.
+
+For an upgrade, keep existing runs on their original controller, source, and
+images, and use the upgraded controller for new run IDs. Do not update an active
+controller in place or edit its ledger to bypass an identity mismatch. Retire
+the original controller only after its runs are terminal. Replacing an old run
+requires terminal evidence or verified exact cancellation before a new run ID
+is submitted. Follow the [controller rollout procedure](../run-lifecycle.md#controller-rollout-with-existing-runs)
+when merging and deploying these changes.
 
 Each wave also records its resolved per-state resource profiles before launch.
 Status uses those snapshots when the initial submission preview is unavailable,
