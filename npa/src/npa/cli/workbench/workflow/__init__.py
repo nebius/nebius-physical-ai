@@ -4442,17 +4442,18 @@ def _image_preflight_execution_steps(
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.scheduler import resources_for_step
+    from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
 
     selected = str(infra or "").strip()
     if not selected:
         return list(steps)
-    kind, _, location = selected.partition("/")
+    kind = selected.partition("/")[0]
     cloud = kind.casefold()
     if cloud == "k8s":
         cloud = "kubernetes"
     elif cloud in {"*", "none"}:
         cloud = ""
-    context = location.partition("/")[0]
+    context = context_from_infra(selected)
     overridden = []
     for step in steps:
         resources = resources_for_step(spec, step)

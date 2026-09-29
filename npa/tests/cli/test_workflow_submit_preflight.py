@@ -2335,6 +2335,62 @@ def test_multitask_different_context_fails_before_registry_or_cluster_checks(
     target.assert_not_called()
 
 
+@pytest.mark.parametrize("infra_prefix", ["k8s", "kubernetes"])
+@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("declared_context", ["foo/bar", "foo"])
+def test_multitask_context_with_slash_requires_exact_probe_target(
+    tmp_path: Path,
+    mocker,
+    infra_prefix: str,
+    parallel: bool,
+    declared_context: str,
+) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    path = _write_pull_authority_spec(
+        tmp_path,
+        ("kubernetes", "kubernetes"),
+        parallel=parallel,
+        region=declared_context,
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    target = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
+    bootstrap = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(path),
+            "--infra",
+            f"{infra_prefix}/foo/bar",
+        ],
+    )
+
+    if declared_context == "foo/bar":
+        assert result.exit_code == 0, result.output
+        assert target.call_args.kwargs["context"] == "foo/bar"
+        assert pulls.call_args.kwargs["context"] == "foo/bar"
+        assert bootstrap.call_args.kwargs["context"] == "foo/bar"
+    else:
+        assert result.exit_code == 1
+        assert "different --infra context" in result.output
+        target.assert_not_called()
+        pulls.assert_not_called()
+        bootstrap.assert_not_called()
+
+
 @pytest.mark.parametrize("parallel", [False, True])
 def test_multitask_submit_manifest_gate_cannot_skip_declared_vm_failure(
     tmp_path: Path, mocker, parallel: bool
