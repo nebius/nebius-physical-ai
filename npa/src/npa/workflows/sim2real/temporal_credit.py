@@ -44,8 +44,12 @@ def _validate_boolean_evidence(
         location = f"per_step[{index}]"
         _literal_boolean(raw, "model_disagreement", location=location)
         truth = raw.get("simulator_ground_truth")
-        if not isinstance(truth, Mapping):
+        if truth is None:
             continue
+        if not isinstance(truth, Mapping):
+            raise TemporalCreditError(
+                f"{location}.simulator_ground_truth must be an object or null"
+            )
         for field in _SIMULATOR_BOOLEAN_FIELDS:
             _literal_boolean(
                 truth, field, location=f"{location}.simulator_ground_truth"

@@ -896,6 +896,22 @@ def test_temporal_credit_preserves_literal_boolean_semantics(
     assert components["termination_penalty"] == (-0.10 if expected else 0.0)
 
 
+@pytest.mark.parametrize("truth", [[], [["contact", "false"]], "false", 0, False])
+def test_temporal_credit_rejects_non_object_ground_truth(truth: Any) -> None:
+    evaluation = {"per_step": [{"step": 0, "simulator_ground_truth": truth}]}
+
+    with pytest.raises(TemporalCreditError, match="ground_truth must be an object"):
+        convert_evaluation(evaluation)
+
+
+@pytest.mark.parametrize("fields", [{}, {"simulator_ground_truth": None}])
+def test_temporal_credit_preserves_absent_ground_truth(fields: dict) -> None:
+    signal = convert_evaluation({"per_step": [{"step": 0, **fields}]})
+
+    assert signal["per_step"][0]["simulator_ground_truth"] == {}
+    assert signal["success"] is False
+
+
 def test_checkpoint_selection_uses_validation_and_prefers_earlier_exact_tie() -> None:
     report = {
         "success_rate": 0.25,
