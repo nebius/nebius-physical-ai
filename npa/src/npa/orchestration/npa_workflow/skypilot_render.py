@@ -32,6 +32,7 @@ from npa.workbench.model_cache import (
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+    "workflow.video_sweep.generate": "cosmos2-transfer",
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
@@ -90,6 +91,14 @@ HABITAT_SIM_ACCELERATOR = "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"
 OPENPI_TERMS_ENV = "NPA_OPENPI_ACCEPT_GEMMA_TERMS"
 
 SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
+    "workflow.video_sweep.prepare": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.video_sweep.review": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workflow.video_sweep.generate": ("HF_TOKEN",),
+    "workflow.video_sweep.lineage": (
+        "NPA_LINEAGE_POSTGRES_DSN",
+        "MLFLOW_TRACKING_URI",
+        "MLFLOW_EXPERIMENT_ID",
+    ),
     "workbench.encord": ("ENCORD_SSH_KEY_B64",),
     "workflow.paidf": (),
     "workflow.paidf.run_iaa_augmentation": ("HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"),
@@ -146,6 +155,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
 # already installs vLLM for self-hosted vlm_eval); it is what lets the npa.workflow
 # SONIC specs run without a vendor image at all.
 TOOL_REF_PIP_EXTRAS: dict[str, str] = {
+    "workflow.video_sweep.lineage": "video-sweep",
     "workbench.encord": "encord",
     "workbench.token_factory.robot_sdg": "robot-sdg",
     "workbench.sonic": "sonic",

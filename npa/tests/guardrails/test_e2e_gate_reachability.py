@@ -16,6 +16,9 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_LINEAGE_POSTGRES_DSN": "requires operator-selected private Postgres and MLflow tracking services",
+    "NPA_VIDEO_SWEEP_FULL_GPU": "requires real Transfer runtime, licensed model access, inputs and tracking services",
+    "NPA_VIDEO_SWEEP_REASONER_MODEL": "requires an explicit available model for live paid hosted inference",
     "NPA_E2E_RUNTIME_STORAGE": (
         "CPU control-storage execution requires an operator-selected project, "
         "fresh science/control prefixes, and an owned isolated controller"

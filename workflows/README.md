@@ -1,5 +1,7 @@
 # NPA workflow catalog
 
+The [video variant sweep](guides/video-variant-sweep.md) composes hosted prompt enhancement, parallel Cosmos Transfer generation, paired visual review, and Postgres/MLflow lineage.
+
 [Docs](../docs/README.md) · [Authoring guide](../docs/workbench/npa-workflow-guide.md)
 
 These `npa.workflow/v0.0.1` YAML files compose Workbench operations into a state

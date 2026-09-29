@@ -1,0 +1,57 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "a54a59c6eda2ec5c6d2aeee63e30d535bd8ab024da0182c03d64a9e6fa0d68cd",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation, wave planning, and scheduler planning passed.",
+      "evidence": [
+        "validate-spec; plan-spec --waves; run-spec --plan-only --scheduler-plan"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Source snapshots, merged prompts, partitioned real Transfer calls, paired review, tracking and accepted-only publication are wired and covered by focused tests. Hosted live tests explicitly use a different model than the reference default.",
+      "evidence": [
+        "npa/tests/workflows/test_video_sweep.py",
+        "npa/tests/e2e/test_video_sweep_live.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Project-scoped S3 probe and real object create/read/conditional-replay/conflict tests passed. Exact deployment destinations still require submit preflight.",
+      "evidence": [
+        "test_private_s3_artifact_roundtrip"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Procedural clips were decoded locally. Deployment requires operator-supplied source and variant inventories at worker-readable URIs.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "Transfer payload access and hosted inference were verified, but the reference Cosmos3 model is absent from the tested account. MiniMax-M3 was explicitly used for hosted component tests.",
+      "evidence": [
+        "health access --capability cosmos2",
+        "test_hosted_description_merge_and_paired_judge"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The selected public Transfer release passed image pull preflight. The worker must also receive this submitted NPA source overlay.",
+      "evidence": [
+        "workflow preflight-images"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Live Postgres/MLflow commit and replay passed on isolated services. Complete GPU execution and worker connectivity to deployment tracking services remain unverified.",
+      "evidence": [
+        "test_postgres_and_mlflow_commit_and_replay"
+      ]
+    }
+  }
+}
