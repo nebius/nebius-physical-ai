@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from npa.workflows.franka_rl_validity import (
+    SimulationValidityError,
     configure_validity,
     validate_simulation_state,
 )
@@ -215,8 +216,16 @@ def _transition(
         observed["tcp"], observed["object"], observed["quaternion"]
     )
     frame = _frame(env)
-    if _step(env, action):
-        return observed, True
+    try:
+        if _step(env, action):
+            return observed, True
+    except SimulationValidityError as error:
+        error.evidence["input_action"] = action.tolist()
+        error.evidence["controller_phase"] = controller.phase
+        error.evidence["last_valid_observation"] = {
+            key: value.tolist() for key, value in observed.items()
+        }
+        raise
     after = _snapshot(env)
     row = {
         "state": observed["state"],
@@ -301,6 +310,16 @@ def _collect(config, recipe: dict, condition: str, output: Path) -> None:
     env.close()
 
 
+def _collect_with_fault_record(config, recipe, condition, output: Path) -> None:
+    # Isaac's launcher may consume exceptions on context exit. Retain the
+    # measured fault before it crosses that boundary.
+    try:
+        _collect(config, recipe, condition, output)
+    except SimulationValidityError as error:
+        write_json(output / "simulation-validity-failure.json", error.evidence)
+        raise
+
+
 def main(argv: list[str] | None = None) -> int:
     """Launch the pinned native Isaac runtime for one physical condition.
 
@@ -314,7 +333,6 @@ def main(argv: list[str] | None = None) -> int:
     """
     from isaaclab_tasks.utils import add_launcher_args, launch_simulation
     from isaaclab.utils.seed import configure_seed
-    from npa.workflows.franka_rl_validity import SimulationValidityError
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-path", type=Path, required=True)
@@ -327,14 +345,8 @@ def main(argv: list[str] | None = None) -> int:
     os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
     config = _configuration(recipe, args.condition)
     args.enable_cameras = True
-    try:
-        with launch_simulation(config, args):
-            _collect(config, recipe, args.condition, args.output_path)
-    except SimulationValidityError as error:
-        write_json(
-            args.output_path / "simulation-validity-failure.json", error.evidence
-        )
-        raise
+    with launch_simulation(config, args):
+        _collect_with_fault_record(config, recipe, args.condition, args.output_path)
     return 0
 
 

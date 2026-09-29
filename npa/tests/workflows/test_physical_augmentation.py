@@ -107,6 +107,26 @@ def test_configuration_aligns_sensor_with_actual_ik_offset():
         _align_tool_frame(config, make_recipe("test", 0, 1, 600))
 
 
+def test_native_fault_is_retained_before_launcher_consumes_exception(
+    tmp_path, monkeypatch
+):
+    from npa.workflows import physical_augmentation_runtime as runtime
+    from npa.workflows.franka_rl_validity import SimulationValidityError
+
+    evidence = {"constraint": "native_limit_exceeded", "joint_name": "panda_joint1"}
+
+    def fail(*args):
+        raise SimulationValidityError(evidence)
+
+    monkeypatch.setattr(runtime, "_collect", fail)
+    with pytest.raises(SimulationValidityError):
+        runtime._collect_with_fault_record(None, {}, "displaced", tmp_path)
+    assert (
+        json.loads((tmp_path / "simulation-validity-failure.json").read_text())
+        == evidence
+    )
+
+
 def test_hold_requires_consecutive_contact_geometry_and_low_velocity():
     recipe = make_recipe("test", 0, 1, 600)
     arrays = {
