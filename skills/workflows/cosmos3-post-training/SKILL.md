@@ -71,8 +71,8 @@ Final benchmark success was 95.0% and 95.8%. The first saved checkpoint above
 90% was update 1,500, available after about 5 h 53 m and 3 h 19 m, respectively.
 Quality was verified afterward; do not infer exact threshold crossing, online
 early stopping, unseen-task generalization, or improved quality from GPU count
-with only one training seed. The blog and all original numeric/visual evidence
-are linked from the recipe. Historical raw reports retain their original
+with only one training seed. All original numeric/visual evidence is linked
+from the recipe. Historical raw reports retain their original
 measurement-time scope; the later checkpoint-linked quality records supersede
 pending campaign status without rewriting those bytes.
 

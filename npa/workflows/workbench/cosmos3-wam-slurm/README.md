@@ -1,6 +1,6 @@
 # Cosmos 3 Nano WAM on reserved B200s with Slurm
 
-[Workbench reference assets](../README.md) · [Full runbook](../../../../docs/workbench/cookbooks/cosmos3-wam-slurm.md) · [Blog draft](../../../../docs/workbench/cosmos3-wam-scaling-blog.md)
+[Workbench reference assets](../README.md) · [Full runbook](../../../../docs/workbench/cookbooks/cosmos3-wam-slurm.md) · [Measured results](../../../../docs/workbench/evidence/cosmos3-wam-scaling/README.md)
 
 This native Slurm recipe runs NVIDIA's **LIBERO-10 world action model (WAM)**
 post-training experiment. It trains the action and generation pathways together.

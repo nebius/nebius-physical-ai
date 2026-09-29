@@ -1,6 +1,6 @@
 # Cosmos 3 Nano WAM post-training on Nebius B200s
 
-[Workbench docs](../README.md) · [Recipe and parameter reference](../../../npa/workflows/workbench/cosmos3-wam-slurm/README.md) · [Blog draft](../cosmos3-wam-scaling-blog.md)
+[Workbench docs](../README.md) · [Recipe and parameter reference](../../../npa/workflows/workbench/cosmos3-wam-slurm/README.md) · [Measured results](../evidence/cosmos3-wam-scaling/README.md)
 
 This recipe makes NVIDIA's LIBERO-10 action-policy post-training experiment
 repeatable on a reserved B200 Slurm cluster. The experiment predicts future
