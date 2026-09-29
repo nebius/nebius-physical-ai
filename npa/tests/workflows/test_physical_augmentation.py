@@ -46,7 +46,7 @@ def test_controller_recomputes_actions_for_displaced_object_and_limits_speed():
     nominal = controller.action(tcp, cube, quaternion)
     shifted = controller.action(tcp, cube + [0.04, 0.08, 0], quaternion)
     assert not np.array_equal(nominal, shifted)
-    assert np.linalg.norm(shifted[:3] - tcp) <= 0.003001
+    assert np.linalg.norm(shifted[:3] - nominal[:3]) <= 0.003001
     assert shifted[-1] == 1.0
     assert controller.phase == 0  # Elapsed calls alone cannot certify reaching.
 
@@ -56,15 +56,38 @@ def test_controller_aligns_downward_before_descending_and_bounds_rotation():
     cube = np.array([0.5, 0.0, 0.025])
     tcp = cube + [0, 0, 0.12]
     tilted = np.array([np.cos(0.4), 0, np.sin(0.4), 0])
+    previous = tilted
     for _ in range(30):
         action = controller.action(tcp, cube, tilted)
-        angle = 2 * np.arccos(np.clip(np.dot(tilted, action[3:7]), -1, 1))
+        current = action[3:7].astype(float)
+        cosine = np.dot(previous, current) / (
+            np.linalg.norm(previous) * np.linalg.norm(current)
+        )
+        angle = 2 * np.arccos(np.clip(cosine, -1, 1))
         assert 0 < angle <= 0.01601
         assert np.linalg.norm(action[3:7]) == pytest.approx(1)
+        previous = current
     assert controller.phase == 0
     for _ in range(8):
         controller.action(tcp, cube, np.array([1, 0, 0, 0]))
     assert controller.phase == 1
+
+
+def test_tracking_lag_does_not_erase_trajectory_progress():
+    controller = LiftController(0.02)
+    cube = np.array([0.5, 0.0, 0.025])
+    tcp = np.array([0.5, 0.0, 0.4])
+    quaternion = np.array([1.0, 0.0, 0.0, 0.0])
+    previous = tcp.copy()
+    # A lagged actuator must still reach the measured approach waypoint. Targets
+    # rebased on each measurement advance only ~4.5cm during this experiment.
+    for _ in range(150):
+        action = controller.action(tcp, cube, quaternion)
+        assert np.linalg.norm(action[:3] - previous) <= 0.003001
+        tcp += 0.1 * (action[:3] - tcp)
+        previous = action[:3].copy()
+    assert controller.phase >= 1
+    assert tcp[2] < 0.15
 
 
 def test_configuration_aligns_sensor_with_actual_ik_offset():

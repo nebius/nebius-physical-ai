@@ -58,7 +58,7 @@ def make_recipe(run_id: str, seed: int, episodes: int, steps: int) -> dict:
 
 def _semantics() -> dict:
     return {
-        "controller": "measured-state-cartesian-lift-v2",
+        "controller": "measured-state-cartesian-lift-v3",
         "tcp_contract": {"body": "panda_hand", "offset_m": [0.0, 0.0, 0.107]},
         "action_names": list(ACTION_NAMES),
         "action_semantics": "absolute TCP pose in robot root frame, xyzw; gripper +1 open/-1 close",
@@ -118,6 +118,8 @@ class LiftController:
     phase: int = 0
     dwell: int = 0
     grasp: np.ndarray | None = None
+    commanded_position: np.ndarray | None = None
+    commanded_quaternion: np.ndarray | None = None
 
     def action(
         self, tcp: np.ndarray, cube: np.ndarray, quaternion: np.ndarray
@@ -142,7 +144,7 @@ class LiftController:
             or not np.isclose(np.linalg.norm(quaternion), 1, atol=1e-4)
         ):
             raise ValueError("Invalid controller observation")
-        orientation, aligned = _downward_command(quaternion, self.dt)
+        _, aligned = _downward_command(quaternion, self.dt)
         target = (self.grasp if self.grasp is not None else cube).copy()
         target[2] += (0.12, 0.0, 0.0, 0.18)[self.phase]
         delta = target - tcp
@@ -154,13 +156,26 @@ class LiftController:
             self.dwell = 0
             if self.phase == 2:
                 self.grasp = cube.copy()
-        position = tcp + delta * min(
-            1.0, 0.15 * self.dt / max(np.linalg.norm(delta), 1e-9)
-        )
+        position, orientation = self._pose_command(tcp, target, quaternion)
         return np.asarray(
             [*position, *orientation, 1.0 if commanded_phase < 2 else -1.0],
             dtype=np.float32,
         )
+
+    def _pose_command(self, tcp, target, quaternion) -> tuple[np.ndarray, np.ndarray]:
+        # Integrate bounded setpoints; resetting to measured pose on every call
+        # makes actuator tracking error erase most of each intended movement.
+        if self.commanded_position is None:
+            self.commanded_position = tcp.copy()
+            self.commanded_quaternion = quaternion.copy()
+        delta = target - self.commanded_position
+        self.commanded_position += delta * min(
+            1.0, 0.15 * self.dt / max(np.linalg.norm(delta), 1e-9)
+        )
+        self.commanded_quaternion, _ = _downward_command(
+            self.commanded_quaternion, self.dt
+        )
+        return self.commanded_position, self.commanded_quaternion
 
 
 def _downward_command(quaternion: np.ndarray, dt: float) -> tuple[np.ndarray, bool]:
