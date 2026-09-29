@@ -292,11 +292,12 @@ func failure(stderr io.Writer, code string) int {
 }
 
 // inFlightByteBudget bounds the payload bytes admitted to the detection pool at
-// one time. Detection allocates roughly three copies of a record (the string
-// conversion, the lowercased prefilter copy, and match state), so bounding
-// admitted bytes bounds the detector heap independently of archive size. A
-// record larger than the entire budget is admitted alone rather than refused:
-// coverage never depends on a size threshold.
+// one time. It is not a heap or resident-memory limit: the string conversion,
+// lowercased prefilter, regexp working set, and findings allocate additional
+// memory, and reclamation can lag completed detections. The README records
+// measured overhead rather than assuming a constant multiplier. A record larger
+// than the entire budget is admitted alone rather than refused: coverage never
+// depends on a size threshold.
 const inFlightByteBudget = 512 << 20
 
 // inFlightJobsPerWorker bounds outstanding records per worker so that a stream
@@ -307,14 +308,14 @@ const inFlightJobsPerWorker = 4
 // reclaimIntervalBytes is how many completed payload bytes trigger one forced
 // heap reclamation. Reclaiming after every record measured 0.54% of wall time
 // on a representative corpus and would serialise the pool on a stop-the-world
-// pause per record; reclaiming per budget-sized batch keeps the resident set
-// bounded at a fraction of that cost.
+// pause per record. Reclaiming per budget-sized batch reduces the frequency of
+// those pauses; it does not establish a resident-memory ceiling.
 const reclaimIntervalBytes = inFlightByteBudget
 
 // byteBudget is a weighted semaphore over payload bytes admitted for detection.
 // A reservation is taken before the payload is allocated, so the budget bounds
-// the bytes this process allocates for records rather than only the bytes it has
-// already read.
+// raw payload allocations rather than only the bytes already read. Detector
+// copies and working memory are outside this payload budget.
 type byteBudget struct {
 	mutex     sync.Mutex
 	returned  *sync.Cond
@@ -712,9 +713,10 @@ func emitRecords(ordered <-chan *scanJob, emit func(any) bool) (summary, string)
 //
 // Detection of distinct records overlaps, but emission is strictly ordinal, so
 // the protocol bytes are identical to scanning one record at a time. Worker
-// count follows GOMAXPROCS, which in production is the schedulable CPU count:
-// the scanner starts this helper with only PATH in its environment, so a shell
-// GOMAXPROCS reaches a hand-run helper but never the one the scanner owns.
+// count is sampled from GOMAXPROCS at pipeline startup. The pinned Go runtime
+// accounts for CPU affinity and Linux cgroup CPU quota in its default. The
+// scanner starts this helper with only PATH in its environment, so inherited
+// GOMAXPROCS and GOMEMLIMIT cannot configure the scanner-owned helper.
 //
 // Args:
 //

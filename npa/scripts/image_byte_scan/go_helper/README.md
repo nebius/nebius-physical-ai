@@ -7,11 +7,14 @@ Gitleaks 8.28.0 `Detector.Detect` API on each complete raw record, including bin
 and empty records. It does not use Gitleaks file discovery, MIME filtering,
 stdin chunking, a baseline, or image-authored ignore files.
 
-Distinct records are detected concurrently, one worker per schedulable CPU, and
-results are emitted in record order. Admission reserves payload bytes against a
-512 MiB budget before allocating them, so the bytes held for detection are bounded
-independently of archive size; a record larger than the whole budget is admitted
-alone rather than refused, so coverage never depends on a size threshold.
+Distinct records are detected concurrently, and results are emitted in record
+order. Worker count is sampled from `runtime.GOMAXPROCS(0)` at pipeline startup;
+the pinned Go runtime's default accounts for CPU affinity and Linux cgroup CPU
+quota. The pool does not resize if those limits change during a scan.
+
+Admission reserves raw payload bytes against a 512 MiB budget before allocating
+them; a record larger than the whole budget is admitted alone rather than
+refused, so coverage never depends on a size threshold.
 
 That budget bounds admitted payload bytes, not resident memory: the detector
 holds the raw bytes, a string copy, a lowercased copy and the regexp engine's
@@ -27,6 +30,13 @@ KiB, Linux x86_64, Go toolchain 1.27.1, one record in flight:
 These are single-record measurements at those three sizes, and the multiple is
 not constant across them. Sizing above 128 MiB by extrapolating it is an
 estimate, not a measurement; larger records have not been measured.
+
+The scanner launches its helper with only `PATH` in the environment to isolate
+it from ambient configuration and credentials. Shell `GOMAXPROCS`, `GOMEMLIMIT`
+and `GODEBUG` settings therefore do not configure a scanner-owned helper. The
+payload budget and periodic garbage collection do not establish a process-memory
+ceiling. If the operating system terminates the helper for resource exhaustion,
+the scan fails and cannot establish a clean result.
 
 Records above the budget run alone, so a small number of large serialized records
 can limit parallelism; quantifying that limit requires a measured time profile,
