@@ -169,6 +169,7 @@ if os.environ["NPA_ATTENTION_BACKEND"] == "fa4":
     print("flash-attn-4", metadata.version("flash-attn-4"))
 else:
     assert metadata.version("flash-attn").startswith("2.")
+    import torch  # Load libtorch/libc10 before the standalone CUDA extension.
     import flash_attn_2_cuda
     print("flash-attn", metadata.version("flash-attn"))
 PY

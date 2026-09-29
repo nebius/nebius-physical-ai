@@ -30,8 +30,9 @@ def attention_backend(backend, tile=None):
     if backend == "fa2":
         if not metadata.version("flash-attn").startswith("2."):
             raise RuntimeError("Standalone FA2 2.x is required")
-        import flash_attn_2_cuda  # noqa: F401
+        # The package loads PyTorch's shared libraries before its CUDA extension.
         from flash_attn import flash_attn_func
+        import flash_attn_2_cuda  # noqa: F401
 
         return flash_attn_func
     from flash_attn.cute import flash_attn_func
