@@ -131,6 +131,7 @@ jobs:
         with:
           version: "0.12.5"
           enable-cache: true
+          save-cache: false
           cache-suffix: python-3.12
           cache-dependency-glob: |
             npa/pyproject.toml
