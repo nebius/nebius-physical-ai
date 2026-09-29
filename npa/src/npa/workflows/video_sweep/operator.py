@@ -23,7 +23,11 @@ _REQUIRED_SECRETS = (
     "MLFLOW_TRACKING_URI",
     "MLFLOW_EXPERIMENT_ID",
 )
-_OPTIONAL_SECRETS = ("MLFLOW_TRACKING_TOKEN", "AWS_SESSION_TOKEN")
+_OPTIONAL_SECRETS = (
+    "MLFLOW_TRACKING_TOKEN",
+    "MLFLOW_TRACKING_CA_PEM",
+    "AWS_SESSION_TOKEN",
+)
 _FIELDS = {
     "project",
     "infra",
@@ -79,24 +83,8 @@ def _operate(args):
     output = args.output_dir or args.config.parent / (config["run_id"] + "-demo")
     if args.action != "check" and output.exists():
         raise FileExistsError("Choose a new demo output directory")
-    if args.action != "export":
-        with _private_log(args.config) as log:
-            print(
-                "Checking credentials, exact model access, and the workflow.",
-                flush=True,
-            )
-            _preflight(config, log)
-            if args.action == "check":
-                print(
-                    "Operator preflight passed. Worker-pod service connectivity is verified during execution."
-                )
-                return
-            print(
-                "Staging inputs and submitting the canonical workflow. Progress is recorded in the private operator log.",
-                flush=True,
-            )
-            _stage_inputs(config)
-            _invoke(_submit_command(config, resume=args.action == "resume"), log)
+    if args.action != "export" and not _run_workflow(args, config):
+        return
     from npa.workflows.video_sweep.demo import export_demo
 
     stage = SimpleNamespace(root_uri=_root(config), run_id=config["run_id"], workers=2)
@@ -105,6 +93,29 @@ def _operate(args):
     print(
         f"Demo exported: {len(summary['candidates'])} variants, {summary['accepted']} accepted. Open index.html or demo.mp4 in the output directory."
     )
+
+
+def _run_workflow(args, config):
+    with _private_log(args.config) as log:
+        print("Checking credentials, exact model access, and the workflow.", flush=True)
+        _preflight(config, log)
+        if args.action == "check":
+            print(
+                "Operator preflight passed. Worker-pod service connectivity is verified during execution."
+            )
+            return False
+        print(
+            "Staging inputs and submitting the canonical workflow. Progress is recorded in the private operator log.",
+            flush=True,
+        )
+        _stage_inputs(config)
+        state_dir = args.config.parent / (config["run_id"] + "-runtime")
+        state_dir.mkdir(mode=0o700, exist_ok=True)
+        command = _submit_command(
+            config, resume=args.action == "resume", state_dir=state_dir
+        )
+        _invoke(command, log)
+    return True
 
 
 def _initialize(path):
@@ -280,7 +291,7 @@ def _stage_inputs(config):
     artifacts.write_json(_root(config) + "/inputs/variants.json", _variants(config))
 
 
-def _submit_command(config, *, resume=False):
+def _submit_command(config, *, resume=False, state_dir=None):
     command = _npa(
         "workbench",
         "workflow",
@@ -293,26 +304,38 @@ def _submit_command(config, *, resume=False):
         "--resume-run" if resume else "--run-id",
         config["run_id"],
         "--runtime",
+        "--stage-src",
         "--max-wait-seconds",
         "0",
-        "--accelerators",
-        config["accelerators"],
     )
+    if state_dir is not None:
+        command.extend(("--isolated-config-dir", str(state_dir)))
+    for key, value in _variables(config).items():
+        command.extend(("--var", f"{key}={value}"))
+    for name in (*_REQUIRED_SECRETS, *_OPTIONAL_SECRETS):
+        if os.environ.get(name):
+            command.extend(("--secret-env", name))
+    return command
+
+
+def _variables(config):
     variables = {
         key: config[key]
-        for key in ("bucket", "reasoner_model", "merge_model", "samples", "threshold")
+        for key in (
+            "bucket",
+            "reasoner_model",
+            "merge_model",
+            "samples",
+            "threshold",
+            "accelerators",
+        )
     }
     variables.update(
         prefix=config["prefix"].rstrip("/") + "/" + config["run_id"],
         sources_uri=_root(config) + "/inputs/sources.json",
         variants_uri=_root(config) + "/inputs/variants.json",
     )
-    for key, value in variables.items():
-        command.extend(("--var", f"{key}={value}"))
-    for name in (*_REQUIRED_SECRETS, *_OPTIONAL_SECRETS):
-        if os.environ.get(name):
-            command.extend(("--secret-env", name))
-    return command
+    return variables
 
 
 if __name__ == "__main__":

@@ -15,7 +15,7 @@ requires complete coverage before judging any candidate.
 ## One-command operator kit and offline demo
 
 After configuring the cluster and services described below, use the operator kit
-from a Linux host with `npa[video-sweep]` installed. It keeps the canonical YAML
+from a checkout on a Linux host with `npa[video-sweep]` installed. It keeps the canonical YAML
 as the stage graph and automates preflight, immutable source/variant inventories,
 standard runtime submission, and verified HTML/MP4 export:
 
@@ -38,10 +38,11 @@ submit compute or call a model. Select a new output directory for each export.
 Use a new run ID for changed inputs or parameters.
 
 Exact-project S3 credentials come from NPA configuration. The required service
-secrets are listed below; optional MLflow bearer and AWS session tokens are
+secrets are listed below; optional MLflow bearer token, private CA, and AWS session token are
 forwarded only when present. Values never enter submission arguments.
 The configuration and adjacent `.operator.log` are private files; keep both
-outside the repository. The helper does not provision the cluster, tracking
+outside the repository. Each run uses a separate adjacent `-runtime` directory
+for SkyPilot state and stages the current source checkout. The helper does not provision the cluster, tracking
 services, or gated model access. Both workers must fit concurrently, and tracking
 endpoints must be reachable from their CPU pods. Operator preflight does not
 prove that connectivity. The runtime waits without a per-wave deadline.
@@ -124,7 +125,9 @@ Configure an existing Nebius Kubernetes cluster, project-owned S3 storage,
 Hugging Face access to Transfer and its guardrails, and hosted inference access.
 Run setup, submission, monitoring, and cleanup on the same Linux operator host;
 macOS supports local authoring and planning but not the isolated SkyPilot API.
-The reference requests one H200 per worker. Use the workflow GPU discovery and
+The reference defaults to one H200 per worker. Set `accelerators` in the operator
+configuration or pass `--var accelerators=RTXPRO6000:1` to select a verified
+RTX PRO 6000 target for both generation workers. Use the workflow GPU discovery and
 image preflight commands to verify the selected cluster and image first. The
 cluster must admit both workers concurrently: SkyPilot initializes networking
 for the entire job group before starting its payloads.
@@ -139,6 +142,7 @@ installs this extra for the lineage worker. Set these values privately:
 | `MLFLOW_TRACKING_URI` | HTTPS tracking endpoint; loopback HTTP is supported for local tests |
 | `MLFLOW_EXPERIMENT_ID` | Existing MLflow experiment ID |
 | `MLFLOW_TRACKING_TOKEN` | Optional bearer token for the tracking service |
+| `MLFLOW_TRACKING_CA_PEM` | Optional PEM certificate authority for private HTTPS; hostname and certificate verification stay enabled |
 | `NEBIUS_TOKEN_FACTORY_KEY` | Hosted inference credential |
 | `HF_TOKEN` | Credential with exact upstream payload access |
 

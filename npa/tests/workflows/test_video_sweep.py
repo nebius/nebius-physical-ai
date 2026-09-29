@@ -442,3 +442,13 @@ def test_demo_refuses_unverified_publication(sweep, tmp_path, corruption):
     with pytest.raises(ValueError):
         export_demo(args, tmp_path / "demo")
     assert not (tmp_path / "demo").exists()
+
+
+def test_private_tracking_ca_fails_closed(monkeypatch):
+    import ssl
+
+    monkeypatch.setenv("MLFLOW_TRACKING_CA_PEM", "not a certificate")
+    with pytest.raises(ssl.SSLError):
+        tracking._tracking_tls()
+    monkeypatch.delenv("MLFLOW_TRACKING_CA_PEM")
+    assert tracking._tracking_tls() is True

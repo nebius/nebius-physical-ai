@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import ssl
 import time
 from urllib.parse import urlsplit
 
@@ -35,8 +36,20 @@ def _mlflow_client() -> httpx.Client:
     token = os.environ.get("MLFLOW_TRACKING_TOKEN", "")
     headers = {"Authorization": "Bearer " + token} if token else {}
     return httpx.Client(
-        base_url=uri.rstrip("/") + "/", headers=headers, follow_redirects=False
+        base_url=uri.rstrip("/") + "/",
+        headers=headers,
+        follow_redirects=False,
+        verify=_tracking_tls(),
     )
+
+
+def _tracking_tls():
+    authority = os.environ.get("MLFLOW_TRACKING_CA_PEM", "")
+    if not authority:
+        return True
+    context = ssl.create_default_context()
+    context.load_verify_locations(cadata=authority)
+    return context
 
 
 def _post(client: httpx.Client, operation: str, payload: dict) -> dict:

@@ -55,7 +55,8 @@ def test_submit_uses_canonical_runtime_and_secret_names(configuration, monkeypat
     _, config = configuration
     monkeypatch.setenv("HF_TOKEN", "private-token-value")
     command = operator._submit_command(config)
-    assert command[command.index("--runtime") + 1 :][:2] == ["--max-wait-seconds", "0"]
+    assert "--stage-src" in command
+    assert command[command.index("--max-wait-seconds") + 1] == "0"
     assert command[command.index("submit") + 1].endswith(
         "testing/video-variant-sweep.yaml"
     )
@@ -125,3 +126,29 @@ def test_credentials_use_exact_project_storage(configuration, monkeypatch):
     operator._credentials(config)
     assert os.environ["AWS_ACCESS_KEY_ID"] == "key"
     assert os.environ["AWS_ENDPOINT_URL"] == "https://storage.example"
+
+
+def test_selected_gpu_reaches_both_workers_without_changing_cpu_stages(configuration):
+    from pathlib import Path
+    from npa.orchestration.npa_workflow import build_plan
+    from npa.orchestration.npa_workflow.submit import load_spec_for_submit
+
+    _, config = configuration
+    config["accelerators"] = "RTXPRO6000:1"
+    command = operator._submit_command(config)
+    assert "accelerators=RTXPRO6000:1" in command
+    assert "--accelerators" not in command
+    spec = load_spec_for_submit(
+        Path(operator._spec()), config_overrides=operator._variables(config)
+    )
+    steps = build_plan(spec, run_id="test").steps
+    workers = [step for step in steps if step.state.startswith("worker-")]
+    assert len(workers) == 2
+    assert all(
+        step.resources_profile["accelerators"] == "RTXPRO6000:1" for step in workers
+    )
+    assert all(
+        "accelerators" not in step.resources_profile
+        for step in steps
+        if step not in workers
+    )
