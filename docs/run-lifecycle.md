@@ -119,6 +119,13 @@ Multi-tool workflows can pin distinct validated images with repeatable
 global `--image` fallback, and the rendered task uses the digest that preflight
 verified.
 
+Reordering selector or digest-pin mappings preserves the selected images and
+permits completed-wave replay. Exact tool selectors take precedence over family
+selectors, and the longest matching family takes precedence over `*`. Moving an
+image between those selectors changes the run identity, even when the set of
+image digests stays the same. Resource-level image declarations are covered by
+the separate workflow identity.
+
 ### Controller rollout with existing runs
 
 Use a separate controller revision for new runs while existing runs finish on
