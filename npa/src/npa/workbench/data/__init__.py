@@ -214,12 +214,16 @@ def _copy_object(
         return
 
     response = source_s3_client.get_object(Bucket=source_bucket, Key=source_key)
-    body = response["Body"].read()
+    body = response["Body"]
+    try:
+        payload = body.read()
+    finally:
+        body.close()
     metadata = dict(response.get("Metadata") or {})
     target_s3_client.put_object(
         Bucket=target_bucket,
         Key=target_key,
-        Body=body,
+        Body=payload,
         Metadata=metadata,
     )
 

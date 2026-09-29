@@ -23,12 +23,13 @@ def _entries() -> list[dict[str, object]]:
 
 @pytest.mark.parametrize("entry", _entries(), ids=lambda entry: entry["name"])
 def test_scan_target_applies_only_declared_preparation(
-    monkeypatch: pytest.MonkeyPatch, entry: dict[str, object]
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, entry: dict[str, object]
 ) -> None:
     """Prepare only inventory entries whose production image does so.
 
     Args:
         monkeypatch: Isolated subprocess replacement.
+        tmp_path: Private build/export directory.
         entry: Base-image inventory entry.
     Returns:
         None.
@@ -43,20 +44,26 @@ def test_scan_target_applies_only_declared_preparation(
         return subprocess.CompletedProcess(command, 0)
 
     monkeypatch.setattr(scanner.subprocess, "run", record)
-    target = scanner.prepare_target(entry)
-    command = scanner.preparation_command(entry)
-    if command is None:
+    target = scanner.prepare_target(entry, tmp_path)
+    if not entry["purge_linux_libc_dev"] and not entry["upgrade_os"]:
         assert target == entry["image"] and calls == []
         return
-    assert target == f"npa-base-scan:{entry['name']}"
-    assert calls == [
-        (command, {"input": scanner._PATCH_DOCKERFILE, "text": True, "check": True})
-    ]
+    assert target == tmp_path / "image.tar"
+    create, build, remove = [command for command, _ in calls]
+    builder = create[create.index("--name") + 1]
+    assert create[create.index("--driver") + 1] == "docker-container"
+    assert build == scanner.preparation_command(
+        entry, builder, target, tmp_path / "context"
+    )
+    assert remove == ["docker", "buildx", "rm", "--force", builder]
+    assert "--load" not in build and "-t" not in build
+    assert calls[1][1]["input"] == scanner._PATCH_DOCKERFILE
     assert "FROM ${BASE_IMAGE}" in scanner._PATCH_DOCKERFILE
 
 
 def test_failed_preparation_never_returns_a_scan_target(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """Fail before scanning when Docker cannot construct the patched base.
 
@@ -75,7 +82,7 @@ def test_failed_preparation_never_returns_a_scan_target(
 
     monkeypatch.setattr(scanner.subprocess, "run", fail)
     with pytest.raises(subprocess.CalledProcessError) as error:
-        scanner.prepare_target(entry)
+        scanner.prepare_target(entry, tmp_path)
     assert error.value.returncode == 17
 
 
@@ -235,7 +242,8 @@ def test_parallel_scans_use_worker_private_trivy_caches(
 
     assert len(scan_caches) == 3
     assert cache not in scan_caches
-    assert len(set(scan_caches)) == 2
+    assert len(set(scan_caches)) == 3
+    assert all(not path.exists() for path in scan_caches)
 
 
 def test_parallel_scans_dynamically_claim_the_next_entry(

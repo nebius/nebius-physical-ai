@@ -34,6 +34,125 @@
 format: npa_golden_evals_v1
 
 containers:
+  robotwin:
+    image: npa-robotwin
+    dockerfile: npa/docker/workbench/robotwin/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Fail-closed zero-vendor-payload bootstrap for an independently gated
+        RoboTwin bimanual data-collection workflow.
+    safety:
+      runs_as: ubuntu
+      base_image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+      network: none during refusal check
+      external_fetch: []
+      notes: >-
+        CPU refusal and byte-absence packaging evidence only. The image is
+        unbuilt and publication-quarantined; no SAPIEN, Vulkan, RTX, task-success,
+        HDF5, video, or frame capability is claimed.
+    golden_eval:
+      kind: container-smoke
+      command: bash /opt/npa/robotwin/smoke.sh
+      gpu: none
+      timeout_seconds: 120
+      status: needs-image-update
+  gymnasium-robotics:
+    image: npa-gymnasium-robotics
+    internal: true
+    default_tag: neutral-unbuilt
+    dockerfile: npa/docker/workbench/gymnasium-robotics/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Neutral development-candidate bootstrap for a runtime-cached genuine Shadow
+        Dexterous Hand manipulation, touch, contacts, and EGL hard gate.
+    safety:
+      runs_as: ubuntu
+      base_image: ubuntu:noble-20260905@sha256:a61567bd31828687156d735ea8eb01ba4e37636e225dd6a48ba94136a70d9d61
+      network: runtime fetch only after a complete immutable lock
+      external_fetch:
+        - exact Gymnasium-Robotics source and hashed Python wheels into an operator-owned cache
+      notes: >-
+        An owner-only reference build supplied the exact config and ordered
+        20-DiffID scanner anchors, but did not complete the product scan, SBOM,
+        push, or immutable-digest gates and left no accepted artifact. Intended
+        candidate layers contain only neutral bootstrap bytes; upstream source,
+        Shadow assets, MuJoCo/Python workload, populated cache, model, dataset,
+        vendor runtime, credential, checkpoint, and output bytes are excluded.
+        Fetching later is delivery, not rights acceptance.
+    golden_eval:
+      kind: container-smoke
+      command: bash /usr/local/bin/npa-gymnasium-entrypoint run-smoke
+      gpu: required
+      timeout_seconds: 1800
+      status: needs-image-update
+      artifact: ${NPA_SMOKE_OUTPUT_DIR}/gymnasium-robotics-smoke.json
+
+  libero:
+    image: npa-libero
+    dockerfile: npa/docker/workbench/libero/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Trains and reloads LIBERO's upstream BC-RNN policy on one official
+        LIBERO-Spatial demonstration with genuine held-out evaluation.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.10-slim-bookworm@sha256:999137905e8718de681744822ccd965e1950e1baba089035060418e05e1d7496
+      network: >-
+        Customer-authorized immutable runtime fetch from pinned GitHub, PyPI,
+        PyTorch, and Hugging Face endpoints plus operator S3 output
+      external_fetch:
+        - github-libero-runtime
+        - pypi-runtime
+        - pytorch-runtime
+        - huggingface-libero-demo-runtime
+        - huggingface-bert-runtime
+        - s3-runtime
+      notes: >-
+        The public candidate is an unbuilt, quarantined neutral bootstrap. It
+        contains no LIBERO, GPU runtime, model, demonstration, task/render
+        asset, cache, checkpoint, credential, or output bytes. A short-lived
+        customer/run authorization for the exact named terms and manifest plus
+        an explicit immutable qualified-candidate digest are mandatory. HF/NGC
+        credentials prove access only. The eval remains blocked until byte, anonymous
+        pull, and exact-digest one-B200 evidence is accepted.
+    golden_eval:
+      kind: container-smoke
+      command: sh /opt/npa/libero/smoke.sh
+      artifact: /workspace/byof-runs/libero-smoke.json
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 7200
+      status: needs-image-update
+  antioch:
+    image: npa-antioch
+    dockerfile: npa/docker/workbench/antioch/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        CPU-only control plane for durable Antioch simulation submission,
+        reconciliation, cancellation, collection, offline policy-data export,
+        and a same-pod tunnel/relay to a cluster-local policy Service.
+    safety:
+      runs_as: "10001"
+      base_image: python:3.12-slim-bookworm
+      network: authenticated FastAPI control plane on :8789
+      external_fetch: ["operator-authorized digest-pinned Antioch CLI at runtime"]
+      notes: >-
+        Contains no simulator engine, proprietary Antioch wheel, credentials, or
+        customer data. The smoke proves the token boundary, system-info route,
+        CPU-only classification, and absence of the proprietary distribution;
+        authenticated vendor health is covered by the separate live integration.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_antioch_functional
+      command: python -m npa.smoke.test_antioch_functional
+      gpu: none
+      timeout_seconds: 60
+      status: ready
+
   openpi:
     image: npa-openpi
     dockerfile: npa/docker/workbench/openpi/Dockerfile
@@ -267,6 +386,42 @@ containers:
       timeout_seconds: 1800
       status: gpu-gated
 
+  habitat-sim:
+    image: npa-habitat-sim
+    dockerfile: npa/docker/workbench/habitat-sim/Dockerfile.bootstrap
+    physical_ai:
+      useful: true
+      role: >-
+        Renders a genuine Skokloster Castle RGB/depth traversal with Bullet
+        physics and headless EGL on an RTX-class renderer.
+    safety:
+      runs_as: ubuntu
+      base_image: ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+      network: official Ubuntu, GitHub, PyPI and Meta runtime fetch; operator S3 output
+      external_fetch: [official-ubuntu-runtime, github-codeload-runtime, pypi-runtime, official-meta-habitat-test-scene-runtime, s3-runtime]
+      notes: >-
+        Neutral runtime-fetch bootstrap; supported release validation is pending.
+        Accompanying source covers inherited and installed Ubuntu components.
+        Required scans must prove Habitat, scientific/native runtime, scene,
+        cache, credential, output, CUDA, and NVIDIA driver payload absence. The CC BY 4.0 scene must be hash-verified and attributed
+        after runtime fetch. These requirements are not accepted image/live proof.
+    golden_eval:
+      kind: container-smoke
+      command: >-
+        test -n "$NPA_WORKFLOW_RUN_ID" &&
+        test -n "$NPA_RENDERED_PLAN_SHA256" &&
+        test -n "$NPA_TASK_IMAGE" &&
+        test -n "$NPA_HABITAT_GOLDEN_OUTPUT_URI" &&
+        python3 -m npa.workflows.habitat_sim_smoke
+        --output-dir /tmp/npa-habitat-sim-golden
+        --output-uri "$NPA_HABITAT_GOLDEN_OUTPUT_URI"
+        --run-id "$NPA_WORKFLOW_RUN_ID"
+        --plan-sha256 "$NPA_RENDERED_PLAN_SHA256"
+      artifact: /tmp/npa-habitat-sim-golden/habitat-sim-smoke.json
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: 1800
+      status: blocked-on-upstream
   genesis:
     image: npa-genesis
     dockerfile: npa/docker/workbench/genesis/Dockerfile
@@ -983,6 +1138,27 @@ containers:
       timeout_seconds: unlimited
       status: gpu-gated
 
+  sam3:
+    image: npa-sam3
+    dockerfile: npa/docker/workbench/sam3/Dockerfile
+    physical_ai:
+      useful: true
+      role: SAM 3.1 text-prompted video segmentation with per-frame object masks.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm (digest pinned)
+      network: Operator-only pinned source, model and CUDA runtime fetch
+      external_fetch: [github, huggingface, pytorch-cu130]
+      notes: >-
+        Neutral bootstrap; no SAM source or weights are baked. HF_TOKEN and
+        operator-provided source video required. GPU acceptance is deferred.
+    golden_eval:
+      kind: container-smoke
+      command: python /opt/npa/sam3/runtime.py segment --input-path /inputs/video.mp4 --prompt person --output-path /tmp/npa-sam31-golden
+      gpu: required
+      timeout_seconds: unlimited
+      status: gpu-gated
+
   sam2:
     image: npa-sam2
     dockerfile: npa/docker/workbench/sam2/Dockerfile
@@ -1034,6 +1210,33 @@ containers:
       gpu: optional
       timeout_seconds: 600
       status: ready
+
+  robomimic:
+    image: npa-robomimic
+    dockerfile: npa/docker/workbench/robomimic/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Trains a low-dimensional behavior-cloning policy on official Lift PH
+        demonstrations and reloads it for held-out action inference.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.11.16-slim-bookworm (digest pinned)
+      network: none in the neutral image; dataset fetch is deferred to an authorized gate
+      external_fetch: [operator-prepared-cuda-runtime, official-lift-ph-dataset, s3]
+      notes: >-
+        Quarantined Phase A candidate. The image contains pinned MIT source and
+        non-CUDA dependencies only. The command below proves missing-runtime
+        refusal without writing a cache; it is not the physical-AI capability
+        acceptance. CUDA runtime use and the exact-digest B200 gate remain
+        separately blocked.
+    golden_eval:
+      kind: entrypoint-smoke
+      command: robomimic-entrypoint assert-refusal
+      serverless_gpu: b200
+      gpu: required
+      timeout_seconds: 120
+      status: blocked-on-upstream
 
   wan2-2:
     image: npa-wan2-2
@@ -1088,6 +1291,27 @@ containers:
       timeout_seconds: 120
       status: ready
 
+  mjlab:
+    image: npa-mjlab
+    dockerfile: npa/docker/workbench/mjlab/Dockerfile
+    physical_ai:
+      useful: true
+      role: GPU robot learning, measured policy evaluation and ONNX deployment artifacts.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.12-slim-bookworm (digest pinned); CUDA provided by locked wheels
+      network: S3 artifacts only; no model download required for velocity or cartpole tasks
+      external_fetch: [s3]
+      notes: No checkpoints, motion datasets, credentials or populated caches baked.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_mjlab_functional
+      command: python -m npa.smoke.test_mjlab_functional
+      serverless_gpu: h100
+      gpu: required
+      timeout_seconds: 600
+      status: gpu-gated
+
   curobo:
     image: npa-curobo
     dockerfile: npa/docker/workbench/curobo/Dockerfile
@@ -1134,6 +1358,32 @@ containers:
       gpu: required
       timeout_seconds: 3600
       status: gpu-gated
+
+  flex-pi:
+    image: npa-flex-pi
+    dockerfile: npa/docker/workbench/flex-pi/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Flex-pi 6B multi-stream world-action policy predicts a 32-step bimanual
+        action chunk from three cameras, robot state, and language instruction.
+    safety:
+      runs_as: ubuntu
+      base_image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-devel (digest pinned)
+      network: runtime-only Hugging Face/ModelScope fetch and S3 artifact upload
+      external_fetch: [huggingface-public-model, huggingface-authorized-public-input, modelscope, s3]
+      notes: >-
+        Ships pinned MIT source/runtime, but no weights, observation media,
+        credentials, or populated cache. The input dataset card has no declared
+        license and is fetched only for the operator's authorized run.
+    golden_eval:
+      kind: container-smoke
+      module: npa.smoke.test_flex_pi_functional
+      command: python -m npa.smoke.test_flex_pi_functional
+      serverless_gpu: rtx6000
+      gpu: required
+      timeout_seconds: unlimited
+      status: ready
 
   sim2real-control:
     image: npa-sim2real-control

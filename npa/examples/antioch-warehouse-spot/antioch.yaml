@@ -1,0 +1,11 @@
+# The Workbench adapter replaces this placeholder with its run-derived identity.
+id: replace-at-runtime
+name: npa-warehouse-spot
+scenario_paths: [src/scenario.py]
+services:
+  sim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    resources:
+      gpu: rtx-pro-6000
