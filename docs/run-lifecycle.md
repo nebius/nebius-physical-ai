@@ -90,10 +90,67 @@ image gets one exact, bounded capability probe in the selected context, whose po
 must be deleted successfully. Results are cached by digest plus contract version.
 First-party images cannot replace their declared user with `runAsUser: 0`.
 
+Image identity binds the render registry, GPU target, image variant, and every
+image override selector to its reference, then binds each preflight reference
+to its resolved immutable image. Mapping order does not matter; reassigning the
+same references or digest values changes identity. Direct immutable image
+overrides are included even when the preflight pin map is empty. Older
+value-only or pin-only identities cannot prove this complete selection to an
+upgraded controller; resume those runs with their original controller instead.
+
+For each wave with rendered images, a versioned composite binds that v3
+selection fingerprint to each state's tool and exact resolved reference. The
+ledger retains those bindings, the references and their separate set hash, and
+whether every reference is content addressed. Swapping selector assignments or
+catalog defaults cannot hide behind an unchanged set of resolved images.
+
+**Upgrade note:** earlier value-only, pin-only, and reference-set-only records,
+as well as unversioned v3 selection-only records for waves with images, cannot
+prove this binding in completed replay, durable output reuse, or supervised
+recovery. Those identity checks reject weaker records; they do not migrate saved
+identities in place. Ordinary in-flight provider adoption is a separate legacy
+path and is not made into an input-identity fence by this change. Follow the
+[controller rollout procedure](#controller-rollout-with-existing-runs) below.
+Accelerator-name overrides remain outside image identity because they select
+cluster resources rather than container images.
+
 Multi-tool workflows can pin distinct validated images with repeatable
 `--image-override TOOL_REF=IMAGE`. An exact tool override beats the optional
 global `--image` fallback, and the rendered task uses the digest that preflight
 verified.
+
+Reordering selector or digest-pin mappings preserves the selected images and
+permits completed-wave replay. Exact tool selectors take precedence over family
+selectors, and the longest matching family takes precedence over `*`. Moving an
+image between those selectors changes the run identity, even when the set of
+image digests stays the same. Resource-level image declarations are covered by
+the separate workflow identity.
+
+### Controller rollout with existing runs
+
+Use a separate controller revision for new runs while existing runs finish on
+their original revision. A source merge does not require replacing a running
+driver or resuming its ledger under the new controller.
+
+1. Preserve each unfinished run's original controller revision, environment,
+   prepared source, immutable images, and recorded workflow options. Keep exact
+   run and provider identifiers in private operational records.
+2. Leave those controllers and their ledgers unchanged. If an old driver needs
+   to restart, use its original revision and recorded inputs with the same run
+   ID. Do not point an existing run at the upgraded controller or rewrite saved
+   identity fields.
+3. Install the upgraded controller separately and use it for new work with new
+   run IDs. A replacement of unfinished work is permitted only after the prior
+   attempt is terminal or its exact cancellation has been verified; a new run
+   ID alone does not prevent duplicate work.
+4. Retire the original controller only after every run assigned to it is
+   terminal. If its revision or evidence cannot be recovered, preserve the run
+   and resolve that uncertainty before upgrading or relaunching it.
+
+This procedure does not require interrupting a running GPU job. An alternative
+is to wait until all affected runs are terminal before upgrading their existing
+controller. A snapshot showing no active runs is valid only at the time it was
+checked; it is not a durable substitute for preserving controller revisions.
 
 ### The controller launch is one transaction
 
