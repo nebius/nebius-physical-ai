@@ -26,8 +26,9 @@ Use three coherent appearance profiles, with all four supported fields:
 `lighting`, `background`, `color_grade`, `surface_finish`. Cross each source and
 profile with generation seeds `17` and `29`: **48 initial variants**.
 
-Freeze prompts, source captions, native conditioning parameters and evaluator
-settings before measurement. Both arms receive identical inputs and the same
+Freeze prompts, captioning instructions, native conditioning parameters and
+evaluator settings before measurement. Retain and charge the actual captions
+produced by each arm. Both arms receive identical inputs and the same
 quality requirements. Use separate ranking frames during refinement and held-out
 frames for final acceptance. Fix those partitions before either arm, without
 exposing held-out grader inputs to the workers.
