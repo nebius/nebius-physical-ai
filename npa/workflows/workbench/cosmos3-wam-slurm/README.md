@@ -176,8 +176,11 @@ It refuses to replace an existing Slurm configuration. Set private
 `NPA_SLURM_CLUSTER_NAME` and `NPA_SLURM_ACCOUNT` values before running it as the
 operator user with sudo. Accounting credentials are generated on the VM and
 written with mode 0600. The dedicated IPv4 firewall permits SSH, established
-connections, loopback and the worker's own address; `persist-firewall.sh` saves
-those rules for reboot. Multi-node joining additionally requires private peer
+connections, loopback and the worker's own address. IPv6 permits SSH, loopback,
+established connections and ICMPv6, denying new Slurm/NFS connections;
+`persist-firewall.sh` saves both families for reboot. IPv6 hardening was added
+after the measured campaign; see the scope note in [native-cluster.md](native-cluster.md).
+Multi-node joining additionally requires private peer
 addresses, shared Munge credentials and a common filesystem. This research
 deployment colocates the controller on a worker; it has no controller failover.
 
@@ -402,7 +405,8 @@ use `npa soperator destroy` after the same cancellation and archival checks.
 ```bash
 npa/.venv/bin/python -m pytest \
   npa/tests/workflows/test_cosmos3_wam_slurm.py \
-  npa/tests/workflows/test_cosmos3_wam_scaling_report.py -q
+  npa/tests/workflows/test_cosmos3_wam_scaling_report.py \
+  npa/tests/workflows/test_cosmos3_wam_worker.py -q
 ```
 
 The opt-in live test runs real one- and two-node jobs from a Slurm login. It

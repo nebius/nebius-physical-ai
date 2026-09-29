@@ -62,7 +62,12 @@ The campaign observed a PyTorch data-loader failure under the default setting,
 then reproduced the removal with an independent background shared-memory probe.
 The controller creates a private accounting password and stores it with mode
 0600. A dedicated firewall permits SSH, loopback, established connections and
-the worker's own address. `persist-firewall.sh` preserves it across reboots.
+the worker's own address. `persist-firewall.sh` preserves both address families
+across reboots. IPv6 allows loopback, established connections, SSH and ICMPv6;
+new inbound Slurm/NFS connections are denied because cluster peers use IPv4.
+Bootstrap fails if IPv6 filtering cannot be installed. This IPv6 hardening was
+added after the benchmark and is covered by offline tests; the recorded GPU
+campaign used the earlier IPv4-only firewall.
 
 The final `srun` must enumerate all eight B200s. Verify `nvidia-smi topo -m`,
 `systemctl is-active nvidia-fabricmanager` and `ibstat`: all GPU pairs should
