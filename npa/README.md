@@ -57,6 +57,9 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+For a first contest evaluation, use the [one-file BEHAVIOR DEV setup](../docs/workbench/challenge-onboarding.md)
+through `npa workbench workflow challenge init`, `check`, and `prepare`.
+The same helpers are available in `npa.sdk.workbench.workflow_challenge`.
 For resumable contest evaluations, see the [BEHAVIOR campaign guide](../docs/workbench/behavior-campaign.md).
 It documents case ownership, verified results, and workflow task activity. The
 guide also documents the CPU-only `policy-identity-inspect` internal command for

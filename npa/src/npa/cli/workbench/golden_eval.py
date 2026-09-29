@@ -210,7 +210,7 @@ def run(
             err_console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1) from exc
         console.print_json(json.dumps(result))
-        if not result.get("ok"):
+        if result.get("ok") is not True:
             raise typer.Exit(code=1)
         return
 

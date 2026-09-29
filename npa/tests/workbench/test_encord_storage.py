@@ -138,6 +138,40 @@ def test_head_preserves_opaque_etag_separately() -> None:
     assert metadata.etag == version.token.strip('"')
 
 
+@pytest.mark.parametrize(
+    "fault", ["changed_before", "changed_during", "short_stream", "stream_failure"]
+)
+def test_content_readback_rejects_changed_or_incomplete_objects(
+    monkeypatch, fault
+) -> None:
+    client = FakeStorageClient()
+    identity = ("result-bucket", "run/media.mp4")
+    client.s3.objects[identity] = b"video"
+    gateway = S3ObjectStorageGateway(client)
+    metadata = gateway.head("s3://result-bucket/run/media.mp4")
+    original = client.s3.get_object
+    streams = []
+
+    def get_object(**kwargs):
+        assert kwargs["IfMatch"] == metadata.etag
+        if fault == "changed_before":
+            client.s3.objects[identity] = b"wrong"
+        response = original(**kwargs)
+        if fault == "changed_during":
+            client.s3.objects[identity] = b"wrong"
+        elif fault == "short_stream":
+            response["Body"] = StreamingBody(b"vi")
+        elif fault == "stream_failure":
+            response["Body"] = StreamingBody(b"video", fail=True)
+        streams.append(response["Body"])
+        return response
+
+    monkeypatch.setattr(client.s3, "get_object", get_object)
+    with pytest.raises((EncordToolError, OSError, RuntimeError)):
+        gateway.hash_object(metadata)
+    assert all(body.closed for body in streams)
+
+
 def test_object_gateway_lists_every_page_and_heads_each_object() -> None:
     client = FakeStorageClient()
     client.s3.objects[("source-bucket", "incoming/a.mp4")] = b"a"

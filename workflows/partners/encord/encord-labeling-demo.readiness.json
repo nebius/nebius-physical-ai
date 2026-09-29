@@ -1,0 +1,64 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "e315f49351c49e7b2ff7e0551c7e43860ac42887b145ad2e7134fb5b17d579b1",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and plan construction passed for the exact spec with v2 pull manifests; readers retain v1 support.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Resolved stages match push -> import_labels -> pull -> verify -> render_labels. Operator overrides and artifact handoffs are tested.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Live S3 writes and conditional evidence checkpoints passed under private operator overrides.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Live source MP4 bytes were staged in S3 and fully decoded; labeling inputs matched their source SHA-256 where applicable.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Online Encord and S3 preflight passed; real SDK and storage operations succeeded.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Local CPU execution used the installed checkout with the encord extra. No container build or remote image execution is claimed.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The committed live test completed the local CPU graph against Encord/S3 with v2 manifests: three videos, nine tracks, 346 boxes, 331 polygons, and ten scene-label segments. CPU submit --plan-only passed; actual pod execution remains untested.",
+      "evidence": [
+        "README.md",
+        "../../../npa/tests/workflows/test_encord_workflow.py"
+      ]
+    }
+  }
+}

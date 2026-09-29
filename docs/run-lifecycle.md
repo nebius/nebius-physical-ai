@@ -67,6 +67,16 @@ run instead of as an `ImagePullBackOff` on the cluster. If complete-path
 planning itself fails, `preflight-images` exits before any registry or
 Kubernetes probe; it never reports that failure as `images: none`.
 
+### Image override compatibility
+
+**Compatibility note:** an `--image-override` selector that matches no toolRef
+now fails before preparation, credential resolution, or staging, including with
+preflight disabled. Older versions silently ignored it. Scope shared override
+sets to each workflow; use an exact toolRef, a family prefix such as
+`workbench.fiftyone` (without glob characters), or bare `*`. Selectors for
+unselected decision branches remain valid because matching uses every state in
+the workflow. Library rendering and planning enforce the same contract.
+
 ### Quota is arithmetic, and it is checked first
 
 The plan treats `compute.disk.size.network-ssd` as a **byte allowance**,
@@ -90,10 +100,67 @@ image gets one exact, bounded capability probe in the selected context, whose po
 must be deleted successfully. Results are cached by digest plus contract version.
 First-party images cannot replace their declared user with `runAsUser: 0`.
 
+Image identity binds the render registry, GPU target, image variant, and every
+image override selector to its reference, then binds each preflight reference
+to its resolved immutable image. Mapping order does not matter; reassigning the
+same references or digest values changes identity. Direct immutable image
+overrides are included even when the preflight pin map is empty. Older
+value-only or pin-only identities cannot prove this complete selection to an
+upgraded controller; resume those runs with their original controller instead.
+
+For each wave with rendered images, a versioned composite binds that v3
+selection fingerprint to each state's tool and exact resolved reference. The
+ledger retains those bindings, the references and their separate set hash, and
+whether every reference is content addressed. Swapping selector assignments or
+catalog defaults cannot hide behind an unchanged set of resolved images.
+
+**Upgrade note:** earlier value-only, pin-only, and reference-set-only records,
+as well as unversioned v3 selection-only records for waves with images, cannot
+prove this binding in completed replay, durable output reuse, or supervised
+recovery. Those identity checks reject weaker records; they do not migrate saved
+identities in place. Ordinary in-flight provider adoption is a separate legacy
+path and is not made into an input-identity fence by this change. Follow the
+[controller rollout procedure](#controller-rollout-with-existing-runs) below.
+Accelerator-name overrides remain outside image identity because they select
+cluster resources rather than container images.
+
 Multi-tool workflows can pin distinct validated images with repeatable
 `--image-override TOOL_REF=IMAGE`. An exact tool override beats the optional
 global `--image` fallback, and the rendered task uses the digest that preflight
 verified.
+
+Reordering selector or digest-pin mappings preserves the selected images and
+permits completed-wave replay. Exact tool selectors take precedence over family
+selectors, and the longest matching family takes precedence over `*`. Moving an
+image between those selectors changes the run identity, even when the set of
+image digests stays the same. Resource-level image declarations are covered by
+the separate workflow identity.
+
+### Controller rollout with existing runs
+
+Use a separate controller revision for new runs while existing runs finish on
+their original revision. A source merge does not require replacing a running
+driver or resuming its ledger under the new controller.
+
+1. Preserve each unfinished run's original controller revision, environment,
+   prepared source, immutable images, and recorded workflow options. Keep exact
+   run and provider identifiers in private operational records.
+2. Leave those controllers and their ledgers unchanged. If an old driver needs
+   to restart, use its original revision and recorded inputs with the same run
+   ID. Do not point an existing run at the upgraded controller or rewrite saved
+   identity fields.
+3. Install the upgraded controller separately and use it for new work with new
+   run IDs. A replacement of unfinished work is permitted only after the prior
+   attempt is terminal or its exact cancellation has been verified; a new run
+   ID alone does not prevent duplicate work.
+4. Retire the original controller only after every run assigned to it is
+   terminal. If its revision or evidence cannot be recovered, preserve the run
+   and resolve that uncertainty before upgrading or relaunching it.
+
+This procedure does not require interrupting a running GPU job. An alternative
+is to wait until all affected runs are terminal before upgrading their existing
+controller. A snapshot showing no active runs is valid only at the time it was
+checked; it is not a durable substitute for preserving controller revisions.
 
 ### The controller launch is one transaction
 
@@ -182,10 +249,28 @@ launch absence; a new lookup must still prove absence. Existing outputs,
 unreadable storage, missing output declarations, or uncertain scheduler status
 continue to block a new launch. Prior attempts remain in the run history.
 
+A durable `block_relaunch` decision remains unresolved unless the same record
+already contains verified terminal cancellation. After the reported dependency
+is repaired, a record with provider identity is reconciled against that exact
+job ID: a live job is adopted and polled, unavailable queue evidence remains
+blocked, and neither case resets the attempt number or submits replacement
+work. A previously verified terminal attempt keeps the ordinary terminal retry
+path and does not become queue-dependent again.
+An unrecognized non-terminal recovery decision also defaults to exact
+reconciliation; only explicit completion/absence decisions, provider-terminal
+evidence, or durable proof that launch never started may skip that fence.
+A cancellation claim without a terminal provider status, or a malformed launch
+sequence, remains uncertain and cannot authorize replacement work.
+
 Directory-style output evidence scans every S3 list page for a non-empty
 descendant. Zero-byte directory markers do not prove completion or absence,
 and malformed/truncated pagination blocks recovery rather than authorizing
 duplicate work.
+
+Image override selectors must be an exact toolRef, a boundary-safe family
+prefix such as `workbench.fiftyone`, or the bare `*`. Glob-like and unmatched
+selectors fail before run preparation, provisioning, or source staging, even
+when image preflight is disabled. Validation considers every workflow branch.
 
 ## Reading status
 
@@ -199,6 +284,30 @@ even at the allowance boundary. If the exact provider attempt is still live,
 its cancellation must reach a verified terminal state before that reuse is
 accepted.
 The workflow completion result is separate from the observed provider status.
+The verified cancellation and output-reuse decision are written as an immutable
+supervisor event before the mutable runtime attempt is terminalized. If the
+driver stops between those writes, resume binds that event to the exact attempt,
+workflow, source, and image identities, revalidates every declared output, and
+completes the same attempt without submitting replacement work. Missing,
+malformed, conflicting, mismatched, or temporarily unreadable evidence remains
+blocked and retryable under the same run ID. The provider's verified terminal
+status remains factual even while output revalidation is blocked.
+The wave record and immutable terminal event retain `output_reuse_error_type`
+(for example, `PermissionError` or `ValueError`) beside the sanitized reason.
+This distinguishes access errors from rejected evidence without exposing raw
+credentials or changing the fail-closed recovery decision. The field clears
+after successful evidence recovery; exception type alone does not authorize
+a retry or a replacement job.
+
+An unreadable supervisor history blocks reconciliation without creating a reuse
+claim. Restoring access lets the same attempt reconcile its exact provider job.
+If the driver stopped after the reuse decision but before recording verified
+cancellation, resume validates the decision's identity and output declarations,
+then reconciles that exact job. A live job is adopted; a succeeded job must still
+pass output validation. A cancelled or failed job retains its terminal failure
+and launches no replacement during that resume. A later resume can request the
+ordinary explicit workload retry. An attempt already marked for reuse still
+requires its immutable cancellation proof; missing or corrupt proof stays blocked.
 
 
 `status` resolves the exact run from the selected project's receipt, the
@@ -325,3 +434,9 @@ may remove a trailing control-directory suffix only when the requested run ID
 and path layout, or the manifest's exact run-prefix provenance, identify the
 parent as the run root. Workflow names and pending status alone never authorize
 listing a parent prefix that could contain a sibling workflow's outputs.
+
+Completed-wave replay requires nonempty, matching workflow, source, and image
+identities before checking its retained outputs. A changed or missing identity
+blocks both replay and replacement submission, even when an output is missing.
+With matching identities, missing declared outputs retain the normal recovery
+path; a replacement must publish and verify its own declared outputs.

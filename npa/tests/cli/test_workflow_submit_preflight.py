@@ -1689,6 +1689,50 @@ def test_paidf_input_selectors_conflict_before_preflight() -> None:
     assert "missing prerequisites" not in result.output
 
 
+@pytest.fixture
+def paidf_input_submit_ready(monkeypatch, mocker):
+    _mock_sky_bin_ok(monkeypatch)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://artifacts/npa-src/npa")
+    monkeypatch.setenv("HF_TOKEN", "synthetic-hf-token")
+    monkeypatch.setattr(workflow_cli, "_adopt_npa_kubeconfig", lambda _: True)
+    mocker.patch.object(workflow_cli, "_verify_submit_controller_owner")
+    mocker.patch.object(workflow_cli, "_preflight_submit_images", return_value={})
+    mocker.patch.object(workflow_cli, "_enforce_workflow_access")
+    mocker.patch(
+        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access"
+    )
+
+
+def test_paidf_listing_diagnosis_reaches_submit_without_private_error_text(
+    monkeypatch, mocker, paidf_input_submit_ready
+):
+    from botocore.exceptions import ClientError
+    from npa.workflows import data_factory_input as dfi
+
+    monkeypatch.setattr(dfi.shutil, "which", lambda name: f"/test-bin/{name}")
+    storage = mocker.Mock()
+    storage.s3.get_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey"}}, "GetObject"
+    )
+    storage.s3.get_paginator.return_value.paginate.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "private/capture.mp4"}},
+        "ListObjectsV2",
+    )
+    mocker.patch(
+        "npa.clients.storage.StorageClient.from_environment", return_value=storage
+    )
+    launch = mocker.patch.object(workflow_cli, "_run_npa_workflow_runtime")
+
+    result = _submit("--skip-preflight", "--var", "bucket=artifacts")
+
+    assert result.exit_code == 1, result.output
+    assert "ClientError (AccessDenied)" in result.output
+    assert "private/capture.mp4" not in result.output
+    storage.s3.get_paginator.return_value.paginate.assert_called_once()
+    storage.download_path.assert_not_called()
+    launch.assert_not_called()
+
+
 def test_paidf_lerobot_selector_is_planned_without_object_store_access(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -2619,6 +2663,66 @@ HARDENING_SPEC = (
     / "testing"
     / "adversarial-scenario-hardening.yaml"
 )
+
+
+@pytest.fixture
+def image_selector_boundaries(mocker):
+    targets = (
+        "npa.cli.workbench.workflow._refuse_dedicated_live_gate_execution",
+        "npa.orchestration.npa_workflow.robotwin_preflight.prepare_live_submit",
+        "npa.orchestration.npa_workflow.first_run_state.prepare_run",
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        "npa.cli.workbench.workflow._preflight_submit_images",
+        "npa.cli.workbench.workflow._stage_npa_src_for_submit",
+        "npa.orchestration.npa_workflow.deploy.ensure_infra_present",
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        "npa.cli.workbench.workflow._run_npa_workflow_runtime",
+    )
+    boundaries = []
+    for target in targets:
+        boundary = mocker.patch(target, side_effect=AssertionError(target))
+        boundaries.append(boundary)
+    return boundaries
+
+
+@pytest.mark.parametrize("preflight", ["--preflight-images", "--no-preflight-images"])
+@pytest.mark.parametrize("dedicated_live_gate", [False, True])
+@pytest.mark.parametrize(
+    ("selector", "message"),
+    [
+        ("workbench.scenario_gen.generat", "matched no workflow toolRef"),
+        ("workbench.scenario_gen.genreate", "matched no workflow toolRef"),
+        ("workbench.*", "Use TOOL_REF=IMAGE"),
+    ],
+)
+def test_submit_rejects_image_selector_before_mutations(
+    image_selector_boundaries, mocker, preflight, selector, message, dedicated_live_gate
+):
+    mocker.patch(
+        "npa.cli.workbench.workflow._is_dedicated_live_gate_spec",
+        return_value=dedicated_live_gate,
+    )
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(HARDENING_SPEC),
+            "--run-id",
+            "invalid-image-selector",
+            "--runtime",
+            "--deploy-if-absent",
+            "--image-override",
+            f"{selector}=cr.example/custom:1",
+            preflight,
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert message in result.output
+    for boundary in image_selector_boundaries:
+        boundary.assert_not_called()
 
 
 def test_deploy_if_absent_quota_blocker_precedes_all_submit_mutation(
