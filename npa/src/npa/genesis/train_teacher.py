@@ -7,7 +7,7 @@ observations that are only available in simulation.
 After training, the teacher generates camera-only demonstrations that
 are used to train a vision-based student policy via imitation learning.
 
-Requires: genesis-world, rsl-rl-lib==2.2.4, torch (CUDA)
+Requires: genesis-world, rsl-rl-lib==5.5.1, torch (CUDA)
 """
 
 from __future__ import annotations
@@ -15,11 +15,14 @@ from __future__ import annotations
 import copy
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
+
+if TYPE_CHECKING:
+    from tensordict import TensorDict
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,7 @@ class TrainingError(Exception):
 class PPOConfig:
     """PPO hyperparameters matching rsl-rl defaults for manipulation."""
 
-    # Policy (passed to ActorCritic via train_cfg["policy"])
+    # Actor and critic MLP architecture.
     actor_hidden_dims: list[int] | None = None
     critic_hidden_dims: list[int] | None = None
     activation: str = "elu"
@@ -63,60 +66,81 @@ class PPOConfig:
         if self.critic_hidden_dims is None:
             self.critic_hidden_dims = [256, 256, 128]
 
-    def to_train_cfg(self) -> dict[str, Any]:
-        """Build the train_cfg dict that OnPolicyRunner expects.
-
-        IMPORTANT: OnPolicyRunner pops "class_name" from the policy and
-        algorithm sub-dicts, so the caller must deepcopy this if reuse is
-        needed.
-        """
+    def _model_config(self, hidden_dims: list[int]) -> dict[str, Any]:
         return {
-            "policy": {
-                "class_name": "ActorCritic",
-                "actor_hidden_dims": list(self.actor_hidden_dims),
-                "critic_hidden_dims": list(self.critic_hidden_dims),
-                "activation": self.activation,
-                "init_noise_std": self.init_noise_std,
-            },
-            "algorithm": {
-                "class_name": "PPO",
-                "num_learning_epochs": self.num_learning_epochs,
-                "num_mini_batches": self.num_mini_batches,
-                "clip_param": self.clip_param,
-                "gamma": self.gamma,
-                "lam": self.lam,
-                "value_loss_coef": self.value_loss_coef,
-                "entropy_coef": self.entropy_coef,
-                "learning_rate": self.learning_rate,
-                "max_grad_norm": self.max_grad_norm,
-                "use_clipped_value_loss": self.use_clipped_value_loss,
-                "schedule": self.schedule,
-                "desired_kl": self.desired_kl,
-            },
+            "class_name": "MLPModel",
+            "hidden_dims": list(hidden_dims),
+            "activation": self.activation,
+            "obs_normalization": self.empirical_normalization,
+        }
+
+    def _algorithm_config(self) -> dict[str, Any]:
+        return {
+            "class_name": "PPO",
+            "num_learning_epochs": self.num_learning_epochs,
+            "num_mini_batches": self.num_mini_batches,
+            "clip_param": self.clip_param,
+            "gamma": self.gamma,
+            "lam": self.lam,
+            "value_loss_coef": self.value_loss_coef,
+            "entropy_coef": self.entropy_coef,
+            "learning_rate": self.learning_rate,
+            "max_grad_norm": self.max_grad_norm,
+            "use_clipped_value_loss": self.use_clipped_value_loss,
+            "schedule": self.schedule,
+            "desired_kl": self.desired_kl,
+        }
+
+    def to_train_cfg(self) -> dict[str, Any]:
+        """Build independent actor, critic, and PPO configuration for RSL-RL 5.
+
+        Args:
+            None.
+        Returns:
+            A fresh runner configuration using privileged observations.
+        Raises:
+            None.
+        """
+        # __post_init__ replaces None with defaults, but mypy cannot narrow
+        # attribute types across methods; assert the post-init invariant here.
+        actor_dims = self.actor_hidden_dims
+        critic_dims = self.critic_hidden_dims
+        assert actor_dims is not None and critic_dims is not None, (
+            "actor/critic hidden dims must be set by __post_init__"
+        )
+        actor = self._model_config(actor_dims)
+        actor["distribution_cfg"] = {
+            "class_name": "GaussianDistribution",
+            "init_std": self.init_noise_std,
+        }
+        return {
+            "actor": actor,
+            "critic": self._model_config(critic_dims),
+            "algorithm": self._algorithm_config(),
+            "obs_groups": {"actor": ["policy"], "critic": ["policy"]},
             "num_steps_per_env": self.num_steps_per_env,
             "save_interval": self.save_interval,
-            "empirical_normalization": self.empirical_normalization,
         }
 
 
 class GenesisEnvWrapper:
     """Wraps FrankaPickPlaceEnv for the rsl-rl VecEnv contract.
 
-    rsl-rl OnPolicyRunner (v2.2.4) expects:
+    rsl-rl OnPolicyRunner (v5.5.1) expects:
 
     Attributes:
         num_envs, num_actions, max_episode_length, episode_length_buf, device
 
     Methods:
-        get_observations() -> (obs, extras)
-            extras["observations"] is a dict; "critic" key holds privileged obs.
+        get_observations() -> TensorDict
+            The "policy" group holds privileged observations for both models.
         step(actions)      -> (obs, rewards, dones, infos)   **4 values**
-            infos["observations"]["critic"] = privileged obs
             infos["time_outs"] = timeout mask for value bootstrapping
     """
 
     def __init__(self, env) -> None:
         self._env = env
+        self.cfg = asdict(env.cfg)
         self.num_envs: int = env.n_envs
         self.num_actions: int = env.act_dim
         self.max_episode_length: int = env.cfg.max_episode_steps
@@ -128,22 +152,54 @@ class GenesisEnvWrapper:
         )
         self._obs: torch.Tensor | None = None
 
-    def get_observations(self) -> tuple[torch.Tensor, dict]:
+    def _observations(self):
+        from tensordict import TensorDict
+
+        return TensorDict({"policy": self._obs}, batch_size=[self.num_envs])
+
+    def get_observations(self) -> TensorDict:
+        """Return privileged observations in the runner's policy group.
+
+        Args:
+            None.
+        Returns:
+            Batched policy observations shared by actor and critic.
+        Raises:
+            RuntimeError: The simulation cannot provide observations.
+        """
         if self._obs is None:
             obs_dict = self._env.get_privileged_obs()
             self._obs = obs_dict["flat"]
-        return self._obs, {"observations": {"critic": self._obs}}
+        return self._observations()
 
-    def reset(self) -> tuple[torch.Tensor, dict]:
+    def reset(self) -> TensorDict:
+        """Reset the simulation and runner episode counters.
+
+        Args:
+            None.
+        Returns:
+            The reset environment's grouped observations.
+        Raises:
+            RuntimeError: The simulation cannot reset.
+        """
         obs_dict = self._env.reset()
         self._obs = obs_dict["flat"]
         self.episode_length_buf.zero_()
-        return self._obs, {"observations": {"critic": self._obs}}
+        return self._observations()
 
     def step(
         self,
         actions: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
+    ) -> tuple[TensorDict, torch.Tensor, torch.Tensor, dict]:
+        """Advance simulation and preserve timeout bootstrapping for PPO.
+
+        Args:
+            actions: Batched actions in the environment's declared action space.
+        Returns:
+            Grouped observations, rewards, terminations, and timeout metadata.
+        Raises:
+            RuntimeError: The simulation cannot apply the actions.
+        """
         obs_dict, rewards, dones, info = self._env.step(actions)
         self._obs = obs_dict["flat"]
         self.episode_length_buf += 1
@@ -154,14 +210,13 @@ class GenesisEnvWrapper:
         )
 
         infos: dict[str, Any] = {
-            "observations": {"critic": self._obs},
             "time_outs": time_outs.float(),
         }
 
         # Reset episode counter for done envs
         self.episode_length_buf[dones] = 0
 
-        return self._obs, rewards, dones, infos
+        return self._observations(), rewards, dones, infos
 
 
 def train_teacher(
@@ -210,7 +265,7 @@ def train_teacher(
         from rsl_rl.runners import OnPolicyRunner
     except ImportError as exc:
         raise TrainingError(
-            "rsl-rl not installed. Install with: pip install rsl-rl-lib==2.2.4"
+            "rsl-rl not installed. Install with: pip install rsl-rl-lib==5.5.1"
         ) from exc
 
     # Create Genesis environment
@@ -237,7 +292,7 @@ def train_teacher(
     # Save a clean copy of the config alongside the checkpoint for later loading
     config_for_save = copy.deepcopy(train_cfg)
 
-    # Create runner — it instantiates ActorCritic and PPO from the config dicts
+    # Construct independent actor and critic models through the runner.
     logger.info("Creating OnPolicyRunner...")
     try:
         runner = OnPolicyRunner(
@@ -263,7 +318,8 @@ def train_teacher(
 
     # Save the architecture config so generate_demos can reconstruct the network
     arch_config = {
-        "policy": config_for_save["policy"],
+        "actor": config_for_save["actor"],
+        "rsl_rl_version": "5.5.1",
         "num_obs": env.obs_dim,
         "num_actions": env.act_dim,
         "action_space": action_space,

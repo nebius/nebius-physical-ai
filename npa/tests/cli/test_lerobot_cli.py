@@ -373,6 +373,80 @@ def test_lerobot_status_json_includes_queue_state_classification(mocker) -> None
     assert payload["platform"] == "gpu-h200-sxm"
 
 
+def test_lerobot_status_surfaces_failure_reason_and_log_tail(mocker) -> None:
+    cfg = _cfg()
+    cfg.runtime = "serverless"
+    cfg.serverless_job = ServerlessJobConfig(
+        job_id="job-1",
+        job_name="train-1",
+        project_id="project-1",
+        gpu_type="gpu-h200-sxm",
+        gpu_count=8,
+    )
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="failed",
+        pending_reason="PAYLOAD_EXIT_NONZERO",
+    )
+    client.classify_queue_state.return_value = "failed"
+    client.get_job_logs.return_value = "Traceback: RuntimeError boom"
+    mocker.patch("npa.cli.workbench.lerobot.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.workbench.lerobot.ServerlessClient", return_value=client)
+
+    result = runner.invoke(app, ["workbench", "lerobot", "status", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert payload["pending_reason"] == "PAYLOAD_EXIT_NONZERO"
+    assert payload["log_tail"] == "Traceback: RuntimeError boom"
+    assert payload["log_tail_source"] == "job_logs"
+    assert "log_fetch_error" not in payload
+    client.get_job_logs.assert_called_once_with("job-1", "project-1", tail=40)
+
+
+def test_lerobot_status_reports_log_fetch_failure_without_hiding_true_status(
+    mocker,
+) -> None:
+    from npa.clients.serverless import AuthError
+
+    cfg = _cfg()
+    cfg.runtime = "serverless"
+    cfg.serverless_job = ServerlessJobConfig(
+        job_id="job-1",
+        job_name="train-1",
+        project_id="project-1",
+        gpu_type="gpu-h200-sxm",
+        gpu_count=8,
+    )
+    client = mocker.MagicMock()
+    client.get_job.return_value = JobInfo(
+        id="job-1",
+        name="train-1",
+        project_id="project-1",
+        status="failed",
+        log_tail="cached provider message",
+    )
+    client.classify_queue_state.return_value = "failed"
+    client.get_job_logs.side_effect = AuthError("403 forbidden")
+    mocker.patch("npa.cli.workbench.lerobot.resolve_config", return_value=cfg)
+    mocker.patch("npa.cli.workbench.lerobot.ServerlessClient", return_value=client)
+
+    result = runner.invoke(app, ["workbench", "lerobot", "status", "--output", "json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "failed"
+    assert payload["log_tail"] == "cached provider message"
+    assert payload["log_fetch_error"] == {
+        "error_type": "AuthError",
+        "message": "403 forbidden",
+    }
+
+
 def test_lerobot_gpu_platform_aliases() -> None:
     assert lerobot._lerobot_gpu_platform("h200") == "gpu-h200-sxm"
     assert lerobot._lerobot_gpu_platform("b300") == "gpu-b300-sxm"

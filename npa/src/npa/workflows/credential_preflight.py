@@ -12,6 +12,7 @@ packages or touches infrastructure at import time.
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable
 
@@ -22,12 +23,17 @@ from npa.workflows.sim2real_health import (
     WARN,
     CheckResult,
     has_failure,
+    run_checks_concurrently,
 )
 
 # Preserve the lightweight default for hosted-inference users. The explicit
 # ``all`` selection also checks the Nebius CLI profile needed for cloud work.
 DEFAULT_CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory")
-SUPPORTED_CREDENTIAL_CHECKS: tuple[str, ...] = (*DEFAULT_CREDENTIAL_CHECKS, "nebius")
+SUPPORTED_CREDENTIAL_CHECKS: tuple[str, ...] = (
+    *DEFAULT_CREDENTIAL_CHECKS,
+    "encord",
+    "nebius",
+)
 # Backward-compatible name for callers that use the default check set.
 CREDENTIAL_CHECKS = DEFAULT_CREDENTIAL_CHECKS
 
@@ -47,6 +53,7 @@ class CredentialProbes:
     ngc_validator: Callable[[str], str] | None = None
     s3_client_factory: Callable[[], Any] | None = None
     token_factory_verifier: Callable[[], list[str]] | None = None
+    encord_verifier: Callable[[], str] | None = None
     nebius_profile_verifier: Callable[[], Any] | None = None
 
 
@@ -273,6 +280,46 @@ def check_token_factory(credentials: Any, probes: CredentialProbes) -> CheckResu
     )
 
 
+def check_encord(credentials: Any, probes: CredentialProbes) -> CheckResult:
+    """Check Encord credential presence and optionally perform a read-only probe."""
+
+    from npa.clients.credentials import ENCORD_TOKEN_KEYS
+
+    tokens = getattr(credentials, "tokens", {}) or {}
+    present = [
+        name for name in ENCORD_TOKEN_KEYS if str(tokens.get(name) or "").strip()
+    ]
+    if not present:
+        return CheckResult(
+            name="encord",
+            status=WARN,
+            summary="No Encord SSH credential is set.",
+            remedy=(
+                "Set ENCORD_SSH_KEY, ENCORD_SSH_KEY_B64, or a local "
+                "ENCORD_SSH_KEY_FILE before using the Encord workbench client."
+            ),
+        )
+    if probes.encord_verifier is None:
+        return CheckResult(
+            name="encord",
+            status=PASS,
+            summary=f"{present[0]} is set (not verified against Encord).",
+        )
+    try:
+        summary = probes.encord_verifier()
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(
+            name="encord",
+            status=FAIL,
+            summary="Encord credential did not authenticate.",
+            remedy="Confirm the registered public key and ENCORD_DOMAIN.",
+            details=(str(exc),),
+        )
+    return CheckResult(
+        name="encord", status=PASS, summary=f"Encord authenticated ({summary})."
+    )
+
+
 def check_nebius(_credentials: Any, probes: CredentialProbes) -> CheckResult:
     """Check that the selected Nebius CLI profile can call the control plane."""
 
@@ -343,8 +390,20 @@ _CHECK_FUNCS: dict[str, Callable[[Any, CredentialProbes], CheckResult]] = {
     "ngc": check_ngc,
     "s3": check_s3,
     "token_factory": check_token_factory,
+    "encord": check_encord,
     "nebius": check_nebius,
 }
+
+
+def _validate_checks(selected: list[str]) -> None:
+    """Raise if any name in *selected* is not a supported credential check."""
+
+    unknown = [name for name in selected if name not in _CHECK_FUNCS]
+    if unknown:
+        raise ValueError(
+            f"unknown credential check(s): {', '.join(unknown)}. "
+            f"Choices: {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
+        )
 
 
 def run_credential_preflight(
@@ -353,17 +412,38 @@ def run_credential_preflight(
     probes: CredentialProbes | None = None,
     checks: Iterable[str] | None = None,
 ) -> list[CheckResult]:
-    """Run the selected credential checks and return their results in order."""
+    """Run the selected credential checks and return their results in order.
+
+    Each check is an independent network probe (HF, NGC, S3, Token Factory,
+    Nebius CLI); see ``run_checks_concurrently`` for the concurrency and
+    ordering contract. Duplicate ``checks`` names are preserved and each
+    re-run; the worker pool is capped at the distinct-check count, since
+    repeating one name gains nothing from proportionally more threads.
+
+    Args:
+        credentials: Resolved credentials object each check reads fields
+            from (see individual ``check_*`` functions for which fields).
+        probes: Injectable side-effecting probes; defaults to presence-only.
+        checks: Check names to run, in return order. Defaults to
+            :data:`CREDENTIAL_CHECKS`. May contain duplicates.
+
+    Returns:
+        One :class:`CheckResult` per entry in ``checks``, in that order.
+
+    Raises:
+        ValueError: ``checks`` contains a name outside
+            :data:`SUPPORTED_CREDENTIAL_CHECKS`.
+    """
 
     active_probes = probes or CredentialProbes()
     selected = list(checks) if checks is not None else list(CREDENTIAL_CHECKS)
-    unknown = [name for name in selected if name not in _CHECK_FUNCS]
-    if unknown:
-        raise ValueError(
-            f"unknown credential check(s): {', '.join(unknown)}. "
-            f"Choices: {', '.join(SUPPORTED_CREDENTIAL_CHECKS)}."
-        )
-    return [_CHECK_FUNCS[name](credentials, active_probes) for name in selected]
+    _validate_checks(selected)
+    thunks = [
+        functools.partial(_CHECK_FUNCS[name], credentials, active_probes)
+        for name in selected
+    ]
+    max_workers = min(len(selected), len(SUPPORTED_CREDENTIAL_CHECKS))
+    return run_checks_concurrently(thunks, max_workers=max_workers)
 
 
 __all__ = [
@@ -371,6 +451,7 @@ __all__ = [
     "DEFAULT_CREDENTIAL_CHECKS",
     "SUPPORTED_CREDENTIAL_CHECKS",
     "CredentialProbes",
+    "check_encord",
     "check_hf",
     "check_ngc",
     "check_nebius",

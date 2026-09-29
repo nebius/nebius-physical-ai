@@ -38,7 +38,6 @@ EXPECTED_STAGE_ORDER = [
     "eval-rider",
     "eval-nighttime",
     "eval-distant",
-    "review",
 ]
 SYNTHETIC_BDD100K_LABEL_MAP = {
     "person": 0,
@@ -101,7 +100,7 @@ def test_gpu_stages_are_the_ones_that_need_a_gpu() -> None:
     for state in ("backfill-clip", "train-rider", "train-nighttime", "train-distant"):
         profile = spec.resources[by_state[state].resources]
         assert "accelerators" in profile, state
-    for state in ("ingest", "backfill-cpu", "curate-views", "review"):
+    for state in ("ingest", "backfill-cpu", "curate-views"):
         profile = spec.resources[by_state[state].resources]
         assert "accelerators" not in profile, state
 

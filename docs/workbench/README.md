@@ -16,6 +16,7 @@ Python and HTTP access follow each tool's documented contract.
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
 | Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
+| Curate media with Encord | [S3 registration, pull, roundtrip verification, and a local MP4 demo](encord.md) |
 | Finish | [Teardown](../teardown.md) |
 
 ## Generation and scenes
@@ -42,6 +43,7 @@ Python and HTTP access follow each tool's documented contract.
 | Simulation-to-policy pipeline | [Sim2Real runbook](guides/sim2real-workflow.md) · [data contracts](guides/sim2real-data-contracts.md) · [customer assets](guides/sim2real-customer-assets.md) · [robot spec](guides/sim2real-robot-spec.md) |
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
 | Motion planning | [cuRobo](curobo.md) |
+| BEHAVIOR 2026 household challenge | [Start here: one-file DEV setup](challenge-onboarding.md); [evaluation rules and runtime](behavior-challenge.md); [reusable campaigns and TRAIN recording](behavior-campaign.md); [CPU simulator source inspection](behavior-simulator-source-inspect.md); [matched π0.5 training results and limits](behavior-matched-results-2026-09-19.md); requires licensed runtime and fixed policy |
 | OpenArm simulation and RL | [OpenArm with MuJoCo and Isaac Lab](openarm.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
 | Policy evaluation in Isaac Lab | [Isaac Arena](isaac-arena.md) |
@@ -52,6 +54,8 @@ Python and HTTP access follow each tool's documented contract.
 | --- | --- |
 | Curation, vector search, and detection training | [BDD100K pipeline](cookbooks/bdd100k-pipeline.md) · [LanceDB search](cookbooks/lancedb-vector-search.md) · [LanceDB deployment](cookbooks/lancedb-deploy-runbook.md) |
 | Hosted captioning, generation, and reasoning | [Token Factory](token-factory.md) · [cloud composition](composing-cloud-and-token-factory.md) |
+| Generate synthetic instruction datasets | [Token Factory SDG with automatic model routing](token-factory-sdg.md) |
+| Generate camera/action robot datasets | [Robot SDG with Token Factory and LeRobot](token-factory-robot-sdg.md) |
 | Evaluate rollouts and verify VLM model provenance | [VLM evaluation loop and live endpoint check](cookbooks/vlm-eval-loop-runbook.md) |
 | Find artifacts across selected or accessible buckets | [Artifact discovery guide](cookbooks/find-artifacts.md) |
 | View and share artifacts | [Rerun](rerun-sharing.md) · [Foxglove / MCAP](foxglove-export.md) · [browser workbench](../agent.md) |
@@ -66,9 +70,11 @@ Python and HTTP access follow each tool's documented contract.
 | Select images | [Public catalog](container-image-catalog.md) · [GPU compatibility](image-gpu-compatibility-matrix.md) · [SONIC variants](sonic-image-catalog.md) |
 | Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) |
 | Configure nodes and caches | [GPU driver strategy](mk8s-gpu-driver-strategy.md) · [model-weight cache](model-weight-cache.md) · [preemptible VMs](preemptible-vms.md) |
-| Reproduce benchmarks and demos | [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) |
+| Reproduce benchmarks and demos | [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) · [performance/reliability validation](workbench-improvements-validation.md) |
 | Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) · [FiftyOne image validation](../../npa/docker/workbench/fiftyone/RELEASE.md#validate-a-local-candidate) |
 
 Inspect the selected guide's actual output artifacts after the run reaches a
 terminal state. A plan, successful status response, or historical benchmark
 alone does not establish a new run's result.
+
+SAM 3.1 video segmentation is available as a [development container](../../npa/docker/workbench/sam3/README.md); checkpoint access and GPU qualification are required before release acceptance.

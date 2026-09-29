@@ -24,3 +24,26 @@ BatchRenderer/Madrona is deferred; do not prioritize it. There is no platform es
 ## Validation
 
 E2E: 8/8 passing except visual demo generation.
+
+## Teacher checkpoint compatibility
+
+The RSL-RL 5 migration uses separate MLP actor and critic configurations and
+TensorDict observation groups. Preserve deterministic legacy ActorCritic loading
+and the current MLPModel checkpoint path. Load external checkpoints only with
+`weights_only=True`; never route them through the upstream unrestricted runner
+loader. Validate action and observation widths, normalization, and real ONNX
+outputs. CPU PPO round trips cover the framework contract; promotion still
+requires the Genesis GPU workload and camera-demo checks.
+
+Run the committed migration check in the candidate GPU environment:
+
+```bash
+NPA_VALIDATION_SOURCE_SHA="$(git rev-parse HEAD)" \
+  npa/.venv/bin/python npa/scripts/validate_genesis_rsl_migration.py \
+  --output-path /tmp/genesis-rsl-validation
+```
+
+It trains in real physics, compares the restricted loader and ONNX Runtime
+against the upstream actor, and records real camera arrays. The short training
+run checks framework compatibility; its report preserves the actual teacher
+success rate and explicitly labels any failure demonstrations.

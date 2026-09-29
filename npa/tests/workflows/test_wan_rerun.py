@@ -479,7 +479,7 @@ class _MemoryS3:
 def test_build_wan_rrd_embeds_exact_video_and_timestamped_frames(
     tmp_path: Path,
 ) -> None:
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     run_dir = tmp_path / "run"
     _materialize_multigpu_run(run_dir)
@@ -503,7 +503,7 @@ def test_build_wan_rrd_embeds_exact_video_and_timestamped_frames(
 def test_single_gpu_layout_builds_and_uses_accurate_execution_entity(
     tmp_path: Path,
 ) -> None:
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     run_dir = tmp_path / "single"
     _materialize_single_gpu_run(run_dir)

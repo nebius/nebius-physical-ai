@@ -16,7 +16,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import rerun as rr
 import rerun.blueprint as rrb
-from rerun.recording import load_recording
+from npa.viz.recordings import load_recording
 
 from npa.fiftyone_lerobot_subtasks import (
     apply_subtask_segments,
