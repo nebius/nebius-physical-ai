@@ -9,7 +9,8 @@ description: Use when working on SONIC whole-body-control training, export, eval
 
 Use this skill for NVIDIA GEAR-SONIC whole-body-control workbench changes,
 including standalone training, export, evaluation, serving, image routing, and
-workflow composition with retargeting or MJLab.
+workflow composition with retargeting and native SONIC evaluation. MJLab uses
+its own native RSL-RL checkpoints; no automatic SONIC checkpoint adapter is implied.
 
 ## Procedure
 

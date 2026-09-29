@@ -33,7 +33,8 @@ jobs:
       - name: Install npa guardrail module
         run: |
           python -m venv npa/.venv
-          npa/.venv/bin/python -m pip install -e npa
+          # The scanner and its source-attribution verifier use only the stdlib.
+          npa/.venv/bin/python -m pip install --no-deps -e npa
 
       - name: Run confidentiality scans
         env:

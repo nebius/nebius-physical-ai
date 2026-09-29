@@ -36,7 +36,7 @@ PRIORITY_JOBS = {
         "security-scanners",
         "security-regression",
     },
-    "test.yml": {"scope", "coverage"},
+    "test.yml": {"coverage"},
     "image-security-scan.yml": {"base-image-plan", "base-image-cve-scan"},
 }
 TEST_JOBS = {
@@ -115,15 +115,23 @@ def test_candidate_runner_roles_keep_bulk_work_out_of_priority_capacity(name):
         if "runs-on" not in job:
             continue
         role = None
-        if job_id in PRIORITY_JOBS.get(name, set()):
+        if name == "security-regression.yml" and job_id in {
+            "scan",
+            "security-scanners",
+        }:
+            role = "SECURITY"
+        elif job_id in PRIORITY_JOBS.get(name, set()):
             role = "PRIORITY"
         elif job_id in TEST_JOBS.get(name, set()):
             role = "TEST"
         if role is None:
             assert job["runs-on"] == "ubuntu-latest"
             continue
+        pool = f"vars.NPA_CI_{role}_RUNNER"
+        if role == "SECURITY":
+            pool += " || vars.NPA_CI_PRIORITY_RUNNER"
         expected = (
             '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) '
-            f"&& (vars.NPA_CI_{role}_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}}}"
+            f"&& ({pool} || 'ubuntu-latest') || 'ubuntu-latest' }}}}"
         )
         assert job["runs-on"] == expected, (name, job_id)

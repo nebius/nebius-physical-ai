@@ -64,13 +64,34 @@ class CleanupResult:
         self.commands.extend(other.commands)
 
 
-NONTERMINAL_JOB_STATUSES = {
-    "PENDING",
-    "STARTING",
-    "RUNNING",
-    "RECOVERING",
-    "CANCELLING",
-}
+_TERMINAL_MANAGED_JOB_STATUSES = frozenset(
+    {
+        "SUCCEEDED",
+        "CANCELLED",
+        "FAILED",
+        "FAILED_SETUP",
+        "FAILED_PRECHECKS",
+        "FAILED_NO_RESOURCE",
+        "FAILED_CONTROLLER",
+    }
+)
+
+
+def is_terminal_managed_job_status(value: object) -> bool:
+    """Return true only for terminal states in the pinned SkyPilot contract.
+
+    Args:
+        value: Managed-job status returned by SkyPilot or durable state.
+    Returns:
+        Whether the status authoritatively proves terminal completion.
+    Raises:
+        None.
+    """
+
+    status = str(value or "").strip().upper()
+    return status in _TERMINAL_MANAGED_JOB_STATUSES
+
+
 JOBS_CONTROLLER_PATTERN = "sky-jobs-controller-*"
 RUN_ID_MIN_LENGTH = 12
 _RUN_ID_ALLOWED_RE = re.compile(r"^[A-Za-z0-9-]+$")
@@ -894,7 +915,7 @@ def _verify_managed_job_convergence(
     if evidence.outcome == "unavailable":
         return f"unavailable:{evidence.error or 'provider unavailable'}"
     status = str(evidence.status or "").strip().upper()
-    if status and status not in NONTERMINAL_JOB_STATUSES and status != "UNKNOWN":
+    if is_terminal_managed_job_status(status):
         return "terminal"
     return status or "UNKNOWN"
 
@@ -932,7 +953,7 @@ def cleanup_all_for_run(
         )
         return cleanup
     for job in matching_jobs:
-        if str(job.get("status", "")).upper() in NONTERMINAL_JOB_STATUSES:
+        if not is_terminal_managed_job_status(job.get("status")):
             job_id = str(job.get("job_id") or job.get("id"))
             cleanup.extend(
                 _cancel_job(
@@ -1106,7 +1127,7 @@ def wait_for_jobs_terminal(
         still_running = [
             job_id
             for job_id, status in _job_statuses(snapshot.jobs).items()
-            if job_id in wanted and status in NONTERMINAL_JOB_STATUSES
+            if job_id in wanted and not is_terminal_managed_job_status(status)
         ]
         if not still_running:
             return True, []
@@ -1126,7 +1147,7 @@ def _job_statuses(jobs: Sequence[dict[str, Any]]) -> dict[str, str]:
         status = str(job.get("status") or "").upper()
         # A job group reports one row per task; the job is only terminal once
         # every one of its rows is.
-        if job_id in statuses and statuses[job_id] in NONTERMINAL_JOB_STATUSES:
+        if job_id in statuses and not is_terminal_managed_job_status(statuses[job_id]):
             continue
         statuses[job_id] = status
     return statuses
@@ -1146,7 +1167,7 @@ def _nonterminal_job_ids(
     return sorted(
         job_id
         for job_id, status in _job_statuses(snapshot.jobs).items()
-        if status in NONTERMINAL_JOB_STATUSES
+        if not is_terminal_managed_job_status(status)
     )
 
 
@@ -1988,22 +2009,26 @@ def sky_environment(
     # even though every other probe sees the exact selected NPA kubeconfig.
     # Link the first (highest-precedence) KUBECONFIG into the isolated default
     # location.  This keeps auth live and operator-owned without copying a
-    # credential-bearing file into run state.
+    # credential-bearing file into run state.  When KUBECONFIG is unset the
+    # operator relies on the default ``~/.kube/config``; fall back to the source
+    # HOME's copy (mirroring the ``.nebius`` link above) so isolated submits do
+    # not collapse to ``contexts: []`` and reject every ``--infra k8s/<context>``.
     raw_kubeconfig = str(env.get("KUBECONFIG") or "").strip()
     if raw_kubeconfig:
         selected_kubeconfig = Path(raw_kubeconfig.split(os.pathsep, 1)[0]).expanduser()
-        if selected_kubeconfig.is_file():
-            isolated_kubeconfig = home / ".kube" / "config"
-            isolated_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
-            selected_target = selected_kubeconfig.resolve()
-            if isolated_kubeconfig.is_symlink():
-                if isolated_kubeconfig.resolve(strict=False) != selected_target:
-                    isolated_kubeconfig.unlink()
-            if (
-                not isolated_kubeconfig.exists()
-                and not isolated_kubeconfig.is_symlink()
-            ):
-                isolated_kubeconfig.symlink_to(selected_target)
+    elif provider_home and provider_home != home:
+        selected_kubeconfig = provider_home / ".kube" / "config"
+    else:
+        selected_kubeconfig = None
+    if selected_kubeconfig is not None and selected_kubeconfig.is_file():
+        isolated_kubeconfig = home / ".kube" / "config"
+        isolated_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
+        selected_target = selected_kubeconfig.resolve()
+        if isolated_kubeconfig.is_symlink():
+            if isolated_kubeconfig.resolve(strict=False) != selected_target:
+                isolated_kubeconfig.unlink()
+        if not isolated_kubeconfig.exists() and not isolated_kubeconfig.is_symlink():
+            isolated_kubeconfig.symlink_to(selected_target)
     env["HOME"] = str(home)
     env["SKY_RUNTIME_DIR"] = str(runtime)
     # SkyPilot otherwise derives its user hash from the unchanged operator and

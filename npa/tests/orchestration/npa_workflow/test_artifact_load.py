@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+import pytest
 
 from npa.clients import config
 from npa.orchestration.npa_workflow.artifact_load import (
     discover_final_rerun_artifact,
     load_final_artifact_into_agent,
 )
+from npa.orchestration.npa_workflow.submission_state import submission_state_path
+
+_MISSING = object()
 
 
 class FakeS3:
@@ -55,8 +61,8 @@ def _inventory(artifact: str, *, next_cursor: str = "") -> dict:
     }
 
 
-def _ready_status(artifact: str) -> dict:
-    return {
+def _ready_status(artifact: str, *, rerun_ready: object = True) -> dict:
+    status = {
         "run_id": "paidf-1",
         "artifact_uri": artifact,
         "artifact_key": artifact.removeprefix("s3://bucket/"),
@@ -65,8 +71,11 @@ def _ready_status(artifact: str) -> dict:
         "project_id": "project-a",
         "bucket": "bucket",
         "resolved_prefix": "physical-ai-data-factory",
-        "rerun_ready": True,
+        "rerun_ready": rerun_ready,
     }
+    if rerun_ready is _MISSING:
+        del status["rerun_ready"]
+    return status
 
 
 def _patch_agent(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
@@ -184,6 +193,86 @@ def test_resume_skips_duplicate_post_when_agent_already_has_artifact(
     assert methods == ["GET", "GET"]
 
 
+@pytest.mark.parametrize(
+    "rerun_ready",
+    [False, "true", "false", 1, 0, None, [True], {"ready": True}, _MISSING],
+    ids=[
+        "false",
+        "true-string",
+        "false-string",
+        "one",
+        "zero",
+        "null",
+        "array",
+        "object",
+        "missing",
+    ],
+)
+def test_resume_posts_and_fails_closed_for_non_true_readiness(
+    monkeypatch, tmp_path: Path, rerun_ready: object
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _patch_agent(monkeypatch, tmp_path)
+    artifact = "s3://bucket/physical-ai-data-factory/paidf-1/reports/sim2real.rrd"
+    client = FakeS3({artifact.removeprefix("s3://bucket/")})
+    methods: list[str] = []
+
+    def request(method: str, url: str, **_kwargs):  # noqa: ANN202
+        methods.append(method)
+        if "/api/artifacts/run/" in url:
+            return Response(200, _inventory(artifact))
+        status = _ready_status(artifact, rerun_ready=rerun_ready)
+        if method == "POST":
+            return Response(200, {"ok": True, "sim_viz": status})
+        return Response(200, status)
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-1",
+        run_prefix_uri="s3://bucket/physical-ai-data-factory/paidf-1",
+        storage_client=client,
+        http_request=request,
+    )
+
+    assert result.status == "partial"
+    assert result.verified is False
+    assert methods == ["GET", "GET", "POST"]
+
+
+@pytest.mark.parametrize("rerun_ready", ["false", _MISSING], ids=["string", "missing"])
+def test_final_verification_cannot_persist_ambiguous_readiness(
+    monkeypatch, tmp_path: Path, rerun_ready: object
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _patch_agent(monkeypatch, tmp_path)
+    artifact = "s3://bucket/physical-ai-data-factory/paidf-1/reports/sim2real.rrd"
+    methods = []
+
+    def request(method: str, url: str, **_kwargs):
+        methods.append(method)
+        if "/api/artifacts/run/" in url:
+            return Response(200, _inventory(artifact))
+        if method == "POST":
+            return Response(200, {"ok": True, "sim_viz": _ready_status(artifact)})
+        flag = False if len(methods) == 2 else rerun_ready
+        return Response(200, _ready_status(artifact, rerun_ready=flag))
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-1",
+        run_prefix_uri="s3://bucket/physical-ai-data-factory/paidf-1",
+        storage_client=FakeS3({artifact.removeprefix("s3://bucket/")}),
+        http_request=request,
+    )
+
+    assert methods == ["GET", "GET", "POST", "GET"]
+    assert result.status == "partial"
+    assert result.verified is False
+    state = json.loads(submission_state_path("demo", "paidf-1").read_text())
+    assert state["artifact_load"]["verified"] is False
+    assert state["artifact_load"]["status"] == "partial"
+
+
 def test_agent_source_ambiguity_fails_closed_without_post(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -239,3 +328,204 @@ def test_missing_agent_is_partial_not_workflow_failure(
     assert result.retry_command == (
         "npa workbench workflow load-artifact paidf-1 --project demo"
     )
+
+
+def test_storage_failure_detail_is_redacted_before_return_and_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".npa/config.yaml")
+    caplog.set_level("DEBUG", logger="npa.orchestration.npa_workflow.artifact_load")
+    query_secret = "synthetic-list-query"
+    assignment_secret = "synthetic-list-assignment"
+    bearer_secret = "synthetic-list-bearer"
+    plain_credential = "hunter2"
+
+    class FailingListing:
+        s3: object
+
+        def __init__(self) -> None:
+            self.s3 = self
+
+        def head_object(self, **_kwargs):  # noqa: ANN201
+            raise RuntimeError(
+                "exact artifact unavailable at "
+                f"s3://bucket/exact?signature={query_secret} "
+                f"login failed for {plain_credential}"
+            )
+
+        def get_paginator(self, _name: str):  # noqa: ANN201
+            return self
+
+        def paginate(self, **_kwargs):  # noqa: ANN201
+            raise RuntimeError(
+                "listing failed at "
+                f"s3://bucket/reports?signature={query_secret} "
+                f'{{"aws_secret_access_key":"{assignment_secret}"}} '
+                f"Bearer {bearer_secret} login failed for {plain_credential}"
+            )
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-storage-redaction",
+        run_prefix_uri="s3://bucket/paidf-storage-redaction",
+        storage_client=FailingListing(),
+        credential_values={"AWS_SECRET_ACCESS_KEY": plain_credential},
+    )
+
+    persisted = json.loads(
+        submission_state_path("demo", "paidf-storage-redaction").read_text()
+    )
+    exposed = f"{result.to_dict()}\n{persisted}\n{caplog.text}"
+    assert result.status == "partial"
+    assert query_secret not in exposed
+    assert assignment_secret not in exposed
+    assert bearer_secret not in exposed
+    assert plain_credential not in exposed
+
+
+def test_agent_failure_detail_redacts_loaded_auth_before_return_and_persistence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".npa/config.yaml")
+    _patch_agent(monkeypatch, tmp_path)
+    artifact = "s3://bucket/paidf-agent-redaction/reports/sim2real.rrd"
+    client = FakeS3({artifact.removeprefix("s3://bucket/")})
+    query_secret = "synthetic-agent-query"
+    assignment_secret = "synthetic-agent-assignment"
+    bearer_secret = "synthetic-agent-bearer"
+
+    def request(*_args, **_kwargs):
+        raise RuntimeError(
+            "agent failed at "
+            f"https://agent.invalid/status?token={query_secret} "
+            f"authorization={assignment_secret} "
+            f"Bearer {bearer_secret} do-not-print"
+        )
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-agent-redaction",
+        run_prefix_uri="s3://bucket/paidf-agent-redaction",
+        storage_client=client,
+        http_request=request,
+    )
+
+    persisted = json.loads(
+        submission_state_path("demo", "paidf-agent-redaction").read_text()
+    )
+    exposed = f"{result.to_dict()}\n{persisted}"
+    assert result.status == "partial"
+    assert query_secret not in exposed
+    assert assignment_secret not in exposed
+    assert bearer_secret not in exposed
+    assert "do-not-print" not in exposed
+
+
+@pytest.mark.parametrize("run_prefix_uri", ["", "s3://bucket/paidf-1"])
+def test_optional_handoff_keeps_workflow_success_when_receipt_is_corrupt(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    run_prefix_uri: str,
+) -> None:
+    from npa.cli.workbench.workflow import _load_paidf_artifact
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".npa/config.yaml")
+    secret = "synthetic-receipt-secret"
+    path = submission_state_path("demo", "paidf-1")
+    path.parent.mkdir(parents=True)
+    body = f'{{"aws_secret_access_key":"{secret}",'.encode()
+    path.write_bytes(body)
+    if run_prefix_uri:
+        monkeypatch.setattr(
+            "npa.orchestration.npa_workflow.src_staging._storage_client",
+            lambda **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("synthetic storage failure")
+            ),
+        )
+
+    result = _load_paidf_artifact(
+        project="demo",
+        run_id="paidf-1",
+        run_prefix_uri=run_prefix_uri,
+    )
+
+    assert result["status"] == "partial"
+    assert "receipt_warning" in result
+    assert secret not in str(result)
+    assert path.read_bytes() == body
+
+
+def test_optional_handoff_redacts_storage_failure_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.cli.workbench.workflow import _load_paidf_artifact
+
+    monkeypatch.setattr(config, "CONFIG_PATH", tmp_path / ".npa/config.yaml")
+    query_secret = "synthetic-query-value"
+    assignment_secret = "synthetic-assignment-value"
+    credential_secret = "synthetic-credential-value"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.src_staging._storage_client",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError(
+                "storage failed at "
+                f"https://storage.invalid/object?signature={query_secret} "
+                f"custom_secret={assignment_secret} {credential_secret}"
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError(f"receipt failed for password {credential_secret}")
+        ),
+    )
+
+    result = _load_paidf_artifact(
+        project="demo",
+        run_id="paidf-redaction",
+        run_prefix_uri="s3://bucket/paidf-redaction",
+        credential_values={"AWS_SECRET_ACCESS_KEY": credential_secret},
+    )
+
+    detail = str(result["detail"])
+    receipt_warning = str(result["receipt_warning"])
+    assert result["status"] == "partial"
+    assert query_secret not in detail
+    assert assignment_secret not in detail
+    assert credential_secret not in detail
+    assert "https://storage.invalid/object?<redacted>" in detail
+    assert "custom_secret=<redacted>" in detail
+    assert credential_secret not in receipt_warning
+
+
+def test_submission_receipt_warning_redacts_failure_context() -> None:
+    from npa.cli.workbench.workflow import _submission_receipt_warning
+
+    query_secret = "synthetic-warning-query"
+    assignment_secret = "synthetic-warning-assignment"
+    token_secret = "hf_syntheticwarningtoken"
+    plain_credential = "hunter2"
+
+    warning = _submission_receipt_warning(
+        ValueError(
+            "write failed at "
+            f"https://storage.invalid/receipt?token={query_secret} "
+            f"custom_secret={assignment_secret} {token_secret} "
+            f"login failed for password {plain_credential}"
+        ),
+        secrets=(plain_credential,),
+    )
+
+    assert query_secret not in warning
+    assert assignment_secret not in warning
+    assert token_secret not in warning
+    assert plain_credential not in warning
+    assert "https://storage.invalid/receipt?<redacted>" in warning
+    assert "custom_secret=<redacted>" in warning

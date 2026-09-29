@@ -38,6 +38,25 @@ def test_exempt_images_are_real_workflow_image_tools() -> None:
     assert dc.EXEMPT_IMAGE_TOOLS <= dc.WORKFLOW_IMAGE_TOOLS
 
 
+def test_habitat_exemption_preserves_the_four_step_rule() -> None:
+    summaries = dc.spec_step_summary()
+    habitat = next(s for s in summaries if s.name == "habitat-sim-smoke.yaml")
+    assert habitat.total_states == habitat.exec_steps == 1
+    assert habitat.image_tools == frozenset({"habitat-sim"})
+    assert not habitat.is_comprehensive
+    assert "habitat-sim" in dc.EXEMPT_IMAGE_TOOLS
+
+    short_non_exempt = dc.SpecSummary(
+        name="short-non-exempt.yaml",
+        path=Path("short-non-exempt.yaml"),
+        total_states=3,
+        exec_steps=3,
+        image_tools=frozenset({"groot"}),
+    )
+    assert "groot" in dc.image_coverage([habitat, short_non_exempt]).missing
+    assert dc.MIN_COMPREHENSIVE_STEPS == 4
+
+
 def test_daily_plan_set_covers_every_covered_image() -> None:
     summaries = dc.spec_step_summary()
     report = dc.image_coverage(summaries)
@@ -78,7 +97,6 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     rotation = {c.spec for c in cases}
     # Verified-passing on real GPU (RTXPRO-6000) stay in the rotation.
     for good in (
-        "mjlab-eval.yaml",
         "cosmos3-reason.yaml",
         "tokenfactory-rollout-judge.yaml",
         # SONIC twins are self-contained now: the in-job train runtime writes a
@@ -95,6 +113,8 @@ def test_gpu_submit_rotation_covers_all_twins_and_excludes_plan_only() -> None:
     # Twins that can't pass as a standalone submit today are excluded.
     for bad in (
         "sonic-eval.yaml",
+        "mjlab-eval.yaml",
+        "mjlab-train-eval.yaml",
         "bdd100k-pipeline.yaml",
     ):
         assert bad not in rotation, f"{bad} should be excluded from the rotation"
