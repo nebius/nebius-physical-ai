@@ -23,10 +23,26 @@ and enforced by `npa/docker/workbench/packaging-contract.yaml`.
   not an active GitHub Actions workflow. It defines scheduled CPU checks and
   an optional GPU job. Its presence does not establish nightly GPU validation.
 - **Image CVE / config scanning:** handled separately by the weekly
-  `image-security-scan.yml` (Trivy config scan + base-image CVE matrix).
+  `image-security-scan.yml` (Trivy config scan + complete base-image CVE inventory).
 
 The active [GPU e2e preflight](../../.github/workflows/e2e.yml) collects tests
 and checks shell syntax. It does not execute GPU workloads.
+
+The RoboTwin Phase A golden eval is deliberately narrower than a simulator
+smoke: `robotwin-runtime assert-refusal` runs on CPU and proves the real
+missing-authorization gate creates no source, asset, cache, or output paths.
+The candidate is unbuilt and publication-quarantined, so this definition is not
+a recorded container pass and never establishes SAPIEN, Vulkan, task-success,
+HDF5/video, or RTX capability.
+Gymnasium-Robotics appears in the machine-readable manifest as an internal
+development-candidate record with `needs-image-update`. This records the future real
+MuJoCo/EGL gate without registering a supported image. The neutral candidate
+must contain no upstream source, Shadow asset, MuJoCo/Python workload runtime,
+or populated cache; its Dockerfile refuses before package network access when
+the exact signed-snapshot bootstrap or corresponding-source locks differ. An
+owner-only reference build supplied exact config and ordered-layer scanner
+anchors but did not complete the product scan or leave an accepted artifact. No
+golden evaluation, accepted image, or public availability is claimed.
 
 ## CLI
 
@@ -94,6 +110,9 @@ flowchart TB
     s2r["envgen / reference-policy / loop-eval rollouts"]
     groot["groot: GR00T inference"]
   end
+  subgraph unvalidated["Unvalidated / publication-quarantined"]
+    habitat["habitat-sim: unvalidated/quarantined; strict RTX-only route pending"]
+  end
   subgraph blocked["blocked-on-upstream"]
     b300["base-cuda13-b300: flash_attn + CUDA13"]
     reason["cosmos3-reason: Reason cache wiring"]
@@ -114,6 +133,7 @@ flowchart TB
 | `lerobot-vlm-rl` | `0.1.1` | container-smoke | CUDA; VLM signal parse + RL step | required | gpu-gated |
 | `genesis` | `0.4.6` | container-smoke | import; Franka scene; step; body state | required | gpu-gated |
 | `isaac-lab` | `3.0.0b2.post1-sim2real-coherent-20260904` | container-smoke | version; runtime; vectorized environment steps and replay; separately validated RTX/Vulkan render | required | gpu-gated |
+| `habitat-sim` | `0.3.3-public-unbuilt` | container-smoke | runtime-hashed official Skokloster scene; distinct RGB/depth frames; Bullet time and displacement; NVIDIA EGL; exact digest and storage readback | exactly one RTX PRO 6000 Blackwell; never B200 | unvalidated |
 | `content-agents` | `0.5.2-npa2` | container-smoke | exact OVRTX runtime fetch; real rigid-physics authoring; upstream validation + render | required | gpu-gated |
 | `cosmos` | `cu128-torch27-sm100-1.0.9-20260803T002017Z` | container-smoke | version; model load; single inference (safety on) | required | gpu-gated |
 | `cosmos2-transfer` | `2.5.1-sim2real-coherent-20260904` | container-smoke | procedural input; four real diffusion steps; decoded, numerically validated output MP4; guardrails enabled | required | gpu-gated |
@@ -144,6 +164,12 @@ gates before publication; see the
 The validator's ASGI root-response CORS check and the smoke's TCP App
 readiness are separate checks; they do not establish media-route CORS coverage.
 
+The Habitat-Sim definition is a candidate contract, not a pass record. It keeps
+the pinned MIT simulator source in the image and fetches only the attributed CC
+BY 4.0 Skokloster test scene at runtime behind archive and member SHA-256
+checks. Publication stays quarantined until a rebuilt exact digest passes the
+complete byte scan and the genuine one-RTX renderer workflow.
+
 ## Golden-eval kinds
 
 | kind | meaning |
@@ -155,9 +181,10 @@ readiness are separate checks; they do not establish media-route CORS coverage.
 | `build-import` | import/compile proof that the heavy deps resolve |
 
 `status` is one of `ready` (runs on a normal runner), `gpu-gated` (needs a GPU
-host/serverless with the image), `blocked-on-upstream` (B300/CUDA13 family), or
-`needs-image-update` (the published image cannot run its eval yet — see the
-validation results below).
+host/serverless with the image), `blocked-on-upstream` (B300/CUDA13 family),
+`unvalidated` (the candidate is unbuilt or publication-quarantined, so no
+published image is implied), or `needs-image-update` (a published image exists
+but cannot run its eval yet — see the validation results below).
 
 ## Validation results
 
@@ -327,6 +354,17 @@ pipeline. Key safety notes are condensed below.
   `/bin/bash`; sshd is not enabled by default. SkyPilot may generate ephemeral
   host keys and start SSH inside a submitted task. The packaging contract must
   record this exemption whenever a public image carries `NOPASSWD:ALL`.
+- **`robomimic` Phase A refusal** — the unbuilt neutral candidate is intended to
+  run as uid 1000, start no sshd, and contain no CUDA/PyTorch runtime, data,
+  weights, populated cache, credentials, or outputs. Its `entrypoint-smoke` is
+  a planned/static refusal contract; the unbuilt candidate has not executed, so
+  refusal without mutation is not yet execution evidence or capability proof.
+  The real four-step held-out checkpoint-reload
+  gate and any public-image claim remain blocked on a customer-created,
+  run/manifest-bound runtime authorization, separate transaction authorization,
+  built-byte/security/SBOM/provenance checks, and an exact-digest run on exactly
+  one STRICT-reserved B200 with authenticated run/Pod/node/provider allocation
+  observation.
 - **Runtime user** — npa-built images (`groot`, `lerobot*`, `genesis`, `cosmos`,
   `cosmos3`, `cosmos3-reason`, `fiftyone`, `envgen`, `reference-policy`,
   `loop-eval`, `robocasa`, and the runtime-fetch `isaac-lab`) run as the unprivileged

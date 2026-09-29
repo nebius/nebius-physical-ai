@@ -41,10 +41,9 @@ def repository(tmp_path: Path) -> Path:
         "[project.optional-dependencies]\ndev = []\nadapter = []\nsonic = []\ngenesis-test = []\n"
     )
     (tmp_path / "npa/ci/constraints.in").write_text("# constraints\n")
+    generated = "anyio==4.14.2\n"
     (tmp_path / "npa/ci/requirements.txt").write_text(
-        ci_requirements._FINGERPRINT_PREFIX
-        + ci_requirements._fingerprint(tmp_path)
-        + "\nanyio==4.14.2\n"
+        ci_requirements._render_requirements(tmp_path, generated)
     )
     _commit(tmp_path, "base")
     return tmp_path

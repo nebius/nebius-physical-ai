@@ -139,6 +139,9 @@ class OperationRecord(BaseModel):
     derived_project_id: str
     remote_kind: RemoteKind
     selection: str
+    scenario_case: str = ""
+    parameters: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    expected_cli_version: str = "0.4.289"
     remote_id: str = ""
     invocation_id: str = ""
     submission_owner: str = ""
