@@ -267,7 +267,7 @@ def test_rerun_viewer_is_exact_source_stage14_runtime() -> None:
         if line.strip() and not line.startswith("#")
     ]
     assert all(line.count("==") == 1 for line in lines)
-    for dependency in ("boto3==1.43.62", "mcap==1.4.0", "rerun-sdk==0.31.4"):
+    for dependency in ("boto3==1.43.62", "mcap==1.4.0", "rerun-sdk==0.38.1"):
         assert dependency in lines
 
 

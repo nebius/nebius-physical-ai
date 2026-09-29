@@ -393,7 +393,7 @@ def test_rrd_roundtrip_preserves_run_identity_and_each_ppo_pass_once(
     iteration_ids: tuple[int | None, ...],
 ) -> None:
     import pyarrow as pa
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     inner_evidence, heldout_report = _build_run_tree(tmp_path)
     localized = {"outer_iteration": 2, "iterations": []}
@@ -476,7 +476,7 @@ def test_rrd_roundtrip_preserves_run_identity_and_each_ppo_pass_once(
 def _rrd_training_scalars(path: Path) -> dict[str, Any]:
     """Decode training scalars from an actual closed RRD file."""
 
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     measured = {}
     for chunk in load_recording(path).chunks():
@@ -600,7 +600,7 @@ def test_iteration_validation_rejects_ambiguous_or_mismatched_lineage(
 
 def _decoded_validation_metrics(path: Path) -> tuple[list[float], dict[str, str]]:
     import pyarrow as pa
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     samples, labels = [], {}
     for chunk in load_recording(path).chunks():

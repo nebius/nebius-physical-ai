@@ -587,7 +587,12 @@ fixture fallback.
 The source is committed last via `input/provenance.json`; `source.mp4`,
 `conditioning.mp4`, and `conditioning-frame-*.png` carry digests. A retry with
 the same run ID verifies and reuses the source, repairs deterministic derived
-objects if needed, and refuses a different explicit source. Provenance records
+objects if needed, and refuses a different explicit source. If staging stops
+before provenance is written, retrying without an input selector adopts the
+single staged source alongside that run's conditioning video and numbered frames.
+It verifies existing bytes, writes only missing objects, and commits provenance
+last. Unrelated siblings require an explicit source selection; multiple source
+videos are never chosen implicitly. Provenance records
 `input_origin`, `source_kind`, authoritative URL/revision, license/attribution,
 SHA-256, canonical S3 URI, and source→conditioning→frame derivation. The durable
 workflow manifest, config/final reports, Rerun panel, and FiftyOne-backed dataset

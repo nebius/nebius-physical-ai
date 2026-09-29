@@ -2195,7 +2195,7 @@ def delete_bucket_cmd(
                 verification={"bucket_absent": True},
             )
             if prune_config:
-                _prune_local_state(bucket_name)
+                _prune_local_state(bucket_name, resolved_project)
             _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
             if output_json:
                 import json
@@ -2274,7 +2274,7 @@ def delete_bucket_cmd(
                 verification={"bucket_absent": verified_gone},
             )
             if prune_config and bucket_name and (not wait or verified_gone):
-                _prune_local_state(bucket_name)
+                _prune_local_state(bucket_name, resolved_project)
             if not wait or verified_gone:
                 _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
             if wait and not verified_gone:
@@ -2344,7 +2344,7 @@ def delete_bucket_cmd(
         verification={"bucket_absent": verified_gone},
     )
     if prune_config and bucket_name and (not wait or verified_gone):
-        _prune_local_state(bucket_name)
+        _prune_local_state(bucket_name, resolved_project)
     if not wait or verified_gone:
         _complete_bucket_iam_cleanup_tombstone(iam_alias, iam_marker)
     if wait and not verified_gone:
@@ -2537,17 +2537,21 @@ def _bucket_name_from_uri(value: str) -> str:
     return str(value or "").strip().removeprefix("s3://").strip("/").split("/", 1)[0]
 
 
-def _prune_local_state(bucket_name: str) -> None:
+def _prune_local_state(bucket_name: str, project_id: str = "") -> None:
     """Drop every on-disk secret tied to a now-deleted bucket.
 
-    Two files hold them: ``credentials.yaml`` (the object-storage access key) and
+    Two files hold them: ``credentials.yaml`` (the object-storage access key,
+    including the exact project's scoped credential-store record) and
     ``config.yaml`` (the Terraform remote-state backend key under
-    ``projects.<alias>.terraform_state``). A bucket delete that cleaned only the
-    former left live-looking HMAC keys for the deleted bucket in config.yaml.
+    ``projects.<alias>.terraform_state``). A bucket delete that cleaned only
+    the legacy top-level secrets left a stale scoped record that resurrected
+    the deleted bucket the next time it was selected.
     """
+    from npa.clients.project_credential_store import ProjectCredentialStoreError
+
     try:
-        _prune_storage_credentials(bucket_name)
-    except (OSError, ValueError) as exc:
+        _prune_storage_credentials(bucket_name, project_id)
+    except (OSError, ValueError, ProjectCredentialStoreError) as exc:
         _partial_cleanup(
             f"bucket deletion/absence was recorded, but the atomic credential rewrite "
             f"failed and the prior credential document was left intact: {exc}. Fix "
@@ -2603,24 +2607,29 @@ _STORAGE_SECRET_KEYS = (
 _STORAGE_SECTION_KEYS = ("storage", "s3", "object-storage", "object_storage")
 
 
-def _prune_storage_credentials(bucket_name: str) -> None:
+def _prune_storage_credentials(bucket_name: str, project_id: str = "") -> None:
     """Drop saved S3 credentials that point at a bucket that no longer exists.
 
     Leaving them behind means the next `npa configure` / deploy reuses an access
     key for a deleted bucket — the stale-secret half of the teardown report.
-    Removes the access key, secret key, endpoint and bucket from the storage
-    section (under whatever key names the file uses). IAM identity state is a
-    separate lifecycle: its ID and any NPA ownership proof remain until the
-    explicit ownership-gated service-account teardown confirms it is gone.
+    Removes the access key, secret key, endpoint and bucket from the legacy
+    top-level storage section (under whatever key names the file uses), and,
+    when *project_id* is known, the exact project's scoped
+    ``project_credentials.projects[project_id].storage`` record in the same
+    atomic rewrite. IAM identity state is a separate lifecycle: its ID and any
+    NPA ownership proof remain until the explicit ownership-gated
+    service-account teardown confirms it is gone.
     """
     from copy import deepcopy
 
     from npa.clients.credentials import CREDENTIALS_PATH, update_private_yaml
+    from npa.clients.project_credential_store import retire_project_bucket_document
 
     removed: list[str] = []
 
     def prune(existing: dict[str, Any]) -> dict[str, Any]:
         data = deepcopy(existing)
+        data = retire_project_bucket_document(data, project_id, bucket_name)
         saved_bucket = ""
         for section_key in _STORAGE_SECTION_KEYS:
             section = data.get(section_key)
@@ -2656,7 +2665,7 @@ def _prune_storage_credentials(bucket_name: str) -> None:
         setup = data.get("storage_setup")
         projects = setup.get("projects") if isinstance(setup, dict) else None
         if isinstance(setup, dict) and isinstance(projects, dict):
-            for project_id, project_record in list(projects.items()):
+            for setup_project_id, project_record in list(projects.items()):
                 resources = (
                     project_record.get("resources")
                     if isinstance(project_record, dict)
@@ -2671,16 +2680,16 @@ def _prune_storage_credentials(bucket_name: str) -> None:
                     and isinstance(bucket, dict)
                     and str(bucket.get("name", "") or "").strip() == bucket_name
                     and str(bucket.get("project_id", "") or "").strip()
-                    == str(project_id)
+                    == str(setup_project_id)
                 ):
                     continue
                 resources = dict(resources)
                 resources.pop("bucket", None)
                 if resources:
                     project_record["resources"] = resources
-                    projects[project_id] = project_record
+                    projects[setup_project_id] = project_record
                 else:
-                    projects.pop(project_id, None)
+                    projects.pop(setup_project_id, None)
             if projects:
                 setup["projects"] = projects
                 data["storage_setup"] = setup

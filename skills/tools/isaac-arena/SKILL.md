@@ -357,3 +357,23 @@ repeated failures can consume worker disk.
 npa/.venv/bin/python /home/ubuntu/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/tools/isaac-arena
 npa/.venv/bin/python -m pytest npa/tests/workbench/test_isaac_arena.py npa/tests/docker/test_packaging_contract.py npa/tests/guardrails/test_skills_index.py -q
 ```
+
+## Native film capture
+
+For higher-resolution footage, `evaluate --record-video --video-profile film`
+requests native 3840 × 2160 output and 32 consecutive ready, physics-frozen
+settling renders per captured action, with 128 direct/diffuse and 64 reflection
+samples. `standard` preserves existing capture settings. The camera pose,
+physics, replay actions, and acceptance thresholds remain unchanged. Native
+resolution and profile readback are verified; never call an upscaled standard
+capture a film-profile render. Inspect the actual result before claiming improved
+picture quality.
+The evidence-only Gaussian radius scales from 3.5 pixels at 720p to 10.5 pixels
+at 4K; acceptance verifies that exact profile-specific transform. Keep the raw
+4K capture for editorial finishing, with a separate derivative recipe.
+
+Set `config.video_profile: film` in the existing RTX workflow when using an
+updated runtime. The published r4 image predates the selector: use the explicit
+source-overlay path and retain its content fingerprint, or a newly qualified
+image. An empty workflow selector omits the new option for existing images.
+Release qualification remains digest-scoped and does not cover modified overlays.
