@@ -587,6 +587,8 @@ def test_portable_preflight_entrypoint_restores_runtime_and_runs_bound_python(
 ):
     import sys
 
+    # This fixture archives the executable only, so supply its matching stdlib.
+    monkeypatch.setenv("PYTHONHOME", sys.base_prefix)
     python_bytes = Path(sys.executable).read_bytes()
     receipt = _locked_runtime_receipt(
         python_bytes, base_relative=".local/python/bin/python"
