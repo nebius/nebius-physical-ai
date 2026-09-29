@@ -566,7 +566,9 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
 
 The check deploys a real CPU agent, verifies metadata-backed access and resource
 inventory, rejects anonymous requests, and compares deployed Python sources
-with the tested checkout. It retains the deployment manifest and rendered
+with the tested checkout. HTTPS verifies the hostname and the server certificate
+retrieved through provider-pinned SSH, and rejects an untrusted certificate.
+It retains the certificate, deployment manifest and rendered
 backend hash privately, then destroys only the test agent with shared IAM
 preserved. The configuration has no default; without it the test skips.
 

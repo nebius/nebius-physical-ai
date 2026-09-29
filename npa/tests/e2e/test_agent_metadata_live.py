@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import ssl
 import subprocess
 import sys
 import time
@@ -89,9 +90,9 @@ def _request(client, route: str, evidence: Path, label: str) -> tuple[dict, floa
     return response.json(), elapsed
 
 
-def _deployed_source_hashes(project: str, name: str, evidence: Path) -> dict:
+def _deployed_ssh(project: str, name: str):
     record = agent._agent_record(project, name)
-    ssh = agent.SSHClient(
+    return agent.SSHClient(
         config=agent.resolve_ssh_config(
             ssh_host=record["public_ip"],
             ssh_user=record.get("ssh_user", "ubuntu"),
@@ -100,6 +101,21 @@ def _deployed_source_hashes(project: str, name: str, evidence: Path) -> dict:
             name=None,
         ).ssh
     )
+
+
+def _deployed_tls(project: str, name: str, evidence: Path) -> ssl.SSLContext:
+    # SSH checks the provider-pinned host key before trusting this certificate.
+    _, certificate, _ = _deployed_ssh(project, name).run_or_raise(
+        "sudo cat /etc/nginx/ssl/npa-agent.crt"
+    )
+    _write_evidence(evidence, "server-certificate.pem", certificate)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.load_verify_locations(cadata=certificate)
+    assert context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED
+    return context
+
+
+def _deployed_source_hashes(project: str, name: str, evidence: Path) -> dict:
     modules = ["agent", "agent_access_runtime", "agent_resources", "agent_env_files"]
     script = (
         "import hashlib, importlib, json; from pathlib import Path; "
@@ -109,7 +125,7 @@ def _deployed_source_hashes(project: str, name: str, evidence: Path) -> dict:
         "print(json.dumps({name:hashlib.sha256(path.read_bytes()).hexdigest() "
         "for name,path in files.items()}))"
     )
-    _, stdout, _ = ssh.run_or_raise(
+    _, stdout, _ = _deployed_ssh(project, name).run_or_raise(
         "sudo /opt/npa-agent/venv/bin/python -c " + shlex.quote(script)
     )
     hashes = json.loads(stdout)
@@ -119,6 +135,14 @@ def _deployed_source_hashes(project: str, name: str, evidence: Path) -> dict:
         expected = hashlib.sha256((source / f"{name}.py").read_bytes()).hexdigest()
         assert hashes[name] == expected, f"Deployed {name} source differs"
     return hashes
+
+
+def _reject_untrusted_certificate(base: str) -> None:
+    # No trusted roots: the same public endpoint must fail before HTTP auth.
+    untrusted = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    with httpx.Client(base_url=base, verify=untrusted, timeout=None) as client:
+        with pytest.raises(httpx.ConnectError, match="CERTIFICATE_VERIFY_FAILED"):
+            client.get("/api/access?refresh=true")
 
 
 def test_fresh_metadata_agent_access_and_inventory(deployment):
@@ -131,11 +155,14 @@ def test_fresh_metadata_agent_access_and_inventory(deployment):
     )
     assert status["health"] is True and status["basic_auth_enforced"] is True
     base = status["public_url"].rstrip("/")
+    assert base.startswith("https://"), "Live proof requires public HTTPS"
+    tls = _deployed_tls(project, name, evidence)
+    _reject_untrusted_certificate(base)
     auth = agent._load_auth_secret(str(agent._auth_secret_path(project, name)))
-    with httpx.Client(base_url=base, verify=False, timeout=None) as anonymous:
+    with httpx.Client(base_url=base, verify=tls, timeout=None) as anonymous:
         for route in ("/", "/api/access?refresh=true", "/api/resources"):
             assert anonymous.get(route).status_code == 401
-    with httpx.Client(base_url=base, auth=auth, verify=False, timeout=None) as client:
+    with httpx.Client(base_url=base, auth=auth, verify=tls, timeout=None) as client:
         manifest, _ = _request(client, "/api/deployment", evidence, "deployment")
         access, access_seconds = _request(
             client, "/api/access?refresh=true", evidence, "access"
@@ -171,6 +198,14 @@ def _record_result(evidence, manifest, hashes, access_seconds, resources_seconds
                 "resources_http_status": 200,
                 "resources_seconds": resources_seconds,
                 "anonymous_statuses": [401, 401, 401],
+                "tls_hostname_verified": True,
+                "tls_untrusted_certificate_rejected": True,
+                "tls_trust_source": "provider-pinned SSH",
+                "server_certificate_sha256": hashlib.sha256(
+                    ssl.PEM_cert_to_DER_cert(
+                        (evidence / "server-certificate.pem").read_text()
+                    )
+                ).hexdigest(),
                 "deployed_source_sha256": hashes,
             },
             indent=2,
