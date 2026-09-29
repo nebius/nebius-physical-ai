@@ -28,12 +28,15 @@ def prepare_reference(args):
         ValueError: Sample, measured cases or recipe verification fails.
         OSError: Data staging or conditional publication fails.
     """
+    settings = _anchor_settings(args)
     with tempfile.TemporaryDirectory(prefix="npa-rl-reference-") as temporary:
         root = Path(temporary)
         capture = materialize(args.sample_path, root / "capture")
         baseline, cohorts, protocol = _prepare_inputs(args, root, capture)
+        protocol.update(settings)
         plan = _publish_inputs(args, root, baseline, capture, protocol)
         plan.update(
+            settings,
             cohorts=cohorts,
             adapters=adapter_identities(
                 args.navigation_image, args.reconstruction_image
@@ -45,6 +48,15 @@ def prepare_reference(args):
         )
         _publish(args.output_root + "/reference-plan.json", plan)
         return plan
+
+
+def _anchor_settings(args):
+    coefficient = getattr(args, "baseline_anchor_coefficient", None)
+    if coefficient is None:
+        return {}
+    from npa.workflows.navigation.anchor_config import validate_anchor_coefficient
+
+    return {"baseline_anchor_coefficient": validate_anchor_coefficient(coefficient)}
 
 
 def _prepare_inputs(args, root, capture):

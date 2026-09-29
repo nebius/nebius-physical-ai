@@ -102,6 +102,9 @@ def build_runner(env, recipe, output: Path | None):
     config.max_iterations = recipe.iterations
     wrapped = RslRlVecEnvWrapper(env, clip_actions=config.clip_actions)
     settings = config.to_dict()
+    from npa.workflows.navigation.anchor_config import configure_training_anchor
+
+    configure_training_anchor(settings, recipe, training=output is not None)
     runner = OnPolicyRunner(
         wrapped, settings, log_dir=str(output) if output else None, device="cuda:0"
     )

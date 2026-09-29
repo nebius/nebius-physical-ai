@@ -2,9 +2,10 @@
 
 The reference prepares its own public RGB-D scan, trains a real navigation
 baseline, observes actual failures on office training routes, admits the capture
-for reconstruction, continues PPO with baseline replay, and
-compares checkpoints on frozen cases. There is no pre-trained demo baseline to
-find or operator adapter to write. On a configured RTX Workbench environment:
+for reconstruction, continues PPO with baseline replay and a frozen baseline
+policy penalty, and compares checkpoints on frozen cases. There is no pre-trained
+demo baseline to find or operator adapter to write. On a configured RTX Workbench
+environment:
 
 ```bash
 npa workbench workflow demo run rl-improvement
@@ -48,11 +49,32 @@ collision scenes are packaged in one world, separated beyond the sensor range.
 The office and its poses/goals are translated together; no floor is added and
 no geometry is rescaled.
 
+The continuation adds a KL-divergence penalty that discourages its action
+distribution from drifting away from the original baseline. The full preset
+sets `baseline_anchor_coefficient` to `10.0` before training; it is a learning
+setting, not a quality threshold. The teacher is frozen after the exact native
+baseline and optimizer have been restored and the initial checkpoint retained.
+It sees the original training minibatches through its own fixed observation
+normalizer. All office and warehouse routes remain in PPO training. Evaluation
+uses the candidate alone; it does not switch between policies or select actions
+from known route outcomes.
+
+The anchor is a retention experiment and does not guarantee a passing policy.
+Its checkpoint retains the original teacher identity and state so continued
+training cannot silently replace the teacher with an adapted candidate. The
+same per-case and per-region gates below decide whether it is effective.
+
 The earlier continuation trained only on the office before evaluating a
 different warehouse layout. That candidate scored zero held-out successes.
 Forgetting and distribution mismatch are plausible causes; replay is an
 implemented mitigation, not proof that transfer has been fixed. The original
 negative result and missing observation remain historical evidence.
+
+A subsequent full replay run improved development success from 82.475% to
+93.0%, but failed 371 metric checks across 257 cases, including warehouse
+regressions. Selection retained the baseline and never evaluated final outcomes.
+That rejected run motivates the baseline penalty; it does not qualify the new
+training recipe. The new recipe requires its own full GPU comparison.
 
 ## Development and final evaluation
 

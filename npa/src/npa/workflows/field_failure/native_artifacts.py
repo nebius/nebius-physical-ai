@@ -88,17 +88,24 @@ def _protocol(request, root):
     path = root / "protocol.json"
     _download(request["protocol"], path)
     value = _read_json(path)
-    if set(value) != {
+    required = {
         "schema_version",
         "navigation_image",
         "task",
         "adapter_module",
         "adapter_sha256",
         "source_bundle_sha256",
+    }
+    if not required <= set(value) or set(value) - required - {
+        "baseline_anchor_coefficient"
     }:
         raise ValueError("native protocol has unsupported or missing fields")
     if value["schema_version"] != "npa.field-failure.native-protocol.v1":
         raise ValueError("unsupported native field-failure protocol")
+    if "baseline_anchor_coefficient" in value:
+        from npa.workflows.navigation.anchor_config import validate_anchor_coefficient
+
+        validate_anchor_coefficient(value["baseline_anchor_coefficient"])
     return value
 
 
@@ -124,6 +131,8 @@ def _recipe(root, protocol):
         raise ValueError("native recipe differs from the sealed common protocol")
     if value.get("initial_checkpoint") is not None:
         raise ValueError("native scene bundles cannot choose the evaluated checkpoint")
+    if value.get("baseline_anchor") is not None:
+        raise ValueError("native scene bundles cannot choose the baseline teacher")
     return value
 
 

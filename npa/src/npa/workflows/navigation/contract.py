@@ -7,7 +7,7 @@ import json
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 Number = Annotated[float, Field(allow_inf_nan=False)]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -100,6 +100,22 @@ class InitialCheckpoint(BaseModel):
         return self
 
 
+class BaselineAnchor(BaseModel):
+    """Bind a training-only policy penalty to an immutable native baseline.
+
+    Args:
+        **data: Nonnegative KL coefficient and original checkpoint identity.
+    Returns:
+        Fully bound anchor configuration; zero disables the extension.
+    Raises:
+        ValueError: Coefficient, checkpoint path or digest is invalid.
+    """
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    coefficient: Annotated[float, Field(ge=0, allow_inf_nan=False)]
+    checkpoint: InitialCheckpoint
+
+
 class Recipe(BaseModel):
     """Bind a BYOF task, scene, training recipe and held-out reset set.
 
@@ -131,8 +147,23 @@ class Recipe(BaseModel):
     eval_cases: Annotated[list[Case], Field(min_length=2)]
     probe: Probe
     initial_checkpoint: InitialCheckpoint | None = None
+    baseline_anchor: BaselineAnchor | None = None
     source_bundle_sha256: Digest | None = None
     reference_controller_sha256: Digest | None = None
+
+    @model_serializer(mode="wrap")
+    def _serialize_anchor(self, handler):
+        value = handler(self)
+        if value.get("baseline_anchor") is None:
+            value.pop("baseline_anchor", None)
+        return value
+
+    @model_validator(mode="after")
+    def _anchor_initialization(self):
+        if self.baseline_anchor and self.baseline_anchor.coefficient > 0:
+            if self.initial_checkpoint is None:
+                raise ValueError("baseline anchor requires a native initial checkpoint")
+        return self
 
     @model_validator(mode="after")
     def _reference_controller(self):
@@ -193,17 +224,20 @@ def read_recipe(root: Path) -> Recipe:
     if hashlib.sha256(scene.read_bytes()).hexdigest() != recipe.scene_sha256:
         raise ValueError("scene SHA-256 mismatch")
     if recipe.initial_checkpoint:
-        checkpoint = root / recipe.initial_checkpoint.file
-        if checkpoint.is_symlink() or not checkpoint.resolve().is_relative_to(
-            root.resolve()
-        ):
-            raise ValueError("initial checkpoint escapes input bundle")
-        if (
-            hashlib.sha256(checkpoint.read_bytes()).hexdigest()
-            != recipe.initial_checkpoint.sha256
-        ):
-            raise ValueError("initial checkpoint SHA-256 mismatch")
+        _verify_checkpoint(root, recipe.initial_checkpoint, "initial")
+    if recipe.baseline_anchor:
+        _verify_checkpoint(root, recipe.baseline_anchor.checkpoint, "anchor")
     return recipe
+
+
+def _verify_checkpoint(root, identity, role):
+    checkpoint = root / identity.file
+    if checkpoint.is_symlink() or not checkpoint.resolve().is_relative_to(
+        root.resolve()
+    ):
+        raise ValueError(f"{role} checkpoint escapes input bundle")
+    if hashlib.sha256(checkpoint.read_bytes()).hexdigest() != identity.sha256:
+        raise ValueError(f"{role} checkpoint SHA-256 mismatch")
 
 
 def finite_array(value, shape: tuple[int, ...], name: str):

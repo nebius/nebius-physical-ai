@@ -32,7 +32,7 @@ def _train(env, wrapped, runner, adapter, recipe, output, source=None, control=N
     from npa.workflows.navigation.initialization import initialize_runner
     from npa.workflows.navigation.learning_evidence import learn
 
-    initialization = initialize_runner(runner, recipe, source)
+    initialization = initialize_runner(runner, recipe, source, True)
     before = parameters(runner)
     probe_init = (
         _training_control_initialization(runner, initialization)
@@ -41,7 +41,7 @@ def _train(env, wrapped, runner, adapter, recipe, output, source=None, control=N
     )
     probe = _probes(adapter, env, wrapped, recipe, output, control, probe_init)
     env.reset(seed=recipe.train_cases[0].seed)
-    performance = learn(runner, env, recipe, output)
+    performance = learn(runner, env, recipe, output, source=source)
     delta = float(torch.linalg.vector_norm(parameters(runner) - before))
     if not 0 < delta < float("inf"):
         raise RuntimeError("native learner produced no finite policy parameter update")
@@ -291,8 +291,7 @@ def _run_environment_stage(
             args.output_path,
             control,
         )
-    if json.loads((args.input_path / "agent.json").read_text()) != settings:
-        raise ValueError("evaluation learner config differs from trained policy")
+    _verify_evaluation_settings(args.input_path, recipe, settings)
     return _evaluate(
         env,
         wrapped,
@@ -303,6 +302,14 @@ def _run_environment_stage(
         args.output_path,
         control,
     )
+
+
+def _verify_evaluation_settings(source, recipe, settings):
+    from npa.workflows.navigation.anchor_config import inference_settings
+
+    training_settings = json.loads((source / "agent.json").read_text())
+    if inference_settings(training_settings, recipe) != settings:
+        raise ValueError("evaluation learner config differs from trained policy")
 
 
 def _bind_evidence(evidence, runtime, recipe, source):
@@ -349,7 +356,7 @@ def _initialize_control(args, recipe, runner, settings, device):
     from npa.workflows.navigation.initialization import initialize_runner
 
     if args.stage == "train":
-        initialized = initialize_runner(runner, recipe, args.input_path)
+        initialized = initialize_runner(runner, recipe, args.input_path, True)
         parameters(runner)
         return _training_control_initialization(runner, initialized)
     if args.stage == "evaluate":

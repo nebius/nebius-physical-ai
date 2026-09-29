@@ -37,22 +37,40 @@ def train(request: dict) -> dict:
         protocol = _protocol(request, root)
         checkpoint = root / "baseline.pt"
         _download(request["baseline"]["checkpoint"], checkpoint)
+        original_baseline = checkpoint
         reports = []
         for index, scene in enumerate(request["scenes"]):
             output, report = _train_scene(
-                request, protocol, scene, checkpoint, root, index
+                request,
+                protocol,
+                scene,
+                checkpoint,
+                root,
+                index,
+                original_baseline=original_baseline,
             )
             checkpoint = output / "policy.pt"
             reports.append(report)
         return _training_record(request, root, checkpoint, reports)
 
 
-def _train_scene(request, protocol, scene, checkpoint, root, index):
+def _train_scene(
+    request, protocol, scene, checkpoint, root, index, *, original_baseline=None
+):
+    if "baseline_anchor_coefficient" in protocol:
+        from npa.workflows.navigation.artifacts import file_sha256
+
+        if (
+            original_baseline is None
+            or file_sha256(original_baseline)
+            != request["baseline"]["checkpoint"]["sha256"]
+        ):
+            raise ValueError("anchor training requires the sealed original baseline")
     source = _bundle(scene["asset"], root, f"scene-{index}")
     baseline_replay = _diagnostic_replay(
         request, source, protocol, checkpoint, root, f"baseline-{index}"
     )
-    _initialize(source, protocol, checkpoint)
+    _initialize(source, protocol, checkpoint, original_baseline=original_baseline)
     output = root / f"trained-{index}"
     report = _execute(request, "train", source, output, protocol)
     candidate_replay = _diagnostic_replay(
@@ -98,7 +116,7 @@ def _training_record(request, root, checkpoint, reports):
     }
 
 
-def _initialize(source, protocol, checkpoint):
+def _initialize(source, protocol, checkpoint, *, original_baseline=None):
     from npa.workflows.navigation.artifacts import file_sha256
     from npa.workflows.navigation.contract import read_recipe
 
@@ -108,6 +126,21 @@ def _initialize(source, protocol, checkpoint):
         "file": "baseline.pt",
         "sha256": file_sha256(checkpoint),
     }
+    if original_baseline is not None and "baseline_anchor_coefficient" in protocol:
+        from npa.workflows.navigation.anchor_config import validate_anchor_coefficient
+
+        coefficient = validate_anchor_coefficient(
+            protocol["baseline_anchor_coefficient"]
+        )
+        teacher = source / "anchor-reference.pt"
+        expected = file_sha256(original_baseline)
+        shutil.copyfile(original_baseline, teacher)
+        if file_sha256(teacher) != expected:
+            raise ValueError("original baseline changed during anchor binding")
+        recipe["baseline_anchor"] = {
+            "coefficient": coefficient,
+            "checkpoint": {"file": teacher.name, "sha256": file_sha256(teacher)},
+        }
     (source / "recipe.json").write_text(json.dumps(recipe, allow_nan=False))
     read_recipe(source)
 
@@ -169,6 +202,7 @@ def _replay_batch(request, source, protocol, checkpoint, root, name, recipe, cas
     replay = root / (name + "-replay-input")
     shutil.copytree(source, replay)
     recipe["initial_checkpoint"] = None
+    recipe.pop("baseline_anchor", None)
     recipe["train_cases"], recipe["eval_cases"] = recipe["eval_cases"], cases
     (replay / "recipe.json").write_text(json.dumps(recipe, allow_nan=False))
     _initialize(replay, protocol, checkpoint)

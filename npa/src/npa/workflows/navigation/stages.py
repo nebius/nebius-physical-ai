@@ -156,6 +156,8 @@ def _carry_inputs(source, output, recipe, stage):
     names = ["recipe.json", recipe.scene_file]
     if recipe.initial_checkpoint:
         names.append(recipe.initial_checkpoint.file)
+    if recipe.baseline_anchor and recipe.baseline_anchor.checkpoint.file not in names:
+        names.append(recipe.baseline_anchor.checkpoint.file)
     for name in names:
         destination = output / name
         destination.parent.mkdir(parents=True, exist_ok=True)

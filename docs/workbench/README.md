@@ -11,6 +11,7 @@ Python and HTTP access follow each tool's documented contract.
 | Task | Guide |
 | --- | --- |
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
+| Run public samples | [Four workflow demos](guides/public-workflow-demos.md): scan-to-policy, industrial sensors, RL improvement, and NuRec |
 | Use your coding agent | [First-run prompts](agent-first-run.md) · [workflow operations](agent-workflow-operations.md) |
 | Prepare the runtime | [Workbench setup](getting-started.md) · [Kubernetes](kubernetes.md) · [direct runtime modes](runtime-modes.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |

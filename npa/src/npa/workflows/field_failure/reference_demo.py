@@ -166,6 +166,7 @@ def main(argv=None):
     parser.add_argument("--reconstruction-image")
     parser.add_argument("--baseline-iterations", type=int, default=1500)
     parser.add_argument("--candidate-iterations", type=int, default=1500)
+    parser.add_argument("--baseline-anchor-coefficient", type=float)
     parser.add_argument("--num-envs", type=int, default=4000)
     parser.add_argument("--episode-steps", type=int, default=300)
     parser.add_argument("--cohort-seed", type=int, default=71000000)

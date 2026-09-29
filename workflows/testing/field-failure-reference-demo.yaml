@@ -16,6 +16,7 @@ config:
   reconstruction_image: ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb
   baseline_iterations: 1500
   candidate_iterations: 1500
+  baseline_anchor_coefficient: 10.0
   num_envs: 4000
   episode_steps: 300
   output_root: s3://{{config.bucket}}/{{config.prefix}}
@@ -177,6 +178,8 @@ states:
       - '{{config.baseline_iterations}}'
       - --candidate-iterations
       - '{{config.candidate_iterations}}'
+      - --baseline-anchor-coefficient
+      - '{{config.baseline_anchor_coefficient}}'
       - --num-envs
       - '{{config.num_envs}}'
       - --episode-steps

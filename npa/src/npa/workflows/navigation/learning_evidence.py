@@ -5,7 +5,7 @@ import time
 from npa.workflows.navigation.artifacts import file_sha256, write_json
 
 
-def learn(runner, env, recipe, output):
+def learn(runner, env, recipe, output, source=None):
     """Run native PPO while retaining the actual pre-update checkpoint and timing.
 
     Args:
@@ -13,27 +13,37 @@ def learn(runner, env, recipe, output):
         env: Actual vectorized Isaac environment.
         recipe: Explicit robot population and learning iteration settings.
         output: Artifact directory including native TensorBoard checkpoint logs.
+        source: Sealed checkpoint bundle for optional baseline anchoring.
     Returns:
         Measured training throughput, memory and initial checkpoint identity.
     Raises:
         RuntimeError: Native learning or scalar-log extraction fails.
     """
     import torch
+    from npa.workflows.navigation.anchor_runtime import bind_after_snapshot
 
     reference = output / "reference_checkpoint.pt"
     _save_initial_checkpoint(runner, reference)
+    bind_after_snapshot(runner, recipe, reference, source)
     torch.cuda.reset_peak_memory_stats()
     torch.cuda.synchronize()
     started = time.perf_counter()
     runner.learn(num_learning_iterations=recipe.iterations, init_at_random_ep_len=False)
     torch.cuda.synchronize()
     elapsed = time.perf_counter() - started
+    return _learning_result(runner, env, recipe, output, reference, elapsed)
+
+
+def _learning_result(runner, env, recipe, output, reference, elapsed):
+    import torch
+    from npa.workflows.navigation.anchor_runtime import anchor_evidence
+
     transitions = (
         recipe.iterations * runner.cfg["num_steps_per_env"] * env.unwrapped.num_envs
     )
     if recipe.adapter_module == "npa.workflows.navigation.reference":
         _learning_curves(runner, output)
-    return {
+    result = {
         "reference_checkpoint_sha256": file_sha256(reference),
         "learning_wall_seconds": elapsed,
         "control_transitions": transitions,
@@ -42,6 +52,10 @@ def learn(runner, env, recipe, output):
         "peak_cuda_allocated_bytes": torch.cuda.max_memory_allocated(),
         "peak_cuda_reserved_bytes": torch.cuda.max_memory_reserved(),
     }
+    anchor = anchor_evidence(runner, recipe, output)
+    if anchor is not None:
+        result["baseline_anchor"] = anchor
+    return result
 
 
 def _save_initial_checkpoint(runner, path):

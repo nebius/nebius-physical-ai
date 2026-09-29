@@ -1,20 +1,21 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "88e491cddd844cee0d6ba88efff6aa7457e29c52760f48b5d9a767b0952ab127",
+  "workflow_sha256": "baec66736efb19adbe280bc924a8327ee71747caa2577f541338b3f5a3d1d550",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec --run-id preview --check-render pass with19 executable states.",
+      "reason": "Actual validate-spec and plan-spec --run-id preview --check-render passed with 19 tasks in an isolated empty configuration. Network and provider access were prohibited. This proves planning only.",
       "evidence": [
+        "npa/tests/workflows/field_failure/test_reference_anchor_configuration.py",
         "npa/tests/workflows/field_failure/test_reference_admission_pipeline.py"
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "Real native observation of every frozen office training route gates capture admission; raw outcomes and bound admission are reverified before reconstruction and training. Thresholds, cohorts and full budgets remain unchanged. Synthetic contract tests are not GPU qualification.",
+      "status": "unverified",
+      "reason": "The fixed baseline-anchor coefficient is recorded in the pre-learning protocol and plan. The new trainer implementation and full GPU retention experiment remain under review; prior aggregate success did not pass per-case and warehouse retention gates. Cohorts, full budgets and quality gates remain unchanged.",
       "evidence": [
         "docs/workbench/cookbooks/public-rl-improvement-demo.md",
-        "npa/tests/workflows/field_failure/test_reference_admission.py"
+        "npa/tests/workflows/field_failure/test_reference_anchor_configuration.py"
       ]
     }
   },
