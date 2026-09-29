@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -304,6 +305,46 @@ def test_cosmos3_success_cannot_bypass_the_fixed_threshold() -> None:
     assert payload["success"] is False
 
 
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [(True, True), (False, False), (pytest.param(None, True, id="omitted"))],
+)
+def test_cosmos_reason_success_accepts_booleans_or_uses_score(
+    verdict, expected
+) -> None:
+    model_payload = {
+        "score": 0.9,
+        "summary": "stable grasp",
+        "per_step": [
+            {"step": 0, "critique_text": "cube is stable", "error_tags": ["ok"]}
+        ],
+    }
+    if verdict is not None:
+        model_payload["success"] = verdict
+
+    payload = reason_module._parse_cosmos_reason_output(
+        json.dumps(model_payload),
+        actions=[{"step": 0, "action": [0.0]}],
+        rollout_id="rollout-verdict",
+        threshold=0.5,
+        family="cosmos3",
+    )
+
+    assert payload["success"] is expected
+
+
+@pytest.mark.parametrize("verdict", ["false", "true", 0, 1, None, [], {}])
+def test_cosmos_reason_rejects_malformed_explicit_success(verdict) -> None:
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        reason_module._parse_cosmos_reason_output(
+            json.dumps({"success": verdict, "score": 0.9}),
+            actions=[],
+            rollout_id="rollout-malformed-verdict",
+            threshold=0.5,
+            family="cosmos3",
+        )
+
+
 def test_task_description_from_manifest_prefers_task_description() -> None:
     manifest = {"task_description": "Pick up the cube.", "task": "ignored"}
     assert task_description_from_manifest(manifest) == "Pick up the cube."
@@ -370,6 +411,57 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
     archived_alias = merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.75)
     assert archived_alias["score"] == 0.85
     assert archived_alias["success"] is False
+
+
+@pytest.mark.parametrize("lane", ["reason2", "cosmos3"])
+def test_legacy_dual_merge_rejects_malformed_lane_verdict(lane) -> None:
+    reason2 = {"score": 0.9, "success": True}
+    cosmos3 = {"score": 0.9, "success": True}
+    (reason2 if lane == "reason2" else cosmos3)["success"] = "false"
+
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.5)
+
+
+@pytest.mark.parametrize(
+    "merge", [merge_reason_evaluations, merge_dual_reason_evaluations]
+)
+@pytest.mark.parametrize("missing", ["reason2", "cosmos3", "both"])
+def test_archived_merge_does_not_promote_omitted_verdicts(merge, missing) -> None:
+    lanes = [{"score": 0.9, "success": True}, {"score": 0.8, "success": True}]
+    for index, name in enumerate(("reason2", "cosmos3")):
+        if missing in (name, "both"):
+            lanes[index].pop("success")
+    archived = json.loads(json.dumps(lanes))
+
+    merged = merge(*archived, threshold=0.5)
+
+    assert merged["score"] == 0.85
+    assert merged["success"] is False
+    assert json.loads(json.dumps(merged))["success"] is False
+    assert archived == lanes
+
+
+@pytest.mark.parametrize(
+    "merge", [merge_reason_evaluations, merge_dual_reason_evaluations]
+)
+@pytest.mark.parametrize("threshold", [0.5, 0.95])
+def test_archived_merge_preserves_verdicts_under_a_new_threshold(
+    merge, threshold
+) -> None:
+    archived = json.loads(
+        json.dumps(
+            [
+                {"score": 0.49, "success": True},
+                {"score": 0.9, "success": True},
+            ]
+        )
+    )
+
+    merged = merge(*archived, threshold=threshold)
+
+    assert merged["score"] == 0.695
+    assert json.loads(json.dumps(merged))["success"] is True
 
 
 def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
@@ -983,3 +1075,112 @@ def _no_reset_boundary():
         "action_outcome_valid": True,
         "temporal_credit_valid": True,
     }
+
+
+class _ReasonInputs(dict):
+    input_ids = [[10]]
+
+    def to(self, _device):
+        return self
+
+
+class _ReasonProcessor:
+    def __init__(self, model_payload):
+        self.model_payload = model_payload
+
+    def apply_chat_template(self, messages, **_kwargs):
+        assert messages[0]["content"][1]["type"] == "image"
+        return "synthetic rollout prompt"
+
+    def __call__(self, **_kwargs):
+        return _ReasonInputs(input_ids=self.input_ids)
+
+    @property
+    def input_ids(self):
+        return _ReasonInputs.input_ids
+
+    def batch_decode(self, generated, **_kwargs):
+        assert generated == [[20]]
+        return [json.dumps(self.model_payload)]
+
+
+class _ReasonModel:
+    def parameters(self):
+        return iter([SimpleNamespace(device="cpu")])
+
+    def generate(self, **kwargs):
+        assert kwargs["input_ids"] == [[10]]
+        return [[10, 20]]
+
+
+def _install_reason_model_double(monkeypatch, model_payload):
+    """Replace external model execution while retaining the public inference path."""
+    import torch
+
+    processor = _ReasonProcessor(model_payload)
+    transformer = SimpleNamespace(
+        AutoProcessor=SimpleNamespace(
+            from_pretrained=lambda *_args, **_kwargs: processor
+        ),
+        AutoModelForImageTextToText=SimpleNamespace(
+            from_pretrained=lambda *_args, **_kwargs: _ReasonModel()
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "transformers", transformer)
+    monkeypatch.setitem(
+        sys.modules,
+        "qwen_vl_utils",
+        SimpleNamespace(process_vision_info=lambda _messages: ([], [])),
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
+
+
+@pytest.fixture
+def self_hosted_reason(monkeypatch, tmp_path):
+    """A decoded local frame plus external model doubles; no live inference."""
+    from PIL import Image
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (2, 2)).save(frame)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    monkeypatch.setenv("NPA_COSMOS_REASON2_CACHE", str(tmp_path / "cache"))
+
+    def run(model_payload):
+        _install_reason_model_double(monkeypatch, model_payload)
+        return reason_module.run_cosmos_reason_vlm(
+            model_id=DEFAULT_REASON2_MODEL,
+            image_paths=[frame],
+            actions=[{"step": 0, "action": [0.0]}],
+            task_description="Hold the cube.",
+            rollout_id="review-rollout",
+            threshold=0.5,
+        )
+
+    return run
+
+
+@pytest.mark.parametrize("verdict", ["false", 1, None])
+def test_self_hosted_inference_rejects_malformed_verdict_before_completion(
+    self_hosted_reason, capsys, verdict
+):
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        self_hosted_reason({"score": 0.9, "success": verdict})
+
+    events = [
+        json.loads(line)["event"] for line in capsys.readouterr().out.splitlines()
+    ]
+    assert events == ["cosmos_reason_inference_start"]
+
+
+@pytest.mark.parametrize("verdict,expected", [(True, True), (False, False)])
+def test_self_hosted_inference_preserves_explicit_boolean_verdict(
+    self_hosted_reason, capsys, verdict, expected
+):
+    result = self_hosted_reason({"score": 0.9, "success": verdict})
+
+    assert result["success"] is expected
+    assert result["component_source"] == "cosmos_reason_vlm"
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events[-1]["event"] == "cosmos_reason_inference_complete"
+    assert events[-1]["success"] is expected
