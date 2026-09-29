@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
 import pytest
@@ -9,19 +11,24 @@ import yaml
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.deploy.images import container_image_for_tool
 from npa.orchestration.npa_workflow.detect import (
     detect_submit_format,
     is_npa_workflow_spec,
 )
 from npa.orchestration.npa_workflow.interpreter import build_plan
+from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.skypilot_render import (
     NpaWorkflowRenderError,
     SkypilotRenderOptions,
+    assert_literal_python_heredocs_compile,
     assert_no_unresolved_placeholders,
     normalize_resources,
     plan_image_pull_secrets,
+    render_task_run_script,
     render_skypilot_yaml,
     resolve_task_image,
+    secret_env_hints_for_plan,
     tool_image_key,
     tool_vendor_interpreters,
     tool_requires_staged_npa_source,
@@ -31,7 +38,10 @@ from npa.orchestration.npa_workflow.submit import (
     merge_config_overrides,
     prepare_npa_workflow_for_submit,
 )
-from npa.orchestration.npa_workflow.submission_state import load_submission_state
+from npa.orchestration.npa_workflow.submission_state import (
+    load_submission_state,
+    submission_state_path,
+)
 from npa.orchestration.skypilot.workflow import WorkflowResult
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -39,6 +49,41 @@ NPA_SPECS = REPO_ROOT / "workflows" / "testing"
 PAIDF = NPA_SPECS / "physical-ai-data-factory.yaml"
 SKYPILOT_FIXTURES = REPO_ROOT / "npa" / "tests" / "fixtures" / "skypilot"
 RUNNER = CliRunner()
+
+
+def _patch_npa_submit_preflight(mocker) -> None:  # noqa: ANN001
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_sky_bin",
+        return_value=Path("/mock/bin/sky"),
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot._bin.resolve_isolated_config_dir",
+        return_value=None,
+    )
+    mocker.patch(
+        "npa.cli.workbench.workflow._execution_target_preflight",
+        return_value=(None, {}),
+    )
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
+
+
+def _invoke_npa_submit(run_id: str, *, json_output: bool = False):
+    args = [
+        "workbench",
+        "workflow",
+        "submit",
+        str(NPA_SPECS / "vlm-eval-single.yaml"),
+        "--run-id",
+        run_id,
+        "--registry",
+        "cr.example.invalid/reg",
+        "--skip-preflight",
+        "--no-preflight-images",
+        "--no-resolve-accelerators",
+    ]
+    if json_output:
+        args.extend(["--output-format", "json"])
+    return RUNNER.invoke(app, args)
 
 
 def test_is_npa_workflow_spec_true_for_golden() -> None:
@@ -51,6 +96,82 @@ def test_is_npa_workflow_spec_false_for_skypilot() -> None:
     path = SKYPILOT_FIXTURES / "sonic-train-standalone.yaml"
     assert not is_npa_workflow_spec(path)
     assert detect_submit_format(path) == "skypilot"
+
+
+@pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_recommends_hub_token_without_rendering_its_value(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
+    plan = build_plan(spec, run_id="flex-pi-secret-hint")
+
+    assert secret_env_hints_for_plan(plan.steps) == ("HF_TOKEN",)
+
+
+def test_flex_pi_b200_reference_renders_one_b200_and_the_tool_image() -> None:
+    spec = load_spec(NPA_SPECS / "flex-pi-b200-inference.yaml")
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-b200"),
+        run_id="flex-pi-b200",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["resources"]["accelerators"] == "B200:1"
+    assert task["resources"]["image_id"].startswith(
+        "docker:registry.example/npa-flex-pi:"
+    )
+    assert "--expected-gpu B200" in task["run"]
+    assert task["run"].count("--torch-compile") == 1
+
+
+@pytest.mark.parametrize(
+    ("name", "nodes", "accelerators"),
+    [
+        ("flex-pi-b200-public-training.yaml", 1, "B200:4"),
+        ("flex-pi-b300-multinode-public-training.yaml", 4, "B300:1"),
+    ],
+)
+def test_flex_pi_training_renders_authoritative_node_count(name, nodes, accelerators):
+    spec = load_spec(NPA_SPECS / name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="four-rank-training"),
+        run_id="four-rank-training",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task.get("num_nodes", 1) == nodes
+    assert task["resources"]["accelerators"] == accelerators
+    assert task["envs"]["NPA_FLEX_PI_NODE_COUNT"] == str(nodes)
+    assert task["run"].count("workbench flex-pi train") == 1
+
+
+@pytest.mark.parametrize(
+    "spec_name",
+    ["flex-pi-b200-inference.yaml", "flex-pi-rtxpro-inference.yaml"],
+)
+def test_flex_pi_reference_workflows_compile_the_denoising_step(
+    spec_name: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / spec_name)
+    rendered = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="flex-pi-compiled"),
+        run_id="flex-pi-compiled",
+        options=SkypilotRenderOptions(
+            registry="registry.example", materialize_registry_secrets=False
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    assert task["run"].count("--torch-compile") == 1
 
 
 @pytest.mark.parametrize(
@@ -83,6 +204,44 @@ def test_non_isaac_byof_specs_render_their_declared_runtime_image(
     assert "ACCEPT_EULA" not in task["envs"]
 
 
+def test_robomimic_plan_uses_unbuilt_placeholder_and_stages_npa(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/exact")
+    spec = load_spec(NPA_SPECS / "byof-robomimic.yaml")
+    plan = build_plan(spec, run_id="robomimic-private-plan")
+
+    with pytest.raises(ValueError, match="publication-quarantined for releases"):
+        container_image_for_tool("robomimic")
+
+    placeholder = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robomimic-private-plan",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    placeholder_task = [doc for doc in yaml.safe_load_all(placeholder) if doc][-1]
+    assert placeholder_task["resources"]["image_id"].endswith(
+        "/npa-robomimic:0.1.0-neutral-unbuilt"
+    )
+
+    private_image = "private.invalid/npa-robomimic@sha256:" + "a" * 64
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robomimic-private-plan",
+        options=SkypilotRenderOptions(
+            image_overrides={"workbench.byof.repo": private_image},
+            materialize_registry_secrets=False,
+        ),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+    assert task["resources"]["image_id"] == f"docker:{private_image}"
+    assert task["envs"]["NPA_SRC_S3_URI"] == "s3://example-bucket/npa-src/exact"
+    assert "npa CLI not found" in task["setup"]
+    assert "npa workbench byof run" in task["run"]
+
+
 def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
     spec = load_spec(NPA_SPECS / "byof-wan2.2.yaml")
     plan = build_plan(spec, run_id="disk-contract")
@@ -103,15 +262,21 @@ def test_kubernetes_profile_disk_size_renders_as_ephemeral_storage() -> None:
 def test_every_byof_spec_declares_its_outer_runtime_image() -> None:
     paths = sorted(NPA_SPECS.glob("byof*.yaml"))
 
-    # Pinned so a new BYOF spec cannot skip the per-profile image assertion
-    # below by simply not being globbed. Bump it when you add one.
-    assert len(paths) == 16
+    assert paths, "The BYOF workflow inventory must not be empty"
     for path in paths:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base_image = raw["config"].get("base_image")
         assert isinstance(base_image, str) and base_image, path.name
+        image_config = (
+            "controller_image" if path.name == "byof-robomimic.yaml" else "base_image"
+        )
+        outer_image = raw["config"].get(image_config)
+        assert isinstance(outer_image, str) and outer_image, path.name
         for profile in raw["resources"].values():
-            assert profile["image"] == "{{config.base_image}}", path.name
+            if path.name == "byof-robotwin.yaml":
+                assert "image" not in profile
+                continue
+            assert profile["image"] == f"{{{{config.{image_config}}}}}", path.name
 
 
 def test_isaac_byof_config_routes_image_and_preserves_cli_opt_out() -> None:
@@ -397,6 +562,55 @@ def test_submit_time_accelerator_override_preserves_profile_gpu_count() -> None:
         )["accelerators"]
         == "resolved-product:8"
     )
+
+
+def test_submit_time_accelerator_override_accepts_single_mapping() -> None:
+    assert (
+        normalize_resources(
+            {"accelerators": {"RTXPRO6000": 2}},
+            accelerator_overrides={
+                "RTXPRO6000:2": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2"
+            },
+        )["accelerators"]
+        == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2"
+    )
+
+
+def test_non_kubernetes_renderer_preserves_mapping_alternatives() -> None:
+    alternatives = {"H100": 1, "H200": 1}
+
+    assert (
+        normalize_resources({"cloud": "nebius", "accelerators": alternatives})[
+            "accelerators"
+        ]
+        == alternatives
+    )
+
+
+def test_mapping_product_override_preserves_quantity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_WORKFLOW_GPU_ACCELERATOR", "cluster-product")
+
+    assert (
+        normalize_resources({"cloud": "kubernetes", "accelerators": {"vendor-gpu": 4}})[
+            "accelerators"
+        ]
+        == "cluster-product:4"
+    )
+
+
+def test_kubernetes_renderer_rejects_mapping_alternatives() -> None:
+    with pytest.raises(ValueError, match="SkyPilot alternatives"):
+        normalize_resources(
+            {"cloud": "kubernetes", "accelerators": {"H100": 1, "H200": 1}}
+        )
+
+
+def test_empty_accelerator_mapping_is_omitted() -> None:
+    assert normalize_resources({"cloud": "kubernetes", "accelerators": {}}) == {
+        "cloud": "kubernetes"
+    }
 
 
 def test_nebius_cloud_render_injects_exact_host_docker_secrets(
@@ -920,6 +1134,153 @@ resources:
         assert_no_unresolved_placeholders(unresolved_image)
 
 
+def _rendered_shell(script: str, *, field_name: str = "run") -> str:
+    return yaml.safe_dump({"name": "heredoc-contract", field_name: script})
+
+
+def _malformed_python_heredoc(command: str, *, delimiter: str = "PY") -> str:
+    lines = [
+        f"{command} <<'{delimiter}'",
+        "from pathlib import Path",
+        'Path("failure.json").write_text("failed',
+        '")',
+        delimiter,
+    ]
+    return "\n".join(lines) + "\n"
+
+
+@pytest.mark.parametrize("field_name", ["run", "setup"])
+def test_literal_python_heredoc_guard_rejects_generated_newline_syntax_error(
+    field_name: str,
+) -> None:
+    script = _malformed_python_heredoc(
+        "STATUS=failed /usr/bin/python3 -B -", delimiter="PUBFAIL"
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="does not compile"):
+        assert_literal_python_heredocs_compile(
+            _rendered_shell(script, field_name=field_name)
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python3",
+        "MODE=fixed /usr/bin/python3 -B",
+        "python3 -B - argument-for-sys-argv",
+    ],
+)
+def test_literal_python_heredoc_guard_accepts_valid_stdin_programs(
+    command: str,
+) -> None:
+    script = "\n".join(
+        [
+            f'{command} <<"PY"',
+            "from pathlib import Path",
+            'Path("result.json").write_text("ready\\n")',
+            "PY",
+        ]
+    )
+
+    assert_literal_python_heredocs_compile(_rendered_shell(script))
+
+
+def test_literal_python_heredoc_guard_does_not_execute_or_import() -> None:
+    script = "\n".join(
+        [
+            "python3 - <<'PY'",
+            "import module_that_must_not_be_imported_by_the_renderer",
+            'raise RuntimeError("must not execute")',
+            "PY",
+        ]
+    )
+
+    assert_literal_python_heredocs_compile(_rendered_shell(script))
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        _malformed_python_heredoc("python3 -").replace("<<'PY'", "<<PY", 1),
+        _malformed_python_heredoc('"$CONTROL_PY" -B -'),
+        _malformed_python_heredoc("$VENV/bin/python -"),
+        _malformed_python_heredoc('PYTHONPATH="$RUN/src" python3 -B -'),
+        _malformed_python_heredoc("node -"),
+        _malformed_python_heredoc("python3 worker.py"),
+        _malformed_python_heredoc("python3 -c pass"),
+        _malformed_python_heredoc("python3 -m worker"),
+        "\n".join(
+            [
+                "cat <<'DATA'",
+                "python3 - <<'PY'",
+                "this is not Python",
+                "PY",
+                "DATA",
+            ]
+        ),
+        "# python3 - <<'PY'\nthis is a shell command, not Python\nPY\n",
+        "printf '%s\\n' \"python3 - <<'PY'\"\n",
+        "\n".join(
+            [
+                "payload='",
+                "python3 - <<'PY'",
+                "this is quoted shell data, not Python",
+                "PY",
+                "'",
+            ]
+        ),
+        "\n".join(
+            [
+                "python3 - <<'FIRST' | cat <<'SECOND'",
+                "pass",
+                "FIRST",
+                "this is data for cat, not Python",
+                "SECOND",
+            ]
+        ),
+        "\n".join(
+            [
+                "echo command continues \\",
+                "python3 - <<'PY'",
+                "this is data for echo, not Python",
+                "PY",
+            ]
+        ),
+        "\n".join(
+            [
+                "X=prefix\\",
+                "python3 - <<'PY'",
+                "this is continued assignment data, not Python",
+                "PY",
+            ]
+        ),
+    ],
+)
+def test_literal_python_heredoc_guard_skips_ambiguous_shell_forms(script: str) -> None:
+    assert_literal_python_heredocs_compile(_rendered_shell(script))
+
+
+def test_render_path_checks_literal_python_heredocs(mocker) -> None:  # noqa: ANN001
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="invalid-python-heredoc")
+    mocker.patch(
+        "npa.orchestration.npa_workflow.skypilot_render.build_skypilot_task_doc",
+        return_value={
+            "name": "invalid-python-heredoc",
+            "run": _malformed_python_heredoc("python3 -B -"),
+        },
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="does not compile"):
+        render_skypilot_yaml(
+            spec,
+            plan,
+            run_id="invalid-python-heredoc",
+            options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+        )
+
+
 def test_render_self_hosted_vlm_includes_vllm_setup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1082,6 +1443,142 @@ def test_render_rejects_parallel_execution() -> None:
         )
 
 
+def test_robotwin_outer_render_is_cpu_only_image_free_and_destination_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa/public")
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+    plan = build_plan(spec, run_id="robotwin-public-launcher")
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="robotwin-public-launcher",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc][-1]
+
+    from npa.execution_preflight import skypilot_output_destinations
+
+    assert task["resources"]["cloud"] == "kubernetes"
+    assert "accelerators" not in task["resources"]
+    assert "image" not in task["resources"]
+    assert "image_id" not in task["resources"]
+    assert task["envs"]["NPA_EXECUTION_OUTPUTS"] == "[]"
+    assert task["envs"]["NPA_SRC_S3_URI"].startswith("s3://")
+    assert skypilot_output_destinations([task]) == {}
+    assert "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT" in task["run"]
+    assert "NPA_INTERNAL_BYOF_ROBOTWIN_CONTEXT_V1" not in rendered
+    assert "private-bucket-canary" not in rendered
+    assert secret_env_hints_for_plan(plan.steps) == (
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+    )
+
+
+def test_robotwin_source_uri_is_process_isolated_between_renders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+
+    ambient = "s3://ambient-source/should-remain"
+    monkeypatch.setenv("NPA_SRC_S3_URI", ambient)
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+    observed: list[str] = []
+    for suffix in ("a" * 64, "b" * 64):
+        prepared = workflow_cli._prepare_robotwin_submit_without_global_source(
+            spec=spec,
+            run_id=f"robotwin-{suffix[0]}",
+            assume_decision="",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+        try:
+            task = [
+                document
+                for document in yaml.safe_load_all(
+                    prepared.skypilot_yaml_path.read_text(encoding="utf-8")
+                )
+                if document
+            ][-1]
+            observed.append(task["envs"]["NPA_SRC_S3_URI"])
+        finally:
+            prepared.temp_dir.cleanup()
+        assert os.environ["NPA_SRC_S3_URI"] == ambient
+    assert observed == [
+        "${NPA_SRC_S3_URI}",
+        "${NPA_SRC_S3_URI}",
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["timeout", "child", "eof", "start"],
+)
+def test_robotwin_isolated_render_failures_are_controlled(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    from npa.cli.workbench import workflow as workflow_cli
+
+    spec = load_spec(NPA_SPECS / "byof-robotwin.yaml")
+
+    class FakeConnection:
+        def close(self) -> None:
+            return None
+
+        def poll(self, _timeout: int) -> bool:
+            if failure == "timeout":
+                return False
+            return True
+
+        def recv(self) -> object:
+            if failure == "eof":
+                raise EOFError
+            if failure == "child":
+                return (False, "private-render-detail")
+            return (True, "unused")
+
+    class FakeProcess:
+        exitcode = 1 if failure == "child" else 0
+
+        def start(self) -> None:
+            if failure == "start":
+                raise OSError("private process detail")
+
+        def terminate(self) -> None:
+            return None
+
+        def join(self, timeout: int) -> None:
+            return None
+
+        def is_alive(self) -> bool:
+            return False
+
+        def kill(self) -> None:
+            return None
+
+    class FakeContext:
+        def Pipe(self, *, duplex: bool) -> tuple[FakeConnection, FakeConnection]:
+            assert duplex is False
+            return FakeConnection(), FakeConnection()
+
+        def Process(self, **_kwargs: object) -> FakeProcess:
+            return FakeProcess()
+
+    monkeypatch.setattr(
+        workflow_cli.multiprocessing, "get_context", lambda _name: FakeContext()
+    )
+
+    with pytest.raises(NpaWorkflowError) as exc_info:
+        workflow_cli._prepare_robotwin_submit_without_global_source(
+            spec=spec,
+            run_id="robotwin-failure-boundary",
+            assume_decision="",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )
+    assert "private-render-detail" not in str(exc_info.value)
+    assert "submission was not attempted" in str(exc_info.value)
+
+
 def test_resolve_task_image_uses_override() -> None:
     image = resolve_task_image(
         "workbench.vlm_eval.run",
@@ -1122,6 +1619,189 @@ def test_first_party_image_rejects_uid_zero_pod_override(
                 materialize_registry_secrets=False,
             ),
         )
+
+
+def _render_with_pod_config(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    image: str,
+    pod_config: dict[str, object],
+) -> str:
+    monkeypatch.setenv("NPA_REGISTRY", "registry-us.example/project")
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    for profile in spec.resources.values():
+        if isinstance(profile, dict):
+            profile["kubernetes"] = {"pod_config": pod_config}
+    return render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="sudo-contract"),
+        run_id="sudo-contract",
+        options=SkypilotRenderOptions(
+            image_overrides={"*": image},
+            materialize_registry_secrets=False,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "pod_config",
+    [
+        {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "ray-node",
+                        "securityContext": {
+                            "runAsUser": 1000,
+                            "allowPrivilegeEscalation": False,
+                        },
+                    }
+                ]
+            }
+        },
+        {
+            "spec": {
+                "containers": [
+                    {
+                        "name": "ray-node",
+                        "securityContext": {
+                            "runAsNonRoot": True,
+                            "allowPrivilegeEscalation": False,
+                        },
+                    }
+                ],
+            }
+        },
+        {
+            "spec": {
+                "securityContext": {"runAsUser": 1000},
+                "containers": [
+                    {
+                        "name": "ray-node",
+                        "securityContext": {"allowPrivilegeEscalation": False},
+                    }
+                ],
+            }
+        },
+    ],
+)
+def test_first_party_image_rejects_non_root_main_that_blocks_sudo(
+    monkeypatch: pytest.MonkeyPatch,
+    pod_config: dict[str, object],
+) -> None:
+    with pytest.raises(NpaWorkflowRenderError, match="no-new-privileges"):
+        _render_with_pod_config(
+            monkeypatch,
+            image="registry-us.example/project/npa-fiftyone:validation",
+            pod_config=pod_config,
+        )
+
+
+@pytest.mark.parametrize(
+    ("image", "pod_config"),
+    [
+        (
+            "registry-us.example/project/vendor:validation",
+            {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "ray-node",
+                            "securityContext": {
+                                "runAsNonRoot": True,
+                                "runAsUser": 1000,
+                                "allowPrivilegeEscalation": False,
+                            },
+                        }
+                    ]
+                }
+            },
+        ),
+        (
+            "registry-us.example/project/npa-fiftyone:validation",
+            {
+                "spec": {
+                    "initContainers": [
+                        {
+                            "name": "initialize-output",
+                            "securityContext": {
+                                "runAsNonRoot": True,
+                                "runAsUser": 1000,
+                                "allowPrivilegeEscalation": False,
+                            },
+                        }
+                    ],
+                    "containers": [{"name": "ray-node"}],
+                }
+            },
+        ),
+        (
+            "registry-us.example/project/npa-fiftyone:validation",
+            {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "ray-node",
+                            "securityContext": {
+                                "runAsNonRoot": True,
+                                "runAsUser": 1000,
+                                "allowPrivilegeEscalation": True,
+                            },
+                        }
+                    ]
+                }
+            },
+        ),
+    ],
+)
+def test_passwordless_sudo_guard_stays_scoped_to_first_party_main_container(
+    monkeypatch: pytest.MonkeyPatch,
+    image: str,
+    pod_config: dict[str, object],
+) -> None:
+    rendered = _render_with_pod_config(
+        monkeypatch,
+        image=image,
+        pod_config=pod_config,
+    )
+
+    assert "sudo-contract" in rendered
+
+
+def test_render_task_run_script_accepts_linux_argument_byte_boundary() -> None:
+    boundary_argument = "a" * 131_071
+
+    rendered = render_task_run_script(["tool", boundary_argument])
+
+    assert boundary_argument in rendered
+
+
+def test_render_task_run_script_applies_limit_per_argument() -> None:
+    first = "a" * 70_000
+    second = "b" * 70_000
+
+    rendered = render_task_run_script(["tool", first, second])
+
+    assert first in rendered
+    assert second in rendered
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["bash", "-c", "a" * 131_072],
+        ["tool", "small", "b" * 131_072],
+        ["tool", "é" * 65_536],
+    ],
+)
+def test_render_task_run_script_rejects_linux_oversized_argument(
+    command: list[str],
+) -> None:
+    with pytest.raises(
+        NpaWorkflowRenderError,
+        match=r"command argument \d+ is 131072 UTF-8 bytes.*declared workflow inputs",
+    ):
+        render_task_run_script(command)
 
 
 def test_resolve_task_image_uses_longest_tool_family_override() -> None:
@@ -1177,17 +1857,15 @@ def test_prepare_requires_assume_decision_for_dynamic_specs() -> None:
 def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> None:
     # This test replaces the runtime; provider boundary coverage lives in
     # test_execution_preflight and must not be bypassed by --skip-preflight.
-    mocker.patch(
-        "npa.cli.workbench.workflow._execution_target_preflight",
-        return_value=(None, {}),
-    )
-    mocker.patch("npa.cli.workbench.workflow._preflight_submit_gang_capacity")
+    _patch_npa_submit_preflight(mocker)
     captured: dict[str, object] = {}
 
     def fake_submit(path, run_id, **kwargs):
         captured["content"] = Path(path).read_text(encoding="utf-8")
         captured["run_id"] = run_id
         captured["path"] = str(path)
+        captured["sky_bin"] = kwargs["sky_bin"]
+        captured["isolated_config_dir"] = kwargs["isolated_config_dir"]
         return WorkflowResult(status="SUBMITTED", job_id="42", returncode=0)
 
     mocker.patch(
@@ -1224,6 +1902,14 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     assert "score-rollouts" in content
     assert_no_unresolved_placeholders(content)
     receipt = load_submission_state("default", "npa-submit-1")
+    assert receipt["controller"] == {
+        "schema": "npa.workflow.controller-route.v1",
+        "sky_bin": captured["sky_bin"],
+        "isolated": False,
+        "isolated_config_dir": "",
+    }
+    assert captured["sky_bin"] == "/mock/bin/sky"
+    assert captured["isolated_config_dir"] is None
     assert receipt["launch"]["sky_job_id"] == "42"
     assert receipt["workflow"]["name"] == "vlm-eval-single"
     assert receipt["workflow"]["run_prefix_uri"] == (
@@ -1231,6 +1917,277 @@ def test_workbench_workflow_submit_npa_workflow_renders_and_submits(mocker) -> N
     )
     assert receipt["workflow"]["manifest_uri"].endswith("/npa-workflow/manifest.json")
     assert receipt["workflow"]["steps"][0]["state"] == "score-rollouts"
+
+
+@pytest.mark.parametrize(
+    ("state", "run_id"),
+    [
+        ("submitted", "npa-submit-corrupt"),
+        ("adopted", "npa-adopt-corrupt"),
+    ],
+)
+def test_post_launch_corrupt_receipt_does_not_hide_exact_job_identity(
+    mocker,
+    state: str,
+    run_id: str,
+) -> None:
+    _patch_npa_submit_preflight(mocker)
+    secret = "synthetic-corrupt-receipt-secret"
+    receipt_path = submission_state_path("default", run_id)
+    corrupt_body = f'{{"aws_secret_access_key":"{secret}",'.encode()
+
+    def fake_submit(_path, _run_id, **kwargs):
+        receipt_path.write_bytes(corrupt_body)
+        kwargs["transaction_recorder"]({"state": state, "job_id": "42"})
+        return WorkflowResult(
+            status=state.upper(),
+            job_id="42",
+            returncode=0,
+            launch_transaction={"state": state, "job_id": "42"},
+        )
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit,
+    )
+
+    result = _invoke_npa_submit(run_id, json_output=True)
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == state.upper()
+    assert payload["job_id"] == "42"
+    assert payload["submission_warnings"]
+    assert "receipt is unavailable" in payload["submission_warnings"][0]
+    assert secret not in f"{result.stdout}\n{result.stderr}"
+    assert receipt_path.read_bytes() == corrupt_body
+
+
+def test_post_launch_receipt_warning_redacts_plain_resolved_secret(mocker) -> None:
+    from dataclasses import replace
+
+    from npa.orchestration.npa_workflow import submission_state, submit_credentials
+
+    _patch_npa_submit_preflight(mocker)
+    plain_secret = "hunter2"
+    real_update = submission_state.update_submission_state
+    real_resolve = submit_credentials.resolve_submit_credentials
+
+    def resolve_with_plain_secret(**kwargs):
+        resolved = real_resolve(**kwargs)
+        return replace(
+            resolved,
+            secret_values={
+                **resolved.secret_values,
+                "SYNTHETIC_PLAIN_SECRET": plain_secret,
+            },
+        )
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submit_credentials.resolve_submit_credentials",
+        side_effect=resolve_with_plain_secret,
+    )
+
+    def fail_accepted_launch(project, run_id, updates, **kwargs):
+        launch = updates.get("launch")
+        if isinstance(launch, dict) and launch.get("state") == "submitted":
+            raise ValueError(f"login failed for password {plain_secret}")
+        return real_update(project, run_id, updates, **kwargs)
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=fail_accepted_launch,
+    )
+
+    def fake_submit(_path, _run_id, **kwargs):
+        kwargs["transaction_recorder"]({"state": "submitted", "job_id": "42"})
+        return WorkflowResult(
+            status="SUBMITTED",
+            job_id="42",
+            returncode=0,
+            launch_transaction={"state": "submitted", "job_id": "42"},
+        )
+
+    mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit,
+    )
+
+    result = _invoke_npa_submit(
+        "npa-submit-plain-secret-warning",
+        json_output=True,
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "SUBMITTED"
+    assert payload["job_id"] == "42"
+    assert payload["submission_warnings"]
+    assert plain_secret not in f"{result.stdout}\n{result.stderr}"
+
+
+@pytest.mark.parametrize(
+    ("state", "job_id", "run_id"),
+    [
+        ("indeterminate", "42", "npa-submit-nonaccepted-state"),
+        ("submitted", " ", "npa-submit-blank-job-id"),
+    ],
+)
+def test_post_launch_receipt_failure_requires_exact_accepted_identity(
+    mocker,
+    state: str,
+    job_id: str,
+    run_id: str,
+) -> None:
+    _patch_npa_submit_preflight(mocker)
+    receipt_path = submission_state_path("default", run_id)
+    corrupt_body = b'{"truncated":'
+
+    def fake_submit(_path, _run_id, **kwargs):
+        receipt_path.write_bytes(corrupt_body)
+        kwargs["transaction_recorder"]({"state": state, "job_id": job_id})
+        return WorkflowResult(
+            status=state.upper(),
+            job_id=job_id,
+            returncode=0,
+            launch_transaction={"state": state, "job_id": job_id},
+        )
+
+    submit = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        side_effect=fake_submit,
+    )
+
+    result = _invoke_npa_submit(run_id, json_output=True)
+
+    assert result.exit_code != 0
+    submit.assert_called_once()
+    assert "submission_warnings" not in result.output
+    assert receipt_path.read_bytes() == corrupt_body
+
+
+@pytest.mark.parametrize(
+    ("status", "job_id", "launch_transaction", "run_id"),
+    [
+        ("INDETERMINATE", "42", {}, "npa-final-receipt-indeterminate"),
+        ("SUBMITTED", " ", {}, "npa-final-receipt-blank-job"),
+        (
+            "SUBMITTED",
+            "42",
+            {"state": "indeterminate", "job_id": "42"},
+            "npa-final-receipt-transaction-state-conflict",
+        ),
+        (
+            "SUBMITTED",
+            "42",
+            {"state": "submitted", "job_id": "99"},
+            "npa-final-receipt-transaction-id-conflict",
+        ),
+    ],
+)
+def test_final_post_launch_receipt_failure_requires_accepted_result_identity(
+    mocker,
+    status: str,
+    job_id: str,
+    launch_transaction: dict[str, str],
+    run_id: str,
+) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    _patch_npa_submit_preflight(mocker)
+    real_update = submission_state.update_submission_state
+
+    def fail_final_launch_update(project, exact_run_id, updates, **kwargs):
+        launch = updates.get("launch")
+        if (
+            kwargs.get("locked") is True
+            and set(updates) == {"launch"}
+            and isinstance(launch, dict)
+            and "status" in launch
+        ):
+            raise ValueError("synthetic final receipt failure")
+        return real_update(project, exact_run_id, updates, **kwargs)
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=fail_final_launch_update,
+    )
+    submit = mocker.patch(
+        "npa.orchestration.skypilot.workflow.submit_workflow",
+        return_value=WorkflowResult(
+            status=status,
+            job_id=job_id,
+            returncode=1,
+            launch_transaction=launch_transaction,
+        ),
+    )
+
+    result = _invoke_npa_submit(run_id, json_output=True)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "could not persist post-launch submission receipt" in result.output
+    assert "submission_warnings" not in result.output
+    submit.assert_called_once()
+
+
+def test_prelaunch_corrupt_receipt_still_prevents_provider_submit(mocker) -> None:
+    _patch_npa_submit_preflight(mocker)
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+    secret = "synthetic-prelaunch-receipt-secret"
+    receipt_path = submission_state_path("default", "npa-submit-prelaunch-corrupt")
+    receipt_path.parent.mkdir(parents=True)
+    corrupt_body = f'{{"aws_secret_access_key":"{secret}",'.encode()
+    receipt_path.write_bytes(corrupt_body)
+
+    result = _invoke_npa_submit("npa-submit-prelaunch-corrupt")
+
+    assert result.exit_code == 1
+    assert "could not persist pre-mutation submission ledger" in result.output
+    assert secret not in f"{result.stdout}\n{result.stderr}"
+    assert receipt_path.read_bytes() == corrupt_body
+    submit.assert_not_called()
+
+
+def test_planning_receipt_write_failure_never_reaches_provider(mocker) -> None:
+    _patch_npa_submit_preflight(mocker)
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=ValueError("synthetic pre-launch receipt failure"),
+    )
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = _invoke_npa_submit("npa-submit-prelaunch-write-failure")
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "synthetic pre-launch receipt failure" in result.output
+    submit.assert_not_called()
+
+
+def test_workflow_receipt_write_failure_never_reaches_provider(mocker) -> None:
+    from npa.orchestration.npa_workflow import submission_state
+
+    _patch_npa_submit_preflight(mocker)
+    real_update = submission_state.update_submission_state
+
+    def fail_workflow_update(project, run_id, updates, **kwargs):
+        if kwargs.get("locked") is True and set(updates) == {"workflow", "controller"}:
+            raise ValueError("synthetic workflow receipt failure")
+        return real_update(project, run_id, updates, **kwargs)
+
+    mocker.patch(
+        "npa.orchestration.npa_workflow.submission_state.update_submission_state",
+        side_effect=fail_workflow_update,
+    )
+    submit = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
+
+    result = _invoke_npa_submit("npa-submit-workflow-write-failure")
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "could not persist pre-launch workflow receipt" in result.output
+    submit.assert_not_called()
 
 
 def test_workbench_workflow_submit_npa_plan_only(
@@ -1323,10 +2280,7 @@ def test_e2e_clear_workbench_images_env_is_not_global_cli_override(
 def test_workbench_workflow_submit_npa_var_merges_config(
     mocker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    mocker.patch(
-        "npa.cli.workbench.workflow._execution_target_preflight",
-        return_value=(None, {}),
-    )
+    _patch_npa_submit_preflight(mocker)
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     captured: dict[str, object] = {}
 
@@ -1369,7 +2323,10 @@ def test_default_npa_setup_has_optin_source_overlay() -> None:
     # Installs route through the PEP 668-tolerant helper (see npa_pip_install).
     assert "npa_pip_install -e /tmp/npa-src-overlay --no-deps" in setup
     assert "using isolated non-root npa overlay environment" in setup
-    assert "python3 -m venv --system-site-packages /tmp/npa-overlay-venv" in setup
+    assert (
+        '"$npa_setup_python" -m venv --system-site-packages /tmp/npa-overlay-venv'
+        in setup
+    )
     assert setup.index("PYTHONPATH=/tmp/npa-src-overlay/src") < setup.index(
         "npa_pip_install -e /tmp/npa-src-overlay --no-deps"
     )

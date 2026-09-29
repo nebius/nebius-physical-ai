@@ -1,6 +1,7 @@
 """A repair reuses only exact, authoritative capacity already provisioned."""
 
 from copy import deepcopy
+from dataclasses import replace
 import json
 from subprocess import CompletedProcess
 from unittest.mock import Mock
@@ -124,6 +125,118 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
     kwargs, _, groups, *_ = existing
     groups[-1]["spec"]["template"]["preemptible"] = {}
     assert not E._is_verified_unchanged_target(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "",
+        "missing-state",
+        "wrong-parent",
+        "wrong-id",
+        "wrong-shape",
+        "reserved-cpu",
+        "extra",
+        "gpu-growth",
+    ],
+)
+@pytest.mark.parametrize("retry", [False, True])
+def test_cpu_pool_removal_reuses_only_proven_unchanged_gpu_capacity(
+    existing, failure, retry
+):
+    kwargs, groups, workdir = _cpu_removal(existing)
+    cpu = groups[0]
+    if retry:
+        (workdir / "terraform.tfvars").write_text(render_tfvars(kwargs["cluster"]))
+    if failure == "missing-state":
+        (workdir / "terraform.tfstate").unlink()
+    elif failure == "wrong-parent":
+        cpu["metadata"]["parent_id"] = "cluster-other"
+    elif failure == "wrong-id":
+        cpu["metadata"]["id"] = "nodegroup-other"
+    elif failure == "wrong-shape":
+        cpu["spec"]["template"]["resources"]["preset"] = "32vcpu-128gb"
+    elif failure == "reserved-cpu":
+        cpu["spec"]["template"]["reservation_policy"] = {"policy": "STRICT"}
+    elif failure == "extra":
+        groups.append(deepcopy(groups[-1]))
+    elif failure == "gpu-growth":
+        kwargs["cluster"] = replace(
+            kwargs["cluster"], gpu_nodes=replace(kwargs["cluster"].gpu_nodes, count=4)
+        )
+    assert E._is_verified_unchanged_target(**kwargs) is (not failure)
+
+
+def _cpu_removal(existing):
+    kwargs, _, groups, _, workdir = existing
+    original = kwargs["cluster"]
+    kwargs["cluster"] = replace(
+        original, cpu_nodes=replace(original.cpu_nodes, count=0)
+    )
+    cpu = groups[0]
+    cpu["metadata"] = {
+        "id": "nodegroup-cpu",
+        "parent_id": "cluster-test",
+        "name": "render-ng-cpu",
+    }
+    cpu["status"]["state"] = "PROVISIONING"
+    attributes = {**cpu["metadata"], "template": deepcopy(cpu["spec"]["template"])}
+    state = {
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "name": "cpu-only",
+                "instances": [{"attributes": attributes}],
+            }
+        ]
+    }
+    (workdir / "terraform.tfstate").write_text(json.dumps(state))
+    return kwargs, groups, workdir
+
+
+@pytest.mark.parametrize("wrong_parent", [False, True])
+def test_removed_cpu_taint_is_never_adopted_or_replaced(
+    existing, monkeypatch, wrong_parent
+):
+    kwargs, _, workdir = _cpu_removal(existing)
+    state = json.loads((workdir / "terraform.tfstate").read_text())
+    instance = state["resources"][0]["instances"][0]
+    instance["status"] = "tainted"
+    if wrong_parent:
+        instance["attributes"]["parent_id"] = "cluster-other"
+    state["resources"].append(
+        {
+            "mode": "managed",
+            "type": "nebius_mk8s_v1_cluster",
+            "instances": [{"attributes": {"id": "cluster-test"}}],
+        }
+    )
+    commands = []
+
+    def capture(command, **options):
+        commands.append(command)
+        assert command == ["terraform", "state", "pull"]
+        return CompletedProcess(command, 0, json.dumps(state), "")
+
+    monkeypatch.setattr(E, "_run_capture", capture)
+    args = dict(
+        terraform_bin="terraform",
+        workdir=workdir,
+        env={},
+        cluster=kwargs["cluster"],
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="selected",
+        on_status=None,
+    )
+    if wrong_parent:
+        with pytest.raises(RuntimeError, match="no exact desired pool"):
+            E._reconcile_tainted_node_groups(**args)
+    else:
+        assert E._reconcile_tainted_node_groups(**args) == {}
+    assert len(commands) == 1
 
 
 @pytest.mark.parametrize(
