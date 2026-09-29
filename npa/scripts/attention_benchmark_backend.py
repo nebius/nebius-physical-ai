@@ -1,7 +1,9 @@
 """Select an explicit FA2/FA4 benchmark backend without silently substituting kernels."""
 
 from importlib import metadata
+import hashlib
 import os
+from pathlib import Path
 import re
 import subprocess
 
@@ -75,6 +77,33 @@ def _tiled_inference(tile):
     return forward
 
 
+def _benchmark_sources():
+    names = (
+        "attention_benchmark_backend.py",
+        "attention_kernel_benchmark.py",
+        "attention_sdxl_benchmark.py",
+        "fa4_sdxl_attention.py",
+        "fa4_sdxl_validation.py",
+        "fa4_sdxl_model.json",
+    )
+    root = Path(__file__).parent
+    return {
+        name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in names
+    }
+
+
+def _package_versions(backend):
+    # Normalize distribution names, and resolve duplicates in sys.path order.
+    names = {
+        re.sub(r"[-_.]+", "-", entry.metadata["Name"]).lower()
+        for entry in metadata.distributions()
+    }
+    required = "flash-attn" if backend == "fa2" else "flash-attn-4"
+    if required not in names:
+        raise RuntimeError(f"Missing distribution for requested backend: {required}")
+    return {name: metadata.version(name) for name in sorted(names)}
+
+
 def benchmark_environment(backend):
     """Capture portable software and GPU identity for comparing like environments.
 
@@ -98,14 +127,13 @@ def benchmark_environment(backend):
         ["nvidia-smi", "--id=0", "--query-gpu=driver_version", "--format=csv,noheader"],
         text=True,
     ).strip()
-    packages = ("torch", "nvidia-cutlass-dsl", "quack-kernels")
-    packages += ("flash-attn" if backend == "fa2" else "flash-attn-4",)
     return {
         "image_id": image_id,
         "driver": driver,
         "gpu": torch.cuda.get_device_name(),
         "capability": list(torch.cuda.get_device_capability()),
         "cuda": torch.version.cuda,
-        "source_commit": os.getenv("NPA_FLASH_ATTN_COMMIT"),
-        "packages": {name: metadata.version(name) for name in packages},
+        "flash_attention_commit": os.getenv("NPA_FLASH_ATTN_COMMIT"),
+        "benchmark_sources_sha256": _benchmark_sources(),
+        "packages": _package_versions(backend),
     }

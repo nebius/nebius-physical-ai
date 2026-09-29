@@ -37,6 +37,9 @@ building and qualifying other architectures. FA4 remains the build default;
 the two attention packages are never installed together. `NPA_ATTENTION_BACKEND`
 and `NPA_FLASH_ATTN_COMMIT` identify the baked selection and source for the GPU
 checker and benchmark workers.
+Set `FA2_NVCC_THREADS=1` when compiling on a host with limited RAM; the default
+is upstream's four compiler threads. This affects build memory and throughput,
+not the GPU kernel configuration or attention benchmark iteration count.
 
 See [FA2/FA4 comparison and inference tile experiments](../../../../../docs/workbench/guides/fa2-fa4-comparison.md)
 for correctness checks, full SDXL generations and repeated timing. The FA2

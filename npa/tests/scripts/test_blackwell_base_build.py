@@ -176,3 +176,10 @@ def test_unknown_backend_cannot_build_or_overwrite_fa4(docker_calls, args):
     result = _run(CANONICAL, *args)
     assert result.returncode == 2
     assert not docker_calls.exists()
+
+
+def test_compiler_memory_control_reaches_the_fa2_build(docker_calls, monkeypatch):
+    monkeypatch.setenv("FA2_NVCC_THREADS", "1")
+    result = _run(CANONICAL, "--attention-backend", "fa2", "--tag", SUFFIX)
+    assert result.returncode == 0, result.stderr
+    assert "FA2_NVCC_THREADS=1" in _calls(docker_calls)[0]

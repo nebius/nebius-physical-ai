@@ -9,6 +9,7 @@ TAG="${TS:-$(date -u +%Y%m%dT%H%M%SZ)}"
 PUSH=0
 ATTENTION_BACKEND=fa4
 FA2_CUDA_ARCHS="${FA2_CUDA_ARCHS:-120}"
+FA2_NVCC_THREADS="${FA2_NVCC_THREADS:-4}"
 DOCKER_CONTEXT="${DOCKER_CONTEXT:-}"
 CUDA_BASE_TAG="${CUDA_BASE_TAG:-13.0.1-cudnn-devel-ubuntu22.04}"
 FLASH_ATTN_COMMIT="${FLASH_ATTN_COMMIT:-eed1971f5132630dc296fe37601e834d4b57a248}"
@@ -36,6 +37,8 @@ a remote Docker daemon. GPU capability still requires per-image validation.
 FA4 is the default. --attention-backend fa2 instead builds the separate
 cuda13-blackwell-fa2-${TAG} image (legacy alias cuda13-b300-fa2-${TAG}).
 FA2 is source-compiled for SM120 by default; FA2_CUDA_ARCHS overrides that list.
+FA2_NVCC_THREADS controls compiler parallelism (default 4); use 1 on a build
+host with limited memory. It does not change runtime attention settings.
 
 --arch-list sets TORCH_CUDA_ARCH_LIST for source-compiled CUDA extensions in
 this image and every child image that inherits the env. --require-archs fails
@@ -125,6 +128,7 @@ BUILD_ARGS=(
   --build-arg "FLASH_ATTN_COMMIT=${FLASH_ATTN_COMMIT}"
   --build-arg "ATTENTION_BACKEND=${ATTENTION_BACKEND}"
   --build-arg "FA2_CUDA_ARCHS=${FA2_CUDA_ARCHS}"
+  --build-arg "FA2_NVCC_THREADS=${FA2_NVCC_THREADS}"
   --build-arg "CUTLASS_DSL_VERSION=${CUTLASS_DSL_VERSION}"
   --build-arg "QUACK_KERNELS_VERSION=${QUACK_KERNELS_VERSION}"
   --build-arg "TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST}"

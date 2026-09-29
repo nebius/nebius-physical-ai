@@ -4,7 +4,7 @@ import importlib
 import copy
 from pathlib import Path
 import sys
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -170,3 +170,30 @@ def test_unmatched_or_incomplete_reports_cannot_claim_speedup(backend, mutation)
         report["cases"][0]["samples"].pop()
     with pytest.raises(ValueError):
         comparison.comparison(reports)
+
+
+def test_provenance_records_all_packages_using_normalized_names(backend, monkeypatch):
+    distributions = [
+        SimpleNamespace(metadata={"Name": name})
+        for name in ("flash_attn", "Torch", "Pillow")
+    ]
+    monkeypatch.setattr(backend.metadata, "distributions", lambda: distributions)
+    monkeypatch.setattr(backend.metadata, "version", lambda name: name + "-version")
+    assert backend._package_versions("fa2") == {
+        "flash-attn": "flash-attn-version",
+        "pillow": "pillow-version",
+        "torch": "torch-version",
+    }
+
+
+def test_provenance_requires_the_requested_distribution(backend, monkeypatch):
+    monkeypatch.setattr(backend.metadata, "distributions", lambda: [])
+    with pytest.raises(RuntimeError, match="Missing distribution"):
+        backend._package_versions("fa4")
+
+
+def test_provenance_fingerprints_the_actual_benchmark_sources(backend):
+    fingerprints = backend._benchmark_sources()
+    assert "fa4_sdxl_model.json" in fingerprints
+    assert "attention_benchmark_backend.py" in fingerprints
+    assert all(len(value) == 64 for value in fingerprints.values())

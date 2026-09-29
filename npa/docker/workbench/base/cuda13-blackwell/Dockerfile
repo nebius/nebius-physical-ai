@@ -134,6 +134,8 @@ RUN python -m pip install \
 ARG ATTENTION_BACKEND=fa4
 # The FA2 extension is compiled specifically for the RTX comparison target.
 ARG FA2_CUDA_ARCHS=120
+# Compiler parallelism affects build memory, not attention execution.
+ARG FA2_NVCC_THREADS=4
 ENV NPA_ATTENTION_BACKEND=${ATTENTION_BACKEND} \
     NPA_FLASH_ATTN_COMMIT=${FLASH_ATTN_COMMIT}
 LABEL npa.attention.backend="${ATTENTION_BACKEND}" \
@@ -146,6 +148,7 @@ RUN git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attent
          python -m pip install "flash_attn/cute[cu13]"; \
        elif [ "${ATTENTION_BACKEND}" = fa2 ]; then \
          FLASH_ATTENTION_FORCE_BUILD=TRUE FLASH_ATTN_CUDA_ARCHS="${FA2_CUDA_ARCHS}" \
+           NVCC_THREADS="${FA2_NVCC_THREADS}" \
            python -m pip install --no-build-isolation --no-deps .; \
        else echo "Unsupported ATTENTION_BACKEND" >&2; exit 2; fi \
     && rm -rf /tmp/flash-attention

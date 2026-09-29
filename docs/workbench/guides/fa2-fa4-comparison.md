@@ -35,6 +35,12 @@ also accepts `--attention-backend fa2`, with the separate
 `cuda13-b300-fa2-<suffix>` compatibility tag. Existing FA4 tags are never reused
 for FA2.
 
+FA2 compilation can require substantial host RAM. On a smaller build host,
+prefix the FA2 build command with `FA2_NVCC_THREADS=1` to reduce compiler
+parallelism from its default of four. This does not change runtime kernels or
+benchmark settings. GPU validation still requires the physical RTX GPU even
+when the image is compiled on a CPU host.
+
 ## Qualify before timing
 
 Create an output directory writable by the image's UID 1000. Run each image's
@@ -112,7 +118,8 @@ npa/.venv/bin/python npa/scripts/compare_attention_sdxl.py \
 ```
 
 Each block saves a PNG and final latent array per scene, along with all timing
-samples and untimed attention coverage. Compare the renders and latent errors;
+samples, untimed attention coverage, installed package versions, and hashes of
+the mounted benchmark sources. Compare the renders and latent errors;
 floating-point differences can amplify across diffusion steps, so pixel
 identity is not a kernel-correctness test. The summary refuses incomplete runs,
 mixed image identities within a backend, differing software/model/settings,
