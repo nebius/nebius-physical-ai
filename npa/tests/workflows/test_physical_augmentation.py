@@ -183,3 +183,61 @@ def test_recipe_cannot_change_paths_task_or_acceptance(tmp_path, field, value):
     path.write_text(json.dumps(recipe))
     with pytest.raises(ValueError):
         read_recipe(path)
+
+
+def test_zero_exit_without_native_receipt_cannot_publish_completion(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    from npa.workflows import physical_augmentation
+
+    monkeypatch.setattr(
+        physical_augmentation.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0),
+    )
+    with pytest.raises(RuntimeError, match="completion record"):
+        physical_augmentation._collect_condition(tmp_path, tmp_path, "nominal")
+
+
+def test_zero_success_retains_attempts_without_completed_report(tmp_path, monkeypatch):
+    from npa.workflows import physical_augmentation_report
+
+    recipe = make_recipe("test", 0, 1, 600)
+    (tmp_path / "recipe.json").write_text(json.dumps(recipe))
+    attempts = [
+        {"condition": condition, "success": False} for condition in recipe["conditions"]
+    ]
+    monkeypatch.setattr(
+        physical_augmentation_report, "_verified_attempts", lambda *args: (attempts, {})
+    )
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="No physically accepted"):
+        physical_augmentation_report.report_results(tmp_path, output)
+    assert json.loads((output / "attempts.json").read_text())["attempted"] == 4
+    assert not (output / "report.json").exists()
+
+
+def test_failed_stage_uses_physical_augmentation_identity(tmp_path):
+    from npa.workflows.physical_augmentation import main
+
+    destination = tmp_path / "prepared"
+    with pytest.raises(ValueError):
+        main(
+            [
+                "prepare",
+                "--run-id",
+                "test",
+                "--episodes-per-condition",
+                "0",
+                "--output-path",
+                str(destination),
+            ]
+        )
+    failures = list(tmp_path.glob("prepared-failures/*/failure.json"))
+    assert len(failures) == 1
+    assert (
+        json.loads(failures[0].read_text())["schema"]
+        == "npa.physical-augmentation.stage-failure.v1"
+    )
+    assert not destination.exists()

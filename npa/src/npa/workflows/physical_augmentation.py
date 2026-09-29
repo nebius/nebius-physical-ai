@@ -81,6 +81,12 @@ def _collect_condition(source: Path, output: Path, condition: str) -> None:
         )
     if "PhysX error:" in log_text or "simulation will miss interactions" in log_text:
         raise RuntimeError(f"Invalid native physics in {condition}")
+    capture = json.loads((output / condition / "capture.json").read_text())
+    if (capture.get("schema"), capture.get("condition")) != (
+        "npa.physical-augmentation.capture.v1",
+        condition,
+    ):
+        raise ValueError("Native capture completion record has the wrong identity")
     print(f"Captured physical condition: {condition}", flush=True)
 
 
@@ -121,7 +127,13 @@ def main(argv: list[str] | None = None) -> int:
         try:
             _execute(args, workspace, output)
         except Exception as error:
-            _publish_stage_failure(output, args.output_path, error, stage=args.stage)
+            _publish_stage_failure(
+                output,
+                args.output_path,
+                error,
+                stage=args.stage,
+                schema="npa.physical-augmentation.stage-failure.v1",
+            )
             raise
         publish(output, args.output_path)
         print(json.dumps({"stage": args.stage, "status": "complete"}))

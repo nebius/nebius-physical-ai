@@ -236,11 +236,15 @@ def report_results(source: Path, output: Path) -> dict:
     attempts, identity = _verified_attempts(source, recipe)
     accepted = [row for row in attempts if row["success"]]
     summary = _summary(recipe, attempts, accepted)
-    write_json(output / "report.json", summary)
+    write_json(
+        output / "attempts.json",
+        {**summary, "schema": "npa.physical-augmentation.attempts.v1"},
+    )
     if not accepted:
         raise ValueError(
             "No physically accepted demonstrations; retained attempts are diagnostic data"
         )
     counts = _export(source, output, recipe, accepted, identity)
     write_json(output / "recording-validation.json", {"entity_counts": counts})
+    write_json(output / "report.json", summary)
     return summary
