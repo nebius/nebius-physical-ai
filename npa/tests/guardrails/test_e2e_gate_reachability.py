@@ -50,6 +50,7 @@ MANUAL_GATES = {
         "native working-directory source delivery requires an operator-selected Ray Jobs endpoint and private evidence"
     ),
     "NPA_AGENT_RECOVERY_LIVE_CONFIG": "creates and destroys an isolated operator-selected agent VM while injecting a credential staging failure",
+    "NPA_AGENT_METADATA_LIVE_CONFIG": "creates and destroys an isolated operator-selected CPU agent with private configuration and authenticated metadata evidence",
     "NPA_RAY_CLIP_RESULTS": "requires operator-selected downloaded native Ray CLIP CUDA result artifacts",
     "NPA_FLEET_KUBERAY_LIVE_CONFIG": (
         "native Ray worker execution requires an operator-selected CPU Fleet, exact kubeconfig and private evidence"
