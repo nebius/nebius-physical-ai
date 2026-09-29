@@ -1052,15 +1052,17 @@ def _submission_global_config(
                     "LIBERO worker startup hook differs from the signed profile"
                 )
             worker["post_provision_runcmd"] = list(commands)
-        # SkyPilot also uses allowed_clouds for storage discovery, and does not
-        # apply client-side allowed_clouds overrides to a running API server.
-        # Keep this server config stable across submissions while limiting
-        # Nebius to the storage capability for the explicit Kubernetes target.
-        config["allowed_clouds"] = ["kubernetes", "nebius"]
-        nebius = config.setdefault("nebius", {})
-        if not isinstance(nebius, dict):
-            raise ValueError("SkyPilot global config nebius section must be a mapping")
-        nebius["capabilities"] = ["storage"]
+        if not controller:
+            # Ordinary Kubernetes jobs need Nebius for storage discovery. The
+            # verified LIBERO profile instead requires Kubernetes-only discovery
+            # and controller-only credential transport.
+            config["allowed_clouds"] = ["kubernetes", "nebius"]
+            nebius = config.setdefault("nebius", {})
+            if not isinstance(nebius, dict):
+                raise ValueError(
+                    "SkyPilot global config nebius section must be a mapping"
+                )
+            nebius["capabilities"] = ["storage"]
     return config
 
 
