@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import importlib
+import importlib.util
+from pathlib import Path
 import sys
 from types import ModuleType, SimpleNamespace as NS
 
@@ -35,9 +36,13 @@ def servo(monkeypatch):
     native = ModuleType("isaaclab.envs.mdp.actions.binary_joint_actions")
     native.BinaryJointPositionAction = BinaryAction
     monkeypatch.setitem(sys.modules, native.__name__, native)
-    name = "npa.workflows.physical_augmentation_servo"
-    monkeypatch.delitem(sys.modules, name, raising=False)
-    module = importlib.import_module(name)
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "src/npa/workflows/physical_augmentation_servo.py"
+    )
+    spec = importlib.util.spec_from_file_location("tested_physical_gripper", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     data = NS(
         joint_pos_limits=NS(torch=torch.tensor([[[0.0, 0.04]] * 2] * 2)),
         joint_vel_limits=NS(torch=torch.full((2, 2), 0.2)),
@@ -48,8 +53,7 @@ def servo(monkeypatch):
         step_dt=0.02,
         cfg=NS(npa_gripper_servo={"native_velocity_fraction": 0.25}),
     )
-    yield module.RampedGripperAction(None, env), data
-    sys.modules.pop(name, None)
+    return module.RampedGripperAction(None, env), data
 
 
 def test_close_and_reverse_keep_binary_intent_and_bounded_targets(servo):

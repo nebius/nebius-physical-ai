@@ -45,6 +45,9 @@ actuator lag, and verifies measured downward orientation before descending.
 Binary gripper commands pass through a persistent target ramp at one quarter of
 the native finger velocity limit (0.05 m/s for this Franka). This avoids an
 instantaneous close-target jump; the native measured-velocity guard stays active.
+The TGS solver applies external forces every position iteration, as recommended
+by Isaac for accurate velocity updates. The 3 cm/s stable-hold threshold and
+native joint-validity checks are unchanged.
 
 ## What the artifacts mean
 

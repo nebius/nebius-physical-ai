@@ -125,6 +125,7 @@ def _verified_attempts(source: Path, recipe: dict) -> tuple[list[dict], dict]:
             or capture.get("tcp_contract") != recipe["tcp_contract"]
             or capture.get("tool_frame_checked") is not True
             or capture.get("gripper_servo") != recipe["gripper_servo"]
+            or capture.get("physics_solver") != recipe["physics_solver"]
         ):
             raise ValueError("Capture lacks native physics validity evidence")
         current = {

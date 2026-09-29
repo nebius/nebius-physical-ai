@@ -42,6 +42,7 @@ def _configuration(recipe: dict, condition: str):
     config.observations.policy.enable_corruption = False
     _align_tool_frame(config, recipe)
     _configure_gripper(config, recipe)
+    _configure_solver(config, recipe)
     case = recipe["conditions"][condition]
     config.scene.object.spawn = sim.CuboidCfg(
         size=(0.05, 0.05, 0.05),
@@ -72,6 +73,16 @@ def _configure_gripper(config, recipe: dict) -> None:
         "npa.workflows.physical_augmentation_servo:RampedGripperAction"
     )
     config.npa_gripper_servo = recipe["gripper_servo"]
+
+
+def _configure_solver(config, recipe: dict) -> None:
+    if config.sim.physics.solver_type != 1:
+        raise ValueError("Physical augmentation requires the native TGS solver")
+    # Native Isaac warns that skipping these forces produces noisy velocities.
+    # Improve the solver's velocity updates rather than loosening hold criteria.
+    config.sim.physics.enable_external_forces_every_iteration = recipe[
+        "physics_solver"
+    ]["external_forces_every_iteration"]
 
 
 def _align_tool_frame(config, recipe: dict) -> None:
@@ -316,6 +327,10 @@ def _collect(config, recipe: dict, condition: str, output: Path) -> None:
         "tcp_contract": recipe["tcp_contract"],
         "tool_frame_checked": True,
         "gripper_servo": recipe["gripper_servo"],
+        "physics_solver": {
+            "type": "TGS" if env.cfg.sim.physics.solver_type == 1 else "PGS",
+            "external_forces_every_iteration": env.cfg.sim.physics.enable_external_forces_every_iteration,
+        },
     }
     write_json(output / "capture.json", metadata)
     env.close()
