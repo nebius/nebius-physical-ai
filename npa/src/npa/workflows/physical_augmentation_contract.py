@@ -58,8 +58,8 @@ def make_recipe(run_id: str, seed: int, episodes: int, steps: int) -> dict:
 
 def _semantics() -> dict:
     return {
-        "controller": "measured-state-cartesian-lift-v5",
-        "gripper_servo": {"native_velocity_fraction": 0.25},
+        "controller": "measured-state-cartesian-lift-v6",
+        "gripper_servo": {"native_velocity_fraction": 0.25, "effort_limit_n": 20.0},
         "physics_solver": {"type": "TGS", "external_forces_every_iteration": True},
         "tcp_contract": {"body": "panda_hand", "offset_m": [0.0, 0.0, 0.107]},
         "action_names": list(ACTION_NAMES),

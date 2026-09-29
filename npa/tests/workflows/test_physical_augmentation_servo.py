@@ -16,6 +16,7 @@ torch = pytest.importorskip("torch")
 def servo(monkeypatch):
     class BinaryAction:
         def __init__(self, cfg, env):
+            self._env = env
             self._asset = env.robot
             self._joint_ids = [0, 1]
             self._processed_actions = torch.zeros((2, 2))
@@ -46,12 +47,15 @@ def servo(monkeypatch):
     data = NS(
         joint_pos_limits=NS(torch=torch.tensor([[[0.0, 0.04]] * 2] * 2)),
         joint_vel_limits=NS(torch=torch.full((2, 2), 0.2)),
+        joint_effort_limits=NS(torch=torch.full((2, 2), 20.0)),
         joint_pos=NS(torch=torch.full((2, 2), 0.04)),
     )
     env = NS(
         robot=NS(data=data),
         step_dt=0.02,
-        cfg=NS(npa_gripper_servo={"native_velocity_fraction": 0.25}),
+        cfg=NS(
+            npa_gripper_servo={"native_velocity_fraction": 0.25, "effort_limit_n": 20.0}
+        ),
     )
     return module.RampedGripperAction(None, env), data
 
@@ -91,3 +95,10 @@ def test_nonfinite_gripper_intent_is_rejected(servo):
     action, _ = servo
     with pytest.raises(ValueError, match="Nonfinite"):
         action.process_actions(torch.full((2, 1), float("nan")))
+
+
+def test_native_actuator_must_apply_the_sealed_force_limit(servo):
+    action, data = servo
+    data.joint_effort_limits.torch.fill_(200.0)
+    with pytest.raises(ValueError, match="gripper limits"):
+        type(action)(None, action._env)

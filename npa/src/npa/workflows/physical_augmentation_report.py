@@ -157,6 +157,10 @@ def _verified_attempts(source: Path, recipe: dict) -> tuple[list[dict], dict]:
 def _export_metadata(recipe: dict, accepted: list[dict], identity: dict) -> dict:
     return {
         "format": "npa_isaac_lab_rollout_v2",
+        "producer": "npa.workflows.physical_augmentation",
+        "source_revision": _source_revision(),
+        "recipe": recipe,
+        "native_runtime_version": identity["runtime_version"],
         "robot_type": "franka",
         "run_id": recipe["run_id"],
         "task": recipe["task"],
@@ -173,6 +177,22 @@ def _export_metadata(recipe: dict, accepted: list[dict], identity: dict) -> dict
     }
 
 
+def _source_revision() -> dict:
+    root = Path(__file__).parents[1]
+    modules = [
+        "workflows/physical_augmentation.py",
+        "workflows/physical_augmentation_contract.py",
+        "workflows/physical_augmentation_runtime.py",
+        "workflows/physical_augmentation_servo.py",
+        "workflows/physical_augmentation_report.py",
+        "workflows/franka_rl_validity.py",
+        "workflows/franka_rl_recording.py",
+        "adapter/isaac_lab_lerobot.py",
+        "viz/adapters/lerobot_to_rerun.py",
+    ]
+    return {name: file_sha256(root / name) for name in modules}
+
+
 def _export(
     source: Path, output: Path, recipe: dict, accepted: list[dict], identity: dict
 ) -> dict:
@@ -180,6 +200,7 @@ def _export(
     from npa.workflows.franka_rl_recording import write_recording
 
     metadata = _export_metadata(recipe, accepted, identity)
+    metadata["recipe_sha256"] = file_sha256(source / "recipe.json")
     with tempfile.TemporaryDirectory(prefix="physical-accepted-") as temporary:
         staging = Path(temporary)
         for index, row in enumerate(accepted):

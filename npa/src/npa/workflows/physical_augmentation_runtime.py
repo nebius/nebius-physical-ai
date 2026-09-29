@@ -73,6 +73,9 @@ def _configure_gripper(config, recipe: dict) -> None:
         "npa.workflows.physical_augmentation_servo:RampedGripperAction"
     )
     config.npa_gripper_servo = recipe["gripper_servo"]
+    config.scene.robot.actuators["panda_hand"].effort_limit_sim = recipe[
+        "gripper_servo"
+    ]["effort_limit_n"]
 
 
 def _configure_solver(config, recipe: dict) -> None:

@@ -45,6 +45,8 @@ actuator lag, and verifies measured downward orientation before descending.
 Binary gripper commands pass through a persistent target ramp at one quarter of
 the native finger velocity limit (0.05 m/s for this Franka). This avoids an
 instantaneous close-target jump; the native measured-velocity guard stays active.
+Each finger's actuator force is limited to 20 N, and the action term verifies
+that limit through the native articulation data before accepting commands.
 The TGS solver applies external forces every position iteration, as recommended
 by Isaac for accurate velocity updates. The 3 cm/s stable-hold threshold and
 native joint-validity checks are unchanged.
@@ -61,6 +63,8 @@ native joint-validity checks are unchanged.
 - `reports/lerobot/` contains only accepted demonstrations, with real RTX video.
   `accepted-provenance.json` maps every exported episode to its original
   condition, attempt, action semantics, and source-file hashes.
+  Its sealed recipe, recipe hash, native runtime version, and implementation
+  module hashes are also embedded in the Rerun recording's static provenance.
 - `reports/demonstrations.rrd` shows the exported video, state, action, and
   measured outcome. The report stage independently decodes and checks its entities.
 

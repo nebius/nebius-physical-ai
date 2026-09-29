@@ -23,6 +23,8 @@ class RampedGripperAction(BinaryJointPositionAction):
         data = self._asset.data
         self._limits = data.joint_pos_limits.torch[:, self._joint_ids].clone()
         velocity = data.joint_vel_limits.torch[:, self._joint_ids]
+        effort = data.joint_effort_limits.torch[:, self._joint_ids]
+        expected_effort = env.cfg.npa_gripper_servo["effort_limit_n"]
         fraction = env.cfg.npa_gripper_servo["native_velocity_fraction"]
         if (
             not torch.isfinite(self._limits).all()
@@ -30,9 +32,10 @@ class RampedGripperAction(BinaryJointPositionAction):
             or (velocity <= 0).any()
             or (self._limits[..., 0] > self._limits[..., 1]).any()
             or not 0 < fraction < 1
+            or not torch.allclose(effort, torch.full_like(effort, expected_effort))
         ):
             raise ValueError(
-                "Invalid native gripper limits or target velocity fraction"
+                "Native gripper limits differ from the sealed servo settings"
             )
         self._step_limit = velocity * fraction * env.step_dt
         self.target = data.joint_pos.torch[:, self._joint_ids].clone()
