@@ -798,7 +798,7 @@ def canonical_registry_host(value: str) -> str:
 
     cleaned = str(value or "").strip().removeprefix("docker:")
     cleaned = cleaned.removeprefix("https://").removeprefix("http://")
-    host = cleaned.split("/", 1)[0].rstrip("/").casefold()
+    host = cleaned.split("/", 1)[0].rstrip("/").lower()
     if host in {"docker.io", "index.docker.io", "registry-1.docker.io"}:
         return "docker.io"
     return host
@@ -1692,12 +1692,22 @@ def _cleanup_kubernetes_pull_probe(
     image: str,
     expected_uid: str,
     creation_confirmed: bool,
+    sleeper: Callable[[float], None],
+    poll_interval_seconds: float,
 ) -> tuple[str, KeyboardInterrupt | None]:
     """Finish bounded owned cleanup before propagating an operator interrupt."""
 
     interrupted: KeyboardInterrupt | None = None
     absent_observations = 0
+    outcome = "retry"
     for _attempt in range(4):
+        # Confirm an accepted deletion immediately once. If the Pod remains,
+        # allow termination to progress before consuming the remaining polls.
+        if _attempt and not (_attempt == 1 and outcome == "deleted"):
+            try:
+                sleeper(max(0.0, poll_interval_seconds))
+            except KeyboardInterrupt as exc:
+                interrupted = interrupted or exc
         try:
             outcome, expected_uid = _cleanup_pull_probe_iteration(
                 run=run,
@@ -2049,6 +2059,8 @@ def verify_kubernetes_image_pull(
                 image=image,
                 expected_uid=expected_uid,
                 creation_confirmed=creation_confirmed,
+                sleeper=sleeper,
+                poll_interval_seconds=poll_interval_seconds,
             )
             if cleanup_interrupt is not None:
                 if cleanup_status != "verified":

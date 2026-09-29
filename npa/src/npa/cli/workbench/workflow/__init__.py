@@ -34,7 +34,7 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 if TYPE_CHECKING:
-    from npa.orchestration.npa_workflow.interpreter import ExecutionPlan
+    from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep
     from npa.orchestration.npa_workflow.run_state import (
         RunStateStore,
         RunStorageLocation,
@@ -4395,7 +4395,9 @@ def _resolve_submit_registry(registry: str, project: str) -> str:
     return explicit
 
 
-def _image_preflight_steps(spec, *, run_id: str, assume_decision: str) -> list[object]:
+def _image_preflight_steps(
+    spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str
+) -> list[PlanStep]:
     """Build a conservative plan containing every reachable image path."""
 
     from npa.orchestration.npa_workflow import build_reachability_plan
@@ -4415,6 +4417,7 @@ def _plan_preflight_image_requirements(
     run_id: str,
     options: SkypilotRenderOptions,
     assume_decision: str,
+    infra: str = "",
 ) -> tuple[list[str], dict[str, ImagePullRequirements]]:
     """Preserve each reachable branch's image and exact pull authority."""
     from npa.orchestration.npa_workflow.skypilot_render import (
@@ -4423,10 +4426,59 @@ def _plan_preflight_image_requirements(
     )
 
     steps = _image_preflight_steps(spec, run_id=run_id, assume_decision=assume_decision)
+    execution_steps = _image_preflight_execution_steps(spec, steps, infra=infra)
     return (
         plan_images(spec, steps, run_id=run_id, options=options),
-        plan_image_pull_requirements(spec, steps, run_id=run_id, options=options),
+        plan_image_pull_requirements(
+            spec, execution_steps, run_id=run_id, options=options
+        ),
     )
+
+
+def _image_preflight_execution_steps(
+    spec: NpaWorkflowSpec, steps: Sequence[PlanStep], *, infra: str
+) -> list[PlanStep]:
+    """Cover both native CLI override behavior and multi-task rendered targets."""
+
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.scheduler import resources_for_step
+
+    selected = str(infra or "").strip()
+    if not selected:
+        return list(steps)
+    kind, _, location = selected.partition("/")
+    cloud = kind.casefold()
+    if cloud == "k8s":
+        cloud = "kubernetes"
+    elif cloud in {"*", "none"}:
+        cloud = ""
+    context = location.partition("/")[0]
+    overridden = []
+    for step in steps:
+        resources = resources_for_step(spec, step)
+        declared_cloud = str(resources.get("cloud") or "").strip().casefold()
+        declared_context = str(resources.get("region") or "").strip()
+        if (
+            len(steps) > 1
+            and cloud == "kubernetes"
+            and declared_cloud in {"k8s", "kubernetes"}
+            and declared_context
+            and declared_context != context
+        ):
+            raise NpaWorkflowError(
+                "image preflight cannot bind a multi-task Kubernetes resource "
+                "to a different --infra context: SkyPilot ignores resource "
+                "overrides for multi-task YAML. Align every resource region "
+                "with the selected context before submitting."
+            )
+        overridden.append(
+            replace(step, resources_profile={**resources, "cloud": cloud})
+        )
+    # SkyPilot 0.12.2 applies --infra only to singleton tasks; chain DAGs and
+    # JobGroups ignore it. Runtime waves may be either shape, so a complete
+    # multi-step plan must prove both paths. An unresolved declared cloud stays
+    # unresolved rather than being silently certified through the CLI override.
+    return overridden if len(steps) <= 1 else [*steps, *overridden]
 
 
 def _preflight_submit_image_manifests(
@@ -4445,10 +4497,6 @@ def _preflight_submit_image_manifests(
 
     from npa.deploy.images import is_official_public_image
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
-    from npa.orchestration.npa_workflow.skypilot_render import (
-        plan_image_pull_requirements,
-        plan_images,
-    )
     from npa.orchestration.skypilot.registry_preflight import (
         check_image_pulls_with_credentials,
     )
@@ -4456,14 +4504,12 @@ def _preflight_submit_image_manifests(
     try:
         resolved_spec = spec or load_spec(yaml_path)
         run_id = f"{resolved_spec.name}-manifest-preflight"
-        steps = _image_preflight_steps(
+        images, requirements = _plan_preflight_image_requirements(
             resolved_spec,
             run_id=run_id,
+            options=options,
             assume_decision=assume_decision,
-        )
-        images = plan_images(resolved_spec, steps, run_id=run_id, options=options)
-        requirements = plan_image_pull_requirements(
-            resolved_spec, steps, run_id=run_id, options=options
+            infra=infra,
         )
     except NpaWorkflowError as exc:
         _fail(f"image-manifest-preflight planning failed: {exc}")
@@ -4473,7 +4519,6 @@ def _preflight_submit_image_manifests(
     selected_operator_images, _ = _image_pull_execution_paths(
         images=images,
         requirements=requirements,
-        infra=infra,
     )
     checks = check_image_pulls_with_credentials(
         images,
@@ -4546,6 +4591,7 @@ def _preflight_submit_images(
             run_id=run_id,
             options=options,
             assume_decision=assume_decision,
+            infra=infra,
         )
     except NpaWorkflowError as exc:
         _fail(f"image-preflight planning failed: {exc}")
@@ -4559,7 +4605,6 @@ def _preflight_submit_images(
     operator_images, kubernetes_images = _image_pull_execution_paths(
         images=images,
         requirements=pull_requirements,
-        infra=infra,
     )
     target_context = context_from_infra(infra)
     target_namespace = ""
@@ -4677,16 +4722,9 @@ def _image_pull_execution_paths(
     *,
     images: Sequence[str],
     requirements: Mapping[str, ImagePullRequirements],
-    infra: str,
 ) -> tuple[set[str], set[str]]:
     """Resolve VM/Kubernetes paths without inferring them from Secret presence."""
 
-    selected = str(infra or "").strip()
-    selected_kind = selected.partition("/")[0]
-    if selected_kind in {"k8s", "kubernetes"}:
-        return set(), set(images)
-    if selected:
-        return set(images), set()
     operator_images = {
         image
         for image in images
@@ -10027,7 +10065,11 @@ def preflight_images_cmd(
     run_id = f"{spec.name}-preflight"
     try:
         images, pull_requirements = _plan_preflight_image_requirements(
-            spec, run_id=run_id, options=options, assume_decision=assume_decision
+            spec,
+            run_id=run_id,
+            options=options,
+            assume_decision=assume_decision,
+            infra=infra,
         )
     except (NpaWorkflowError, ValueError) as exc:
         _fail(f"image preflight planning failed: {exc}")
@@ -10047,7 +10089,6 @@ def preflight_images_cmd(
     operator_images, kubernetes_images = _image_pull_execution_paths(
         images=images,
         requirements=pull_requirements,
-        infra=infra,
     )
     target_namespace = ""
     inherited_pull_secrets: tuple[str, ...] = ()

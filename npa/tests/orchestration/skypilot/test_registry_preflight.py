@@ -839,6 +839,17 @@ def test_target_secret_with_wrong_registry_is_unverified() -> None:
     assert "does not cover registry ghcr.io" in detail
 
 
+def test_unicode_registry_spelling_cannot_borrow_another_hosts_secret() -> None:
+    verified, _detail = verify_kubernetes_pull_secret(
+        "strasse.example",
+        ("pull-secret",),
+        context="target-context",
+        runner=lambda *args, **kwargs: _docker_secret_result("straße.example"),
+    )
+
+    assert verified is False
+
+
 @pytest.mark.parametrize(
     "docker_config_registry",
     (
@@ -2016,6 +2027,51 @@ def test_target_pull_probe_retries_when_delete_times_out() -> None:
     assert check.cleanup_status == "unverified"
     assert check.ok is False
     assert delete_attempts == 4
+
+
+@pytest.mark.parametrize("interrupt_sleep", [False, True])
+def test_cleanup_allows_pod_termination_to_progress_between_observations(
+    interrupt_sleep: bool,
+) -> None:
+    run, calls = _target_probe_runner()
+    elapsed = 0.0
+    sleep_calls: list[float] = []
+
+    def terminating_pod(cmd, **kwargs):  # noqa: ANN001
+        result = run(cmd, **kwargs)
+        if "--ignore-not-found=true" in cmd and not result.stdout and elapsed < 2:
+            # Deletion was accepted; the owned Pod is still terminating.
+            result.stdout = run(["get", "pod", "owned-probe"]).stdout
+        return result
+
+    def advance(seconds: float) -> None:
+        nonlocal elapsed
+        elapsed += seconds
+        sleep_calls.append(seconds)
+        if interrupt_sleep and len(sleep_calls) == 1:
+            raise KeyboardInterrupt
+
+    def verify() -> KubernetesPullCheck:
+        return verify_kubernetes_image_pull(
+            image=IMAGE,
+            secret_names=("pull-secret",),
+            namespace="target-namespace",
+            context="target-context",
+            timeout_seconds=30,
+            runner=terminating_pod,
+            sleeper=advance,
+            poll_interval_seconds=1,
+            nonce_factory=lambda: "abc123",
+        )
+
+    if interrupt_sleep:
+        with pytest.raises(KeyboardInterrupt) as caught:
+            verify()
+        assert not getattr(caught.value, "__notes__", ())
+    else:
+        assert verify().ok
+    assert sleep_calls == [1, 1]
+    assert sum("delete" in cmd for cmd in calls) == 3
 
 
 def test_target_pull_probe_bounds_create_exception_text() -> None:

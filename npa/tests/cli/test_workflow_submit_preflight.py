@@ -2151,19 +2151,7 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     assert set(checked_images) == {digest_image}
 
 
-@pytest.mark.parametrize(
-    ("infra", "expected_operator", "expected_kubernetes"),
-    (
-        ("", {"vm", "mixed"}, {"kubernetes", "mixed"}),
-        ("nebius", {"vm", "kubernetes", "mixed"}, set()),
-        ("k8s/target-context", set(), {"vm", "kubernetes", "mixed"}),
-    ),
-)
-def test_image_pull_execution_paths_preserve_each_rendered_target(
-    infra: str,
-    expected_operator: set[str],
-    expected_kubernetes: set[str],
-) -> None:
+def test_image_pull_execution_paths_preserve_each_rendered_target() -> None:
     requirements = {
         "vm": ImagePullRequirements(requires_operator=True),
         "kubernetes": ImagePullRequirements(requires_kubernetes=True),
@@ -2176,11 +2164,205 @@ def test_image_pull_execution_paths_preserve_each_rendered_target(
     operator, kubernetes = workflow_cli._image_pull_execution_paths(
         images=list(requirements),
         requirements=requirements,
-        infra=infra,
     )
 
-    assert operator == expected_operator
-    assert kubernetes == expected_kubernetes
+    assert operator == {"vm", "mixed"}
+    assert kubernetes == {"kubernetes", "mixed"}
+
+
+def _write_pull_authority_spec(
+    tmp_path: Path,
+    clouds: tuple[str, ...],
+    *,
+    parallel: bool = False,
+    region: str = "",
+) -> Path:
+    image = f"registry.example.invalid/workflow@sha256:{'a' * 64}"
+    resources = {}
+    states = {}
+    for index, cloud in enumerate(clouds):
+        name = f"step-{index}"
+        resources[name] = {
+            "image": image,
+            "kubernetes": {
+                "pod_config": {
+                    "spec": {
+                        "serviceAccountName": name,
+                        "imagePullSecrets": [{"name": f"pull-{index}"}],
+                        "nodeSelector": {"test.example.invalid/pool": name},
+                    }
+                }
+            },
+        }
+        if cloud:
+            resources[name]["cloud"] = cloud
+        if region:
+            resources[name]["region"] = region
+        states[name] = {"resources": name, "run": {"shell": "true"}}
+        if not parallel:
+            if index == len(clouds) - 1:
+                states[name]["terminal"] = True
+            else:
+                states[name]["next"] = f"step-{index + 1}"
+    initial = "step-0"
+    if parallel:
+        initial = "fan-out"
+        states[initial] = {"parallel": list(states), "next": "done"}
+        states["done"] = {"terminal": True}
+    path = tmp_path / "pull-authorities.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "npa.workflow/v0.0.1",
+                "kind": "Workflow",
+                "metadata": {"name": "pull-authorities"},
+                "resources": resources,
+                "initial": initial,
+                "states": states,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize("cloud", ["", "nebius", "kubernetes"])
+def test_single_task_infra_override_preserves_kubernetes_authority(
+    tmp_path: Path, cloud: str
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    spec = workflow_cli.load_spec(_write_pull_authority_spec(tmp_path, (cloud,)))
+    images, requirements = workflow_cli._plan_preflight_image_requirements(
+        spec,
+        run_id="single",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        assume_decision="",
+        infra="k8s/target-context",
+    )
+
+    assert workflow_cli._image_pull_execution_paths(
+        images=images, requirements=requirements
+    ) == (set(), set(images))
+    requirement = requirements[images[0]]
+    assert requirement.service_account_names == ("step-0",)
+    assert requirement.pull_secret_name_sets == (("pull-0",),)
+    assert json.loads(requirement.pod_placement_specs[0]) == {
+        "nodeSelector": {"test.example.invalid/pool": "step-0"}
+    }
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_multitask_infra_keeps_declared_and_overridden_pull_authorities(
+    tmp_path: Path, parallel: bool
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    spec = workflow_cli.load_spec(
+        _write_pull_authority_spec(
+            tmp_path, ("nebius", "kubernetes"), parallel=parallel
+        )
+    )
+    images, requirements = workflow_cli._plan_preflight_image_requirements(
+        spec,
+        run_id="multi",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        assume_decision="",
+        infra="k8s/target-context",
+    )
+
+    # Pinned SkyPilot ignores --infra for chain DAGs and JobGroups. Runtime
+    # singleton waves may apply it, so neither authority can be discarded.
+    assert workflow_cli._image_pull_execution_paths(
+        images=images, requirements=requirements
+    ) == (set(images), set(images))
+    requirement = requirements[images[0]]
+    assert set(requirement.service_account_names) == {"step-0", "step-1"}
+    assert set(requirement.pull_secret_name_sets) == {("pull-0",), ("pull-1",)}
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_multitask_infra_cannot_resolve_an_ignored_cloud_override(
+    tmp_path: Path, parallel: bool
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    spec = workflow_cli.load_spec(
+        _write_pull_authority_spec(tmp_path, ("", "kubernetes"), parallel=parallel)
+    )
+    images, requirements = workflow_cli._plan_preflight_image_requirements(
+        spec,
+        run_id="unresolved",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        assume_decision="",
+        infra="k8s/target-context",
+    )
+
+    assert requirements[images[0]].target_unresolved
+    assert workflow_cli._image_pull_execution_paths(
+        images=images, requirements=requirements
+    ) == (set(), set())
+
+
+def test_multitask_different_context_fails_before_registry_or_cluster_checks(
+    tmp_path: Path, mocker
+) -> None:
+    path = _write_pull_authority_spec(
+        tmp_path, ("kubernetes", "kubernetes"), region="declared-context"
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    target = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(path),
+            "--infra",
+            "k8s/other",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "SkyPilot ignores resource overrides for multi-task YAML" in result.output
+    pulls.assert_not_called()
+    target.assert_not_called()
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_multitask_submit_manifest_gate_cannot_skip_declared_vm_failure(
+    tmp_path: Path, mocker, parallel: bool
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
+
+    path = _write_pull_authority_spec(
+        tmp_path, ("nebius", "kubernetes"), parallel=parallel
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        side_effect=lambda images, **_kwargs: [
+            ImagePullCheck(image=image, status="denied", detail="operator denied")
+            for image in images
+        ],
+    )
+
+    with pytest.raises(typer.Exit):
+        workflow_cli._preflight_submit_image_manifests(
+            path,
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+            assume_decision="",
+            enabled=True,
+            infra="k8s/target-context",
+        )
+
+    pulls.assert_called_once()
 
 
 def test_effective_pull_secret_sets_do_not_union_distinct_paths() -> None:
@@ -2282,7 +2464,6 @@ def test_unresolved_cloud_is_not_certified_as_operator_pull() -> None:
     operator_images, kubernetes_images = workflow_cli._image_pull_execution_paths(
         images=["image"],
         requirements=requirements,
-        infra="",
     )
 
     assert operator_images == set()
@@ -3131,6 +3312,7 @@ def test_submit_fails_clearly_when_provisioning_left_no_context(
     )
     # Registry pull semantics are covered independently; this test reaches the
     # post-provision context diagnostic.
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_image_manifests")
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     launched = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
 
