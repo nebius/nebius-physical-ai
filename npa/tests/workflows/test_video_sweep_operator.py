@@ -100,6 +100,40 @@ def test_export_requires_only_storage_and_never_submits(
     assert "2 variants, 1 accepted" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    "accepted,tracked,exports",
+    [(False, True, True), (True, True, False), (False, False, False)],
+)
+def test_failed_run_exports_only_fully_tracked_rejections(
+    configuration, monkeypatch, capsys, accepted, tracked, exports
+):
+    import subprocess
+    from npa.workflows.video_sweep import demo
+
+    path, _ = configuration
+    monkeypatch.setattr(operator, "_credentials", lambda _: None)
+    monkeypatch.setattr(operator, "_preflight", lambda *_: None)
+    monkeypatch.setattr(operator, "_stage_inputs", lambda _: None)
+    monkeypatch.setattr(
+        operator.artifacts,
+        "exists",
+        lambda uri: tracked or not uri.endswith("lineage.json"),
+    )
+    monkeypatch.setattr(
+        operator.artifacts, "read_json", lambda _: {"items": [{"accepted": accepted}]}
+    )
+    calls = []
+    monkeypatch.setattr(demo, "export_demo", lambda *args: calls.append(args))
+
+    def fail(*_):
+        raise subprocess.CalledProcessError(1, ["workflow", "submit"])
+
+    monkeypatch.setattr(operator, "_invoke", fail)
+    assert operator.main(["run", "--config", str(path)]) == 1
+    assert bool(calls) is exports
+    assert ("workflow failure is retained" in capsys.readouterr().out) is exports
+
+
 def test_credentials_use_exact_project_storage(configuration, monkeypatch):
     from npa.clients import config as client_config
     from npa.clients import credentials

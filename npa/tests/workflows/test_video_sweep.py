@@ -314,7 +314,9 @@ def test_rejected_clips_are_excluded_but_kept_in_review(sweep):
     assert len(artifacts.read_json(args.root_uri + "/review.json")["items"]) == 2
 
 
-def test_all_rejected_never_publishes_dataset(sweep):
+def test_all_rejected_never_publishes_dataset_but_exports_review(sweep, tmp_path):
+    from npa.workflows.video_sweep.demo import export_demo
+
     args, _ = sweep
     execution.review(args)
     report = artifacts.read_json(args.root_uri + "/review.json")
@@ -324,6 +326,53 @@ def test_all_rejected_never_publishes_dataset(sweep):
     _lineage_receipt(args)
     with pytest.raises(ValueError, match="No candidate passed"):
         publication.publish(args)
+    output = tmp_path / "held-out-demo"
+    summary = export_demo(args, output)
+    assert summary["accepted"] == 0 and summary["published"] is False
+    assert len(summary["candidates"]) == 2
+    assert not Path(args.root_uri + "/dataset/manifest.json").exists()
+    assert not Path(args.root_uri + "/dataset/next-sources.json").exists()
+    assert "no dataset published" in summary["evidence"]
+    with av.open(str(output / "demo.mp4")) as video:
+        assert sum(1 for _ in video.decode(video=0)) > 24 * 9
+
+
+@pytest.mark.parametrize(
+    "conflict", ["lineage.json", "dataset/manifest.json", "dataset/next-sources.json"]
+)
+def test_rejection_demo_requires_tracking_and_absent_publication(
+    sweep, tmp_path, conflict
+):
+    from npa.workflows.video_sweep.demo import export_demo
+
+    args, _ = sweep
+    execution.review(args)
+    report = artifacts.read_json(args.root_uri + "/review.json")
+    for row in report["items"]:
+        row.update(passed=False, accepted=False)
+    Path(args.root_uri + "/review.json").write_text(json.dumps(report))
+    _lineage_receipt(args)
+    path = Path(args.root_uri) / conflict
+    path.parent.mkdir(exist_ok=True)
+    path.write_text("{}")
+    with pytest.raises(ValueError):
+        export_demo(args, tmp_path / "demo")
+    assert not (tmp_path / "demo").exists()
+
+
+@pytest.mark.parametrize("code,missing", [("404", True), ("AccessDenied", False)])
+def test_artifact_presence_propagates_access_failures(monkeypatch, code, missing):
+    from botocore.exceptions import ClientError
+
+    def head(**_):
+        raise ClientError({"Error": {"Code": code}}, "HeadObject")
+
+    monkeypatch.setattr(artifacts, "_client", lambda: SimpleNamespace(head_object=head))
+    if missing:
+        assert artifacts.exists("s3://example-bucket/manifest.json") is False
+    else:
+        with pytest.raises(ClientError):
+            artifacts.exists("s3://example-bucket/manifest.json")
 
 
 @pytest.mark.parametrize(

@@ -17,10 +17,10 @@ _MODEL_LABELS = {
 
 
 def export_demo(args, output: Path) -> dict:
-    """Verify publication and export allowlisted metadata with actual footage.
+    """Verify publication or a fully tracked rejection and export actual footage.
 
     Args:
-        args: Stage arguments identifying an existing completed run.
+        args: Stage arguments identifying an existing reviewed, tracked run.
         output: New local directory; existing paths are never overwritten.
     Returns:
         Sanitized summary without source paths, prompts, or service identifiers.
@@ -31,11 +31,16 @@ def export_demo(args, output: Path) -> dict:
     if output.exists():
         raise FileExistsError("Choose a new demo directory")
     plan, report = execution.reviewed(args)
-    _verify_publication(args, plan, report)
+    published = _verify_publication(args, plan, report)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=output.parent) as directory:
         stage = Path(directory)
         summary = _materialize(stage, plan, report)
+        summary["published"] = published
+        if not published:
+            summary["evidence"] = (
+                "Verified media, review and lineage receipts; all variants held out, no dataset published"
+            )
         render_movie(stage, summary)
         _write_html(stage, summary)
         (stage / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -45,7 +50,7 @@ def export_demo(args, output: Path) -> dict:
     return summary
 
 
-def _verify_publication(args, plan: dict, report: dict) -> None:
+def _verify_publication(args, plan: dict, report: dict) -> bool:
     generated = {row["id"]: row for row in execution._join(args, plan)}
     for row in report["items"]:
         candidate = generated[row["id"]]
@@ -53,15 +58,26 @@ def _verify_publication(args, plan: dict, report: dict) -> None:
             raise ValueError("Review media differs from the worker receipt")
     receipt = artifacts.read_json(args.root_uri + "/lineage.json")
     publication._verify_lineage(receipt, report)
-    dataset = artifacts.read_json(args.root_uri + "/dataset/manifest.json")
     expected = {row["id"]: row["sha256"] for row in report["items"] if row["accepted"]}
+    if not expected:
+        for name in ("manifest.json", "next-sources.json"):
+            if artifacts.exists(args.root_uri + "/dataset/" + name):
+                raise ValueError(
+                    "An all-rejected review must not have a published dataset"
+                )
+        return False
+    _verify_dataset(args, report, receipt, expected)
+    return True
+
+
+def _verify_dataset(args, report, receipt, expected):
+    dataset = artifacts.read_json(args.root_uri + "/dataset/manifest.json")
     actual = {row["id"]: row["sha256"] for row in dataset["clips"]}
     if (
         dataset.get("schema") != "npa.video_sweep.dataset.v1"
         or dataset.get("run_id") != args.run_id
         or dataset.get("review_sha256") != artifacts.digest(report)
         or dataset.get("lineage_sha256") != artifacts.digest(receipt)
-        or not expected
         or actual != expected
         or len(dataset["clips"]) != len(expected)
     ):

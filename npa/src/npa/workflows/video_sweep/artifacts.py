@@ -86,6 +86,28 @@ def read_json(uri: str) -> dict:
     return result
 
 
+def exists(uri: str) -> bool:
+    """Check an exact artifact, propagating permission and transport failures.
+
+    Args:
+        uri: Exact S3 object URI or local file path.
+    Returns:
+        Whether the artifact exists.
+    Raises:
+        ClientError: Storage access fails for a reason other than absence.
+    """
+    if not uri.startswith("s3:"):
+        return Path(uri).is_file()
+    bucket, key = _object(uri)
+    try:
+        _client().head_object(Bucket=bucket, Key=key)
+    except ClientError as error:
+        if error.response["Error"]["Code"] in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise
+    return True
+
+
 def write_json(uri: str, payload: dict) -> None:
     """Publish a JSON artifact after its dependencies have succeeded.
 

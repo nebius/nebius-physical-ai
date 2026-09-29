@@ -527,8 +527,8 @@
           <h1>More variation.<br /><span>A visible quality gate.</span></h1>
         </div>
         <p class="intro">
-          Follow real Cosmos Transfer 2.5 outputs from source footage to an
-          accepted dataset. Compare the motion, inspect the decisions, and
+          Follow real Cosmos Transfer 2.5 outputs from source footage through the
+          quality gate. Compare the motion, inspect the decisions, and
           explore the quality threshold.
         </p>
       </section>
@@ -630,7 +630,7 @@
           <p class="gate-note">
             Exploration only. The recorded decision requires the judge to pass
             the clip <em>and</em> its score to meet the threshold. This control
-            leaves the published dataset unchanged.
+            does not change the recorded decisions or publication.
           </p>
           <button class="reset" id="reset">Reset to recorded threshold</button>
         </section>
@@ -764,15 +764,18 @@
         ],
         [
           "05",
-          "Publish",
-          `${S.accepted} accepted clips are bound to the published dataset. The next-run inventory feeds an explicitly launched next sweep.`,
+          S.published === false ? "Held out" : "Publish",
+          S.published === false
+            ? "All variants were rejected. No dataset or next-run inventory was published. Review the results and revise the next run's inputs."
+            : `${S.accepted} accepted clips are bound to the published dataset. The next-run inventory feeds an explicitly launched next sweep.`,
         ],
       ];
       steps.forEach(([number, name, detail], index) => {
         const button = document.createElement("button");
         button.className = "node";
         const numberLabel = document.createElement("span");
-        numberLabel.textContent = number + " ✓";
+        numberLabel.textContent =
+          number + (index === 4 && S.published === false ? " —" : " ✓");
         button.append(numberLabel, document.createTextNode(name));
         button.onclick = () => {
           document.querySelectorAll(".node").forEach((n) => {

@@ -33,9 +33,16 @@ The generated configuration includes two editable variants, frame sampling,
 threshold, GPU accelerator, and a fresh run ID. `check` runs the operator
 preflight without submitting compute. `resume` uses the standard durable
 `--resume-run` path with the same configuration. `export` rebuilds the demo from
-an already published run using only its configured project storage; it does not
+an already reviewed run using only its configured project storage; it does not
 submit compute or call a model. Select a new output directory for each export.
 Use a new run ID for changed inputs or parameters.
+
+If every candidate is rejected after tracking completes, `run` and `resume`
+still return failure and publish no dataset. They export a review-only HTML/MP4
+bundle so the result is inspectable. `export` also supports these tracked
+rejections. It verifies that neither a dataset manifest nor a next-run inventory
+exists; access errors do not count as absence. Incomplete tracking and failed
+publication of accepted clips cannot use this path.
 
 Exact-project S3 credentials come from NPA configuration. The required service
 secrets are listed below; optional MLflow bearer token, private CA, and AWS session token are
@@ -68,10 +75,9 @@ metadata and audio. **Visible clip content remains**: an exported demo containin
 private imagery still requires private handling. The procedural validation demo
 contains no customer imagery. The HTML uses no external assets or requests.
 
-The viewer reports component evidence separately from full workflow completion.
-The complete reference DAG remains subject to the validation limitation below;
-the operator wrapper does not turn existing component receipts into proof of a
-successful single-submit run.
+The viewer reports artifact evidence separately from full workflow completion.
+It marks all-rejected runs as held out, with no published dataset. The operator
+wrapper does not turn component receipts into proof of a successful workflow.
 
 ## Inputs and configuration
 
@@ -220,17 +226,22 @@ according to the operator's retention policy. Do not destroy shared services.
 The [readiness record](../testing/video-variant-sweep.readiness.json) separates
 planning and component checks from a completed GPU workflow run.
 
-A procedural live test ran two concurrent Transfer workers on RTX PRO 6000 GPUs.
-Both generated 121-frame videos with conditioning and content guardrails enabled.
-Paired review accepted one clip at 0.85 and rejected the other at 0.30 against the
-unchanged 0.80 threshold. Operator-driven Postgres/MLflow commit and replay,
-accepted-only S3 publication, and next-run inventory creation passed. These
-results use the explicitly selected MiniMax model. Cosmos3 validation remains
-blocked by model availability. The separate GPU test harness failed to render
-its empty terminal after generation completed; the reference ends with the executable publication stage, and
-all its waves are covered by rendering tests. The complete reference DAG,
-including connectivity from its CPU pods to tracking services, remains
-unverified.
+A single canonical submission completed preparation, two parallel RTX PRO 6000
+Transfer workers, paired review, and tracking from CPU pods into real Postgres
+and authenticated HTTPS MLflow services. Both workers produced distinct
+121-frame videos with conditioning and content guardrails enabled. Both fresh
+variants scored 0.30 against threshold 0.80: the judge found that the requested
+lighting change was not preserved faithfully. Publication correctly failed
+without creating a dataset or next-run inventory. The tracked rejection
+export produced an offline HTML viewer and a 554-frame MP4; playback, mobile
+layout, no-network behavior, and full video decoding passed.
+
+The tracking stores were independently checked: two Postgres rows, two finished
+MLflow runs, and two score/acceptance metric pairs. Earlier component execution
+accepted one clip at 0.85 and rejected one at 0.30; its accepted-only S3
+publication and next-run inventory passed. A successful single-submit run that
+publishes accepted clips remains unverified. These results explicitly use
+MiniMax-M3; the reference Cosmos3 model remains unavailable to the tested account.
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/workflows/test_video_sweep.py -q

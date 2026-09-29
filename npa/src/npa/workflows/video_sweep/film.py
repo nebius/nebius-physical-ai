@@ -214,7 +214,8 @@ def _comparison(summary, row, index):
 
 
 def _outcome(summary):
-    canvas = _base("VERIFIED PUBLICATION")
+    published = summary.get("published", True)
+    canvas = _base("VERIFIED PUBLICATION" if published else "ALL VARIANTS HELD OUT")
     count, accepted = len(summary["candidates"]), summary["accepted"]
     _text(
         canvas,
@@ -224,8 +225,18 @@ def _outcome(summary):
         _LIME,
     )
     _text(canvas, (68, 367), "All candidates retain Postgres + MLflow lineage.", 36)
-    _text(canvas, (68, 427), "Only accepted clips enter the published dataset.", 36)
-    _text(canvas, (68, 487), "The next-run inventory is ready for another sweep.", 36)
+    publication = (
+        "Only accepted clips enter the published dataset."
+        if published
+        else "No dataset or next-run inventory was published."
+    )
+    following = (
+        "The next-run inventory is ready for another sweep."
+        if published
+        else "Review the results before choosing the next inputs."
+    )
+    _text(canvas, (68, 427), publication, 36)
+    _text(canvas, (68, 487), following, 36)
     _text(
         canvas,
         (68, 635),

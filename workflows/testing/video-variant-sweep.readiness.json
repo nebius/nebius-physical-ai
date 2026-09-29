@@ -50,11 +50,13 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Two concurrent RTX PRO 6000 workers generated real videos. Operator-driven paired review accepted one at 0.85 and rejected one at 0.30 with threshold 0.80; Postgres/MLflow commit/replay and accepted-only S3 publication passed. The trimmed GPU harness then failed on an empty terminal state. The complete reference DAG and in-pod tracking-service connectivity remain unverified.",
+      "reason": "A single canonical submission completed preparation, two parallel RTX PRO 6000 generation workers, paired review, and in-pod Postgres/MLflow tracking. Both fresh variants scored 0.30 against threshold 0.80; publication correctly failed without a dataset or next-run inventory. A verified rejection HTML/MP4 export passed. Earlier component execution published one accepted clip at 0.85 and held one at 0.30. A successful single-submit accepted-publication path remains unverified; hosted validation explicitly used MiniMax-M3 instead of the unavailable default Cosmos3 model.",
       "evidence": [
-        "Procedural live run: two generated variants, two tracked reviews, one published clip and next-run source inventory.",
-        "test_postgres_and_mlflow_commit_and_replay",
-        "test_workflow_partitions_before_review_and_tracking_before_publication"
+        "Canonical runtime: prepare, worker-0, worker-1, review and lineage succeeded; publish failed on all-rejected review.",
+        "Two committed Postgres rows, two finished MLflow runs, and per-variant score/acceptance metrics were independently verified.",
+        "Read-only rejection export: two real 121-frame variants; 554-frame MP4 decoded; offline browser checks passed.",
+        "test_all_rejected_never_publishes_dataset_but_exports_review",
+        "test_failed_run_exports_only_fully_tracked_rejections"
       ]
     }
   }

@@ -83,15 +83,39 @@ def _operate(args):
     output = args.output_dir or args.config.parent / (config["run_id"] + "-demo")
     if args.action != "check" and output.exists():
         raise FileExistsError("Choose a new demo output directory")
-    if args.action != "export" and not _run_workflow(args, config):
-        return
+    try:
+        if args.action != "export" and not _run_workflow(args, config):
+            return
+    except subprocess.CalledProcessError:
+        if args.action in {"run", "resume"}:
+            _export_rejection(config, output)
+        raise
     from npa.workflows.video_sweep.demo import export_demo
 
     stage = SimpleNamespace(root_uri=_root(config), run_id=config["run_id"], workers=2)
-    print("Verifying published artifacts and rendering the offline demo.", flush=True)
+    print("Verifying run artifacts and rendering the offline demo.", flush=True)
     summary = export_demo(stage, output)
     print(
         f"Demo exported: {len(summary['candidates'])} variants, {summary['accepted']} accepted. Open index.html or demo.mp4 in the output directory."
+    )
+
+
+def _export_rejection(config, output):
+    from npa.workflows.video_sweep.demo import export_demo
+
+    root = _root(config)
+    if not all(
+        artifacts.exists(root + "/" + name) for name in ("review.json", "lineage.json")
+    ):
+        return
+    report = artifacts.read_json(root + "/review.json")
+    if not report.get("items") or any(row["accepted"] for row in report["items"]):
+        return
+    stage = SimpleNamespace(root_uri=root, run_id=config["run_id"], workers=2)
+    export_demo(stage, output)
+    print(
+        "All variants held out. Review demo exported; no dataset published. The workflow failure is retained.",
+        flush=True,
     )
 
 
