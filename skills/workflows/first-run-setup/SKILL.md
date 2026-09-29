@@ -160,15 +160,33 @@ single node, so `NAME:2` never schedules on 1-GPU nodes regardless of node count
 ## Step 8 — Prove the images are pullable
 
 ```bash
-npa workbench workflow preflight-images <spec.yaml> --project <alias> --json
+npa workbench workflow preflight-images <spec.yaml> --project <alias> \
+  --infra k8s/<context> --json
 ```
 
 **Gate:** every image reports `ok`. Supported images resolve from the anonymous
 GHCR mirror by default. If you explicitly select a custom/private registry,
 `not_found` means the image was never pushed there. A `403` does not fail a job —
 Kubernetes retries pulls forever — so an unpullable image silently burns cluster
-time in `ImagePullBackOff`. `submit` runs this check before provisioning by
-default.
+time in `ImagePullBackOff`. The check uses the selected kubeconfig context
+namespace (the namespace source used by SkyPilot 0.12), falling back to
+`default`, and proves every distinct rendered `imagePullSecret` plus
+ServiceAccount and pod-placement path after applying SkyPilot 0.12's
+context/task overrides. Placement includes selectors, affinity, runtime class,
+and tolerations. NPA deliberately uses the first `KUBECONFIG` file, matching
+SkyPilot's isolated home rather than accepting a context available only in a
+later file.
+ServiceAccount identity comes from the context-effective
+`kubernetes.remote_identity`, followed by config-level and task pod-config
+overrides; admission may attach additional pull Secrets, so a probe under
+another ServiceAccount is not equivalent. An initial empty or multi-entry
+Secret list is valid; once a base list exists, the override must have exactly
+one entry and the base cannot be empty. For `deployIfAbsent`, `submit` checks
+definitive public manifests before provisioning and runs the exact target pod
+proof immediately after the cluster exists. Bearer credentials are forwarded
+only to trusted HTTPS token realms; every reachable decision combination is
+covered; every returned image is digest-pinned. If `cloud` is omitted, provide
+an exact `--infra` so VM versus Kubernetes authority is not guessed.
 
 ## Step 9 — Submit
 

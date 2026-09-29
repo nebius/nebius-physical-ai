@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import replace
@@ -34,7 +34,7 @@ from npa.orchestration.npa_workflow.spec import load_spec
 from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_contract
 
 if TYPE_CHECKING:
-    from npa.orchestration.npa_workflow.interpreter import ExecutionPlan
+    from npa.orchestration.npa_workflow.interpreter import ExecutionPlan, PlanStep
     from npa.orchestration.npa_workflow.run_state import (
         RunStateStore,
         RunStorageLocation,
@@ -43,7 +43,10 @@ if TYPE_CHECKING:
     from npa.orchestration.npa_workflow.submit_credentials import (
         SubmitCredentialContext,
     )
-    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        ImagePullRequirements,
+        SkypilotRenderOptions,
+    )
 
 app = typer.Typer(
     name="workflow",
@@ -1013,7 +1016,11 @@ def submit_cmd(
     infra: str = typer.Option(
         "",
         "--infra",
-        help="SkyPilot infrastructure target, for example k8s/<context>.",
+        help=(
+            "SkyPilot infrastructure target. Kubernetes image preflight requires "
+            "an exact k8s/<context> and its effective SkyPilot namespace; the "
+            "ambient context is never used."
+        ),
     ),
     submit_timeout: int = typer.Option(
         1800,
@@ -2408,21 +2415,37 @@ def submit_cmd(
         elif image_value_for_preflight:
             image_overrides_for_preflight["*"] = image_value_for_preflight
         image_overrides_for_preflight.update(specific_image_overrides)
-        image_digest_pins = _preflight_submit_images(
-            yaml_path,
-            spec=merged_npa_spec,
-            options=SkypilotRenderOptions(
-                registry=_resolve_submit_registry(registry, project),
-                image_overrides=image_overrides_for_preflight,
-                gpu_target=gpu_target,
-                image_variant=image_variant,
-                materialize_registry_secrets=False,
-            ),
-            assume_decision=assume_decision,
-            enabled=preflight_images and not plan_only,
-            infra=infra,
-            image_bootstrap_timeout_seconds=image_bootstrap_timeout_seconds,
+        image_preflight_options = SkypilotRenderOptions(
+            registry=_resolve_submit_registry(registry, project),
+            image_overrides=image_overrides_for_preflight,
+            gpu_target=gpu_target,
+            image_variant=image_variant,
+            materialize_registry_secrets=False,
         )
+        deferred_target_image_preflight = bool(
+            deploy_if_absent and deploy_targets and preflight_images and not plan_only
+        )
+        if deferred_target_image_preflight:
+            _preflight_submit_image_manifests(
+                yaml_path,
+                spec=merged_npa_spec,
+                options=image_preflight_options,
+                assume_decision=assume_decision,
+                enabled=True,
+                infra=infra,
+            )
+            image_digest_pins: dict[str, str] = {}
+        else:
+            image_digest_pins = _preflight_submit_images(
+                yaml_path,
+                spec=merged_npa_spec,
+                options=image_preflight_options,
+                assume_decision=assume_decision,
+                enabled=preflight_images and not plan_only,
+                infra=infra,
+                config_path=config_path,
+                image_bootstrap_timeout_seconds=image_bootstrap_timeout_seconds,
+            )
 
         # Provision/adopt the exact submission target before any writable-S3
         # probe, PAIDF input upload, or NPA source staging. PAIDF derives
@@ -2520,6 +2543,17 @@ def submit_cmd(
             if post_infra_missing:
                 _fail_missing_prerequisites(yaml_path, post_infra_missing)
                 return
+        if deferred_target_image_preflight:
+            image_digest_pins = _preflight_submit_images(
+                yaml_path,
+                spec=merged_npa_spec,
+                options=image_preflight_options,
+                assume_decision=assume_decision,
+                enabled=True,
+                infra=infra,
+                config_path=config_path,
+                image_bootstrap_timeout_seconds=image_bootstrap_timeout_seconds,
+            )
         if not plan_only and execution_target is not None:
             from npa.execution_preflight import verify_execution_scope
 
@@ -2835,6 +2869,7 @@ def submit_cmd(
                     assume_decision=assume_decision,
                     enabled=preflight_images,
                     infra=infra,
+                    config_path=config_path,
                     image_bootstrap_timeout_seconds=(image_bootstrap_timeout_seconds),
                 )
                 if preflight_images and refreshed_pins != image_digest_pins:
@@ -4360,34 +4395,159 @@ def _resolve_submit_registry(registry: str, project: str) -> str:
     return explicit
 
 
+def _image_preflight_steps(
+    spec: NpaWorkflowSpec, *, run_id: str, assume_decision: str
+) -> list[PlanStep]:
+    """Build a conservative plan containing every reachable image path."""
+
+    from npa.orchestration.npa_workflow import build_reachability_plan
+
+    return list(
+        build_reachability_plan(
+            spec,
+            run_id=run_id,
+            assume_decision=assume_decision,
+        ).steps
+    )
+
+
 def _plan_preflight_image_requirements(
     spec: NpaWorkflowSpec,
     *,
     run_id: str,
     options: SkypilotRenderOptions,
     assume_decision: str,
-) -> tuple[list[str], dict[str, tuple[str, ...]]]:
-    """Plan image and pull-secret requirements across every reachable decision."""
-
-    from npa.orchestration.npa_workflow import build_plan
+    infra: str = "",
+) -> tuple[list[str], dict[str, ImagePullRequirements]]:
+    """Preserve each reachable branch's image and exact pull authority."""
     from npa.orchestration.npa_workflow.skypilot_render import (
-        plan_image_pull_secrets,
+        plan_image_pull_requirements,
         plan_images,
     )
 
-    decisions = [str(assume_decision or "").strip()]
-    decisions.extend(
-        str(transition.when or "").strip()
-        for state in spec.states.values()
-        for transition in state.transitions
-    )
-    steps = []
-    for decision in dict.fromkeys(decisions):
-        plan = build_plan(spec, run_id=run_id, assume_decision=decision)
-        steps.extend(plan.steps)
+    steps = _image_preflight_steps(spec, run_id=run_id, assume_decision=assume_decision)
+    execution_steps = _image_preflight_execution_steps(spec, steps, infra=infra)
     return (
         plan_images(spec, steps, run_id=run_id, options=options),
-        plan_image_pull_secrets(spec, steps, run_id=run_id, options=options),
+        plan_image_pull_requirements(
+            spec, execution_steps, run_id=run_id, options=options
+        ),
+    )
+
+
+def _image_preflight_execution_steps(
+    spec: NpaWorkflowSpec, steps: Sequence[PlanStep], *, infra: str
+) -> list[PlanStep]:
+    """Cover both native CLI override behavior and multi-task rendered targets."""
+
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.scheduler import resources_for_step
+    from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
+
+    selected = str(infra or "").strip()
+    if not selected:
+        return list(steps)
+    kind = selected.partition("/")[0]
+    cloud = kind.casefold()
+    if cloud == "k8s":
+        cloud = "kubernetes"
+    elif cloud in {"*", "none"}:
+        cloud = ""
+    context = context_from_infra(selected)
+    overridden = []
+    for step in steps:
+        resources = resources_for_step(spec, step)
+        declared_cloud = str(resources.get("cloud") or "").strip().casefold()
+        declared_context = str(resources.get("region") or "").strip()
+        if (
+            len(steps) > 1
+            and cloud == "kubernetes"
+            and declared_cloud in {"k8s", "kubernetes"}
+            and declared_context
+            and declared_context != context
+        ):
+            raise NpaWorkflowError(
+                "image preflight cannot bind a multi-task Kubernetes resource "
+                "to a different --infra context: SkyPilot ignores resource "
+                "overrides for multi-task YAML. Align every resource region "
+                "with the selected context before submitting."
+            )
+        overridden.append(
+            replace(step, resources_profile={**resources, "cloud": cloud})
+        )
+    # SkyPilot 0.12.2 applies --infra only to singleton tasks; chain DAGs and
+    # JobGroups ignore it. Runtime waves may be either shape, so a complete
+    # multi-step plan must prove both paths. An unresolved declared cloud stays
+    # unresolved rather than being silently certified through the CLI override.
+    return overridden if len(steps) <= 1 else [*steps, *overridden]
+
+
+def _preflight_submit_image_manifests(
+    yaml_path: Path,
+    *,
+    spec=None,
+    options: SkypilotRenderOptions,
+    assume_decision: str,
+    enabled: bool,
+    infra: str = "",
+) -> None:
+    """Reject definitive manifest failures before deployIfAbsent creates compute."""
+
+    if not enabled:
+        return
+
+    from npa.deploy.images import is_official_public_image
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.skypilot.registry_preflight import (
+        check_image_pulls_with_credentials,
+    )
+
+    try:
+        resolved_spec = spec or load_spec(yaml_path)
+        run_id = f"{resolved_spec.name}-manifest-preflight"
+        images, requirements = _plan_preflight_image_requirements(
+            resolved_spec,
+            run_id=run_id,
+            options=options,
+            assume_decision=assume_decision,
+            infra=infra,
+        )
+    except NpaWorkflowError as exc:
+        _fail(f"image-manifest-preflight planning failed: {exc}")
+        return
+    if not images:
+        return
+    selected_operator_images, _ = _image_pull_execution_paths(
+        images=images,
+        requirements=requirements,
+    )
+    checks = check_image_pulls_with_credentials(
+        images,
+        mint=True,
+        operator_images=set(images),
+        kubernetes_images=set(),
+    )
+    blocking = [
+        check
+        for check in checks
+        if not check.ok
+        and (
+            check.image in selected_operator_images
+            or check.status == "invalid"
+            or is_official_public_image(check.image)
+        )
+    ]
+    if blocking:
+        detail = "\n".join(check.render() for check in blocking)
+        _fail(
+            "image-manifest-preflight failed before infrastructure provisioning:\n"
+            f"{detail}"
+        )
+    deferred = sum(not check.ok for check in checks)
+    typer.echo(
+        f"image-manifest-preflight: {len(checks)} image reference(s) checked; "
+        f"{deferred} target-only result(s) deferred",
+        err=True,
     )
 
 
@@ -4399,14 +4559,16 @@ def _preflight_submit_images(
     assume_decision: str,
     enabled: bool,
     infra: str = "",
+    config_path: Path | None = None,
     image_bootstrap_timeout_seconds: int = 1800,
 ) -> dict[str, str]:
     """Fail before the run starts when a step's image cannot actually be pulled.
 
     Authority is resolved per registry and execution path. An exact operator-side
-    manifest fetch proves the pull directly; a Kubernetes path may instead prove a
-    declared docker-config imagePullSecret for that registry. If neither authority
-    is verified, every registry fails closed with a path-specific remedy.
+    manifest fetch proves a VM path. Every Kubernetes path must exercise an owned
+    probe pod in its exact context and effective SkyPilot namespace, with each
+    distinct declared imagePullSecret-and-ServiceAccount authority. If any
+    required path is unverified, the image fails closed.
     """
 
     if not enabled:
@@ -4414,30 +4576,111 @@ def _preflight_submit_images(
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
+    from npa.orchestration.skypilot._bin import resolve_global_config_path
     from npa.orchestration.skypilot.registry_preflight import (
+        RegistryPreflightError,
+        SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME,
         check_image_pulls_with_credentials,
+        resolve_kubernetes_pull_target,
     )
 
     try:
         resolved_spec = spec or load_spec(yaml_path)
         run_id = f"{resolved_spec.name}-preflight"
-        images, pull_secrets_by_image = _plan_preflight_image_requirements(
+        images, pull_requirements = _plan_preflight_image_requirements(
             resolved_spec,
             run_id=run_id,
             options=options,
             assume_decision=assume_decision,
+            infra=infra,
         )
-    except (NpaWorkflowError, ValueError):
-        # Planning problems are reported by the submit path itself with better context.
+    except NpaWorkflowError as exc:
+        _fail(f"image-preflight planning failed: {exc}")
+        return {}
+    except ValueError:
+        # The submit path reports unsupported image options with fuller context.
         return {}
     if not images:
         return {}
 
+    operator_images, kubernetes_images = _image_pull_execution_paths(
+        images=images,
+        requirements=pull_requirements,
+    )
+    target_context = context_from_infra(infra)
+    target_namespace = ""
+    inherited_pull_secrets: tuple[str, ...] = ()
+    inherited_pull_secrets_configured = False
+    inherited_service_account_name = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+    target_kubeconfig = ""
+    target_pod_placement_json = "{}"
+    if kubernetes_images:
+        try:
+            target = resolve_kubernetes_pull_target(
+                context=target_context,
+                global_config_path=resolve_global_config_path(config_path),
+            )
+        except RegistryPreflightError as exc:
+            _fail(f"image-preflight target resolution failed: {exc}")
+            return {}
+        target_namespace = target.namespace
+        inherited_pull_secrets = target.pull_secret_names
+        inherited_pull_secrets_configured = target.pull_secret_names_configured
+        inherited_service_account_name = target.service_account_name
+        target_kubeconfig = target.kubeconfig_path
+        target_pod_placement_json = target.pod_placement_json
+    try:
+        pull_paths_by_image = _image_pull_paths(
+            images=images,
+            requirements=pull_requirements,
+            kubernetes_images=kubernetes_images,
+            inherited_pull_secrets=inherited_pull_secrets,
+            inherited_pull_secrets_configured=inherited_pull_secrets_configured,
+            inherited_service_account_name=inherited_service_account_name,
+            inherited_pod_placement_json=target_pod_placement_json,
+        )
+    except RegistryPreflightError as exc:
+        _fail(f"image-preflight target delivery resolution failed: {exc}")
+        return {}
+    pull_secret_sets_by_image = {
+        image: tuple(secret_names for secret_names, _, _ in paths)
+        for image, paths in pull_paths_by_image.items()
+    }
+    service_account_names_by_image = {
+        image: tuple(service_account_name for _, service_account_name, _ in paths)
+        for image, paths in pull_paths_by_image.items()
+    }
+    pod_placements_by_image = {
+        image: tuple(
+            json.loads(pod_placement_json) for _, _, pod_placement_json in paths
+        )
+        for image, paths in pull_paths_by_image.items()
+    }
+    pull_secrets_by_image = {
+        image: (sets[0] if sets else ())
+        for image, sets in pull_secret_sets_by_image.items()
+    }
+    service_accounts_by_image = {
+        image: (
+            service_account_names[0]
+            if service_account_names
+            else inherited_service_account_name
+        )
+        for image, service_account_names in service_account_names_by_image.items()
+    }
     checks = check_image_pulls_with_credentials(
         images,
         mint=True,
         pull_secrets_by_image=pull_secrets_by_image,
-        context=context_from_infra(infra),
+        pull_secret_sets_by_image=pull_secret_sets_by_image,
+        service_account_names_by_image=service_account_names_by_image,
+        pod_placements_by_image=pod_placements_by_image,
+        operator_images=operator_images,
+        kubernetes_images=kubernetes_images,
+        namespace=target_namespace,
+        context=target_context,
+        kubeconfig=target_kubeconfig,
+        target_pull_timeout_seconds=image_bootstrap_timeout_seconds,
     )
     blocking = []
     for check in checks:
@@ -4453,8 +4696,15 @@ def _preflight_submit_images(
     contract_checks = _preflight_image_bootstrap_contracts(
         images=images,
         pull_checks=checks,
-        context=context_from_infra(infra),
+        context=target_context,
+        namespace=target_namespace,
+        kubeconfig=target_kubeconfig,
         pull_secrets_by_image=pull_secrets_by_image,
+        service_accounts_by_image=service_accounts_by_image,
+        pod_placements_by_image={
+            image: (placements[0] if placements else {})
+            for image, placements in pod_placements_by_image.items()
+        },
         observation_timeout_seconds=image_bootstrap_timeout_seconds,
         bind_requested_images=True,
     )
@@ -4469,12 +4719,127 @@ def _preflight_submit_images(
     }
 
 
+def _image_pull_execution_paths(
+    *,
+    images: Sequence[str],
+    requirements: Mapping[str, ImagePullRequirements],
+) -> tuple[set[str], set[str]]:
+    """Resolve VM/Kubernetes paths without inferring them from Secret presence."""
+
+    operator_images = {
+        image
+        for image in images
+        if bool(getattr(requirements.get(image), "requires_operator", False))
+        and not bool(getattr(requirements.get(image), "target_unresolved", False))
+    }
+    kubernetes_images = {
+        image
+        for image in images
+        if bool(getattr(requirements.get(image), "requires_kubernetes", False))
+        and not bool(getattr(requirements.get(image), "target_unresolved", False))
+    }
+    return operator_images, kubernetes_images
+
+
+def _image_pull_secret_sets(
+    *,
+    images: Sequence[str],
+    requirements: Mapping[str, ImagePullRequirements],
+    kubernetes_images: Collection[str],
+    inherited_pull_secrets: tuple[str, ...] = (),
+    inherited_pull_secrets_configured: bool = False,
+) -> dict[str, tuple[tuple[str, ...], ...]]:
+    """Preserve every rendered Kubernetes path's effective Secret set."""
+
+    return {
+        image: tuple(secret_names for secret_names, _, _ in paths)
+        for image, paths in _image_pull_paths(
+            images=images,
+            requirements=requirements,
+            kubernetes_images=kubernetes_images,
+            inherited_pull_secrets=inherited_pull_secrets,
+            inherited_pull_secrets_configured=inherited_pull_secrets_configured,
+        ).items()
+    }
+
+
+def _image_pull_paths(
+    *,
+    images: Sequence[str],
+    requirements: Mapping[str, ImagePullRequirements],
+    kubernetes_images: Collection[str],
+    inherited_pull_secrets: tuple[str, ...] = (),
+    inherited_pull_secrets_configured: bool = False,
+    inherited_service_account_name: str = "skypilot-service-account",
+    inherited_pod_placement_json: str = "{}",
+) -> dict[str, tuple[tuple[tuple[str, ...], str, str], ...]]:
+    """Preserve each path's paired Secrets, ServiceAccount, and placement."""
+
+    from npa.orchestration.skypilot.registry_preflight import (
+        RegistryPreflightError,
+        merge_kubernetes_pull_placement,
+        merge_skypilot_pull_secret_names,
+    )
+
+    selected_kubernetes = set(kubernetes_images)
+    result: dict[str, tuple[tuple[tuple[str, ...], str, str], ...]] = {}
+    for image in images:
+        if image not in selected_kubernetes:
+            result[image] = ()
+            continue
+        requirement = requirements.get(image)
+        declared_sets = tuple(
+            getattr(requirement, "pull_secret_name_sets", ()) or (None,)
+        )
+        inherited_names = (
+            inherited_pull_secrets
+            if inherited_pull_secrets_configured or inherited_pull_secrets
+            else None
+        )
+        declared_service_accounts = tuple(
+            getattr(requirement, "service_account_names", ())
+            or (None for _ in declared_sets)
+        )
+        declared_placements = tuple(
+            getattr(requirement, "pod_placement_specs", ())
+            or ("{}" for _ in declared_sets)
+        )
+        if len(declared_service_accounts) != len(declared_sets) or len(
+            declared_placements
+        ) != len(declared_sets):
+            raise RegistryPreflightError(
+                "rendered Kubernetes pull paths lost authority alignment"
+            )
+        effective_paths = (
+            (
+                merge_skypilot_pull_secret_names(inherited_names, declared_names),
+                declared_service_account or inherited_service_account_name,
+                merge_kubernetes_pull_placement(
+                    inherited_pod_placement_json,
+                    declared_placement,
+                ),
+            )
+            for declared_names, declared_service_account, declared_placement in zip(
+                declared_sets,
+                declared_service_accounts,
+                declared_placements,
+                strict=True,
+            )
+        )
+        result[image] = tuple(dict.fromkeys(effective_paths))
+    return result
+
+
 def _preflight_image_bootstrap_contracts(
     *,
     images: list[str],
     pull_checks: Sequence[object],
     context: str,
+    namespace: str = "",
+    kubeconfig: str = "",
     pull_secrets_by_image: Mapping[str, tuple[str, ...]] | None = None,
+    service_accounts_by_image: Mapping[str, str] | None = None,
+    pod_placements_by_image: Mapping[str, Mapping[str, object]] | None = None,
     observation_timeout_seconds: int = 1800,
     bind_requested_images: bool = False,
 ) -> list[dict[str, object]]:
@@ -4482,6 +4847,7 @@ def _preflight_image_bootstrap_contracts(
 
     from npa.orchestration.skypilot.image_bootstrap_contract import (
         CONTRACT_VERSION,
+        ImageContractEvidence,
         ImageBootstrapContractError,
         immutable_image_reference,
         is_trusted_npa_image,
@@ -4516,6 +4882,18 @@ def _preflight_image_bootstrap_contracts(
                 # The packaging contract deliberately scopes this attestation to
                 # a subset of NPA images. Anonymous manifest pullability is the
                 # complete preflight for registered images outside that subset.
+                pull_digest = str(
+                    getattr(check_by_image.get(image), "digest", "") or ""
+                ).lower()
+                evidence = ImageContractEvidence(
+                    image=immutable_image_reference(image, pull_digest),
+                    digest=pull_digest,
+                    contract_version=CONTRACT_VERSION,
+                    state="compatible",
+                    source="registry_pull_preflight",
+                    checks=("immutable_registry_pull",),
+                )
+                results.append(evidence.to_dict())
                 continue
             host = reference.registry
             username, password = resolve_registry_credentials(
@@ -4556,10 +4934,18 @@ def _preflight_image_bootstrap_contracts(
                         image=image,
                         digest=digest,
                         context=context,
-                        kubeconfig=str(os.environ.get("KUBECONFIG") or ""),
+                        namespace=namespace,
+                        kubeconfig=kubeconfig
+                        or str(os.environ.get("KUBECONFIG") or ""),
                         image_pull_secrets=tuple(
                             (pull_secrets_by_image or {}).get(image, ())
                         ),
+                        service_account_name=str(
+                            (service_accounts_by_image or {}).get(
+                                image, "skypilot-service-account"
+                            )
+                        ),
+                        pod_placement=(pod_placements_by_image or {}).get(image, {}),
                         observation_timeout_seconds=observation_timeout_seconds,
                     )
                 elif attested.ok:
@@ -4580,11 +4966,19 @@ def _preflight_image_bootstrap_contracts(
                         image=image,
                         digest=digest,
                         context=context,
+                        namespace=namespace,
                         runtime_bootstrap=True,
-                        kubeconfig=str(os.environ.get("KUBECONFIG") or ""),
+                        kubeconfig=kubeconfig
+                        or str(os.environ.get("KUBECONFIG") or ""),
                         image_pull_secrets=tuple(
                             (pull_secrets_by_image or {}).get(image, ())
                         ),
+                        service_account_name=str(
+                            (service_accounts_by_image or {}).get(
+                                image, "skypilot-service-account"
+                            )
+                        ),
+                        pod_placement=(pod_placements_by_image or {}).get(image, {}),
                         observation_timeout_seconds=observation_timeout_seconds,
                     )
                 store_cached_evidence(cache_path, evidence)
@@ -9342,7 +9736,7 @@ def plan_spec_cmd(
 ) -> None:
     """Expand an NPA workflow spec into an execution plan (dry-run)."""
 
-    from npa.orchestration.npa_workflow import NpaWorkflowError, build_plan
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
 
     spec = _load_npa_workflow(yaml_path)
@@ -9362,6 +9756,8 @@ def plan_spec_cmd(
         return
     _warn_placeholder_bucket(spec.config, quiet=json_output)
     resolved_run_id = run_id or f"{spec.name}-plan"
+    from npa.orchestration.npa_workflow import build_plan
+
     try:
         plan = build_plan(spec, run_id=resolved_run_id, assume_decision=assume_decision)
         render_check = (
@@ -9594,7 +9990,18 @@ def preflight_images_cmd(
         "", "--image-variant", help="SONIC image variant."
     ),
     infra: str = typer.Option(
-        "", "--infra", help="Exact k8s/<context> used for unattested image probes."
+        "",
+        "--infra",
+        help=(
+            "Execution target. Kubernetes pull verification requires an exact "
+            "k8s/<context> and its effective SkyPilot namespace; the ambient "
+            "kubectl context is never used."
+        ),
+    ),
+    config_path: Path | None = typer.Option(
+        None,
+        "--config-path",
+        help="SkyPilot global config whose effective Kubernetes settings are checked.",
     ),
     image_pull_secret: list[str] = typer.Option(
         [],
@@ -9615,20 +10022,24 @@ def preflight_images_cmd(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
 ) -> None:
-    """Prove every image this spec pulls is pullable, with the run's own credentials.
+    """Prove every image this spec pulls through each selected execution path.
 
     Kubernetes retries image pulls forever, so a registry that answers 403 leaves the
-    job in PENDING/ImagePullBackOff rather than failing. Being able to list a
-    repository's tags is a different permission from pulling it, so this reproduces
-    the actual manifest fetch a worker performs.
+    job in PENDING/ImagePullBackOff rather than failing. VM paths reproduce the
+    manifest fetch. Every Kubernetes path creates an owned, bounded probe pod in
+    the exact context, effective SkyPilot namespace, and rendered ServiceAccount,
+    then verifies its cleanup.
     """
 
     from npa.orchestration.npa_workflow.errors import NpaWorkflowError
     from npa.orchestration.npa_workflow.submit import merge_config_overrides
     from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
-    from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
+    from npa.orchestration.skypilot._bin import resolve_global_config_path
     from npa.orchestration.skypilot.registry_preflight import (
+        RegistryPreflightError,
+        SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME,
         check_image_pulls_with_credentials,
+        resolve_kubernetes_pull_target,
     )
 
     spec = merge_config_overrides(
@@ -9654,35 +10065,111 @@ def preflight_images_cmd(
         typer.echo(f"registry: {resolved_registry}", err=True)
     run_id = f"{spec.name}-preflight"
     try:
-        images, pull_secrets_by_image = _plan_preflight_image_requirements(
+        images, pull_requirements = _plan_preflight_image_requirements(
             spec,
             run_id=run_id,
             options=options,
             assume_decision=assume_decision,
+            infra=infra,
         )
     except (NpaWorkflowError, ValueError) as exc:
         _fail(f"image preflight planning failed: {exc}")
         return
+    explicit_pull_secrets: tuple[str, ...] = ()
     if image_pull_secret:
-        explicit = tuple(
+        explicit_pull_secrets = tuple(
             dict.fromkeys(item.strip() for item in image_pull_secret if item.strip())
         )
-        pull_secrets_by_image = {
-            selected: tuple(
-                dict.fromkeys((*pull_secrets_by_image.get(selected, ()), *explicit))
-            )
-            for selected in images
-        }
     if not images:
         typer.echo("images: none pinned by this spec")
         return
 
-    context = context_from_infra(infra)
+    from npa.orchestration.skypilot.k8s_gpu_catalog import context_from_infra
+
+    target_context = context_from_infra(infra)
+    operator_images, kubernetes_images = _image_pull_execution_paths(
+        images=images,
+        requirements=pull_requirements,
+    )
+    target_namespace = ""
+    inherited_pull_secrets: tuple[str, ...] = ()
+    inherited_pull_secrets_configured = False
+    inherited_service_account_name = SKYPILOT_DEFAULT_SERVICE_ACCOUNT_NAME
+    target_kubeconfig = ""
+    target_pod_placement_json = "{}"
+    if kubernetes_images:
+        try:
+            target = resolve_kubernetes_pull_target(
+                context=target_context,
+                global_config_path=resolve_global_config_path(config_path),
+            )
+        except RegistryPreflightError as exc:
+            _fail(f"image-preflight target resolution failed: {exc}")
+            return
+        target_namespace = target.namespace
+        inherited_pull_secrets = target.pull_secret_names
+        inherited_pull_secrets_configured = target.pull_secret_names_configured
+        inherited_service_account_name = target.service_account_name
+        target_kubeconfig = target.kubeconfig_path
+        target_pod_placement_json = target.pod_placement_json
+    try:
+        pull_paths_by_image = _image_pull_paths(
+            images=images,
+            requirements=pull_requirements,
+            kubernetes_images=kubernetes_images,
+            inherited_pull_secrets=inherited_pull_secrets,
+            inherited_pull_secrets_configured=inherited_pull_secrets_configured,
+            inherited_service_account_name=inherited_service_account_name,
+            inherited_pod_placement_json=target_pod_placement_json,
+        )
+    except RegistryPreflightError as exc:
+        _fail(f"image-preflight target delivery resolution failed: {exc}")
+        return
+    pull_secret_sets_by_image = {
+        image: tuple(secret_names for secret_names, _, _ in paths)
+        for image, paths in pull_paths_by_image.items()
+    }
+    service_account_names_by_image = {
+        image: tuple(service_account_name for _, service_account_name, _ in paths)
+        for image, paths in pull_paths_by_image.items()
+    }
+    pod_placements_by_image = {
+        image: tuple(
+            json.loads(pod_placement_json) for _, _, pod_placement_json in paths
+        )
+        for image, paths in pull_paths_by_image.items()
+    }
+    pull_secrets_by_image = {
+        selected: (sets[0] if sets else ())
+        for selected, sets in pull_secret_sets_by_image.items()
+    }
+    bootstrap_pull_secrets_by_image = {
+        selected: tuple(
+            dict.fromkeys((*pull_secrets_by_image[selected], *explicit_pull_secrets))
+        )
+        for selected in pull_secrets_by_image
+    }
+    service_accounts_by_image = {
+        image: (
+            service_account_names[0]
+            if service_account_names
+            else inherited_service_account_name
+        )
+        for image, service_account_names in service_account_names_by_image.items()
+    }
     checks = check_image_pulls_with_credentials(
         images,
         mint=True,
         pull_secrets_by_image=pull_secrets_by_image,
-        context=context,
+        pull_secret_sets_by_image=pull_secret_sets_by_image,
+        service_account_names_by_image=service_account_names_by_image,
+        pod_placements_by_image=pod_placements_by_image,
+        operator_images=operator_images,
+        kubernetes_images=kubernetes_images,
+        namespace=target_namespace,
+        context=target_context,
+        kubeconfig=target_kubeconfig,
+        target_pull_timeout_seconds=image_bootstrap_timeout_seconds,
     )
     failed = [check for check in checks if not check.ok]
     contract_checks: list[dict[str, object]] = []
@@ -9690,8 +10177,15 @@ def preflight_images_cmd(
         contract_checks = _preflight_image_bootstrap_contracts(
             images=images,
             pull_checks=checks,
-            context=context,
-            pull_secrets_by_image=pull_secrets_by_image,
+            context=target_context,
+            namespace=target_namespace,
+            kubeconfig=target_kubeconfig,
+            pull_secrets_by_image=bootstrap_pull_secrets_by_image,
+            service_accounts_by_image=service_accounts_by_image,
+            pod_placements_by_image={
+                image: (placements[0] if placements else {})
+                for image, placements in pod_placements_by_image.items()
+            },
             observation_timeout_seconds=image_bootstrap_timeout_seconds,
         )
     if json_output:

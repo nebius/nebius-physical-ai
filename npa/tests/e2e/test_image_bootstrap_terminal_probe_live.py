@@ -18,16 +18,19 @@ def test_image_bootstrap_terminal_probe_live() -> None:
     image = os.environ.get("NPA_E2E_IMAGE_PROBE_IMAGE", "").strip()
     digest = os.environ.get("NPA_E2E_IMAGE_PROBE_DIGEST", "").strip()
     context = os.environ.get("NPA_E2E_KUBECONTEXT", "").strip()
-    if not (image and digest and context):
+    namespace = os.environ.get("NPA_E2E_KUBE_NAMESPACE", "").strip()
+    if not (image and digest and context and namespace):
         pytest.skip(
             "set NPA_E2E_IMAGE_PROBE_IMAGE, NPA_E2E_IMAGE_PROBE_DIGEST, "
-            "and NPA_E2E_KUBECONTEXT for the disposable Kubernetes probe"
+            "NPA_E2E_KUBECONTEXT, and NPA_E2E_KUBE_NAMESPACE for the "
+            "disposable Kubernetes probe"
         )
 
     evidence = probe_image_capabilities(
         image=image,
         digest=digest,
         context=context,
+        namespace=namespace,
         kubeconfig=os.environ.get("KUBECONFIG", "").strip(),
     )
 
@@ -42,13 +45,17 @@ def test_vendor_image_runtime_bootstrap_live() -> None:
     image = os.environ.get("NPA_E2E_IMAGE_PROBE_IMAGE", "").strip()
     digest = os.environ.get("NPA_E2E_IMAGE_PROBE_DIGEST", "").strip()
     context = os.environ.get("NPA_E2E_KUBECONTEXT", "").strip()
-    if not (image and digest and context):
-        pytest.skip("Requires an operator-selected vendor image and exact cluster")
+    namespace = os.environ.get("NPA_E2E_KUBE_NAMESPACE", "").strip()
+    if not (image and digest and context and namespace):
+        pytest.skip(
+            "Requires an operator-selected vendor image, exact cluster, and namespace"
+        )
 
     evidence = probe_image_capabilities(
         image=image,
         digest=digest,
         context=context,
+        namespace=namespace,
         kubeconfig=os.environ.get("KUBECONFIG", "").strip(),
         image_pull_secrets=tuple(
             name.strip()
