@@ -12,6 +12,8 @@ from npa.orchestration.npa_workflow.artifact_load import (
 )
 from npa.orchestration.npa_workflow.submission_state import submission_state_path
 
+_MISSING = object()
+
 
 class FakeS3:
     def __init__(self, keys: set[str]) -> None:
@@ -59,8 +61,8 @@ def _inventory(artifact: str, *, next_cursor: str = "") -> dict:
     }
 
 
-def _ready_status(artifact: str) -> dict:
-    return {
+def _ready_status(artifact: str, *, rerun_ready: object = True) -> dict:
+    status = {
         "run_id": "paidf-1",
         "artifact_uri": artifact,
         "artifact_key": artifact.removeprefix("s3://bucket/"),
@@ -69,8 +71,11 @@ def _ready_status(artifact: str) -> dict:
         "project_id": "project-a",
         "bucket": "bucket",
         "resolved_prefix": "physical-ai-data-factory",
-        "rerun_ready": True,
+        "rerun_ready": rerun_ready,
     }
+    if rerun_ready is _MISSING:
+        del status["rerun_ready"]
+    return status
 
 
 def _patch_agent(monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001
@@ -186,6 +191,86 @@ def test_resume_skips_duplicate_post_when_agent_already_has_artifact(
     assert result.verified is True
     assert result.posted is False
     assert methods == ["GET", "GET"]
+
+
+@pytest.mark.parametrize(
+    "rerun_ready",
+    [False, "true", "false", 1, 0, None, [True], {"ready": True}, _MISSING],
+    ids=[
+        "false",
+        "true-string",
+        "false-string",
+        "one",
+        "zero",
+        "null",
+        "array",
+        "object",
+        "missing",
+    ],
+)
+def test_resume_posts_and_fails_closed_for_non_true_readiness(
+    monkeypatch, tmp_path: Path, rerun_ready: object
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _patch_agent(monkeypatch, tmp_path)
+    artifact = "s3://bucket/physical-ai-data-factory/paidf-1/reports/sim2real.rrd"
+    client = FakeS3({artifact.removeprefix("s3://bucket/")})
+    methods: list[str] = []
+
+    def request(method: str, url: str, **_kwargs):  # noqa: ANN202
+        methods.append(method)
+        if "/api/artifacts/run/" in url:
+            return Response(200, _inventory(artifact))
+        status = _ready_status(artifact, rerun_ready=rerun_ready)
+        if method == "POST":
+            return Response(200, {"ok": True, "sim_viz": status})
+        return Response(200, status)
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-1",
+        run_prefix_uri="s3://bucket/physical-ai-data-factory/paidf-1",
+        storage_client=client,
+        http_request=request,
+    )
+
+    assert result.status == "partial"
+    assert result.verified is False
+    assert methods == ["GET", "GET", "POST"]
+
+
+@pytest.mark.parametrize("rerun_ready", ["false", _MISSING], ids=["string", "missing"])
+def test_final_verification_cannot_persist_ambiguous_readiness(
+    monkeypatch, tmp_path: Path, rerun_ready: object
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _patch_agent(monkeypatch, tmp_path)
+    artifact = "s3://bucket/physical-ai-data-factory/paidf-1/reports/sim2real.rrd"
+    methods = []
+
+    def request(method: str, url: str, **_kwargs):
+        methods.append(method)
+        if "/api/artifacts/run/" in url:
+            return Response(200, _inventory(artifact))
+        if method == "POST":
+            return Response(200, {"ok": True, "sim_viz": _ready_status(artifact)})
+        flag = False if len(methods) == 2 else rerun_ready
+        return Response(200, _ready_status(artifact, rerun_ready=flag))
+
+    result = load_final_artifact_into_agent(
+        project="demo",
+        run_id="paidf-1",
+        run_prefix_uri="s3://bucket/physical-ai-data-factory/paidf-1",
+        storage_client=FakeS3({artifact.removeprefix("s3://bucket/")}),
+        http_request=request,
+    )
+
+    assert methods == ["GET", "GET", "POST", "GET"]
+    assert result.status == "partial"
+    assert result.verified is False
+    state = json.loads(submission_state_path("demo", "paidf-1").read_text())
+    assert state["artifact_load"]["verified"] is False
+    assert state["artifact_load"]["status"] == "partial"
 
 
 def test_agent_source_ambiguity_fails_closed_without_post(

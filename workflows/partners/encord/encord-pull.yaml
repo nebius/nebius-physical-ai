@@ -28,5 +28,5 @@ states:
     resources: cpu
     outputs:
       - uri: "{{config.encord_pull_uri}}/manifest.json"
-        schema: npa.encord.pull_manifest.v1
+        schema: npa.encord.pull_manifest.v2
     terminal: true
