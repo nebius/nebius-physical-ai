@@ -31,12 +31,12 @@ ARG REQUIRE_TORCH_ARCHS="sm_80 sm_90 sm_100 sm_120"
 LABEL npa.image="cuda13-blackwell" \
       npa.cuda.base="${CUDA_BASE_TAG}" \
       npa.torch.version="${TORCH_VERSION}+cu130" \
-      npa.flash_attn_4.commit="${FLASH_ATTN_COMMIT}" \
+      npa.flash_attention.commit="${FLASH_ATTN_COMMIT}" \
       npa.cutlass_dsl.version="${CUTLASS_DSL_VERSION}" \
       npa.quack_kernels.version="${QUACK_KERNELS_VERSION}" \
       npa.cuda_arch_list="${TORCH_CUDA_ARCH_LIST}" \
       npa.build_ts="${BUILD_TS}" \
-      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION};flash_attn_4_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
+      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION};flash_attention_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -127,13 +127,27 @@ RUN python -m pip install \
 
 ARG CUTLASS_DSL_VERSION
 ARG QUACK_KERNELS_VERSION
+RUN python -m pip install \
+      "nvidia-cutlass-dsl[cu13]==${CUTLASS_DSL_VERSION}" \
+      "quack-kernels==${QUACK_KERNELS_VERSION}"
+
+ARG ATTENTION_BACKEND=fa4
+# The FA2 extension is compiled specifically for the RTX comparison target.
+ARG FA2_CUDA_ARCHS=120
+ENV NPA_ATTENTION_BACKEND=${ATTENTION_BACKEND} \
+    NPA_FLASH_ATTN_COMMIT=${FLASH_ATTN_COMMIT}
+LABEL npa.attention.backend="${ATTENTION_BACKEND}" \
+      npa.fa2.cuda_archs="${FA2_CUDA_ARCHS}"
 RUN git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attention \
     && cd /tmp/flash-attention \
     && git checkout "${FLASH_ATTN_COMMIT}" \
-    && python -m pip install \
-      "nvidia-cutlass-dsl[cu13]==${CUTLASS_DSL_VERSION}" \
-      "quack-kernels==${QUACK_KERNELS_VERSION}" \
-      "flash_attn/cute[cu13]" \
+    && test "$(git rev-parse HEAD)" = "${FLASH_ATTN_COMMIT}" \
+    && if [ "${ATTENTION_BACKEND}" = fa4 ]; then \
+         python -m pip install "flash_attn/cute[cu13]"; \
+       elif [ "${ATTENTION_BACKEND}" = fa2 ]; then \
+         FLASH_ATTENTION_FORCE_BUILD=TRUE FLASH_ATTN_CUDA_ARCHS="${FA2_CUDA_ARCHS}" \
+           python -m pip install --no-build-isolation --no-deps .; \
+       else echo "Unsupported ATTENTION_BACKEND" >&2; exit 2; fi \
     && rm -rf /tmp/flash-attention
 
 # The root import is a restricted, keyword-only-options FA4 adapter. Never
@@ -142,13 +156,18 @@ COPY scripts/flash_attn_root.py /npa/flash_attn_root.py
 RUN python - <<'PY'
 from importlib import metadata
 from pathlib import Path
+import os
 import site
 
-site_dir = Path(site.getsitepackages()[0])
-pkg = site_dir / "flash_attn"
-pkg.mkdir(exist_ok=True)
-(pkg / "__init__.py").write_bytes(Path("/npa/flash_attn_root.py").read_bytes())
-print("flash-attn-4", metadata.version("flash-attn-4"))
+if os.environ["NPA_ATTENTION_BACKEND"] == "fa4":
+    pkg = Path(site.getsitepackages()[0]) / "flash_attn"
+    pkg.mkdir(exist_ok=True)
+    (pkg / "__init__.py").write_bytes(Path("/npa/flash_attn_root.py").read_bytes())
+    print("flash-attn-4", metadata.version("flash-attn-4"))
+else:
+    assert metadata.version("flash-attn").startswith("2.")
+    import flash_attn_2_cuda
+    print("flash-attn", metadata.version("flash-attn"))
 PY
 
 # Baked in so every derived image can validate itself on whatever GPU it lands
@@ -168,7 +187,7 @@ from flash_attn import flash_attn_func
 # Imports do not prove kernel execution or backward correctness. The baked
 # gpu_capability_smoke.py checks both on the actual target GPU.
 print("nvidia-nccl-cu13", metadata.version("nvidia-nccl-cu13"))
-print("flash-attn-4", flash_attn.__version__)
+print("flash_attn", flash_attn.__version__)
 print("flash_attn_func", flash_attn_func)
 PY
 

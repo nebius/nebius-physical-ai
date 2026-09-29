@@ -22,14 +22,24 @@ class FA4SDXLProcessor:
 
     Args:
         attention_function: Explicit ``flash_attn.cute.flash_attn_func`` callable.
+        record_shapes: Record coverage outside timed runs; defaults to True.
+        attention_options: Backend-specific options; defaults to the FA4 subset.
     Returns:
         A callable Diffusers processor with measured call counts and shapes.
     Raises:
         ValueError: A layer requests behavior outside the qualified SDXL subset.
     """
 
-    def __init__(self, attention_function):
+    def __init__(
+        self, attention_function, *, record_shapes=True, attention_options=None
+    ):
         self.attention_function = attention_function
+        self.record_shapes = record_shapes
+        self.attention_options = (
+            {"causal": False, "pack_gqa": False, "num_splits": 1}
+            if attention_options is None
+            else dict(attention_options)
+        )
         self.shapes = Counter()
         self.profile_inputs = None
 
@@ -48,12 +58,11 @@ class FA4SDXLProcessor:
         query = attn.to_q(hidden_states).unflatten(-1, (attn.heads, -1))
         key = attn.to_k(context).unflatten(-1, (attn.heads, -1))
         value = attn.to_v(context).unflatten(-1, (attn.heads, -1))
-        shape = (tuple(query.shape), tuple(key.shape), tuple(value.shape))
-        self.shapes[shape] += 1
-        if self.profile_inputs is None:
-            self.profile_inputs = (query.detach(), key.detach(), value.detach())
-        result = self.attention_function(
-            query, key, value, causal=False, pack_gqa=False, num_splits=1
-        )
+        if self.record_shapes:
+            shape = (tuple(query.shape), tuple(key.shape), tuple(value.shape))
+            self.shapes[shape] += 1
+            if self.profile_inputs is None:
+                self.profile_inputs = (query.detach(), key.detach(), value.detach())
+        result = self.attention_function(query, key, value, **self.attention_options)
         output = result[0] if isinstance(result, tuple) else result
         return attn.to_out[1](attn.to_out[0](output.flatten(2).to(query.dtype)))

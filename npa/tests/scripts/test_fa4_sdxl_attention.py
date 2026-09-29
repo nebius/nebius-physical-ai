@@ -84,3 +84,20 @@ def test_kernel_failure_propagates_without_fallback():
     processor = processor_module.FA4SDXLProcessor(fail)
     with pytest.raises(RuntimeError, match="CUDA kernel failed"):
         processor(_layer(), torch.zeros(2, 7, 8, dtype=torch.float64))
+
+
+def test_timed_processor_disables_recording_and_preserves_fa2_options():
+    calls = []
+
+    def fa2(query, key, value, **options):
+        calls.append(options)
+        return query
+
+    processor = processor_module.FA4SDXLProcessor(
+        fa2, record_shapes=False, attention_options={"causal": False}
+    )
+    result = processor(_layer(), torch.ones(2, 7, 8, dtype=torch.float64))
+    assert result.shape == (2, 7, 8)
+    assert calls == [{"causal": False}]
+    assert not processor.shapes
+    assert processor.profile_inputs is None

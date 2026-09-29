@@ -74,8 +74,8 @@ Customers should select the tag family by target GPU:
 
 `cuda13-b300` is a declared legacy alias, accepted for existing immutable
 releases and consumers. The shared base build produces both prefixes with the
-same suffix for the same image, and its old source path is a symlink to
-`base/cuda13-blackwell`. The rename does not republish existing tags or change
+same suffix for the same image. Its old build entrypoint forwards to
+`base/cuda13-blackwell/build.sh`; Dockerfile and script paths use the canonical directory. The rename does not republish existing tags or change
 accepted release digests. Use the exact image reference from the relevant
 release record; a family name alone is not a published artifact or GPU result.
 

@@ -71,6 +71,8 @@ For a custom transformer workload, follow the
 [RTX PRO 6000 FlashAttention 4 adoption guide](rtx6000-fa4.md): build the shared
 `cuda13-blackwell` base, rebuild your application image, integrate
 FA4 explicitly, and validate before changing its deployed image digest.
+Use the [FA2/FA4 comparison guide](fa2-fa4-comparison.md) to build separate
+baselines, measure full SDXL generation and test opt-in FA4 inference tiles.
 
 Match the selected tool's dataset format, observation/action schema, runtime,
 and output contract. A new robot may also need simulator assets and action

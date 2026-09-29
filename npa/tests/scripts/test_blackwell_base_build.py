@@ -69,17 +69,10 @@ def test_both_paths_build_one_image_with_both_names(directory, docker_calls):
     assert f"Built: npa-base:cuda13-blackwell-{SUFFIX}" in result.stdout
 
 
-def test_legacy_directory_is_one_recipe_alias():
-    assert LEGACY.is_symlink()
-    assert LEGACY.resolve() == CANONICAL
-    for relative in (
-        "Dockerfile",
-        "build.sh",
-        "scripts/flash_attn_root.py",
-        "scripts/check_torch_gpu_arch.py",
-        "scripts/gpu_capability_smoke.py",
-    ):
-        assert (LEGACY / relative).samefile(CANONICAL / relative)
+def test_legacy_directory_is_a_regular_wrapper():
+    assert not LEGACY.is_symlink()
+    assert (LEGACY / "build.sh").is_file()
+    assert not (LEGACY / "Dockerfile").exists()
 
 
 @pytest.mark.parametrize("context", [None, "test-builder"])
@@ -148,4 +141,38 @@ def test_help_explains_both_names_without_docker(docker_calls):
     assert result.returncode == 0
     assert "cuda13-blackwell" in result.stdout
     assert "cuda13-b300" in result.stdout
+    assert not docker_calls.exists()
+
+
+@pytest.mark.parametrize("directory", [CANONICAL, LEGACY])
+def test_fa2_has_separate_local_and_registry_tags(directory, docker_calls):
+    result = _run(
+        directory,
+        "--tag",
+        SUFFIX,
+        "--attention-backend",
+        "fa2",
+        "--registry",
+        "registry.example/team",
+        "--push",
+    )
+    assert result.returncode == 0, result.stderr
+    calls = _calls(docker_calls)
+    assert _tags(calls[0]) == [
+        f"npa-base:cuda13-blackwell-fa2-{SUFFIX}",
+        f"npa-base:cuda13-b300-fa2-{SUFFIX}",
+        f"registry.example/team/npa-base:cuda13-blackwell-fa2-{SUFFIX}",
+        f"registry.example/team/npa-base:cuda13-b300-fa2-{SUFFIX}",
+    ]
+    assert "ATTENTION_BACKEND=fa2" in calls[0]
+    assert "FA2_CUDA_ARCHS=120" in calls[0]
+    assert all("-fa2-" in call[-1] for call in calls[1:])
+
+
+@pytest.mark.parametrize(
+    "args", [("--attention-backend",), ("--attention-backend", "sdpa")]
+)
+def test_unknown_backend_cannot_build_or_overwrite_fa4(docker_calls, args):
+    result = _run(CANONICAL, *args)
+    assert result.returncode == 2
     assert not docker_calls.exists()

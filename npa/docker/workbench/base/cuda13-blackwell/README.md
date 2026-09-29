@@ -16,7 +16,8 @@ published through the appropriate registry process. The base contains the
 Python/CUDA/FA4 environment and validation scripts; add application code,
 dependencies, launch commands and scheduler bootstrap in the derived image.
 
-For existing consumers, `base/cuda13-b300` is a symlink to this directory.
+For existing consumers, `base/cuda13-b300/build.sh` forwards to this build script.
+Use this canonical directory for the Dockerfile and validation scripts.
 The build script tags the same image as both `cuda13-blackwell-<suffix>` and
 `cuda13-b300-<suffix>`. `--registry` adds both registry references, and `--push`
 pushes both, using `DOCKER_CONTEXT` when set. Already-published image references
@@ -25,3 +26,19 @@ and recorded validation identities are unchanged; the rename publishes nothing.
 See [FA4 pins, restrictions and measured evidence](../../../../../docs/workbench/flash-attention.md)
 and the [public image catalog](../../../../../docs/workbench/container-image-catalog.md)
 for the distinction between source recipes and accepted published images.
+
+## Standalone FA2 comparison variant
+
+`build.sh --attention-backend fa2 --tag dev-<full-source-sha>` builds a separate
+`npa-base:cuda13-blackwell-fa2-dev-<full-source-sha>` image. It compiles FA2 from
+the same pinned upstream revision and common CUDA/PyTorch layers, with
+`FA2_CUDA_ARCHS=120` by default. Override that environment variable only when
+building and qualifying other architectures. FA4 remains the build default;
+the two attention packages are never installed together. `NPA_ATTENTION_BACKEND`
+and `NPA_FLASH_ATTN_COMMIT` identify the baked selection and source for the GPU
+checker and benchmark workers.
+
+See [FA2/FA4 comparison and inference tile experiments](../../../../../docs/workbench/guides/fa2-fa4-comparison.md)
+for correctness checks, full SDXL generations and repeated timing. The FA2
+variant and tile experiments are unqualified until their own RTX evidence is
+recorded; prior FA4 receipts do not validate a new image.

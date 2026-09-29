@@ -66,6 +66,11 @@ To adopt that stack in your own application, start with the
 same image. This naming change introduces no new published catalog row and
 does not change the accepted release tags or digests below.
 
+The opt-in [`cuda13-blackwell-fa2` comparison variant](guides/fa2-fa4-comparison.md)
+builds standalone FA2 for RTX SM120 from the same foundation recipe. It remains
+outside the public release inventory and has no recorded GPU qualification yet.
+The new comparison and tile-tuning harness does not change the accepted images.
+
 The current build inventory is maintained in `packaging-contract.yaml`, and
 the tool map in `npa.deploy.images`. `publicly_publishable_tools()` selects the
 public release inventory; `PUBLICATION_QUARANTINE_TOOLS` identifies candidates

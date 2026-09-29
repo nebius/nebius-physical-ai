@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Validate native CUDA coverage and real FA4 outputs and gradients on a GPU.
+"""Validate native CUDA coverage and FA2/FA4 outputs and gradients on a GPU.
 
 Run inside the CUDA 13 base image. Dense, grouped-query and variable-length
 cases cover FP16/BF16, head dimensions 64/128 and causal/noncausal attention.
@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import os
 import sys
 from importlib import metadata
 from pathlib import Path
@@ -52,7 +53,7 @@ def covering_sass_arch(
     return max(compatible, default=None)
 
 
-def _check_device(torch, expected: str) -> dict:
+def _check_device(torch, expected: str, namespace="flash_attn.cute") -> dict:
     capability = torch.cuda.get_device_capability()
     flags = torch.cuda.get_arch_list()
     if expected and capability != tuple(int(part) for part in expected.split(".")):
@@ -67,7 +68,11 @@ def _check_device(torch, expected: str) -> dict:
         "wheel_arch_flags": flags,
         "packages": {
             name: metadata.version(name)
-            for name in ("flash-attn-4", "nvidia-cutlass-dsl", "quack-kernels")
+            for name in (
+                "flash-attn" if namespace == "fa2" else "flash-attn-4",
+                "nvidia-cutlass-dsl",
+                "quack-kernels",
+            )
         },
     }
 
@@ -151,7 +156,12 @@ def _cumulative_lengths(torch, lengths):
 
 def _attention_functions(namespace="flash_attn.cute"):
     # Use the FA4 namespace explicitly: a root flash_attn import can resolve FA2.
-    if namespace == "flash_attn":
+    if namespace == "fa2":
+        if not metadata.version("flash-attn").startswith("2."):
+            raise RuntimeError("FA2 qualification requires the flash-attn 2.x package")
+        # A root shim alone cannot establish a standalone FA2 baseline.
+        import flash_attn_2_cuda  # noqa: F401
+    if namespace in ("flash_attn", "fa2"):
         from flash_attn import flash_attn_func, flash_attn_varlen_func
 
         return flash_attn_func, flash_attn_varlen_func
@@ -160,10 +170,20 @@ def _attention_functions(namespace="flash_attn.cute"):
     return flash_attn_func, flash_attn_varlen_func
 
 
-def _run_attention(torch, functions, tensors, lengths, kind: str, causal: bool):
+def _run_attention(
+    torch,
+    functions,
+    tensors,
+    lengths,
+    kind: str,
+    causal: bool,
+    namespace="flash_attn.cute",
+):
     dense, varlen = functions
     # Disable only packing and split-KV optimizations, never change the backend.
     options = {"causal": causal, "pack_gqa": False, "num_splits": 1}
+    if namespace == "fa2":
+        options = {"causal": causal, "dropout_p": 0.0}
     if kind != "varlen":
         return dense(*tensors, **options)
     return varlen(
@@ -176,12 +196,20 @@ def _run_attention(torch, functions, tensors, lengths, kind: str, causal: bool):
     )
 
 
-def _check_attention_case(torch, functions, kind, dtype, head_dim, causal) -> dict:
+def _check_attention_case(
+    torch,
+    functions,
+    kind,
+    dtype,
+    head_dim,
+    causal,
+    namespace="flash_attn.cute",
+) -> dict:
     tensors, lengths = _make_inputs(torch, kind, dtype, head_dim)
     reference_inputs = tuple(
         tensor.detach().double().requires_grad_() for tensor in tensors
     )
-    output = _run_attention(torch, functions, tensors, lengths, kind, causal)
+    output = _run_attention(torch, functions, tensors, lengths, kind, causal, namespace)
     if isinstance(output, tuple):
         output = output[0]
     if kind == "varlen":
@@ -213,7 +241,7 @@ def _run_checks(expected: str, report: dict) -> None:
     import torch
 
     torch.manual_seed(0)
-    report["environment"] = _check_device(torch, expected)
+    report["environment"] = _check_device(torch, expected, report["backend"])
     _check_controls(torch)
     report["controls"] = "passed"
     functions = _attention_functions(report["backend"])
@@ -225,7 +253,9 @@ def _run_checks(expected: str, report: dict) -> None:
         print(f"Checking {label}", flush=True)
         report["active_case"] = label
         report["cases"].append(
-            _check_attention_case(torch, functions, kind, dtype, head_dim, causal)
+            _check_attention_case(
+                torch, functions, kind, dtype, head_dim, causal, report["backend"]
+            )
         )
     report.pop("active_case", None)
 
@@ -245,8 +275,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json-output", type=Path)
     parser.add_argument(
         "--attention-api",
-        choices=("flash_attn.cute", "flash_attn"),
-        default="flash_attn.cute",
+        choices=("flash_attn.cute", "flash_attn", "fa2"),
+        default="fa2"
+        if os.getenv("NPA_ATTENTION_BACKEND") == "fa2"
+        else "flash_attn.cute",
         help="Explicit namespace to qualify; the root adapter is image-specific",
     )
     args = parser.parse_args(argv)
@@ -267,7 +299,7 @@ def main(argv: list[str] | None = None) -> int:
             json.dumps(report, indent=2) + "\n", encoding="utf-8"
         )
     passed = report["status"] == "passed"
-    print(f"FA4 cases passed: {len(report['cases'])}/24")
+    print(f"{report['backend']} cases passed: {len(report['cases'])}/24")
     print("GPU_CAPABILITY_SMOKE_OK" if passed else "GPU_CAPABILITY_SMOKE_FAILED")
     return 0 if passed else 1
 

@@ -199,3 +199,23 @@ def test_golden_eval_runs_strict_smoke_on_selected_gpu():
         entry["script"]
         == "npa/docker/workbench/base/cuda13-blackwell/scripts/gpu_capability_smoke.py"
     )
+
+
+def test_fa2_image_selects_fa2_qualification(smoke, monkeypatch):
+    monkeypatch.setenv("NPA_ATTENTION_BACKEND", "fa2")
+
+    def check(expected, report):
+        assert report["backend"] == "fa2"
+
+    monkeypatch.setattr(smoke, "_run_checks", check)
+    assert smoke.main([]) == 0
+
+
+def test_fa2_dense_call_does_not_receive_fa4_only_flags(smoke):
+    calls = []
+
+    def dense(*args, **kwargs):
+        calls.append(kwargs)
+
+    smoke._run_attention(None, (dense, None), (1, 2, 3), None, "dense", True, "fa2")
+    assert calls == [{"causal": True, "dropout_p": 0.0}]

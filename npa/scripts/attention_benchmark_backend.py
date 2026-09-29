@@ -1,0 +1,111 @@
+"""Select an explicit FA2/FA4 benchmark backend without silently substituting kernels."""
+
+from importlib import metadata
+import os
+import re
+import subprocess
+
+FA_COMMIT = "eed1971f5132630dc296fe37601e834d4b57a248"
+
+
+def attention_backend(backend, tile=None):
+    """Load the installed backend, optionally testing an FA4 inference tile.
+
+    Args:
+        backend: ``fa2`` or ``fa4``; each requires its own base image.
+        tile: Experimental FA4 forward tile (M, N), or None for upstream defaults.
+    Returns:
+        A Q/K/V callable accepting the causal keyword and returning a tensor.
+    Raises:
+        ValueError: The backend or tile is invalid.
+        RuntimeError: The installed image does not match the requested backend.
+    """
+    if backend not in ("fa2", "fa4") or (tile and backend != "fa4"):
+        raise ValueError("Tiles require FA4; backend must be fa2 or fa4")
+    if os.getenv("NPA_ATTENTION_BACKEND") != backend:
+        raise RuntimeError("Run each backend in its matching base image")
+    if backend == "fa2":
+        if not metadata.version("flash-attn").startswith("2."):
+            raise RuntimeError("Standalone FA2 2.x is required")
+        import flash_attn_2_cuda  # noqa: F401
+        from flash_attn import flash_attn_func
+
+        return flash_attn_func
+    from flash_attn.cute import flash_attn_func
+
+    if tile:
+        return _tiled_inference(tile)
+
+    def fa4(query, key, value, *, causal=False):
+        result = flash_attn_func(
+            query, key, value, causal=causal, pack_gqa=False, num_splits=1
+        )
+        return result[0] if isinstance(result, tuple) else result
+
+    return fa4
+
+
+def _tiled_inference(tile):
+    import torch
+    from flash_attn.cute.interface import _flash_attn_fwd
+
+    if os.getenv("NPA_FLASH_ATTN_COMMIT") != FA_COMMIT:
+        raise RuntimeError("Experimental tiles require the exact pinned FA4 source")
+    if tuple(tile) not in ((64, 64), (64, 128), (128, 64), (128, 128)):
+        raise ValueError("Unqualified tile candidate")
+
+    def forward(query, key, value, *, causal=False):
+        if torch.is_grad_enabled() or any(t.requires_grad for t in (query, key, value)):
+            raise ValueError("Experimental tiles are inference-only")
+        if not query.is_cuda or torch.cuda.get_device_capability(query.device) != (
+            12,
+            0,
+        ):
+            raise ValueError("Experimental tiles require SM120")
+        return _flash_attn_fwd(
+            query,
+            key,
+            value,
+            causal=causal,
+            tile_mn=tuple(tile),
+            pack_gqa=False,
+            num_splits=1,
+        )[0]
+
+    return forward
+
+
+def benchmark_environment(backend):
+    """Capture portable software and GPU identity for comparing like environments.
+
+    Args:
+        backend: The requested FA2 or FA4 backend.
+    Returns:
+        GPU model, compute capability and installed package versions.
+    Raises:
+        RuntimeError: CUDA is unavailable or the GPU is not SM120.
+    """
+    import torch
+
+    if not torch.cuda.is_available() or torch.cuda.get_device_capability() != (12, 0):
+        raise RuntimeError("This comparison requires an SM120 GPU")
+    image_id = os.getenv("NPA_BENCHMARK_IMAGE_ID", "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+        raise RuntimeError(
+            "Pass the inspected Docker image ID as NPA_BENCHMARK_IMAGE_ID"
+        )
+    driver = subprocess.check_output(
+        ["nvidia-smi", "--id=0", "--query-gpu=driver_version", "--format=csv,noheader"],
+        text=True,
+    ).strip()
+    packages = ("torch", "nvidia-cutlass-dsl", "quack-kernels")
+    packages += ("flash-attn" if backend == "fa2" else "flash-attn-4",)
+    return {
+        "image_id": image_id,
+        "driver": driver,
+        "gpu": torch.cuda.get_device_name(),
+        "capability": list(torch.cuda.get_device_capability()),
+        "cuda": torch.version.cuda,
+        "source_commit": os.getenv("NPA_FLASH_ATTN_COMMIT"),
+        "packages": {name: metadata.version(name) for name in packages},
+    }
