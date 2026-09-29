@@ -1393,11 +1393,24 @@ def _offer_profile_binding(
             + (f" && `nebius config set tenant-id {tenant_id}`." if tenant_id else ".")
         )
         return False
-    if nebius_client.set_profile_project(project_id, tenant_id):
+    result = nebius_client.set_profile_project(project_id, tenant_id)
+    if result is nebius_client.ProfileMutationResult.UPDATED:
         typer.echo(f"  Nebius profile now points at {project_id}.")
         return True
+    if result is nebius_client.ProfileMutationResult.PARTIAL:
+        typer.echo(
+            "  The Nebius profile may be partially updated and requires repair. "
+            "Inspect both `nebius config get parent-id` and "
+            "`nebius config get tenant-id`, then set the intended values by hand."
+        )
+        return False
+    recovery = (
+        "The previous profile values were restored and verified."
+        if result is nebius_client.ProfileMutationResult.RESTORED
+        else "The profile was left unchanged."
+    )
     typer.echo(
-        "  Could not update the Nebius profile. Set it by hand with "
+        f"  Could not update the Nebius profile. {recovery} Set it by hand with "
         f"`nebius config set parent-id {project_id}`."
     )
     return False
@@ -2824,15 +2837,29 @@ def _run_known_project_configure(
             "default_project": alias,
         }
     )
-    if provision and not nebius_client.set_profile_project(
-        values["--project-id"], values["--tenant-id"]
-    ):
-        typer.echo(
-            "Warning: the active Nebius CLI profile could not be rebound, but NPA "
-            "saved the explicit project/tenant IDs. Keep the intended profile active "
-            "for later provider commands.",
-            err=True,
+    if provision:
+        profile_result = nebius_client.set_profile_project(
+            values["--project-id"], values["--tenant-id"]
         )
+        if profile_result is nebius_client.ProfileMutationResult.PARTIAL:
+            typer.echo(
+                "Warning: the active Nebius CLI profile may be partially updated "
+                "and requires repair. Inspect and correct both parent-id and "
+                "tenant-id before later provider commands.",
+                err=True,
+            )
+        elif profile_result is not nebius_client.ProfileMutationResult.UPDATED:
+            recovery = (
+                "The previous profile values were restored and verified."
+                if profile_result is nebius_client.ProfileMutationResult.RESTORED
+                else "The profile was left unchanged."
+            )
+            typer.echo(
+                "Warning: the active Nebius CLI profile could not be rebound. "
+                f"{recovery} NPA saved the explicit project/tenant IDs; keep the "
+                "intended profile active for later provider commands.",
+                err=True,
+            )
     typer.echo(f"Wrote {CONFIG_PATH} (project alias: {alias}, non-interactive).")
     if storage:
         typer.echo(

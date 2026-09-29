@@ -1,0 +1,35 @@
+{
+  "schema": "npa.flex_pi.public_observation.v1",
+  "dataset": {
+    "id": "flex-pi/robotwin_3d",
+    "revision": "bee164afe94041d8c3d7dd1203725c41163fc3f4",
+    "license": "not-declared-on-dataset-card"
+  },
+  "observation": {
+    "episode": 0,
+    "frame_index": 0,
+    "instruction": "adjust the bottle",
+    "rgb": {
+      "cam_high": {
+        "path": "videos/chunk-000/observation.images.cam_high/episode_000000.mp4",
+        "sha256": "543630db475f4b5f6a232dd0189514cf2a4f90a518510eeb7edfcc2718abed47"
+      },
+      "cam_left_wrist": {
+        "path": "videos/chunk-000/observation.images.cam_left_wrist/episode_000000.mp4",
+        "sha256": "7f1566e97ef272e8de2803367f9b3ae4119df1be5bdb3b2760fb4547bbab103b"
+      },
+      "cam_right_wrist": {
+        "path": "videos/chunk-000/observation.images.cam_right_wrist/episode_000000.mp4",
+        "sha256": "f189530786547b812bcf31ccff22361578d7bca11f8f9401746f3fab74576333"
+      }
+    },
+    "state": {
+      "path": "data/chunk-000/episode_000000.parquet",
+      "sha256": "31852c53099f0951286bbb40293ed6046ebf6a8589d3d24ce84a4a070e01fc1d"
+    },
+    "intrinsics": {
+      "path": "meta/camera_intrinsics.json",
+      "sha256": "ef42ccbf746e9b96017af8c2fd192d5c2fc8b3518dd93ee3c4eba7f2e56ad52e"
+    }
+  }
+}

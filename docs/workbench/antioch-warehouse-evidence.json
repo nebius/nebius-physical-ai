@@ -1,0 +1,81 @@
+{
+  "tool": "NPA / Antioch / Isaac Sim 6.0.1",
+  "robot": "Boston Dynamics Spot model",
+  "environment": "Isaac Sim Simple Warehouse",
+  "control": "Loaded locomotion policy driven by scripted velocity commands",
+  "parameters": {
+    "seconds": 8.0,
+    "speed": 0.8,
+    "start_x": -3.0,
+    "view": "tracking",
+    "width": 1920
+  },
+  "source_sha256": "4df5ea7d2792a681c4e923a89c24e2b4bc3b550d0ced17da39a4786f46a3a825",
+  "provider_outcome": "passed",
+  "checks": [
+    {
+      "criterion": "finite physical state",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "criterion": "robot remains upright",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "criterion": "camera frames advance",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "criterion": "camera contains visible scene",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "criterion": "policy advances",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "criterion": "robot travels",
+      "detail": "",
+      "passed": true
+    },
+    {
+      "criterion": "joints articulate",
+      "detail": "",
+      "passed": true
+    }
+  ],
+  "metrics": {
+    "frames": 200,
+    "expected_frames": 200,
+    "distance_m": 6.254069634284919,
+    "displacement_m": 6.235502644449825,
+    "minimum_base_height_m": 0.47776418924331665,
+    "maximum_base_height_m": 0.5411228537559509,
+    "maximum_joint_range_rad": 0.7875545918941498,
+    "minimum_body_up_z": 0.9998023454285643,
+    "finite_state": true,
+    "policy_steps": 5518,
+    "physics_dt_s": 0.002,
+    "policy_physics_dt_s": 0.002,
+    "policy_decimation": 10,
+    "minimum_frame_std": 41.646736215432284
+  },
+  "artifacts": {
+    "measurements.json": {
+      "bytes": 141992,
+      "sha256": "58d3742db039bec8b5e5ca4a709dd155ff4d9ca4418ef5cf396eb5fc62a0efd5"
+    },
+    "warehouse_spot.mp4": {
+      "bytes": 10336322,
+      "sha256": "d41e689ad58ff762ba1698d4d8b14820a25d80ef10fdee95c3bf1f7621c2543a"
+    }
+  },
+  "scope": "Simulated locomotion and native RTX capture; no autonomous-navigation, policy benchmark or physical-robot claim.",
+  "main_base": "c8fa086ad5ded22afdb512c1640dbc520924ac24",
+  "pull_request": "https://github.com/nebius/nebius-physical-ai/pull/747"
+}
