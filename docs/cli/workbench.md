@@ -18,6 +18,7 @@ cosmos3  Cosmos3 omni-model generation and reasoning workflow contracts.
 cosmos-curate  NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips.
 cosmos-evaluator  Cosmos Evaluator checks plus NPA source-relative temporal and protected-appearance diagnostics.
 fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
+flex-pi  Flex-Pi multi-stream policy inference and public training.
 foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
@@ -27,7 +28,8 @@ leisaac  LeIsaac SO101 browser teleoperation on the RTX PRO 6000 Kubernetes pool
 nurec  NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses
     Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200.
 sonic  NVIDIA GEAR-SONIC whole-body-control workbench.
-mjlab  MJLab locomotion policy evaluation for SONIC workflows.
+mjlab  MJLab GPU robot learning, evaluation and ONNX export.
+namespace  Create or select Kubernetes namespaces.
 molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
 openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
 openarm  Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
@@ -71,6 +73,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `cosmos-curate` | NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips. |
 | `cosmos-evaluator` | Cosmos Evaluator checks plus NPA source-relative temporal and protected-appearance diagnostics. |
 | `fiftyone` | Voxel51 FiftyOne dataset curation and visualization workbench. |
+| `flex-pi` | Flex-Pi multi-stream policy inference and public training. |
 | `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
@@ -79,7 +82,8 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `leisaac` | LeIsaac SO101 browser teleoperation on the RTX PRO 6000 Kubernetes pool. |
 | `nurec` | NVIDIA Omniverse NuRec / Neural Reconstruction Engine: sensor recordings -> 3DGUT Gaussian reconstruction -> renderable USDZ -> novel-view renders. COLMAP ingestion uses Apache-2.0 NVIDIA NCore on CPU. Proprietary NRE reconstruction/rendering requires an RT-core GPU (L40S or RTX PRO 6000 Blackwell); never route the render path at H100/H200. |
 | `sonic` | NVIDIA GEAR-SONIC whole-body-control workbench. |
-| `mjlab` | MJLab locomotion policy evaluation for SONIC workflows. |
+| `mjlab` | MJLab GPU robot learning, evaluation and ONNX export. |
+| `namespace` | Create or select Kubernetes namespaces. |
 | `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
 | `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |
 | `openarm` | Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab. |

@@ -8,6 +8,7 @@ import subprocess
 from types import SimpleNamespace
 
 import pytest
+import typer
 from typer.testing import CliRunner
 import yaml
 
@@ -236,6 +237,101 @@ def test_submit_remaps_the_spec_accelerator_onto_the_cluster_name(
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
 
 
+def test_submit_remaps_single_accelerator_mapping(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
+) -> None:
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["resources"]["gpu"]["accelerators"] = {"RTXPRO6000": 1}
+    path = tmp_path / "mapping-accelerator.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+
+    overrides = workflow_cli._resolve_submit_accelerators(
+        path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=True
+    )
+
+    assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+def test_submit_rejects_mapping_alternatives_before_daemon(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    spec = yaml.safe_load(yaml.safe_dump(SPEC))
+    spec["resources"]["gpu"]["accelerators"] = {"RTXPRO6000": 1, "H100": 1}
+    path = tmp_path / "mapping-alternatives.yaml"
+    path.write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+    daemon_calls: list[object] = []
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        lambda **kwargs: daemon_calls.append(kwargs),
+    )
+
+    with pytest.raises(typer.Exit):
+        workflow_cli._resolve_submit_accelerators(
+            path, infra="k8s/npa-cluster", sky_bin=sky_bin, enabled=True
+        )
+
+    assert daemon_calls == []
+    assert "SkyPilot alternatives" in capsys.readouterr().err
+
+
+def _two_gpu_inventory():
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuInventory,
+        KubernetesGpuNode,
+    )
+
+    return KubernetesGpuInventory(
+        "unit-context",
+        1,
+        1,
+        2,
+        2,
+        ("RTXPRO6000",),
+        {},
+        nodes=(
+            KubernetesGpuNode(
+                "unit-node",
+                True,
+                True,
+                ("RTXPRO6000",),
+                2,
+                2,
+                0,
+                2,
+                free_cpu_millis=8000,
+                free_memory_bytes=32 * 10**9,
+                free_pod_slots=1,
+                allocatable_cpu_millis=8000,
+                allocatable_memory_bytes=32 * 10**9,
+                allocatable_pods=1,
+            ),
+        ),
+    )
+
+
+def test_gang_preflight_uses_single_mapping_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: _two_gpu_inventory(),
+    )
+    spec = SimpleNamespace(
+        states={"train": SimpleNamespace(name="train", resources="gpu")},
+        resources={"gpu": {"accelerators": {"RTXPRO6000": 2}}},
+        config={},
+    )
+
+    row = workflow_cli._preflight_submit_gang_capacity(spec, context="unit-context")[0]
+
+    assert row["accelerator"] == "RTXPRO6000:2"
+
+
 def test_submit_accelerator_readiness_uses_resolved_config_overrides(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sky_bin: str
 ) -> None:
@@ -259,6 +355,74 @@ def test_submit_accelerator_readiness_uses_resolved_config_overrides(
     )
 
     assert overrides == {"RTXPRO6000:1": "RTXPRO-6000-BLACKWELL-SERVER-EDITION:1"}
+
+
+def test_submit_accelerator_failure_redacts_exact_runtime_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opaque_secret = "synthetic-opaque-accelerator-credential"
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+
+    def reject_daemon(**_kwargs) -> None:  # noqa: ANN003 - test stub
+        raise ValueError(f"daemon rejected {opaque_secret}")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        reject_daemon,
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._resolve_submit_accelerators(
+            spec_path,
+            infra="k8s/npa-cluster",
+            sky_bin=sky_bin,
+            enabled=True,
+            diagnostic_secrets=(opaque_secret,),
+        )
+
+    assert excinfo.type.__name__ == "Exit"
+    output = capsys.readouterr().err
+    assert "daemon rejected <redacted>" in output
+    assert opaque_secret not in output
+
+
+def test_submit_accelerator_catalog_failure_redacts_exact_runtime_secret(
+    monkeypatch: pytest.MonkeyPatch,
+    spec_path: Path,
+    sky_bin: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    opaque_secret = "synthetic-opaque-catalog-credential"
+    monkeypatch.delenv("NPA_WORKFLOW_GPU_ACCELERATOR", raising=False)
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.ensure_local_api_daemon_health",
+        lambda **_kwargs: None,
+    )
+
+    def reject_catalog(*_args, **_kwargs) -> None:  # noqa: ANN002,ANN003
+        raise ValueError(f"catalog rejected {opaque_secret}")
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.k8s_gpu_catalog.wait_for_kubernetes_accelerators",
+        reject_catalog,
+    )
+
+    with pytest.raises(Exception) as excinfo:
+        workflow_cli._resolve_submit_accelerators(
+            spec_path,
+            infra="k8s/npa-cluster",
+            sky_bin=sky_bin,
+            enabled=True,
+            diagnostic_secrets=(opaque_secret,),
+        )
+
+    assert excinfo.type.__name__ == "Exit"
+    output = capsys.readouterr().err
+    assert "catalog rejected <redacted>" in output
+    assert opaque_secret not in output
 
 
 @pytest.mark.parametrize(

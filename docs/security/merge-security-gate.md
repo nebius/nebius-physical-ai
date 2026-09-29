@@ -7,7 +7,9 @@ source-scanner, image-security, and hostile-input jobs. A superseding PR commit
 cancels that complete gate rather than leaving work in six workflow queues.
 PRs run browser and focused Python compatibility checks alongside the complete
 Python 3.12 coverage suite. `pr-precheck` provides an early five-minute signal;
-it does not replace required validation. Queue candidates reuse those successful
+it remains required but overlaps full validation after the secret-scan planner
+accepts the generated CI requirements. It does not replace required validation.
+Queue candidates reuse those successful
 results only after trusted-base code verifies the current PR head, latest
 attempt, all required jobs, receipt, tested merge parent, and an identical Git
 tree through GitHub APIs. Evidence must be less than 24 hours old; no downloaded
@@ -80,8 +82,12 @@ Those boundaries motivate three complementary maintained scanners:
 
 The gate materializes regular files from the actual target commit and the
 proposed merge commit, scans both with the same policy and vulnerability database,
-and subtracts matching occurrences. Identities include the file, rule, and
-expression or package version. Moving lines does not create a finding; adding a
+and subtracts matching occurrences. Within each revision, source/workflow scanning
+overlaps dependency resolution and scanning; their reports remain separate and
+both must complete successfully. Revisions stay sequential to share one freshly
+downloaded vulnerability database and dependency resolution cache without races.
+Identities include the file, rule, and expression or package version.
+Moving lines does not create a finding; adding a
 second occurrence or moving vulnerable code to another file does. Existing
 findings remain visible in private reports and are not silently accepted through
 a committed baseline file. A fix followed by a later reintroduction fails against
@@ -100,11 +106,10 @@ separate image validation requirements.
 The AnyIO floor is 4.14.2 for ordinary installs and the application lock, covering
 [TLS hostname verification](https://github.com/advisories/GHSA-82r6-8w77-94w6)
 and [process-worker stderr hangs](https://github.com/advisories/GHSA-5p39-cfhj-2xmp).
-`.github/dependabot.yml` checks application, CI, scanner, browser, and Actions
-dependencies daily and proposes version updates in one cross-ecosystem
-`dependencies` PR, so overlapping manifests and generated locks are reviewed
-and tested together. After changing Python dependency declarations, regenerate
-the CI pins with
+`.github/dependabot.yml` checks application declarations, scanner, browser, and
+Actions dependencies daily and proposes version updates in one cross-ecosystem
+`dependencies` PR. The generated `npa/ci/requirements.txt` body is sealed against
+direct edits; after changing Python dependency declarations, regenerate it with
 `npa/.venv/bin/python npa/scripts/ci_requirements.py --update`.
 Dependabot security-update enablement is a separate repository setting; the
 version-update configuration does not enable it or merge its PRs automatically.
@@ -164,8 +169,11 @@ and that the patched AnyIO pin passes. Unit regressions cover each protected
 manifest, duplicate findings, removals, required inventories, and gate exit codes.
 
 The customer confidentiality scan retains every raw redacted finding and reports
-raw, dispositioned, and unresolved counts separately. One NCore-specific source
-correction recognizes only lines 633 and 640 of the exact regular Git `100644`
+raw, dispositioned, and unresolved counts separately. Its installation omits
+application dependencies because the scanner and source-attribution verifier use
+only Python's standard library; detection and proof checks are unchanged.
+One NCore-specific source correction recognizes only lines 633 and 640 of the
+exact regular Git `100644`
 file at
 `npa/docker/workbench/ncore/notices/cpython/LICENSE.third-party`. Before those two
 locations can be dispositioned, the scanner verifies the complete notice bytes

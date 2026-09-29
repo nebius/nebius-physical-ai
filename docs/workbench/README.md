@@ -16,7 +16,7 @@ Python and HTTP access follow each tool's documented contract.
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
 | Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
-| Curate media with Encord | [S3 registration, pull, and roundtrip verification](encord.md) |
+| Curate media with Encord | [S3 registration, pull, roundtrip verification, and a local MP4 demo](encord.md) |
 | Finish | [Teardown](../teardown.md) |
 
 ## Generation and scenes
@@ -43,6 +43,7 @@ Python and HTTP access follow each tool's documented contract.
 | Simulation-to-policy pipeline | [Sim2Real runbook](guides/sim2real-workflow.md) · [data contracts](guides/sim2real-data-contracts.md) · [customer assets](guides/sim2real-customer-assets.md) · [robot spec](guides/sim2real-robot-spec.md) |
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
 | Motion planning | [cuRobo](curobo.md) |
+| BEHAVIOR 2026 household challenge | [Evaluation workflow, rules, and optional stage-refresh experiment](behavior-challenge.md); [reusable campaigns and TRAIN recording](behavior-campaign.md); [CPU simulator source inspection](behavior-simulator-source-inspect.md); [matched π0.5 training results and limits](behavior-matched-results-2026-09-19.md); requires licensed runtime and fixed policy |
 | OpenArm simulation and RL | [OpenArm with MuJoCo and Isaac Lab](openarm.md) |
 | Isaac Lab versions | [Isaac Lab 3](isaac-lab-3.md) |
 | Policy evaluation in Isaac Lab | [Isaac Arena](isaac-arena.md) |

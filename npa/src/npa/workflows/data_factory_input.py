@@ -33,6 +33,10 @@ class PaidfInputError(RuntimeError):
     """An input cannot be selected, verified, normalized, or staged safely."""
 
 
+class _InputListingError(PaidfInputError):
+    """A pagination contract failed with a fixed, non-sensitive diagnosis."""
+
+
 PROVENANCE_SCHEMA = "npa.paidf.input-provenance.v1"
 CONDITIONING_FRAMES = 8
 CONDITIONING_FRAME_COUNT = 93
@@ -1940,7 +1944,8 @@ def _read_lerobot_episode_record(
         )
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
-            "could not inspect the selected LeRobot episode-metadata shard"
+            "could not inspect the selected LeRobot episode-metadata shard: "
+            f"{_input_listing_diagnostic(exc)}"
         ) from exc
     if not candidates:
         raise PaidfInputError(
@@ -2130,22 +2135,63 @@ def _trim_lerobot_episode(
         raise PaidfInputError("could not extract the selected LeRobot episode")
 
 
+def _validate_s3_listing_page(
+    page: dict[str, Any], seen_tokens: set[str], *, has_paginator: bool
+) -> None:
+    # Minimal storage adapters may omit the flag; explicit values must be booleans.
+    truncated = page.get("IsTruncated", False)
+    if type(truncated) is not bool:
+        raise _InputListingError(
+            "input listing IsTruncated must be a boolean when present"
+        )
+    if not truncated:
+        return
+    token = page.get("NextContinuationToken")
+    if not isinstance(token, str) or not token:
+        raise _InputListingError("truncated input listing has no continuation token")
+    if token in seen_tokens:
+        raise _InputListingError("input listing repeated continuation token")
+    if not has_paginator:
+        raise _InputListingError(
+            "storage client cannot complete a truncated input listing"
+        )
+    seen_tokens.add(token)
+
+
+def _input_listing_diagnostic(exc: Exception) -> str:
+    """Retain failure categories without exposing provider messages or object keys."""
+    if isinstance(exc, _InputListingError):
+        return str(exc)
+    response = getattr(exc, "response", None)
+    error = response.get("Error") if isinstance(response, dict) else None
+    code = error.get("Code") if isinstance(error, dict) else None
+    name = type(exc).__name__
+    if isinstance(code, str) and re.fullmatch(r"[A-Za-z0-9]+", code):
+        return f"{name} ({code})"
+    return name
+
+
 def _list_s3_keys(client: Any, *, bucket: str, prefix: str) -> list[str]:
-    """List a prefix across pages while remaining easy to fake in unit tests."""
+    """Collect a prefix only after validating every page's continuation contract."""
 
     paginator_factory = getattr(client.s3, "get_paginator", None)
-    if callable(paginator_factory):
+    has_paginator = callable(paginator_factory)
+    if has_paginator:
         pages = paginator_factory("list_objects_v2").paginate(
             Bucket=bucket, Prefix=prefix
         )
     else:
         pages = [client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)]
-    return [
-        str(item.get("Key") or "")
-        for page in pages
-        for item in page.get("Contents", [])
-        if str(item.get("Key") or "")
-    ]
+    keys: list[str] = []
+    seen_tokens: set[str] = set()
+    for page in pages:
+        _validate_s3_listing_page(page, seen_tokens, has_paginator=has_paginator)
+        keys.extend(
+            str(item.get("Key") or "")
+            for item in page.get("Contents", [])
+            if str(item.get("Key") or "")
+        )
+    return keys
 
 
 def _fixture_provenance(run_id: str, base_uri: str) -> dict[str, Any]:
@@ -2322,16 +2368,16 @@ def _read_provenance(client: Any, base_uri: str) -> dict[str, Any] | None:
 def _legacy_staged_video(client: Any, base_uri: str) -> str:
     bucket, prefix = _split_s3(base_uri)
     try:
-        response = client.s3.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        keys = _list_s3_keys(client, bucket=bucket, prefix=prefix)
     except Exception as exc:  # noqa: BLE001
         raise PaidfInputError(
-            f"could not inspect the canonical PAIDF input prefix: {exc}"
+            "could not inspect every object in the canonical PAIDF input prefix: "
+            f"{_input_listing_diagnostic(exc)}"
         ) from exc
     videos = [
-        str(item.get("Key") or "")
-        for item in response.get("Contents", [])
-        if str(item.get("Key") or "").lower().endswith(".mp4")
-        and not str(item.get("Key") or "").lower().endswith("conditioning.mp4")
+        key
+        for key in keys
+        if key.lower().endswith(".mp4") and key != f"{prefix}conditioning.mp4"
     ]
     if len(videos) > 1:
         raise PaidfInputError(
@@ -2339,18 +2385,31 @@ def _legacy_staged_video(client: Any, base_uri: str) -> str:
             "explicitly with --input-uri or use a new --run-id"
         )
     if videos:
+        _check_legacy_artifacts(keys, videos[0], prefix, base_uri)
         return f"s3://{bucket}/{videos[0]}"
-    other = [
-        str(item.get("Key") or "")
-        for item in response.get("Contents", [])
-        if str(item.get("Key") or "")
-    ]
-    if other:
+    if keys:
         raise PaidfInputError(
             f"uncommitted input artifacts already exist under {base_uri}, but no source "
-            "MP4 can be adopted. Use --input-video/--input-uri, --seed-fixture, or a new run id."
+            "MP4 is present. Restore the original source with --input-video/--input-uri "
+            "to resume this run."
         )
     return ""
+
+
+def _check_legacy_artifacts(
+    keys: list[str], source: str, prefix: str, base_uri: str
+) -> None:
+    expected = {source, f"{prefix}conditioning.mp4"}
+    expected.update(
+        f"{prefix}conditioning-frame-{index:04d}.png"
+        for index in range(1, CONDITIONING_FRAMES + 1)
+    )
+    if set(keys) - expected:
+        raise PaidfInputError(
+            f"a source MP4 is present under {base_uri}, but conflicting uncommitted "
+            "artifacts exist. Pass the source explicitly with --input-uri to verify "
+            "and resume this run."
+        )
 
 
 def _download_staged_source(client: Any, base_uri: str, tmp: Path) -> Path:

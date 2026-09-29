@@ -11,6 +11,7 @@ from typing import Any, Callable, Mapping
 
 from npa.clients.json_output import parse_single_json_document
 from npa.lifecycle_intent import OperationIntent, intent_boundary
+from npa.orchestration.skypilot.cleanup import is_terminal_managed_job_status
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
@@ -938,13 +939,6 @@ def _parse_workflow_inventory(
     return [dict(row) for row in rows], ""
 
 
-def _terminal_managed_job_status(value: object) -> bool:
-    """Classify only terminal statuses from the pinned SkyPilot contract."""
-
-    status = str(value or "").strip().upper()
-    return status in {"SUCCEEDED", "CANCELLED"} or status.startswith("FAILED")
-
-
 def _owned_workflow_teardown_allowance(
     completed: subprocess.CompletedProcess[str],
 ) -> dict[str, Any] | None:
@@ -1006,7 +1000,7 @@ def _owned_workflow_teardown_allowance(
         or not isinstance(jobs[job_id].get("persisted_states"), list)
         or not jobs[job_id]["persisted_states"]
         or all(
-            _terminal_managed_job_status(state)
+            is_terminal_managed_job_status(state)
             for state in jobs[job_id]["persisted_states"]
         )
         for job_id in conflict_ids
@@ -1014,7 +1008,7 @@ def _owned_workflow_teardown_allowance(
         return None
     if any(
         jobs[job_id].get("live_outcome") != "found"
-        or _terminal_managed_job_status(jobs[job_id].get("live_status"))
+        or is_terminal_managed_job_status(jobs[job_id].get("live_status"))
         for job_id in cancelled_ids
     ):
         return None
@@ -1022,7 +1016,7 @@ def _owned_workflow_teardown_allowance(
         live_outcome = str(row.get("live_outcome") or "").strip()
         if live_outcome == "found":
             if (
-                not _terminal_managed_job_status(row.get("live_status"))
+                not is_terminal_managed_job_status(row.get("live_status"))
                 and job_id not in cancelled_ids
             ):
                 return None
@@ -1032,7 +1026,7 @@ def _owned_workflow_teardown_allowance(
                 not isinstance(persisted_states, list)
                 or not persisted_states
                 or not all(
-                    _terminal_managed_job_status(state) for state in persisted_states
+                    is_terminal_managed_job_status(state) for state in persisted_states
                 )
             ):
                 return None

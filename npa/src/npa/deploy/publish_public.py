@@ -41,6 +41,7 @@ import base64
 import hashlib
 import http.client
 import json
+import math
 import os
 import re
 import shutil
@@ -55,6 +56,12 @@ from pathlib import Path
 from typing import Any
 
 from npa.deploy import images
+from npa.deploy.corresponding_source import (
+    ACCEPTED_RECORD as GYMNASIUM_ACCEPTED_RECORD,
+    SOURCE_LOCK as GYMNASIUM_SOURCE_LOCK,
+    CorrespondingSourceError,
+    verify_corresponding_source_delivery,
+)
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     is_publicly_redistributable,
@@ -467,13 +474,50 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
     left to fail incidentally when the tag turns out not to exist.
     """
 
-    if item.tool not in images.PUBLICATION_QUARANTINE_TOOLS:
+    if item.tool not in (
+        images.PUBLICATION_QUARANTINE_TOOLS
+        | images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS
+        | images.DEVELOPMENT_BUILD_QUARANTINE_TOOLS
+    ):
         return True, "not applicable"
     return False, (
-        f"{item.tool} has no accepted image: it has not been built, payload "
-        "scanned, or GPU validated. Publication is blocked until that evidence "
-        "exists and the tool leaves images.PUBLICATION_QUARANTINE_TOOLS."
+        f"{item.tool} has no accepted release image: its corresponding-source "
+        "closure, accepted manifest, supported tag, architecture, payload-scan "
+        "and GPU evidence are not accepted. Development builds may be produced "
+        "for validation, but release publication remains blocked until that "
+        "evidence exists and the tool leaves its development-build quarantine."
     )
+
+
+def verify_gymnasium_corresponding_source(item: PublishItem) -> tuple[bool, str]:
+    """Require exact public corresponding source before Gymnasium release copying."""
+
+    match = re.search(r"@(sha256:[0-9a-f]{64})$", item.source_ref)
+    if match is None:
+        return False, "Gymnasium source image is not pinned by immutable digest"
+    try:
+        manifest = _crane_json(["manifest", item.source_ref])
+        if manifest.get("manifests") is not None:
+            raise RuntimeError("Gymnasium source must be one linux/amd64 manifest")
+        config_digest = manifest.get("config", {}).get("digest")
+        config = _crane_json(["config", item.source_ref]).get("config") or {}
+        labels = config.get("Labels") if isinstance(config, dict) else {}
+        revision = (
+            labels.get("org.opencontainers.image.revision")
+            if isinstance(labels, dict)
+            else None
+        )
+        verify_corresponding_source_delivery(
+            GYMNASIUM_ACCEPTED_RECORD,
+            GYMNASIUM_SOURCE_LOCK,
+            source_revision=str(revision or ""),
+            image_digest=match.group(1),
+            platform_manifest_digest=match.group(1),
+            config_digest=str(config_digest or ""),
+        )
+        return True, "exact anonymous corresponding-source delivery verified"
+    except (CorrespondingSourceError, KeyError, TypeError, RuntimeError) as exc:
+        return False, str(exc)
 
 
 def verify_gpu_accepted_publication_source(item: PublishItem) -> tuple[bool, str]:
@@ -804,6 +848,32 @@ def _scan_content_agents_payload_exact_digest(
     }
 
 
+def _is_finite_manifest_number(value: Any) -> bool:
+    """Return whether a JSON manifest value is a finite, non-boolean number."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return not isinstance(value, float) or math.isfinite(value)
+
+
+def _valid_content_agents_rigid_physics(rigid: Any) -> bool:
+    """Validate rigid-physics evidence at the public-promotion boundary."""
+
+    if not isinstance(rigid, dict):
+        return False
+    mass_or_density = rigid.get("mass_or_density")
+    friction = rigid.get("friction")
+    return (
+        rigid.get("rigid_body") is True
+        and rigid.get("collision") is True
+        and rigid.get("fixed") is False
+        and _is_finite_manifest_number(mass_or_density)
+        and mass_or_density > 0
+        and _is_finite_manifest_number(friction)
+        and 0.1 <= friction <= 2.0
+    )
+
+
 def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, str]:
     """Bind Content Agents publication to clean bytes and the accepted RTX run."""
 
@@ -979,14 +1049,7 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
             ):
                 raise RuntimeError(f"Content Agents RTX proof has no {artifact_name}")
         rigid = proof.get("rigid_physics")
-        if (
-            not isinstance(rigid, dict)
-            or rigid.get("rigid_body") is not True
-            or rigid.get("collision") is not True
-            or rigid.get("fixed") is not False
-            or float(rigid.get("mass_or_density") or 0) <= 0
-            or not 0.1 <= float(rigid.get("friction") or 0) <= 2.0
-        ):
+        if not _valid_content_agents_rigid_physics(rigid):
             raise RuntimeError("Content Agents accepted rigid-physics proof is invalid")
 
         specialized = accepted.get("payload_scan")
@@ -1505,6 +1568,9 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
         if ok and item.tool in images.SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
             ok, detail = verify_bootstrap_publication_source(item)
             detail = f"BOOTSTRAP GATE — {detail}"
+        if ok and item.tool == "gymnasium-robotics":
+            ok, detail = verify_gymnasium_corresponding_source(item)
+            detail = f"CORRESPONDING SOURCE GATE — {detail}"
         if ok and item.tool == "wan2-2":
             ok, detail = verify_wan_publication_source(item)
             detail = f"WAN GATE — {detail}"

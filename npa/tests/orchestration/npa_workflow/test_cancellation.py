@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from botocore.exceptions import ClientError
 import pytest
 
 from npa.orchestration.npa_workflow.cancellation import (
@@ -14,6 +15,7 @@ from npa.orchestration.npa_workflow.run_resolution import RunResolution
 from npa.orchestration.skypilot import cleanup as cleanup_module
 from npa.orchestration.skypilot.cleanup import CleanupResult
 from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+from npa.orchestration.skypilot.workflow_state import WorkflowS3Config
 
 
 def _resolution(runtime: dict, *, manifest: dict | None = None) -> RunResolution:
@@ -56,6 +58,55 @@ def test_terminal_multistage_run_without_root_job_id_is_an_explicit_noop() -> No
     assert assessment.no_cancellation_needed
     assert assessment.active_jobs == []
     assert [job.job_id for job in assessment.terminal_jobs] == ["101", "102"]
+
+
+def test_denied_stage_status_blocks_a_terminal_cancellation_noop(
+    monkeypatch,
+) -> None:
+    class DeniedStageStatus:
+        def get_object(self, **_kwargs):
+            raise ClientError(
+                {
+                    "Error": {
+                        "Code": "AccessDenied",
+                        "Message": "synthetic stage-status denial",
+                    }
+                },
+                "GetObject",
+            )
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow_state.boto3.client",
+        lambda *args, **kwargs: DeniedStageStatus(),
+    )
+    resolution = _resolution(
+        {},
+        manifest={
+            "run_id": "paidf-runtime",
+            "workflow_name": "legacy",
+            "status": "succeeded",
+            "stages": {"train": {"status": "succeeded"}},
+        },
+    )
+    resolution.state = WorkflowS3Config(
+        bucket="synthetic-bucket",
+        prefix="paidf-runtime",
+        endpoint_url="https://storage.example.invalid",
+    )
+
+    assessment = assess_run_cancellation(
+        resolution,
+        lookup=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("unreadable stage state must stop before provider lookup")
+        ),
+    )
+
+    assert assessment.detected_state == "VERIFICATION_UNAVAILABLE"
+    assert not assessment.no_cancellation_needed
+    assert assessment.errors == [
+        "stage train status verification failed: S3 object not found or unreadable: "
+        "s3://synthetic-bucket/paidf-runtime/logs/train/status.json"
+    ]
 
 
 def test_failed_controller_cancellation_cannot_become_an_ambient_absence_noop():

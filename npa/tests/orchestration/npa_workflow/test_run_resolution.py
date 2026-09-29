@@ -164,6 +164,273 @@ def test_receipt_proven_run_stays_found_when_live_verification_is_unavailable(
     assert resolved.conclusively_absent is False
 
 
+def test_receipt_controller_route_binds_live_lookup(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = "isolated-controller-route"
+    controller_dir = (tmp_path / "controller").resolve()
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "18"},
+            "controller": {
+                "schema": "npa.workflow.controller-route.v1",
+                "isolated": True,
+                "isolated_config_dir": str(controller_dir),
+                "sky_bin": "/opt/npa/sky",
+            },
+        },
+    )
+    calls = []
+
+    def lookup(*args, **kwargs):
+        calls.append(kwargs)
+        return ManagedJobEvidence("found", job_id="18", status="PENDING")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
+    )
+
+    resolved = resolve_run(run_id, project="paidf")
+
+    assert resolved.controller_route_recorded is True
+    assert resolved.sky_bin == "/opt/npa/sky"
+    assert resolved.isolated_config_dir == controller_dir
+    assert calls == [
+        {
+            "job_id": "18",
+            "sky_bin": "/opt/npa/sky",
+            "isolated_config_dir": controller_dir,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "controller",
+    [
+        {"schema": "npa.workflow.controller-route.v1"},
+        {
+            "schema": "npa.workflow.controller-route.v1",
+            "isolated": "false",
+            "isolated_config_dir": "",
+            "sky_bin": "/opt/npa/sky",
+        },
+        {
+            "schema": "npa.workflow.controller-route.v1",
+            "isolated": True,
+            "isolated_config_dir": "relative/controller",
+            "sky_bin": "/opt/npa/sky",
+        },
+        {
+            "schema": "npa.workflow.controller-route.v1",
+            "isolated": False,
+            "isolated_config_dir": "",
+            "sky_bin": "relative/sky",
+        },
+    ],
+)
+def test_malformed_receipt_controller_route_fails_closed(
+    resolver_env: ExactS3,
+    monkeypatch: pytest.MonkeyPatch,
+    controller: dict[str, object],
+) -> None:
+    update_submission_state(
+        "paidf",
+        "malformed-controller-route",
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "18"},
+            "controller": controller,
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail("malformed route must not be queried"),
+    )
+
+    resolved = resolve_run("malformed-controller-route", project="paidf")
+
+    assert resolved.managed_job.outcome == "unavailable"
+    assert resolved.controller_route_error
+
+
+def test_explicit_controller_route_conflict_fails_closed(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    recorded = (tmp_path / "recorded").resolve()
+    update_submission_state(
+        "paidf",
+        "conflicting-controller-route",
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "18"},
+            "controller": {
+                "schema": "npa.workflow.controller-route.v1",
+                "isolated": True,
+                "isolated_config_dir": str(recorded),
+                "sky_bin": "/opt/npa/sky",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail("conflicting route must not be queried"),
+    )
+
+    resolved = resolve_run(
+        "conflicting-controller-route",
+        project="paidf",
+        sky_bin="/different/sky",
+        isolated_config_dir=tmp_path / "different",
+    )
+
+    assert resolved.managed_job.outcome == "unavailable"
+    assert "conflicts" in resolved.controller_route_error
+
+
+def test_legacy_receipt_without_controller_route_fails_closed(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "legacy-controller-unknown"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "19"},
+        },
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail("ambient controller must not be queried"),
+    )
+
+    resolved = resolve_run(run_id, project="paidf")
+
+    assert resolved.found is True
+    assert resolved.verification_unavailable is True
+    assert resolved.managed_job.outcome == "unavailable"
+    assert "no recorded controller route" in resolved.managed_job.error
+    assert resolved.controller_route_error == resolved.managed_job.error
+
+
+def test_legacy_receipt_accepts_explicit_controller_route(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    run_id = "legacy-explicit-controller"
+    controller_dir = (tmp_path / "controller").resolve()
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "20"},
+        },
+    )
+    calls = []
+
+    def lookup(*args, **kwargs):
+        calls.append(kwargs)
+        return ManagedJobEvidence("found", job_id="20", status="RUNNING")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
+    )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        sky_bin="/opt/npa/sky",
+        isolated_config_dir=controller_dir,
+    )
+
+    assert resolved.managed_job.outcome == "found"
+    assert calls[0]["sky_bin"] == "/opt/npa/sky"
+    assert calls[0]["isolated_config_dir"] == controller_dir
+
+
+def test_legacy_shared_controller_accepts_explicit_sky_bin(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_id = "legacy-explicit-shared-controller"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "21"},
+        },
+    )
+    calls = []
+
+    def lookup(*args, **kwargs):
+        calls.append(kwargs)
+        return ManagedJobEvidence("found", job_id="21", status="RUNNING")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
+    )
+
+    resolved = resolve_run(run_id, project="paidf", sky_bin="/opt/npa/sky")
+
+    assert resolved.managed_job.outcome == "found"
+    assert calls[0]["sky_bin"] == "/opt/npa/sky"
+    assert calls[0]["isolated_config_dir"] is None
+
+
+def test_recorded_shared_controller_rejects_active_ambient_isolation(
+    resolver_env: ExactS3,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    run_id = "recorded-shared-ambient-isolated"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {"name": "physical-ai-data-factory"},
+            "launch": {"status": "submitted", "sky_job_id": "21"},
+            "controller": {
+                "schema": "npa.workflow.controller-route.v1",
+                "isolated": False,
+                "isolated_config_dir": "",
+                "sky_bin": "/opt/npa/sky",
+            },
+        },
+    )
+    monkeypatch.setenv(
+        "NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str((tmp_path / "ambient").resolve())
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail(
+            "ambient isolated controller must not be queried"
+        ),
+    )
+
+    resolved = resolve_run(run_id, project="paidf")
+
+    assert resolved.managed_job.outcome == "unavailable"
+    assert "recorded shared controller conflicts" in resolved.controller_route_error
+
+
+def test_exact_job_without_receipt_does_not_query_ambient_controller(
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lambda *args, **kwargs: pytest.fail("ambient controller must not be queried"),
+    )
+
+    resolved = resolve_run("exact-job-only", project="paidf", exact_job_id="22")
+
+    assert resolved.managed_job.outcome == "unavailable"
+    assert resolved.verification_unavailable is True
+    assert "no recorded controller route" in resolved.managed_job.error
+
+
 def test_legacy_partial_canonical_prefix_is_a_found_run(
     resolver_env: ExactS3,
 ) -> None:
@@ -190,24 +457,33 @@ def test_legacy_partial_canonical_prefix_is_a_found_run(
 
 
 def test_managed_job_evidence_finds_run_while_manifest_is_pending(
-    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch
+    resolver_env: ExactS3, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(
-        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
-        lambda *args, **kwargs: ManagedJobEvidence(
+    lookup_dirs = []
+
+    def lookup(*args, **kwargs):
+        lookup_dirs.append(kwargs.get("isolated_config_dir"))
+        return ManagedJobEvidence(
             "found",
             job_id="91",
             status="RUNNING",
             task_rows=({"task_id": 0, "task_name": "annotate", "status": "RUNNING"},),
-        ),
+        )
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job",
+        lookup,
     )
 
-    resolved = resolve_run("managed-only", project="paidf")
+    resolved = resolve_run(
+        "managed-only", project="paidf", isolated_config_dir=tmp_path
+    )
 
     assert resolved.found is True
     assert resolved.source == "managed_job"
     assert resolved.job_id == "91"
     assert resolved.manifest_pending is True
+    assert lookup_dirs == [tmp_path]
 
 
 def test_runtime_ledger_recovers_exact_active_wave_identity(
@@ -259,7 +535,7 @@ def test_runtime_ledger_recovers_exact_active_wave_identity(
         "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
     )
 
-    resolved = resolve_run(run_id, project="paidf")
+    resolved = resolve_run(run_id, project="paidf", sky_bin="/opt/npa/sky")
 
     assert resolved.source == "canonical_paidf_s3_prefix"
     assert resolved.job_id == "41"
@@ -540,6 +816,194 @@ def test_explicit_nested_uri_supports_manifest_pending_exact_prefix(
             {"MaxItems": 10_000, "PageSize": 1000},
         ),
     ]
+
+
+def test_ambiguous_manifest_pending_prefix_never_lists_sibling_workflow(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "inflight-probe"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    owned_key = f"{exact_prefix}/artifacts/mine.json"
+    sibling_key = f"checkpoints/{run_id}/other-workflow/secret.bin"
+    resolver_env.objects[("alias-bucket", owned_key)] = b"mine"
+    resolver_env.objects[("alias-bucket", sibling_key)] = b"sibling"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert resolved.manifest_pending is True
+    assert artifacts == [f"s3://alias-bucket/{owned_key}"]
+    assert sibling_key not in artifacts
+    assert resolver_env.queries[0][1] == f"{exact_prefix}/"
+    assert resolver_env.queries[-1][1] == f"{exact_prefix}/artifacts/"
+
+
+def test_ambiguous_manifest_pending_prefix_is_not_found_from_sibling_only(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "sibling-only-probe"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    resolver_env.objects[
+        ("alias-bucket", f"checkpoints/{run_id}/other-workflow/secret.bin")
+    ] = b"sibling"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+
+    assert resolved.found is False
+    explicit = next(
+        check for check in resolved.checks if check.source == "explicit_workflow_s3_uri"
+    )
+    assert explicit.outcome == "absent"
+    assert resolver_env.queries[0][1] == f"{exact_prefix}/"
+
+
+def test_ambiguous_pending_paidf_component_does_not_override_exact_uri(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "paidf-looking-probe"
+    exact_prefix = (
+        f"archives/physical-ai-data-factory/checkpoints/{run_id}/npa-workflow"
+    )
+    owned_key = f"{exact_prefix}/artifacts/mine.json"
+    sibling_key = (
+        f"archives/physical-ai-data-factory/checkpoints/{run_id}/"
+        "other-workflow/secret.bin"
+    )
+    resolver_env.objects[("alias-bucket", owned_key)] = b"mine"
+    resolver_env.objects[("alias-bucket", sibling_key)] = b"sibling"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert resolved.manifest_pending is True
+    assert artifacts == [f"s3://alias-bucket/{owned_key}"]
+    assert sibling_key not in artifacts
+    assert resolver_env.queries[0][1] == f"{exact_prefix}/"
+    assert resolver_env.queries[-1][1] == f"{exact_prefix}/artifacts/"
+
+
+def test_ambiguous_exact_fallback_enforces_artifact_limit(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "fallback-limit"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    for name in ("a.json", "b.json"):
+        resolver_env.objects[("alias-bucket", f"{exact_prefix}/artifacts/{name}")] = (
+            name.encode()
+        )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+    artifacts = list_resolved_artifacts(resolved, limit=1)
+
+    assert artifacts == [f"s3://alias-bucket/{exact_prefix}/artifacts/a.json"]
+
+
+def test_paidf_manifest_with_mismatched_run_root_keeps_exact_artifact_scope(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "manifest-provenance"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    manifest = _manifest(run_id)
+    manifest["run_prefix_uri"] = "s3://alias-bucket/different/root"
+    resolver_env.put_json(
+        "alias-bucket",
+        f"{exact_prefix}/manifest.json",
+        manifest,
+    )
+    owned_key = f"{exact_prefix}/artifacts/mine.json"
+    sibling_key = f"checkpoints/{run_id}/other-workflow/secret.bin"
+    resolver_env.objects[("alias-bucket", owned_key)] = b"mine"
+    resolver_env.objects[("alias-bucket", sibling_key)] = b"sibling"
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert resolved.manifest_pending is False
+    assert artifacts == [f"s3://alias-bucket/{owned_key}"]
+    assert sibling_key not in artifacts
+    assert resolver_env.queries[-1][1] == f"{exact_prefix}/artifacts/"
+
+
+def test_terminal_ledger_workflow_name_cannot_widen_ambiguous_exact_uri(
+    resolver_env: ExactS3,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "terminal-ledger-provenance"
+    exact_prefix = f"checkpoints/{run_id}/npa-workflow"
+    sibling_key = f"checkpoints/{run_id}/other-workflow/secret.bin"
+    resolver_env.objects[("alias-bucket", sibling_key)] = b"sibling"
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.first_run_state.terminal_run_evidence",
+        lambda **_kwargs: {
+            "last_known_state": "SUCCEEDED",
+            "workflow_identity": "physical-ai-data-factory",
+        },
+    )
+
+    resolved = resolve_run(
+        run_id,
+        project="paidf",
+        workflow_s3_uri=f"s3://alias-bucket/{exact_prefix}",
+    )
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert resolved.source == "project_run_terminal_ledger"
+    assert resolved.manifest_pending is False
+    assert artifacts == []
+    assert sibling_key not in artifacts
+    assert resolver_env.queries[-1][1] == f"{exact_prefix}/artifacts/"
+
+
+def test_receipt_canonical_parent_must_match_requested_run_id(
+    resolver_env: ExactS3,
+) -> None:
+    run_id = "receipt-wanted-run"
+    other_run = "receipt-other-run"
+    update_submission_state(
+        "paidf",
+        run_id,
+        {
+            "workflow": {
+                "name": "physical-ai-data-factory",
+                "run_prefix_uri": (
+                    f"s3://alias-bucket/physical-ai-data-factory/{other_run}"
+                ),
+            },
+            "launch": {"status": "submitted", "sky_job_id": "17"},
+        },
+    )
+    sibling_key = f"physical-ai-data-factory/{other_run}/other-workflow/secret.bin"
+    resolver_env.objects[("alias-bucket", sibling_key)] = b"sibling"
+
+    resolved = resolve_run(run_id, project="paidf")
+    artifacts = list_resolved_artifacts(resolved)
+
+    assert resolved.manifest_pending is True
+    assert artifacts == []
+    assert sibling_key not in artifacts
+    assert resolver_env.queries[-1][1] == (
+        f"physical-ai-data-factory/{other_run}/npa-workflow/artifacts/"
+    )
 
 
 def _resolved_declarative_run(
