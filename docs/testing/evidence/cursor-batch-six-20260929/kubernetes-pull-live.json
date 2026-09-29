@@ -1,0 +1,119 @@
+{
+  "source": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+  "tree": "6a9fd1d40233625adc9392f32d8476e3f47bb752",
+  "cases_passed": 9,
+  "kubectl_calls": 42,
+  "created_pull_probe_pods": 5,
+  "uid_precondition_deletes_verified": 5,
+  "final_probe_pods": 0,
+  "committed_terminal_live_test_passed": 1,
+  "owned_cluster_removed": true,
+  "cloud_resources_created": false,
+  "source_files_unchanged": true,
+  "kubernetes": "v1.35.8",
+  "container_runtime": "containerd://2.3.4",
+  "completed_at": "2026-09-29T22:57:33.455948+00:00",
+  "live_result_sha256": "764d5aa699af6b149187539488261d50b42fe08006c18924b64c6fa605855026",
+  "call_log_sha256": "bf6764d0c7f099b5ddacdfc5ba7f8312d677b2c4e8d59045495521109b7c1dec",
+  "limitations": [
+    "One local node and public Alpine image with empty public-auth fixture.",
+    "No private-registry success, Nebius target, multi-node, cold-cache, GPU or VLM claim.",
+    "Admission-default inheritance verified; no custom webhook or RuntimeClass-added placement qualification."
+  ],
+  "started_at": "2026-09-29T22:56:44.007708+00:00",
+  "finished_at": "2026-09-29T22:56:59.053710+00:00",
+  "public_image": "docker.io/library/alpine@sha256:8a1f59ffb675680d47db6337b49d22281a139e9d709335b492be023728e11715",
+  "source_bindings": {
+    "npa/src/npa/orchestration/skypilot/registry_preflight.py": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be",
+    "npa/src/npa/orchestration/skypilot/image_bootstrap_contract.py": "8db4c61c151fc0881cc2ab33e199d97bad659336ca28e1f8f42ffaad43353e4a",
+    "npa/src/npa/cli/workbench/workflow/__init__.py": "d0a5d25965cb59f42dd2571d7051e7488b0afd1e505a7444ae0d3394f8980cd4",
+    "npa/src/npa/orchestration/npa_workflow/skypilot_render.py": "be4449af1fcc219a1570b0f84289565ab263ad91dcbd8b694be2eeb2748f8352"
+  },
+  "evidence_files_rehashed": 20,
+  "changed_helper_directly_exercised": true,
+  "planner_scope": "The actual CLI complete-path planner feeds a real target pull in a slash-bearing Kubernetes context; a partial declared context is refused before probing. This does not submit a workflow or certify vendor bootstrap.",
+  "cases": [
+    {
+      "case": "explicit_context_namespace_over_ambient",
+      "status": "verified",
+      "cleanup": "not_applicable",
+      "pods_created": 0,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "public_digest_pull",
+      "status": "verified",
+      "cleanup": "verified",
+      "pods_created": 1,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "exact_requested_node_placement",
+      "status": "verified",
+      "cleanup": "verified",
+      "pods_created": 1,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "admitted_service_account_pull_secret",
+      "status": "verified",
+      "cleanup": "verified",
+      "pods_created": 1,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "missing_service_account",
+      "status": "service_account_unverified",
+      "cleanup": "verified",
+      "pods_created": 0,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "nonexistent_immutable_manifest",
+      "status": "image_pull_failed",
+      "cleanup": "verified",
+      "pods_created": 1,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "host_success_missing_target_secret",
+      "status": "target_pull_unverified",
+      "cleanup": "not_applicable",
+      "pods_created": 0,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "cli_planner_exact_slash_context_real_pull",
+      "status": "ok",
+      "cleanup": "verified",
+      "pods_created": 1,
+      "cleanup_inventory_empty": true,
+      "directly_exercises_changed_helper": true
+    },
+    {
+      "case": "cli_planner_partial_slash_context_refused_before_probe",
+      "status": "verified",
+      "cleanup": "not_applicable",
+      "pods_created": 0,
+      "cleanup_inventory_empty": true,
+      "directly_exercises_changed_helper": true
+    }
+  ],
+  "final_source_relationship": {
+    "producer": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+    "final_local_head": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+    "runtime_source_bytes_identical": true,
+    "compared_paths": [
+      "npa/src/npa/orchestration/skypilot/registry_preflight.py",
+      "npa/src/npa/orchestration/skypilot/image_bootstrap_contract.py",
+      "npa/src/npa/cli/workbench/workflow/__init__.py",
+      "npa/src/npa/orchestration/npa_workflow/skypilot_render.py"
+    ],
+    "changed_repository_files": [
+      "docs/cli/workflow.md",
+      "docs/workbench/npa-workflow-guide.md"
+    ],
+    "changed_compared_files": [],
+    "scope": "Actual live producer precedes the final documentation-only commit. All four recorded modules are byte-identical, and the complete repository diff contains only the two documented files. No new live run is claimed at the documentation commit."
+  }
+}

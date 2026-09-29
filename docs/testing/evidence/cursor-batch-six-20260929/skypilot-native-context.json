@@ -1,0 +1,19 @@
+{
+  "skypilot_version": "0.12.2",
+  "source_sha256": "a50dabbe5af6d26efd3c09ed12191ec2a7fdf1c1d922102c49715d9dc594688d",
+  "cases": [
+    {
+      "infra": "k8s/foo/bar",
+      "cloud": "kubernetes",
+      "region": "foo/bar",
+      "zone": null
+    },
+    {
+      "infra": "kubernetes/foo/bar",
+      "cloud": "kubernetes",
+      "region": "foo/bar",
+      "zone": null
+    }
+  ],
+  "cloud_operations": false
+}

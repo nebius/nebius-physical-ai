@@ -1,0 +1,84 @@
+{
+  "prs": [
+    709,
+    716
+  ],
+  "reviewed_fix": "885e3ab7d369e605eab01a8e4ea309da75c72501",
+  "focused_tests": {
+    "passed": 60,
+    "failed": 0,
+    "seconds": 177.02,
+    "platform": "Darwin Python 3.12",
+    "scope": "Eight actual-Git controls and 52 recovery controls, including fresh CLI processes and hostile provider fixtures."
+  },
+  "controls": [
+    "Committed blobs remain authoritative despite dirty working files; a real linked Git worktree remains supported.",
+    "A replacement ref changes the unhardened Git control output; recovery still hashes the original committed blob.",
+    "A synthetic promisor remote helper executes in the unhardened missing-blob control; the hardened read fails without executing it.",
+    "Ambient Git repository, object-directory and injected-config selectors cannot redirect the source lookup.",
+    "Relative repositories, symlinked repository roots, symlinked Git markers and non-checkout directories are refused.",
+    "Unknown managed resource types, with either zero or populated instances, block before provider reads and retain recovery-required state."
+  ],
+  "implementation": "Canonical absolute checkout validation, raw blob reads, replacement refs disabled, lazy fetch disabled, all transport protocols denied, ambient Git selectors cleared, and optional locks disabled. Unknown managed types are checked before iterating instances.",
+  "limits": [
+    "The demonstrated command-execution path is a configured promisor remote helper on a missing object; no fsmonitor-specific exploit or customer incident is claimed.",
+    "These are current local security and recovery controls. Historical provider recovery proofs retain their original sources; no new cloud mutation was performed.",
+    "No new time, cost or job-count cap was introduced."
+  ],
+  "final_source_relationships": [
+    {
+      "producer": "33f6a4bd78b7b2d390df7e9c082182f71979446c",
+      "final_local_head": "ce4ec078729896dc2211270d83f10d03aa91a240",
+      "runtime_source_bytes_identical": true,
+      "compared_paths": [
+        "npa/src",
+        "npa/scripts"
+      ],
+      "changed_repository_files": [
+        "npa/ci/constraints.in",
+        "npa/ci/requirements.txt"
+      ],
+      "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer."
+    },
+    {
+      "producer": "0a678528e3a5e54863282ded4eef1307d9ac8f68",
+      "final_local_head": "70edfe4a38c53b624e3fdce368979238430cd18a",
+      "runtime_source_bytes_identical": true,
+      "compared_paths": [
+        "npa/src",
+        "npa/scripts"
+      ],
+      "changed_repository_files": [
+        "npa/ci/constraints.in",
+        "npa/ci/requirements.txt"
+      ],
+      "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer."
+    }
+  ],
+  "shared_file_bindings": [
+    {
+      "repository_path": "npa/src/npa/cluster/absent_evidence.py",
+      "sha256": "17f041f31b260bb0ab5c25fabccce78f74137d15e1400dadbdb8b9ab842ac0af",
+      "identical_in_final_heads": [
+        709,
+        716
+      ]
+    },
+    {
+      "repository_path": "npa/tests/unit/test_cluster_absence_source.py",
+      "sha256": "7174b2af945fcb40bc3faaaa5ea65316f6d8626dcb6daed93f53a694be5adfdc",
+      "identical_in_final_heads": [
+        709,
+        716
+      ]
+    },
+    {
+      "repository_path": "npa/tests/unit/test_cluster_absence_recovery.py",
+      "sha256": "d744288b2aaf88f7c4a1b51b12d9fcf5bb52d047c8f6bbc80deafc0ffb05645f",
+      "identical_in_final_heads": [
+        709,
+        716
+      ]
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "source": "0afa48b914601a74297d5cfa86943b3f241c4f8e",
+  "source_tree": "823d08c64c569d37922e488e948d275ded22d729",
+  "focused_cli": {
+    "passed": 194,
+    "failed": 0,
+    "log_sha256": "9a9657a41d77339d12e6034bb8179f012b8269d3832f24231dc876a60e795c57",
+    "source_binding": "H1 production and tests preceded final commit; final commit additionally contains independent cleanup and common-dependency changes."
+  },
+  "mutation": {
+    "kind": "Restore override-only authority classification in a task-local pytest plugin; repository source unmodified",
+    "expected_failing_cases": 6,
+    "observed_failing_cases": 6,
+    "log_sha256": "2ccb686822d47505cdfb1736b72fcbffed5a199a6d821fafad63a9be1156e15f"
+  },
+  "digest_review": {
+    "decision": "Preserve index-versus-platform semantics",
+    "reason": "Known registry indexes already provide accepted child digests. When only the Kubernetes target can fetch the image, proof trusts the exact admitted Pod and kubelet pull of the immutable reference; it does not independently reconstruct index ancestry. Comparing an unknown index directly with the platform imageID would reject valid pulls."
+  },
+  "limits": [
+    "Native parser/schema calls perform no cloud operation.",
+    "Conservative complete-path checks can require both operator and Kubernetes proof even when a specific runtime run launches singleton waves only.",
+    "This is CPU/control-plane evidence, with no GPU, robotics, visual-quality or VLM qualification."
+  ],
+  "registry_review": {
+    "verdict": "clear for reviewed registry cleanup/credential canonicalization changes and release note",
+    "scope": [
+      "cleanup polling permits termination progress while preserving owned UID deletion",
+      "sleep interruptions retained and propagated only after cleanup",
+      "casefold-to-lower excludes sharp-s alias credential borrowing",
+      "release note accurately states target preflight and bootstrap-only flag semantics"
+    ],
+    "validation": {
+      "registry_module_passed": 130,
+      "registry_module_failed": 0,
+      "seconds": 21.64,
+      "mutation_controls": {
+        "cleanup_delays": {
+          "candidate_passed": true,
+          "mutation_rejected": true,
+          "failure_class": "AssertionError"
+        },
+        "cleanup_interrupt": {
+          "candidate_passed": true,
+          "mutation_rejected": true,
+          "failure_class": "Failed"
+        },
+        "unicode_authority": {
+          "candidate_passed": true,
+          "mutation_rejected": true,
+          "failure_class": "AssertionError"
+        },
+        "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+      }
+    },
+    "limitations": [
+      "No new live Kubernetes operation performed by this reviewer.",
+      "Digest ID must not be forced equal to index digest because CRI may report a platform child; known index membership checked by existing source.",
+      "Reviewed current uncommitted registry diff, not independent CLI target-selection edits."
+    ],
+    "evidence": {
+      "pr683-independent-registry-tests.log": "8bf63f1338f19f2fc203c275b5033537a55b5cd35ddf535bb49695f00c240dbf",
+      "pr683-independent-registry-mutations.json": "ce5e8176c043ee8ccf7aa10f08a7b6529ccff66b1341c656ba18d8ebed39f7fe"
+    }
+  },
+  "root_mutation_rechecks": {
+    "restore_unicode_casefold": {
+      "control": "registry",
+      "exit": 1,
+      "rejected": true
+    },
+    "remove_cleanup_poll_delay": {
+      "control": "polling",
+      "exit": 1,
+      "rejected": true
+    },
+    "scope": "Two separate in-memory reversals were rejected. These overlap the independent registry controls and are not added to a unique-test total."
+  }
+}

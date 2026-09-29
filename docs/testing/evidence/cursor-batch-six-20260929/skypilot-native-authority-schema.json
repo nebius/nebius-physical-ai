@@ -1,0 +1,66 @@
+{
+  "skypilot_version": "0.12.2",
+  "native_calls": true,
+  "cloud_operations": false,
+  "infra_cases": [
+    {
+      "job_group": false,
+      "declared_clouds": [
+        "nebius"
+      ],
+      "observed_clouds": [
+        "kubernetes"
+      ]
+    },
+    {
+      "job_group": false,
+      "declared_clouds": [
+        "nebius",
+        "kubernetes"
+      ],
+      "observed_clouds": [
+        "nebius",
+        "kubernetes"
+      ]
+    },
+    {
+      "job_group": true,
+      "declared_clouds": [
+        "nebius",
+        "kubernetes"
+      ],
+      "observed_clouds": [
+        "nebius",
+        "kubernetes"
+      ]
+    }
+  ],
+  "schema_configs_accepted": [
+    {
+      "nebius": {
+        "capabilities": [
+          "storage"
+        ]
+      }
+    },
+    {
+      "nebius": {
+        "capabilities": [
+          "compute",
+          "storage"
+        ]
+      }
+    }
+  ],
+  "sources": {
+    "sky/client/cli/command.py": "8e5fafbcfe01116260673273659ba61eb7e9bb8d261e81199d2e0a4977097a4e",
+    "sky/utils/schemas.py": "20b8c40e298c33bc968853eb3db7e2b7d1e1953657193dfe7b7299d3dba94483",
+    "sky/utils/common_utils.py": "c97bb80c447c8226ca9e62179f689eab7a24ce108f5f195d23922dde5fde07cb"
+  },
+  "wheel_provenance": {
+    "version": "0.12.2",
+    "filename": "skypilot-0.12.2-py3-none-any.whl",
+    "sha256": "f282fbe1d8cc4a4d846c235d4bcc9c1ffc6bd6cba83cf47cdfada8f1a033851f",
+    "url": "https://files.pythonhosted.org/packages/bd/d4/5d415923144d3e912a701cb89d877359e336f0b3851bbaa15d0055bb8f1a/skypilot-0.12.2-py3-none-any.whl"
+  }
+}

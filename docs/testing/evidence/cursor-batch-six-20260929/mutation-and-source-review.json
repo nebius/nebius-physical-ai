@@ -1,0 +1,156 @@
+{
+  "review_kind": "Independent AI-assisted bounded source/test review; no GitHub approval posted",
+  "redaction": {
+    "source": "2b6a7f18238a131014a53e47b1deb6ab813cf3dc",
+    "focused_passed": 96,
+    "finding": "Repeated suffix slices in excluded token counter keys made marker scanning quadratic.",
+    "resolution": "Bounded offset comparisons; old implementation rejected by CountedKey regression.",
+    "controls": {
+      "repeated-quoted-tail-search": {
+        "candidate_passed": true,
+        "mutation_rejected": true
+      },
+      "standalone-aws-signature": {
+        "candidate_passed": true,
+        "mutation_rejected": true
+      },
+      "shapeless-workflow-token-remains-redacted": true
+    },
+    "marker_control": {
+      "candidate_passed": true,
+      "old_suffix_copy_mutation_rejected": true
+    },
+    "prior_copy_work_reproduction": [
+      {
+        "input_bytes": 5000,
+        "suffix_bytes_copied": 1250000
+      },
+      {
+        "input_bytes": 10000,
+        "suffix_bytes_copied": 5000000
+      },
+      {
+        "input_bytes": 20000,
+        "suffix_bytes_copied": 20000000
+      }
+    ]
+  },
+  "kubernetes_storage": {
+    "head": "fb5d702a71048549fb8c11d0a87044cdf0ed0bbc",
+    "finding": "Unconditional provider enablement contradicted verified LIBERO Kubernetes-only preflight.",
+    "resolution": "Enable storage-only Nebius for ordinary Kubernetes targets; retain LIBERO dual contexts, Kubernetes-only discovery, NO_UPLOAD and controller LOCAL_CREDENTIALS.",
+    "before_distinguishing": {
+      "failed": 2,
+      "passed": 7
+    },
+    "after_distinguishing": {
+      "passed": 16,
+      "failed": 0
+    },
+    "full_focused_macos": {
+      "passed": 624,
+      "failed": 2,
+      "failures_reproduced_on_main": 2
+    },
+    "historical_live_scope": "B200 admission and eight-object transport, followed by retained failed cuRobo numeric audit. Historical source is hash verified; no new GPU workload or current-head live claim."
+  },
+  "ssh_host_key": {
+    "head": "26ba19f4866479db70219a1315a2e543d9e62f7a",
+    "review": "Same-layer host-key removal retained; preserved runtime generation and current main bootstrap guards.",
+    "same_layer_control_passed": true,
+    "actual_main_later_layer_mutation_rejected": true,
+    "full_focused_macos": {
+      "passed": 120,
+      "failed": 19,
+      "failures_reproduced_on_main": 19
+    },
+    "historical_live_scope": "Retained private Evo image ancestor-key and independent startup-key controls; broad source and Dockerfile function have since changed on main. Relevant install/cleanup fragment identical; historical source attribution remains required.",
+    "published_error_sample_audit": {
+      "samples": 690,
+      "matched_recomputed_rmse_values": 6,
+      "new_input_pose_recomputation": false
+    }
+  },
+  "host_key_mutation": {
+    "candidate_passed": true,
+    "actual_current_main_late_deletion_rejected": true
+  },
+  "historical_source_comparison": {
+    "659": {
+      "retained": {
+        "commit": "f1751358cd21bf48384fd597550da4a29fbfebb4",
+        "source_file": "npa/src/npa/orchestration/skypilot/workflow.py",
+        "source_file_sha256": "83b0e706ea53ec42514f730d5292a11d3b9970f671a5495d6d3150c55cff09a0",
+        "function": "_submission_global_config",
+        "function_sha256": "7a798005781ed8f5e1fe1ae28b369181374294385e3d9b78a71e7543e5edbfc6"
+      },
+      "current": {
+        "commit": "fb5d702a71048549fb8c11d0a87044cdf0ed0bbc",
+        "source_file": "npa/src/npa/orchestration/skypilot/workflow.py",
+        "source_file_sha256": "4a06505d8cccaa38040d33dfce1b3e5b7a8cb99ca832f7a0fafecf0fbb442d14",
+        "function": "_submission_global_config",
+        "function_sha256": "976141ae3a614d43acfbe1a1a54252bf386db1caec8dd5d574a394c9c9a363c8"
+      },
+      "entire_function_identical": false,
+      "entire_file_identical": false,
+      "published_historical_source_hash_verified": true
+    },
+    "686": {
+      "retained": {
+        "commit": "841ceb59e051d7e7216992df56318c5cbbf7e7f5",
+        "source_file": "npa/scripts/run_byof_repo.py",
+        "source_file_sha256": "364200fc994417a0ad9961adb4f64409cc7df66fe0c734092ae3a50774be34ff",
+        "function": "_dockerfile_text",
+        "function_sha256": "e9d2802606fdf0122ca4f4c1db9b098b2872c61cfede7abe74e90fd4555014ee"
+      },
+      "current": {
+        "commit": "26ba19f4866479db70219a1315a2e543d9e62f7a",
+        "source_file": "npa/scripts/run_byof_repo.py",
+        "source_file_sha256": "aa4b6958ed2ac16c434ff0383d161468f337ee2f9d0071261a9c78b0f9a9018c",
+        "function": "_dockerfile_text",
+        "function_sha256": "9b414b51a70b1d23a2aaebba98cdc53a34a9568d7b14dd64dc6f2e284ff87473"
+      },
+      "entire_function_identical": false,
+      "entire_file_identical": false,
+      "host_key_install_cleanup_fragment_identical": true
+    }
+  },
+  "historical_pose_error_sample_recomputation": {
+    "published_samples": 690,
+    "all_six_reported_rmse_values_recomputed": true,
+    "metrics": {
+      "exact_ape": {
+        "count": 120,
+        "rmse_m": 7.175037147775919e-16
+      },
+      "exact_rpe": {
+        "count": 110,
+        "rmse_m": 7.454745723290291e-16
+      },
+      "bounded_ape": {
+        "count": 120,
+        "rmse_m": 0.0035454338272704316
+      },
+      "bounded_rpe": {
+        "count": 110,
+        "rmse_m": 0.00594981427373233
+      },
+      "drifting_ape": {
+        "count": 120,
+        "rmse_m": 0.4438116058995693
+      },
+      "drifting_rpe": {
+        "count": 110,
+        "rmse_m": 0.14287670678355588
+      }
+    },
+    "scope": "Recomputed from the published retained error samples; no new workload or independent input-pose recomputation."
+  },
+  "scope": "Fresh CPU controls and bounded independent AI-assisted source review. Source hashes identify historical versus prepared code. This is neither human approval nor a new GPU or VLM run.",
+  "additional_review_evidence": [
+    "review-resolutions.json",
+    "kubernetes-authority-review.json",
+    "scanner-memory-review.json",
+    "recovery-source-security.json"
+  ]
+}

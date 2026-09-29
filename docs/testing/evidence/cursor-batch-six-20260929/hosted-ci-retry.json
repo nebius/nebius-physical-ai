@@ -1,0 +1,26 @@
+{
+  "pr": 653,
+  "original_job": 109661885065,
+  "original_run": 36643771545,
+  "reason": "GitHub annotation: job exceeded existing 5m0s execution time",
+  "original_log_sha256": "9b17325c50ce1a2c2c0f1b5421ade2391e72033bea150ae37b9fc3be0b6ee620",
+  "retry_requested": true,
+  "scope": "Only the completed precheck job and its dependent jobs; code unchanged.",
+  "retry_job": 109666342608,
+  "retry_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36643771545/job/109666342608",
+  "retry_conclusion": "success",
+  "head": "98200307d4ff2a366cb882488ad89bc852585b61",
+  "retry_started_at": "2026-09-29T23:26:02Z",
+  "retry_completed_at": "2026-09-29T23:30:38Z",
+  "job_seconds": 276,
+  "retry_precheck_tests": {
+    "passed": 5718,
+    "skipped": 6,
+    "pytest_seconds": 242.76
+  },
+  "collection_count": 35097,
+  "retry_log_sha256": "185df6669c6f9993706fcf55c724b3f0d8e6cd151edb70f165aeb5fa3ce5e254",
+  "original_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36643771545/job/109661885065",
+  "limits_unchanged": true,
+  "source_unchanged": true
+}

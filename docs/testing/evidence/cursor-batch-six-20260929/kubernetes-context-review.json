@@ -1,0 +1,43 @@
+{
+  "schema": "npa.independent_followup_review.v1",
+  "pr": 683,
+  "head": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+  "tree": "6a9fd1d40233625adc9392f32d8476e3f47bb752",
+  "previous_head": "d22efb3d68ebf02176f9e489b6cc6cfac3f4452d",
+  "verdict": "clear",
+  "finding": "The prior parser truncated slash-containing Kubernetes context names, falsely accepting a different partial-name cluster or rejecting an exact match.",
+  "resolution": "Planning comparison and target probing now share context_from_infra; the entire context remainder is compared exactly.",
+  "review_scope": [
+    "Changed helper and reachable target-probe call sites",
+    "Both k8s and kubernetes prefixes",
+    "Sequential and parallel multi-task plans",
+    "Exact slash-containing context accepted and propagated to resolver, pull probe, and bootstrap",
+    "Partial-name mismatch rejected before all three target boundaries"
+  ],
+  "independent_validation": {
+    "passed": 9,
+    "failed": 0,
+    "negative_control": {
+      "source": "Exact previous _image_preflight_execution_steps function restored in memory only",
+      "new_cases_failed": 8,
+      "valid_context_false_refusals": 4,
+      "wrong_context_false_accepts": 4
+    },
+    "initial_harness_error": "First private mutation harness attempt lacked future annotations and failed before tests; corrected retry supplied the module annotation semantics. Initial log retained and not counted as a test result."
+  },
+  "source_sha256": {
+    "npa/src/npa/cli/workbench/workflow/__init__.py": "d0a5d25965cb59f42dd2571d7051e7488b0afd1e505a7444ae0d3394f8980cd4",
+    "npa/tests/cli/test_workflow_submit_preflight.py": "207971af0cb58a190ee823deb926d0f96696595ffa4829a5a1def7d3f632bdd5",
+    "npa/src/npa/orchestration/skypilot/k8s_gpu_catalog.py": "e09e0d32ec5c71d6333755a27434afd8f1b22082883de7c165dad4df0570fd49"
+  },
+  "evidence_sha256": {
+    "pr683-independent-context-tests.log": "dfcb0df4816eafaaabe21cefb891166c22d142cbd6bfc4e0699f6d37f9677300",
+    "pr683-independent-context-mutation.log": "a2365c8345e779b9f76aa334cf3e0eaec3cedf9a0dbe63e113d95f32d4a90266",
+    "pr683-independent-context-mutation-initial-harness-error.log": "30ad058d8805727517a4a18434caf5ed5ee28311e5f87210556f34c4d40d6fcc"
+  },
+  "limitations": [
+    "Focused CLI regression tests use synthetic specs and mocked external boundaries; no new live Kubernetes/GPU operation.",
+    "This follow-up postdates combined16a4f2b3; the prior full security scan result is not claimed against this new head.",
+    "No code changes, push, or GitHub review submitted by this reviewer."
+  ]
+}

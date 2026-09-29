@@ -1,0 +1,786 @@
+{
+  "schema": "npa.batch-six.source-bindings.v1",
+  "status": "published_heads_and_hosted_checks_verified",
+  "base": "8448df6a547f1a8b4a8692124dc56c0235da4261",
+  "prepared_integration": {
+    "commit": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35"
+  },
+  "prepared_pr_sources": {
+    "652": {
+      "commit": "23aae56968d77abc1e1c5b6c57704b71811b3568",
+      "tree": "a9834b4a48d057ce7a3858c90055a00ac61a4e63",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/launch_transaction.py",
+          "sha256": "0bbe414d6faba3db0e57df89f4ed4dd63489b6363306b36cf0e02d6652595bad",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    },
+    "653": {
+      "commit": "98200307d4ff2a366cb882488ad89bc852585b61",
+      "tree": "337610ea1d61cf0a7727adf8f0887de13560b767",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/workbench/workflow/__init__.py",
+          "sha256": "45a511e70dc0140c9dfb67b0b0da160cbaefb3726f69340d59a41460c6ef2d35",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/diagnostic_redaction.py",
+          "sha256": "1780fab1a7ce0e67188cc095035cea6767584100f9cdc06bf4a327dc8999e4f1",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/artifact_load.py",
+          "sha256": "a285cca043711b486c6722ec8e7da80500021644854572cf11a9caad1ea9d4a2",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/submission_state.py",
+          "sha256": "66974f99920b43342a89a1f007898ff4739f080a6c396725b406ee6dc67b6c85",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/workflow_state.py",
+          "sha256": "c10549cfb48b1dfd0147db916b14b19ed4b929a0517362998b700fff270f68f0",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/verification.py",
+          "sha256": "386515c47efd627844890d3223da90e692baffb0109033e132a27566c5a75b96",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    },
+    "654": {
+      "commit": "520777591be2a5f236572dae88439eb060c80d09",
+      "tree": "d9d1772ae3d6bac4527167f810ab7eb8e3966819",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/agent.py",
+          "sha256": "d886a449351ccb90b44ec65dee117a2f5e958d1f94629963bfef3969a2d92e0c",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/agent_access_runtime.py",
+          "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/agent_resources.py",
+          "sha256": "19438686adad42371c5b5e9a47099fe5ca6014aff12712666eb0d7cf0c4f8bcb",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    },
+    "659": {
+      "commit": "afb4754802f11663a1c1c50280923066ad09110f",
+      "tree": "efb259a25909d5d3fb560f9032ac035e99439672",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/workflow.py",
+          "sha256": "4a06505d8cccaa38040d33dfce1b3e5b7a8cb99ca832f7a0fafecf0fbb442d14",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    },
+    "681": {
+      "commit": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+      "tree": "82d7fd24bf3e7309edf10ca546ab87b9038bb83b",
+      "production_files": [
+        {
+          "repository_path": "npa/scripts/image_byte_scan/core.py",
+          "sha256": "ff22f1c7a83f5bddfbf4915cb4944a95dc02aa34693bd2ed495ebd2dc3213172",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/scripts/image_byte_scan/go_helper/README.md",
+          "sha256": "f730eb633c3901ee4c88871b6fa6537fa10b3de97253156ede113201aab90723",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/scripts/image_byte_scan/go_helper/main.go",
+          "sha256": "82e05a0c5b0e2679f1f3bb11cbc312575d99db68ceaa58bb07e19b776be397a8",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/scripts/image_byte_scan/go_helper/main_test.go",
+          "sha256": "532ba5b4d79566ddc2ccec37428a87ab8b61fb7d322c976a33be495a5bde3fae",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/scripts/image_byte_scan/real_helper_checks.py",
+          "sha256": "33e034aadfd6cf47e90a688357773e845ac8602a48ad85e814ee56b5b28f0491",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    },
+    "683": {
+      "commit": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+      "tree": "ee17584e994aaae56c98be495fa9244169b4ecac",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/workbench/workflow/__init__.py",
+          "sha256": "d0a5d25965cb59f42dd2571d7051e7488b0afd1e505a7444ae0d3394f8980cd4",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/__init__.py",
+          "sha256": "d0be796b30a6025083ce8a5595868f60bb55553337ef04fbcae10545145f84f9",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/interpreter.py",
+          "sha256": "4d610a5eb3a9dc7d06f53ba7998347fc8b980c21400f97a7e441c880044a8935",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/skypilot_render.py",
+          "sha256": "be4449af1fcc219a1570b0f84289565ab263ad91dcbd8b694be2eeb2748f8352",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/_bin.py",
+          "sha256": "aa29bd1036a452ff43a8c4f0a74426fe672d5cd41d038951a5b1d3855360b2b9",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/cleanup.py",
+          "sha256": "d422ac993ddb99c94563c1e02caf5a74800c1f04e88fdb68e6a53c1ea6372c0b",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/image_bootstrap_contract.py",
+          "sha256": "8db4c61c151fc0881cc2ab33e199d97bad659336ca28e1f8f42ffaad43353e4a",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/registry_preflight.py",
+          "sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    },
+    "686": {
+      "commit": "3e08e29055e47701b40c2a7ecd0d7c5e65fa2007",
+      "tree": "68deea417bbe01ef42683652a9a348878a702067",
+      "production_files": [
+        {
+          "repository_path": "npa/scripts/run_byof_repo.py",
+          "sha256": "aa4b6958ed2ac16c434ff0383d161468f337ee2f9d0071261a9c78b0f9a9018c",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    },
+    "692": {
+      "commit": "7656874d2726826f3c516ae884e4108c2293d588",
+      "tree": "c8554d7940d89f7860f39a394112afda1a79931b",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cluster_backends/mk8s_execution.py",
+          "sha256": "1a9e45eb3004c12c1d9cee184568d9aa20eb0615ab5490227acc44031fd9fc00",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster_backends/provider_rpc.py",
+          "sha256": "5c4c092141e1fdfd4a154b055c2ec14fbeecbe0d1c1c17ac625faff9945fa4c4",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    },
+    "709": {
+      "commit": "ce4ec078729896dc2211270d83f10d03aa91a240",
+      "tree": "ca7ce495752c88332b1539470c7d457fc96f30a8",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/cluster/__init__.py",
+          "sha256": "82561502807e783050e13b2ca673258e95c5439812a8df22dcb80e70b07b746c",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/cluster/reconcile_absent.py",
+          "sha256": "0b92ad2c4c3d58d90fa98516beaf4a1df12ed46c53f525b8db63402e840e5410",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_evidence.py",
+          "sha256": "17f041f31b260bb0ab5c25fabccce78f74137d15e1400dadbdb8b9ab842ac0af",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_journal.py",
+          "sha256": "ed9b03347b40a2a4e21f60b0a025693cedab735b74ca1fa4695c409b6a9c8af7",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_provider.py",
+          "sha256": "70418faf81d546f980551072e1e1281cc874788e8143827c87b995c3593b04ea",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/reconcile_absent.py",
+          "sha256": "dcb3bc4eb7f4269a4a8ac13ba74b15e05b5d9b39a3332f2eb9bcc99ba06a6633",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    },
+    "716": {
+      "commit": "70edfe4a38c53b624e3fdce368979238430cd18a",
+      "tree": "a1c30b71ca2dd16edb44857989f98bc25c16848c",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/cluster/__init__.py",
+          "sha256": "82561502807e783050e13b2ca673258e95c5439812a8df22dcb80e70b07b746c",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/cluster/reconcile_absent.py",
+          "sha256": "0b92ad2c4c3d58d90fa98516beaf4a1df12ed46c53f525b8db63402e840e5410",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/workbench/workflow/__init__.py",
+          "sha256": "cde7468fec90315b971e50a149ee0b889bf39dfb882e839318987113b6dcf16a",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/workbench/workflow/absence_recovery.py",
+          "sha256": "019d3ead22eadd2d1a2600e30134d544aa553d8f8559832ba61f4a285dffa568",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_evidence.py",
+          "sha256": "17f041f31b260bb0ab5c25fabccce78f74137d15e1400dadbdb8b9ab842ac0af",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_journal.py",
+          "sha256": "ed9b03347b40a2a4e21f60b0a025693cedab735b74ca1fa4695c409b6a9c8af7",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_provider.py",
+          "sha256": "70418faf81d546f980551072e1e1281cc874788e8143827c87b995c3593b04ea",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/reconcile_absent.py",
+          "sha256": "dcb3bc4eb7f4269a4a8ac13ba74b15e05b5d9b39a3332f2eb9bcc99ba06a6633",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_evidence.py",
+          "sha256": "4b65541c1462cad1a5f18a08988427cd140ecba2c7dcd8e3285ebd98ac08d0c7",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_naming_contract.py",
+          "sha256": "203971cd6d1b9756f57c9f2d264dfe5a70f0694d47edb990222a94cd7f96c5c4",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_native.py",
+          "sha256": "1e8f2fe8d0a3d808e92f31b08212510075b3923a07e3fbbc1e38250f7e6b50de",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_reader.py",
+          "sha256": "253f04042bab225a8ea0d402b369aa73487c67935201703c981815b1fd2cc8de",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_recovery.py",
+          "sha256": "41a096086744aa02ff52ff6a9aae81306e147c73ab766ee58233f828eac86348",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_target.py",
+          "sha256": "ca84ad1a224f8e22e051f2432b0010af7f15f37ba7b6029cbebd3bb735a6cc0b",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_trace.py",
+          "sha256": "385f71fa64b45a8f7ce62961445bb7904320d347d8a0b4bbbf4e09b7b15aae2d",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_zero_evidence.py",
+          "sha256": "48bffc675c9ab544f6a96da8a1c765c2dc88d9157af33b77c16aad17979edd42",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_zero_native.py",
+          "sha256": "0fac979916fff8b6b96aad230da7d27fb3b350287c194b6365d0970798ef5030",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_zero_source.py",
+          "sha256": "c69c796b77a19b0f7c58ae50f3dae75572a885ca1f700651bdcbead909ceef40",
+          "role": "source_or_test_or_documentation_binding"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_zero_trace.py",
+          "sha256": "d86e1e9183c63f0110c747cec9125bfa9b5ec556c9c9cbc9185954a625c43a22",
+          "role": "source_or_test_or_documentation_binding"
+        }
+      ]
+    }
+  },
+  "final_pr_heads": {
+    "652": "23aae56968d77abc1e1c5b6c57704b71811b3568",
+    "653": "98200307d4ff2a366cb882488ad89bc852585b61",
+    "654": "520777591be2a5f236572dae88439eb060c80d09",
+    "659": "afb4754802f11663a1c1c50280923066ad09110f",
+    "681": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+    "683": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+    "686": "3e08e29055e47701b40c2a7ecd0d7c5e65fa2007",
+    "692": "7656874d2726826f3c516ae884e4108c2293d588",
+    "709": "ce4ec078729896dc2211270d83f10d03aa91a240",
+    "716": "70edfe4a38c53b624e3fdce368979238430cd18a"
+  },
+  "note": "Final v8 candidates differ from tested v7 only in two documentation files, verified by a complete committed-tree diff. Tests, runtime, scripts and dependency declarations are identical. Every execution retains its actual producer; final docs and hosted gates are separate.",
+  "earlier_prepared_pr_sources": {
+    "652": {
+      "commit": "d633863fd66c65ef8075507f4aa1dc177f5f6057",
+      "tree": "2435eabedb45ffef7049edd844fc917820993c1a",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/launch_transaction.py",
+          "sha256": "0bbe414d6faba3db0e57df89f4ed4dd63489b6363306b36cf0e02d6652595bad"
+        }
+      ]
+    },
+    "653": {
+      "commit": "2b6a7f18238a131014a53e47b1deb6ab813cf3dc",
+      "tree": "c0a4cf016b16b2006a6fa103ec5a2b5d35df35c4",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/workbench/workflow/__init__.py",
+          "sha256": "45a511e70dc0140c9dfb67b0b0da160cbaefb3726f69340d59a41460c6ef2d35"
+        },
+        {
+          "repository_path": "npa/src/npa/diagnostic_redaction.py",
+          "sha256": "1780fab1a7ce0e67188cc095035cea6767584100f9cdc06bf4a327dc8999e4f1"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/artifact_load.py",
+          "sha256": "a285cca043711b486c6722ec8e7da80500021644854572cf11a9caad1ea9d4a2"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/submission_state.py",
+          "sha256": "66974f99920b43342a89a1f007898ff4739f080a6c396725b406ee6dc67b6c85"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/workflow_state.py",
+          "sha256": "c10549cfb48b1dfd0147db916b14b19ed4b929a0517362998b700fff270f68f0"
+        },
+        {
+          "repository_path": "npa/src/npa/verification.py",
+          "sha256": "386515c47efd627844890d3223da90e692baffb0109033e132a27566c5a75b96"
+        }
+      ]
+    },
+    "654": {
+      "commit": "ccdea9492f0e94802750ca0733be635ad6a638d8",
+      "tree": "fec15ca1c5d8b7d1755c8d5e00b8491cf1e47dad",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/agent.py",
+          "sha256": "d886a449351ccb90b44ec65dee117a2f5e958d1f94629963bfef3969a2d92e0c"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/agent_access_runtime.py",
+          "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/agent_resources.py",
+          "sha256": "19438686adad42371c5b5e9a47099fe5ca6014aff12712666eb0d7cf0c4f8bcb"
+        }
+      ]
+    },
+    "659": {
+      "commit": "fb5d702a71048549fb8c11d0a87044cdf0ed0bbc",
+      "tree": "f7aaf05f607df2fdc865eb4a9e2ba06f04a85548",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/workflow.py",
+          "sha256": "4a06505d8cccaa38040d33dfce1b3e5b7a8cb99ca832f7a0fafecf0fbb442d14"
+        }
+      ]
+    },
+    "681": {
+      "commit": "7f3f942404446e61730126e4cf69c9a16d69b7a0",
+      "tree": "d28ad32af75e898188bd7ade1f0bb409b9ea16b5",
+      "production_files": [
+        {
+          "repository_path": "npa/scripts/image_byte_scan/core.py",
+          "sha256": "ff22f1c7a83f5bddfbf4915cb4944a95dc02aa34693bd2ed495ebd2dc3213172"
+        },
+        {
+          "repository_path": "npa/scripts/image_byte_scan/go_helper/README.md",
+          "sha256": "6e9152b508f6d28e09dce60e470c413fdc3894e8892c7866428fd6313ebe1288"
+        },
+        {
+          "repository_path": "npa/scripts/image_byte_scan/go_helper/main.go",
+          "sha256": "088860a15d14e90b24d6e2bf5598d84fb413d3f4b1494c6091643aac23be011b"
+        },
+        {
+          "repository_path": "npa/scripts/image_byte_scan/go_helper/main_test.go",
+          "sha256": "532ba5b4d79566ddc2ccec37428a87ab8b61fb7d322c976a33be495a5bde3fae"
+        },
+        {
+          "repository_path": "npa/scripts/image_byte_scan/real_helper_checks.py",
+          "sha256": "33e034aadfd6cf47e90a688357773e845ac8602a48ad85e814ee56b5b28f0491"
+        }
+      ]
+    },
+    "683": {
+      "commit": "90ec04846dcaf3062eca10feba2a487752ad7a55",
+      "tree": "eb233034cd73ddc62bbea655a297641aa5a58d7d",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/workbench/workflow/__init__.py",
+          "sha256": "88b632aa3dc1a8822296975972f8d30f36fe8a18abda2548d244192c04d5f702"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/__init__.py",
+          "sha256": "d0be796b30a6025083ce8a5595868f60bb55553337ef04fbcae10545145f84f9"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/interpreter.py",
+          "sha256": "4d610a5eb3a9dc7d06f53ba7998347fc8b980c21400f97a7e441c880044a8935"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/skypilot_render.py",
+          "sha256": "be4449af1fcc219a1570b0f84289565ab263ad91dcbd8b694be2eeb2748f8352"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/_bin.py",
+          "sha256": "aa29bd1036a452ff43a8c4f0a74426fe672d5cd41d038951a5b1d3855360b2b9"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/cleanup.py",
+          "sha256": "d422ac993ddb99c94563c1e02caf5a74800c1f04e88fdb68e6a53c1ea6372c0b"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/image_bootstrap_contract.py",
+          "sha256": "8db4c61c151fc0881cc2ab33e199d97bad659336ca28e1f8f42ffaad43353e4a"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/registry_preflight.py",
+          "sha256": "76846a0f9f533e4cc6ccdfb487e6b3dbe997829d6b2d706cf35cbd7030b9fe90"
+        }
+      ]
+    },
+    "686": {
+      "commit": "26ba19f4866479db70219a1315a2e543d9e62f7a",
+      "tree": "4d80cecc922a5fef0f0d2fbcc3cad63aa29fcd56",
+      "production_files": [
+        {
+          "repository_path": "npa/scripts/run_byof_repo.py",
+          "sha256": "aa4b6958ed2ac16c434ff0383d161468f337ee2f9d0071261a9c78b0f9a9018c"
+        }
+      ]
+    },
+    "692": {
+      "commit": "a837eb984047e718c6e3de57667fbf0be7a4653d",
+      "tree": "fca5f5e2e94e446e42d1a7e5e2dbb389979692a2",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cluster_backends/mk8s_execution.py",
+          "sha256": "1a9e45eb3004c12c1d9cee184568d9aa20eb0615ab5490227acc44031fd9fc00"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster_backends/provider_rpc.py",
+          "sha256": "5c4c092141e1fdfd4a154b055c2ec14fbeecbe0d1c1c17ac625faff9945fa4c4"
+        }
+      ]
+    },
+    "709": {
+      "commit": "81fe50769d953b45c739baef4f4e3f56f6afe145",
+      "tree": "5ab211bf15b2bd0df1f811d72f461b2c308cebb4",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/cluster/__init__.py",
+          "sha256": "82561502807e783050e13b2ca673258e95c5439812a8df22dcb80e70b07b746c"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/cluster/reconcile_absent.py",
+          "sha256": "0b92ad2c4c3d58d90fa98516beaf4a1df12ed46c53f525b8db63402e840e5410"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_evidence.py",
+          "sha256": "46b36c05512ae92fc045c802d6c1a4a248cd0238d21014493bfcdb9b2e455bed"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_journal.py",
+          "sha256": "ed9b03347b40a2a4e21f60b0a025693cedab735b74ca1fa4695c409b6a9c8af7"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_provider.py",
+          "sha256": "70418faf81d546f980551072e1e1281cc874788e8143827c87b995c3593b04ea"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/reconcile_absent.py",
+          "sha256": "dcb3bc4eb7f4269a4a8ac13ba74b15e05b5d9b39a3332f2eb9bcc99ba06a6633"
+        }
+      ]
+    },
+    "716": {
+      "commit": "4b18e1d06fa1cd77a2ead10a27bf12054dbdd8bd",
+      "tree": "7bda60270af513c4cd724bfa4cf26f4346f5e9c6",
+      "production_files": [
+        {
+          "repository_path": "npa/src/npa/cli/cluster/__init__.py",
+          "sha256": "82561502807e783050e13b2ca673258e95c5439812a8df22dcb80e70b07b746c"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/cluster/reconcile_absent.py",
+          "sha256": "0b92ad2c4c3d58d90fa98516beaf4a1df12ed46c53f525b8db63402e840e5410"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/workbench/workflow/__init__.py",
+          "sha256": "cde7468fec90315b971e50a149ee0b889bf39dfb882e839318987113b6dcf16a"
+        },
+        {
+          "repository_path": "npa/src/npa/cli/workbench/workflow/absence_recovery.py",
+          "sha256": "019d3ead22eadd2d1a2600e30134d544aa553d8f8559832ba61f4a285dffa568"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_evidence.py",
+          "sha256": "46b36c05512ae92fc045c802d6c1a4a248cd0238d21014493bfcdb9b2e455bed"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_journal.py",
+          "sha256": "ed9b03347b40a2a4e21f60b0a025693cedab735b74ca1fa4695c409b6a9c8af7"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/absent_provider.py",
+          "sha256": "70418faf81d546f980551072e1e1281cc874788e8143827c87b995c3593b04ea"
+        },
+        {
+          "repository_path": "npa/src/npa/cluster/reconcile_absent.py",
+          "sha256": "dcb3bc4eb7f4269a4a8ac13ba74b15e05b5d9b39a3332f2eb9bcc99ba06a6633"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_evidence.py",
+          "sha256": "4b65541c1462cad1a5f18a08988427cd140ecba2c7dcd8e3285ebd98ac08d0c7"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_naming_contract.py",
+          "sha256": "203971cd6d1b9756f57c9f2d264dfe5a70f0694d47edb990222a94cd7f96c5c4"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_native.py",
+          "sha256": "1e8f2fe8d0a3d808e92f31b08212510075b3923a07e3fbbc1e38250f7e6b50de"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_reader.py",
+          "sha256": "253f04042bab225a8ea0d402b369aa73487c67935201703c981815b1fd2cc8de"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_recovery.py",
+          "sha256": "41a096086744aa02ff52ff6a9aae81306e147c73ab766ee58233f828eac86348"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_target.py",
+          "sha256": "ca84ad1a224f8e22e051f2432b0010af7f15f37ba7b6029cbebd3bb735a6cc0b"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_trace.py",
+          "sha256": "385f71fa64b45a8f7ce62961445bb7904320d347d8a0b4bbbf4e09b7b15aae2d"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_zero_evidence.py",
+          "sha256": "48bffc675c9ab544f6a96da8a1c765c2dc88d9157af33b77c16aad17979edd42"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_zero_native.py",
+          "sha256": "0fac979916fff8b6b96aad230da7d27fb3b350287c194b6365d0970798ef5030"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_zero_source.py",
+          "sha256": "c69c796b77a19b0f7c58ae50f3dae75572a885ca1f700651bdcbead909ceef40"
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/absence_zero_trace.py",
+          "sha256": "d86e1e9183c63f0110c747cec9125bfa9b5ec556c9c9cbc9185954a625c43a22"
+        }
+      ]
+    }
+  },
+  "earlier_prepared_integration": {
+    "commit": "b145a06fbbd11b950f0ea67ad52fb2bea7fcd292",
+    "tree": "4669fb6a8c6ab7c5ca744b9b9a183290e2de2819"
+  },
+  "live_and_review_source_relationships": [
+    {
+      "producer": "0cf9bca8190ba18c45e1b4ec1d37fcd2d18ed72c",
+      "final_local_head": "520777591be2a5f236572dae88439eb060c80d09",
+      "runtime_source_bytes_identical": true,
+      "compared_paths": [
+        "npa/src",
+        "npa/scripts"
+      ],
+      "changed_repository_files": [
+        "npa/ci/constraints.in",
+        "npa/ci/requirements.txt",
+        "npa/pyproject.toml",
+        "skills/atomic/guardrail-failures/SKILL.md"
+      ],
+      "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer.",
+      "changed_compared_files": []
+    },
+    {
+      "producer": "0afa48b914601a74297d5cfa86943b3f241c4f8e",
+      "final_local_head": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+      "runtime_source_bytes_identical": false,
+      "compared_paths": [
+        "npa/src",
+        "npa/scripts"
+      ],
+      "changed_repository_files": [
+        "docs/cli/workflow.md",
+        "docs/workbench/npa-workflow-guide.md",
+        "npa/ci/requirements.txt",
+        "npa/pyproject.toml",
+        "npa/src/npa/cli/workbench/workflow/__init__.py",
+        "npa/tests/cli/test_workflow_submit_preflight.py"
+      ],
+      "scope": "Three of four earlier recorded live modules remain unchanged at the final candidate. The changed CLI module has separate live evidence at the parser-fix producer in kubernetes-pull-live.json, with identical runtime bytes at the final documentation-only successor. This earlier run is not relabeled as the final execution.",
+      "recorded_module_comparisons": [
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/registry_preflight.py",
+          "producer_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be",
+          "candidate_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be",
+          "identical": true
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/skypilot/image_bootstrap_contract.py",
+          "producer_sha256": "8db4c61c151fc0881cc2ab33e199d97bad659336ca28e1f8f42ffaad43353e4a",
+          "candidate_sha256": "8db4c61c151fc0881cc2ab33e199d97bad659336ca28e1f8f42ffaad43353e4a",
+          "identical": true
+        },
+        {
+          "repository_path": "npa/src/npa/cli/workbench/workflow/__init__.py",
+          "producer_sha256": "e1bcbf7e8425ead2b791621d5e2e9d58ea387c1e23219d917041480998fd2be2",
+          "candidate_sha256": "d0a5d25965cb59f42dd2571d7051e7488b0afd1e505a7444ae0d3394f8980cd4",
+          "identical": false
+        },
+        {
+          "repository_path": "npa/src/npa/orchestration/npa_workflow/skypilot_render.py",
+          "producer_sha256": "be4449af1fcc219a1570b0f84289565ab263ad91dcbd8b694be2eeb2748f8352",
+          "candidate_sha256": "be4449af1fcc219a1570b0f84289565ab263ad91dcbd8b694be2eeb2748f8352",
+          "identical": true
+        }
+      ],
+      "subsequent_fix_review": "kubernetes-context-review.json",
+      "changed_compared_files": [
+        "npa/src/npa/cli/workbench/workflow/__init__.py"
+      ]
+    },
+    {
+      "producer": "8f5746ba3601337756c3a256dc9e9dc6c3a1a395",
+      "final_local_head": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+      "runtime_source_bytes_identical": true,
+      "compared_paths": [
+        "npa/src",
+        "npa/scripts"
+      ],
+      "changed_repository_files": [
+        "npa/ci/constraints.in",
+        "npa/ci/requirements.txt",
+        "npa/pyproject.toml"
+      ],
+      "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer.",
+      "changed_compared_files": []
+    },
+    {
+      "producer": "c91ce03e6e40cb2c911609f8412b078d991b86eb",
+      "final_local_head": "7656874d2726826f3c516ae884e4108c2293d588",
+      "runtime_source_bytes_identical": true,
+      "compared_paths": [
+        "npa/src",
+        "npa/scripts"
+      ],
+      "changed_repository_files": [
+        "npa/ci/constraints.in",
+        "npa/ci/requirements.txt"
+      ],
+      "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer.",
+      "changed_compared_files": []
+    },
+    {
+      "producer": "33f6a4bd78b7b2d390df7e9c082182f71979446c",
+      "final_local_head": "ce4ec078729896dc2211270d83f10d03aa91a240",
+      "runtime_source_bytes_identical": true,
+      "compared_paths": [
+        "npa/src",
+        "npa/scripts"
+      ],
+      "changed_repository_files": [
+        "npa/ci/constraints.in",
+        "npa/ci/requirements.txt"
+      ],
+      "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer.",
+      "changed_compared_files": []
+    },
+    {
+      "producer": "0a678528e3a5e54863282ded4eef1307d9ac8f68",
+      "final_local_head": "70edfe4a38c53b624e3fdce368979238430cd18a",
+      "runtime_source_bytes_identical": true,
+      "compared_paths": [
+        "npa/src",
+        "npa/scripts"
+      ],
+      "changed_repository_files": [
+        "npa/ci/constraints.in",
+        "npa/ci/requirements.txt"
+      ],
+      "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer.",
+      "changed_compared_files": []
+    },
+    {
+      "producer": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+      "final_local_head": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+      "runtime_source_bytes_identical": true,
+      "compared_paths": [
+        "npa/src/npa/orchestration/skypilot/registry_preflight.py",
+        "npa/src/npa/orchestration/skypilot/image_bootstrap_contract.py",
+        "npa/src/npa/cli/workbench/workflow/__init__.py",
+        "npa/src/npa/orchestration/npa_workflow/skypilot_render.py"
+      ],
+      "changed_repository_files": [
+        "docs/cli/workflow.md",
+        "docs/workbench/npa-workflow-guide.md"
+      ],
+      "changed_compared_files": [],
+      "scope": "Actual live producer precedes the final documentation-only commit. All four recorded modules are byte-identical, and the complete repository diff contains only the two documented files. No new live run is claimed at the documentation commit."
+    }
+  ],
+  "previous_v6_integration": {
+    "commit": "16a4f2b3e4c1b2a5c373d93f73ca4141795dd688",
+    "tree": "62a03043e5f47bdb09c797f25cb3221828bccb6b"
+  },
+  "previous_v7_integration": {
+    "commit": "02dc1907d1d4319f7a329ebf3fecf275e3026210"
+  },
+  "final_documentation_equivalence_file": "final-documentation-source-equivalence.json",
+  "published_pr_heads": {
+    "652": "23aae56968d77abc1e1c5b6c57704b71811b3568",
+    "653": "98200307d4ff2a366cb882488ad89bc852585b61",
+    "654": "520777591be2a5f236572dae88439eb060c80d09",
+    "659": "afb4754802f11663a1c1c50280923066ad09110f",
+    "681": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+    "683": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+    "686": "3e08e29055e47701b40c2a7ecd0d7c5e65fa2007",
+    "692": "7656874d2726826f3c516ae884e4108c2293d588",
+    "709": "ce4ec078729896dc2211270d83f10d03aa91a240",
+    "716": "70edfe4a38c53b624e3fdce368979238430cd18a"
+  },
+  "public_source_commits": {
+    "final_integration": "https://github.com/nebius/nebius-physical-ai/commit/ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+    "actual_full_suite_integration": "https://github.com/nebius/nebius-physical-ai/commit/02dc1907d1d4319f7a329ebf3fecf275e3026210"
+  }
+}

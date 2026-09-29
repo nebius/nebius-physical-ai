@@ -1,0 +1,219 @@
+{
+  "schema": "npa.batch-six.retained-evidence.v1",
+  "historical_proofs": {
+    "654": {
+      "producer": "52dfa35d470642f632a845e4fb20002c0d35b218",
+      "scope": "Earlier protected CPU agent access, inventory and teardown. Historical deployed module bytes were not copied before teardown; superseded for fresh deployed-byte evidence by agent-metadata-live.json.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/d218a386dc5fbedf2833477a5651f3cc3b4c0fe2/docs/testing/evidence/agent-provenance-audit-52dfa35d/README.md"
+      ]
+    },
+    "659": {
+      "producer": "f1751358cd21bf48384fd597550da4a29fbfebb4",
+      "scope": "Historical B200 Kubernetes admission and durable storage discovery produced eight objects. The later cuRobo numeric audit failed; workload success is not claimed. Current source differs and no new GPU run is attributed to it.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/9fe5c38bc074f3b0ed41cd33177703471fe362fb/docs/testing/evidence/kubernetes-storage-admission-f1751358/README.md"
+      ]
+    },
+    "681": {
+      "producer": "f93ddc316ede4951875776f6617a917407ad4408",
+      "scope": "Historical synthetic scanner measurements and a separate rejected real-image scan. No production-image speedup or image acceptance is claimed.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/572b7fad2bd44a2e32bc38326c805ef21e625134/docs/testing/evidence/image-byte-scanner-f93ddc31/README.md"
+      ]
+    },
+    "683": {
+      "producer": "33f670a5a6eda11e66c1737f3e41201f67702e49",
+      "scope": "Earlier six-case local Kubernetes pull proof. The new seven-case execution is separately bound to its current producer.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/a2002707fd3255cac80e5323dceb36cc274c910d/docs/testing/evidence/kubernetes-pull-authority-33f670a5/README.md"
+      ]
+    },
+    "686": {
+      "producer": "841ceb59e051d7e7216992df56318c5cbbf7e7f5",
+      "scope": "Historical image-layer host-key absence and independent runtime startup-key proof. The relevant install/cleanup fragment matches; the whole current function and file differ. Recomputed 690 published error samples and six RMSE values; no new input-pose or workload execution.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/9631fc2d60edc6ec2f80e5fc935902c7838fd4fd/docs/testing/evidence/evo-ssh-key-repair-841ceb59/README.md"
+      ]
+    },
+    "692": {
+      "producer": "06b084f2db1870c6c258ce260e39e1e8379fa56b",
+      "scope": "Historical actual CPU-node provision/readiness/destroy with all three provider deadline fields set from the existing apply budget; eight readbacks established four owned resources absent. Not a forced-timeout or A/B benchmark.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/f4952d0f4bf6254e35d4e836b91ee7f222005c91/docs/testing/evidence/mk8s-provider-rpc-06b084f2/README.md"
+      ]
+    },
+    "709": {
+      "producer": "742cfda0d72bf272806054d32469f531a508fb16",
+      "reviewed_successor": "59f8829d23e16a553da310f26d7cc85f398a775f",
+      "scope": "Historical actual MK8s absence reconciliation of four original resources, complete inventories, durable journal/lease readback and repeat CLI without new provider reads. No new provider mutation or workload qualification.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/363cb7bc1df8e7526740e0b3a6d632daf27b8c90/docs/testing/evidence/mk8s-absence-reconciliation-59f8829d/README.md"
+      ]
+    },
+    "716": {
+      "accepted_id_producer": "6d0338661495eb521295db912c7e19b5de6ccf23",
+      "zero_id_producer": "b4c6568101e835e60e494206c6ec7ef71d908b61",
+      "scope": "Two historical actual Sky absence recoveries. This preparation rehashed 42 retained files and replayed current absence predicates against original responses. Historical workload outcome remains unknown; zero-ID historical queue stdout was not retained.",
+      "proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/6b48a001d27c11d8dd96b96c4a06693cb3b5a937/docs/testing/evidence/skypilot-absence-recovery-6d033866/README.md",
+        "https://github.com/nebius/nebius-physical-ai/blob/76b78182b3cc831cbeeeeedf73c85664dcc66806/docs/testing/evidence/skypilot-zero-id-recovery-b4c65681/README.md"
+      ]
+    }
+  },
+  "anonymous_readback": {
+    "storage_and_host_key": {
+      "659": {
+        "anonymous_hash_verified": [
+          {
+            "name": "README.md",
+            "bytes": 2109,
+            "sha256": "f836b241621a2da559beb8e007df8a194a9fdd1358b702348865cb2690e38dfa"
+          },
+          {
+            "name": "review.json",
+            "bytes": 3906,
+            "sha256": "0e76e39cbdf44d8702a4e049a4675b15da202cc4651000f834d55f31b0115228"
+          }
+        ],
+        "ref": "9fe5c38bc074f3b0ed41cd33177703471fe362fb"
+      },
+      "686": {
+        "anonymous_hash_verified": [
+          {
+            "name": "README.md",
+            "bytes": 3844,
+            "sha256": "c046f9a0c93752a5db3dc09ec11ab65befe2d6b4d3903763d013d0a79dda70e5"
+          },
+          {
+            "name": "report.json",
+            "bytes": 5371,
+            "sha256": "7e47374627d2897da90b8c02a8889e1ef56af544595e589c5f5e36eb738cfc39"
+          },
+          {
+            "name": "synthetic-controls.png",
+            "bytes": 84768,
+            "sha256": "399161ffcadc065b5d7028ea24fba68aba5d750c9458c5f4e38207942247bf04"
+          },
+          {
+            "name": "synthetic-errors.csv",
+            "bytes": 24788,
+            "sha256": "bc88ffab8e480587858f9a96d92dccc0bcc51554fdbb4fb07edb7d86fd45bdca"
+          }
+        ],
+        "ref": "9631fc2d60edc6ec2f80e5fc935902c7838fd4fd"
+      }
+    },
+    "provider_and_absence": [
+      {
+        "pr": 692,
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/f4952d0f4bf6254e35d4e836b91ee7f222005c91/docs/testing/evidence/mk8s-provider-rpc-06b084f2/README.md",
+        "verified": [
+          {
+            "file": "README.md",
+            "sha256": "0892b9c737c4ae0b26c2357231f4ecb2eeeec9296a24839f692c319a6c6f1197",
+            "http": 200
+          },
+          {
+            "file": "evidence.json",
+            "sha256": "97d2853c0823d384f90766a443fc102a50fb85abddfc66ecac26885b15216436",
+            "http": 200
+          }
+        ]
+      },
+      {
+        "pr": 709,
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/363cb7bc1df8e7526740e0b3a6d632daf27b8c90/docs/testing/evidence/mk8s-absence-reconciliation-59f8829d/README.md",
+        "verified": [
+          {
+            "file": "README.md",
+            "sha256": "656e5fc0edbaf6db52a2019d71319b4a83de13728e13a943ad53482b338fc53d",
+            "http": 200
+          },
+          {
+            "file": "review.json",
+            "sha256": "723b9d9f4e428ba71f7a5f52be92f7d028a9a1a662601929858b5dde81682f3d",
+            "http": 200
+          }
+        ]
+      },
+      {
+        "pr": 716,
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/6b48a001d27c11d8dd96b96c4a06693cb3b5a937/docs/testing/evidence/skypilot-absence-recovery-6d033866/README.md",
+        "verified": [
+          {
+            "file": "README.md",
+            "sha256": "67ed9fb1d4d73dd8f249d2cbabc8945acd4dab25d4592bb658bfd45bd91052d8",
+            "http": 200
+          },
+          {
+            "file": "result.json",
+            "sha256": "75162ba1f5ff0c2ece648759c885e6fc56b53fd75577ed8a36289466264b6441",
+            "http": 200
+          }
+        ]
+      },
+      {
+        "pr": 716,
+        "url": "https://github.com/nebius/nebius-physical-ai/blob/76b78182b3cc831cbeeeeedf73c85664dcc66806/docs/testing/evidence/skypilot-zero-id-recovery-b4c65681/README.md",
+        "verified": [
+          {
+            "file": "README.md",
+            "sha256": "dc2ee1daa8dc4be6c0920c07708c1802163e07d65df60e9809fdb127f2d4b1d3",
+            "http": 200
+          },
+          {
+            "file": "execution.json",
+            "sha256": "7bcde2f097dae49fcec4dba9bb025d864d308dfd112b2f5476a8fb3c5eb03e40",
+            "http": 200
+          },
+          {
+            "file": "read-observations.json",
+            "sha256": "23e9bf7924abc3b1a5cf402585b300aed9552d659f8791ca8e2861be59b66146",
+            "http": 200
+          },
+          {
+            "file": "validation.json",
+            "sha256": "50046719bba1ba2b74f3dbb289dc6edc145eee4abf48684a810c466f0fa0090f",
+            "http": 200
+          }
+        ]
+      }
+    ]
+  },
+  "current_recheck_of_historical_sky_responses": [
+    {
+      "contract": "accepted_ids",
+      "all_recorded_hashes_match": true,
+      "rehash_file_count": 21,
+      "fresh_reads_at_original_execution": 6,
+      "typed_404_responses": 3,
+      "inventory_counts": [
+        41,
+        21
+      ],
+      "current_absence_predicates_accept_recorded_responses": true,
+      "original_failure_and_history_preserved": true,
+      "terminal_journal_and_lease": true,
+      "new_live_execution": false,
+      "result_sha256": "a2c06c4f188b3824d264b7039eb3375aba3e66cd26cb48fb8e199a8cddb59aad"
+    },
+    {
+      "contract": "zero_ids",
+      "all_recorded_hashes_match": true,
+      "rehash_file_count": 21,
+      "fresh_reads_at_original_execution": 6,
+      "typed_404_responses": 3,
+      "inventory_counts": [
+        41,
+        21
+      ],
+      "current_absence_predicates_accept_recorded_responses": true,
+      "original_failure_and_history_preserved": true,
+      "terminal_journal_and_lease": true,
+      "new_live_execution": false,
+      "result_sha256": "93d69f17e84940ea2789184ec8937b6ba44a90271546518292f7a948d9956f6c"
+    }
+  ],
+  "not_current_live_execution": true
+}

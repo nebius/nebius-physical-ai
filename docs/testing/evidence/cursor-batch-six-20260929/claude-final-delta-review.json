@@ -1,0 +1,28 @@
+{
+  "status": "complete_no_confirmed_blocking_findings",
+  "reviewer": "Claude Opus static review",
+  "source_commit": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+  "compared_base": "16a4f2b3e4c1b2a5c373d93f73ca4141795dd688",
+  "reviewed_files": [
+    "npa/src/npa/cli/workbench/workflow/__init__.py",
+    "npa/tests/cli/test_workflow_submit_preflight.py",
+    "skills/atomic/guardrail-failures/SKILL.md",
+    "docs/cli/workflow.md",
+    "docs/workbench/npa-workflow-guide.md"
+  ],
+  "confirmed_findings": [],
+  "resolved": [
+    "The canonical parser preserves the complete context and agrees with real resolver, pull-probe and bootstrap call sites.",
+    "The eight new context assertions bind to reachable call sites and distinguish the old helper.",
+    "Handwritten guidance belongs in the maintained guide; restoring the generated CLI reference fixes generator drift.",
+    "The missing guardrail failure-index row names an existing test and matches its credential-isolation remedy.",
+    "The complete v7-to-final diff contains only two Markdown files; source and test bytes are unchanged."
+  ],
+  "nonblocking_observation": "Uppercase K8S input remains fail-closed under the existing lowercase-prefix parser contract; this is not a newly introduced failure mode.",
+  "artifact_sha256": "46aea9abd9e1d546abd2cdf2e82e61dea6a9285c8d943b31de106545d1cee35c",
+  "limitations": [
+    "Static source review only: no tests, GitHub query or approval, Kubernetes execution or installed SkyPilot comparison performed by this reviewer.",
+    "The full-suite, independent Codex controls, live lifecycle and pinned native Sky results are separate evidence the final reviewer did not reproduce."
+  ],
+  "human_github_approval": false
+}

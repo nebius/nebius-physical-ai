@@ -1,0 +1,66 @@
+{
+  "base": "8448df6a547f1a8b4a8692124dc56c0235da4261",
+  "head": "b145a06fbbd11b950f0ea67ad52fb2bea7fcd292",
+  "tree": "4669fb6a8c6ab7c5ca744b9b9a183290e2de2819",
+  "gate": {
+    "base": "8448df6a547f1a8b4a8692124dc56c0235da4261",
+    "head": "b145a06fbbd11b950f0ea67ad52fb2bea7fcd292",
+    "base_findings": 613,
+    "candidate_findings": 615,
+    "regressions": [
+      {
+        "scanner": "bandit",
+        "path": "npa/tests/e2e/test_agent_metadata_live.py",
+        "rule": "B501",
+        "identity": "60bd62b707fb43d77fa11a96b375eab9f14fe6b60ae8ffc6f5b812b7e477289b",
+        "line": 135,
+        "message": "Call to httpx with verify=False disabling SSL certificate checks, security issue."
+      },
+      {
+        "scanner": "bandit",
+        "path": "npa/tests/e2e/test_agent_metadata_live.py",
+        "rule": "B501",
+        "identity": "7908a2c240c012c332956e0403a0acf66610f5e13ad73d871e0d6ea099beedd9",
+        "line": 138,
+        "message": "Call to httpx with verify=False disabling SSL certificate checks, security issue."
+      }
+    ],
+    "blocking_findings": [
+      {
+        "scanner": "bandit",
+        "path": "npa/tests/e2e/test_agent_metadata_live.py",
+        "rule": "B501",
+        "identity": "60bd62b707fb43d77fa11a96b375eab9f14fe6b60ae8ffc6f5b812b7e477289b",
+        "line": 135,
+        "message": "Call to httpx with verify=False disabling SSL certificate checks, security issue."
+      },
+      {
+        "scanner": "bandit",
+        "path": "npa/tests/e2e/test_agent_metadata_live.py",
+        "rule": "B501",
+        "identity": "7908a2c240c012c332956e0403a0acf66610f5e13ad73d871e0d6ea099beedd9",
+        "line": 138,
+        "message": "Call to httpx with verify=False disabling SSL certificate checks, security issue."
+      },
+      {
+        "scanner": "trivy",
+        "path": "npa/ci/requirements.txt",
+        "rule": "CVE-2026-49264",
+        "identity": "oauthlib==3.3.1:CVE-2026-49264",
+        "line": 1,
+        "message": "oauthlib==3.3.1; fixed: 4.0.0"
+      },
+      {
+        "scanner": "trivy",
+        "path": "npa/ci/requirements.txt",
+        "rule": "CVE-2026-49265",
+        "identity": "oauthlib==3.3.1:CVE-2026-49265",
+        "line": 1,
+        "message": "oauthlib==3.3.1; fixed: 4.0.0"
+      }
+    ]
+  },
+  "status": "failed",
+  "retained_summary_sha256": "41ac231df64d85d765722953028fe9a5ab25b8b770d7f289aa89f2277e8477c1",
+  "scope": "Earlier failing native gate retained unchanged in attribution: two new disabled-TLS findings and two blocking unchanged OAuthLib CVEs. Verified TLS and the 4.0.0 dependency alignment removed those blockers in the later v6 comparison."
+}

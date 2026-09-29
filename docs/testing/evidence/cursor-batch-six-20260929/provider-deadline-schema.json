@@ -1,0 +1,33 @@
+{
+  "provider_version": "0.5.221",
+  "archive_sha256": "f008a7bc64effa2a39102882fbc9b03f636b617db650c9da0e8e1b944dce94fd",
+  "matches_committed_lock": true,
+  "schema_sha256": "a2f61aa388437dea36e53c54d4dfb03ab324ac698590b2cdd5b0637c2d5a3e8b",
+  "descriptions": {
+    "timeout": "SDK request deadline; observed default 60 seconds.",
+    "per_retry_timeout": "Deadline for an individual request attempt; observed default 20 seconds.",
+    "auth_timeout": "Request deadline that also includes authentication; observed default 900 seconds."
+  },
+  "verification": "terraform providers schema -json with a filesystem-only provider mirror and no credentials or remote backend; no provider API mutation",
+  "verdict": "No deadline behavior change: auth_timeout includes the entire request, and per_retry_timeout intentionally permits one slow create request to use the existing apply budget. Explicit operator retry counts and timeouts remain unchanged.",
+  "focused_tests": {
+    "passed": 66,
+    "failed": 0,
+    "seconds": 3.81,
+    "scope": "Provider materialization and live-evidence contract tests; not another cloud lifecycle."
+  },
+  "final_source_relationship": {
+    "producer": "c91ce03e6e40cb2c911609f8412b078d991b86eb",
+    "final_local_head": "7656874d2726826f3c516ae884e4108c2293d588",
+    "runtime_source_bytes_identical": true,
+    "compared_paths": [
+      "npa/src",
+      "npa/scripts"
+    ],
+    "changed_repository_files": [
+      "npa/ci/constraints.in",
+      "npa/ci/requirements.txt"
+    ],
+    "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer."
+  }
+}

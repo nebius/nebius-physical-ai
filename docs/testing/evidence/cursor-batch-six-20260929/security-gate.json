@@ -1,0 +1,151 @@
+{
+  "base": "8448df6a547f1a8b4a8692124dc56c0235da4261",
+  "head": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+  "policy": {
+    "security_gate.py": "2155d2c8fd9294df346721feda504d9fd0ebba287a48d2df72f6bfe3de4c3905",
+    "security_source.py": "dfe7df9a3da6340fa24d04363850ad0e78fb6a250eb341ebbacd0e37e67d52e4",
+    "security_dependencies.py": "d4a43249c70ad2ae3cee75ffff62f9476e4080cd8ef23b80f1887b900889a9b5",
+    "security_regression_checks.py": "678fdbce69c6429b86f6bf38b9a552d289181c7b256f501e9c5cc8b589852df3",
+    "security_install.sh": "a4b64be8c34ef899b6a9b93b3352b01bfc111d4a623431a15791b7e7ff013151",
+    "security-requirements.txt": "190f4c090d2dc19ce9e1f98e86604848ebb228c99c53d16b83842f43a7d41fae"
+  },
+  "gate": {
+    "base": "8448df6a547f1a8b4a8692124dc56c0235da4261",
+    "head": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+    "base_findings": 613,
+    "candidate_findings": 611,
+    "regressions": [],
+    "blocking_findings": []
+  },
+  "regression_proof": {
+    "source": {
+      "initial_findings": 2,
+      "duplicate_rejected": true,
+      "moved_rejected": true,
+      "existing_tolerated": true,
+      "inline_suppressions_ignored": true
+    },
+    "dependencies": {
+      "findings": 17,
+      "python_rejected": true,
+      "npm_rejected": true,
+      "existing_tolerated": true
+    },
+    "current_dependencies": {
+      "unchanged_rejected": true,
+      "patched_accepted": true
+    },
+    "parse_failure_rejected": true,
+    "fixtures_executed_or_installed": false
+  },
+  "steps": {
+    "freeze": {
+      "exit": 0,
+      "seconds": 0.184
+    },
+    "trivy-version": {
+      "exit": 0,
+      "seconds": 0.09
+    },
+    "real-regressions": {
+      "exit": 0,
+      "seconds": 7.17
+    },
+    "comparison": {
+      "exit": 0,
+      "seconds": 124.039
+    }
+  },
+  "python_tools": [
+    "bandit==1.9.4",
+    "markdown-it-py==4.2.0",
+    "mdurl==0.1.2",
+    "packaging==26.3",
+    "pip==25.0.1",
+    "Pygments==2.21.0",
+    "PyYAML==6.0.3",
+    "rich==15.0.0",
+    "stevedore==5.9.1",
+    "uv==0.12.17",
+    "zizmor==1.30.1"
+  ],
+  "scope": "Fresh actual pinned scanners from trusted base policy, full Git base/candidate snapshots, fresh vulnerability DB; existing isolated scanner tools reused read-only. Candidate application was not executed or installed by this gate. Collector consumed the existing root-started v7 run without starting another scan.",
+  "policy_byte_identical_base_candidate": true,
+  "vulnerability_db_metadata": {
+    "Version": 2,
+    "NextUpdate": "2026-09-30T19:09:08.570009207Z",
+    "UpdatedAt": "2026-09-29T19:09:08.570009916Z",
+    "DownloadedAt": "2026-09-29T22:54:29.734907538Z"
+  },
+  "trivy_version": "0.74.0",
+  "source_bindings": [
+    {
+      "repository_path": "npa/ci/constraints.in",
+      "sha256": "2cc7f4b6e56821e6820764a12fa5795619c02c9a74ca9c1baba651be0613a044"
+    },
+    {
+      "repository_path": "npa/ci/requirements.txt",
+      "sha256": "18b81c781ed6eeccc3227746631ab46f575de2b7ca582a83bb94386dce15afe2"
+    },
+    {
+      "repository_path": "npa/tests/e2e/test_agent_metadata_live.py",
+      "sha256": "f0e954cc9049061ca2fd41e45feb4cf5b429427aec54d875a0551e9f63e38171"
+    },
+    {
+      "repository_path": "npa/scripts/image_byte_scan/go_helper/main.go",
+      "sha256": "82e05a0c5b0e2679f1f3bb11cbc312575d99db68ceaa58bb07e19b776be397a8"
+    },
+    {
+      "repository_path": "npa/scripts/image_byte_scan/core.py",
+      "sha256": "ff22f1c7a83f5bddfbf4915cb4944a95dc02aa34693bd2ed495ebd2dc3213172"
+    },
+    {
+      "repository_path": "npa/src/npa/orchestration/skypilot/registry_preflight.py",
+      "sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+    },
+    {
+      "repository_path": "npa/src/npa/cli/workbench/workflow/__init__.py",
+      "sha256": "8e34b9cc83e07daf11538f456bcd262c83596869aaa974e408ab973b747dedbb"
+    },
+    {
+      "repository_path": "npa/src/npa/orchestration/skypilot/k8s_gpu_catalog.py",
+      "sha256": "e09e0d32ec5c71d6333755a27434afd8f1b22082883de7c165dad4df0570fd49"
+    },
+    {
+      "repository_path": "npa/tests/cli/test_workflow_submit_preflight.py",
+      "sha256": "207971af0cb58a190ee823deb926d0f96696595ffa4829a5a1def7d3f632bdd5"
+    }
+  ],
+  "retained_report_sha256": "cc81b8eb279347f7c36b77acdc0dc3c73284964ad9e35bf7e848e5c23c08cdda",
+  "retained_evidence_digests": [
+    {
+      "label": "comparison/summary.json",
+      "sha256": "0523d3fb5debb10bc1f562484760935ccd84e0f712793f1d96c601123005e195"
+    },
+    {
+      "label": "regressions/regression-proof.json",
+      "sha256": "f89556d295eec119d8b7706c5ac749970cc44fab8f0254e99869bf19a623eb21"
+    },
+    {
+      "label": "comparison.log",
+      "sha256": "476df2e0e8f71ac836429df870cdafdbed895a027eaf282343860b96a9a8a1bc"
+    },
+    {
+      "label": "real-regressions.log",
+      "sha256": "5ddcecd64d07327db162400476ce3d0fda4d6f3e0320fff6113459b8264298b9"
+    },
+    {
+      "label": "freeze.log",
+      "sha256": "7e333b77e430ac7988a58e0c020496f8b20d6f271d92311b10c82f8f17500cdc"
+    },
+    {
+      "label": "trivy-db-metadata.json",
+      "sha256": "ddec77056c6232924538e274b362281e677266d1e470ce96edc5add8864b5a20"
+    }
+  ],
+  "status": "passed",
+  "limits": [
+    "613 baseline and 611 candidate findings are retained; zero regressions and zero blocking findings do not mean zero findings.",
+    "This native source/dependency gate does not replace the full application test suite, hosted CI, human review or merge-queue admission."
+  ]
+}

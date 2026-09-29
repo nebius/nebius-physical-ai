@@ -1,0 +1,171 @@
+{
+  "schema": "npa.batch-six.validation.v1",
+  "merge_ready": true,
+  "final_heads": {
+    "652": "23aae56968d77abc1e1c5b6c57704b71811b3568",
+    "653": "98200307d4ff2a366cb882488ad89bc852585b61",
+    "654": "520777591be2a5f236572dae88439eb060c80d09",
+    "659": "afb4754802f11663a1c1c50280923066ad09110f",
+    "681": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+    "683": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+    "686": "3e08e29055e47701b40c2a7ecd0d7c5e65fa2007",
+    "692": "7656874d2726826f3c516ae884e4108c2293d588",
+    "709": "ce4ec078729896dc2211270d83f10d03aa91a240",
+    "716": "70edfe4a38c53b624e3fdce368979238430cd18a"
+  },
+  "combined_full_suite": {
+    "status": "passed",
+    "result": "passed",
+    "source_commit": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+    "passed": 34744,
+    "failed": 0,
+    "errors": 0,
+    "skipped": 156,
+    "xpassed": 1,
+    "xpass_scope": "Non-strict expected-failure marker; does not fail pytest.",
+    "seconds": 433.33,
+    "driver_seconds": 436.0,
+    "log_sha256": "3099937d1a415b3e2d341707f4e5751bd0376ba528be8f670885a8d6b933a304",
+    "receipt_status": "Private execution log copied and SHA256-bound; raw log not included.",
+    "final_candidate_equivalence_file": "final-documentation-source-equivalence.json"
+  },
+  "final_github_checks": {
+    "status": "passed",
+    "observed_at": "2026-09-29T23:32:10.445071+00:00",
+    "expected_heads_matched": 10,
+    "latest_check_runs": 257,
+    "success": 218,
+    "skipped": 39,
+    "unfinished_or_failed": 0,
+    "evidence_file": "hosted-ci.json",
+    "retry_history_file": "hosted-ci-retry.json"
+  },
+  "claude_review": {
+    "status": "completed_with_one_new_finding",
+    "result": "review_findings_resolved_by_separately_verified_final_fix",
+    "source_commit": "16a4f2b3e4c1b2a5c373d93f73ca4141795dd688",
+    "source_tree": "62a03043e5f47bdb09c797f25cb3221828bccb6b",
+    "artifact_sha256": "da01cd6167e97fec8291d2dcc0df8c29b5163b65fe40850459dcea0c960e104b",
+    "evidence_file": "claude-followup-review.json",
+    "human_approval": false,
+    "post_repair_review": {
+      "status": "complete_no_unresolved_confirmed_findings",
+      "claude_scope": "Initial and follow-up Claude reviews completed; the follow-up reviewed v6 and resolved the seven earlier findings and H1-H3, then found the slash-context defect. Claude did not directly review v7.",
+      "final_fix_head": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+      "final_fix_review": "Independent Codex source review and nine passing regression controls; restoring the old helper rejected all eight distinguishing cases. The coordinating agent also reviewed the patch.",
+      "final_fix_live": "Nine actual Kubernetes cases at the parser-fix producer include the changed planner and pre-probe context refusal; the final documentation-only successor has identical runtime bytes.",
+      "evidence_files": [
+        "kubernetes-context-review.json",
+        "kubernetes-context-fix.json",
+        "kubernetes-pull-live.json"
+      ],
+      "human_github_approval": false
+    },
+    "final_delta_review": {
+      "status": "complete_no_confirmed_blocking_findings",
+      "source_commit": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+      "evidence_file": "claude-final-delta-review.json"
+    }
+  },
+  "final_security_and_privacy": {
+    "status": "source_dependency_and_packet_privacy_passed",
+    "source_dependency_gate": {
+      "status": "passed",
+      "source_commit": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+      "base_findings": 613,
+      "candidate_findings": 611,
+      "regressions": 0,
+      "blocking_findings": 0,
+      "evidence_file": "security-gate.json",
+      "final_candidate_equivalence_file": "final-documentation-source-equivalence.json"
+    },
+    "packet_privacy": {
+      "status": "passed",
+      "evidence_file": "packet-validation.json"
+    },
+    "candidate_revalidation_required": false
+  },
+  "final_ordered_merge_simulation": {
+    "status": "completed_local_integration",
+    "source_commit": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+    "scope": "All ten final candidates integrated in order; all local and hosted checks passed. Merge-queue execution is a later action."
+  },
+  "operator_note": "Ready for the documented merge sequence at the recorded published heads. All validation and review gates are complete, with source attribution preserved. Merge-queue execution and any human approval remain separate actions.",
+  "final_heads_scope": "All ten expected published PR heads read back through GitHub with successful required checks and clean mergeability at the recorded observation.",
+  "retained_initial_full_suite": {
+    "status": "failed",
+    "passed": 34563,
+    "failed": 36,
+    "errors": 115,
+    "skipped": 156,
+    "xpassed": 1,
+    "seconds": 918.77,
+    "log_sha256": "5fd6c2a164c02be3fcee8074677ab88b3aade3efc31ed844b0d576068fd7b004",
+    "triage": {
+      "environment_failures_or_errors": 149,
+      "environment_cause": "The task root was group writable and a shared temporary namespace collided with security fixtures that require owner-only directories.",
+      "environment_repair": "Corrected directory permissions and separated the namespace and security temporary directories without changing security source guards.",
+      "same_source_affected_recheck": {
+        "passed": 347,
+        "failed": 0,
+        "seconds": 3.25
+      },
+      "remaining_two_repairs": [
+        "Registered the new manual agent lifecycle environment gate.",
+        "Mocked manifest preflight in the test targeting a later post-provision failure."
+      ]
+    },
+    "not_a_passing_full_suite": true
+  },
+  "completed_local_gates": {
+    "status": "passed",
+    "source_commit": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+    "evidence_file": "completed-local-gates.json"
+  },
+  "retained_v6_full_suite": {
+    "status": "failed",
+    "result": "failed",
+    "source_commit": "16a4f2b3e4c1b2a5c373d93f73ca4141795dd688",
+    "source_tree": "62a03043e5f47bdb09c797f25cb3221828bccb6b",
+    "passed": 34735,
+    "failed": 1,
+    "errors": 0,
+    "skipped": 156,
+    "xpassed": 1,
+    "seconds": 432.97,
+    "log_sha256": "0cf9ea49c90858c183b2271ebfb8ae901a84e40804797e40dc77728773761dd3",
+    "failure": "test_failure_index_documents_every_guardrail: missing index entry for the new credential isolation guardrail",
+    "repair_status": "The missing guardrail index entry is repaired at #654 520777591; 127 documentation/skill checks passed. This earlier full-suite run remains failed.",
+    "not_a_passing_full_suite": true
+  },
+  "next_full_suite": {
+    "status": "completed",
+    "evidence_field": "combined_full_suite"
+  },
+  "candidate_updates": {
+    "status": "documentation_only_repair_bound",
+    "evidence_file": "final-documentation-source-equivalence.json"
+  },
+  "final_documentation_equivalence_file": "final-documentation-source-equivalence.json",
+  "retained_v7_documentation_gate": {
+    "status": "failed",
+    "source_commit": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+    "cause": "Twelve lines of handwritten preflight guidance had been added to generated docs/cli/workflow.md, so CLI reference regeneration detected drift.",
+    "repair": "Move the guidance into maintained docs/workbench/npa-workflow-guide.md and restore the generated reference page.",
+    "repair_head": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+    "log_sha256": "344a9535a6932f337464353ec6674af69d34e0ee0a3343354527952a089a17da",
+    "not_a_passing_docs_gate": true
+  },
+  "final_documentation_gate": {
+    "status": "passed",
+    "source_commit": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+    "driver_seconds": 88.15,
+    "log_sha256": "db9e0ce5f1d8035c906244c27c4b7c022628d1f0149f581ffeee5e5bb7c2cf7d",
+    "evidence_file": "final-local-validation.json"
+  },
+  "final_local_gates": {
+    "status": "passed",
+    "evidence_file": "final-local-validation.json"
+  },
+  "readiness_observed_at": "2026-09-29T23:32:10.445071+00:00"
+}

@@ -1,0 +1,301 @@
+{
+  "schema": "npa.cursor-program.batch-six-review.v1",
+  "recorded_date": "2026-09-29",
+  "status": "merge_ready_at_recorded_published_heads",
+  "merge_ready": true,
+  "base": "8448df6a547f1a8b4a8692124dc56c0235da4261",
+  "proposed_merge_order": [
+    652,
+    653,
+    654,
+    659,
+    681,
+    683,
+    686,
+    692,
+    709,
+    716
+  ],
+  "dependency_sequences": [
+    [
+      692,
+      709,
+      716
+    ]
+  ],
+  "prs": [
+    {
+      "number": 652,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/652",
+      "purpose": "Retry ambiguous pre-launch Kubernetes readiness evidence",
+      "prepared_source": "23aae56968d77abc1e1c5b6c57704b71811b3568",
+      "final_published_head": "23aae56968d77abc1e1c5b6c57704b71811b3568",
+      "historical_proof_links": [],
+      "scoped_validation": {
+        "passed": 66,
+        "failed": 0,
+        "log_sha256": "af570fb174b59ab3be713020d6c986ced374ad2ad15e538ce34fd43c1c6dec48",
+        "source_binding": "Prepared source or predecessor with unchanged tested production paths; final full integration gate is separate.",
+        "source_commit": "d633863fd66c65ef8075507f4aa1dc177f5f6057",
+        "source_tree": "2435eabedb45ffef7049edd844fc917820993c1a"
+      },
+      "earlier_prepared_source": "d633863fd66c65ef8075507f4aa1dc177f5f6057",
+      "final_local_head": "23aae56968d77abc1e1c5b6c57704b71811b3568",
+      "merge_ready": true
+    },
+    {
+      "number": 653,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/653",
+      "purpose": "Redact durable workflow diagnostics without quadratic marker scans",
+      "prepared_source": "98200307d4ff2a366cb882488ad89bc852585b61",
+      "final_published_head": "98200307d4ff2a366cb882488ad89bc852585b61",
+      "historical_proof_links": [],
+      "scoped_validation": {
+        "passed": 96,
+        "failed": 0,
+        "log_sha256": "1639d161bce494ef4db73ee9e48e97507692eecaa197d867449ada48ed7b2837",
+        "source_binding": "Prepared source or predecessor with unchanged tested production paths; final full integration gate is separate.",
+        "source_commit": "2b6a7f18238a131014a53e47b1deb6ab813cf3dc",
+        "source_tree": "c0a4cf016b16b2006a6fa103ec5a2b5d35df35c4"
+      },
+      "earlier_prepared_source": "2b6a7f18238a131014a53e47b1deb6ab813cf3dc",
+      "final_local_head": "98200307d4ff2a366cb882488ad89bc852585b61",
+      "merge_ready": true
+    },
+    {
+      "number": 654,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/654",
+      "purpose": "Bound metadata credential requests and owned process cleanup",
+      "prepared_source": "520777591be2a5f236572dae88439eb060c80d09",
+      "final_published_head": "520777591be2a5f236572dae88439eb060c80d09",
+      "historical_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/d218a386dc5fbedf2833477a5651f3cc3b4c0fe2/docs/testing/evidence/agent-provenance-audit-52dfa35d/README.md"
+      ],
+      "scoped_validation": {
+        "passed": 97,
+        "failed": 0,
+        "log_sha256": "d117dc96757e4b0c31d262872abd41feb3369418b69113e958a181ffc505bdfb",
+        "source_binding": "Prepared source or predecessor with unchanged tested production paths; final full integration gate is separate.",
+        "source_commit": "ccdea9492f0e94802750ca0733be635ad6a638d8",
+        "source_tree": "fec15ca1c5d8b7d1755c8d5e00b8491cf1e47dad"
+      },
+      "earlier_prepared_source": "ccdea9492f0e94802750ca0733be635ad6a638d8",
+      "final_local_head": "520777591be2a5f236572dae88439eb060c80d09",
+      "review_followup_evidence": {
+        "verified_tls_live": "agent-metadata-live.json",
+        "manual_gate_tests_passed": 4,
+        "guardrail_index_tests_passed": 127
+      },
+      "merge_ready": true
+    },
+    {
+      "number": 659,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/659",
+      "purpose": "Allow Nebius storage for Kubernetes while preserving LIBERO isolation",
+      "prepared_source": "afb4754802f11663a1c1c50280923066ad09110f",
+      "final_published_head": "afb4754802f11663a1c1c50280923066ad09110f",
+      "historical_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/9fe5c38bc074f3b0ed41cd33177703471fe362fb/docs/testing/evidence/kubernetes-storage-admission-f1751358/README.md"
+      ],
+      "scoped_validation": {
+        "distinguishing_controls_passed": 16,
+        "distinguishing_controls_failed": 0,
+        "macos_broader_passed": 624,
+        "macos_broader_failed": 2,
+        "macos_failures_reproduced_on_main": 2,
+        "linux_combined_gate": {
+          "status": "passed",
+          "source_commit": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+          "evidence_file": "validation-pending.json"
+        }
+      },
+      "earlier_prepared_source": "fb5d702a71048549fb8c11d0a87044cdf0ed0bbc",
+      "final_local_head": "afb4754802f11663a1c1c50280923066ad09110f",
+      "merge_ready": true
+    },
+    {
+      "number": 681,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/681",
+      "purpose": "Scan complete image bytes concurrently without changing ledger order",
+      "prepared_source": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+      "final_published_head": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+      "historical_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/572b7fad2bd44a2e32bc38326c805ef21e625134/docs/testing/evidence/image-byte-scanner-f93ddc31/README.md"
+      ],
+      "scoped_validation": {
+        "passed": 806,
+        "failed": 0,
+        "skipped": 0,
+        "seconds": 27.53,
+        "source_commit": "7f3f942404446e61730126e4cf69c9a16d69b7a0",
+        "source_tree": "d28ad32af75e898188bd7ade1f0bb409b9ea16b5"
+      },
+      "earlier_prepared_source": "7f3f942404446e61730126e4cf69c9a16d69b7a0",
+      "final_local_head": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+      "review_followup_evidence": {
+        "memory_and_runtime_review": "scanner-memory-review.json",
+        "additional_go_test_observations_passed": 50
+      },
+      "merge_ready": true
+    },
+    {
+      "number": 683,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/683",
+      "purpose": "Verify actual admitted Kubernetes pull authority and cleanup",
+      "prepared_source": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+      "final_published_head": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+      "historical_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/a2002707fd3255cac80e5323dceb36cc274c910d/docs/testing/evidence/kubernetes-pull-authority-33f670a5/README.md"
+      ],
+      "scoped_validation": {
+        "passed": 531,
+        "failed": 0,
+        "log_sha256": "5a727e116e44287e15473e5cd9e521b6785d4c7c78d611b8bef6bc43623776a9",
+        "source_binding": "Historical focused suite retains its original producer. Later authority and CLI parser changes have separate current-source controls; this count is not a final-head full-suite result.",
+        "source_commit": "90ec04846dcaf3062eca10feba2a487752ad7a55",
+        "source_tree": "eb233034cd73ddc62bbea655a297641aa5a58d7d"
+      },
+      "earlier_prepared_source": "90ec04846dcaf3062eca10feba2a487752ad7a55",
+      "final_local_head": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+      "review_followup_evidence": {
+        "fresh_kubernetes_live": "kubernetes-pull-live.json",
+        "native_schema": "skypilot-native-authority-schema.json",
+        "review_controls": "kubernetes-authority-review.json",
+        "canonical_context_review": "kubernetes-context-review.json"
+      },
+      "merge_ready": true
+    },
+    {
+      "number": 686,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/686",
+      "purpose": "Remove generated SSH host keys in the installation layer",
+      "prepared_source": "3e08e29055e47701b40c2a7ecd0d7c5e65fa2007",
+      "final_published_head": "3e08e29055e47701b40c2a7ecd0d7c5e65fa2007",
+      "historical_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/9631fc2d60edc6ec2f80e5fc935902c7838fd4fd/docs/testing/evidence/evo-ssh-key-repair-841ceb59/README.md"
+      ],
+      "scoped_validation": {
+        "same_layer_control_passed": true,
+        "old_main_later_layer_mutation_rejected": true,
+        "macos_broader_passed": 120,
+        "macos_broader_failed": 19,
+        "macos_failures_reproduced_on_main": 19,
+        "linux_combined_gate": {
+          "status": "passed",
+          "source_commit": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+          "evidence_file": "validation-pending.json"
+        }
+      },
+      "earlier_prepared_source": "26ba19f4866479db70219a1315a2e543d9e62f7a",
+      "final_local_head": "3e08e29055e47701b40c2a7ecd0d7c5e65fa2007",
+      "merge_ready": true
+    },
+    {
+      "number": 692,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/692",
+      "purpose": "Align provider RPC deadlines with existing apply budget",
+      "prepared_source": "7656874d2726826f3c516ae884e4108c2293d588",
+      "final_published_head": "7656874d2726826f3c516ae884e4108c2293d588",
+      "historical_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/f4952d0f4bf6254e35d4e836b91ee7f222005c91/docs/testing/evidence/mk8s-provider-rpc-06b084f2/README.md"
+      ],
+      "scoped_validation": {
+        "passed": 579,
+        "failed": 0,
+        "log_sha256": "945bd0c00b33f78d7afa0777b3e59ccedbf2ca4a21aea459927ba5b9f5146a27",
+        "source_binding": "Prepared source or predecessor with unchanged tested production paths; final full integration gate is separate.",
+        "source_commit": "933f930883df4ef0c359067d321eec2b0e9b5859",
+        "source_tree": "f5d223472b4762265eb10cff42d6c8e145699592"
+      },
+      "earlier_prepared_source": "a837eb984047e718c6e3de57667fbf0be7a4653d",
+      "final_local_head": "7656874d2726826f3c516ae884e4108c2293d588",
+      "review_followup_evidence": {
+        "pinned_schema_and_66_focused_tests": "provider-deadline-schema.json"
+      },
+      "merge_ready": true
+    },
+    {
+      "number": 709,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/709",
+      "purpose": "Finalize owned cluster operations after verified absence",
+      "prepared_source": "ce4ec078729896dc2211270d83f10d03aa91a240",
+      "final_published_head": "ce4ec078729896dc2211270d83f10d03aa91a240",
+      "historical_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/363cb7bc1df8e7526740e0b3a6d632daf27b8c90/docs/testing/evidence/mk8s-absence-reconciliation-59f8829d/README.md"
+      ],
+      "scoped_validation": {
+        "passed": 50,
+        "failed": 0,
+        "log_sha256": "6ce029e0f0d58506f27091ac6cb959c9835add55b7f92625a25ae1f1e3ac1607",
+        "source_binding": "Prepared source or predecessor with unchanged tested production paths; final full integration gate is separate.",
+        "source_commit": "5670c7c0b1c5e1704405333f4393d0b9a4c80872",
+        "source_tree": "68cd6f72768f6837a712d171ea117b0d06d7516b"
+      },
+      "earlier_prepared_source": "81fe50769d953b45c739baef4f4e3f56f6afe145",
+      "final_local_head": "ce4ec078729896dc2211270d83f10d03aa91a240",
+      "review_followup_evidence": {
+        "current_60_security_and_recovery_tests": "recovery-source-security.json"
+      },
+      "merge_ready": true
+    },
+    {
+      "number": 716,
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/716",
+      "purpose": "Reconcile absent Sky resources while retaining original failure evidence",
+      "prepared_source": "70edfe4a38c53b624e3fdce368979238430cd18a",
+      "final_published_head": "70edfe4a38c53b624e3fdce368979238430cd18a",
+      "historical_proof_links": [
+        "https://github.com/nebius/nebius-physical-ai/blob/6b48a001d27c11d8dd96b96c4a06693cb3b5a937/docs/testing/evidence/skypilot-absence-recovery-6d033866/README.md",
+        "https://github.com/nebius/nebius-physical-ai/blob/76b78182b3cc831cbeeeeedf73c85664dcc66806/docs/testing/evidence/skypilot-zero-id-recovery-b4c65681/README.md"
+      ],
+      "scoped_validation": {
+        "passed": 137,
+        "failed": 0,
+        "log_sha256": "e0a6adaac44712a1ec89c8661f94ab383d9f238822a7d50f27a1145eb26e5d2b",
+        "source_binding": "Prepared source or predecessor with unchanged tested production paths; final full integration gate is separate.",
+        "source_commit": "2c6762467d1883420075bbbbef62b49c854be677",
+        "source_tree": "85e98bbb85de6d299eaf98abd80b1937507b83b4"
+      },
+      "earlier_prepared_source": "4b18e1d06fa1cd77a2ead10a27bf12054dbdd8bd",
+      "final_local_head": "70edfe4a38c53b624e3fdce368979238430cd18a",
+      "review_followup_evidence": {
+        "propagated_security_controls": "recovery-source-security.json"
+      },
+      "merge_ready": true
+    }
+  ],
+  "execution_summary": {
+    "current_preparation": "Codex, without Cursor execution",
+    "new_gpu_runs": 0,
+    "new_vlm_runs": 0,
+    "fresh_agent_live_tests_passed": 1,
+    "fresh_kubernetes_pull_cases_passed": 9,
+    "fresh_terminal_capability_live_tests_passed": 1,
+    "historical_sky_files_rehashed": 42,
+    "latest_kubernetes_live_producer": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+    "latest_verified_tls_agent_producer": "0cf9bca8190ba18c45e1b4ec1d37fcd2d18ed72c"
+  },
+  "validation_file": "validation-pending.json",
+  "scope_limits": [
+    "Current CPU/native/live controller evidence is distinct from historical GPU evidence.",
+    "No new GPU performance, robot-policy, visual-quality or VLM acceptance is claimed.",
+    "Raw credentials, infrastructure identities, private endpoints and operational paths remain outside this packet.",
+    "AI review records do not represent an independent human GitHub approval."
+  ],
+  "final_local_integration": {
+    "commit": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35"
+  },
+  "review_resolutions_file": "review-resolutions.json",
+  "evidence_counts_overlap": true,
+  "remaining_actions": [],
+  "claude_followup_file": "claude-followup-review.json",
+  "final_documentation_equivalence_file": "final-documentation-source-equivalence.json",
+  "final_local_validation_file": "final-local-validation.json",
+  "published_source_commits": {
+    "final_integration": "https://github.com/nebius/nebius-physical-ai/commit/ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+    "actual_full_suite_integration": "https://github.com/nebius/nebius-physical-ai/commit/02dc1907d1d4319f7a329ebf3fecf275e3026210"
+  },
+  "readiness_observed_at": "2026-09-29T23:32:10.445071+00:00",
+  "hosted_ci_file": "hosted-ci.json",
+  "final_delta_review_file": "claude-final-delta-review.json"
+}

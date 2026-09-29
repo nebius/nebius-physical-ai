@@ -1,0 +1,86 @@
+{
+  "tests": {
+    "exit": 0,
+    "seconds": 3.822,
+    "counts": {
+      "passed": 50,
+      "declared": 34,
+      "skipped": 0,
+      "failed": 0
+    }
+  },
+  "vet": {
+    "exit": 0,
+    "seconds": 1.396
+  },
+  "executable_tokens": {
+    "equal": true,
+    "sha256": "cf50ce839085931441a50b6bb17ef1f2a51b54d8c20d08b41f9c8e563e502cb0"
+  },
+  "runtime_default": {
+    "gomaxprocs": 48,
+    "num_cpu": 48,
+    "version": "go1.27.1"
+  },
+  "runtime_one_cpu_affinity": {
+    "gomaxprocs": 1,
+    "num_cpu": 1,
+    "version": "go1.27.1"
+  },
+  "source_sha256": "82e05a0c5b0e2679f1f3bb11cbc312575d99db68ceaa58bb07e19b776be397a8",
+  "runtime_source_sha256": {
+    "debug.go": "01d5f04213a154af89bee99c8acfafa16ff116b83765126ad970c55f4df1d222",
+    "cgroup_linux.go": "a2237d59862ebb1fd5f85750663cfe03965463a6d6bf21e5a411df26504f5f7f"
+  },
+  "head": "8f5746ba3601337756c3a256dc9e9dc6c3a1a395",
+  "tree": "ed738f17b2f6e90863f1ddbf976760c3f9f41e14",
+  "review_disposition": {
+    "payload_reservation": "Existing 512 MiB contract bounds admitted raw payload allocations only; record larger than that still runs alone. No RSS cap claimed. Reserving twice length would halve that allowance and still not bound detector working memory.",
+    "memory_comments": "Removed unsupported three-copy approximation and resident-set bound from source comments; retained measured 8.04-9.85x single-record RSS table and scope.",
+    "cpu_default": "Pinned Go1.27.1 runtime source implements Linux cgroup-aware defaults for module go1.26; worker count sampled at startup. Actual affinity run passed; no live CPU-quota cgroup created.",
+    "environment": "Only PATH inherited by owned helper already on base8448df6a. Credential and configuration isolation deliberately preserved. GOMAXPROCS/GOMEMLIMIT/GODEBUG do not pass through.",
+    "runtime_changes": false,
+    "secrecy_gates": "Staged gitleaks and built-in confidentiality passed."
+  },
+  "final_source_relationship": {
+    "producer": "8f5746ba3601337756c3a256dc9e9dc6c3a1a395",
+    "final_local_head": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+    "runtime_source_bytes_identical": true,
+    "compared_paths": [
+      "npa/src",
+      "npa/scripts"
+    ],
+    "changed_repository_files": [
+      "npa/ci/constraints.in",
+      "npa/ci/requirements.txt",
+      "npa/pyproject.toml"
+    ],
+    "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer."
+  },
+  "retained_log_digests": [
+    {
+      "label": "vet.stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "tests.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "vet.status.json",
+      "sha256": "38d78f6e8fc5ccb0885383702eb01f17e4b35155205d109b608364a44e0b27c9"
+    },
+    {
+      "label": "vet.stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "label": "tests.status.json",
+      "sha256": "38d78f6e8fc5ccb0885383702eb01f17e4b35155205d109b608364a44e0b27c9"
+    },
+    {
+      "label": "tests.stdout.log",
+      "sha256": "398e48cf736d0b422f830bb85cb7a61eaf5aefb1ff00f9f72c2e4328e94ea352"
+    }
+  ]
+}

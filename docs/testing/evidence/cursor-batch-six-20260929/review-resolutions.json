@@ -1,0 +1,125 @@
+{
+  "initial_review": {
+    "source_commit": "19153d8e",
+    "artifact_sha256": "5a65f252a7a9385104c4061ae1c89975096602bdedca37c99a2a154597254a28",
+    "kind": "Claude static analysis; reviewer explicitly did not run tests"
+  },
+  "new_claude_review": "completed_with_one_new_finding",
+  "human_github_approval": false,
+  "resolutions": [
+    {
+      "id": "1",
+      "prs": "692",
+      "finding": "Provider auth and retry deadlines",
+      "disposition": "Reviewed; rationale clarified",
+      "evidence_summary": "The exact lock-pinned 0.5.221 schema says auth_timeout includes the request and authentication, default 15 minutes. The 20-second attempt default would still interrupt a slow create. One slow attempt may use the existing apply budget; earlier errors can retry. No behavior or operator budget changed.",
+      "evidence_file": "provider-deadline-schema.json"
+    },
+    {
+      "id": "2",
+      "prs": "681",
+      "finding": "Memory and CPU sizing claims",
+      "disposition": "Documentation corrected; behavior retained",
+      "evidence_summary": "The 512 MiB admission accounting covers raw payloads, not RSS; an oversized record runs alone. Detector/string/GC overhead remains documented. Pinned Go 1.27.1 has cgroup-aware defaults; actual one-CPU affinity passed. No live CPU-quota cgroup or new RSS cap is claimed.",
+      "evidence_file": "scanner-memory-review.json"
+    },
+    {
+      "id": "3",
+      "prs": "683",
+      "finding": "Cleanup retries had no delay",
+      "disposition": "Fixed and tested",
+      "evidence_summary": "Cleanup now permits termination progress and preserves UID ownership and interruption semantics. Delay and interruption reversals were rejected; fresh real Kubernetes cleanup passed.",
+      "evidence_file": "kubernetes-authority-review.json"
+    },
+    {
+      "id": "4",
+      "prs": "683",
+      "finding": "Pinned digest versus first target imageID",
+      "disposition": "Scoped limitation retained; proposed equality rejected",
+      "evidence_summary": "A registry index and the platform child reported by CRI can differ legitimately. Known index children are checked. Target-only proof trusts the exact admitted Pod and kubelet pull of the immutable reference; it does not independently reconstruct unavailable index ancestry.",
+      "evidence_file": "kubernetes-authority-review.json"
+    },
+    {
+      "id": "5",
+      "prs": "709,716",
+      "finding": "Unknown managed type with zero instances",
+      "disposition": "Fixed and tested",
+      "evidence_summary": "The type gate runs before instance iteration; both empty and populated unknown types reject before provider reads. No leaked cloud object is inferred from the empty-state case.",
+      "evidence_file": "recovery-source-security.json"
+    },
+    {
+      "id": "6",
+      "prs": "709,716",
+      "finding": "Unvalidated producer repository",
+      "disposition": "Confirmed narrower mechanism; fixed and tested",
+      "evidence_summary": "A real Git control showed that a missing object can invoke a configured promisor remote helper. Offline raw-object reads and replacement-ref rejection now preserve source identity; canonical checkout and ambient-selector controls passed.",
+      "evidence_file": "recovery-source-security.json"
+    },
+    {
+      "id": "7",
+      "prs": "683",
+      "finding": "Image-pull-secret behavior announcement",
+      "disposition": "Release note added",
+      "evidence_summary": "The changelog states bootstrap-only flag scope and how to configure task or ServiceAccount pull Secrets, plus the fail-closed unresolved-target behavior.",
+      "evidence_file": "kubernetes-authority-review.json"
+    },
+    {
+      "id": "H1",
+      "prs": "683",
+      "finding": "Infra override and mixed target classification",
+      "disposition": "Native semantics verified and classification fixed",
+      "evidence_summary": "Actual SkyPilot 0.12.2 calls distinguish singleton override from mixed task/job-group retention. Both capabilities configurations validate. CLI controls passed and restoring override-only classification rejected six cases.",
+      "evidence_file": "skypilot-native-authority-schema.json"
+    },
+    {
+      "id": "H2",
+      "prs": "654",
+      "finding": "Missing provenance could surface a raw error",
+      "disposition": "Existing public handler verified",
+      "evidence_summary": "The access response boundary catches discovery errors and returns a generic HTTP 503. Missing provenance remains fail-closed. Fresh staged metadata requests returned 200 over verified TLS; timeout controls are distinct from this missing-provenance source review.",
+      "evidence_file": "agent-metadata-live.json"
+    },
+    {
+      "id": "H3",
+      "prs": "683",
+      "finding": "Unicode casefold aliases registry names",
+      "disposition": "Fixed and tested",
+      "evidence_summary": "Registry canonicalization uses lower rather than casefold; the sharp-s spelling control rejects credential-authority aliasing. No observed customer credential exposure is claimed.",
+      "evidence_file": "kubernetes-authority-review.json"
+    },
+    {
+      "id": "F1",
+      "prs": "683",
+      "finding": "Slash-containing context truncated in planning conflict check",
+      "disposition": "Fixed and independently verified after Claude follow-up",
+      "evidence_summary": "Canonical parser used at signed parser-fix head; 202 CLI controls, nine independent controls and eight old-helper negative controls passed as expected. Fresh nine-case Kubernetes execution at the parser-fix producer directly exercises the changed planner; the final documentation-only successor has identical runtime bytes. Claude reviewed the earlier v6 snapshot; this final repair review is separate.",
+      "evidence_file": "kubernetes-context-review.json"
+    }
+  ],
+  "material_validation_gaps": [
+    "Default live-harness skips are not live proof. Current agent and Kubernetes executions are separately bound; provider and absence live proofs remain historical.",
+    "Pinned SkyPilot schema and native classification are verified without a cloud submit. Fresh local Kubernetes execution covers probe lifecycle within its stated limits.",
+    "The changelog now describes bootstrap Secret scope and unresolved-target refusal."
+  ],
+  "additional_gate_repairs": [
+    "The agent live harness now trusts the SSH-authenticated certificate and verifies hostname; no-trust negative control passed. No scanner suppression was used.",
+    "The manual agent lifecycle gate is registered; four gate-reachability tests passed.",
+    "Common dependency declarations and the CI lock align oauthlib 4.0.0 and HCL dependencies across all ten candidates. The trusted-base native source/dependency gate passed on the final integrated tree with zero regressions and zero blocking findings."
+  ],
+  "followup_review_file": "claude-followup-review.json",
+  "post_repair_review": {
+    "status": "complete_no_unresolved_confirmed_findings",
+    "claude_scope": "Initial and follow-up Claude reviews completed; the follow-up reviewed v6 and resolved the seven earlier findings and H1-H3, then found the slash-context defect. Claude did not directly review v7.",
+    "final_fix_head": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+    "final_fix_review": "Independent Codex source review and nine passing regression controls; restoring the old helper rejected all eight distinguishing cases. The coordinating agent also reviewed the patch.",
+    "final_fix_live": "Nine actual Kubernetes cases at the parser-fix producer include the changed planner and pre-probe context refusal; the final documentation-only successor has identical runtime bytes.",
+    "evidence_files": [
+      "kubernetes-context-review.json",
+      "kubernetes-context-fix.json",
+      "kubernetes-pull-live.json"
+    ],
+    "human_github_approval": false
+  },
+  "final_delta_review_file": "claude-final-delta-review.json",
+  "final_review_status": "complete_no_unresolved_confirmed_findings"
+}

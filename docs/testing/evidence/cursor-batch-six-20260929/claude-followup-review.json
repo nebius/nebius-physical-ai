@@ -1,0 +1,60 @@
+{
+  "source_commit": "16a4f2b3e4c1b2a5c373d93f73ca4141795dd688",
+  "source_tree": "62a03043e5f47bdb09c797f25cb3221828bccb6b",
+  "artifact_sha256": "da01cd6167e97fec8291d2dcc0df8c29b5163b65fe40850459dcea0c960e104b",
+  "status": "completed_with_one_new_finding",
+  "prior_seven_findings_and_h1_h3": "resolved",
+  "new_finding": {
+    "id": "F1",
+    "pr": 683,
+    "severity": "low-medium",
+    "summary": "Kubernetes --infra context parsing truncates slash-containing context names in the conflict check, while the actual target parser retains the whole context.",
+    "confirmed_cases": [
+      {
+        "infra": "k8s/foo/bar",
+        "declared_context": "foo/bar",
+        "observed_problem": "matching context is incorrectly refused"
+      },
+      {
+        "infra": "k8s/foo/bar",
+        "declared_context": "foo",
+        "observed_problem": "conflict is missed and target proof can describe a different context"
+      }
+    ],
+    "repair": "Use the canonical context_from_infra parser and cover both matching multi-segment contexts and conflicting prefixes.",
+    "status": "fixed_with_independent_regression_review",
+    "fixed_head": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+    "regression_test_result": {
+      "author_cli_suite_passed": 202,
+      "independent_focused_passed": 9,
+      "exact_old_function_mutants_rejected": 8,
+      "evidence_file": "kubernetes-context-review.json"
+    },
+    "fresh_live_validation": {
+      "source_commit": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+      "cases_passed": 9,
+      "evidence_file": "kubernetes-pull-live.json",
+      "changed_helper_directly_exercised": true
+    }
+  },
+  "review_scope": "Read-only source review; reviewer ran no tests and did not verify live endpoints, provider schema or CI.",
+  "post_repair_review": {
+    "status": "complete_no_unresolved_confirmed_findings",
+    "claude_scope": "Initial and follow-up Claude reviews completed; the follow-up reviewed v6 and resolved the seven earlier findings and H1-H3, then found the slash-context defect. Claude did not directly review v7.",
+    "final_fix_head": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+    "final_fix_review": "Independent Codex source review and nine passing regression controls; restoring the old helper rejected all eight distinguishing cases. The coordinating agent also reviewed the patch.",
+    "final_fix_live": "Nine actual Kubernetes cases at the parser-fix producer include the changed planner and pre-probe context refusal; the final documentation-only successor has identical runtime bytes.",
+    "evidence_files": [
+      "kubernetes-context-review.json",
+      "kubernetes-context-fix.json",
+      "kubernetes-pull-live.json"
+    ],
+    "human_github_approval": false
+  },
+  "human_github_approval": false,
+  "remaining_scope_notes": [
+    "Expected deployment-manifest comparison reuses the observed bootstrap timestamp; it is not an independent timestamp assertion. Deployed module-byte comparisons remain separate evidence.",
+    "Trusting the current self-signed agent certificate is verified; a future private-CA deployment would need the appropriate chain.",
+    "Ordinary Git worktree files are supported. No further local-config execution path under the hardened raw-object environment was identified by this review."
+  ]
+}

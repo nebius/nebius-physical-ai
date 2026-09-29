@@ -1,0 +1,24 @@
+{
+  "status": "verified_documentation_only_change",
+  "tested_integration_commit": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+  "final_integration_commit": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+  "live_kubernetes_producer": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+  "final_pr683_head": "4816e367d85cf55b2763d0fe3647b4ef03cbeffd",
+  "complete_repository_diff_paths": [
+    "docs/cli/workflow.md",
+    "docs/workbench/npa-workflow-guide.md"
+  ],
+  "production_tests_dependency_scripts_byte_identical": true,
+  "method": "Complete git diff --name-only between the committed integration trees and separately between the live producer and final PR head; both contain only the two documentation files.",
+  "documentation_source_bindings": [
+    {
+      "repository_path": "docs/cli/workflow.md",
+      "sha256": "453b21d9e40a411462b86e46423944177072899c76c806299accd6c66429830e"
+    },
+    {
+      "repository_path": "docs/workbench/npa-workflow-guide.md",
+      "sha256": "32d0f08dfb7c4075850a64ff203b86946ef3e685af2a3dcddf3dbdeb9875f397"
+    }
+  ],
+  "scope": "Actual full-suite and native security executions remain attributed to v7. Actual Kubernetes execution remains attributed to the pre-documentation-repair producer. No repeated full-suite, security or live execution on v8 is claimed; final documentation checks and hosted CI are separate."
+}

@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "committed_source_files_rehashed": 52,
+  "live_agent_module_hashes_matched": 4,
+  "live_kubernetes_module_hashes_verified_at_producer": 4,
+  "live_kubernetes_module_hashes_matched_to_candidate": 4,
+  "source_equivalence_relationships_verified": 7,
+  "readme_local_links_verified": 40,
+  "json_parse": "passed",
+  "confidentiality": {
+    "scope": "Every public packet file including checksums",
+    "built_in_nebius_infra": "passed",
+    "private_operational_path_check": "passed"
+  },
+  "gitleaks": {
+    "scope": "Complete public packet directory",
+    "result": "passed",
+    "redaction_enabled": true
+  },
+  "checksum_manifest": "SHA256SUMS",
+  "checksum_verification": "passed",
+  "verification_stage": "Local packet verification before publication; anonymous public readback is a separate receipt.",
+  "scope": "Packet integrity and source attribution only. Test, security, review and hosted-check outcomes are recorded in validation-pending.json; packet validation does not replace them. No raw operational logs or credentials are included."
+}

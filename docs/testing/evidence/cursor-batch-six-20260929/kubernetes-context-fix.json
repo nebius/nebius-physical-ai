@@ -1,0 +1,33 @@
+{
+  "head": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+  "tree": "6a9fd1d40233625adc9392f32d8476e3f47bb752",
+  "parent": "d22efb3d68ebf02176f9e489b6cc6cfac3f4452d",
+  "change": "Reuse canonical context_from_infra without truncating slash-bearing context names",
+  "focused_cli": {
+    "passed": 202,
+    "failed": 0
+  },
+  "new_regressions": {
+    "passed": 8,
+    "failed": 0,
+    "cases": "k8s/kubernetes aliases, chain/parallel, declared exact foo/bar and rejected partial foo"
+  },
+  "old_behavior_mutation": {
+    "expected_failed": 8,
+    "actual_failed": 8,
+    "repository_edited": false
+  },
+  "signed_commit": true,
+  "working_tree_clean": true,
+  "evidence_sha256": {
+    "pr683-context-slash-tests.log": "09387f033584066ce5c025fe6bc35837551ee1537a95a6d6702468b8f953cdbb",
+    "pr683-context-slash-cli-tests.log": "f5b741f683f545e99a5de88538dde03f996bd4a92ed6da1ca6a13a55d3f87254",
+    "pr683-context-slash-mutation.log": "a4e03a8c4bacb86206ce0d6ff5997cd7d893ce95daf059020ddf254b597f8c5f",
+    "pr683-context-slash-confidentiality.log": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8",
+    "pr683-context-slash-gitleaks.log": "21b4768f40b25d217095b54713eb60ff8fcba5a2a1512fe4928775768df04b22"
+  },
+  "fresh_live_source": "1f687a1493a6e1a2020da85d77f2826586f21b7a",
+  "fresh_live_cases": 9,
+  "signature_cryptographically_verified": true,
+  "scope": "Fresh live receipt is separate and directly exercises the changed planner plus actual target pulls; CPU controls preserve alias and exact-context refusal coverage."
+}

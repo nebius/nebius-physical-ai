@@ -1,0 +1,77 @@
+{
+  "source": "90ec04846dcaf3062eca10feba2a487752ad7a55",
+  "tree": "eb233034cd73ddc62bbea655a297641aa5a58d7d",
+  "cases_passed": 7,
+  "kubectl_calls": 34,
+  "created_pull_probe_pods": 4,
+  "uid_precondition_deletes_verified": 4,
+  "final_probe_pods": 0,
+  "committed_terminal_live_test_passed": 1,
+  "owned_cluster_removed": true,
+  "cloud_resources_created": false,
+  "source_files_unchanged": true,
+  "kubernetes": "v1.35.8",
+  "container_runtime": "containerd://2.3.4",
+  "completed_at": "2026-09-29T21:58:34.944729+00:00",
+  "live_result_sha256": "fdc8081049ffa188986fda8944926eb7de4ee29f68438b163b01e686f201b5cb",
+  "call_log_sha256": "a95ae98c8e55589a51ce8a2207368bc3663a8ffd7930b8bf22f2ac6493c02fd1",
+  "limitations": [
+    "One local node and public Alpine image with empty public-auth fixture.",
+    "No private-registry success, Nebius target, multi-node, cold-cache, GPU or VLM claim.",
+    "Admission-default inheritance verified; no custom webhook or RuntimeClass-added placement qualification."
+  ],
+  "cases": [
+    {
+      "case": "explicit_context_namespace_over_ambient",
+      "status": "verified",
+      "cleanup": "not_applicable",
+      "pods_created": 0,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "public_digest_pull",
+      "status": "verified",
+      "cleanup": "verified",
+      "pods_created": 1,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "exact_requested_node_placement",
+      "status": "verified",
+      "cleanup": "verified",
+      "pods_created": 1,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "admitted_service_account_pull_secret",
+      "status": "verified",
+      "cleanup": "verified",
+      "pods_created": 1,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "missing_service_account",
+      "status": "service_account_unverified",
+      "cleanup": "verified",
+      "pods_created": 0,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "nonexistent_immutable_manifest",
+      "status": "image_pull_failed",
+      "cleanup": "verified",
+      "pods_created": 1,
+      "cleanup_inventory_empty": true
+    },
+    {
+      "case": "host_success_missing_target_secret",
+      "status": "target_pull_unverified",
+      "cleanup": "not_applicable",
+      "pods_created": 0,
+      "cleanup_inventory_empty": true
+    }
+  ],
+  "started_at": "2026-09-29T21:56:17.263809+00:00",
+  "finished_at": "2026-09-29T21:56:27.631767+00:00",
+  "public_image": "docker.io/library/alpine@sha256:8a1f59ffb675680d47db6337b49d22281a139e9d709335b492be023728e11715"
+}

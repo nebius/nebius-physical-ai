@@ -1,0 +1,57 @@
+{
+  "source_commit": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+  "source_binding": "Actual v7 execution; final v8 documentation-only equivalence is recorded separately. Raw logs remain private.",
+  "gates": [
+    {
+      "gate": "precheck",
+      "status": "passed",
+      "tests_passed": 266,
+      "pytest_seconds": 2.3,
+      "retained_log_sha256": "831c52925036974127f5325d697ad3dc42b83f8367a3c08a229b2a85b754179f"
+    },
+    {
+      "gate": "smoke",
+      "status": "passed",
+      "tests_passed": 118,
+      "pytest_seconds": 17.02,
+      "retained_log_sha256": "433687292cf6fab83577aab808254ed94dfb23d30620c8e30538e28c46874c5e"
+    },
+    {
+      "gate": "hostile",
+      "status": "passed",
+      "tests_passed": 883,
+      "pytest_seconds": 129.39,
+      "retained_log_sha256": "33701882cca111cd59ddb7415b72f2c8faa7b34d5b3be9785b53094c73be9b76"
+    }
+  ],
+  "earlier_v6": {
+    "source_commit": "16a4f2b3e4c1b2a5c373d93f73ca4141795dd688",
+    "source_tree": "62a03043e5f47bdb09c797f25cb3221828bccb6b",
+    "source_binding": "Retained logs from the exact-source final integration validation driver. Raw logs remain private.",
+    "gates": [
+      {
+        "gate": "precheck",
+        "status": "passed",
+        "tests_passed": 266,
+        "pytest_seconds": 1.73,
+        "retained_log_sha256": "4e2c344ad62872b3c109007889b145c5359f16bc945a8e3f6dbd454ea276fdde"
+      },
+      {
+        "gate": "smoke",
+        "status": "passed",
+        "tests_passed": 118,
+        "pytest_seconds": 8.09,
+        "retained_log_sha256": "e0b6eb4f4d1ad78cd910461ea8fb90e176cbf4ff673b35e88351d5edbd99fd62"
+      },
+      {
+        "gate": "hostile-runtime",
+        "status": "passed",
+        "tests_passed": 883,
+        "pytest_seconds": 129.91,
+        "retained_log_sha256": "1b010160ceefb4fad56016568858042e4ecb378981ed2c6fa535933120fe6484"
+      }
+    ],
+    "scope": "Focused local gates; counts overlap other evidence and do not replace or sum into the source-specific full-suite result."
+  },
+  "scope": "Counts overlap the full suite and must not be summed into its total."
+}

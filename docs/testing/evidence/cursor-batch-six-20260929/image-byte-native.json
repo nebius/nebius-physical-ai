@@ -1,0 +1,259 @@
+{
+  "pr": 681,
+  "base": "8448df6a547f1a8b4a8692124dc56c0235da4261",
+  "head": "7f3f942404446e61730126e4cf69c9a16d69b7a0",
+  "tree": "d28ad32af75e898188bd7ade1f0bb409b9ea16b5",
+  "changes": "Signed conflict-free merge of current main; scanner production bytes retain the reviewed concurrency implementation.",
+  "linux_pytest": {
+    "passed": 806,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 27.53
+  },
+  "go_native": {
+    "declared": 34,
+    "failed": 0,
+    "passed": 50,
+    "skipped": 0
+  },
+  "go_helper_sha256": "941ceeec99c5b5e3fb4e4b624a5c630427ec02ae0f41d5c31d86e24346e3b89d",
+  "race_and_vet": {
+    "race-with-cgo": {
+      "exit": 0,
+      "seconds": 65.177,
+      "counts": {
+        "passed": 50,
+        "declared": 34,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    "vet": {
+      "exit": 0,
+      "seconds": 4.81
+    }
+  },
+  "native": {
+    "integration": {
+      "passed": true,
+      "synthetic_only": true,
+      "literal_differential_cases": 200,
+      "archive_checks": [
+        {
+          "cancellation": {
+            "helper_joined": true,
+            "passed": true,
+            "unrelated_sibling_preserved": true
+          },
+          "complete": true,
+          "engine": "reference",
+          "findings": 3524,
+          "helper_findings": 6,
+          "helper_joined": true,
+          "records": 47,
+          "regular_files": 6
+        },
+        {
+          "cancellation": {
+            "helper_joined": true,
+            "passed": true,
+            "unrelated_sibling_preserved": true
+          },
+          "complete": true,
+          "engine": "native",
+          "findings": 3524,
+          "helper_findings": 6,
+          "helper_joined": true,
+          "records": 47,
+          "regular_files": 6
+        }
+      ],
+      "duplex_check": {
+        "caller_depth": 64,
+        "helper_findings": 12000,
+        "helper_workers": 1,
+        "passed": true,
+        "records": 98,
+        "scanned_bytes": 888422
+      }
+    },
+    "integration-one-cpu": {
+      "passed": true,
+      "synthetic_only": true,
+      "literal_differential_cases": 200,
+      "archive_checks": [
+        {
+          "cancellation": {
+            "helper_joined": true,
+            "passed": true,
+            "unrelated_sibling_preserved": true
+          },
+          "complete": true,
+          "engine": "reference",
+          "findings": 3524,
+          "helper_findings": 6,
+          "helper_joined": true,
+          "records": 47,
+          "regular_files": 6
+        },
+        {
+          "cancellation": {
+            "helper_joined": true,
+            "passed": true,
+            "unrelated_sibling_preserved": true
+          },
+          "complete": true,
+          "engine": "native",
+          "findings": 3524,
+          "helper_findings": 6,
+          "helper_joined": true,
+          "records": 47,
+          "regular_files": 6
+        }
+      ],
+      "duplex_check": {
+        "caller_depth": 64,
+        "helper_findings": 12000,
+        "helper_workers": 1,
+        "passed": true,
+        "records": 98,
+        "scanned_bytes": 888422
+      }
+    }
+  },
+  "cli_differential": {
+    "clean-gzip": {
+      "byte_identical_ledger": true,
+      "baseline": {
+        "complete": true,
+        "valid": true,
+        "records": 245,
+        "scanned_bytes": 6363331,
+        "regular_files": 70,
+        "findings": 0,
+        "helper_summary": {
+          "bytes": 6363331,
+          "files": 245,
+          "findings": 0,
+          "type": "summary"
+        },
+        "cli_exit": 0,
+        "seconds": 1.767,
+        "image_sha256": "fe9a9588a12a04ba228986901d1be5ba5bde917beda21cb6faab7d229144ef39",
+        "ledger_sha256": "716afe7c2a0c1fc043b64513f4b81e08a0d6dcd2291dbbbe4a9d8d430f2405cc",
+        "ledger_lines": 534
+      },
+      "candidate": {
+        "complete": true,
+        "valid": true,
+        "records": 245,
+        "scanned_bytes": 6363331,
+        "regular_files": 70,
+        "findings": 0,
+        "helper_summary": {
+          "bytes": 6363331,
+          "files": 245,
+          "findings": 0,
+          "type": "summary"
+        },
+        "cli_exit": 0,
+        "seconds": 0.669,
+        "image_sha256": "fe9a9588a12a04ba228986901d1be5ba5bde917beda21cb6faab7d229144ef39",
+        "ledger_sha256": "716afe7c2a0c1fc043b64513f4b81e08a0d6dcd2291dbbbe4a9d8d430f2405cc",
+        "ledger_lines": 534
+      }
+    },
+    "poisoned-gzip": {
+      "byte_identical_ledger": true,
+      "baseline": {
+        "complete": true,
+        "valid": false,
+        "records": 245,
+        "scanned_bytes": 6363293,
+        "regular_files": 70,
+        "findings": 6,
+        "helper_summary": {
+          "bytes": 6363293,
+          "files": 245,
+          "findings": 2,
+          "type": "summary"
+        },
+        "cli_exit": 1,
+        "seconds": 1.813,
+        "image_sha256": "3d5ee79f35376f50607323ac22ccc34d9cb4e66a0eeeee5b461e3269e45b5263",
+        "ledger_sha256": "b1edeb08addd405de71e6b196774b58015a3e291fc1e73751bd11319e45f90bf",
+        "ledger_lines": 536
+      },
+      "candidate": {
+        "complete": true,
+        "valid": false,
+        "records": 245,
+        "scanned_bytes": 6363293,
+        "regular_files": 70,
+        "findings": 6,
+        "helper_summary": {
+          "bytes": 6363293,
+          "files": 245,
+          "findings": 2,
+          "type": "summary"
+        },
+        "cli_exit": 1,
+        "seconds": 0.661,
+        "image_sha256": "3d5ee79f35376f50607323ac22ccc34d9cb4e66a0eeeee5b461e3269e45b5263",
+        "ledger_sha256": "b1edeb08addd405de71e6b196774b58015a3e291fc1e73751bd11319e45f90bf",
+        "ledger_lines": 536
+      }
+    },
+    "poisoned-tar": {
+      "byte_identical_ledger": true,
+      "baseline": {
+        "complete": true,
+        "valid": false,
+        "records": 243,
+        "scanned_bytes": 6360264,
+        "regular_files": 70,
+        "findings": 6,
+        "helper_summary": {
+          "bytes": 6360264,
+          "files": 243,
+          "findings": 2,
+          "type": "summary"
+        },
+        "cli_exit": 1,
+        "seconds": 1.801,
+        "image_sha256": "3a724c44b59e69c7608e7b49bc9b076fce9adb46df83e0c4644153ed3e9c44ee",
+        "ledger_sha256": "4c83ec39c94e1b781ddd5962bb759a88c060eaae269f8e33d0f705f6e605b0f2",
+        "ledger_lines": 526
+      },
+      "candidate": {
+        "complete": true,
+        "valid": false,
+        "records": 243,
+        "scanned_bytes": 6360264,
+        "regular_files": 70,
+        "findings": 6,
+        "helper_summary": {
+          "bytes": 6360264,
+          "files": 243,
+          "findings": 2,
+          "type": "summary"
+        },
+        "cli_exit": 1,
+        "seconds": 0.673,
+        "image_sha256": "3a724c44b59e69c7608e7b49bc9b076fce9adb46df83e0c4644153ed3e9c44ee",
+        "ledger_sha256": "4c83ec39c94e1b781ddd5962bb759a88c060eaae269f8e33d0f705f6e605b0f2",
+        "ledger_lines": 526
+      }
+    }
+  },
+  "limitations": [
+    "Synthetic generated OCI fixtures exercise actual native scanner dependencies and CLI. This run does not approve a production image or establish a production-image speedup.",
+    "No GPU or VLM execution applies to this CPU byte-scanning change.",
+    "An input-reading goroutine may remain blocked until the owned helper process exits; worker completion and owned process joining are verified, not joining every goroutine."
+  ],
+  "setup_recoveries": [
+    "Initial macOS suite: 779 passed, 13 skipped, 14 Linux-only platform failures; all 14 failing IDs reproduced on unchanged current main. Complete suite passed on Linux.",
+    "Initial extracted checkout was group writable and lacked Git metadata. Corrected permissions and installed exact shallow snapshot objects before successful Linux suite.",
+    "Go race initially refused official build environment CGO_ENABLED=0; re-executed with CGO_ENABLED=1 and passed."
+  ]
+}

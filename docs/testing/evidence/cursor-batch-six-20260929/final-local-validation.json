@@ -1,0 +1,65 @@
+{
+  "head": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+  "base": "8448df6a547f1a8b4a8692124dc56c0235da4261",
+  "status": "passed",
+  "gates": [
+    {
+      "gate": "precheck",
+      "tested_head": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+      "exit_code": 0,
+      "seconds": 2.94,
+      "log_sha256": "6717776cfcdb9aba0fa19511cddfa26369f17a4f172d446a6af4484c5b2d0151",
+      "passed": 266
+    },
+    {
+      "gate": "docs",
+      "tested_head": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+      "exit_code": 0,
+      "seconds": 88.15,
+      "log_sha256": "db9e0ce5f1d8035c906244c27c4b7c022628d1f0149f581ffeee5e5bb7c2cf7d"
+    },
+    {
+      "gate": "confidentiality",
+      "tested_head": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+      "exit_code": 0,
+      "seconds": 0.14,
+      "log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+    },
+    {
+      "gate": "smoke",
+      "tested_head": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+      "exit_code": 0,
+      "seconds": 17.51,
+      "log_sha256": "433687292cf6fab83577aab808254ed94dfb23d30620c8e30538e28c46874c5e",
+      "passed": 118
+    },
+    {
+      "gate": "hostile",
+      "tested_head": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+      "exit_code": 0,
+      "seconds": 130.92,
+      "log_sha256": "33701882cca111cd59ddb7415b72f2c8faa7b34d5b3be9785b53094c73be9b76",
+      "passed": 883
+    },
+    {
+      "gate": "full",
+      "tested_head": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+      "exit_code": 0,
+      "seconds": 436.0,
+      "log_sha256": "3099937d1a415b3e2d341707f4e5751bd0376ba528be8f670885a8d6b933a304",
+      "passed": 34744,
+      "skipped": 156,
+      "xpassed": 1
+    }
+  ],
+  "source_equivalence": {
+    "tested_full_head": "02dc1907d1d4319f7a329ebf3fecf275e3026210",
+    "final_head": "ebdc21ebeefa362e11abffa76ef3c9d5429d9a35",
+    "changed_paths": [
+      "docs/cli/workflow.md",
+      "docs/workbench/npa-workflow-guide.md"
+    ],
+    "all_other_tracked_bytes_identical": true
+  },
+  "scope": "All ten final PR heads integrated in documented merge order. Full, smoke and hostile Linux gates ran on the code-identical predecessor; only two Markdown files changed afterward. Precheck, docs and confidentiality ran on the final integration. Real live workloads are reported separately."
+}

@@ -1,0 +1,287 @@
+{
+  "pr": 654,
+  "candidate_head": "520777591be2a5f236572dae88439eb060c80d09",
+  "source_commit": "0cf9bca8190ba18c45e1b4ec1d37fcd2d18ed72c",
+  "source_tree": "80040c442420aa5e885438c6d30d9ed48a904071",
+  "live_test": {
+    "result": "passed",
+    "passed": 1,
+    "elapsed_seconds": 369.89,
+    "test": "npa/tests/e2e/test_agent_metadata_live.py"
+  },
+  "verified_tls_lifecycle": {
+    "source_commit": "0cf9bca8190ba18c45e1b4ec1d37fcd2d18ed72c",
+    "source_tree": "80040c442420aa5e885438c6d30d9ed48a904071",
+    "access_http_status": 200,
+    "access_seconds": 4.235296724946238,
+    "resources_http_status": 200,
+    "resources_seconds": 5.418928458937444,
+    "anonymous_statuses": [
+      401,
+      401,
+      401
+    ],
+    "tls_hostname_verified": true,
+    "tls_untrusted_certificate_rejected": true,
+    "tls_trust_source": "provider-pinned SSH",
+    "server_certificate_sha256": "629cc1e5cc0a4be9cb7df0d1cf65b02a286d1ae46595410160e52dfb182bd515",
+    "deployed_sources": [
+      {
+        "module": "agent",
+        "sha256": "d886a449351ccb90b44ec65dee117a2f5e958d1f94629963bfef3969a2d92e0c"
+      },
+      {
+        "module": "agent_access_runtime",
+        "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+      },
+      {
+        "module": "agent_resources",
+        "sha256": "19438686adad42371c5b5e9a47099fe5ca6014aff12712666eb0d7cf0c4f8bcb"
+      },
+      {
+        "module": "agent_env_files",
+        "sha256": "4229185b5f105e1db48cbed63b2c77372368fa1a4471b637b9bb50ce64f910ab"
+      },
+      {
+        "module": "rendered_backend",
+        "sha256": "312c696bc89632a0adc7e7787e8c2e044390c2dc3dd1239a06216a5376189697"
+      }
+    ],
+    "cleanup": {
+      "infrastructure_absent": true,
+      "verified": true
+    },
+    "log_sha256": "a6168c7601361007b784b297ae06179dcdf626dac592a34301aba456828df4e9"
+  },
+  "production_source_identical_to_prior_live": true,
+  "additional_local_checks": {
+    "e2e_gate_reachability_passed": 4,
+    "ruff": "passed",
+    "confidentiality": "passed",
+    "gitleaks": "passed"
+  },
+  "verification_update": "Fresh committed harness used exact SSH-authenticated server certificate trust, checked hostname and CERT_REQUIRED, and rejected the same endpoint with no trust roots before authenticated requests. Prior unverified-TLS evidence remains retained but is superseded by this run.",
+  "earlier_evidence": {
+    "scope": "Retained prior runs and local checks; original source identities and limitations remain as recorded. The verified-TLS lifecycle above supersedes prior unverified-TLS network proof.",
+    "report_sha256": "1cce78ea4614bac68768787496802c3ac4c39a9c826baf40d81b19baf12c6a2a",
+    "report": {
+      "pr": 654,
+      "source_commit": "ccdea9492f0e94802750ca0733be635ad6a638d8",
+      "source_tree": "fec15ca1c5d8b7d1755c8d5e00b8491cf1e47dad",
+      "live_test": {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0
+      },
+      "live_measurements": {
+        "source_commit": "ccdea9492f0e94802750ca0733be635ad6a638d8",
+        "source_tree": "fec15ca1c5d8b7d1755c8d5e00b8491cf1e47dad",
+        "access_http_status": 200,
+        "access_seconds": 4.175530261010863,
+        "resources_http_status": 200,
+        "resources_seconds": 5.7632621839875355,
+        "anonymous_statuses": [
+          401,
+          401,
+          401
+        ],
+        "deployed_source_sha256": [
+          {
+            "module": "agent",
+            "sha256": "d886a449351ccb90b44ec65dee117a2f5e958d1f94629963bfef3969a2d92e0c"
+          },
+          {
+            "module": "agent_access_runtime",
+            "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+          },
+          {
+            "module": "agent_env_files",
+            "sha256": "4229185b5f105e1db48cbed63b2c77372368fa1a4471b637b9bb50ce64f910ab"
+          },
+          {
+            "module": "agent_resources",
+            "sha256": "19438686adad42371c5b5e9a47099fe5ca6014aff12712666eb0d7cf0c4f8bcb"
+          },
+          {
+            "module": "rendered_backend",
+            "sha256": "01471578b135bc42241fe30af31a38de4e454a239bdcccbc79ed58ab739759fa"
+          }
+        ]
+      },
+      "access": {
+        "ok": true,
+        "status": "partial",
+        "visible_project_count": 43,
+        "credential_source": "instance_metadata"
+      },
+      "resources": {
+        "ok": true,
+        "category_count": 10,
+        "discovered_reference_count": 75,
+        "discovered_categories": 9
+      },
+      "cleanup": [
+        {
+          "outcome": "verified_deleted",
+          "verified": true,
+          "infrastructure_absent": true
+        },
+        {
+          "outcome": "verified_deleted",
+          "verified": true,
+          "infrastructure_absent": true
+        }
+      ],
+      "linux_process_control": {
+        "source_commit": "ccdea9492f0e94802750ca0733be635ad6a638d8",
+        "timeout_return_seconds": 0.10089060198515654,
+        "cleanup_and_recovery_passed": true
+      },
+      "focused_linux_tests": {
+        "passed": 97,
+        "failed": 0,
+        "seconds": 1.64,
+        "production_source_identical_to_final": true
+      },
+      "retained_prior_harness_failure": {
+        "source_commit": "0695a1cdfd397cfb98f6df771795f673391a7d5f",
+        "exception": "KeyError",
+        "missing_test_assumption": "deployment field in local record",
+        "authenticated_access_and_resources": 200,
+        "anonymous_root_and_routes": [
+          401,
+          401,
+          401
+        ],
+        "cleanup_verified": true
+      },
+      "limits": [
+        "CPU credential, API and process-control validation; GPU and VLM testing are not applicable.",
+        "Resource access remains partial; no unrestricted tenant access is asserted.",
+        "Rendered backend digest is retained; four deployed imported source files were compared against the exact checkout."
+      ],
+      "private_evidence_digests": {
+        "initial/access.json": {
+          "sha256": "16d8c2be3a0cbd7800fe920db8e0ed172ab26c9f3e143aaf3d9d5fa669e3614c",
+          "bytes": 73715
+        },
+        "initial/deploy.stderr": {
+          "sha256": "9fa68ac0e46d960ebcc1aebec978e95aedacbdd784f6bcc989663fb55e971db8",
+          "bytes": 1418
+        },
+        "initial/deploy.stdout": {
+          "sha256": "d02f54f62987226b572dbe542699fb700f6fdff247d4b3dbbb541add8bc73286",
+          "bytes": 17559
+        },
+        "initial/deployment.json": {
+          "sha256": "c63138a9c9563e33916ea1a4b3b09c249b4ba050fd18abccd3bc01d8ea43766e",
+          "bytes": 516
+        },
+        "initial/destroy.stderr": {
+          "sha256": "640c9f219c97d9ecb4def8764fd677091deaaa915751975a0272bdbe654bda8b",
+          "bytes": 283
+        },
+        "initial/destroy.stdout": {
+          "sha256": "cd1318e330df87bf00953fe6a0818588fc15d82848fd0ce6c36b43f5cd1211aa",
+          "bytes": 967
+        },
+        "initial/resources.json": {
+          "sha256": "cdf584a1e18214006947d37910c4dcabd3fbe6ef4203aa7c4fe12fa8d3385a8d",
+          "bytes": 10301
+        },
+        "initial/status.stderr": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        "initial/status.stdout": {
+          "sha256": "46a8d1640a0d9d10a2d4e0b9319b68d766c89a82901259accbb53f8db5b2e643",
+          "bytes": 908
+        },
+        "final/access.json": {
+          "sha256": "15945a284f2dce32a6992e9b4f1ba380eb47c6fc9fbcd66fc6297456a3b97c83",
+          "bytes": 73715
+        },
+        "final/deploy.stderr": {
+          "sha256": "9fa68ac0e46d960ebcc1aebec978e95aedacbdd784f6bcc989663fb55e971db8",
+          "bytes": 1418
+        },
+        "final/deploy.stdout": {
+          "sha256": "17dbc0f2df2f945bb65a5e43906334a635b9a20110a3ee1a8c6729dbe69dc043",
+          "bytes": 17565
+        },
+        "final/deployed-source-hashes.json": {
+          "sha256": "64db7be29647cba87652845cf36b2bba9e0800e7db46ef30236670caf5ff7c25",
+          "bytes": 431
+        },
+        "final/deployment.json": {
+          "sha256": "6138a274af43a141cd57f1fdd823bec450c286ad978f9fa18e932a625c679015",
+          "bytes": 516
+        },
+        "final/destroy.stderr": {
+          "sha256": "640c9f219c97d9ecb4def8764fd677091deaaa915751975a0272bdbe654bda8b",
+          "bytes": 283
+        },
+        "final/destroy.stdout": {
+          "sha256": "165dfe967a0f369a1c17f0bbad9e57c67b897327f6ddd7c2c3f3128ed6e4f387",
+          "bytes": 967
+        },
+        "final/resources.json": {
+          "sha256": "9062501dfb09ed6b1e8d516421af2a403e9dfba87fb6e687adf042602694f459",
+          "bytes": 10301
+        },
+        "final/result.json": {
+          "sha256": "763915ef7e603552996c8ccc4df48eade759705b03a51d5533d6fd39f57cd39a",
+          "bytes": 812
+        },
+        "final/status.stderr": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "bytes": 0
+        },
+        "final/status.stdout": {
+          "sha256": "0907b25108a8b9625a3a7bbff4bd29b0606b1cbe1222b796bf5bbcfa8ad49c1b",
+          "bytes": 908
+        }
+      },
+      "candidate_head": "877af39ab51e4dbaef223a4b253e2aa7a2230e47",
+      "production_source_identical_to_live": true,
+      "final_test_only_delta": [
+        "npa/tests/conftest.py",
+        "npa/tests/guardrails/test_agent_credential_provenance_isolation.py"
+      ],
+      "ambient_provenance_regression": {
+        "affected_tests_passed": 96,
+        "affected_tests_failed": 0,
+        "nested_pytest_regression_passed": 1,
+        "removed_scrub_mutation_detected": true,
+        "provider_commands_during_negative_control": 0
+      },
+      "darwin_rendered_suite": {
+        "status": "interrupted_as_redundant_to_combined_linux_validation",
+        "completed_passed": 395,
+        "completed_failed": 0,
+        "not_a_full_suite_pass": true
+      }
+    }
+  },
+  "limits": [
+    "CPU agent credentials, inventory, source provenance, transport, and teardown only; GPU and VLM are not applicable.",
+    "Dependency-only integration and final hosted CI remain root-owned, and must retain this exact live source identity."
+  ],
+  "final_source_relationship": {
+    "producer": "0cf9bca8190ba18c45e1b4ec1d37fcd2d18ed72c",
+    "final_local_head": "520777591be2a5f236572dae88439eb060c80d09",
+    "runtime_source_bytes_identical": true,
+    "compared_paths": [
+      "npa/src",
+      "npa/scripts"
+    ],
+    "changed_repository_files": [
+      "npa/ci/constraints.in",
+      "npa/ci/requirements.txt",
+      "npa/pyproject.toml",
+      "skills/atomic/guardrail-failures/SKILL.md"
+    ],
+    "scope": "Source-byte equivalence only. Dependency alignment does not retroactively change the original execution environment or producer.",
+    "changed_compared_files": []
+  }
+}
