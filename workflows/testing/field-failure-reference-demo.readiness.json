@@ -12,10 +12,11 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The fixed baseline-anchor coefficient is recorded in the pre-learning protocol and plan. The new trainer implementation and full GPU retention experiment remain under review; prior aggregate success did not pass per-case and warehouse retention gates. Cohorts, full budgets and quality gates remain unchanged.",
+      "reason": "Full source-bound baseline/candidate learning, measured simulation-failure admission, reconstruction, development comparison and rejection were verified. The fixed coefficient-10.0 candidate scored 82.05% versus 82.475% baseline and failed 699 metric checks across 399 cases. Effective promotion remains unverified; the baseline was retained and final evaluation remained untouched. Cohorts, full budgets and quality gates are unchanged.",
       "evidence": [
         "docs/workbench/cookbooks/public-rl-improvement-demo.md",
-        "npa/tests/workflows/field_failure/test_reference_anchor_configuration.py"
+        "npa/tests/workflows/field_failure/test_reference_anchor_configuration.py",
+        "docs/workbench/evidence/public-demos/rl-improvement-rejection.json"
       ]
     }
   },

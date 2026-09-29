@@ -73,8 +73,19 @@ negative result and missing observation remain historical evidence.
 A subsequent full replay run improved development success from 82.475% to
 93.0%, but failed 371 metric checks across 257 cases, including warehouse
 regressions. Selection retained the baseline and never evaluated final outcomes.
-That rejected run motivates the baseline penalty; it does not qualify the new
-training recipe. The new recipe requires its own full GPU comparison.
+That rejected run remains preserved separately from the current experiment.
+
+The full coefficient-10.0 experiment completed 1,500 baseline and 1,500 new
+candidate updates, with 48 million transitions per policy. It verified exact
+baseline model/optimizer continuation and the original frozen teacher. On
+4,000 separate development routes per policy, success declined from 82.475%
+to 82.05% (−0.425 percentage points). Office success fell from 65.0% to 64.2%;
+warehouse success fell from 99.95% to 99.90%. The unchanged regional and
+per-case guards found 699 metric violations across 399 cases. Selection retained
+the baseline, published the rejection report and exited unsuccessfully before
+final evaluation. This verifies the workflow's training, comparison and rejection
+path; the baseline penalty has not established an effective promotion.
+See the [source-bound rejection evidence](../evidence/public-demos/rl-improvement-rejection.json).
 
 ## Development and final evaluation
 

@@ -10,11 +10,12 @@
       ]
     },
     "task_fidelity": {
-      "status": "unverified",
-      "reason": "Historical source 39a662651 qualified with 4,000 robots, 500 PPO updates and 3,415/4,000 successful held-out routes (85.375%), above the unchanged 80% gate. The new retention implementation changes the shared navigation runtime even with its anchor disabled, so the current source requires fresh full scan qualification. The original controls, readback and report evidence remain bound to their old source. New-site, physical-robot and camera-policy transfer are outside that qualification.",
+      "status": "verified",
+      "reason": "Fresh source de63c25f4 completed 500 PPO updates and 16 million transitions with 4,000 robots, then passed 3,386/4,000 held-out routes (84.65%) above the unchanged 80% gate. All cases terminated by native step 20 within the 300-step maximum. Nine publication bundles, native controls, sampled GPU bindings and original CLI/report/browser/privacy evidence were independently verified. Original external auditor import failures remain preserved beside unchanged corrected results. New-site, physical-robot and camera-input policy transfer are outside this qualification.",
       "evidence": [
         "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
-        "docs/workbench/evidence/public-demos/real-to-sim.json"
+        "docs/workbench/evidence/public-demos/real-to-sim.json",
+        "docs/workbench/evidence/public-demos/real-to-sim-visual-review.json"
       ]
     }
   },
@@ -40,14 +41,14 @@
     },
     "source_image": {
       "status": "unverified",
-      "reason": "The completed source 39a662651 run binds actual native image, source-overlay, recipe and checkpoint hashes. A future operator must verify the selected image and source. Observed robot/actuator hashes after load do not establish full vendor asset closure pinned before load.",
+      "reason": "The completed source de63c25f4 run binds actual native image, source-overlay, recipe and checkpoint hashes. A future operator must verify the selected image and source. Observed robot/actuator hashes after setup do not establish complete vendor asset closure or pre-load identity.",
       "evidence": [
         "docs/workbench/evidence/public-demos/real-to-sim.json"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The full 4,000-robot, 500-update run and 4,000-case evaluation qualified on RTX PRO 6000 Blackwell with process-bound GPU evidence. Each new target still requires its own GPU/runtime/scratch health checks.",
+      "reason": "The full 4,000-robot, 500-update run and 4,000-case evaluation qualified on RTX PRO 6000 Blackwell with sampled device observations bound to the exact pod/container while each sealed native main process was active. Each new target still requires its own GPU/runtime/scratch health checks.",
       "evidence": [
         "docs/workbench/evidence/public-demos/real-to-sim.json"
       ]

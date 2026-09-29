@@ -1,28 +1,27 @@
 {
   "schema": "npa.public.scan_visual_review.v1",
-  "source_sha": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
-  "observed_at": "2026-09-29T01:48:48.003615+00:00",
-  "canonical_report_sha256": "a648bac853fbc41fe4b4756520d0cbeba71ea2059f86f78e5a7b018efd1604f0",
-  "browser_receipt_sha256": "e5a2371a528dc0ff2bdf7014cd7facfed71eb319f26435a8004cf73d0082c385",
+  "source_sha": "de63c25f4009aa09b6ec68710170c462bedbd20c",
+  "observed_at": "2026-09-29T15:33:47.322194+00:00",
+  "canonical_report_sha256": "0b65689ecf20189e8cf62b950f96e27b4509ecf314fae64c0e9db1be9f4773bb",
+  "browser_receipt_sha256": "8215c39fffbe65d55f12a0361a304f40880f2409eafb99d5d7c71f08b146f30a",
   "desktop_and_mobile_reviewed": true,
   "screenshots": {
-    "report-1440.png": "b6787b893395cce2e902f77a72a89e1239be46ad30d74d0b5ec226372b18a61e",
-    "report-390.png": "221055f423ba441b64143f377f06e68d300f0f25f1647a38e090402be1ce9ba9"
+    "report-1440.png": "2eea57808de5159d3f44c5002c1ead96031e0e5a4801bc7687cae84050130d95",
+    "report-390.png": "7361957b501d38e6acb7c67dfdb6d9fa0b93aae2e6b2e4bfee41ebf76d8566c6"
   },
   "inspected_native_frames": {
-    "0": "8c9693dc45a1f644a78d66a6a73349a04347460b7796cf1fc0e37c5a86ea7de9",
-    "1": "c62a1d43229d889f2811d162361d7fd3a85724aaae538d6012ba8e93e4fe682e",
-    "4": "3105b9ccc5fdc6cccbe3ad20f19798e37fc24dc7679d4ebec2d33730e73b2a8a",
-    "8": "18c6397a986fdb5e47f3ae77dd30bc5bc2981604c0a994360d4af66b04c5b5a2"
+    "0": "499b968149623e6bd7f1d597705431bb942e77a996b1f446da106be4c2524883",
+    "1": "6b57556a7884e79ab5737ce21a4479e9f9af53f3c2c253ff8103d19a777e7805",
+    "7": "2dc47f408ab2a579a5d7e82f8bc221da3ca5480ee56ce2a27df198843d63992e"
   },
   "actual_scored_thumbnail": {
-    "file": "scored-step-004.png",
-    "sha256": "3105b9ccc5fdc6cccbe3ad20f19798e37fc24dc7679d4ebec2d33730e73b2a8a",
-    "step": 4,
-    "simulation_seconds": 0.8,
+    "file": "preview-frames/000001.png",
+    "sha256": "6b57556a7884e79ab5737ce21a4479e9f9af53f3c2c253ff8103d19a777e7805",
+    "step": 1,
+    "simulation_seconds": 0.2,
     "unmodified_native_png": true
   },
-  "scored_html_frames": 9,
+  "scored_html_frames": 8,
   "scored_html_steps": [
     0,
     1,
@@ -31,16 +30,20 @@
     4,
     5,
     6,
-    7,
-    8
+    7
   ],
-  "focal_terminal_step": 8,
+  "focal_terminal_step": 7,
   "focal_terminal_success": true,
+  "focal_terminal_displayed_goal_distance_m": 0.32,
+  "full_native_video_frames": 21,
+  "full_native_video_duration_seconds": 4.2,
+  "executed_native_control_steps": 20,
+  "configured_maximum_control_steps": 300,
   "visual_findings": [
-    "Reconstructed public office and moving quadruped are visible at inspected scored steps1,4,8.",
+    "Reconstructed public office and moving quadruped are visible at inspected scored steps 1 and 7.",
     "All original frames and the canonical native HTML remain unchanged.",
-    "Frame0 shows the reconstructed office without a visible robot; the robot appears at the first action frame,step1 (0.2s). This first-frame appearance limitation is retained.",
-    "The report clearly distinguishes the scored focal episode from the all4000-case cohort metric and excludes later observer frames."
+    "Frame 0 shows the reconstructed office without a visible robot; the robot appears at step 1 (0.2 s). This first-frame limitation is retained.",
+    "The report distinguishes its scored focal episode from the 4,000-case cohort metric and excludes later observer frames. All cohort episodes terminated by native step 20 within the unchanged 300-step maximum."
   ],
   "browser_checks": [
     {
@@ -48,8 +51,8 @@
       "timelines": [
         {
           "title": "Held-out navigation \u00b7 scored focal episode",
-          "frames": 9,
-          "images": 9
+          "frames": 8,
+          "images": 8
         }
       ],
       "play_pause_timelines_verified": 1,
@@ -61,8 +64,8 @@
       "timelines": [
         {
           "title": "Held-out navigation \u00b7 scored focal episode",
-          "frames": 9,
-          "images": 9
+          "frames": 8,
+          "images": 8
         }
       ],
       "play_pause_timelines_verified": 1,
@@ -70,6 +73,11 @@
       "network_requests": 0
     }
   ],
-  "privacy_receipt_sha256": "197dbcf8fd05f9f337f0ec7298573967247ef8b2c034e1984146efe2f892c4cc",
-  "focal_terminal_displayed_goal_distance_m": 0.4
+  "no_horizontal_overflow": true,
+  "scrubbers_verified": true,
+  "privacy_receipt_sha256": "0a010cd6ef4b735e497fcffc6e802fdab65daf864ecbeff5b62fd5060c9467a6",
+  "root_visual_review_sha256": "7b1e9ccf1e38bff2390f52900dc5e0972107c02aa5e627e1535ed7b6d1fc948a",
+  "initial_browser_import_failure_preserved": true,
+  "browser_import_recovery_scope": "The first attempt used the integration virtualenv, which lacks Playwright, and failed during import before creating any report output. The unchanged browser helper then passed under the already-established sensor-demo repository virtualenv; no dependency installation or report repair.",
+  "scope": "Actual unchanged focal images and offline report behavior; cohort success comes from the separate all-trajectory audit. No camera-input policy or physical-robot capability is inferred from previews."
 }

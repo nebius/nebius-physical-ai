@@ -101,7 +101,7 @@ ID printed by the command. The launcher does not add a per-stage time limit.
 | --- | --- | --- |
 | `real-to-sim` | Complete hash-verified TUM office RGB-D capture, calibration, poses, measured collision scene and supported reset cases | Reconstruction measurements, trained checkpoint, and scored navigation episodes |
 | `synthetic-data` | NVIDIA warehouse and calibrated four-camera route | 265 poses, 1,060 RGB-D views, colored point clouds, and independent geometry checks |
-| `rl-improvement` | Public office/warehouse inputs, baseline training, and measured baseline simulation failures | Failure-admitted reconstruction, continued training, development selection, and separate final comparison |
+| `rl-improvement` | Public office/warehouse inputs, baseline training, and measured baseline simulation failures | Failure-admitted reconstruction, continued training, development selection or rejection report; final comparison only after selection passes |
 | `nurec` | Pinned public PPISP NCore capture | Native Gaussian USDZ, novel views, image-quality metrics, and a Rerun recording |
 
 ## View, inspect, and resume
@@ -142,19 +142,26 @@ The earlier scan-trained candidate scored 0/4,000 on the held-out warehouse.
 A subsequent full replay experiment improved development success from 82.475%
 to 93.0%, but failed 371 metric checks across 257 cases. Selection retained the
 baseline and left final outcomes untouched. Both negative results remain
-historical evidence. The current baseline-retention recipe must establish its
-own result before being described as effective.
+historical evidence. The current fixed-baseline-penalty experiment also rejected
+its candidate: development success declined from 82.475% to 82.05%, with 699
+metric violations across 399 cases. The original baseline was retained and
+final evaluation was not run. The workflow's full training, comparison and
+rejection behavior are verified; effective promotion remains unproven.
 
-Earlier scan-to-policy, SDG, and NuRec runs have full GPU qualification, complete
-artifact readback, and offline report checks recorded in the
-[source-bound measurements](../evidence/public-demos/README.md). Scan navigation
-succeeded on 3,415/4,000 held-out routes (85.375%) in the reconstructed public
-office. Each receipt identifies the exact native source revision and report
-bytes. The retention change also touches the scan's shared navigation runtime,
-so the current scan source requires a fresh full qualification. SDG and NuRec
-retain their unchanged workload source. RL improvement still requires a
-qualifying final comparison; execution and physics checks alone do not establish
-improvement over a baseline.
+Scan-to-policy, SDG and NuRec have full GPU qualification, complete artifact
+readback and offline report checks in the
+[source-bound measurements](../evidence/public-demos/README.md). The fresh scan
+run qualifies the updated shared navigation runtime: 3,386/4,000 successful
+held-out routes (84.65%) after 500 training updates and 16 million transitions.
+All cases completed by native step 20 within the unchanged 300-step maximum.
+This evaluates goals within the reconstructed public office; it does not establish
+transfer to unseen buildings, physical robots or camera-input policies.
+
+Each receipt identifies its exact native source revision and report bytes.
+The earlier scan result remains preserved separately. SDG and NuRec retain their
+unchanged workload source. The RL comparison workflow is verified through its
+rejection path. Successful policy promotion still requires the unchanged
+development and final quality gates.
 
 To stop a run, use `npa workbench workflow cancel '<run-id>' --project '<project>'`.
 Cancel and verify terminal status before removing dedicated infrastructure.
