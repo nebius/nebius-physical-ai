@@ -112,6 +112,14 @@ single-GPU-node cluster, not a parallel workflow.
 
 ### Concurrent consumers
 
+SkyPilot can reject a second job's `ReadWriteOnce` claim before it creates a
+worker pod, including when both jobs request read-only mounts. Workbench status
+reports `STORAGE_VOLUME_IN_USE` when that job's controller log names an exact
+claim from its rendered resources. This is a recorded observation: status does
+not verify that the named consumer is still running and does not cancel either
+job. Let the owning job release the claim before starting another consumer, or
+use storage that supports the required concurrent jobs.
+
 `huggingface_hub` serialises concurrent downloads with `filelock`, taking an
 advisory lock per blob under `<cache>/.locks`, so sharing one cache between stages
 that start together depends on locking working on the volume. Measured with four
@@ -214,6 +222,7 @@ which is the failure this exists to remove.
 | `NPA_COSMOS_REASON_CACHE`, `NPA_COSMOS_REASON2_CACHE`, `NPA_COSMOS_REASON3_CACHE` | `huggingface/cosmos-reason*` | Self-hosted Cosmos Reason families |
 | `NPA_COSMOS_CURATE_WEIGHTS_DIR` | `cosmos-curate/models` | rebinds upstream Cosmos-Curate's hardcoded `/config/models` |
 | `HF_LEROBOT_HOME`, `LEROBOT_HF_HOME` | `lerobot` | LeRobot datasets and policies |
+| `NPA_SAM3_CACHE` | `sam3` | SAM 3.1 source, runtime closure and gated checkpoint |
 | `WAN22_CACHE_DIR`, `NPA_LTX_MODEL_CACHE` | `wan2.2`, `ltx-2.5` | the BYOF video models |
 | `NPA_CONTENT_AGENTS_RUNTIME_CACHE` | `runtimes/content-agents` | exact OVRTX SDK delivered directly by NVIDIA to the operator |
 

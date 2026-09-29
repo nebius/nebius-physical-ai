@@ -666,7 +666,6 @@ def probe_terraform_backend(
 
 
 def probe_storage_write(
-    *,
     bucket: str,
     endpoint_url: str,
     access_key_id: str,
@@ -677,6 +676,8 @@ def probe_storage_write(
     profile: StorageCapabilityProfile = StorageCapabilityProfile.STANDARD,
     credential_context: StorageCredentialContext = StorageCredentialContext.CONFIGURED,
     key_factory: Callable[[], str] | None = None,
+    *,
+    session_token: str = "",
 ) -> StorageProbeResult:
     """Probe only a consumer profile's declared actions."""
 
@@ -706,7 +707,7 @@ def probe_storage_write(
                 endpoint=endpoint,
                 access=access,
                 secret=secret,
-                session_token="",
+                session_token=str(session_token or ""),
                 region=str(region or "").strip(),
                 addressing_style="path",
             )

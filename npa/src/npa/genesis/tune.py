@@ -294,7 +294,7 @@ def _retrain_with_overrides(
         from rsl_rl.runners import OnPolicyRunner
     except ImportError as exc:
         raise TrainingError(
-            "rsl-rl not installed. Install with: pip install rsl-rl-lib==2.2.4"
+            "rsl-rl not installed. Install with: pip install rsl-rl-lib==5.5.1"
         ) from exc
 
     # Create environment WITH overrides
@@ -345,7 +345,8 @@ def _retrain_with_overrides(
     import json
 
     arch_config = {
-        "policy": config_for_save["policy"],
+        "actor": config_for_save["actor"],
+        "rsl_rl_version": "5.5.1",
         "num_obs": env.obs_dim,
         "num_actions": env.act_dim,
         "action_space": action_space,

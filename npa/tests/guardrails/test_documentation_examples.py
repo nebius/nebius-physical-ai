@@ -163,6 +163,12 @@ def test_heading_anchors_handle_formatting_and_duplicate_collisions(
         ("npa studio demo draft --invented", "unknown option --invented"),
         ("npa studio demo unknown", "unknown film command unknown"),
         ("npa studio demo final --open", ""),
+        ("npa studio demo review --judge token-factory --strict --open", ""),
+        (
+            "npa studio demo review --assessment ./assessment.json --shot-list ./edit.json",
+            "",
+        ),
+        ("npa studio demo review --invented", "unknown option --invented"),
         ("npa workbench nurec check --output json | jq .", ""),
     ],
 )

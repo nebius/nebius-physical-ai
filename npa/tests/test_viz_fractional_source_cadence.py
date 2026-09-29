@@ -7,7 +7,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from rerun.recording import load_recording
+from npa.viz.recordings import load_recording
 
 from npa.adapter.isaac_lab_lerobot import G1_STATE_DIM, G1_STATE_NAMES_43
 from npa.viz.adapters.lerobot_to_rerun import lerobot_to_rerun

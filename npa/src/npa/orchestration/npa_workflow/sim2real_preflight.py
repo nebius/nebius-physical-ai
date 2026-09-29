@@ -195,7 +195,17 @@ def static_prerequisites(
 
     hf_token = str(secret_values.get("HF_TOKEN") or "").strip()
     if hf_token:
-        repos = ["nvidia/Cosmos-Transfer2.5-2B"]
+        # Derive the gated repos from the sim2real capability's single source of
+        # truth so this pre-launch gate matches `health access --capability
+        # sim2real`. Cosmos Transfer (Stage 3) also fetches the pinned
+        # Predict2.5 tokenizer and the Cosmos Guardrail weights at runtime;
+        # probing only Cosmos-Transfer2.5-2B here let a run pass preflight and
+        # then fail inside Stage 3 on an unaccepted dependency.
+        from npa.workbench.model_access import gated_hf_repos
+
+        repos = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+        if not repos:
+            repos = ["nvidia/Cosmos-Transfer2.5-2B"]
         denied: list[str] = []
         for repo in (item for item in repos if item):
             result = hf_validator(hf_token, repo)

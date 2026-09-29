@@ -840,8 +840,9 @@ def test_agent_inventory_credential_source_is_allowlisted(
         assert runtime._agent_inventory_credential_context()[3] == expected
 
 
+@pytest.mark.parametrize("credential_source", ["configured_profile", "instance_metadata"])
 def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, credential_source
 ) -> None:
     from npa.cli import agent_access_runtime as runtime
 
@@ -863,7 +864,7 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
 
     monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
     monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cursor-sa")
-    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "configured_profile")
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", credential_source)
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(
         runtime,
@@ -873,6 +874,9 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
             "NPA_NEBIUS_IAM_TOKEN": canary,
             "TF_VAR_iam_token": canary,
             "NPA_REUSE_IAM_TOKEN": "1",
+            "IAM_TOKEN": canary,
+            "NEBIUS_IAM_TOKEN_FILE": "/fixture/token",
+            "NPA_NEBIUS_IAM_TOKEN_FILE": "/fixture/token",
             "NEBIUS_PROFILE": "stale-profile",
         },
     )
@@ -887,16 +891,20 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
     assert command[:5] == [
         "/bin/true",
         "--config",
-        str(config),
+        str(config) if credential_source == "configured_profile" else "/root/.nebius/config.yaml",
         "--profile",
         "cursor-sa",
     ]
     assert env["NEBIUS_PROFILE"] == "cursor-sa"
-    assert env["HOME"] == str(tmp_path)
+    assert env["HOME"] == (str(tmp_path) if credential_source == "configured_profile" else "/root")
+    assert runtime._agent_inventory_credential_context()[3] == credential_source
     assert "NEBIUS_IAM_TOKEN" not in env
     assert "NPA_NEBIUS_IAM_TOKEN" not in env
     assert "TF_VAR_iam_token" not in env
     assert "NPA_REUSE_IAM_TOKEN" not in env
+    assert "IAM_TOKEN" not in env
+    assert "NEBIUS_IAM_TOKEN_FILE" not in env
+    assert "NPA_NEBIUS_IAM_TOKEN_FILE" not in env
     assert canary not in repr(command)
     assert canary not in repr(env)
 

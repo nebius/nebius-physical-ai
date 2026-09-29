@@ -535,6 +535,104 @@ def test_rendered_gpu_fallback_route_is_zero_token_and_confirmation_bound(
         sys.modules.pop(module_name, None)
 
 
+def _render_test_deployment() -> dict[str, str]:
+    return {
+        "deployment_id": "npa-agent-render-test",
+        "deployment_name": "agent",
+        "project_alias": "smoke",
+        "runtime_namespace": "smoke/agent",
+        "repository": "nebius/nebius-physical-ai",
+        "branch": "render-test",
+        "commit": "synthetic-commit",
+        "source_tree": "synthetic-tree",
+        "short_commit": "synthetic",
+        "workspace_label": "NPA Workbench",
+        "bootstrap_timestamp": "2026-01-01T00:00:00Z",
+    }
+
+
+def _gpu_fallback_request() -> dict[str, object]:
+    return {
+        "gpu_family": "rtx-pro",
+        "gpu_product": "RTXPRO6000",
+        "gpu_count": 1,
+        "image": "registry.example/npa@sha256:synthetic",
+        "image_digest": "sha256:synthetic",
+        "sm": "sm_120",
+        "rt_cores_required": True,
+        "backend": "kubernetes",
+        "model": "policy-a",
+        "workload_tier": "render",
+        "execution_mode": "train",
+        "boot_disk_count": 1,
+        "boot_disk_size_bytes": 1023 * 1024**3,
+        "pool": "on-demand",
+    }
+
+
+def _assert_malformed_success_preserves_state(module, attempt, payload) -> None:
+    tracked_state = copy.deepcopy(module._load_state())
+    tracked_confirmation = module._peek_agent_confirm_token()
+    malformed_values = ("false", "true", 0, 1, None, [], {}, [False])
+    for malformed in malformed_values:
+        with pytest.raises(
+            module.HTTPException, match="success must be a boolean"
+        ) as raised:
+            attempt({**payload, "success": malformed})
+        assert raised.value.status_code == 400
+        assert module._load_state() == tracked_state
+        assert module._peek_agent_confirm_token() == tracked_confirmation
+
+
+def test_rendered_gpu_fallback_requires_literal_boolean_success(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.cli import agent as agent_module
+
+    monkeypatch.setattr(
+        agent_module,
+        "build_deployment_manifest",
+        lambda **_kwargs: _render_test_deployment(),
+    )
+    module_name = "npa_rendered_gpu_fallback_boolean_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    module.STATE_PATH = tmp_path / "gpu-fallback-boolean-state.json"
+    module._STATE_STORE = None
+    request = _gpu_fallback_request()
+    candidate = {**request, "pool": "preemptible"}
+    payload = {
+        "logical_allocation": "strict-boolean-allocation",
+        "request": request,
+        "failure": {"code": "quota_exhausted"},
+        "evidence": {"source": "scheduler"},
+        "preemptible_candidate": candidate,
+    }
+    attempt = next(
+        route.endpoint
+        for route in module.app.router.routes
+        if getattr(route, "path", "") == "/agent/gpu-allocation/attempt"
+    )
+    try:
+        first = attempt(payload)
+        second = attempt(payload)
+        assert first["allocation"]["qualifying_attempts"] == 1
+        assert second["allocation"]["qualifying_attempts"] == 2
+
+        prompt = attempt({**payload, "success": False})
+        assert prompt["allocation"]["qualifying_attempts"] == 3
+        assert prompt["allocation"]["status"] == "awaiting-consent"
+        assert prompt["needs_confirmation"] is True
+
+        _assert_malformed_success_preserves_state(module, attempt, payload)
+
+        succeeded = attempt({**payload, "success": True})
+        assert succeeded["decision"]["reason"] == "allocation_succeeded"
+        assert succeeded["allocation"]["qualifying_attempts"] == 0
+        assert succeeded["allocation"]["status"] == "succeeded"
+    finally:
+        sys.modules.pop(module_name, None)
+
+
 def test_gpu_decline_preserves_unrelated_pending_confirmation(
     monkeypatch, tmp_path
 ) -> None:
@@ -3026,6 +3124,49 @@ def test_rendered_foxglove_exact_source_avoids_tenant_wide_access_scan(
         sys.modules.pop(module_name, None)
 
 
+def _isolate_rrd_history_access(monkeypatch, module):
+    """Supply typed access while refusing external discovery in this fixture."""
+    from unittest.mock import Mock
+
+    capabilities = {
+        "artifact_discovery": module.CapabilityAccess("available", "fixture")
+    }
+    bucket = module.StorageResourceAccess(
+        "fixture-bucket", "artifact-bucket", "artifact-project", capabilities
+    )
+    project = module.ProjectAccess(
+        "artifact-project", "fixture", True, "available", capabilities, (bucket,)
+    )
+    report = module.AgentAccessReport(
+        "fixture-tenant",
+        "artifact-project",
+        "fixture",
+        "available",
+        "fixture-only",
+        capabilities,
+        (project,),
+    )
+
+    def access_report(*, refresh=False):
+        if refresh:
+            module._finish_agent_access_refresh(report)
+        return report
+
+    access = Mock(wraps=module._begin_agent_artifact_access)
+    external = Mock(side_effect=AssertionError("unexpected external access discovery"))
+    monkeypatch.setattr(module, "_agent_access_report", access_report)
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", access)
+    for name in (
+        "_discover_agent_access_report",
+        "_agent_inventory_credential_context",
+        "_agent_command_env",
+        "_agent_nebius_json",
+        "_agent_s3_client_optional",
+    ):
+        monkeypatch.setattr(module, name, external)
+    return access, external
+
+
 def test_source_qualified_rrd_loads_keep_independent_history(
     monkeypatch, tmp_path
 ) -> None:
@@ -3034,9 +3175,14 @@ def test_source_qualified_rrd_loads_keep_independent_history(
     import shutil
     import sys
 
+    # Dedicated archive tests retain real staging; history needs only rendering.
+    monkeypatch.setattr(
+        "npa.cli.agent._stage_agent_npa_source", lambda *_args, **_kwargs: None
+    )
     module_name = "npa_rendered_artifact_history_backend"
     monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    access, external = _isolate_rrd_history_access(monkeypatch, module)
     recordings = tmp_path / "recordings"
     recordings.mkdir()
     module.RECORDINGS_DIR = recordings
@@ -3211,6 +3357,10 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             != responses[0]["sim_viz"]["artifact_preview_url"]
         )
         assert selected_one["rerun_ready"] is True
+        assert access.call_count >= 3
+        assert snapshots[ref_one]["project_id"] == "artifact-project"
+        assert snapshots[ref_two]["project_id"] == "artifact-project"
+        external.assert_not_called()
     finally:
         sys.modules.pop(module_name, None)
 
@@ -5239,7 +5389,14 @@ def test_rendered_visual_turn_with_approval_words_stays_on_vision_path(
     }
     captured: dict[str, object] = {}
 
-    def visual_chat(*, messages, requested_model="", tier="standard", interactive=True):
+    def visual_chat(
+        *,
+        messages,
+        requested_model="",
+        tier="standard",
+        interactive=True,
+        use_model_router=False,
+    ):
         captured.update(
             messages=messages,
             requested_model=requested_model,
@@ -6585,3 +6742,105 @@ def test_rendered_catalog_action_reaches_factual_completion(monkeypatch, tmp_pat
         json.dumps(catalog_observation, sort_keys=True)
         in planner_inputs[1][-1]["content"]
     )
+
+
+def _snapshot_test_access(module):
+    """Build a complete discovery scope using the real access-report producer."""
+    return module.discover_agent_access(
+        tenant_id="tenant-test",
+        deployment_project_id="project-test",
+        fallback_buckets=[],
+        list_projects=lambda _tenant: [
+            {"metadata": {"id": "project-test", "name": "Project Test"}}
+        ],
+        list_buckets=lambda _project: [
+            {"metadata": {"id": "bucket-resource-test", "name": "bucket-test"}}
+        ],
+        probe_bucket=lambda _bucket: module.BucketProbe("available", "available"),
+    )
+
+
+def _snapshot_test_page(module):
+    """Provide two real run records so continuation consumes a saved snapshot."""
+    runs = [
+        module.RunSummary(
+            f"snapshot-run-{index}",
+            "2031-01-01T00:00:00Z",
+            0,
+            None,
+            bucket="bucket-test",
+            project_id="project-test",
+            resolved_prefix="runs",
+        )
+        for index in range(2)
+    ]
+    return SimpleNamespace(
+        runs=runs,
+        total_runs=2,
+        truncated=False,
+        discovery_complete=True,
+        source_errors=(),
+    )
+
+
+@pytest.fixture
+def snapshot_route(monkeypatch, tmp_path, mocker):
+    """Use the rendered HTTP app and real cursor storage with external discovery replaced."""
+    from fastapi.testclient import TestClient
+
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_snapshot_completeness_backend"
+    )
+    report = _snapshot_test_access(module)
+    external = {
+        "_agent_artifact_s3_client": lambda: (
+            object(),
+            {"bucket": "bucket-test", "prefix": ""},
+        ),
+        "_configured_agent_artifact_sources": lambda: (),
+        "_agent_access_report": lambda **_kwargs: report,
+        "_agent_access_report_for_artifact_discovery": lambda: report,
+        "_begin_agent_artifact_access": lambda: report,
+        "_end_agent_artifact_access": lambda: None,
+    }
+    for name, callback in external.items():
+        monkeypatch.setattr(module, name, callback)
+    discovery = mocker.Mock(return_value=_snapshot_test_page(module))
+    monkeypatch.setattr(module, "list_runs_cached_multi", discovery)
+    return module, TestClient(module.app), discovery
+
+
+@pytest.mark.parametrize("field", ["query_complete", "source_index_truncated"])
+@pytest.mark.parametrize("omit", [False, True], ids=["malformed", "missing"])
+def test_rendered_snapshot_continuation_rejects_corrupt_coverage(
+    snapshot_route, field, omit
+):
+    module, client, discovery = snapshot_route
+    first = client.get("/artifacts/runs", params={"limit": 1})
+    assert first.status_code == 200
+    assert first.json()["query_complete"] is True
+    cursor = first.json()["next_cursor"]
+    assert cursor
+    snapshot = next(iter(module._AGENT_RUN_CURSOR_SNAPSHOTS.values()))
+    metadata = snapshot["metadata"]
+    original = dict(metadata)
+    if omit:
+        metadata.pop(field)
+    else:
+        metadata[field] = "false"
+
+    failed = client.get("/artifacts/runs", params={"limit": 1, "cursor": cursor})
+
+    assert failed.status_code == 502
+    assert failed.json()["ok"] is False
+    assert field in failed.json()["error"]
+    assert "pagination_complete" not in failed.json()
+    assert "total_runs" not in failed.json()
+    discovery.assert_called_once()
+    assert metadata != original
+    metadata.update(original)
+    restored = client.get("/artifacts/runs", params={"limit": 1, "cursor": cursor})
+    assert restored.status_code == 200
+    assert restored.json()["pagination_complete"] is True
+    assert restored.json()["runs"][0]["run_id"] == "snapshot-run-1"
+    discovery.assert_called_once()

@@ -34,7 +34,7 @@ app = typer.Typer(
 logger = logging.getLogger(__name__)
 
 # Keep this pinned to the rerun-sdk version used to produce current recordings.
-RERUN_VERSION = "0.31.4"
+RERUN_VERSION = "0.38.1"
 MAX_TTL_HOURS = 168
 UTC = timezone.utc
 RERUN_BROWSER_ORIGIN = "https://app.rerun.io"

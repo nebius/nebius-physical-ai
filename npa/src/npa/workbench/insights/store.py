@@ -36,6 +36,7 @@ from .schemas import (
     RecordResponse,
 )
 from .storage import (
+    InsightsStorageError,
     append_jsonl_uri,
     list_json_uris,
     read_json_uri,
@@ -239,7 +240,7 @@ def record_metrics(request: RecordRequest) -> RecordResponse:
     if request.input_uri.strip():
         try:
             payload = read_json_uri(request.input_uri)
-        except StorageAuthorizationError:
+        except (StorageAuthorizationError, InsightsStorageError):
             raise
         except FileNotFoundError as exc:
             raise InsightsStoreError(
@@ -299,7 +300,13 @@ def ingest_run(request: IngestRunRequest) -> IngestRunResponse:
         scanned += 1
         try:
             payload = read_json_uri(uri)
-        except StorageAuthorizationError:
+        except (StorageAuthorizationError, InsightsStorageError):
+            # A denied/expired-credential/transport failure mid-scan means the
+            # run's true contents are unknown, not that this one artifact
+            # happens to be unreadable JSON: reporting a partial ingest as
+            # success would silently understate the run. Malformed-but-fetched
+            # JSON (the except-Exception case below) is different — it really
+            # is not one of the known manifest/report schemas.
             raise
         except Exception:  # noqa: BLE001 - skip unreadable/non-object artifacts.
             continue

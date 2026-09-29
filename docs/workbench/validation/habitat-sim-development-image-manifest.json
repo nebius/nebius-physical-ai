@@ -1,0 +1,140 @@
+{
+  "format": "npa_habitat_sim_development_image_manifest_v1",
+  "tool": "habitat-sim",
+  "status": "development-only",
+  "release_authorized": false,
+  "supported_release_selection": "quarantined",
+  "image": "ghcr.io/nebius/nebius-physical-ai/npa-habitat-sim@sha256:0ec05dca8b64b9ad4ed194d0e91762adb5a46a186d3dbc49cde4287f437800f2",
+  "oci_digest": "sha256:0ec05dca8b64b9ad4ed194d0e91762adb5a46a186d3dbc49cde4287f437800f2",
+  "producer_sha": "dd49fdb6ee66a72e505b9830a29dad883df91e91",
+  "trusted_build_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36092335522",
+  "dockerfile": "npa/docker/workbench/habitat-sim/Dockerfile.bootstrap",
+  "evidence_date": "2026-09-25",
+  "source_inputs": [
+    {
+      "path": "npa/docker/workbench/habitat-sim/Dockerfile.bootstrap",
+      "sha256": "c13b74bd8fd25f662cdbc3cfed2fcfacaee20fea8c0e42562cf45bf344ceb19e"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/apt-build.lock",
+      "sha256": "c88925cf63d383581266c0ed7a16f71890f5404cc66d8c7f556c8d0914d788c4"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/apt-runtime.lock",
+      "sha256": "4bb99869a74cf5cedf359d173b72e5c0ec2dea6530b7191af136844dd651fcb7"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/bootstrap-entrypoint.sh",
+      "sha256": "b8fd557ad646d7225b7ae7ed9848f7babad6d11c0156c1acd30a9095642374a1"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/bootstrap_sources.py",
+      "sha256": "17cbeeb6f6124fe3d44017aef102012c4829bd41f4b4abf68686840b71188ee5"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/prepare_source.py",
+      "sha256": "b66f979e2af49fc504457843288fa7e66402bc7afabda129aa0164866e30d561"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/python-shim.sh",
+      "sha256": "386fc816f1c1c7d510ac7dfcf751a9641bf18d9ffa2af3559739341c82e44dd4"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/requirements-build.lock",
+      "sha256": "fb28aa41f74070e19844e6d512b94c8a919d8ba768b2826f439aa35f6d261f6e"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/requirements-runtime.lock",
+      "sha256": "aa95c81b28e5a8a045965ab25de96c6328ad65f7c03b2717c9a765b898e9d620"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/runtime.sh",
+      "sha256": "7a1c1529935163e18c10d6dc2adef7b22b046974f079acb6b21fdf0977de935d"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/source-manifest.json",
+      "sha256": "a72e4328f9cb056d56cb251358b8d0b493876f84cf9e4ead5d2045cb15ec61e6"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/verify_apt_artifacts.sh",
+      "sha256": "b39bc6c180cce87b391a4ea288ad42cef55d6dd4783858176b4e1579159f0b3d"
+    },
+    {
+      "path": "npa/docker/workbench/habitat-sim/verify_apt_source.py",
+      "sha256": "dc6810e80433e08b4bf3cb8514eb89678e451f72b8180d413bd4ddf3471a6ac9"
+    },
+    {
+      "path": "npa/src/npa/__init__.py",
+      "sha256": "1d0197eb597b94bde044a0d64bf81967489d646c485f9dc1c98081afdc9fd223"
+    },
+    {
+      "path": "npa/src/npa/workflows/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "npa/src/npa/workflows/habitat_sim_smoke.py",
+      "sha256": "3007275168f8f21cc7b53c84491c78d693b2af27a470a53e14f65a7a6144bef1"
+    }
+  ],
+  "gpu_proof": {
+    "observed_image_digest": "sha256:0ec05dca8b64b9ad4ed194d0e91762adb5a46a186d3dbc49cde4287f437800f2",
+    "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "gpu_count": 1,
+    "capabilities_exercised": [
+      "skokloster_castle_rgb_depth_bullet_traversal",
+      "headless_nvidia_egl_rgb_depth_render",
+      "bullet_physics_world_step",
+      "greedy_geodesic_agent_traversal"
+    ],
+    "rgb_frames": 19,
+    "depth_frames": 19,
+    "bullet_steps": 19,
+    "displacement_m": 2.246638795883755,
+    "artifact_count": 58,
+    "artifact_bytes": 8589429,
+    "renderer_vendor": "NVIDIA Corporation",
+    "scope": "Functional rendering, navigation and Bullet execution through a managed task using the exact development image. No long-run benchmark, learned-policy training, or GPU-utilization-rate result is claimed."
+  },
+  "evidence": {
+    "capability_report": {
+      "sha256": "e215c3e7c184d717630abe81f7ef130e40728a825941ffd623c9a08f73eae97c",
+      "size_bytes": 29045
+    },
+    "published_artifact_manifest": {
+      "sha256": "d9544f920e79c7001e807d2946fdfa7396259a53359383854b3a1ab434686d25",
+      "size_bytes": 25933
+    },
+    "gpu_verification": {
+      "sha256": "e435caaf360fa65dd83f3e8e9fafd756bc75de2e871b4efbf233f4abf2d0e7e1",
+      "size_bytes": 2687
+    },
+    "independent_artifact_verification": {
+      "sha256": "8f732d42b3cda81e1371280dd0bb431549242e5e7732a0697885c6d7885edc85",
+      "size_bytes": 3008
+    },
+    "anonymous_complete_byte_pull": {
+      "sha256": "2b7bce05739081917370255dc876a3b4d26207fae3236ae42855b957ab64e414",
+      "size_bytes": 1012
+    },
+    "verified_slsa_provenance": {
+      "sha256": "388887d08227d5eca5238262876b4ead3bfaaf9b8765f761419ee3c56364dbd7",
+      "size_bytes": 14868
+    },
+    "verified_spdx_sbom": {
+      "sha256": "bad914fd8ad62b77f2374e5a094abb994a1b935d0537327807c06892393ad824",
+      "size_bytes": 571517
+    },
+    "owned_resource_cleanup": {
+      "sha256": "e8926abab7e4f46d1dd7c15a6dfd1eea1e7244f4650117604cd4147d9a709c69",
+      "size_bytes": 3695
+    }
+  },
+  "evidence_storage": "Exact infrastructure identities, raw reports and artifacts are retained in access-controlled operator evidence; only non-identifying hashes and measurements are published here.",
+  "reuse_scope": "The listed Dockerfile and COPY inputs match the retained producer byte for byte. This record does not claim a new image build or a new GPU run for later source commits.",
+  "excluded": [
+    "supported release promotion",
+    "legacy baked Dockerfile qualification",
+    "legacy direct-pod validation selector",
+    "B200 or B300 renderer support"
+  ]
+}

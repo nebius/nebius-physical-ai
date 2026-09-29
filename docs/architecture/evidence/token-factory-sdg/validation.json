@@ -1,0 +1,75 @@
+{
+  "scope": "Live Token Factory routing, generation, review, and local artifact publication. No Jev inference, remote S3 write, or Kubernetes submission.",
+  "tests": {
+    "passed": 2,
+    "failed": 0
+  },
+  "prompt_revision": "npa-token-factory-sdg-v3",
+  "development_history": [
+    {
+      "prompt_version": "v1",
+      "note": "All six seeds selected Lightning; three contradictory numeric answers were incorrectly accepted by the initial reviewer.",
+      "generated_at": "2026-09-20T15:02:45.585881+00:00",
+      "counts": {
+        "seed_count": 6,
+        "accepted_count": 5,
+        "rejected_count": 1,
+        "error_count": 0,
+        "generation_model_counts": {
+          "nvidia/Nemotron-3_5-Lightning": 6
+        }
+      },
+      "provenance_sha256": "570e264a301ed02667aed46911c22b47df7fae94e28e5f21e0d9246e13f20798"
+    },
+    {
+      "prompt_version": "v2",
+      "note": "The revised policy over-routed all six seeds to MiniMax; explicit review checks rejected the separate contradictory negative control.",
+      "generated_at": "2026-09-20T15:06:01.374130+00:00",
+      "counts": {
+        "seed_count": 6,
+        "accepted_count": 6,
+        "rejected_count": 0,
+        "error_count": 0,
+        "generation_model_counts": {
+          "MiniMaxAI/MiniMax-M3": 6
+        }
+      },
+      "provenance_sha256": "efd9db57ea09b0f982b18827379615b5f10789fa82e0e1e5b6da3c6396637535"
+    },
+    {
+      "prompt_version": "v3",
+      "note": "Correct three/three routing and one correct quality rejection. The initial test incorrectly required all six candidates to be accepted; the assertion was corrected to verify exclusion of rejected rows.",
+      "generated_at": "2026-09-20T15:07:51.626959+00:00",
+      "counts": {
+        "seed_count": 6,
+        "accepted_count": 5,
+        "rejected_count": 1,
+        "error_count": 0,
+        "generation_model_counts": {
+          "MiniMaxAI/MiniMax-M3": 3,
+          "nvidia/Nemotron-3_5-Lightning": 3
+        }
+      },
+      "provenance_sha256": "181b386c9f6f92e15080592ac63b598d53dbb85987fc093a3b368c19a1ce09c6"
+    }
+  ],
+  "held_out_evaluation": false,
+  "price_source": "https://tokenfactory.nebius.com/api/public/models_info",
+  "catalog_checked_at": "2026-09-20",
+  "public_price_usd_per_million_tokens": {
+    "nvidia/Nemotron-3_5-Lightning": {
+      "input": 0.06,
+      "output": 0.24
+    },
+    "MiniMaxAI/MiniMax-M3": {
+      "input": 0.3,
+      "output": 1.2
+    }
+  },
+  "source_sha256": {
+    "npa/src/npa/workbench/token_factory/sdg.py": "b0e0273f5cb087b05874ea3af548004af5188b626667a06dcc757a10acc99662",
+    "npa/src/npa/workbench/token_factory/sdg_protocol.py": "95df53856f384a85469e93f2e3908f9cec3c82941fc358e8128187d721b31b0e"
+  },
+  "published_protocol_sha256": "0444013cc2cc2fb421181e0ce5e18f830fb12ec795bd43cea4385e99ca736399",
+  "publication_note": "The executed protocol was reformatted after measurement; AST equality with the executed source was verified. Source hashes above identify the measured code."
+}

@@ -1,0 +1,31 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: token-factory-robot-sdg
+  description: Automatically plan Fetch scenes through Token Factory, simulate pick-and-place, and export physics-checked RGB/action LeRobot data with videos.
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/token-factory-robot-sdg"
+  prompts_uri: "s3://{{config.bucket}}/{{config.prefix}}/prompts.jsonl"
+  robot_sdg_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/robot-data"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+initial: generate-robot-data
+states:
+  generate-robot-data:
+    description: Hosted scene routing → MuJoCo controller → physics gate → LeRobot v3 and camera videos.
+    toolRef: workbench.token_factory.robot_sdg
+    resources: cpu
+    outputs:
+      - uri: "{{config.robot_sdg_output_uri}}/dataset/meta/info.json"
+        schema: lerobot.dataset.v3
+      - uri: "{{config.robot_sdg_output_uri}}/index.html"
+        schema: npa.robot_sdg.gallery.v1
+      - uri: "{{config.robot_sdg_output_uri}}/provenance.jsonl"
+        schema: npa.robot_sdg.provenance.v1
+      - uri: "{{config.robot_sdg_output_uri}}/report.json"
+        schema: npa.token_factory.robot_sdg.v1
+    terminal: true

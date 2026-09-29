@@ -23,6 +23,11 @@ allowlists, and custom provider endpoints remain supported, including dedicated
 deployments of retired public models. Existing agent configurations retain their
 saved model choices; update them explicitly when migrating.
 
+Optional [Jev model routing](workbench/jev-routing.md) can choose between the
+eligible Token Factory text models for final answer generation. It is disabled
+by default and uses a separate TypeSafe credential. The guide covers opt-in
+configuration, privacy, fallback behavior, and real cache-counter evidence.
+
 | | |
 | --- | --- |
 | **Prerequisites** | Everything in [the quickstart](quickstart.md), plus Terraform 1.x, an SSH key pair, writable S3, and either a Token Factory key or an owner-only custom-provider config |
