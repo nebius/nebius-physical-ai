@@ -25,6 +25,12 @@ and full GLM making production code changes and verifying six-case MuJoCo/LeRobo
 runs. It preserves the router's all-Flash decisions and distinguishes the
 explicit full-GLM review assignments from automatic routing.
 
+The [extended task suite](../../npa/examples/specialists/extended_tasks/README.md)
+defines hours-scale robot data, NuRec reconstruction and Cosmos3 curation tasks.
+Each requires integrated code changes, controlled failure recovery and real
+artifact verification. These are benchmark assignments awaiting calibration
+and execution, not additional measured results.
+
 Run independent agents on your own Linux or macOS host. LangGraph checkpoints
 persist each task's conversation and next step; Workbench owns task assignment,
 tool permissions, operation receipts and source patches. Model inference uses
