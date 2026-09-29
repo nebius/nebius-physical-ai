@@ -167,6 +167,7 @@ def _combined_config(root, directory):
     result = {
         **profile_configs[0],
         "workspace": str(workspace),
+        "source": str(root / "source"),
         "targets": list(TARGETS),
         "state": str(directory / "combined/operations"),
         "matrix": str(root / "driver/multimodel-scenes.json"),

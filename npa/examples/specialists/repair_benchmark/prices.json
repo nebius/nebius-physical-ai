@@ -1,7 +1,7 @@
 {
-  "observed_date": "2026-09-27",
+  "observed_date": "2026-09-29",
   "sources": [
-    "https://developers.openai.com/api/docs/models/gpt-6-astra.md",
+    "https://developers.openai.com/api/docs/pricing",
     "https://tokenfactory.nebius.com/api/public/models_info"
   ],
   "description": "Published standard API-equivalent rates; not an invoice. Both Astra context tariffs retained unless per-request evidence proves short context. Full ToFa input tariff without an assumed cache discount. All routing/generation/recovery attempts included.",

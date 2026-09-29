@@ -7,6 +7,7 @@ from http.server import HTTPServer
 import importlib
 import json
 from pathlib import Path
+import subprocess
 import sys
 from threading import Thread
 from types import SimpleNamespace
@@ -54,6 +55,102 @@ def test_native_failure_handoff_does_not_escalate_initial_diagnosis(modules, tmp
     assert not any(value.get("handoff_on_failure") for value in default.values())
     assert opted_in["wait"].pop("handoff_on_failure") is True
     assert opted_in == default
+
+
+def _git_commit(repository, message):
+    subprocess.run(["git", "add", "."], cwd=repository, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--quiet",
+            "-m",
+            message,
+        ],
+        cwd=repository,
+        check=True,
+    )
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repository, text=True
+    ).strip()
+
+
+def _checkout_fixture(modules, tmp_path, monkeypatch):
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(repository)], check=True)
+    for target in modules.sandbox.TARGETS:
+        path = repository / "npa/src" / target
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("value = 'historical'\n")
+    baseline = _git_commit(repository, "Historical failures")
+    for target in modules.sandbox.TARGETS:
+        (repository / "npa/src" / target).write_text("value = 'reference'\n")
+    (repository / "README.md").write_text("Complete checkout fixture\n")
+    _git_commit(repository, "Reference fixes")
+    monkeypatch.setattr(modules.prepare, "REPOSITORY", repository)
+    (tmp_path / "tests").mkdir()
+    return baseline
+
+
+def test_independent_checkouts_run_their_own_source_without_sibling_edits(
+    modules, tmp_path, monkeypatch
+):
+    baseline = _checkout_fixture(modules, tmp_path, monkeypatch)
+    target, sibling = modules.sandbox.TARGETS[:2]
+    first, second = tmp_path / "first", tmp_path / "second"
+    for workspace in (first, second):
+        modules.prepare._candidate(tmp_path, workspace, target, baseline, True)
+        assert (workspace / "README.md").is_file()
+        assert (workspace / "npa/src" / target).read_text() == "value = 'historical'\n"
+        assert (workspace / "npa/src" / sibling).read_text() == "value = 'reference'\n"
+    (first / "npa/src" / target).write_text("value = 'repair'\n")
+    options = SimpleNamespace(
+        native_python=Path(sys.executable), reader_python=Path(sys.executable)
+    )
+    config = modules.prepare._operation_config(
+        tmp_path, first, tmp_path / "state", [target], options, source=first / "npa/src"
+    )
+    sources = modules.operation._sources(config)
+    assert all(path.is_relative_to(first) for path in sources.values())
+    mounts = modules.sandbox._input_mounts(config, tmp_path / "attempt")
+    assert mounts[:3] == ["--ro-bind", str(first / "npa/src"), "/workbench/npa/src"]
+    assert str(second) not in mounts
+    assert (second / "npa/src" / target).read_text() == "value = 'historical'\n"
+    assert (first / "npa/src" / target).stat().st_ino != (
+        second / "npa/src" / target
+    ).stat().st_ino
+
+
+def test_combined_check_uses_neutral_reference_not_one_workers_checkout(
+    modules, tmp_path
+):
+    directory = tmp_path / "arm"
+    for number, target in enumerate(modules.sandbox.TARGETS):
+        workspace = directory / f"worker-{number}"
+        source = workspace / "npa/src" / target
+        source.parent.mkdir(parents=True)
+        source.write_text(f"repair = {number}\n")
+        modules.operation._write(
+            directory / "configs" / f"{number}.json",
+            {
+                "workspace": str(workspace),
+                "source": str(workspace / "npa/src"),
+                "targets": [target],
+            },
+        )
+    config = modules.run._combined_config(tmp_path, directory)
+    assert config["source"] == str(tmp_path / "source")
+    for number, target in enumerate(modules.sandbox.TARGETS):
+        assert (
+            Path(config["workspace"]) / "npa/src" / target
+        ).read_text() == f"repair = {number}\n"
 
 
 def test_system_python_mounts_its_prefix_instead_of_the_filesystem(

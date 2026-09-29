@@ -81,7 +81,31 @@ def _copy_inputs(root):
     shutil.copyfile(HERE.parent / "workflow_usage.py", root / "workflow_usage.py")
 
 
-def _candidate(root, workspace, target, baseline):
+def _clone_workspace(workspace):
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=REPOSITORY, text=True
+    ).strip()
+    subprocess.run(
+        [
+            "git",
+            "clone",
+            "--shared",
+            "--no-checkout",
+            "--quiet",
+            str(REPOSITORY),
+            str(workspace),
+        ],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(workspace), "checkout", "--quiet", "--detach", revision],
+        check=True,
+    )
+
+
+def _candidate(root, workspace, target, baseline, independent_checkout=False):
+    if independent_checkout:
+        _clone_workspace(workspace)
     path = workspace / "npa/src" / target
     path.parent.mkdir(parents=True, exist_ok=True)
     contents = subprocess.check_output(
@@ -92,12 +116,14 @@ def _candidate(root, workspace, target, baseline):
         shutil.copyfile(source, workspace / source.name)
 
 
-def _operation_config(root, workspace, state, targets, options, combined=False):
+def _operation_config(
+    root, workspace, state, targets, options, combined=False, source=None
+):
     return {
         "workspace": str(workspace),
         "state": str(state),
         "targets": list(targets),
-        "source": str(root / "source"),
+        "source": str(source if source is not None else root / "source"),
         "tests": str(root / "tests"),
         "driver": str(root / "driver"),
         "matrix": str(
@@ -170,12 +196,18 @@ def _endpoint_policy(protocol):
 def _profile(root, directory, task, options, protocol):
     target, requirements = TASKS[task]
     workspace = directory / "workspaces" / task
-    _candidate(root, workspace, target, protocol["baseline_ref"])
+    independent = protocol.get("workspace_layout") == "independent-checkout"
+    _candidate(root, workspace, target, protocol["baseline_ref"], independent)
     instructions = requirements + "\n" + PROCESS
     (workspace / "TASK.md").write_text(instructions + "\n")
     path = directory / "configs" / f"{task}.json"
     config = _operation_config(
-        root, workspace, directory / "operations" / task, [target], options
+        root,
+        workspace,
+        directory / "operations" / task,
+        [target],
+        options,
+        source=workspace / "npa/src" if independent else None,
     )
     _write(path, config)
     return {
@@ -280,6 +312,12 @@ def _options():
     parser.add_argument("--native-python", required=True, type=Path)
     parser.add_argument("--reader-python", required=True, type=Path)
     parser.add_argument(
+        "--workspace-layout",
+        choices=("overlay", "independent-checkout"),
+        default="overlay",
+        help="Use a separate complete Git checkout and runtime source tree for every lane in both arms.",
+    )
+    parser.add_argument(
         "--native-failure-handoff",
         action="store_true",
         help="Hand a failed native wait to the next configured model; preserve receipts and do not replay effects.",
@@ -293,6 +331,8 @@ def _main():
     root = options.output.resolve()
     root.mkdir(parents=True, mode=0o700, exist_ok=False)
     protocol = json.loads((HERE / "protocol.json").read_text())
+    if options.workspace_layout != "overlay":
+        protocol["workspace_layout"] = options.workspace_layout
     if options.native_failure_handoff:
         protocol["native_failure_handoff"] = True
     _copy_inputs(root)

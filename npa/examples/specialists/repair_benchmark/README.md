@@ -107,6 +107,22 @@ Start a new root for a new declared experiment, retaining the old result. Run
 arms serially on the same host and avoid unrelated heavy work during timing.
 Model workers within a hybrid arm execute concurrently.
 
+Pass `--workspace-layout independent-checkout` during preparation to give every
+lane in both arms its own complete detached Workbench checkout. Native operations
+import that lane's source tree; they cannot see another lane's edits or outputs.
+Only the assigned repair file is writable through the agent tools. Tests and
+verifiers remain immutable, and the final integration check combines all patches
+against the neutral frozen reference. The default `overlay` layout keeps a shared
+read-only reference with separate candidate files.
+
+The checkouts share a local Git object store and read-only Python dependencies,
+but their working files and operation outputs are independent. Per-profile
+ownership locks still prevent duplicate workers and conflicting takeovers of the
+same agent. This tests filesystem isolation on one host, not separate VMs or cloud
+job isolation. Checkout preparation is outside measured task latency; record its
+time and disk use separately. Do not compare a new cohort with an older one as a
+causal test of the layout itself.
+
 ## Cost and evidence
 
 [`prices.json`](prices.json) records dated public API-equivalent rates. Refresh
