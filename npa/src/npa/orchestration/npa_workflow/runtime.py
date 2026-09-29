@@ -20,7 +20,7 @@ Design notes
   already write. Nothing new is invented.
 * **Seam respected.** Waves are rendered through
   ``skypilot_render.render_skypilot_steps_yaml``, i.e. through
-  ``build_skypilot_task_doc`` -> ``build_scheduler_task``. The orchestrator never
+  ``build_skypilot_task_docs`` -> ``build_scheduler_task``. The orchestrator never
   reaches into rendering internals.
 * **Durable + resumable.** Every wave attempt is written to
   ``<config.prefix>/npa-workflow/runtime.json`` (``npa.workflow.runtime.v1``).
@@ -61,7 +61,7 @@ from npa.orchestration.npa_workflow.run_state import (
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     assert_no_unresolved_placeholders,
-    build_skypilot_task_doc,
+    build_skypilot_task_docs,
     plan_images,
     resolve_task_image,
     render_skypilot_steps_yaml,
@@ -694,11 +694,9 @@ def _resource_profiles_for_steps(
     run_id: str,
 ) -> dict[str, dict[str, Any]]:
     """Capture each wave state's exact resolved resource profile."""
+    tasks = build_skypilot_task_docs(spec, steps, run_id=run_id, options=render_options)
     profiles: dict[str, dict[str, Any]] = {}
-    for step in steps:
-        task = build_skypilot_task_doc(
-            spec, step, run_id=run_id, options=render_options
-        )
+    for step, task in zip(steps, tasks, strict=True):
         profile = dict(task.get("resources") or {})
         profile.pop("image_id", None)
         profile.pop("image_login_config", None)
