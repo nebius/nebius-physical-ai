@@ -18,8 +18,15 @@ import itertools
 import json
 import os
 import sys
+import time
 from importlib import metadata
 from pathlib import Path
+
+_ATTENTION_CASES = tuple(
+    itertools.product(
+        ("dense", "gqa", "varlen"), ("float16", "bfloat16"), (64, 128), (False, True)
+    )
+)
 
 
 def _parse_sass_arch(flag: str) -> tuple[int, int] | None:
@@ -245,19 +252,42 @@ def _run_checks(expected: str, report: dict) -> None:
     _check_controls(torch)
     report["controls"] = "passed"
     functions = _attention_functions(report["backend"])
-    cases = itertools.product(
-        ("dense", "gqa", "varlen"), ("float16", "bfloat16"), (64, 128), (False, True)
-    )
-    for kind, dtype, head_dim, causal in cases:
+    for kind, dtype, head_dim, causal in _ATTENTION_CASES:
         label = f"{kind}/{dtype}/d{head_dim}/causal={causal}"
         print(f"Checking {label}", flush=True)
         report["active_case"] = label
-        report["cases"].append(
-            _check_attention_case(
-                torch, functions, kind, dtype, head_dim, causal, report["backend"]
-            )
+        started = time.perf_counter()
+        case = _check_attention_case(
+            torch, functions, kind, dtype, head_dim, causal, report["backend"]
         )
+        case["elapsed_seconds"] = time.perf_counter() - started
+        report["cases"].append(case)
     report.pop("active_case", None)
+
+
+def _parse_args(argv):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expect-capability", default="", metavar="CC")
+    parser.add_argument("--json-output", type=Path)
+    parser.add_argument(
+        "--attention-api",
+        choices=("flash_attn.cute", "flash_attn", "fa2"),
+        default="fa2"
+        if os.getenv("NPA_ATTENTION_BACKEND") == "fa2"
+        else "flash_attn.cute",
+        help="Explicit namespace to qualify; the root adapter is image-specific",
+    )
+    return parser.parse_args(argv)
+
+
+def _write_report(report, output):
+    if output is not None:
+        output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(
+        f"{report['backend']} cases passed: "
+        f"{len(report['cases'])}/{report['expected_cases']}"
+    )
+    print(f"Qualification elapsed: {report['elapsed_seconds']:.3f}s (includes JIT)")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -270,36 +300,24 @@ def main(argv: list[str] | None = None) -> int:
     Raises:
         OSError: The requested JSON output cannot be written.
     """
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--expect-capability", default="", metavar="CC")
-    parser.add_argument("--json-output", type=Path)
-    parser.add_argument(
-        "--attention-api",
-        choices=("flash_attn.cute", "flash_attn", "fa2"),
-        default="fa2"
-        if os.getenv("NPA_ATTENTION_BACKEND") == "fa2"
-        else "flash_attn.cute",
-        help="Explicit namespace to qualify; the root adapter is image-specific",
-    )
-    args = parser.parse_args(argv)
+    args = _parse_args(argv)
     report = {
         "schema_version": 1,
         "backend": args.attention_api,
         "status": "failed",
         "cases": [],
+        "expected_cases": len(_ATTENTION_CASES),
     }
+    started = time.perf_counter()
     try:
         _run_checks(args.expect_capability, report)
         report["status"] = "passed"
     except Exception as exc:  # noqa: BLE001 - a smoke must report every runtime failure
         report["error"] = f"{type(exc).__name__}: {exc}"
         print(report["error"], file=sys.stderr)
-    if args.json_output is not None:
-        args.json_output.write_text(
-            json.dumps(report, indent=2) + "\n", encoding="utf-8"
-        )
+    report["elapsed_seconds"] = time.perf_counter() - started
+    _write_report(report, args.json_output)
     passed = report["status"] == "passed"
-    print(f"{report['backend']} cases passed: {len(report['cases'])}/24")
     print("GPU_CAPABILITY_SMOKE_OK" if passed else "GPU_CAPABILITY_SMOKE_FAILED")
     return 0 if passed else 1
 

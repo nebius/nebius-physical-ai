@@ -67,10 +67,18 @@ def test_obsolete_failure_bypass_is_rejected(smoke):
     assert error.value.code == 2
 
 
-def test_success_report_retains_measurements(smoke, monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("case_count", [1, 3])
+def test_success_report_retains_measurements(
+    smoke, monkeypatch, tmp_path, capsys, case_count
+):
+    monkeypatch.setattr(smoke, "_ATTENTION_CASES", [object()] * case_count)
+    clock = iter((10.0, 16.25))
+    monkeypatch.setattr(smoke.time, "perf_counter", lambda: next(clock))
+
     def succeed(expected, report):
         report["cases"] = [
             {"status": "passed", "metrics": {"dQ": {"max_abs_error": 0.001}}}
+            for _ in range(case_count)
         ]
 
     monkeypatch.setattr(smoke, "_run_checks", succeed)
@@ -80,7 +88,32 @@ def test_success_report_retains_measurements(smoke, monkeypatch, tmp_path, capsy
     assert report["status"] == "passed"
     assert report["backend"] == "flash_attn.cute"
     assert report["cases"][0]["metrics"]["dQ"]["max_abs_error"] == 0.001
-    assert "GPU_CAPABILITY_SMOKE_OK" in capsys.readouterr().out
+    assert report["expected_cases"] == case_count
+    assert report["elapsed_seconds"] == 6.25
+    console = capsys.readouterr().out
+    assert f"cases passed: {case_count}/{case_count}" in console
+    assert "GPU_CAPABILITY_SMOKE_OK" in console
+
+
+def test_each_case_records_elapsed_time(smoke, monkeypatch):
+    import sys
+
+    monkeypatch.setitem(
+        sys.modules, "torch", SimpleNamespace(manual_seed=lambda _: None)
+    )
+    monkeypatch.setattr(smoke, "_check_device", lambda *args: {})
+    monkeypatch.setattr(smoke, "_check_controls", lambda *args: None)
+    monkeypatch.setattr(smoke, "_attention_functions", lambda *args: ())
+    monkeypatch.setattr(smoke, "_ATTENTION_CASES", [("dense", "float16", 64, False)])
+    monkeypatch.setattr(
+        smoke, "_check_attention_case", lambda *args: {"status": "passed"}
+    )
+    clock = iter((20.0, 23.5))
+    monkeypatch.setattr(smoke.time, "perf_counter", lambda: next(clock))
+    report = {"backend": "flash_attn.cute", "cases": []}
+    smoke._run_checks("12.0", report)
+    assert report["cases"] == [{"status": "passed", "elapsed_seconds": 3.5}]
+    assert "active_case" not in report
 
 
 def test_device_mismatch_stops_before_attention(smoke):
@@ -194,7 +227,12 @@ def test_golden_eval_runs_strict_smoke_on_selected_gpu():
     root = Path(__file__).resolve().parents[2]
     evals = yaml.safe_load((root / "src/npa/smoke/golden_evals.yaml").read_text())
     entry = evals["containers"]["base-cuda13-b300"]["golden_eval"]
-    assert entry["command"] == "python /npa/gpu_capability_smoke.py"
+    assert (
+        entry["command"]
+        == "python /npa/gpu_capability_smoke.py --expect-capability 10.3"
+    )
+    assert entry["serverless_gpu"] == "b300"
+    assert entry["timeout_seconds"] == "unlimited"
     assert (
         entry["script"]
         == "npa/docker/workbench/base/cuda13-blackwell/scripts/gpu_capability_smoke.py"

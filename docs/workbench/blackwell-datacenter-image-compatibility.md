@@ -57,6 +57,15 @@ failure waiver. Published immutable images and downstream images keep their
 old dependencies until rebuilt and independently qualified. Historical results
 remain in `known_gaps.flash_attn_sm120` in the machine-readable inventory.
 
+The B300 golden-eval entry requires `--expect-capability 10.3` and uses an
+explicit unlimited local execution timeout so cold CuTe compilation cannot be
+mistaken for a five-minute capability failure. Its serverless path is rejected
+by the runner. The checker records total and per-case elapsed time in new JSON
+receipts; see the [base qualification procedure](../../npa/docker/workbench/base/cuda13-blackwell/README.md#qualify-the-intended-gpu).
+The updated FA4/CUTLASS/Quack pins still require new B200, B300 and H100 hardware
+results. Neither the RTX evidence nor the timeout change qualifies datacenter
+images or downstream workloads for release.
+
 ## 2. Build, tag, and register
 
 **Additive tags only.** Never overwrite an existing tag; this mirrors the `sm_120` rollout and the SONIC catalog rule. Encode the architectures in the tag so routing is auditable:

@@ -1031,7 +1031,7 @@
         "cuRobo Warp kernels (runtime JIT)"
       ],
       "smoke": "npa.smoke.test_curobo_functional: actual Franka pose solve, validated joint/FK artifacts and decoded RRD",
-      "notes": "The 0.8.0-cuda13-b300-unbuilt candidate has no built-image or GPU evidence. The tag family is a build target, not an observed B300 compatibility claim. Complete MotionBenchMaker/MPiNets kinematic and dynamics benchmarks are a separate workload gate."
+      "notes": "The 0.8.0-cuda13-blackwell-unbuilt candidate has no built-image or GPU evidence. The tag family is a build target, not an observed B300 compatibility claim. Complete MotionBenchMaker/MPiNets kinematic and dynamics benchmarks are a separate workload gate."
     },
     {
       "name": "npa-paidf-image-edit-sky",

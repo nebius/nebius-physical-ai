@@ -826,9 +826,11 @@ run record, and the
 [container packaging contract](container-packaging.md) for security and
 redistribution requirements.
 
-The cuRobo V2 candidate is separately publication-quarantined: its permissively
-licensed source, robot assets and benchmark data have a checked-in recipe, but
-no public release is claimed until exact-image and real-GPU gates are accepted.
+The cuRobo V2 candidate, `0.8.0-cuda13-blackwell-unbuilt`, is separately
+publication-quarantined: its permissively licensed source, robot assets and
+benchmark data have a checked-in recipe, but no public release is claimed until
+exact-image and real-GPU gates are accepted. Renaming this unpublished placeholder
+does not change an accepted image digest or establish GPU compatibility.
 
 ## Rerun SDK migration in build sources
 

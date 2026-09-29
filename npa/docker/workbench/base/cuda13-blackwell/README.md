@@ -55,3 +55,22 @@ SM120 inference factory with a small shape-qualified tile profile. It rejects
 training use and a different upstream revision; other shapes use native FA4.
 The normal root/CuTe APIs are unchanged. See the comparison guide before opting
 a model into this profile; kernel timings alone do not qualify an application.
+
+## Qualify the intended GPU
+
+The `base-cuda13-b300` golden-eval entry asserts capability **10.3**. It has an
+explicit `unlimited` timeout because cold CuTe compilation for the complete
+output/gradient matrix has not been timed on the new datacenter dependency set.
+Run this entry with local `--execute` inside the selected image on B300;
+the golden-eval runner rejects serverless execution for unlimited entries.
+For RTX PRO 6000, B200 or H100, invoke `/npa/gpu_capability_smoke.py` directly
+with `--expect-capability 12.0`, `10.0` or `9.0`, respectively.
+
+Use `--json-output` to retain the numerical checks, matrix-derived
+`expected_cases`, total `elapsed_seconds` and each completed case's
+`elapsed_seconds`. Total time includes imports, controls, reference checks and
+cold JIT compilation; it is qualification duration, not an attention benchmark.
+The earlier receipts predate these timing fields and remain bound to their
+recorded image and source hashes. B200, B300 and H100 qualification of the new
+pins remains pending; each downstream rebuild also needs its own workload test
+before release.
