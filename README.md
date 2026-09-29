@@ -203,6 +203,9 @@ does not prove its inputs, credentials, image, or GPU are ready for execution.
 
 For a real run, follow the selected guide's `prepare-run`, image preflight,
 `submit --runtime`, and monitoring instructions with your own project and input.
+Collect executed actions across physical scene variations with the
+[physical augmentation workflow](docs/workbench/guides/physical-augmentation.md).
+
 See the [workflow catalog](workflows/README.md),
 [authoring guide](docs/workbench/npa-workflow-guide.md), and
 [run lifecycle](docs/run-lifecycle.md). The canonical

@@ -107,6 +107,13 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Native eight-RTX-PRO-6000 XR1 fine-tuning; paired Antioch robot evaluation is a separate operator step.",
     ),
     SubmitLiveCase(
+        "physical-augmentation.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Native RTX Franka physical variants, regenerated IK actions, verified transitions, and LeRobot/Rerun demonstrations.",
+    ),
+    SubmitLiveCase(
         "franka-rl-transfer.yaml",
         "gpu",
         secret_envs=(
