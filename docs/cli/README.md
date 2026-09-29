@@ -10,6 +10,7 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa burst](burst.md)
 - [npa workbench byof](byof.md)
 - [npa workbench specialists cancel](cancel.md)
+- [npa workbench workflow challenge](challenge.md)
 - [npa cleanup](cleanup.md)
 - [npa cluster](cluster.md)
 - [npa configure](configure.md)

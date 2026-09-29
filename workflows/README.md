@@ -21,7 +21,7 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
-| Evaluate a BEHAVIOR 2026 policy | [Workflow](testing/behavior-challenge-eval.yaml) · [rules and runtime prerequisites](../docs/workbench/behavior-challenge.md) — GPU validation pending |
+| Evaluate a BEHAVIOR 2026 policy | [Start here](../docs/workbench/challenge-onboarding.md) · [Workflow](testing/behavior-challenge-eval.yaml) · [measured scope and limits](../docs/workbench/behavior-campaign.md#scope-and-validation-status) — operator runtime required |
 | Run a live π0.5 robot pickup in Antioch | [OpenPI live pickup](partners/antioch/openpi-live-pickup.md) — pretrained-policy inference, physical success checks, and native recording |
 | Collect Antioch trajectories and train ACT | [Antioch ACT workflow](partners/antioch/antioch-offline-policy-train.yaml) — completed dataset → LeRobot training; [runbook](partners/antioch/README.md#dataset-based-act-training) |
 | Fine-tune XR1 on Antioch robot demonstrations | [Antioch pipeline](partners/antioch/README.md) — physical demonstrations, Nebius S3, NPA credential storage, attached evaluation with the pinned Antioch SDK, and measured policy results |
