@@ -1,0 +1,227 @@
+{
+  "schema_version": "npa.mjlab.trained-rollout.v1",
+  "verified_on": "2026-09-25",
+  "task": "Mjlab-Velocity-Flat-Unitree-G1",
+  "execution": {
+    "cloud": "Nebius",
+    "region": "us-central1",
+    "capacity": "reserved",
+    "project_scope": "dedicated operator project",
+    "gpu_count": 1,
+    "gpu_model": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "compute_capability": [
+      12,
+      0
+    ],
+    "driver": "580.173.02"
+  },
+  "image": {
+    "reference": "npa-mjlab:dev-0202f396fb23f7d066fd452b469578e67151d382",
+    "source_sha": "0202f396fb23f7d066fd452b469578e67151d382",
+    "image_config_id": "sha256:e40f3fc549e5030b85e853f989a1a2cd46c8b8e02ec33ee051e50b4b438b7240",
+    "archive_sha256": "c88b20a82f6b9727c6914c551798e6c7d408df282f82bee3ac832c50e4b9ead4",
+    "archive_bytes": 4058032065
+  },
+  "runtime": {
+    "image_source_sha": "0202f396fb23f7d066fd452b469578e67151d382",
+    "versions": {
+      "mjlab": "1.6.0",
+      "mujoco": "3.11.0",
+      "mujoco-warp": "3.11.0",
+      "rsl-rl-lib": "5.4.2",
+      "warp-lang": "1.17.0",
+      "torch": "2.13.0+cu130",
+      "setuptools": "84.0.0"
+    },
+    "torch_cuda": "13.0",
+    "torch_arch_list": [
+      "sm_75",
+      "sm_80",
+      "sm_86",
+      "sm_90",
+      "sm_100",
+      "sm_120"
+    ],
+    "devices": [
+      {
+        "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+        "capability": [
+          12,
+          0
+        ]
+      }
+    ]
+  },
+  "training": {
+    "initial": {
+      "iterations": 2000,
+      "num_envs": 4096,
+      "seed": 42,
+      "gpu_count": 1,
+      "checkpoint_iteration": 1999,
+      "optimizer_step_min": 40000.0,
+      "optimizer_step_max": 40000.0,
+      "actor_parameters_finite": true,
+      "checkpoint_sha256": "313c26d4278ccc07c92401ffddd91282ea18cb81ff821b9ffd67383859371fd6",
+      "steps_per_environment_per_update": 24,
+      "image": {
+        "reference": "npa-mjlab:dev-7ccb0e8cfbf97f414916b0f026b8f204f1277781",
+        "image_config_id": "sha256:f785b188a74ebca4eb6e79f633d4e663fd0bc67a60f7ba85f06bc8aa579c5a25",
+        "source_sha": "7ccb0e8cfbf97f414916b0f026b8f204f1277781",
+        "archive_sha256": "8bbe7f36e6dce3e1007a0a3f422f43fc7e348d0c0fe092a2e9da13c1bd1de168",
+        "archive_bytes": 5331650312
+      },
+      "versions": {
+        "mjlab": "1.6.0",
+        "mujoco": "3.11.0",
+        "mujoco-warp": "3.11.0",
+        "rsl-rl-lib": "5.4.2",
+        "torch": "2.11.0+cu128",
+        "warp-lang": "1.17.0"
+      }
+    },
+    "resumed": {
+      "iterations": 1000,
+      "num_envs": 4096,
+      "seed": 42,
+      "gpu_count": 1,
+      "checkpoint_iteration": 2998,
+      "optimizer_step_min": 60000.0,
+      "optimizer_step_max": 60000.0,
+      "actor_parameters_finite": true,
+      "checkpoint_sha256": "4c74f9227215d251578c8aa9ec32e94ed5dc8820bf392bf6d07ec1f7ca9997ed",
+      "steps_per_environment_per_update": 24,
+      "versions": {
+        "mjlab": "1.6.0",
+        "mujoco": "3.11.0",
+        "mujoco-warp": "3.11.0",
+        "rsl-rl-lib": "5.4.2",
+        "torch": "2.13.0+cu130",
+        "warp-lang": "1.17.0"
+      }
+    },
+    "total_ppo_updates": 3000,
+    "total_environment_transitions": 294912000,
+    "resume_changed_actor": true,
+    "checkpoint_chain_verified": true,
+    "note": "The initial checkpoint was trained on the historical CUDA 12.8 image. The CUDA 13.0 image resumed optimizer/actor state for another 1000 updates and produced every evaluation, rendered artifact and ONNX export below. Upstream resume repeats the saved iteration index; actual checkpoint indices are retained."
+  },
+  "evaluations": {
+    "eval-seed-43": {
+      "seed": 43,
+      "episodes_completed": 32,
+      "mean_return": 92.72241249595663,
+      "mean_episode_length": 950.40625,
+      "score": 0.9375,
+      "passed": true
+    },
+    "eval-seed-44": {
+      "seed": 44,
+      "episodes_completed": 32,
+      "mean_return": 99.5137198145867,
+      "mean_episode_length": 993.1875,
+      "score": 0.96875,
+      "passed": true
+    }
+  },
+  "total_episodes": 64,
+  "survived_episodes": 61,
+  "score_definition": "Fraction reaching the 1000-step task horizon without terminal failure; survival is not task success or a convergence benchmark.",
+  "video": {
+    "codec_name": "h264",
+    "width": 320,
+    "height": 240,
+    "pix_fmt": "yuv420p",
+    "r_frame_rate": "50/1",
+    "duration": "20.000000",
+    "nb_read_frames": "1000",
+    "sha256": "a4364313fd2e14e4e8ac18328a20f28e49f1e57073d7b3eccc54abba0ac6eb01",
+    "all_frames_decoded": true,
+    "episode_selection": "First environment, first episode, seed 43; no best-episode selection."
+  },
+  "html": {
+    "sha256": "d2a408989fb7f4c6f3fc30fd352f96daabe45edc881b33581b70e70b742407c9",
+    "embeds_exact_mp4": true,
+    "self_contained": true,
+    "browser": {
+      "delivered_html_sha256": "d2a408989fb7f4c6f3fc30fd352f96daabe45edc881b33581b70e70b742407c9",
+      "html_matches_published_artifact": true,
+      "html_http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "video": {
+        "duration": 20,
+        "width": 320,
+        "height": 240,
+        "error": null
+      },
+      "playback": {
+        "currentTime": 10,
+        "frames": 61,
+        "error": null
+      }
+    }
+  },
+  "onnx": {
+    "checked": true,
+    "opsets": {
+      "": 18
+    },
+    "bytes": 880856,
+    "sha256": "df6b41b4089282578eb768cafe7db5b4f823cdf79bfff9ce0bee4cae011fd44e",
+    "metadata": {
+      "task": "Mjlab-Velocity-Flat-Unitree-G1",
+      "mjlab_version": "1.6.0"
+    }
+  },
+  "artifacts": {
+    "hashes_verified_after_s3_readback": 82,
+    "evaluation_and_export_input_sha256": "4c74f9227215d251578c8aa9ec32e94ed5dc8820bf392bf6d07ec1f7ca9997ed",
+    "live_workbench_discovery": {
+      "rollout.mp4": "video",
+      "rollout.html": "text",
+      "mjlab_eval.json": "json"
+    }
+  },
+  "workflows": {
+    "executor": "npa workbench workflow run-spec --execute --persist-state on the reserved GPU VM",
+    "render_spec": "workflows/testing/mjlab-render.yaml",
+    "seed_43_tool_ref": "workbench.mjlab.render",
+    "seed_44_tool_ref": "workbench.mjlab.eval",
+    "explicit_image_override": true,
+    "durable_state_persisted": true,
+    "both_runs_completed": true
+  },
+  "restricted_payload_scan": {
+    "source": "local-docker-stream",
+    "history_only": false,
+    "entries_scanned": 89532,
+    "verdict": "clean",
+    "scope": "Every saved image layer and history. This does not establish the complete public security/license/bootstrap gates."
+  },
+  "ci": {
+    "source_sha": "0202f396fb23f7d066fd452b469578e67151d382",
+    "python_312_shards_passed": 8,
+    "required_checks": "passed",
+    "run_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36083480882"
+  },
+  "publication": "Private operator image and private artifacts. No public registry manifest digest or released image is claimed. Signed HTML links remain outside Git.",
+  "not_qualified": [
+    "CUDA 13 image on B200/B300",
+    "Kubernetes deployment or submitted SkyPilot workflow",
+    "Live agent UI deployment",
+    "Motion-tracking inputs or camera-policy training",
+    "Multi-node training",
+    "Full upstream 30000-update recipe or policy convergence"
+  ],
+  "evaluation_num_envs": 1,
+  "evidence_preservation": {
+    "archive_bytes": 319152519,
+    "archive_sha256": "17b33b3ea1d16a9ab84830944111259f4a04443a18cfb765ae3f282f3f87d798",
+    "downloaded_hash_verified": true
+  },
+  "cleanup": {
+    "remaining_project_instances": 0,
+    "remaining_project_disks": 0,
+    "private_project_storage_retained": true
+  }
+}

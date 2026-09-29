@@ -13,7 +13,10 @@ from pathlib import Path, PurePosixPath
 
 import yaml
 
-from npa.deploy.images import CONTAINER_IMAGE_NAMES
+from npa.deploy.images import (
+    CONTAINER_IMAGE_NAMES,
+    DEVELOPMENT_BUILD_QUARANTINE_TOOLS,
+)
 
 _LOG = logging.getLogger(__name__)
 _WORKBENCH = "npa/docker/workbench/"
@@ -73,6 +76,28 @@ def _changed_entries(before: dict, after: dict) -> set[str]:
     }
 
 
+def _catalog_metadata(document: dict) -> dict:
+    metadata = dict(document, images=_catalog_entries(document))
+    # These fields describe the catalog, not a recipe or deployment target.
+    for field in ("as_of", "registry_note"):
+        if field in metadata:
+            if not isinstance(metadata[field], str):
+                raise ValueError("Invalid image catalog description")
+            del metadata[field]
+    for field in ("verdicts", "validation_states"):
+        if field not in metadata:
+            continue
+        glossary = metadata[field]
+        if not isinstance(glossary, dict) or not all(
+            isinstance(key, str) and isinstance(value, str)
+            for key, value in glossary.items()
+        ):
+            raise ValueError("Invalid image catalog glossary")
+        # New or removed states still invalidate the shared metadata proof.
+        metadata[field] = sorted(glossary)
+    return metadata
+
+
 def _metadata_tools(root: Path, before: str, head: str, paths: set[str]) -> set[str]:
     old, new = _contract(root, before), _contract(root, head)
     selected = _changed_entries(old, new) if _CONTRACT in paths else set()
@@ -81,7 +106,7 @@ def _metadata_tools(root: Path, before: str, head: str, paths: set[str]) -> set[
     documents = [
         json.loads(_read(root, revision, _CATALOG)) for revision in (before, head)
     ]
-    catalogs = [dict(doc, images=_catalog_entries(doc)) for doc in documents]
+    catalogs = [_catalog_metadata(doc) for doc in documents]
     dockerfiles = _changed_entries(*catalogs)
     known = {entry.get("dockerfile") for entry in new["images"].values()}
     if dockerfiles - known:
@@ -224,7 +249,8 @@ def select_public_image_builds(root: Path, before: str, head: str) -> list[str]:
     entries = {
         key: entry
         for key, entry in _contract(root, head)["images"].items()
-        if entry.get("redistribution") == "public" and key in CONTAINER_IMAGE_NAMES
+        if entry.get("redistribution") == "public"
+        and (key in CONTAINER_IMAGE_NAMES or key in DEVELOPMENT_BUILD_QUARANTINE_TOOLS)
     }
     if not _SHA.fullmatch(before) or set(before) == {"0"}:
         return sorted(entries)
