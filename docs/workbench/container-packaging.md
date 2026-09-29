@@ -38,6 +38,14 @@ entrypoint that forwards orchestrator arguments. Compliant first-party images
 record `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1` in OCI
 config, with Dockerfile behavior covered by build tests.
 
+Isaac-family builds also bake SkyPilot's early APT package set: `curl`, `fuse`,
+`netcat-openbsd`, `rsync`, and `wget`. Worker startup can then use those tools
+when an immutable Ubuntu snapshot is temporarily unavailable. The `fuse`
+package supplies the userspace helper only; it does not grant `/dev/fuse`, Linux
+capabilities, or a workload mount. A source change affects future image builds
+only. Existing image digests retain their original contents until a rebuilt,
+validated digest is explicitly promoted and recorded in the release manifest.
+
 The accepted historical `npa-groot:0.1.0` artifact has
 the non-root `ubuntu` user, system Python, `rsync`, an SSH client, and
 passwordless sudo, but lacks `openssh-server`, runtime host-key generation, and
@@ -542,10 +550,19 @@ the workbench push filter. Explicit manual build selections remain available.
 
 Missing history, unknown shared workbench files, ambiguous metadata, and
 unsupported build-input syntax conservatively restore the full public build set.
+Catalog timestamps and glossary wording do not force unrelated rebuilds;
+changes to schema, targets, or glossary state names still do. Images that copy
+the catalog itself are rebuilt when its bytes change.
 An empty automatic selection performs no build or release preflight. Every
 selected image retains all pre-publication and exact-digest security checks;
 release promotion remains a separate manual operation. Selection lives in
 `npa.deploy.image_build_scope` and is tested using real Git histories.
+
+A failed development image is cleaned up inside its own build job, only after
+that image attempted a push. Successful sibling images retain their validated
+development tags. Cleanup still requires one exact tag and matching digest and
+refuses a digest shared with another tag. It does not create another runner
+matrix or add work to the PR or merge-queue gates.
 
 The public-plan inventory retains all 34 published release tags. The current
 Isaac Arena r3 tag is an exact-digest promotion of the public full-SHA candidate

@@ -26,7 +26,8 @@ delete a temporary Kubernetes probe pod when bootstrap evidence is absent:
 
 ```bash
 npa workbench workflow validate-spec "<spec.yaml>"
-npa workbench workflow plan-spec "<spec.yaml>" --run-id "<run-id>" --var bucket="<bucket>"
+npa workbench workflow plan-spec "<spec.yaml>" --run-id "<run-id>" \
+  --var bucket="<bucket>" --check-render
 npa workbench workflow preflight-images "<spec.yaml>" \
   --project "<alias>" --infra "k8s/<cluster>" --var bucket="<bucket>"
 ```
@@ -34,6 +35,28 @@ npa workbench workflow preflight-images "<spec.yaml>" \
 Use the same target and overrides throughout; public images need no `--registry`.
 The [workflow quick start](workbench/npa-workflow-guide.md#quick-start) shows the
 complete sequence.
+
+`plan-spec --check-render` also sends the resolved static plan through the same
+SkyPilot renderer used for submission. It catches pod configuration and
+first-party image startup-contract errors that schema validation cannot see. The
+check stays local, does not contact a provider, and does not materialize registry
+secrets.
+
+The renderer also compiles simple quoted Python heredocs in top-level `setup`
+and `run` scripts with the local NPA interpreter, so syntax errors fail before
+submission. This check is deliberately narrow: the quoted identifier delimiter
+must end the command line, and the command must invoke a literal `python`,
+`python3`, or versioned `python3` executable that reads its program from standard
+input. Fixed environment assignments may precede it. Unquoted or nested
+heredocs, continued command lines, dynamically expanded commands or assignments,
+other interpreters, and heredocs passed to a Python script as data are left to
+the shell and runtime.
+
+The renderer rejects explicit non-root main containers that disable the sudo
+access required by first-party images. It also rejects individual command
+arguments of 131,072 UTF-8 bytes or more, including an oversized `run.shell`.
+Keep large scripts and archives in declared workflow inputs or mounted storage;
+use a short launcher to verify and execute them.
 
 `preflight-images` reports each image as `ok` / `not_found` / `forbidden` and
 prints the exact build command for anything missing. It unions every declared
@@ -105,6 +128,11 @@ Each submission also writes an owner-only local receipt at
 `~/.npa/workflow-submissions/<project>/<run>.json`. It holds location, plan, and
 job identity **only — never credentials** — and it removes any dependency on
 `NPA_SRC_S3_URI` in a later shell.
+
+Resource profiles retain Kubernetes `automountServiceAccountToken` when its
+value is a JSON boolean, so disabling or enabling that pod behavior survives a
+restart. String, numeric, and structured lookalikes remain blocked by the
+receipt's credential filter.
 
 ## Restart safety
 
@@ -178,6 +206,14 @@ canonical workflow prefix, or the pinned managed-job identity — even while the
 final manifest is still pending. `logs` uses the same resolver. Both JSON and
 text output identify every source they checked.
 
+New submission receipts record the resolved SkyPilot executable and isolated
+controller state directory used for launch. Later `status`, `logs`, and
+`cancel` calls reuse that exact route. A legacy receipt with a managed-job ID
+but no controller route requires explicit `--sky-bin`. Runs launched with
+isolated state also require the matching `--isolated-config-dir`. NPA reports
+live verification as unavailable instead of treating absence from an ambient
+SkyPilot queue as proof that the job is absent.
+
 | State | What it means |
 | --- | --- |
 | `MANIFEST_PENDING` | Submission evidence exists (a receipt, job, or task identity) and the manifest has not landed yet |
@@ -196,6 +232,54 @@ state. `cancel` makes no cancellation call and records only a
 verification-failed receipt for the same uncertainty.
 Client setup and response-body failures also remain unavailable, even when
 their underlying exception resembles a missing file or key.
+
+The optional `supervisor` object is a durable snapshot from its `recorded_at`
+time. Status labels it `observation_scope: durable_supervisor_snapshot` and
+`current_artifact_state_verified: false`; reading status does not recheck that
+snapshot's outputs or checkpoints. A live `RUNNING` job can therefore appear
+beside an earlier supervisor observation that outputs were absent. The top-level
+`automation_may_trust_state` flag covers the current lifecycle-state query and
+does not make those historical artifact observations current.
+
+Status also corrects live-job adoption advice in terminal snapshots written by
+older drivers. Such views identify `recovery_guidance_basis:
+recorded_terminal_attempt`; they do not rewrite the stored event or verify
+current artifact availability. Other recovery decisions remain unchanged.
+
+When the driver records a terminal attempt, it replaces earlier live-job adoption
+advice with the terminal outcome. A failed job directs the operator to its error
+and artifacts; a completed wave is reusable only after its declared outputs pass
+validation. This reporting update preserves the configured retry policy.
+
+### Pending storage claims
+
+When a managed job has no remaining worker pod, live status can still report a
+typed storage blocker from its rendered persistent-volume claim. This lookup is
+deliberately narrow: NPA uses only claim names declared by the exact rendered
+stage and attributed to the exact recorded managed-job ID. It then requires one
+current claim with the same namespace, name, and Kubernetes UID. The claim must
+still be `Pending` and must not be deleting. Events are queried in that claim's
+namespace and accepted only when their involved-object identity matches all
+three fields.
+
+`ProvisioningFailed` warnings become `STORAGE_QUOTA_EXCEEDED`,
+`STORAGE_CAPACITY_UNAVAILABLE`, or `STORAGE_PROVISIONING_FAILED`. Normal
+provisioning progress such as `ExternalProvisioning`, `Provisioning`, and
+`WaitForFirstConsumer` remains pending and is not treated as a failure. A
+warning caused by a provisioning timeout, temporary service outage, or rate
+limit also remains pending and cannot authorize cancellation. A prior
+warning on a claim that is now `Bound`, a warning for an older claim UID, an
+ambiguous claim, or a malformed declared name also falls back to the existing
+unknown/no-pod status.
+
+Status may display a current UID-bound event without proving that it belongs to
+the latest launch attempt. The supervisor acts only when the event's latest
+observed timestamp is at or after the durable attempt start. Otherwise it fails
+closed: it neither cancels nor relaunches. An actionable quota or provisioning
+error can terminalize only the exact recorded managed job; a capacity blocker
+can retain that same attempt for recovery. A declared claim name identifies
+placement, not ownership, so it never authorizes broad claim discovery or
+cancellation.
 
 If a shell cannot resolve the project storage location, point status at the
 prefix explicitly:

@@ -528,6 +528,7 @@ def test_robotwin_normal_submit_redacts_private_values_in_all_output_modes(
         lambda _uri, _fingerprint: None,
     )
     private, context_path = _install_robotwin_submit_context(monkeypatch, tmp_path)
+    _mock_sky_bin_ok(monkeypatch)
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "test-access-key")
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
     monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa-config"))
@@ -620,6 +621,7 @@ def test_robotwin_normal_submit_redacts_private_values_in_all_output_modes(
     assert result.exit_code == 0, result.output
     assert captured["authorized_output_uri"] == summary_uri
     submit_kwargs = captured["submit_kwargs"]
+    assert submit_kwargs["sky_bin"] == "/usr/bin/sky"
     assert ROBOTWIN_CONTEXT_ENV not in submit_kwargs["secret_envs"]
     assert ROBOTWIN_ENTITLEMENT_ENV not in submit_kwargs["secret_envs"]
     assert ROBOTWIN_TRANSPORT_ENV in submit_kwargs["secret_envs"]
@@ -836,6 +838,53 @@ def test_robotwin_source_staging_is_not_a_workload_output_destination(
     }
 
 
+def _resumed_preflight_options(source: str, recorded: str) -> dict:
+    return dict(
+        project="unit",
+        context="unit",
+        region="",
+        run_id="resume-run",
+        assume_decision="",
+        credentials=SimpleNamespace(),
+        verify_cluster=False,
+        recorded_store=SimpleNamespace(run_prefix_uri=recorded),
+        source_uri=source,
+    )
+
+
+@pytest.mark.parametrize("source_denied", [False, True])
+def test_resume_preflight_checks_control_and_source_destinations_separately(
+    monkeypatch: pytest.MonkeyPatch, source_denied: bool
+) -> None:
+    from npa.orchestration.npa_workflow import load_spec
+
+    source = "s3://control-bucket/source/frozen"
+    recorded = "s3://control-bucket/recorded-run"
+    verified = []
+    monkeypatch.setattr(
+        "npa.execution_preflight.resolve_execution_target",
+        lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+
+    def verify(target, **_kwargs):
+        verified.append(target)
+        if source_denied and source + "/" in target.output_uris:
+            raise ValueError("source staging denied")
+        return {"presence": "pass", "access": "pass"}
+
+    monkeypatch.setattr("npa.execution_preflight.verify_execution_target", verify)
+    kwargs = _resumed_preflight_options(source, recorded)
+    if source_denied:
+        with pytest.raises(ValueError, match="source staging denied"):
+            _REAL_EXECUTION_TARGET_PREFLIGHT(load_spec(SPEC), **kwargs)
+    else:
+        _REAL_EXECUTION_TARGET_PREFLIGHT(load_spec(SPEC), **kwargs)
+    assert recorded + "/" in verified[0].output_uris
+    assert source + "/" not in verified[0].output_uris
+    assert verified[1].output_uris == [source + "/"]
+    assert verified[1].provenance == {"outputs": "control-plane-source-staging"}
+
+
 def test_fail_reports_bracketed_exception_messages_literally(monkeypatch) -> None:
     output = StringIO()
     monkeypatch.setattr(
@@ -933,8 +982,8 @@ def test_fail_structurally_redacts_raw_multiline_exception(monkeypatch) -> None:
         assert secret not in rendered
 
 
-def test_submit_lists_every_missing_prerequisite_at_once() -> None:
-    result = _submit()
+def test_submit_lists_every_missing_prerequisite_at_once(tmp_path: Path) -> None:
+    result = _submit("--sky-bin", str(tmp_path / "missing-sky"))
 
     assert result.exit_code == 1, result.output
     assert "missing prerequisites" in result.output
@@ -1458,6 +1507,7 @@ def test_submit_preflight_clears_as_prerequisites_are_met(
 ) -> None:
     """Each satisfied prerequisite drops out of the report."""
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://real-bucket/npa-src/npa")
+    monkeypatch.setenv("NPA_SKYPILOT_BIN", str(tmp_path / "missing-sky"))
     result = _submit("--var", "bucket=real-bucket")
     assert result.exit_code == 1
     assert "NPA_SRC_S3_URI is unset" not in result.output
@@ -1603,6 +1653,50 @@ def test_paidf_input_selectors_conflict_before_preflight() -> None:
     assert result.exit_code == 1
     assert "options conflict" in result.output
     assert "missing prerequisites" not in result.output
+
+
+@pytest.fixture
+def paidf_input_submit_ready(monkeypatch, mocker):
+    _mock_sky_bin_ok(monkeypatch)
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://artifacts/npa-src/npa")
+    monkeypatch.setenv("HF_TOKEN", "synthetic-hf-token")
+    monkeypatch.setattr(workflow_cli, "_adopt_npa_kubeconfig", lambda _: True)
+    mocker.patch.object(workflow_cli, "_verify_submit_controller_owner")
+    mocker.patch.object(workflow_cli, "_preflight_submit_images", return_value={})
+    mocker.patch.object(workflow_cli, "_enforce_workflow_access")
+    mocker.patch(
+        "npa.workbench.cosmos.checkpoint_access.preflight_control_checkpoint_access"
+    )
+
+
+def test_paidf_listing_diagnosis_reaches_submit_without_private_error_text(
+    monkeypatch, mocker, paidf_input_submit_ready
+):
+    from botocore.exceptions import ClientError
+    from npa.workflows import data_factory_input as dfi
+
+    monkeypatch.setattr(dfi.shutil, "which", lambda name: f"/test-bin/{name}")
+    storage = mocker.Mock()
+    storage.s3.get_object.side_effect = ClientError(
+        {"Error": {"Code": "NoSuchKey"}}, "GetObject"
+    )
+    storage.s3.get_paginator.return_value.paginate.side_effect = ClientError(
+        {"Error": {"Code": "AccessDenied", "Message": "private/capture.mp4"}},
+        "ListObjectsV2",
+    )
+    mocker.patch(
+        "npa.clients.storage.StorageClient.from_environment", return_value=storage
+    )
+    launch = mocker.patch.object(workflow_cli, "_run_npa_workflow_runtime")
+
+    result = _submit("--skip-preflight", "--var", "bucket=artifacts")
+
+    assert result.exit_code == 1, result.output
+    assert "ClientError (AccessDenied)" in result.output
+    assert "private/capture.mp4" not in result.output
+    storage.s3.get_paginator.return_value.paginate.assert_called_once()
+    storage.download_path.assert_not_called()
+    launch.assert_not_called()
 
 
 def test_paidf_lerobot_selector_is_planned_without_object_store_access(

@@ -522,6 +522,24 @@ def test_spec_accelerators_reads_only_kubernetes_profiles() -> None:
     assert spec_accelerators(resources) == ["RTXPRO6000:1", "RTXPRO6000:8"]
 
 
+def test_spec_accelerators_preserves_single_mapping_quantity() -> None:
+    resources = {"gpu": {"cloud": "kubernetes", "accelerators": {"RTXPRO6000": 2}}}
+
+    assert spec_accelerators(resources) == ["RTXPRO6000:2"]
+
+
+def test_spec_accelerators_rejects_unselected_mapping_alternatives() -> None:
+    resources = {
+        "gpu": {
+            "cloud": "kubernetes",
+            "accelerators": {"RTXPRO6000": 1, "H100": 1},
+        }
+    }
+
+    with pytest.raises(ValueError, match="SkyPilot alternatives"):
+        spec_accelerators(resources)
+
+
 def test_spec_accelerators_tolerates_a_missing_block() -> None:
     assert spec_accelerators(None) == []
     assert spec_accelerators({}) == []

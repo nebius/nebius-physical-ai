@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import builtins
+import errno
 import importlib.util
 import json
 import os
@@ -520,6 +521,21 @@ def test_missing_customer_evidence_has_no_kubernetes_effect(monkeypatch, tmp_pat
     assert not (tmp_path / "result").exists()
 
 
+def _closed_terminal_output(master: int) -> bytes:
+    output = bytearray()
+    while True:
+        try:
+            chunk = os.read(master, 8192)
+        except OSError as exc:
+            if exc.errno == errno.EIO:
+                break
+            raise
+        if not chunk:
+            break
+        output.extend(chunk)
+    return bytes(output)
+
+
 def test_authorize_uses_nonseekable_terminal_and_declines_without_writing(
     monkeypatch, tmp_path, capsys
 ):
@@ -574,10 +590,14 @@ def test_authorize_uses_nonseekable_terminal_and_declines_without_writing(
             "authorization_created": False,
         }
         assert not list(tmp_path.iterdir())
-        assert b"Customer identity" in os.read(master, 8192)
+        # PTYs may deliver echoed input separately from the flushed prompts.
+        os.close(slave)
+        slave = None
+        assert b"Customer identity" in _closed_terminal_output(master)
     finally:
         os.close(master)
-        os.close(slave)
+        if slave is not None:
+            os.close(slave)
 
 
 def _context_fixture(tmp_path):

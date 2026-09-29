@@ -199,6 +199,87 @@ def test_plan_submit_argv_forwards_preset_and_config_vars() -> None:
     )
 
 
+def test_live_argv_forwards_runtime_storage_prefix_to_plan_and_run(
+    tmp_path: Path,
+) -> None:
+    argv = _load_live_argv()
+    common = {
+        "path": tmp_path / "insights-smoke.yaml",
+        "run_id": "storage-location-live",
+        "registry": "registry.example/workbench",
+        "project": "operator-project",
+        "workflow_s3_prefix": "owner/runtime-control",
+        "skypilot_config_args": (
+            "--sky-bin",
+            "/owner/sky/bin/sky",
+            "--isolated-config-dir",
+            "/owner/state/run/controller",
+            "--infra",
+            "k8s/operator-context",
+        ),
+    }
+    planned = argv.plan_submit_args(**common)
+    runtime = argv.runtime_submit_args(
+        **common,
+        poll_seconds=2,
+        max_wait_seconds=0,
+        cancel_on_timeout=False,
+    )
+
+    for command in (planned, runtime):
+        index = command.index("--workflow-s3-prefix")
+        assert command[index + 1] == "owner/runtime-control"
+        assert command[command.index("--sky-bin") + 1] == "/owner/sky/bin/sky"
+        assert command[command.index("--isolated-config-dir") + 1] == (
+            "/owner/state/run/controller"
+        )
+        assert command[command.index("--infra") + 1] == "k8s/operator-context"
+    assert "--plan-only" in planned
+    assert "--runtime" in runtime
+
+
+@pytest.mark.parametrize(
+    "value", ["", "s3://bucket/root", "/absolute", "parent//child", "parent/../child"]
+)
+def test_runtime_storage_live_rejects_unsafe_control_parent(
+    value: str,
+) -> None:
+    argv = _load_live_argv()
+
+    with pytest.raises(ValueError, match="safe relative key"):
+        argv._safe_relative_workflow_prefix(value)
+
+
+@pytest.mark.parametrize(
+    ("science", "control"),
+    [("same", "same"), ("science", "science/control"), ("control/science", "control")],
+)
+def test_runtime_storage_live_requires_disjoint_prefixes(
+    science: str, control: str
+) -> None:
+    argv = _load_live_argv()
+    assert not argv._workflow_prefixes_disjoint(science, control)
+
+
+def test_runtime_storage_live_requires_fresh_owned_isolation_root(
+    tmp_path: Path,
+) -> None:
+    argv = _load_live_argv()
+    owned = tmp_path / "owned"
+    owned.mkdir(mode=0o700)
+    assert argv._owned_empty_isolation_root(str(owned)) == owned
+
+    permissive = tmp_path / "permissive"
+    permissive.mkdir(mode=0o755)
+    permissive.chmod(0o755)
+    with pytest.raises(ValueError, match="owner-only"):
+        argv._owned_empty_isolation_root(str(permissive))
+
+    (owned / "prior-run").mkdir()
+    with pytest.raises(ValueError, match="fresh and empty"):
+        argv._owned_empty_isolation_root(str(owned))
+
+
 def test_live_workflow_argv_builders_omit_project_only_when_unselected() -> None:
     argv = _load_live_argv()
     path = Path("/tmp/catalog-spec.yaml")
