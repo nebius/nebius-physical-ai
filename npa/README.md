@@ -552,6 +552,24 @@ configured bucket and storage service account for real. See
 [`tests/e2e/test_config_storage_cleanup_live_e2e.py`](tests/e2e/test_config_storage_cleanup_live_e2e.py)
 for the full env contract and safety preconditions.
 
+For the CPU agent credential lifecycle, set `NPA_AGENT_METADATA_LIVE_CONFIG`
+to an owner-only JSON file containing `deploy_args` (starting with `agent`,
+`deploy`, an unused `--name`, the selected `--project`, `--agent-only`, and
+explicit ingress settings) and `evidence_dir` outside the checkout. Use private
+`NPA_CONFIG_DIR` and `NPA_OPERATION_JOURNAL_DIR` directories and complete the
+credential and exact-name capacity preflights first. Run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_agent_metadata_live.py -q
+```
+
+The check deploys a real CPU agent, verifies metadata-backed access and resource
+inventory, rejects anonymous requests, and compares deployed Python sources
+with the tested checkout. It retains the deployment manifest and rendered
+backend hash privately, then destroys only the test agent with shared IAM
+preserved. The configuration has no default; without it the test skips.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
 

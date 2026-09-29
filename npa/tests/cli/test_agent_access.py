@@ -840,7 +840,9 @@ def test_agent_inventory_credential_source_is_allowlisted(
         assert runtime._agent_inventory_credential_context()[3] == expected
 
 
-@pytest.mark.parametrize("credential_source", ["configured_profile", "instance_metadata"])
+@pytest.mark.parametrize(
+    "credential_source", ["configured_profile", "instance_metadata"]
+)
 def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
     monkeypatch, tmp_path, credential_source
 ) -> None:
@@ -891,12 +893,16 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
     assert command[:5] == [
         "/bin/true",
         "--config",
-        str(config) if credential_source == "configured_profile" else "/root/.nebius/config.yaml",
+        str(config)
+        if credential_source == "configured_profile"
+        else "/root/.nebius/config.yaml",
         "--profile",
         "cursor-sa",
     ]
     assert env["NEBIUS_PROFILE"] == "cursor-sa"
-    assert env["HOME"] == (str(tmp_path) if credential_source == "configured_profile" else "/root")
+    assert env["HOME"] == (
+        str(tmp_path) if credential_source == "configured_profile" else "/root"
+    )
     assert runtime._agent_inventory_credential_context()[3] == credential_source
     assert "NEBIUS_IAM_TOKEN" not in env
     assert "NPA_NEBIUS_IAM_TOKEN" not in env
