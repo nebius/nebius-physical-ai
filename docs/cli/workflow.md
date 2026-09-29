@@ -25,7 +25,7 @@ stage-src  Upload the local npa package to S3 for image-less workflow steps.
 validate-spec  Validate an NPA workflow specification file.
 plan-spec  Expand an NPA workflow spec into an execution plan (dry-run).
 run-spec  Run or plan an NPA workflow spec.
-preflight-images  Prove every image this spec pulls is pullable, with the run's own credentials.
+preflight-images  Prove every image this spec pulls through each selected execution path.
 gpus  Print advertised GPU names using an owned API for a selected context.
 reconcile-controller  Reconcile an orphaned workflow against its original exclusive controller.
 trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
@@ -57,13 +57,25 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 | `validate-spec` | Validate an NPA workflow specification file. |
 | `plan-spec` | Expand an NPA workflow spec into an execution plan (dry-run). |
 | `run-spec` | Run or plan an NPA workflow spec. |
-| `preflight-images` | Prove every image this spec pulls is pullable, with the run's own credentials. |
+| `preflight-images` | Prove every image this spec pulls through each selected execution path. |
 | `gpus` | Print advertised GPU names using an owned API for a selected context. |
 | `reconcile-controller` | Reconcile an orphaned workflow against its original exclusive controller. |
 | `trigger` | Watch S3-compatible data prefixes and retrigger Workbench workflows. |
 | `challenge` | Prepare a BEHAVIOR DEV evaluation from one setup file. |
 
 ## Examples
+
+Image preflight follows SkyPilot's resource override behavior. `--infra` replaces
+the declared target for a single task. SkyPilot ignores that override for
+multi-task YAML and JobGroups, while runtime workflows can also launch singleton
+waves. Preflight therefore checks both declared and selected pull authorities
+for a workflow with multiple reachable tasks, including parallel and mutually
+exclusive decision branches. Set
+an explicit cloud on every resource profile; a missing cloud cannot be certified
+through an override that SkyPilot may ignore. Kubernetes resource regions must
+agree with the selected context. This conservative check can require operator
+registry access even when a particular runtime execution uses only singleton
+Kubernetes waves.
 
 ```bash
 npa workbench workflow --help

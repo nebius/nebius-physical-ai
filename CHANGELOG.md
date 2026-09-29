@@ -20,6 +20,17 @@ a versioned heading when a release is cut.
   alongside problem and pending cues. The field is audit metadata only:
   illustrative judgments remain reviewed and non-failing under `--strict`.
 
+### Workflow image preflight verifies the actual pull authority
+
+- Kubernetes image checks now require a probe in the selected context and
+  namespace, using the workflow's ServiceAccount, pull Secrets and placement.
+  Host registry access alone no longer proves that a workload can pull.
+- `preflight-images` rejects an unresolved execution target. Select `--infra`
+  or declare the workflow resource cloud so it can verify the correct authority.
+- `--image-pull-secret` applies to bootstrap capability probes, as described in
+  its help. To configure workflow pulls, declare `imagePullSecrets` in the task's
+  Kubernetes Pod configuration or on its selected ServiceAccount.
+
 ### GPU routing selects on workload, not just on the GPU
 
 - SONIC image resolution now intersects the GPU target with the workload. Each
