@@ -64,6 +64,11 @@ class JobSubmissionIndeterminateError(ServerlessClientError):
     project_id: str = ""
     job_name: str = ""
     provider_job_id: str = ""
+    # Only a durable call site (`create_job(..., durable=True)`) reconnects a
+    # same-name retry to the existing job automatically; a non-durable call
+    # site has no such record, so a same-name retry there still issues a new
+    # `create` request with no client-side duplicate protection.
+    durable: bool = False
 
 
 @dataclass
@@ -972,14 +977,19 @@ class ServerlessClient:
                 project_id=project_id,
                 name=name,
                 create=lambda: self._create_job_request(
-                    args, name=name, project_id=project_id
+                    args, name=name, project_id=project_id, durable=True
                 ),
                 allow_create=not adopt_only,
             )
         return self._create_job_request(args, name=name, project_id=project_id)
 
     def _create_job_request(
-        self, args: list[str], *, name: str, project_id: str
+        self,
+        args: list[str],
+        *,
+        name: str,
+        project_id: str,
+        durable: bool = False,
     ) -> JobInfo:
         try:
             result = self._run(args, timeout=_JOB_CREATE_TIMEOUT, wrap_timeout=False)
@@ -995,6 +1005,7 @@ class ServerlessClient:
                     "submission is indeterminate, preserve the launch record and reconnect",
                     project_id=project_id,
                     job_name=name,
+                    durable=durable,
                 ) from lookup_exc
             if info.id and info.name == name and info.project_id == project_id:
                 return info

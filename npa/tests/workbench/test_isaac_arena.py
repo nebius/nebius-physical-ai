@@ -1288,3 +1288,53 @@ def test_cli_sdk_and_terms_share_supported_contract(tmp_path: Path) -> None:
         "scope": "viewport evaluation only",
         "source": "exact-driver-matched Ubuntu signed package",
     }
+
+
+def test_film_profile_cli_sdk_and_runtime_agree(tmp_path):
+    cli = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "isaac-arena",
+            "evaluate",
+            "--output-path",
+            str(tmp_path),
+            "--record-video",
+            "--video-profile",
+            "film",
+            "--dry-run",
+        ],
+    )
+    assert cli.exit_code == 0, cli.output
+    cli_result = json.loads(cli.output)
+    sdk_result = sdk_evaluate(
+        output_path=str(tmp_path), record_video=True, video_profile="film", dry_run=True
+    )
+    assert cli_result["argv"] == sdk_result["argv"]
+    args = sdk_result["argv"]
+    assert "samplesPerPixel=128" in args[args.index("--kit_args") + 1]
+
+
+@pytest.mark.parametrize("profile", ["", "unknown", None, []])
+def test_capture_profile_rejects_unsupported_values(profile, tmp_path):
+    with pytest.raises(IsaacArenaError, match="video_profile"):
+        evaluate(
+            IsaacArenaRequest(
+                output_path=str(tmp_path), video_profile=profile, dry_run=True
+            )
+        )
+
+
+def test_film_requires_video(tmp_path):
+    with pytest.raises(IsaacArenaError, match="requires record_video"):
+        sdk_evaluate(output_path=str(tmp_path), video_profile="film", dry_run=True)
+
+
+def test_profile_environment_cannot_override_explicit_request(monkeypatch):
+    from npa.workbench.isaac_arena.runtime import _subprocess_env
+
+    key = "NPA_ISAAC_ARENA_VIDEO_PROFILE"
+    monkeypatch.setenv(key, "film")
+    assert key not in _subprocess_env()
+    assert _subprocess_env(viewport_only=True)[key] == "standard"
+    assert _subprocess_env(viewport_only=True, video_profile="film")[key] == "film"

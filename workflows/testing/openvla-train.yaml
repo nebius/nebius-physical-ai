@@ -1,0 +1,31 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: openvla-train
+  description: >-
+    Fine-tune an OpenVLA policy with the OpenVLA-OFT LoRA recipe (stub
+    stage). Exercises the workbench.openvla.train toolRef and anchors the
+    openvla/train three-tier contract (CLI <-> SDK <-> spec). The base
+    model is resolved at runtime through the HF Hub cache; no weights are
+    bundled in the repo or image.
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/openvla-train"
+  model_id: "openvla/openvla-7b"
+  dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/checkpoints/"
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 8
+    memory: 32Gi
+initial: train
+states:
+  train:
+    toolRef: workbench.openvla.train
+    resources: gpu
+    outputs:
+      - uri: "{{config.training_uri}}manifest.json"
+        schema: npa.workbench.openvla.train.stub.v1
+    terminal: true

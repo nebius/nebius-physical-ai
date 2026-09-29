@@ -1004,6 +1004,7 @@ def check_image_pulls_with_credentials(
         target_detail = "Kubernetes target pull is not required"
         target_digest = ""
         if requires_kubernetes:
+            namespace = _target_pull_namespace(namespace, context, kubeconfig)
             if not str(context or "").strip() or not _KUBERNETES_NAME_RE.fullmatch(
                 namespace
             ):
@@ -1506,6 +1507,18 @@ def _configured_pull_secret_names(
             )
         names.append(name)
     return tuple(names)
+
+
+def _target_pull_namespace(namespace: str, context: str, kubeconfig: str) -> str:
+    """Resolve only the selected context, preserving explicit namespaces."""
+    if namespace or not context:
+        return namespace
+    from npa.clients.kubernetes_namespace import context_namespace
+
+    try:
+        return context_namespace(context=context, kubeconfig=kubeconfig)
+    except ValueError:
+        return ""
 
 
 def verify_kubernetes_pull_secret(

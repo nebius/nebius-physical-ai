@@ -62,4 +62,4 @@ def test_h200_workflow_renders_family_and_real_command(monkeypatch) -> None:
     assert "--suite primary" in docs[1]["run"]
     hints = secret_env_hints_for_plan(plan.steps)
     assert "HF_TOKEN" in hints
-    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" in hints
+    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" not in hints

@@ -7,7 +7,7 @@ FROM ${BASE_IMAGE}
 ARG BASE_IMAGE
 ARG GENESIS_VERSION=0.4.6
 ARG LEROBOT_VERSION=0.4.4
-ARG RSL_RL_VERSION=2.2.4
+ARG RSL_RL_VERSION=5.5.1
 
 LABEL npa.tool="genesis" \
       npa.version="${GENESIS_VERSION}" \
@@ -53,6 +53,8 @@ RUN python -m pip install --upgrade pip setuptools wheel \
     && python -m pip install \
       "genesis-world==${GENESIS_VERSION}" \
       "rsl-rl-lib==${RSL_RL_VERSION}" \
+      "moviepy @ https://github.com/Zulko/moviepy/archive/97316f37f6a8d3843abfb53eba8f3bb0ea46a008.tar.gz#sha256=6bef8575b091f6a7342ed271ff5dba97dbb07255df0a5b81fec38f8248b143d9" \
+      "pillow>=12.3.0,<13.0" \
       "tensorboard==2.20.0" \
       "lerobot==${LEROBOT_VERSION}" \
       "typer==0.24.1" \
