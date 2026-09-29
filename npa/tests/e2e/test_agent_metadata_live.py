@@ -143,7 +143,11 @@ def test_fresh_metadata_agent_access_and_inventory(deployment):
         resources, resources_seconds = _request(
             client, "/api/resources", evidence, "resources"
         )
-    expected = agent._agent_record(project, name)["deployment"]
+    expected = agent.build_deployment_manifest(
+        project_alias=project,
+        name=name,
+        bootstrap_timestamp=manifest["bootstrap_timestamp"],
+    )
     assert_live_deployment(expected, manifest)
     identity = access["identity"]
     assert identity["credential_source"] == "instance_metadata"
