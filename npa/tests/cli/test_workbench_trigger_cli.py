@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import Any
 
 import pytest
+import boto3
+from botocore.stub import Stubber
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -264,3 +266,100 @@ def test_native_paginator_preserves_filtering_and_ordering() -> None:
         "datasets/lerobot/meta/info.json",
         "datasets/lerobot/data/chunk-000/episode.parquet",
     ]
+
+
+@pytest.fixture
+def native_s3():
+    client = boto3.client(
+        "s3",
+        region_name="us-east-1",
+        endpoint_url="https://storage.example.invalid",
+        aws_access_key_id="synthetic-access",
+        aws_secret_access_key="synthetic-secret",
+    )
+    yield client
+    client.close()
+
+
+def _stub_listing(stubber, pages: list[dict]) -> None:
+    token = None
+    for page in pages:
+        expected = {"Bucket": "bucket", "Prefix": "datasets/lerobot"}
+        if token:
+            expected["ContinuationToken"] = token
+        stubber.add_response("list_objects_v2", page, expected)
+        token = page.get("NextContinuationToken")
+
+
+def _assert_rejected_discovery(client, message: str) -> None:
+    store = RecordingStore()
+    with pytest.raises(SimToRealTriggerError, match=message):
+        run_once(
+            _trigger_config(),
+            s3_client=client,
+            watermark_store=store,
+            launcher=RejectLaunch(),
+        )
+    assert store.saved == []
+
+
+@pytest.mark.parametrize(
+    "tokens", [(None,), ("",), ("second", "second"), ("second", "third", "second")]
+)
+def test_native_pagination_rejects_incomplete_discovery(native_s3, tokens) -> None:
+    pages = []
+    for token in tokens:
+        page = {
+            "IsTruncated": True,
+            "Contents": [_object("datasets/lerobot/meta/info.json", 1)],
+        }
+        if token is not None:
+            page["NextContinuationToken"] = token
+        pages.append(page)
+    with Stubber(native_s3) as stubber:
+        _stub_listing(stubber, pages)
+        _assert_rejected_discovery(native_s3, "continuation token")
+        stubber.assert_no_pending_responses()
+
+
+def test_native_pagination_collects_all_filtered_objects(native_s3) -> None:
+    pages = [
+        {
+            "IsTruncated": True,
+            "NextContinuationToken": "second",
+            "Contents": [_object("datasets/lerobot/data/episode.parquet", 2)],
+        },
+        {
+            "IsTruncated": False,
+            "Contents": [
+                _object("datasets/lerobot/meta/info.json", 1),
+                _object("datasets/lerobot/notes.txt", 3),
+            ],
+        },
+    ]
+    with Stubber(native_s3) as stubber:
+        _stub_listing(stubber, pages)
+        objects = list_lerobot_objects(_trigger_config(), s3_client=native_s3)
+        stubber.assert_no_pending_responses()
+    assert [item.key for item in objects] == [
+        "datasets/lerobot/meta/info.json",
+        "datasets/lerobot/data/episode.parquet",
+    ]
+
+
+@pytest.mark.parametrize("client_type", [FallbackS3, NativePaginatorS3])
+@pytest.mark.parametrize("truncated", [None, "false", 0, 1, [], {}])
+def test_both_listing_paths_reject_non_boolean_truncation(client_type, truncated):
+    client = client_type([{"IsTruncated": truncated, "Contents": []}])
+    _assert_rejected_discovery(client, "IsTruncated must be a boolean")
+
+
+def test_fallback_pagination_rejects_nonadjacent_token_cycle() -> None:
+    client = FallbackS3(
+        [
+            {"IsTruncated": True, "NextContinuationToken": token, "Contents": []}
+            for token in ("second", "third", "second")
+        ]
+    )
+    _assert_rejected_discovery(client, "repeated a continuation token")
+    assert len(client.calls) == 3

@@ -670,34 +670,42 @@ def _s3_client_from_config(config: TriggerConfig) -> Any:
     )
 
 
+def _listing_continuation(page: dict[str, Any], seen_tokens: set[str]) -> str | None:
+    truncated = page.get("IsTruncated", False)
+    if type(truncated) is not bool:
+        raise SimToRealTriggerError("S3 listing IsTruncated must be a boolean")
+    if not truncated:
+        return None
+    token = page.get("NextContinuationToken")
+    if not isinstance(token, str) or not token.strip():
+        raise SimToRealTriggerError(
+            "truncated S3 object listing did not provide a continuation token"
+        )
+    if token in seen_tokens:
+        raise SimToRealTriggerError("S3 object listing repeated a continuation token")
+    seen_tokens.add(token)
+    return token
+
+
 def _iter_s3_objects(s3_client: Any, *, bucket: str, prefix: str):
+    seen_tokens: set[str] = set()
     if hasattr(s3_client, "get_paginator"):
         paginator = s3_client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+            _listing_continuation(page, seen_tokens)
             yield from page.get("Contents", [])
         return
 
     token = None
-    seen_tokens: set[str] = set()
     while True:
         kwargs = {"Bucket": bucket, "Prefix": prefix}
         if token:
             kwargs["ContinuationToken"] = token
         page = s3_client.list_objects_v2(**kwargs)
+        token = _listing_continuation(page, seen_tokens)
         yield from page.get("Contents", [])
-        if not page.get("IsTruncated"):
+        if token is None:
             return
-        next_token = page.get("NextContinuationToken")
-        if not isinstance(next_token, str) or not next_token.strip():
-            raise SimToRealTriggerError(
-                "truncated S3 object listing did not provide a continuation token"
-            )
-        if next_token in seen_tokens:
-            raise SimToRealTriggerError(
-                "S3 object listing repeated a continuation token"
-            )
-        seen_tokens.add(next_token)
-        token = next_token
 
 
 def _relative_key(key: str, prefix: str) -> str:
