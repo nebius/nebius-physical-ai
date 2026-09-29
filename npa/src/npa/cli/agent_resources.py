@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -22,12 +23,279 @@ _SECRET_KEY_RE = re.compile(
 )
 _INVENTORY_CACHE: dict[str, Any] = {"expires_at": 0.0, "payload": None}
 _INVENTORY_LOCK = threading.Lock()
+_AGENT_COMMAND_LOCK = threading.Lock()
+_AGENT_ACTIVE_PROCESSES: dict[int, subprocess.Popen[str]] = {}
+_AGENT_ABANDONED_PROCESS_GROUPS: dict[int, subprocess.Popen[str]] = {}
+_AGENT_COMMAND_BREAKER_OPEN = False
+_AGENT_COMMAND_REAPER: threading.Thread | None = None
+_AGENT_COMMAND_REAPER_INTERVAL_SECONDS = 0.1
+_AGENT_CREDENTIAL_SOURCES = frozenset({"configured_profile", "instance_metadata"})
+_AGENT_METADATA_PROFILE = "cursor-sa"
+_AGENT_METADATA_CONFIG = "/root/.nebius/config.yaml"
+_AGENT_METADATA_HOME = "/root"
+_AMBIENT_NEBIUS_AUTH_KEYS = frozenset(
+    {
+        "IAM_TOKEN",
+        "NEBIUS_ENDPOINT",
+        "NEBIUS_IAM_TOKEN",
+        "NEBIUS_IAM_TOKEN_FILE",
+        "NPA_NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN_FILE",
+        "NPA_REUSE_IAM_TOKEN",
+        "TF_VAR_iam_token",
+    }
+)
 _SAFE_K8S_REFERENCE_KEYS = {
     "image_pull_secrets",
     "k8s_image_pull_secrets",
     "env_secret_names",
     "k8s_env_secret_names",
 }
+
+
+def staged_agent_credential_source(environment: dict[str, str] | None = None) -> str:
+    """Return the exact allowlisted credential source staged for the agent.
+
+    Args:
+        environment: Environment containing the bootstrap provenance marker.
+
+    Returns:
+        The staged credential source, or an empty string when unavailable.
+
+    Raises:
+        None.
+    """
+    values = environment if environment is not None else os.environ
+    source = str(values.get("NPA_NEBIUS_CREDENTIAL_SOURCE") or "").strip()
+    return source if source in _AGENT_CREDENTIAL_SOURCES else ""
+
+
+def prepare_agent_cloud_environment(
+    environment: dict[str, str] | None = None,
+) -> tuple[dict[str, str], str]:
+    """Build a token-free environment from verified staged credential provenance.
+
+    Args:
+        environment: Source environment for the child process.
+
+    Returns:
+        A sanitized environment and its allowlisted credential source.
+
+    Raises:
+        ValueError: The staged credential source is missing or unsupported.
+    """
+    env = {str(key): str(value) for key, value in dict(environment or {}).items()}
+    source = staged_agent_credential_source(env)
+    if not source:
+        raise ValueError("agent credential source is unavailable")
+    for key in _AMBIENT_NEBIUS_AUTH_KEYS:
+        env.pop(key, None)
+    if source == "instance_metadata":
+        env["HOME"] = _AGENT_METADATA_HOME
+        env["NEBIUS_CONFIG_DIR"] = "/root/.nebius"
+        env["NEBIUS_PROFILE"] = _AGENT_METADATA_PROFILE
+        env["NPA_NEBIUS_CONFIG"] = _AGENT_METADATA_CONFIG
+        env["NPA_NEBIUS_PROFILE"] = _AGENT_METADATA_PROFILE
+    return env, source
+
+
+def _agent_process_is_owned_child(process: subprocess.Popen[str]) -> bool:
+    # WNOWAIT proves this PID is still our child without freeing it for reuse.
+    if process.returncode is not None:
+        return False
+    try:
+        os.waitid(
+            os.P_PID,
+            process.pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except (ChildProcessError, ProcessLookupError):
+        return False
+    return True
+
+
+def _agent_process_exited_without_reaping(
+    process: subprocess.Popen[str],
+) -> bool | None:
+    if process.returncode is not None:
+        return None
+    try:
+        result = os.waitid(
+            os.P_PID,
+            process.pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except (ChildProcessError, ProcessLookupError):
+        return None
+    return result is not None
+
+
+def _agent_process_group_has_other_members(process_group: int, leader_pid: int) -> bool:
+    # The unreaped leader keeps its PID/PGID reserved while /proc is inspected.
+    uncertain = False
+    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            text = stat_path.read_text(encoding="utf-8")
+            closing_parenthesis = text.rfind(")")
+            fields = text[closing_parenthesis + 2 :].split()
+            pid = int(text.split(" ", 1)[0])
+            member_group = int(fields[2])
+        except FileNotFoundError:
+            continue
+        except (IndexError, OSError, ValueError):
+            uncertain = True
+            continue
+        if pid != leader_pid and member_group == process_group:
+            return True
+    return uncertain
+
+
+def _close_agent_process_pipes(process: subprocess.Popen[str]) -> None:
+    for stream in (process.stdout, process.stderr):
+        if stream is not None and not stream.closed:
+            try:
+                stream.close()
+            except Exception:
+                continue
+
+
+def _kill_agent_process_group(process_group: int) -> None:
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except (PermissionError, ProcessLookupError):
+        return
+
+
+def _reap_abandoned_agent_processes() -> None:
+    global _AGENT_COMMAND_BREAKER_OPEN, _AGENT_COMMAND_REAPER
+    while True:
+        with _AGENT_COMMAND_LOCK:
+            abandoned = tuple(_AGENT_ABANDONED_PROCESS_GROUPS.items())
+        for process_group, process in abandoned:
+            exited = _agent_process_exited_without_reaping(process)
+            if exited is False:
+                continue
+            if exited is True and _agent_process_group_has_other_members(
+                process_group, process.pid
+            ):
+                _kill_agent_process_group(process_group)
+                continue
+            if exited is True:
+                try:
+                    process.wait(timeout=0)
+                except subprocess.TimeoutExpired:
+                    continue
+            with _AGENT_COMMAND_LOCK:
+                if _AGENT_ABANDONED_PROCESS_GROUPS.get(process_group) is process:
+                    _AGENT_ABANDONED_PROCESS_GROUPS.pop(process_group, None)
+                if _AGENT_ACTIVE_PROCESSES.get(process_group) is process:
+                    _AGENT_ACTIVE_PROCESSES.pop(process_group, None)
+        with _AGENT_COMMAND_LOCK:
+            if not _AGENT_ABANDONED_PROCESS_GROUPS:
+                _AGENT_COMMAND_BREAKER_OPEN = False
+                _AGENT_COMMAND_REAPER = None
+                return
+        time.sleep(_AGENT_COMMAND_REAPER_INTERVAL_SECONDS)
+
+
+def _start_agent_process_reaper() -> None:
+    global _AGENT_COMMAND_REAPER
+    with _AGENT_COMMAND_LOCK:
+        if _AGENT_COMMAND_REAPER is not None and _AGENT_COMMAND_REAPER.is_alive():
+            return
+        reaper = threading.Thread(
+            target=_reap_abandoned_agent_processes,
+            name="npa-agent-command-reaper",
+            daemon=True,
+        )
+        _AGENT_COMMAND_REAPER = reaper
+        reaper.start()
+
+
+def _start_bounded_agent_process(
+    command: list[str],
+    *,
+    env: dict[str, str] | None,
+    cwd: str | None,
+) -> subprocess.Popen[str]:
+    with _AGENT_COMMAND_LOCK:
+        if _AGENT_COMMAND_BREAKER_OPEN:
+            raise TimeoutError("a prior agent cloud command has not exited")
+        process = subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            close_fds=True,
+            start_new_session=True,
+        )
+        _AGENT_ACTIVE_PROCESSES[process.pid] = process
+    return process
+
+
+def _abandon_agent_process(process: subprocess.Popen[str]) -> None:
+    global _AGENT_COMMAND_BREAKER_OPEN
+    with _AGENT_COMMAND_LOCK:
+        _AGENT_ABANDONED_PROCESS_GROUPS[process.pid] = process
+        _AGENT_COMMAND_BREAKER_OPEN = True
+    try:
+        if _agent_process_is_owned_child(process):
+            _kill_agent_process_group(process.pid)
+    finally:
+        _close_agent_process_pipes(process)
+        _start_agent_process_reaper()
+
+
+def _remove_owned_active_process(process: subprocess.Popen[str]) -> None:
+    with _AGENT_COMMAND_LOCK:
+        if _AGENT_ACTIVE_PROCESSES.get(process.pid) is process:
+            _AGENT_ACTIVE_PROCESSES.pop(process.pid, None)
+
+
+def run_bounded_agent_command(
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    cwd: str | None = None,
+    timeout_s: float | None,
+) -> subprocess.CompletedProcess[str]:
+    """Run one agent child without waiting synchronously after its deadline.
+
+    Args:
+        command: Argument vector to execute without a shell.
+        env: Sanitized child environment.
+        cwd: Optional child working directory.
+        timeout_s: Positive request-time deadline, or ``None`` only for an
+            explicitly durable operation with no wall-clock cap.
+
+    Returns:
+        The completed child-process result.
+
+    Raises:
+        TimeoutError: The command exceeded its deadline or the breaker is open.
+        ValueError: The command or deadline is invalid.
+        OSError: The command could not be started.
+    """
+    if not command:
+        raise ValueError("agent command is required")
+    if timeout_s is not None and timeout_s <= 0:
+        raise ValueError("agent command timeout must be positive or None")
+    process = _start_bounded_agent_process(command, env=env, cwd=cwd)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        _abandon_agent_process(process)
+        raise TimeoutError("agent command timed out") from None
+    except BaseException:
+        _abandon_agent_process(process)
+        raise
+    _remove_owned_active_process(process)
+    return subprocess.CompletedProcess(
+        command, int(process.returncode), stdout or "", stderr or ""
+    )
 
 
 def artifact_only_http_probe(client: Any) -> dict[str, Any]:
@@ -219,7 +487,8 @@ def discover_mk8s_accelerators(
 ) -> dict[str, Any]:
     """Return accelerator families grounded in a cluster's live node groups."""
     try:
-        proc = subprocess.run(
+        env, _source = prepare_agent_cloud_environment(command_env)
+        proc = run_bounded_agent_command(
             [
                 *command,
                 "mk8s",
@@ -230,11 +499,8 @@ def discover_mk8s_accelerators(
                 "--format",
                 "json",
             ],
-            env=command_env,
-            text=True,
-            capture_output=True,
-            timeout=30,
-            check=False,
+            env=env,
+            timeout_s=30,
         )
         payload = json.loads(proc.stdout or "{}") if proc.returncode == 0 else {}
     except Exception:
@@ -510,20 +776,18 @@ def run_resource_discovery_command(
     allowed = {"iam", "compute", "mk8s", "registry", "storage", "vpc"}
     if len(command) < 4 or command[0] != "nebius" or command[3] not in allowed:
         return 2, "", "unsupported resource discovery command"
-    env = dict(command_env or os.environ)
-    for key in ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE"):
-        env.pop(key, None)
+    try:
+        env, _source = prepare_agent_cloud_environment(command_env or dict(os.environ))
+    except ValueError:
+        return 2, "", "agent credential source is unavailable"
     env["NEBIUS_PROFILE"] = str(command[2])
     try:
-        proc = subprocess.run(
+        proc = run_bounded_agent_command(
             command,
             env=env,
-            text=True,
-            capture_output=True,
-            timeout=timeout_s,
-            check=False,
+            timeout_s=timeout_s,
         )
-    except subprocess.TimeoutExpired as exc:
+    except TimeoutError as exc:
         raise TimeoutError("resource discovery timed out") from exc
     except OSError:
         return 1, "", "resource discovery command failed to start"
