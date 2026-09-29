@@ -371,3 +371,74 @@ def test_cli_does_not_echo_private_error_content(monkeypatch, capsys):
     monkeypatch.setattr("npa.workflows.video_sweep.__main__.prepare", fail)
     assert main(["prepare", "--root-uri", "unused", "--run-id", "test"]) == 1
     assert "private-prompt" not in capsys.readouterr().err
+
+
+def test_demo_exports_decoded_media_without_private_metadata(sweep, tmp_path):
+    from npa.workflows.video_sweep.demo import export_demo
+
+    args, _ = sweep
+    execution.review(args)
+    report_path = Path(args.root_uri) / "review.json"
+    report = json.loads(report_path.read_text())
+    report["items"][0]["reason"] = (
+        "private-review-text </script><script>alert(1)</script>"
+    )
+    report_path.write_text(json.dumps(report))
+    _lineage_receipt(args)
+    publication.publish(args)
+    output = tmp_path / "demo"
+    summary = export_demo(args, output)
+    html = (output / "index.html").read_text()
+    assert summary["accepted"] == 2
+    assert summary["judge"] == "Operator-selected model"
+    for forbidden in (
+        args.root_uri,
+        args.run_id,
+        "private-review-text",
+        "synthetic-track",
+        "synthetic-request",
+        "Use warm lighting",
+    ):
+        assert forbidden not in html
+        assert forbidden not in (output / "summary.json").read_text()
+    assert "__DEMO_DATA__" not in html
+    assert "data:video/mp4;base64," in html
+    assert output.stat().st_mode & 0o777 == 0o700
+    with av.open(str(output / "demo.mp4")) as video:
+        assert not video.streams.audio
+        assert sum(1 for _ in video.decode(video=0)) > 24 * 9
+    for row in summary["candidates"]:
+        path = output / (row["name"] + ".mp4")
+        _, metadata = vision.sample_video(path, 2)
+        assert metadata["frame_count"] == row["frames"] == 16
+        assert artifacts.file_digest(path) == row["sha256"]
+    with pytest.raises(FileExistsError):
+        export_demo(args, output)
+
+
+@pytest.mark.parametrize(
+    "corruption", ["dataset_hash", "lineage", "media", "missing_clip", "next_inventory"]
+)
+def test_demo_refuses_unverified_publication(sweep, tmp_path, corruption):
+    from npa.workflows.video_sweep.demo import export_demo
+
+    args, _ = sweep
+    execution.review(args)
+    _lineage_receipt(args)
+    publication.publish(args)
+    path = Path(args.root_uri) / "dataset/manifest.json"
+    dataset = json.loads(path.read_text())
+    if corruption == "dataset_hash":
+        dataset["review_sha256"] = "wrong"
+    elif corruption == "lineage":
+        dataset["lineage_sha256"] = "wrong"
+    elif corruption == "media":
+        Path(dataset["clips"][0]["uri"]).write_bytes(b"changed")
+    elif corruption == "next_inventory":
+        (Path(args.root_uri) / "dataset/next-sources.json").write_text("{}")
+    else:
+        dataset["clips"].pop()
+    path.write_text(json.dumps(dataset))
+    with pytest.raises(ValueError):
+        export_demo(args, tmp_path / "demo")
+    assert not (tmp_path / "demo").exists()

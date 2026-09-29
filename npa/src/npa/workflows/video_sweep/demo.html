@@ -1,0 +1,834 @@
+<!doctype html>
+<!-- Offline evidence viewer for a verified video variant sweep. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; media-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <title>Video variant sweep · Nebius Physical AI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0a121b;
+        --panel: #111e2b;
+        --line: #283747;
+        --text: #ecf2f3;
+        --muted: #a5b3bc;
+        --lime: #c5f46a;
+        --coral: #ff9a87;
+        --cyan: #8dd7e3;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+      button,
+      select {
+        cursor: pointer;
+      }
+      button:focus-visible,
+      a:focus-visible,
+      input:focus-visible,
+      select:focus-visible {
+        outline: 2px solid var(--lime);
+        outline-offset: 4px;
+      }
+      button {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--text);
+        background: var(--panel);
+        padding: 10px 18px;
+      }
+      button:hover {
+        border-color: var(--lime);
+      }
+      a {
+        color: var(--lime);
+      }
+      .wrap {
+        max-width: 1500px;
+        margin: auto;
+        padding: 0 48px;
+      }
+      header {
+        height: 86px;
+        border-bottom: 1px solid var(--line);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 16px;
+      }
+      .brand {
+        font-size: 13px;
+        letter-spacing: 0.15em;
+        font-weight: 650;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .mark {
+        width: 18px;
+        height: 18px;
+        background: var(--lime);
+        transform: rotate(-10deg);
+      }
+      .pill {
+        font-size: 11px;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        border: 1px solid var(--line);
+        border-radius: 30px;
+        padding: 6px 12px;
+        color: var(--muted);
+      }
+      .pill:before {
+        content: "●";
+        color: var(--lime);
+        padding-right: 8px;
+      }
+      .hero {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 45px;
+        padding: 46px 0 34px;
+      }
+      .eyebrow {
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        font-weight: 650;
+        color: var(--lime);
+        text-transform: uppercase;
+        margin: 0 0 15px;
+      }
+      h1 {
+        font-size: clamp(32px, 4vw, 58px);
+        font-weight: 550;
+        letter-spacing: -0.045em;
+        line-height: 1.08;
+        margin: 0;
+      }
+      h1 span {
+        color: var(--lime);
+      }
+      .intro {
+        max-width: 420px;
+        color: var(--muted);
+        margin: 0 0 5px;
+        line-height: 1.7;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 28px;
+      }
+      .stat {
+        padding: 18px 22px;
+        border-right: 1px solid var(--line);
+      }
+      .stat:last-child {
+        border: 0;
+      }
+      .stat strong {
+        font-size: 27px;
+        letter-spacing: -0.03em;
+        font-weight: 550;
+      }
+      .stat small {
+        display: block;
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 0.05em;
+      }
+      .stat em {
+        font-size: 12px;
+        color: var(--lime);
+        font-style: normal;
+        padding-left: 10px;
+      }
+      .section-heading {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        align-items: center;
+        margin: 24px 0 16px;
+      }
+      h2 {
+        font-size: 19px;
+        letter-spacing: -0.02em;
+        margin: 0;
+        font-weight: 550;
+      }
+      .subtle {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .workspace {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 275px;
+        gap: 20px;
+      }
+      .compare {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--panel);
+      }
+      .video-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 2px;
+        background: var(--line);
+      }
+      .video-label {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        background: #12202e;
+        padding: 12px 16px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+      .video-label b {
+        font-weight: 500;
+        color: var(--muted);
+      }
+      video {
+        width: 100%;
+        aspect-ratio: 16/9;
+        display: block;
+        object-fit: contain;
+        background: #060b11;
+      }
+      .transport {
+        padding: 16px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+      }
+      #play {
+        min-width: 94px;
+        background: var(--lime);
+        color: var(--bg);
+        border: 0;
+        font-weight: 600;
+      }
+      input[type="range"] {
+        accent-color: var(--lime);
+        cursor: pointer;
+        min-width: 0;
+      }
+      #scrub {
+        flex: 1;
+      }
+      .clock {
+        font-size: 12px;
+        font-variant-numeric: tabular-nums;
+        color: var(--muted);
+        min-width: 77px;
+      }
+      #selection {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px 12px;
+        color: var(--text);
+        max-width: 230px;
+      }
+      .decision {
+        padding: 20px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        display: flex;
+        flex-direction: column;
+      }
+      .decision .tag {
+        font-size: 11px;
+        letter-spacing: 0.12em;
+        color: var(--lime);
+      }
+      .score {
+        font-size: 64px;
+        line-height: 1.2;
+        letter-spacing: -0.05em;
+        margin: 12px 0 6px;
+      }
+      .score small {
+        font-size: 18px;
+        color: var(--muted);
+        letter-spacing: 0;
+      }
+      .score-track {
+        height: 7px;
+        border-radius: 5px;
+        background: #2b3b46;
+        margin: 10px 0 18px;
+        position: relative;
+      }
+      .score-fill {
+        height: 100%;
+        background: var(--lime);
+        border-radius: 5px;
+      }
+      .threshold-marker {
+        position: absolute;
+        top: -5px;
+        height: 17px;
+        width: 2px;
+        background: white;
+      }
+      .decision p {
+        font-size: 12px;
+        line-height: 1.7;
+        color: var(--muted);
+        margin: 4px 0;
+      }
+      .decision footer {
+        margin-top: auto;
+        padding-top: 16px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .lower {
+        display: grid;
+        grid-template-columns: 1.4fr 1fr;
+        gap: 24px;
+        margin-top: 32px;
+      }
+      .panel {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 24px;
+      }
+      .pipeline {
+        display: flex;
+        align-items: stretch;
+        gap: 5px;
+        margin: 22px 0 16px;
+      }
+      .node {
+        min-width: 0;
+        flex: 1;
+        text-align: left;
+        padding: 12px 9px;
+        font-size: 11px;
+        line-height: 1.5;
+      }
+      .node span {
+        display: block;
+        color: var(--muted);
+        font-size: 10px;
+        margin-bottom: 6px;
+      }
+      .node.active {
+        background: #213329;
+        border-color: var(--lime);
+      }
+      .pipeline-detail {
+        min-height: 69px;
+        font-size: 13px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+      .pipeline-detail strong {
+        color: var(--text);
+        font-weight: 500;
+      }
+      .gate-control {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: center;
+        margin-top: 18px;
+      }
+      .gate-control input {
+        flex: 1;
+      }
+      .gate-value {
+        font-size: 23px;
+        letter-spacing: -0.04em;
+        color: var(--lime);
+        min-width: 45px;
+      }
+      .gate-result {
+        font-size: 13px;
+        margin: 12px 0;
+      }
+      .gate-note {
+        font-size: 11px;
+        color: var(--muted);
+        line-height: 1.7;
+      }
+      .reset {
+        border: 0;
+        padding: 0;
+        background: none;
+        color: var(--lime);
+        font-size: 11px;
+      }
+      .evidence {
+        padding: 24px 0 35px;
+        margin-top: 24px;
+        border-top: 1px solid var(--line);
+        display: flex;
+        gap: 24px;
+        align-items: start;
+        justify-content: space-between;
+      }
+      .evidence p {
+        margin: 0;
+        color: var(--muted);
+        max-width: 950px;
+        font-size: 11px;
+        line-height: 1.8;
+      }
+      .evidence button {
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .error {
+        color: var(--coral);
+      }
+      @media (max-width: 1050px) {
+        .wrap {
+          padding: 0 24px;
+        }
+        .workspace {
+          grid-template-columns: 1fr;
+        }
+        .decision {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 0 24px;
+        }
+        .score {
+          grid-row: 1/4;
+          grid-column: 2;
+          font-size: 54px;
+        }
+        .score-track {
+          grid-column: 1/-1;
+        }
+        .decision footer {
+          grid-column: 1/-1;
+        }
+        .hero {
+          align-items: start;
+          flex-direction: column;
+          gap: 18px;
+        }
+        .intro {
+          max-width: 650px;
+        }
+        .lower {
+          grid-template-columns: 1fr;
+        }
+      }
+      @media (max-width: 600px) {
+        .wrap {
+          padding: 0 16px;
+        }
+        header {
+          height: 74px;
+        }
+        .brand {
+          font-size: 10px;
+        }
+        .pill {
+          font-size: 9px;
+        }
+        .hero {
+          padding: 30px 0;
+        }
+        .stats {
+          grid-template-columns: 1fr 1fr;
+        }
+        .stat {
+          border-bottom: 1px solid var(--line);
+        }
+        .stat:nth-child(2) {
+          border-right: 0;
+        }
+        .stat:nth-child(3) {
+          border-bottom: 0;
+        }
+        .video-grid {
+          grid-template-columns: 1fr;
+        }
+        .section-heading {
+          align-items: start;
+        }
+        .pipeline {
+          flex-wrap: wrap;
+        }
+        .node {
+          flex: 1 0 28%;
+        }
+        .evidence {
+          flex-direction: column;
+        }
+        .transport {
+          gap: 10px;
+        }
+        .clock {
+          min-width: 67px;
+          font-size: 10px;
+        }
+        #play {
+          min-width: 70px;
+          padding: 9px;
+        }
+        h2 {
+          font-size: 17px;
+        }
+        .panel {
+          padding: 18px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          scroll-behavior: auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <div class="brand"><span class="mark"></span>NEBIUS / PHYSICAL AI</div>
+        <div class="pill">Recorded GPU results</div>
+      </header>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Video variant sweep</p>
+          <h1>More variation.<br /><span>A visible quality gate.</span></h1>
+        </div>
+        <p class="intro">
+          Follow real Cosmos Transfer 2.5 outputs from source footage to an
+          accepted dataset. Compare the motion, inspect the decisions, and
+          explore the quality threshold.
+        </p>
+      </section>
+      <div class="stats">
+        <div class="stat">
+          <strong id="sources-count"></strong><small>SOURCE CLIPS</small>
+        </div>
+        <div class="stat">
+          <strong id="variants-count"></strong><em id="workers-count"></em
+          ><small>GENERATED VARIANTS</small>
+        </div>
+        <div class="stat">
+          <strong id="accepted-count"></strong
+          ><small>ACCEPTED INTO DATASET</small>
+        </div>
+        <div class="stat">
+          <strong id="tracked-count"></strong
+          ><small>TRACKED IN POSTGRES + MLFLOW</small>
+        </div>
+      </div>
+      <div class="section-heading">
+        <h2>Inspect the change</h2>
+        <label
+          ><span class="subtle">Compare </span
+          ><select id="selection" aria-label="Select generated variant"></select
+        ></label>
+      </div>
+      <div class="workspace">
+        <section class="compare" aria-label="Synchronized video comparison">
+          <div class="video-grid">
+            <div>
+              <div class="video-label">Source <b id="source-meta"></b></div>
+              <video
+                id="source"
+                muted
+                playsinline
+                preload="auto"
+                aria-label="Source video"
+              ></video>
+            </div>
+            <div>
+              <div class="video-label">
+                Generated variant <b id="candidate-meta"></b>
+              </div>
+              <video
+                id="candidate"
+                muted
+                playsinline
+                preload="auto"
+                aria-label="Generated video"
+              ></video>
+            </div>
+          </div>
+          <div class="transport">
+            <button id="play">Play</button
+            ><input
+              id="scrub"
+              type="range"
+              min="0"
+              max="1"
+              step="0.001"
+              value="0"
+              aria-label="Scrub both videos"
+            /><span class="clock" id="clock">0.00 / 0.00</span>
+          </div>
+          <div class="error subtle" id="play-error" role="status"></div>
+        </section>
+        <aside class="decision">
+          <span class="tag" id="decision"></span>
+          <div class="score"><span id="score"></span><small> / 1</small></div>
+          <div class="score-track">
+            <div class="score-fill" id="score-fill"></div>
+            <div class="threshold-marker" id="threshold-marker"></div>
+          </div>
+          <p id="gate-description"></p>
+          <p id="publication"></p>
+          <footer id="judge"></footer>
+        </aside>
+      </div>
+      <div class="lower">
+        <section class="panel">
+          <h2>One connected pipeline</h2>
+          <div class="pipeline" id="pipeline"></div>
+          <div class="pipeline-detail" id="pipeline-detail" role="status"></div>
+        </section>
+        <section class="panel">
+          <h2>Explore the acceptance gate</h2>
+          <div class="gate-control">
+            <input
+              id="threshold"
+              aria-label="Explore score threshold"
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+            /><span class="gate-value" id="threshold-value"></span>
+          </div>
+          <p class="gate-result" id="gate-result"></p>
+          <p class="gate-note">
+            Exploration only. The recorded decision requires the judge to pass
+            the clip <em>and</em> its score to meet the threshold. This control
+            leaves the published dataset unchanged.
+          </p>
+          <button class="reset" id="reset">Reset to recorded threshold</button>
+        </section>
+      </div>
+      <footer class="evidence">
+        <p id="evidence"></p>
+        <button id="download">Download evidence summary ↗</button>
+      </footer>
+    </div>
+    <script>
+      "use strict";
+      const DATA = __DEMO_DATA__;
+      const S = DATA.summary;
+      const $ = (id) => document.getElementById(id);
+      const text = (id, value) => {
+        $(id).textContent = value;
+      };
+      const videos = [$("source"), $("candidate")];
+      let playing = false;
+      let current = S.candidates[0];
+      const duration = () =>
+        Math.max(
+          ...videos.map((v) => (Number.isFinite(v.duration) ? v.duration : 0)),
+        );
+      function pause() {
+        playing = false;
+        videos.forEach((v) => v.pause());
+        text("play", "Play");
+      }
+      function seek(seconds) {
+        videos.forEach((v) => {
+          if (Number.isFinite(v.duration))
+            v.currentTime = Math.min(seconds, v.duration);
+        });
+      }
+      async function play() {
+        text("play-error", "");
+        if ($("source").ended || $("source").currentTime >= duration() - 0.05)
+          seek(0);
+        try {
+          await Promise.all(videos.map((v) => v.play()));
+          playing = true;
+          text("play", "Pause");
+        } catch (_) {
+          pause();
+          text(
+            "play-error",
+            "Playback could not start. Reload this file in a browser that supports H.264 video.",
+          );
+        }
+      }
+      $("play").onclick = () => (playing ? pause() : play());
+      $("scrub").oninput = () => {
+        pause();
+        seek(Number($("scrub").value) * duration());
+      };
+      function tick() {
+        const seconds = Math.max(...videos.map((v) => v.currentTime));
+        if (playing && videos.every((v) => v.ended)) pause();
+        if (
+          playing &&
+          !videos[0].ended &&
+          !videos[1].ended &&
+          Math.abs(videos[0].currentTime - videos[1].currentTime) > 0.12
+        )
+          videos[1].currentTime = videos[0].currentTime;
+        $("scrub").value = duration() ? seconds / duration() : 0;
+        text("clock", `${seconds.toFixed(2)} / ${duration().toFixed(2)}`);
+        requestAnimationFrame(tick);
+      }
+      function select(index) {
+        pause();
+        current = S.candidates[index];
+        const source = S.sources.find((row) => row.name === current.source);
+        [
+          [videos[0], source],
+          [videos[1], current],
+        ].forEach(([video, row]) => {
+          video.src = DATA.media[row.name + ".mp4"];
+          video.poster = DATA.media[row.name + ".jpg"];
+          video.load();
+        });
+        text("source-meta", `${source.frames} frames`);
+        text("candidate-meta", `Seed ${current.seed}`);
+        showDecision();
+      }
+      function showDecision() {
+        const color = current.accepted ? "var(--lime)" : "var(--coral)";
+        text("decision", current.accepted ? "ACCEPTED" : "HELD OUT");
+        $("decision").style.color = color;
+        text("score", current.score.toFixed(2));
+        $("score").style.color = color;
+        $("score-fill").style.width = `${current.score * 100}%`;
+        $("score-fill").style.background = color;
+        $("threshold-marker").style.left = `${S.threshold * 100}%`;
+        text(
+          "gate-description",
+          `Recorded threshold ${S.threshold.toFixed(2)} · Judge ${current.passed ? "passed" : "rejected"} the clip.`,
+        );
+        text(
+          "publication",
+          current.accepted
+            ? "Included in the published dataset and next-run inventory."
+            : "Excluded from the dataset. Its review and lineage remain recorded.",
+        );
+        text(
+          "judge",
+          `${S.judge} · ${S.samples} sampled frames per clip. Sampled review does not certify every frame.`,
+        );
+      }
+      const steps = [
+        [
+          "01",
+          "Prepare",
+          "Source snapshots → visual descriptions → enhanced prompts. Every source is paired with every configured variant.",
+        ],
+        [
+          "02",
+          "Generate",
+          `Cosmos Transfer 2.5 runs disjoint partitions across ${S.workers} workers with source conditioning and content guardrails.`,
+        ],
+        [
+          "03",
+          "Review",
+          `${S.judge} compares ${S.samples} sampled source and candidate frames. The recorded score gate is ${S.threshold.toFixed(2)}.`,
+        ],
+        [
+          "04",
+          "Track",
+          `All ${S.candidates.length} candidate decisions are covered by the committed Postgres and MLflow lineage receipt.`,
+        ],
+        [
+          "05",
+          "Publish",
+          `${S.accepted} accepted clips are bound to the published dataset. The next-run inventory feeds an explicitly launched next sweep.`,
+        ],
+      ];
+      steps.forEach(([number, name, detail], index) => {
+        const button = document.createElement("button");
+        button.className = "node";
+        const numberLabel = document.createElement("span");
+        numberLabel.textContent = number + " ✓";
+        button.append(numberLabel, document.createTextNode(name));
+        button.onclick = () => {
+          document.querySelectorAll(".node").forEach((n) => {
+            n.classList.remove("active");
+            n.setAttribute("aria-pressed", "false");
+          });
+          button.classList.add("active");
+          button.setAttribute("aria-pressed", "true");
+          text("pipeline-detail", detail);
+        };
+        $("pipeline").append(button);
+        if (index === 2) button.click();
+      });
+      S.candidates.forEach((row, index) => {
+        const option = document.createElement("option");
+        option.value = index;
+        option.textContent = `Variant ${index + 1} · ${row.accepted ? "Accepted" : "Held out"}`;
+        $("selection").append(option);
+      });
+      $("selection").onchange = () => select(Number($("selection").value));
+      text("sources-count", S.sources.length);
+      text("variants-count", S.candidates.length);
+      text("workers-count", `${S.workers} workers`);
+      text("accepted-count", S.accepted);
+      text("tracked-count", S.candidates.length);
+      function gate() {
+        const threshold = Number($("threshold").value);
+        text("threshold-value", threshold.toFixed(2));
+        const count = S.candidates.filter(
+          (c) => c.passed && c.score >= threshold,
+        ).length;
+        text(
+          "gate-result",
+          `${count} of ${S.candidates.length} variants would pass at this threshold.`,
+        );
+      }
+      $("threshold").oninput = gate;
+      $("reset").onclick = () => {
+        $("threshold").value = S.threshold;
+        gate();
+      };
+      $("reset").click();
+      text(
+        "evidence",
+        `${S.evidence}. ${S.scope} Media hashes are checked before export. Container metadata and audio are removed; visible content remains. This offline file contains actual clips. No prompts, source paths, run IDs, service addresses, or raw review text are included.`,
+      );
+      $("download").onclick = () => {
+        const a = document.createElement("a");
+        a.href =
+          "data:application/json;charset=utf-8," +
+          encodeURIComponent(JSON.stringify(S, null, 2));
+        a.download = "evidence-summary.json";
+        a.click();
+      };
+      select(0);
+      tick();
+    </script>
+  </body>
+</html>

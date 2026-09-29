@@ -149,3 +149,22 @@ def test_full_gpu_stages_require_real_transfer(tmp_path):
     assert dataset["clips"]
     report = artifacts.read_json(args.root_uri + "/review.json")
     assert all(row["engine"] == "cosmos-transfer2.5" for row in report["items"])
+
+
+def test_export_published_run(tmp_path):
+    from npa.workflows.video_sweep.demo import export_demo
+
+    root = os.environ.get("NPA_VIDEO_SWEEP_DEMO_ROOT_URI", "")
+    run_id = os.environ.get("NPA_VIDEO_SWEEP_DEMO_RUN_ID", "")
+    if not root or not run_id:
+        pytest.skip("Select a private completed run for read-only demo export")
+    plan = artifacts.read_json(root + "/plan.json")
+    args = SimpleNamespace(root_uri=root, run_id=run_id, workers=plan["workers"])
+    output = tmp_path / "demo"
+    summary = export_demo(args, output)
+    assert len(summary["candidates"]) == len(plan["items"])
+    assert summary["accepted"] > 0
+    assert root not in (output / "index.html").read_text()
+    assert run_id not in (output / "index.html").read_text()
+    with av.open(str(output / "demo.mp4")) as video:
+        assert sum(1 for _ in video.decode(video=0)) > 24 * 9

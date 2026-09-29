@@ -12,6 +12,66 @@ the worker states, their indices, and their declared output receipts together.
 Every worker, including an empty partition, emits a receipt. The review stage
 requires complete coverage before judging any candidate.
 
+## One-command operator kit and offline demo
+
+After configuring the cluster and services described below, use the operator kit
+from a Linux host with `npa[video-sweep]` installed. It keeps the canonical YAML
+as the stage graph and automates preflight, immutable source/variant inventories,
+standard runtime submission, and verified HTML/MP4 export:
+
+```bash
+npa/.venv/bin/python -m npa.workflows.video_sweep.operator init \
+  --config /private/video-sweep/sweep.json
+# Fill in project, Kubernetes context, bucket, exact model IDs, and S3 source URIs.
+# Supply the tracking and model credentials through the environment.
+npa/.venv/bin/python -m npa.workflows.video_sweep.operator run \
+  --config /private/video-sweep/sweep.json \
+  --output-dir /private/video-sweep/demo
+```
+
+The generated configuration includes two editable variants, frame sampling,
+threshold, GPU accelerator, and a fresh run ID. `check` runs the operator
+preflight without submitting compute. `resume` uses the standard durable
+`--resume-run` path with the same configuration. `export` rebuilds the demo from
+an already published run using only its configured project storage; it does not
+submit compute or call a model. Select a new output directory for each export.
+Use a new run ID for changed inputs or parameters.
+
+Exact-project S3 credentials come from NPA configuration. The required service
+secrets are listed below; optional MLflow bearer and AWS session tokens are
+forwarded only when present. Values never enter submission arguments.
+The configuration and adjacent `.operator.log` are private files; keep both
+outside the repository. The helper does not provision the cluster, tracking
+services, or gated model access. Both workers must fit concurrently, and tracking
+endpoints must be reachable from their CPU pods. Operator preflight does not
+prove that connectivity. The runtime waits without a per-wave deadline.
+
+The `prefix` field defaults to `video-variant-sweep`; run objects live beneath
+`s3://<bucket>/<prefix>/<run_id>/`.
+
+The output directory contains:
+
+- `index.html`: a standalone offline viewer with embedded clips, synchronized
+  playback/scrubbing, candidate selection, stage evidence, and a threshold
+  explorer that leaves recorded decisions unchanged.
+- `demo.mp4`: a silent comparison film, with one full-length chapter per
+  candidate, its source, measured score, and recorded acceptance.
+- `summary.json`, silent preview MP4s, and JPEG posters: allowlisted metadata,
+  original/preview media hashes, and the assets embedded in the viewer.
+
+Export checks worker coverage, source/candidate hashes, accepted dataset bytes,
+review/lineage bindings, and the next-run inventory before creating the final
+output directory. It excludes prompts, raw review reasons, source paths, run IDs,
+service addresses, and provider request identifiers. It removes container
+metadata and audio. **Visible clip content remains**: an exported demo containing
+private imagery still requires private handling. The procedural validation demo
+contains no customer imagery. The HTML uses no external assets or requests.
+
+The viewer reports component evidence separately from full workflow completion.
+The complete reference DAG remains subject to the validation limitation below;
+the operator wrapper does not turn existing component receipts into proof of a
+successful single-submit run.
+
 ## Inputs and configuration
 
 Use an operator-owned S3 source inventory with exact video object URIs:
@@ -183,3 +243,12 @@ runtime, `NPA_VIDEO_SWEEP_SOURCES_URI`, `NPA_VIDEO_SWEEP_VARIANTS_URI`, and all
 service credentials. The standard live-submit matrix registers the complete
 runtime workflow; automated rotation waits for these operator-specific inputs
 and services.
+
+The read-only live export test uses `NPA_VIDEO_SWEEP_DEMO_ROOT_URI` and
+`NPA_VIDEO_SWEEP_DEMO_RUN_ID` to select a completed private run, verifies its
+receipts and media, and decodes the exported MP4. It submits no compute:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_video_sweep_live.py::test_export_published_run -q
+```
