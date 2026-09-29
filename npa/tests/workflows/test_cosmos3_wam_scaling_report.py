@@ -5,10 +5,32 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import shlex
+import subprocess
+import sys
 
 import pytest
 
 RECIPE = Path(__file__).resolve().parents[2] / "workflows/workbench/cosmos3-wam-slurm"
+ROOT = Path(__file__).resolve().parents[3]
+
+
+def test_documented_command_reproduces_committed_scaling_bytes(tmp_path):
+    evidence = ROOT / "docs/workbench/evidence/cosmos3-wam-scaling"
+    instructions = (evidence / "README.md").read_text()
+    commands = instructions.split("```bash\n", 1)[1].split("```", 1)[0]
+    argv = shlex.split(commands.replace("\\\n", "").splitlines()[0])
+    output = tmp_path / "repeated-scaling.json"
+    assert argv[0] == "npa/.venv/bin/python"
+    assert argv[-2:] == ["--output-path", "$WAM_SCALING_REPORT"]
+    subprocess.run(
+        [sys.executable, *argv[1:-1], str(output)],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert output.read_bytes() == (evidence / "repeated-scaling.json").read_bytes()
 
 
 def _module():

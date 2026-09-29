@@ -52,7 +52,7 @@ def _verify_summary(measurement, seconds, tokens):
     work = measurement["work"]
     _close(work["measured_tokens"], sum(tokens))
     _close(work["mean_tokens_per_optimizer_step"], statistics.mean(tokens))
-    _close(work["tokens_per_second"], sum(tokens) / sum(seconds))
+    _close(work["tokens_per_second"], sum(tokens) / math.fsum(seconds))
 
 
 def _read(directory):
@@ -108,7 +108,10 @@ def _group(records):
     repetitions = [_repeat(record) for record in records]
     means = [repeat["step_mean_seconds"] for repeat in repetitions]
     throughputs = [repeat["tokens_per_second"] for repeat in repetitions]
-    total_seconds = sum(sum(record["seconds"]) for record in records)
+    # Built-in float summation changed in Python 3.12; keep receipts reproducible.
+    total_seconds = math.fsum(
+        second for record in records for second in record["seconds"]
+    )
     total_tokens = sum(sum(record["tokens"]) for record in records)
     return {
         "repetitions": repetitions,

@@ -43,6 +43,10 @@ this completed comparison and the linked quality records supply final status.
 
 ## Reproduce from committed data
 
+The reducer uses `math.fsum` for elapsed-time aggregation so Python versions
+with different built-in float summation produce the same committed JSON bytes.
+The documented reducer command is exercised against all six committed runs in CI.
+
 From the repository root, choose a fresh output path in `WAM_SCALING_REPORT`:
 
 ```bash
