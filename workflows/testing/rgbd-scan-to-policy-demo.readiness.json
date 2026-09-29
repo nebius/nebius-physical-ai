@@ -10,8 +10,8 @@
       ]
     },
     "task_fidelity": {
-      "status": "verified",
-      "reason": "The complete public scan workflow qualified at source 39a662651: one measured collision scene, 4,000 robots, 500 PPO updates and 3,415/4,000 successful held-out routes (85.375%), above the unchanged 80% gate. Independent native controls, trajectory audits, full readback and original offline report checks passed. New-site, physical-robot and camera-policy transfer remain outside this qualification.",
+      "status": "unverified",
+      "reason": "Historical source 39a662651 qualified with 4,000 robots, 500 PPO updates and 3,415/4,000 successful held-out routes (85.375%), above the unchanged 80% gate. The new retention implementation changes the shared navigation runtime even with its anchor disabled, so the current source requires fresh full scan qualification. The original controls, readback and report evidence remain bound to their old source. New-site, physical-robot and camera-policy transfer are outside that qualification.",
       "evidence": [
         "docs/workbench/guides/rgbd-scan-to-policy-demo.md",
         "docs/workbench/evidence/public-demos/real-to-sim.json"

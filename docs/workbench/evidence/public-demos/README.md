@@ -7,6 +7,12 @@ on September 28. The receipts bind measured outputs to source, workflow, image,
 staged-source, and artifact hashes without disclosing runtime infrastructure or
 storage locations.
 
+The current retention change updates the shared navigation runtime. The scan
+receipt below remains qualification of its recorded source; a fresh full scan
+run must qualify the new source. SDG and NuRec workload code, selected inputs,
+image selections and rendered tasks remain unchanged. Their recorded measurements retain
+their original scope.
+
 | Demo | Independently verified result | Receipt |
 | --- | --- | --- |
 | Scan-to-policy navigation | 4,000 robots in one measured scene, 500 training updates, and 3,415/4,000 successful held-out routes (85.375%, above the unchanged 80% gate) | [Scan qualification](real-to-sim.json) |
@@ -67,7 +73,17 @@ had memory observations but no sampled nonzero utilization.
 
 [Earlier qualification](history/2eb77537d/README.md) remains preserved with its
 original source, measurements, and NuRec presentation-correction provenance.
-The RL improvement demo still requires a qualifying final policy comparison.
-Execution and physics checks alone do not establish improvement over a baseline.
+The [subsequent RL replay result](rl-improvement-rejection.json) completed full
+baseline and candidate training, then improved development success from 82.475%
+to 93.0%. It nevertheless failed 371 metric checks across 257 cases, including
+warehouse retention. Selection retained the baseline and never evaluated final
+outcomes. Its original HTML and independently verified rejection remain evidence
+of a failed quality gate. Required native bundles were read back and checked;
+this receipt does not claim an inventory of every object or continuous GPU
+observation across every phase.
+
+The new baseline-retention recipe still requires its own qualifying final policy
+comparison. Execution and physics checks alone do not establish improvement
+over a baseline.
 Every operator must also pass storage, vendor-access, and selected-runtime
 preflight.

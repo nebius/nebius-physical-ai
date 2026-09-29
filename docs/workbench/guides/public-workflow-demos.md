@@ -138,17 +138,23 @@ the measured success rates, safety metrics, and failed quality gates. Training
 scene performance does not establish cross-scene transfer. Final evaluation
 cases must remain separate from training and development selection.
 
-The earlier scan-trained candidate scored 0/4,000 on the held-out warehouse;
-that negative result remains historical evidence. The new replay experiment
-must establish its own result before being described as effective.
+The earlier scan-trained candidate scored 0/4,000 on the held-out warehouse.
+A subsequent full replay experiment improved development success from 82.475%
+to 93.0%, but failed 371 metric checks across 257 cases. Selection retained the
+baseline and left final outcomes untouched. Both negative results remain
+historical evidence. The current baseline-retention recipe must establish its
+own result before being described as effective.
 
-The scan-to-policy, SDG, and NuRec demos have full GPU qualification, complete
+Earlier scan-to-policy, SDG, and NuRec runs have full GPU qualification, complete
 artifact readback, and offline report checks recorded in the
 [source-bound measurements](../evidence/public-demos/README.md). Scan navigation
 succeeded on 3,415/4,000 held-out routes (85.375%) in the reconstructed public
 office. Each receipt identifies the exact native source revision and report
-bytes. RL improvement still requires a qualifying final comparison; execution
-and physics checks alone do not establish improvement over a baseline.
+bytes. The retention change also touches the scan's shared navigation runtime,
+so the current scan source requires a fresh full qualification. SDG and NuRec
+retain their unchanged workload source. RL improvement still requires a
+qualifying final comparison; execution and physics checks alone do not establish
+improvement over a baseline.
 
 To stop a run, use `npa workbench workflow cancel '<run-id>' --project '<project>'`.
 Cancel and verify terminal status before removing dedicated infrastructure.
