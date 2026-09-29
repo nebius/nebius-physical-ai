@@ -41,6 +41,7 @@ def _configuration(recipe: dict, condition: str):
     config.commands.object_pose.debug_vis = False
     config.observations.policy.enable_corruption = False
     _align_tool_frame(config, recipe)
+    _configure_gripper(config, recipe)
     case = recipe["conditions"][condition]
     config.scene.object.spawn = sim.CuboidCfg(
         size=(0.05, 0.05, 0.05),
@@ -62,6 +63,15 @@ def _configuration(recipe: dict, condition: str):
     _camera_config(config)
     configure_validity(config, recipe)
     return config
+
+
+def _configure_gripper(config, recipe: dict) -> None:
+    from isaaclab.utils.string import ResolvableString
+
+    config.actions.gripper_action.class_type = ResolvableString(
+        "npa.workflows.physical_augmentation_servo:RampedGripperAction"
+    )
+    config.npa_gripper_servo = recipe["gripper_servo"]
 
 
 def _align_tool_frame(config, recipe: dict) -> None:
@@ -305,6 +315,7 @@ def _collect(config, recipe: dict, condition: str, output: Path) -> None:
         "simulation_validity_checks": env.npa_validity_checks,
         "tcp_contract": recipe["tcp_contract"],
         "tool_frame_checked": True,
+        "gripper_servo": recipe["gripper_servo"],
     }
     write_json(output / "capture.json", metadata)
     env.close()

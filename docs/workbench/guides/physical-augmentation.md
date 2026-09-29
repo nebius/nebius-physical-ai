@@ -42,6 +42,9 @@ The frame sensor and IK controller share the same 107 mm offset from
 `panda_hand`; every recorded snapshot checks their agreement. The controller
 limits changes between commanded poses, advances persistent targets despite
 actuator lag, and verifies measured downward orientation before descending.
+Binary gripper commands pass through a persistent target ramp at one quarter of
+the native finger velocity limit (0.05 m/s for this Franka). This avoids an
+instantaneous close-target jump; the native measured-velocity guard stays active.
 
 ## What the artifacts mean
 
