@@ -156,6 +156,7 @@ RUN git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attent
 # The root import is a restricted, keyword-only-options FA4 adapter. Never
 # forward ambiguous FA2 positional arguments into the incompatible FA4 API.
 COPY scripts/flash_attn_root.py /npa/flash_attn_root.py
+COPY scripts/flash_attn_rtx.py /npa/flash_attn_rtx.py
 RUN python - <<'PY'
 from importlib import metadata
 from pathlib import Path
@@ -166,6 +167,7 @@ if os.environ["NPA_ATTENTION_BACKEND"] == "fa4":
     pkg = Path(site.getsitepackages()[0]) / "flash_attn"
     pkg.mkdir(exist_ok=True)
     (pkg / "__init__.py").write_bytes(Path("/npa/flash_attn_root.py").read_bytes())
+    (pkg / "rtx.py").write_bytes(Path("/npa/flash_attn_rtx.py").read_bytes())
     print("flash-attn-4", metadata.version("flash-attn-4"))
 else:
     assert metadata.version("flash-attn").startswith("2.")

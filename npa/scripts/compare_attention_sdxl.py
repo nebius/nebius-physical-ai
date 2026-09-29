@@ -56,6 +56,8 @@ def _validate(reports):
             raise ValueError(f"Do not mix image identities for {backend}")
         if len({tuple(run["tile"] or ()) for run in runs}) != 1:
             raise ValueError("Compare each tile candidate separately")
+        if len({run.get("tuning") for run in runs}) != 1:
+            raise ValueError("Compare each tuning profile separately")
         if any(
             run["environment"]["packages"] != runs[0]["environment"]["packages"]
             for run in runs
@@ -107,6 +109,7 @@ def comparison(reports):
         "schema_version": 1,
         "cases": cases,
         "fa4_tile": groups["fa4"][0]["tile"],
+        "fa4_tuning": groups["fa4"][0].get("tuning"),
         "images": {
             name: runs[0]["environment"]["image_id"] for name, runs in groups.items()
         },

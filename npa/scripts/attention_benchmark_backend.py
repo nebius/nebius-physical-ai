@@ -11,20 +11,23 @@ FA_COMMIT = "eed1971f5132630dc296fe37601e834d4b57a248"
 FA4_VERSION = "4.0.0b33.dev10+geed1971"
 
 
-def attention_backend(backend, tile=None):
+def attention_backend(backend, tile=None, tuning=None):
     """Load the installed backend, optionally testing an FA4 inference tile.
 
     Args:
         backend: ``fa2`` or ``fa4``; each requires its own base image.
         tile: Experimental FA4 forward tile (M, N), or None for upstream defaults.
+        tuning: Opt-in ``rtx6000-inference`` profile, mutually exclusive with tile.
     Returns:
         A Q/K/V callable accepting the causal keyword and returning a tensor.
     Raises:
         ValueError: The backend or tile is invalid.
         RuntimeError: The installed image does not match the requested backend.
     """
-    if backend not in ("fa2", "fa4") or (tile and backend != "fa4"):
+    if backend not in ("fa2", "fa4") or ((tile or tuning) and backend != "fa4"):
         raise ValueError("Tiles require FA4; backend must be fa2 or fa4")
+    if tuning not in (None, "rtx6000-inference") or (tile and tuning):
+        raise ValueError("Select one qualified tuning profile or one tile")
     if os.getenv("NPA_ATTENTION_BACKEND") != backend:
         raise RuntimeError("Run each backend in its matching base image")
     if backend == "fa2":
@@ -35,6 +38,10 @@ def attention_backend(backend, tile=None):
         import flash_attn_2_cuda  # noqa: F401
 
         return flash_attn_func
+    if tuning:
+        from flash_attn.rtx import make_inference_attention
+
+        return make_inference_attention()
     from flash_attn.cute import flash_attn_func
 
     if tile:

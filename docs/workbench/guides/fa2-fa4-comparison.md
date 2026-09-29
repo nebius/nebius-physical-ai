@@ -127,6 +127,32 @@ favors FA2. Small differences within block variation do not establish a win.
 
 ## Experiment with FA4 inference tiles
 
+The FA4 image also provides an explicit inference factory. Its measured tile
+profile is being qualified with full-model runs; keep it opt-in:
+
+```python
+import torch
+from flash_attn.rtx import make_inference_attention
+
+# Create once after selecting this process's CUDA device.
+attention = make_inference_attention("cuda:0")
+with torch.inference_mode():
+    output = attention(query, key, value, causal=False)
+```
+
+The factory requires the exact pinned FA4 revision and SM120. It rejects
+enabled gradients, tensors requiring gradients, mismatched devices and options
+outside its Q/K/V plus `causal` interface. It does not change the root adapter
+or register a model backend automatically. Its tile selection is limited to the
+benchmark's batch-2 FP16 SDXL shapes and BF16 causal transformer shapes;
+unlisted shapes use native FA4. It never substitutes FA2 or SDPA. Use the
+standard FA4 API for training and advanced attention semantics.
+
+Both workers accept `--backend fa4 --tuning rtx6000-inference` to measure this
+baked callable. Compare it with fresh FA2 and default-FA4 blocks using the same
+worker sources. `--tuning` and `--tile` are mutually exclusive. Keep default and
+tuned FA4 reports in separate comparisons so mixed modes cannot hide a regression.
+
 The two benchmark workers accept `--tile 64x64`, `64x128`, `128x64`, or `128x128`
 with `--backend fa4`. These options use the pinned upstream private forward API
 to explore SM120 tile sizes; they are **inference-only**, reject another source

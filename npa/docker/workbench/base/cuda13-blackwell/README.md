@@ -47,3 +47,9 @@ See [FA2/FA4 comparison and inference tile experiments](../../../../../docs/work
 for correctness checks, full SDXL generations and repeated timing. The FA2
 variant and tile experiments are unqualified until their own RTX evidence is
 recorded; prior FA4 receipts do not validate a new image.
+
+The FA4 variant installs `flash_attn.rtx.make_inference_attention`, an explicit
+SM120 inference factory with a small shape-qualified tile profile. It rejects
+training use and a different upstream revision; other shapes use native FA4.
+The normal root/CuTe APIs are unchanged. See the comparison guide before opting
+a model into this profile; kernel timings alone do not qualify an application.

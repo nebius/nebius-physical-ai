@@ -92,14 +92,16 @@ def _arguments():
     parser.add_argument("--backend", choices=("fa2", "fa4"), required=True)
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--output-path", type=Path, required=True)
-    parser.add_argument("--tile", choices=("64x64", "64x128", "128x64", "128x128"))
+    tuning = parser.add_mutually_exclusive_group()
+    tuning.add_argument("--tile", choices=("64x64", "64x128", "128x64", "128x128"))
+    tuning.add_argument("--tuning", choices=("rtx6000-inference",))
     parser.add_argument("--steps", type=int, default=30)
     parser.add_argument("--repeats", type=int, default=5)
     args = parser.parse_args()
     if min(args.steps, args.repeats) < 1:
         parser.error("steps and repeats must be positive")
-    if args.tile and args.backend != "fa4":
-        parser.error("--tile requires --backend fa4")
+    if (args.tile or args.tuning) and args.backend != "fa4":
+        parser.error("Inference tuning requires --backend fa4")
     return args
 
 
@@ -128,7 +130,7 @@ def main():
     args = _arguments()
     _verify_model(args.model_path)
     tile = tuple(map(int, args.tile.split("x"))) if args.tile else None
-    function = attention_backend(args.backend, tile)
+    function = attention_backend(args.backend, tile, args.tuning)
     environment = _environment(args.backend)
     pipeline = _load_pipeline(args.model_path)
     args.output_path.mkdir(parents=True, exist_ok=False)
@@ -136,6 +138,7 @@ def main():
         "schema_version": 1,
         "backend": args.backend,
         "tile": tile,
+        "tuning": args.tuning,
         "environment": environment,
         "model": MODEL_ID,
         "model_revision": MODEL_REVISION,

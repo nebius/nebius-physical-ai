@@ -142,6 +142,7 @@ def test_comparison_retains_regressions_and_block_variance(backend):
         "torch",
         "steps",
         "tile",
+        "tuning",
         "image",
         "incomplete",
         "instrumentation",
@@ -159,6 +160,8 @@ def test_unmatched_or_incomplete_reports_cannot_claim_speedup(backend, mutation)
         report["steps"] = 1
     elif mutation == "tile":
         report["tile"] = [64, 64]
+    elif mutation == "tuning":
+        report["tuning"] = "rtx6000-inference"
     elif mutation == "image":
         report["environment"]["image_id"] = "another-image"
     elif mutation == "incomplete":
@@ -208,6 +211,14 @@ def test_tile_guard_checks_installed_package_not_just_image_environment(
     monkeypatch.setattr(backend.metadata, "version", lambda name: "4.0.0-different")
     with pytest.raises(RuntimeError, match="exact pinned"):
         backend._tiled_inference((64, 64))
+
+
+def test_tuning_requires_fa4_and_cannot_mix_with_manual_tiles(backend, monkeypatch):
+    monkeypatch.setenv("NPA_ATTENTION_BACKEND", "fa4")
+    with pytest.raises(ValueError):
+        backend.attention_backend("fa2", tuning="rtx6000-inference")
+    with pytest.raises(ValueError):
+        backend.attention_backend("fa4", tile=(64, 64), tuning="rtx6000-inference")
 
 
 def test_tile_guard_rejects_other_blackwell_architectures(backend, monkeypatch):
