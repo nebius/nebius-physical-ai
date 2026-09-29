@@ -13,10 +13,11 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "Topology, data isolation and measured retry routing are tested; model and evaluator fidelity require operator-provided batch scripts.",
+      "reason": "The generated CPU reference executes all stages and measured retries; production model and evaluator fidelity still require operator-provided batch scripts.",
       "evidence": [
         "npa/tests/orchestration/npa_workflow/test_policy_training_spec.py",
-        "npa/tests/workflows/test_policy_training.py"
+        "npa/tests/workflows/test_policy_training.py",
+        "npa/tests/e2e/test_policy_training_live.py::test_turnkey_reference_demo"
       ]
     }
   },
@@ -28,9 +29,10 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "No complete non-customer training dataset or batch scripts supplied; real FiftyOne tested on generated preview/metadata fixtures.",
+      "reason": "The turnkey reference generates complete LeRobot v3 data and includes a Slurm-compatible reference worker; production datasets and model scripts remain operator inputs.",
       "evidence": [
-        "npa/tests/e2e/test_policy_training_live.py::test_real_fiftyone_curation_and_group_split"
+        "npa/tests/e2e/test_policy_training_live.py::test_real_fiftyone_curation_and_group_split",
+        "npa/tests/e2e/test_policy_training_live.py::test_turnkey_reference_demo"
       ]
     },
     "credentials": {

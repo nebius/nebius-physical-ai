@@ -113,3 +113,54 @@ def test_operator_slurm_pipeline(tmp_path):
     assert report["request"]["run_id"] == run_id
     assert report["request"]["stage"] == "deploy"
     assert report["policy_test_report_uri"]
+
+
+def test_turnkey_reference_demo(tmp_path):
+    if os.environ.get("NPA_E2E_POLICY_DEMO") != "1":
+        pytest.skip(
+            "opt in to real FiftyOne, LeRobot video generation and browser export"
+        )
+    from npa.workflows.policy_training.demo import run_demo
+
+    spec = (
+        Path(__file__).resolve().parents[3]
+        / "workflows/testing/policy-training-slurm.yaml"
+    )
+    output = tmp_path / "demo"
+    report = run_demo(output, spec, video=True)
+    assert len(report["steps"]) == 18
+    assert [a["decision"] for a in report["pretrain"]] == [
+        "loop_back",
+        "loop_back",
+        "promote_checkpoint",
+    ]
+    assert [a["decision"] for a in report["finetune"]] == [
+        "loop_back",
+        "promote_checkpoint",
+    ]
+    assert report["deployment"]["systems"]["slow-actuator"] == {
+        "successes": 24,
+        "trials": 24,
+    }
+    assert report["curation"]["selected_count"] == 120
+    assert report["splits"] == {"train": 108, "holdout_1": 6, "holdout_2": 6}
+    for name in (
+        "index.html",
+        "evidence.json",
+        "poster.png",
+        "demo.mp4",
+        "checksums.json",
+    ):
+        assert (output / name).stat().st_size > 0
+    assert str(output) not in (output / "index.html").read_text()
+    _assert_demo_video(output / "demo.mp4")
+
+
+def _assert_demo_video(path):
+    import av
+
+    with av.open(str(path)) as recording:
+        stream = recording.streams.video[0]
+        assert (stream.width, stream.height) == (1440, 810)
+        assert int(stream.average_rate) == 24
+        assert sum(1 for _ in recording.decode(video=0)) == 1080

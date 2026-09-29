@@ -75,6 +75,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+policy-demo = ["fiftyone==1.22.0", "graphql-core>=3.2.13,<3.3", "playwright>=1.63.0,<2"]
 mjlab = ["mjlab==1.6.0", "torch>=2.13.0", "uvicorn>=0.52.4"]
 encord = ["encord>=0.1.202,<0.2", "av>=14.0", "Pillow>=10.0"]
 studio = ["edge-tts==7.2.8"]

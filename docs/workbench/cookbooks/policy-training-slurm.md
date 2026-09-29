@@ -8,6 +8,79 @@ training, evaluation, and policy-test jobs to an existing Slurm cluster. It
 requires operator-provided model scripts; it does not bundle a foundation model,
 simulation benchmark, robot controller, or synthetic-data generator.
 
+## Run the complete reference demo
+
+From a checkout, with `uv` and `ffmpeg` installed:
+
+```bash
+bash npa/scripts/run_policy_training_demo.sh /tmp/policy-training-demo
+```
+
+The command creates or reuses `npa/.venv`, installs the `adapter` and `policy-demo`
+extras plus Chromium, generates all inputs, executes the existing workflow,
+and writes `index.html`, `demo.mp4`, `poster.png`, `evidence.json`, and
+`checksums.json`. Open `index.html` directly: it is self-contained, works offline,
+and supports chapter selection, timeline scrubbing, and held-out trial switching.
+The MP4 is a 45-second, 1440×810 walkthrough of those same measurements.
+Use a new output directory for each run; existing evidence is never overwritten.
+Append `--html-only` to omit MP4 encoding. The poster still requires Chromium.
+On minimal Linux hosts, install Chromium's system dependencies with
+`npa/.venv/bin/python -m playwright install --with-deps chromium` first.
+
+This is a **local CPU reference run** of the pipeline. It executes real FiftyOne,
+LeRobot v3 conversion (Parquet plus camera videos), NumPy behavior cloning,
+checkpoint verification, measured evaluation, and both retry loops. Its
+`reference-local` batch transport launches the supplied worker as a local
+process; it does not invoke Slurm, SkyPilot, a foundation model, or robot hardware.
+The Slurm workflow and its deployment prerequisites below remain unchanged.
+
+The generated task is analytical Cartesian reaching. Of 132 source episodes,
+12 have unusably dark previews; actual FiftyOne filters keep 120 and split them
+into 108 training groups and two six-group holdouts. Labels come from the
+generator, rather than an object detector. The policy learns a linear map from
+target error to action with damped least-squares updates. Fine-tuning relabels
+only training actions for an actuator with half the nominal gain.
+
+Each holdout is evaluated from four initial-state variations per source episode:
+24 correlated trials, rather than 24 independent tasks. Success means a final
+target distance of at most 4 cm after 16 control steps. The first gate requires
+90% success in both nominal and perturbed actuator conditions; the second
+requires 90% with the slow actuator. These are two conditions of the same
+reference evaluator. The recorded terminal test rechecks the approved checkpoint
+on holdout two; it is not an additional independent generalization benchmark.
+Retries stop on measured success. Numerical optimizer convergence without a
+passing gate raises an error rather than producing a success artifact.
+
+The deterministic reference completes with three pretraining attempts and two
+fine-tuning attempts, then 24/24 terminal successes. These are reference-task
+measurements, not evidence of foundation-model quality or hardware readiness.
+The robot drawing uses inverse kinematics to illustrate recorded Cartesian
+positions; contacts and collisions are outside this reference environment.
+
+Raw requests, source datasets, checkpoints, and worker logs remain in the
+output's `private/` subdirectory. Share only the five named artifacts above.
+The HTML embeds an allowlisted report with no worker paths or request payloads
+and makes no network requests. The setup needs network access to install its
+dependencies; the generated workload needs no cloud credentials or customer data.
+
+For a real Slurm reference run, the supplied
+[`policy_training_reference.sbatch`](../../../npa/scripts/policy_training_reference.sbatch)
+implements all five batch stages. Install `npa` on the worker, set
+`NPA_POLICY_PYTHON` to that Python executable, stage the generated LeRobot dataset
+and manifests in the run's private S3 storage, and map all five `scripts` entries
+to this script's absolute worker path. Rewrite the staged episode manifest's
+dataset and preview URIs to the corresponding S3 locations. Use `transport: local`
+on a Slurm login host, or `soperator` from the Kubernetes workflow. The reference
+worker intentionally rejects datasets whose robot type is not
+`npa_generated_planar_reacher`; production training uses the operator's own scripts.
+
+Committed live coverage can reproduce the reference, including MP4 export:
+
+```bash
+NPA_E2E_POLICY_DEMO=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_policy_training_live.py -k turnkey_reference_demo -q
+```
+
 ```mermaid
 flowchart LR
   A[Real and optional synthetic episodes] --> B[FiftyOne curation]

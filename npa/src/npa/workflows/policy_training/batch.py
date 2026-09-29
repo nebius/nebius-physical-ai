@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import signal
 import subprocess
+import sys
 import uuid
 from pathlib import PurePosixPath
 from typing import Any
@@ -64,6 +65,24 @@ def _terminate(signum, frame):
 
 
 def _submit(settings: dict[str, Any], stage: str, request_uri: str) -> None:
+    if settings["transport"] == "reference-local":
+        # This explicit reference mode exercises the same result contract without Slurm.
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "npa.workflows.policy_training.reference",
+                "--request-uri",
+                request_uri,
+            ],
+            check=True,
+            capture_output=True,
+        )
+        return
+    _submit_slurm(settings, stage, request_uri)
+
+
+def _submit_slurm(settings: dict[str, Any], stage: str, request_uri: str) -> None:
     script = settings["scripts"][stage]
     if not isinstance(script, str) or not PurePosixPath(script).is_absolute():
         raise ValueError("batch script must be an absolute worker-readable path")
