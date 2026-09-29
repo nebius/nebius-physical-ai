@@ -1,0 +1,54 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "ad953f3bb61e563a48ead674453a9049d93ec158936aedcb9c485d4c457c57e9",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema, production render preview and scheduler plan pass.",
+      "evidence": [
+        "validate-spec",
+        "plan-spec --check-render --assume-decision promote_checkpoint",
+        "run-spec --plan-only --scheduler-plan --assume-decision loop_back"
+      ]
+    },
+    "task_fidelity": {
+      "status": "unverified",
+      "reason": "Topology, data isolation and measured retry routing are tested; model and evaluator fidelity require operator-provided batch scripts.",
+      "evidence": [
+        "npa/tests/orchestration/npa_workflow/test_policy_training_spec.py",
+        "npa/tests/workflows/test_policy_training.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Example bucket must be replaced with authorized private run storage.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "No complete non-customer training dataset or batch scripts supplied; real FiftyOne tested on generated preview/metadata fixtures.",
+      "evidence": [
+        "npa/tests/e2e/test_policy_training_live.py::test_real_fiftyone_curation_and_group_split"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Exact storage and Slurm target credentials must be verified with operator settings.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Source and rendering validated locally; deployed worker images and staged source have not been exercised together.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No configured Slurm target, trainer, evaluator or policy-test scripts supplied for this run.",
+      "evidence": [
+        "npa/tests/e2e/test_policy_training_live.py::test_operator_slurm_pipeline (skipped)"
+      ]
+    }
+  }
+}

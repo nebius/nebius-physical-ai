@@ -72,6 +72,17 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "policy-training-slurm.yaml",
+        "multi",
+        runtime=True,
+        plan_only=True,
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only_justification=(
+            "Requires operator-owned batch scripts, private Slurm access and episode inputs; "
+            "the dedicated opt-in live test exercises the configured execution path."
+        ),
+    ),
+    SubmitLiveCase(
         "behavior-comet-native-full-training.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
