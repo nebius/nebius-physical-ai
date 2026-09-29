@@ -44,7 +44,11 @@ from npa.benchmarks.sim2real_model_agent import (
     _write_recovery_checkpoint,
 )
 from npa.benchmarks.sim2real_model_server import render_server_resources
-from npa.benchmarks.sim2real_success import VerificationError, _lift_evidence
+from npa.benchmarks.sim2real_success import (
+    VerificationError,
+    _lift_evidence,
+    verify_artifact_tree,
+)
 
 
 def _manifest(*, duration: float = 2.0, timestamped: bool = True) -> dict:
@@ -195,6 +199,123 @@ def test_lift_evidence_rejects_gaps_in_temporal_coverage(tmp_path: Path) -> None
         )
         is None
     )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["0.051", "bad", True, None, [], {}, float("nan"), float("inf"), -float("inf")],
+)
+def test_lift_evidence_rejects_malformed_lift(tmp_path: Path, value: object) -> None:
+    manifest = _manifest()
+    manifest["actions"][-1]["simulator_ground_truth"]["object_lift_m"] = value
+    with pytest.raises(VerificationError, match="object_lift_m.*finite JSON number"):
+        _lift_evidence(
+            tmp_path / "manifest.json",
+            manifest,
+            minimum_lift_m=0.05,
+            minimum_hold_seconds=2.0,
+        )
+
+
+@pytest.mark.parametrize("value", ["10", "bad", 10.0, True, None, 0, -1, [], {}])
+def test_lift_evidence_rejects_malformed_checkpoint_size(
+    tmp_path: Path, value: object
+) -> None:
+    manifest = _manifest()
+    manifest["policy_checkpoint_size_bytes"] = value
+    with pytest.raises(
+        VerificationError, match="policy_checkpoint_size_bytes.*positive JSON integer"
+    ):
+        _lift_evidence(
+            tmp_path / "manifest.json",
+            manifest,
+            minimum_lift_m=0.05,
+            minimum_hold_seconds=2.0,
+        )
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        None,
+        [],
+        "bad",
+        {},
+        {"simulator_ground_truth": []},
+        {"simulator_ground_truth": None},
+    ],
+)
+@pytest.mark.parametrize("position", [0, 3])
+def test_malformed_row_invalidates_otherwise_complete_hold(
+    tmp_path: Path, row: object, position: int
+) -> None:
+    manifest = _manifest()
+    manifest["actions"].insert(position, row)
+    assert (
+        _lift_evidence(
+            tmp_path / "manifest.json",
+            manifest,
+            minimum_lift_m=0.05,
+            minimum_hold_seconds=2.0,
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("sim_time_seconds", "2"),
+        ("sim_time_seconds", float("inf")),
+        ("sim_step", "2"),
+        ("sim_step", 2.0),
+        ("sim_step", True),
+    ],
+)
+def test_malformed_timing_has_typed_error(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    manifest = _manifest()
+    manifest["actions"][-1][field] = value
+    with pytest.raises(VerificationError, match=field):
+        _lift_evidence(
+            tmp_path / "manifest.json",
+            manifest,
+            minimum_lift_m=0.05,
+            minimum_hold_seconds=2.0,
+        )
+
+
+def test_lift_evidence_preserves_integer_lifts_and_capture_timing(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(timestamped=False)
+    manifest["capture"] = {
+        "simulation_step_seconds": manifest.pop("simulation_step_seconds")
+    }
+    for row in manifest["actions"]:
+        row["simulator_ground_truth"]["object_lift_m"] = 1
+    evidence = _lift_evidence(
+        tmp_path / "manifest.json",
+        manifest,
+        minimum_lift_m=0.05,
+        minimum_hold_seconds=2.0,
+    )
+    assert evidence is not None
+    assert evidence.duration_seconds == 2.0
+    assert evidence.minimum_lift_m == 1.0
+
+
+def test_public_verifier_reports_numeric_error_without_bare_value_error(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest()
+    manifest["actions"][0]["simulator_ground_truth"]["object_lift_m"] = "bad"
+    (tmp_path / "rollout.json").write_text(json.dumps(manifest))
+    with pytest.raises(
+        VerificationError, match="Invalid rollout evidence:.*object_lift_m"
+    ):
+        verify_artifact_tree(tmp_path)
 
 
 def test_file_tools_cannot_escape_workspace(tmp_path: Path) -> None:

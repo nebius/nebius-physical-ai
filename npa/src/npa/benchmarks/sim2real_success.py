@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -34,15 +35,46 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _sample_time(row: dict[str, Any], manifest: dict[str, Any]) -> float:
+def _finite_number(value: Any, field: str) -> float:
+    if type(value) not in (int, float):
+        raise VerificationError(f"{field} must be a finite JSON number")
+    try:
+        number = float(value)
+    except OverflowError as exc:
+        raise VerificationError(f"{field} must be a finite JSON number") from exc
+    if not math.isfinite(number):
+        raise VerificationError(f"{field} must be a finite JSON number")
+    return number
+
+
+def _simulation_step_seconds(manifest: dict[str, Any]) -> float:
+    value = manifest.get("simulation_step_seconds")
+    if value is None:
+        capture = manifest.get("capture", {})
+        if not isinstance(capture, dict):
+            raise VerificationError("rollout capture must be an object")
+        value = capture.get("simulation_step_seconds")
+    seconds = _finite_number(value, "simulation_step_seconds")
+    if seconds <= 0:
+        raise VerificationError("simulation_step_seconds must be positive")
+    return seconds
+
+
+def _sample_step(row: dict[str, Any]) -> int | None:
+    value = row.get("sim_step")
+    if value is not None and (type(value) is not int or value < 0):
+        raise VerificationError("sim_step must be a non-negative JSON integer")
+    return value
+
+
+def _sample_time(row: dict[str, Any], step_seconds: float) -> float:
     for key in ("sim_time_seconds", "timestamp_seconds", "time_seconds"):
         if row.get(key) is not None:
-            return float(row[key])
-    step_seconds = manifest.get("simulation_step_seconds")
-    if step_seconds is None:
-        step_seconds = (manifest.get("capture") or {}).get("simulation_step_seconds")
-    if step_seconds is not None and row.get("sim_step") is not None:
-        return float(row["sim_step"]) * float(step_seconds)
+            return _finite_number(row[key], key)
+    step = _sample_step(row)
+    if step is not None:
+        timestamp = _finite_number(step, "sim_step") * step_seconds
+        return _finite_number(timestamp, "derived simulation timestamp")
     raise VerificationError(
         "rollout ground truth has no physical timestamp; record sim_time_seconds "
         "or simulation_step_seconds instead of inferring duration from sample count"
@@ -50,20 +82,12 @@ def _sample_time(row: dict[str, Any], manifest: dict[str, Any]) -> float:
 
 
 def _qualifies(row: dict[str, Any], lift_m: float) -> bool:
-    truth = row.get("simulator_ground_truth") or {}
-    return (
-        truth.get("stable_grasp") is True
-        and float(truth.get("object_lift_m") or 0) >= lift_m
-    )
+    truth = row["simulator_ground_truth"]
+    measured_lift = _finite_number(truth.get("object_lift_m"), "object_lift_m")
+    return truth["stable_grasp"] is True and measured_lift >= lift_m
 
 
-def _lift_evidence(
-    manifest_path: Path,
-    manifest: dict[str, Any],
-    *,
-    minimum_lift_m: float,
-    minimum_hold_seconds: float,
-) -> LiftEvidence | None:
+def _trained_checkpoint(manifest: dict[str, Any]) -> str | None:
     if manifest.get("schema") != "npa.sim2real.action_rollout.v1":
         return None
     if manifest.get("source") != "byo_isaac_policy_rollout":
@@ -74,59 +98,83 @@ def _lift_evidence(
     ):
         return None
     checkpoint_sha = str(manifest.get("policy_checkpoint_sha256") or "")
-    if (
-        len(checkpoint_sha) != 64
-        or int(manifest.get("policy_checkpoint_size_bytes") or 0) <= 0
-    ):
+    if len(checkpoint_sha) != 64:
         return None
-    step_seconds_raw = manifest.get("simulation_step_seconds")
-    if step_seconds_raw is None:
-        step_seconds_raw = (manifest.get("capture") or {}).get(
-            "simulation_step_seconds"
-        )
-    if step_seconds_raw is None or float(step_seconds_raw) <= 0:
+    size = manifest.get("policy_checkpoint_size_bytes")
+    if type(size) is not int or size <= 0:
         raise VerificationError(
-            "rollout has no positive simulation_step_seconds needed to prove "
-            "continuous temporal coverage"
+            "policy_checkpoint_size_bytes must be a positive JSON integer"
         )
-    step_seconds = float(step_seconds_raw)
+    return checkpoint_sha
+
+
+def _hold_interrupted(
+    previous: tuple[float, dict[str, Any]],
+    timestamp: float,
+    row: dict[str, Any],
+    step_seconds: float,
+) -> bool:
+    delta = timestamp - previous[0]
+    if delta <= 0:
+        raise VerificationError("rollout timestamps are not strictly increasing")
+    previous_step = _sample_step(previous[1])
+    current_step = _sample_step(row)
+    return (
+        delta > step_seconds * 1.5
+        or previous_step is None
+        or current_step is None
+        or current_step != previous_step + 1
+    )
+
+
+def _longest_lift_hold(
+    manifest: dict[str, Any], minimum_lift_m: float, step_seconds: float
+) -> list[tuple[float, dict[str, Any]]]:
+    actions = manifest.get("actions")
+    if not isinstance(actions, list):
+        raise VerificationError("rollout actions must be an array")
 
     current: list[tuple[float, dict[str, Any]]] = []
     best: list[tuple[float, dict[str, Any]]] = []
-    for row in manifest.get("actions") or []:
+    for row in actions:
         if not isinstance(row, dict):
-            current = []
-            continue
-        truth = row.get("simulator_ground_truth") or {}
+            return []
+        truth = row.get("simulator_ground_truth")
+        if not isinstance(truth, dict):
+            return []
         stable_grasp = truth.get("stable_grasp")
         if stable_grasp is not True and stable_grasp is not False:
-            return None
-        timestamp = _sample_time(row, manifest)
+            return []
+        _sample_step(row)
+        timestamp = _sample_time(row, step_seconds)
         if _qualifies(row, minimum_lift_m):
-            if current:
-                delta = timestamp - current[-1][0]
-                if delta <= 0:
-                    raise VerificationError(
-                        "rollout timestamps are not strictly increasing"
-                    )
-                previous_step = current[-1][1].get("sim_step")
-                current_step = row.get("sim_step")
-                if (
-                    delta > step_seconds * 1.5
-                    or previous_step is None
-                    or current_step is None
-                    or int(current_step) != int(previous_step) + 1
-                ):
-                    current = []
+            if current and _hold_interrupted(current[-1], timestamp, row, step_seconds):
+                current = []
             current.append((timestamp, row))
             if not best or current[-1][0] - current[0][0] > best[-1][0] - best[0][0]:
                 best = list(current)
         else:
             current = []
+    return best
+
+
+def _lift_evidence(
+    manifest_path: Path,
+    manifest: dict[str, Any],
+    *,
+    minimum_lift_m: float,
+    minimum_hold_seconds: float,
+) -> LiftEvidence | None:
+    checkpoint_sha = _trained_checkpoint(manifest)
+    if checkpoint_sha is None:
+        return None
+    best = _longest_lift_hold(
+        manifest, minimum_lift_m, _simulation_step_seconds(manifest)
+    )
     if len(best) < 2 or best[-1][0] - best[0][0] < minimum_hold_seconds:
         return None
     lifts = [
-        float((row.get("simulator_ground_truth") or {}).get("object_lift_m") or 0)
+        _finite_number(row["simulator_ground_truth"]["object_lift_m"], "object_lift_m")
         for _, row in best
     ]
     return LiftEvidence(
@@ -216,7 +264,11 @@ def verify_artifact_tree(
         if found:
             evidence.append(found)
     if not evidence:
-        detail = f" Timestamp errors: {'; '.join(parse_errors)}" if parse_errors else ""
+        detail = (
+            f" Invalid rollout evidence: {'; '.join(parse_errors)}"
+            if parse_errors
+            else ""
+        )
         raise VerificationError(
             f"no trained real-Isaac rollout proves stable grasp, >= {minimum_lift_m:.3f} m "
             f"lift, and >= {minimum_hold_seconds:.3f} s continuous hold.{detail}"
