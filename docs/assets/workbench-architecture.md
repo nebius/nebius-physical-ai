@@ -46,10 +46,10 @@ deployment modes are documented in the [Workbench index](../workbench/README.md)
 ## Visual maintenance
 
 The PNG uses three columns: integrations, Workbench, and Nebius AI Cloud.
-A flat midnight navy canvas, restrained lime and periwinkle accents, rounded
-panels, and generous spacing keep the architecture readable at the README's
-960-pixel display width. Keep only a few integration examples in the image;
-the public catalog holds the inventory and the README holds the registry
+A graphite navy canvas, restrained lime and cyan accents, rectangular panels,
+and technical monospaced typography keep the architecture readable at the
+README's 960-pixel display width. Keep only a few integration examples in the
+image; the public catalog holds the inventory and the README holds the registry
 namespace. Preserve the accessible image description and the Mermaid
 `accTitle` / `accDescr`.
 
@@ -63,11 +63,13 @@ connector against the sources above after generation.
 <summary>PNG generation brief</summary>
 
 Create a landscape platform architecture graphic for Nebius Physical AI. Use
-midnight navy `#071D2B`, lighter navy `#102A3A`, white type, electric lime
-`#D8F85B`, and periwinkle `#9BAFFF`. Use crisp sans-serif typography, a precise
-three-column grid, generous spacing, thin low-contrast borders, and subtly
-rounded flat panels. Use semibold headings and solid fills. Keep the title
-moderate and all labels readable at 960px. Avoid redundant nested boxes:
+graphite navy `#0B1220`, lighter navy `#101B2B`, off-white type `#EDF2F7`,
+electric lime `#D8F85B`, and pale cyan `#7DD3FC`. Use technical monospaced
+typography inspired by IBM Plex Mono or JetBrains Mono, a precise three-column
+grid, generous spacing, thin slate borders, and rectangular flat panels.
+Use semibold headings and regular body text. Keep the title moderate and all
+labels readable at 960px. Render sharp lettering, orthogonal connectors, and
+compact arrowheads without texture or glow. Avoid redundant nested boxes:
 the integration groups and SkyPilot have no inner borders, and the Workbench
 column has no enclosing boundary.
 
@@ -86,7 +88,7 @@ column has no enclosing boundary.
   state", and "Token Factory" / "Hosted inference API", stacked vertically.
 - Connect the outer integrations panel to GHCR with a rightward "package"
   arrow representing both integration groups. Align GHCR
-  and Kubernetes for a straight lime "image pull" arrow. Route a periwinkle
+  and Kubernetes for a straight lime "image pull" arrow. Route a cyan
   "jobs" elbow from SkyPilot through the column gutter into Kubernetes, clear
   of other lines and text. Connect Kubernetes and Object Storage with a short
   vertical bidirectional "read / write" arrow. Token Factory stands separately.
