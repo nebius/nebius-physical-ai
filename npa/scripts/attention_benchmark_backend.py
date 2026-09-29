@@ -11,6 +11,15 @@ FA_COMMIT = "eed1971f5132630dc296fe37601e834d4b57a248"
 FA4_VERSION = "4.0.0b33.dev10+geed1971"
 
 
+def _validate_selection(backend, tile, tuning):
+    if backend not in ("fa2", "fa4") or ((tile or tuning) and backend != "fa4"):
+        raise ValueError("Tiles require FA4; backend must be fa2 or fa4")
+    if tuning not in (None, "rtx6000-inference") or (tile and tuning):
+        raise ValueError("Select one qualified tuning profile or one tile")
+    if os.getenv("NPA_ATTENTION_BACKEND") != backend:
+        raise RuntimeError("Run each backend in its matching base image")
+
+
 def attention_backend(backend, tile=None, tuning=None):
     """Load the installed backend, optionally testing an FA4 inference tile.
 
@@ -24,12 +33,7 @@ def attention_backend(backend, tile=None, tuning=None):
         ValueError: The backend or tile is invalid.
         RuntimeError: The installed image does not match the requested backend.
     """
-    if backend not in ("fa2", "fa4") or ((tile or tuning) and backend != "fa4"):
-        raise ValueError("Tiles require FA4; backend must be fa2 or fa4")
-    if tuning not in (None, "rtx6000-inference") or (tile and tuning):
-        raise ValueError("Select one qualified tuning profile or one tile")
-    if os.getenv("NPA_ATTENTION_BACKEND") != backend:
-        raise RuntimeError("Run each backend in its matching base image")
+    _validate_selection(backend, tile, tuning)
     if backend == "fa2":
         if not metadata.version("flash-attn").startswith("2."):
             raise RuntimeError("Standalone FA2 2.x is required")

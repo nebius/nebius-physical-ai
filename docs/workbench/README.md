@@ -14,7 +14,7 @@ Python and HTTP access follow each tool's documented contract.
 | Use your coding agent | [First-run prompts](agent-first-run.md) · [workflow operations](agent-workflow-operations.md) |
 | Prepare the runtime | [Workbench setup](getting-started.md) · [Kubernetes](kubernetes.md) · [direct runtime modes](runtime-modes.md) |
 | Use FA4 in your own RTX PRO 6000 container | [RTX PRO 6000 adoption guide: base → application → validation → deployment](guides/rtx6000-fa4.md) |
-| Compare FA2 and FA4 on RTX PRO 6000 | [Separate images, kernel measurements, full SDXL renders and opt-in tile experiments](guides/fa2-fa4-comparison.md) |
+| Compare FA2 and FA4 on RTX PRO 6000 | [Build and tuning guide](guides/fa2-fa4-comparison.md) · [Measured speeds and actual renders](fa2-fa4-validation.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
 | Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |

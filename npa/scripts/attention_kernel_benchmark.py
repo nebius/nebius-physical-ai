@@ -195,6 +195,17 @@ def _arguments():
     return args
 
 
+def _measure_cases(torch, function, args, report):
+    for case in _cases():
+        tuned = args.tile or args.tuning
+        modes = (False, True) if case["backward"] and not tuned else (False,)
+        for backward in modes:
+            result = _measure(torch, function, case, args, backward)
+            report["results"].append(result)
+            args.output_path.write_text(json.dumps(report, indent=2) + "\n")
+            print(case["name"], result["mode"], result["median_cuda_ms"], flush=True)
+
+
 def main():
     """Write correctness, kernel identity and steady-state timing measurements.
 
@@ -224,17 +235,7 @@ def main():
         "status": "incomplete",
     }
     args.output_path.parent.mkdir(parents=True, exist_ok=True)
-    for case in _cases():
-        modes = (
-            (False, True)
-            if case["backward"] and not (tile or args.tuning)
-            else (False,)
-        )
-        for backward in modes:
-            result = _measure(torch, function, case, args, backward)
-            report["results"].append(result)
-            args.output_path.write_text(json.dumps(report, indent=2) + "\n")
-            print(case["name"], result["mode"], result["median_cuda_ms"], flush=True)
+    _measure_cases(torch, function, args, report)
     report["status"] = "passed"
     args.output_path.write_text(json.dumps(report, indent=2) + "\n")
 

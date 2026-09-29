@@ -35,6 +35,7 @@ prepare its project and compute, then inspect the result.
 | Manage fleets or Slurm | [Cluster backends](cluster-backends.md) · [Fleet storage verification](fleet-storage-verification.md) · [RTX MIG](fleet-rtx-pro-6000-mig.md) |
 | Choose an image and GPU | [Public image catalog](workbench/container-image-catalog.md) · [compatibility matrix](workbench/image-gpu-compatibility-matrix.md) |
 | Adopt FA4 in an RTX PRO 6000 application | [Base naming, image build and model integration](workbench/guides/rtx6000-fa4.md) |
+| Compare standalone FA2 and tuned FA4 | [RTX PRO 6000 measurements and actual renders](workbench/fa2-fa4-validation.md) |
 | Reuse model downloads | [Model-weight cache](workbench/model-weight-cache.md) |
 | Use preemptible VMs | [Preemptible capacity](workbench/preemptible-vms.md) |
 | Reproduce a workload | [Cookbooks](workbench/cookbooks/README.md) |

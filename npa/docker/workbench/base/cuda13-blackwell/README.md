@@ -44,9 +44,11 @@ The new FA2 variant uses only its canonical tag; it has no historical B300
 alias to preserve and makes no B300 qualification claim.
 
 See [FA2/FA4 comparison and inference tile experiments](../../../../../docs/workbench/guides/fa2-fa4-comparison.md)
-for correctness checks, full SDXL generations and repeated timing. The FA2
-variant and tile experiments are unqualified until their own RTX evidence is
-recorded; prior FA4 receipts do not validate a new image.
+for correctness checks, full SDXL generations and repeated timing. The
+[measured RTX comparison](../../../../../docs/workbench/fa2-fa4-validation.md)
+records the exact FA2/FA4 image identities and 108 complete SDXL generations.
+Selected tuned FA4 inference calls are faster; full-model generation is
+effectively tied with FA2. Prior receipts do not validate replacement bytes.
 
 The FA4 variant installs `flash_attn.rtx.make_inference_attention`, an explicit
 SM120 inference factory with a small shape-qualified tile profile. It rejects

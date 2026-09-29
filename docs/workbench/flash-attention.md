@@ -7,6 +7,13 @@ The adoption guide explains the shared `cuda13-blackwell` base and walks through
 the base build, application image, model integration, validation and deployment.
 This page records the dependency pins, restrictions and measured evidence.
 
+For standalone FA2 versus FA4 performance, see the
+[measured RTX comparison and renders](fa2-fa4-validation.md). It includes a
+separate FA2 image, an opt-in FA4 inference profile and 108 complete SDXL
+generations. Selected attention calls improve; full-model generation is
+effectively tied. The [comparison guide](guides/fa2-fa4-comparison.md) covers
+building both images and using the explicit inference factory.
+
 The CUDA 13 base recipe includes upstream FA4 fixes for RTX PRO 6000 Blackwell
 Server Edition (`sm_120`). Its qualification checks real attention outputs and
 Q/K/V gradients. All 24 cases passed on a reserved Nebius RTX PRO 6000 on

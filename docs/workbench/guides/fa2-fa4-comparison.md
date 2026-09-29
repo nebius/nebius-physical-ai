@@ -8,11 +8,12 @@ FA2 variant compiles the standalone CUDA extension for SM120; the FA4 variant
 installs the CuTe implementation and guarded root import adapter. Installing both
 into one Python environment would make the root `flash_attn` import ambiguous.
 
-**Status:** this is a comparison procedure and experimental tuning harness.
-The new FA2 variant and tile candidates still require a completed RTX GPU run.
-The existing [SDXL evidence](../fa4-sdxl-validation.md) compares FA4 with PyTorch
-SDPA, not standalone FA2. Do not use those numbers as an FA2 comparison or claim
-that these tile candidates improve performance before measuring them.
+**Measured result:** the [RTX comparison and actual renders](../fa2-fa4-validation.md)
+record 108 complete SDXL generations plus forward/backward checks. Tuned FA4
+reached 1.07–1.16× FA2 on the measured causal inference calls; full SDXL generation
+was effectively tied. The profile remains opt-in. These are qualified local
+images, separate from the published Workbench release inventory. Earlier
+[SDXL evidence](../fa4-sdxl-validation.md) compared FA4 with PyTorch SDPA.
 
 ## Build the two base images
 
@@ -127,8 +128,10 @@ favors FA2. Small differences within block variation do not establish a win.
 
 ## Experiment with FA4 inference tiles
 
-The FA4 image also provides an explicit inference factory. Its measured tile
-profile is being qualified with full-model runs; keep it opt-in:
+The FA4 image also provides an explicit inference factory. Its
+[measured tile profile](../fa2-fa4-validation.md#attention-call-measurements)
+improves selected attention calls; the full-model result remains effectively
+tied with FA2. Keep it opt-in and measure your application:
 
 ```python
 import torch

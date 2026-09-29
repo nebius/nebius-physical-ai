@@ -68,8 +68,11 @@ does not change the accepted release tags or digests below.
 
 The opt-in [`cuda13-blackwell-fa2` comparison variant](guides/fa2-fa4-comparison.md)
 builds standalone FA2 for RTX SM120 from the same foundation recipe. It remains
-outside the public release inventory and has no recorded GPU qualification yet.
-The new comparison and tile-tuning harness does not change the accepted images.
+outside the public release inventory. The [RTX comparison](fa2-fa4-validation.md)
+records the exact local FA2 and FA4 image identities, numerical checks and 108
+complete SDXL generations. The opt-in FA4 inference profile improves selected
+attention calls; complete-model performance is effectively tied with FA2.
+These candidates do not change the accepted images listed below.
 
 The current build inventory is maintained in `packaging-contract.yaml`, and
 the tool map in `npa.deploy.images`. `publicly_publishable_tools()` selects the
