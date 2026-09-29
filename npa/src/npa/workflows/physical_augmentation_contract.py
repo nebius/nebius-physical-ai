@@ -58,7 +58,8 @@ def make_recipe(run_id: str, seed: int, episodes: int, steps: int) -> dict:
 
 def _semantics() -> dict:
     return {
-        "controller": "measured-state-cartesian-lift-v1",
+        "controller": "measured-state-cartesian-lift-v2",
+        "tcp_contract": {"body": "panda_hand", "offset_m": [0.0, 0.0, 0.107]},
         "action_names": list(ACTION_NAMES),
         "action_semantics": "absolute TCP pose in robot root frame, xyzw; gripper +1 open/-1 close",
         "alignment": "rgb[t], state[t], action[t], next_state[t]; timestamps are simulation time",
@@ -106,7 +107,6 @@ class LiftController:
     """Generate fresh, speed-bounded Cartesian actions from measured scene state.
 
     Args:
-        quaternion: Initial downward tool orientation in XYZW order.
         dt: Simulation control interval in seconds.
     Returns:
         Stateful controller; no learned policy or world action model is loaded.
@@ -114,18 +114,20 @@ class LiftController:
         ValueError: An observation is nonfinite or has the wrong shape.
     """
 
-    quaternion: np.ndarray
     dt: float
     phase: int = 0
     dwell: int = 0
     grasp: np.ndarray | None = None
 
-    def action(self, tcp: np.ndarray, cube: np.ndarray) -> np.ndarray:
+    def action(
+        self, tcp: np.ndarray, cube: np.ndarray, quaternion: np.ndarray
+    ) -> np.ndarray:
         """Return the next commanded pose and gripper setting.
 
         Args:
             tcp: Measured tool position in robot root coordinates.
             cube: Measured object position in the same coordinates.
+            quaternion: Measured tool orientation in XYZW order.
         Returns:
             Eight-dimensional absolute IK action.
         Raises:
@@ -134,14 +136,17 @@ class LiftController:
         if (
             tcp.shape != (3,)
             or cube.shape != (3,)
+            or quaternion.shape != (4,)
             or self.dt <= 0
-            or not np.isfinite([*tcp, *cube, *self.quaternion, self.dt]).all()
+            or not np.isfinite([*tcp, *cube, *quaternion, self.dt]).all()
+            or not np.isclose(np.linalg.norm(quaternion), 1, atol=1e-4)
         ):
             raise ValueError("Invalid controller observation")
+        orientation, aligned = _downward_command(quaternion, self.dt)
         target = (self.grasp if self.grasp is not None else cube).copy()
         target[2] += (0.12, 0.0, 0.0, 0.18)[self.phase]
         delta = target - tcp
-        close = np.linalg.norm(delta) < 0.008
+        close = np.linalg.norm(delta) < 0.008 and aligned
         self.dwell = self.dwell + 1 if close else 0
         commanded_phase = self.phase
         if self.phase < 3 and self.dwell * self.dt >= (0.15, 0.15, 0.6)[self.phase]:
@@ -153,9 +158,25 @@ class LiftController:
             1.0, 0.15 * self.dt / max(np.linalg.norm(delta), 1e-9)
         )
         return np.asarray(
-            [*position, *self.quaternion, 1.0 if commanded_phase < 2 else -1.0],
+            [*position, *orientation, 1.0 if commanded_phase < 2 else -1.0],
             dtype=np.float32,
         )
+
+
+def _downward_command(quaternion: np.ndarray, dt: float) -> tuple[np.ndarray, bool]:
+    """Rotate toward a downward grasp at at most 0.8 radians per second."""
+    current = quaternion / np.linalg.norm(quaternion)
+    target = np.array([1.0, 0.0, 0.0, 0.0])
+    if np.dot(current, target) < 0:
+        target = -target
+    angle = float(np.arccos(np.clip(np.dot(current, target), -1, 1)))
+    if angle < 1e-8:
+        return target, True
+    fraction = min(1.0, 0.8 * dt / (2 * angle))
+    command = (
+        np.sin((1 - fraction) * angle) * current + np.sin(fraction * angle) * target
+    ) / np.sin(angle)
+    return command, 2 * angle < 0.04
 
 
 def accepted_steps(

@@ -41,13 +41,47 @@ def test_workflow_argv_matches_stage_parser_and_gpu_requirement():
 def test_controller_recomputes_actions_for_displaced_object_and_limits_speed():
     tcp = np.array([0.5, 0.0, 0.3])
     cube = np.array([0.5, 0.0, 0.025])
-    controller = LiftController(np.array([1.0, 0.0, 0.0, 0.0]), 0.02)
-    nominal = controller.action(tcp, cube)
-    shifted = controller.action(tcp, cube + [0.04, 0.08, 0])
+    controller = LiftController(0.02)
+    quaternion = np.array([1.0, 0.0, 0.0, 0.0])
+    nominal = controller.action(tcp, cube, quaternion)
+    shifted = controller.action(tcp, cube + [0.04, 0.08, 0], quaternion)
     assert not np.array_equal(nominal, shifted)
     assert np.linalg.norm(shifted[:3] - tcp) <= 0.003001
     assert shifted[-1] == 1.0
     assert controller.phase == 0  # Elapsed calls alone cannot certify reaching.
+
+
+def test_controller_aligns_downward_before_descending_and_bounds_rotation():
+    controller = LiftController(0.02)
+    cube = np.array([0.5, 0.0, 0.025])
+    tcp = cube + [0, 0, 0.12]
+    tilted = np.array([np.cos(0.4), 0, np.sin(0.4), 0])
+    for _ in range(30):
+        action = controller.action(tcp, cube, tilted)
+        angle = 2 * np.arccos(np.clip(np.dot(tilted, action[3:7]), -1, 1))
+        assert 0 < angle <= 0.01601
+        assert np.linalg.norm(action[3:7]) == pytest.approx(1)
+    assert controller.phase == 0
+    for _ in range(8):
+        controller.action(tcp, cube, np.array([1, 0, 0, 0]))
+    assert controller.phase == 1
+
+
+def test_configuration_aligns_sensor_with_actual_ik_offset():
+    from types import SimpleNamespace as NS
+    from npa.workflows.physical_augmentation_runtime import _align_tool_frame
+
+    offset = NS(pos=[0, 0, 0.107], rot=[0, 0, 0, 1])
+    frame = NS(offset=NS(pos=[0, 0, 0.1034], rot=[0, 0, 0, 1]))
+    config = NS(
+        actions=NS(arm_action=NS(body_name="panda_hand", body_offset=offset)),
+        scene=NS(ee_frame=NS(target_frames=[frame])),
+    )
+    _align_tool_frame(config, make_recipe("test", 0, 1, 600))
+    assert frame.offset.pos == tuple(offset.pos)
+    config.actions.arm_action.body_offset.pos = [0, 0, 0.2]
+    with pytest.raises(ValueError, match="tool frame"):
+        _align_tool_frame(config, make_recipe("test", 0, 1, 600))
 
 
 def test_hold_requires_consecutive_contact_geometry_and_low_velocity():

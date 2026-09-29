@@ -38,6 +38,10 @@ double object mass, and lower object friction (0.25). All use matching reset
 seeds and the same controller. Isaac's native body view must confirm the
 requested mass and friction. Native joint limits, finite measured states,
 quaternions, and task-domain checks run before rewards and automatic resets.
+The frame sensor and IK controller share the same 107 mm offset from
+`panda_hand`; every recorded snapshot checks their agreement. The controller
+rotates the measured tool toward a downward grasp at a bounded angular speed
+and verifies its orientation before descending.
 
 ## What the artifacts mean
 

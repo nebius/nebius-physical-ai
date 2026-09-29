@@ -39,6 +39,7 @@ def _configuration(recipe: dict, condition: str):
     )
     config.commands.object_pose.debug_vis = False
     config.observations.policy.enable_corruption = False
+    _align_tool_frame(config, recipe)
     case = recipe["conditions"][condition]
     config.scene.object.spawn = sim.CuboidCfg(
         size=(0.05, 0.05, 0.05),
@@ -60,6 +61,21 @@ def _configuration(recipe: dict, condition: str):
     _camera_config(config)
     configure_validity(config, recipe)
     return config
+
+
+def _align_tool_frame(config, recipe: dict) -> None:
+    arm = config.actions.arm_action
+    expected = recipe["tcp_contract"]
+    if (
+        arm.body_name != expected["body"]
+        or list(arm.body_offset.pos) != expected["offset_m"]
+    ):
+        raise ValueError("Native IK tool frame differs from the sealed action contract")
+    # The stock frame sensor uses 0.1034m while IK controls 0.107m. That bias is
+    # larger than one speed-bounded action, so feedback from it can reverse motion.
+    frame = config.scene.ee_frame.target_frames[0]
+    frame.offset.pos = tuple(arm.body_offset.pos)
+    frame.offset.rot = tuple(arm.body_offset.rot)
 
 
 def _physics(env, requested: dict) -> dict:
@@ -133,6 +149,7 @@ def _snapshot(env) -> dict:
     cube, _ = subtract_frame_transforms(
         robot.root_pos_w.torch, robot.root_quat_w.torch, obj.root_pos_w.torch
     )
+    _verify_tool_frame(env, tcp, quat)
     return {
         name: value[0].detach().cpu().numpy().copy()
         for name, value in {
@@ -143,6 +160,19 @@ def _snapshot(env) -> dict:
             "velocity": obj.root_lin_vel_w.torch,
         }.items()
     }
+
+
+def _verify_tool_frame(env, tcp, quaternion) -> None:
+    import torch
+
+    position, rotation = env.action_manager.get_term("arm_action")._compute_frame_pose()
+    if not torch.allclose(position, tcp, atol=1e-4, rtol=0) or not torch.allclose(
+        (rotation * quaternion).sum(dim=-1).abs(),
+        torch.ones_like(rotation[:, 0]),
+        atol=1e-4,
+        rtol=0,
+    ):
+        raise ValueError("Measured TCP differs from the native IK control frame")
 
 
 def _step(env, action):
@@ -181,7 +211,9 @@ def _transition(
 ) -> tuple[dict, bool]:
     from npa.workflows.franka_rl_capture import _frame
 
-    action = controller.action(observed["tcp"], observed["object"])
+    action = controller.action(
+        observed["tcp"], observed["object"], observed["quaternion"]
+    )
     frame = _frame(env)
     if _step(env, action):
         return observed, True
@@ -205,7 +237,7 @@ def _transition(
 
 def _episode(env, recipe: dict, condition: str, index: int, output: Path) -> dict:
     initial = _settle(env, recipe["seed"] + index)
-    controller = LiftController(initial["quaternion"], float(env.step_dt))
+    controller = LiftController(float(env.step_dt))
     observed, history, terminated = initial, {}, False
     for step in range(recipe["episode_steps"]):
         observed, terminated = _transition(env, controller, observed, history, step)
@@ -234,6 +266,7 @@ def _episode(env, recipe: dict, condition: str, index: int, output: Path) -> dic
         "seed": recipe["seed"] + index,
         "length": len(arrays["actions"]),
         "terminated": terminated,
+        "controller_phase": controller.phase,
         "initial_object_m": initial["object"].tolist(),
         "longest_hold_steps": hold,
         "success": not terminated and hold >= recipe["success"]["hold_steps"],
@@ -261,6 +294,8 @@ def _collect(config, recipe: dict, condition: str, output: Path) -> None:
         "runtime_version": version("isaaclab"),
         "physics": _physics(env, recipe["conditions"][condition]),
         "simulation_validity_checks": env.npa_validity_checks,
+        "tcp_contract": recipe["tcp_contract"],
+        "tool_frame_checked": True,
     }
     write_json(output / "capture.json", metadata)
     env.close()
