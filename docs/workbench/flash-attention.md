@@ -8,7 +8,7 @@ the base build, application image, model integration, validation and deployment.
 This page records the dependency pins, restrictions and measured evidence.
 
 For standalone FA2 versus FA4 performance, see the
-[measured RTX comparison and renders](fa2-fa4-validation.md). It includes a
+[latest RTX optimization and renders](fa4-rtx-optimization.md). It includes a
 separate FA2 image, an opt-in FA4 inference profile and 108 complete SDXL
 generations. Selected attention calls improve; full-model generation is
 effectively tied. The [comparison guide](guides/fa2-fa4-comparison.md) covers

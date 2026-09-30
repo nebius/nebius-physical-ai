@@ -45,13 +45,16 @@ alias to preserve and makes no B300 qualification claim.
 
 See [FA2/FA4 comparison and inference tile experiments](../../../../../docs/workbench/guides/fa2-fa4-comparison.md)
 for correctness checks, full SDXL generations and repeated timing. The
-[measured RTX comparison](../../../../../docs/workbench/fa2-fa4-validation.md)
+[latest RTX comparison](../../../../../docs/workbench/fa4-rtx-optimization.md)
 records the exact FA2/FA4 image identities and 108 complete SDXL generations.
 Selected tuned FA4 inference calls are faster; full-model generation is
 effectively tied with FA2. Prior receipts do not validate replacement bytes.
 
 The FA4 variant installs `flash_attn.rtx.make_inference_attention`, an explicit
-SM120 inference factory with a small shape-qualified tile profile. It rejects
+SM120 inference factory with a small shape-qualified profile. Qualified
+contiguous inputs directly launch cached upstream kernels; strided inputs keep
+tiled dispatch. The optional upstream persistent cache also fingerprints the
+helper source. It rejects
 training use and a different upstream revision; other shapes use native FA4.
 The normal root/CuTe APIs are unchanged. See the comparison guide before opting
 a model into this profile; kernel timings alone do not qualify an application.

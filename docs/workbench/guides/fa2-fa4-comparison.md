@@ -8,10 +8,11 @@ FA2 variant compiles the standalone CUDA extension for SM120; the FA4 variant
 installs the CuTe implementation and guarded root import adapter. Installing both
 into one Python environment would make the root `flash_attn` import ambiguous.
 
-**Measured result:** the [RTX comparison and actual renders](../fa2-fa4-validation.md)
-record 108 complete SDXL generations plus forward/backward checks. Tuned FA4
-reached 1.07–1.16× FA2 on the measured causal inference calls; full SDXL generation
-was effectively tied. The profile remains opt-in. These are qualified local
+**Measured result:** the [latest RTX optimization and actual renders](../fa4-rtx-optimization.md)
+record 108 complete SDXL generations and repeated attention measurements.
+Optimized FA4 reached 1.76–2.08× FA2 on four short cross-attention calls and
+1.07–1.27× on four causal inference calls. Complete SDXL generation was only
+0.4–0.8% faster, with higher first-generation compilation cost. The profile remains opt-in. These are qualified local
 images, separate from the published Workbench release inventory. Earlier
 [SDXL evidence](../fa4-sdxl-validation.md) compared FA4 with PyTorch SDPA.
 
@@ -74,6 +75,7 @@ for backend in fa2 fa4; do
     -v "$PWD/npa/scripts:/validation:ro" \
     -v "$PWD/results/attention-comparison:/results" "$image" \
     python /validation/attention_kernel_benchmark.py --backend "$backend" \
+      --warmup 1000 --iterations 200 --repeats 9 \
       --output-path "/results/${backend}-kernels.json"
 done
 ```
@@ -89,8 +91,8 @@ retain their package inventories. Set `SDXL_MODEL_PATH` and `ATTENTION_RUNTIME_P
 to those local directories.
 
 Run separate containers in FA2/FA4/FA4/FA2 order to expose order and thermal drift.
-Each block performs an untimed coverage/warmup generation followed by five
-measured 30-step generations at each of three resolutions. Both backends use the
+Each block records a first coverage/warmup generation separately, followed by five
+steady-state 30-step generations at each of three resolutions. Both backends use the
 same SDXL attention processor, with shape recording disabled during timing.
 Image decode and watermarking are included in the generation measurement;
 model loading and image-file writes are excluded.
@@ -122,16 +124,17 @@ samples, untimed attention coverage, installed package versions, and hashes of
 the mounted benchmark sources. Compare the renders and latent errors;
 floating-point differences can amplify across diffusion steps, so pixel
 identity is not a kernel-correctness test. The summary refuses incomplete runs,
-mixed image identities within a backend, differing software/model/settings,
+mixed image identities or helper hashes within a backend, differing software/model/settings,
 and fewer than two blocks per backend. A ratio above 1 favors FA4; below 1
 favors FA2. Small differences within block variation do not establish a win.
 
 ## Experiment with FA4 inference tiles
 
-The FA4 image also provides an explicit inference factory. Its
-[measured tile profile](../fa2-fa4-validation.md#attention-call-measurements)
-improves selected attention calls; the full-model result remains effectively
-tied with FA2. Keep it opt-in and measure your application:
+The FA4 image provides an explicit inference factory. Its
+[measured launch and tile profile](../fa4-rtx-optimization.md#every-attention-call-result)
+uses cached upstream kernels for qualified contiguous inputs. It improves
+selected attention calls substantially, but complete SDXL generation by less
+than 1% versus FA2. Keep it opt-in and measure your application:
 
 ```python
 import torch
@@ -147,9 +150,55 @@ The factory requires the exact pinned FA4 revision and SM120. It rejects
 enabled gradients, tensors requiring gradients, mismatched devices and options
 outside its Q/K/V plus `causal` interface. It does not change the root adapter
 or register a model backend automatically. Its tile selection is limited to the
-benchmark's batch-2 FP16 SDXL shapes and BF16 causal transformer shapes;
-unlisted shapes use native FA4. It never substitutes FA2 or SDPA. Use the
-standard FA4 API for training and advanced attention semantics.
+benchmark's batch-2 FP16 SDXL shapes and BF16 causal transformer shapes.
+Contiguous, 16-byte-aligned qualified inputs directly launch the cached kernel
+with fresh input pointers and output allocation. Strided inputs retain the
+private tiled API; unlisted shapes use native FA4. It never substitutes FA2 or
+SDPA. Use the standard FA4 API for training and advanced attention semantics.
+
+### Qualify the helper and retain compiled code
+
+Cold compilation can outweigh steady-state gains for a short job. To reuse
+compiled kernels across processes, mount a persistent directory writable by
+UID 1000 and set both upstream cache variables before importing FA4. The cache
+fingerprints the helper, upstream code and compiler versions; changing the
+qualified stack requires fresh validation.
+
+The following exercises all optimized shapes against FP64, fresh values,
+multiple streams and graph replay, then starts another container with new
+compilation forbidden. Use the helper hash from the exact source used to build
+the selected image. Do not derive the expected hash from the image under test.
+
+```bash
+mkdir -p results/attention-comparison/cute-cache
+sudo chown -R 1000:1000 results/attention-comparison
+RTX_HELPER_SHA=$(sha256sum npa/docker/workbench/base/cuda13-blackwell/scripts/flash_attn_rtx.py | cut -d ' ' -f1)
+FA4_IMAGE_ID=$(docker image inspect "$FA4_IMAGE" --format '{{.Id}}')
+for mode in populate reload; do
+  extra=()
+  if [ "$mode" = reload ]; then extra=(--require-cache-hit); fi
+  docker run --rm --gpus device=0 --network none \
+    --cap-drop ALL --security-opt no-new-privileges \
+    --read-only --tmpfs /tmp:rw,exec,mode=1777 -e HOME=/tmp \
+    -e "NPA_BENCHMARK_IMAGE_ID=$FA4_IMAGE_ID" \
+    -e FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED=1 \
+    -e FLASH_ATTENTION_CUTE_DSL_CACHE_DIR=/cache \
+    -v "$PWD/results/attention-comparison/cute-cache:/cache" \
+    -v "$PWD/results/attention-comparison:/results" \
+    -v "$PWD/npa/scripts:/validation:ro" "$FA4_IMAGE" \
+    python /validation/validate_rtx_attention.py \
+      --expect-helper-sha256 "$RTX_HELPER_SHA" \
+      --output-path "/results/qualification-${mode}.json" "${extra[@]}"
+done
+```
+
+Both receipts must report `status: passed`: 64 checks for population and 61 for
+reload. The reload excludes native-path checks and fails if the optimized
+launcher attempts any compilation. Use a fresh cache directory for population
+when measuring cold behavior. Persistent caching is optional; the in-process
+compiled-kernel cache works without those variables.
+
+### Compare the optimized callable
 
 Both workers accept `--backend fa4 --tuning rtx6000-inference` to measure this
 baked callable. Compare it with fresh FA2 and default-FA4 blocks using the same

@@ -72,8 +72,8 @@ For a custom transformer workload, follow the
 `cuda13-blackwell` base, rebuild your application image, integrate
 FA4 explicitly, and validate before changing its deployed image digest.
 Use the [FA2/FA4 comparison guide](fa2-fa4-comparison.md) to build separate
-baselines, measure full SDXL generation and test opt-in FA4 inference tiles.
-The [measured RTX comparison](../fa2-fa4-validation.md) includes timings and
+baselines, measure full SDXL generation and test the opt-in FA4 inference profile.
+The [latest RTX comparison](../fa4-rtx-optimization.md) includes timings and
 actual renders, with both improvements and regressions.
 
 Match the selected tool's dataset format, observation/action schema, runtime,

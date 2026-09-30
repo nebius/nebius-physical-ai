@@ -1,5 +1,10 @@
 # FA2 versus tuned FA4 on RTX PRO 6000
 
+**Historical tile-only evidence, September 28.** The
+[September 30 optimization and fresh comparison](fa4-rtx-optimization.md) qualify
+the current cached-launch helper. This page and its receipts retain their
+original source and image identities; they do not measure the newer helper.
+
 [Build and comparison guide](guides/fa2-fa4-comparison.md) · [Application adoption](guides/rtx6000-fa4.md)
 
 **FA4 is supported on the tested RTX PRO 6000, and the opt-in inference profile
