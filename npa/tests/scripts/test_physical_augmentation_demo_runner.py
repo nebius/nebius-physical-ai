@@ -95,6 +95,7 @@ def test_fetch_does_not_allocate_and_rejects_corruption(
     files["checksums.json"] = json.dumps(checksums).encode()
     if corrupt:
         files["demo.mp4"] = b"corrupted"
+        (tmp_path / "demo.html").write_bytes(b"previous verified demo")
 
     def download(uri, path):
         assert uri.startswith(
@@ -124,6 +125,8 @@ def test_fetch_does_not_allocate_and_rejects_corruption(
     if corrupt:
         with pytest.raises(ValueError, match="checksum"):
             runner.main(args)
+        assert (tmp_path / "demo.html").read_bytes() == b"previous verified demo"
+        assert not (tmp_path / "demo.mp4").exists()
     else:
         assert runner.main(args) == 0
         assert (tmp_path / "demo.html").read_bytes() == b"fixture"

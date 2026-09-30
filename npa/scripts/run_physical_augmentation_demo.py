@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import re
+import tempfile
 
 from npa._sdk import call_cli_callback
 from npa.clients.config import resolve_project_storage
@@ -103,18 +104,28 @@ def _submit(args, run_id):
 
 
 def _fetch(args, run_id):
-    import json
 
     settings = resolve_project_storage(
         args.project, include_shared_credentials=False, include_environment=False
     )
-    prefix = (
-        settings.checkpoint_bucket.rstrip("/")
-        + f"/physical-augmentation/{run_id}/reports/"
-    )
+    bucket = settings.checkpoint_bucket.removeprefix("s3://").split("/")[0]
+    prefix = f"s3://{bucket}/physical-augmentation/{run_id}/reports/"
     storage = storage_client_for_project(args.project)
     destination = args.output_path.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".download-", dir=destination) as temporary:
+        staging = Path(temporary)
+        _download_artifacts(storage, prefix, staging)
+        for path in staging.iterdir():
+            path.replace(destination / path.name)
+    print(f"Open in your browser: {destination / 'demo.html'}")
+    print(f"Shareable video: {destination / 'demo.mp4'}")
+    print(f"Interactive recording: {destination / 'demonstrations.rrd'}")
+
+
+def _download_artifacts(storage, prefix, destination):
+    import json
+
     receipt = destination / "checksums.json"
     storage.download_file(prefix + "checksums.json", str(receipt))
     checksums = json.loads(receipt.read_text())
@@ -133,9 +144,6 @@ def _fetch(args, run_id):
         storage.download_file(prefix + name, str(target))
         if file_sha256(target) != checksums[name]:
             raise ValueError(f"Downloaded artifact failed its checksum: {name}")
-    print(f"Open in your browser: {destination / 'demo.html'}")
-    print(f"Shareable video: {destination / 'demo.mp4'}")
-    print(f"Interactive recording: {destination / 'demonstrations.rrd'}")
 
 
 def main(argv=None) -> int:
