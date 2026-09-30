@@ -726,51 +726,60 @@
       byId("cases").replaceChildren();
       cards = order.map(makeCard);
       cards.forEach((card) => byId("cases").append(card.element));
+      function renderMetric(card, name, value, unit, valid, percentage) {
+        card.query(`.${name}`).innerHTML = `${value} <small>${unit}</small>`;
+        card.query(`.${name}`).classList.toggle("good", valid);
+        card.query(`.${name}-bar`).style.width =
+          `${Math.max(0, Math.min(100, percentage))}%`;
+      }
+      function renderGauges(card, telemetry, frame) {
+        const lift = telemetry.lift_cm[frame];
+        const speed = telemetry.speed_cm_s[frame];
+        const hold = telemetry.hold_steps[frame];
+        renderMetric(
+          card,
+          "lift",
+          lift.toFixed(1),
+          "cm",
+          lift >= data.criteria.lift_m * 100,
+          (lift / 20) * 100,
+        );
+        renderMetric(
+          card,
+          "speed",
+          speed.toFixed(2),
+          "cm/s",
+          speed <= data.criteria.max_speed_m_s * 100,
+          (speed / 20) * 100,
+        );
+        renderMetric(
+          card,
+          "hold",
+          Math.min(hold, data.criteria.hold_steps),
+          `/ ${data.criteria.hold_steps} steps`,
+          hold >= data.criteria.hold_steps,
+          (hold / data.criteria.hold_steps) * 100,
+        );
+      }
+      function renderCard(card, trial) {
+        const time = playing ? card.video.currentTime : clock;
+        const frame = Math.min(
+          trial.frames - 1,
+          Math.max(0, Math.floor(time * data.fps)),
+        );
+        const telemetry = trial.telemetry;
+        renderGauges(card, telemetry, frame);
+        card.query(".tcp").textContent = telemetry.actions[frame]
+          .slice(0, 3)
+          .map((value) => value.toFixed(3))
+          .join(" / ");
+        card.query(".gripper").textContent =
+          telemetry.actions[frame][7] < 0 ? "GRIPPER CLOSED" : "GRIPPER OPEN";
+        card.query(".end-tag").style.display =
+          clock >= (trial.frames - 1) / data.fps ? "block" : "none";
+      }
       function renderMetrics() {
-        cards.forEach((card, index) => {
-          const trial = selected[index],
-            time = playing ? card.video.currentTime : clock,
-            frame = Math.min(
-              trial.frames - 1,
-              Math.max(0, Math.floor(time * data.fps)),
-            );
-          const telemetry = trial.telemetry,
-            lift = telemetry.lift_cm[frame],
-            speed = telemetry.speed_cm_s[frame],
-            hold = telemetry.hold_steps[frame];
-          card.query(".lift").innerHTML =
-            `${lift.toFixed(1)} <small>cm</small>`;
-          card.query(".speed").innerHTML =
-            `${speed.toFixed(2)} <small>cm/s</small>`;
-          card.query(".hold").innerHTML =
-            `${Math.min(hold, data.criteria.hold_steps)}<small> / ${data.criteria.hold_steps} steps</small>`;
-          card
-            .query(".lift")
-            .classList.toggle("good", lift >= data.criteria.lift_m * 100);
-          card
-            .query(".speed")
-            .classList.toggle(
-              "good",
-              speed <= data.criteria.max_speed_m_s * 100,
-            );
-          card
-            .query(".hold")
-            .classList.toggle("good", hold >= data.criteria.hold_steps);
-          card.query(".lift-bar").style.width =
-            `${Math.max(0, Math.min(100, (lift / 20) * 100))}%`;
-          card.query(".speed-bar").style.width =
-            `${Math.max(0, Math.min(100, (speed / 20) * 100))}%`;
-          card.query(".hold-bar").style.width =
-            `${Math.min(100, (hold / data.criteria.hold_steps) * 100)}%`;
-          card.query(".tcp").textContent = telemetry.actions[frame]
-            .slice(0, 3)
-            .map((value) => value.toFixed(3))
-            .join(" / ");
-          card.query(".gripper").textContent =
-            telemetry.actions[frame][7] < 0 ? "GRIPPER CLOSED" : "GRIPPER OPEN";
-          card.query(".end-tag").style.display =
-            clock >= (trial.frames - 1) / data.fps ? "block" : "none";
-        });
+        cards.forEach((card, index) => renderCard(card, selected[index]));
         byId("scrub").value = clock;
         byId("clock").textContent =
           `${clock.toFixed(2)} / ${duration.toFixed(2)} s`;
@@ -835,6 +844,13 @@
         }
         requestAnimationFrame(tick);
       }
+      function loadTrial(card, trial) {
+        card.video.src = trial.video;
+        card.video.load();
+        const result = card.query(".outcome");
+        result.className = `outcome ${trial.success ? "accepted" : "rejected"}`;
+        result.textContent = trial.success ? "ACCEPTED" : "REJECTED";
+      }
       function selectSeed(seed) {
         pause();
         selected = order.map((condition) =>
@@ -853,14 +869,7 @@
           (trial) =>
             trial.frames === Math.max(...selected.map((item) => item.frames)),
         );
-        cards.forEach((card, index) => {
-          const trial = selected[index];
-          card.video.src = trial.video;
-          card.video.load();
-          const result = card.query(".outcome");
-          result.className = `outcome ${trial.success ? "accepted" : "rejected"}`;
-          result.textContent = trial.success ? "ACCEPTED" : "REJECTED";
-        });
+        cards.forEach((card, index) => loadTrial(card, selected[index]));
         clock = 0;
         renderMetrics();
         document
