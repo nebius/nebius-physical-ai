@@ -34,21 +34,34 @@ update 1,500, ready after about 5 h 53 m and 3 h 19 m respectively. Evaluation
 happened afterward; this does not establish exact threshold crossing or a
 quality improvement from GPU count with one training seed.
 
-The measured deployment uses native Slurm 23.11.4 on dedicated reserved GPU
-VMs, with controller, accounting and NFS on the first worker. The four-node extension now has
+The historical 8/16-GPU deployment used native Slurm 23.11.4 on dedicated
+reserved GPU VMs, with controller, accounting and NFS on the first worker.
+The four-node extension has
 [successful NPA Soperator deployment and all-worker CUDA qualification](../../../../docs/workbench/evidence/cosmos3-wam-soperator-32/README.md).
 [Actual 32-rank WAM execution](../../../../docs/workbench/evidence/cosmos3-wam-live-training-32/README.md)
-passed NCCL and optimizer updates, with every GPU process attributed and all
-four workers sampled. Full-schedule, repeated-timing and quality results remain
-pending.
-A subsequent [four-GPU execution check](../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/README.md)
+passed NCCL with every GPU process attributed and all four workers sampled.
+The [full 32-GPU schedule](../../../../docs/workbench/evidence/cosmos3-wam-full-32/README.md)
+completed in **2 h 10 m 47 s**. Three [timing repetitions](../../../../docs/workbench/evidence/cosmos3-wam-timing-32/README.md)
+measured **3.6046 ± 0.0026 seconds/update** (mean and sample standard deviation
+of three run means). Four [500-trial evaluations](../../../../docs/workbench/evidence/cosmos3-wam-quality-32/README.md)
+scored **47.4%, 81.8%, 94.0%, 95.6%**, with zero infrastructure errors.
+Update 1,500 was the first saved checkpoint above 90%, ready after
+**1 h 39 m 02 s**; the native log bounds this timestamp to a one-second interval.
+[Four sampled CUDA ranks](../../../../docs/workbench/evidence/cosmos3-wam-profile-32/README.md),
+[all-device full-run telemetry](../../../../docs/workbench/evidence/cosmos3-wam-full-gpu-activity-32/README.md)
+and [final checkpoint recordings](../../../../docs/workbench/evidence/cosmos3-wam-final-visual-32/README.md)
+provide profiling and visual evidence. This Soperator cohort changes the driver,
+scheduler and storage; its timing ratios do not isolate GPU-count scaling.
+An earlier [four-GPU execution check](../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/README.md)
 was cancelled at observed update 535 after correcting the requested topology to
 **four nodes, eight B200s per node, 32 GPUs total**. Its checkpoint 500 is retained;
 it is excluded from scaling and quality results. Two GPUs are untested. The
 [32-GPU plan](../../../../docs/workbench/evidence/cosmos3-wam-plan-32/README.md)
 retains the original capacity rejection. Capacity subsequently became available;
-all 32 GPUs are deployed and qualified. Deployment checks are distinct from WAM
-training results.
+all 32 GPUs were deployed, qualified and used for the completed campaign.
+Slurm allocates nodes and records accounting; torchrun launches the ranks.
+Slurm is not required by the model, but every measured run used it. A standalone
+torchrun-only deployment was not tested.
 
 [Sixteen-rank InfiniBand proof](../../../../docs/workbench/evidence/cosmos3-wam-collective-16/README.md),
 [process-attributed live training](../../../../docs/workbench/evidence/cosmos3-wam-live-training-16/README.md),
@@ -266,9 +279,11 @@ it is not a guarantee about future vulnerability reports.
 The native policy server also initializes Cosmos Guardrail. Before evaluation,
 run `npa workbench health access --capability cosmos3 --json` with the operator's
 configured credential and require successful exact-payload checks. Pass the
-same credential to each evaluation host through an owner-readable token file
-outside the shared filesystem. Set `HF_TOKEN_PATH` to that file in the actual
-Slurm batch script or service environment; an interactive SSH shell's credentials
+same credential to each evaluation host through an owner-readable token file.
+On the native-VM path, keep it outside the shared NFS tree. In the dedicated
+Soperator jail, use a restricted operator-private directory that is explicitly
+excluded from evidence exports and archives. Set `HF_TOKEN_PATH` to that file
+in the actual Slurm batch script or service environment; an interactive SSH shell's credentials
 do not automatically reach those processes. Keep the file's parent directory
 mode 0700 and the file mode 0600. Never put the token value in job arguments,
 scripts, logs or version control.
@@ -411,8 +426,8 @@ duplicate directories or byte-identical copied reports cannot supply repeats.
 It reads saved reports without rehashing archived checkpoint payloads or
 overwriting the original measurements. Both producer and reducer use `math.fsum`
 for elapsed-time totals so Python floating-point summation changes do not alter
-receipts. Compatibility tests reproduce the six committed producer work summaries
-and the documented reducer output. Supplying three matching 32-GPU reports adds
+receipts. Regression tests reproduce the nine committed producer work summaries
+and both documented reducer outputs. Supplying three matching 32-GPU reports adds
 `comparisons_vs_8_gpus`, using the fourfold GPU ratio for efficiency and preserving
 the existing eight-to-sixteen comparison.
 
@@ -462,7 +477,7 @@ details; inspect and redact before publication. Upload artifacts to a private
 run-scoped S3 prefix for durable cross-tool handoff. Stop only this recipe's
 active jobs with `scancel`, verify they are absent from `squeue`, preserve
 artifacts, then remove the dedicated native VMs and GPU cluster as described in
-[native-cluster.md](native-cluster.md). For the separate Soperator alternative,
+[native-cluster.md](native-cluster.md). For the four-node Soperator cluster,
 use `npa soperator destroy` after the same cancellation and archival checks.
 
 ## Tests

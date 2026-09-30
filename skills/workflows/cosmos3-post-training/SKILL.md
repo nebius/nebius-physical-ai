@@ -81,7 +81,17 @@ training processes and full-run telemetry. Native Slurm was tested. The four-nod
 successful `npa soperator` deployment and CUDA qualification on all 32 GPUs; see
 `docs/workbench/evidence/cosmos3-wam-soperator-32/README.md`. Initial 32-rank WAM training also passed with process attribution and
 InfiniBand evidence in `docs/workbench/evidence/cosmos3-wam-live-training-32/README.md`.
-Full-schedule timing and quality measurements remain pending.
+The full 32-GPU schedule completed in 2 h 10 m 47 s. Three timing repeats
+measured 3.6046 ± 0.0026 seconds/update (sample SD across run means). Four
+500-trial evaluations scored 47.4%, 81.8%, 94.0% and 95.6%, with zero
+infrastructure errors. The first saved checkpoint above 90% was update 1,500,
+ready after 1 h 39 m 02 s (one-second log resolution). See `cosmos3-wam-full-32`, `cosmos3-wam-timing-32`,
+`cosmos3-wam-quality-32`, `cosmos3-wam-profile-32` and
+`cosmos3-wam-final-visual-32` under `docs/workbench/evidence/`. Report these as
+a separate Soperator cohort: driver, scheduler and storage changed from the
+8/16-GPU campaign. Do not claim GPU-only scaling efficiency across cohorts.
+Slurm managed every measured allocation; torchrun launched ranks. Slurm is
+not required by the model, but a torchrun-only deployment remains untested.
 One FP32-plus-EMA B200 failed
 before its first update. Four active B200s subsequently passed NCCL and initial
 optimizer updates on an exclusive eight-GPU VM; see
@@ -100,7 +110,8 @@ that all public Cosmos3 recipes stop at one node.
 Both bootstraps install FFmpeg and every node decodes both camera streams
 before model loading. Keep the excluded failure and corrected receipts.
 CUDA profiles observe rank zero on eight GPUs and ranks zero/eight on sixteen;
-kernel groups use linked CPU operators where available. Overlapping kernel
+the four-node profile samples ranks 0/8/16/24. Kernel groups use linked CPU
+operators where available. Overlapping kernel
 durations are not exposed communication stalls or a wall-time breakdown.
 Use a fresh `profile_report.py --output-path` when reanalyzing archived traces,
 preserving the original report and trace hashes.

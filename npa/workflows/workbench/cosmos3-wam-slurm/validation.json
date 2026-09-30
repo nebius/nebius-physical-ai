@@ -1,6 +1,6 @@
 {
   "schema": "npa.cosmos3.wam-recipe-validation.v1",
-  "status": "experimental-eight-and-sixteen-gpu-training-scaling-profile-quality-measured",
+  "status": "experimental-eight-sixteen-thirty-two-gpu-training-profile-quality-measured",
   "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
   "upstream_toml_schema": {
     "checked": true,
@@ -98,6 +98,18 @@
       "train_process_seconds": 15813.01756922,
       "training_gpu_hours": 70.28000112496889,
       "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-full-16/evidence.json"
+    },
+    "32": {
+      "steps": 2000,
+      "checkpoint_steps": [
+        500,
+        1000,
+        1500,
+        2000
+      ],
+      "train_process_seconds": 7847.286811628,
+      "training_gpu_hours": 69.75360078079555,
+      "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-full-32/evidence.json"
     }
   },
   "eight_gpu_profile": {
@@ -214,6 +226,45 @@
         "preceding_evaluated_step": 1000
       },
       "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-quality-16/evidence.json"
+    },
+    "32": {
+      "checkpoint_steps": [
+        500,
+        1000,
+        1500,
+        2000
+      ],
+      "trials_per_checkpoint": 500,
+      "total_trials": 2000,
+      "successes": [
+        237,
+        409,
+        470,
+        478
+      ],
+      "success_rates": [
+        0.474,
+        0.818,
+        0.94,
+        0.956
+      ],
+      "infrastructure_errors": 0,
+      "evaluation_contract": {
+        "workers": 8,
+        "envs": 8,
+        "trials": 50,
+        "seed": 42
+      },
+      "time_to_quality": {
+        "status": "observed_at_scheduled_checkpoint",
+        "step": 1500,
+        "train_seconds_interval": [
+          5942.036118030548,
+          5943.036118030548
+        ],
+        "preceding_evaluated_step": 1000
+      },
+      "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-quality-32/evidence.json"
     }
   },
   "sixteen_gpu_live_execution": {
@@ -294,7 +345,7 @@
     "nodes": 4,
     "gpus_per_node": 8,
     "gpus": 32,
-    "status": "soperator-32-rank-training-running",
+    "status": "completed-training-timing-profile-quality-and-native-visuals",
     "npa_plan_passed": true,
     "source_preflight_passed": true,
     "deployed": true,
@@ -303,7 +354,7 @@
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-plan-32/preflight.json",
     "deployment_attempt": "initial-STRICT-capacity-rejection-preserved; later-NPA-deployment-and-reconcile-passed",
     "deployment_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-soperator-32/deployment.json",
-    "completed_full_schedule": false,
+    "completed_full_schedule": true,
     "live_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-32/evidence.json",
     "runtime": {
       "soperator": "4.1.6",
@@ -311,6 +362,37 @@
       "driver": "580.159.04",
       "torch": "2.10.0+cu130",
       "nccl": "2.28.9"
-    }
+    },
+    "current_public_bootstrap_qualified": true,
+    "post_campaign_bootstrap_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-soperator-32/post-campaign-bootstrap.json",
+    "full_training_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-full-32/evidence.json",
+    "timing_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-timing-32/evidence.json",
+    "quality_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-quality-32/evidence.json",
+    "profile_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-profile-32/evidence.json",
+    "full_gpu_telemetry_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-full-gpu-activity-32/evidence.json",
+    "final_visual_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-final-visual-32/evidence.json",
+    "timing_repetitions": 3,
+    "timed_steps": 447,
+    "timing_mean_step_seconds": 3.6046085011185682,
+    "timing_sample_standard_deviation_seconds": 0.0025594444654952375,
+    "cohort_scope": "Separate Soperator cohort: scheduler, driver and shared storage differ from historical 8/16-GPU measurements; no GPU-only cross-cohort scaling efficiency.",
+    "observed_profile_ranks": [
+      0,
+      8,
+      16,
+      24
+    ],
+    "visual_successes": 10,
+    "visual_trials": 10,
+    "visual_live_attributed_policy_processes": 8,
+    "cleanup_status": "destroyed-and-provider-audited",
+    "cleanup_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-soperator-32/teardown.json"
+  },
+  "scheduler_scope": {
+    "all_measured_runs_used_slurm": true,
+    "rank_launcher": "torchrun",
+    "slurm_required_by_model": false,
+    "torchrun_only_deployment_validated": false,
+    "npa_soperator_deployment_validated": true
   }
 }

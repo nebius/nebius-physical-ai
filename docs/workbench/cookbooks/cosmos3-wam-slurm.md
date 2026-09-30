@@ -55,12 +55,20 @@ gradient accumulation for the scaling comparison:
 | 2 | 16 | 8 | 2 | 64 | 2 | 2,048 |
 | 4 | 32 | 8 | 4 | 64 | 1 | 2,048 |
 
-The 8/16-GPU configurations were measured. The [32-GPU extension](../evidence/cosmos3-wam-plan-32/README.md)
-now has [successful NPA Soperator deployment and all-worker CUDA qualification](../evidence/cosmos3-wam-soperator-32/README.md).
-[Initial 32-rank WAM training](../evidence/cosmos3-wam-live-training-32/README.md)
-has also passed; full-schedule and quality results are pending. Its deployment changes from native Slurm
-to Soperator; disclose the driver, scheduler and storage differences when
-comparing GPU counts. Native
+All three configurations completed the schedule. The [32-GPU extension](../evidence/cosmos3-wam-full-32/README.md)
+used [NPA Soperator deployment and all-worker CUDA qualification](../evidence/cosmos3-wam-soperator-32/README.md),
+then completed 2,000 updates in **2 h 10 m 47 s**. Its three separate
+[timing repeats](../evidence/cosmos3-wam-timing-32/README.md) measured
+**3.6046 ± 0.0026 seconds/update**, and the final
+[500-trial evaluation](../evidence/cosmos3-wam-quality-32/README.md) scored
+**478/500 (95.6%)**. The first saved checkpoint above 90% was update 1,500, ready after
+**1 h 39 m 02 s** (one-second log timestamp resolution).
+[Real 32-rank attribution](../evidence/cosmos3-wam-live-training-32/README.md),
+[CUDA profiles](../evidence/cosmos3-wam-profile-32/README.md),
+[full GPU telemetry](../evidence/cosmos3-wam-full-gpu-activity-32/README.md) and
+[checkpoint videos](../evidence/cosmos3-wam-final-visual-32/README.md) are retained.
+The driver, scheduler and shared storage changed from the historical native
+Slurm cohort; do not interpret cross-cohort timing ratios as GPU-only scaling. Native
 upstream uses 128 samples/rank on two nodes; 64 permits the same nominal global
 batch across this entire comparison. The model retains its 74,000-token cap,
 selective activation checkpointing, BF16 compute, learning rate 5e-5, 500-step
@@ -76,9 +84,9 @@ steps alone cannot demonstrate equivalent policy quality.
 
 ## 1. Prepare a dedicated reserved-capacity cluster
 
-The completed campaign used [native Slurm on dedicated GPU VMs](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md),
+The historical 8/16-GPU campaign used [native Slurm on dedicated GPU VMs](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md),
 with controller, accounting and NFS on the first worker. Follow that deployment
-guide to reproduce the measured setup. The Soperator commands below are an
+guide to reproduce the measured setup. The Soperator commands below provide
 the validated cluster lifecycle for the four-node extension. The earlier 8/16-GPU
 measurements retain their original native-VM deployment context.
 
@@ -98,9 +106,10 @@ export NPA_PYTHON="$PWD/npa/.venv/bin/python"
 umask 077
 ```
 
-For the measured deployment, continue with the
+For the historical 8/16-GPU deployment, continue with the
 [native worker creation and bootstrap instructions](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md#create-the-dedicated-workers),
-then return to step 2 below. Use the same absolute shared paths on every worker.
+then return to step 2 below. For the measured 32-GPU deployment, use Soperator
+as described next. Use the same absolute shared paths on every worker.
 
 ### Soperator deployment for the four-node extension
 
@@ -158,9 +167,11 @@ virtualenv and preserved the framework's frozen `cu130-train` lockfile.
 
 ## 2. Install the pinned native training environment
 
-On the Linux Slurm filesystem, place the Workbench checkout and initialize the
-same `WAM_RECIPE` and `NPA_PYTHON` paths there. Choose shared roots with enough
-space for downloads, converted base, optimizer checkpoints and traces:
+On the Linux Slurm filesystem, place the Workbench checkout and set `WAM_RECIPE`
+to its recipe directory. The NPA cluster lifecycle commands run on the operator
+machine. The standalone recipe scripts inside the shared jail use the pinned
+training interpreter selected below. Choose shared roots with enough space for
+downloads, converted base, optimizer checkpoints and traces:
 
 ```bash
 export WAM_SHARED_ROOT=/shared/cosmos3-wam
@@ -173,7 +184,11 @@ git -C "$WAM_SHARED_ROOT/framework" fetch --depth=1 origin cf5d68c00d97ccd2480a2
 git -C "$WAM_SHARED_ROOT/framework" checkout --detach FETCH_HEAD
 cd "$WAM_SHARED_ROOT/framework"
 uv sync --frozen --all-extras --group cu130-train
+export NPA_PYTHON="$WAM_SHARED_ROOT/framework/.venv/bin/python"
 ```
+
+This `NPA_PYTHON` assignment applies to the subsequent recipe commands in the
+Linux login session; it does not install or change the operator's NPA CLI.
 
 Use NVIDIA's [pinned installation prerequisites](https://github.com/NVIDIA/cosmos-framework/blob/cf5d68c00d97ccd2480a2320ed652b92dec63102/docs/setup.md),
 including a compatible Linux CUDA toolchain/driver and the required system

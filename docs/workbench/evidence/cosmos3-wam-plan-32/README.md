@@ -4,8 +4,11 @@ The requested extension is **four workers with eight B200s each**, using the
 existing `npa soperator` CLI/SDK/backend for cluster lifecycle. This page retains
 the original planning and capacity-rejection history. A later
 [deployment and all-worker CUDA qualification](../cosmos3-wam-soperator-32/README.md)
-succeeded on all four workers after capacity became available. WAM training
-measurements remain pending.
+succeeded on all four workers after capacity became available. The subsequent
+[full training run](../cosmos3-wam-full-32/README.md),
+[three timing repetitions](../cosmos3-wam-timing-32/README.md) and
+[four checkpoint evaluations](../cosmos3-wam-quality-32/README.md) completed
+successfully. The original planning receipts below remain unchanged.
 The [preflight receipt](preflight.json) records a successful provider-free plan
 and verification of the immutable upstream deployment source. These checks do
 not verify reservation availability, deploy Kubernetes/Slurm, or exercise GPUs.

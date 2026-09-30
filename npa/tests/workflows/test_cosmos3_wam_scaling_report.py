@@ -15,14 +15,23 @@ RECIPE = Path(__file__).resolve().parents[2] / "workflows/workbench/cosmos3-wam-
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def test_documented_command_reproduces_committed_scaling_bytes(tmp_path):
-    evidence = ROOT / "docs/workbench/evidence/cosmos3-wam-scaling"
+@pytest.mark.parametrize(
+    ("directory", "filename", "variable"),
+    [
+        ("cosmos3-wam-scaling", "repeated-scaling.json", "$WAM_SCALING_REPORT"),
+        ("cosmos3-wam-timing-32", "repeated-timing.json", "$WAM_TIMING_REPORT"),
+    ],
+)
+def test_documented_command_reproduces_committed_scaling_bytes(
+    tmp_path, directory, filename, variable
+):
+    evidence = ROOT / "docs/workbench/evidence" / directory
     instructions = (evidence / "README.md").read_text()
     commands = instructions.split("```bash\n", 1)[1].split("```", 1)[0]
     argv = shlex.split(commands.replace("\\\n", "").splitlines()[0])
-    output = tmp_path / "repeated-scaling.json"
+    output = tmp_path / filename
     assert argv[0] == "npa/.venv/bin/python"
-    assert argv[-2:] == ["--output-path", "$WAM_SCALING_REPORT"]
+    assert argv[-2:] == ["--output-path", variable]
     subprocess.run(
         [sys.executable, *argv[1:-1], str(output)],
         cwd=ROOT,
@@ -30,10 +39,10 @@ def test_documented_command_reproduces_committed_scaling_bytes(tmp_path):
         capture_output=True,
         text=True,
     )
-    assert output.read_bytes() == (evidence / "repeated-scaling.json").read_bytes()
+    assert output.read_bytes() == (evidence / filename).read_bytes()
 
 
-@pytest.mark.parametrize("gpus", [8, 16])
+@pytest.mark.parametrize("gpus", [8, 16, 32])
 @pytest.mark.parametrize("repeat", [1, 2, 3])
 def test_producer_work_metrics_reproduce_committed_bytes(gpus, repeat):
     directory = (

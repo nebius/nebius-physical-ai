@@ -9,8 +9,11 @@ Slurm cgroup, local rank and global rank. Each snapshot observed completed
 optimizer update 74. The distributed preflight verified four hosts, 32 distinct
 rank/device placements, and the correct NCCL all-reduce sum **528**.
 
-These are execution receipts from an incomplete 2,000-update run. They do not
-establish full training time, repeated throughput or policy quality. The
+These receipts were captured early in the 2,000-update run. Their historical
+bytes remain unchanged. The later [completed schedule](../cosmos3-wam-full-32/README.md),
+[repeated timings](../cosmos3-wam-timing-32/README.md) and
+[checkpoint evaluations](../cosmos3-wam-quality-32/README.md) establish duration,
+throughput and quality; this early window alone does not. The
 [deployment record](../cosmos3-wam-soperator-32/README.md) preserves the corrected
 NCCL FIFO failure from the excluded first attempt.
 
