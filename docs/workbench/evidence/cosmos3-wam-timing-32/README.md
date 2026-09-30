@@ -43,7 +43,10 @@ cmp "$WAM_TIMING_REPORT" docs/workbench/evidence/cosmos3-wam-timing-32/repeated-
 ```
 
 The producer and reducer use `math.fsum` for floating-point totals. The reducer
-rehashes and recomputes every repetition from its CSV. Its standalone-topology
+computes sample deviation at 80-digit decimal precision before converting to a
+float, avoiding Python-version differences from rounding the variance first.
+This preserves the original committed numeric records. It rehashes and recomputes
+every repetition from its CSV. Its standalone-topology
 mode deliberately produces no scaling comparison. The 32-GPU Soperator cohort
 has different scheduler, driver and storage conditions from the older native
 8/16-GPU cohort; the [controlled 8-to-16 comparison](../cosmos3-wam-scaling/README.md)

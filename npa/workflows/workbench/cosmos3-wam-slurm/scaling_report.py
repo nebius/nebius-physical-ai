@@ -2,6 +2,7 @@
 
 import argparse
 import csv
+from decimal import Decimal, localcontext
 import hashlib
 import json
 import math
@@ -82,9 +83,14 @@ def _read(directory):
 
 
 def _spread(values):
+    # Python 3.10 rounds float variance before sqrt; newer versions round once.
+    # Keep ample decimal precision until the final float conversion in all versions.
+    with localcontext() as context:
+        context.prec = 80
+        deviation = float(statistics.stdev(map(Decimal, values)))
     return {
         "mean": statistics.mean(values),
-        "sample_standard_deviation": statistics.stdev(values),
+        "sample_standard_deviation": deviation,
         "minimum": min(values),
         "maximum": max(values),
     }
