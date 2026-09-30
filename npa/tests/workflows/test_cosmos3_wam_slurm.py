@@ -6,6 +6,7 @@ import gzip
 import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -86,6 +87,33 @@ def test_multinode_torchrun_uses_slurm_rank_and_shared_endpoint(tmp_path, monkey
     assert "--master_addr=rank-zero" in argv and "--master_port=29507" in argv
     assert "--standalone" not in argv
     assert "cosmos_framework.scripts.train" in argv
+
+
+@pytest.mark.parametrize("destination", ["fifo", "regular", "unset"])
+def test_sequential_nccl_launches_do_not_reuse_slurm_fifo(
+    tmp_path, monkeypatch, destination
+):
+    recipe = _load("recipe")
+    settings = recipe._settings(_args(tmp_path, 4))
+    log = tmp_path / "operator-nccl.log"
+    monkeypatch.setenv("SLURM_NODEID", "2")
+    monkeypatch.setenv("NCCL_DEBUG", "INFO")
+    monkeypatch.setenv("NCCL_IB_DISABLE", "0")
+    monkeypatch.delenv("NCCL_DEBUG_FILE", raising=False)
+    if destination != "unset":
+        monkeypatch.setenv("NCCL_DEBUG_FILE", str(log))
+        if destination == "fifo":
+            os.mkfifo(log)
+        else:
+            log.touch()
+    env = recipe._environment(settings, tmp_path)
+    expected = {
+        "fifo": str(tmp_path / "nccl-node-2-%p.log"),
+        "regular": str(log),
+        "unset": None,
+    }
+    assert env.get("NCCL_DEBUG_FILE") == expected[destination]
+    assert env["NCCL_DEBUG"] == "INFO" and env["NCCL_IB_DISABLE"] == "0"
 
 
 def _camera_inputs(root):

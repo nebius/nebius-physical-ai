@@ -162,6 +162,32 @@ def _comparison(groups, baseline_gpus=8, candidate_gpus=16):
     }
 
 
+def _single_topology(directories):
+    """Measure repetitions without implying a comparable scaling baseline."""
+
+    records, baseline = _matching_records(directories)
+    counts = {record["measurement"]["gpus"] for record in records}
+    if len(counts) != 1:
+        raise ValueError("single-topology reporting cannot combine GPU counts")
+    return {
+        "schema": "npa.cosmos3.wam-repeated-timing.v1",
+        "status": "timing_measured",
+        "comparison_contract": baseline["comparison_contract"],
+        "hardware": baseline["hardware"],
+        "groups": {str(baseline["gpus"]): _group(records)},
+        "comparison": None,
+        "interpretation": (
+            "Three repetitions of one topology; no scaling baseline is assumed. "
+            "Variability is the sample standard deviation of three run means, "
+            "not a confidence interval. Repetitions use the same training seed. "
+            "Final checkpoint writing is outside these timed iterations. "
+            "Full-schedule duration, allocation time and quality are separate. "
+            "Cross-environment comparisons require review of driver, scheduler "
+            "and storage differences beyond this report's recorded contract."
+        ),
+    }
+
+
 def _summarize(directories):
     records, baseline = _matching_records(directories)
     grouped = {}
@@ -205,7 +231,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-dirs", type=Path, nargs="+", required=True)
     parser.add_argument("--output-path", type=Path, required=True)
+    parser.add_argument(
+        "--single-topology",
+        action="store_true",
+        help="Report three repeats without requiring or claiming a scaling baseline",
+    )
     arguments = parser.parse_args()
-    result = _summarize(arguments.run_dirs)
+    reducer = _single_topology if arguments.single_topology else _summarize
+    result = reducer(arguments.run_dirs)
     arguments.output_path.write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps(result, indent=2))

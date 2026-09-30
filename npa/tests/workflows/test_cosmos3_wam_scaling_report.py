@@ -266,3 +266,39 @@ def test_thirty_two_gpu_report_requires_four_nodes(tmp_path):
     _change(run, lambda report: report.update(nodes=2))
     with pytest.raises(ValueError, match="requires completed"):
         _module()._read(run)
+
+
+def test_single_topology_cli_reports_repeats_without_scaling(tmp_path):
+    runs = [_run(tmp_path, 32, i, value) for i, value in enumerate((3, 4, 5))]
+    output = tmp_path / "timing.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(RECIPE / "scaling_report.py"),
+            "--single-topology",
+            "--run-dirs",
+            *map(str, runs),
+            "--output-path",
+            str(output),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    result = json.loads(output.read_text())
+    assert result["schema"] == "npa.cosmos3.wam-repeated-timing.v1"
+    assert result["status"] == "timing_measured"
+    assert result["comparison"] is None
+    assert set(result["groups"]) == {"32"}
+    group = result["groups"]["32"]
+    assert group["measured_steps"] == 447
+    assert group["replicate_step_means_seconds"]["mean"] == 4
+    assert group["replicate_step_means_seconds"]["sample_standard_deviation"] == 1
+
+
+def test_single_topology_rejects_mixed_counts_and_incomplete_repeats(tmp_path):
+    runs = _campaign(tmp_path)
+    with pytest.raises(ValueError, match="cannot combine GPU counts"):
+        _module()._single_topology(runs)
+    with pytest.raises(ValueError, match="three timing repetitions"):
+        _module()._single_topology(runs[:2])

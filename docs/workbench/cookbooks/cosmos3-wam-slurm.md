@@ -56,9 +56,11 @@ gradient accumulation for the scaling comparison:
 | 4 | 32 | 8 | 4 | 64 | 1 | 2,048 |
 
 The 8/16-GPU configurations were measured. The [32-GPU extension](../evidence/cosmos3-wam-plan-32/README.md)
-passed NPA Soperator planning and source preflight but is blocked on reserved
-capacity. Its deployment changes from native Slurm to Soperator, so qualify and
-disclose runtime differences before attributing differences to GPU count. Native
+now has [successful NPA Soperator deployment and all-worker CUDA qualification](../evidence/cosmos3-wam-soperator-32/README.md).
+[Initial 32-rank WAM training](../evidence/cosmos3-wam-live-training-32/README.md)
+has also passed; full-schedule and quality results are pending. Its deployment changes from native Slurm
+to Soperator; disclose the driver, scheduler and storage differences when
+comparing GPU counts. Native
 upstream uses 128 samples/rank on two nodes; 64 permits the same nominal global
 batch across this entire comparison. The model retains its 74,000-token cap,
 selective activation checkpointing, BF16 compute, learning rate 5e-5, 500-step
@@ -77,7 +79,8 @@ steps alone cannot demonstrate equivalent policy quality.
 The completed campaign used [native Slurm on dedicated GPU VMs](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md),
 with controller, accounting and NFS on the first worker. Follow that deployment
 guide to reproduce the measured setup. The Soperator commands below are an
-alternative deployment path and have not been validated by this campaign.
+the validated cluster lifecycle for the four-node extension. The earlier 8/16-GPU
+measurements retain their original native-VM deployment context.
 
 Use a separate project in the selected tenant and region. Complete credential
 and exact model access checks before provisioning:
@@ -99,15 +102,15 @@ For the measured deployment, continue with the
 [native worker creation and bootstrap instructions](../../../npa/workflows/workbench/cosmos3-wam-slurm/native-cluster.md#create-the-dedicated-workers),
 then return to step 2 below. Use the same absolute shared paths on every worker.
 
-### Alternative: Soperator deployment
+### Soperator deployment for the four-node extension
 
-Choose this alternative only when reproducing the recipe on Soperator. Supply
+To reproduce the four-node extension on Soperator, supply
 the private project, tenant and reservation IDs through the environment, and
 choose an unused cluster name and a private spec location:
 
 ```bash
 "$NPA_PYTHON" "$WAM_RECIPE/cluster.py" \
-  --name "$WAM_CLUSTER_NAME" --nodes 2 --output "$WAM_CLUSTER_SPEC"
+  --name "$WAM_CLUSTER_NAME" --nodes 4 --output "$WAM_CLUSTER_SPEC"
 npa soperator plan --spec "$WAM_CLUSTER_SPEC"
 npa soperator deploy --spec "$WAM_CLUSTER_SPEC" \
   --root-login-ssh-public-key-file "$WAM_LOGIN_PUBLIC_KEY"
@@ -124,12 +127,34 @@ Two free individual GPUs are not a two-node allocation: two workers need 16
 free reserved B200 GPUs. For the four-node comparison, request four workers and
 verify 32-GPU reservation capacity first.
 
+The executed deployment isolated Helm's local repository state after a stale
+global cache prevented chart loading. To reproduce that isolation, choose a
+fresh private directory and export these before `npa soperator deploy`:
+
+```bash
+install -d -m 700 "$WAM_HELM_STATE/cache"
+export HELM_REPOSITORY_CONFIG="$WAM_HELM_STATE/repositories.yaml"
+export HELM_REPOSITORY_CACHE="$WAM_HELM_STATE/cache"
+```
+
 For Soperator, connect using the provider-verified login endpoint and run Slurm
 inside its jail. The following paths must be shared and identical on every
 worker, not `/tmp`.
 Keep the training runtime, dataset, base DCP and run directories on that
 filesystem for the baseline. A later node-local SSD experiment must explicitly
 record that storage change and stage identical verified bytes on each host.
+The provider-configured Kubernetes context also supports the same login jail:
+
+```bash
+kubectl --context "$WAM_KUBE_CONTEXT" exec -it -n soperator login-0 -- \
+  chroot /mnt/jail /bin/bash
+```
+
+Use the context returned by the successful NPA deployment. Install the required
+CPU libraries once in the shared jail before preparing the runtime: FFmpeg,
+`libx11-dev`, `libosmesa6`, `build-essential`, `cmake`, `git-lfs`, and
+`python3-venv`. The executed bootstrap used `uv==0.12.5` in a separate bootstrap
+virtualenv and preserved the framework's frozen `cu130-train` lockfile.
 
 ## 2. Install the pinned native training environment
 

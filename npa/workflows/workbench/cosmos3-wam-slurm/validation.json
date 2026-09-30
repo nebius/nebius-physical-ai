@@ -58,7 +58,8 @@
     "nodes": 2,
     "gpus": 16,
     "nccl_preflight": "passed",
-    "soperator_execution_validated": false
+    "soperator_execution_validated": false,
+    "scope": "Historical completed 8/16-GPU native-VM campaign; see thirty_two_gpu_extension for Soperator"
   },
   "trained_policy_visual": {
     "completed": true,
@@ -293,13 +294,23 @@
     "nodes": 4,
     "gpus_per_node": 8,
     "gpus": 32,
-    "status": "blocked-reserved-capacity",
+    "status": "soperator-32-rank-training-running",
     "npa_plan_passed": true,
     "source_preflight_passed": true,
-    "deployed": false,
-    "execution_validated": false,
+    "deployed": true,
+    "execution_validated": true,
     "protocol": "benchmark-protocol-32.json",
     "evidence": "../../../../docs/workbench/evidence/cosmos3-wam-plan-32/preflight.json",
-    "deployment_attempt": "rejected-before-provider-mutation-by-STRICT-capacity-gate"
+    "deployment_attempt": "initial-STRICT-capacity-rejection-preserved; later-NPA-deployment-and-reconcile-passed",
+    "deployment_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-soperator-32/deployment.json",
+    "completed_full_schedule": false,
+    "live_evidence": "../../../../docs/workbench/evidence/cosmos3-wam-live-training-32/evidence.json",
+    "runtime": {
+      "soperator": "4.1.6",
+      "slurm": "25.11.3",
+      "driver": "580.159.04",
+      "torch": "2.10.0+cu130",
+      "nccl": "2.28.9"
+    }
   }
 }

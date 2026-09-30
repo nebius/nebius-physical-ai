@@ -1,7 +1,11 @@
 # Four nodes, 32 B200 GPUs: deployment preparation
 
 The requested extension is **four workers with eight B200s each**, using the
-existing `npa soperator` CLI/SDK/backend for cluster lifecycle. It has not run.
+existing `npa soperator` CLI/SDK/backend for cluster lifecycle. This page retains
+the original planning and capacity-rejection history. A later
+[deployment and all-worker CUDA qualification](../cosmos3-wam-soperator-32/README.md)
+succeeded on all four workers after capacity became available. WAM training
+measurements remain pending.
 The [preflight receipt](preflight.json) records a successful provider-free plan
 and verification of the immutable upstream deployment source. These checks do
 not verify reservation availability, deploy Kubernetes/Slurm, or exercise GPUs.
@@ -39,7 +43,8 @@ the same command without `--source-preflight-only`. The NPA lifecycle verifies
 the reservation before provider mutation and runs mandatory CUDA checks on all
 workers. Then prepare the pinned runtime/inputs in the shared jail, validate
 32-rank NCCL placement, and submit the recipe with `--nodes 4`. Plan/source
-preflight is the only Soperator qualification currently claimed here.
+preflight records above are historical; the later deployment receipt establishes
+actual cluster and GPU qualification.
 
 Cancel owned Slurm jobs and verify an empty queue before preserving artifacts
 and running `npa soperator destroy --name "$WAM_CLUSTER_NAME"`. The previous

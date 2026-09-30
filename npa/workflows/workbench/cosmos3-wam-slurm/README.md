@@ -35,14 +35,20 @@ happened afterward; this does not establish exact threshold crossing or a
 quality improvement from GPU count with one training seed.
 
 The measured deployment uses native Slurm 23.11.4 on dedicated reserved GPU
-VMs, with controller, accounting and NFS on the first worker. Soperator has passed
-planning and pinned-source preflight, but has not been deployed for this recipe.
+VMs, with controller, accounting and NFS on the first worker. The four-node extension now has
+[successful NPA Soperator deployment and all-worker CUDA qualification](../../../../docs/workbench/evidence/cosmos3-wam-soperator-32/README.md).
+[Actual 32-rank WAM execution](../../../../docs/workbench/evidence/cosmos3-wam-live-training-32/README.md)
+passed NCCL and optimizer updates, with every GPU process attributed and all
+four workers sampled. Full-schedule, repeated-timing and quality results remain
+pending.
 A subsequent [four-GPU execution check](../../../../docs/workbench/evidence/cosmos3-wam-live-training-4/README.md)
 was cancelled at observed update 535 after correcting the requested topology to
 **four nodes, eight B200s per node, 32 GPUs total**. Its checkpoint 500 is retained;
 it is excluded from scaling and quality results. Two GPUs are untested. The
 [32-GPU plan](../../../../docs/workbench/evidence/cosmos3-wam-plan-32/README.md)
-is blocked on reserved capacity and has no GPU execution result.
+retains the original capacity rejection. Capacity subsequently became available;
+all 32 GPUs are deployed and qualified. Deployment checks are distinct from WAM
+training results.
 
 [Sixteen-rank InfiniBand proof](../../../../docs/workbench/evidence/cosmos3-wam-collective-16/README.md),
 [process-attributed live training](../../../../docs/workbench/evidence/cosmos3-wam-live-training-16/README.md),
@@ -184,6 +190,11 @@ At runtime, Slurm supplies `SLURM_NODEID`, `SLURM_NNODES`, and
 `IMAGINAIRE_OUTPUT_ROOT`. `NPA_WAM_RUN_DIR` is an internal preflight output path.
 CUDA, NCCL, network-interface and InfiniBand settings otherwise come from the
 qualified cluster environment; the recipe does not force TCP or disable IB.
+If Soperator supplies a FIFO through `NCCL_DEBUG_FILE`, the launcher replaces
+that logging destination with `nccl-node-<node-rank>-%p.log` in the run directory.
+The FIFO reader exits after the preflight's writers close and would block the
+subsequent trainer. Separate process logs preserve NCCL diagnostics without
+changing the selected transport. Regular-file destinations remain unchanged.
 The launcher clears the inherited `SLURM_TRES_PER_TASK` and explicitly supplies
 128 CPUs and eight GPUs to `srun`. Slurm 23.11 otherwise rejects the inherited
 CPU-only TRES together with `--gpus-per-task` before starting a worker.
@@ -404,6 +415,22 @@ receipts. Compatibility tests reproduce the six committed producer work summarie
 and the documented reducer output. Supplying three matching 32-GPU reports adds
 `comparisons_vs_8_gpus`, using the fourfold GPU ratio for efficiency and preserving
 the existing eight-to-sixteen comparison.
+
+The measured Soperator extension changes the scheduler, driver and shared
+storage relative to the original native-Slurm cohort. Report its three repeats
+separately instead of assuming that the reducer's recorded fields establish
+an otherwise identical environment:
+
+```bash
+npa/.venv/bin/python npa/workflows/workbench/cosmos3-wam-slurm/scaling_report.py \
+  --single-topology \
+  --run-dirs "$WAM_RUN_ROOT/repeat-32-a-r1" "$WAM_RUN_ROOT/repeat-32-b-r1" \
+  "$WAM_RUN_ROOT/repeat-32-c-r1" \
+  --output-path "$WAM_RUN_ROOT/repeated-timing-32.json"
+```
+
+This mode requires one GPU topology with three compatible completed reports.
+It reports repeat variability and token throughput without a scaling baseline.
 
 The result retains each run's mean, median and p95, then reports the mean and
 sample standard deviation of the three run means. That deviation describes

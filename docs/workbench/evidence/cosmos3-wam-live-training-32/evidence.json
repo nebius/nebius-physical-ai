@@ -1,0 +1,50 @@
+{
+  "schema": "npa.cosmos3.wam-live-training.v1",
+  "nodes": 4,
+  "gpus_per_node": 8,
+  "gpus": 32,
+  "processes_attributed": 32,
+  "observed_optimizer_update": 74,
+  "nccl_all_reduce_sum": 528,
+  "infiniband_training_processes": 32,
+  "nccl_warning_lines_in_frozen_prefixes": 0,
+  "prospective_window_seconds": 120,
+  "window_device_samples": 3300,
+  "completed_full_schedule_at_capture": false,
+  "full_run_timing_measured_by_this_receipt": false,
+  "policy_quality_measured_by_this_receipt": false,
+  "public_files_sha256": {
+    "README.md": "66ac3a60e9a3e69cd728987805a3a222d895174e2712b703695ee653f5632aa0",
+    "capture_transport.py": "69251c3a18889ff164571c50dc91ec7902fb7b42f7e1a043c1ba3045d4a438f4",
+    "export_window.py": "f7e4f7b7ba9555673bf7f34ea125740fad6dc1c438006b2534e65ef6d863bf9d",
+    "live-window.json": "c5d7eba7c37658e2425b900082fcfd1eca513d3c104c719db3474c706b7bc267",
+    "node-0.json": "07e6ac9253245aa5487737af5d426ec71e2dea9348ec47c5e31eff505e107bef",
+    "node-1.json": "82ae68819dd18c9b75fb1a20eb7a4e191ceaffcd083548e5e128d11a8c63397d",
+    "node-2.json": "19f328866cdd282373b3b4e2bc9f483bf47f74105e5f1c7ea929fc40bcbfa4b7",
+    "node-3.json": "5a2fc596a3ca807341c4c7c0a8dfb23ed9474dbe31424c7a11e2443bd6de0070",
+    "plot_window.py": "4b1cfb9d851481a81c6f89645a8bde2afca0c44f8ace4734b2afb150110687af",
+    "render-manifest.json": "23d54c83c1f24079dfb45f913c91365a84d5da03af9f199a2ce9a862dd992b4d",
+    "training-window.png": "c4576f7d126e36e53964c98d83a4aebf8eecab131a36b1061f443a095d76d4d6",
+    "transport-node-0.json": "3c22f54650c4693d02d9ef1728b81ed9e5639d8e97bcdd451b6d83edc38039fa",
+    "transport-node-1.json": "433247a4ca115bd0b0a6f27376aa0eec24409a30d0cb0f98d553694af9760366",
+    "transport-node-2.json": "2efe8c6da4dcd03b66f9b08baaf3701d93a423a3d031473b489ca71dafcc236a",
+    "transport-node-3.json": "b099590d3767cce48c898a162158d78fb12311727d0310d968a7fe28bfca1804",
+    "window-node-0/evidence.json": "fcfd84a3506daa8e5dc6f475b77d957b16ee66d572d42a6b33e35cce949df8e0",
+    "window-node-0/gpu-samples.csv.gz": "8b9d8b911c76a2208fd49bcc7110471a3c249c6f8690e22a402d05c3f2057171",
+    "window-node-1/evidence.json": "20b1997c029ebd4f662c82d13fca3ec054afc32ab9efb7c53c285d68acc1bfb1",
+    "window-node-1/gpu-samples.csv.gz": "31faecedbc804e1e95b692d9f7322c1c429dc9696fbc1eff58803b4b2fd9fe1c",
+    "window-node-2/evidence.json": "1d9701cc1cac22d749a6d6b746a81505e007a0e7ad22c79dc26d99ae06ec4727",
+    "window-node-2/gpu-samples.csv.gz": "fbe02d718a4f4bdb62d0ab4b880c7ab5d098bf707716249a61652d8ebb2d84de",
+    "window-node-3/evidence.json": "66d0ed9e6b761d24e90ac9b5141767f9940e6b85faa47c02ac7d3f607971ab8d",
+    "window-node-3/gpu-samples.csv.gz": "e29a5d195ec6960b55e13f6533af5b344c785c5428f41133bf555a5c787e6f86"
+  },
+  "reused_sources_sha256": {
+    "capture.py": "89d1438a9f692d5f56872bcc9905834d9fee33c631c0b63c301453652f97296c",
+    "export_window.py": "990134ea1b27fbeb6d603d579113edf3e87b00a1bab8c0c461be0cce475899d6"
+  },
+  "private_archives_sha256": {
+    "live-32-receipts-complete.tar.gz": "76b91e31423347dfc77ca225d445e974827a729cf2bf7303d13171164e8e6748",
+    "transport-32-public-source.tar.gz": "1af7a6fb43d88d92fedc44e4a594314bfd8918092dc5740c48e76f2aba281ba0"
+  },
+  "numeric_export_python": "3.13.15"
+}

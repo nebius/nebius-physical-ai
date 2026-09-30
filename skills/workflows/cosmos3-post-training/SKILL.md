@@ -77,8 +77,11 @@ measurement-time scope; the later checkpoint-linked quality records supersede
 pending campaign status without rewriting those bytes.
 
 The reserved two-node run has sixteen-rank NCCL/InfiniBand proof, attributed
-training processes and full-run telemetry. Native Slurm was tested; Soperator
-has passed plan/source preflight but has not been deployed for this recipe.
+training processes and full-run telemetry. Native Slurm was tested. The four-node extension now has
+successful `npa soperator` deployment and CUDA qualification on all 32 GPUs; see
+`docs/workbench/evidence/cosmos3-wam-soperator-32/README.md`. Initial 32-rank WAM training also passed with process attribution and
+InfiniBand evidence in `docs/workbench/evidence/cosmos3-wam-live-training-32/README.md`.
+Full-schedule timing and quality measurements remain pending.
 One FP32-plus-EMA B200 failed
 before its first update. Four active B200s subsequently passed NCCL and initial
 optimizer updates on an exclusive eight-GPU VM; see
@@ -86,8 +89,9 @@ optimizer updates on an exclusive eight-GPU VM; see
 cancelled at observed update 535 after the requested topology was clarified as
 four nodes with eight GPUs each: 32 B200s total. Its checkpoint is retained and
 its partial results are excluded from scaling. Two GPUs are untested. The
-32-GPU extension is blocked on reserved capacity; its protocol and NPA plan
-receipt are in `docs/workbench/evidence/cosmos3-wam-plan-32/README.md`. Use the
+32-GPU protocol and original capacity rejection are retained in
+`docs/workbench/evidence/cosmos3-wam-plan-32/README.md`. Capacity subsequently
+became available and the deployment completed. Use the
 existing `npa soperator` lifecycle for this extension; record runtime differences
 from native Slurm and do not treat plan/source checks as deployment proof.
 Current upstream LIBERO already describes two-node training; avoid claiming

@@ -122,7 +122,7 @@ def _plan(args):
 
 def _environment(settings, run):
     root = Path(settings["shared_root"])
-    return dict(
+    env = dict(
         os.environ,
         COSMOS_TRAINING="1",
         LD_LIBRARY_PATH="",
@@ -140,6 +140,13 @@ def _environment(settings, run):
         IMAGINAIRE_OUTPUT_ROOT=str(run / "output"),
         OMP_NUM_THREADS="4",
     )
+    debug_file = env.get("NCCL_DEBUG_FILE")
+    if debug_file and Path(debug_file).is_fifo():
+        # Soperator's FIFO reader exits when the preflight's last writer closes.
+        # A later trainer would block opening that FIFO; retain per-process logs.
+        node = int(env["SLURM_NODEID"])
+        env["NCCL_DEBUG_FILE"] = str(run / f"nccl-node-{node}-%p.log")
+    return env
 
 
 def _native_options(settings, run):
