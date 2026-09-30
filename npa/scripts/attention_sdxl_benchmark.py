@@ -62,8 +62,8 @@ def _generate(pipeline, function, case, steps, record_shapes):
 
 
 def _case(pipeline, function, case, args):
-    # Coverage and compilation occur in a separate, untimed generation.
-    _, _, _, processor = _generate(pipeline, function, case, args.steps, True)
+    # Keep compilation/coverage cost visible but outside steady-state samples.
+    warmup, _, _, processor = _generate(pipeline, function, case, args.steps, True)
     coverage = [
         {"qkv": shape, "calls": count}
         for shape, count in sorted(processor.shapes.items())
@@ -81,6 +81,7 @@ def _case(pipeline, function, case, args):
         print(case["name"], repeat, sample["seconds"], flush=True)
     return {
         **case,
+        "warmup": warmup,
         "coverage": coverage,
         "samples": samples,
         "median_seconds": statistics.median(s["seconds"] for s in samples),

@@ -136,6 +136,25 @@ def test_comparison_retains_regressions_and_block_variance(backend):
     assert result["cases"][0]["fa4"]["block_medians"] == [2.5, 2.5]
 
 
+def test_first_generation_cost_is_retained_outside_steady_state(backend):
+    comparison = importlib.import_module("compare_attention_sdxl")
+    reports = _reports()
+    for index, report in enumerate(reports):
+        report["cases"][0]["warmup"] = {"seconds": 10 + index}
+    result = comparison.comparison(reports)
+    assert result["cases"][0]["fa2_time_over_fa4_time"] == 0.8
+    assert result["cases"][0]["fa4"]["warmup_seconds"] == [11, 12]
+
+
+def test_a_source_overlay_cannot_hide_behind_the_same_image_id(backend):
+    comparison = importlib.import_module("compare_attention_sdxl")
+    reports = _reports()
+    reports[1]["environment"]["attention_sources_sha256"] = {"rtx_inference": "first"}
+    reports[2]["environment"]["attention_sources_sha256"] = {"rtx_inference": "second"}
+    with pytest.raises(ValueError, match="attention implementations"):
+        comparison.comparison(reports)
+
+
 @pytest.mark.parametrize(
     "mutation",
     [

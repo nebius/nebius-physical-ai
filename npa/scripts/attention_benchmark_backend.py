@@ -120,6 +120,16 @@ def _package_versions(backend):
     return {name: metadata.version(name) for name in sorted(names)}
 
 
+def _attention_sources(backend):
+    if backend != "fa4":
+        return {}
+    from flash_attn import rtx
+
+    return {
+        "rtx_inference": hashlib.sha256(Path(rtx.__file__).read_bytes()).hexdigest()
+    }
+
+
 def benchmark_environment(backend):
     """Capture portable software and GPU identity for comparing like environments.
 
@@ -151,5 +161,6 @@ def benchmark_environment(backend):
         "cuda": torch.version.cuda,
         "flash_attention_commit": os.getenv("NPA_FLASH_ATTN_COMMIT"),
         "benchmark_sources_sha256": _benchmark_sources(),
+        "attention_sources_sha256": _attention_sources(backend),
         "packages": _package_versions(backend),
     }

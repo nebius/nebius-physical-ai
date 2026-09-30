@@ -18,7 +18,7 @@ def _signature(report):
         "environment": {
             key: value
             for key, value in environment.items()
-            if key not in ("image_id", "packages")
+            if key not in ("image_id", "packages", "attention_sources_sha256")
         },
         "packages": packages,
         "model": report["model"],
@@ -29,7 +29,7 @@ def _signature(report):
             {
                 key: value
                 for key, value in case.items()
-                if key not in ("samples", "median_seconds")
+                if key not in ("samples", "median_seconds", "warmup")
             }
             for case in report["cases"]
         ],
@@ -58,6 +58,12 @@ def _validate(reports):
             raise ValueError("Compare each tile candidate separately")
         if len({run.get("tuning") for run in runs}) != 1:
             raise ValueError("Compare each tuning profile separately")
+        sources = runs[0]["environment"].get("attention_sources_sha256")
+        if any(
+            run["environment"].get("attention_sources_sha256") != sources
+            for run in runs
+        ):
+            raise ValueError("Do not mix attention implementations within a backend")
         if any(
             run["environment"]["packages"] != runs[0]["environment"]["packages"]
             for run in runs
@@ -79,11 +85,18 @@ def _statistics(runs, index):
     ):
         raise ValueError("Timings must be finite and positive")
     medians = [statistics.median(block) for block in blocks]
+    warmups = [run["cases"][index].get("warmup") for run in runs]
+    if any(warmups) and not all(warmups):
+        raise ValueError("Do not mix reports with and without warmup measurements")
+    warmup_seconds = [sample["seconds"] for sample in warmups if sample is not None]
+    if any(not math.isfinite(value) or value <= 0 for value in warmup_seconds):
+        raise ValueError("Warmup timings must be finite and positive")
     return {
         "median_seconds": statistics.median(medians),
         "block_medians": medians,
         "minimum_seconds": min(min(block) for block in blocks),
         "maximum_seconds": max(max(block) for block in blocks),
+        "warmup_seconds": warmup_seconds,
     }
 
 

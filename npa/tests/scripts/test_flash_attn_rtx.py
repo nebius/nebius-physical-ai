@@ -29,6 +29,12 @@ def tuned(monkeypatch):
     interface._flash_attn_fwd = Mock(return_value=("tuned-output", None))
     monkeypatch.setitem(sys.modules, "flash_attn.cute", cute)
     monkeypatch.setitem(sys.modules, "flash_attn.cute.interface", interface)
+    cache = ModuleType("flash_attn.cute.cache_utils")
+    cache.get_jit_cache = lambda name: {}
+    utilities = ModuleType("flash_attn.cute.utils")
+    utilities.AuxData = lambda: (None, None)
+    monkeypatch.setitem(sys.modules, "flash_attn.cute.cache_utils", cache)
+    monkeypatch.setitem(sys.modules, "flash_attn.cute.utils", utilities)
     monkeypatch.setenv("NPA_FLASH_ATTN_COMMIT", module._COMMIT)
     monkeypatch.setattr(metadata, "version", lambda name: module._VERSION)
     monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
@@ -37,13 +43,23 @@ def tuned(monkeypatch):
     return module, cute.flash_attn_func, interface._flash_attn_fwd
 
 
-def _tensor(sequence=4096, heads=10, dimension=64, dtype=torch.float16):
+def _tensor(
+    sequence=4096,
+    heads=10,
+    dimension=64,
+    dtype=torch.float16,
+    *,
+    contiguous=False,
+    pointer=16,
+):
     return SimpleNamespace(
         shape=(2, sequence, heads, dimension),
         ndim=4,
         dtype=dtype,
         device=torch.device("cuda:0"),
         requires_grad=False,
+        is_contiguous=lambda: contiguous,
+        data_ptr=lambda: pointer,
     )
 
 
@@ -56,6 +72,50 @@ def test_selected_inference_uses_measured_tile(tuned):
         q, q, q, tile_mn=(64, 128), causal=False, pack_gqa=False, num_splits=1
     )
     native.assert_not_called()
+
+
+def test_direct_launch_reuses_code_but_not_tensors_or_output(tuned, monkeypatch):
+    module, native, tiled = tuned
+    launch = Mock()
+    compile_kernel = Mock(return_value=launch)
+    monkeypatch.setattr(module, "_compile_kernel", compile_kernel)
+    outputs = [object(), object()]
+    monkeypatch.setattr(torch, "empty_like", Mock(side_effect=outputs))
+    first, second = (_tensor(contiguous=True, pointer=p) for p in (16, 32))
+    function = module.make_inference_attention()
+    with torch.inference_mode():
+        assert function(first, first, first) is outputs[0]
+        assert function(second, second, second) is outputs[1]
+    assert compile_kernel.call_count == 1
+    assert launch.call_args_list[0].args[:4] == (first, first, first, outputs[0])
+    assert launch.call_args_list[1].args[:4] == (second, second, second, outputs[1])
+    native.assert_not_called()
+    tiled.assert_not_called()
+
+
+def test_unaligned_storage_retains_native_validation(tuned, monkeypatch):
+    module, native, tiled = tuned
+    compile_kernel = Mock()
+    monkeypatch.setattr(module, "_compile_kernel", compile_kernel)
+    query = _tensor(contiguous=True, pointer=18)
+    with torch.inference_mode():
+        assert module.make_inference_attention()(query, query, query) == "tuned-output"
+    tiled.assert_called_once()
+    compile_kernel.assert_not_called()
+    native.assert_not_called()
+
+
+def test_direct_compile_failure_never_substitutes_a_backend(tuned, monkeypatch):
+    module, native, tiled = tuned
+    monkeypatch.setattr(torch, "empty_like", Mock(return_value=object()))
+    monkeypatch.setattr(
+        module, "_compile_kernel", Mock(side_effect=RuntimeError("compile failed"))
+    )
+    query = _tensor(contiguous=True)
+    with torch.inference_mode(), pytest.raises(RuntimeError, match="compile failed"):
+        module.make_inference_attention()(query, query, query)
+    native.assert_not_called()
+    tiled.assert_not_called()
 
 
 def test_unqualified_shape_keeps_native_fa4(tuned):
