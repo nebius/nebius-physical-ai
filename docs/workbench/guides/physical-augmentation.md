@@ -85,7 +85,10 @@ cube use 16 position iterations and one velocity iteration, verified against
 their composed USD attributes before collection. The upstream Franka requests
 zero velocity iterations; the explicit velocity solve addresses contact velocity
 errors without loosening the 3 cm/s stable-hold threshold or native validity
-checks. See NVIDIA's [solver guidance](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/107.3/dev_guide/simulation_control/simulation_control.html).
+checks. Physics uses 2.5 ms steps (400 Hz) for finer contact resolution, while
+actions and camera frames stay at 50 Hz through eight physics substeps per action.
+The runtime verifies both clocks before collection. See NVIDIA's
+[solver guidance](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/107.3/dev_guide/simulation_control/simulation_control.html).
 
 ## What the artifacts mean
 

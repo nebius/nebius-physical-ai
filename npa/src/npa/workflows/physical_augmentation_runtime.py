@@ -34,6 +34,7 @@ def _configuration(recipe: dict, condition: str):
     config.scene.num_envs = 1
     config.seed = recipe["seed"]
     config.sim.device = "cuda:0"
+    _configure_clock(config, recipe)
     config.episode_length_s = (
         (recipe["episode_steps"] + 100) * config.sim.dt * config.decimation
     )
@@ -46,6 +47,13 @@ def _configuration(recipe: dict, condition: str):
     configure_scene(config, recipe)
     configure_validity(config, recipe)
     return config
+
+
+def _configure_clock(config, recipe):
+    clock = recipe["physics_solver"]
+    config.sim.dt = clock["physics_dt_s"]
+    config.decimation = round(clock["control_dt_s"] / config.sim.dt)
+    config.sim.render_interval = config.decimation
 
 
 def _configure_object(config, case):

@@ -58,15 +58,17 @@ def make_recipe(run_id: str, seed: int, episodes: int, steps: int) -> dict:
 
 def _semantics() -> dict:
     return {
-        "controller": "measured-state-cartesian-lift-v7",
+        "controller": "measured-state-cartesian-lift-v8",
         "gripper_servo": {"native_velocity_fraction": 0.25, "effort_limit_n": 20.0},
         "physics_solver": {
             "type": "TGS",
             "external_forces_every_iteration": True,
             "position_iterations": 16,
             "velocity_iterations": 1,
+            "physics_dt_s": 0.0025,
+            "control_dt_s": 0.02,
         },
-        "presentation": {"scene": "studio-table-v1", "width": 1280, "height": 720},
+        "presentation": {"scene": "studio-table-v2", "width": 1280, "height": 720},
         "tcp_contract": {"body": "panda_hand", "offset_m": [0.0, 0.0, 0.107]},
         "action_names": list(ACTION_NAMES),
         "action_semantics": "absolute TCP pose in robot root frame, xyzw; gripper +1 open/-1 close",

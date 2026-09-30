@@ -14,6 +14,16 @@ from npa.workflows.physical_augmentation_contract import make_recipe
 from npa.workflows.physical_augmentation_runtime import _configure_solver
 
 
+def test_contact_resolution_preserves_control_and_camera_frequency():
+    from npa.workflows.physical_augmentation_runtime import _configure_clock
+
+    config = NS(sim=NS(dt=0.01, render_interval=2), decimation=2)
+    _configure_clock(config, make_recipe("test", 42, 1, 600))
+    assert config.sim.dt == 0.0025
+    assert config.decimation == config.sim.render_interval == 8
+    assert config.sim.dt * config.decimation == 0.02
+
+
 def test_solver_enables_native_velocity_iterations_without_relaxing_acceptance():
     robot, object_body = NS(), NS()
     config = NS(
@@ -69,6 +79,8 @@ def _recording(root, condition, count):
         "next_tcp": np.tile([0.5, 0, 0.2], (count, 1)),
         "next_velocity": np.zeros((count, 3)),
     }
+    if condition == "slippery":
+        arrays["next_velocity"][:, 0] = 0.04
     for name, values in arrays.items():
         np.save(folder / f"{name}.npy", values)
     return {
@@ -109,6 +121,7 @@ def test_real_encoding_retains_failed_trial_and_decodes_comparison(tmp_path):
     assert payload["trials"][-1]["success"] is False
     assert payload["trials"][-1]["video"].startswith("data:video/mp4;base64,")
     assert payload["trials"][0]["telemetry"]["hold_steps"][-1] == 32
+    assert payload["trials"][-1]["telemetry"]["hold_steps"][-1] == 0
     with pytest.raises(ValueError, match="differs"):
         demo._verify_video(
             output / "demo.mp4", {"length": 19}, {"width": 1920, "height": 1280}, 30

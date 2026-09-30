@@ -76,7 +76,7 @@ def orient_camera(env) -> None:
 
     origin = env.scene.env_origins[:1]
     eye = torch.tensor([[1.25, -1.2, 0.95]], device=origin.device) + origin
-    target = torch.tensor([[0.32, 0, 0.22]], device=origin.device) + origin
+    target = torch.tensor([[0.32, 0, 0.35]], device=origin.device) + origin
     env.scene["npa_rollout_camera"].set_world_poses_from_view(eyes=eye, targets=target)
     env.sim.render()
 
@@ -119,6 +119,9 @@ def solver_evidence(env, recipe: dict) -> dict:
     if (
         env.cfg.sim.physics.solver_type != 1
         or env.cfg.sim.physics.enable_external_forces_every_iteration is not True
+        or abs(env.physics_dt - expected["physics_dt_s"]) > 1e-12
+        or abs(env.step_dt - expected["control_dt_s"]) > 1e-12
+        or env.cfg.sim.render_interval != env.cfg.decimation
     ):
         raise ValueError("Native solver differs from sealed TGS configuration")
     for name, schema, prefix in (
