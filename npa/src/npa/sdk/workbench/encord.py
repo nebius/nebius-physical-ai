@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from npa.workbench.encord.storage import ArtifactStore
+from npa.workbench.encord.label_import import import_labels
+from npa.workbench.encord.label_render import render_labels
 
 from npa.workbench.encord.schemas import (
     DEFAULT_MEDIA_FILTER,
@@ -116,4 +118,6 @@ __all__ = [
     "pull",
     "push",
     "verify_roundtrip",
+    "import_labels",
+    "render_labels",
 ]

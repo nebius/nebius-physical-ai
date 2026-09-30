@@ -35,7 +35,8 @@ npa workbench encord push \
 Register mode retains S3 as the dataset of record. `--transfer upload` is an
 explicit alternative that creates an Encord-managed copy with separate
 retention and possible duplication. Never retry a registration failure as an
-upload.
+upload. If S3 has no full-object SHA-256, register reads every source byte
+through the NPA client and requires `s3:GetObject`; it has no hashing opt-out.
 
 Require exact source URI, complete object key or URL, namespaced metadata,
 stable item UUID, or a sidecar assertion. Never use a filename or basename as
@@ -46,9 +47,26 @@ identity. Stop when exact signals conflict.
 The default `--label-export none` avoids label initialization. Use
 `--label-export initialize` only when the operator explicitly selects and
 confirms that remote Encord label-state mutation. Retain the resulting manifest
-as evidence.
+as evidence. New pulls emit `npa.encord.pull_manifest.v2`, with exact transferred
+`source_size` and separate `provider_reported_size`. Verification and rendering
+continue to read v1 without rewriting its size fields.
 
-## Verify
+## Labeling demo
+
+Partner workflows and their runbook live in `workflows/partners/encord/`.
+`encord-labeling-demo.yaml` runs push → import-labels → project pull with label
+initialization → media verification → render-labels. Import creates a new
+ontology and project from a SHA-256-bound video plan (v1 boxes; v2 box/polygon
+tracks and temporal classifications). It refuses
+existing project titles and output receipts. Rendering compares the actual
+exported row/object identities, frames, classes, coordinates, and classification
+options/ranges, then produces
+annotated MP4s from those exported labels. These are unreviewed programmatic
+prelabels, not human-approved annotations. Keep that distinction in demos.
+Select the new project and S3 targets before execution. Keep exact remote
+identities and signed label-export media URLs in private evidence.
+
+## Verify transport
 
 Claim a roundtrip only when `verify-roundtrip` consumes both final artifacts
 and passes exact identity, destination existence, size, and compatible checksum.
