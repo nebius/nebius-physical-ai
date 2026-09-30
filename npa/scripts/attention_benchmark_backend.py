@@ -60,13 +60,21 @@ def attention_backend(backend, tile=None, tuning=None):
     return fa4
 
 
+def _pinned_version():
+    version, separator, source = metadata.version("flash-attn-4").partition("+g")
+    # Match the pinned source even when Git chooses a longer unique abbreviation.
+    return (
+        version == FA4_VERSION.partition("+g")[0]
+        and bool(separator)
+        and len(source) >= 7
+        and FA_COMMIT.startswith(source)
+    )
+
+
 def _tiled_inference(tile):
     import torch
 
-    if (
-        os.getenv("NPA_FLASH_ATTN_COMMIT") != FA_COMMIT
-        or metadata.version("flash-attn-4") != FA4_VERSION
-    ):
+    if os.getenv("NPA_FLASH_ATTN_COMMIT") != FA_COMMIT or not _pinned_version():
         raise RuntimeError("Experimental tiles require the exact pinned FA4 source")
     if tuple(tile) not in ((64, 64), (64, 128), (128, 64), (128, 128)):
         raise ValueError("Unqualified tile candidate")

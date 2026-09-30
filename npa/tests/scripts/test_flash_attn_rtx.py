@@ -158,6 +158,31 @@ def test_revision_and_device_guards(tuned, monkeypatch, mismatch):
     kernel.assert_not_called()
 
 
+@pytest.mark.parametrize("length", [7, 8, 40])
+def test_git_can_lengthen_the_pinned_revision_abbreviation(tuned, monkeypatch, length):
+    module, _, _ = tuned
+    version = "4.0.0b33.dev10+g" + module._COMMIT[:length]
+    monkeypatch.setattr(metadata, "version", lambda name: version)
+    assert callable(module.make_inference_attention())
+
+
+@pytest.mark.parametrize(
+    "version",
+    [
+        "4.0.0b33.dev10",
+        "4.0.0b33.dev10+geed197",
+        "4.0.0b33.dev10+geed1971e",
+        "4.0.0b33.dev10+geed1971.d20260930",
+        "4.0.0b33.dev11+geed1971",
+    ],
+)
+def test_metadata_must_still_identify_the_qualified_source(tuned, monkeypatch, version):
+    module, _, _ = tuned
+    monkeypatch.setattr(metadata, "version", lambda name: version)
+    with pytest.raises(RuntimeError, match="exact pinned"):
+        module.make_inference_attention()
+
+
 @pytest.mark.parametrize(
     "options",
     [

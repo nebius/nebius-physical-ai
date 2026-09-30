@@ -45,11 +45,19 @@ class _Runtime(NamedTuple):
     auxiliary_data: object
 
 
+def _pinned_version():
+    version, separator, source = metadata.version("flash-attn-4").partition("+g")
+    # Git lengthens its abbreviation as the repository grows; the pin is unchanged.
+    return (
+        version == _VERSION.partition("+g")[0]
+        and bool(separator)
+        and len(source) >= 7
+        and _COMMIT.startswith(source)
+    )
+
+
 def _device(device):
-    if (
-        os.getenv("NPA_FLASH_ATTN_COMMIT") != _COMMIT
-        or metadata.version("flash-attn-4") != _VERSION
-    ):
+    if os.getenv("NPA_FLASH_ATTN_COMMIT") != _COMMIT or not _pinned_version():
         raise RuntimeError("RTX inference tuning requires the exact pinned FA4 source")
     selected = torch.device("cuda" if device is None else device)
     if selected.type != "cuda" or not torch.cuda.is_available():

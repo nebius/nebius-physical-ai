@@ -77,6 +77,16 @@ def test_fa2_cannot_accept_fa4_tile_argument(backend):
         backend.attention_backend("fa2", (64, 64))
 
 
+@pytest.mark.parametrize("suffix,accepted", [("eed1971f", True), ("eed1971e", False)])
+def test_tile_version_guard_checks_abbreviated_source(
+    backend, monkeypatch, suffix, accepted
+):
+    monkeypatch.setattr(
+        backend.metadata, "version", lambda name: "4.0.0b33.dev10+g" + suffix
+    )
+    assert backend._pinned_version() is accepted
+
+
 def test_math_reference_preserves_causal_gqa(backend):
     torch = pytest.importorskip("torch")
     benchmark = importlib.import_module("attention_kernel_benchmark")
