@@ -41,6 +41,9 @@ def _write_html(output, evidence):
         template.replace("__FOUNDATION_EVIDENCE__", payload)
     )
     (output / "evidence.json").write_text(json.dumps(evidence, indent=2))
+    (output / "license-apache-2.0.txt").write_bytes(
+        Path(__file__).with_name("apache-2.0.txt").read_bytes()
+    )
     (output / "attribution.txt").write_text(
         "Public LIBERO demonstrations from lerobot/libero. License: Apache-2.0.\n"
         "https://www.apache.org/licenses/LICENSE-2.0\n"

@@ -18,7 +18,8 @@ bash npa/scripts/run-foundation-training-preview.sh /tmp/foundation-training-pre
 ```
 
 This produces an offline `index.html`, a sixty-second 1920×1080 `demo.mp4`, a
-poster, source clips, attribution, an evidence manifest and SHA256 checksums.
+poster, source clips, attribution, the Apache-2.0 license, an evidence manifest
+and SHA256 checksums.
 Use a new destination. Add `--html-only` to omit MP4 export. Dependencies use the
 existing `adapter` and `policy-demo` extras and Playwright Chromium. On minimal
 Linux hosts, install Chromium system dependencies with
