@@ -10,6 +10,8 @@ evidence of improved robot-policy performance.
 
 ## Run
 
+![Offline comparison viewer with actual RTX recordings](../evidence/physical-augmentation-demo-preview.png)
+
 From an editable checkout, launch and download the complete demo with one command:
 
 ```bash
@@ -123,28 +125,33 @@ or an arbitrary robot's policy action space.
 
 ## Native validation
 
-A complete run on one NVIDIA RTX PRO 6000 Blackwell Server Edition used Isaac
-Lab 3.0.0b2.post1 and three paired reset seeds per condition. The unchanged
-physical acceptance checks produced:
+The one-command runner completed all three stages on one NVIDIA RTX PRO 6000
+Blackwell Server Edition with Isaac Lab 3.0.0b2.post1. Three paired reset seeds
+per condition produced **12 accepted trials out of 12 attempts** using the unchanged
+physical acceptance checks, 400 Hz physics, and 50 Hz recorded actions/video:
 
 | Condition | Accepted / attempted |
 |---|---:|
-| Nominal | 0 / 3 |
-| Displaced object | 2 / 3 |
-| Double mass | 1 / 3 |
-| Lower friction | 0 / 3 |
+| Nominal | 3 / 3 |
+| Displaced object | 3 / 3 |
+| Double mass | 3 / 3 |
+| Lower friction | 3 / 3 |
 
-This validates collection and selective export, not a reliable demonstration
-controller across all conditions. All nine rejected attempts remain in the
-collection and report. Qualify a task-specific controller before collecting a
-training dataset; these three seeds do not establish generalization.
+These paired seeds demonstrate this scripted reference task; they do not
+establish generalization or policy improvement. Every attempt remains in the
+collection, report, and interactive viewer. Qualify a task-specific controller
+before collecting a training dataset.
 
 The [sanitized execution evidence](../evidence/physical-augmentation-rtx.json)
-records the measured physics, native validity checks, source hashes, and
-independent dataset/video/Rerun readback. All 936 exported state/action pairs
-matched their source arrays; all three videos decoded at 640 × 480 and 50 fps;
-all 54 dynamic Rerun entities passed inspection. The preview below is an actual
-frame from an accepted displaced-object demonstration.
+records native solver/clock readback, measured physics, validity checks, source
+hashes, and independent uploaded-artifact inspection. All 3,564 exported
+state/action pairs match their source arrays; all 12 videos decode at
+1280 × 720 and 50 fps; all 216 dynamic Rerun entities pass inspection.
+Every displayed action and measurement matches the recorded simulator data.
+Offline Chromium checks cover all three resets, playback, scrubbing, data
+download, and mobile layout without JavaScript errors.
+
+The preview below is an actual frame from an accepted displaced-object lift.
 
 ![Accepted displaced-object lift](../evidence/physical-augmentation-rtx-preview.png)
 

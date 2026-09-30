@@ -1,49 +1,121 @@
 {
-  "accepted": 3,
+  "accepted": 12,
   "artifact_audit": {
-    "collected_module_hashes_match_export_and_validated_checkout": true,
     "decoded_videos": [
       {
-        "height": 480,
-        "nb_read_frames": "317",
+        "height": 720,
+        "nb_read_frames": "302",
         "path": "lerobot/videos/observation.images.workspace/chunk-000/file-000.mp4",
         "r_frame_rate": "50/1",
-        "sha256": "027b942468a5d32ba528485339a7b2b5a6cfa638b358d4b95a643ab071af0627",
-        "width": 640
+        "sha256": "b4fb5bd522f0b7f120c1d03944902b3441ab70f9c55799c79d8e2fb3465669eb",
+        "width": 1280
       },
       {
-        "height": 480,
-        "nb_read_frames": "315",
+        "height": 720,
+        "nb_read_frames": "299",
         "path": "lerobot/videos/observation.images.workspace/chunk-000/file-001.mp4",
         "r_frame_rate": "50/1",
-        "sha256": "d1ef5db3331cfc1471c183772c321bb0d97a9a658148e13f57b8abb223fb8af5",
-        "width": 640
+        "sha256": "64acc391a89f1ef2562963440d1564c548a7cd1170ab690a2c6bd389e94f2371",
+        "width": 1280
       },
       {
-        "height": 480,
+        "height": 720,
         "nb_read_frames": "304",
         "path": "lerobot/videos/observation.images.workspace/chunk-000/file-002.mp4",
         "r_frame_rate": "50/1",
-        "sha256": "322afd1232a00773ee2f952e82fbf051007f77df2e5e4cd9b59194842324c6e9",
-        "width": 640
+        "sha256": "eeb3771d98f7a0dc5e4d473b228bb1e2d5227f53d4cc30e52629727412f5a557",
+        "width": 1280
+      },
+      {
+        "height": 720,
+        "nb_read_frames": "295",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-003.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "d4333c4bf0e9c37ff94f88d25906e0286ae617216bfd6f30efecd6b09f65770e",
+        "width": 1280
+      },
+      {
+        "height": 720,
+        "nb_read_frames": "295",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-004.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "01dda39feed223056a820d7c4def72f262954f12ad5f48e19c5ce48c6fab9839",
+        "width": 1280
+      },
+      {
+        "height": 720,
+        "nb_read_frames": "295",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-005.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "48b64c2b3df45492a5d378ffeae78c844906f7fa61fc27e596a544fc1df198e9",
+        "width": 1280
+      },
+      {
+        "height": 720,
+        "nb_read_frames": "297",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-006.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "4d544856aa6bc81c32f6351d8a2467bfc4941888e5ffb013a524b41b3104f11c",
+        "width": 1280
+      },
+      {
+        "height": 720,
+        "nb_read_frames": "297",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-007.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "2586e7a94270ac99bcb2d369bbd2a019c30d69c08a99285b647e9691a37363ac",
+        "width": 1280
+      },
+      {
+        "height": 720,
+        "nb_read_frames": "297",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-008.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "2e1faf6c92cf8a22e4972e50a74a0a93124dd20f3bf791f297d4e489bd32caf7",
+        "width": 1280
+      },
+      {
+        "height": 720,
+        "nb_read_frames": "294",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-009.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "9378cb7e905d9e2c112707dd9e2364fb348355278d53a8554960db441d405fee",
+        "width": 1280
+      },
+      {
+        "height": 720,
+        "nb_read_frames": "295",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-010.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "c4bb5e09cce5b51a8c1f10012ed6e0a2e9d5ffb11d9fd027a720deb385a33e3d",
+        "width": 1280
+      },
+      {
+        "height": 720,
+        "nb_read_frames": "294",
+        "path": "lerobot/videos/observation.images.workspace/chunk-000/file-011.mp4",
+        "r_frame_rate": "50/1",
+        "sha256": "8fa915e76e1fb6e9fa9779f5a97b4eed080b9589d91754882bfb1d47211c522b",
+        "width": 1280
       }
     ],
     "exported_actions_and_states_match_source": true,
-    "lerobot_rows": 936,
+    "lerobot_rows": 3564,
     "rerun_application_id": "npa-franka-rl",
     "rerun_cli_verify_passed": true,
-    "rerun_dynamic_entities": 54,
+    "rerun_dynamic_entities": 216,
     "rerun_entity_rows_match_report": true,
     "rerun_gripper_values_and_timelines_match_source": true,
     "rerun_recording_id_matches_run": true,
     "rerun_static_provenance_matches_export": true,
     "uploaded_report_checksums_verified": true,
+    "workflow_artifact_discovery_contains_declared_demo": true,
     "workflow_artifact_discovery_contains_declared_recording": true
   },
   "artifact_sha256": {
-    "accepted-provenance.json": "2c50c6a282d41dd6366c5eaddec9ed027d558063736a8b44ac1ef364facb4a82",
-    "demonstrations.rrd": "a062ed644da6ba928e74347497cecefb34cd6ef146e00cccbc28907879ab4b8d",
-    "report.json": "6e7f4071d220c7a9cd3bae0534c39e67e91967e98d8e435de0f0578e6892d50b"
+    "accepted-provenance.json": "ff55a39d477e6b22f45e0e714650a0c5379f40279629c0313f6139f6779a144c",
+    "demonstrations.rrd": "e789e9a9b54dbbab767a8ee92a7e009c0354b67c22d5447b4e3f59eec4185924",
+    "report.json": "71f83f4c1a81151f6a6159b5b534f7c26c2f5e0dd3d359fd6311bda60d2d0483"
   },
   "attempted": 12,
   "attempts": [
@@ -52,11 +124,11 @@
       "condition": "displaced",
       "controller_phase": 3,
       "initial_object_m": [
-        0.544517993927002,
-        0.0604032538831234,
-        0.021999526768922806
+        0.5445184111595154,
+        0.06040230393409729,
+        0.02499997802078724
       ],
-      "length": 317,
+      "length": 302,
       "longest_hold_steps": 30,
       "seed": 42,
       "success": true,
@@ -67,14 +139,14 @@
       "condition": "displaced",
       "controller_phase": 3,
       "initial_object_m": [
-        0.524918794631958,
-        0.061873678117990494,
-        0.021999552845954895
+        0.5249192714691162,
+        0.06187272071838379,
+        0.02499997988343239
       ],
-      "length": 600,
-      "longest_hold_steps": 0,
+      "length": 299,
+      "longest_hold_steps": 30,
       "seed": 43,
-      "success": false,
+      "success": true,
       "terminated": false
     },
     {
@@ -82,27 +154,27 @@
       "condition": "displaced",
       "controller_phase": 3,
       "initial_object_m": [
-        0.5458241701126099,
-        0.08315888047218323,
-        0.021999569609761238
-      ],
-      "length": 315,
-      "longest_hold_steps": 30,
-      "seed": 44,
-      "success": true,
-      "terminated": false
-    },
-    {
-      "attempt": 0,
-      "condition": "heavy",
-      "controller_phase": 3,
-      "initial_object_m": [
-        0.5045179724693298,
-        -0.019596733152866364,
-        0.021999530494213104
+        0.5458246469497681,
+        0.08315790444612503,
+        0.02499997802078724
       ],
       "length": 304,
       "longest_hold_steps": 30,
+      "seed": 44,
+      "success": true,
+      "terminated": false
+    },
+    {
+      "attempt": 0,
+      "condition": "heavy",
+      "controller_phase": 3,
+      "initial_object_m": [
+        0.5045183897018433,
+        -0.019597690552473068,
+        0.02499997988343239
+      ],
+      "length": 295,
+      "longest_hold_steps": 30,
       "seed": 42,
       "success": true,
       "terminated": false
@@ -112,14 +184,14 @@
       "condition": "heavy",
       "controller_phase": 3,
       "initial_object_m": [
-        0.48491889238357544,
-        -0.018126463517546654,
-        0.021999593824148178
+        0.4849192202091217,
+        -0.018127277493476868,
+        0.02499997988343239
       ],
-      "length": 600,
-      "longest_hold_steps": 0,
+      "length": 295,
+      "longest_hold_steps": 30,
       "seed": 43,
-      "success": false,
+      "success": true,
       "terminated": false
     },
     {
@@ -127,14 +199,14 @@
       "condition": "heavy",
       "controller_phase": 3,
       "initial_object_m": [
-        0.5058242082595825,
-        0.0031588689889758825,
-        0.02199954353272915
+        0.505824625492096,
+        0.003157907398417592,
+        0.02499997988343239
       ],
-      "length": 600,
-      "longest_hold_steps": 0,
+      "length": 295,
+      "longest_hold_steps": 30,
       "seed": 44,
-      "success": false,
+      "success": true,
       "terminated": false
     },
     {
@@ -142,14 +214,14 @@
       "condition": "nominal",
       "controller_phase": 3,
       "initial_object_m": [
-        0.5045179724693298,
-        -0.01959671638906002,
-        0.02199954353272915
+        0.5045183897018433,
+        -0.019597690552473068,
+        0.02499997988343239
       ],
-      "length": 600,
-      "longest_hold_steps": 0,
+      "length": 297,
+      "longest_hold_steps": 30,
       "seed": 42,
-      "success": false,
+      "success": true,
       "terminated": false
     },
     {
@@ -157,14 +229,14 @@
       "condition": "nominal",
       "controller_phase": 3,
       "initial_object_m": [
-        0.48491889238357544,
-        -0.018126463517546654,
-        0.021999593824148178
+        0.4849192202091217,
+        -0.018127277493476868,
+        0.02499997988343239
       ],
-      "length": 600,
-      "longest_hold_steps": 0,
+      "length": 297,
+      "longest_hold_steps": 30,
       "seed": 43,
-      "success": false,
+      "success": true,
       "terminated": false
     },
     {
@@ -172,14 +244,14 @@
       "condition": "nominal",
       "controller_phase": 3,
       "initial_object_m": [
-        0.5058242082595825,
-        0.003158859210088849,
-        0.021999582648277283
+        0.505824625492096,
+        0.003157907398417592,
+        0.02499997988343239
       ],
-      "length": 600,
-      "longest_hold_steps": 0,
+      "length": 297,
+      "longest_hold_steps": 30,
       "seed": 44,
-      "success": false,
+      "success": true,
       "terminated": false
     },
     {
@@ -187,14 +259,14 @@
       "condition": "slippery",
       "controller_phase": 3,
       "initial_object_m": [
-        0.5045179724693298,
-        -0.01959671638906002,
-        0.02199954353272915
+        0.5045183897018433,
+        -0.019597690552473068,
+        0.02499997988343239
       ],
-      "length": 600,
-      "longest_hold_steps": 0,
+      "length": 294,
+      "longest_hold_steps": 30,
       "seed": 42,
-      "success": false,
+      "success": true,
       "terminated": false
     },
     {
@@ -202,14 +274,14 @@
       "condition": "slippery",
       "controller_phase": 3,
       "initial_object_m": [
-        0.48491889238357544,
-        -0.018126463517546654,
-        0.021999593824148178
+        0.4849192202091217,
+        -0.018127277493476868,
+        0.02499997988343239
       ],
-      "length": 600,
-      "longest_hold_steps": 0,
+      "length": 295,
+      "longest_hold_steps": 30,
       "seed": 43,
-      "success": false,
+      "success": true,
       "terminated": false
     },
     {
@@ -217,41 +289,211 @@
       "condition": "slippery",
       "controller_phase": 3,
       "initial_object_m": [
-        0.5058242082595825,
-        0.003158859210088849,
-        0.021999582648277283
+        0.505824625492096,
+        0.003157907398417592,
+        0.02499997988343239
       ],
-      "length": 600,
-      "longest_hold_steps": 0,
+      "length": 294,
+      "longest_hold_steps": 30,
       "seed": 44,
-      "success": false,
+      "success": true,
       "terminated": false
     }
   ],
+  "browser_audit": {
+    "download_data_checked": true,
+    "javascript_errors": [],
+    "mobile_no_overflow": true,
+    "offline_browser": "Chromium",
+    "playback_to_end_checked": true,
+    "seed_options_tested": [
+      42,
+      43,
+      44
+    ],
+    "seek_telemetry_checked": true,
+    "trial_outcomes_checked": 12
+  },
   "conditions": {
     "displaced": {
-      "accepted": 2,
+      "accepted": 3,
       "attempts": 3
     },
     "heavy": {
-      "accepted": 1,
+      "accepted": 3,
       "attempts": 3
     },
     "nominal": {
-      "accepted": 0,
+      "accepted": 3,
       "attempts": 3
     },
     "slippery": {
-      "accepted": 0,
+      "accepted": 3,
       "attempts": 3
     }
   },
   "container_image": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46",
-  "controller": "measured-state-cartesian-lift-v6",
+  "controller": "measured-state-cartesian-lift-v8",
+  "demo_audit": {
+    "accepted": 12,
+    "all_displayed_telemetry_matches_source": true,
+    "all_embedded_videos_match_exports": true,
+    "attempted": 12,
+    "film": {
+      "height": 1280,
+      "nb_read_frames": "182",
+      "r_frame_rate": "30/1",
+      "sha256": "7c3b4fb21cc0151f690aec0f53b42b6ac8b046b35a5ef4d04e244fdcd5c7aeb8",
+      "width": 1920
+    },
+    "html_sha256": "5bce43b4d9a57c72284d5d0fb7a54d5cc934591713e9a11d62d025b17333564f",
+    "mp4_sha256": "7c3b4fb21cc0151f690aec0f53b42b6ac8b046b35a5ef4d04e244fdcd5c7aeb8",
+    "schema": "npa.physical-augmentation.demo.v1",
+    "template_sha256": "9e196b8cd6612c09f8ae7f5ee0364713191c9d2d71a44d64a3fc38853d93ccd5",
+    "videos": [
+      {
+        "attempt": 0,
+        "condition": "displaced",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "302",
+          "r_frame_rate": "50/1",
+          "sha256": "b4fb5bd522f0b7f120c1d03944902b3441ab70f9c55799c79d8e2fb3465669eb",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 1,
+        "condition": "displaced",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "299",
+          "r_frame_rate": "50/1",
+          "sha256": "64acc391a89f1ef2562963440d1564c548a7cd1170ab690a2c6bd389e94f2371",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 2,
+        "condition": "displaced",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "304",
+          "r_frame_rate": "50/1",
+          "sha256": "eeb3771d98f7a0dc5e4d473b228bb1e2d5227f53d4cc30e52629727412f5a557",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 0,
+        "condition": "heavy",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "295",
+          "r_frame_rate": "50/1",
+          "sha256": "d4333c4bf0e9c37ff94f88d25906e0286ae617216bfd6f30efecd6b09f65770e",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 1,
+        "condition": "heavy",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "295",
+          "r_frame_rate": "50/1",
+          "sha256": "01dda39feed223056a820d7c4def72f262954f12ad5f48e19c5ce48c6fab9839",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 2,
+        "condition": "heavy",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "295",
+          "r_frame_rate": "50/1",
+          "sha256": "48b64c2b3df45492a5d378ffeae78c844906f7fa61fc27e596a544fc1df198e9",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 0,
+        "condition": "nominal",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "297",
+          "r_frame_rate": "50/1",
+          "sha256": "4d544856aa6bc81c32f6351d8a2467bfc4941888e5ffb013a524b41b3104f11c",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 1,
+        "condition": "nominal",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "297",
+          "r_frame_rate": "50/1",
+          "sha256": "2586e7a94270ac99bcb2d369bbd2a019c30d69c08a99285b647e9691a37363ac",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 2,
+        "condition": "nominal",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "297",
+          "r_frame_rate": "50/1",
+          "sha256": "2e1faf6c92cf8a22e4972e50a74a0a93124dd20f3bf791f297d4e489bd32caf7",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 0,
+        "condition": "slippery",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "294",
+          "r_frame_rate": "50/1",
+          "sha256": "9378cb7e905d9e2c112707dd9e2364fb348355278d53a8554960db441d405fee",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 1,
+        "condition": "slippery",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "295",
+          "r_frame_rate": "50/1",
+          "sha256": "c4bb5e09cce5b51a8c1f10012ed6e0a2e9d5ffb11d9fd027a720deb385a33e3d",
+          "width": 1280
+        }
+      },
+      {
+        "attempt": 2,
+        "condition": "slippery",
+        "video_evidence": {
+          "height": 720,
+          "nb_read_frames": "294",
+          "r_frame_rate": "50/1",
+          "sha256": "8fa915e76e1fb6e9fa9779f5a97b4eed080b9589d91754882bfb1d47211c522b",
+          "width": 1280
+        }
+      }
+    ]
+  },
   "hardware": {
     "count": 1,
     "driver": "580.173.02",
     "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+  },
+  "interactive_preview": {
+    "file": "physical-augmentation-demo-preview.png",
+    "sha256": "dcd9a62f59ff9176a5b86becfa67cb50383397d44caff6a02264cb63d71c6002",
+    "source": "Offline Chromium screenshot of the verified native demo"
   },
   "limitations": [
     "Public procedural Franka cube-lift scene; no customer assets used.",
@@ -292,11 +534,15 @@
         "object_geometry": "procedural 5cm collision-bearing cube"
       },
       "physics_solver": {
+        "control_dt_s": 0.02,
         "external_forces_every_iteration": true,
-        "type": "TGS"
+        "physics_dt_s": 0.0025,
+        "position_iterations": 16,
+        "type": "TGS",
+        "velocity_iterations": 1
       },
       "runtime_version": "3.0.0b2.post1",
-      "simulation_validity_checks": 1310,
+      "simulation_validity_checks": 983,
       "tcp_contract": {
         "body": "panda_hand",
         "offset_m": [
@@ -338,11 +584,15 @@
         "object_geometry": "procedural 5cm collision-bearing cube"
       },
       "physics_solver": {
+        "control_dt_s": 0.02,
         "external_forces_every_iteration": true,
-        "type": "TGS"
+        "physics_dt_s": 0.0025,
+        "position_iterations": 16,
+        "type": "TGS",
+        "velocity_iterations": 1
       },
       "runtime_version": "3.0.0b2.post1",
-      "simulation_validity_checks": 1582,
+      "simulation_validity_checks": 963,
       "tcp_contract": {
         "body": "panda_hand",
         "offset_m": [
@@ -384,11 +634,15 @@
         "object_geometry": "procedural 5cm collision-bearing cube"
       },
       "physics_solver": {
+        "control_dt_s": 0.02,
         "external_forces_every_iteration": true,
-        "type": "TGS"
+        "physics_dt_s": 0.0025,
+        "position_iterations": 16,
+        "type": "TGS",
+        "velocity_iterations": 1
       },
       "runtime_version": "3.0.0b2.post1",
-      "simulation_validity_checks": 1878,
+      "simulation_validity_checks": 969,
       "tcp_contract": {
         "body": "panda_hand",
         "offset_m": [
@@ -430,11 +684,15 @@
         "object_geometry": "procedural 5cm collision-bearing cube"
       },
       "physics_solver": {
+        "control_dt_s": 0.02,
         "external_forces_every_iteration": true,
-        "type": "TGS"
+        "physics_dt_s": 0.0025,
+        "position_iterations": 16,
+        "type": "TGS",
+        "velocity_iterations": 1
       },
       "runtime_version": "3.0.0b2.post1",
-      "simulation_validity_checks": 1878,
+      "simulation_validity_checks": 961,
       "tcp_contract": {
         "body": "panda_hand",
         "offset_m": [
@@ -452,8 +710,8 @@
     "accepted_episode": 0,
     "condition": "displaced",
     "file": "physical-augmentation-rtx-preview.png",
-    "frame_index": 316,
-    "sha256": "3551af90116b45a5ed88b83c7d2185050900e352ed280a7ac13e20eecb77ac90",
+    "frame_index": 301,
+    "sha256": "45ce2aa9ccb9a7d8a8f28005b687adf0b7efa6e1cf4d2df6769f0bcf29e44558",
     "source_video": "lerobot/videos/observation.images.workspace/chunk-000/file-000.mp4"
   },
   "recipe": {
@@ -503,7 +761,7 @@
         ]
       }
     },
-    "controller": "measured-state-cartesian-lift-v6",
+    "controller": "measured-state-cartesian-lift-v8",
     "episode_steps": 600,
     "episodes_per_condition": 3,
     "gripper_servo": {
@@ -512,8 +770,17 @@
     },
     "physical_robot_tested": false,
     "physics_solver": {
+      "control_dt_s": 0.02,
       "external_forces_every_iteration": true,
-      "type": "TGS"
+      "physics_dt_s": 0.0025,
+      "position_iterations": 16,
+      "type": "TGS",
+      "velocity_iterations": 1
+    },
+    "presentation": {
+      "height": 720,
+      "scene": "studio-table-v2",
+      "width": 1280
     },
     "schema": "npa.physical-augmentation.recipe.v1",
     "seed": 42,
@@ -558,17 +825,15 @@
     "workflows/franka_rl_recording.py": "0f9a36655f52a11f5cf69caa0691d9d7625a63b31cfd4b25684edc45c4a34da5",
     "workflows/franka_rl_validity.py": "353f88accae8b990281810945cf5fdc4b204908319987503a9aa3df4e3286ab0",
     "workflows/physical_augmentation.py": "68835c132390a9b5ac5f2c7394a586daf30253e25bb6fac72d236e62aa700d83",
-    "workflows/physical_augmentation_contract.py": "2a6d60ff9b04b08afcac1ee1ee1c83e64fc7057712b1d0598cd5041f17c83574",
-    "workflows/physical_augmentation_report.py": "5e40c35f3298418f76a93bf2dca18710f9ee972a6fc67bd1d63e73c309baf0d2",
-    "workflows/physical_augmentation_runtime.py": "64e90a3e7c3da5cbdaaa82e45c7ff3abeb7d5c9eeaff8cfb86195ffdc61953c5",
+    "workflows/physical_augmentation_contract.py": "d8da43290297153d196d3cf681f6d2c9a3349ff63856baf179e8e08a89ee54e5",
+    "workflows/physical_augmentation_demo.html": "9e196b8cd6612c09f8ae7f5ee0364713191c9d2d71a44d64a3fc38853d93ccd5",
+    "workflows/physical_augmentation_demo.py": "ca1e9370e33daa1d1b3a6c02ad529a851995050da766fc0eca4204e03a1e8077",
+    "workflows/physical_augmentation_report.py": "45f8bbd96bdb09532a0dab97f1b5fa05bb604448c0bbc44092666cc0a61af63b",
+    "workflows/physical_augmentation_runtime.py": "937c24998f777fc72796602ba706212f53b4ab7382d4515b5fd6ac1fec21216d",
+    "workflows/physical_augmentation_scene.py": "096719b8ba6e774aa427716d7c9d822ff72cb23cf91b9d060cae1f5b524ac999",
     "workflows/physical_augmentation_servo.py": "d94aff2c973da2c51a7a6422075edffc537f13b48f6b9c14f5cbe6c04fde5d68"
   },
-  "validated_implementation_commit": "733009dbbedacf80504b5246b3fa85eda08d2952",
-  "validation_environment": "Standard Workbench/SkyPilot Kubernetes runtime with a private GPU runtime/shader cache volume; experiment and implementation unchanged.",
-  "workflow": "workflows/testing/physical-augmentation.yaml",
-  "workflow_stages": {
-    "collect": "SUCCEEDED",
-    "prepare": "SUCCEEDED",
-    "report": "SUCCEEDED"
-  }
+  "validated_implementation_commit": "91c4017c76fbc8da92442622f0df23bc2d7c64c4",
+  "validation_environment": "Standard Workbench/SkyPilot Kubernetes runtime; public one-command runner; native runtime fetched into ephemeral worker storage.",
+  "workflow": "workflows/testing/physical-augmentation.yaml"
 }
