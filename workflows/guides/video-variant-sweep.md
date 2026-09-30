@@ -5,12 +5,31 @@ Cosmos Transfer 2.5 generation, paired visual review, Postgres/MLflow tracking,
 and accepted-dataset publication on Nebius through SkyPilot. The reference is
 [video-variant-sweep.yaml](../testing/video-variant-sweep.yaml).
 
+This workflow ends at a versioned synthetic video dataset. Its unit of work is
+a source video, an appearance prompt, and a generation parameter combination.
+Downstream consumers choose how to use that dataset. Policy pretraining,
+fine-tuning, train/test splits, simulator evaluation, and deployment are separate
+workflows; they are not stages or acceptance criteria of this sweep.
+
+The visual review gate checks augmentation fidelity: source objects, motion,
+camera, and the requested appearance change. A passing sampled-frame judgment
+does not establish robot task success or certify every frame as artifact-free.
+The description model and video generator are separate components, and their
+actual identities must be recorded separately. Selecting a Cosmos3 reasoner does
+not change the Transfer 2.5 generation backend in this reference.
+
 The two GPU workers process disjoint partitions of **every source × variant**
 combination. Two workers describes the reference topology; it does not cap the
 number of clips or variants. To change the worker count, change `workers` and
 the worker states, their indices, and their declared output receipts together.
 Every worker, including an empty partition, emits a receipt. The review stage
 requires complete coverage before judging any candidate.
+
+The present reference accepts explicit parameter combinations rather than
+expanding parameter axes, and always describes sources and enhances hints.
+It does not yet offer a direct, unmodified user-prompt mode. Worker receipts are
+written after a whole partition completes; retrying a failed partition currently
+regenerates that partition's clips. These limits matter for large sweeps.
 
 ## One-command operator kit and offline demo
 
@@ -74,6 +93,11 @@ service addresses, and provider request identifiers. It removes container
 metadata and audio. **Visible clip content remains**: an exported demo containing
 private imagery still requires private handling. The procedural validation demo
 contains no customer imagery. The HTML uses no external assets or requests.
+
+The current export is a comparison of source and generated RGB clips. It does
+not export conditioning maps or expose control weights and guidance alongside
+each clip. Those inputs are needed for a complete visual investigation of a
+parameter sweep; the current viewer should not be presented as that full surface.
 
 The viewer reports artifact evidence separately from full workflow completion.
 It marks all-rejected runs as held out, with no published dataset. The operator
