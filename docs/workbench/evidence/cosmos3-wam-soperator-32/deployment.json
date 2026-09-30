@@ -69,5 +69,7 @@
   "public_source_sha256": {
     "npa/src/npa/soperator/lifecycle.py": "105d71dc92ea5e8651ff5b18416eab04cca91ada5905c71c6f193ee5654edb18",
     "npa/tests/e2e/test_soperator_userns_live.py": "9b557e00fcf6c3e6d774c30659db07645179d224c152374269fefaa2809ee28c"
-  }
+  },
+  "public_source_revision": "9b709082254c584f096f7a4121465647be7e6aed",
+  "source_scope": "Hashes identify the executed deployment snapshot at public_source_revision; later bootstrap changes are not established by this receipt."
 }

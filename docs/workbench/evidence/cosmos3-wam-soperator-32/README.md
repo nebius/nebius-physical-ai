@@ -40,6 +40,11 @@ Its documented command is in the [live-test README](../../../../npa/tests/e2e/RE
 Original failures and complete deployment logs remain in private evidence;
 the public receipt includes their hashes.
 
+The receipt pins the exact executed NPA source revision. A subsequent registry
+policy correction retains NPA's existing public BusyBox bootstrap image; that
+image change is outside this historical deployment receipt's validation scope.
+The running measurement cluster is left unchanged during GPU measurements.
+
 The first WAM launch passed the 32-rank collective, then blocked before any
 optimizer update: Soperator's NCCL log FIFO reader had exited after the
 preflight. The subsequent trainer waited for a reader when opening the same

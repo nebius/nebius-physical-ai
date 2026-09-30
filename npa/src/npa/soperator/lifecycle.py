@@ -1603,9 +1603,6 @@ def _nodeconfigurator_values_configmap() -> str:
 
     values = textwrap.dedent(_NODECONFIGURATOR_USERNS_VALUES)
     values = values.replace(
-        "image: docker.io/library/busybox:stable",
-        "image: cr.eu-north1.nebius.cloud/soperator/busybox",
-    ).replace(
         "        sysctl -w kernel.unprivileged_userns_clone=1",
         "        set -eu\n        sysctl -w kernel.unprivileged_userns_clone=1",
     )

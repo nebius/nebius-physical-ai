@@ -37,6 +37,7 @@ def test_userns_values_reach_the_optional_chart_configmap():
     values = yaml.safe_load(configmap["data"]["values.yaml"])
     assert set(values) == {"initContainers"}
     assert len(values["initContainers"]) == 1
+    assert values["initContainers"][0]["image"] == "docker.io/library/busybox:stable"
     command = values["initContainers"][0]["command"][2]
     assert command.startswith("set -eu\n")
     assert '[ "${apparmor_enabled}" = "false" ]' in command
