@@ -11,6 +11,7 @@ from typing import Any
 
 from npa.workbench.dataset.storage import read_json_uri, write_json_uri
 from .contracts import approved_checkpoint, checkpoint, digest
+from .selection import select_training_data
 
 
 def _execute(settings: dict[str, Any], command: list[str]) -> int:
@@ -156,19 +157,43 @@ def batch(
         ValueError: Partition or output provenance is invalid.
         RuntimeError: Slurm reports a failed batch job.
     """
+    _validate_partition(stage, partition)
+    settings = read_json_uri(settings_uri)
     request, request_uri = _prepare_request(
-        stage, partition, split_uri, input_uri, output_uri, run_id, int(iteration)
+        stage,
+        partition,
+        split_uri,
+        input_uri,
+        output_uri,
+        run_id,
+        int(iteration),
+        settings,
     )
     write_json_uri(request_uri, request)
-    _submit(read_json_uri(settings_uri), stage, request_uri)
+    _submit(settings, stage, request_uri)
     result = read_json_uri(request["result_uri"])
     _validate_result(request, result)
     write_json_uri(output_uri, {**result, "request": request})
 
 
 def _prepare_request(
-    stage, partition, split_uri, input_uri, output_uri, run_id, iteration
+    stage, partition, split_uri, input_uri, output_uri, run_id, iteration, settings=None
 ):
+    _validate_partition(stage, partition)
+    if iteration < 1:
+        raise ValueError("iteration must be positive")
+    attempt = output_uri.rsplit("/", 1)[0] + "/attempts/" + uuid.uuid4().hex
+    request = _request(
+        stage, partition, split_uri, input_uri, run_id, attempt + "/result.json"
+    )
+    request["iteration"] = iteration
+    select_training_data(request, settings or {})
+    if iteration > 1 and stage in {"pretrain", "finetune"}:
+        request["checkpoint"] = _resume_checkpoint(output_uri, request)
+    return request, attempt + "/request.json"
+
+
+def _validate_partition(stage, partition):
     expected = {
         "pretrain": "train",
         "finetune": "train",
@@ -178,16 +203,6 @@ def _prepare_request(
     }
     if expected.get(stage) != partition:
         raise ValueError("stage cannot consume that data partition")
-    if iteration < 1:
-        raise ValueError("iteration must be positive")
-    attempt = output_uri.rsplit("/", 1)[0] + "/attempts/" + uuid.uuid4().hex
-    request = _request(
-        stage, partition, split_uri, input_uri, run_id, attempt + "/result.json"
-    )
-    request["iteration"] = iteration
-    if iteration > 1 and stage in {"pretrain", "finetune"}:
-        request["checkpoint"] = _resume_checkpoint(output_uri, request)
-    return request, attempt + "/request.json"
 
 
 def _resume_checkpoint(output_uri, request):
@@ -198,11 +213,13 @@ def _resume_checkpoint(output_uri, request):
     previous = read_json_uri(f"{root}/{iteration - 1}/{filename}")
     prior_request = previous["request"]
     _validate_result(prior_request, previous)
-    for key in ("run_id", "stage", "dataset"):
+    for key in ("run_id", "stage"):
         if prior_request[key] != request[key]:
             raise ValueError(
                 "resume candidate belongs to a different run, stage or dataset"
             )
+    if prior_request["dataset"]["sha256"] != request["dataset"]["sha256"]:
+        raise ValueError("resume candidate belongs to a different training selection")
     if prior_request["iteration"] != iteration - 1:
         raise ValueError("resume candidate belongs to a different iteration")
     return checkpoint(previous)

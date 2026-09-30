@@ -16,6 +16,10 @@ RUNNER_FILES = (
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_E2E_POLICY_DEMO": (
+        "local policy contract demo requires FiftyOne, Playwright Chromium, ffmpeg, "
+        "and an isolated artifact directory; run the cookbook's documented E2E command"
+    ),
     "NPA_E2E_RUNTIME_STORAGE": (
         "CPU control-storage execution requires an operator-selected project, "
         "fresh science/control prefixes, and an owned isolated controller"

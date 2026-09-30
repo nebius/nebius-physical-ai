@@ -8,7 +8,12 @@ training, evaluation, and policy-test jobs to an existing Slurm cluster. It
 requires operator-provided model scripts; it does not bundle a foundation model,
 simulation benchmark, robot controller, or synthetic-data generator.
 
-## Run the complete reference demo
+For the foundation-training design, public-data HTML/MP4 preview, Soperator
+launcher, event entry points and checkpoint evaluation hooks, see
+[Foundation-model training on Soperator](foundation-training.md). The local
+reference below is a contract test only.
+
+## Run the local contract demo
 
 From a checkout, with `uv` and `ffmpeg` installed:
 
@@ -83,15 +88,15 @@ NPA_E2E_POLICY_DEMO=1 npa/.venv/bin/python -m pytest \
 
 ```mermaid
 flowchart LR
-  A[Real and optional synthetic episodes] --> B[FiftyOne curation]
+  A[Versioned LeRobot episode corpus] --> B[FiftyOne curation]
   B --> C[Split source groups 90/5/5]
   C --> D[Slurm pretraining]
   D --> E[Evaluate holdout 1]
-  E --> F{All systems pass?}
+  E --> F{All benchmarks pass?}
   F -->|retry| D
   F -->|pass| G[Slurm fine-tuning]
   G --> H[Evaluate holdout 2]
-  H --> I{All systems pass?}
+  H --> I{All benchmarks pass?}
   I -->|retry| G
   I -->|pass| J[RTX-class policy test]
 ```
@@ -133,7 +138,7 @@ pods, defaulting to the generic name `policy-batch-client`.
    `[0,1]`; sharpness is the variance of the four-neighbor Laplacian on that
    normalized preview. Supply thresholds appropriate to the camera and task.
 3. `gate_policy_uri`: phase-to-system threshold maps, for example
-   `{"pretrain":{"system_1":0.8,"system_2":0.9},"finetune":{"simulation":0.9}}`.
+   `{"pretrain":{"spatial_tasks":0.8,"goal_tasks":0.9},"finetune":{"simulation":0.9}}`.
    These values illustrate the format; the operator chooses the real systems
    and thresholds. Empty policies, invalid probabilities and missing systems fail.
 4. `batch_settings_uri`: private Slurm transport and script selection, described
@@ -146,6 +151,11 @@ It retains references to the source dataset, rather than rewriting LeRobot
 Parquet/video shards. Training scripts must load precisely the listed episode
 indices. Missing source files and source-version incompatibility remain errors
 for the consuming trainer.
+
+Curation records every episode's quality flag and measurements independently of
+selection. Set `selection: all` to retain flagged episodes for an ablation;
+`selection: quality-pass` is the default. The report preserves quality decisions
+for rejected episodes, and source datasets are never deleted.
 
 Quality checks cover the supplied preview frame. Object detections are supplied
 labels, not a detector run by this stage. A full-video quality or detection
@@ -205,8 +215,8 @@ Write a result only after the work and artifact uploads complete:
   "request_sha256": "<canonical-request-sha256>",
   "checkpoint": {"uri": "<private-checkpoint-uri>", "sha256": "<checkpoint-sha256>"},
   "systems": {
-    "system_1": {"successes": 8, "trials": 10},
-    "system_2": {"successes": 9, "trials": 10}
+    "spatial_tasks": {"successes": 8, "trials": 10},
+    "goal_tasks": {"successes": 9, "trials": 10}
   }
 }
 ```

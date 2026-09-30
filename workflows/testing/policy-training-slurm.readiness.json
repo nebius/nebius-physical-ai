@@ -13,7 +13,7 @@
     },
     "task_fidelity": {
       "status": "unverified",
-      "reason": "The generated CPU reference executes all stages and measured retries; production model and evaluator fidelity still require operator-provided batch scripts.",
+      "reason": "Foundation-training event, mixture and checkpoint contracts are tested locally. The public HTML/MP4 is an architecture preview; model training and benchmark fidelity remain unverified.",
       "evidence": [
         "npa/tests/orchestration/npa_workflow/test_policy_training_spec.py",
         "npa/tests/workflows/test_policy_training.py",
@@ -47,7 +47,7 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "No configured Slurm target, trainer, evaluator or policy-test scripts supplied for this run.",
+      "reason": "A model-specific trainer, recovery hook and shared-server benchmark must be configured and qualified before end-to-end foundation execution.",
       "evidence": [
         "npa/tests/e2e/test_policy_training_live.py::test_operator_slurm_pipeline (skipped)"
       ]

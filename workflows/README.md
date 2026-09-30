@@ -261,7 +261,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`token-factory-batch-generate.yaml`](testing/token-factory-batch-generate.yaml) | Hosted asynchronous batch text generation → generations JSONL |
 | [`token-factory-caption.yaml`](testing/token-factory-caption.yaml) | Hosted vision captioning; pass `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
 | [`token-factory-cosmos-reason.yaml`](testing/token-factory-cosmos-reason.yaml) | Hosted inference; pass `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
-| [`policy-training-slurm.yaml`](testing/policy-training-slurm.yaml) | FiftyOne curation, lineage-group split, two measured Slurm training gates, and approved policy test; [one-command HTML/MP4 reference demo and Slurm setup](../docs/workbench/cookbooks/policy-training-slurm.md) |
+| [`policy-training-slurm.yaml`](testing/policy-training-slurm.yaml) | FiftyOne curation, lineage-group split, two measured Slurm training gates, and approved policy test; [foundation-training design and public HTML/MP4 preview](../docs/workbench/cookbooks/foundation-training.md); [Slurm contracts](../docs/workbench/cookbooks/policy-training-slurm.md) |
 | [`token-factory-gate-loop.yaml`](testing/token-factory-gate-loop.yaml) | Zero-GPU **runtime** gate loop: real early-exit + `goto` branch; submit with `--runtime` |
 | [`token-factory-generate.yaml`](testing/token-factory-generate.yaml) | Hosted inference; pass `--secret-env NEBIUS_TOKEN_FACTORY_KEY` |
 | [`token-factory-parallel-fanout.yaml`](testing/token-factory-parallel-fanout.yaml) | Zero-GPU **parallel** fan-out (JobGroup) + join barrier; submit with `--runtime` |

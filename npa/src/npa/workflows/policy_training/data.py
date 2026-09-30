@@ -111,9 +111,21 @@ def curate(input_uri: str, output_uri: str, policy_uri: str) -> None:
                     _sample(fo, episode, Path(directory) / f"{index}.png")
                 )
             selected = set(dataset.match(expression).values("episode_key"))
-            _write_curated(episodes, selected, policy, output_uri)
+            _write_curated(
+                episodes, selected, policy, output_uri, _measurements(dataset)
+            )
     finally:
         dataset.delete()
+
+
+def _measurements(dataset):
+    values = dataset.values(
+        ["episode_key", "brightness", "sharpness", "detection_count"]
+    )
+    return {
+        key: {"brightness": bright, "sharpness": sharp, "detections": count}
+        for key, bright, sharp, count in zip(*values, strict=True)
+    }
 
 
 def _filter(fo: Any, policy: dict[str, Any]) -> Any:
@@ -138,8 +150,11 @@ def _filter(fo: Any, policy: dict[str, Any]) -> Any:
     )
 
 
-def _write_curated(episodes, selected, policy, output_uri):
-    kept = [episode for episode in episodes if digest(episode) in selected]
+def _write_curated(episodes, selected, policy, output_uri, measurements=None):
+    selection = policy.get("selection", "quality-pass")
+    if selection not in {"quality-pass", "all"}:
+        raise ValueError("selection must be quality-pass or all")
+    kept = [e for e in episodes if selection == "all" or digest(e) in selected]
     if not kept:
         raise ValueError("FiftyOne curation selected no episodes")
     disagreement = sum((digest(e) in selected) != e["inhouse_keep"] for e in episodes)
@@ -155,6 +170,17 @@ def _write_curated(episodes, selected, policy, output_uri):
             "inhouse_disagreement_count": disagreement,
             "detection_source": "provided-labels",
             "quality_scope": "preview-frame",
+            "selection": selection,
+            "quality_pass_count": len(selected),
+            "review": [
+                {
+                    "episode_sha256": digest(e),
+                    "quality_pass": digest(e) in selected,
+                    "inhouse_keep": e["inhouse_keep"],
+                    "measurements": (measurements or {}).get(digest(e), {}),
+                }
+                for e in episodes
+            ],
         },
     )
 
