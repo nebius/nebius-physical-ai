@@ -9,6 +9,7 @@ from typing import Any
 
 from .errors import IsaacArenaError
 from .hashing import file_sha256
+from .success import success_flag
 from .task_progress import qualify_task_progress, task_progress_adapter
 
 
@@ -42,24 +43,6 @@ def _signal_summary(values: Any) -> dict[str, Any]:
     return result
 
 
-def _success_flag(value: Any, *, source: str) -> bool:
-    import numpy as np
-
-    scalar = np.asarray(value)
-    if scalar.ndim != 0 or not (
-        np.issubdtype(scalar.dtype, np.bool_) or np.issubdtype(scalar.dtype, np.integer)
-    ):
-        raise IsaacArenaError(
-            f"simulator ground-truth success {source} must be a scalar boolean or 0/1"
-        )
-    success = scalar.item()
-    if success not in (0, 1):
-        raise IsaacArenaError(
-            f"simulator ground-truth success {source} must be a scalar boolean or 0/1"
-        )
-    return bool(success)
-
-
 def _episode_record(path: Path, name: str, episode: Any) -> tuple[dict, dict[str, Any]]:
     arrays = _read_signals(episode)
     success_values = arrays.get("success")
@@ -67,9 +50,11 @@ def _episode_record(path: Path, name: str, episode: Any) -> tuple[dict, dict[str
         raise IsaacArenaError(
             "simulator ground truth requires one success flag per episode"
         )
-    success = _success_flag(success_values.reshape(-1)[0], source="flag")
+    success = success_flag(success_values, source="simulator ground-truth success flag")
     if "success" in episode.attrs:
-        metadata_success = _success_flag(episode.attrs["success"], source="metadata")
+        metadata_success = success_flag(
+            episode.attrs["success"], source="simulator ground-truth success metadata"
+        )
         if metadata_success != success:
             raise IsaacArenaError("simulator ground-truth success metadata disagrees")
     record = {
