@@ -24,10 +24,9 @@ from npa.workflows.physical_augmentation_contract import (
 
 
 def _configuration(recipe: dict, condition: str):
-    import isaaclab.sim as sim
     import isaaclab_tasks  # noqa: F401
     from isaaclab_tasks.utils import load_cfg_from_registry
-    from npa.workflows.franka_rl_environment import _camera_config
+    from npa.workflows.physical_augmentation_scene import configure_scene
     from npa.workflows.sim2real.isaac_assets_compat import remap_moved_franka_usd
 
     config = load_cfg_from_registry(recipe["task"], "env_cfg_entry_point")
@@ -42,8 +41,16 @@ def _configuration(recipe: dict, condition: str):
     config.observations.policy.enable_corruption = False
     _align_tool_frame(config, recipe)
     _configure_gripper(config, recipe)
+    _configure_object(config, recipe["conditions"][condition])
     _configure_solver(config, recipe)
-    case = recipe["conditions"][condition]
+    configure_scene(config, recipe)
+    configure_validity(config, recipe)
+    return config
+
+
+def _configure_object(config, case):
+    import isaaclab.sim as sim
+
     config.scene.object.spawn = sim.CuboidCfg(
         size=(0.05, 0.05, 0.05),
         rigid_props=config.scene.object.spawn.rigid_props,
@@ -61,9 +68,6 @@ def _configuration(recipe: dict, condition: str):
         "y": (-0.02, 0.02),
         "z": (0.0, 0.0),
     }
-    _camera_config(config)
-    configure_validity(config, recipe)
-    return config
 
 
 def _configure_gripper(config, recipe: dict) -> None:
@@ -86,6 +90,18 @@ def _configure_solver(config, recipe: dict) -> None:
     config.sim.physics.enable_external_forces_every_iteration = recipe[
         "physics_solver"
     ]["external_forces_every_iteration"]
+    # The upstream Franka requests zero velocity iterations. Contacts can then
+    # retain biased velocities even when the measured object pose is stationary.
+    for props in (
+        config.scene.robot.spawn.articulation_props,
+        config.scene.object.spawn.rigid_props,
+    ):
+        props.solver_position_iteration_count = recipe["physics_solver"][
+            "position_iterations"
+        ]
+        props.solver_velocity_iteration_count = recipe["physics_solver"][
+            "velocity_iterations"
+        ]
 
 
 def _align_tool_frame(config, recipe: dict) -> None:
@@ -216,10 +232,10 @@ def _step(env, action):
 
 
 def _settle(env, seed: int) -> dict:
-    from npa.workflows.franka_rl_capture import _orient_camera
+    from npa.workflows.physical_augmentation_scene import orient_camera
 
     env.reset(seed=seed)
-    _orient_camera(env)
+    orient_camera(env)
     observed = _snapshot(env)
     action = np.asarray(
         [*observed["tcp"], *observed["quaternion"], 1.0], dtype=np.float32
@@ -234,12 +250,12 @@ def _settle(env, seed: int) -> dict:
 def _transition(
     env, controller, observed: dict, history: dict, step: int
 ) -> tuple[dict, bool]:
-    from npa.workflows.franka_rl_capture import _frame
+    from npa.workflows.physical_augmentation_scene import camera_frame
 
     action = controller.action(
         observed["tcp"], observed["object"], observed["quaternion"]
     )
-    frame = _frame(env)
+    frame = camera_frame(env)
     try:
         if _step(env, action):
             return observed, True
@@ -311,8 +327,10 @@ def _episode(env, recipe: dict, condition: str, index: int, output: Path) -> dic
 def _collect(config, recipe: dict, condition: str, output: Path) -> None:
     import gymnasium as gym
     import torch
+    from npa.workflows.physical_augmentation_scene import solver_evidence
 
     env = gym.make(recipe["task"], cfg=config).unwrapped
+    solver = solver_evidence(env, recipe)
     with torch.inference_mode():
         results = [
             _episode(env, recipe, condition, index, output / f"episode_{index:06d}")
@@ -330,10 +348,8 @@ def _collect(config, recipe: dict, condition: str, output: Path) -> None:
         "tcp_contract": recipe["tcp_contract"],
         "tool_frame_checked": True,
         "gripper_servo": recipe["gripper_servo"],
-        "physics_solver": {
-            "type": "TGS" if env.cfg.sim.physics.solver_type == 1 else "PGS",
-            "external_forces_every_iteration": env.cfg.sim.physics.enable_external_forces_every_iteration,
-        },
+        "physics_solver": solver,
+        "presentation": recipe["presentation"],
     }
     write_json(output / "capture.json", metadata)
     env.close()

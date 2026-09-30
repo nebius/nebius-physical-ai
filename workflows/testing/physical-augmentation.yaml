@@ -67,4 +67,7 @@ states:
       - {uri: "{{config.report_uri}}report.json", schema: npa.physical-augmentation.report.v1}
       - {uri: "{{config.report_uri}}lerobot/meta/info.json", schema: lerobot.dataset.v3}
       - {uri: "{{config.report_uri}}demonstrations.rrd", schema: application/vnd.rerun.rrd}
+      - {uri: "{{config.report_uri}}demo.html", schema: text/html}
+      - {uri: "{{config.report_uri}}demo.mp4", schema: video/mp4}
+      - {uri: "{{config.report_uri}}demo-validation.json", schema: npa.physical-augmentation.demo.v1}
     terminal: true

@@ -10,6 +10,39 @@ evidence of improved robot-policy performance.
 
 ## Run
 
+From an editable checkout, launch and download the complete demo with one command:
+
+```bash
+npa/.venv/bin/python npa/scripts/run_physical_augmentation_demo.py \
+  --project "$NPA_PROJECT" --cluster "$NPA_CLUSTER" --provision \
+  --output-path ./physical-augmentation-demo
+```
+
+Open `physical-augmentation-demo/demo.html` directly in Chrome, Edge or Safari.
+It embeds every actual recording and measurement: play the four physical
+conditions together, scrub time, change speed, and select each paired reset.
+The HTML needs no server, network, account or GPU to view. `demo.mp4` is the
+shareable four-condition film; `demonstrations.rrd` retains the accepted dataset's
+full video/state/action recording. All outcomes remain visible in the HTML.
+
+The runner checks project credentials, ensures one RTX PRO 6000 GPU plus a CPU
+node, verifies CUDA and GLX/EGL/Vulkan readiness, stages this checkout, submits
+the canonical workflow below, and verifies each downloaded artifact's checksum.
+Use `--capacity-block-group` with your own reservation selector when required.
+Use `--kubeconfig`, `--sky-bin`, and `--isolated-config-dir` for operator-owned
+runtime locations. Omit `--provision` to use an existing ready RTX cluster.
+The configured project must have writable S3 storage. An initial Isaac runtime
+fetch and shader compilation can take several minutes. The demo does not
+automatically destroy shared infrastructure; follow the normal run cleanup and
+cluster teardown procedure when finished.
+
+Isaac execution follows the documented runtime-fetch EULA defaults;
+`--no-accept-eula` stops before provisioning or submission. To download an
+existing run without allocating compute, replace `--provision` with
+`--fetch-run "$NPA_RUN_ID"`. `--run-id` optionally names a new run; otherwise
+the runner generates a timestamped name. These are thin launch and fetch
+conveniences; the YAML still owns all three execution stages.
+
 Use a configured project with writable S3 storage and an RTX-capable cluster.
 All stages use the pinned Isaac Lab runtime-fetch image. Preparation and export
 use its CPU Python environment, including the LeRobot-format writer and Rerun;
@@ -47,9 +80,12 @@ the native finger velocity limit (0.05 m/s for this Franka). This avoids an
 instantaneous close-target jump; the native measured-velocity guard stays active.
 Each finger's actuator force is limited to 20 N, and the action term verifies
 that limit through the native articulation data before accepting commands.
-The TGS solver applies external forces every position iteration, as recommended
-by Isaac for accurate velocity updates. The 3 cm/s stable-hold threshold and
-native joint-validity checks are unchanged.
+The TGS solver applies external forces every position iteration. Both robot and
+cube use 16 position iterations and one velocity iteration, verified against
+their composed USD attributes before collection. The upstream Franka requests
+zero velocity iterations; the explicit velocity solve addresses contact velocity
+errors without loosening the 3 cm/s stable-hold threshold or native validity
+checks. See NVIDIA's [solver guidance](https://docs.omniverse.nvidia.com/kit/docs/omni_physics/107.3/dev_guide/simulation_control/simulation_control.html).
 
 ## What the artifacts mean
 
@@ -60,6 +96,11 @@ native joint-validity checks are unchanged.
   Acceptance requires a measured lift of at least 10 cm, low object velocity,
   proximity to the closed tool, limited lateral drift, and 30 consecutive stable
   control steps. A terminated attempt cannot pass.
+- `reports/demo.html` embeds all HD recordings, measured actions, and outcomes
+  in an offline comparison viewer. `demo.mp4` compares the first paired seed
+  across all conditions, holds final frames when a trial ends, and labels every
+  measured outcome. `demo-validation.json` records decoded video counts,
+  dimensions, rates and content hashes. The camera uses 1280 × 720 RTX frames.
 - `reports/lerobot/` contains only accepted demonstrations, with real RTX video.
   `accepted-provenance.json` maps every exported episode to its original
   condition, attempt, action semantics, and source-file hashes.

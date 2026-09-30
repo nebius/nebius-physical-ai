@@ -149,7 +149,7 @@ def test_hold_requires_consecutive_contact_geometry_and_low_velocity():
 def recording(tmp_path):
     count = 32
     state = np.arange((count + 1) * 9, dtype=np.float32).reshape(count + 1, 9) / 1000
-    rgb = np.zeros((count, 480, 640, 3), dtype=np.uint8)
+    rgb = np.zeros((count, 720, 1280, 3), dtype=np.uint8)
     rgb[:, :20, :20] = 200
     rgb[:, 100:120, 100:120, 0] = np.arange(count)[:, None, None]
     arrays = {

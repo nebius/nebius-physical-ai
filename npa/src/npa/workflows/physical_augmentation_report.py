@@ -49,7 +49,7 @@ def verify_episode(root: Path, recipe: dict, dt: float) -> dict:
         for key in _CHANNELS
     }
     count = result["length"]
-    _validate_arrays(arrays, count, dt)
+    _validate_arrays(arrays, count, dt, recipe["presentation"])
     if not np.array_equal(arrays["object"][0], result["initial_object_m"]):
         raise ValueError("Initial object pose differs from the recorded state")
     hold = longest_hold(
@@ -66,7 +66,7 @@ def verify_episode(root: Path, recipe: dict, dt: float) -> dict:
     }
 
 
-def _validate_arrays(arrays: dict, count: int, dt: float) -> None:
+def _validate_arrays(arrays: dict, count: int, dt: float, presentation: dict) -> None:
     if count < 2 or not np.isfinite(dt) or dt <= 0:
         raise ValueError(
             "An attempt needs at least two transitions and positive control_dt"
@@ -102,11 +102,14 @@ def _validate_arrays(arrays: dict, count: int, dt: float) -> None:
         or not np.isin(actions[:, 7], [-1.0, 1.0]).all()
     ):
         raise ValueError("Recorded IK quaternion or binary gripper action is invalid")
-    _validate_images(arrays["rgb"], count)
+    _validate_images(arrays["rgb"], count, presentation)
 
 
-def _validate_images(rgb: np.ndarray, count: int) -> None:
-    if rgb.shape != (count, 480, 640, 3) or rgb.dtype != np.uint8:
+def _validate_images(rgb: np.ndarray, count: int, presentation: dict) -> None:
+    if (
+        rgb.shape != (count, presentation["height"], presentation["width"], 3)
+        or rgb.dtype != np.uint8
+    ):
         raise ValueError("Recording lacks genuine configured RGB frames")
     if any(np.ptp(frame) < 8 for frame in rgb) or all(
         np.array_equal(rgb[0], frame) for frame in rgb[1:]
@@ -126,6 +129,7 @@ def _verified_attempts(source: Path, recipe: dict) -> tuple[list[dict], dict]:
             or capture.get("tool_frame_checked") is not True
             or capture.get("gripper_servo") != recipe["gripper_servo"]
             or capture.get("physics_solver") != recipe["physics_solver"]
+            or capture.get("presentation") != recipe["presentation"]
         ):
             raise ValueError("Capture lacks native physics validity evidence")
         current = {
@@ -185,6 +189,9 @@ def _source_revision() -> dict:
         "workflows/physical_augmentation_runtime.py",
         "workflows/physical_augmentation_servo.py",
         "workflows/physical_augmentation_report.py",
+        "workflows/physical_augmentation_scene.py",
+        "workflows/physical_augmentation_demo.py",
+        "workflows/physical_augmentation_demo.html",
         "workflows/franka_rl_validity.py",
         "workflows/franka_rl_recording.py",
         "adapter/isaac_lab_lerobot.py",
@@ -270,6 +277,9 @@ def report_results(source: Path, output: Path) -> dict:
             "No physically accepted demonstrations; retained attempts are diagnostic data"
         )
     counts = _export(source, output, recipe, accepted, identity)
+    from npa.workflows.physical_augmentation_demo import build_demo
+
+    build_demo(source, output, recipe, attempts, identity)
     write_json(output / "recording-validation.json", {"entity_counts": counts})
     write_json(output / "report.json", summary)
     return summary
