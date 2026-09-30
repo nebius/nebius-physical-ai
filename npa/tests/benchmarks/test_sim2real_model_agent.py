@@ -102,6 +102,7 @@ def test_lift_evidence_rejects_short_or_broken_hold(tmp_path: Path) -> None:
     )
     broken = _manifest()
     broken["actions"][1]["simulator_ground_truth"]["stable_grasp"] = False
+    broken["actions"][1]["simulator_ground_truth"].pop("object_lift_m")
     assert (
         _lift_evidence(
             tmp_path / "manifest.json",
@@ -111,6 +112,38 @@ def test_lift_evidence_rejects_short_or_broken_hold(tmp_path: Path) -> None:
         )
         is None
     )
+
+
+@pytest.mark.parametrize("position", [0, 3])
+@pytest.mark.parametrize(
+    "measurement", [{}, {"object_lift_m": None}, {"object_lift_m": "unmeasured"}]
+)
+def test_ungrasped_rows_preserve_a_complete_hold(
+    tmp_path: Path, position: int, measurement: dict
+) -> None:
+    manifest = _manifest()
+    if position == 0:
+        for row in manifest["actions"]:
+            row["sim_step"] += 1
+            row["sim_time_seconds"] += 1
+    manifest["actions"].insert(
+        position,
+        {
+            "sim_step": position,
+            "sim_time_seconds": float(position),
+            "simulator_ground_truth": {"stable_grasp": False, **measurement},
+        },
+    )
+    evidence = _lift_evidence(
+        tmp_path / "manifest.json",
+        manifest,
+        minimum_lift_m=0.05,
+        minimum_hold_seconds=2.0,
+    )
+    assert evidence is not None
+    assert evidence.duration_seconds == 2.0
+    assert evidence.samples == 3
+    assert evidence.minimum_lift_m == pytest.approx(0.051)
 
 
 def test_lift_evidence_rejects_literal_false_policy_trained(tmp_path: Path) -> None:
@@ -223,15 +256,38 @@ def test_lift_evidence_rejects_malformed_checkpoint_size(
 ) -> None:
     manifest = _manifest()
     manifest["policy_checkpoint_size_bytes"] = value
-    with pytest.raises(
-        VerificationError, match="policy_checkpoint_size_bytes.*positive JSON integer"
-    ):
+    assert (
         _lift_evidence(
             tmp_path / "manifest.json",
             manifest,
             minimum_lift_m=0.05,
             minimum_hold_seconds=2.0,
         )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "field", ["policy_checkpoint_sha256", "policy_checkpoint_size_bytes"]
+)
+@pytest.mark.parametrize("missing", [False, True])
+def test_invalid_checkpoint_metadata_skips_the_rollout(
+    tmp_path: Path, field: str, missing: bool
+) -> None:
+    manifest = _manifest()
+    if missing:
+        manifest.pop(field)
+    else:
+        manifest[field] = "invalid"
+    assert (
+        _lift_evidence(
+            tmp_path / "manifest.json",
+            manifest,
+            minimum_lift_m=0.05,
+            minimum_hold_seconds=2.0,
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(

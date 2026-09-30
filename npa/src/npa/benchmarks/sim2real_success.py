@@ -83,8 +83,10 @@ def _sample_time(row: dict[str, Any], step_seconds: float) -> float:
 
 def _qualifies(row: dict[str, Any], lift_m: float) -> bool:
     truth = row["simulator_ground_truth"]
+    if truth["stable_grasp"] is not True:
+        return False
     measured_lift = _finite_number(truth.get("object_lift_m"), "object_lift_m")
-    return truth["stable_grasp"] is True and measured_lift >= lift_m
+    return measured_lift >= lift_m
 
 
 def _trained_checkpoint(manifest: dict[str, Any]) -> str | None:
@@ -102,9 +104,7 @@ def _trained_checkpoint(manifest: dict[str, Any]) -> str | None:
         return None
     size = manifest.get("policy_checkpoint_size_bytes")
     if type(size) is not int or size <= 0:
-        raise VerificationError(
-            "policy_checkpoint_size_bytes must be a positive JSON integer"
-        )
+        return None
     return checkpoint_sha
 
 
