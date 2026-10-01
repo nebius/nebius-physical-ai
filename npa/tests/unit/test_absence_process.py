@@ -1,6 +1,7 @@
 """Actual child/descendant cancellation must not leave verification locks held."""
 
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -128,6 +129,39 @@ def test_already_reaped_process_never_signals_a_recycled_group(monkeypatch):
     monkeypatch.setattr(module.os, "killpg", lambda *args: pytest.fail("unowned group"))
     monkeypatch.setattr(module.os, "kill", lambda *args: pytest.fail("unowned PID"))
     module._stop_group(SimpleNamespace(pid=1234, returncode=0))
+
+
+@pytest.mark.parametrize("observation_error", [False, True])
+def test_external_reap_without_popen_returncode_never_signals(
+    monkeypatch, observation_error
+):
+    from npa.cluster import absence_process as module
+
+    def externally_reaped(process, streams, limit):
+        waited, _ = os.waitpid(process.pid, 0)
+        assert waited == process.pid
+        assert process.returncode is None
+        if observation_error:
+            raise ChildProcessError("another child reaper consumed exit status")
+
+    monkeypatch.setattr(module, "_wait_for_read", externally_reaped)
+    monkeypatch.setattr(module.os, "killpg", lambda *args: pytest.fail("unowned group"))
+    monkeypatch.setattr(module.os, "kill", lambda *args: pytest.fail("unowned PID"))
+    with pytest.raises(VerificationReadUnavailable, match="ownership unavailable"):
+        run_read([sys.executable, "-c", "pass"])
+
+
+def test_waitid_missing_child_never_authorizes_group_signal(monkeypatch):
+    from types import SimpleNamespace
+    from npa.cluster import absence_process as module
+
+    def missing_child(*args):
+        raise ChildProcessError("externally reaped")
+
+    monkeypatch.setattr(module.os, "waitid", missing_child, raising=False)
+    monkeypatch.setattr(module.os, "killpg", lambda *args: pytest.fail("unowned group"))
+    with pytest.raises(VerificationReadUnavailable, match="ownership unavailable"):
+        module._stop_group(SimpleNamespace(pid=1234, returncode=None))
 
 
 def test_reader_group_refuses_a_parent_without_owned_session(monkeypatch):
