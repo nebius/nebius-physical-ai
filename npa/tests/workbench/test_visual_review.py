@@ -635,7 +635,9 @@ def test_single_review_is_neutral_non_gating_and_retains_sampling(
         "agreement_eligible": False,
         "observations": (),
     }
-    assert report.current_manifest.selected_indices == (0, 2, 4)
+    # Visual review uses the shared keyframes mode: retain broad coverage while
+    # spending half of this three-frame budget in the terminal window.
+    assert report.current_manifest.selected_indices == (0, 3, 4)
     assert report.current_manifest.coverage_complete is True
     assert report.current_review is not None
     assert report.current_review.physical_ai_usefulness.confirmation_status == (
