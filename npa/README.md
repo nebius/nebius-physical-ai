@@ -12,11 +12,6 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
-Workflow image preflight accepts `--image-pull-timeout-seconds` on both
-`preflight-images` and `submit`. Use `0` for no pull deadline. Omitting it
-inherits `--image-bootstrap-timeout-seconds` (1800 seconds by default);
-see the [workflow guide](../docs/workbench/npa-workflow-guide.md).
-
 [flex-pi inference](../docs/workbench/flex-pi.md#cli-and-sdk) emits one JSON
 document on stdout (`--output-format json`, the default); runtime diagnostics
 go to stderr.
@@ -226,6 +221,11 @@ chosen specification, prepare its data and resources, submit it, then inspect
 `npa workbench workflow status`, `logs`, and `artifacts`. The
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
+
+Workflow image preflight accepts `--image-pull-timeout-seconds` on both
+`preflight-images` and `submit`. Use `0` for no pull deadline. Omitting it
+inherits `--image-bootstrap-timeout-seconds` (1800 seconds by default);
+see the [workflow guide](../docs/workbench/npa-workflow-guide.md).
 
 Custom workflow stages receive `NPA_CONTROL_PYTHON`, the executable interpreter
 recorded by setup, or an empty value when none is available. Use it for NPA
