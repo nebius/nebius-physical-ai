@@ -131,7 +131,7 @@ def _title(summary):
     _text(
         canvas,
         (68, 666),
-        "Every shown result is bound to verified media and publication receipts.",
+        "Every shown result is bound to verified media, review and lineage receipts.",
         23,
         _MUTED,
     )
