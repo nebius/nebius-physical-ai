@@ -45,6 +45,9 @@ omitted, the pull timeout inherits the bootstrap timeout (default: 1800 seconds)
 preserving existing commands, including bootstrap timeout `0`. An explicit pull
 timeout changes only the pull probe. `timed_out` means observation expired; it
 does not prove an access failure. Recovery commands retain the selected value.
+The unlimited setting removes the NPA observation and Pod deadlines. Node
+container-runtime failures still report `image_pull_failed`, including canceled
+layer extraction; inspect the node's pull failure before retrying.
 
 Image preflight follows SkyPilot's resource override behavior. `--infra` replaces
 the declared target for a single task. SkyPilot ignores that override for
