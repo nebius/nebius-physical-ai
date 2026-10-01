@@ -111,6 +111,8 @@ def _stop_group(process, *, exited=False):
     # Never signal a recycled identifier after any caller has reaped the leader.
     if process.returncode is not None:
         return
+    if not _child_is_reserved(process.pid):
+        raise VerificationReadUnavailable("Verification child ownership unavailable")
     try:
         if _IN_READER.get():
             os.kill(process.pid, signal.SIGKILL)
@@ -128,6 +130,39 @@ def _stop_group(process, *, exited=False):
         ):
             raise
     process.wait()
+
+
+def _child_is_reserved(pid):
+    # An external SIGCHLD handler can reap without updating Popen.returncode.
+    # Recheck immediately before signalling; observation errors never grant
+    # permission to signal an identifier whose reservation we cannot establish.
+    if hasattr(os, "waitid"):
+        try:
+            os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            return True
+        except ChildProcessError:
+            return False
+        except OSError as exc:
+            raise VerificationReadUnavailable(
+                "Verification child ownership unavailable"
+            ) from exc
+    if sys.platform == "darwin":
+        try:
+            result = subprocess.run(
+                ["/bin/ps", "-p", str(pid), "-o", "ppid=,pgid="],
+                capture_output=True,
+                text=True,
+                timeout=1,
+                check=False,
+            )
+            parent, group = map(int, result.stdout.split())
+            expected_group = os.getpgrp() if _IN_READER.get() else pid
+            return result.returncode == 0 and (parent, group) == (
+                os.getpid(), expected_group
+            )
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return False
+    return False
 
 
 @contextmanager
