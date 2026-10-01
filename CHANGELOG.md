@@ -7,6 +7,13 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM gates reject incomplete self-hosted completions
+
+- Hosted and self-hosted VLM-eval backends now require the exact
+  `finish_reason="stop"` response metadata before parsing a score. Truncated,
+  filtered, aborted, tool-call, malformed, or metadata-missing responses fail
+  closed even when they contain valid-looking verdict JSON.
+
 ### Studio videos accept S3 output paths
 
 - `preview` and `final` accept `--output-path` for an exact S3 MP4 destination,

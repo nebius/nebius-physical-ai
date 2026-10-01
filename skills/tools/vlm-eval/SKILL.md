@@ -45,6 +45,14 @@ rubric, or model against a labeled set before you trust any of them in a gate.
 `--endpoint-url` accepts either a base URL or a full `/chat/completions` URL.
 Default model is `Qwen/Qwen2-VL-7B-Instruct`; `--timeout-s` defaults to 120.
 
+Both real backends require the exact response value
+`choices[0].finish_reason="stop"` before parsing a score. Truncated, filtered,
+tool-call, aborted, malformed, empty, or missing completion metadata is an error
+even when the response already contains valid-looking verdict JSON. A custom
+self-hosted endpoint that omits `finish_reason` must be adapted to emit the
+standard OpenAI-compatible field; NPA does not infer completion from parseable
+JSON.
+
 ## Scoring controls that actually change the verdict
 
 ```bash

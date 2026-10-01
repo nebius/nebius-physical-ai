@@ -12,6 +12,14 @@ Each evaluation records the requested `model` and the endpoint's returned
 identity must be a nonempty string. Retain the serving deployment's checkpoint
 revision separately: a model name alone does not identify its weight bytes.
 
+Every scored response must report the exact value
+`choices[0].finish_reason="stop"`. NPA rejects truncated, filtered, tool-call,
+aborted, empty, malformed, or missing completion metadata before parsing a
+score, even if the response contains a complete-looking JSON verdict. If an
+existing self-hosted adapter omits `finish_reason`, update it to emit the
+standard OpenAI-compatible field; parseable JSON alone does not prove that
+generation completed.
+
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
 JSON file containing `input_path`, `output_path` (a local JSON filename),
