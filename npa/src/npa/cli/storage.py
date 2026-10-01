@@ -1823,7 +1823,11 @@ def reconcile_service_account_cmd(
     reason: str = typer.Option(
         "",
         "--reason",
-        help="Non-secret reason legacy NPA ownership is being recovered.",
+        help=(
+            "Non-secret reason legacy NPA ownership is being recovered. Explicit "
+            "credential syntax is rejected; URL query strings and bearer-like "
+            "values are redacted before storage."
+        ),
     ),
     attested_by: str = typer.Option(
         "",
