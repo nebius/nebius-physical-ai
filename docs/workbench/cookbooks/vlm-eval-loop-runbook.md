@@ -117,7 +117,11 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
   per-rollout score records, including requested/served model identity and
-  whether exact identity equality was enforced.
+  whether exact identity equality was enforced. The report also emits
+  `independent_human_label_calibration_established: false` and ordered
+  `limitations` so JSON-only consumers can see that the gate uses the mean
+  score, samples rather than continuous behavior, and does not establish
+  physical correctness or safety. Stub reports state that no VLM call occurred.
 
 Read the report:
 
@@ -126,7 +130,8 @@ aws s3 cp "s3://${NPA_S3_BUCKET}/sim-to-real/${RUN_ID}/scores/task_success_repor
 ```
 
 Use `task_success` as the coarse gate, then inspect low-score rollouts and their
-rationales before iterating on policy, simulation, or rubric.
+rationales before iterating on policy, simulation, or rubric. It is a
+mean-score gate, not the per-rollout `success_rate`.
 
 ## Plug In Real Labeled Rollouts
 
@@ -155,6 +160,19 @@ Use the best threshold and rubric from the benchmark report to update
 `vlm_success_threshold` in the loop spec (or pass `--var` at submit time).
 `workflows/testing/vlm-eval-benchmark.yaml` runs the same sweep as
 a workflow stage.
+
+Benchmark reports also set
+`independent_human_label_calibration_established: false`: the manifest accepts
+caller labels but does not establish their human authorship or independence.
+Accuracy, agreement, precision, recall, F1, and confusion counts describe that
+one labeled dataset; they are not operational error rates or evidence of
+generalization, physical correctness, or safety. Report limitations identify
+cases whose `score_source` is `fixture` or `stub` as dry-validation or wiring
+inputs rather than VLM evidence.
+
+These disclosure keys are additive. Consumers that reject unknown JSON keys
+must update their schema; consumers that ignore unknown keys retain the previous
+fields and values.
 
 ## Troubleshooting
 

@@ -52,6 +52,31 @@ _CREDENTIAL_ERROR_PATTERNS = (
     "not configured",
     "permission",
 )
+_DIRECT_LIMITATIONS = (
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    "A score from one model, rubric, threshold, and frame sample does not "
+    "establish physical correctness or safety.",
+)
+_DIRECT_NO_CALL_LIMITATION = (
+    "This score is a stub or caller-supplied dry-validation input; no VLM call "
+    "occurred, so it is not model or policy evidence."
+)
+_BENCHMARK_LIMITATIONS = (
+    "Expected labels are caller-supplied; the manifest does not establish their "
+    "independent-human provenance.",
+    "Accuracy, agreement, precision, recall, F1, and TP/TN/FP/FN describe only "
+    "this caller-labeled dataset and do not establish generalization, physical "
+    "correctness, safety, or an operational error rate.",
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+)
+_BENCHMARK_FIXTURE_LIMITATION = (
+    "Cases with score_source 'fixture' use caller-provided dry-validation inputs; "
+    "those cases are not VLM or policy evidence."
+)
+_BENCHMARK_STUB_LIMITATION = (
+    "Cases with score_source 'stub' use deterministic wiring scores; no VLM call "
+    "occurred for those cases, so they are not model or policy evidence."
+)
 
 
 @dataclass(frozen=True)
@@ -138,6 +163,10 @@ def test_golden_set_scores_known_good_and_bad_rollouts(
     assert all(0.0 <= result.score <= 1.0 for result in (good, bad))
     assert good.frame_selection == "keyframes"
     assert good.frame_count == 3
+    for result in (good, bad):
+        assert result.independent_human_label_calibration_established is False
+        assert result.limitations == _DIRECT_LIMITATIONS
+        assert isinstance(result.limitations, tuple)
 
 
 def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
@@ -157,6 +186,12 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
         assert isinstance(result.score, float)
         assert 0.0 <= result.score <= 1.0
         assert isinstance(result.passed, bool)
+        assert result.independent_human_label_calibration_established is False
+        assert result.limitations == (
+            *_DIRECT_LIMITATIONS,
+            _DIRECT_NO_CALL_LIMITATION,
+        )
+        assert isinstance(result.limitations, tuple)
 
 
 def test_parse_structured_response_clamps_score() -> None:
@@ -205,6 +240,8 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
         "rationale": "mocked endpoint saw the expected frame sequence",
     }
     assert 0.0 <= structured["score"] <= 1.0
+    assert result.independent_human_label_calibration_established is False
+    assert result.limitations == _DIRECT_LIMITATIONS
 
 
 def test_http_status_error_includes_bounded_server_detail(
@@ -597,6 +634,57 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
         )
         for case in report.best_config.results
     } == {(DEFAULT_MODEL, None, False)}
+    assert report.independent_human_label_calibration_established is False
+    assert report.limitations == (
+        *_BENCHMARK_LIMITATIONS,
+        _BENCHMARK_FIXTURE_LIMITATION,
+    )
+    assert isinstance(report.limitations, tuple)
+
+
+def test_benchmark_limitations_follow_actual_stub_and_fixture_sources(
+    tmp_path: Path,
+) -> None:
+    all_stub = benchmark_vlm_eval(
+        dataset=str(_write_benchmark_manifest(tmp_path / "all-stub", [None, None])),
+        backend="stub",
+        thresholds=[0.8],
+    )
+    mixed = benchmark_vlm_eval(
+        dataset=str(_write_benchmark_manifest(tmp_path / "mixed", [0.9, None])),
+        backend="stub",
+        thresholds=[0.8],
+    )
+
+    assert {case.score_source for case in all_stub.best_config.results} == {"stub"}
+    assert all_stub.limitations == (*_BENCHMARK_LIMITATIONS, _BENCHMARK_STUB_LIMITATION)
+    assert {case.score_source for case in mixed.best_config.results} == {
+        "fixture",
+        "stub",
+    }
+    assert mixed.limitations == (
+        *_BENCHMARK_LIMITATIONS,
+        _BENCHMARK_FIXTURE_LIMITATION,
+        _BENCHMARK_STUB_LIMITATION,
+    )
+
+
+def _write_benchmark_manifest(root: Path, fixture_scores: list[float | None]) -> Path:
+    root.mkdir(parents=True)
+    items = []
+    for index, fixture_score in enumerate(fixture_scores):
+        item = {
+            "id": f"case-{index}",
+            "rollout": f"rollout-{index}",
+            "expected_label": "pass" if index == 0 else "fail",
+            "task": "Move the object to the target.",
+        }
+        if fixture_score is not None:
+            item["fixture_score"] = fixture_score
+        items.append(item)
+    manifest = root / "benchmark.json"
+    manifest.write_text(json.dumps({"items": items}), encoding="utf-8")
+    return manifest
 
 
 def test_vlm_feedback_artifact_persists_model_enforcement_context(
@@ -629,6 +717,11 @@ def test_vlm_feedback_artifact_persists_model_enforcement_context(
     assert persisted["model"] == "stub/requested-model"
     assert persisted["served_model"] is None
     assert persisted["served_model_match_enforced"] is False
+    assert persisted["independent_human_label_calibration_established"] is False
+    assert persisted["limitations"] == [
+        *_DIRECT_LIMITATIONS,
+        _DIRECT_NO_CALL_LIMITATION,
+    ]
 
 
 def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:

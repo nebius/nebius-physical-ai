@@ -27,6 +27,16 @@ from npa.workbench.vlm_eval import (
     loop_report_uri_for,
 )
 
+_LOOP_LIMITATIONS = [
+    "task_success is a mean-score gate, not a per-rollout success rate.",
+    "Selected frames cannot verify unobserved intervals or continuous task stability.",
+    "The visual gate does not establish physical correctness or safety.",
+]
+_LOOP_STUB_LIMITATION = (
+    "Stub scores are wiring inputs; no VLM call occurred, so they are not model "
+    "or policy evidence."
+)
+
 
 def _write_rollout(root: Path, name: str, frames: int = 2) -> Path:
     rollout = root / name
@@ -103,6 +113,8 @@ def test_aggregate_matches_the_templates_jq_report() -> None:
     assert report["mean_score"] == pytest.approx(0.8)
     # The gate is the MEAN score, not the pass rate: 0.8 >= 0.8.
     assert report["task_success"] is True
+    assert report["independent_human_label_calibration_established"] is False
+    assert report["limitations"] == _LOOP_LIMITATIONS
     assert [item["rollout_id"] for item in report["rollouts"]] == ["a", "b"]
     assert report["rollouts"][0]["requested_model"] == "requested/a"
     assert report["rollouts"][0]["served_model"] == "requested/a"
@@ -140,6 +152,29 @@ def test_aggregate_handles_an_empty_set_without_dividing_by_zero() -> None:
     assert report["success_rate"] == 0.0
     assert report["mean_score"] == 0.0
     assert report["task_success"] is False
+
+
+def test_aggregate_materializes_fresh_limitations_for_each_report() -> None:
+    first = aggregate_loop_report(
+        [],
+        model="m",
+        frame_selection="keyframes",
+        success_threshold=0.8,
+        output_dir="first",
+        backend="stub",
+    )
+    second = aggregate_loop_report(
+        [],
+        model="m",
+        frame_selection="keyframes",
+        success_threshold=0.8,
+        output_dir="second",
+        backend="stub",
+    )
+
+    assert first["limitations"] == [*_LOOP_LIMITATIONS, _LOOP_STUB_LIMITATION]
+    first["limitations"].append("caller mutation")
+    assert second["limitations"] == [*_LOOP_LIMITATIONS, _LOOP_STUB_LIMITATION]
 
 
 # ----------------------------------------------------------------------- report path
@@ -191,6 +226,8 @@ def test_loop_scores_every_rollout_and_writes_both_artifact_levels(
         )
         for item in report["rollouts"]
     } == {(DEFAULT_MODEL, None, False)}
+    assert report["independent_human_label_calibration_established"] is False
+    assert report["limitations"] == [*_LOOP_LIMITATIONS, _LOOP_STUB_LIMITATION]
     # One result per rollout ...
     for name in ("episode_000", "episode_001", "episode_002"):
         assert (scores / "rollouts" / name).is_dir()
@@ -200,12 +237,19 @@ def test_loop_scores_every_rollout_and_writes_both_artifact_levels(
         assert result_payload["model"] == DEFAULT_MODEL
         assert result_payload["served_model"] is None
         assert result_payload["served_model_match_enforced"] is False
+        assert (
+            result_payload["independent_human_label_calibration_established"] is False
+        )
+        assert result_payload["limitations"][-1].startswith(
+            "This score is a stub or caller-supplied"
+        )
     # ... plus the aggregate report the sim-to-real loop gates on.
     report_path = scores / LOOP_REPORT_FILENAME
     assert report_path.is_file()
     on_disk = json.loads(report_path.read_text(encoding="utf-8"))
     assert on_disk["total_rollouts"] == 3
     assert on_disk["rollouts"] == report["rollouts"]
+    assert on_disk["limitations"] == [*_LOOP_LIMITATIONS, _LOOP_STUB_LIMITATION]
     assert report["report_uri"] == str(report_path)
     assert "latency_s" in report
 
