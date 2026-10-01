@@ -105,6 +105,34 @@ the sweep runs but tells you nothing about your task. `--use-fixture-scores`
 honors recorded `fixture_score` values for non-stub backends; stub always uses
 them when present.
 
+Every benchmark must contain at least one pass label and one fail label, and
+resolved item IDs must be unique. Both conditions are checked before frame
+selection or evaluator/backend activity. Reports include specificity and
+balanced accuracy in addition to the existing confusion counts and metrics;
+configuration ranking uses balanced accuracy first so an all-positive judge
+does not win on an imbalanced set.
+
+The packaged `isaac-agency` alias is a CPU-only calibration control:
+
+```bash
+npa workbench vlm-eval benchmark \
+  --dataset isaac-agency \
+  --output /tmp/isaac-agency-benchmark.json \
+  --backend stub \
+  --frame-selection sequence \
+  --max-frames 6 \
+  --thresholds 0.5
+```
+
+It pairs the same six exact stylized frames with a true state claim (the red
+cube becomes elevated) and a false agency claim (the robot grasps and lifts the
+cube). Before scoring, its opt-in structural check verifies frame order and
+hashes, complete color masks, signed vertical motion, and the absence of actor
+proximity. The exact preselected frames and any task resolved from rollout
+metadata are then reused for real-backend scoring. A structural pass or stub
+score is not model evidence: this fixture does not establish contact, causality,
+photoreal performance, physical correctness, policy success, or robot safety.
+
 ## In workflows
 
 toolRefs: `workbench.vlm_eval.run`, `.loop`, `.judge_against_plan`, `.benchmark`.
@@ -129,6 +157,16 @@ Self-hosted VLM steps need a GPU image; set it with `--image` on
   a policy failure; re-score with keyframes before believing it.
 - **Benchmark the rubric before trusting it.** Rubric wording moves scores more
   than most people expect, which is precisely what `benchmark` is for.
+- **Do not calibrate only on positive examples.** Such a set cannot measure
+  false-positive behavior and is rejected before evaluation.
+- **Outcome is not agency.** A moved object does not prove that the visible
+  actor grasped or caused its motion. Use paired state and agency controls.
+- **Do not send simulator gizmos as task evidence.** Disable coordinate axes
+  and debug overlays, or crop them before a VLM audit; judges can inventory
+  those markers as physical task objects.
+- **Keep sealed numeric gates external.** Qualitative text such as "a visible
+  gap" cannot replace synchronized simulator height or another predeclared
+  numeric reference.
 - **A green gate does not mean a good policy.** It means the judge, at this
   rubric and threshold, on these frames, said yes.
 
