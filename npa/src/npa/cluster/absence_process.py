@@ -158,7 +158,8 @@ def _child_is_reserved(pid):
             parent, group = map(int, result.stdout.split())
             expected_group = os.getpgrp() if _IN_READER.get() else pid
             return result.returncode == 0 and (parent, group) == (
-                os.getpid(), expected_group
+                os.getpid(),
+                expected_group,
             )
         except (OSError, ValueError, subprocess.SubprocessError):
             return False
