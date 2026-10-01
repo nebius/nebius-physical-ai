@@ -241,6 +241,17 @@ guardrails and the same exact timeline. The reviewer still rejected both at
 failed its sampled motion-fidelity assessment. Both were tracked and withheld
 from publication. Better-looking footage did not override the gate.
 
+A third pair used a synthetic photographic edit of the first source frame as
+the native one-frame appearance anchor, followed by the procedural motion
+reference. Structural guidance remained 1.0 with CFG normalization enabled;
+text guidance was 5.0. New direct prompts requested warm daylight and a gradual
+cool LED transition. This changed both source and prompts, so it is not a
+matched-input comparison. Native receipts verified the one-frame anchor,
+effective guardrails, complete controls and the same exact output timeline.
+The warm clip gained floor and material detail, while the cool clip developed
+an excessive blue cast. Sampled review rejected both at 0.15 for geometry or
+motion fidelity. An appearance anchor alone did not qualify physical realism.
+
 A CPU replay verified both real candidate checkpoints with the inference
 function set to raise if called. It reused both outputs without inference and
 left both worker receipts unchanged. The exported native HTML passed synchronized
