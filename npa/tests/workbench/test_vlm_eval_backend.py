@@ -647,7 +647,12 @@ class _FakeResp:
 
 _OK_PAYLOAD = {
     "choices": [
-        {"message": {"content": '{"success": true, "score": 0.9, "rationale": "ok"}'}}
+        {
+            "finish_reason": "stop",
+            "message": {
+                "content": '{"success": true, "score": 0.9, "rationale": "ok"}'
+            },
+        }
     ]
 }
 

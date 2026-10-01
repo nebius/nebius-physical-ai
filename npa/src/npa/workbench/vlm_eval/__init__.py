@@ -1422,16 +1422,17 @@ def _call_openai_compatible(
     )
 
     try:
-        message = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        message = choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise VlmEvalError(
             "VLM backend response missing choices[0].message.content"
         ) from exc
+    if choice.get("finish_reason") != "stop":
+        raise VlmEvalError(
+            "VLM backend response did not complete with finish_reason=stop"
+        )
     if backend == "api":
-        if data["choices"][0].get("finish_reason") != "stop":
-            raise VlmEvalError(
-                "Hosted VLM response did not complete with finish_reason=stop"
-            )
         served_model = data.get("model")
         if not isinstance(served_model, str) or not served_model.strip():
             raise VlmEvalError("Hosted VLM response must identify the served model")
