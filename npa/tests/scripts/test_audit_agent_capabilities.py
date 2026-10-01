@@ -18,6 +18,7 @@ Offline and free -- no cluster, no VM, no Token Factory call, no port bound.
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -71,13 +72,13 @@ def audit(tmp_path):
 def _stage_audit_credential_context(
     monkeypatch, tmp_path, backend_globals
 ) -> list[list[str]]:
-    """Represent configured provenance without any real credential or provider call."""
+    """Stage metadata provenance and stub providers without an operator identity."""
     from npa.cli import agent_resources
 
     config = tmp_path / "nebius" / "config.yaml"
     config.parent.mkdir()
     config.write_text("profiles: {}\n", encoding="utf-8")
-    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "configured_profile")
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
     monkeypatch.setenv("NPA_NEBIUS_PROFILE", "audit-fixture")
     provider_calls: list[list[str]] = []
@@ -154,23 +155,31 @@ def test_audit_credential_fixture_patches_imported_provider_runner(
     from npa.cli import agent_resources
 
     calls = _stage_audit_credential_context(monkeypatch, tmp_path, {})
-    result = agent_resources.run_bounded_agent_command(
-        ["nebius", "--profile", "audit-fixture", "iam", "whoami"],
-        timeout_s=1,
-    )
+    result = agent_resources.discover_mk8s_clusters("project-fixture", dict(os.environ))
 
-    assert result.returncode == 0
-    assert calls == [["nebius", "--profile", "audit-fixture", "iam", "whoami"]]
+    assert result == {"status": "available", "items": []}
+    assert len(calls) == 1
+    assert calls[0][1:5] == [
+        "--config",
+        "/root/.nebius/config.yaml",
+        "--profile",
+        "cursor-sa",
+    ]
+    assert "audit-fixture" not in calls[0]
 
 
-@pytest.mark.parametrize("credential_source", ["", "unsupported-fixture"])
+@pytest.mark.parametrize(
+    "credential_source", ["", "unsupported-fixture", "configured_profile"]
+)
 def test_unconfigured_audit_keeps_credential_refusals_visible(
     audit, tmp_path, monkeypatch, credential_source: str
 ) -> None:
     from fastapi.testclient import TestClient
 
     app, backend_globals = audit.load_backend_app(audit.render_backend_body(), tmp_path)
-    _stage_audit_credential_context(monkeypatch, tmp_path, backend_globals)
+    provider_calls = _stage_audit_credential_context(
+        monkeypatch, tmp_path, backend_globals
+    )
     monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", credential_source)
 
     with TestClient(app, raise_server_exceptions=False) as client:
@@ -187,6 +196,7 @@ def test_unconfigured_audit_keeps_credential_refusals_visible(
     assert audit.classify_outcome({"status": artifact.status_code}) == "error"
     assert str(tmp_path) not in access.text + artifact.text
     assert "unsupported-fixture" not in access.text + artifact.text
+    assert not provider_calls, "unsupported provenance must refuse before discovery"
 
 
 def test_rendered_openapi_media_operation_ids_are_unique(audit, tmp_path) -> None:
