@@ -3499,8 +3499,9 @@ def test_submit_fails_clearly_when_provisioning_left_no_context(
     assert not launched.called
 
 
+@pytest.mark.parametrize("pull_timeout", [0, 3600])
 def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
-    monkeypatch, tmp_path, mocker
+    monkeypatch, tmp_path, mocker, pull_timeout
 ) -> None:
     """The preflight used to reject the context that --deploy-if-absent creates."""
     monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "other-ctx")))
@@ -3532,7 +3533,7 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
         "npa.cli.workbench.workflow._preflight_submit_image_manifests",
         side_effect=lambda *args, **kwargs: phases.append("manifest"),
     )
-    mocker.patch(
+    target_preflight = mocker.patch(
         "npa.cli.workbench.workflow._preflight_submit_images",
         side_effect=lambda *args, **kwargs: phases.append("target") or {},
     )
@@ -3552,6 +3553,8 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
             str(HARDENING_SPEC),
             "--run-id",
             "self-provision-demo",
+            "--image-pull-timeout-seconds",
+            str(pull_timeout),
             "--project",
             "submit-project",
             "--infra",
@@ -3570,3 +3573,7 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
     assert all(target.cluster_name == "submit-context" for target in planned_targets)
     assert all(target.context == "submit-context" for target in planned_targets)
     assert phases == ["manifest", "provision", "target"]
+    target_preflight.assert_called_once()
+    assert (
+        target_preflight.call_args.kwargs["image_pull_timeout_seconds"] == pull_timeout
+    )

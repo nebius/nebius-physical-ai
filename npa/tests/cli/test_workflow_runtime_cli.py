@@ -535,8 +535,9 @@ def test_runtime_keeps_configured_project_selection(
 
 
 @pytest.mark.parametrize("pull_timeout", [0, 3600])
+@pytest.mark.parametrize("run_option", ["--run-id", "--resume-run"])
 def test_submit_runtime_passes_per_tool_image_override(
-    fake_runtime, mocker, pull_timeout
+    fake_runtime, mocker, tmp_path, pull_timeout, run_option
 ) -> None:
     image = "cr.example.invalid/reg/npa-token-factory:fixed"
     pins = {image: "cr.example.invalid/reg/npa-token-factory@sha256:" + "a" * 64}
@@ -550,7 +551,7 @@ def test_submit_runtime_passes_per_tool_image_override(
             "workflow",
             "submit",
             str(FANOUT),
-            "--run-id",
+            run_option,
             "rt-tool-image",
             "--image-pull-timeout-seconds",
             str(pull_timeout),
@@ -571,6 +572,14 @@ def test_submit_runtime_passes_per_tool_image_override(
     checked = preflight.call_args.kwargs["options"]
     assert checked.image_overrides == options.image_overrides
     assert preflight.call_args.kwargs["image_pull_timeout_seconds"] == pull_timeout
+    wave = tmp_path / "next-wave.yaml"
+    wave.write_text("name: next-wave\nrun: echo next\n")
+    fake_runtime["options"].pre_submit_hook(wave)
+    assert preflight.call_count == 2
+    assert all(
+        call.kwargs["image_pull_timeout_seconds"] == pull_timeout
+        for call in preflight.call_args_list
+    )
 
 
 def test_submit_rejects_malformed_per_tool_image_override() -> None:
