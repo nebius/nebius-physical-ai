@@ -46,11 +46,15 @@ An already smaller runtime limit is preserved for directly launched helpers.
 
 Unlimited, unavailable or non-v2 metadata leaves the runtime setting unchanged;
 readable ancestor limits still apply when a descendant limit is unavailable.
-Malformed finite-limit data, unavailable usage for a known finite limit, or an
-allowance no larger than the helper's existing runtime memory produces a
-controlled failure before detection. Values above Go's signed addressable range
-are treated as unlimited. The policy is sampled at startup: hidden ancestors,
-later limit changes and competing allocations cannot be predicted.
+A sample with no headroom, or no more allowance than the helper already owns, is
+skipped: `memory.current` includes reclaimable page cache, so transient pressure
+must not prevent scanning. Usable limits from other ancestors and an already
+stricter runtime limit remain effective. A usage file disappearing with ENOENT
+or ENODEV is also skipped. Malformed finite-limit or usage data and other usage
+read failures produce a controlled error before detection. Values above Go's
+signed addressable range are treated as unlimited. The policy is sampled at
+startup: hidden ancestors, later limit changes and competing allocations cannot
+be predicted.
 
 This is a **soft limit on Go-managed memory**, not a process-memory ceiling or an
 OOM guarantee. The [Go GC guide](https://go.dev/doc/gc-guide#Memory_limit) explains

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // cgroupPath rejects traversal rather than normalizing an unexpected proc path.
@@ -94,12 +96,15 @@ func cgroupAllowance(directory string, readFile func(string) ([]byte, error)) (i
 		return 0, ""
 	}
 	usage, err := readFile(filepath.Join(directory, "memory.current"))
+	if os.IsNotExist(err) || errors.Is(err, syscall.ENODEV) {
+		return 0, ""
+	}
 	current, valid := cgroupBytes(usage)
 	if err != nil || !valid {
 		return 0, "cgroup_memory_usage_unavailable"
 	}
 	if current >= limit {
-		return 0, "cgroup_memory_headroom"
+		return 0, ""
 	}
 	remaining := limit - current
 	return int64(remaining - remaining/10), ""
@@ -107,8 +112,9 @@ func cgroupAllowance(directory string, readFile func(string) ([]byte, error)) (i
 
 // cgroupMemoryLimit includes every readable visible ancestor, not just the leaf.
 // Missing cgroup-v2 metadata preserves the existing runtime default. Once a
-// finite limit is known, invalid usage cannot silently select a looser budget.
-func cgroupMemoryLimit(readFile func(string) ([]byte, error)) (int64, string) {
+// finite limit is known, malformed usage cannot silently select a looser budget.
+// Exhausted or too-small samples are advisory: current includes reclaimable cache.
+func cgroupMemoryLimit(readFile func(string) ([]byte, error), owned uint64) (int64, string) {
 	membership, memberErr := readFile("/proc/self/cgroup")
 	mounts, mountErr := readFile("/proc/self/mountinfo")
 	if memberErr != nil || mountErr != nil {
@@ -121,7 +127,7 @@ func cgroupMemoryLimit(readFile func(string) ([]byte, error)) (int64, string) {
 		if code != "" {
 			return 0, code
 		}
-		if limit != 0 && (selected == 0 || limit < selected) {
+		if uint64(limit) > owned && (selected == 0 || limit < selected) {
 			selected = limit
 		}
 		if directory == boundary {
@@ -134,12 +140,9 @@ func cgroupMemoryLimit(readFile func(string) ([]byte, error)) (int64, string) {
 
 // applyCgroupMemoryLimit never raises an explicitly smaller runtime limit.
 func applyCgroupMemoryLimit(readFile func(string) ([]byte, error), owned uint64, setLimit func(int64) int64) string {
-	limit, code := cgroupMemoryLimit(readFile)
+	limit, code := cgroupMemoryLimit(readFile, owned)
 	if code != "" || limit == 0 {
 		return code
-	}
-	if uint64(limit) <= owned {
-		return "cgroup_memory_headroom"
 	}
 	if limit < setLimit(-1) {
 		setLimit(limit)
