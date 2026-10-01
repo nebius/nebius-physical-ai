@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "work_item": "vlm-self-hosted-finish-reason-v1",
-  "generated_at_utc": "2026-10-01T04:59:39Z",
+  "generated_at_utc": "2026-10-01T05:14:06Z",
   "claim": "Both real VLM-eval backends require the exact finish_reason value stop before parsing a verdict.",
   "source": {
     "base_commit": "59514b9905c5427a250c2d0d3455b1f8e374b7e5",

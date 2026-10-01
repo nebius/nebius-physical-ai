@@ -63,7 +63,8 @@ controls, not fixture scores presented as a model evaluation.
 
 ## Reproduce
 
-From exact candidate `b6fcc370049ab73c7c6536a3b58554d6be4d4592`:
+For the source behavior, check out exact candidate
+`b6fcc370049ab73c7c6536a3b58554d6be4d4592` and run:
 
 ```bash
 PYTHONPATH="$PWD/npa/src" npa/.venv/bin/python -m pytest \
@@ -77,7 +78,12 @@ PYTHONPATH="$PWD/npa/src" npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_vlm_eval_loop_e2e.py \
   npa/tests/cli/test_workbench_vlm_eval_cli.py \
   npa/tests/workflows/test_vlm_eval_workflow.py -q
+```
 
+For the 846-test publication-documentation result, check out the publication
+commit containing this evidence directory and run:
+
+```bash
 PYTHONPATH="$PWD/npa/src" npa/.venv/bin/python -m pytest \
   npa/tests/guardrails/test_skills_index.py \
   npa/tests/guardrails/test_documentation_examples.py -q
