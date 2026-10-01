@@ -2931,7 +2931,11 @@ def _s3_delete_failure_response(
         failed.add(key)
         diagnostics.add(f"code={code}")
         if type(message) is str:
-            message_digest = hashlib.sha256(message.encode("utf-8")).hexdigest()[:12]
+            try:
+                encoded_message = message.encode("utf-8")
+            except UnicodeEncodeError:
+                return pending, {"malformed-response"}
+            message_digest = hashlib.sha256(encoded_message).hexdigest()[:12]
             diagnostics.add(f"message-sha256={message_digest}")
     return [key for key in pending if key in failed], diagnostics
 

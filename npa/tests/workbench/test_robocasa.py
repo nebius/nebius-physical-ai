@@ -3454,6 +3454,32 @@ def test_s3_staging_delete_warns_on_malformed_success_response(
     assert "diagnostics=malformed-response" in caplog.text
 
 
+def test_s3_staging_delete_bounds_provider_diagnostics(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class ManyDiagnosticsS3:
+        calls = 0
+
+        def delete_objects(self, **_request):
+            attempt = self.calls
+            self.calls += 1
+            return {
+                "Errors": [
+                    {"Key": "staged", "Code": f"Error{attempt}{index}"}
+                    for index in range(5)
+                ]
+            }
+
+    s3 = ManyDiagnosticsS3()
+
+    capabilities._delete_s3_staging_objects(s3, "bucket", ["staged"])
+
+    assert s3.calls == 2
+    assert "+2-more" in caplog.text
+    assert "code=Error13" not in caplog.text
+    assert "code=Error14" not in caplog.text
+
+
 def test_cleanup_failure_does_not_mask_publication_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -3523,6 +3549,39 @@ def test_hostile_cleanup_exception_metadata_does_not_mask_original_failure(
     assert "exception=HostileCleanup" in caplog.text
     assert "private provider detail" not in caplog.text
     assert "diagnostic property failed" not in caplog.text
+
+
+def test_surrogate_cleanup_message_does_not_mask_original_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class SurrogateMessageS3:
+        calls = 0
+
+        def delete_objects(self, **_request):
+            self.calls += 1
+            return {
+                "Errors": [
+                    {
+                        "Key": "staged",
+                        "Code": "InternalError",
+                        "Message": "\ud800",
+                    }
+                ]
+            }
+
+    s3 = SurrogateMessageS3()
+
+    def fail_then_clean() -> None:
+        try:
+            raise OSError("original publication failure")
+        finally:
+            capabilities._delete_s3_staging_objects(s3, "bucket", ["staged"])
+
+    with pytest.raises(OSError, match="original publication failure"):
+        fail_then_clean()
+
+    assert s3.calls == 2
+    assert "diagnostics=malformed-response" in caplog.text
 
 
 def test_upload_output_copy_failure_never_publishes_commit_marker(
