@@ -311,6 +311,13 @@ output or raise CLI exits and do not guarantee typed response objects.
 The [walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md) explains these
 differences with a detection-training service example.
 
+For a complete public-data GPU training reference, run
+`bash npa/scripts/run-public-vla.sh --backend kubernetes --output-path ./outputs/vla-launch`.
+The [public VLA cookbook](../docs/workbench/cookbooks/public-vla-training.md)
+documents the Slurm/Soperator alternative, optional recipe fields, private launch
+receipts, checkpoint recovery, and collection of the trained policy and HTML/MP4
+evaluation report. The reference uses pinned public SmolVLA and LeRobot data.
+
 For artifact conversion and sharing, see the
 [CLI / SDK walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md),
 [Foxglove export](../docs/workbench/foxglove-export.md), and

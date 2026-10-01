@@ -9,6 +9,11 @@ curation, multi-task training, checkpoint evaluation, task-specific fine-tuning,
 and policy evaluation. Data generation is a separate pipeline and is not part
 of this graph.
 
+For an implemented public-data path that runs native SmolVLA training and LIBERO
+evaluation, start with [the turnkey VLA reference](public-vla-training.md).
+It supports a Kubernetes Job or a Slurm/Pyxis allocation and exports real
+checkpoint-bound rollouts. The preview below explains the larger architecture.
+
 ## See the public-data preview
 
 With `uv` and `ffmpeg` installed, run:
@@ -45,15 +50,15 @@ is a separate local contract test; it is not the foundation-model demonstration.
 | --- | --- |
 | Slurm training managed through Kubernetes | Existing batch transport executes `sbatch` through the Soperator login jail. The distributed recipe renderer generates Pyxis/Enroot plus one torchrun launcher per node. |
 | Foundation pretraining versus task adaptation | Launch recipes explicitly name `pretrain`, `continued-pretrain`, or `finetune`. A pretrained GR00T fine-tune must not be reported as from-scratch pretraining. The trainer owns the scientific recipe. |
-| LeRobot v3 corpus | Curation validates v3 metadata and preserves episode references. The public preview reads actual v3 metadata, Parquet and videos. A model adapter must verify or convert its supported data format at the training boundary. |
+| LeRobot v3 corpus | Curation validates v3 metadata and preserves episode references. The public SmolVLA runner consumes v3 metadata, Parquet and videos through native LeRobot; the architecture preview reads the same public corpus. A model adapter must verify or convert its supported data format at the training boundary. |
 | Flagging distinct from selection | Every reviewed episode retains its quality decision and measurements in the curation report. `selection: all` keeps flagged episodes; `quality-pass` is the default. Preview-frame checks are implemented; full-video, trajectory and language quality analysis remain external inputs. |
 | Weighted multi-task data | Phase-specific `training_selection` produces a hashed training manifest with normalized dataset probabilities. The trainer must consume those probabilities and exact episode indices. No holdout may be used for training. |
 | Task-specific fine-tuning | Explicit `task_ids` filter the training partition. An empty task subset or missing corpus weight fails before batch submission. |
 | Different entry events | Corpus events run the full graph. Dataset events can stop after curation or start fine-tuning from an approved checkpoint. Code events start fine-tuning and evaluation without redoing pretraining. |
 | Checkpoint-triggered evaluation | A trainer hook hashes a completed checkpoint and its recovery files, atomically publishes a ready event, then submits an evaluation job with a durable receipt. This hook must be wired into the selected trainer's post-save barrier. |
 | Shared model server with benchmark clients | Required evaluation topology: benchmark containers exchange observations/actions with one checkpoint-bound GPU policy server. Model-server and benchmark integration are not implemented by the generic batch adapter. |
-| Model recovery | The ready-event contract requires model, optimizer, scheduler, RNG and sampler files. Actual restore behavior belongs to the trainer and still requires interruption/resume qualification. |
-| Final policy quality | Local contract tests do not prove model learning. A real GPU run, held-out benchmark measurements and checkpoint-bound rollout videos remain required. |
+| Model recovery | The ready-event contract requires model, optimizer, scheduler, RNG and sampler files. The public SmolVLA reference has passed a one-GPU interruption/resume test through its final step. Other trainers and multi-node allocations require their own qualification. |
+| Final policy quality | The public SmolVLA reference records actual CUDA updates, 40 native rollout videos and an 8/10 final simulator score. These results do not qualify a different model, benchmark or physical robot. |
 
 ## Why Soperator is the default
 

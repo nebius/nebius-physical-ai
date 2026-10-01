@@ -7,8 +7,6 @@ import json
 import math
 from typing import Any
 
-from npa.workbench.dataset.storage import read_json_uri
-
 
 def digest(payload: Any) -> str:
     """Hash a JSON artifact independently of formatting.
@@ -70,6 +68,8 @@ def approved_checkpoint(uri: str) -> dict[str, str]:
     Raises:
         ValueError: The gate did not promote.
     """
+    from npa.workbench.dataset.storage import read_json_uri
+
     gate = read_json_uri(uri)
     if gate.get("decision") != "promote_checkpoint":
         raise ValueError("checkpoint has not passed its evaluation gate")

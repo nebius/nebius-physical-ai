@@ -21,7 +21,7 @@ def slurm_script(recipe: dict) -> str:
     nodes, gpus = recipe["nodes"], recipe["gpus_per_node"]
     trainer = shlex.join(recipe["trainer_argv"])
     output = q(recipe["output_path"])
-    image = q(recipe["image"])
+    image = q(enroot_image(recipe["image"]))
     mounts = q(recipe["shared_path"] + ":" + recipe["shared_path"])
     return f"""#!/usr/bin/env bash
 # Fixed membership: Slurm allocates nodes; torchrun launches ranks inside them.
@@ -43,6 +43,25 @@ srun --kill-on-bad-exit=1 --container-image={image} \\
     --master-addr="$NPA_MASTER_ADDR" --master-port="$NPA_MASTER_PORT" \\
     "$@"' foundation-trainer {trainer}
 """
+
+
+def enroot_image(image: str) -> str:
+    """Translate a pinned OCI reference into Enroot's registry and digest syntax.
+
+    Args:
+        image: Validated OCI reference ending in @sha256:<digest>.
+    Returns:
+        Pyxis image URI compatible with Enroot 3.x and current releases.
+    Raises:
+        ValueError: The reference lacks an immutable digest.
+    """
+    name, marker, digest = image.removeprefix("docker://").partition("@sha256:")
+    if not marker or not re.fullmatch(r"[a-f0-9]{64}", digest):
+        raise ValueError("Enroot image requires a SHA256 digest")
+    registry, separator, path = name.partition("/")
+    if "#" not in name and separator and ("." in registry or ":" in registry):
+        name = registry + "#" + path
+    return name + ":sha256:" + digest
 
 
 def _validate_recipe(recipe):
