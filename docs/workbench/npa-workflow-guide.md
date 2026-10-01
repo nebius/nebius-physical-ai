@@ -220,6 +220,13 @@ Check this contract with the artifacts each execution path actually produces.
 `validate-spec` and `plan-spec --check-render` cannot prove that a command will
 write its declared outputs.
 
+The schema is strict: omit optional fields instead of assigning `null`;
+collection fields must remain mappings/lists; integer fields reject booleans
+and every YAML float (including `1.0`); booleans accept only YAML `true`/`false`;
+and duplicate state names are rejected instead of being overwritten. Quote
+template tokens when they must remain strings, then run `validate-spec` again
+after generator output or configuration overrides.
+
 ## Tokens (no Jinja)
 
 | Token | Meaning |

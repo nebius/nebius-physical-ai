@@ -188,6 +188,15 @@ only to trusted HTTPS token realms; every reachable decision combination is
 covered; every returned image is digest-pinned. If `cloud` is omitted, provide
 an exact `--infra` so VM versus Kubernetes authority is not guessed.
 
+Image-policy quarantine is earlier than pullability. If resolution reports
+`no consumable public release` or `quarantined`, stop: the recorded public tag
+may still exist and pull anonymously, but NPA deliberately will not execute it.
+Use a fully qualified, immutable `IMAGE@sha256:DIGEST` only after that rebuilt
+artifact has passed the relevant byte scan and capability validation. Supply it
+through the tool's explicit `--image` option or repeat workflow
+`--image-override TOOL_REF=IMAGE@sha256:DIGEST`; do not repoint ambient
+`NPA_REGISTRY` and do not select the stale public tag directly.
+
 ## Step 9 — Submit
 
 ```bash

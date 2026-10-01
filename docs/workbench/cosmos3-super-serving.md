@@ -2,6 +2,10 @@
 
 [Workbench docs](README.md)
 
+For the published B200/H200 results, all four benchmark YAML entry points,
+source credit, and the current runner's scheduling/timing differences, see the
+[Cosmos3-Super benchmark showcase](../../benchmark/cosmos3-super/README.md).
+
 `npa workbench cosmos3 generate` runs Cosmos 3 generation as a batch job: one
 invocation, one artifact, and a full model load every time. For the 64B
 `Cosmos3-Super` checkpoint that load costs minutes, so a synthetic-data
@@ -298,11 +302,16 @@ by serving configurations that enable it.
 
 ## Reproduce the primary sweep or complete B200 record
 
-The Workbench recipe reproduces the methodology documented by the public
+The Workbench recipe implements the workload and topology matrix documented by the public
 [`cosmos3-super-serving`](https://github.com/stewtong/cosmos3-super-serving)
 record at upstream revision `532bffd4c2b2ec08909a92d5bc0b3bab4e911b2b`.
-NPA reimplements the measurement contract; it does not redistribute the
-upstream repository's code, prompt text, result records, or generated media.
+NPA reimplements the measurement harness. Its worker scheduling and inclusion
+of MP4 validation in measured time differ from the upstream v1 protocol now
+documented in the [benchmark comparison](../../benchmark/cosmos3-super/upstream-review.md).
+Treat its runs as separately labeled measurements rather than exact v1
+reproductions. The showcase credits Stewart Tong and provides sourced aggregate
+results; NPA does not vendor the upstream code, raw per-attempt records, prompt
+text, or generated media.
 The artifact-level decision is recorded in
 hardware-specific records
 [`cosmos3-super-b200-benchmark-licensing.json`](../../npa/workflows/workbench/configs/cosmos3-super-b200-benchmark-licensing.json)

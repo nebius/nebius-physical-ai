@@ -363,7 +363,10 @@ def test_sonic_stage_setup_installs_torch_stack(
         spec,
         build_plan(spec, run_id="demo"),
         run_id="demo",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     docs = [d for d in yaml.safe_load_all(rendered) if d]
     assert docs, rendered
@@ -1097,7 +1100,10 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
         spec,
         build_plan(spec, run_id="demo", assume_decision="promote_checkpoint"),
         run_id="demo",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     docs = [doc for doc in yaml.safe_load_all(rendered) if doc]
     transfer = next(doc for doc in docs if "cosmos2 transfer" in doc.get("run", ""))
@@ -1840,6 +1846,24 @@ def test_resolve_task_image_uses_override() -> None:
         options=SkypilotRenderOptions(image_overrides={"*": "cr.example/custom:1"}),
     )
     assert image == "cr.example/custom:1"
+
+
+def test_resolve_task_image_reports_quarantine_as_workflow_error() -> None:
+    with pytest.raises(NpaWorkflowError, match="no consumable public release"):
+        resolve_task_image(
+            "workbench.cosmos_evaluator.evaluate",
+            {},
+            options=SkypilotRenderOptions(),
+        )
+
+
+def test_resolve_task_image_rejects_quarantined_sonic_release() -> None:
+    with pytest.raises(NpaWorkflowError, match="quarantined public release"):
+        resolve_task_image(
+            "workbench.sonic.eval",
+            {},
+            options=SkypilotRenderOptions(gpu_target="gpu-rtx6000"),
+        )
 
 
 def test_resolve_task_image_rejects_glob_like_override_selector() -> None:

@@ -140,6 +140,70 @@ def test_parse_scene_spec_supports_multiple_objects_and_target() -> None:
 
 
 @pytest.mark.parametrize(
+    ("role", "fixed", "expected"),
+    [
+        (sa.ROLE_MANIPULAND, None, False),
+        (sa.ROLE_TARGET, None, False),
+        (sa.ROLE_STATIC, None, True),
+        (sa.ROLE_MANIPULAND, False, False),
+        (sa.ROLE_TARGET, False, False),
+        (sa.ROLE_STATIC, False, False),
+        (sa.ROLE_MANIPULAND, True, True),
+        (sa.ROLE_TARGET, True, True),
+        (sa.ROLE_STATIC, True, True),
+    ],
+)
+def test_parse_scene_spec_fixed_defaults_and_overrides(
+    role: str, fixed: bool | None, expected: bool
+) -> None:
+    obj = {"name": "subject", "asset_source": "primitive", "role": role}
+    if fixed is not None:
+        obj["fixed"] = fixed
+    doc = {"objects": [obj]}
+    if role != sa.ROLE_MANIPULAND:
+        doc["objects"].insert(
+            0,
+            {
+                "name": "manipuland",
+                "asset_source": "primitive",
+                "role": sa.ROLE_MANIPULAND,
+            },
+        )
+
+    parsed = sa.parse_scene_spec(doc)
+
+    assert parsed.objects[-1].fixed is expected
+
+
+@pytest.mark.parametrize(
+    "fixed",
+    [
+        pytest.param("false", id="string"),
+        pytest.param(0, id="integer"),
+        pytest.param(1.5, id="float"),
+        pytest.param(None, id="null"),
+        pytest.param([], id="collection"),
+        pytest.param({}, id="mapping"),
+    ],
+)
+def test_parse_scene_spec_rejects_non_boolean_fixed(fixed: object) -> None:
+    doc = {
+        "objects": [
+            {
+                "name": "subject",
+                "asset_source": "primitive",
+                "fixed": fixed,
+            }
+        ]
+    }
+
+    with pytest.raises(
+        sa.SceneSpecError, match=r"object\[0\]\.fixed must be a JSON boolean"
+    ):
+        sa.parse_scene_spec(doc)
+
+
+@pytest.mark.parametrize(
     "doc",
     [
         {},  # no objects

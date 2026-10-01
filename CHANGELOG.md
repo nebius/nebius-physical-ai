@@ -7,6 +7,14 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### LeRobot feedback control mode requires a JSON boolean
+
+- `POST /feedback/train-step` accepts `control: true` or `control: false`;
+  omitting `control` still defaults to false. Strings (including `"true"`),
+  numbers, and null now return HTTP 400 before any policy update or output
+  directory creation. External clients must send a JSON boolean. Update-result
+  decoding enforces the same contract instead of coercing truthy values.
+
 ### Studio videos accept S3 output paths
 
 - `preview` and `final` accept `--output-path` for an exact S3 MP4 destination,

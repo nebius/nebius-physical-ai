@@ -15,14 +15,11 @@ import typer
 from npa.clients.config import resolve_container_registry
 from npa.clients.credentials import apply_shared_credential_env, load_credentials
 from npa.clients.project_credentials import storage_env_for_project
-from npa.deploy.images import DEFAULT_CONTAINER_REGISTRY, container_image_for_tool
+from npa.deploy.images import container_image_for_tool
 from npa.workbench.robocasa.schemas import DEFAULT_PORT, DEFAULT_TOKEN_ENV
 
 from npa.cli.workbench.robocasa.helpers import OutputFormat, emit, fail
 
-DEFAULT_IMAGE = container_image_for_tool(
-    "robocasa", registry=DEFAULT_CONTAINER_REGISTRY
-)
 DEFAULT_NAME = "npa-robocasa"
 DEFAULT_NAMESPACE = "default"
 
@@ -47,7 +44,12 @@ def deploy_cmd(
         "", "--kubeconfig", help="Kubeconfig path override."
     ),
     image: str = typer.Option(
-        "", "--image", help=f"Container image to deploy. Defaults to {DEFAULT_IMAGE}."
+        "",
+        "--image",
+        help=(
+            "Container image to deploy. Omit only when an accepted public release "
+            "is available; quarantined releases require an explicit operator image."
+        ),
     ),
     name: str = typer.Option(
         DEFAULT_NAME, "--name", help="Kubernetes deployment/service name."
