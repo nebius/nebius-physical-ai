@@ -599,10 +599,47 @@ def test_single_class_dataset_fails_before_frame_selection(
         benchmark_vlm_eval(dataset=str(manifest), backend="api")
 
 
-def test_swapped_paired_labels_fail_structural_preflight(tmp_path: Path) -> None:
+def test_positive_actor_claim_fails_during_parse_before_runtime(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    payload = _packaged_manifest()
+    payload["items"][1]["expected_label"] = "pass"
+    payload["items"].append(_manifest_item("balance-negative", "fail"))
+    manifest = _write_payload(tmp_path, payload)
+    for name in (
+        "select_rollout_frames",
+        "evaluate_agency_structure",
+        "_normalize_backend",
+        "_resolve_api_key",
+        "_call_openai_compatible",
+    ):
+        monkeypatch.setattr(
+            vlm_eval,
+            name,
+            lambda *_args, _name=name, **_kwargs: pytest.fail(f"{_name} was called"),
+        )
+
+    with pytest.raises(
+        VlmEvalError,
+        match=(
+            "benchmark item 2.*actor_causes_motion.*"
+            "refutation-only.*expected_label fail"
+        ),
+    ):
+        benchmark_vlm_eval(
+            dataset=str(manifest),
+            backend="api",
+            frame_selection="sequence",
+            max_frames=6,
+        )
+
+
+def test_object_label_mismatch_still_fails_structural_preflight(
+    tmp_path: Path,
+) -> None:
     payload = _packaged_manifest()
     payload["items"][0]["expected_label"] = "fail"
-    payload["items"][1]["expected_label"] = "pass"
+    payload["items"].append(_manifest_item("balance-positive", "pass"))
     manifest = _write_payload(tmp_path, payload)
 
     with pytest.raises(VlmEvalError, match="does not match expected_label"):

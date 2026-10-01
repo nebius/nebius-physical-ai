@@ -1321,10 +1321,22 @@ def _parse_benchmark_item(
                 f"benchmark item {index} has invalid structural_check: {exc}"
             ) from exc
 
+    expected_label = _coerce_expected_label(raw_label)
+    if (
+        structural_check is not None
+        and structural_check.claim == "actor_causes_motion"
+        and expected_label
+    ):
+        raise VlmEvalError(
+            f"benchmark item {index} structural_check claim "
+            "actor_causes_motion is refutation-only and requires "
+            "expected_label fail"
+        )
+
     return VlmBenchmarkItem(
         id=item_id,
         rollout=_resolve_relative_path(str(rollout), rollout_base),
-        expected_label=_coerce_expected_label(raw_label),
+        expected_label=expected_label,
         task=str(raw_item.get("task") or raw_item.get("instruction") or default_task),
         fixture_score=fixture_score,
         structural_check=structural_check,

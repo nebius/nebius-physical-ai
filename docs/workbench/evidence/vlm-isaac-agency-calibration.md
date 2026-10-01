@@ -87,7 +87,11 @@ guard.
 
 These frames are synthetic stylized stand-ins, not Isaac Sim renders. Color
 masks are valid only for this explicitly configured fixture. Horizontal
-separation can reject the frozen grasp claim; proximity would still be
+separation can reject the frozen grasp claim. `actor_causes_motion` is therefore
+a one-sided refuter: `fail` disproves the configured claim; `inconclusive`
+blocks benchmark preflight and must not be treated as success. Proximity is
 inconclusive because it cannot establish grasp, force, dynamics, or causality.
-The result does not establish photoreal generalization, policy success,
-physical correctness, or robot safety.
+The claim has no `pass` outcome, so benchmark parsing rejects
+`actor_causes_motion` items whose `expected_label` is positive. The result does
+not establish photoreal generalization, policy success, physical correctness,
+or robot safety.
