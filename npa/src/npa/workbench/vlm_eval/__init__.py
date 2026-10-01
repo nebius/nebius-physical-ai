@@ -559,19 +559,55 @@ def select_rollout_frames(
 
 
 def parse_structured_response(text: str) -> VlmStructuredResponse:
-    """Parse a VLM JSON response and clamp its score into [0, 1]."""
+    """Parse self-hosted output and validate its verdict fields.
+
+    Args:
+        text: Model response containing one verdict object.
+
+    Returns:
+        The validated verdict without score or type repair.
+
+    Raises:
+        VlmEvalError: If the response cannot be parsed or has invalid fields.
+    """
 
     payload = _load_json_object(text)
-    if "score" not in payload:
-        raise VlmEvalError("VLM response JSON must include score")
-    if "rationale" not in payload:
-        raise VlmEvalError("VLM response JSON must include rationale")
-    score = _clamp_score(payload["score"])
-    success = _coerce_bool(payload.get("success", score >= 0.5))
+    return _validate_structured_response_fields(
+        payload,
+        response_label="Self-hosted",
+    )
+
+
+def _validate_structured_response_fields(
+    payload: dict[str, Any],
+    *,
+    response_label: str,
+    served_model: str | None = None,
+) -> VlmStructuredResponse:
+    """Validate model verdict fields without changing their values."""
+
+    if not isinstance(payload.get("success"), bool):
+        raise VlmEvalError(f"{response_label} VLM response success must be a boolean")
+    score = payload.get("score")
+    if (
+        isinstance(score, bool)
+        or not isinstance(score, (int, float))
+        or not 0 <= score <= 1
+        or not math.isfinite(score)
+    ):
+        raise VlmEvalError(
+            f"{response_label} VLM response score must be a finite number in [0, 1]"
+        )
+    rationale = payload.get("rationale")
+    if not isinstance(rationale, str) or not rationale.strip():
+        raise VlmEvalError(
+            f"{response_label} VLM response rationale must be a nonempty string"
+        )
     return VlmStructuredResponse(
-        success=success,
-        score=score,
-        rationale=str(payload["rationale"]),
+        success=payload["success"],
+        score=float(score),
+        rationale=rationale,
+        served_model=served_model,
     )
 
 
@@ -603,25 +639,9 @@ def _parse_api_structured_response(
         ) from exc
     if not isinstance(payload, dict):
         raise VlmEvalError("Hosted VLM response JSON must be an object")
-    if not isinstance(payload.get("success"), bool):
-        raise VlmEvalError("Hosted VLM response success must be a boolean")
-    score = payload.get("score")
-    if (
-        isinstance(score, bool)
-        or not isinstance(score, (int, float))
-        or not 0 <= score <= 1
-        or not math.isfinite(score)
-    ):
-        raise VlmEvalError(
-            "Hosted VLM response score must be a finite number in [0, 1]"
-        )
-    rationale = payload.get("rationale")
-    if not isinstance(rationale, str) or not rationale.strip():
-        raise VlmEvalError("Hosted VLM response rationale must be a nonempty string")
-    return VlmStructuredResponse(
-        success=payload["success"],
-        score=float(score),
-        rationale=rationale,
+    return _validate_structured_response_fields(
+        payload,
+        response_label="Hosted",
         served_model=served_model,
     )
 
@@ -1862,14 +1882,6 @@ def _load_json_object(text: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise VlmEvalError("VLM response JSON must be an object")
     return payload
-
-
-def _coerce_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes"}
-    return bool(value)
 
 
 def _clamp_score(value: Any) -> float:

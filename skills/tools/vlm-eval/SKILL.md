@@ -53,6 +53,14 @@ self-hosted endpoint that omits `finish_reason` must be adapted to emit the
 standard OpenAI-compatible field; NPA does not infer completion from parseable
 JSON.
 
+Both real backends also validate verdict fields without repairing them:
+`success` must be a JSON boolean, `score` must be a finite JSON number in
+`[0, 1]` (not a boolean or numeric string), and `rationale` must be a nonempty
+string. An out-of-range score is an error, never a clamped pass. Self-hosted
+responses retain the compatibility framing that accepts a JSON fence or extracts
+one object from surrounding text; hosted responses retain their stricter
+complete-input and duplicate-key checks.
+
 ## Scoring controls that actually change the verdict
 
 ```bash
