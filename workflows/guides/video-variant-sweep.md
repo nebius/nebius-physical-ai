@@ -1,293 +1,219 @@
 # Video variant sweep
 
-Run source videos through visual description, prompt enhancement, parallel
-Cosmos Transfer 2.5 generation, paired visual review, Postgres/MLflow tracking,
-and accepted-dataset publication on Nebius through SkyPilot. The reference is
-[video-variant-sweep.yaml](../testing/video-variant-sweep.yaml).
+Turn source videos into a tracked synthetic dataset: describe the scene, merge an
+appearance hint or retain a direct prompt, generate conditioned variants in
+parallel, review fidelity, record Postgres/MLflow lineage, and publish accepted
+clips. The operator kit now selects
+[the Cosmos3 reference](../testing/video-variant-sweep-cosmos3.yaml) by default.
+The [Transfer 2.5 reference](../testing/video-variant-sweep.yaml) remains available
+for existing configurations and historical results.
 
-This workflow ends at a versioned synthetic video dataset. Its unit of work is
-a source video, an appearance prompt, and a generation parameter combination.
-Downstream consumers choose how to use that dataset. Policy pretraining,
-fine-tuning, train/test splits, simulator evaluation, and deployment are separate
-workflows; they are not stages or acceptance criteria of this sweep.
+This workflow ends at the synthetic dataset. Policy training, train/test splits,
+simulator task-success evaluation, and deployment are separate workflows. The
+review gate measures augmentation fidelity, not robot task success.
 
-The visual review gate checks augmentation fidelity: source objects, motion,
-camera, and the requested appearance change. A passing sampled-frame judgment
-does not establish robot task success or certify every frame as artifact-free.
-The description model and video generator are separate components, and their
-actual identities must be recorded separately. Selecting a Cosmos3 reasoner does
-not change the Transfer 2.5 generation backend in this reference.
+## Run through the operator kit
 
-The two GPU workers process disjoint partitions of **every source × variant**
-combination. Two workers describes the reference topology; it does not cap the
-number of clips or variants. To change the worker count, change `workers` and
-the worker states, their indices, and their declared output receipts together.
-Every worker, including an empty partition, emits a receipt. The review stage
-requires complete coverage before judging any candidate.
-
-The present reference accepts explicit parameter combinations rather than
-expanding parameter axes, and always describes sources and enhances hints.
-It does not yet offer a direct, unmodified user-prompt mode. Worker receipts are
-written after a whole partition completes; retrying a failed partition currently
-regenerates that partition's clips. These limits matter for large sweeps.
-
-## One-command operator kit and offline demo
-
-After configuring the cluster and services described below, use the operator kit
-from a checkout on a Linux host with `npa[video-sweep]` installed. It keeps the canonical YAML
-as the stage graph and automates preflight, immutable source/variant inventories,
-standard runtime submission, and verified HTML/MP4 export:
+Use a Linux operator checkout with `npa[video-sweep]`, an existing Kubernetes
+cluster, project-owned S3 storage, and reachable Postgres/MLflow services:
 
 ```bash
 npa/.venv/bin/python -m npa.workflows.video_sweep.operator init \
   --config /private/video-sweep/sweep.json
-# Fill in project, Kubernetes context, bucket, exact model IDs, and S3 source URIs.
-# Supply the tracking and model credentials through the environment.
+# Fill in project, context, bucket, source URIs and exact accessible model IDs.
+npa/.venv/bin/python -m npa.workflows.video_sweep.operator check \
+  --config /private/video-sweep/sweep.json
 npa/.venv/bin/python -m npa.workflows.video_sweep.operator run \
   --config /private/video-sweep/sweep.json \
   --output-dir /private/video-sweep/demo
 ```
 
-The generated configuration includes two editable variants, frame sampling,
-threshold, GPU accelerator, and a fresh run ID. `check` runs the operator
-preflight without submitting compute. `resume` uses the standard durable
-`--resume-run` path with the same configuration. `export` rebuilds the demo from
-an already reviewed run using only its configured project storage; it does not
-submit compute or call a model. Select a new output directory for each export.
-Use a new run ID for changed inputs or parameters.
+`init` creates a private configuration with `generator: cosmos3-nano`, one B200
+per worker, two appearance variants, eight frame samples, and threshold 0.8.
+Set `accelerators` to a verified alternative such as `RTXPRO6000:1` when using
+that GPU family. GPU placement and model access are checked before submission;
+selecting a GPU does not establish its inference compatibility.
 
-If every candidate is rejected after tracking completes, `run` and `resume`
-still return failure and publish no dataset. They export a review-only HTML/MP4
-bundle so the result is inspectable. `export` also supports these tracked
-rejections. It verifies that neither a dataset manifest nor a next-run inventory
-exists; access errors do not count as absence. Incomplete tracking and failed
-publication of accepted clips cannot use this path.
+The current graph has two parallel workers. Each processes a disjoint partition
+of **every source × variant** combination. This does not limit the number of
+sources or variants. Changing worker concurrency still requires corresponding
+worker states and output declarations. Parameter combinations are explicit rows;
+parameter-axis expansion is not yet part of the operator kit.
 
-Exact-project S3 credentials come from NPA configuration. The required service
-secrets are listed below; optional MLflow bearer token, private CA, and AWS session token are
-forwarded only when present. Values never enter submission arguments.
-The configuration and adjacent `.operator.log` are private files; keep both
-outside the repository. Each run uses a separate adjacent `-runtime` directory
-for SkyPilot state and stages the current source checkout. The helper does not provision the cluster, tracking
-services, or gated model access. Both workers must fit concurrently, and tracking
-endpoints must be reachable from their CPU pods. Operator preflight does not
-prove that connectivity. The runtime waits without a per-wave deadline.
+`check` verifies operator prerequisites without submitting compute. `run` stages
+immutable inventories and the current NPA source, then submits the standard
+runtime with its own SkyPilot state directory. `resume` uses the same configured
+run and durable runtime state. `export` needs only project storage and a completed
+review/tracking result; it never submits compute. Choose a fresh export directory.
+Use a new run ID when changing inputs, prompts, model selections or parameters.
 
-The `prefix` field defaults to `video-variant-sweep`; run objects live beneath
-`s3://<bucket>/<prefix>/<run_id>/`.
+The helper does not provision the cluster or tracking services. Both GPU workers
+must fit concurrently. Service endpoints must be reachable from the worker pods;
+operator-side credential checks do not establish that connectivity. macOS supports
+authoring and export; isolated SkyPilot execution uses Linux.
 
-The output directory contains:
+## Native Cosmos3 generation
 
-- `index.html`: a standalone offline viewer with embedded clips, synchronized
-  playback/scrubbing, candidate selection, stage evidence, and a threshold
-  explorer that leaves recorded decisions unchanged.
-- `demo.mp4`: a silent comparison film, with one full-length chapter per
-  candidate, its source, measured score, and recorded acceptance.
-- `summary.json`, silent preview MP4s, and JPEG posters: allowlisted metadata,
-  original/preview media hashes, and the assets embedded in the viewer.
+The native reference calls the real `run_cosmos3_generate` implementation with
+`Cosmos3-Nano`, `video2video`, and explicit `TransferSettings`. It normalizes the
+complete source to 832×480 at 24 fps with letterboxing, records both original and
+prepared hashes, and supplies native edges from every source interval. It
+verifies exact output frame count and timestamps against that prepared source.
+This is full-source structural conditioning, not prefix-only continuation.
 
-Export checks worker coverage, source/candidate hashes, accepted dataset bytes,
-review/lineage bindings, and the next-run inventory before creating the final
-output directory. It excludes prompts, raw review reasons, source paths, run IDs,
-service addresses, and provider request identifiers. It removes container
-metadata and audio. **Visible clip content remains**: an exported demo containing
-private imagery still requires private handling. The procedural validation demo
-contains no customer imagery. The HTML uses no external assets or requests.
+Native defaults use 93-frame windows, structural guidance 1.5, medium Canny
+thresholds, no RGB hint, and zero first-chunk RGB conditional frames so appearance
+can change. Later windows retain generated overlap for continuity. Guardrails
+remain enabled and must report effective successful prompt/media evaluations.
+Their configured state alone is insufficient. Temporal alignment verifies media
+correspondence; it does not prove visual realism.
 
-The current export is a comparison of source and generated RGB clips. It does
-not export conditioning maps or expose control weights and guidance alongside
-each clip. Those inputs are needed for a complete visual investigation of a
-parameter sweep; the current viewer should not be presented as that full surface.
-
-The viewer reports artifact evidence separately from full workflow completion.
-It marks all-rejected runs as held out, with no published dataset. The operator
-wrapper does not turn component receipts into proof of a successful workflow.
-
-## Inputs and configuration
-
-Use an operator-owned S3 source inventory with exact video object URIs:
+The v2 manifest declares the generator and its native controls explicitly:
 
 ```json
 {
-  "schema": "npa.video_sweep.sources.v1",
-  "clips": ["s3://example-bucket/inputs/clip.mp4"]
-}
-```
-
-The second input declares explicit sweep combinations. A user hint can come
-from the existing agent chat or a manually authored manifest:
-
-```json
-{
-  "schema": "npa.video_sweep.variants.v1",
+  "schema": "npa.video_sweep.variants.v2",
+  "generator": "cosmos3-nano",
   "variants": [
-    {"hint": "Warm evening light", "seed": 7, "control": "edge", "control_weight": 1.0, "guidance": 3.0},
-    {"hint": "Cool indoor light", "seed": 11, "control": "vis", "control_weight": 0.8, "guidance": 4.0}
+    {
+      "hint": "Dim the warehouse ambient lighting; preserve the vehicle and load",
+      "seed": 17,
+      "control_guidance": 1.5,
+      "edge_threshold": "medium",
+      "guidance": 5.0,
+      "num_steps": 35
+    },
+    {
+      "prompt": "A yellow warehouse forklift carries the same stable low pallet under warm overhead lighting. Preserve the exact vehicle, load, trajectory, floor contact, camera and timing.",
+      "seed": 17,
+      "control_guidance": 3.0,
+      "edge_threshold": "medium",
+      "guidance": 5.0,
+      "num_steps": 35
+    }
   ]
 }
 ```
 
-Supported controls are `edge` and `vis`; this workflow does not fetch a depth
-estimator or segmentation model. Seeds are nonnegative integers. Weights and
-guidance must be finite and positive, and control weight must not exceed one.
-Duplicate source URIs, duplicate video bytes, empty inputs, and duplicate
-parameter combinations fail before generation.
+Each row has exactly one `hint` or `prompt`. A direct `prompt` is preserved
+verbatim and its provenance records `direct-user-prompt`; an appearance `hint`
+is merged with the source description. Source description and paired review
+still use the selected reasoner. Supported edge thresholds are `very_low`, `low`,
+`medium`, `high`, and `very_high`. `control_guidance` is native Cosmos3 structural
+guidance, not Transfer 2.5's control weight. Seeds are nonnegative integers;
+sampling steps and text guidance must be positive. No unchecked parameter bag
+is forwarded into inference.
 
-`sources_uri` and `variants_uri` select these inventories. `bucket` and `prefix`
-select the private run output. `root_uri` derives from them. `reasoner_model`
-selects the exact hosted model used for source description and paired review;
-`merge_model` selects the text model used for prompt enhancement. `samples`
-defaults to eight evenly spaced decoded frames per clip, including its ends.
-`threshold` defaults to 0.8. `source_overlay: true` installs the submitted NPA
-source inside the pinned Transfer image.
+Source inventories retain their existing schema:
 
-The reference keeps `nvidia/Cosmos3-Super-Reasoner` explicit. The currently
-verified account does not expose that model. Check your own model list and
-select an available model explicitly; there is no automatic substitution.
-The live hosted tests used `MiniMaxAI/MiniMax-M3`, which is a different model.
-The merge default is `nvidia/Nemotron-3_5-Lightning`. Both IDs are checked before
-GPU generation. Provider response model, request ID, token usage when returned,
-and completion status are retained in the private artifacts.
+```json
+{"schema":"npa.video_sweep.sources.v1","clips":["s3://example-bucket/inputs/source.mp4"]}
+```
 
-## Run
+For operator use, place only the variant rows in the configuration's `variants`
+field; the kit writes the versioned manifest. Duplicate source URIs, duplicate
+source bytes, duplicate variants, and invalid controls fail before generation.
 
-Configure an existing Nebius Kubernetes cluster, project-owned S3 storage,
-Hugging Face access to Transfer and its guardrails, and hosted inference access.
-Run setup, submission, monitoring, and cleanup on the same Linux operator host;
-macOS supports local authoring and planning but not the isolated SkyPilot API.
-The reference defaults to one H200 per worker. Set `accelerators` in the operator
-configuration or pass `--var accelerators=RTXPRO6000:1` to select a verified
-RTX PRO 6000 target for both generation workers. Use the workflow GPU discovery and
-image preflight commands to verify the selected cluster and image first. The
-cluster must admit both workers concurrently: SkyPilot initializes networking
-for the entire job group before starting its payloads.
+## Reasoning and generation are separate models
 
-Provide reachable Postgres and MLflow services before submission. Install
-`npa[video-sweep]` when running the lineage stage locally; the workflow renderer
-installs this extra for the lineage worker. Set these values privately:
+`generator` selects video generation. `reasoner_model` selects source description
+and paired visual review; `merge_model` selects prompt enhancement. The current
+reasoning client uses Token Factory and requires exact available model IDs. A
+Cosmos3 generation result does not prove Cosmos3 reasoning.
 
-| Environment variable | Meaning |
-| --- | --- |
-| `NPA_LINEAGE_POSTGRES_DSN` | Postgres connection string; role can create/write `npa_video_variants` |
-| `MLFLOW_TRACKING_URI` | HTTPS tracking endpoint; loopback HTTP is supported for local tests |
-| `MLFLOW_EXPERIMENT_ID` | Existing MLflow experiment ID |
-| `MLFLOW_TRACKING_TOKEN` | Optional bearer token for the tracking service |
-| `MLFLOW_TRACKING_CA_PEM` | Optional PEM certificate authority for private HTTPS; hostname and certificate verification stay enabled |
-| `NEBIUS_TOKEN_FACTORY_KEY` | Hosted inference credential |
-| `HF_TOKEN` | Credential with exact upstream payload access |
+The reference reasoner is `nvidia/Cosmos3-Super-Reasoner`, which was unavailable
+to the account used for the earlier live tests. Those tests explicitly selected
+`MiniMaxAI/MiniMax-M3`. The reference merge model is
+`nvidia/Nemotron-3_5-Lightning`. There is no silent substitution. Cluster-backed
+Cosmos3 reasoning remains a separate integration requirement.
 
-Keep credentials, prompts, clips, inventories, and run artifacts out of Git.
 Source frames and hints are sent to the explicitly selected hosted service.
-Only process inputs approved for that service.
+Use only inputs approved for that service. Public demonstrations must use
+synthetic or otherwise approved imagery.
 
-```bash
-npa workbench health preflight --project "$PROJECT" --checks s3,token_factory,hf
-npa workbench health access --capability cosmos2 --json
-npa workbench workflow validate-spec workflows/testing/video-variant-sweep.yaml --json
-npa workbench workflow plan-spec workflows/testing/video-variant-sweep.yaml --run-id preview --waves --json
-npa workbench workflow preflight-images workflows/testing/video-variant-sweep.yaml --json
-npa workbench workflow submit workflows/testing/video-variant-sweep.yaml \
-  --project "$PROJECT" --infra "k8s/$CONTEXT" --run-id "$RUN_ID" --runtime \
-  --var "bucket=$BUCKET" --var "sources_uri=$SOURCES_URI" \
-  --var "variants_uri=$VARIANTS_URI" --var "reasoner_model=$REASONER_MODEL" \
-  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY \
-  --secret-env HF_TOKEN --secret-env NEBIUS_TOKEN_FACTORY_KEY \
-  --secret-env NPA_LINEAGE_POSTGRES_DSN --secret-env MLFLOW_TRACKING_URI \
-  --secret-env MLFLOW_EXPERIMENT_ID --secret-env MLFLOW_TRACKING_TOKEN
-```
+## Realism review
 
-Omit the optional token flag for an MLflow service that does not use bearer
-authentication. All services must be reachable from the worker pods; a local
-SSH tunnel is useful for local integration tests but is not a pod endpoint.
-The submit path uses the standard source staging and private secret channel.
+Before accepting a warehouse vehicle variant, inspect these independent aspects:
 
-## Artifacts and failure behavior
+- Vehicle, mast, fork and pallet geometry remain rigid and consistent.
+- Tires contact the floor; wheel rotation and translation are physically plausible.
+- The load stays supported and moves with the vehicle without slipping or detaching.
+- Source trajectory, occlusions, camera, timing and stationary background survive.
+- The requested lighting or material change is visible, with plausible shadows.
+- Chunk boundaries have no teleportation, abrupt shape changes or duplicate objects.
 
-| Artifact beneath `root_uri` | Contents |
+The reviewer receives explicit instructions about contact, rigid geometry, stable
+loads and temporal continuity. Acceptance requires both a boolean pass and a
+finite score meeting the configured threshold. Its evenly spaced sampled frames
+include clip endpoints, but do not certify every frame. Inspect moving playback
+and transition points as well as the score. Retain rejected candidates as evidence.
+
+## Recovery, controls and export
+
+Each completed candidate gets an immutable receipt before the worker proceeds.
+A retry verifies the same plan/request identity, generator, seed, media hash,
+full decoding and sampled metadata before reusing that candidate. Native receipts
+also bind the generation evidence, prepared reference and actual edge-control
+bytes. Corrupt or mismatched checkpoints fail closed instead of triggering a new
+generation. A failed partition can reuse its completed candidates; an unfinished
+candidate without a completed receipt is not claimed as recovered.
+
+Native generation publishes the actual conditioning map and normalization /
+temporal-alignment evidence. The offline exporter verifies those bindings and
+shows the prepared source, generated video, real edge-control clip, model identity
+and allowlisted numeric/categorical generation parameters. It excludes raw
+prompts, review reasons, source URIs, run IDs, service addresses and provider IDs.
+It removes audio and container metadata. Visible private imagery still requires
+private handling.
+
+The output directory contains a standalone `index.html`, silent `demo.mp4`,
+`summary.json`, preview MP4s and posters. The HTML embeds all media and needs no
+external requests. Playback and scrubbing include the native control video.
+Threshold exploration does not alter recorded decisions or publication.
+
+When all candidates are rejected, publication fails and no dataset or next-run
+inventory is created. A completed, tracked rejection may still export a review
+bundle. `run` and `resume` preserve the nonzero workflow result. Incomplete
+tracking or failed publication of accepted clips cannot use that path.
+
+## Credentials and artifacts
+
+Keep credentials and operational configuration outside Git:
+
+| Variable | Use |
 | --- | --- |
-| `sources/` | Source snapshots named by their SHA-256 |
-| `plan.json` | Exact source/variant inventory, descriptions, merged prompts, and inference provenance |
-| `candidates/`, `workers/*.json` | Real generated videos and complete partition receipts |
-| `review.json` | Scores, reasons, model provenance, and acceptance for every candidate |
-| `lineage.json` | Receipt binding the exact review to committed Postgres and MLflow records |
-| `dataset/manifest.json` | Accepted video objects, hashes, review digest, and lineage digest |
-| `dataset/next-sources.json` | Source inventory for an explicitly launched subsequent run |
+| `HF_TOKEN` | Exact runtime-fetched model and guardrail access |
+| `NEBIUS_TOKEN_FACTORY_KEY` | Selected hosted reasoning and merge models |
+| `NPA_LINEAGE_POSTGRES_DSN` | Postgres role able to create/write lineage records |
+| `MLFLOW_TRACKING_URI` | HTTPS tracking endpoint; loopback HTTP for local tests |
+| `MLFLOW_EXPERIMENT_ID` | Existing tracking experiment |
+| `MLFLOW_TRACKING_TOKEN` | Optional tracking bearer token |
+| `MLFLOW_TRACKING_CA_PEM` | Optional private CA; TLS hostname verification remains enabled |
 
-Transfer uses the actual upstream runtime with conditioning and content
-guardrails enabled. It never falls back to reference augmentation. Inputs and
-generated videos are decoded and fingerprinted; review and publication verify
-the recorded bytes. Missing workers, incorrect partition coverage, changed
-media, malformed judgments, unfinished model responses, and failed tracking
-stop publication. A clip needs both `passed: true` and a score at least equal
-to `threshold`. Rejected clips remain in private review/lineage evidence and
-are excluded from the dataset. If no candidate passes, publication fails.
+The kit resolves exact-project S3 credentials and forwards required values through
+runtime secrets. An optional AWS session token is forwarded when present.
+Artifacts live beneath the configured bucket, prefix and run ID. They include
+`plan.json`, per-candidate `receipt.json`, native `generation.json` and controls,
+worker receipts, `review.json`, `lineage.json`, and accepted-only
+`dataset/manifest.json` plus `dataset/next-sources.json`.
 
-The visual gate assesses sampled frames; it cannot certify that every frame is
-free of hallucinations. Source and generated samples use relative frame
-positions; this is not dense optical-flow or physics validation.
+Track every acceptance and rejection before publication. Postgres writes are
+parameterized and replay-safe; MLflow records the actual per-candidate metrics.
+The next-source inventory is for an explicit subsequent run, not a training loop.
+Cancel the exact run and wait for terminal jobs before removing task-owned
+controllers/services. Preserve dataset and lineage artifacts.
 
-The [MLflow REST API](https://mlflow.org/docs/latest/api_reference/rest-api.html)
-records per-variant scores, acceptance, and identifiers. Postgres stores the
-full lineage using
-[parameterized Psycopg queries](https://www.psycopg.org/psycopg3/docs/basic/params.html).
-Completed tracking replays reuse the stored MLflow run IDs. Postgres and MLflow
-do not share a transaction: a failure between an MLflow write and the database
-commit can leave an unreferenced tracking run. No dataset receipt is published
-in that failure path.
+## Transfer 2.5 compatibility and evidence
 
-Stage JSON artifacts reject conflicting rewrites. Use a fresh run ID for new
-inputs or generation parameters. The feedback path deliberately produces a
-new-run inventory instead of an unbounded workflow loop. Generic workflow
-status, artifact discovery, and video viewing remain the existing agent UX;
-this change does not add a new chat interface or an MLflow query tool.
+Existing configurations without `generator`, or with `cosmos-transfer2.5`, use
+the original reference and v1 variant rows: `hint`, `seed`, `control` (`edge` or
+`vis`), `control_weight` in (0,1], and positive `guidance`. Native control names
+are not silently translated to these older parameters. Historical runs remain
+exportable with their actual generator label.
 
-For cleanup, cancel an unfinished run with `npa workbench workflow cancel`
-before removing its task-owned resources. Keep accepted datasets and lineage
-according to the operator's retention policy. Do not destroy shared services.
-
-## Verification
-
-The [readiness record](../testing/video-variant-sweep.readiness.json) separates
-planning and component checks from a completed GPU workflow run.
-
-A single canonical submission completed preparation, two parallel RTX PRO 6000
-Transfer workers, paired review, and tracking from CPU pods into real Postgres
-and authenticated HTTPS MLflow services. Both workers produced distinct
-121-frame videos with conditioning and content guardrails enabled. Both fresh
-variants scored 0.30 against threshold 0.80: the judge found that the requested
-lighting change was not preserved faithfully. Publication correctly failed
-without creating a dataset or next-run inventory. The tracked rejection
-export produced an offline HTML viewer and a 554-frame MP4; playback, mobile
-layout, no-network behavior, and full video decoding passed.
-
-The tracking stores were independently checked: two Postgres rows, two finished
-MLflow runs, and two score/acceptance metric pairs. Earlier component execution
-accepted one clip at 0.85 and rejected one at 0.30; its accepted-only S3
-publication and next-run inventory passed. A successful single-submit run that
-publishes accepted clips remains unverified. These results explicitly use
-MiniMax-M3; the reference Cosmos3 model remains unavailable to the tested account.
-
-```bash
-npa/.venv/bin/python -m pytest npa/tests/workflows/test_video_sweep.py -q
-NPA_INTEGRATION_E2E=1 NPA_VIDEO_SWEEP_REASONER_MODEL=MiniMaxAI/MiniMax-M3 \
-  npa/.venv/bin/python -m pytest npa/tests/e2e/test_video_sweep_live.py -q
-```
-
-Live tests self-skip without their explicit prerequisites. The hosted test
-uses a procedural identity pair and is not evidence of Transfer generation.
-The Postgres/MLflow test writes real service records and verifies replay.
-The S3 test uses `NPA_VIDEO_SWEEP_TEST_S3_URI` and deletes its exact test object.
-The full GPU stage test requires `NPA_VIDEO_SWEEP_FULL_GPU=1`, the real Transfer
-runtime, `NPA_VIDEO_SWEEP_SOURCES_URI`, `NPA_VIDEO_SWEEP_VARIANTS_URI`, and all
-service credentials. The standard live-submit matrix registers the complete
-runtime workflow; automated rotation waits for these operator-specific inputs
-and services.
-
-The read-only live export test uses `NPA_VIDEO_SWEEP_DEMO_ROOT_URI` and
-`NPA_VIDEO_SWEEP_DEMO_RUN_ID` to select a completed private run, verifies its
-receipts and media, and decodes the exported MP4. It submits no compute:
-
-```bash
-NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
-  npa/tests/e2e/test_video_sweep_live.py::test_export_published_run -q
-```
+The earlier Transfer component run accepted one clip at 0.85 and rejected one at
+0.30. A later full submission completed preparation, both GPU workers, review,
+and Postgres/MLflow tracking; both candidates scored 0.30 against threshold 0.80
+and publication correctly failed. These are procedural-source results with
+MiniMax-M3 reasoning, not proof of a realistic Cosmos3 workflow. See the separate
+readiness records beside each reference for the current scope of verification.

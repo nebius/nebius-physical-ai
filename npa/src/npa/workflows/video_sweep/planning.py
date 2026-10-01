@@ -19,10 +19,9 @@ from npa.workflows.video_sweep.vision import completion, sample_video, text_bloc
 
 
 def _validate_inputs(source: dict, sweep: dict) -> None:
-    if (
-        source.get("schema") != "npa.video_sweep.sources.v1"
-        or sweep.get("schema") != "npa.video_sweep.variants.v1"
-    ):
+    if source.get("schema") != "npa.video_sweep.sources.v1" or sweep.get(
+        "schema"
+    ) not in {"npa.video_sweep.variants.v1", "npa.video_sweep.variants.v2"}:
         raise ValueError("Unrecognized source or variant schema")
     clips, variants = source.get("clips"), sweep.get("variants")
     if (
@@ -36,8 +35,21 @@ def _validate_inputs(source: dict, sweep: dict) -> None:
         set(clips)
     ) != len(clips):
         raise ValueError("Source URIs must be nonempty and unique")
+    native = sweep["schema"] == "npa.video_sweep.variants.v2"
+    if native and sweep.get("generator") != "cosmos3-nano":
+        raise ValueError("Native sweep requires the explicit cosmos3-nano generator")
+    if (
+        not native
+        and sweep.get("generator", "cosmos-transfer2.5") != "cosmos-transfer2.5"
+    ):
+        raise ValueError("Legacy sweep requires the Transfer generation backend")
     for variant in variants:
-        _validate_variant(variant)
+        if native:
+            from npa.workflows.video_sweep.cosmos3 import validate_variant
+
+            validate_variant(variant)
+        else:
+            _validate_variant(variant)
     if len({digest(v) for v in variants}) != len(variants):
         raise ValueError("Duplicate generation variants")
 
@@ -126,6 +138,7 @@ def prepare(args) -> None:
             "reasoner_model": args.reasoner_model,
             "samples": args.samples,
             "workers": args.workers,
+            "generator": sweep.get("generator", "cosmos-transfer2.5"),
             "items": items,
         },
     )
@@ -138,7 +151,12 @@ def _expand_items(args, source: dict, sweep: dict, client) -> list[dict]:
             uri, args.root_uri, client, args.reasoner_model, args.samples
         )
         for variant in sweep["variants"]:
-            prompt, provenance = _merge(described, variant, client, args.merge_model)
+            if "prompt" in variant:
+                prompt, provenance = variant["prompt"], {"mode": "direct-user-prompt"}
+            else:
+                prompt, provenance = _merge(
+                    described, variant, client, args.merge_model
+                )
             identity = digest({"source": described["sha256"], "variant": variant})
             items.append(
                 {

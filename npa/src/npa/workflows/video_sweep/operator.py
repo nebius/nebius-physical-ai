@@ -149,7 +149,8 @@ def _initialize(path):
         "bucket": "<bucket>",
         "prefix": "video-variant-sweep",
         "run_id": "video-sweep-" + uuid.uuid4().hex[:12],
-        "accelerators": "H200:1",
+        "accelerators": "B200:1",
+        "generator": "cosmos3-nano",
         "sources": ["s3://<bucket>/inputs/source.mp4"],
         "reasoner_model": "nvidia/Cosmos3-Super-Reasoner",
         "merge_model": "nvidia/Nemotron-3_5-Lightning",
@@ -159,16 +160,18 @@ def _initialize(path):
             {
                 "hint": "Warm evening light",
                 "seed": 7,
-                "control": "edge",
-                "control_weight": 1.0,
-                "guidance": 3.0,
+                "edge_threshold": "medium",
+                "control_guidance": 1.5,
+                "guidance": 5.0,
+                "num_steps": 35,
             },
             {
                 "hint": "Cool indoor light",
                 "seed": 11,
-                "control": "edge",
-                "control_weight": 1.0,
-                "guidance": 3.0,
+                "edge_threshold": "medium",
+                "control_guidance": 1.5,
+                "guidance": 5.0,
+                "num_steps": 35,
             },
         ],
     }
@@ -181,8 +184,7 @@ def _initialize(path):
 
 def _load(path):
     config = json.loads(path.read_text())
-    if not isinstance(config, dict) or set(config) != _FIELDS:
-        raise ValueError("Configuration fields differ from the generated template")
+    _validate_fields(config)
     for key in (
         "project",
         "infra",
@@ -194,12 +196,7 @@ def _load(path):
         value = config[key]
         if not isinstance(value, str) or not value or any(c in value for c in "<>\n\r"):
             raise ValueError("Replace configuration placeholders")
-    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9/_-]*", config["prefix"]):
-        raise ValueError("Use a relative S3 prefix without dots or whitespace")
-    if not config["infra"].startswith("k8s/"):
-        raise ValueError("The reference uses a Kubernetes target")
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", config["run_id"]):
-        raise ValueError("Use a lowercase alphanumeric run ID with hyphens")
+    _validate_location(config)
     if type(config["samples"]) is not int or config["samples"] < 2:
         raise ValueError("At least two frame samples are required")
     if (
@@ -212,6 +209,28 @@ def _load(path):
         artifacts._object(uri)
     artifacts._object(_root(config) + "/plan.json")
     return config
+
+
+def _validate_fields(config):
+    if not isinstance(config, dict) or set(config) not in (
+        _FIELDS,
+        _FIELDS | {"generator"},
+    ):
+        raise ValueError("Configuration fields differ from the generated template")
+    if config.get("generator", "cosmos-transfer2.5") not in (
+        "cosmos-transfer2.5",
+        "cosmos3-nano",
+    ):
+        raise ValueError("Unknown generation backend")
+
+
+def _validate_location(config):
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9/_-]*", config["prefix"]):
+        raise ValueError("Use a relative S3 prefix without dots or whitespace")
+    if not config["infra"].startswith("k8s/"):
+        raise ValueError("The reference uses a Kubernetes target")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", config["run_id"]):
+        raise ValueError("Use a lowercase alphanumeric run ID with hyphens")
 
 
 def _credentials(config):
@@ -246,11 +265,13 @@ def _npa(*args):
     return [sys.executable, "-m", "npa", *args]
 
 
-def _spec():
+def _spec(config=None):
     from npa.orchestration.npa_workflow import load_spec
     from npa.orchestration.npa_workflow.blueprints import resolve_npa_workflow_spec
 
-    path = resolve_npa_workflow_spec("video-variant-sweep.yaml")
+    native = config and config.get("generator") == "cosmos3-nano"
+    name = "video-variant-sweep-cosmos3.yaml" if native else "video-variant-sweep.yaml"
+    path = resolve_npa_workflow_spec(name)
     if path is None:
         raise FileNotFoundError("The canonical workflow catalog is missing")
     load_spec(path)
@@ -261,7 +282,7 @@ def _invoke(command, log):
     subprocess.run(command, check=True, stdout=log, stderr=log)
 
 
-def _preflight(config, log):
+def _service_preflight(config):
     from npa.clients.token_factory import TokenFactoryClient
 
     missing = [name for name in _REQUIRED_SECRETS if not os.environ.get(name)]
@@ -271,6 +292,10 @@ def _preflight(config, log):
         TokenFactoryClient().list_models()
     ):
         raise ValueError("Select explicitly available hosted models")
+
+
+def _preflight(config, log):
+    _service_preflight(config)
     for command in (
         _npa(
             "workbench",
@@ -281,19 +306,26 @@ def _preflight(config, log):
             "--checks",
             "s3,token_factory,hf",
         ),
-        _npa("workbench", "health", "access", "--capability", "cosmos2", "--json"),
-        _npa("workbench", "workflow", "validate-spec", _spec(), "--json"),
+        _npa(
+            "workbench",
+            "health",
+            "access",
+            "--capability",
+            "cosmos3" if config.get("generator") == "cosmos3-nano" else "cosmos2",
+            "--json",
+        ),
+        _npa("workbench", "workflow", "validate-spec", _spec(config), "--json"),
         _npa(
             "workbench",
             "workflow",
             "plan-spec",
-            _spec(),
+            _spec(config),
             "--run-id",
             "preview",
             "--waves",
             "--json",
         ),
-        _npa("workbench", "workflow", "preflight-images", _spec(), "--json"),
+        _npa("workbench", "workflow", "preflight-images", _spec(config), "--json"),
     ):
         _invoke(command, log)
 
@@ -307,6 +339,12 @@ def _sources(config):
 
 
 def _variants(config):
+    if config.get("generator") == "cosmos3-nano":
+        return {
+            "schema": "npa.video_sweep.variants.v2",
+            "generator": "cosmos3-nano",
+            "variants": config["variants"],
+        }
     return {"schema": "npa.video_sweep.variants.v1", "variants": config["variants"]}
 
 
@@ -320,7 +358,7 @@ def _submit_command(config, *, resume=False, state_dir=None):
         "workbench",
         "workflow",
         "submit",
-        _spec(),
+        _spec(config),
         "--project",
         config["project"],
         "--infra",

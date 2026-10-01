@@ -1,6 +1,6 @@
 # NPA workflow catalog
 
-The [video variant sweep](guides/video-variant-sweep.md) composes hosted prompt enhancement, parallel Cosmos Transfer generation, paired visual review, and Postgres/MLflow lineage. Its operator kit automates configured submission and exports a private, offline HTML comparison viewer and MP4 walkthrough.
+The [video variant sweep](guides/video-variant-sweep.md) composes hosted prompt enhancement, parallel Cosmos3 full-source edge transfer (or the compatible Transfer 2.5 reference), paired visual review, and Postgres/MLflow lineage. Completed candidates have verified recovery receipts; native runs export actual controls and generation settings. Its operator kit automates configured submission and exports a private, offline HTML comparison viewer and MP4 walkthrough.
 
 [Docs](../docs/README.md) · [Authoring guide](../docs/workbench/npa-workflow-guide.md)
 

@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--worker", type=int, default=0)
+    parser.add_argument(
+        "--generator",
+        choices=("cosmos-transfer2.5", "cosmos3-nano"),
+        default="cosmos-transfer2.5",
+    )
     parser.add_argument("--sources-uri", default="")
     parser.add_argument("--variants-uri", default="")
     parser.add_argument("--reasoner-model", default="nvidia/Cosmos3-Super-Reasoner")

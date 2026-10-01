@@ -501,3 +501,65 @@ def test_private_tracking_ca_fails_closed(monkeypatch):
         tracking._tracking_tls()
     monkeypatch.delenv("MLFLOW_TRACKING_CA_PEM")
     assert tracking._tracking_tls() is True
+
+
+def test_completed_candidates_resume_without_model_calls(sweep):
+    args, calls = sweep
+    before = len(calls)
+    for worker in range(args.workers):
+        args.worker = worker
+        execution.generate(args)
+    assert len(calls) == before
+
+
+@pytest.mark.parametrize("mutation", ["plan", "bytes", "metadata", "engine", "seed"])
+def test_invalid_candidate_checkpoint_blocks_regeneration(sweep, mutation):
+    args, calls = sweep
+    args.worker = 0
+    plan = execution.load_plan(args)
+    path = Path(args.root_uri) / "candidates" / plan["items"][0]["id"] / "receipt.json"
+    receipt = json.loads(path.read_text())
+    candidate = receipt["candidate"]
+    if mutation == "plan":
+        receipt["plan_sha256"] = "different"
+    elif mutation == "bytes":
+        Path(candidate["uri"]).write_bytes(b"corrupt")
+    elif mutation == "metadata":
+        candidate["video"]["frame_count"] = 1
+    elif mutation == "engine":
+        candidate["engine"] = "different-model"
+    else:
+        candidate["seed"] = True
+    path.write_text(json.dumps(receipt))
+    with pytest.raises(ValueError):
+        execution.generate(args)
+    assert len(calls) == 2
+
+
+def test_partition_failure_reuses_earlier_completed_candidate(sweep, monkeypatch):
+    args, calls = sweep
+    root = Path(args.root_uri)
+    plan = execution.load_plan(args)
+    plan["workers"] = 1
+    (root / "plan.json").write_text(json.dumps(plan))
+    for path in (root / "workers").glob("*.json"):
+        path.unlink()
+    for path in (root / "candidates").glob("*/receipt.json"):
+        path.unlink()
+    args.worker, args.workers = 0, 1
+    original = execution._generate_item
+
+    def fail_second(item, stage, current_plan):
+        if item["id"] == plan["items"][1]["id"]:
+            raise RuntimeError("worker interrupted")
+        return original(item, stage, current_plan)
+
+    monkeypatch.setattr(execution, "_generate_item", fail_second)
+    with pytest.raises(RuntimeError, match="interrupted"):
+        execution.generate(args)
+    assert not (root / "workers/0.json").exists()
+    assert len(calls) == 3
+    monkeypatch.setattr(execution, "_generate_item", original)
+    execution.generate(args)
+    assert len(calls) == 4
+    assert len(artifacts.read_json(str(root / "workers/0.json"))["items"]) == 2

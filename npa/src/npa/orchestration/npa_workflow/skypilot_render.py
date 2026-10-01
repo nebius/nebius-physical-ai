@@ -33,6 +33,7 @@ from npa.workbench.model_cache import (
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
 TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workflow.video_sweep.generate": "cosmos2-transfer",
+    "workflow.video_sweep.generate_cosmos3": "cosmos3",
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
@@ -94,6 +95,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     "workflow.video_sweep.prepare": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.video_sweep.review": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workflow.video_sweep.generate": ("HF_TOKEN",),
+    "workflow.video_sweep.generate_cosmos3": ("HF_TOKEN",),
     "workflow.video_sweep.lineage": (
         "NPA_LINEAGE_POSTGRES_DSN",
         "MLFLOW_TRACKING_URI",

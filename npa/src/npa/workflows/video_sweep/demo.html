@@ -202,6 +202,19 @@
         gap: 2px;
         background: var(--line);
       }
+      .fanout {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+        gap: 14px;
+        margin: 0 0 28px;
+      }
+      .fanout button {
+        text-align: left;
+        padding: 0;
+        overflow: hidden;
+      }
+      .fanout video { display: block; aspect-ratio: 16 / 9; object-fit: contain; }
+      #parameters { padding: 0 16px; overflow-wrap: anywhere; }
       .video-label {
         display: flex;
         justify-content: space-between;
@@ -527,7 +540,7 @@
           <h1>More variation.<br /><span>A visible quality gate.</span></h1>
         </div>
         <p class="intro">
-          Follow real Cosmos Transfer 2.5 outputs from source footage through the
+          Follow real <span id="generator-label"></span> outputs from source footage through the
           quality gate. Compare the motion, inspect the decisions, and
           explore the quality threshold.
         </p>
@@ -549,6 +562,11 @@
           ><small>TRACKED IN POSTGRES + MLFLOW</small>
         </div>
       </div>
+      <div class="section-heading">
+        <h2>One source → a world of variations</h2>
+        <span class="subtle">Actual generated clips · click to inspect</span>
+      </div>
+      <div class="fanout" id="fanout" aria-label="Generated variant gallery"></div>
       <div class="section-heading">
         <h2>Inspect the change</h2>
         <label
@@ -595,6 +613,8 @@
             /><span class="clock" id="clock">0.00 / 0.00</span>
           </div>
           <div class="error subtle" id="play-error" role="status"></div>
+          <p class="subtle" id="parameters"></p>
+          <div id="control-panel" hidden><div class="video-label">Actual generation edge control</div><video id="control" muted playsinline preload="auto" aria-label="Actual edge control" style="width:100%;max-height:280px;object-fit:contain"></video></div>
         </section>
         <aside class="decision">
           <span class="tag" id="decision"></span>
@@ -649,6 +669,9 @@
         $(id).textContent = value;
       };
       const videos = [$("source"), $("candidate")];
+      const galleryVideos = [];
+      const activeVideos = () => [...videos, ...galleryVideos];
+      text("generator-label", S.generator || "Cosmos Transfer 2.5");
       let playing = false;
       let current = S.candidates[0];
       const duration = () =>
@@ -657,11 +680,11 @@
         );
       function pause() {
         playing = false;
-        videos.forEach((v) => v.pause());
+        activeVideos().forEach((v) => v.pause());
         text("play", "Play");
       }
       function seek(seconds) {
-        videos.forEach((v) => {
+        activeVideos().forEach((v) => {
           if (Number.isFinite(v.duration))
             v.currentTime = Math.min(seconds, v.duration);
         });
@@ -671,7 +694,7 @@
         if ($("source").ended || $("source").currentTime >= duration() - 0.05)
           seek(0);
         try {
-          await Promise.all(videos.map((v) => v.play()));
+          await Promise.all(activeVideos().map((v) => v.play()));
           playing = true;
           text("play", "Pause");
         } catch (_) {
@@ -690,13 +713,11 @@
       function tick() {
         const seconds = Math.max(...videos.map((v) => v.currentTime));
         if (playing && videos.every((v) => v.ended)) pause();
-        if (
-          playing &&
-          !videos[0].ended &&
-          !videos[1].ended &&
-          Math.abs(videos[0].currentTime - videos[1].currentTime) > 0.12
-        )
-          videos[1].currentTime = videos[0].currentTime;
+        if (playing && !videos[0].ended)
+          activeVideos().slice(1).forEach((video) => {
+            if (!video.ended && Math.abs(video.currentTime - videos[0].currentTime) > 0.12)
+              video.currentTime = Math.min(videos[0].currentTime, video.duration || 0);
+          });
         $("scrub").value = duration() ? seconds / duration() : 0;
         text("clock", `${seconds.toFixed(2)} / ${duration().toFixed(2)}`);
         requestAnimationFrame(tick);
@@ -715,6 +736,19 @@
         });
         text("source-meta", `${source.frames} frames`);
         text("candidate-meta", `Seed ${current.seed}`);
+        const control = (S.controls || []).find(row => row.name === current.control);
+        $("control-panel").hidden = !control;
+        videos.splice(2);
+        $("control").pause();
+        $("control").removeAttribute("src");
+        if (control) {
+          $("control").src = DATA.media[control.name + ".mp4"];
+          $("control").poster = DATA.media[control.name + ".jpg"];
+          $("control").load();
+          videos.push($("control"));
+        }
+        text("parameters", Object.entries(current.parameters || {}).map(([key, value]) => `${key}: ${value}`).join(" · "));
+        galleryVideos.forEach(video => { video.currentTime = 0; });
         showDecision();
       }
       function showDecision() {
@@ -750,7 +784,7 @@
         [
           "02",
           "Generate",
-          `Cosmos Transfer 2.5 runs disjoint partitions across ${S.workers} workers with source conditioning and content guardrails.`,
+          `${S.generator || "Cosmos Transfer 2.5"} runs disjoint partitions across ${S.workers} workers with source conditioning and content guardrails.`,
         ],
         [
           "03",
@@ -794,6 +828,25 @@
         option.value = index;
         option.textContent = `Variant ${index + 1} · ${row.accepted ? "Accepted" : "Held out"}`;
         $("selection").append(option);
+        const card = document.createElement("button");
+        card.setAttribute("aria-label", `Inspect variant ${index + 1}`);
+        const label = document.createElement("div");
+        label.className = "video-label";
+        label.textContent = `Variant ${index + 1} · Seed ${row.seed} · ${row.accepted ? "Accepted" : "Held out"}`;
+        const video = document.createElement("video");
+        video.muted = true;
+        video.playsInline = true;
+        video.preload = "auto";
+        video.src = DATA.media[row.name + ".mp4"];
+        video.poster = DATA.media[row.name + ".jpg"];
+        card.append(label, video);
+        card.onclick = () => {
+          $("selection").value = index;
+          select(index);
+          play();
+        };
+        galleryVideos.push(video);
+        $("fanout").append(card);
       });
       $("selection").onchange = () => select(Number($("selection").value));
       text("sources-count", S.sources.length);

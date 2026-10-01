@@ -7,12 +7,22 @@ import json
 import tempfile
 from pathlib import Path
 
-from npa.workflows.video_sweep import artifacts, execution, publication
+from npa.workflows.video_sweep import (
+    artifacts,
+    checkpoints,
+    execution,
+    planning,
+    publication,
+)
 from npa.workflows.video_sweep.film import render_movie, transcode
 
 _MODEL_LABELS = {
     "MiniMaxAI/MiniMax-M3": "MiniMax-M3",
     "nvidia/Cosmos3-Super-Reasoner": "Cosmos3 Super Reasoner",
+}
+_ENGINE_LABELS = {
+    "cosmos-transfer2.5": "Cosmos Transfer 2.5",
+    "cosmos3-nano": "Cosmos3-Nano",
 }
 
 
@@ -56,6 +66,14 @@ def _verify_publication(args, plan: dict, report: dict) -> bool:
         candidate = generated[row["id"]]
         if any(row[key] != candidate[key] for key in ("uri", "sha256", "engine")):
             raise ValueError("Review media differs from the worker receipt")
+        if candidate["engine"] == "cosmos3-nano":
+            item = next(item for item in plan["items"] if item["id"] == row["id"])
+            checkpoints._verify(candidate, item, args.root_uri, plan)
+            if any(
+                row.get(key) != candidate.get(key)
+                for key in ("controls", "reference", "generation_sha256")
+            ):
+                raise ValueError("Review controls differ from the worker receipt")
     receipt = artifacts.read_json(args.root_uri + "/lineage.json")
     publication._verify_lineage(receipt, report)
     expected = {row["id"]: row["sha256"] for row in report["items"] if row["accepted"]}
@@ -95,29 +113,25 @@ def _verify_dataset(args, report, receipt, expected):
 
 
 def _materialize(stage: Path, plan: dict, report: dict) -> dict:
-    sources, candidates = {}, []
+    sources, candidates, controls = {}, [], []
     reviews = {row["id"]: row for row in report["items"]}
     for item in plan["items"]:
-        source = item["source"]
+        row = reviews[item["id"]]
+        source = row.get("reference", item["source"])
         if source["sha256"] not in sources:
             name = f"source-{len(sources) + 1}"
             sources[source["sha256"]] = _media(stage, name, source)
-        row = reviews[item["id"]]
-        media = _media(stage, f"variant-{len(candidates) + 1}", row)
-        candidates.append(
-            {
-                **media,
-                "source": sources[source["sha256"]]["name"],
-                "score": float(row["score"]),
-                "passed": row["passed"],
-                "accepted": row["accepted"],
-                "seed": int(item["variant"]["seed"]),
-            }
-        )
+        candidate = _candidate(stage, item, row, len(candidates) + 1, controls)
+        candidate["source"] = sources[source["sha256"]]["name"]
+        candidates.append(candidate)
     return {
         "schema": "npa.video_sweep.demo.v1",
         "sources": list(sources.values()),
         "candidates": candidates,
+        "controls": controls,
+        "generator": _ENGINE_LABELS.get(
+            plan.get("generator", "cosmos-transfer2.5"), "Operator-selected generator"
+        ),
         "threshold": float(report["threshold"]),
         "accepted": sum(row["accepted"] for row in candidates),
         "samples": int(plan["samples"]),
@@ -126,6 +140,34 @@ def _materialize(stage: Path, plan: dict, report: dict) -> dict:
         "evidence": "Verified media, review, lineage and publication receipts",
         "scope": "Component results; workflow completion is not inferred from artifacts.",
     }
+
+
+def _candidate(stage, item, row, index, controls):
+    variant = item["variant"]
+    if row["engine"] == "cosmos3-nano":
+        from npa.workflows.video_sweep.cosmos3 import validate_variant
+
+        validate_variant(variant)
+    else:
+        planning._validate_variant(variant)
+    result = {
+        **_media(stage, f"variant-{index}", row),
+        "score": float(row["score"]),
+        "passed": row["passed"],
+        "accepted": row["accepted"],
+        "seed": int(variant["seed"]),
+        "engine": _ENGINE_LABELS.get(row["engine"], "Operator-selected generator"),
+        "parameters": {
+            key: value
+            for key, value in variant.items()
+            if key not in {"hint", "prompt"}
+        },
+    }
+    if row.get("controls"):
+        control = _media(stage, f"control-{index}", row["controls"]["edge"])
+        controls.append(control)
+        result["control"] = control["name"]
+    return result
 
 
 def _media(stage: Path, name: str, row: dict) -> dict:
@@ -138,7 +180,11 @@ def _media(stage: Path, name: str, row: dict) -> dict:
 
 def _write_html(stage: Path, summary: dict) -> None:
     media = {}
-    for row in [*summary["sources"], *summary["candidates"]]:
+    for row in [
+        *summary["sources"],
+        *summary["candidates"],
+        *summary.get("controls", []),
+    ]:
         for extension, mime in (("mp4", "video/mp4"), ("jpg", "image/jpeg")):
             name = row["name"] + "." + extension
             encoded = base64.b64encode((stage / name).read_bytes()).decode("ascii")

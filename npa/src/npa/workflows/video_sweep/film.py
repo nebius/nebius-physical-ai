@@ -123,7 +123,7 @@ def _title(summary):
     _text(
         canvas,
         (68, 485),
-        "Real Cosmos Transfer 2.5 outputs, compared with their source.",
+        f"Real {summary.get('generator', 'Cosmos Transfer 2.5')} outputs, compared with their source.",
         30,
     )
     stats = f"{len(summary['sources'])} source(s)     {len(summary['candidates'])} variants     {summary['accepted']} accepted"

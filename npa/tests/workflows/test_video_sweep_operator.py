@@ -58,7 +58,7 @@ def test_submit_uses_canonical_runtime_and_secret_names(configuration, monkeypat
     assert "--stage-src" in command
     assert command[command.index("--max-wait-seconds") + 1] == "0"
     assert command[command.index("submit") + 1].endswith(
-        "testing/video-variant-sweep.yaml"
+        "testing/video-variant-sweep-cosmos3.yaml"
     )
     assert "HF_TOKEN" in command and "private-token-value" not in command
     assert "--run-id" in command and "--resume-run" not in command

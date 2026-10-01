@@ -1,0 +1,51 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "b57ac41ea896b5447401c3e0488a6e4136420de6dce09d69fb3a06fc6f5f239c",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and wave planning passed.",
+      "evidence": [
+        "validate-spec; plan-spec --waves"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Native Cosmos3 generation uses guarded complete-source edge conditioning, exact temporal alignment and retained control artifacts. Unit contracts cover native sampling, checkpoint integrity and direct prompts.",
+      "evidence": [
+        "npa/tests/workflows/test_video_sweep_cosmos3.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Exact target storage must pass operator preflight.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Native full-source generation needs live validation against the selected source.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "blocked",
+      "reason": "Native Cosmos3 payload access passed. The default hosted Cosmos3 reasoner was unavailable in the tested account; generation does not prove hosted reasoning availability.",
+      "evidence": [
+        "health access --capability cosmos3"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The pinned Cosmos image passed authenticated pull preflight.",
+      "evidence": [
+        "workflow preflight-images"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Native sweep GPU validation is in progress; unit tests are not completion evidence.",
+      "evidence": []
+    }
+  }
+}

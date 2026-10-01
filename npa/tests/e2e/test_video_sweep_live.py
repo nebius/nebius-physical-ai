@@ -129,15 +129,17 @@ def test_private_s3_artifact_roundtrip(tmp_path):
         artifacts._client().delete_object(Bucket=bucket, Key=key)
 
 
-def test_full_gpu_stages_require_real_transfer(tmp_path):
+def test_full_gpu_stages_require_the_selected_generator(tmp_path):
     if os.environ.get("NPA_VIDEO_SWEEP_FULL_GPU") != "1":
-        pytest.skip("Run inside the Transfer runtime with explicit full GPU opt-in")
+        pytest.skip("Run inside the selected Cosmos runtime with full GPU opt-in")
     args = _args(tmp_path)
     args.root_uri = (
         os.environ["NPA_VIDEO_SWEEP_TEST_S3_URI"].rstrip("/") + "/" + args.run_id
     )
     args.sources_uri = os.environ["NPA_VIDEO_SWEEP_SOURCES_URI"]
     args.variants_uri = os.environ["NPA_VIDEO_SWEEP_VARIANTS_URI"]
+    variants = artifacts.read_json(args.variants_uri)
+    args.generator = variants.get("generator", "cosmos-transfer2.5")
     from npa.workflows.video_sweep.publication import publish
 
     planning.prepare(args)
@@ -148,7 +150,20 @@ def test_full_gpu_stages_require_real_transfer(tmp_path):
     dataset = artifacts.read_json(args.root_uri + "/dataset/manifest.json")
     assert dataset["clips"]
     report = artifacts.read_json(args.root_uri + "/review.json")
-    assert all(row["engine"] == "cosmos-transfer2.5" for row in report["items"])
+    assert all(row["engine"] == args.generator for row in report["items"])
+    if args.generator == "cosmos3-nano":
+        _assert_native_transfer(args, report)
+
+
+def _assert_native_transfer(args, report):
+    for row in report["items"]:
+        uri = args.root_uri + "/candidates/" + row["id"] + "/generation.json"
+        evidence = artifacts.read_json(uri)
+        assert artifacts.digest(evidence) == row["generation_sha256"]
+        assert evidence["guardrail_state"]["effective"] is True
+        assert evidence["guardrail_state"]["status"] == "passed"
+        assert evidence["structural_transfer"]["video_guardrail_passed"] is True
+        assert evidence["artifacts"]["edge"] == row["controls"]["edge"]
 
 
 def test_export_published_run(tmp_path):
