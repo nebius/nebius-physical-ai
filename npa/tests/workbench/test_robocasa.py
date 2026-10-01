@@ -3028,15 +3028,35 @@ class _TransactionalFakeS3:
         self.copy_count = 0
         self.events: list[tuple[str, str]] = []
         self.head_keys: list[str] = []
+        self.list_requests: list[dict[str, object]] = []
 
-    def list_objects_v2(self, *, Prefix, MaxKeys, **_kwargs):
+    def list_objects_v2(
+        self,
+        *,
+        Prefix,
+        MaxKeys,
+        ContinuationToken=None,
+        **_kwargs,
+    ):
+        assert 0 < MaxKeys <= 1000
         keys = sorted(key for key in self.objects if key.startswith(Prefix))
-        selected = keys[:MaxKeys]
-        return {
+        start = int(ContinuationToken) if ContinuationToken is not None else 0
+        selected = keys[start : start + MaxKeys]
+        truncated = start + len(selected) < len(keys)
+        request = {
+            "Prefix": Prefix,
+            "MaxKeys": MaxKeys,
+            "ContinuationToken": ContinuationToken,
+        }
+        self.list_requests.append(request)
+        response = {
             "KeyCount": len(selected),
             "Contents": [{"Key": key} for key in selected],
-            "IsTruncated": len(keys) > MaxKeys,
+            "IsTruncated": truncated,
         }
+        if truncated:
+            response["NextContinuationToken"] = str(start + len(selected))
+        return response
 
     def head_object(self, *, Key, **_kwargs):
         try:
@@ -3115,6 +3135,37 @@ class _TransactionalFakeS3:
         return {}
 
 
+def test_s3_prefix_listing_paginates_beyond_provider_page_cap() -> None:
+    objects = {f"runs/large/{index:04d}.bin": (b"x", {}) for index in range(1001)}
+    s3 = _TransactionalFakeS3(objects=objects)
+
+    keys = capabilities._s3_prefix_keys(
+        s3,
+        "bucket",
+        "runs/large/",
+        limit=1002,
+    )
+
+    assert keys == set(objects)
+    assert [request["MaxKeys"] for request in s3.list_requests] == [1000, 2]
+    assert s3.list_requests[1]["ContinuationToken"] == "1000"
+
+
+def test_s3_prefix_listing_stops_at_population_bound() -> None:
+    objects = {f"runs/unbounded/{index:04d}.bin": (b"x", {}) for index in range(1002)}
+    s3 = _TransactionalFakeS3(objects=objects)
+
+    with pytest.raises(RoboCasaError, match="population is unbounded"):
+        capabilities._s3_prefix_keys(
+            s3,
+            "bucket",
+            "runs/unbounded/",
+            limit=1001,
+        )
+
+    assert [request["MaxKeys"] for request in s3.list_requests] == [1000, 1]
+
+
 def test_upload_output_publishes_commit_marker_last(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3139,6 +3190,67 @@ def test_upload_output_publishes_commit_marker_last(
     marker = json.loads(s3.objects["runs/exact/_NPA_COMPLETE.json"][0])
     assert marker["schema"] == "npa.robocasa.output-commit.v1"
     assert [item["path"] for item in marker["files"]] == ["a.bin", "b.bin"]
+
+
+def test_upload_output_retries_partial_staging_delete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "artifact.bin").write_bytes(b"artifact")
+
+    class PartialDeleteS3(_TransactionalFakeS3):
+        delete_calls = 0
+
+        def delete_objects(self, *, Delete, **kwargs):
+            self.delete_calls += 1
+            if self.delete_calls == 1:
+                key = Delete["Objects"][0]["Key"]
+                self.events.append(("delete", "staging"))
+                return {"Errors": [{"Key": key, "Code": "InternalError"}]}
+            return super().delete_objects(Delete=Delete, **kwargs)
+
+    s3 = PartialDeleteS3()
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+
+    capabilities.upload_output(
+        tmp_path,
+        "s3://bucket/runs/delete-retry",
+        {"ok": True},
+    )
+
+    assert s3.delete_calls == 2
+    assert not any(key.startswith(".npa-staging/") for key in s3.objects)
+    assert "runs/delete-retry/_NPA_COMPLETE.json" in s3.objects
+
+
+def test_upload_output_warns_on_persistent_partial_staging_delete(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    (tmp_path / "artifact.bin").write_bytes(b"artifact")
+
+    class PersistentDeleteFailureS3(_TransactionalFakeS3):
+        delete_calls = 0
+
+        def delete_objects(self, *, Delete, **_kwargs):
+            self.delete_calls += 1
+            key = Delete["Objects"][0]["Key"]
+            return {"Errors": [{"Key": key, "Code": "AccessDenied"}]}
+
+    s3 = PersistentDeleteFailureS3()
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+
+    capabilities.upload_output(
+        tmp_path,
+        "s3://bucket/runs/delete-warning",
+        {"ok": True},
+    )
+
+    assert s3.delete_calls == 2
+    assert "failed to remove 1 RoboCasa S3 staging object(s) after retry" in caplog.text
+    assert any(key.startswith(".npa-staging/") for key in s3.objects)
+    assert "runs/delete-warning/_NPA_COMPLETE.json" in s3.objects
 
 
 def test_upload_output_copy_failure_never_publishes_commit_marker(

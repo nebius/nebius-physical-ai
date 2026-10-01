@@ -2658,26 +2658,57 @@ def _s3_prefix_keys(
     *,
     limit: int,
 ) -> set[str]:
-    response = s3.list_objects_v2(
-        Bucket=bucket,
-        Prefix=prefix,
-        MaxKeys=limit,
-    )
-    contents = response.get("Contents", [])
-    if (
-        not isinstance(contents, list)
-        or response.get("IsTruncated")
-        or len(contents) > limit
-    ):
-        raise RoboCasaError("RoboCasa output_uri object population is unbounded")
-    keys = {
-        str(item.get("Key"))
-        for item in contents
-        if isinstance(item, dict) and isinstance(item.get("Key"), str)
-    }
-    if len(keys) != len(contents):
-        raise RoboCasaError("RoboCasa output_uri object population is invalid")
-    return keys
+    if type(limit) is not int or limit < 1:
+        raise RoboCasaError("RoboCasa output_uri object population limit is invalid")
+    keys: set[str] = set()
+    continuation_token: str | None = None
+    seen_tokens: set[str] = set()
+    while True:
+        page_limit = min(1000, limit - len(keys))
+        request: dict[str, Any] = {
+            "Bucket": bucket,
+            "Prefix": prefix,
+            "MaxKeys": page_limit,
+        }
+        if continuation_token is not None:
+            request["ContinuationToken"] = continuation_token
+        response = s3.list_objects_v2(**request)
+        if not isinstance(response, dict):
+            raise RoboCasaError("RoboCasa output_uri object population is invalid")
+        contents = response.get("Contents", [])
+        is_truncated = response.get("IsTruncated", False)
+        if (
+            not isinstance(contents, list)
+            or type(is_truncated) is not bool
+            or len(contents) > page_limit
+        ):
+            raise RoboCasaError("RoboCasa output_uri object population is invalid")
+        page_keys = [
+            item.get("Key")
+            for item in contents
+            if isinstance(item, dict) and isinstance(item.get("Key"), str)
+        ]
+        if (
+            len(page_keys) != len(contents)
+            or any(not key.startswith(prefix) or key in keys for key in page_keys)
+            or len(set(page_keys)) != len(page_keys)
+        ):
+            raise RoboCasaError("RoboCasa output_uri object population is invalid")
+        keys.update(page_keys)
+        if not is_truncated:
+            return keys
+        if len(keys) >= limit:
+            raise RoboCasaError("RoboCasa output_uri object population is unbounded")
+        next_token = response.get("NextContinuationToken")
+        if (
+            not page_keys
+            or not isinstance(next_token, str)
+            or not next_token
+            or next_token in seen_tokens
+        ):
+            raise RoboCasaError("RoboCasa output_uri object population is invalid")
+        seen_tokens.add(next_token)
+        continuation_token = next_token
 
 
 def _require_committed_s3_population(
@@ -2861,6 +2892,47 @@ def _copy_s3_once(
         content_sha256=digest,
         byte_count=byte_count,
     )
+
+
+def _delete_s3_staging_objects(
+    s3: Any,
+    bucket: str,
+    staged_keys: list[str],
+) -> None:
+    """Best-effort bounded cleanup that notices per-key DeleteObjects errors."""
+    for offset in range(0, len(staged_keys), 1000):
+        pending = staged_keys[offset : offset + 1000]
+        for _attempt in range(2):
+            try:
+                response = s3.delete_objects(
+                    Bucket=bucket,
+                    Delete={
+                        "Objects": [{"Key": key} for key in pending],
+                        "Quiet": True,
+                    },
+                )
+            except Exception:  # pragma: no cover - provider failure is best-effort.
+                continue
+            errors = response.get("Errors", []) if isinstance(response, dict) else None
+            if isinstance(errors, list):
+                failed: set[str] = set()
+                malformed = False
+                requested = set(pending)
+                for error in errors:
+                    key = error.get("Key") if isinstance(error, dict) else None
+                    if not isinstance(key, str) or key not in requested:
+                        malformed = True
+                        break
+                    failed.add(key)
+                if not malformed:
+                    pending = [key for key in pending if key in failed]
+                    if not pending:
+                        break
+        if pending:
+            LOGGER.warning(
+                "failed to remove %d RoboCasa S3 staging object(s) after retry",
+                len(pending),
+            )
 
 
 def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> None:
@@ -3068,19 +3140,7 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
             final_keys=final_keys,
         )
     finally:
-        for offset in range(0, len(staged_keys), 1000):
-            try:
-                s3.delete_objects(
-                    Bucket=bucket,
-                    Delete={
-                        "Objects": [
-                            {"Key": key} for key in staged_keys[offset : offset + 1000]
-                        ],
-                        "Quiet": True,
-                    },
-                )
-            except Exception as exc:  # pragma: no cover - best-effort staging cleanup.
-                LOGGER.warning("failed to remove RoboCasa S3 staging objects: %s", exc)
+        _delete_s3_staging_objects(s3, bucket, staged_keys)
 
 
 def parse_s3_uri(uri: str) -> tuple[str, str]:
