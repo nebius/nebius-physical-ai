@@ -3135,6 +3135,138 @@ class _TransactionalFakeS3:
         return {}
 
 
+class _PagedListingS3:
+    def __init__(self, pages: list[dict[str, object]]) -> None:
+        self.pages = list(pages)
+        self.requests: list[dict[str, object]] = []
+
+    def list_objects_v2(self, **request):
+        self.requests.append(request)
+        if not self.pages:
+            pytest.fail("unexpected extra S3 listing request")
+        return self.pages.pop(0)
+
+
+@pytest.mark.parametrize(
+    "page",
+    [
+        pytest.param(
+            {"KeyCount": 1, "Contents": [{"Key": "runs/bad/a"}]},
+            id="missing-truncation",
+        ),
+        pytest.param(
+            {
+                "Contents": [{"Key": "runs/bad/a"}],
+                "IsTruncated": False,
+            },
+            id="missing-key-count",
+        ),
+        pytest.param(
+            {
+                "KeyCount": 2,
+                "Contents": [{"Key": "runs/bad/a"}],
+                "IsTruncated": False,
+            },
+            id="contradictory-key-count",
+        ),
+        pytest.param(
+            {
+                "KeyCount": 1,
+                "Contents": [{"Key": "runs/bad/a"}],
+                "IsTruncated": False,
+                "NextContinuationToken": "unexpected",
+            },
+            id="token-on-final-page",
+        ),
+        pytest.param(
+            {
+                "KeyCount": 2,
+                "Contents": [{"Key": "runs/bad/a"}, {"Key": "runs/bad/a"}],
+                "IsTruncated": False,
+            },
+            id="duplicate-key-on-page",
+        ),
+    ],
+)
+def test_s3_prefix_listing_rejects_malformed_page_metadata(
+    page: dict[str, object],
+) -> None:
+    s3 = _PagedListingS3([page])
+
+    with pytest.raises(RoboCasaError, match="population is invalid"):
+        capabilities._s3_prefix_keys(s3, "bucket", "runs/bad/", limit=4)
+
+    assert len(s3.requests) == 1
+
+
+@pytest.mark.parametrize(
+    "pages",
+    [
+        pytest.param(
+            [
+                {
+                    "KeyCount": 1,
+                    "Contents": [{"Key": "runs/bad/a"}],
+                    "IsTruncated": True,
+                }
+            ],
+            id="missing-continuation-token",
+        ),
+        pytest.param(
+            [
+                {
+                    "KeyCount": 0,
+                    "Contents": [],
+                    "IsTruncated": True,
+                    "NextContinuationToken": "empty",
+                }
+            ],
+            id="empty-truncated-page",
+        ),
+        pytest.param(
+            [
+                {
+                    "KeyCount": 1,
+                    "Contents": [{"Key": "runs/bad/a"}],
+                    "IsTruncated": True,
+                    "NextContinuationToken": "same",
+                },
+                {
+                    "KeyCount": 1,
+                    "Contents": [{"Key": "runs/bad/b"}],
+                    "IsTruncated": True,
+                    "NextContinuationToken": "same",
+                },
+            ],
+            id="repeated-continuation-token",
+        ),
+        pytest.param(
+            [
+                {
+                    "KeyCount": 1,
+                    "Contents": [{"Key": "runs/bad/a"}],
+                    "IsTruncated": True,
+                    "NextContinuationToken": "next",
+                },
+                {
+                    "KeyCount": 1,
+                    "Contents": [{"Key": "runs/bad/a"}],
+                    "IsTruncated": False,
+                },
+            ],
+            id="duplicate-key-across-pages",
+        ),
+    ],
+)
+def test_s3_prefix_listing_requires_bounded_forward_progress(
+    pages: list[dict[str, object]],
+) -> None:
+    s3 = _PagedListingS3(pages)
+
+    with pytest.raises(RoboCasaError, match="population is invalid"):
+        capabilities._s3_prefix_keys(s3, "bucket", "runs/bad/", limit=4)
+
+
 def test_s3_prefix_listing_paginates_beyond_provider_page_cap() -> None:
     objects = {f"runs/large/{index:04d}.bin": (b"x", {}) for index in range(1001)}
     s3 = _TransactionalFakeS3(objects=objects)
@@ -3196,17 +3328,31 @@ def test_upload_output_retries_partial_staging_delete(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    (tmp_path / "artifact.bin").write_bytes(b"artifact")
+    for name in ("a.bin", "b.bin", "c.bin"):
+        (tmp_path / name).write_bytes(name.encode())
 
     class PartialDeleteS3(_TransactionalFakeS3):
         delete_calls = 0
+        delete_requests: list[list[str]] = []
 
         def delete_objects(self, *, Delete, **kwargs):
             self.delete_calls += 1
+            keys = [item["Key"] for item in Delete["Objects"]]
+            self.delete_requests.append(keys)
             if self.delete_calls == 1:
-                key = Delete["Objects"][0]["Key"]
+                key = keys[1]
+                for deleted in (keys[0], keys[2]):
+                    self.objects.pop(deleted)
                 self.events.append(("delete", "staging"))
-                return {"Errors": [{"Key": key, "Code": "InternalError"}]}
+                return {
+                    "Errors": [
+                        {
+                            "Key": key,
+                            "Code": "InternalError",
+                            "Message": "retry this object",
+                        }
+                    ]
+                }
             return super().delete_objects(Delete=Delete, **kwargs)
 
     s3 = PartialDeleteS3()
@@ -3219,8 +3365,33 @@ def test_upload_output_retries_partial_staging_delete(
     )
 
     assert s3.delete_calls == 2
+    assert [len(keys) for keys in s3.delete_requests] == [3, 1]
+    assert s3.delete_requests[1] == [s3.delete_requests[0][1]]
     assert not any(key.startswith(".npa-staging/") for key in s3.objects)
     assert "runs/delete-retry/_NPA_COMPLETE.json" in s3.objects
+
+
+def test_s3_staging_delete_batches_at_provider_limit() -> None:
+    class RecordingDeleteS3:
+        requests: list[dict[str, object]] = []
+
+        def delete_objects(self, **request):
+            self.requests.append(request)
+            return {}
+
+    s3 = RecordingDeleteS3()
+    staged_keys = [f".npa-staging/object-{index:04d}" for index in range(1001)]
+
+    capabilities._delete_s3_staging_objects(s3, "bucket", staged_keys)
+
+    assert [
+        len(request["Delete"]["Objects"])  # type: ignore[index]
+        for request in s3.requests
+    ] == [1000, 1]
+    assert all(
+        request["Delete"]["Quiet"] is True  # type: ignore[index]
+        for request in s3.requests
+    )
 
 
 def test_upload_output_warns_on_persistent_partial_staging_delete(
@@ -3236,7 +3407,15 @@ def test_upload_output_warns_on_persistent_partial_staging_delete(
         def delete_objects(self, *, Delete, **_kwargs):
             self.delete_calls += 1
             key = Delete["Objects"][0]["Key"]
-            return {"Errors": [{"Key": key, "Code": "AccessDenied"}]}
+            return {
+                "Errors": [
+                    {
+                        "Key": key,
+                        "Code": "AccessDenied",
+                        "Message": "private provider detail",
+                    }
+                ]
+            }
 
     s3 = PersistentDeleteFailureS3()
     monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
@@ -3249,8 +3428,101 @@ def test_upload_output_warns_on_persistent_partial_staging_delete(
 
     assert s3.delete_calls == 2
     assert "failed to remove 1 RoboCasa S3 staging object(s) after retry" in caplog.text
+    assert "code=AccessDenied" in caplog.text
+    message_digest = hashlib.sha256(b"private provider detail").hexdigest()[:12]
+    assert f"message-sha256={message_digest}" in caplog.text
+    assert "private provider detail" not in caplog.text
     assert any(key.startswith(".npa-staging/") for key in s3.objects)
     assert "runs/delete-warning/_NPA_COMPLETE.json" in s3.objects
+
+
+def test_s3_staging_delete_warns_on_malformed_success_response(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class MalformedDeleteS3:
+        calls = 0
+
+        def delete_objects(self, **_request):
+            self.calls += 1
+            return {"Errors": [{"Key": "staged", "Code": 500}]}
+
+    s3 = MalformedDeleteS3()
+
+    capabilities._delete_s3_staging_objects(s3, "bucket", ["staged"])
+
+    assert s3.calls == 2
+    assert "diagnostics=malformed-response" in caplog.text
+
+
+def test_cleanup_failure_does_not_mask_publication_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    (tmp_path / "artifact.bin").write_bytes(b"artifact")
+
+    class CleanupUnavailable(Exception):
+        def __init__(self) -> None:
+            self.response = {
+                "Error": {"Code": "SlowDown"},
+                "ResponseMetadata": {"HTTPStatusCode": 503},
+            }
+            super().__init__("private provider detail")
+
+    class FailingCleanupS3(_TransactionalFakeS3):
+        delete_calls = 0
+
+        def delete_objects(self, **_request):
+            self.delete_calls += 1
+            raise CleanupUnavailable()
+
+    s3 = FailingCleanupS3(fail_copy_number=1)
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+
+    with pytest.raises(OSError, match="injected copy failure"):
+        capabilities.upload_output(
+            tmp_path,
+            "s3://bucket/runs/copy-and-cleanup-failure",
+            {"ok": True},
+        )
+
+    assert s3.delete_calls == 2
+    assert "exception=CleanupUnavailable" in caplog.text
+    assert "exception-code=SlowDown" in caplog.text
+    assert "http-status=503" in caplog.text
+    assert "private provider detail" not in caplog.text
+
+
+def test_hostile_cleanup_exception_metadata_does_not_mask_original_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class HostileCleanup(Exception):
+        @property
+        def response(self):
+            raise RuntimeError("diagnostic property failed")
+
+    class HostileCleanupS3:
+        calls = 0
+
+        def delete_objects(self, **_request):
+            self.calls += 1
+            raise HostileCleanup("private provider detail")
+
+    s3 = HostileCleanupS3()
+
+    def fail_then_clean() -> None:
+        try:
+            raise OSError("original publication failure")
+        finally:
+            capabilities._delete_s3_staging_objects(s3, "bucket", ["staged"])
+
+    with pytest.raises(OSError, match="original publication failure"):
+        fail_then_clean()
+
+    assert s3.calls == 2
+    assert "exception=HostileCleanup" in caplog.text
+    assert "private provider detail" not in caplog.text
+    assert "diagnostic property failed" not in caplog.text
 
 
 def test_upload_output_copy_failure_never_publishes_commit_marker(

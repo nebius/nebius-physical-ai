@@ -2676,10 +2676,13 @@ def _s3_prefix_keys(
         if not isinstance(response, dict):
             raise RoboCasaError("RoboCasa output_uri object population is invalid")
         contents = response.get("Contents", [])
-        is_truncated = response.get("IsTruncated", False)
+        is_truncated = response.get("IsTruncated")
+        key_count = response.get("KeyCount")
         if (
             not isinstance(contents, list)
             or type(is_truncated) is not bool
+            or type(key_count) is not int
+            or key_count != len(contents)
             or len(contents) > page_limit
         ):
             raise RoboCasaError("RoboCasa output_uri object population is invalid")
@@ -2696,6 +2699,8 @@ def _s3_prefix_keys(
             raise RoboCasaError("RoboCasa output_uri object population is invalid")
         keys.update(page_keys)
         if not is_truncated:
+            if response.get("NextContinuationToken") is not None:
+                raise RoboCasaError("RoboCasa output_uri object population is invalid")
             return keys
         if len(keys) >= limit:
             raise RoboCasaError("RoboCasa output_uri object population is unbounded")
@@ -2894,6 +2899,75 @@ def _copy_s3_once(
     )
 
 
+_S3_DELETE_ERROR_CODE = re.compile(r"[0-9A-Za-z_.-]{1,64}")
+
+
+def _s3_delete_failure_response(
+    response: object,
+    pending: list[str],
+) -> tuple[list[str], set[str]]:
+    if type(response) is not dict:
+        return pending, {"malformed-response"}
+    errors = response.get("Errors", [])
+    if type(errors) is not list:
+        return pending, {"malformed-response"}
+    requested = set(pending)
+    failed: set[str] = set()
+    diagnostics: set[str] = set()
+    for error in errors:
+        if type(error) is not dict:
+            return pending, {"malformed-response"}
+        key = error.get("Key")
+        code = error.get("Code")
+        message = error.get("Message")
+        if (
+            type(key) is not str
+            or key not in requested
+            or type(code) is not str
+            or _S3_DELETE_ERROR_CODE.fullmatch(code) is None
+            or (message is not None and type(message) is not str)
+        ):
+            return pending, {"malformed-response"}
+        failed.add(key)
+        diagnostics.add(f"code={code}")
+        if type(message) is str:
+            message_digest = hashlib.sha256(message.encode("utf-8")).hexdigest()[:12]
+            diagnostics.add(f"message-sha256={message_digest}")
+    return [key for key in pending if key in failed], diagnostics
+
+
+def _s3_cleanup_exception_diagnostics(exc: BaseException) -> set[str]:
+    name = type(exc).__name__
+    details = {
+        f"exception={name}"
+        if _S3_DELETE_ERROR_CODE.fullmatch(name)
+        else "exception=unknown"
+    }
+    try:
+        response = getattr(exc, "response", None)
+    except BaseException:
+        return details
+    if type(response) is not dict:
+        return details
+    error = response.get("Error")
+    metadata = response.get("ResponseMetadata")
+    code = error.get("Code") if type(error) is dict else None
+    status = metadata.get("HTTPStatusCode") if type(metadata) is dict else None
+    if type(code) is str and _S3_DELETE_ERROR_CODE.fullmatch(code) is not None:
+        details.add(f"exception-code={code}")
+    if type(status) is int and 100 <= status <= 599:
+        details.add(f"http-status={status}")
+    return details
+
+
+def _bounded_s3_cleanup_diagnostics(diagnostics: set[str]) -> str:
+    ordered = sorted(diagnostics)
+    displayed = ordered[:8]
+    if len(ordered) > len(displayed):
+        displayed.append(f"+{len(ordered) - len(displayed)}-more")
+    return ",".join(displayed) if displayed else "unknown"
+
+
 def _delete_s3_staging_objects(
     s3: Any,
     bucket: str,
@@ -2902,6 +2976,7 @@ def _delete_s3_staging_objects(
     """Best-effort bounded cleanup that notices per-key DeleteObjects errors."""
     for offset in range(0, len(staged_keys), 1000):
         pending = staged_keys[offset : offset + 1000]
+        diagnostics: set[str] = set()
         for _attempt in range(2):
             try:
                 response = s3.delete_objects(
@@ -2911,27 +2986,21 @@ def _delete_s3_staging_objects(
                         "Quiet": True,
                     },
                 )
-            except Exception:  # pragma: no cover - provider failure is best-effort.
+            except Exception as exc:  # pragma: no cover - exercised by fake provider.
+                diagnostics.update(_s3_cleanup_exception_diagnostics(exc))
                 continue
-            errors = response.get("Errors", []) if isinstance(response, dict) else None
-            if isinstance(errors, list):
-                failed: set[str] = set()
-                malformed = False
-                requested = set(pending)
-                for error in errors:
-                    key = error.get("Key") if isinstance(error, dict) else None
-                    if not isinstance(key, str) or key not in requested:
-                        malformed = True
-                        break
-                    failed.add(key)
-                if not malformed:
-                    pending = [key for key in pending if key in failed]
-                    if not pending:
-                        break
+            pending, response_diagnostics = _s3_delete_failure_response(
+                response, pending
+            )
+            diagnostics.update(response_diagnostics)
+            if not pending:
+                break
         if pending:
             LOGGER.warning(
-                "failed to remove %d RoboCasa S3 staging object(s) after retry",
+                "failed to remove %d RoboCasa S3 staging object(s) after retry; "
+                "diagnostics=%s",
                 len(pending),
+                _bounded_s3_cleanup_diagnostics(diagnostics),
             )
 
 
