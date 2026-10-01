@@ -106,8 +106,9 @@ GPUs; multiplying their labels does not give the GPU count.
 
 ## Workbench workflows
 
-These four YAMLs link to the maintained `workflows/testing/cosmos3-super-*`
-specs. The resource requirements and commands are unchanged.
+These four YAMLs are byte-identical copies of the maintained
+`workflows/testing/cosmos3-super-*` specs, with a consistency check in the
+documentation guardrails. The resource requirements and commands are unchanged.
 
 | YAML | GPU allocation | Workbench coverage |
 | --- | --- | --- |

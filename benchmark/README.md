@@ -14,12 +14,13 @@ Workbench runs and single-GPU checks distinct from full-node measurements.
 Credit the authors and link every upstream repository used for its methodology,
 software, or results; preserve applicable licenses when adapting material.
 
-The Cosmos3-Super YAMLs are relative symlinks to the maintained
+The Cosmos3-Super YAMLs are byte-identical copies of the maintained
 [`workflows/testing/`](../workflows/testing/) specs. They can be passed directly
 to the CLI from a Git checkout, while catalog discovery and live-submit coverage
-continue to use the original paths. Edit the original spec to update both entry
-points. Clone with symlink support; on a platform that checks links out as text,
-use the original workflow paths.
+continue to use the original paths. Update both copies together; the existing
+documentation guardrails check the complete file set and byte equality to
+prevent drift. These regular files also work in downloads without symlink
+support.
 
 For setup and operation, see the [Workbench docs](../docs/workbench/README.md)
 and [workflow catalog](../workflows/README.md).
