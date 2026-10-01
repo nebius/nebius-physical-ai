@@ -1882,10 +1882,13 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
     from npa.fleet import lifecycle as L
 
     def fake_prepare(install_dir, **k):
-        install_dir.mkdir(parents=True, exist_ok=True)
-        return install_dir / "k8s-training"
+        workdir = install_dir / "k8s-training"
+        workdir.mkdir(parents=True, exist_ok=True)
+        (workdir / "provider.tf").write_text('provider "nebius" {}\n')
+        return workdir
 
     monkeypatch.setattr(L, "_prepare_install_dir", fake_prepare)
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 0))
     monkeypatch.setattr(L, "_cluster_tf_env", lambda *a, **k: {})
 
     def fake_stream(*a, **k):
@@ -1931,6 +1934,28 @@ def _run_one_cluster(L, tmp_path, *, profile: str = "", cluster=None):
         timeout_minutes=1,
         on_status=None,
     )
+
+
+def test_apply_provider_defaults_use_same_budget_as_outer_deadline(
+    tmp_path, monkeypatch
+):
+    L = _mock_deploy_boundary(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        L, "_run_stream", lambda args, **kwargs: calls.append((args, kwargs))
+    )
+    result = _run_one_cluster(L, tmp_path)
+    assert result["status"] == "deployed"
+    apply = [kwargs for args, kwargs in calls if "apply" in args]
+    assert len(apply) == 1
+    assert apply[0]["timeout"] == 60
+    sidecar = json.loads((tmp_path / "a/c" / L._ENV_SIDECAR).read_text())
+    assert sidecar["provider_rpc_deadlines"]["apply_timeout_minutes"] == 1
+    assert sidecar["provider_rpc_deadlines"]["inserted_defaults"] == {
+        "timeout": "1m",
+        "per_retry_timeout": "1m",
+        "auth_timeout": "1m",
+    }
 
 
 def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> None:
@@ -3636,6 +3661,7 @@ def _patch_infra_free_subprocess_boundaries(tmp_path: Path, monkeypatch):
     recipe = tmp_path / "recipe"
     (recipe / "k8s-training").mkdir(parents=True)
     (recipe / "modules").mkdir()
+    (recipe / "k8s-training/provider.tf").write_text('provider "nebius" {}\n')
     work_root = tmp_path / "work"
 
     monkeypatch.setenv("NPA_TERRAFORM_BIN", str(terraform))
@@ -5881,3 +5907,29 @@ def test_destroy_unresolved_status_remains_nonzero(tmp_path, monkeypatch) -> Non
 
     assert result.exit_code == 1
     assert "teardown is incomplete" in result.output
+
+
+def test_provider_advisory_is_saved_and_original_apply_still_runs(
+    tmp_path, monkeypatch
+):
+    L = _mock_deploy_boundary(monkeypatch)
+    prepare = L._prepare_install_dir
+
+    def unsupported(*args, **kwargs):
+        workdir = prepare(*args, **kwargs)
+        (workdir / "provider.tf").write_text(
+            'provider /* upstream comment */ "nebius" {}'
+        )
+        return workdir
+
+    monkeypatch.setattr(L, "_prepare_install_dir", unsupported)
+    calls = []
+    monkeypatch.setattr(L, "_run_stream", lambda args, **kwargs: calls.append(args))
+    assert _run_one_cluster(L, tmp_path)["status"] == "deployed"
+    assert len([args for args in calls if "apply" in args]) == 1
+    saved = json.loads((tmp_path / "a/c" / L._ENV_SIDECAR).read_text())
+    assert saved["provider_rpc_deadlines"]["status"] == "advisory"
+    assert saved["provider_rpc_deadlines"]["reason_code"] == "unsupported_recipe_shape"
+    assert (
+        tmp_path / "a/c/k8s-training/provider.tf"
+    ).read_text() == 'provider /* upstream comment */ "nebius" {}'

@@ -144,6 +144,65 @@ on AMD64 and ARM64. NPA checks the SHA-bound platform metadata, initializes with
 On a lock mismatch, intentionally regenerate and review the provider lock;
 removing it would discard the verification contract.
 
+### Provider request deadlines
+
+Deadline injection is advisory. Unsupported HCL/JSON, ambiguous providers, symlinks,
+concurrent source changes, or unavailable writes leave recipe bytes unchanged and
+record `status: advisory` with a stable `reason_code` in the deployment sidecar.
+Terraform still validates and applies the original materialized recipe. Invalid
+requested apply timeouts remain errors; unsafe paths are never traversed or rewritten.
+
+The shared MK8s backend supplies omitted Nebius provider `timeout`,
+`per_retry_timeout`, and `auth_timeout` attributes from the existing NPA apply
+`--timeout` budget, expressed in minutes. This avoids the provider SDK's shorter
+request default ending a create RPC before its resource identity is returned.
+These are request deadlines; they are not a guarantee that asynchronous resource
+creation succeeds or that GPU capacity is available.
+
+In the pinned provider schema, `auth_timeout` covers the request including
+authentication; it is not an authentication-only budget. Leaving that ceiling
+or the per-attempt deadline at a shorter default would still interrupt a slow
+create request. Giving an attempt the full apply budget deliberately allows one
+slow attempt to consume that budget. Earlier transient failures can still retry
+under the existing retry count; NPA does not promise time for every retry.
+
+NPA edits only the owned materialized provider block. Explicit operator values,
+expressions, nulls, retry counts, aliases, and override-file settings remain
+unchanged. The source recipe remains unchanged. The deployment sidecar records
+the inserted defaults and materialized source hashes before Terraform runs.
+
+Destroy retains those materialized provider settings so the recorded KubeRay
+input digest and recovery provenance remain valid. Its own NPA outer deadline
+and cancellation still apply. Existing installations without these generated
+defaults retain their original settings until an ordinary supported reapply.
+
+
+The provider inspection uses `python-hcl2` 8.x and supports the pinned NPA
+recipes, ordinary block/line comments, heredocs, aliases and Terraform JSON.
+It refuses syntax the parser cannot represent before writing or running
+Terraform. One known valid-Terraform limitation is a block comment between the
+`provider` keyword and its label, such as `provider /* note */ "nebius" {}`.
+Such a custom recipe must move that comment outside the block header; NPA does
+not attempt a text/regex rewrite or silently run with uninspected defaults.
+
+For live verification, set `NPA_MK8S_RPC_LIVE_CONFIG` to a private JSON evidence
+configuration and run `npa/tests/e2e/test_mk8s_provider_rpc_live.py` with
+`NPA_INTEGRATION_E2E=1`. Run its `live` phase after a supported owned provision,
+and its `cleanup` phase after supported teardown. The verifier is read-only:
+it binds the producing source/start/result, exact state and deployment
+sidecar, materialized provider hash, and actual provider identities. Cleanup
+requires typed NotFound for the exact cluster and each recorded node group.
+Before those reads, the verifier requires the same plain service-account
+profile, credential/config file byte hashes, endpoint, project and tenant that
+the provision-start receipt recorded. It checks the live project/tenant identity
+and removes ambient Nebius selectors from the subprocess environment. Missing
+legacy authority bindings are refused; never backfill them after a run. This
+read-only harness supports explicit key-backed profiles, not attached metadata
+or arbitrary authentication plugins.
+It does not adopt or destroy resources, and a failed provision cannot be
+reported as a successful lifecycle. Keep all configuration and receipts
+private because they contain operational identifiers.
+
 ## Cleanup
 
 Stop active jobs and preserve needed outputs before removing this cluster:
