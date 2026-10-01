@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
@@ -588,6 +589,46 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
     assert report.best_config.metrics.true_negatives == 2
     assert all(0.0 <= case.score <= 1.0 for case in report.best_config.results)
     assert {case.score_source for case in report.best_config.results} == {"fixture"}
+    assert {
+        (
+            case.requested_model,
+            case.served_model,
+            case.served_model_match_enforced,
+        )
+        for case in report.best_config.results
+    } == {(DEFAULT_MODEL, None, False)}
+
+
+def test_vlm_feedback_artifact_persists_model_enforcement_context(
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.feedback import (
+        FeedbackRequest,
+        FeedbackType,
+        collect_feedback,
+    )
+
+    output = tmp_path / "feedback.json"
+    request = FeedbackRequest(
+        rollout_path=tmp_path / "rollout",
+        output_path=output,
+        task="inspect the rollout",
+        checkpoint_uri="s3://unused/checkpoint",
+        threshold=0.8,
+        feedback_type=FeedbackType.CRITIQUE,
+        vlm_backend="stub",
+        vlm_model="stub/requested-model",
+        vlm_score=0.9,
+    )
+
+    payload, status = collect_feedback("vlm", request)
+    persisted = json.loads(output.read_text(encoding="utf-8"))
+
+    assert payload.success is True
+    assert status.artifacts["result_uri"] == str(output)
+    assert persisted["model"] == "stub/requested-model"
+    assert persisted["served_model"] is None
+    assert persisted["served_model_match_enforced"] is False
 
 
 def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:
@@ -717,6 +758,7 @@ def test_self_hosted_retains_server_model_without_inventing_identity(
     result = _call_single("self-hosted")
 
     assert result.served_model == served_model
+    assert result.served_model_match_enforced is False
     assert result.score == 0.9
     assert result.success is True
     assert result.rationale == "ok"

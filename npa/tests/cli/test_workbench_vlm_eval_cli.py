@@ -50,9 +50,15 @@ def test_workbench_vlm_eval_run_writes_local_json(tmp_path) -> None:
     payload = json.loads(result.output)
     assert payload["backend"] == "stub"
     assert payload["passed"] is True
+    assert payload["served_model"] is None
+    assert payload["served_model_match_enforced"] is False
     written = output_dir / "vlm_eval_stub.json"
     assert written.exists()
-    assert json.loads(written.read_text(encoding="utf-8"))["score"] == 0.9
+    persisted = json.loads(written.read_text(encoding="utf-8"))
+    assert persisted["score"] == 0.9
+    assert persisted["model"] == DEFAULT_MODEL
+    assert persisted["served_model"] is None
+    assert persisted["served_model_match_enforced"] is False
 
 
 def test_workbench_vlm_eval_dry_run_does_not_write(tmp_path) -> None:
@@ -225,8 +231,18 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
     assert payload["best_config"]["metrics"]["accuracy"] == 1.0
     assert payload["best_config"]["metrics"]["true_positives"] == 2
     assert payload["best_config"]["metrics"]["true_negatives"] == 2
+    assert {
+        (
+            case["requested_model"],
+            case["served_model"],
+            case["served_model_match_enforced"],
+        )
+        for case in payload["best_config"]["results"]
+    } == {(DEFAULT_MODEL, None, False)}
     assert payload["written_uri"] == str(output_path)
-    assert json.loads(output_path.read_text(encoding="utf-8"))["item_count"] == 4
+    persisted = json.loads(output_path.read_text(encoding="utf-8"))
+    assert persisted["item_count"] == 4
+    assert persisted["best_config"]["results"] == payload["best_config"]["results"]
 
 
 def test_vlm_eval_sdk_benchmark_returns_report() -> None:

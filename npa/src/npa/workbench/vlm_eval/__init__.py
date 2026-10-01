@@ -63,6 +63,9 @@ DEFAULT_SAMPLE_BENCHMARK_PATH = (
 )
 SUPPORTED_BACKENDS = ("self-hosted", "api", "stub")
 SUPPORTED_FRAME_SELECTIONS = ("final", "keyframes", "sequence")
+_EXACT_SERVED_MODEL_MATCH_MODELS = frozenset(
+    {"nvidia/Nemotron-3_5-Lightning", "MiniMaxAI/MiniMax-M3"}
+)
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".ppm", ".webp"}
 VIDEO_SUFFIXES = {".avi", ".mov", ".mp4", ".mpeg", ".mpg", ".webm"}
 
@@ -88,6 +91,7 @@ class VlmEvalResult:
     frame_count: int = 0
     rationale: str = ""
     served_model: str | None = None
+    served_model_match_enforced: bool = False
 
 
 @dataclass(frozen=True)
@@ -96,6 +100,7 @@ class VlmStructuredResponse:
     score: float
     rationale: str
     served_model: str | None = None
+    served_model_match_enforced: bool = False
 
 
 @dataclass(frozen=True)
@@ -161,6 +166,9 @@ class VlmBenchmarkCaseResult:
     rationale: str
     frame_count: int
     score_source: str
+    requested_model: str = ""
+    served_model: str | None = None
+    served_model_match_enforced: bool = False
 
 
 @dataclass(frozen=True)
@@ -576,7 +584,10 @@ def parse_structured_response(text: str) -> VlmStructuredResponse:
 
 
 def _parse_api_structured_response(
-    text: Any, *, served_model: str
+    text: Any,
+    *,
+    served_model: str,
+    served_model_match_enforced: bool = False,
 ) -> VlmStructuredResponse:
     """Validate the complete hosted judge output without repairing its verdict."""
 
@@ -623,6 +634,7 @@ def _parse_api_structured_response(
         score=float(score),
         rationale=rationale,
         served_model=served_model,
+        served_model_match_enforced=served_model_match_enforced,
     )
 
 
@@ -700,6 +712,9 @@ class VlmLoopRollout:
     status: str
     frame_count: int
     result_uri: str
+    requested_model: str = ""
+    served_model: str | None = None
+    served_model_match_enforced: bool = False
 
 
 def evaluate_rollout_set(
@@ -761,6 +776,9 @@ def evaluate_rollout_set(
                 status=result.status,
                 frame_count=result.frame_count,
                 result_uri=written,
+                requested_model=result.model,
+                served_model=result.served_model,
+                served_model_match_enforced=result.served_model_match_enforced,
             )
         )
 
@@ -908,6 +926,7 @@ def _result_from_structured(
         frame_count=frame_count,
         rationale=structured.rationale,
         served_model=structured.served_model,
+        served_model_match_enforced=structured.served_model_match_enforced,
     )
 
 
@@ -960,6 +979,9 @@ def _run_benchmark_case(
         rationale=result.rationale,
         frame_count=result.frame_count,
         score_source="fixture" if score is not None else result.backend,
+        requested_model=result.model,
+        served_model=result.served_model,
+        served_model_match_enforced=result.served_model_match_enforced,
     )
 
 
@@ -1436,12 +1458,18 @@ def _call_openai_compatible(
         served_model = data.get("model")
         if not isinstance(served_model, str) or not served_model.strip():
             raise VlmEvalError("Hosted VLM response must identify the served model")
-        if model in {"nvidia/Nemotron-3_5-Lightning", "MiniMaxAI/MiniMax-M3"}:
+        served_model_match_enforced = False
+        if model in _EXACT_SERVED_MODEL_MATCH_MODELS:
             if served_model != model:
                 raise VlmEvalError(
                     "Hosted VLM response model does not match the requested model"
                 )
-        return _parse_api_structured_response(message, served_model=served_model)
+            served_model_match_enforced = True
+        return _parse_api_structured_response(
+            message,
+            served_model=served_model,
+            served_model_match_enforced=served_model_match_enforced,
+        )
     result = parse_structured_response(str(message))
     served_model = data.get("model")
     if served_model is not None:

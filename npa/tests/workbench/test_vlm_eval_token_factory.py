@@ -27,6 +27,8 @@ def test_api_backend_defaults_to_token_factory_served_vision_model(tmp_path) -> 
         score=0.9,  # skips the real VLM call
     )
     assert result.model == DEFAULT_VISION_MODEL
+    assert result.served_model is None
+    assert result.served_model_match_enforced is False
 
 
 def test_api_backend_defaults_to_token_factory_base_url(monkeypatch) -> None:
@@ -64,6 +66,7 @@ def test_api_backend_requires_a_key(monkeypatch) -> None:
     ("model", "constrained"),
     [
         ("MiniMaxAI/MiniMax-M3", False),
+        ("nvidia/Nemotron-3_5-Lightning", True),
         ("vendor/explicit-vision", True),
     ],
 )
@@ -91,8 +94,11 @@ def test_api_judge_uses_model_specific_json_mode(
     )
     assert result.score == 0.9
     assert ("response_format" in requests[0]) is constrained
-    if not constrained:
+    assert result.served_model_match_enforced is (model != "vendor/explicit-vision")
+    if model == "MiniMaxAI/MiniMax-M3":
         assert requests[0]["chat_template_kwargs"] == {"thinking_mode": "disabled"}
+    elif model == "nvidia/Nemotron-3_5-Lightning":
+        assert requests[0]["chat_template_kwargs"] == {"enable_thinking": False}
 
 
 def test_malformed_minimax_json_remains_an_error(monkeypatch) -> None:
@@ -252,6 +258,41 @@ def test_api_judge_preserves_valid_scores(monkeypatch, score) -> None:
     assert result.success is False
     assert result.score == score
     assert result.rationale == "visible evidence"
+    assert result.served_model_match_enforced is True
+
+
+def test_canonical_match_enforcement_is_independent_of_negative_verdict(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "negative.png"
+    Image.new("RGB", (8, 8), "red").save(frame)
+    completion = _completion(
+        content='{"success":false,"score":0.0,"rationale":"task failed"}'
+    )
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **kwargs: completion
+    )
+
+    result = evaluate_vlm(
+        input_path=str(frame),
+        output_path=str(tmp_path / "evaluation.json"),
+        backend="api",
+        model="MiniMaxAI/MiniMax-M3",
+        endpoint_url="https://example.test/v1",
+        success_threshold=0.8,
+    )
+
+    saved = json.loads(json.dumps(asdict(result)))
+    assert saved["status"] == "needs_iteration"
+    assert saved["score"] == 0.0
+    assert saved["passed"] is False
+    assert saved["model"] == "MiniMaxAI/MiniMax-M3"
+    assert saved["served_model"] == "MiniMaxAI/MiniMax-M3"
+    assert saved["served_model_match_enforced"] is True
 
 
 def test_self_hosted_judge_keeps_legacy_parsing_for_completed_response(
@@ -271,6 +312,19 @@ def test_self_hosted_judge_keeps_legacy_parsing_for_completed_response(
     assert result.success is True
     assert result.score == 1.0
     assert result.served_model is None
+    assert result.served_model_match_enforced is False
+
+
+def test_api_custom_model_exact_return_is_not_marked_enforced(monkeypatch) -> None:
+    model = "vendor/versioned-vision"
+    result = _call_completion(
+        monkeypatch,
+        _completion(model=model),
+        model=model,
+    )
+
+    assert result.served_model == model
+    assert result.served_model_match_enforced is False
 
 
 def test_api_custom_alias_preserves_request_and_reports_actual_judged_model(
@@ -302,6 +356,7 @@ def test_api_custom_alias_preserves_request_and_reports_actual_judged_model(
     saved = json.loads(json.dumps(asdict(result)))
     assert saved["model"] == "vendor/explicit-alias"
     assert saved["served_model"] == "vendor/served-vision"
+    assert saved["served_model_match_enforced"] is False
     assert saved["score"] == 0.9
     assert saved["passed"] is True
     assert saved["frame_count"] == 1
