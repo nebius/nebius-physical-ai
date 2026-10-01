@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
@@ -158,14 +159,121 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
         assert isinstance(result.passed, bool)
 
 
-def test_parse_structured_response_clamps_score() -> None:
-    parsed = parse_structured_response(
-        '{"success": true, "score": 1.4, "rationale": "clear completion"}'
+def test_result_construction_does_not_repair_validated_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_on_repair(_score):
+        pytest.fail("validated model score reached the legacy clamp")
+
+    monkeypatch.setattr(vlm_eval, "_clamp_score", fail_on_repair)
+    result = vlm_eval._result_from_structured(
+        backend="self-hosted",
+        input_path="rollout",
+        output_path="result",
+        task="task",
+        model=DEFAULT_MODEL,
+        success_threshold=0.8,
+        frame_selection="keyframes",
+        frame_count=1,
+        structured=VlmStructuredResponse(
+            success=False,
+            score=0.74268,
+            rationale="visible evidence",
+        ),
     )
 
-    assert parsed.success is True
-    assert parsed.score == 1.0
-    assert parsed.rationale == "clear completion"
+    assert result.score == 0.7427
+    assert result.passed is False
+
+
+@pytest.mark.parametrize(
+    "score",
+    [99, "99", True, -0.1, 1.1, float("nan"), float("inf"), None, [], {}],
+)
+def test_parse_structured_response_rejects_invalid_score(score) -> None:
+    payload = json.dumps(
+        {"success": False, "score": score, "rationale": "model declared failure"}
+    )
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError,
+        match=r"Self-hosted VLM response score must be a finite number in \[0, 1\]",
+    ):
+        parse_structured_response(payload)
+
+
+@pytest.mark.parametrize("score", [0, 0.0, 0.74, 1, 1.0])
+def test_parse_structured_response_preserves_valid_scores(score) -> None:
+    parsed = parse_structured_response(
+        json.dumps({"success": False, "score": score, "rationale": "visible evidence"})
+    )
+
+    assert parsed.success is False
+    assert parsed.score == score
+    assert parsed.rationale == "visible evidence"
+
+
+@pytest.mark.parametrize(
+    ("payload", "error"),
+    [
+        ('{"score":0.5,"rationale":"visible"}', "success must be a boolean"),
+        (
+            '{"success":"no","score":0.5,"rationale":"visible"}',
+            "success must be a boolean",
+        ),
+        ('{"success":false,"score":0.5}', "rationale must be a nonempty string"),
+        (
+            '{"success":false,"score":0.5,"rationale":null}',
+            "rationale must be a nonempty string",
+        ),
+        (
+            '{"success":false,"score":0.5,"rationale":"  "}',
+            "rationale must be a nonempty string",
+        ),
+        (
+            '{"success":false,"score":0.5,"rationale":7}',
+            "rationale must be a nonempty string",
+        ),
+    ],
+)
+def test_parse_structured_response_rejects_invalid_verdict_fields(
+    payload: str, error: str
+) -> None:
+    with pytest.raises(vlm_eval.VlmEvalError, match=error):
+        parse_structured_response(payload)
+
+
+@pytest.mark.parametrize("score", [99, "99", True])
+def test_default_self_hosted_backend_rejects_score_before_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, score
+) -> None:
+    rollout = _write_image_rollout(tmp_path / "rollout", [(40, 80, 120)])
+    content = json.dumps(
+        {"success": False, "score": score, "rationale": "model declared failure"}
+    )
+    completion = {
+        "model": DEFAULT_MODEL,
+        "choices": [{"finish_reason": "stop", "message": {"content": content}}],
+    }
+    calls = []
+
+    def local_transport(**kwargs):
+        calls.append(kwargs)
+        return completion
+
+    def reject_result_construction(**_kwargs):
+        pytest.fail("invalid model score reached VlmEvalResult construction")
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", local_transport)
+    monkeypatch.setattr(vlm_eval, "_result_from_structured", reject_result_construction)
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="score must be a finite number"):
+        evaluate_vlm(
+            input_path=str(rollout),
+            output_path=str(tmp_path / "result"),
+        )
+
+    assert len(calls) == 1
 
 
 def test_mocked_self_hosted_endpoint_returns_structured_score(

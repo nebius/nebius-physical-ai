@@ -254,22 +254,28 @@ def test_api_judge_preserves_valid_scores(monkeypatch, score) -> None:
     assert result.rationale == "visible evidence"
 
 
-def test_self_hosted_judge_keeps_legacy_parsing_for_completed_response(
-    monkeypatch,
+@pytest.mark.parametrize(
+    "content",
+    [
+        '```json\n{"success":true,"score":0.7,"rationale":"visible"}\n```',
+        'Evaluation: {"success":true,"score":0.7,"rationale":"visible"} complete.',
+    ],
+)
+def test_self_hosted_judge_keeps_legacy_framing_for_valid_verdict(
+    monkeypatch, content
 ) -> None:
     completion = {
         "choices": [
             {
                 "finish_reason": "stop",
-                "message": {
-                    "content": '```json\n{"success":"yes","score":7,"rationale":"legacy"}\n```'
-                },
+                "message": {"content": content},
             }
         ]
     }
     result = _call_completion(monkeypatch, completion, backend="self-hosted")
     assert result.success is True
-    assert result.score == 1.0
+    assert result.score == 0.7
+    assert result.rationale == "visible"
     assert result.served_model is None
 
 
