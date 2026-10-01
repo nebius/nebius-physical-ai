@@ -133,7 +133,11 @@ def materialize_plan(plan: list[tuple[str, str, bool]], *, local: Path) -> None:
 
 
 def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None:
-    from npa.workflows.sim2real_viz import emit_sim2real_mcap, emit_sim2real_rerun
+    from npa.workflows.sim2real_viz import (
+        _heldout_policy_metadata,
+        emit_sim2real_mcap,
+        emit_sim2real_rerun,
+    )
 
     evidence = read_json(
         f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json",
@@ -231,21 +235,19 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
     reports = local / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "sim2real-report.json").write_text(json.dumps(report, indent=2))
-    inference_provenance = gold.get("policy_inference_provenance") or {}
+    heldout_policy_metadata = _heldout_policy_metadata(
+        gold,
+        checkpoint_fallback=str(evidence.get("selected_checkpoint_uri") or ""),
+        checkpoint_sha256_fallback=str(gold.get("policy_checkpoint_sha256") or ""),
+        checkpoint_size_fallback=gold.get("policy_checkpoint_size_bytes", 0),
+    )
     run_metadata = {
         "run_id": args.run_id,
         "artifact_root": root,
         "policy_checkpoint": evidence.get("selected_checkpoint_uri", ""),
         "policy_checkpoint_sha256": gold.get("policy_checkpoint_sha256", ""),
         "policy_checkpoint_size_bytes": gold.get("policy_checkpoint_size_bytes", 0),
-        "heldout_policy_loaded_for_inference": (
-            inference_provenance.get("loaded_for_inference") is True
-        ),
-        "heldout_policy_checkpoint": evidence.get("selected_checkpoint_uri", ""),
-        "heldout_policy_checkpoint_sha256": gold.get("policy_checkpoint_sha256", ""),
-        "heldout_policy_checkpoint_size_bytes": gold.get(
-            "policy_checkpoint_size_bytes", 0
-        ),
+        **heldout_policy_metadata,
         "rrd_s3_uri": rrd_uri,
         "embodiment": gold.get("embodiment", {}),
     }

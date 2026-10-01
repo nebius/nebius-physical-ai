@@ -27,6 +27,7 @@ class _FakeRerun:
     def __init__(self) -> None:
         self.logged: list[tuple[str, str]] = []
         self.logged_times: list[tuple[str, str, float]] = []
+        self.logged_payloads: list[tuple[str, dict[str, Any]]] = []
         self.times: list[float] = []
         self.current_time = 0.0
         self.saved_path: Path | None = None
@@ -80,9 +81,72 @@ class _FakeRerun:
         kind = archetype.get("kind", "?")
         self.logged.append((entity_path, kind))
         self.logged_times.append((entity_path, kind, self.current_time))
+        self.logged_payloads.append((entity_path, archetype))
 
     def disconnect(self, recording: Any = None) -> None:
         self.disconnected = True
+
+
+@pytest.mark.parametrize("loaded_value", ["true", 1, ["true"]])
+def test_policy_access_markdown_requires_literal_loading_proof(
+    loaded_value: object,
+) -> None:
+    text = viz_module._policy_access_markdown(
+        {"heldout_policy_loaded_for_inference": loaded_value}
+    )
+
+    assert "Loaded for held-out inference: `False`" in text
+    assert "Held-out inference checkpoint loading was not proven" in text
+
+
+@pytest.mark.parametrize(
+    ("stock_or_scripted", "expected_claim"),
+    [
+        pytest.param(False, True, id="proven-learned-policy"),
+        pytest.param(True, False, id="stock-or-scripted"),
+        pytest.param(None, False, id="missing"),
+        pytest.param("false", False, id="malformed"),
+    ],
+)
+def test_policy_access_markdown_only_claims_learned_policy_when_proven(
+    stock_or_scripted: object,
+    expected_claim: bool,
+) -> None:
+    text = viz_module._policy_access_markdown(
+        {
+            "heldout_policy_loaded_for_inference": True,
+            "heldout_policy_stock_or_scripted_policy": stock_or_scripted,
+        }
+    )
+
+    assert ("`stock_or_scripted_policy=false`" in text) is expected_claim
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        pytest.param("true", id="malformed-object"),
+        pytest.param({"loaded_for_inference": "true"}, id="malformed-field"),
+    ],
+)
+def test_real_scene_provenance_fails_closed_on_malformed_loading_evidence(
+    provenance: object,
+) -> None:
+    fake = _FakeRerun()
+    viz_module._log_real_isaac_scene_context(
+        fake,
+        _FakeRecording(),
+        heldout_report={"policy_inference_provenance": provenance},
+        counts={},
+    )
+
+    payload = next(
+        value
+        for entity, value in fake.logged_payloads
+        if entity == "world/task_context/provenance"
+    )
+    assert "Loaded for inference (strict proof): `False`" in payload["text"]
+    assert "Stock or scripted policy proven absent: `False`" in payload["text"]
 
 
 def _build_run_tree(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:

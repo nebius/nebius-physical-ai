@@ -98,6 +98,79 @@ def test_regen_sim2real_rrd_success(
     assert result.local_rrd_path.endswith("sim2real.rrd")
 
 
+@pytest.mark.parametrize(
+    ("provenance", "expected_loaded", "expected_stock_or_scripted"),
+    [
+        pytest.param(
+            {
+                "checkpoint_uri": "s3://demo-bucket/run/model.pt",
+                "checkpoint_sha256": "a" * 64,
+                "checkpoint_size_bytes": 128,
+                "loaded_for_inference": True,
+                "stock_or_scripted_policy": False,
+            },
+            True,
+            False,
+            id="proven",
+        ),
+        pytest.param("true", False, None, id="malformed-object"),
+    ],
+)
+def test_regen_preserves_strict_heldout_policy_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provenance: object,
+    expected_loaded: bool,
+    expected_stock_or_scripted: bool | None,
+) -> None:
+    local_dir = tmp_path / "run"
+    (local_dir / "inner_loop/outer-01").mkdir(parents=True)
+    (local_dir / "eval/heldout").mkdir(parents=True)
+    (local_dir / "inner_loop/outer-01/evidence.json").write_text(
+        json.dumps({"iterations": []}),
+        encoding="utf-8",
+    )
+    (local_dir / "eval/heldout/report.json").write_text(
+        json.dumps(
+            {
+                "success_rate": 1.0,
+                "policy_inference_provenance": provenance,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    captured: dict[str, object] = {}
+
+    class FakeResult:
+        output_rrd_path = str(local_dir / "reports" / "sim2real.rrd")
+        heldout_frame_count = 4
+        rollout_count = 0
+        frame_count = 0
+
+    def fake_emit(**kwargs):
+        captured.update(kwargs)
+        return FakeResult()
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_rerun", fake_emit
+    )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.emit_sim2real_mcap_if_enabled",
+        lambda **_kwargs: {"status": "skipped"},
+    )
+
+    regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
+
+    metadata = captured["run_metadata"]
+    assert isinstance(metadata, dict)
+    assert metadata["heldout_policy_loaded_for_inference"] is expected_loaded
+    assert (
+        metadata["heldout_policy_stock_or_scripted_policy"]
+        is expected_stock_or_scripted
+    )
+
+
 def _regen_fixture(tmp_path: Path) -> Path:
     local_dir = tmp_path / "run"
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)

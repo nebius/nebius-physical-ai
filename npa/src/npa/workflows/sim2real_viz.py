@@ -1044,15 +1044,66 @@ def _stage_progress_markdown(
     return "\n".join(rows)
 
 
+def _heldout_policy_metadata(
+    heldout_report: dict[str, Any],
+    *,
+    checkpoint_fallback: str = "",
+    checkpoint_sha256_fallback: str = "",
+    checkpoint_size_fallback: object = 0,
+) -> dict[str, Any]:
+    """Project held-out policy evidence into a strict visualization contract."""
+
+    raw_provenance = heldout_report.get("policy_inference_provenance")
+    provenance = raw_provenance if isinstance(raw_provenance, dict) else {}
+    stock_or_scripted_policy = provenance.get("stock_or_scripted_policy")
+    if stock_or_scripted_policy is not True and stock_or_scripted_policy is not False:
+        stock_or_scripted_policy = None
+    checkpoint_size = provenance.get("checkpoint_size_bytes", checkpoint_size_fallback)
+    if (
+        not isinstance(checkpoint_size, int)
+        or isinstance(checkpoint_size, bool)
+        or checkpoint_size < 0
+    ):
+        checkpoint_size = 0
+    return {
+        "heldout_policy_checkpoint": str(
+            provenance.get("checkpoint_uri") or checkpoint_fallback
+        ),
+        "heldout_policy_checkpoint_sha256": str(
+            provenance.get("checkpoint_sha256") or checkpoint_sha256_fallback
+        ),
+        "heldout_policy_checkpoint_size_bytes": checkpoint_size,
+        "heldout_policy_loaded_for_inference": (
+            provenance.get("loaded_for_inference") is True
+        ),
+        "heldout_policy_stock_or_scripted_policy": stock_or_scripted_policy,
+    }
+
+
 def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
-    heldout_loaded = bool(run_metadata.get("heldout_policy_loaded_for_inference"))
-    inference_statement = (
-        "The synchronized held-out Isaac cameras and 3D point cloud were generated "
-        "after loading these exact candidate checkpoint bytes; "
-        "`stock_or_scripted_policy=false`."
-        if heldout_loaded
-        else "Held-out inference checkpoint loading was not proven in this recording."
+    heldout_loaded = run_metadata.get("heldout_policy_loaded_for_inference") is True
+    stock_or_scripted_policy = run_metadata.get(
+        "heldout_policy_stock_or_scripted_policy"
     )
+    if not heldout_loaded:
+        inference_statement = (
+            "Held-out inference checkpoint loading was not proven in this recording."
+        )
+    else:
+        inference_statement = (
+            "The synchronized held-out Isaac cameras and 3D point cloud were generated "
+            "after loading these exact candidate checkpoint bytes."
+        )
+        if stock_or_scripted_policy is False:
+            inference_statement += " `stock_or_scripted_policy=false`."
+        elif stock_or_scripted_policy is True:
+            inference_statement += (
+                " `stock_or_scripted_policy=true`; this is not learned-only evidence."
+            )
+        else:
+            inference_statement += (
+                " The absence of a stock or scripted policy was not proven."
+            )
     return "\n".join(
         [
             "# Deployable policy and viewer access",
@@ -2188,7 +2239,10 @@ def _log_real_isaac_scene_context(
             ),
             recording=recording,
         )
-    provenance = heldout_report.get("policy_inference_provenance") or {}
+    raw_provenance = heldout_report.get("policy_inference_provenance")
+    provenance = raw_provenance if isinstance(raw_provenance, dict) else {}
+    loaded_for_inference = provenance.get("loaded_for_inference") is True
+    stock_or_scripted_absent = provenance.get("stock_or_scripted_policy") is False
     rr.log(
         "world/task_context/provenance",
         rr.TextDocument(
@@ -2199,7 +2253,9 @@ def _log_real_isaac_scene_context(
             "context—not a synthetic motion claim.\n\n"
             f"Checkpoint: `{provenance.get('checkpoint_uri', '')}`\n\n"
             f"SHA-256: `{provenance.get('checkpoint_sha256', '')}`\n\n"
-            f"Loaded for inference: `{provenance.get('loaded_for_inference', False)}`",
+            f"Loaded for inference (strict proof): `{loaded_for_inference}`\n\n"
+            "Stock or scripted policy proven absent: "
+            f"`{stock_or_scripted_absent}`",
             media_type="text/markdown",
         ),
         recording=recording,

@@ -960,7 +960,7 @@ def _patch_stage14_io(
 def _stage14_policy_metadata(
     monkeypatch: pytest.MonkeyPatch,
     work: Path,
-    provenance: dict | None,
+    provenance: object | None,
 ) -> tuple[dict, dict]:
     root = "s3://unit/runs/finalize"
     evidence = {
@@ -981,25 +981,70 @@ def _stage14_policy_metadata(
 
 
 @pytest.mark.parametrize(
-    ("provenance", "expected"),
+    ("provenance", "expected_loaded", "expected_stock_or_scripted"),
     [
-        pytest.param({"loaded_for_inference": False}, False, id="false"),
-        pytest.param(None, False, id="missing"),
-        pytest.param({"loaded_for_inference": "false"}, False, id="malformed"),
-        pytest.param({"loaded_for_inference": True}, True, id="proven"),
+        pytest.param(
+            {
+                "loaded_for_inference": False,
+                "stock_or_scripted_policy": False,
+            },
+            False,
+            False,
+            id="false",
+        ),
+        pytest.param(None, False, None, id="missing"),
+        pytest.param(
+            {
+                "loaded_for_inference": "false",
+                "stock_or_scripted_policy": "false",
+            },
+            False,
+            None,
+            id="malformed-fields",
+        ),
+        pytest.param("true", False, None, id="malformed-string-object"),
+        pytest.param(
+            [{"loaded_for_inference": True}],
+            False,
+            None,
+            id="malformed-list-object",
+        ),
+        pytest.param(
+            {
+                "loaded_for_inference": True,
+                "stock_or_scripted_policy": False,
+            },
+            True,
+            False,
+            id="proven-learned-policy",
+        ),
+        pytest.param(
+            {
+                "loaded_for_inference": True,
+                "stock_or_scripted_policy": True,
+            },
+            True,
+            True,
+            id="proven-stock-or-scripted-policy",
+        ),
     ],
 )
 def test_stage14_derives_heldout_policy_loading_from_gold_report(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    provenance: dict | None,
-    expected: bool,
+    provenance: object | None,
+    expected_loaded: bool,
+    expected_stock_or_scripted: bool | None,
 ) -> None:
     metadata, heldout_report = _stage14_policy_metadata(
         monkeypatch, tmp_path, provenance
     )
 
-    assert metadata["heldout_policy_loaded_for_inference"] is expected
+    assert metadata["heldout_policy_loaded_for_inference"] is expected_loaded
+    assert (
+        metadata["heldout_policy_stock_or_scripted_policy"]
+        is expected_stock_or_scripted
+    )
     assert heldout_report.get("policy_inference_provenance") is provenance
 
 

@@ -18,6 +18,7 @@ from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri
 from npa.workflows.sim2real_viz import (
     Sim2RealVizResult,
+    _heldout_policy_metadata,
     emit_sim2real_mcap_if_enabled,
     emit_sim2real_rerun,
 )
@@ -549,6 +550,13 @@ def regen_sim2real_rrd(
 
     inner_evidence = json.loads(inner_path.read_text(encoding="utf-8"))
     heldout_report = json.loads(heldout_path.read_text(encoding="utf-8"))
+    heldout_policy_metadata = _heldout_policy_metadata(
+        heldout_report,
+        checkpoint_sha256_fallback=str(
+            heldout_report.get("policy_checkpoint_sha256") or ""
+        ),
+        checkpoint_size_fallback=heldout_report.get("policy_checkpoint_size_bytes", 0),
+    )
     report_path = work_dir / "reports" / "sim2real-report.json"
     report = (
         json.loads(report_path.read_text(encoding="utf-8"))
@@ -587,6 +595,7 @@ def regen_sim2real_rrd(
             ),
             "policy_ui_action": policy_access.get("ui_action", ""),
             "policy_deployable": policy_access.get("deployable_policy", False),
+            **heldout_policy_metadata,
             "orchestrator_job_name": config.run_id,
             "orchestrator_node_product": config.k8s_gpu_product,
             "viewer_command": viewer_command,
