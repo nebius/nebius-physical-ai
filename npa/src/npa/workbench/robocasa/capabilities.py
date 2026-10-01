@@ -21,6 +21,7 @@ import logging
 import os
 import platform
 import re
+import secrets
 import shutil
 import stat
 import struct
@@ -2594,25 +2595,12 @@ def _s3_head_object(s3: Any, bucket: str, key: str) -> dict[str, Any] | None:
     return response
 
 
-def _require_s3_object(
+def _s3_object_content_identity(
     s3: Any,
     bucket: str,
     key: str,
-    *,
-    digest_key: str,
-    digest: str,
-    content_sha256: str,
     byte_count: int,
-) -> None:
-    head = _s3_head_object(s3, bucket, key)
-    if head is None:
-        raise RoboCasaError(f"RoboCasa S3 object identity mismatch: {key}")
-    metadata = _normalized_s3_metadata(head.get("Metadata"))
-    if metadata.get(digest_key.lower()) != digest or (
-        type(head.get("ContentLength")) is not int
-        or head["ContentLength"] != byte_count
-    ):
-        raise RoboCasaError(f"RoboCasa S3 object identity mismatch: {key}")
+) -> tuple[int, str]:
     try:
         response = s3.get_object(Bucket=bucket, Key=key)
         stream = response["Body"]
@@ -2635,8 +2623,32 @@ def _require_s3_object(
         close = getattr(stream, "close", None)
         if callable(close):
             close()
-    if observed != byte_count or hasher.hexdigest() != content_sha256:
+    return observed, hasher.hexdigest()
+
+
+def _require_s3_object(
+    s3: Any,
+    bucket: str,
+    key: str,
+    *,
+    digest_key: str,
+    digest: str,
+    content_sha256: str,
+    byte_count: int,
+) -> dict[str, Any]:
+    head = _s3_head_object(s3, bucket, key)
+    if head is None:
+        raise RoboCasaError(f"RoboCasa S3 object identity mismatch: {key}")
+    metadata = _normalized_s3_metadata(head.get("Metadata"))
+    if metadata.get(digest_key.lower()) != digest or (
+        type(head.get("ContentLength")) is not int
+        or head["ContentLength"] != byte_count
+    ):
+        raise RoboCasaError(f"RoboCasa S3 object identity mismatch: {key}")
+    observed, observed_sha256 = _s3_object_content_identity(s3, bucket, key, byte_count)
+    if observed != byte_count or observed_sha256 != content_sha256:
         raise RoboCasaError(f"RoboCasa S3 object bytes changed: {key}")
+    return head
 
 
 def _s3_prefix_keys(
@@ -2668,34 +2680,112 @@ def _s3_prefix_keys(
     return keys
 
 
-def _require_committed_s3_tree(
+def _require_committed_s3_population(
     s3: Any,
     bucket: str,
-    complete_key: str,
-    *,
-    commit_sha256: str,
-    commit_bytes: int,
-    final_keys: dict[str, dict[str, Any]],
+    final_prefix: str,
+    allowed_keys: set[str],
+    claim_key: str,
 ) -> None:
-    _require_s3_object(
+    keys = _s3_prefix_keys(
         s3,
         bucket,
-        complete_key,
-        digest_key="commit-sha256",
-        digest=commit_sha256,
-        content_sha256=commit_sha256,
-        byte_count=commit_bytes,
+        final_prefix,
+        limit=len(allowed_keys) + 1,
     )
-    for key, item in final_keys.items():
+    if not keys <= allowed_keys:
+        raise RoboCasaError("RoboCasa output_uri contains foreign objects")
+    if claim_key not in keys:
+        raise RoboCasaError("RoboCasa output_uri is not an owned resumable prefix")
+    if keys != allowed_keys:
+        raise RoboCasaError("RoboCasa committed S3 output tree is incomplete")
+
+
+def _require_s3_objects(
+    s3: Any,
+    bucket: str,
+    objects: dict[str, dict[str, Any]],
+) -> None:
+    for key, item in objects.items():
         _require_s3_object(
             s3,
             bucket,
             key,
-            digest_key="content-sha256",
-            digest=str(item["sha256"]),
-            content_sha256=str(item["sha256"]),
+            digest_key=str(item["digest_key"]),
+            digest=str(item["digest"]),
+            content_sha256=str(item["content_sha256"]),
             byte_count=int(item["bytes"]),
         )
+
+
+def _committed_s3_objects(
+    claim_key: str,
+    claim_content_sha256: str,
+    claim_bytes: int,
+    complete_key: str,
+    commit_sha256: str,
+    commit_bytes: int,
+    final_keys: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    objects = {
+        claim_key: {
+            "digest_key": "commit-sha256",
+            "digest": commit_sha256,
+            "content_sha256": claim_content_sha256,
+            "bytes": claim_bytes,
+        },
+        complete_key: {
+            "digest_key": "commit-sha256",
+            "digest": commit_sha256,
+            "content_sha256": commit_sha256,
+            "bytes": commit_bytes,
+        },
+    }
+    objects.update(
+        {
+            key: {
+                "digest_key": "content-sha256",
+                "digest": item["sha256"],
+                "content_sha256": item["sha256"],
+                "bytes": item["bytes"],
+            }
+            for key, item in final_keys.items()
+        }
+    )
+    return objects
+
+
+def _require_committed_s3_tree(
+    s3: Any,
+    bucket: str,
+    *,
+    final_prefix: str,
+    allowed_keys: set[str],
+    claim_key: str,
+    claim_content_sha256: str,
+    claim_bytes: int,
+    complete_key: str,
+    commit_sha256: str,
+    commit_bytes: int,
+    final_keys: dict[str, dict[str, Any]],
+) -> None:
+    _require_committed_s3_population(
+        s3,
+        bucket,
+        final_prefix,
+        allowed_keys,
+        claim_key,
+    )
+    objects = _committed_s3_objects(
+        claim_key,
+        claim_content_sha256,
+        claim_bytes,
+        complete_key,
+        commit_sha256,
+        commit_bytes,
+        final_keys,
+    )
+    _require_s3_objects(s3, bucket, objects)
 
 
 def _put_s3_once(
@@ -2732,6 +2822,45 @@ def _put_s3_once(
         byte_count=len(body),
     )
     return False
+
+
+def _copy_s3_once(
+    s3: Any,
+    *,
+    bucket: str,
+    source_key: str,
+    source_etag: str,
+    final_key: str,
+    digest: str,
+    byte_count: int,
+) -> None:
+    if not source_etag:
+        raise RoboCasaError(
+            f"RoboCasa S3 staging identity is unavailable: {source_key}"
+        )
+    try:
+        s3.copy_object(
+            Bucket=bucket,
+            Key=final_key,
+            CopySource={"Bucket": bucket, "Key": source_key},
+            CopySourceIfMatch=source_etag,
+            IfNoneMatch="*",
+            Metadata={"content-sha256": digest},
+            MetadataDirective="REPLACE",
+        )
+    except Exception as exc:
+        code, status = _s3_error_code(exc)
+        if code not in {"412", "PreconditionFailed"} and status != 412:
+            raise
+    _require_s3_object(
+        s3,
+        bucket,
+        final_key,
+        digest_key="content-sha256",
+        digest=digest,
+        content_sha256=digest,
+        byte_count=byte_count,
+    )
 
 
 def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> None:
@@ -2797,6 +2926,7 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
     claim_body = (
         json.dumps(claim, sort_keys=True, separators=(",", ":")) + "\n"
     ).encode("utf-8")
+    claim_content_sha256 = hashlib.sha256(claim_body).hexdigest()
     claim_key = final_prefix + _OUTPUT_CLAIM_NAME
     complete_key = final_prefix + _OUTPUT_COMPLETE_NAME
     final_keys = {final_prefix + str(item["path"]): item for item in files}
@@ -2825,19 +2955,15 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
     if existing_keys and claim_key not in existing_keys:
         raise RoboCasaError("RoboCasa output_uri is not an owned resumable prefix")
     if complete_key in existing_keys:
-        _require_s3_object(
-            s3,
-            bucket,
-            claim_key,
-            digest_key="commit-sha256",
-            digest=commit_sha256,
-            content_sha256=hashlib.sha256(claim_body).hexdigest(),
-            byte_count=len(claim_body),
-        )
         _require_committed_s3_tree(
             s3,
             bucket,
-            complete_key,
+            final_prefix=final_prefix,
+            allowed_keys=allowed_keys,
+            claim_key=claim_key,
+            claim_content_sha256=claim_content_sha256,
+            claim_bytes=len(claim_body),
+            complete_key=complete_key,
             commit_sha256=commit_sha256,
             commit_bytes=len(commit_body),
             final_keys=final_keys,
@@ -2864,18 +2990,25 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
         _require_committed_s3_tree(
             s3,
             bucket,
-            complete_key,
+            final_prefix=final_prefix,
+            allowed_keys=allowed_keys,
+            claim_key=claim_key,
+            claim_content_sha256=claim_content_sha256,
+            claim_bytes=len(claim_body),
+            complete_key=complete_key,
             commit_sha256=commit_sha256,
             commit_bytes=len(commit_body),
             final_keys=final_keys,
         )
         return
 
-    staging_prefix = f".npa-staging/robocasa/{commit_sha256}/"
+    staging_prefix = f".npa-staging/robocasa/{commit_sha256}/{secrets.token_hex(16)}/"
     staged_keys: list[str] = []
+    staged_etags: list[str] = []
     try:
         for item in files:
             staging_key = staging_prefix + str(item["path"])
+            staged_keys.append(staging_key)
             s3.upload_file(
                 str(item["source"]),
                 bucket,
@@ -2884,23 +3017,32 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
                     "Metadata": {"content-sha256": str(item["sha256"])},
                 },
             )
-            staged_keys.append(staging_key)
-        for item, staging_key in zip(files, staged_keys, strict=True):
-            final_key = final_prefix + str(item["path"])
-            s3.copy_object(
-                Bucket=bucket,
-                Key=final_key,
-                CopySource={"Bucket": bucket, "Key": staging_key},
-                Metadata={"content-sha256": str(item["sha256"])},
-                MetadataDirective="REPLACE",
-            )
-            _require_s3_object(
+            stage_head = _require_s3_object(
                 s3,
                 bucket,
-                final_key,
+                staging_key,
                 digest_key="content-sha256",
                 digest=str(item["sha256"]),
                 content_sha256=str(item["sha256"]),
+                byte_count=int(item["bytes"]),
+            )
+            stage_etag = stage_head.get("ETag")
+            if not isinstance(stage_etag, str) or not stage_etag:
+                raise RoboCasaError(
+                    f"RoboCasa S3 staging identity is unavailable: {staging_key}"
+                )
+            staged_etags.append(stage_etag)
+        for item, staging_key, stage_etag in zip(
+            files, staged_keys, staged_etags, strict=True
+        ):
+            final_key = final_prefix + str(item["path"])
+            _copy_s3_once(
+                s3,
+                bucket=bucket,
+                source_key=staging_key,
+                source_etag=stage_etag,
+                final_key=final_key,
+                digest=str(item["sha256"]),
                 byte_count=int(item["bytes"]),
             )
         _put_s3_once(
@@ -2911,6 +3053,19 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
             content_type="application/json",
             digest_key="commit-sha256",
             digest=commit_sha256,
+        )
+        _require_committed_s3_tree(
+            s3,
+            bucket,
+            final_prefix=final_prefix,
+            allowed_keys=allowed_keys,
+            claim_key=claim_key,
+            claim_content_sha256=claim_content_sha256,
+            claim_bytes=len(claim_body),
+            complete_key=complete_key,
+            commit_sha256=commit_sha256,
+            commit_bytes=len(commit_body),
+            final_keys=final_keys,
         )
     finally:
         for offset in range(0, len(staged_keys), 1000):

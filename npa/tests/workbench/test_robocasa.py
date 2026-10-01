@@ -3059,6 +3059,7 @@ class _TransactionalFakeS3:
         return {
             "ContentLength": len(body),
             "Metadata": dict(metadata),
+            "ETag": f'"{hashlib.sha256(body).hexdigest()}"',
         }
 
     def get_object(self, *, Key, **_kwargs):
@@ -3075,11 +3076,27 @@ class _TransactionalFakeS3:
         )
         self.events.append(("stage", key))
 
-    def copy_object(self, *, Key, CopySource, Metadata, **_kwargs):
+    def copy_object(
+        self,
+        *,
+        Key,
+        CopySource,
+        CopySourceIfMatch,
+        IfNoneMatch,
+        Metadata,
+        **_kwargs,
+    ):
         self.copy_count += 1
         if self.copy_count == self.fail_copy_number:
             raise OSError("injected copy failure")
         body, _source_metadata = self.objects[CopySource["Key"]]
+        source_etag = f'"{hashlib.sha256(body).hexdigest()}"'
+        if (
+            CopySourceIfMatch != source_etag
+            or IfNoneMatch != "*"
+            or Key in self.objects
+        ):
+            raise _S3PreconditionFailed()
         self.objects[Key] = (body, dict(Metadata))
         self.events.append(("copy", Key))
 
@@ -3203,6 +3220,7 @@ def test_upload_output_normalizes_provider_metadata_casing_across_resume(
         {1: "digest"},
         {"content-sha256": b"digest"},
         {"invalid key": "digest"},
+        {"content-sha256": "digest", "métadata": "value"},
         {"content-sha256": "digest\n"},
     ],
 )
@@ -3212,6 +3230,29 @@ def test_s3_object_verification_rejects_ambiguous_or_malformed_metadata(
     s3 = _TransactionalFakeS3(objects={"object": (b"x", metadata)})
 
     with pytest.raises(RoboCasaError, match="metadata response is"):
+        capabilities._require_s3_object(
+            s3,
+            "bucket",
+            "object",
+            digest_key="content-sha256",
+            digest="digest",
+            content_sha256=hashlib.sha256(b"x").hexdigest(),
+            byte_count=1,
+        )
+
+
+@pytest.mark.parametrize("content_length", ["1", 1.0, True, None])
+def test_s3_object_verification_requires_integer_content_length(
+    content_length: object,
+) -> None:
+    s3 = _TransactionalFakeS3(objects={"object": (b"x", {"content-sha256": "digest"})})
+    original_head = s3.head_object
+
+    def malformed_head(**kwargs):
+        return {**original_head(**kwargs), "ContentLength": content_length}
+
+    s3.head_object = malformed_head  # type: ignore[method-assign]
+    with pytest.raises(RoboCasaError, match="object identity mismatch"):
         capabilities._require_s3_object(
             s3,
             "bucket",
@@ -3284,6 +3325,93 @@ def test_upload_output_rechecks_committed_object_bytes(
     capabilities.upload_output(tmp_path, uri, result)
     body, metadata = s3.objects["runs/corrupt/artifact.bin"]
     s3.objects["runs/corrupt/artifact.bin"] = (b"x" * len(body), metadata)
+
+    with pytest.raises(RoboCasaError, match="object bytes changed"):
+        capabilities.upload_output(tmp_path, uri, result)
+
+
+def test_upload_output_never_replaces_a_corrupted_partial_final(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "a.bin").write_bytes(b"a")
+    (tmp_path / "b.bin").write_bytes(b"b")
+    s3 = _TransactionalFakeS3(fail_copy_number=2)
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+    result = {"ok": True}
+    uri = "s3://bucket/runs/immutable-partial"
+
+    with pytest.raises(OSError, match="injected copy failure"):
+        capabilities.upload_output(tmp_path, uri, result)
+    body, metadata = s3.objects["runs/immutable-partial/a.bin"]
+    s3.objects["runs/immutable-partial/a.bin"] = (b"x" * len(body), metadata)
+    s3.fail_copy_number = None
+
+    with pytest.raises(RoboCasaError, match="object bytes changed"):
+        capabilities.upload_output(tmp_path, uri, result)
+    assert s3.objects["runs/immutable-partial/a.bin"][0] == b"x" * len(body)
+    assert "runs/immutable-partial/_NPA_COMPLETE.json" not in s3.objects
+
+
+@pytest.mark.parametrize("target", ["claim", "completion", "final"])
+def test_upload_output_revalidates_mutation_after_completion_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    target: str,
+) -> None:
+    (tmp_path / "artifact.bin").write_bytes(b"artifact")
+
+    class MutatingCompletionS3(_TransactionalFakeS3):
+        def put_object(self, *, Key, **kwargs):
+            super().put_object(Key=Key, **kwargs)
+            if not Key.endswith("_NPA_COMPLETE.json"):
+                return
+            target_key = {
+                "claim": "runs/completion-race/_NPA_CLAIM.json",
+                "completion": Key,
+                "final": "runs/completion-race/artifact.bin",
+            }[target]
+            body, metadata = self.objects[target_key]
+            replacement = (b"x" if body[:1] != b"x" else b"y") + body[1:]
+            self.objects[target_key] = (replacement, metadata)
+
+    s3 = MutatingCompletionS3()
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+
+    with pytest.raises(RoboCasaError, match="object bytes changed"):
+        capabilities.upload_output(
+            tmp_path,
+            "s3://bucket/runs/completion-race",
+            {"ok": True},
+        )
+
+
+def test_upload_output_late_completion_revalidates_claim(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "artifact.bin").write_bytes(b"artifact")
+
+    class LateCompletionS3(_TransactionalFakeS3):
+        late_marker: tuple[bytes, dict[str, str]] | None = None
+        list_calls = 0
+
+        def list_objects_v2(self, **kwargs):
+            self.list_calls += 1
+            if self.late_marker is not None and self.list_calls == 2:
+                self.objects["runs/late/_NPA_COMPLETE.json"] = self.late_marker
+                key = "runs/late/_NPA_CLAIM.json"
+                body, metadata = self.objects[key]
+                self.objects[key] = (b"x" + body[1:], metadata)
+            return super().list_objects_v2(**kwargs)
+
+    s3 = LateCompletionS3()
+    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+    result = {"ok": True}
+    uri = "s3://bucket/runs/late"
+    capabilities.upload_output(tmp_path, uri, result)
+    s3.late_marker = s3.objects.pop("runs/late/_NPA_COMPLETE.json")
+    s3.list_calls = 0
 
     with pytest.raises(RoboCasaError, match="object bytes changed"):
         capabilities.upload_output(tmp_path, uri, result)

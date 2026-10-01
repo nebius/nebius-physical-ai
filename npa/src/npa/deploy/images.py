@@ -2349,7 +2349,7 @@ def container_image_for_tool(
     made otherwise-public workloads depend on private registry credentials.
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
-    if tool in VALIDATION_CANDIDATE_TOOLS:
+    if tool == "robocasa":
         if not tag:
             raise ValueError(
                 f"{tool} has no accepted default image. Supply an immutable image "

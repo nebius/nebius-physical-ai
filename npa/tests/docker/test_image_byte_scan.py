@@ -899,6 +899,13 @@ def test_unknown_authorization_fields_are_rejected(tmp_path):
         run(tmp_path, authorization)
 
 
+def test_trusted_contract_is_rejected_for_non_habitat_authorization(tmp_path):
+    authorization = fixture(tmp_path)
+    authorization["trusted_contract"] = {}
+    with pytest.raises(W.ScanError, match="trusted_contract_unexpected"):
+        run(tmp_path, authorization)
+
+
 @pytest.mark.parametrize("policy", ["exact-substring-v1", W.POLICY])
 @pytest.mark.parametrize("chunk", [1, 2, 7, 31])
 def test_streaming_literals_match_independent_whole_file_regex(policy, chunk):

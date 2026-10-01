@@ -131,6 +131,9 @@ REMOVED_PATH_RULES = [
 PKCS12 = re.compile(r"(?i)(?:^|/)[^/]+\.p(?:12|fx)$")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}$")
 SHA = re.compile(r"[0-9a-f]{64}$")
+GIT_SHA1 = re.compile(r"[0-9a-f]{40}$")
+HABITAT_VERIFICATION_SCHEMA = "npa.habitat-sim.oci-verification.v1"
+HABITAT_CONTRACT_PATH = "npa/docker/workbench/habitat-sim/runtime-payload.json"
 PAX_TEXT_KEYS = frozenset(
     {
         "path",
@@ -2553,19 +2556,90 @@ def verified_tools(spec):
     return helper, receipt["config"]
 
 
-def input_snapshots(authorization):
-    items = [
-        ("tools_receipt", authorization["tools_receipt"], True),
-        ("verification_report", authorization["verification_report"], True),
-        ("helper", authorization["helper"], True),
-        ("config", authorization["config"], False),
-    ]
-    tools_receipt = bound_json(authorization["tools_receipt"])
-    items.append(("helper_ready", tools_receipt["ready"], True))
+def _validate_trusted_contract_binding(binding, verification):
+    require(
+        isinstance(binding, dict)
+        and set(binding) == {"path", "revision", "git_blob", "bytes", "sha256"},
+        "trusted_contract_schema",
+    )
+    require(
+        binding["path"] == HABITAT_CONTRACT_PATH
+        and isinstance(binding["revision"], str)
+        and GIT_SHA1.fullmatch(binding["revision"]) is not None
+        and binding["revision"] == verification.get("expected_source_revision")
+        and isinstance(binding["git_blob"], str)
+        and GIT_SHA1.fullmatch(binding["git_blob"]) is not None
+        and type(binding["bytes"]) is int
+        and 0 < binding["bytes"] <= DOCKER_SAVE_METADATA_LIMIT
+        and isinstance(binding["sha256"], str)
+        and SHA.fullmatch(binding["sha256"]) is not None,
+        "trusted_contract_binding",
+    )
+    return binding
+
+
+def _read_trusted_contract_blob(checkout, binding):
+    spec = f"{binding['revision']}:{HABITAT_CONTRACT_PATH}"
+    oid = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", spec],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    require(
+        oid.returncode == 0 and oid.stdout.strip() == binding["git_blob"],
+        "trusted_contract_blob",
+    )
+    size = subprocess.run(
+        ["git", "-C", str(checkout), "cat-file", "-s", spec],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    require(
+        size.returncode == 0 and size.stdout.strip() == str(binding["bytes"]),
+        "trusted_contract_blob",
+    )
+    blob = subprocess.run(
+        ["git", "-C", str(checkout), "cat-file", "blob", spec],
+        check=False,
+        capture_output=True,
+    )
+    require(
+        blob.returncode == 0
+        and len(blob.stdout) == binding["bytes"]
+        and sha(blob.stdout) == binding["sha256"],
+        "trusted_contract_blob",
+    )
+    return blob.stdout
+
+
+def trusted_contract_snapshot(authorization):
+    """Validate and snapshot Habitat's committed runtime-payload contract."""
+    verification = bound_json(authorization["verification_report"])
+    binding = authorization.get("trusted_contract")
+    if verification.get("schema_version") != HABITAT_VERIFICATION_SCHEMA:
+        require(binding is None, "trusted_contract_unexpected")
+        return None
+    binding = _validate_trusted_contract_binding(binding, verification)
+    checkout = _ROOTS.get()[1]
+    committed = _read_trusted_contract_blob(checkout, binding)
+    contract_path = checkout / HABITAT_CONTRACT_PATH
+    with open_source_fd(contract_path) as (fd, info):
+        require(
+            info.st_size == binding["bytes"]
+            and descriptor_bytes(fd, byte_limit=DOCKER_SAVE_METADATA_LIMIT)
+            == committed,
+            "trusted_contract_worktree_changed",
+        )
+    return {"path": str(contract_path), "sha256": binding["sha256"]}
+
+
+def _optional_snapshot_specs(authorization):
+    items = []
     literal = authorization.get("literal_inventory")
     if literal is not None:
         items.append(("literal_inventory", literal, True))
-
     engine = authorization.get("literal_engine")
     require(
         "literal_engine" not in authorization or isinstance(engine, dict),
@@ -2580,13 +2654,29 @@ def input_snapshots(authorization):
             ("literal_engine_" + role, engine[role], role != "source")
             for role in AHO_PINS
         )
+    if authorization.get("confidentiality") is not None:
+        items.append(("confidentiality", authorization["confidentiality"], True))
+    trusted_contract = trusted_contract_snapshot(authorization)
+    if trusted_contract is not None:
+        items.append(("trusted_contract", trusted_contract, False))
+    return items
+
+
+def input_snapshots(authorization):
+    items = [
+        ("tools_receipt", authorization["tools_receipt"], True),
+        ("verification_report", authorization["verification_report"], True),
+        ("helper", authorization["helper"], True),
+        ("config", authorization["config"], False),
+    ]
+    tools_receipt = bound_json(authorization["tools_receipt"])
+    items.append(("helper_ready", tools_receipt["ready"], True))
+    items.extend(_optional_snapshot_specs(authorization))
     configured_sources = authorization.get("sources")
     require(configured_sources == source_bindings(), "scanner_source_binding_changed")
     items.extend(
         ("source:" + role, spec, False) for role, spec in configured_sources.items()
     )
-    if authorization.get("confidentiality") is not None:
-        items.append(("confidentiality", authorization["confidentiality"], True))
     result = []
     for role, spec, secret in items:
         with bound_open(spec, secret=secret) as (path, _fd, info):
@@ -2651,7 +2741,13 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
     require(
         required
         <= set(authorization)
-        <= required | {"literal_inventory", "literal_engine", "confidentiality"},
+        <= required
+        | {
+            "literal_inventory",
+            "literal_engine",
+            "confidentiality",
+            "trusted_contract",
+        },
         "authorization_fields",
     )
     require(

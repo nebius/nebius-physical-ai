@@ -192,6 +192,74 @@ def test_habitat_contract_binding_uses_committed_blob_and_rejects_drift(tmp_path
         P._trusted_contract(root, revision)
 
 
+def _prepared_habitat_handoff(tmp_path, monkeypatch, detector_type, fixture):
+    seed = fixture(tmp_path)
+    verification = W.bound_json(seed["verification_report"])
+    revision = P._trusted_revision(CHECKOUT)
+    verification.update(
+        schema_version=W.HABITAT_VERIFICATION_SCHEMA,
+        archive_sha256=verification["docker_save_sha256"],
+        expected_source_revision=revision,
+    )
+    verification_path = Path(seed["verification_report"]["path"])
+    verification_path.write_bytes(W.canonical(verification))
+    _contract, contract_binding = P._trusted_contract(CHECKOUT, revision)
+    monkeypatch.setattr(P, "tools_bindings", lambda _: (seed["helper"], seed["config"]))
+    monkeypatch.setattr(P, "native_engine", lambda _: None)
+    monkeypatch.setattr(P, "_verify_habitat_report", lambda *_: contract_binding)
+    monkeypatch.setattr(W, "Detector", detector_type)
+    original_snapshots = W.input_snapshots
+    monkeypatch.setattr(W, "input_snapshots", lambda _: [])
+    monkeypatch.setenv("CUSTOMER_DENYLIST", "synthetic-required-policy")
+    prepared_dir = tmp_path / "prepared"
+    prepared_dir.mkdir(mode=0o700)
+    args = SimpleNamespace(
+        tools_receipt=seed["tools_receipt"]["path"],
+        native_receipt=None,
+        archive=seed["archive"]["path"],
+        verification_report=str(verification_path),
+        expected_image_id=seed["expected_image_id"],
+        policy_mode="ci-regex",
+        literal_inventory=None,
+        trusted_root=CHECKOUT,
+    )
+    authorization = P.authorize(args, prepared_dir)
+    authorization.pop("literal_engine")
+    monkeypatch.setattr(W, "input_snapshots", original_snapshots)
+    return authorization, verification
+
+
+def test_habitat_prepare_authorization_runs_scanner_handoff(tmp_path, monkeypatch):
+    from image_byte_scan import habitat_sim_verification as H
+    from test_image_byte_scan import FakeDetector, fixture
+
+    with W.authorized_roots(tmp_path, CHECKOUT):
+        authorization, verification = _prepared_habitat_handoff(
+            tmp_path, monkeypatch, FakeDetector, fixture
+        )
+        generic = {
+            **verification,
+            "schema_version": "npa.curobo.image-verification.v1",
+        }
+        monkeypatch.setattr(
+            H,
+            "inspect",
+            lambda fd, size, image_id: {
+                "layers": W.graph(fd, size, generic, image_id),
+                "receipt": {"kind": "synthetic-habitat-handoff"},
+            },
+        )
+        monkeypatch.setattr(H, "bind", lambda *_: None)
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir(mode=0o700)
+        report = W._scan(authorization, scan_dir, detector_type=FakeDetector)
+
+    assert report["valid"] is True and report["complete"] is True
+    assert any(
+        item["role"] == "trusted_contract" for item in report["input_snapshot_receipts"]
+    )
+
+
 def test_invalid_cli_never_echoes_value(capsys):
     assert P.main(["check-policy", "--unrecognized", "synthetic-private-argument"]) == 1
     captured = capsys.readouterr()
