@@ -3086,12 +3086,15 @@ def generate_workflow_draft(
         for value in (resolved_infra.get("available_accelerators") or [])
         if str(value).strip()
     }
-    if requested_accel and available_accels:
+    if requested_accel and (
+        available_accels
+        or resolved_infra.get("accelerator_discovery_status") == "available"
+    ):
         requested_base = _accelerator_family(requested_accel)
         if requested_base not in available_accels:
             context_errors.append(
                 f"requested accelerator {requested_base} is unavailable on the selected "
-                f"backend (available: {', '.join(sorted(available_accels))})"
+                f"backend (available: {', '.join(sorted(available_accels)) or 'none'})"
             )
     if requested_accel and configured_accel:
         requested_base = _accelerator_family(requested_accel)

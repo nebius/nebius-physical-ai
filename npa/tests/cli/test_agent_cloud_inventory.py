@@ -162,6 +162,35 @@ def test_unavailable_accelerators_prevent_runnable_workflow_claim(
     assert not any("must declare" in error for error in draft["context_errors"])
 
 
+@pytest.mark.parametrize("available", [[], ["RTXPRO6000"]])
+def test_verified_accelerator_inventory_checks_requested_gpu(available):
+    draft = generate_workflow_draft(
+        user_text="create Isaac sim2real YAML on RTX PRO 6000",
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+        infrastructure={
+            "has_infra": True,
+            "cloud_clusters": [
+                {
+                    "name": "chosen",
+                    "raw": {
+                        "accelerator_discovery": {"status": "available"},
+                        "available_accelerators": available,
+                    },
+                }
+            ],
+        },
+    )
+    assert draft["runnable"] is bool(available)
+    if not available:
+        assert any(
+            "RTXPRO6000 is unavailable" in error and "available: none" in error
+            for error in draft["context_errors"]
+        )
+    else:
+        assert draft["context_errors"] == []
+
+
 def test_failed_cloud_accelerators_do_not_override_configured_backend(monkeypatch):
     inventory = _cloud_inventory_with_failed_accelerators(monkeypatch)
     draft = generate_workflow_draft(
