@@ -57,6 +57,7 @@ RESULT_FILENAME = "vlm_eval_stub.json"
 LOOP_REPORT_FILENAME = "task_success_report.json"
 BENCHMARK_RESULT_FILENAME = "vlm_eval_benchmark.json"
 BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
+BENCHMARK_EVIDENCE_SCOPES = frozenset({"unspecified", "illustrative_only"})
 DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
 DEFAULT_SAMPLE_BENCHMARK_PATH = (
     Path(__file__).resolve().parent / "fixtures" / "sample_benchmark" / "benchmark.json"
@@ -161,6 +162,8 @@ class VlmBenchmarkDataset:
     format: str
     items: list[VlmBenchmarkItem]
     rubrics: dict[str, str]
+    evidence_scope: str = "unspecified"
+    limitations: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -227,6 +230,8 @@ class VlmBenchmarkReport:
     ranked_configs: list[VlmBenchmarkConfigResult]
     independent_human_label_calibration_established: bool = False
     limitations: tuple[str, ...] = _BENCHMARK_REPORT_LIMITATIONS
+    dataset_evidence_scope: str = "unspecified"
+    dataset_limitations: tuple[str, ...] = ()
 
 
 __all__ = [
@@ -362,6 +367,8 @@ def benchmark_vlm_eval(
         best_config=ranked[0],
         ranked_configs=ranked,
         limitations=_benchmark_report_limitations(ranked),
+        dataset_evidence_scope=benchmark_dataset.evidence_scope,
+        dataset_limitations=benchmark_dataset.limitations,
     )
 
 
@@ -403,12 +410,24 @@ def load_benchmark_dataset(
         dataset_format = BENCHMARK_DATASET_FORMAT
         rubrics: dict[str, str] = {}
         rollout_base_path = ""
+        evidence_scope = "unspecified"
+        limitations: tuple[str, ...] = ()
     elif isinstance(payload, dict):
         raw_items = payload.get("items") or payload.get("rollouts")
         dataset_format = str(payload.get("format") or BENCHMARK_DATASET_FORMAT)
         rubrics = _coerce_rubric_map(payload.get("rubrics", {}))
         rollout_base_path = str(
             payload.get("rollout_base_path") or payload.get("base_path") or ""
+        )
+        evidence_scope = (
+            _coerce_benchmark_evidence_scope(payload["evidence_scope"])
+            if "evidence_scope" in payload
+            else "unspecified"
+        )
+        limitations = (
+            _coerce_benchmark_limitations(payload["limitations"])
+            if "limitations" in payload
+            else ()
         )
     else:
         raise VlmEvalError("benchmark dataset JSON must be an object or an item list")
@@ -437,6 +456,8 @@ def load_benchmark_dataset(
         format=dataset_format,
         items=items,
         rubrics=rubrics,
+        evidence_scope=evidence_scope,
+        limitations=limitations,
     )
 
 
@@ -1218,6 +1239,33 @@ def _coerce_expected_label(value: Any) -> bool:
     raise VlmEvalError(
         "expected_label must be a boolean or one of pass/fail, success/failure, true/false"
     )
+
+
+def _coerce_benchmark_evidence_scope(value: Any) -> str:
+    if not isinstance(value, str) or value not in BENCHMARK_EVIDENCE_SCOPES:
+        accepted = ", ".join(sorted(BENCHMARK_EVIDENCE_SCOPES))
+        raise VlmEvalError(
+            f"benchmark dataset evidence_scope must be exactly one of: {accepted}"
+        )
+    return value
+
+
+def _coerce_benchmark_limitations(value: Any) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise VlmEvalError("benchmark dataset limitations must be an array of strings")
+    limitations: list[str] = []
+    for index, limitation in enumerate(value, start=1):
+        if (
+            not isinstance(limitation, str)
+            or not limitation
+            or limitation.strip() != limitation
+        ):
+            raise VlmEvalError(
+                "benchmark dataset limitation "
+                f"{index} must be a nonempty string without surrounding whitespace"
+            )
+        limitations.append(limitation)
+    return tuple(limitations)
 
 
 def _coerce_rubric_map(value: Any) -> dict[str, str]:
