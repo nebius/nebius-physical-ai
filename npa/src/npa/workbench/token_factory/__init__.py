@@ -47,6 +47,7 @@ from npa.clients.token_factory import (
     TokenFactoryClient,
     TokenFactoryError,
     split_reasoning,
+    thinking_chat_extra,
 )
 
 if TYPE_CHECKING:
@@ -230,6 +231,7 @@ def caption_images(
     max_images: int = DEFAULT_MAX_IMAGES,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     temperature: float = 0.2,
+    thinking: bool | None = None,
     client: TokenFactoryClient | None = None,
 ) -> CaptionResult:
     """Caption every image under ``input_path`` with a hosted vision model."""
@@ -241,6 +243,9 @@ def caption_images(
     effective_model = model or DEFAULT_VISION_MODEL
     effective_instruction = (instruction or DEFAULT_CAPTION_INSTRUCTION).strip()
     active = client or _default_client()
+    extra = (
+        thinking_chat_extra(effective_model, thinking) if thinking is not None else None
+    )
 
     with _materialized_input(input_path) as local_input:
         image_paths = _discover_image_paths(local_input)[:max_images]
@@ -267,10 +272,25 @@ def caption_images(
                     ],
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    extra=extra,
                 )
             except TokenFactoryError as exc:
+                detail = str(exc)
+                if "reasoning-only response with no visible answer" in detail:
+                    if thinking is None:
+                        detail = (
+                            "Token Factory returned a reasoning-only response with "
+                            "no visible caption. Retry with thinking=False "
+                            "(CLI: --no-thinking)."
+                        )
+                    else:
+                        detail = (
+                            "Token Factory returned a reasoning-only response with "
+                            "no visible caption despite the explicit "
+                            f"thinking={thinking} override."
+                        )
                 raise TokenFactoryToolError(
-                    f"captioning {label} failed: {exc}"
+                    f"captioning {label} failed: {detail}"
                 ) from exc
             captions.append(CaptionItem(image=label, caption=text.strip()))
 

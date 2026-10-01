@@ -7,6 +7,14 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Token Factory captions expose thinking control
+
+- `token-factory caption` accepts `--thinking/--no-thinking` and the SDK accepts
+  `thinking=True|False`. Omitting the option preserves existing model defaults;
+  explicit overrides use verified Lightning/MiniMax template fields and a
+  generic `thinking` field for other selected models. Reasoning-only responses
+  still fail closed and now point default callers to `--no-thinking`.
+
 ### Studio videos accept S3 output paths
 
 - `preview` and `final` accept `--output-path` for an exact S3 MP4 destination,

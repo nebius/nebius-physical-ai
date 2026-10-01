@@ -73,6 +73,29 @@ def default_chat_extra(model: str) -> dict[str, Any]:
     return {}
 
 
+def thinking_chat_extra(model: str, enabled: bool) -> dict[str, Any]:
+    """Build an explicit model-specific thinking override.
+
+    Known replacement models use their verified template keys. Other explicit
+    model IDs use the OpenAI-compatible ``thinking`` key only because the caller
+    requested an override; defaults for unknown models remain untouched.
+
+    Args:
+        model: Exact model ID sent to Token Factory.
+        enabled: Whether the model should emit a reasoning trace.
+    Returns:
+        Extra chat-completion fields for :meth:`TokenFactoryClient.chat_completion`.
+    """
+
+    if model == "nvidia/Nemotron-3_5-Lightning":
+        control: dict[str, Any] = {"enable_thinking": enabled}
+    elif model == "MiniMaxAI/MiniMax-M3":
+        control = {"thinking_mode": "enabled" if enabled else "disabled"}
+    else:
+        control = {"thinking": enabled}
+    return {"chat_template_kwargs": control}
+
+
 @dataclass(frozen=True)
 class TokenFactoryAccessResult:
     """Secret-free model availability and billable-inference preflight result."""
