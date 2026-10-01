@@ -259,6 +259,26 @@ def _redact_private_key_blocks(text: str) -> str:
     return "".join(pieces)
 
 
+def contains_explicit_credential_material(text: str) -> bool:
+    """Detect credential assignments, private keys and recognized token formats.
+
+    Args:
+        text: Operator-supplied text to validate before persistence.
+    Returns:
+        Whether explicit credential syntax occurs. This is not a safety
+        certificate: conservative diagnostic redaction is still required before
+        persistence, including for opaque URL queries and bearer-like prose.
+    Raises:
+        None.
+    """
+
+    if _PRIVATE_KEY_BEGIN.search(text):
+        return True
+    if _redact_secret_assignments(text) != text:
+        return True
+    return any(pattern.search(text) for pattern in _KNOWN_TOKEN_PATTERNS)
+
+
 def redact_diagnostic_text(
     reason: object,
     *,

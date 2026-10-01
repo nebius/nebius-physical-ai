@@ -12,6 +12,13 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+Durable workflow diagnostics and stage logs use conservative credential
+redaction: URL user information, complete query strings, and bearer-like values
+are removed even when they could be harmless prose. Storage ownership recovery
+rejects explicit credential assignments, recognized tokens and private keys;
+other reasons are accepted and stored with that same conservative redaction.
+Use an unsigned evidence URL without a query to retain a navigable reference.
+
 [flex-pi inference](../docs/workbench/flex-pi.md#cli-and-sdk) emits one JSON
 document on stdout (`--output-format json`, the default); runtime diagnostics
 go to stderr.

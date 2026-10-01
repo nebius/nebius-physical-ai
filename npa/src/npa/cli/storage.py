@@ -1981,13 +1981,17 @@ def reconcile_service_account_cmd(
             "Writing ownership recovery requires --reason <why>, --attest-npa-created, "
             "and --yes after reviewing --dry-run. The identity remains unowned."
         )
-    from npa.orchestration.skypilot.workflow_state import redact_text
+    from npa.diagnostic_redaction import (
+        contains_explicit_credential_material,
+        redact_diagnostic_text,
+    )
 
-    if redact_text(reason.strip()) != reason.strip():
+    if contains_explicit_credential_material(reason.strip()):
         _partial_cleanup(
             "The recovery reason appears to contain credential material and was not stored. "
             "Use a non-secret evidence reference instead."
         )
+    reason = redact_diagnostic_text(reason.strip())
     operator = str(attested_by or getpass.getuser() or "unknown").strip()
     if not operator:
         _partial_cleanup("A non-empty --attested-by identity is required.")
