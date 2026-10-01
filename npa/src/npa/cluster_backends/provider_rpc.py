@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import stat
 from pathlib import Path
 import tempfile
 from typing import Any
@@ -37,8 +38,11 @@ def _hcl_providers(path: Path, text: str) -> list[_Provider]:
     from lark import Tree
     from lark.exceptions import LarkError
 
+    parser = getattr(hcl2, "parses_to_tree", None)
+    if not callable(parser):
+        raise ImportError("Terraform parser API is unavailable")
     try:
-        body = hcl2.parses_to_tree(text).children[0]
+        body = parser(text).children[0]
     except LarkError:
         raise ValueError(
             f"Unsupported or invalid Terraform HCL configuration: {path.name}"
@@ -127,6 +131,7 @@ def _replace(path: Path, text: str) -> None:
     temporary = Path(name)
     try:
         with os.fdopen(descriptor, "w") as output:
+            os.fchmod(output.fileno(), stat.S_IMODE(path.stat().st_mode))
             output.write(text)
         os.replace(temporary, path)
     finally:
@@ -142,8 +147,18 @@ def _materialized_text(
     if not defaults:
         return original
     if provider.json_block is not None:
-        provider.json_block.update(defaults)
-        return json.dumps(documents[provider.path], indent=2) + "\n"
+        document = documents[provider.path]
+        providers = document["provider"]
+        entries = providers["nebius"]
+        merged = [
+            {**entry, **defaults} if entry is provider.json_block else entry
+            for entry in ([entries] if isinstance(entries, dict) else entries)
+        ]
+        rewritten = {
+            **providers,
+            "nebius": merged[0] if isinstance(entries, dict) else merged,
+        }
+        return json.dumps({**document, "provider": rewritten}, indent=2) + "\n"
     assert provider.insertion is not None and provider.opening is not None
     insertion = "\n" + "".join(
         f'  {key} = "{value}"\n' for key, value in defaults.items()
@@ -168,7 +183,7 @@ def _advisory(timeout_minutes: int, reason: str) -> dict[str, Any]:
 
 
 def _configure(workdir: Path, timeout_minutes: int) -> dict[str, Any]:
-    if workdir.is_symlink() or workdir.absolute() != workdir.resolve():
+    if workdir.is_symlink():
         return _advisory(timeout_minutes, "unsafe_recipe_path")
     provider, attributes, texts, documents = _inspect(workdir)
     defaults = {key: f"{timeout_minutes}m" for key in sorted(_FIELDS - attributes)}
@@ -212,3 +227,5 @@ def configure_provider_rpc_deadlines(
         return _advisory(timeout_minutes, "unsupported_recipe_shape")
     except ImportError:
         return _advisory(timeout_minutes, "parser_unavailable")
+    except Exception:
+        return _advisory(timeout_minutes, "deadline_configuration_unavailable")
