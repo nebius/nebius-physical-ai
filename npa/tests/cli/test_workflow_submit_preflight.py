@@ -2635,7 +2635,23 @@ def test_effective_pull_secret_sets_accept_initial_multi_entry_task_list() -> No
     assert effective == {"image": (("task-a", "task-b"),)}
 
 
-def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(mocker) -> None:
+@pytest.mark.parametrize(
+    ("timeout_args", "pull_timeout", "bootstrap_timeout"),
+    [
+        ([], 1800, 1800),
+        (["--image-pull-timeout-seconds", "0"], 0, 1800),
+        (["--image-pull-timeout-seconds", "3600"], 3600, 1800),
+        (["--image-bootstrap-timeout-seconds", "0"], 0, 0),
+        (
+            ["--image-pull-timeout-seconds", "0", "--image-bootstrap-timeout-seconds", "45"],
+            0,
+            45,
+        ),
+    ],
+)
+def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(
+    mocker, timeout_args, pull_timeout, bootstrap_timeout
+) -> None:
     from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
 
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
@@ -2673,7 +2689,7 @@ def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(mocker) -> No
     ):
         args.extend(["--var", f"{name}={digest_image}"])
 
-    result = runner.invoke(app, args)
+    result = runner.invoke(app, args + timeout_args)
 
     assert result.exit_code == 0, result.output
     assert checks.call_args.kwargs["pull_secrets_by_image"] == {digest_image: ()}
@@ -2685,7 +2701,8 @@ def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(mocker) -> No
     }
     assert checks.call_args.kwargs["operator_images"] == set()
     assert checks.call_args.kwargs["kubernetes_images"] == {digest_image}
-    assert checks.call_args.kwargs["target_pull_timeout_seconds"] == 1800
+    assert checks.call_args.kwargs["target_pull_timeout_seconds"] == pull_timeout
+    assert contracts.call_args.kwargs["observation_timeout_seconds"] == bootstrap_timeout
     assert contracts.call_args.kwargs["pull_secrets_by_image"] == {
         digest_image: ("operator-registry",)
     }
@@ -2693,6 +2710,36 @@ def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(mocker) -> No
         digest_image: "skypilot-service-account"
     }
     assert contracts.call_args.kwargs["context"] == "target-context"
+
+
+@pytest.mark.parametrize("pull_timeout", [None, 0, 3600])
+def test_submit_image_preflight_keeps_pull_and_bootstrap_deadlines_separate(
+    mocker, pull_timeout
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    image = "docker.io/library/alpine:3.22.0"
+    mocker.patch.object(
+        workflow_cli, "_plan_preflight_image_requirements",
+        return_value=([image], {}),
+    )
+    checks = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    contracts = mocker.patch.object(
+        workflow_cli, "_preflight_image_bootstrap_contracts", return_value=[]
+    )
+    workflow_cli._preflight_submit_images(
+        SIM2REAL_SPEC, spec=SimpleNamespace(name="probe"),
+        options=SkypilotRenderOptions(),
+        assume_decision="", enabled=True, image_bootstrap_timeout_seconds=45,
+        image_pull_timeout_seconds=pull_timeout,
+    )
+    assert checks.call_args.kwargs["target_pull_timeout_seconds"] == (
+        45 if pull_timeout is None else pull_timeout
+    )
+    assert contracts.call_args.kwargs["observation_timeout_seconds"] == 45
 
 
 def test_preflight_images_deduplicates_declared_and_explicit_pull_secret(

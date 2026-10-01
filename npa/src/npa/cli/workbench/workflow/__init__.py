@@ -861,6 +861,7 @@ _WORKFLOW_RECOVERY_VALUE_OPTIONS = (
     ("max_infrastructure_recoveries", "--max-infrastructure-recoveries"),
     ("max_concurrency", "--max-concurrency"),
     ("image_bootstrap_timeout_seconds", "--image-bootstrap-timeout-seconds"),
+    ("image_pull_timeout_seconds", "--image-pull-timeout-seconds"),
     ("gpu_readiness_timeout", "--gpu-readiness-timeout"),
     ("gpu_readiness_poll_interval", "--gpu-readiness-poll-interval"),
     ("tool", "--tool"),
@@ -1196,6 +1197,15 @@ def submit_cmd(
         help=(
             "Seconds to observe each digest-bound image capability probe; "
             "0 waits without a deadline for large cold pulls."
+        ),
+    ),
+    image_pull_timeout_seconds: int | None = typer.Option(
+        None,
+        "--image-pull-timeout-seconds",
+        min=0,
+        help=(
+            "Seconds to observe each target image pull; 0 waits without a deadline. "
+            "When omitted, use --image-bootstrap-timeout-seconds."
         ),
     ),
     resolve_accelerators: bool = typer.Option(
@@ -2445,6 +2455,7 @@ def submit_cmd(
                 infra=infra,
                 config_path=config_path,
                 image_bootstrap_timeout_seconds=image_bootstrap_timeout_seconds,
+                image_pull_timeout_seconds=image_pull_timeout_seconds,
             )
 
         # Provision/adopt the exact submission target before any writable-S3
@@ -2553,6 +2564,7 @@ def submit_cmd(
                 infra=infra,
                 config_path=config_path,
                 image_bootstrap_timeout_seconds=image_bootstrap_timeout_seconds,
+                image_pull_timeout_seconds=image_pull_timeout_seconds,
             )
         if not plan_only and execution_target is not None:
             from npa.execution_preflight import verify_execution_scope
@@ -2871,6 +2883,7 @@ def submit_cmd(
                     infra=infra,
                     config_path=config_path,
                     image_bootstrap_timeout_seconds=(image_bootstrap_timeout_seconds),
+                    image_pull_timeout_seconds=image_pull_timeout_seconds,
                 )
                 if preflight_images and refreshed_pins != image_digest_pins:
                     raise RuntimeError(
@@ -4561,6 +4574,7 @@ def _preflight_submit_images(
     infra: str = "",
     config_path: Path | None = None,
     image_bootstrap_timeout_seconds: int = 1800,
+    image_pull_timeout_seconds: int | None = None,
 ) -> dict[str, str]:
     """Fail before the run starts when a step's image cannot actually be pulled.
 
@@ -4680,7 +4694,11 @@ def _preflight_submit_images(
         namespace=target_namespace,
         context=target_context,
         kubeconfig=target_kubeconfig,
-        target_pull_timeout_seconds=image_bootstrap_timeout_seconds,
+        target_pull_timeout_seconds=(
+            image_bootstrap_timeout_seconds
+            if image_pull_timeout_seconds is None
+            else image_pull_timeout_seconds
+        ),
     )
     blocking = []
     for check in checks:
@@ -10020,6 +10038,15 @@ def preflight_images_cmd(
             "0 waits without a deadline for large cold pulls."
         ),
     ),
+    image_pull_timeout_seconds: int | None = typer.Option(
+        None,
+        "--image-pull-timeout-seconds",
+        min=0,
+        help=(
+            "Seconds to observe each target image pull; 0 waits without a deadline. "
+            "When omitted, use --image-bootstrap-timeout-seconds."
+        ),
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON report."),
 ) -> None:
     """Prove every image this spec pulls through each selected execution path.
@@ -10169,7 +10196,11 @@ def preflight_images_cmd(
         namespace=target_namespace,
         context=target_context,
         kubeconfig=target_kubeconfig,
-        target_pull_timeout_seconds=image_bootstrap_timeout_seconds,
+        target_pull_timeout_seconds=(
+            image_bootstrap_timeout_seconds
+            if image_pull_timeout_seconds is None
+            else image_pull_timeout_seconds
+        ),
     )
     failed = [check for check in checks if not check.ok]
     contract_checks: list[dict[str, object]] = []

@@ -36,6 +36,16 @@ npa workbench workflow preflight-images "$workflow_spec" \
 Review the resolved GPU shape, image, and output prefix. Image preflight may
 create and delete a temporary probe pod.
 
+Both `preflight-images` and `submit` accept
+`--image-pull-timeout-seconds` for each target pull and
+`--image-bootstrap-timeout-seconds` for each capability probe. Set the pull
+timeout to `0` to wait without a deadline for a large authenticated cold pull;
+interrupting the command still verifies deletion of its owned probe. When
+omitted, the pull timeout inherits the bootstrap timeout (default: 1800 seconds),
+preserving existing commands, including bootstrap timeout `0`. An explicit pull
+timeout changes only the pull probe. `timed_out` means observation expired; it
+does not prove an access failure. Recovery commands retain the selected value.
+
 Image preflight follows SkyPilot's resource override behavior. `--infra` replaces
 the declared target for a single task. SkyPilot ignores that override for
 multi-task YAML and JobGroups, while runtime workflows can also launch singleton

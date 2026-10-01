@@ -534,7 +534,10 @@ def test_runtime_keeps_configured_project_selection(
     assert fake_runtime["options"].project == (selected or "research")
 
 
-def test_submit_runtime_passes_per_tool_image_override(fake_runtime, mocker) -> None:
+@pytest.mark.parametrize("pull_timeout", [0, 3600])
+def test_submit_runtime_passes_per_tool_image_override(
+    fake_runtime, mocker, pull_timeout
+) -> None:
     image = "cr.example.invalid/reg/npa-token-factory:fixed"
     pins = {image: "cr.example.invalid/reg/npa-token-factory@sha256:" + "a" * 64}
     preflight = mocker.patch(
@@ -549,6 +552,8 @@ def test_submit_runtime_passes_per_tool_image_override(fake_runtime, mocker) -> 
             str(FANOUT),
             "--run-id",
             "rt-tool-image",
+            "--image-pull-timeout-seconds",
+            str(pull_timeout),
             "--runtime",
             "--tool-image",
             f"workbench.token_factory.caption={image}",
@@ -565,6 +570,7 @@ def test_submit_runtime_passes_per_tool_image_override(fake_runtime, mocker) -> 
     assert options.image_digest_pins == pins
     checked = preflight.call_args.kwargs["options"]
     assert checked.image_overrides == options.image_overrides
+    assert preflight.call_args.kwargs["image_pull_timeout_seconds"] == pull_timeout
 
 
 def test_submit_rejects_malformed_per_tool_image_override() -> None:

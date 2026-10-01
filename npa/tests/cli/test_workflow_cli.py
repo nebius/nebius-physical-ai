@@ -408,6 +408,31 @@ def test_declarative_recovery_argv_keeps_resume_run_contract(
     assert _recovery_option(argv, "--output-format") == "json"
 
 
+@pytest.mark.parametrize("pull_timeout", [0, 3600])
+def test_recovery_preserves_explicit_image_pull_timeout(pull_timeout: int) -> None:
+    from npa.cli.workbench import workflow
+
+    argv = workflow._workflow_submit_recovery_argv(
+        Path("workflow.yaml"),
+        alias="synthetic",
+        run_id="declarative-run",
+        is_npa_spec=True,
+        arguments={"image_pull_timeout_seconds": pull_timeout},
+    )
+    assert _recovery_option(argv, "--image-pull-timeout-seconds") == str(pull_timeout)
+
+
+@pytest.mark.parametrize("command", ["submit", "preflight-images"])
+def test_negative_image_pull_timeout_fails_cli_validation(command: str) -> None:
+    result = runner.invoke(
+        app,
+        ["workbench", "workflow", command, "workflow.yaml",
+         "--image-pull-timeout-seconds", "-1"],
+    )
+    assert result.exit_code == 2
+    assert "image-pull-timeout-seconds" in result.output
+
+
 def test_recovery_serializer_accounts_for_every_submit_argument() -> None:
     import inspect
     import typer
