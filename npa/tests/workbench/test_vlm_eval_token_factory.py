@@ -1572,27 +1572,36 @@ def test_api_result_retains_image_sequence_sampling_coverage(
         lambda **kwargs: _completion(model="vendor/served-vision"),
     )
 
-    result = evaluate_vlm(
-        input_path=str(rollout),
-        output_path=str(tmp_path / "evaluation.json"),
-        backend="api",
-        model="vendor/explicit-alias",
-        endpoint_url="https://example.test/v1",
-        task="Identify visible sequence changes.",
-        frame_selection="keyframes",
-        max_frames=3,
-    )
+    results = {
+        strategy: evaluate_vlm(
+            input_path=str(rollout),
+            output_path=str(tmp_path / f"{strategy}-evaluation.json"),
+            backend="api",
+            model="vendor/explicit-alias",
+            endpoint_url="https://example.test/v1",
+            task="Identify visible sequence changes.",
+            frame_selection=strategy,
+            max_frames=3,
+        )
+        for strategy in ("keyframes", "sequence")
+    }
 
-    assert result.evidence is not None
-    frames = result.evidence.request.frames
-    assert [frame.source_index for frame in frames] == [0, 2, 4]
-    assert [frame.source_count for frame in frames] == [5, 5, 5]
-    sampling = result.evidence.request.request_manifest["sampling"]
-    assert sampling["selected_indices"] == [0, 2, 4]
-    assert sampling["source_count"] == 5
-    assert sampling["selected_count"] == 3
-    assert sampling["max_frames"] == 3
-    assert sampling["coverage_complete"] is True
+    expected_indices = {
+        "keyframes": [0, 3, 4],
+        "sequence": [0, 2, 4],
+    }
+    for strategy, result in results.items():
+        assert result.evidence is not None
+        frames = result.evidence.request.frames
+        assert [frame.source_index for frame in frames] == expected_indices[strategy]
+        assert [frame.source_count for frame in frames] == [5, 5, 5]
+        sampling = result.evidence.request.request_manifest["sampling"]
+        assert sampling["strategy"] == strategy
+        assert sampling["selected_indices"] == expected_indices[strategy]
+        assert sampling["source_count"] == 5
+        assert sampling["selected_count"] == 3
+        assert sampling["max_frames"] == 3
+        assert sampling["coverage_complete"] is True
 
 
 def test_api_result_surfaces_provider_success_score_contradiction(

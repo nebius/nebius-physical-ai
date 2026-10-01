@@ -474,6 +474,99 @@ def test_live_gpu_self_hosted_vlm_eval_returns_structured_score(
     assert result.frame_count in {2, 3, 4}
 
 
+@pytest.mark.parametrize(
+    ("count", "max_frames", "expected"),
+    [
+        (250, 4, [0, 112, 225, 249]),
+        (250, 8, [0, 56, 112, 168, 225, 233, 241, 249]),
+        (
+            250,
+            15,
+            [0, 32, 64, 96, 128, 160, 192, 225, 228, 232, 235, 239, 242, 246, 249],
+        ),
+        (7, 4, [0, 2, 5, 6]),
+        (6, 3, [0, 4, 5]),
+        (5, 3, [0, 3, 4]),
+        (3, 2, [0, 2]),
+        (10, 2, [0, 9]),
+        (454, 4, [0, 204, 408, 453]),
+        (221, 4, [0, 98, 198, 220]),
+    ],
+)
+def test_keyframe_indices_match_frozen_vectors(
+    count: int, max_frames: int, expected: list[int]
+) -> None:
+    assert (
+        vlm_eval._selected_indices(
+            count, frame_selection="keyframes", max_frames=max_frames
+        )
+        == expected
+    )
+
+
+def test_sequence_indices_match_legacy_oracle_exhaustively() -> None:
+    for count in range(1001):
+        for max_frames in range(1, 129):
+            selected = min(max_frames, count)
+            expected = (
+                []
+                if selected == 0
+                else [count - 1]
+                if selected == 1
+                else sorted(
+                    {
+                        round(index * (count - 1) / (selected - 1))
+                        for index in range(selected)
+                    }
+                )
+            )
+            assert (
+                vlm_eval._selected_indices(
+                    count,
+                    frame_selection="sequence",
+                    max_frames=max_frames,
+                )
+                == expected
+            )
+
+
+def test_keyframe_indices_preserve_cardinality_order_and_endpoints() -> None:
+    for count in range(1001):
+        for max_frames in range(1, 129):
+            indices = vlm_eval._selected_indices(
+                count,
+                frame_selection="keyframes",
+                max_frames=max_frames,
+            )
+            assert len(indices) == min(count, max_frames)
+            assert indices == sorted(set(indices))
+            assert all(0 <= index < count for index in indices)
+            if len(indices) >= 2:
+                assert indices[0] == 0
+                assert indices[-1] == count - 1
+            if count <= max_frames:
+                assert indices == list(range(count))
+
+    assert (
+        sum(
+            index >= 225
+            for index in vlm_eval._selected_indices(
+                250, frame_selection="keyframes", max_frames=4
+            )
+        )
+        == 2
+    )
+    assert (
+        sum(
+            index >= 225
+            for index in vlm_eval._selected_indices(
+                250, frame_selection="keyframes", max_frames=15
+            )
+        )
+        == 8
+    )
+
+
 def test_select_rollout_frames_from_numpy_final_frame(tmp_path: Path) -> None:
     rollout = tmp_path / "episode_0000"
     rollout.mkdir()
@@ -499,11 +592,15 @@ def test_select_rollout_frames_retains_numpy_sampling_coverage(tmp_path: Path) -
     frames = np.zeros((6, 8, 8, 3), dtype=np.uint8)
     np.save(rollout / "obs_workspace.npy", frames)
 
-    selected = select_rollout_frames(rollout, frame_selection="keyframes", max_frames=3)
+    keyframes = select_rollout_frames(
+        rollout, frame_selection="keyframes", max_frames=3
+    )
+    sequence = select_rollout_frames(rollout, frame_selection="sequence", max_frames=3)
 
-    assert [frame.source_index for frame in selected] == [0, 2, 5]
-    assert [frame.source_count for frame in selected] == [6, 6, 6]
-    assert all(frame.source_kind == "numpy-episode" for frame in selected)
+    assert [frame.source_index for frame in keyframes] == [0, 4, 5]
+    assert [frame.source_index for frame in sequence] == [0, 2, 5]
+    assert [frame.source_count for frame in keyframes] == [6, 6, 6]
+    assert all(frame.source_kind == "numpy-episode" for frame in keyframes)
 
 
 @pytest.mark.skipif(
@@ -536,14 +633,20 @@ def test_select_rollout_frames_retains_video_indices_and_timestamps(
         timeout=30,
     )
 
-    selected = select_rollout_frames(video, frame_selection="sequence", max_frames=3)
+    sequence = select_rollout_frames(video, frame_selection="sequence", max_frames=3)
+    keyframes = select_rollout_frames(video, frame_selection="keyframes", max_frames=3)
 
-    assert [frame.source_index for frame in selected] == [0, 2, 5]
-    assert [frame.source_count for frame in selected] == [6, 6, 6]
-    assert [frame.source_timestamp_s for frame in selected] == pytest.approx(
+    assert [frame.source_index for frame in sequence] == [0, 2, 5]
+    assert [frame.source_count for frame in sequence] == [6, 6, 6]
+    assert [frame.source_timestamp_s for frame in sequence] == pytest.approx(
         [0.0, 1.0, 2.5]
     )
-    assert all(frame.source_kind == "video" for frame in selected)
+    assert [frame.source_index for frame in keyframes] == [0, 4, 5]
+    assert [frame.source_count for frame in keyframes] == [6, 6, 6]
+    assert [frame.source_timestamp_s for frame in keyframes] == pytest.approx(
+        [0.0, 2.0, 2.5]
+    )
+    assert all(frame.source_kind == "video" for frame in sequence + keyframes)
 
 
 def test_video_timestamps_use_structured_ffprobe_output(
@@ -603,35 +706,64 @@ def test_extracted_video_frames_sort_by_numeric_ordinal() -> None:
     ]
 
 
-def test_unknown_video_count_does_not_infer_sampling_coverage(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("frame_selection", "expected_fallback", "expected_count"),
+    [
+        ("final", "final", 1),
+        ("keyframes", "sample", 2),
+        ("sequence", "sample", 2),
+    ],
+)
+def test_unknown_video_count_preserves_legacy_fallback_and_null_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    frame_selection: str,
+    expected_fallback: str,
+    expected_count: int,
 ) -> None:
     video = tmp_path / "rollout.mp4"
     video.write_bytes(b"placeholder")
     monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/tool")
     monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: None)
+    calls: list[str] = []
+
+    def fake_final(_video_path: Path, output_dir: Path) -> list[float | None]:
+        calls.append("final")
+        Image.new("RGB", (8, 8), "green").save(output_dir / "frame-001.png")
+        return []
 
     def fake_sample(
         _video_path: Path, output_dir: Path, *, max_frames: int
     ) -> list[float | None]:
+        calls.append("sample")
         assert max_frames == 2
-        Image.new("RGB", (8, 8), "green").save(output_dir / "frame-001.png")
+        for ordinal in range(1, 3):
+            Image.new("RGB", (8, 8), "green").save(
+                output_dir / f"frame-{ordinal:03d}.png"
+            )
         return []
 
+    monkeypatch.setattr(vlm_eval, "_extract_final_video_frame", fake_final)
     monkeypatch.setattr(vlm_eval, "_extract_video_sample", fake_sample)
 
-    selected = select_rollout_frames(video, frame_selection="sequence", max_frames=2)
+    selected = select_rollout_frames(
+        video, frame_selection=frame_selection, max_frames=2
+    )
     sampling = vlm_eval._sampling_manifest(
-        selected, frame_selection="sequence", max_frames=2
+        selected, frame_selection=frame_selection, max_frames=2
     )
 
-    assert selected[0].source_index is None
-    assert selected[0].source_count is None
-    assert selected[0].source_timestamp_s is None
-    assert sampling["selected_indices"] == [None]
+    assert calls == [expected_fallback]
+    assert len(selected) == expected_count
+    assert all(frame.source_index is None for frame in selected)
+    assert all(frame.source_count is None for frame in selected)
+    assert all(frame.source_timestamp_s is None for frame in selected)
+    assert sampling["selected_indices"] == [None] * expected_count
     assert sampling["coverage_complete"] is False
     assert sampling["timestamps_complete"] is False
 
+
+def test_sampling_manifest_fails_closed_on_partial_provenance() -> None:
     partial = [
         vlm_eval.SelectedFrame(
             "frame-0",

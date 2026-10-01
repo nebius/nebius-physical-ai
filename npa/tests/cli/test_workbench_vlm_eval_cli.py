@@ -32,6 +32,16 @@ def test_workbench_vlm_eval_command_help() -> None:
     assert "VLM evaluation" in result.output
 
 
+def test_vlm_eval_frame_selection_help_distinguishes_named_strategies() -> None:
+    for command in ("run", "loop", "benchmark", "compare-judges", "review-visual"):
+        result = runner.invoke(app, ["workbench", "vlm-eval", command, "--help"])
+
+        assert result.exit_code == 0
+        assert "terminal-stratified" in result.output
+        assert "known-count" in result.output
+        assert "uniform full-span" in result.output
+
+
 def test_workbench_vlm_eval_run_writes_local_json(tmp_path) -> None:
     output_dir = tmp_path / "eval"
 
