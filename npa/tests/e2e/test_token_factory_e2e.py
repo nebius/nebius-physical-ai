@@ -27,7 +27,6 @@ from PIL import Image, ImageDraw
 from npa.clients.token_factory import (
     DEFAULT_REASONER_MODEL,
     DEFAULT_TEXT_MODEL,
-    DEFAULT_VISION_MODEL,
     TokenFactoryClient,
     resolve_config,
 )
@@ -95,6 +94,7 @@ def test_live_list_models_authenticates() -> None:
     models = TokenFactoryClient().list_models()
     assert isinstance(models, list)
     assert models, "Token Factory returned no models for this key"
+    assert "MiniMaxAI/MiniMax-M3" in models
 
 
 def test_live_text_chat_completion() -> None:
@@ -122,7 +122,7 @@ def test_live_default_reasoner_scene_plan(tmp_path: Path) -> None:
     )
 
     assert result.status == "completed"
-    assert result.model == DEFAULT_REASONER_MODEL
+    assert result.model == "MiniMaxAI/MiniMax-M3"
     assert result.image_count == 1
     assert result.analysis.strip(), "reasoner returned an empty analysis"
 
@@ -313,7 +313,7 @@ def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:
         assert result.exit_code == 0, result.output
         payload = json.loads(target.read_text())
         assert payload["status"] == "completed"
-        assert payload["model"] == DEFAULT_VISION_MODEL
+        assert payload["model"] == "MiniMaxAI/MiniMax-M3"
         assert payload["image_count"] == 3
         texts = (
             [row["caption"] for row in payload["captions"]]
@@ -327,7 +327,7 @@ def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("inside", [True, False])
-@pytest.mark.parametrize("model", [DEFAULT_VISION_MODEL, "moonshotai/Kimi-K3"])
+@pytest.mark.parametrize("model", ["MiniMaxAI/MiniMax-M3", "moonshotai/Kimi-K3"])
 def test_live_visual_judge_distinguishes_completion(
     tmp_path: Path, inside: bool, model: str
 ) -> None:
@@ -438,7 +438,7 @@ def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:
     )
     (tmp_path / "attributes.json").write_text(json.dumps(asdict(result), indent=2))
     assert result.question_model == DEFAULT_TEXT_MODEL
-    assert result.vlm_model == DEFAULT_VISION_MODEL
+    assert result.vlm_model == "MiniMaxAI/MiniMax-M3"
     assert result.total_checks == result.passed_checks == 2
     assert result.passed
     assert all(
