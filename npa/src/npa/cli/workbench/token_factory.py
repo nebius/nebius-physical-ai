@@ -263,6 +263,8 @@ def caption_cmd(
         _fail(str(exc))
         return
     _emit(payload, output)
+    if result.status == "failed":
+        raise typer.Exit(1)
 
 
 @app.command("generate")
