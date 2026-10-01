@@ -1289,7 +1289,10 @@ def test_verified_absence_dry_run_does_not_remove_ownership_before_real_pass(
             "Review https://example.invalid/review?page=2",
             "Review https://example.invalid/review?<redacted>",
         ),
-        ("bearer of bad news: legacy ownership", "Bearer <redacted> bad news: legacy ownership"),
+        (
+            "bearer of bad news: legacy ownership",
+            "Bearer <redacted> bad news: legacy ownership",
+        ),
         (
             "Review https://example.invalid/review?opaque-private-value",
             "Review https://example.invalid/review?<redacted>",
@@ -1305,9 +1308,17 @@ def test_reconcile_accepts_conservative_redaction_without_storing_raw_reason(
     result = runner.invoke(
         app,
         [
-            "storage", "service-account", "reconcile", "--project", "prod",
-            "--id", "serviceaccount-storage", "--reason", reason,
-            "--attest-npa-created", "--yes",
+            "storage",
+            "service-account",
+            "reconcile",
+            "--project",
+            "prod",
+            "--id",
+            "serviceaccount-storage",
+            "--reason",
+            reason,
+            "--attest-npa-created",
+            "--yes",
         ],
     )
     assert result.exit_code == 0, result.output
@@ -1334,9 +1345,17 @@ def test_reconcile_rejects_explicit_credentials_before_recording_attestation(
     result = runner.invoke(
         app,
         [
-            "storage", "service-account", "reconcile", "--project", "prod",
-            "--id", "serviceaccount-storage", "--reason", reason,
-            "--attest-npa-created", "--yes",
+            "storage",
+            "service-account",
+            "reconcile",
+            "--project",
+            "prod",
+            "--id",
+            "serviceaccount-storage",
+            "--reason",
+            reason,
+            "--attest-npa-created",
+            "--yes",
         ],
     )
     assert result.exit_code == 2
