@@ -361,6 +361,33 @@ def _caption_request_instruction(instruction: str) -> str:
     return f"{instruction}\n\n{CAPTION_AVAILABILITY_DIRECTIVE}"
 
 
+_CAPTION_AVAILABILITY_WRAPPERS = (
+    ("**", "**"),
+    ("__", "__"),
+    ("'", "'"),
+    ('"', '"'),
+    ("‘", "’"),
+    ("“", "”"),
+)
+
+
+def _is_image_unavailable_answer(caption: str) -> bool:
+    """Match one closed whole-answer presentation of the no-image sentinel."""
+
+    normalized = caption
+    for opening, closing in _CAPTION_AVAILABILITY_WRAPPERS:
+        if (
+            len(normalized) > len(opening) + len(closing)
+            and normalized.startswith(opening)
+            and normalized.endswith(closing)
+        ):
+            normalized = normalized[len(opening) : -len(closing)].strip()
+            break
+    normalized = normalized.removesuffix(".")
+    sentinel = CAPTION_IMAGE_UNAVAILABLE_SENTINEL.removesuffix(".")
+    return normalized.casefold() == sentinel.casefold()
+
+
 def _caption_image(
     image_path: Path,
     *,
@@ -387,9 +414,7 @@ def _caption_image(
         raise TokenFactoryToolError(f"captioning {label} failed: {exc}") from exc
     caption = text.strip()
     status = (
-        "image_unavailable"
-        if caption.casefold() == CAPTION_IMAGE_UNAVAILABLE_SENTINEL.casefold()
-        else "completed"
+        "image_unavailable" if _is_image_unavailable_answer(caption) else "completed"
     )
     return CaptionItem(image=label, caption=caption, status=status)
 
