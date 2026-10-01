@@ -364,6 +364,8 @@ def _caption_request_instruction(instruction: str) -> str:
 _CAPTION_AVAILABILITY_WRAPPERS = (
     ("**", "**"),
     ("__", "__"),
+    ("*", "*"),
+    ("_", "_"),
     ("'", "'"),
     ('"', '"'),
     ("‘", "’"),
@@ -372,16 +374,19 @@ _CAPTION_AVAILABILITY_WRAPPERS = (
 
 
 def _is_image_unavailable_answer(caption: str) -> bool:
-    """Match one closed whole-answer presentation of the no-image sentinel."""
+    """Match nested closed whole-answer presentations of the no-image sentinel."""
 
     normalized = caption
-    for opening, closing in _CAPTION_AVAILABILITY_WRAPPERS:
-        if (
-            len(normalized) > len(opening) + len(closing)
-            and normalized.startswith(opening)
-            and normalized.endswith(closing)
-        ):
-            normalized = normalized[len(opening) : -len(closing)].strip()
+    while True:
+        for opening, closing in _CAPTION_AVAILABILITY_WRAPPERS:
+            if (
+                len(normalized) > len(opening) + len(closing)
+                and normalized.startswith(opening)
+                and normalized.endswith(closing)
+            ):
+                normalized = normalized[len(opening) : -len(closing)].strip()
+                break
+        else:
             break
     normalized = normalized.removesuffix(".")
     sentinel = CAPTION_IMAGE_UNAVAILABLE_SENTINEL.removesuffix(".")

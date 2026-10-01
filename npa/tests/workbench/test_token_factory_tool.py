@@ -70,15 +70,29 @@ _SENTINEL_WRAPPERS = (
     ("plain", "", ""),
     ("markdown-asterisks", "**", "**"),
     ("markdown-underscores", "__", "__"),
+    ("markdown-italic-asterisk", "*", "*"),
+    ("markdown-italic-underscore", "_", "_"),
     ("ascii-single", "'", "'"),
     ("ascii-double", '"', '"'),
     ("smart-single", "‘", "’"),
     ("smart-double", "“", "”"),
 )
+_PRESENTATION_WRAPPERS = _SENTINEL_WRAPPERS[1:]
 _SENTINEL_CORE_VARIANTS = (
     ("without-period", "NO IMAGE RECEIVED"),
     ("with-period", "NO IMAGE RECEIVED."),
 )
+
+
+def _nested_sentinel(depth: int) -> str:
+    wrappers = (("“", "”"), ("_", "_"), ("*", "*"), ('"', '"'))
+    answer = "NO IMAGE RECEIVED."
+    for index in range(depth):
+        opening, closing = wrappers[index % len(wrappers)]
+        answer = f"{opening}  {answer}  {closing}"
+    return answer
+
+
 _ACCEPTED_SENTINEL_FORMATS = (
     [
         pytest.param(f"{opening}{core}{closing}", id=f"{name}-{core_name}")
@@ -99,6 +113,25 @@ _ACCEPTED_SENTINEL_FORMATS = (
             id=f"{name}-case-variation",
         )
         for name, opening, closing in _SENTINEL_WRAPPERS
+    ]
+    + [
+        pytest.param(
+            f"{outer_opening}  {inner_opening}{core}{inner_closing}  {outer_closing}",
+            id=f"nested-{outer_name}-{inner_name}-{core_name}",
+        )
+        for outer_name, outer_opening, outer_closing in _PRESENTATION_WRAPPERS
+        for inner_name, inner_opening, inner_closing in _PRESENTATION_WRAPPERS
+        for core_name, core in _SENTINEL_CORE_VARIANTS
+    ]
+    + [
+        pytest.param('**"NO IMAGE RECEIVED."**', id="trigger-bold-around-quote"),
+        pytest.param('"**NO IMAGE RECEIVED.**"', id="trigger-quote-around-bold"),
+        pytest.param("***NO IMAGE RECEIVED.***", id="trigger-triple-asterisk"),
+        pytest.param("___NO IMAGE RECEIVED.___", id="triple-underscore"),
+    ]
+    + [
+        pytest.param(_nested_sentinel(depth), id=f"nested-depth-{depth}")
+        for depth in range(1, 17)
     ]
 )
 
@@ -263,8 +296,8 @@ def test_caption_images_normalizes_closed_whole_answer_formats(
         pytest.param('"NO IMAGE RECEIVED".', id="punctuation-after-quote"),
         pytest.param("`NO IMAGE RECEIVED.`", id="inline-code"),
         pytest.param("```NO IMAGE RECEIVED.```", id="code-fence"),
-        pytest.param('"**NO IMAGE RECEIVED.**"', id="quote-around-bold"),
-        pytest.param('**"NO IMAGE RECEIVED."**', id="bold-around-quote"),
+        pytest.param("*NO IMAGE RECEIVED.**", id="unmatched-asterisk-emphasis"),
+        pytest.param("__NO IMAGE RECEIVED._", id="unmatched-underscore-emphasis"),
         pytest.param('“NO IMAGE RECEIVED."', id="mismatched-smart-ascii-double"),
         pytest.param('"NO IMAGE RECEIVED.”', id="mismatched-ascii-smart-double"),
         pytest.param("‘NO IMAGE RECEIVED.'", id="mismatched-smart-ascii-single"),
@@ -296,8 +329,18 @@ def test_caption_images_leaves_out_of_contract_answers_completed(
     )
 
 
-def test_empty_answer_is_a_classifier_only_non_match() -> None:
-    assert _is_image_unavailable_answer("") is False
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param("", id="empty"),
+        pytest.param("**", id="bold-wrapper-only"),
+        pytest.param("****", id="nested-asterisk-wrapper-only"),
+        pytest.param('""', id="quote-wrapper-only"),
+        pytest.param('"  *  _  “”  _  *  "', id="deep-wrapper-only"),
+    ],
+)
+def test_wrapper_only_answer_is_a_classifier_only_non_match(reply: str) -> None:
+    assert _is_image_unavailable_answer(reply) is False
 
 
 def test_caption_images_preserves_actual_client_empty_response_error(
