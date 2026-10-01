@@ -38,9 +38,11 @@ still rejects detector-memory exhaustion rather than accepting partial coverage.
 
 ## Prepare the helper
 
-Run on **Linux amd64**, from an NPA checkout with its development environment
-installed. The bootstrap downloads its pinned Go toolchain and modules; a local
-Go installation is not required. macOS and ARM hosts are not supported by this
+Run on **Linux amd64 with kernel 5.9 or newer**, from an NPA checkout with its
+development environment installed. Linux 5.9 is required because the
+built-binary TSYNC proof binds the pre-existing thread's `Seccomp_filters`
+counter. The bootstrap downloads its pinned Go toolchain and modules; a local Go
+installation is not required. macOS, ARM, and older kernels are rejected by this
 native preparation path.
 
 Choose a private analysis directory outside the checkout. Replace the three

@@ -49,6 +49,23 @@ def archive_bytes(members):
     return stream.getvalue()
 
 
+@pytest.mark.parametrize(
+    ("release", "supported"),
+    [
+        ("5.9", True),
+        ("5.9.0", True),
+        ("5.15.0-186-generic", True),
+        ("6.12.0+", True),
+        ("5.8.19", False),
+        ("4.19.0", False),
+        ("invalid", False),
+        ("5", False),
+    ],
+)
+def test_containment_probe_kernel_floor(release, supported):
+    assert B.supported_linux_kernel(release) is supported
+
+
 def prepare_archive(tmp_path, monkeypatch, members):
     raw = archive_bytes(members)
     monkeypatch.setattr(B, "GO_ARCHIVE_SHA256", B.digest(raw))

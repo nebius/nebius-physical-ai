@@ -30,6 +30,7 @@ GO_ARCHIVE_SHA256 = "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf5901
 GO_ARCHIVE_URL = f"https://go.dev/dl/go{GO_VERSION}.linux-amd64.tar.gz"
 GITLEAKS_VERSION = "v8.28.0"
 PROCESS_CONTAINMENT = "seccomp-process-group-v1"
+MIN_LINUX_KERNEL = (5, 9)
 SOURCE_NAMES = (
     "main.go",
     "main_test.go",
@@ -46,6 +47,13 @@ GO_NAMES = ("main.go", "main_test.go", "go.mod", "go.sum")
 
 class BuildError(Exception):
     """A fixed diagnostic code; raw subprocess output stays in protected logs."""
+
+
+def supported_linux_kernel(release: str) -> bool:
+    match = re.match(r"^([0-9]+)\.([0-9]+)(?:\.|[-+]|$)", release)
+    return bool(
+        match and (int(match.group(1)), int(match.group(2))) >= MIN_LINUX_KERNEL
+    )
 
 
 def digest(data: bytes) -> str:
@@ -646,6 +654,8 @@ def build(
 ) -> dict:
     if platform.system() != "Linux" or platform.machine() not in {"x86_64", "amd64"}:
         raise BuildError("unsupported_platform")
+    if not supported_linux_kernel(platform.release()):
+        raise BuildError("unsupported_kernel")
     trusted = no_symlinks(trusted_root)
     analysis = no_symlinks(analysis_root)
     output = no_symlinks(output_dir)
