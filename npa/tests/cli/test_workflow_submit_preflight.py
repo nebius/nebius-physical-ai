@@ -2643,7 +2643,12 @@ def test_effective_pull_secret_sets_accept_initial_multi_entry_task_list() -> No
         (["--image-pull-timeout-seconds", "3600"], 3600, 1800),
         (["--image-bootstrap-timeout-seconds", "0"], 0, 0),
         (
-            ["--image-pull-timeout-seconds", "0", "--image-bootstrap-timeout-seconds", "45"],
+            [
+                "--image-pull-timeout-seconds",
+                "0",
+                "--image-bootstrap-timeout-seconds",
+                "45",
+            ],
             0,
             45,
         ),
@@ -2702,7 +2707,9 @@ def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(
     assert checks.call_args.kwargs["operator_images"] == set()
     assert checks.call_args.kwargs["kubernetes_images"] == {digest_image}
     assert checks.call_args.kwargs["target_pull_timeout_seconds"] == pull_timeout
-    assert contracts.call_args.kwargs["observation_timeout_seconds"] == bootstrap_timeout
+    assert (
+        contracts.call_args.kwargs["observation_timeout_seconds"] == bootstrap_timeout
+    )
     assert contracts.call_args.kwargs["pull_secrets_by_image"] == {
         digest_image: ("operator-registry",)
     }
@@ -2720,7 +2727,8 @@ def test_submit_image_preflight_keeps_pull_and_bootstrap_deadlines_separate(
 
     image = "docker.io/library/alpine:3.22.0"
     mocker.patch.object(
-        workflow_cli, "_plan_preflight_image_requirements",
+        workflow_cli,
+        "_plan_preflight_image_requirements",
         return_value=([image], {}),
     )
     checks = mocker.patch(
@@ -2731,9 +2739,12 @@ def test_submit_image_preflight_keeps_pull_and_bootstrap_deadlines_separate(
         workflow_cli, "_preflight_image_bootstrap_contracts", return_value=[]
     )
     workflow_cli._preflight_submit_images(
-        SIM2REAL_SPEC, spec=SimpleNamespace(name="probe"),
+        SIM2REAL_SPEC,
+        spec=SimpleNamespace(name="probe"),
         options=SkypilotRenderOptions(),
-        assume_decision="", enabled=True, image_bootstrap_timeout_seconds=45,
+        assume_decision="",
+        enabled=True,
+        image_bootstrap_timeout_seconds=45,
         image_pull_timeout_seconds=pull_timeout,
     )
     assert checks.call_args.kwargs["target_pull_timeout_seconds"] == (

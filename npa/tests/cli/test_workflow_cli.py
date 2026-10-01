@@ -426,8 +426,14 @@ def test_recovery_preserves_explicit_image_pull_timeout(pull_timeout: int) -> No
 def test_negative_image_pull_timeout_fails_cli_validation(command: str) -> None:
     result = runner.invoke(
         app,
-        ["workbench", "workflow", command, "workflow.yaml",
-         "--image-pull-timeout-seconds", "-1"],
+        [
+            "workbench",
+            "workflow",
+            command,
+            "workflow.yaml",
+            "--image-pull-timeout-seconds",
+            "-1",
+        ],
     )
     assert result.exit_code == 2
     assert "image-pull-timeout-seconds" in result.output
