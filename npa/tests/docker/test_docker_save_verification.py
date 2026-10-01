@@ -233,7 +233,9 @@ def test_verifier_rejects_concatenated_gzip_before_later_optional_header(
 
 def test_verifier_streams_regular_file_larger_than_framed_scanner_limit(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(core, "DETECTOR_RECORD_LIMIT", 4)
     archive, image_id = _archive(tmp_path, layer_entries=[("opt/result.txt", b"12345")])
 
     report = VERIFIER.verify(archive, image_id)
@@ -241,6 +243,40 @@ def test_verifier_streams_regular_file_larger_than_framed_scanner_limit(
     assert report["valid"]
     assert report["regular_files_read"] == 1
     assert report["content_bytes_read"] == 5
+
+
+def test_verifier_complete_record_limit_accepts_exact_boundary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(core, "COMPLETE_RECORD_LIMIT", 5)
+    layer = io.BytesIO(_tar([("opt/result.txt", b"12345")]))
+
+    assert VERIFIER._regular_population(layer) == (1, 1, 5)
+
+
+def test_verifier_rejects_boundary_plus_one_before_body_consumption(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(core, "COMPLETE_RECORD_LIMIT", 5)
+    member = tarfile.TarInfo("opt/result.txt")
+    member.size = 6
+    header = member.tobuf(format=tarfile.GNU_FORMAT)
+
+    class TrackingReader(io.BytesIO):
+        def __init__(self, data):
+            super().__init__(data)
+            self.requests = []
+
+        def read(self, amount=-1):
+            self.requests.append(amount)
+            return super().read(amount)
+
+    layer = TrackingReader(header)
+    with pytest.raises(core.ScanError, match="^complete_record_limit$"):
+        VERIFIER._regular_population(layer)
+
+    assert layer.tell() == 512
+    assert layer.requests == [512]
 
 
 def test_verifier_zero_run_limit_is_incremental(

@@ -239,6 +239,67 @@ def test_whole_file_match_crosses_large_binary_record_without_cap():
     assert result.record_sha256 == hashlib.sha256(raw).hexdigest()
 
 
+def test_offset_conversion_uses_bounded_text_and_encoding_temporaries():
+    slices = []
+
+    class TrackedText(str):
+        def __getitem__(self, key):
+            result = super().__getitem__(key)
+            if isinstance(key, slice):
+                slices.append(len(result))
+            return result
+
+    text = TrackedText("é" * 200_000 + "\udcffLATE\r\n")
+    positions = {len(text) - 6, len(text) - 2}
+    offsets = policy_module._byte_positions(text, positions)
+    lines = policy_module._byte_line_positions(b"", text, set(offsets.values()))
+
+    assert offsets[min(positions)] > 200_000
+    assert set(lines.values()) == {1}
+    assert slices
+    assert max(slices) <= policy_module._ENCODE_CHARACTER_CHUNK
+
+
+def test_first_giant_line_with_trailing_separator_is_not_sliced_for_search():
+    slices = []
+
+    class TrackedText(str):
+        def __getitem__(self, key):
+            result = super().__getitem__(key)
+            if isinstance(key, slice):
+                slices.append(len(result))
+            return result
+
+    text = TrackedText("A" * 200_000 + "\udcffEND\r\n")
+    end = len(text) - 2
+    expression = re.compile(r"(?<!B)^A+\udcff(END)\1?$")
+
+    assert policy_module._line_match_span(expression, text, 0, end) == (0, end)
+    assert slices == []
+
+
+def test_late_regex_and_literal_offsets_preserve_surrogates_and_lines():
+    raw = "é".encode() * 100_000 + b"\xffBEGIN-middle-END\n" + b"x" * 100_000
+    regex = compile_policy(r"(?s:\udcffBEGIN.*END)")
+    regex_result = regex.scan_record(raw)
+    expected_start = len("é".encode()) * 100_000
+
+    assert regex_result.findings[0].start_byte == expected_start
+    assert regex_result.findings[0].end_byte == expected_start + len(
+        b"\xffBEGIN-middle-END"
+    )
+    literal_start = len(raw) - 17
+    literal_match = LiteralMatch(1, literal_start, len(raw))
+    literal_policy = compile_policy("absent", literal_policy=binding())
+    literal_result_value = literal_policy.scan_record(
+        raw,
+        literal_scan=literal_result(raw, matches=(literal_match,)),
+    )
+    literal = literal_result_value.findings[0]
+    assert (literal.start_byte, literal.end_byte) == (literal_start, len(raw))
+    assert literal.start_line == literal.end_line == 2
+
+
 @pytest.mark.parametrize(
     ("raw", "customer", "infra"),
     [

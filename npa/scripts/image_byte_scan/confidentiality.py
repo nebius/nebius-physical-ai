@@ -21,6 +21,7 @@ from typing import Iterator
 _SEMANTICS = "python-search-lines-plus-finditer-record/v1"
 _LINE_BREAK = re.compile(r"\r\n|[\n\r\v\f\x1c-\x1e\x85\u2028\u2029]")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+_ENCODE_CHARACTER_CHUNK = 64 * 1024
 
 
 class ConfidentialityError(ValueError):
@@ -138,13 +139,25 @@ def _lines(text: str) -> Iterator[tuple[int, int, int]]:
         yield start, len(text), len(text)
 
 
+def _encoded_length(text: str, start: int, end: int) -> int:
+    """Return one character range's encoded size with bounded temporaries."""
+    byte_count = 0
+    while start < end:
+        next_start = min(start + _ENCODE_CHARACTER_CHUNK, end)
+        part = text[start:next_start]
+        byte_count += len(part.encode("utf-8", "surrogateescape"))
+        part = None
+        start = next_start
+    return byte_count
+
+
 def _byte_positions(text: str, positions: set[int]) -> dict[int, int]:
-    """Convert only needed character offsets, encoding each intervening span once."""
+    """Convert needed character offsets with bounded encoding buffers."""
     previous = 0
     byte_offset = 0
     result = {}
     for position in sorted(positions):
-        byte_offset += len(text[previous:position].encode("utf-8", "surrogateescape"))
+        byte_offset += _encoded_length(text, previous, position)
         result[position] = byte_offset
         previous = position
     return result
@@ -165,17 +178,17 @@ def _line_positions(text: str, positions: set[int]) -> dict[int, int]:
 
 
 def _byte_line_positions(
-    raw: bytes | mmap.mmap, text: str, positions: set[int]
+    _raw: bytes | mmap.mmap, text: str, positions: set[int]
 ) -> dict[int, int]:
-    """Map bounded byte offsets while encoding each decoded span at most once."""
+    """Map bounded byte offsets with bounded encoding buffers."""
     targets = iter(sorted(positions))
     target = next(targets, None)
     result = {}
     line = 1
     char_cursor = byte_cursor = 0
     for separator in _LINE_BREAK.finditer(text):
-        separator_end = byte_cursor + len(
-            text[char_cursor : separator.end()].encode("utf-8", "surrogateescape")
+        separator_end = byte_cursor + _encoded_length(
+            text, char_cursor, separator.end()
         )
         while target is not None and target < separator_end:
             result[target] = line
@@ -187,6 +200,27 @@ def _byte_line_positions(
         result[target] = line
         target = next(targets, None)
     return result
+
+
+def _line_match_span(
+    expression: re.Pattern[str],
+    text: str,
+    start: int,
+    end: int,
+) -> tuple[int, int] | None:
+    """Run one exact split-line search and release any substring immediately."""
+    if start == 0:
+        match = expression.search(text, 0, end)
+        return match.span() if match is not None else None
+    line = text[start:end]
+    try:
+        match = expression.search(line)
+        if match is None:
+            return None
+        return start + match.start(), start + match.end()
+    finally:
+        match = None
+        line = None
 
 
 @dataclass(frozen=True)
@@ -306,12 +340,11 @@ class ConfidentialityPolicy:
         line_count = 0
         for start, end, _next_start in _lines(text):
             line_count += 1
-            line = text[start:end]
             for rule in self._rules:
-                match = rule.expression.search(line)
-                if match is not None:
+                match_span = _line_match_span(rule.expression, text, start, end)
+                if match_span is not None:
                     add_span(
-                        (rule.rule_id, start + match.start(), start + match.end()),
+                        (rule.rule_id, *match_span),
                         "line",
                     )
         for rule in self._rules:

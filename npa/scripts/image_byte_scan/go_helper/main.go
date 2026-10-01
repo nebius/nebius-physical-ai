@@ -37,8 +37,14 @@ const detectorMemoryHeadroom uint64 = 4 * 1024 * 1024 * 1024
 // ceiling remains the fail-closed backstop if a future detector expands more.
 const detectorPayloadExpansion uint64 = 10
 const maxRecordBytes = (maxMemoryBytes - detectorMemoryHeadroom) / detectorPayloadExpansion
+const completeRecordLimit uint64 = 1 << 30
 const maxRecordFindings = 4096
 const maxDetectionWorkers = 64
+
+var mappedRecordUnmap = syscall.Munmap
+var mappedRecordClose = func(file *os.File) error { return file.Close() }
+var mappedRecordStat = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
+var mappedRecordDetect = detectMappedRecord
 
 type finding struct {
 	RuleID    string `json:"rule_id"`
@@ -835,6 +841,9 @@ func process(input io.Reader, output, stderr io.Writer, detector *detect.Detecto
 }
 
 func mapPrivateRecord(fd int, length uint64) (*os.File, []byte, os.FileInfo, string) {
+	if length > completeRecordLimit {
+		return nil, nil, nil, "complete_record_limit"
+	}
 	if fd < 3 || length == 0 || length > uint64(int(^uint(0)>>1)) {
 		return nil, nil, nil, "record_descriptor_invalid"
 	}
@@ -865,6 +874,20 @@ func mapPrivateRecord(fd int, length uint64) (*os.File, []byte, os.FileInfo, str
 	return file, payload, before, ""
 }
 
+func detectMappedRecord(payload []byte, detector *detect.Detector, ordinal uint64) (found []finding, code string) {
+	defer func() {
+		if recover() != nil {
+			found = nil
+			code = "internal_panic"
+		}
+	}()
+	raw := unsafe.String(unsafe.SliceData(payload), len(payload))
+	found, code = scanRaw(raw, ordinal, detector)
+	raw = ""
+	runtime.KeepAlive(payload)
+	return found, code
+}
+
 func scanMappedRecord(detector *detect.Detector, recordFD int,
 	length, ordinal uint64) (result, summary, string) {
 	if ordinal == 0 {
@@ -877,23 +900,25 @@ func scanMappedRecord(detector *detect.Detector, recordFD int,
 	if code != "" {
 		return result{}, summary{}, code
 	}
-	defer file.Close()
 	first := sha256.Sum256(payload)
-	raw := unsafe.String(unsafe.SliceData(payload), len(payload))
-	findings, code := scanRaw(raw, ordinal, detector)
-	raw = ""
-	runtime.KeepAlive(payload)
+	findings, scanCode := mappedRecordDetect(payload, detector, ordinal)
 	second := sha256.Sum256(payload)
-	after, statError := file.Stat()
-	if code != "" || statError != nil || first != second || !sameConfigStat(before, after) {
-		if code == "" {
-			code = "record_changed"
-		}
-		_ = syscall.Munmap(payload)
-		return result{}, summary{}, code
+	after, statError := mappedRecordStat(file)
+	mutation := statError != nil || first != second ||
+		(statError == nil && !sameConfigStat(before, after))
+	unmapError := mappedRecordUnmap(payload)
+	closeError := mappedRecordClose(file)
+	if scanCode != "" {
+		return result{}, summary{}, scanCode
 	}
-	if syscall.Munmap(payload) != nil {
+	if mutation {
+		return result{}, summary{}, "record_changed"
+	}
+	if unmapError != nil {
 		return result{}, summary{}, "record_unmap_failed"
+	}
+	if closeError != nil {
+		return result{}, summary{}, "record_close_failed"
 	}
 	digest := hex.EncodeToString(first[:])
 	record := result{Type: "result", Ordinal: ordinal, Bytes: length, SHA256: digest, Findings: findings}

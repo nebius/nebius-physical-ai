@@ -102,6 +102,9 @@ DETECTOR_PAYLOAD_EXPANSION = 10
 DETECTOR_RECORD_LIMIT = (
     DETECTOR_MEMORY_LIMIT - DETECTOR_MEMORY_HEADROOM
 ) // DETECTOR_PAYLOAD_EXPANSION
+# Complete-record scanners preserve whole-record regex semantics, but do not
+# admit a regular file merely because it fits inside the decoded-layer ceiling.
+COMPLETE_RECORD_LIMIT = 1 << 30
 DOCKER_SAVE_DECODED_LAYER_LIMIT = 64 * 1024 * 1024 * 1024
 CONFIDENTIALITY_RECORD_LIMIT = DETECTOR_RECORD_LIMIT
 CONFIDENTIALITY_MEMORY_LIMIT = DETECTOR_MEMORY_LIMIT
@@ -184,6 +187,13 @@ INPUT_ERRORS = (
 def require(condition, code):
     if not condition:
         raise ScanError(code)
+
+
+def _admit_complete_record(length):
+    require(
+        type(length) is int and 0 <= length <= COMPLETE_RECORD_LIMIT,
+        "complete_record_limit",
+    )
 
 
 def canonical(value):
@@ -472,32 +482,151 @@ def _spill_error(error):
     return ScanError("oversized_spill_io")
 
 
+def _close_descriptors(descriptors):
+    failed = False
+    for descriptor in descriptors:
+        if descriptor is None:
+            continue
+        try:
+            os.close(descriptor)
+        except OSError:
+            failed = True
+    return failed
+
+
+def _same_spill_name(directory_fd, name, descriptor):
+    try:
+        named = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        opened = os.fstat(descriptor)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return None
+    return stat.S_ISREG(named.st_mode) and (named.st_dev, named.st_ino) == (
+        opened.st_dev,
+        opened.st_ino,
+    )
+
+
+def _cleanup_named_spill(directory_fd, name, descriptor):
+    failed = False
+    same_name = _same_spill_name(directory_fd, name, descriptor)
+    if same_name is True:
+        try:
+            os.unlink(name, dir_fd=directory_fd)
+            os.fsync(directory_fd)
+        except OSError:
+            failed = True
+    elif same_name is None:
+        failed = True
+    return _close_descriptors((descriptor,)) or failed
+
+
+def _named_spill_writer(directory_fd):
+    flags = os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
+    for _attempt in range(16):
+        name = ".oversized-record-" + secrets.token_hex(16)
+        try:
+            descriptor = os.open(name, flags, 0o600, dir_fd=directory_fd)
+        except FileExistsError:
+            continue
+        except OSError as error:
+            raise _spill_error(error) from None
+        try:
+            os.unlink(name, dir_fd=directory_fd)
+            os.fsync(directory_fd)
+            return descriptor
+        except OSError as error:
+            _cleanup_named_spill(directory_fd, name, descriptor)
+            raise _spill_error(error) from None
+    raise ScanError("oversized_spill_name_collision")
+
+
+def _open_spill_writer(directory_fd):
+    unsupported = {
+        errno.EINVAL,
+        errno.EISDIR,
+        errno.ENOSYS,
+        errno.EOPNOTSUPP,
+        errno.EPERM,
+    }
+    if hasattr(os, "O_TMPFILE"):
+        try:
+            return os.open(
+                ".",
+                os.O_RDWR | os.O_TMPFILE | os.O_CLOEXEC,
+                0o600,
+                dir_fd=directory_fd,
+            )
+        except OSError as error:
+            if error.errno not in unsupported:
+                raise _spill_error(error) from None
+    return _named_spill_writer(directory_fd)
+
+
+def _finished_spill_writer(descriptor, length, expected_digest):
+    os.fsync(descriptor)
+    os.fchmod(descriptor, 0o400)
+    info = os.fstat(descriptor)
+    require(
+        stat.S_ISREG(info.st_mode)
+        and info.st_uid == os.geteuid()
+        and stat.S_IMODE(info.st_mode) == 0o400
+        and info.st_nlink == 0
+        and info.st_size == length,
+        "oversized_spill_identity",
+    )
+    require(
+        descriptor_digest(descriptor) == expected_digest,
+        "oversized_spill_changed",
+    )
+    return info
+
+
+def _readonly_spill_descriptor(writer, writer_info):
+    reader = os.open(
+        f"/proc/self/fd/{writer}",
+        os.O_RDONLY | os.O_NONBLOCK | os.O_CLOEXEC,
+    )
+    try:
+        reader_info = os.fstat(reader)
+        require(
+            stat_fingerprint(reader_info) == stat_fingerprint(writer_info)
+            and fcntl.fcntl(reader, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY,
+            "oversized_spill_identity",
+        )
+        return reader
+    except BaseException:
+        try:
+            os.close(reader)
+        except OSError:
+            pass
+        raise
+
+
 class _PrivateSpill:
     """One owner-only record file unlinked before any scanner receives it."""
 
     def __init__(self, directory):
-        self.directory_fd = directory_fd(directory)
-        self.name = self.write_fd = self.fd = self.identity = self.expected_digest = None
+        self.directory_fd = self.write_fd = self.fd = None
+        self.identity = self.expected_digest = self.expected_length = None
         try:
-            for _attempt in range(16):
-                self.name = ".oversized-record-" + secrets.token_hex(16)
-                try:
-                    self.write_fd = os.open(
-                        self.name,
-                        os.O_WRONLY
-                        | os.O_CREAT
-                        | os.O_EXCL
-                        | os.O_NOFOLLOW
-                        | os.O_CLOEXEC,
-                        0o600,
-                        dir_fd=self.directory_fd,
-                    )
-                    break
-                except FileExistsError:
-                    continue
-            require(self.write_fd is not None, "oversized_spill_name_collision")
+            self.directory_fd = directory_fd(directory)
+            self.write_fd = _open_spill_writer(self.directory_fd)
+            os.fchmod(self.write_fd, 0o600)
+            opened = os.fstat(self.write_fd)
+            require(
+                stat.S_ISREG(opened.st_mode)
+                and opened.st_uid == os.geteuid()
+                and stat.S_IMODE(opened.st_mode) == 0o600
+                and opened.st_nlink == 0,
+                "oversized_spill_identity",
+            )
         except BaseException:
-            self.close()
+            try:
+                self.close()
+            except ScanError:
+                pass
             raise
 
     def write(self, data):
@@ -511,50 +640,50 @@ class _PrivateSpill:
             raise _spill_error(error) from None
 
     def finish(self, length, expected_digest):
+        readonly = None
         try:
             require(
                 isinstance(expected_digest, str)
                 and SHA.fullmatch(expected_digest) is not None,
                 "oversized_spill_digest",
             )
-            os.fsync(self.write_fd)
-            os.fchmod(self.write_fd, 0o400)
-            before = os.fstat(self.write_fd)
-            require(
-                stat.S_ISREG(before.st_mode)
-                and before.st_uid == os.geteuid()
-                and stat.S_IMODE(before.st_mode) == 0o400
-                and before.st_nlink == 1
-                and before.st_size == length,
-                "oversized_spill_identity",
+            before = _finished_spill_writer(
+                self.write_fd,
+                length,
+                expected_digest,
             )
-            self.fd = os.open(
-                self.name,
-                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
-                dir_fd=self.directory_fd,
-            )
-            require(
-                stat_fingerprint(os.fstat(self.fd)) == stat_fingerprint(before),
-                "oversized_spill_identity",
-            )
-            os.close(self.write_fd)
-            self.write_fd = None
-            os.unlink(self.name, dir_fd=self.directory_fd)
-            self.name = None
-            os.fsync(self.directory_fd)
+            readonly = _readonly_spill_descriptor(self.write_fd, before)
+            writer, self.write_fd = self.write_fd, None
+            os.close(writer)
+            self.fd, readonly = readonly, None
             current = os.fstat(self.fd)
-            require(current.st_nlink == 0, "oversized_spill_not_unlinked")
+            require(
+                current.st_nlink == 0
+                and stat_fingerprint(current) == stat_fingerprint(before)
+                and descriptor_digest(self.fd) == expected_digest,
+                "oversized_spill_changed",
+            )
             self.identity = stat_fingerprint(current)
             self.expected_digest = expected_digest
+            self.expected_length = length
             return self.fd
         except OSError as error:
             raise _spill_error(error) from None
+        finally:
+            if readonly is not None:
+                try:
+                    os.close(readonly)
+                except OSError:
+                    pass
 
     def verify(self):
         current = os.fstat(self.fd)
         require(
             current.st_nlink == 0
-            and stat_fingerprint(current) == self.identity,
+            and stat.S_IMODE(current.st_mode) == 0o400
+            and current.st_size == self.expected_length
+            and stat_fingerprint(current) == self.identity
+            and fcntl.fcntl(self.fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY,
             "oversized_spill_changed",
         )
         require(
@@ -563,31 +692,24 @@ class _PrivateSpill:
         )
 
     def close(self):
-        cleanup_failed = False
-        if self.name is not None and self.directory_fd is not None:
-            try:
-                os.unlink(self.name, dir_fd=self.directory_fd)
-                os.fsync(self.directory_fd)
-            except FileNotFoundError:
-                pass
-            except OSError:
-                cleanup_failed = True
-            self.name = None
+        descriptors = []
         for attribute in ("write_fd", "fd", "directory_fd"):
-            descriptor = getattr(self, attribute, None)
-            if descriptor is not None:
-                try:
-                    os.close(descriptor)
-                except OSError:
-                    cleanup_failed = True
-                setattr(self, attribute, None)
-        require(not cleanup_failed, "oversized_spill_cleanup_failed")
+            descriptors.append(getattr(self, attribute))
+            setattr(self, attribute, None)
+        require(
+            not _close_descriptors(descriptors),
+            "oversized_spill_cleanup_failed",
+        )
 
     def __enter__(self):
         return self
 
-    def __exit__(self, _error_type, _error, _traceback):
-        self.close()
+    def __exit__(self, _error_type, error, _traceback):
+        try:
+            self.close()
+        except ScanError:
+            if error is None:
+                raise
 
 
 class ZeroReader:
@@ -1028,10 +1150,67 @@ def _helper_descriptors(authorization):
         yield helper_fd, config_fd
 
 
+def _signal_process_group(process_group):
+    if process_group is None:
+        return False
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return False
+
+
+def _process_stat_fields(entry):
+    try:
+        fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+        return fields[0], int(fields[2]), int(fields[3])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _process_group_survived(process_group):
+    if process_group is None:
+        return False
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    observed = False
+    try:
+        entries = list(Path("/proc").iterdir())
+    except OSError:
+        return True
+    for entry in entries:
+        if not entry.name.isdecimal():
+            continue
+        fields = _process_stat_fields(entry)
+        if fields is None:
+            continue
+        state, group, session = fields
+        if group != process_group or session != process_group:
+            continue
+        observed = True
+        if state != "Z":
+            return True
+    if observed:
+        return False
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        return True
+    return True
+
+
 class Detector:
     def __init__(self, authorization, stderr_path):
         self.authorization = authorization
-        self.process = self.stderr = None
+        self.process = self.process_group = self.stderr = None
         self.joined = False
         self.ordinal = self.bytes = self.findings = 0
         self.session_records = self.session_bytes = self.session_findings = 0
@@ -1058,7 +1237,10 @@ class Detector:
             self.stderr = os.fdopen(stderr_fd, "wb")
             self._start_stream()
         except BaseException:
-            self.abort()
+            try:
+                self.abort()
+            except BaseException:
+                pass
             raise
 
     def _start_process(self, arguments=(), inherited=(), *, stream):
@@ -1094,13 +1276,25 @@ class Detector:
                 start_new_session=True,
                 pass_fds=(helper_fd, config_fd, *inherited),
             )
+            process_id = self.process.pid
+            require(
+                type(process_id) is int and process_id > 0,
+                "helper_process_group",
+            )
+            self.process_group = process_id
+            try:
+                isolated = (
+                    os.getsid(process_id) == process_id
+                    and os.getpgid(process_id) == process_id
+                )
+            except ProcessLookupError:
+                isolated = self.process.poll() is not None
+            require(isolated, "helper_process_group")
         finally:
             _SPAWNING = False
 
     def _start_stream(self):
-        arguments = (
-            ("--ordinal-base", str(self.ordinal)) if self.ordinal else ()
-        )
+        arguments = ("--ordinal-base", str(self.ordinal)) if self.ordinal else ()
         self._start_process(arguments, stream=True)
         self.session_records = self.session_bytes = self.session_findings = 0
         self.stream_active = True
@@ -1232,13 +1426,23 @@ class Detector:
 
     def _close_current_streams(self):
         if self.process is None:
-            return
+            return False
+        failed = False
         for stream in (self.process.stdin, self.process.stdout):
             if stream is not None and not stream.closed:
                 try:
                     stream.close()
-                except BrokenPipeError:
-                    pass
+                except OSError:
+                    failed = True
+        return failed
+
+    def _cleanup_exited_current(self):
+        process_group, self.process_group = self.process_group, None
+        failed = _signal_process_group(process_group)
+        failed = _process_group_survived(process_group) or failed
+        failed = self._close_current_streams() or failed
+        self.stream_active = False
+        return failed
 
     def _finish_stream(self):
         if not self.stream_active:
@@ -1255,25 +1459,28 @@ class Detector:
         require(not self.responses, "helper_extra_response")
         require(os.read(self.stdout_fd, 1) == b"", "helper_extra_response")
         code = self.process.wait()
-        self.stream_active = False
-        self._close_current_streams()
-        require(code == (1 if self.session_findings else 0), "helper_exit_status")
+        status_error = code != (1 if self.session_findings else 0)
+        cleanup_failed = self._cleanup_exited_current()
+        require(not status_error, "helper_exit_status")
+        require(not cleanup_failed, "helper_cleanup_failed")
 
     def scan_spilled(self, fd, length, digest):
         """Scan one immutable oversized record in an isolated mapped helper."""
-        require(not self.outstanding, "oversized_helper_pending_records")
-        self._finish_stream()
-        ordinal = self.ordinal + 1
-        before = stat_fingerprint(os.fstat(fd))
-        arguments = (
-            "--record-fd",
-            str(fd),
-            "--record-length",
-            str(length),
-            "--record-ordinal",
-            str(ordinal),
-        )
+        _admit_complete_record(length)
+        require(length > 0, "record_descriptor_invalid")
         try:
+            require(not self.outstanding, "oversized_helper_pending_records")
+            self._finish_stream()
+            ordinal = self.ordinal + 1
+            before = stat_fingerprint(os.fstat(fd))
+            arguments = (
+                "--record-fd",
+                str(fd),
+                "--record-length",
+                str(length),
+                "--record-ordinal",
+                str(ordinal),
+            )
             self._start_process(arguments, (fd,), stream=False)
             findings = self._mapped_findings(ordinal, length, digest)
             self._finish_mapped_process(findings)
@@ -1283,7 +1490,10 @@ class Detector:
             )
             self.outstanding.append((length, digest, findings))
         except BaseException:
-            self._abort_current()
+            try:
+                self._abort_current()
+            except BaseException:
+                pass
             raise
 
     def _mapped_findings(self, ordinal, length, digest):
@@ -1309,20 +1519,34 @@ class Detector:
         require(not self.responses, "helper_extra_response")
         require(os.read(self.stdout_fd, 1) == b"", "helper_extra_response")
         code = self.process.wait()
-        self._close_current_streams()
-        require(code == (1 if findings else 0), "helper_exit_status")
+        status_error = code != (1 if findings else 0)
+        cleanup_failed = self._cleanup_exited_current()
+        require(not status_error, "helper_exit_status")
+        require(not cleanup_failed, "helper_cleanup_failed")
 
     def _abort_current(self):
         if self.process is None:
             return
+        failed = False
         if self.process.poll() is None:
-            try:
-                self.process.terminate()
-            except ProcessLookupError:
-                pass
-        self.process.wait()
-        self.stream_active = False
-        self._close_current_streams()
+            if self.process_group is not None:
+                group_failed = _signal_process_group(self.process_group)
+                failed = group_failed
+            else:
+                group_failed = True
+            if group_failed:
+                try:
+                    self.process.kill()
+                except ProcessLookupError:
+                    pass
+                except OSError:
+                    failed = True
+        try:
+            self.process.wait()
+        except (OSError, subprocess.SubprocessError):
+            failed = True
+        failed = self._cleanup_exited_current() or failed
+        require(not failed, "helper_cleanup_failed")
 
     def begin(self, length):
         require(type(length) is int and 0 <= length < 2**64, "protocol_length")
@@ -1449,14 +1673,25 @@ class Detector:
             self.stderr.close()
             return result
         except BaseException:
-            self.abort()
+            try:
+                self.abort()
+            except BaseException:
+                pass
             raise
 
     def abort(self):
-        self._abort_current()
+        failed = False
+        try:
+            self._abort_current()
+        except BaseException:
+            failed = True
         self.joined = True
         if self.stderr is not None and not self.stderr.closed:
-            self.stderr.close()
+            try:
+                self.stderr.close()
+            except OSError:
+                failed = True
+        require(not failed, "helper_cleanup_failed")
 
 
 class PendingRecord:
@@ -1674,6 +1909,7 @@ _LITERAL_FINDING_FIELDS = {
 
 
 def _checked_spill_descriptor(fd, length, digest):
+    _admit_complete_record(length)
     info = os.fstat(fd)
     require(
         stat.S_ISREG(info.st_mode)
@@ -1726,6 +1962,21 @@ def _checked_mapped_policy(policy_config, literal_binding, policy_sha256):
     return policy, binding
 
 
+def _close_mapped_resources(mapping, descriptor):
+    cleanup_failed = False
+    for mapped_resource in (mapping, descriptor):
+        if mapped_resource is None:
+            continue
+        try:
+            if mapped_resource is mapping:
+                mapped_resource.close()
+            else:
+                os.close(mapped_resource)
+        except (OSError, BufferError, ValueError):
+            cleanup_failed = True
+    return cleanup_failed
+
+
 def _mapped_confidentiality_scan(
     connection,
     descriptor,
@@ -1737,30 +1988,35 @@ def _mapped_confidentiality_scan(
     policy_sha256,
     finding_limit,
 ):
-    fd = descriptor.detach()
+    fd = mapping = None
+    primary = None
     try:
+        fd = descriptor.detach()
         before = _checked_spill_descriptor(fd, length, digest)
         policy, binding = _checked_mapped_policy(
             policy_config, literal_binding, policy_sha256
         )
-        literal_scan = _checked_literal_scan(
-            binding, digest, length, literal_matches
-        )
+        literal_scan = _checked_literal_scan(binding, digest, length, literal_matches)
         connection.send_bytes(
             canonical({"type": "ready", "policy_sha256": policy_sha256})
         )
-        with mmap.mmap(fd, length, access=mmap.ACCESS_READ) as mapping:
-            receipt = policy.scan_mapped_record(
-                mapping, literal_scan=literal_scan, finding_limit=finding_limit
-            )
+        mapping = mmap.mmap(fd, length, access=mmap.ACCESS_READ)
+        receipt = policy.scan_mapped_record(
+            mapping, literal_scan=literal_scan, finding_limit=finding_limit
+        )
         require(
             stat_fingerprint(os.fstat(fd)) == before
             and descriptor_digest(fd) == digest,
             "oversized_spill_changed",
         )
-        return receipt
+    except BaseException as error:
+        primary = error
     finally:
-        os.close(fd)
+        cleanup_failed = _close_mapped_resources(mapping, fd)
+    if primary is not None:
+        raise primary
+    require(not cleanup_failed, "oversized_confidentiality_cleanup_failed")
+    return receipt
 
 
 def _confidentiality_receipt_bytes(receipt):
@@ -1790,6 +2046,25 @@ def _send_confidentiality_error(connection, error, fallback):
         pass
 
 
+def _acknowledge_oversized_session(connection):
+    os.setsid()
+    process_id = os.getpid()
+    process_group = os.getpgrp()
+    require(
+        os.getsid(0) == process_id and process_group == process_id,
+        "oversized_confidentiality_session",
+    )
+    connection.send_bytes(
+        canonical(
+            {
+                "type": "session",
+                "pid": process_id,
+                "process_group": process_group,
+            }
+        )
+    )
+
+
 def _oversized_confidentiality_worker(
     connection,
     descriptor,
@@ -1804,6 +2079,7 @@ def _oversized_confidentiality_worker(
 ):
     """Scan one immutable spill mapping in a disposable spawned process."""
     try:
+        _acknowledge_oversized_session(connection)
         _apply_address_space_limit(memory_limit)
         receipt = _mapped_confidentiality_scan(
             connection,
@@ -1892,6 +2168,7 @@ class _OversizedConfidentialityDetector:
         process_context=None,
         memory_limit=CONFIDENTIALITY_MEMORY_LIMIT,
         finding_limit=RECORD_FINDING_LIMIT,
+        worker_target=_oversized_confidentiality_worker,
     ):
         self.policy_config = policy_config
         self.literal_binding = (
@@ -1901,7 +2178,9 @@ class _OversizedConfidentialityDetector:
         self.context = process_context or multiprocessing.get_context("spawn")
         self.memory_limit = memory_limit
         self.finding_limit = finding_limit
+        self.worker_target = worker_target
         self.connection = self.process = self.child_connection = None
+        self.process_group = None
         self.records = 0
         self.joined = True
 
@@ -1922,6 +2201,7 @@ class _OversizedConfidentialityDetector:
         return result
 
     def scan(self, fd, length, digest, literal_matches):
+        _admit_complete_record(length)
         require(self.process is None, "oversized_confidentiality_worker_active")
         self._configure_worker(fd, length, digest, literal_matches)
         try:
@@ -1931,7 +2211,10 @@ class _OversizedConfidentialityDetector:
             self.records += 1
             return result, findings
         except BaseException:
-            self.abort()
+            try:
+                self.abort()
+            except BaseException:
+                pass
             raise
 
     def _configure_worker(self, fd, length, digest, literal_matches):
@@ -1939,7 +2222,7 @@ class _OversizedConfidentialityDetector:
         self.connection, self.child_connection = parent, child
         descriptor = multiprocessing.reduction.DupFd(fd)
         self.process = self.context.Process(
-            target=_oversized_confidentiality_worker,
+            target=self.worker_target,
             args=(
                 child,
                 descriptor,
@@ -1963,9 +2246,28 @@ class _OversizedConfidentialityDetector:
             self.process.start()
         finally:
             _SPAWNING = False
-        require(not _CANCEL_REQUESTED, "scan_cancelled")
-        self.child_connection.close()
+        try:
+            self.child_connection.close()
+        except OSError as error:
+            raise ScanError("oversized_confidentiality_cleanup_failed") from error
         self.child_connection = None
+        require(not _CANCEL_REQUESTED, "scan_cancelled")
+        session = self._response()
+        process_id = self.process.pid
+        if (
+            isinstance(session, dict)
+            and session.get("type") == "session"
+            and session.get("pid") == process_id
+            and session.get("process_group") == process_id
+        ):
+            self.process_group = process_id
+        require(
+            set(session) == {"type", "pid", "process_group"}
+            and self.process_group == process_id
+            and os.getsid(process_id) == process_id
+            and os.getpgid(process_id) == process_id,
+            "oversized_confidentiality_session",
+        )
         expected = {"type": "ready", "policy_sha256": self.policy_sha256}
         require(self._response() == expected, "confidentiality_worker_ready")
 
@@ -1985,34 +2287,103 @@ class _OversizedConfidentialityDetector:
         return result, findings
 
     def _join_worker(self):
-        self.connection.close()
+        cleanup_failed = False
+        try:
+            self.connection.close()
+        except OSError:
+            cleanup_failed = True
         self.connection = None
-        self.process.join()
+        join_failed = False
+        try:
+            self.process.join()
+        except (OSError, ValueError):
+            join_failed = True
         self.joined = True
-        require(self.process.exitcode == 0, "confidentiality_worker_exit")
-        self.process.close()
+        status_error = join_failed or self.process.exitcode != 0
+        process_group, self.process_group = self.process_group, None
+        cleanup_failed = _signal_process_group(process_group) or cleanup_failed
+        cleanup_failed = _process_group_survived(process_group) or cleanup_failed
+        try:
+            self.process.close()
+        except (OSError, ValueError):
+            cleanup_failed = True
         self.process = None
+        require(not status_error, "confidentiality_worker_exit")
+        require(not cleanup_failed, "oversized_confidentiality_cleanup_failed")
 
     def finish(self):
         require(self.process is None, "oversized_confidentiality_worker_active")
         self.joined = True
 
-    def abort(self):
-        if self.child_connection is not None:
-            self.child_connection.close()
-            self.child_connection = None
-        if self.connection is not None:
-            self.connection.close()
-            self.connection = None
-        if self.process is not None:
-            if self.process.pid is not None and self.process.is_alive():
-                self.process.terminate()
-            if self.process.pid is not None:
+    def _close_connections(self):
+        failed = False
+        for attribute in ("child_connection", "connection"):
+            connection = getattr(self, attribute)
+            if connection is None:
+                continue
+            try:
+                connection.close()
+            except OSError:
+                failed = True
+            setattr(self, attribute, None)
+        return failed
+
+    def _cache_worker_group(self, process_id):
+        if self.process_group is not None or process_id is None:
+            return
+        try:
+            isolated = (
+                os.getsid(process_id) == process_id
+                and os.getpgid(process_id) == process_id
+            )
+        except ProcessLookupError:
+            isolated = False
+        if isolated:
+            self.process_group = process_id
+
+    def _abort_worker_process(self):
+        if self.process is None:
+            return False
+        failed = False
+        process_id = self.process.pid
+        self._cache_worker_group(process_id)
+        try:
+            alive = process_id is not None and self.process.is_alive()
+        except (OSError, ValueError):
+            alive = False
+            failed = True
+        if alive:
+            group_failed = _signal_process_group(self.process_group)
+            failed = group_failed or failed
+            if self.process_group is None or group_failed:
+                try:
+                    self.process.kill()
+                except OSError:
+                    failed = True
+        if process_id is not None:
+            try:
                 self.process.join()
-            self.joined = True
-            if hasattr(self.process, "close"):
+            except (OSError, ValueError):
+                failed = True
+        self.joined = True
+        process_group, self.process_group = self.process_group, None
+        failed = _signal_process_group(process_group) or failed
+        failed = _process_group_survived(process_group) or failed
+        if hasattr(self.process, "close"):
+            try:
                 self.process.close()
-            self.process = None
+            except (OSError, ValueError):
+                failed = True
+        self.process = None
+        return failed
+
+    def abort(self):
+        cleanup_failed = self._close_connections()
+        cleanup_failed = self._abort_worker_process() or cleanup_failed
+        require(
+            not cleanup_failed,
+            "oversized_confidentiality_cleanup_failed",
+        )
 
 
 class ConfidentialityDetector:
@@ -2070,9 +2441,15 @@ class ConfidentialityDetector:
             )
         except BaseException:
             if self.child_connection is not None:
-                self.child_connection.close()
+                try:
+                    self.child_connection.close()
+                except OSError:
+                    pass
                 self.child_connection = None
-            self.abort()
+            try:
+                self.abort()
+            except BaseException:
+                pass
             raise
 
     def _response(self):
@@ -2131,28 +2508,59 @@ class ConfidentialityDetector:
             result == {"type": "summary", "records": self.records},
             "confidentiality_worker_summary",
         )
-        self.connection.close()
-        self.process.join()
+        cleanup_failed = self._close_connections()
+        status_error, process_cleanup = self._close_process(terminate=False)
+        require(not status_error, "confidentiality_worker_exit")
+        require(
+            not (cleanup_failed or process_cleanup),
+            "confidentiality_cleanup_failed",
+        )
+
+    def _close_connections(self):
+        failed = False
+        for attribute in ("child_connection", "connection"):
+            connection = getattr(self, attribute)
+            if connection is None:
+                continue
+            try:
+                connection.close()
+            except OSError:
+                failed = True
+            setattr(self, attribute, None)
+        return failed
+
+    def _close_process(self, *, terminate):
+        if self.process is None:
+            self.joined = True
+            return False, False
+        failed = False
+        if terminate and self.process.pid is not None:
+            try:
+                if self.process.is_alive():
+                    self.process.kill()
+            except (OSError, ValueError):
+                failed = True
+        try:
+            if self.process.pid is not None:
+                self.process.join()
+        except (OSError, ValueError):
+            failed = True
         self.joined = True
-        require(self.process.exitcode == 0, "confidentiality_worker_exit")
-        if hasattr(self.process, "close"):
+        status_error = not terminate and self.process.exitcode != 0
+        try:
             self.process.close()
+        except (OSError, ValueError):
+            failed = True
+        self.process = None
+        return status_error, failed
 
     def abort(self):
-        if self.child_connection is not None:
-            self.child_connection.close()
-            self.child_connection = None
-        if self.connection is not None:
-            self.connection.close()
-        if self.process is not None and self.process.pid is not None:
-            if self.process.is_alive():
-                self.process.terminate()
-            self.process.join()
-            self.joined = True
-            if hasattr(self.process, "close"):
-                self.process.close()
-        else:
-            self.joined = True
+        cleanup_failed = self._close_connections()
+        _, process_cleanup = self._close_process(terminate=True)
+        require(
+            not (cleanup_failed or process_cleanup),
+            "confidentiality_cleanup_failed",
+        )
 
 
 class Ledger:
@@ -2311,6 +2719,7 @@ class Ledger:
             raise ScanError(code) from error
 
     def send(self, reader, length, kind, context):
+        _admit_complete_record(length)
         self.flush_zeros()
         self.records += 1
         if length > DETECTOR_RECORD_LIMIT:
@@ -2409,27 +2818,31 @@ class Ledger:
         pending = PendingRecord(self.records, length, kind, context, None)
         spill = _PrivateSpill(self.directory)
         previous, self.open_record = self.open_record, pending
+        primary = None
         try:
-            self._spill_record_bytes(
-                reader, length, spill, digest, matcher, pending
-            )
+            self._spill_record_bytes(reader, length, spill, digest, matcher, pending)
             pending.digest = digest.hexdigest()
             fd = spill.finish(length, pending.digest)
             self.detector.scan_spilled(fd, length, pending.digest)
             if self.oversized_confidentiality is not None:
-                pending.confidentiality_result = (
-                    self.oversized_confidentiality.scan(
-                        fd,
-                        length,
-                        pending.digest,
-                        pending.literal_matches,
-                    )
+                pending.confidentiality_result = self.oversized_confidentiality.scan(
+                    fd,
+                    length,
+                    pending.digest,
+                    pending.literal_matches,
                 )
             spill.verify()
             return pending
+        except BaseException as error:
+            primary = error
+            raise
         finally:
             self.open_record = previous
-            spill.close()
+            try:
+                spill.close()
+            except ScanError:
+                if primary is None:
+                    raise
 
     def _spill_record_bytes(self, reader, length, spill, digest, matcher, pending):
         remaining = length
@@ -2632,16 +3045,24 @@ class Ledger:
             self.oversized_confidentiality.finish()
 
     def abort(self):
+        failed = False
         if (
             self.confidentiality_detector is not None
             and not self.confidentiality_detector.joined
         ):
-            self.confidentiality_detector.abort()
+            try:
+                self.confidentiality_detector.abort()
+            except BaseException:
+                failed = True
         if (
             self.oversized_confidentiality is not None
             and not self.oversized_confidentiality.joined
         ):
-            self.oversized_confidentiality.abort()
+            try:
+                self.oversized_confidentiality.abort()
+            except BaseException:
+                failed = True
+        require(not failed, "confidentiality_cleanup_failed")
 
     def flush_zeros(self):
         if self.zero_run is not None:
@@ -2809,6 +3230,8 @@ def walk_tar(reader, sink, scope, file_handler):
             },
             "unsupported_tar_entry_type",
         )
+        if info.isreg():
+            _admit_complete_record(info.size)
         if info.type in {
             tarfile.XHDTYPE,
             tarfile.XGLTYPE,
@@ -3332,6 +3755,12 @@ def verification_archive_digest(verification):
     ]
 
 
+def _retain_report_failure(report, code):
+    report["valid"] = False
+    report["complete"] = False
+    report.setdefault("failure_code", code)
+
+
 def _scan(authorization, directory, detector_type=Detector, *, record_observer=None):
     require(
         isinstance(authorization, dict)
@@ -3614,20 +4043,24 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
             else "uninterpretable_input_or_scanner_failure"
         )
     finally:
+        cleanup_failed = False
         if detector is not None and not detector.joined:
-            detector.abort()
+            try:
+                detector.abort()
+            except BaseException:
+                cleanup_failed = True
         report["helper_joined"] = detector is None or detector.joined
         if sink is not None:
-            sink.abort()
+            try:
+                sink.abort()
+            except BaseException:
+                cleanup_failed = True
             report["confidentiality_worker_joined"] = (
-                (
-                    sink.confidentiality_detector is None
-                    or sink.confidentiality_detector.joined
-                )
-                and (
-                    sink.oversized_confidentiality is None
-                    or sink.oversized_confidentiality.joined
-                )
+                sink.confidentiality_detector is None
+                or sink.confidentiality_detector.joined
+            ) and (
+                sink.oversized_confidentiality is None
+                or sink.oversized_confidentiality.joined
             )
             if sink.zero_run is not None:
                 report.update(
@@ -3643,9 +4076,15 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
                 regular_bytes=sink.regular_bytes,
                 findings=sink.findings,
             )
-            sink.stream.close()
+            try:
+                sink.stream.close()
+            except (OSError, ValueError):
+                cleanup_failed = True
         if literal_engine is not None:
-            literal_engine.close()
+            try:
+                literal_engine.close()
+            except BaseException:
+                cleanup_failed = True
         try:
             current = os.fstat(fd)
             path_current = archive_path.lstat()
@@ -3655,17 +4094,16 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
                 or (current.st_dev, current.st_ino)
                 != (path_current.st_dev, path_current.st_ino)
             ):
-                report.update(
-                    valid=False,
-                    complete=False,
-                    failure_code="archive_changed_during_scan",
-                )
+                _retain_report_failure(report, "archive_changed_during_scan")
         except OSError:
-            report.update(
-                valid=False, complete=False, failure_code="archive_changed_during_scan"
-            )
+            _retain_report_failure(report, "archive_changed_during_scan")
         finally:
-            os.close(fd)
+            try:
+                os.close(fd)
+            except OSError:
+                cleanup_failed = True
+        if cleanup_failed:
+            _retain_report_failure(report, "scanner_cleanup_failed")
     return report
 
 

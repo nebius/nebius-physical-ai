@@ -139,7 +139,7 @@ func protocol(t *testing.T, payload []byte) (int, []map[string]any, string) {
 	return exit, rows, errors.String()
 }
 
-func mappedProtocol(t *testing.T, payload []byte, ordinal uint64) (int, []map[string]any, string) {
+func privateMappedRecord(t *testing.T, payload []byte) int {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "record")
 	if err := os.WriteFile(path, payload, 0600); err != nil {
@@ -156,6 +156,12 @@ func mappedProtocol(t *testing.T, payload []byte, ordinal uint64) (int, []map[st
 		syscall.Close(fd)
 		t.Fatal(err)
 	}
+	return fd
+}
+
+func mappedProtocol(t *testing.T, payload []byte, ordinal uint64) (int, []map[string]any, string) {
+	t.Helper()
+	fd := privateMappedRecord(t, payload)
 	var output, errors bytes.Buffer
 	exit := processMapped(&output, &errors, scanner(), fixtureReady, fd, uint64(len(payload)), ordinal)
 	rows := make([]map[string]any, 0)
@@ -312,6 +318,109 @@ func TestMappedModeRejectsWritableOrLinkedDescriptor(t *testing.T) {
 		if exit != 2 || !strings.Contains(diagnostic.String(), "record_descriptor_invalid") {
 			t.Fatal("unsafe mapped descriptor accepted")
 		}
+	}
+}
+
+func TestMappedCompleteRecordLimitBoundary(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sparse-record")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_EXCL, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Truncate(int64(completeRecordLimit)); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Chmod(0400); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	opened, payload, _, code := mapPrivateRecord(fd, completeRecordLimit)
+	if code != "" || uint64(len(payload)) != completeRecordLimit {
+		t.Fatalf("exact boundary rejected: %q", code)
+	}
+	if err := syscall.Munmap(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := opened.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, code := mapPrivateRecord(-1, completeRecordLimit+1); code != "complete_record_limit" {
+		t.Fatalf("boundary+1 produced %q", code)
+	}
+}
+
+func TestMappedCleanupPreservesPrimaryFailurePrecedence(t *testing.T) {
+	originalDetect := mappedRecordDetect
+	originalStat := mappedRecordStat
+	originalUnmap := mappedRecordUnmap
+	originalClose := mappedRecordClose
+	defer func() {
+		mappedRecordDetect = originalDetect
+		mappedRecordStat = originalStat
+		mappedRecordUnmap = originalUnmap
+		mappedRecordClose = originalClose
+	}()
+	cases := []struct {
+		name, scanCode, expected string
+		mutation, unmap, close   bool
+	}{
+		{"scan", "synthetic_scan_failure", "synthetic_scan_failure", false, true, true},
+		{"mutation", "", "record_changed", true, true, true},
+		{"unmap", "", "record_unmap_failed", false, true, true},
+		{"close", "", "record_close_failed", false, false, true},
+	}
+	for _, item := range cases {
+		t.Run(item.name, func(t *testing.T) {
+			fd := privateMappedRecord(t, []byte("mapped cleanup fixture"))
+			unmapped, closed := false, false
+			mappedRecordDetect = func(payload []byte, detector *detect.Detector, ordinal uint64) ([]finding, string) {
+				if item.scanCode != "" {
+					return nil, item.scanCode
+				}
+				return detectMappedRecord(payload, detector, ordinal)
+			}
+			mappedRecordStat = func(file *os.File) (os.FileInfo, error) {
+				if item.mutation {
+					return nil, errors.New("synthetic mutation")
+				}
+				return file.Stat()
+			}
+			mappedRecordUnmap = func(payload []byte) error {
+				unmapped = true
+				if err := syscall.Munmap(payload); err != nil {
+					return err
+				}
+				if item.unmap {
+					return errors.New("synthetic unmap")
+				}
+				return nil
+			}
+			mappedRecordClose = func(file *os.File) error {
+				closed = true
+				if err := file.Close(); err != nil {
+					return err
+				}
+				if item.close {
+					return errors.New("synthetic close")
+				}
+				return nil
+			}
+			_, _, code := scanMappedRecord(
+				scanner(), fd, uint64(len("mapped cleanup fixture")), 1,
+			)
+			if code != item.expected || !unmapped || !closed {
+				t.Fatalf("code=%q unmap=%t close=%t", code, unmapped, closed)
+			}
+		})
 	}
 }
 

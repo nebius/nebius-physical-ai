@@ -22,14 +22,16 @@ treated as a permanent detector constant: `RLIMIT_AS` remains the hard,
 fail-closed backstop if implementation drift uses more memory.
 
 The archive scanner routes a larger regular-file record through an isolated
-one-shot mode. It spills every byte to an owner-only file in the private evidence
-directory, fsyncs and changes it to mode `0400`, reopens it read-only, then
-unlinks it before launching the helper. The helper maps that descriptor
-read-only, exposes the complete mapping to the same single `Detector.Detect`
-call without a second Go payload copy, and hashes and stats it before and after
-detection. Mapping, detector allocation, mutation, unmap, process death, or
-receipt failure leaves the scan incomplete. No chunked or overlap matching path
-exists.
+one-shot mode, with an independent 1 GiB complete-record ceiling. It prefers
+`O_TMPFILE`; filesystems without it use an `O_EXCL` mode-`0600` name that is
+unlinked immediately inside the private analysis directory. After every byte is
+written, the scanner fsyncs and changes the inode to mode `0400`, reopens it
+read-only through its descriptor, and closes the writer before launching either
+worker. The helper maps that unlinked descriptor read-only, exposes the complete
+mapping to the same single `Detector.Detect` call without a second Go payload
+copy, and hashes and stats it before and after detection. Mapping, detector
+allocation, mutation, unmap, process death, or receipt failure leaves the scan
+incomplete. No chunked or overlap matching path exists.
 
 ## Prepare the helper
 
@@ -89,8 +91,9 @@ Normal framed mode optionally accepts `--ordinal-base N` so a restarted helper
 retains globally controlled synthetic record paths. One-shot mode requires
 `--config-fd`, `--record-fd`, `--record-length`, and `--record-ordinal`
 together. Its record descriptor must be an owner-only, unlinked, read-only
-regular file of the exact declared length. It emits the same readiness, result,
-summary, and exit-status contract as a one-record framed session.
+regular file of the exact declared length, no larger than 1,073,741,824 bytes.
+It emits the same readiness, actual global ordinal, result, summary, and
+exit-status contract as a one-record framed session.
 
 The helper emits one readiness JSON line, then consumes an unsigned 64-bit
 big-endian byte length followed by exactly that many bytes, repeatedly. It emits

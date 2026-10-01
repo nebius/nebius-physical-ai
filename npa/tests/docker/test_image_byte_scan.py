@@ -9,6 +9,7 @@ import sys
 import io
 import json
 import os
+import signal
 import subprocess
 import tarfile
 from pathlib import Path
@@ -33,6 +34,47 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def _resistant_oversized_worker(
+    connection,
+    _descriptor,
+    _length,
+    _digest,
+    policy_config,
+    _literal_binding,
+    _literal_matches,
+    policy_sha256,
+    _memory_limit,
+    _finding_limit,
+):
+    """Spawn one resistant group child after acknowledging worker isolation."""
+    os.setsid()
+    process_id = os.getpid()
+    connection.send_bytes(
+        W.canonical(
+            {
+                "type": "session",
+                "pid": process_id,
+                "process_group": os.getpgrp(),
+            }
+        )
+    )
+    descendant = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import signal;signal.signal(signal.SIGTERM,signal.SIG_IGN);signal.pause()",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    Path(policy_config["test_marker"]).write_text(str(descendant.pid))
+    connection.send_bytes(
+        W.canonical({"type": "ready", "policy_sha256": policy_sha256})
+    )
+    signal.pause()
+
+
 def test_detector_record_limit_is_derived_from_memory_budget():
     assert (
         W.DETECTOR_RECORD_LIMIT * W.DETECTOR_PAYLOAD_EXPANSION
@@ -46,6 +88,44 @@ def test_detector_record_limit_is_derived_from_memory_budget():
     )
     assert W.CONFIDENTIALITY_RECORD_LIMIT == W.DETECTOR_RECORD_LIMIT
     assert W.CONFIDENTIALITY_MEMORY_LIMIT == W.DETECTOR_MEMORY_LIMIT
+    assert W.COMPLETE_RECORD_LIMIT == 1 << 30
+    assert W.DETECTOR_RECORD_LIMIT < 1_050_480_753 <= W.COMPLETE_RECORD_LIMIT
+
+
+def test_complete_record_limit_admits_boundary_and_rejects_next_byte():
+    W._admit_complete_record(W.COMPLETE_RECORD_LIMIT)
+    with pytest.raises(W.ScanError, match="^complete_record_limit$"):
+        W._admit_complete_record(W.COMPLETE_RECORD_LIMIT + 1)
+
+
+def test_complete_record_limit_precedes_reader_and_spill_creation(
+    tmp_path, monkeypatch
+):
+    class Unreadable:
+        def read(self, _amount):
+            raise AssertionError("record body was consumed")
+
+    created = []
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(tmp_path, detector, [], "exact-substring-v1")
+    monkeypatch.setattr(
+        W,
+        "_PrivateSpill",
+        lambda *_args: created.append(True),
+    )
+
+    with pytest.raises(W.ScanError, match="^complete_record_limit$"):
+        sink.send(
+            Unreadable(),
+            W.COMPLETE_RECORD_LIMIT + 1,
+            "synthetic",
+            {"scope": "layer"},
+        )
+    sink.stream.close()
+    detector.abort()
+
+    assert created == []
+    assert sink.records == 0
 
 
 def test_schedulable_cpu_population_is_bounded(monkeypatch):
@@ -1087,8 +1167,12 @@ def test_spilled_record_preserves_small_record_ledger_and_regex_semantics(
     tmp_path, monkeypatch
 ):
     body = (
-        b"prefix-BEGIN" + b"A" * 13 + b"\xff" + b"B" * 23
-        + b"END\r\nanchored-value\r\ninfra" + b"x" * 17
+        b"prefix-BEGIN"
+        + b"A" * 13
+        + b"\xff"
+        + b"B" * 23
+        + b"END\r\nanchored-value\r\ninfra"
+        + b"x" * 17
         + b"boundary--literal-marker--suffix"
     )
     marker_start = body.index(b"literal-marker")
@@ -1113,6 +1197,43 @@ def test_spilled_record_preserves_small_record_ledger_and_regex_semantics(
         "customer-denylist",
         "infra-denylist",
     }
+
+
+def test_forced_spill_preserves_late_unbounded_literal_and_surrogate_semantics(
+    tmp_path, monkeypatch
+):
+    body = (
+        b"A" * (192 * 1024)
+        + b"\xffBEGIN"
+        + b"B" * (96 * 1024)
+        + b"END--INFRA"
+        + b"C" * 257
+        + b"BOUNDARY--literal-marker\r\nanchored-value\r\n"
+    )
+    marker_start = body.index(b"literal-marker")
+    monkeypatch.setattr(W, "CHUNK", 4093)
+    monkeypatch.setattr(W, "LITERAL_MATCH_CHUNK", 13)
+    assert marker_start // 13 != (marker_start + len(b"literal-marker") - 1) // 13
+
+    streaming = _confidential_ledger_bytes(
+        tmp_path / "late-streaming", body, len(body), monkeypatch
+    )
+    spilled = _confidential_ledger_bytes(
+        tmp_path / "late-spilled", body, len(body) - 1, monkeypatch
+    )
+    rows = [json.loads(line) for line in spilled.splitlines()]
+
+    assert spilled == streaming
+    literal = findings(rows, "private_literal")
+    assert len(literal) == 1
+    assert literal[0]["byte_start"] == marker_start
+    record = next(row for row in rows if row.get("type") == "record")
+    confidentiality = [item for item in record["findings"] if "views" in item]
+    assert {item["rule_id"] for item in confidentiality} == {
+        "customer-denylist",
+        "infra-denylist",
+    }
+    assert max(item["end_byte"] for item in confidentiality) > 192 * 1024
 
 
 def test_literal_finding_limit_precedes_population_publication(tmp_path, monkeypatch):
@@ -1156,7 +1277,10 @@ def test_confidentiality_worker_memory_exhaustion_fails_in_parent() -> None:
         policy.policy_sha256,
         memory_limit=1,
     )
-    payload = b"x" * W.CHUNK
+    # The mapped-record path deliberately removed a whole-record line copy.
+    # Exceed any allocator slack already present before the one-byte limit so
+    # this remains a deterministic process-limit test after that optimization.
+    payload = b"x" * (16 * W.CHUNK)
     try:
         detector.begin(len(payload))
         with pytest.raises(
@@ -1173,6 +1297,7 @@ def test_private_spill_detects_same_size_mutation_and_remains_unlinked(tmp_path)
     spill = W._PrivateSpill(tmp_path)
     writable = None
     try:
+        assert os.fstat(spill.write_fd).st_nlink == 0
         spill.write(b"immutable-record")
         writable = os.dup(spill.write_fd)
         fd = spill.finish(
@@ -1190,6 +1315,102 @@ def test_private_spill_detects_same_size_mutation_and_remains_unlinked(tmp_path)
             os.close(writable)
         spill.close()
     assert not list(tmp_path.glob(".oversized-record-*"))
+
+
+def test_named_spill_fallback_unlinks_immediately(tmp_path, monkeypatch):
+    monkeypatch.delattr(W.os, "O_TMPFILE")
+    spill = W._PrivateSpill(tmp_path)
+    try:
+        assert os.fstat(spill.write_fd).st_nlink == 0
+        assert not list(tmp_path.glob(".oversized-record-*"))
+    finally:
+        spill.close()
+
+
+def test_spill_name_collisions_never_unlink_preexisting_file(tmp_path, monkeypatch):
+    monkeypatch.delattr(W.os, "O_TMPFILE")
+    monkeypatch.setattr(W.secrets, "token_hex", lambda _length: "fixed")
+    collision = tmp_path / ".oversized-record-fixed"
+    collision.write_bytes(b"preexisting collision")
+    collision.chmod(0o600)
+    before = collision.stat()
+
+    with pytest.raises(W.ScanError, match="^oversized_spill_name_collision$"):
+        W._PrivateSpill(tmp_path)
+
+    after = collision.stat()
+    assert collision.read_bytes() == b"preexisting collision"
+    assert (after.st_dev, after.st_ino, after.st_mode) == (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+    )
+
+
+def test_spill_close_attempts_every_descriptor_and_fails_closed(tmp_path, monkeypatch):
+    spill = W._PrivateSpill(tmp_path)
+    targets = {spill.write_fd, spill.directory_fd}
+    calls = []
+    original = W.os.close
+
+    def close_then_fail(descriptor):
+        if descriptor in targets:
+            calls.append(descriptor)
+            original(descriptor)
+            raise OSError(errno.EIO, "synthetic close failure")
+        return original(descriptor)
+
+    monkeypatch.setattr(W.os, "close", close_then_fail)
+    with pytest.raises(W.ScanError, match="^oversized_spill_cleanup_failed$"):
+        spill.close()
+
+    assert set(calls) == targets
+
+
+@pytest.mark.parametrize(
+    "primary",
+    ["oversized_spill_changed", "scan_cancelled"],
+)
+def test_spill_cleanup_never_replaces_primary_failure(tmp_path, monkeypatch, primary):
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(tmp_path, detector, [], "exact-substring-v1")
+    monkeypatch.setattr(W, "DETECTOR_RECORD_LIMIT", 1)
+    original_close = W._PrivateSpill.close
+
+    def cleanup_failure(spill):
+        original_close(spill)
+        raise W.ScanError("oversized_spill_cleanup_failed")
+
+    def primary_failure(*_args):
+        raise W.ScanError(primary)
+
+    if primary == "oversized_spill_changed":
+        monkeypatch.setattr(W._PrivateSpill, "verify", primary_failure)
+    else:
+        detector.scan_spilled = primary_failure
+    monkeypatch.setattr(W._PrivateSpill, "close", cleanup_failure)
+
+    with pytest.raises(W.ScanError, match=f"^{primary}$"):
+        sink.send(io.BytesIO(b"record"), 6, "synthetic", {"scope": "layer"})
+    sink.stream.close()
+    detector.abort()
+
+
+def test_spill_cleanup_only_failure_fails_closed(tmp_path, monkeypatch):
+    detector = FakeDetector({}, tmp_path / "unused")
+    sink = W.Ledger(tmp_path, detector, [], "exact-substring-v1")
+    monkeypatch.setattr(W, "DETECTOR_RECORD_LIMIT", 1)
+    original_close = W._PrivateSpill.close
+
+    def cleanup_failure(spill):
+        original_close(spill)
+        raise W.ScanError("oversized_spill_cleanup_failed")
+
+    monkeypatch.setattr(W._PrivateSpill, "close", cleanup_failure)
+    with pytest.raises(W.ScanError, match="^oversized_spill_cleanup_failed$"):
+        sink.send(io.BytesIO(b"record"), 6, "synthetic", {"scope": "layer"})
+    sink.stream.close()
+    detector.abort()
 
 
 @pytest.mark.parametrize(
@@ -1274,6 +1495,108 @@ def test_oversized_confidentiality_oom_or_worker_death_fails_closed(tmp_path):
     assert detector.joined
 
 
+def test_oversized_confidentiality_abort_kills_resistant_group_descendant(tmp_path):
+    marker = tmp_path / "oversized-descendant.pid"
+    policy_config = {
+        "customer_pattern": "absent-private-marker",
+        "infra_pattern": None,
+        "test_marker": str(marker),
+    }
+    policy = W.C.compile_policy(
+        policy_config["customer_pattern"],
+        policy_config["infra_pattern"],
+    )
+    detector = W._OversizedConfidentialityDetector(
+        policy_config,
+        None,
+        policy.policy_sha256,
+        worker_target=_resistant_oversized_worker,
+    )
+    spill = W._PrivateSpill(tmp_path)
+    payload = b"resistant-worker-record"
+    try:
+        spill.write(payload)
+        fd = spill.finish(len(payload), digest(payload))
+        detector._configure_worker(fd, len(payload), digest(payload), [])
+        detector._start_worker()
+        descendant = int(marker.read_text())
+        process_group = detector.process_group
+        assert process_group == detector.process.pid
+        assert Path(f"/proc/{descendant}").exists()
+
+        detector.abort()
+
+        assert detector.joined
+        assert detector.process_group is None
+        assert not W._process_group_survived(process_group)
+    finally:
+        detector.abort()
+        spill.close()
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected"),
+    [
+        (True, "oversized_spill_changed"),
+        (False, "oversized_confidentiality_cleanup_failed"),
+    ],
+)
+def test_mapped_confidentiality_cleanup_preserves_mutation_and_fails_alone(
+    tmp_path, monkeypatch, mutate, expected
+):
+    policy_config = {
+        "customer_pattern": "absent-private-marker",
+        "infra_pattern": None,
+    }
+    policy = W.C.compile_policy(**policy_config)
+    payload = b"mapped-cleanup-record"
+    spill = W._PrivateSpill(tmp_path)
+    spill.write(payload)
+    fd = spill.finish(len(payload), digest(payload))
+
+    class Descriptor:
+        def detach(self):
+            return os.dup(fd)
+
+    class Connection:
+        def send_bytes(self, _payload):
+            return None
+
+    original_close = W._close_mapped_resources
+
+    def cleanup_failure(mapping, descriptor):
+        original_close(mapping, descriptor)
+        return True
+
+    monkeypatch.setattr(W, "_close_mapped_resources", cleanup_failure)
+    if mutate:
+        original_digest = W.descriptor_digest
+        calls = 0
+
+        def changed_after_scan(descriptor):
+            nonlocal calls
+            calls += 1
+            value = original_digest(descriptor)
+            return value if calls == 1 else "0" * 64
+
+        monkeypatch.setattr(W, "descriptor_digest", changed_after_scan)
+    try:
+        with pytest.raises(W.ScanError, match=f"^{expected}$"):
+            W._mapped_confidentiality_scan(
+                Connection(),
+                Descriptor(),
+                len(payload),
+                digest(payload),
+                policy_config,
+                None,
+                [],
+                policy.policy_sha256,
+                W.RECORD_FINDING_LIMIT,
+            )
+    finally:
+        spill.close()
+
+
 def test_oversized_confidentiality_receipt_is_exact():
     policy_sha = "a" * 64
     digest_value = "b" * 64
@@ -1285,9 +1608,9 @@ def test_oversized_confidentiality_receipt_is_exact():
         "line_count": 1,
         "findings": [],
     }
-    assert W._validate_confidentiality_result(
-        valid, 7, digest_value, policy_sha, 1
-    ) == []
+    assert (
+        W._validate_confidentiality_result(valid, 7, digest_value, policy_sha, 1) == []
+    )
     for key, value in (
         ("policy_sha256", "c" * 64),
         ("record_sha256", "d" * 64),
@@ -1296,9 +1619,7 @@ def test_oversized_confidentiality_receipt_is_exact():
     ):
         changed = {**valid, key: value}
         with pytest.raises(W.ScanError, match="confidentiality_worker_result"):
-            W._validate_confidentiality_result(
-                changed, 7, digest_value, policy_sha, 1
-            )
+            W._validate_confidentiality_result(changed, 7, digest_value, policy_sha, 1)
 
 
 def test_confidentiality_worker_can_be_owned_before_process_start() -> None:
@@ -1667,8 +1988,7 @@ def test_oversized_prior_layer_file_is_scanned_even_when_later_whiteouted(
     prior = next(
         row
         for row in rows
-        if row.get("kind") == "layer_regular_content"
-        and row.get("layer_ordinal") == 0
+        if row.get("kind") == "layer_regular_content" and row.get("layer_ordinal") == 0
     )
     assert prior["bytes"] == len(content) and prior["sha256"] == digest(content)
     assert findings(rows, "private_literal")
@@ -2019,13 +2339,24 @@ def _protocol_ready(authorization):
     }
 
 
-def _protocol_script(ready):
+def _protocol_script(ready, descendant_marker=None):
+    descendant = ""
+    if descendant_marker is not None:
+        descendant = f"""
+child=subprocess.Popen(
+ [sys.executable,"-c","import signal;signal.signal(signal.SIGTERM,signal.SIG_IGN);signal.pause()"],
+ stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+)
+Path({str(descendant_marker)!r}).write_text(str(child.pid))
+"""
     return f"""#!{sys.executable}
-import hashlib,json,os,struct,sys
+import hashlib,json,os,struct,subprocess,sys
+from pathlib import Path
 ready={ready!r}
 args=dict(zip(sys.argv[1::2],sys.argv[2::2],strict=True))
 fd=int(args["--config-fd"]); data=os.pread(fd,os.fstat(fd).st_size,0)
 if hashlib.sha256(data).hexdigest()!=ready["config_sha256"]: raise SystemExit(2)
+{descendant}
 print(json.dumps(ready),flush=True)
 if "--record-fd" in args:
  rfd=int(args["--record-fd"]); size=int(args["--record-length"])
@@ -2047,12 +2378,12 @@ print(json.dumps({{"type":"summary","files":files,"bytes":total,"findings":0}}),
 """
 
 
-def _protocol_helper(authorization, tmp_path):
+def _protocol_helper(authorization, tmp_path, *, descendant_marker=None):
     """An executable framing fixture, not Gitleaks or a native qualification."""
     ready = _protocol_ready(authorization)
     helper = tmp_path / "protocol-helper"
     authorization["helper"] = {
-        **write(helper, _protocol_script(ready).encode()),
+        **write(helper, _protocol_script(ready, descendant_marker).encode()),
         "ready_sha256": W.sha(W.canonical(ready)),
     }
     helper.chmod(0o700)
@@ -2064,7 +2395,12 @@ def _protocol_helper(authorization, tmp_path):
     "alter", ["ready", "record_sha", "record_length", "record_order", "summary"]
 )
 def test_protocol_corruption_fails_and_joins_only_owned_helper(tmp_path, alter):
-    authorization = _protocol_helper(fixture(tmp_path), tmp_path)
+    descendant_marker = tmp_path / "resistant-descendant.pid"
+    authorization = _protocol_helper(
+        fixture(tmp_path),
+        tmp_path,
+        descendant_marker=descendant_marker,
+    )
 
     class CorruptResponse(W.Detector):
         instance = None
@@ -2094,6 +2430,44 @@ def test_protocol_corruption_fails_and_joins_only_owned_helper(tmp_path, alter):
         CorruptResponse.instance.joined
         and CorruptResponse.instance.process.poll() is not None
     )
+    assert int(descendant_marker.read_text()) > 0
+    assert not W._process_group_survived(CorruptResponse.instance.process.pid)
+
+
+def test_top_level_cleanup_does_not_replace_primary_cancellation(tmp_path):
+    class PrimaryAndCleanupFailure(FakeDetector):
+        def begin(self, _length):
+            raise W.ScanError("scan_cancelled")
+
+        def abort(self):
+            self.joined = True
+            raise W.ScanError("helper_cleanup_failed")
+
+    report, _ = run(
+        tmp_path,
+        fixture(tmp_path),
+        detector_type=PrimaryAndCleanupFailure,
+    )
+
+    assert report["failure_code"] == "scan_cancelled"
+    assert not report["valid"] and not report["complete"]
+
+
+def test_top_level_cleanup_only_failure_fails_closed(tmp_path):
+    class CleanupFailure(FakeDetector):
+        def finish(self):
+            result = super().finish()
+            self.joined = False
+            return result
+
+        def abort(self):
+            self.joined = True
+            raise W.ScanError("helper_cleanup_failed")
+
+    report, _ = run(tmp_path, fixture(tmp_path), detector_type=CleanupFailure)
+
+    assert report["failure_code"] == "scanner_cleanup_failed"
+    assert not report["valid"] and not report["complete"]
 
 
 def test_full_protocol_fixture_preserves_empty_and_all_zero_records(tmp_path):
@@ -2120,16 +2494,20 @@ def test_helper_sessions_preserve_global_receipts_around_spilled_record(tmp_path
         detector.write(records[0])
         detector.submit(len(records[0]), digest(records[0]))
         assert detector.collect() == []
+        assert detector.ordinal == 1
 
         spill.write(records[1])
         fd = spill.finish(len(records[1]), digest(records[1]))
         detector.scan_spilled(fd, len(records[1]), digest(records[1]))
         assert detector.collect() == []
+        assert detector.ordinal == 2
+        assert detector.process_group is None
 
         detector.begin(len(records[2]))
         detector.write(records[2])
         detector.submit(len(records[2]), digest(records[2]))
         assert detector.collect() == []
+        assert detector.ordinal == 3
         assert detector.finish() == {
             "type": "summary",
             "files": 3,
@@ -2140,6 +2518,31 @@ def test_helper_sessions_preserve_global_receipts_around_spilled_record(tmp_path
         detector.abort()
         spill.close()
     assert detector.joined
+
+
+def test_normal_helper_exit_kills_resistant_group_descendant(tmp_path):
+    marker = tmp_path / "resistant-descendant.pid"
+    authorization = _protocol_helper(
+        fixture(tmp_path),
+        tmp_path,
+        descendant_marker=marker,
+    )
+    detector = W.Detector(authorization, tmp_path / "helper-stderr.jsonl")
+
+    assert marker.exists()
+    descendant = int(marker.read_text())
+    process_group = detector.process_group
+    assert Path(f"/proc/{descendant}").exists()
+    assert detector.finish() == {
+        "type": "summary",
+        "files": 0,
+        "bytes": 0,
+        "findings": 0,
+    }
+
+    assert detector.joined
+    assert detector.process_group is None
+    assert not W._process_group_survived(process_group)
 
 
 def _paused_ledger_wrapper(marker):
@@ -2164,11 +2567,14 @@ raise SystemExit(W.main())
 
 
 def test_cli_sigterm_receipt_and_helper_join_preserve_unrelated_sibling(tmp_path):
-    import signal
-    import subprocess
     import time
 
-    authorization = _protocol_helper(fixture(tmp_path), tmp_path)
+    descendant_marker = tmp_path / "resistant-descendant.pid"
+    authorization = _protocol_helper(
+        fixture(tmp_path),
+        tmp_path,
+        descendant_marker=descendant_marker,
+    )
     auth = tmp_path / "auth.json"
     write(auth, js(authorization))
     marker = tmp_path / "helper.json"
@@ -2212,12 +2618,15 @@ def test_cli_sigterm_receipt_and_helper_join_preserve_unrelated_sibling(tmp_path
             and stderr == b""
         )
         result = json.loads((output / "report.json").read_bytes())
+        descendant = int(descendant_marker.read_text())
         assert (
             result["failure_code"] == "scan_cancelled"
             and result["helper_joined"]
             and not result["complete"]
         )
-        assert sibling.poll() is None and not Path(f"/proc/{identity['pid']}").exists()
+        assert sibling.poll() is None
+        assert not W._process_group_survived(identity["pid"])
+        assert descendant != identity["pid"]
     finally:
         if child.poll() is None:
             child.kill()
