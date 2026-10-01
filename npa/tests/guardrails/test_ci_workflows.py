@@ -867,7 +867,7 @@ def test_queue_proof_uses_base_code_and_receipt_only_follows_success():
         == "validated-candidate-${{ github.run_attempt }}-${{ github.sha }}"
     )
     assert receipt["with"]["if-no-files-found"] == "error"
-    assert jobs["pr-precheck"]["timeout-minutes"] == "5"
+    assert "timeout-minutes" not in jobs["pr-precheck"]
 
 
 def _write_fingerprint_probe(tmp_path: Path) -> None:

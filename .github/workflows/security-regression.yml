@@ -122,7 +122,8 @@ jobs:
     name: pr-precheck
     if: github.event_name == 'pull_request'
     runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
-    timeout-minutes: 5
+    # Five minutes is a feedback target. Slow checkout/setup must not cancel
+    # required validation before the precheck has finished.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
