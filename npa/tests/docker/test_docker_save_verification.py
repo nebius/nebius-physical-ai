@@ -231,14 +231,16 @@ def test_verifier_rejects_concatenated_gzip_before_later_optional_header(
     assert population_calls == []
 
 
-def test_verifier_regular_file_limit_precedes_population_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_verifier_streams_regular_file_larger_than_framed_scanner_limit(
+    tmp_path: Path,
 ) -> None:
     archive, image_id = _archive(tmp_path, layer_entries=[("opt/result.txt", b"12345")])
-    monkeypatch.setattr(core, "TAR_REGULAR_FILE_LIMIT", 4)
 
-    with pytest.raises(core.ScanError, match="tar_regular_file_limit"):
-        VERIFIER.verify(archive, image_id)
+    report = VERIFIER.verify(archive, image_id)
+
+    assert report["valid"]
+    assert report["regular_files_read"] == 1
+    assert report["content_bytes_read"] == 5
 
 
 def test_verifier_zero_run_limit_is_incremental(

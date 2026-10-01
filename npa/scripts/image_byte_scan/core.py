@@ -6,16 +6,19 @@ import argparse
 import base64
 import collections
 import csv
+import errno
 import fcntl
 import hashlib
 import importlib.machinery
 import importlib.util
 import io
 import json
+import mmap
 import multiprocessing
 import os
 import re
 import resource
+import secrets
 import signal
 import select
 import stat
@@ -99,7 +102,6 @@ DETECTOR_PAYLOAD_EXPANSION = 10
 DETECTOR_RECORD_LIMIT = (
     DETECTOR_MEMORY_LIMIT - DETECTOR_MEMORY_HEADROOM
 ) // DETECTOR_PAYLOAD_EXPANSION
-TAR_REGULAR_FILE_LIMIT = DETECTOR_RECORD_LIMIT
 DOCKER_SAVE_DECODED_LAYER_LIMIT = 64 * 1024 * 1024 * 1024
 CONFIDENTIALITY_RECORD_LIMIT = DETECTOR_RECORD_LIMIT
 CONFIDENTIALITY_MEMORY_LIMIT = DETECTOR_MEMORY_LIMIT
@@ -462,6 +464,130 @@ class Slice:
         require(result, "archive_short_read")
         self.position += len(result)
         return result
+
+
+def _spill_error(error):
+    if error.errno in {errno.ENOSPC, errno.EDQUOT, errno.EFBIG}:
+        return ScanError("oversized_spill_no_space")
+    return ScanError("oversized_spill_io")
+
+
+class _PrivateSpill:
+    """One owner-only record file unlinked before any scanner receives it."""
+
+    def __init__(self, directory):
+        self.directory_fd = directory_fd(directory)
+        self.name = self.write_fd = self.fd = self.identity = self.expected_digest = None
+        try:
+            for _attempt in range(16):
+                self.name = ".oversized-record-" + secrets.token_hex(16)
+                try:
+                    self.write_fd = os.open(
+                        self.name,
+                        os.O_WRONLY
+                        | os.O_CREAT
+                        | os.O_EXCL
+                        | os.O_NOFOLLOW
+                        | os.O_CLOEXEC,
+                        0o600,
+                        dir_fd=self.directory_fd,
+                    )
+                    break
+                except FileExistsError:
+                    continue
+            require(self.write_fd is not None, "oversized_spill_name_collision")
+        except BaseException:
+            self.close()
+            raise
+
+    def write(self, data):
+        try:
+            remaining = memoryview(data)
+            while remaining:
+                written = os.write(self.write_fd, remaining)
+                require(written > 0, "oversized_spill_short_write")
+                remaining = remaining[written:]
+        except OSError as error:
+            raise _spill_error(error) from None
+
+    def finish(self, length, expected_digest):
+        try:
+            require(
+                isinstance(expected_digest, str)
+                and SHA.fullmatch(expected_digest) is not None,
+                "oversized_spill_digest",
+            )
+            os.fsync(self.write_fd)
+            os.fchmod(self.write_fd, 0o400)
+            before = os.fstat(self.write_fd)
+            require(
+                stat.S_ISREG(before.st_mode)
+                and before.st_uid == os.geteuid()
+                and stat.S_IMODE(before.st_mode) == 0o400
+                and before.st_nlink == 1
+                and before.st_size == length,
+                "oversized_spill_identity",
+            )
+            self.fd = os.open(
+                self.name,
+                os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC,
+                dir_fd=self.directory_fd,
+            )
+            require(
+                stat_fingerprint(os.fstat(self.fd)) == stat_fingerprint(before),
+                "oversized_spill_identity",
+            )
+            os.close(self.write_fd)
+            self.write_fd = None
+            os.unlink(self.name, dir_fd=self.directory_fd)
+            self.name = None
+            os.fsync(self.directory_fd)
+            current = os.fstat(self.fd)
+            require(current.st_nlink == 0, "oversized_spill_not_unlinked")
+            self.identity = stat_fingerprint(current)
+            self.expected_digest = expected_digest
+            return self.fd
+        except OSError as error:
+            raise _spill_error(error) from None
+
+    def verify(self):
+        current = os.fstat(self.fd)
+        require(
+            current.st_nlink == 0
+            and stat_fingerprint(current) == self.identity,
+            "oversized_spill_changed",
+        )
+        require(
+            descriptor_digest(self.fd) == self.expected_digest,
+            "oversized_spill_changed",
+        )
+
+    def close(self):
+        cleanup_failed = False
+        if self.name is not None and self.directory_fd is not None:
+            try:
+                os.unlink(self.name, dir_fd=self.directory_fd)
+                os.fsync(self.directory_fd)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                cleanup_failed = True
+            self.name = None
+        for attribute in ("write_fd", "fd", "directory_fd"):
+            descriptor = getattr(self, attribute, None)
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    cleanup_failed = True
+                setattr(self, attribute, None)
+        require(not cleanup_failed, "oversized_spill_cleanup_failed")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, _error_type, _error, _traceback):
+        self.close()
 
 
 class ZeroReader:
@@ -879,12 +1005,37 @@ class AuthorizedAho:
             self.fd = None
 
 
+@contextmanager
+def _helper_descriptors(authorization):
+    with (
+        bound_open(authorization["helper"], secret=True) as (
+            _,
+            helper_source_fd,
+            _,
+        ),
+        bound_open(authorization["config"], secret=False) as (
+            _,
+            config_source_fd,
+            _,
+        ),
+        sealed_execution_input(
+            helper_source_fd, authorization["helper"]["sha256"], executable=True
+        ) as helper_fd,
+        sealed_execution_input(
+            config_source_fd, authorization["config"]["sha256"]
+        ) as config_fd,
+    ):
+        yield helper_fd, config_fd
+
+
 class Detector:
     def __init__(self, authorization, stderr_path):
-        global _SPAWNING
+        self.authorization = authorization
         self.process = self.stderr = None
         self.joined = False
         self.ordinal = self.bytes = self.findings = 0
+        self.session_records = self.session_bytes = self.session_findings = 0
+        self.stream_active = False
         # Submitted records awaiting their result, oldest first. Responses are
         # buffered from the raw descriptor so that writing record bytes and
         # reading results can never block on each other.
@@ -905,49 +1056,54 @@ class Detector:
             finally:
                 os.close(parent_fd)
             self.stderr = os.fdopen(stderr_fd, "wb")
-            with (
-                bound_open(authorization["helper"], secret=True) as (
-                    _,
-                    helper_source_fd,
-                    _,
-                ),
-                bound_open(authorization["config"], secret=False) as (
-                    _,
-                    config_source_fd,
-                    _,
-                ),
-                sealed_execution_input(
-                    helper_source_fd, authorization["helper"]["sha256"], executable=True
-                ) as helper_fd,
-                sealed_execution_input(
-                    config_source_fd, authorization["config"]["sha256"]
-                ) as config_fd,
-            ):
-                _SPAWNING = True
-                try:
-                    self.process = subprocess.Popen(
-                        [f"/proc/self/fd/{helper_fd}", "--config-fd", str(config_fd)],
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=self.stderr,
-                        env={"PATH": os.defpath},
-                        start_new_session=True,
-                        pass_fds=(helper_fd, config_fd),
-                    )
-                finally:
-                    _SPAWNING = False
-            if _CANCEL_REQUESTED:
-                raise ScanError("scan_cancelled")
-            self.stdout_fd = self.process.stdout.fileno()
-            self.stdin_fd = self.process.stdin.fileno()
-            # Records go out through this descriptor rather than the buffered
-            # writer, so a full pipe returns to _transfer instead of parking this
-            # process inside a write while the helper waits to be read.
-            os.set_blocking(self.stdin_fd, False)
-            self._validate_ready(authorization)
+            self._start_stream()
         except BaseException:
             self.abort()
             raise
+
+    def _start_process(self, arguments=(), inherited=(), *, stream):
+        self.responses = bytearray()
+        self.stdout_closed = False
+        with _helper_descriptors(self.authorization) as (helper_fd, config_fd):
+            self._spawn_process(
+                helper_fd, config_fd, arguments, inherited, stream=stream
+            )
+        require(not _CANCEL_REQUESTED, "scan_cancelled")
+        self.stdout_fd = self.process.stdout.fileno()
+        self.stdin_fd = self.process.stdin.fileno() if stream else None
+        if stream:
+            os.set_blocking(self.stdin_fd, False)
+        self._validate_ready(self.authorization)
+
+    def _spawn_process(self, helper_fd, config_fd, arguments, inherited, *, stream):
+        global _SPAWNING
+        argv = [
+            f"/proc/self/fd/{helper_fd}",
+            "--config-fd",
+            str(config_fd),
+            *arguments,
+        ]
+        _SPAWNING = True
+        try:
+            self.process = subprocess.Popen(
+                argv,
+                stdin=subprocess.PIPE if stream else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=self.stderr,
+                env={"PATH": os.defpath},
+                start_new_session=True,
+                pass_fds=(helper_fd, config_fd, *inherited),
+            )
+        finally:
+            _SPAWNING = False
+
+    def _start_stream(self):
+        arguments = (
+            ("--ordinal-base", str(self.ordinal)) if self.ordinal else ()
+        )
+        self._start_process(arguments, stream=True)
+        self.session_records = self.session_bytes = self.session_findings = 0
+        self.stream_active = True
 
     def _validate_ready(self, authorization):
         self.ready = self._response()
@@ -1074,8 +1230,104 @@ class Detector:
                 "helper_response_limit",
             )
 
+    def _close_current_streams(self):
+        if self.process is None:
+            return
+        for stream in (self.process.stdin, self.process.stdout):
+            if stream is not None and not stream.closed:
+                try:
+                    stream.close()
+                except BrokenPipeError:
+                    pass
+
+    def _finish_stream(self):
+        if not self.stream_active:
+            return
+        require(not self.outstanding, "helper_unfinished_records")
+        self.process.stdin.close()
+        expected = {
+            "type": "summary",
+            "files": self.session_records,
+            "bytes": self.session_bytes,
+            "findings": self.session_findings,
+        }
+        require(self._response() == expected, "helper_summary_receipt")
+        require(not self.responses, "helper_extra_response")
+        require(os.read(self.stdout_fd, 1) == b"", "helper_extra_response")
+        code = self.process.wait()
+        self.stream_active = False
+        self._close_current_streams()
+        require(code == (1 if self.session_findings else 0), "helper_exit_status")
+
+    def scan_spilled(self, fd, length, digest):
+        """Scan one immutable oversized record in an isolated mapped helper."""
+        require(not self.outstanding, "oversized_helper_pending_records")
+        self._finish_stream()
+        ordinal = self.ordinal + 1
+        before = stat_fingerprint(os.fstat(fd))
+        arguments = (
+            "--record-fd",
+            str(fd),
+            "--record-length",
+            str(length),
+            "--record-ordinal",
+            str(ordinal),
+        )
+        try:
+            self._start_process(arguments, (fd,), stream=False)
+            findings = self._mapped_findings(ordinal, length, digest)
+            self._finish_mapped_process(findings)
+            require(
+                stat_fingerprint(os.fstat(fd)) == before,
+                "oversized_spill_changed",
+            )
+            self.outstanding.append((length, digest, findings))
+        except BaseException:
+            self._abort_current()
+            raise
+
+    def _mapped_findings(self, ordinal, length, digest):
+        result = self._response()
+        require(
+            result.get("type") == "result"
+            and result.get("ordinal") == ordinal
+            and result.get("bytes") == length
+            and result.get("sha256") == digest,
+            "helper_record_byte_receipt",
+        )
+        findings = self._checked_findings(result.get("findings"))
+        expected = {
+            "type": "summary",
+            "files": 1,
+            "bytes": length,
+            "findings": len(findings),
+        }
+        require(self._response() == expected, "helper_summary_receipt")
+        return findings
+
+    def _finish_mapped_process(self, findings):
+        require(not self.responses, "helper_extra_response")
+        require(os.read(self.stdout_fd, 1) == b"", "helper_extra_response")
+        code = self.process.wait()
+        self._close_current_streams()
+        require(code == (1 if findings else 0), "helper_exit_status")
+
+    def _abort_current(self):
+        if self.process is None:
+            return
+        if self.process.poll() is None:
+            try:
+                self.process.terminate()
+            except ProcessLookupError:
+                pass
+        self.process.wait()
+        self.stream_active = False
+        self._close_current_streams()
+
     def begin(self, length):
         require(type(length) is int and 0 <= length < 2**64, "protocol_length")
+        if not self.stream_active:
+            self._start_stream()
         self._transfer(struct.pack(">Q", length))
 
     def write(self, data):
@@ -1094,7 +1346,7 @@ class Detector:
         Raises:
             None.
         """
-        self.outstanding.append((length, digest))
+        self.outstanding.append((length, digest, None))
 
     def outstanding_records(self):
         """Report how many submitted records have not been collected yet.
@@ -1160,64 +1412,48 @@ class Detector:
                 record's ordinal, byte count, digest, or finding schema.
         """
         require(bool(self.outstanding), "helper_collect_without_record")
-        length, digest = self.outstanding.popleft()
-        result = self._response()
+        length, digest, findings = self.outstanding.popleft()
+        if findings is None:
+            result = self._response()
+            require(
+                result.get("type") == "result"
+                and type(result.get("ordinal")) is int
+                and result["ordinal"] == self.ordinal + 1,
+                "helper_record_order",
+            )
+            require(
+                type(result.get("bytes")) is int
+                and result["bytes"] == length
+                and result.get("sha256") == digest,
+                "helper_record_byte_receipt",
+            )
+            findings = self._checked_findings(result.get("findings"))
+            self.session_records += 1
+            self.session_bytes += length
+            self.session_findings += len(findings)
         self.ordinal += 1
-        require(
-            result.get("type") == "result"
-            and type(result.get("ordinal")) is int
-            and result["ordinal"] == self.ordinal,
-            "helper_record_order",
-        )
-        require(
-            type(result.get("bytes")) is int
-            and result["bytes"] == length
-            and result.get("sha256") == digest,
-            "helper_record_byte_receipt",
-        )
-        findings = self._checked_findings(result.get("findings"))
         self.bytes += length
         self.findings += len(findings)
         return findings
 
     def finish(self):
-        require(not self.outstanding, "helper_unfinished_records")
-        self.process.stdin.close()
-        result = self._response()
-        require(
-            result
-            == {
+        try:
+            self._finish_stream()
+            result = {
                 "type": "summary",
                 "files": self.ordinal,
                 "bytes": self.bytes,
                 "findings": self.findings,
-            },
-            "helper_summary_receipt",
-        )
-        require(not self.responses, "helper_extra_response")
-        require(os.read(self.stdout_fd, 1) == b"", "helper_extra_response")
-        code = self.process.wait()
-        self.joined = True
-        self.process.stdout.close()
-        self.stderr.close()
-        require(code == (1 if self.findings else 0), "helper_exit_status")
-        return result
+            }
+            self.joined = True
+            self.stderr.close()
+            return result
+        except BaseException:
+            self.abort()
+            raise
 
     def abort(self):
-        if self.process is not None:
-            if self.process.poll() is None:
-                try:
-                    self.process.terminate()
-                except ProcessLookupError:
-                    pass
-            self.process.wait()
-            self.joined = True
-            for stream in (self.process.stdin, self.process.stdout):
-                if stream is not None and not stream.closed:
-                    try:
-                        stream.close()
-                    except BrokenPipeError:
-                        pass  # The owned child is already reaped; discard its pending pipe buffer.
+        self._abort_current()
         self.joined = True
         if self.stderr is not None and not self.stderr.closed:
             self.stderr.close()
@@ -1253,6 +1489,7 @@ class PendingRecord:
         self.kind = kind
         self.context = context
         self.raw_parts = raw_parts
+        self.confidentiality_result = None
         self.literal_matches = []
         self.digest = None
         # Lines belonging to the record itself, and lines the scan produced
@@ -1427,6 +1664,357 @@ def _confidentiality_worker(
         connection.close()
 
 
+_LITERAL_FINDING_FIELDS = {
+    "rule_id",
+    "literal_index",
+    "literal_sha256",
+    "byte_start",
+    "byte_end",
+}
+
+
+def _checked_spill_descriptor(fd, length, digest):
+    info = os.fstat(fd)
+    require(
+        stat.S_ISREG(info.st_mode)
+        and stat.S_IMODE(info.st_mode) == 0o400
+        and info.st_uid == os.getuid()
+        and info.st_nlink == 0
+        and info.st_size == length
+        and fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE == os.O_RDONLY,
+        "oversized_confidentiality_descriptor",
+    )
+    require(descriptor_digest(fd) == digest, "oversized_spill_digest")
+    return stat_fingerprint(info)
+
+
+def _checked_literal_match(item):
+    require(
+        isinstance(item, dict)
+        and set(item) == _LITERAL_FINDING_FIELDS
+        and item["rule_id"] == "private_literal"
+        and isinstance(item["literal_sha256"], str)
+        and SHA.fullmatch(item["literal_sha256"]) is not None,
+        "confidentiality_worker_protocol",
+    )
+    return C.LiteralMatch(
+        item["literal_index"],
+        item["byte_start"],
+        item["byte_end"],
+    )
+
+
+def _checked_literal_scan(binding, digest, length, rows):
+    matches = tuple(_checked_literal_match(item) for item in rows)
+    if binding is None:
+        return None
+    return C.LiteralScan(binding, digest, length, matches, True)
+
+
+def _checked_mapped_policy(policy_config, literal_binding, policy_sha256):
+    binding = (
+        C.LiteralPolicyBinding(**literal_binding)
+        if literal_binding is not None
+        else None
+    )
+    policy = C.compile_policy(
+        policy_config.get("customer_pattern"),
+        policy_config.get("infra_pattern"),
+        literal_policy=binding,
+    )
+    require(policy.policy_sha256 == policy_sha256, "confidentiality_policy_changed")
+    return policy, binding
+
+
+def _mapped_confidentiality_scan(
+    connection,
+    descriptor,
+    length,
+    digest,
+    policy_config,
+    literal_binding,
+    literal_matches,
+    policy_sha256,
+    finding_limit,
+):
+    fd = descriptor.detach()
+    try:
+        before = _checked_spill_descriptor(fd, length, digest)
+        policy, binding = _checked_mapped_policy(
+            policy_config, literal_binding, policy_sha256
+        )
+        literal_scan = _checked_literal_scan(
+            binding, digest, length, literal_matches
+        )
+        connection.send_bytes(
+            canonical({"type": "ready", "policy_sha256": policy_sha256})
+        )
+        with mmap.mmap(fd, length, access=mmap.ACCESS_READ) as mapping:
+            receipt = policy.scan_mapped_record(
+                mapping, literal_scan=literal_scan, finding_limit=finding_limit
+            )
+        require(
+            stat_fingerprint(os.fstat(fd)) == before
+            and descriptor_digest(fd) == digest,
+            "oversized_spill_changed",
+        )
+        return receipt
+    finally:
+        os.close(fd)
+
+
+def _confidentiality_receipt_bytes(receipt):
+    response = canonical(
+        {
+            "type": "result",
+            "policy_sha256": receipt.policy_sha256,
+            "record_sha256": receipt.record_sha256,
+            "byte_count": receipt.byte_count,
+            "line_count": receipt.line_count,
+            "findings": [asdict(item) for item in receipt.findings],
+        }
+    )
+    require(len(response) <= HELPER_RESPONSE_LIMIT, "confidentiality_response_limit")
+    return response
+
+
+def _send_confidentiality_error(connection, error, fallback):
+    code = (
+        str(error)
+        if isinstance(error, (ScanError, C.ConfidentialityError))
+        else fallback
+    )
+    try:
+        connection.send_bytes(canonical({"type": "error", "error": code}))
+    except (BrokenPipeError, EOFError, OSError):
+        pass
+
+
+def _oversized_confidentiality_worker(
+    connection,
+    descriptor,
+    length,
+    digest,
+    policy_config,
+    literal_binding,
+    literal_matches,
+    policy_sha256,
+    memory_limit,
+    finding_limit,
+):
+    """Scan one immutable spill mapping in a disposable spawned process."""
+    try:
+        _apply_address_space_limit(memory_limit)
+        receipt = _mapped_confidentiality_scan(
+            connection,
+            descriptor,
+            length,
+            digest,
+            policy_config,
+            literal_binding,
+            literal_matches,
+            policy_sha256,
+            finding_limit,
+        )
+        connection.send_bytes(_confidentiality_receipt_bytes(receipt))
+        connection.send_bytes(canonical({"type": "summary", "records": 1}))
+    except BaseException as error:
+        _send_confidentiality_error(
+            connection, error, "oversized_confidentiality_worker_failure"
+        )
+    finally:
+        connection.close()
+
+
+def _validate_confidentiality_result(
+    result, length, digest, policy_sha256, finding_limit
+):
+    fields = {
+        "type",
+        "policy_sha256",
+        "record_sha256",
+        "byte_count",
+        "line_count",
+        "findings",
+    }
+    require(
+        isinstance(result, dict)
+        and set(result) == fields
+        and result["type"] == "result"
+        and result["policy_sha256"] == policy_sha256
+        and result["record_sha256"] == digest
+        and result["byte_count"] == length
+        and type(result["line_count"]) is int
+        and result["line_count"] >= 0
+        and isinstance(result["findings"], list)
+        and len(result["findings"]) <= finding_limit,
+        "confidentiality_worker_result",
+    )
+    findings = []
+    for item in result["findings"]:
+        findings.append(_checked_confidentiality_finding(item))
+    return findings
+
+
+def _checked_confidentiality_finding(item):
+    fields = {
+        "rule_id",
+        "start_byte",
+        "end_byte",
+        "start_line",
+        "end_line",
+        "views",
+    }
+    require(
+        isinstance(item, dict)
+        and set(item) == fields
+        and isinstance(item["rule_id"], str)
+        and type(item["start_byte"]) is int
+        and type(item["end_byte"]) is int
+        and type(item["start_line"]) is int
+        and type(item["end_line"]) is int
+        and isinstance(item["views"], list)
+        and all(isinstance(view, str) for view in item["views"]),
+        "confidentiality_worker_result",
+    )
+    return item
+
+
+class _OversizedConfidentialityDetector:
+    """Own one spawned mmap worker at a time and validate its exact receipts."""
+
+    def __init__(
+        self,
+        policy_config,
+        literal_binding,
+        policy_sha256,
+        *,
+        process_context=None,
+        memory_limit=CONFIDENTIALITY_MEMORY_LIMIT,
+        finding_limit=RECORD_FINDING_LIMIT,
+    ):
+        self.policy_config = policy_config
+        self.literal_binding = (
+            asdict(literal_binding) if literal_binding is not None else None
+        )
+        self.policy_sha256 = policy_sha256
+        self.context = process_context or multiprocessing.get_context("spawn")
+        self.memory_limit = memory_limit
+        self.finding_limit = finding_limit
+        self.connection = self.process = self.child_connection = None
+        self.records = 0
+        self.joined = True
+
+    def _response(self):
+        try:
+            raw = self.connection.recv_bytes(HELPER_RESPONSE_LIMIT)
+        except (EOFError, OSError) as exc:
+            raise ScanError("oversized_confidentiality_worker_failed") from exc
+        result = json_object(raw)
+        require(isinstance(result, dict), "confidentiality_worker_protocol")
+        if result.get("type") == "error":
+            code = result.get("error")
+            require(
+                isinstance(code, str) and re.fullmatch(r"[a-z0-9_-]+", code),
+                "confidentiality_worker_protocol",
+            )
+            raise ScanError(code)
+        return result
+
+    def scan(self, fd, length, digest, literal_matches):
+        require(self.process is None, "oversized_confidentiality_worker_active")
+        self._configure_worker(fd, length, digest, literal_matches)
+        try:
+            self._start_worker()
+            result, findings = self._receive_worker_result(length, digest)
+            self._join_worker()
+            self.records += 1
+            return result, findings
+        except BaseException:
+            self.abort()
+            raise
+
+    def _configure_worker(self, fd, length, digest, literal_matches):
+        parent, child = self.context.Pipe(duplex=True)
+        self.connection, self.child_connection = parent, child
+        descriptor = multiprocessing.reduction.DupFd(fd)
+        self.process = self.context.Process(
+            target=_oversized_confidentiality_worker,
+            args=(
+                child,
+                descriptor,
+                length,
+                digest,
+                self.policy_config,
+                self.literal_binding,
+                literal_matches,
+                self.policy_sha256,
+                self.memory_limit,
+                self.finding_limit,
+            ),
+            name="image-byte-oversized-confidentiality",
+        )
+        self.joined = False
+
+    def _start_worker(self):
+        global _SPAWNING
+        _SPAWNING = True
+        try:
+            self.process.start()
+        finally:
+            _SPAWNING = False
+        require(not _CANCEL_REQUESTED, "scan_cancelled")
+        self.child_connection.close()
+        self.child_connection = None
+        expected = {"type": "ready", "policy_sha256": self.policy_sha256}
+        require(self._response() == expected, "confidentiality_worker_ready")
+
+    def _receive_worker_result(self, length, digest):
+        result = self._response()
+        findings = _validate_confidentiality_result(
+            result,
+            length,
+            digest,
+            self.policy_sha256,
+            self.finding_limit,
+        )
+        require(
+            self._response() == {"type": "summary", "records": 1},
+            "confidentiality_worker_summary",
+        )
+        return result, findings
+
+    def _join_worker(self):
+        self.connection.close()
+        self.connection = None
+        self.process.join()
+        self.joined = True
+        require(self.process.exitcode == 0, "confidentiality_worker_exit")
+        self.process.close()
+        self.process = None
+
+    def finish(self):
+        require(self.process is None, "oversized_confidentiality_worker_active")
+        self.joined = True
+
+    def abort(self):
+        if self.child_connection is not None:
+            self.child_connection.close()
+            self.child_connection = None
+        if self.connection is not None:
+            self.connection.close()
+            self.connection = None
+        if self.process is not None:
+            if self.process.pid is not None and self.process.is_alive():
+                self.process.terminate()
+            if self.process.pid is not None:
+                self.process.join()
+            self.joined = True
+            if hasattr(self.process, "close"):
+                self.process.close()
+            self.process = None
+
+
 class ConfidentialityDetector:
     def __init__(
         self,
@@ -1526,48 +2114,13 @@ class ConfidentialityDetector:
             )
         )
         result = self._response()
-        require(
-            set(result)
-            == {
-                "type",
-                "policy_sha256",
-                "record_sha256",
-                "byte_count",
-                "line_count",
-                "findings",
-            }
-            and result["type"] == "result"
-            and result["record_sha256"] == digest
-            and result["byte_count"] == length
-            and type(result["line_count"]) is int
-            and result["line_count"] >= 0
-            and isinstance(result["findings"], list)
-            and len(result["findings"]) <= self.finding_limit,
-            "confidentiality_worker_result",
+        findings = _validate_confidentiality_result(
+            result,
+            length,
+            digest,
+            self.policy_sha256,
+            self.finding_limit,
         )
-        findings = []
-        for item in result["findings"]:
-            require(
-                isinstance(item, dict)
-                and set(item)
-                == {
-                    "rule_id",
-                    "start_byte",
-                    "end_byte",
-                    "start_line",
-                    "end_line",
-                    "views",
-                }
-                and isinstance(item["rule_id"], str)
-                and type(item["start_byte"]) is int
-                and type(item["end_byte"]) is int
-                and type(item["start_line"]) is int
-                and type(item["end_line"]) is int
-                and isinstance(item["views"], list)
-                and all(isinstance(view, str) for view in item["views"]),
-                "confidentiality_worker_result",
-            )
-            findings.append(item)
         self.records += 1
         return result, findings
 
@@ -1627,6 +2180,7 @@ class Ledger:
         finally:
             os.close(parent_fd)
         self.stream = os.fdopen(stream_fd, "w", encoding="utf-8")
+        self.directory = directory
         self.record_observer = record_observer
         self.detector, self.literals, self.policy = detector, literals, policy
         validate_literal_inventory(literals)
@@ -1672,11 +2226,16 @@ class Ledger:
             else None
         )
         self.confidentiality_detector = None
+        self.oversized_confidentiality = None
         self.confidentiality_configuration = (
             (policy_config, typed_binding, self.confidentiality.policy_sha256)
             if self.confidentiality is not None
             else None
         )
+        if self.confidentiality_configuration is not None:
+            self.oversized_confidentiality = _OversizedConfidentialityDetector(
+                *self.confidentiality_configuration
+            )
         if self.confidentiality_configuration is not None and not defer_confidentiality:
             self.start_confidentiality()
         self.zero_run = None
@@ -1753,11 +2312,14 @@ class Ledger:
 
     def send(self, reader, length, kind, context):
         self.flush_zeros()
-        require(
-            self.confidentiality is None or length <= CONFIDENTIALITY_RECORD_LIMIT,
-            "confidentiality_record_limit",
-        )
         self.records += 1
+        if length > DETECTOR_RECORD_LIMIT:
+            self.flush_pending()
+            pending = self.stream_oversized_record(reader, length, kind, context)
+            pending.sealed = True
+            self.pending.append(pending)
+            self.finalize_head()
+            return pending.digest
         self.make_room(length)
         pending = self.stream_record(reader, length, kind, context)
         pending.sealed = True
@@ -1840,6 +2402,50 @@ class Ledger:
         self.detector.submit(length, pending.digest)
         return pending
 
+    def stream_oversized_record(self, reader, length, kind, context):
+        """Spill and scan one record that cannot use the framed helper protocol."""
+        digest = hashlib.sha256()
+        matcher = self.new_matcher()
+        pending = PendingRecord(self.records, length, kind, context, None)
+        spill = _PrivateSpill(self.directory)
+        previous, self.open_record = self.open_record, pending
+        try:
+            self._spill_record_bytes(
+                reader, length, spill, digest, matcher, pending
+            )
+            pending.digest = digest.hexdigest()
+            fd = spill.finish(length, pending.digest)
+            self.detector.scan_spilled(fd, length, pending.digest)
+            if self.oversized_confidentiality is not None:
+                pending.confidentiality_result = (
+                    self.oversized_confidentiality.scan(
+                        fd,
+                        length,
+                        pending.digest,
+                        pending.literal_matches,
+                    )
+                )
+            spill.verify()
+            return pending
+        finally:
+            self.open_record = previous
+            spill.close()
+
+    def _spill_record_bytes(self, reader, length, spill, digest, matcher, pending):
+        remaining = length
+        while remaining:
+            data = reader.read(min(CHUNK, remaining))
+            require(bool(data) and len(data) <= remaining, "truncated_record")
+            spill.write(data)
+            digest.update(data)
+            for offset in range(0, len(data), LITERAL_MATCH_CHUNK):
+                batch = data[offset : offset + LITERAL_MATCH_CHUNK]
+                findings = self.literal_batch(matcher, batch, pending)
+                self.issue_literals(pending, findings)
+            remaining -= len(data)
+        findings = self.literal_batch(matcher, b"", pending, final=True)
+        self.issue_literals(pending, findings)
+
     def issue_literals(self, pending, findings):
         """Record literal matches found in one chunk of a record.
 
@@ -1909,14 +2515,17 @@ class Ledger:
         Raises:
             ScanError: If the composed receipt does not bind the same record.
         """
-        self.confidentiality_detector.begin(pending.length)
-        for data in pending.raw_parts:
-            self.confidentiality_detector.write(data)
-        receipt, confidentiality_findings = self.confidentiality_detector.end(
-            pending.length,
-            pending.digest,
-            pending.literal_matches,
-        )
+        if pending.confidentiality_result is not None:
+            receipt, confidentiality_findings = pending.confidentiality_result
+        else:
+            self.confidentiality_detector.begin(pending.length)
+            for data in pending.raw_parts:
+                self.confidentiality_detector.write(data)
+            receipt, confidentiality_findings = self.confidentiality_detector.end(
+                pending.length,
+                pending.digest,
+                pending.literal_matches,
+            )
         require(
             receipt["record_sha256"] == pending.digest
             and receipt["byte_count"] == pending.length
@@ -2019,6 +2628,8 @@ class Ledger:
             and not self.confidentiality_detector.joined
         ):
             self.confidentiality_detector.finish()
+        if self.oversized_confidentiality is not None:
+            self.oversized_confidentiality.finish()
 
     def abort(self):
         if (
@@ -2026,6 +2637,11 @@ class Ledger:
             and not self.confidentiality_detector.joined
         ):
             self.confidentiality_detector.abort()
+        if (
+            self.oversized_confidentiality is not None
+            and not self.oversized_confidentiality.joined
+        ):
+            self.oversized_confidentiality.abort()
 
     def flush_zeros(self):
         if self.zero_run is not None:
@@ -2281,10 +2897,6 @@ def walk_tar(reader, sink, scope, file_handler):
             extension_chain_bytes = 0
             long_name = long_link = None
             if info.isreg():
-                require(
-                    not layer_scope or info.size <= TAR_REGULAR_FILE_LIMIT,
-                    "tar_regular_file_limit",
-                )
                 file_handler(
                     reader, info.size, name, {**context, "tar_offset": reader.tell()}
                 )
@@ -3008,8 +3620,14 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
         if sink is not None:
             sink.abort()
             report["confidentiality_worker_joined"] = (
-                sink.confidentiality_detector is None
-                or sink.confidentiality_detector.joined
+                (
+                    sink.confidentiality_detector is None
+                    or sink.confidentiality_detector.joined
+                )
+                and (
+                    sink.oversized_confidentiality is None
+                    or sink.oversized_confidentiality.joined
+                )
             )
             if sink.zero_run is not None:
                 report.update(

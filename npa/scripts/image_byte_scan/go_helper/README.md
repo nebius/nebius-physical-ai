@@ -11,8 +11,7 @@ Distinct records are detected concurrently, with at most 64 workers, and results
 are emitted in record order. Admission reserves payload bytes against a 512 MiB
 budget before allocating them, so the bytes held for detection are bounded
 independently of archive size. A record larger than that budget is admitted alone
-up to the derived per-record ceiling; larger records fail before payload
-allocation rather than being skipped or truncated.
+up to the derived framed-record ceiling.
 
 The helper has a 12 GiB address-space ceiling. Current measurements peak at
 9.85x payload bytes for one record, so admission rounds that observation to 10x,
@@ -21,6 +20,16 @@ retains 4 GiB of fixed/process headroom, and derives a record ceiling of
 payload budget used by concurrent smaller records. The measurement is not
 treated as a permanent detector constant: `RLIMIT_AS` remains the hard,
 fail-closed backstop if implementation drift uses more memory.
+
+The archive scanner routes a larger regular-file record through an isolated
+one-shot mode. It spills every byte to an owner-only file in the private evidence
+directory, fsyncs and changes it to mode `0400`, reopens it read-only, then
+unlinks it before launching the helper. The helper maps that descriptor
+read-only, exposes the complete mapping to the same single `Detector.Detect`
+call without a second Go payload copy, and hashes and stats it before and after
+detection. Mapping, detector allocation, mutation, unmap, process death, or
+receipt failure leaves the scan incomplete. No chunked or overlap matching path
+exists.
 
 ## Prepare the helper
 
@@ -75,6 +84,13 @@ Python literal matching is prepared separately by the archive scanner.
 Launch with exactly one of `--config PATH` or `--config-fd FD`. The descriptor
 must be inherited, regular, seekable, at offset zero, and greater than 2. The
 helper checks configuration metadata before and after its complete read.
+
+Normal framed mode optionally accepts `--ordinal-base N` so a restarted helper
+retains globally controlled synthetic record paths. One-shot mode requires
+`--config-fd`, `--record-fd`, `--record-length`, and `--record-ordinal`
+together. Its record descriptor must be an owner-only, unlinked, read-only
+regular file of the exact declared length. It emits the same readiness, result,
+summary, and exit-status contract as a one-record framed session.
 
 The helper emits one readiness JSON line, then consumes an unsigned 64-bit
 big-endian byte length followed by exactly that many bytes, repeatedly. It emits

@@ -139,6 +139,39 @@ func protocol(t *testing.T, payload []byte) (int, []map[string]any, string) {
 	return exit, rows, errors.String()
 }
 
+func mappedProtocol(t *testing.T, payload []byte, ordinal uint64) (int, []map[string]any, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "record")
+	if err := os.WriteFile(path, payload, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0400); err != nil {
+		t.Fatal(err)
+	}
+	fd, err := syscall.Open(path, syscall.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		syscall.Close(fd)
+		t.Fatal(err)
+	}
+	var output, errors bytes.Buffer
+	exit := processMapped(&output, &errors, scanner(), fixtureReady, fd, uint64(len(payload)), ordinal)
+	rows := make([]map[string]any, 0)
+	decoder := json.NewDecoder(&output)
+	for {
+		var row map[string]any
+		if err := decoder.Decode(&row); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal("invalid mapped output JSON")
+		}
+		rows = append(rows, row)
+	}
+	return exit, rows, errors.String()
+}
+
 func syntheticPAT() string { return "gh" + "p_" + "aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hI6" }
 
 func syntheticJWT() string {
@@ -212,6 +245,72 @@ func TestEmptyAndMultipleRecords(t *testing.T) {
 	for index, row := range rows[1:5] {
 		if row["ordinal"] != float64(index+1) {
 			t.Fatal("ordinal mismatch")
+		}
+	}
+}
+
+func TestMappedAndFramedWholeRecordProtocolsAreIdentical(t *testing.T) {
+	cases := [][]byte{
+		[]byte("ordinary \xff binary\nwith lines"),
+		[]byte(strings.Repeat("boundary-", 20000) + syntheticPAT()),
+		[]byte(syntheticJWT()),
+		[]byte(syntheticPrivateKey()),
+	}
+	for index, payload := range cases {
+		var output, errors bytes.Buffer
+		framedExit := processFrom(
+			bytes.NewReader(framed(payload)),
+			&output,
+			&errors,
+			scanner(),
+			fixtureReady,
+			6,
+		)
+		mappedExit, mappedRows, mappedErrors := mappedProtocol(t, payload, 7)
+		var framedRows []map[string]any
+		decoder := json.NewDecoder(&output)
+		for {
+			var row map[string]any
+			if err := decoder.Decode(&row); err == io.EOF {
+				break
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			framedRows = append(framedRows, row)
+		}
+		if framedExit != mappedExit || errors.String() != mappedErrors ||
+			!reflect.DeepEqual(framedRows, mappedRows) {
+			t.Fatalf("mapped protocol differs for case %d", index)
+		}
+	}
+}
+
+func TestMappedModeRejectsWritableOrLinkedDescriptor(t *testing.T) {
+	for _, linked := range []bool{false, true} {
+		path := filepath.Join(t.TempDir(), "record")
+		if err := os.WriteFile(path, []byte("record"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		flags := syscall.O_RDWR
+		if linked {
+			flags = syscall.O_RDONLY
+		}
+		fd, err := syscall.Open(path, flags|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(path, 0400); err != nil {
+			t.Fatal(err)
+		}
+		if !linked {
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var output, diagnostic bytes.Buffer
+		exit := processMapped(&output, &diagnostic, scanner(), fixtureReady, fd, 6, 1)
+		if exit != 2 || !strings.Contains(diagnostic.String(), "record_descriptor_invalid") {
+			t.Fatal("unsafe mapped descriptor accepted")
 		}
 	}
 }
@@ -883,6 +982,11 @@ func TestDescriptorModeRejectsAmbiguousOrInvalidArguments(t *testing.T) {
 		{"--config-fd", "invalid"}, {"--config-fd", "18446744073709551616"},
 		{"--config", configFixturePath(), "--config-fd", "3"},
 		{"--config", "", "--config-fd", "3"}, {"--config-fd", "3", "extra"},
+		{"--config-fd", "3", "--record-fd", "4"},
+		{"--config-fd", "3", "--record-length", "4"},
+		{"--config-fd", "3", "--record-ordinal", "1"},
+		{"--config-fd", "3", "--record-fd", "3", "--record-length", "4", "--record-ordinal", "1"},
+		{"--config-fd", "3", "--record-fd", "4", "--record-length", "4", "--record-ordinal", "1", "--ordinal-base", "2"},
 	}
 	for _, args := range cases {
 		var out, diagnostic bytes.Buffer

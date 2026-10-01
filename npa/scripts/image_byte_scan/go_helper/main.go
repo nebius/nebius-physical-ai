@@ -20,6 +20,7 @@ import (
 	"sort"
 	"sync"
 	"syscall"
+	"unsafe"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/viper"
@@ -488,6 +489,20 @@ func sortFindings(findings []finding) {
 	})
 }
 
+// scanRaw applies Gitleaks once to one complete immutable string.
+func scanRaw(raw string, ordinal uint64, detector *detect.Detector) ([]finding, string) {
+	matches := detector.Detect(detect.Fragment{Raw: raw, FilePath: recordPath(ordinal)})
+	if len(matches) > maxRecordFindings {
+		return nil, "record_finding_limit"
+	}
+	findings := make([]finding, 0, len(matches))
+	for _, match := range matches {
+		findings = append(findings, finding{match.RuleID, match.StartLine, match.EndLine})
+	}
+	sortFindings(findings)
+	return findings, ""
+}
+
 // detectRecord hashes and scans one complete record, then releases its budget.
 // A panic is contained and reported on the job so the collector can fail closed
 // rather than losing the whole process.
@@ -514,17 +529,9 @@ func detectRecord(job *scanJob, detector *detect.Detector, budget *byteBudget) {
 	job.digest = hex.EncodeToString(digest[:])
 	// One call, one complete file. No MIME decision, source chunker, overlap,
 	// archive traversal, baseline, ignore file, or AddFinding accumulation.
-	matches := detector.Detect(detect.Fragment{Raw: string(job.payload), FilePath: recordPath(job.ordinal)})
+	findings, code := scanRaw(string(job.payload), job.ordinal, detector)
 	job.payload = nil
-	if len(matches) > maxRecordFindings {
-		job.failure = "record_finding_limit"
-		return
-	}
-	findings := make([]finding, 0, len(matches))
-	for _, match := range matches {
-		findings = append(findings, finding{match.RuleID, match.StartLine, match.EndLine})
-	}
-	sortFindings(findings)
+	job.failure = code
 	job.findings = findings
 }
 
@@ -658,17 +665,20 @@ func admitOne(input io.Reader, detector *detect.Detector, budget *byteBudget,
 //
 //	The controlled failure code that stopped the stream, or "" at clean EOF or
 //	when the pipeline aborted.
-func admitRecords(input io.Reader, detector *detect.Detector, budget *byteBudget,
-	dispatch chan<- *scanJob, ordered chan<- *scanJob, abort <-chan struct{}) string {
+func admitRecordsFrom(input io.Reader, detector *detect.Detector, budget *byteBudget,
+	dispatch chan<- *scanJob, ordered chan<- *scanJob, abort <-chan struct{}, ordinalBase uint64) string {
 	var files, consumed uint64
 	for {
-		length, code := readLength(input, files, consumed)
+		if ordinalBase > math.MaxUint64-files {
+			return "length_overflow"
+		}
+		length, code := readLength(input, ordinalBase+files, consumed)
 		if code != "" || length < 0 {
 			return code
 		}
 		files++
 		consumed += uint64(length)
-		job, code := admitOne(input, detector, budget, files, length)
+		job, code := admitOne(input, detector, budget, ordinalBase+files, length)
 		if job == nil {
 			return code
 		}
@@ -687,6 +697,11 @@ func admitRecords(input io.Reader, detector *detect.Detector, budget *byteBudget
 			return ""
 		}
 	}
+}
+
+func admitRecords(input io.Reader, detector *detect.Detector, budget *byteBudget,
+	dispatch chan<- *scanJob, ordered chan<- *scanJob, abort <-chan struct{}) string {
+	return admitRecordsFrom(input, detector, budget, dispatch, ordered, abort, 0)
 }
 
 // emitRecords writes one result per record in ordinal order.
@@ -755,7 +770,8 @@ func detectionWorkers() int {
 	return workers
 }
 
-func runPipeline(input io.Reader, detector *detect.Detector, emit func(any) bool) (summary, string) {
+func runPipelineFrom(input io.Reader, detector *detect.Detector, emit func(any) bool,
+	ordinalBase uint64) (summary, string) {
 	workers := detectionWorkers()
 	budget := newByteBudget(inFlightByteBudget)
 	dispatch := make(chan *scanJob, workers)
@@ -764,7 +780,7 @@ func runPipeline(input io.Reader, detector *detect.Detector, emit func(any) bool
 	pool := startDetectionPool(workers, dispatch, detector, budget, abort)
 	admitted := make(chan string, 1)
 	go func() {
-		code := admitRecords(input, detector, budget, dispatch, ordered, abort)
+		code := admitRecordsFrom(input, detector, budget, dispatch, ordered, abort, ordinalBase)
 		close(dispatch)
 		close(ordered)
 		admitted <- code
@@ -784,7 +800,12 @@ func runPipeline(input io.Reader, detector *detect.Detector, emit func(any) bool
 	return totals, <-admitted
 }
 
-func process(input io.Reader, output, stderr io.Writer, detector *detect.Detector, info ready) (exit int) {
+func runPipeline(input io.Reader, detector *detect.Detector, emit func(any) bool) (summary, string) {
+	return runPipelineFrom(input, detector, emit, 0)
+}
+
+func processFrom(input io.Reader, output, stderr io.Writer, detector *detect.Detector,
+	info ready, ordinalBase uint64) (exit int) {
 	defer func() {
 		if recover() != nil {
 			exit = failure(stderr, "internal_panic")
@@ -796,7 +817,7 @@ func process(input io.Reader, output, stderr io.Writer, detector *detect.Detecto
 	if !emit(info) {
 		return failure(stderr, "output_error")
 	}
-	totals, code := runPipeline(input, detector, emit)
+	totals, code := runPipelineFrom(input, detector, emit, ordinalBase)
 	if code != "" {
 		return failure(stderr, code)
 	}
@@ -809,6 +830,154 @@ func process(input io.Reader, output, stderr io.Writer, detector *detect.Detecto
 	return 0
 }
 
+func process(input io.Reader, output, stderr io.Writer, detector *detect.Detector, info ready) int {
+	return processFrom(input, output, stderr, detector, info, 0)
+}
+
+func mapPrivateRecord(fd int, length uint64) (*os.File, []byte, os.FileInfo, string) {
+	if fd < 3 || length == 0 || length > uint64(int(^uint(0)>>1)) {
+		return nil, nil, nil, "record_descriptor_invalid"
+	}
+	file := os.NewFile(uintptr(fd), "private-oversized-record")
+	if file == nil {
+		return nil, nil, nil, "record_descriptor_invalid"
+	}
+	before, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return nil, nil, nil, "record_descriptor_invalid"
+	}
+	system, ok := before.Sys().(*syscall.Stat_t)
+	flags, _, flagErr := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), syscall.F_GETFL, 0)
+	if !ok || !before.Mode().IsRegular() || before.Size() < 0 ||
+		uint64(before.Size()) != length || before.Mode().Perm() != 0400 ||
+		before.Mode()&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 ||
+		system.Uid != uint32(os.Geteuid()) || system.Nlink != 0 ||
+		flagErr != 0 || int(flags)&syscall.O_ACCMODE != syscall.O_RDONLY {
+		file.Close()
+		return nil, nil, nil, "record_descriptor_invalid"
+	}
+	payload, err := syscall.Mmap(fd, 0, int(length), syscall.PROT_READ, syscall.MAP_SHARED)
+	if err != nil {
+		file.Close()
+		return nil, nil, nil, "record_mapping_failed"
+	}
+	return file, payload, before, ""
+}
+
+func scanMappedRecord(detector *detect.Detector, recordFD int,
+	length, ordinal uint64) (result, summary, string) {
+	if ordinal == 0 {
+		return result{}, summary{}, "record_ordinal_invalid"
+	}
+	if code := controlledPathCode(detector, ordinal); code != "" {
+		return result{}, summary{}, code
+	}
+	file, payload, before, code := mapPrivateRecord(recordFD, length)
+	if code != "" {
+		return result{}, summary{}, code
+	}
+	defer file.Close()
+	first := sha256.Sum256(payload)
+	raw := unsafe.String(unsafe.SliceData(payload), len(payload))
+	findings, code := scanRaw(raw, ordinal, detector)
+	raw = ""
+	runtime.KeepAlive(payload)
+	second := sha256.Sum256(payload)
+	after, statError := file.Stat()
+	if code != "" || statError != nil || first != second || !sameConfigStat(before, after) {
+		if code == "" {
+			code = "record_changed"
+		}
+		_ = syscall.Munmap(payload)
+		return result{}, summary{}, code
+	}
+	if syscall.Munmap(payload) != nil {
+		return result{}, summary{}, "record_unmap_failed"
+	}
+	digest := hex.EncodeToString(first[:])
+	record := result{Type: "result", Ordinal: ordinal, Bytes: length, SHA256: digest, Findings: findings}
+	totals := summary{Type: "summary", Files: 1, Bytes: length, Findings: uint64(len(findings))}
+	return record, totals, ""
+}
+
+func processMapped(output, stderr io.Writer, detector *detect.Detector, info ready,
+	recordFD int, length, ordinal uint64) (exit int) {
+	defer func() {
+		if recover() != nil {
+			exit = failure(stderr, "internal_panic")
+		}
+	}()
+	writer := bufio.NewWriter(output)
+	encoder := json.NewEncoder(writer)
+	emit := func(value any) bool { return encoder.Encode(value) == nil && writer.Flush() == nil }
+	if !emit(info) {
+		return failure(stderr, "output_error")
+	}
+	record, totals, code := scanMappedRecord(detector, recordFD, length, ordinal)
+	if code != "" {
+		return failure(stderr, code)
+	}
+	if !emit(record) || !emit(totals) {
+		return failure(stderr, "output_error")
+	}
+	if totals.Findings != 0 {
+		return 1
+	}
+	return 0
+}
+
+type scannerOptions struct {
+	configPath    string
+	configFD      int
+	recordFD      int
+	recordLength  uint64
+	recordOrdinal uint64
+	ordinalBase   uint64
+	configByFD    bool
+	mapped        bool
+}
+
+func validScannerOptions(supplied map[string]bool, options scannerOptions) bool {
+	mappedComplete := supplied["record-fd"] &&
+		supplied["record-length"] && supplied["record-ordinal"]
+	return supplied["config"] != supplied["config-fd"] &&
+		(!supplied["config"] || options.configPath != "") &&
+		(!supplied["config-fd"] || options.configFD >= 3) &&
+		(!options.mapped || (mappedComplete && options.configByFD &&
+			!supplied["ordinal-base"] && options.recordFD >= 3 &&
+			options.recordFD != options.configFD && options.recordLength != 0 &&
+			options.recordOrdinal != 0))
+}
+
+func parseScannerOptions(args []string) (scannerOptions, bool) {
+	flags := flag.NewFlagSet("whole-file-scanner", flag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	path := flags.String("config", "", "Trusted repository config")
+	fd := flags.Int("config-fd", -1, "Inherited verified regular-file config descriptor")
+	recordFD := flags.Int("record-fd", -1, "Inherited private oversized-record descriptor")
+	recordLength := flags.Uint64("record-length", 0, "Exact oversized-record byte count")
+	recordOrdinal := flags.Uint64("record-ordinal", 0, "Global one-based record ordinal")
+	ordinalBase := flags.Uint64("ordinal-base", 0, "Global ordinal preceding this stream")
+	if flags.Parse(args) != nil || flags.NArg() != 0 {
+		return scannerOptions{}, false
+	}
+	supplied := map[string]bool{}
+	flags.Visit(func(item *flag.Flag) { supplied[item.Name] = true })
+	mapped := supplied["record-fd"] || supplied["record-length"] || supplied["record-ordinal"]
+	options := scannerOptions{
+		configPath:    *path,
+		configFD:      *fd,
+		recordFD:      *recordFD,
+		recordLength:  *recordLength,
+		recordOrdinal: *recordOrdinal,
+		ordinalBase:   *ordinalBase,
+		configByFD:    supplied["config-fd"],
+		mapped:        mapped,
+	}
+	return options, validScannerOptions(supplied, options)
+}
+
 func run(args []string, input io.Reader, output, stderr io.Writer) (exit int) {
 	defer func() {
 		if recover() != nil {
@@ -817,26 +986,17 @@ func run(args []string, input io.Reader, output, stderr io.Writer) (exit int) {
 	}()
 	log.SetOutput(io.Discard)
 	zerolog.SetGlobalLevel(zerolog.Disabled)
-	flags := flag.NewFlagSet("whole-file-scanner", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	path := flags.String("config", "", "Trusted repository config")
-	fd := flags.Int("config-fd", -1, "Inherited verified regular-file config descriptor")
-	if flags.Parse(args) != nil || flags.NArg() != 0 {
-		return failure(stderr, "invalid_arguments")
-	}
-	supplied := map[string]bool{}
-	flags.Visit(func(item *flag.Flag) { supplied[item.Name] = true })
-	if supplied["config"] == supplied["config-fd"] ||
-		(supplied["config"] && *path == "") || (supplied["config-fd"] && *fd < 3) {
+	options, valid := parseScannerOptions(args)
+	if !valid {
 		return failure(stderr, "invalid_arguments")
 	}
 	var parsed config.Config
 	var info ready
 	var code string
-	if supplied["config-fd"] {
-		parsed, info, code = configurationFD(*fd)
+	if options.configByFD {
+		parsed, info, code = configurationFD(options.configFD)
 	} else {
-		parsed, info, code = configuration(*path)
+		parsed, info, code = configuration(options.configPath)
 	}
 	if code != "" {
 		return failure(stderr, code)
@@ -846,7 +1006,11 @@ func run(args []string, input io.Reader, output, stderr io.Writer) (exit int) {
 	detector.IgnoreGitleaksAllow = true
 	detector.Redact = 100
 	detector.Verbose = false
-	return process(input, output, stderr, detector, info)
+	if options.mapped {
+		return processMapped(output, stderr, detector, info,
+			options.recordFD, options.recordLength, options.recordOrdinal)
+	}
+	return processFrom(input, output, stderr, detector, info, options.ordinalBase)
 }
 
 func boundedAddressSpace(requested uint64, inherited syscall.Rlimit) uint64 {

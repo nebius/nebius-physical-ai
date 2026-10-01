@@ -8,9 +8,11 @@ loaders and the separately verified exact-literal matcher belong to the caller.
 
 from __future__ import annotations
 
+import codecs
 from dataclasses import dataclass, field
 import hashlib
 import json
+import mmap
 import re
 import sys
 from typing import Iterator
@@ -162,7 +164,9 @@ def _line_positions(text: str, positions: set[int]) -> dict[int, int]:
     return result
 
 
-def _byte_line_positions(raw: bytes, text: str, positions: set[int]) -> dict[int, int]:
+def _byte_line_positions(
+    raw: bytes | mmap.mmap, text: str, positions: set[int]
+) -> dict[int, int]:
     """Map bounded byte offsets while encoding each decoded span at most once."""
     targets = iter(sorted(positions))
     target = next(targets, None)
@@ -233,6 +237,39 @@ class ConfidentialityPolicy:
         """
         if type(raw) is not bytes:
             raise ConfidentialityError("record_type_invalid")
+        return self._checked_scan(raw, literal_scan, finding_limit)
+
+    def scan_mapped_record(
+        self,
+        raw: mmap.mmap,
+        *,
+        literal_scan: LiteralScan | None = None,
+        finding_limit: int | None = None,
+    ) -> RecordScan:
+        """Scan one immutable, read-only mapping with byte-identical semantics.
+
+        Args:
+            raw: Complete regular-file bytes in a read-only mapping.
+            literal_scan: Optional caller-verified literal-match receipt.
+            finding_limit: Optional maximum distinct finding population.
+
+        Returns:
+            A redacted receipt for the exact mapped bytes.
+
+        Raises:
+            ConfidentialityError: If the input, policy evaluation, or receipt
+                composition is invalid or incomplete.
+        """
+        if type(raw) is not mmap.mmap:
+            raise ConfidentialityError("record_mapping_invalid")
+        return self._checked_scan(raw, literal_scan, finding_limit)
+
+    def _checked_scan(
+        self,
+        raw: bytes | mmap.mmap,
+        literal_scan: LiteralScan | None,
+        finding_limit: int | None,
+    ) -> RecordScan:
         if finding_limit is not None and (
             type(finding_limit) is not int or finding_limit < 0
         ):
@@ -248,13 +285,13 @@ class ConfidentialityPolicy:
 
     def _scan(
         self,
-        raw: bytes,
+        raw: bytes | mmap.mmap,
         literal_scan: LiteralScan | None,
         finding_limit: int | None,
     ) -> RecordScan:
         record_sha = hashlib.sha256(raw).hexdigest()
         external = self._literal_matches(literal_scan, record_sha, len(raw))
-        text = raw.decode("utf-8", "surrogateescape")
+        text = codecs.decode(raw, "utf-8", "surrogateescape")
         spans: dict[tuple[str, int, int], set[str]] = {}
 
         def add_span(key: tuple[str, int, int], view: str) -> None:

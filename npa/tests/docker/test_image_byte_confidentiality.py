@@ -4,6 +4,8 @@ from dataclasses import FrozenInstanceError, asdict, replace
 import hashlib
 import importlib.util
 import json
+import mmap
+import os
 from pathlib import Path
 import random
 import re
@@ -235,6 +237,39 @@ def test_whole_file_match_crosses_large_binary_record_without_cap():
     assert result.findings[0].end_byte == result.byte_count == len(raw)
     assert result.findings[0].views == ("record",)
     assert result.record_sha256 == hashlib.sha256(raw).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("raw", "customer", "infra"),
+    [
+        (
+            b"BEGIN" + b"\xff\0" * 101 + b"\nEND\nanchored\n",
+            r"(?s:BEGIN.*END)|(?m:^anchored$)",
+            r"begin.*end",
+        ),
+        (b"A\r\nFIXTURE" + "\u2028".encode() + b"B", r"^FIXTURE$", None),
+        (b"prefix\xffA\0B\xfesuffix", r"\udcffA\x00B\udcfe", None),
+        (b"owner=ABC-ABC\nABC-ABC", r"(?<=owner=)([A-Z]+)-\1", None),
+    ],
+)
+def test_readonly_mmap_is_byte_identical_to_complete_bytes(
+    tmp_path, raw, customer, infra
+):
+    path = tmp_path / "record"
+    path.write_bytes(raw)
+    path.chmod(0o400)
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        with mmap.mmap(fd, len(raw), access=mmap.ACCESS_READ) as mapped:
+            policy = compile_policy(customer, infra)
+            assert policy.scan_mapped_record(mapped) == policy.scan_record(raw)
+    finally:
+        os.close(fd)
+
+
+def test_mapped_scan_requires_an_exact_mmap_instance():
+    with pytest.raises(Error, match="^record_mapping_invalid$"):
+        compile_policy("fixture").scan_mapped_record(b"fixture")
 
 
 def test_all_findings_are_retained():
