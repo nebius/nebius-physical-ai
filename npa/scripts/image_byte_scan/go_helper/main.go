@@ -19,6 +19,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"sync"
 	"syscall"
 	"unsafe"
@@ -202,6 +203,40 @@ func (result threadContainmentResult) valid() bool {
 		result.unshareErr == syscall.EPERM
 }
 
+type seccompFilterCount struct {
+	value int
+	valid bool
+}
+
+func currentThreadSeccompFilterCount() seccompFilterCount {
+	status, err := os.ReadFile("/proc/thread-self/status")
+	if err != nil {
+		return seccompFilterCount{}
+	}
+	return seccompFilterCountFromStatus(status)
+}
+
+func seccompFilterCountFromStatus(status []byte) seccompFilterCount {
+	prefix := []byte("Seccomp_filters:")
+	found := seccompFilterCount{}
+	for _, line := range bytes.Split(status, []byte{'\n'}) {
+		if !bytes.HasPrefix(line, prefix) {
+			continue
+		}
+		if found.valid {
+			return seccompFilterCount{}
+		}
+		value, conversionErr := strconv.Atoi(
+			string(bytes.TrimSpace(line[len(prefix):])),
+		)
+		if conversionErr != nil || value < 0 {
+			return seccompFilterCount{}
+		}
+		found = seccompFilterCount{value: value, valid: true}
+	}
+	return found
+}
+
 type processContainmentResult struct {
 	mode              uintptr
 	modeErr           syscall.Errno
@@ -271,16 +306,38 @@ func (result processContainmentResult) valid() bool {
 		result.cloneNamespaceErr == syscall.EPERM
 }
 
-func startPreexistingThreadProbe() (chan struct{}, chan struct{}, chan threadContainmentResult) {
+type preexistingThreadContainmentResult struct {
+	before      seccompFilterCount
+	after       seccompFilterCount
+	containment threadContainmentResult
+}
+
+func (result preexistingThreadContainmentResult) valid() bool {
+	return result.before.valid &&
+		result.after.valid &&
+		result.after.value == result.before.value+1 &&
+		result.containment.valid()
+}
+
+func startPreexistingThreadProbe() (
+	chan struct{},
+	chan struct{},
+	chan preexistingThreadContainmentResult,
+) {
 	ready := make(chan struct{})
 	run := make(chan struct{})
-	result := make(chan threadContainmentResult)
+	result := make(chan preexistingThreadContainmentResult)
 	go func() {
 		runtime.LockOSThread()
 		defer runtime.UnlockOSThread()
+		before := currentThreadSeccompFilterCount()
 		close(ready)
 		<-run
-		result <- inspectContainedThread()
+		result <- preexistingThreadContainmentResult{
+			before:      before,
+			after:       currentThreadSeccompFilterCount(),
+			containment: inspectContainedThread(),
+		}
 	}()
 	return ready, run, result
 }
@@ -295,10 +352,10 @@ func runInheritedProcessContainmentProbe() int {
 
 func runProcessContainmentProbe(
 	runThread chan struct{},
-	threadResult chan threadContainmentResult,
+	threadResult chan preexistingThreadContainmentResult,
 ) int {
 	close(runThread)
-	if !validatePreexistingThread(<-threadResult) {
+	if !(<-threadResult).valid() {
 		return failure(os.Stderr, "process_containment_tsync_failed")
 	}
 	if !inspectProcessContainment().valid() {
@@ -315,10 +372,6 @@ func runProcessContainmentProbe(
 	}
 	fmt.Fprintln(os.Stdout, processContainment)
 	return 0
-}
-
-func validatePreexistingThread(result threadContainmentResult) bool {
-	return result.valid()
 }
 
 type finding struct {
@@ -1345,7 +1398,7 @@ func main() {
 	}
 	probe := len(os.Args) == 2 && os.Args[1] == processContainmentProbeArgument
 	var runThread chan struct{}
-	var threadResult chan threadContainmentResult
+	var threadResult chan preexistingThreadContainmentResult
 	if probe {
 		ready, run, result := startPreexistingThreadProbe()
 		<-ready

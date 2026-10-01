@@ -37,7 +37,6 @@ def digest(data):
 
 def _resistant_oversized_worker(
     connection,
-    _descriptor,
     _length,
     _digest,
     policy_config,
@@ -1573,60 +1572,104 @@ def test_oversized_confidentiality_oom_or_worker_death_fails_closed(tmp_path):
     assert detector.joined
 
 
-def test_oversized_confidentiality_dupfd_failure_closes_pipe_before_return(
-    monkeypatch,
+@pytest.mark.timeout(15)
+def test_oversized_confidentiality_descriptor_send_failure_joins_worker(
+    tmp_path, monkeypatch
 ):
-    class TrackedEndpoint:
-        def __init__(self):
-            self.closed = False
-
-        def close(self):
-            self.closed = True
-
-    class TrackedContext:
-        def __init__(self):
-            self.parent = TrackedEndpoint()
-            self.child = TrackedEndpoint()
-            self.process_calls = 0
-
-        def Pipe(self, *, duplex):
-            assert duplex is True
-            return self.parent, self.child
-
-        def Process(self, **_kwargs):
-            self.process_calls += 1
-            raise AssertionError("Process must not be built after DupFd failure")
-
-    context = TrackedContext()
     failure = OSError(errno.EMFILE, "synthetic descriptor exhaustion")
 
-    def fail_duplication(_descriptor):
+    def fail_send(_connection, _descriptor, _process_id):
         raise failure
 
-    monkeypatch.setattr(W.multiprocessing.reduction, "DupFd", fail_duplication)
+    monkeypatch.setattr(W.multiprocessing.reduction, "send_handle", fail_send)
+    policy_config = {
+        "customer_pattern": "absent-private-marker",
+        "infra_pattern": None,
+    }
+    policy = W.C.compile_policy(**policy_config)
     detector = W._OversizedConfidentialityDetector(
-        {"customer_pattern": "absent-private-marker", "infra_pattern": None},
+        policy_config,
         None,
-        "a" * 64,
-        process_context=context,
+        policy.policy_sha256,
+    )
+    spill = W._PrivateSpill(tmp_path)
+    payload = b"descriptor-transfer-failure"
+    try:
+        spill.write(payload)
+        fd = spill.finish(len(payload), digest(payload))
+        with pytest.raises(OSError) as caught:
+            detector.scan(fd, len(payload), digest(payload), [])
+        assert caught.value is failure
+        assert (
+            detector.connection,
+            detector.child_connection,
+            detector.process,
+            detector.process_group,
+            detector.pidfd,
+        ) == (None, None, None, None, None)
+        assert detector.joined is True
+    finally:
+        detector.abort()
+        spill.close()
+
+
+def test_oversized_confidentiality_extinguishes_group_before_pid_reap(monkeypatch):
+    policy_config = {
+        "customer_pattern": "absent-private-marker",
+        "infra_pattern": None,
+    }
+    policy = W.C.compile_policy(**policy_config)
+    detector = W._OversizedConfidentialityDetector(
+        policy_config,
+        None,
+        policy.policy_sha256,
+    )
+    order = []
+
+    class Connection:
+        def close(self):
+            order.append("connection-close")
+
+    class Process:
+        exitcode = 0
+
+        def join(self):
+            order.append("pid-reap")
+
+        def close(self):
+            order.append("process-close")
+
+    detector.connection = Connection()
+    detector.process = Process()
+    detector.process_group = 73
+    detector.pidfd = 74
+    monkeypatch.setattr(
+        detector,
+        "_wait_worker_exit",
+        lambda: order.append("direct-exit") or False,
+    )
+    monkeypatch.setattr(
+        W,
+        "_signal_process_group",
+        lambda group: order.append(("signal-group", group)) or False,
+    )
+    monkeypatch.setattr(
+        W,
+        "_wait_for_process_group_exit",
+        lambda group: order.append(("group-extinct", group)) or True,
     )
 
-    with pytest.raises(OSError) as caught:
-        detector.scan(91, 1, digest(b"x"), [])
+    def close_pidfd():
+        order.append("pidfd-close")
+        detector.pidfd = None
+        return False
 
-    assert caught.value is failure
-    assert context.parent.closed and context.child.closed
-    assert context.process_calls == 0
-    assert (
-        detector.connection,
-        detector.child_connection,
-        detector.process,
-        detector.process_group,
-    ) == (None, None, None, None)
-    assert detector.joined is True
+    monkeypatch.setattr(detector, "_close_worker_pidfd", close_pidfd)
+    detector._join_worker()
 
-    detector.abort()
-    assert context.parent.closed and context.child.closed
+    assert order.index(("signal-group", 73)) < order.index("pid-reap")
+    assert order.index(("group-extinct", 73)) < order.index("pid-reap")
+    assert detector.process is detector.process_group is detector.pidfd is None
 
 
 def test_oversized_confidentiality_abort_kills_resistant_group_descendant(tmp_path):
@@ -1651,8 +1694,8 @@ def test_oversized_confidentiality_abort_kills_resistant_group_descendant(tmp_pa
     try:
         spill.write(payload)
         fd = spill.finish(len(payload), digest(payload))
-        detector._configure_worker(fd, len(payload), digest(payload), [])
-        detector._start_worker()
+        detector._configure_worker(len(payload), digest(payload), [])
+        detector._start_worker(fd)
         descendant = int(marker.read_text())
         process_group = detector.process_group
         assert process_group == detector.process.pid
@@ -1688,10 +1731,6 @@ def test_mapped_confidentiality_cleanup_preserves_mutation_and_fails_alone(
     spill.write(payload)
     fd = spill.finish(len(payload), digest(payload))
 
-    class Descriptor:
-        def detach(self):
-            return os.dup(fd)
-
     class Connection:
         def send_bytes(self, _payload):
             return None
@@ -1718,7 +1757,7 @@ def test_mapped_confidentiality_cleanup_preserves_mutation_and_fails_alone(
         with pytest.raises(W.ScanError, match=f"^{expected}$"):
             W._mapped_confidentiality_scan(
                 Connection(),
-                Descriptor(),
+                os.dup(fd),
                 len(payload),
                 digest(payload),
                 policy_config,
@@ -2823,6 +2862,40 @@ def test_detector_abort_closes_pidfd_and_owned_group(tmp_path):
     assert detector.joined is True
     assert not W._process_group_survived(process_group)
     _assert_pidfds_closed(detector)
+
+
+def test_detector_abort_fails_closed_when_group_extinction_is_unproved(monkeypatch):
+    detector = W.Detector.__new__(W.Detector)
+    detector.current_cleanup_failed = False
+    detector.process_group = 91
+    detector.direct_exited = False
+    detector.direct_status = None
+    detector.pidfd = None
+    detector.stderr = None
+    detector.joined = False
+    detector.stream_active = True
+
+    class Process:
+        pid = 91
+
+        def kill(self):
+            raise AssertionError("owned group signal should be used")
+
+        def wait(self):
+            return -signal.SIGKILL
+
+    detector.process = Process()
+    monkeypatch.setattr(detector, "_close_stdin", lambda: False)
+    monkeypatch.setattr(detector, "_close_pidfd", lambda: False)
+    monkeypatch.setattr(detector, "_close_current_streams", lambda: False)
+    monkeypatch.setattr(W, "_signal_process_group", lambda _group: False)
+    monkeypatch.setattr(W, "_wait_for_process_group_exit", lambda _group: False)
+
+    with pytest.raises(W.ScanError, match="^helper_cleanup_failed$"):
+        detector.abort()
+
+    assert detector.joined is True
+    assert detector.process_group is None
 
 
 @pytest.mark.parametrize(

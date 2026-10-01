@@ -1639,8 +1639,8 @@ class Detector:
         failed = self.current_cleanup_failed
         self.current_cleanup_failed = False
         failed = self._close_stdin() or failed
+        process_group = self.process_group
         if self.process is not None and not self.direct_exited:
-            process_group = self.process_group
             group_failed = _signal_process_group(process_group)
             self.process_group = None
             failed = group_failed or failed
@@ -1656,6 +1656,8 @@ class Detector:
             except (OSError, subprocess.SubprocessError):
                 failed = True
             self.direct_exited = True
+        if process_group is not None:
+            failed = not _wait_for_process_group_exit(process_group) or failed
         self.process_group = None
         failed = self._close_pidfd() or failed
         failed = self._close_current_streams() or failed
@@ -2102,10 +2104,9 @@ def _mapped_confidentiality_scan(
     policy_sha256,
     finding_limit,
 ):
-    fd = mapping = None
+    fd, mapping = descriptor, None
     primary = None
     try:
-        fd = descriptor.detach()
         before = _checked_spill_descriptor(fd, length, digest)
         policy, binding = _checked_mapped_policy(
             policy_config, literal_binding, policy_sha256
@@ -2181,7 +2182,6 @@ def _acknowledge_oversized_session(connection):
 
 def _oversized_confidentiality_worker(
     connection,
-    descriptor,
     length,
     digest,
     policy_config,
@@ -2195,6 +2195,7 @@ def _oversized_confidentiality_worker(
     try:
         _acknowledge_oversized_session(connection)
         _apply_address_space_limit(memory_limit)
+        descriptor = multiprocessing.reduction.recv_handle(connection)
         receipt = _mapped_confidentiality_scan(
             connection,
             descriptor,
@@ -2294,7 +2295,7 @@ class _OversizedConfidentialityDetector:
         self.finding_limit = finding_limit
         self.worker_target = worker_target
         self.connection = self.process = self.child_connection = None
-        self.process_group = None
+        self.process_group = self.pidfd = None
         self.records = 0
         self.joined = True
 
@@ -2318,8 +2319,8 @@ class _OversizedConfidentialityDetector:
         _admit_complete_record(length)
         require(self.process is None, "oversized_confidentiality_worker_active")
         try:
-            self._configure_worker(fd, length, digest, literal_matches)
-            self._start_worker()
+            self._configure_worker(length, digest, literal_matches)
+            self._start_worker(fd)
             result, findings = self._receive_worker_result(length, digest)
             self._join_worker()
             self.records += 1
@@ -2331,15 +2332,13 @@ class _OversizedConfidentialityDetector:
                 pass
             raise
 
-    def _configure_worker(self, fd, length, digest, literal_matches):
+    def _configure_worker(self, length, digest, literal_matches):
         parent, child = self.context.Pipe(duplex=True)
         self.connection, self.child_connection = parent, child
-        descriptor = multiprocessing.reduction.DupFd(fd)
         self.process = self.context.Process(
             target=self.worker_target,
             args=(
                 child,
-                descriptor,
                 length,
                 digest,
                 self.policy_config,
@@ -2353,7 +2352,7 @@ class _OversizedConfidentialityDetector:
         )
         self.joined = False
 
-    def _start_worker(self):
+    def _start_worker(self, fd):
         global _SPAWNING
         _SPAWNING = True
         try:
@@ -2365,6 +2364,7 @@ class _OversizedConfidentialityDetector:
         except OSError as error:
             raise ScanError("oversized_confidentiality_cleanup_failed") from error
         self.child_connection = None
+        self.pidfd = os.pidfd_open(self.process.pid, 0)
         require(not _CANCEL_REQUESTED, "scan_cancelled")
         session = self._response()
         process_id = self.process.pid
@@ -2382,6 +2382,7 @@ class _OversizedConfidentialityDetector:
             and os.getpgid(process_id) == process_id,
             "oversized_confidentiality_session",
         )
+        multiprocessing.reduction.send_handle(self.connection, fd, process_id)
         expected = {"type": "ready", "policy_sha256": self.policy_sha256}
         require(self._response() == expected, "confidentiality_worker_ready")
 
@@ -2400,6 +2401,27 @@ class _OversizedConfidentialityDetector:
         )
         return result, findings
 
+    def _wait_worker_exit(self):
+        if self.pidfd is None:
+            return True
+        poller = select.poll()
+        poller.register(self.pidfd, select.POLLIN | select.POLLERR | select.POLLHUP)
+        try:
+            events = dict(poller.poll())
+        except OSError:
+            return True
+        return self.pidfd not in events
+
+    def _close_worker_pidfd(self):
+        pidfd, self.pidfd = self.pidfd, None
+        if pidfd is None:
+            return False
+        try:
+            os.close(pidfd)
+        except OSError:
+            return True
+        return False
+
     def _join_worker(self):
         cleanup_failed = False
         try:
@@ -2407,6 +2429,12 @@ class _OversizedConfidentialityDetector:
         except OSError:
             cleanup_failed = True
         self.connection = None
+        cleanup_failed = self._wait_worker_exit() or cleanup_failed
+        process_group = self.process_group
+        cleanup_failed = _signal_process_group(process_group) or cleanup_failed
+        cleanup_failed = (
+            not _wait_for_process_group_exit(process_group) or cleanup_failed
+        )
         join_failed = False
         try:
             self.process.join()
@@ -2414,9 +2442,8 @@ class _OversizedConfidentialityDetector:
             join_failed = True
         self.joined = True
         status_error = join_failed or self.process.exitcode != 0
-        process_group, self.process_group = self.process_group, None
-        cleanup_failed = _signal_process_group(process_group) or cleanup_failed
-        cleanup_failed = _process_group_survived(process_group) or cleanup_failed
+        self.process_group = None
+        cleanup_failed = self._close_worker_pidfd() or cleanup_failed
         try:
             self.process.close()
         except (OSError, ValueError):
@@ -2457,32 +2484,32 @@ class _OversizedConfidentialityDetector:
 
     def _abort_worker_process(self):
         if self.process is None:
-            return False
+            return self._close_worker_pidfd()
         failed = False
         process_id = self.process.pid
         self._cache_worker_group(process_id)
-        try:
-            alive = process_id is not None and self.process.is_alive()
-        except (OSError, ValueError):
-            alive = False
-            failed = True
-        if alive:
+        process_group = self.process_group
+        if process_id is not None:
             group_failed = _signal_process_group(self.process_group)
             failed = group_failed or failed
             if self.process_group is None or group_failed:
                 try:
                     self.process.kill()
-                except OSError:
+                except ProcessLookupError:
+                    pass
+                except (OSError, ValueError):
                     failed = True
+            failed = self._wait_worker_exit() or failed
+            if process_group is not None:
+                failed = not _wait_for_process_group_exit(process_group) or failed
         if process_id is not None:
             try:
                 self.process.join()
             except (OSError, ValueError):
                 failed = True
         self.joined = True
-        process_group, self.process_group = self.process_group, None
-        failed = _signal_process_group(process_group) or failed
-        failed = _process_group_survived(process_group) or failed
+        self.process_group = None
+        failed = self._close_worker_pidfd() or failed
         if hasattr(self.process, "close"):
             try:
                 self.process.close()

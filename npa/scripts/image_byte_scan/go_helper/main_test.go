@@ -49,6 +49,28 @@ func TestProcessContainmentReadinessIdentity(t *testing.T) {
 	}
 }
 
+func TestSeccompFilterCountRequiresOneNonnegativeValue(t *testing.T) {
+	for name, item := range map[string]struct {
+		status []byte
+		value  int
+		valid  bool
+	}{
+		"present":   {[]byte("Name:\thelper\nSeccomp_filters:\t2\n"), 2, true},
+		"zero":      {[]byte("Seccomp_filters:\t0\n"), 0, true},
+		"missing":   {[]byte("Seccomp:\t2\n"), 0, false},
+		"negative":  {[]byte("Seccomp_filters:\t-1\n"), 0, false},
+		"malformed": {[]byte("Seccomp_filters:\tunknown\n"), 0, false},
+		"duplicate": {[]byte("Seccomp_filters:\t1\nSeccomp_filters:\t2\n"), 0, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			actual := seccompFilterCountFromStatus(item.status)
+			if actual.value != item.value || actual.valid != item.valid {
+				t.Fatalf("got %+v, want value=%d valid=%v", actual, item.value, item.valid)
+			}
+		})
+	}
+}
+
 type seccompFilterInput struct {
 	syscall uint32
 	arch    uint32

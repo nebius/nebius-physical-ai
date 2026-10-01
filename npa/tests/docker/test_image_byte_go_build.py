@@ -155,6 +155,20 @@ def test_read_detects_exact_path_replacement(tmp_path, monkeypatch):
         B.read_regular(target)
 
 
+def test_held_execution_inode_rejects_later_path_replacement(tmp_path):
+    target = tmp_path / "helper"
+    target.write_bytes(b"tested bytes")
+    held = B.open_held_regular(target)
+    try:
+        replacement = tmp_path / "replacement"
+        replacement.write_bytes(b"untested bytes")
+        replacement.replace(target)
+        with pytest.raises(B.BuildError, match="^input_(changed|replaced)$"):
+            B.read_held_regular(held)
+    finally:
+        B.close_held_regular(held)
+
+
 def test_exclusive_output_never_overwrites(tmp_path):
     target = tmp_path / "receipt"
     B.write_new(target, b"first")
@@ -334,11 +348,12 @@ def test_failed_subprocess_has_private_logs_fixed_boundary(tmp_path, monkeypatch
     def popen(*args, **kwargs):
         assert kwargs["start_new_session"] is True
         assert kwargs["stdin"] == subprocess.DEVNULL
+        assert kwargs["pass_fds"] == (37,)
         return Result()
 
     monkeypatch.setattr(B.subprocess, "Popen", popen)
     with pytest.raises(B.BuildError, match="^step_tests_failed$"):
-        B.run_step(["unused"], "tests", tmp_path, {}, tmp_path)
+        B.run_step(["unused"], "tests", tmp_path, {}, tmp_path, pass_fds=(37,))
     assert (tmp_path / "tests.stdout.log").read_bytes() == Result.stdout
     assert stat.S_IMODE((tmp_path / "tests.stdout.log").stat().st_mode) == 0o600
     assert json.loads((tmp_path / "tests.status.json").read_bytes()) == {

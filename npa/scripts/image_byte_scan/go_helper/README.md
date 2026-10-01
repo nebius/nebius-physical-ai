@@ -32,6 +32,9 @@ mapping to the same single `Detector.Detect` call without a second Go payload
 copy, and hashes and stats it before and after detection. Mapping, detector
 allocation, mutation, unmap, process death, or receipt failure leaves the scan
 incomplete. No chunked or overlap matching path exists.
+The 1 GiB ceiling is a finite hostile-input admission bound, not a promise that
+every admitted byte pattern will fit: the unchanged 12 GiB address-space limit
+still rejects detector-memory exhaustion rather than accepting partial coverage.
 
 ## Prepare the helper
 
@@ -76,6 +79,9 @@ checksums, and builds a source snapshot without changing `go.mod` or `go.sum`.
 The output receipt binds the exact source, trusted `.gitleaks.toml`, binary,
 raw readiness JSON, successful built-binary containment probe, toolchain,
 downloaded module closure, notices and tests.
+The bootstrap holds the built binary and config descriptors across both probes
+and hashes those same held bytes for the receipt; a path replacement or in-place
+mutation fails preparation.
 All path components are opened through descriptors without following symlinks;
 parent traversal is rejected before normalization. Cancellation stops and joins
 the command session owned by the bootstrap, including children that ignore
@@ -120,6 +126,9 @@ inherited seccomp policy that forbids changing process group/session membership
 and creating or joining namespaces. Readiness binds that containment policy.
 `clone3` is reported unavailable so ordinary runtime thread creation falls back
 to `clone`; namespace-bearing `clone` calls are still rejected.
+The built-binary probe records the ambient seccomp-filter count on a locked
+pre-existing thread and requires the production TSYNC installation to increase
+that exact thread's count by one.
 The caller sends `SIGKILL` to the isolated helper group after direct exit and
 accepts a terminal result only after stdout reaches EOF and no live member of
 that group remains. A missing policy, retained pipe, surviving member, or policy
