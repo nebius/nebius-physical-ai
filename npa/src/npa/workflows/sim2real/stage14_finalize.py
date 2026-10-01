@@ -231,13 +231,16 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
     reports = local / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "sim2real-report.json").write_text(json.dumps(report, indent=2))
+    inference_provenance = gold.get("policy_inference_provenance") or {}
     run_metadata = {
         "run_id": args.run_id,
         "artifact_root": root,
         "policy_checkpoint": evidence.get("selected_checkpoint_uri", ""),
         "policy_checkpoint_sha256": gold.get("policy_checkpoint_sha256", ""),
         "policy_checkpoint_size_bytes": gold.get("policy_checkpoint_size_bytes", 0),
-        "heldout_policy_loaded_for_inference": True,
+        "heldout_policy_loaded_for_inference": (
+            inference_provenance.get("loaded_for_inference") is True
+        ),
         "heldout_policy_checkpoint": evidence.get("selected_checkpoint_uri", ""),
         "heldout_policy_checkpoint_sha256": gold.get("policy_checkpoint_sha256", ""),
         "heldout_policy_checkpoint_size_bytes": gold.get(

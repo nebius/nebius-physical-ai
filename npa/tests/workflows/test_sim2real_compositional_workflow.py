@@ -885,6 +885,124 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
     assert records[0]["artifacts"]["idempotent_replay"] is True
 
 
+def _stage14_reader(evidence: dict, gold: dict):
+    components = [
+        {"stage": stage, "tier": "SEAM" if stage == 12 else "WORKS"}
+        for stage in range(1, 15)
+    ]
+
+    def read_json(uri: str, **_kwargs):
+        if uri.endswith("/evidence.json"):
+            return evidence
+        if uri.endswith("/report.json"):
+            return gold
+        stage = int(Path(uri).stem.removeprefix("stage_"))
+        return components[stage - 1]
+
+    return read_json
+
+
+def _materialize_stage14_inputs(_plan, *, local: Path) -> None:
+    (local / "outer_loop").mkdir(parents=True)
+    (local / "outer_loop" / "decision.json").write_text("{}")
+    (local / "stage_02_assets").mkdir()
+    (local / "stage_02_assets" / "consumed_robot_spec.json").write_text("{}")
+
+
+def _capture_stage14_encoders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> dict:
+    from npa.workflows import sim2real_viz
+
+    captured: dict = {}
+
+    def emit_rerun(**kwargs):
+        captured.update(kwargs)
+        kwargs["output_rrd"].write_bytes(b"rrd")
+        return Namespace(to_dict=lambda: {"frames": 1})
+
+    def emit_mcap(**kwargs):
+        kwargs["output_mcap"].write_bytes(b"mcap")
+        return Namespace(to_dict=lambda: {"messages": 1})
+
+    monkeypatch.setattr(sim2real_viz, "emit_sim2real_rerun", emit_rerun)
+    monkeypatch.setattr(sim2real_viz, "emit_sim2real_mcap", emit_mcap)
+    return captured
+
+
+def _patch_stage14_io(
+    monkeypatch: pytest.MonkeyPatch,
+    evidence: dict,
+    gold: dict,
+):
+    from npa.workflows.sim2real import stage14_finalize
+
+    monkeypatch.setattr(stage14_finalize, "read_json", _stage14_reader(evidence, gold))
+    monkeypatch.setattr(stage14_finalize, "download_plan", lambda **_kwargs: [])
+    monkeypatch.setattr(
+        stage14_finalize, "materialize_plan", _materialize_stage14_inputs
+    )
+    monkeypatch.setattr(stage14_finalize, "source_sha", lambda: "b" * 40)
+    monkeypatch.setattr(stage14_finalize, "write_json", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        stage14_finalize,
+        "publish_component_record",
+        lambda **_kwargs: {"stage": 14, "tier": "WORKS"},
+    )
+    monkeypatch.setattr(
+        stage14_finalize,
+        "storage",
+        lambda: Namespace(upload_file=lambda *_args: None),
+    )
+    return stage14_finalize
+
+
+def _stage14_policy_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+    work: Path,
+    provenance: dict | None,
+) -> tuple[dict, dict]:
+    root = "s3://unit/runs/finalize"
+    evidence = {
+        "iterations": [],
+        "selected_checkpoint_uri": f"{root}/checkpoints/model.pt",
+    }
+    gold = {
+        "policy_checkpoint_sha256": "a" * 64,
+        "policy_checkpoint_size_bytes": 128,
+    }
+    if provenance is not None:
+        gold["policy_inference_provenance"] = provenance
+    stage14_finalize = _patch_stage14_io(monkeypatch, evidence, gold)
+    captured = _capture_stage14_encoders(monkeypatch)
+    args = Namespace(run_id="run", outer_iteration=1)
+    stage14_finalize.finalize_in_work(args, root=root, work=work)
+    return captured["run_metadata"], captured["heldout_report"]
+
+
+@pytest.mark.parametrize(
+    ("provenance", "expected"),
+    [
+        pytest.param({"loaded_for_inference": False}, False, id="false"),
+        pytest.param(None, False, id="missing"),
+        pytest.param({"loaded_for_inference": "false"}, False, id="malformed"),
+        pytest.param({"loaded_for_inference": True}, True, id="proven"),
+    ],
+)
+def test_stage14_derives_heldout_policy_loading_from_gold_report(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    provenance: dict | None,
+    expected: bool,
+) -> None:
+    metadata, heldout_report = _stage14_policy_metadata(
+        monkeypatch, tmp_path, provenance
+    )
+
+    assert metadata["heldout_policy_loaded_for_inference"] is expected
+    assert heldout_report.get("policy_inference_provenance") is provenance
+
+
 def test_stage14_selects_only_consumed_artifacts_and_cleans_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
