@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import signal
@@ -11,12 +12,14 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable, Iterable
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 from npa.cli.agent_deployment import DeploymentIdentityError
 
 DiscoveryRunner = Callable[[list[str]], tuple[int, str, str]]
+_LOG = logging.getLogger(__name__)
 
 _SECRET_KEY_RE = re.compile(
     r"(?:access.?key|secret|password|credential|authorization|bearer|token)",
@@ -139,9 +142,8 @@ def _agent_process_group_has_other_members(
     # The unreaped leader keeps its PID/PGID reserved while /proc is inspected.
     uncertain = False
     leader_seen = False
-    try:
-        processes = tuple(Path("/proc").iterdir())
-    except OSError:
+    processes = _agent_proc_entries()
+    if processes is None:
         return None
     for process_path in processes:
         if not process_path.name.isdigit():
@@ -163,6 +165,24 @@ def _agent_process_group_has_other_members(
         if pid != leader_pid and member_group == process_group:
             return True
     return None if uncertain or not leader_seen else False
+
+
+def _agent_proc_entries() -> tuple[Path, ...] | None:
+    try:
+        return tuple(Path("/proc").iterdir())
+    except FileNotFoundError:
+        _report_procfs_restriction("procfs_unavailable")
+    except PermissionError:
+        _report_procfs_restriction("procfs_permission_denied")
+    except OSError:
+        _report_procfs_restriction("procfs_read_failed")
+    return None
+
+
+@lru_cache(maxsize=None)
+def _report_procfs_restriction(reason: str) -> None:
+    # Three fixed reason codes; report each once so retries cannot flood logs.
+    _LOG.warning("Agent command cleanup remains blocked: %s", reason)
 
 
 def _close_agent_process_pipes(process: subprocess.Popen[str]) -> None:
@@ -205,7 +225,8 @@ def _reap_abandoned_agent_processes() -> None:
 
 def _reap_owned_agent_group(process_group: int, process: subprocess.Popen[str]) -> bool:
     # Unknown ownership or /proc visibility cannot prove group absence. Keep
-    # the breaker open; retry slowly without targeting reused IDs.
+    # the breaker open; retry slowly without targeting reused IDs. A reaped
+    # leader proves only that leader exited, not that its descendants exited.
     if _agent_process_exited_without_reaping(process) is not True:
         return False
     members = _agent_process_group_has_other_members(process_group, process.pid)
@@ -472,12 +493,9 @@ def assemble_k8s_backend_inventory(
             for key, value in (cloud_discovery or {"status": "unverified"}).items()
             if key != "items"
         },
-        "has_infra": bool(
-            configured
-            or any(x.get("kubeconfig_exists") for x in local_clusters)
-            or cloud_clusters
-        )
-        or (None if (cloud_discovery or {}).get("status") == "unavailable" else False),
+        "has_infra": _backend_presence(
+            configured, local_clusters, cloud_clusters, cloud_discovery
+        ),
         "agent_npa_ready": npa_ready,
         "agent_npa_error": npa_error,
         "terraform_dir": str(terraform_dir),
@@ -487,6 +505,23 @@ def assemble_k8s_backend_inventory(
             "Pass project/cluster_name in the workflow submit payload to target a known backend.",
         ],
     }
+
+
+def _backend_presence(
+    configured: list[dict[str, Any]],
+    local_clusters: list[dict[str, Any]],
+    cloud_clusters: list[dict[str, Any]],
+    cloud_discovery: dict[str, Any] | None,
+) -> bool | None:
+    if (
+        configured
+        or any(item.get("kubeconfig_exists") for item in local_clusters)
+        or cloud_clusters
+    ):
+        return True
+    if (cloud_discovery or {}).get("status") == "unavailable":
+        return None
+    return False
 
 
 def validate_resource_inventory(payload: Any) -> dict[str, Any]:

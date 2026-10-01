@@ -590,6 +590,10 @@ permission denial and invalid responses do not establish resource absence.
 Without another configured or cached backend, `has_infra` is null and the agent
 refuses absence-based provisioning until discovery succeeds. Configured
 backends remain available for their ordinary target validation.
+If node-group discovery fails for the selected backend, workflow drafts report
+accelerator availability as unverified and remain non-runnable, including when
+the request names an accelerator. Failed cloud discovery does not override an
+independently configured backend.
 
 A timed-out child keeps new cloud commands blocked until its owned process
 group is proven absent and its leader reaped. If procfs visibility or child
@@ -598,6 +602,10 @@ cadence instead of repeatedly scanning at ten times per second. Restored procfs
 visibility permits recovery; lost process ownership needs operator diagnosis
 and a service restart after verifying cleanup. The agent never releases the
 block or signals a reusable PID based on uncertain evidence.
+Reaping the leader alone is insufficient: descendants can outlive it. Missing
+procfs (an unsupported host or missing mount) and denied procfs access retain the
+same safety block but emit distinct `procfs_unavailable` and
+`procfs_permission_denied` diagnostics once per process, without repetitive logs.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).

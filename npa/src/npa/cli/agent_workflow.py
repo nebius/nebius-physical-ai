@@ -3073,6 +3073,14 @@ def generate_workflow_draft(
         )
     requested_accel = str((params or {}).get("accelerator") or "").strip()
     configured_accel = str(resolved_infra.get("accelerator") or "").strip()
+    accelerator_unavailable = (
+        resolved_infra.get("accelerator_discovery_status") == "unavailable"
+    )
+    if accelerator_unavailable:
+        context_errors.append(
+            "accelerator availability on the selected backend is unverified because "
+            "node-group discovery is unavailable; retry discovery before submit"
+        )
     available_accels = {
         _accelerator_family(str(value))
         for value in (resolved_infra.get("available_accelerators") or [])
@@ -3109,6 +3117,11 @@ def generate_workflow_draft(
             if resolved_infra.get("cloud_discovery_status") == "unavailable"
             else "No Kubernetes backend is currently configured; provision or select one before submit."
         )
+    elif accelerator_unavailable:
+        warnings.append(
+            "Accelerator availability is unverified; failed node-group discovery "
+            "does not establish which accelerators the backend provides."
+        )
     elif infrastructure is not None and not configured_accel and not requested_accel:
         warnings.append(
             "The configured Kubernetes backend does not declare an accelerator; "
@@ -3119,7 +3132,9 @@ def generate_workflow_draft(
             context_errors.append(
                 "a configured Kubernetes backend is required before Sim2Real submit"
             )
-        elif not configured_accel and not requested_accel:
+        elif (
+            not accelerator_unavailable and not configured_accel and not requested_accel
+        ):
             context_errors.append(
                 "the selected Kubernetes backend must declare an RT-core accelerator"
             )

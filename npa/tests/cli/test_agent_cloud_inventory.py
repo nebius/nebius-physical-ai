@@ -15,6 +15,7 @@ import pytest
 from npa.cli import agent_resources as resources
 from npa.cli.agent_chat import format_infra_backends
 from npa.cli.agent_workflow import resolve_workflow_infrastructure
+from npa.cli.agent_workflow import generate_workflow_draft
 
 
 METADATA = {"NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata"}
@@ -109,7 +110,7 @@ def test_successful_empty_inventory_remains_available(monkeypatch, stdout):
         assert kwargs["env"]["NPA_NEBIUS_CREDENTIAL_SOURCE"] == "instance_metadata"
 
 
-def test_cluster_keeps_failed_accelerator_discovery_unknown(monkeypatch):
+def _cloud_inventory_with_failed_accelerators(monkeypatch):
     responses = iter(
         [
             subprocess.CompletedProcess(
@@ -124,7 +125,11 @@ def test_cluster_keeps_failed_accelerator_discovery_unknown(monkeypatch):
     monkeypatch.setattr(
         resources, "run_bounded_agent_command", lambda *a, **k: next(responses)
     )
-    inventory = resources.discover_mk8s_clusters("project-fixture", METADATA)
+    return resources.discover_mk8s_clusters("project-fixture", METADATA)
+
+
+def test_cluster_keeps_failed_accelerator_discovery_unknown(monkeypatch):
+    inventory = _cloud_inventory_with_failed_accelerators(monkeypatch)
     raw = inventory["items"][0]["raw"]
     assert inventory["status"] == "available"
     assert raw["accelerator_discovery"]["status"] == "unavailable"
@@ -134,6 +139,68 @@ def test_cluster_keeps_failed_accelerator_discovery_unknown(monkeypatch):
     )
     selected = resolve_workflow_infrastructure({"cloud_clusters": inventory["items"]})
     assert selected["accelerator_discovery_status"] == "unavailable"
+
+
+@pytest.mark.parametrize("requested", ["", " on RTX PRO 6000"])
+def test_unavailable_accelerators_prevent_runnable_workflow_claim(
+    monkeypatch, requested
+):
+    inventory = _cloud_inventory_with_failed_accelerators(monkeypatch)
+    draft = generate_workflow_draft(
+        user_text="create Isaac sim2real YAML" + requested,
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+        infrastructure={"has_infra": True, "cloud_clusters": inventory["items"]},
+    )
+    assert draft["runnable"] is False
+    assert any(
+        "accelerator availability" in error and "unverified" in error
+        for error in draft["context_errors"]
+    )
+    assert any("unverified" in warning for warning in draft["warnings"])
+    assert not any("does not declare" in warning for warning in draft["warnings"])
+    assert not any("must declare" in error for error in draft["context_errors"])
+
+
+def test_failed_cloud_accelerators_do_not_override_configured_backend(monkeypatch):
+    inventory = _cloud_inventory_with_failed_accelerators(monkeypatch)
+    draft = generate_workflow_draft(
+        user_text="create Isaac sim2real YAML on RTX PRO 6000",
+        intent="create_vlm_rl_workflow",
+        bucket="bucket",
+        infrastructure={
+            "has_infra": True,
+            "cloud_clusters": inventory["items"],
+            "configured": [
+                {"context": "chosen", "raw": {"gpu_accelerator": "RTXPRO6000"}}
+            ],
+        },
+    )
+    assert draft["infrastructure"]["source"] == "configured"
+    assert draft["infrastructure"]["context"] == "chosen"
+    assert draft["runnable"] is True
+    assert not any("unverified" in error for error in draft["context_errors"])
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (FileNotFoundError, "procfs_unavailable"),
+        (PermissionError, "procfs_permission_denied"),
+    ],
+)
+def test_procfs_restrictions_remain_uncertain_and_log_distinct_reasons(
+    monkeypatch, caplog, error, reason
+):
+    resources._report_procfs_restriction.cache_clear()
+    monkeypatch.setattr(Path, "iterdir", Mock(side_effect=error("private detail")))
+    assert resources._agent_process_group_has_other_members(981100, 981100) is None
+    assert resources._agent_process_group_has_other_members(981100, 981100) is None
+    messages = [
+        record.message for record in caplog.records if record.name == resources.__name__
+    ]
+    assert messages == ["Agent command cleanup remains blocked: " + reason]
+    assert "private detail" not in caplog.text
 
 
 @pytest.mark.parametrize("configured", [False, True])
@@ -201,6 +268,59 @@ def test_unowned_child_never_releases_breaker_or_signals_group(monkeypatch):
     assert resources._reap_owned_agent_group(process.pid, process) is False
     inspect.assert_not_called()
     process.wait.assert_not_called()
+
+
+_REAPED_LEADER_WITH_LIVE_DESCENDANT = '''
+import ctypes, os, subprocess, sys
+from unittest.mock import Mock
+from npa.cli import agent_resources as resources
+assert ctypes.CDLL(None).prctl(36, 1, 0, 0, 0) == 0
+read_fd, write_fd = os.pipe()
+code = """
+import os, sys
+descendant = os.fork()
+if descendant == 0:
+    os.close(1)
+    os.read(int(sys.argv[1]), 1)
+    os._exit(0)
+print(descendant, flush=True)
+"""
+leader = subprocess.Popen(
+    [sys.executable, '-c', code, str(read_fd)], pass_fds=(read_fd,),
+    start_new_session=True, stdout=subprocess.PIPE, text=True,
+)
+os.close(read_fd)
+descendant = int(leader.stdout.readline())
+try:
+    leader.wait(timeout=5)
+    assert leader.returncode == 0
+    assert os.getpgid(descendant) == leader.pid
+    kill = Mock(side_effect=AssertionError('a reaped leader cannot reserve the group'))
+    resources._kill_agent_process_group = kill
+    resources._AGENT_ABANDONED_PROCESS_GROUPS = {leader.pid: leader}
+    resources._AGENT_COMMAND_BREAKER_OPEN = True
+    assert resources._reap_owned_agent_group(leader.pid, leader) is False
+    assert leader.pid in resources._AGENT_ABANDONED_PROCESS_GROUPS
+    assert resources._AGENT_COMMAND_BREAKER_OPEN is True
+    assert os.getpgid(descendant) == leader.pid
+    kill.assert_not_called()
+finally:
+    os.close(write_fd)
+    assert os.waitpid(descendant, 0) == (descendant, 0)
+print('reaped-leader descendant safety verified; owned descendant reaped')
+'''
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Requires Linux child subreaper")
+def test_reaped_leader_does_not_prove_real_descendant_absence():
+    completed = subprocess.run(
+        [sys.executable, "-c", _REAPED_LEADER_WITH_LIVE_DESCENDANT],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "owned descendant reaped" in completed.stdout
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Requires Linux waitid and procfs")

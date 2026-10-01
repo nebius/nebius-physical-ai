@@ -1932,6 +1932,44 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
     return module
 
 
+def test_rendered_chat_blocks_draft_when_accelerator_discovery_is_unavailable(
+    monkeypatch, tmp_path
+):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_unverified_accelerator_draft"
+    )
+    state = {}
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda payload: state.update(payload))
+    monkeypatch.setattr(module, "_agent_s3_settings", lambda: {"bucket": "bucket"})
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda: {
+            "has_infra": True,
+            "cloud_discovery": {"status": "available"},
+            "cloud_clusters": [
+                {
+                    "name": "chosen",
+                    "raw": {
+                        "accelerator_discovery": {
+                            "status": "unavailable",
+                            "error": {"kind": "permission_denied"},
+                        },
+                    },
+                }
+            ],
+        },
+    )
+    reply, _used, _suggested, yaml_text, validation, intent = (
+        module._maybe_toolground_chat_reply("create sim2real yaml on RTX PRO 6000")
+    )
+    assert intent == "create_vlm_rl_workflow"
+    assert yaml_text is None and validation["ok"] is False
+    assert "accelerator availability" in reply and "unverified" in reply
+    assert state["workflow_draft"]["runnable"] is False
+
+
 def test_rendered_inventory_failure_does_not_offer_absence_based_provisioning(
     monkeypatch,
     tmp_path,
