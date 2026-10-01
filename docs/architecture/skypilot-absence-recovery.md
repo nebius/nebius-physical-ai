@@ -146,3 +146,11 @@ Run real accepted-ID and zero-ID absence controls, including complete paginated
 inventories and exact typed NotFound responses. Then update the reviewed version
 and nine hashes together and run the native-source contract and guardrail tests.
 Changing only the global version pin fails closed; old evidence is not relabeled.
+
+The installed-wheel guardrail skips only when SkyPilot is absent. Run
+`test_installed_skypilot_wheel_matches_reviewed_nine_source_hashes` in the pinned
+Sky environment during an upgrade; it checks the distribution version and hashes
+the nine installed files directly. The generic guardrails also compare the global
+pin to the independently reviewed naming version. Nested reader mode is accepted
+only in a parent-marked owned child session; the parent retains the deadline and
+process-group cleanup responsibility for all credential and provider descendants.

@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from typer.testing import CliRunner
 
 from npa.cli.main import app
@@ -56,3 +58,22 @@ def test_registered_absence_failure_does_not_print_private_error(monkeypatch):
         "reconciled": False,
     }
     assert "private-provider-error-content" not in result.output
+
+
+@pytest.mark.parametrize("value", ["inf", "nan"])
+def test_nonfinite_deadline_is_an_operator_input_error(tmp_path, value):
+    result = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "reconcile-absent",
+            "--evidence-file",
+            str(tmp_path / "missing"),
+            "--verification-timeout-seconds",
+            value,
+        ],
+    )
+    assert result.exit_code == 2
+    assert "finite" in result.output
+    assert "verification-unavailable" not in result.output

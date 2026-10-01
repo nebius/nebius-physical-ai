@@ -2,6 +2,7 @@
 
 from enum import Enum
 import json
+import math
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -54,6 +55,11 @@ def reconcile_absent_cmd(
     Raises:
         typer.Exit: Evidence, reads, or exclusive ownership could not be verified.
     """
+    if not math.isfinite(verification_timeout_seconds):
+        raise typer.BadParameter(
+            "Verification timeout must be finite",
+            param_hint="--verification-timeout-seconds",
+        )
     try:
         result = reconcile_absent(
             evidence_file,
