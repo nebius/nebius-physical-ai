@@ -87,6 +87,8 @@ def wheel(tmp_path: Path) -> Path:
                 else f"def {symbol}(*args, **kwargs): ...\n"
             )
             _write(target, existing + body)
+        elif not target.exists():
+            _write(target, "")
 
     # Callables whose parameter names the script asserts on.
     _write(

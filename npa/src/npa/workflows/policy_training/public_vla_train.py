@@ -22,7 +22,7 @@ def main() -> None:
         RuntimeError: Native training fails.
         OSError: Durable metrics or checkpoint evidence cannot be written.
     """
-    from lerobot.scripts import lerobot_train as native
+    import lerobot.scripts.lerobot_train as native
 
     evidence = Path(os.environ["NPA_VLA_EVIDENCE"])
     evidence.mkdir(parents=True, exist_ok=True)

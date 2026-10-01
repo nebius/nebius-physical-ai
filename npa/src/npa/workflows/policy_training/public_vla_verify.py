@@ -63,7 +63,7 @@ def _weight_change(root):
 def _infer_public_observation(root):
     import torch
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
-    from lerobot.policies import make_pre_post_processors
+    from lerobot.policies.factory import make_pre_post_processors
     from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
     plan = json.loads((root / "plans/specialist.json").read_text())

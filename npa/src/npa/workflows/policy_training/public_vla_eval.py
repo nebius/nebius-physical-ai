@@ -23,8 +23,8 @@ def main() -> None:
     if not (assets / "scenes").is_dir():
         raise ValueError("pinned LIBERO assets are missing")
     benchmark_runtime._assets_path_cache = str(assets)
-    from lerobot.envs import libero
-    from lerobot.scripts import lerobot_eval as native
+    import lerobot.envs.libero as libero
+    import lerobot.scripts.lerobot_eval as native
 
     offset = int(os.environ["NPA_VLA_INIT_OFFSET"])
     original = libero.LiberoEnv.__init__
