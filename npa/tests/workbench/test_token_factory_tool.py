@@ -34,8 +34,32 @@ def _capturing_client(reply: str, captured: dict) -> TokenFactoryClient:
     import json as _json
 
     def handler(request: httpx.Request) -> httpx.Response:
-        captured["body"] = _json.loads(request.content.decode("utf-8"))
+        body = _json.loads(request.content.decode("utf-8"))
+        captured["body"] = body
+        captured.setdefault("bodies", []).append(body)
         return httpx.Response(200, json={"choices": [{"message": {"content": reply}}]})
+
+    config = resolve_config(api_key="test-key", environ={})
+    return TokenFactoryClient(
+        config, http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
+
+
+def _reasoning_only_client() -> TokenFactoryClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": None,
+                            "reasoning": "hidden trace only",
+                        }
+                    }
+                ]
+            },
+        )
 
     config = resolve_config(api_key="test-key", environ={})
     return TokenFactoryClient(
@@ -80,6 +104,82 @@ def test_caption_images_respects_max_images(tmp_path: Path) -> None:
     )
 
     assert result.image_count == 2
+
+
+def test_caption_images_forwards_override_to_every_image(tmp_path: Path) -> None:
+    images = tmp_path / "images"
+    _write_image(images / "a.png", (10, 20, 30))
+    _write_image(images / "b.png", (40, 50, 60))
+    captured: dict = {}
+
+    result = caption_images(
+        input_path=str(images),
+        output_path=str(tmp_path / "out"),
+        model="openbmb/MiniCPM-V-4_5",
+        thinking=False,
+        client=_capturing_client("visible caption", captured),
+    )
+
+    assert result.image_count == 2
+    assert len(captured["bodies"]) == 2
+    assert all(
+        body["chat_template_kwargs"] == {"thinking": False}
+        for body in captured["bodies"]
+    )
+
+
+def test_caption_images_default_does_not_guess_unknown_thinking_key(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "frame.png"
+    _write_image(image, (10, 20, 30))
+    captured: dict = {}
+
+    caption_images(
+        input_path=str(image),
+        output_path=str(tmp_path / "out"),
+        model="openbmb/MiniCPM-V-4_5",
+        client=_capturing_client("visible caption", captured),
+    )
+
+    assert "chat_template_kwargs" not in captured["body"]
+
+
+def test_caption_images_reasoning_only_default_has_actionable_hint(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "frame.png"
+    _write_image(image, (10, 20, 30))
+    with pytest.raises(TokenFactoryToolError) as excinfo:
+        caption_images(
+            input_path=str(image),
+            output_path=str(tmp_path / "out"),
+            model="openbmb/MiniCPM-V-4_5",
+            client=_reasoning_only_client(),
+        )
+
+    assert "--no-thinking" in str(excinfo.value)
+    assert "hidden trace only" not in str(excinfo.value)
+
+
+def test_caption_images_reasoning_only_explicit_override_does_not_repeat_hint(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "frame.png"
+    _write_image(image, (10, 20, 30))
+    with pytest.raises(TokenFactoryToolError) as excinfo:
+        caption_images(
+            input_path=str(image),
+            output_path=str(tmp_path / "out"),
+            model="openbmb/MiniCPM-V-4_5",
+            thinking=False,
+            client=_reasoning_only_client(),
+        )
+
+    message = str(excinfo.value)
+    assert "explicit thinking=False override" in message
+    assert "--no-thinking" not in message
+    assert "hidden trace only" not in message
 
 
 def test_caption_images_no_images_raises(tmp_path: Path) -> None:

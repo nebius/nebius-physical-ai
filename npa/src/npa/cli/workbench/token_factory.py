@@ -234,6 +234,14 @@ def caption_cmd(
     temperature: float = typer.Option(
         0.2, "--temperature", help="Sampling temperature."
     ),
+    thinking: bool | None = typer.Option(
+        None,
+        "--thinking/--no-thinking",
+        help=(
+            "Explicitly enable or disable model reasoning for captions; "
+            "omit to preserve model defaults."
+        ),
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Do not write the result artifact."
     ),
@@ -252,6 +260,7 @@ def caption_cmd(
             max_images=max_images,
             max_tokens=max_tokens,
             temperature=temperature,
+            thinking=thinking,
         )
         payload = asdict(result)
         payload["dry_run"] = dry_run

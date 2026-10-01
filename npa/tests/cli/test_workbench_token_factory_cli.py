@@ -5,6 +5,7 @@ from pathlib import Path
 
 import httpx
 from PIL import Image
+import pytest
 from typer.testing import CliRunner
 
 import npa.cli.workbench.token_factory as cli_token_factory
@@ -15,8 +16,10 @@ import npa.workbench.token_factory as tool
 runner = CliRunner()
 
 
-def _install_fake_client(monkeypatch, reply: str) -> None:
+def _install_fake_client(monkeypatch, reply: str, captured: dict | None = None) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
+        if captured is not None:
+            captured.setdefault("bodies", []).append(json.loads(request.content))
         return httpx.Response(200, json={"choices": [{"message": {"content": reply}}]})
 
     config = resolve_config(api_key="test-key", environ={})
@@ -114,6 +117,101 @@ def test_token_factory_caption_writes_local_json(monkeypatch, tmp_path: Path) ->
         json.loads(written.read_text(encoding="utf-8"))["captions"][0]["caption"]
         == "a caption"
     )
+
+
+def test_token_factory_caption_help_exposes_thinking_override() -> None:
+    result = runner.invoke(app, ["workbench", "token-factory", "caption", "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "--thinking" in result.output
+    assert "--no-thinking" in result.output
+    assert "preserve model defaults" in result.output
+
+
+@pytest.mark.parametrize(
+    ("flag", "expected"),
+    [
+        (None, None),
+        ("--no-thinking", False),
+        ("--thinking", True),
+    ],
+)
+def test_token_factory_caption_cli_forwards_thinking_payload(
+    monkeypatch, tmp_path: Path, flag: str | None, expected: bool | None
+) -> None:
+    captured: dict = {}
+    _install_fake_client(monkeypatch, "visible caption", captured)
+    image = tmp_path / "frame.png"
+    Image.new("RGB", (16, 16), (1, 2, 3)).save(image)
+    args = [
+        "workbench",
+        "token-factory",
+        "caption",
+        "--input-path",
+        str(image),
+        "--output-path",
+        str(tmp_path / "out"),
+        "--model",
+        "openbmb/MiniCPM-V-4_5",
+        "--dry-run",
+        "--output",
+        "json",
+    ]
+    if flag is not None:
+        args.append(flag)
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    body = captured["bodies"][0]
+    if expected is None:
+        assert "chat_template_kwargs" not in body
+    else:
+        assert body["chat_template_kwargs"] == {"thinking": expected}
+
+
+@pytest.mark.parametrize(
+    ("provided", "value"),
+    [
+        (False, None),
+        (True, False),
+        (True, True),
+    ],
+)
+def test_token_factory_caption_sdk_forwards_plain_thinking_value(
+    monkeypatch, provided: bool, value: bool | None
+) -> None:
+    from npa.sdk.workbench import token_factory as sdk_token_factory
+
+    captured: dict = {}
+
+    def fake_caption_images(**kwargs):
+        captured.update(kwargs)
+        return tool.CaptionResult(
+            status="completed",
+            input_path=kwargs["input_path"],
+            output_path=kwargs["output_path"],
+            result_uri=str(Path(kwargs["output_path"]) / "captions.json"),
+            model=kwargs["model"],
+            instruction=kwargs["instruction"],
+            image_count=0,
+            generated_at="2026-10-01T00:00:00+00:00",
+        )
+
+    monkeypatch.setattr(cli_token_factory, "caption_images", fake_caption_images)
+    monkeypatch.setattr(cli_token_factory, "_emit", lambda payload, output: None)
+    kwargs = {
+        "input_path": "input",
+        "output_path": "output",
+        "model": "openbmb/MiniCPM-V-4_5",
+        "dry_run": True,
+    }
+    if provided:
+        kwargs["thinking"] = value
+
+    sdk_token_factory.caption(**kwargs)
+
+    assert captured["thinking"] is value
 
 
 def test_token_factory_reason_writes_scene_json(monkeypatch, tmp_path: Path) -> None:
