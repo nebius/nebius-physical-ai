@@ -1,6 +1,7 @@
 """Explicit, read-only cloud verification and local terminal reconciliation."""
 
 import json
+import math
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -34,6 +35,11 @@ def reconcile_absent_cmd(
     ),
 ) -> None:
     """Reconcile an absent legacy cluster operation; never delete or relaunch."""
+    if not math.isfinite(verification_timeout_seconds):
+        raise typer.BadParameter(
+            "Verification timeout must be finite",
+            param_hint="--verification-timeout-seconds",
+        )
     if output_format != "json":
         raise typer.BadParameter("Only JSON output is supported")
     try:
