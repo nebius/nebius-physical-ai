@@ -554,8 +554,9 @@ for the full env contract and safety preconditions.
 
 For the CPU agent credential lifecycle, set `NPA_AGENT_METADATA_LIVE_CONFIG`
 to an owner-only JSON file containing `deploy_args` (starting with `agent`,
-`deploy`, an unused `--name`, the selected `--project`, `--agent-only`, and
-explicit ingress settings) and `evidence_dir` outside the checkout. Use private
+`deploy`, exactly one unused `--name`, exactly one selected `--project`,
+`--agent-only`, and explicit ingress settings) and `evidence_dir` outside the
+checkout. Use private
 `NPA_CONFIG_DIR` and `NPA_OPERATION_JOURNAL_DIR` directories and complete the
 credential and exact-name capacity preflights first. Run:
 
@@ -565,12 +566,14 @@ NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
 ```
 
 The check deploys a real CPU agent, verifies metadata-backed access and resource
-inventory, rejects anonymous requests, and compares deployed Python sources
-with the tested checkout. HTTPS verifies the hostname and the server certificate
-retrieved through provider-pinned SSH, and rejects an untrusted certificate.
-It retains the certificate, deployment manifest and rendered
-backend hash privately, then destroys only the test agent with shared IAM
-preserved. The configuration has no default; without it the test skips.
+inventory with successful project and tenant discovery, rejects anonymous
+requests, and compares deployed Python sources with the tested checkout. It
+also captures the backend bytes rendered by the actual local deploy call and
+requires the deployed backend SHA-256 to match. HTTPS verifies the hostname and
+the server certificate retrieved through provider-pinned SSH, and rejects an
+untrusted certificate. It retains the certificate, deployment manifest and
+matched backend hashes privately, then destroys only the test agent with shared
+IAM preserved. The configuration has no default; without it the test skips.
 
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).

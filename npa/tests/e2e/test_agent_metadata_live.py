@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import ssl
 import subprocess
@@ -14,8 +15,10 @@ import time
 
 import httpx
 import pytest
+from typer.testing import CliRunner
 
 from npa.cli import agent
+from npa.cli.main import app
 from npa.cli.agent_deployment import assert_live_deployment
 
 
@@ -45,6 +48,79 @@ def _invoke(args: list[str], evidence: Path, label: str) -> dict:
     return json.loads(result.stdout) if "--json" in args else {}
 
 
+def _exact_option_value(args: list[str], flag: str) -> str:
+    positions = [
+        index
+        for index, value in enumerate(args)
+        if value == flag or value.startswith(flag + "=")
+    ]
+    assert len(positions) == 1 and args[positions[0]] == flag, (
+        f"Live deploy requires exactly one separate {flag} value"
+    )
+    index = positions[0]
+    assert index + 1 < len(args), f"Live deploy {flag} has no value"
+    raw_value = str(args[index + 1])
+    value = raw_value.strip()
+    assert value == raw_value, f"Live deploy {flag} must not contain outer whitespace"
+    assert value and not value.startswith("-"), f"Live deploy {flag} is invalid"
+    return value
+
+
+def _private_evidence_directory(raw_path: str) -> Path:
+    evidence = Path(raw_path).expanduser().resolve()
+    checkout = Path(__file__).resolve().parents[3]
+    assert not evidence.is_relative_to(checkout), (
+        "Live evidence directory must be outside the checkout"
+    )
+    evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
+    assert evidence.stat().st_mode & 0o077 == 0, "Evidence must be owner-only"
+    return evidence
+
+
+def _invoke_deploy(
+    args: list[str], evidence: Path, monkeypatch: pytest.MonkeyPatch
+) -> str:
+    """Run the real CLI while retaining the exact locally rendered backend digest."""
+    expected_backend_digests: set[str] = set()
+    install_services = agent.install_agent_services
+
+    def capture_install(
+        ssh,
+        *,
+        setup_script: str,
+        stage_source,
+        resuming: bool,
+    ) -> bool:
+        match = re.search(
+            r"cat <<'PY' \| sudo tee /opt/npa-agent/backend\.py >/dev/null\n"
+            r"(?P<body>.*?)\nPY\n",
+            setup_script,
+            flags=re.DOTALL,
+        )
+        assert match, "Rendered installer did not contain backend.py"
+        expected_backend_digests.add(
+            hashlib.sha256((match.group("body") + "\n").encode()).hexdigest()
+        )
+        return install_services(
+            ssh,
+            setup_script=setup_script,
+            stage_source=stage_source,
+            resuming=resuming,
+        )
+
+    monkeypatch.setattr(agent, "install_agent_services", capture_install)
+    result = CliRunner().invoke(app, args)
+    _write_evidence(evidence, "deploy.stdout", result.stdout)
+    _write_evidence(evidence, "deploy.stderr", result.stderr)
+    assert result.exit_code == 0, "deploy failed; inspect private evidence"
+    assert len(expected_backend_digests) == 1, (
+        "Deploy did not produce one stable rendered backend"
+    )
+    expected = next(iter(expected_backend_digests))
+    _write_evidence(evidence, "expected-rendered-backend.sha256", expected + "\n")
+    return expected
+
+
 @pytest.fixture
 def deployment():
     path = Path(os.environ["NPA_AGENT_METADATA_LIVE_CONFIG"])
@@ -52,11 +128,10 @@ def deployment():
     config = json.loads(path.read_text())
     args = config["deploy_args"]
     assert args[:2] == ["agent", "deploy"] and "--agent-only" in args
-    project, name = (args[args.index(flag) + 1] for flag in ("--project", "--name"))
+    project = _exact_option_value(args, "--project")
+    name = _exact_option_value(args, "--name")
     assert not agent._agent_record(project, name), "Choose an unused agent name"
-    evidence = Path(config["evidence_dir"])
-    evidence.mkdir(mode=0o700, parents=True, exist_ok=True)
-    assert evidence.stat().st_mode & 0o077 == 0, "Evidence must be owner-only"
+    evidence = _private_evidence_directory(str(config["evidence_dir"]))
     try:
         yield args, project, name, evidence
     finally:
@@ -115,7 +190,13 @@ def _deployed_tls(project: str, name: str, evidence: Path) -> ssl.SSLContext:
     return context
 
 
-def _deployed_source_hashes(project: str, name: str, evidence: Path) -> dict:
+def _deployed_source_hashes(
+    project: str,
+    name: str,
+    evidence: Path,
+    *,
+    expected_backend_sha256: str,
+) -> dict:
     modules = ["agent", "agent_access_runtime", "agent_resources", "agent_env_files"]
     script = (
         "import hashlib, importlib, json; from pathlib import Path; "
@@ -134,6 +215,10 @@ def _deployed_source_hashes(project: str, name: str, evidence: Path) -> dict:
     for name in modules:
         expected = hashlib.sha256((source / f"{name}.py").read_bytes()).hexdigest()
         assert hashes[name] == expected, f"Deployed {name} source differs"
+    assert re.fullmatch(r"[0-9a-f]{64}", expected_backend_sha256)
+    assert hashes["rendered_backend"] == expected_backend_sha256, (
+        "Deployed rendered backend differs from the exact local installer"
+    )
     return hashes
 
 
@@ -145,9 +230,9 @@ def _reject_untrusted_certificate(base: str) -> None:
             client.get("/api/access?refresh=true")
 
 
-def test_fresh_metadata_agent_access_and_inventory(deployment):
+def test_fresh_metadata_agent_access_and_inventory(deployment, monkeypatch):
     args, project, name, evidence = deployment
-    _invoke(args, evidence, "deploy")
+    expected_backend_sha256 = _invoke_deploy(args, evidence, monkeypatch)
     status = _invoke(
         ["agent", "status", "--project", project, "--name", name, "--json"],
         evidence,
@@ -176,12 +261,31 @@ def test_fresh_metadata_agent_access_and_inventory(deployment):
         bootstrap_timestamp=manifest["bootstrap_timestamp"],
     )
     assert_live_deployment(expected, manifest)
+    assert access.get("ok") is True
+    assert access.get("status") in {"available", "partial"}
+    assert (access.get("capabilities") or {}).get("project_discovery", {}).get(
+        "status"
+    ) == "available"
     identity = access["identity"]
     assert identity["credential_source"] == "instance_metadata"
     assert identity["credential_profile"] == "cursor-sa"
     assert identity["credential_config"] == "/root/.nebius/config.yaml"
-    assert isinstance(resources, dict) and not resources.get("error")
-    hashes = _deployed_source_hashes(project, name, evidence)
+    assert resources.get("ok") is True and not resources.get("error")
+    categories = {
+        str(category.get("id") or ""): category
+        for category in resources.get("categories") or []
+        if isinstance(category, dict)
+    }
+    for category_id in ("project", "tenant"):
+        category = categories.get(category_id) or {}
+        assert category.get("status") == "discovered"
+        assert int(category.get("discovered_count") or 0) > 0
+    hashes = _deployed_source_hashes(
+        project,
+        name,
+        evidence,
+        expected_backend_sha256=expected_backend_sha256,
+    )
     _record_result(evidence, manifest, hashes, access_seconds, resources_seconds)
 
 

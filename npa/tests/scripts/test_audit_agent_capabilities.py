@@ -18,6 +18,7 @@ Offline and free -- no cluster, no VM, no Token Factory call, no port bound.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -67,21 +68,33 @@ def audit(tmp_path):
         sys.path[:] = original_path
 
 
-def _stage_audit_credential_context(monkeypatch, tmp_path, backend_globals) -> None:
+def _stage_audit_credential_context(
+    monkeypatch, tmp_path, backend_globals
+) -> list[list[str]]:
     """Represent configured provenance without any real credential or provider call."""
+    from npa.cli import agent_resources
+
     config = tmp_path / "nebius" / "config.yaml"
     config.parent.mkdir()
     config.write_text("profiles: {}\n", encoding="utf-8")
     monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "configured_profile")
     monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
     monkeypatch.setenv("NPA_NEBIUS_PROFILE", "audit-fixture")
+    provider_calls: list[list[str]] = []
 
-    def reject_provider_command(*_args, **_kwargs):
-        pytest.fail("the offline capability audit must not call a provider")
+    def fake_provider_command(command, *_args, **_kwargs):
+        provider_calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, '{"items":[]}', "")
 
     monkeypatch.setitem(
-        backend_globals, "run_bounded_agent_command", reject_provider_command
+        backend_globals, "run_bounded_agent_command", fake_provider_command
     )
+    # Resource-discovery helpers are imported functions: their globals belong to
+    # npa.cli.agent_resources, not to the rendered backend module.
+    monkeypatch.setattr(
+        agent_resources, "run_bounded_agent_command", fake_provider_command
+    )
+    return provider_calls
 
 
 def test_audit_script_renders_and_reports_a_healthy_surface(
@@ -133,6 +146,21 @@ def test_audit_script_renders_and_reports_a_healthy_surface(
     assert not not_working, "advertised capabilities did not work:\n" + "\n".join(
         not_working
     )
+
+
+def test_audit_credential_fixture_patches_imported_provider_runner(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.cli import agent_resources
+
+    calls = _stage_audit_credential_context(monkeypatch, tmp_path, {})
+    result = agent_resources.run_bounded_agent_command(
+        ["nebius", "--profile", "audit-fixture", "iam", "whoami"],
+        timeout_s=1,
+    )
+
+    assert result.returncode == 0
+    assert calls == [["nebius", "--profile", "audit-fixture", "iam", "whoami"]]
 
 
 @pytest.mark.parametrize("credential_source", ["", "unsupported-fixture"])
