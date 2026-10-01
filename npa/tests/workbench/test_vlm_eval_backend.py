@@ -159,6 +159,33 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
         assert isinstance(result.passed, bool)
 
 
+def test_result_construction_does_not_repair_validated_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_on_repair(_score):
+        pytest.fail("validated model score reached the legacy clamp")
+
+    monkeypatch.setattr(vlm_eval, "_clamp_score", fail_on_repair)
+    result = vlm_eval._result_from_structured(
+        backend="self-hosted",
+        input_path="rollout",
+        output_path="result",
+        task="task",
+        model=DEFAULT_MODEL,
+        success_threshold=0.8,
+        frame_selection="keyframes",
+        frame_count=1,
+        structured=VlmStructuredResponse(
+            success=False,
+            score=0.74268,
+            rationale="visible evidence",
+        ),
+    )
+
+    assert result.score == 0.7427
+    assert result.passed is False
+
+
 @pytest.mark.parametrize(
     "score",
     [99, "99", True, -0.1, 1.1, float("nan"), float("inf"), None, [], {}],

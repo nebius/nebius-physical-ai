@@ -910,7 +910,7 @@ def _result_from_structured(
     frame_count: int,
     structured: VlmStructuredResponse,
 ) -> VlmEvalResult:
-    score = round(_clamp_score(structured.score), 4)
+    score = round(structured.score, 4)
     passed = score >= success_threshold
     return VlmEvalResult(
         status="passed" if passed else "needs_iteration",
