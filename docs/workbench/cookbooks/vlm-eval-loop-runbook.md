@@ -12,6 +12,20 @@ Each evaluation records the requested `model` and the endpoint's returned
 identity must be a nonempty string. Retain the serving deployment's checkpoint
 revision separately: a model name alone does not identify its weight bytes.
 
+Results also record `served_model_match_enforced`. It is `true` only when NPA
+applied its exact requested-versus-served equality check for a canonical hosted
+model and that check passed. It is `false` when exact equality was not enforced.
+`false` does not mean the names mismatch, a returned identity exists, or a
+provider call occurred; inspect `model`, `served_model`, and `backend` together.
+The flag describes identity enforcement, not task quality, so it can be `true`
+on a zero-score `needs_iteration` result.
+
+Full result artifacts use `model` for the effective requested identity. Loop
+aggregate rows and benchmark case rows copy that value to `requested_model` and
+also retain `served_model` plus `served_model_match_enforced`, so extracted rows
+remain interpretable outside their parent report. Stub, score-override, and
+self-hosted results currently report the flag as `false`.
+
 Every scored response must report the exact value
 `choices[0].finish_reason="stop"`. NPA rejects truncated, filtered, tool-call,
 aborted, empty, malformed, or missing completion metadata before parsing a
@@ -102,7 +116,8 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 - `rollouts/<rollout-id>/vlm_eval_stub.json`: one structured result per rollout.
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
-  per-rollout `{success, score, rationale}` records.
+  per-rollout score records, including requested/served model identity and
+  whether exact identity equality was enforced.
 
 Read the report:
 

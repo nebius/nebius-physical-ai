@@ -53,6 +53,25 @@ self-hosted endpoint that omits `finish_reason` must be adapted to emit the
 standard OpenAI-compatible field; NPA does not infer completion from parseable
 JSON.
 
+## Read model identity evidence correctly
+
+Every full result records the effective requested `model`, the returned
+`served_model` when the endpoint supplies one, and
+`served_model_match_enforced`.
+
+- `true` means NPA applied exact requested-versus-served string equality for a
+  canonical hosted model and the check passed. It says nothing about the task
+  verdict: a zero-score failed rollout can still have enforced identity.
+- `false` means exact equality was not enforced. It does not imply a mismatch,
+  a returned identity, or even that a provider call occurred. Inspect
+  `backend`, `model`, and `served_model` before making a provenance claim.
+
+Loop aggregate rows and benchmark case rows carry the same context as
+`requested_model`, `served_model`, and `served_model_match_enforced`. Stub,
+score-override, self-hosted, and alias-tolerant hosted results use `false`.
+Do not reinterpret matching strings on a `false` result as an NPA-enforced
+exact-model guarantee.
+
 ## Scoring controls that actually change the verdict
 
 ```bash

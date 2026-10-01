@@ -17,6 +17,7 @@ import pytest
 from PIL import Image
 
 from npa.workbench.vlm_eval import (
+    DEFAULT_MODEL,
     LOOP_REPORT_FILENAME,
     VlmEvalError,
     VlmLoopRollout,
@@ -78,6 +79,11 @@ def _rollout(rollout_id: str, score: float, success: bool) -> VlmLoopRollout:
         status="passed" if success else "needs_iteration",
         frame_count=2,
         result_uri=f"s3://b/{rollout_id}/vlm_eval_stub.json",
+        requested_model=f"requested/{rollout_id}",
+        served_model=(
+            f"requested/{rollout_id}" if rollout_id == "a" else f"served/{rollout_id}"
+        ),
+        served_model_match_enforced=rollout_id == "a",
     )
 
 
@@ -98,6 +104,12 @@ def test_aggregate_matches_the_templates_jq_report() -> None:
     # The gate is the MEAN score, not the pass rate: 0.8 >= 0.8.
     assert report["task_success"] is True
     assert [item["rollout_id"] for item in report["rollouts"]] == ["a", "b"]
+    assert report["rollouts"][0]["requested_model"] == "requested/a"
+    assert report["rollouts"][0]["served_model"] == "requested/a"
+    assert report["rollouts"][0]["served_model_match_enforced"] is True
+    assert report["rollouts"][1]["requested_model"] == "requested/b"
+    assert report["rollouts"][1]["served_model"] == "served/b"
+    assert report["rollouts"][1]["served_model_match_enforced"] is False
 
 
 def test_aggregate_gate_is_the_mean_not_the_pass_rate() -> None:
@@ -171,16 +183,29 @@ def test_loop_scores_every_rollout_and_writes_both_artifact_levels(
         "episode_001",
         "episode_002",
     }
+    assert {
+        (
+            item["requested_model"],
+            item["served_model"],
+            item["served_model_match_enforced"],
+        )
+        for item in report["rollouts"]
+    } == {(DEFAULT_MODEL, None, False)}
     # One result per rollout ...
     for name in ("episode_000", "episode_001", "episode_002"):
         assert (scores / "rollouts" / name).is_dir()
         written = list((scores / "rollouts" / name).glob("*.json"))
         assert written, f"no per-rollout result for {name}"
+        result_payload = json.loads(written[0].read_text(encoding="utf-8"))
+        assert result_payload["model"] == DEFAULT_MODEL
+        assert result_payload["served_model"] is None
+        assert result_payload["served_model_match_enforced"] is False
     # ... plus the aggregate report the sim-to-real loop gates on.
     report_path = scores / LOOP_REPORT_FILENAME
     assert report_path.is_file()
     on_disk = json.loads(report_path.read_text(encoding="utf-8"))
     assert on_disk["total_rollouts"] == 3
+    assert on_disk["rollouts"] == report["rollouts"]
     assert report["report_uri"] == str(report_path)
     assert "latency_s" in report
 
