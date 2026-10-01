@@ -469,6 +469,7 @@ def _ready(raw: bytes, config_sha: str) -> dict:
         or ready.get("max_target_megabytes") != 0
         or ready.get("ignore_inline_allow") is not True
         or ready.get("redact") != 100
+        or ready.get("process_containment") != "seccomp-process-group-v1"
         or not isinstance(ready.get("rule_count"), int)
         or ready["rule_count"] < 217
         or summary != {"type": "summary", "files": 0, "bytes": 0, "findings": 0}

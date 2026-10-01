@@ -207,6 +207,7 @@ def ready_raw(**overrides):
         "max_target_megabytes": 0,
         "ignore_inline_allow": True,
         "redact": 100,
+        "process_containment": "seccomp-process-group-v1",
         "policy_before_sha256": "b" * 64,
         "policy_after_sha256": "c" * 64,
     }
@@ -230,6 +231,7 @@ def test_ready_preserves_exact_first_line_bytes():
         {"max_target_megabytes": 1},
         {"ignore_inline_allow": False},
         {"redact": 0},
+        {"process_containment": "other"},
         {"rule_count": 0},
         {"policy_after_sha256": "invalid"},
     ],

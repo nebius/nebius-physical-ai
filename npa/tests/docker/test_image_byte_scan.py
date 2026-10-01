@@ -2458,6 +2458,7 @@ def _protocol_ready(authorization):
         "max_target_megabytes": 0,
         "ignore_inline_allow": True,
         "redact": 100,
+        "process_containment": "seccomp-process-group-v1",
         "removed_content_path_rules": W.REMOVED_PATH_RULES,
         "path_rules": [
             {"rule_id": name, "selector": "fixture", "has_content_regex": True}
@@ -2513,7 +2514,7 @@ print(json.dumps({{"type":"summary","files":files,"bytes":total,"findings":0}}),
 
 
 _RETAINED_STDOUT_PROTOCOL_TEMPLATE = """#!__PYTHON__
-import hashlib,json,os,signal,struct,subprocess,sys
+import hashlib,json,os,signal,struct,subprocess,sys,time
 from pathlib import Path
 ready=__READY__
 args=dict(zip(sys.argv[1::2],sys.argv[2::2],strict=True))
@@ -2521,13 +2522,20 @@ fd=int(args["--config-fd"]); data=os.pread(fd,os.fstat(fd).st_size,0)
 if hashlib.sha256(data).hexdigest()!=ready["config_sha256"]: raise SystemExit(2)
 transport="mapped" if "--record-fd" in args else "streamed"
 outcome=__OUTCOME__ if transport==__TRANSPORT__ else "valid"
+marker=Path(__MARKER__)
 child_options={"stderr":subprocess.DEVNULL}
 if outcome!="exit_during_transfer": child_options["stdin"]=subprocess.DEVNULL
+child_program="import signal;signal.signal(signal.SIGTERM,signal.SIG_IGN);signal.pause()"
+if outcome=="escaped_valid":
+ child_program="import os,signal;from pathlib import Path;os.setsid();Path("+repr(str(marker))+").write_text(str(os.getpid()));signal.signal(signal.SIGTERM,signal.SIG_IGN);signal.pause()"
 child=subprocess.Popen(
- [sys.executable,"-c","import signal;signal.signal(signal.SIGTERM,signal.SIG_IGN);signal.pause()"],
+ [sys.executable,"-c",child_program],
  **child_options,
 )
-Path(__MARKER__).write_text(str(child.pid))
+if outcome=="escaped_valid":
+ while not marker.exists() or marker.read_text()!=str(child.pid): time.sleep(0.01)
+else:
+ marker.write_text(str(child.pid))
 print(json.dumps(ready),flush=True)
 if outcome=="exit_during_transfer": raise SystemExit(0)
 def emit_result(data,ordinal):
@@ -2643,6 +2651,7 @@ def _exercise_protocol_transport(detector, transport, tmp_path):
     ("outcome", "expected_error"),
     [
         ("valid", None),
+        ("escaped_valid", "helper_cleanup_failed"),
         ("missing_summary", "helper_unexpected_eof"),
         ("extra", "helper_extra_response"),
         ("exit_mismatch", "helper_exit_status"),
@@ -2664,6 +2673,7 @@ def test_direct_exit_contains_descendant_retaining_stdout(
         start_new_session=True,
     )
     detector = None
+    descendant = None
     try:
         detector = _PidfdTrackingDetector(
             authorization,
@@ -2680,12 +2690,19 @@ def test_direct_exit_contains_descendant_retaining_stdout(
         process_group = detector.process.pid
         assert detector.process_group is None
         assert not W._process_group_survived(process_group)
+        if outcome == "escaped_valid":
+            os.kill(descendant, 0)
         assert descendant != process_group
         assert sibling.poll() is None
         _assert_pidfds_closed(detector)
     finally:
         if detector is not None:
             detector.abort()
+        if descendant is not None:
+            try:
+                os.kill(descendant, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         sibling.terminate()
         sibling.wait()
 
@@ -2809,7 +2826,15 @@ def test_detector_abort_closes_pidfd_and_owned_group(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "alter", ["ready", "record_sha", "record_length", "record_order", "summary"]
+    "alter",
+    [
+        "ready",
+        "containment",
+        "record_sha",
+        "record_length",
+        "record_order",
+        "summary",
+    ],
 )
 def test_protocol_corruption_fails_and_joins_only_owned_helper(tmp_path, alter):
     descendant_marker = tmp_path / "resistant-descendant.pid"
@@ -2830,6 +2855,8 @@ def test_protocol_corruption_fails_and_joins_only_owned_helper(tmp_path, alter):
             result = super()._response()
             if result["type"] == "ready" and alter == "ready":
                 result["version"] = "wrong"
+            if result["type"] == "ready" and alter == "containment":
+                result["process_containment"] = "missing"
             if result["type"] == "result":
                 if alter == "record_sha":
                     result["sha256"] = "0" * 64

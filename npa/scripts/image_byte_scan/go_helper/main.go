@@ -29,6 +29,7 @@ import (
 )
 
 const detectorVersion = "8.28.0"
+const processContainment = "seccomp-process-group-v1"
 const maxMemoryBytes uint64 = 12 * 1024 * 1024 * 1024
 const detectorMemoryHeadroom uint64 = 4 * 1024 * 1024 * 1024
 
@@ -45,6 +46,123 @@ var mappedRecordUnmap = syscall.Munmap
 var mappedRecordClose = func(file *os.File) error { return file.Close() }
 var mappedRecordStat = func(file *os.File) (os.FileInfo, error) { return file.Stat() }
 var mappedRecordDetect = detectMappedRecord
+
+type sockFilter struct {
+	Code uint16
+	Jt   uint8
+	Jf   uint8
+	K    uint32
+}
+
+type sockFilterProgram struct {
+	Length uint16
+	Filter *sockFilter
+}
+
+const (
+	bpfLoadWordAbsolute = 0x20
+	bpfJumpEqual        = 0x15
+	bpfJumpSet          = 0x45
+	bpfReturn           = 0x06
+
+	seccompDataSyscall = 0
+	seccompDataArch    = 4
+	seccompDataArg0    = 16
+
+	auditArchX8664         = 0xc000003e
+	seccompReturnKill      = 0x80000000
+	seccompReturnErrno     = 0x00050000
+	seccompReturnAllow     = 0x7fff0000
+	prSetNoNewPrivileges   = 38
+	seccompSetModeFilter   = 1
+	seccompFilterFlagSync  = 1
+	syscallSeccomp         = 317
+	syscallClone           = 56
+	syscallSetProcessGroup = 109
+	syscallSetSession      = 112
+	syscallUnshare         = 272
+	syscallSetNamespace    = 308
+	syscallClone3          = 435
+	x32SyscallBit          = 0x40000000
+	cloneNamespaceFlags    = 0x7e020080
+)
+
+func processContainmentFilter() []sockFilter {
+	filter := []sockFilter{
+		{Code: bpfLoadWordAbsolute, K: seccompDataArch},
+		{Code: bpfJumpEqual, Jt: 1, K: auditArchX8664},
+		{Code: bpfReturn, K: seccompReturnKill},
+		{Code: bpfLoadWordAbsolute, K: seccompDataSyscall},
+	}
+	forbidden := []uint32{
+		syscallSetProcessGroup,
+		syscallSetSession,
+		syscallUnshare,
+		syscallSetNamespace,
+		syscallClone3,
+	}
+	forbiddenJumps := make([]int, 0, len(forbidden))
+	forbiddenJumps = append(forbiddenJumps, len(filter))
+	filter = append(filter, sockFilter{Code: bpfJumpSet, K: x32SyscallBit})
+	for _, number := range forbidden {
+		forbiddenJumps = append(forbiddenJumps, len(filter))
+		filter = append(filter, sockFilter{Code: bpfJumpEqual, K: number})
+	}
+	filter = append(
+		filter,
+		sockFilter{Code: bpfJumpEqual, Jf: 2, K: syscallClone},
+		sockFilter{Code: bpfLoadWordAbsolute, K: seccompDataArg0},
+		sockFilter{Code: bpfJumpSet, Jt: 1, K: cloneNamespaceFlags},
+		sockFilter{Code: bpfReturn, K: seccompReturnAllow},
+		sockFilter{Code: bpfReturn, K: seccompReturnErrno | uint32(syscall.EPERM)},
+	)
+	errnoIndex := len(filter) - 1
+	for _, index := range forbiddenJumps {
+		filter[index].Jt = uint8(errnoIndex - index - 1)
+	}
+	return filter
+}
+
+func installProcessContainment() error {
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" {
+		return fmt.Errorf("unsupported containment platform")
+	}
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if _, _, errno := syscall.RawSyscall6(
+		syscall.SYS_PRCTL,
+		prSetNoNewPrivileges,
+		1,
+		0,
+		0,
+		0,
+		0,
+	); errno != 0 {
+		return fmt.Errorf("set no-new-privileges: %w", errno)
+	}
+	filter := processContainmentFilter()
+	program := sockFilterProgram{
+		Length: uint16(len(filter)),
+		Filter: &filter[0],
+	}
+	result, _, errno := syscall.RawSyscall6(
+		syscallSeccomp,
+		seccompSetModeFilter,
+		seccompFilterFlagSync,
+		uintptr(unsafe.Pointer(&program)),
+		0,
+		0,
+		0,
+	)
+	runtime.KeepAlive(filter)
+	if errno != 0 {
+		return fmt.Errorf("install process containment: %w", errno)
+	}
+	if result != 0 {
+		return fmt.Errorf("synchronize process containment: thread %d", result)
+	}
+	return nil
+}
 
 type finding struct {
 	RuleID    string `json:"rule_id"`
@@ -79,6 +197,7 @@ type ready struct {
 	MaxTargetMegaBytes      int        `json:"max_target_megabytes"`
 	IgnoreInlineAllow       bool       `json:"ignore_inline_allow"`
 	Redact                  uint       `json:"redact"`
+	ProcessContainment      string     `json:"process_containment"`
 }
 
 type summary struct {
@@ -299,7 +418,8 @@ func parseConfiguration(data []byte, path string) (config.Config, ready, string)
 	return parsed, ready{Type: "ready", Protocol: "whole-file-gitleaks.v1", Version: detectorVersion,
 		ConfigSHA256: hex.EncodeToString(digest[:]), RuleCount: len(parsed.Rules), PathRules: paths,
 		RemovedContentPathRules: removed, PolicyBeforeSHA256: beforePolicy, PolicyAfterSHA256: afterPolicy,
-		MaxTargetMegaBytes: 0, IgnoreInlineAllow: true, Redact: 100}, ""
+		MaxTargetMegaBytes: 0, IgnoreInlineAllow: true, Redact: 100,
+		ProcessContainment: processContainment}, ""
 }
 
 func failure(stderr io.Writer, code string) int {
@@ -1063,6 +1183,9 @@ func applyAddressSpaceLimit(requested uint64) (uint64, error) {
 }
 
 func main() {
+	if err := installProcessContainment(); err != nil {
+		os.Exit(failure(os.Stderr, "process_containment_failed"))
+	}
 	if _, err := applyAddressSpaceLimit(maxMemoryBytes); err != nil {
 		os.Exit(failure(os.Stderr, "memory_limit_failed"))
 	}

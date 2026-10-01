@@ -26,6 +26,7 @@ import struct
 import subprocess
 import sys
 import tarfile
+import time
 import types
 import zipfile
 import zlib
@@ -109,6 +110,7 @@ DOCKER_SAVE_DECODED_LAYER_LIMIT = 64 * 1024 * 1024 * 1024
 CONFIDENTIALITY_RECORD_LIMIT = DETECTOR_RECORD_LIMIT
 CONFIDENTIALITY_MEMORY_LIMIT = DETECTOR_MEMORY_LIMIT
 HELPER_RESPONSE_LIMIT = 8 * 1024 * 1024
+HELPER_CLEANUP_GRACE_SECONDS = 2.0
 RECORD_FINDING_LIMIT = 4096
 SCAN_FINDING_LIMIT = 100_000
 LITERAL_MATCH_CHUNK = 64 * 1024
@@ -1207,6 +1209,15 @@ def _process_group_survived(process_group):
     return True
 
 
+def _wait_for_process_group_exit(process_group):
+    deadline = time.monotonic() + HELPER_CLEANUP_GRACE_SECONDS
+    while _process_group_survived(process_group):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
 class Detector:
     def __init__(self, authorization, stderr_path):
         self.authorization = authorization
@@ -1336,6 +1347,10 @@ class Detector:
             "helper_coverage_policy",
         )
         require(
+            self.ready.get("process_containment") == "seccomp-process-group-v1",
+            "helper_process_containment",
+        )
+        require(
             self.ready.get("removed_content_path_rules") == REMOVED_PATH_RULES,
             "helper_content_path_policy",
         )
@@ -1417,17 +1432,21 @@ class Detector:
         self.current_cleanup_failed = (
             _signal_process_group(process_group) or self.current_cleanup_failed
         )
-        self.process_group = None
         try:
             self.direct_status = self.process.wait()
         except (OSError, subprocess.SubprocessError):
             self.current_cleanup_failed = True
         self.direct_exited = True
+        group_stopped = _wait_for_process_group_exit(process_group)
         read_error = None
         try:
             self._read_stdout(drain=True)
         except BaseException as error:
             read_error = error
+        self.current_cleanup_failed = (
+            not self.stdout_closed or not group_stopped or self.current_cleanup_failed
+        )
+        self.process_group = None
         self.current_cleanup_failed = self._close_pidfd() or self.current_cleanup_failed
         if read_error is not None:
             raise read_error

@@ -111,6 +111,14 @@ helper that has filled its output pipe and stopped reading, which is why
 `core.Detector` transfers record bytes and collects results through one readiness
 wait rather than draining only before each write.
 
+Before reading configuration or records, the Linux amd64 helper installs an
+inherited seccomp policy that forbids changing process group/session membership
+and creating or joining namespaces. Readiness binds that containment policy.
+The caller sends `SIGKILL` to the isolated helper group after direct exit and
+accepts a terminal result only after stdout reaches EOF and no live member of
+that group remains. A missing policy, retained pipe, surviving member, or policy
+installation failure rejects the scan rather than accepting incomplete cleanup.
+
 | Code | Meaning |
 | --- | --- |
 | `0` | All records processed; no findings. |

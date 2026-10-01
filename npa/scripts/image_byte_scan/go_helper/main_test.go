@@ -28,7 +28,39 @@ import (
 var fixtureConfig config.Config
 var fixtureReady ready
 
+func processContainmentProbe() int {
+	if err := installProcessContainment(); err != nil {
+		fmt.Fprintf(os.Stderr, "install failed: %v\n", err)
+		return 2
+	}
+	mode, _, modeErr := syscall.RawSyscall(syscall.SYS_PRCTL, 21, 0, 0)
+	_, _, sessionErr := syscall.RawSyscall(syscall.SYS_SETSID, 0, 0, 0)
+	_, _, groupErr := syscall.RawSyscall(syscall.SYS_SETPGID, 0, 0, 0)
+	_, _, x32Err := syscall.RawSyscall(syscallSetProcessGroup|x32SyscallBit, 0, 0, 0)
+	_, _, unshareErr := syscall.RawSyscall(syscallUnshare, 0, 0, 0)
+	if modeErr != 0 || mode != 2 ||
+		sessionErr != syscall.EPERM || groupErr != syscall.EPERM ||
+		x32Err != syscall.EPERM || unshareErr != syscall.EPERM {
+		fmt.Fprintf(
+			os.Stderr,
+			"mode=%d mode_errno=%d setsid_errno=%d setpgid_errno=%d x32_errno=%d unshare_errno=%d\n",
+			mode,
+			modeErr,
+			sessionErr,
+			groupErr,
+			x32Err,
+			unshareErr,
+		)
+		return 3
+	}
+	fmt.Fprintln(os.Stdout, processContainment)
+	return 0
+}
+
 func TestMain(m *testing.M) {
+	if os.Getenv("NPA_PROCESS_CONTAINMENT_PROBE") == "1" {
+		os.Exit(processContainmentProbe())
+	}
 	zerolog.SetGlobalLevel(zerolog.Disabled)
 	var code string
 	fixtureConfig, fixtureReady, code = configuration(configFixturePath())
@@ -37,6 +69,25 @@ func TestMain(m *testing.M) {
 		os.Exit(2)
 	}
 	os.Exit(m.Run())
+}
+
+func TestProcessContainmentBlocksGroupEscape(t *testing.T) {
+	command := exec.Command(os.Args[0], "-test.run=^$")
+	command.Env = append(os.Environ(), "NPA_PROCESS_CONTAINMENT_PROBE=1")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("containment probe failed: %v: %s", err, output)
+	}
+	if strings.TrimSpace(string(output)) != processContainment {
+		t.Fatalf("unexpected containment probe output: %q", output)
+	}
+	if fixtureReady.ProcessContainment != processContainment {
+		t.Fatalf(
+			"ready containment %q, want %q",
+			fixtureReady.ProcessContainment,
+			processContainment,
+		)
+	}
 }
 
 func scanner() *detect.Detector {
