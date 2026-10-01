@@ -625,8 +625,9 @@ whose tested tree was verified at merge, and covers 938 modules.
 Every full-suite shard requires working `ffmpeg` and `ffprobe` before running
 media validation. `npa/scripts/ci_install_ffmpeg.sh` verifies existing tools and
 installs missing tools from Ubuntu's signed package sources. For GitHub's Azure
-mirror it uses the primary Ubuntu archive over HTTPS through a temporary source
-file, preserving suites, components and signature verification without changing
+mirror, whether selected directly or through the hosted image's mirror-list file,
+it uses the primary Ubuntu archive over HTTPS through a temporary source file,
+preserving suites, components and signature verification without changing
 system sources or consulting unrelated vendor repositories. Package and executable
 failures remain blocking; `NPA_REQUIRE_FFMPEG=1` prevents silent media-test skips.
 

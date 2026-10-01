@@ -75,25 +75,44 @@ def _run(setup, **overrides):
 
 
 @pytest.mark.parametrize("present", [(), ("ffmpeg",), ("ffprobe",)])
-def test_missing_media_tools_use_signed_primary_archive(media_setup, present):
+@pytest.mark.parametrize(
+    "source_uri",
+    [
+        "http://azure.archive.ubuntu.com/ubuntu/",
+        "https://azure.archive.ubuntu.com/ubuntu",
+        "mirror+file:/etc/apt/apt-mirrors.txt",
+        "mirror+file:///etc/apt/apt-mirrors.txt",
+        "https://archive.ubuntu.com/ubuntu",
+    ],
+)
+def test_missing_media_tools_use_signed_primary_archive(
+    media_setup, present, source_uri
+):
     """Install either missing tool while preserving the signed Ubuntu policy.
 
     Args:
         media_setup: Isolated package-manager fixture.
         present: Tools already available on the runner.
+        source_uri: Direct or mirror-list source used by the hosted image.
     Returns:
         None.
     Raises:
         AssertionError: Setup changes sources, skips installation or leaves files.
     """
     directory, _ = media_setup
+    source_path = directory / "ubuntu.sources"
+    source_path.write_text(
+        source_path.read_text().replace(
+            "http://azure.archive.ubuntu.com/ubuntu/", source_uri
+        )
+    )
     original = (directory / "ubuntu.sources").read_text()
     for tool in present:
         _executable(directory / "bin" / tool, "exit 0\n")
     result = _run(media_setup)
     assert result.returncode == 0, result.stderr
     assert (directory / "selected.sources").read_text() == original.replace(
-        "http://azure.archive.ubuntu.com/ubuntu/", "https://archive.ubuntu.com/ubuntu"
+        source_uri, "https://archive.ubuntu.com/ubuntu"
     )
     assert (directory / "ubuntu.sources").read_text() == original
     calls = (directory / "apt-calls").read_text().splitlines()
