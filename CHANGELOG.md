@@ -42,6 +42,14 @@ a versioned heading when a release is cut.
   directory creation. External clients must send a JSON boolean. Update-result
   decoding enforces the same contract instead of coercing truthy values.
 
+### Token Factory captions expose unavailable images
+
+- Caption requests now ask the hosted vision model for the exact
+  `NO IMAGE RECEIVED.` sentinel when pixels are unavailable. An exact
+  whole-answer match is retained as `image_unavailable`, makes the aggregate
+  artifact fail, and exits nonzero after writing it. Later images are still
+  attempted once; dry runs emit the failed result without writing.
+
 ### Studio videos accept S3 output paths
 
 - `preview` and `final` accept `--output-path` for an exact S3 MP4 destination,
