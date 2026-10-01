@@ -244,3 +244,52 @@ def test_failed_atomic_replacement_is_advisory_and_preserves_original(
     assert "private" not in json.dumps(receipt)
     assert provider.read_text() == 'provider "nebius" {}'
     assert sorted(p.name for p in tmp_path.iterdir()) == ["provider.tf"]
+
+
+def test_symlinked_ancestor_keeps_deadline_defaults(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    root = real / "recipe"
+    root.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(real, target_is_directory=True)
+    (root / "provider.tf").write_text('provider "nebius" {}')
+    result = rpc.configure_provider_rpc_deadlines(alias / "recipe", 12)
+    assert result["status"] == "configured"
+    assert result["inserted_defaults"]["timeout"] == "12m"
+
+
+@pytest.mark.parametrize("mode", [0o600, 0o640, 0o644])
+def test_atomic_defaults_preserve_original_mode(tmp_path, mode):
+    provider = tmp_path / "provider.tf"
+    provider.write_text('provider "nebius" {}')
+    provider.chmod(mode)
+    rpc.configure_provider_rpc_deadlines(tmp_path, 12)
+    assert provider.stat().st_mode & 0o777 == mode
+
+
+@pytest.mark.parametrize("error", [RecursionError, MemoryError, AssertionError])
+def test_unexpected_parser_failure_remains_advisory(tmp_path, monkeypatch, error):
+    provider = tmp_path / "provider.tf"
+    provider.write_text('provider "nebius" {}')
+
+    def fail(*args):
+        raise error("private parser detail")
+
+    monkeypatch.setattr(rpc, "_inspect", fail)
+    receipt = rpc.configure_provider_rpc_deadlines(tmp_path, 12)
+    assert receipt["reason_code"] == "deadline_configuration_unavailable"
+    assert provider.read_text() == 'provider "nebius" {}'
+    assert "private" not in json.dumps(receipt)
+
+
+def test_json_materialization_does_not_change_inspected_document(tmp_path):
+    provider = tmp_path / "provider.tf.json"
+    original = {"provider": {"nebius": [{"alias": "other"}, {}]}}
+    provider.write_text(json.dumps(original))
+    selected, _, texts, documents = rpc._inspect(tmp_path)
+    result = rpc._materialized_text(
+        selected, texts[provider], {"timeout": "12m"}, documents
+    )
+    assert documents[provider] == original
+    assert json.loads(result)["provider"]["nebius"][1] == {"timeout": "12m"}

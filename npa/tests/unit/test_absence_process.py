@@ -101,3 +101,70 @@ def test_nested_reader_helper_does_not_escape_outer_process_group(tmp_path):
     with verification_deadline(0.5), pytest.raises(VerificationReadUnavailable):
         run_read([sys.executable, "-c", nested])
     _assert_stopped(pids)
+
+
+def test_success_keeps_leader_unreaped_until_descendant_cleanup(tmp_path, monkeypatch):
+    from npa.cluster import absence_process as module
+
+    pids = tmp_path / "pids.json"
+    seen = []
+    stop = module._stop_group
+
+    def observed(process, **kwargs):
+        seen.append(process.returncode)
+        return stop(process, **kwargs)
+
+    monkeypatch.setattr(module, "_stop_group", observed)
+    source = _tree_script(pids).rsplit("time.sleep(60)", 1)[0]
+    assert run_read([sys.executable, "-c", source]).returncode == 0
+    assert seen == [None]
+    _assert_stopped(pids)
+
+
+def test_already_reaped_process_never_signals_a_recycled_group(monkeypatch):
+    from types import SimpleNamespace
+    from npa.cluster import absence_process as module
+
+    monkeypatch.setattr(module.os, "killpg", lambda *args: pytest.fail("unowned group"))
+    monkeypatch.setattr(module.os, "kill", lambda *args: pytest.fail("unowned PID"))
+    module._stop_group(SimpleNamespace(pid=1234, returncode=0))
+
+
+def test_reader_group_refuses_a_parent_without_owned_session(monkeypatch):
+    from npa.cluster.absence_process import reader_process_group
+
+    monkeypatch.delenv("NPA_ABSENCE_READER_PARENT_PID", raising=False)
+    with pytest.raises(VerificationReadUnavailable, match="run_read child session"):
+        with reader_process_group():
+            pytest.fail("unowned context entered")
+
+
+def test_excess_output_refuses_and_stops_the_actual_child(monkeypatch):
+    monkeypatch.setenv("NPA_ABSENCE_MAX_OUTPUT_BYTES", "1024")
+    with pytest.raises(VerificationReadUnavailable, match="byte limit"):
+        run_read(
+            [
+                sys.executable,
+                "-c",
+                "import os,time; os.write(1,b'x'*2048);time.sleep(60)",
+            ]
+        )
+
+
+def test_output_limit_zero_keeps_explicit_large_read_possible(monkeypatch):
+    monkeypatch.setenv("NPA_ABSENCE_MAX_OUTPUT_BYTES", "0")
+    assert len(run_read([sys.executable, "-c", "print('x'*2048)"]).stdout) == 2049
+
+
+@pytest.mark.parametrize(
+    "output", ["1 9 S\n", "9 9 S\n", "9 9 Z\n10 9 S\n", "malformed", ""]
+)
+def test_denied_group_observation_never_proves_cleanup(monkeypatch, output):
+    from npa.cluster import absence_process as module
+
+    monkeypatch.setattr(
+        module.subprocess,
+        "run",
+        lambda *a, **k: subprocess.CompletedProcess([], 0, stdout=output),
+    )
+    assert not module._darwin_group_only_zombies(9)

@@ -74,3 +74,21 @@ def test_verification_deadline_is_forwarded(monkeypatch, tmp_path):
         {"verification_timeout_seconds": 0.0},
         {"verification_timeout_seconds": 0.25},
     ]
+
+
+@pytest.mark.parametrize("value", ["inf", "nan"])
+def test_nonfinite_deadline_is_an_operator_input_error(tmp_path, value):
+    result = CliRunner().invoke(
+        app,
+        [
+            "cluster",
+            "reconcile-absent",
+            "--evidence-file",
+            str(tmp_path / "missing"),
+            "--verification-timeout-seconds",
+            value,
+        ],
+    )
+    assert result.exit_code == 2
+    assert "finite" in result.output
+    assert "verification-unavailable" not in result.output

@@ -268,3 +268,16 @@ Timeouts kill and join only the verifier's owned process group, preserve the
 failed journal and lease, and return `verification-unavailable` with
 `reconciled: false`. Retry after restoring the provider or local Git reader.
 Malformed evidence also returns that sanitized envelope without private paths.
+
+The verifier observes child exit without reaping, then stops the owned process
+group while its leader PID remains reserved, and only then joins the leader.
+Nested reader mode requires the parent-issued marker and an owned child session;
+it must never be entered by the caller holding the recovery locks. SIGINT joins
+owned children before propagating; SIGTERM temporarily becomes a sanitized
+verification failure and the previous handler is restored afterward.
+
+`NPA_ABSENCE_MAX_OUTPUT_BYTES` sets the accepted bytes per captured stream
+(default 67108864, or 64 MiB; `0` explicitly disables this size limit). Capture
+sizes are monitored while the read runs and checked before loading output into
+memory. Excess output refuses verification and stops owned children; it never
+establishes absence. This is an evidence-read bound, not a workflow/run budget.
