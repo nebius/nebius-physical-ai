@@ -240,6 +240,36 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "eval-harness-compare.yaml",
+        "cpu",
+        plan_only=True,
+        plan_only_justification=(
+            "The eval-harness compare stage runs the configured policies "
+            "for real, but the reference spec's default task is a MuJoCo "
+            "contact simulation and MuJoCo is not installed on the submit "
+            "image; the spec exercises config validation and the toolRef "
+            "argv only."
+        ),
+        notes=(
+            "Anchors the eval-harness/compare three-tier contract "
+            "(CLI <-> SDK <-> spec); real episode rollouts run wherever "
+            "the mujoco package is installed."
+        ),
+    ),
+    SubmitLiveCase(
+        "mujoco-manip-run.yaml",
+        "cpu",
+        plan_only=True,
+        plan_only_justification=(
+            "The mujoco run stage steps real MuJoCo simulation, but MuJoCo "
+            "is not installed on the submit image; the spec exercises "
+            "config validation and the toolRef argv only."
+        ),
+        notes=(
+            "Anchors the mujoco/run three-tier contract (CLI <-> SDK <-> spec)."
+        ),
+    ),
+    SubmitLiveCase(
         "openvla-train.yaml",
         "gpu",
         plan_only=True,

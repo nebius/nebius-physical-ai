@@ -1,0 +1,36 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: eval-harness-compare
+  description: >-
+    A/B compare two policies on a registered manipulation task with paired
+    episode seeds, a per-episode success judge, and bootstrap confidence
+    intervals. Exercises the workbench.eval_harness.compare toolRef and
+    anchors the eval-harness/compare three-tier contract (CLI <-> SDK <-> spec).
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/eval-harness-compare"
+  task: "mujoco_manip.peg_insertion"
+  policy_a: "scripted:expert"
+  policy_b: "scripted:noisy"
+  episodes: 10
+  seed: 0
+  judge: "heuristic"
+  max_steps: 500
+  vlm_endpoint_url: ""
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/compare/"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 8Gi
+initial: compare
+states:
+  compare:
+    toolRef: workbench.eval_harness.compare
+    resources: cpu
+    outputs:
+      - uri: "{{config.report_uri}}compare.json"
+        schema: npa.workbench.eval_harness.compare.v1
+      - uri: "{{config.report_uri}}compare.md"
+    terminal: true
