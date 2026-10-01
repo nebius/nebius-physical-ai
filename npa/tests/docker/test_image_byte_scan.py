@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import errno
 import gzip
 import hashlib
@@ -1317,6 +1318,83 @@ def test_private_spill_detects_same_size_mutation_and_remains_unlinked(tmp_path)
     assert not list(tmp_path.glob(".oversized-record-*"))
 
 
+@pytest.mark.skipif(not hasattr(os, "O_TMPFILE"), reason="Linux O_TMPFILE required")
+def test_anonymous_spill_open_includes_unlinkable_exclusive_flag(monkeypatch):
+    opened = []
+
+    def capture_open(path, flags, mode, *, dir_fd):
+        opened.append((path, flags, mode, dir_fd))
+        return 73
+
+    monkeypatch.setattr(W.os, "open", capture_open)
+
+    assert W._open_spill_writer(19) == 73
+    assert opened == [
+        (
+            ".",
+            os.O_RDWR | os.O_TMPFILE | os.O_EXCL | os.O_CLOEXEC,
+            0o600,
+            19,
+        )
+    ]
+
+
+@pytest.mark.skipif(
+    sys.platform != "linux" or not hasattr(os, "O_TMPFILE"),
+    reason="Linux anonymous-file relink semantics required",
+)
+def test_anonymous_spill_cannot_be_relinked_through_proc(tmp_path, monkeypatch):
+    directory_descriptor = W.directory_fd(tmp_path)
+    flags = os.O_RDWR | os.O_TMPFILE | os.O_EXCL | os.O_CLOEXEC
+    try:
+        try:
+            probe = os.open(".", flags, 0o600, dir_fd=directory_descriptor)
+        except OSError as error:
+            pytest.skip(f"test filesystem has no O_TMPFILE support: {error.errno}")
+        else:
+            os.close(probe)
+    finally:
+        os.close(directory_descriptor)
+
+    monkeypatch.setattr(
+        W,
+        "_named_spill_writer",
+        lambda _directory_fd: pytest.fail("anonymous spill unexpectedly fell back"),
+    )
+    payload = b"complete private spill record"
+    target = tmp_path / "relinked-private-record"
+    spill = W._PrivateSpill(tmp_path)
+    try:
+        spill.write(payload)
+        descriptor = spill.finish(len(payload), digest(payload))
+        library = ctypes.CDLL(None, use_errno=True)
+        linkat = library.linkat
+        linkat.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+        ]
+        linkat.restype = ctypes.c_int
+        ctypes.set_errno(0)
+        linked = linkat(
+            -100,
+            os.fsencode(f"/proc/self/fd/{descriptor}"),
+            -100,
+            os.fsencode(target),
+            0x400,
+        )
+
+        assert linked == -1
+        assert ctypes.get_errno() != 0
+        assert not target.exists()
+        spill.verify()
+    finally:
+        spill.close()
+    assert not target.exists()
+
+
 def test_named_spill_fallback_unlinks_immediately(tmp_path, monkeypatch):
     monkeypatch.delattr(W.os, "O_TMPFILE")
     spill = W._PrivateSpill(tmp_path)
@@ -1493,6 +1571,62 @@ def test_oversized_confidentiality_oom_or_worker_death_fails_closed(tmp_path):
         detector.abort()
         spill.close()
     assert detector.joined
+
+
+def test_oversized_confidentiality_dupfd_failure_closes_pipe_before_return(
+    monkeypatch,
+):
+    class TrackedEndpoint:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class TrackedContext:
+        def __init__(self):
+            self.parent = TrackedEndpoint()
+            self.child = TrackedEndpoint()
+            self.process_calls = 0
+
+        def Pipe(self, *, duplex):
+            assert duplex is True
+            return self.parent, self.child
+
+        def Process(self, **_kwargs):
+            self.process_calls += 1
+            raise AssertionError("Process must not be built after DupFd failure")
+
+    context = TrackedContext()
+    failure = OSError(errno.EMFILE, "synthetic descriptor exhaustion")
+
+    def fail_duplication(_descriptor):
+        raise failure
+
+    monkeypatch.setattr(W.multiprocessing.reduction, "DupFd", fail_duplication)
+    detector = W._OversizedConfidentialityDetector(
+        {"customer_pattern": "absent-private-marker", "infra_pattern": None},
+        None,
+        "a" * 64,
+        process_context=context,
+    )
+
+    with pytest.raises(OSError) as caught:
+        detector.scan(91, 1, digest(b"x"), [])
+
+    assert caught.value is failure
+    assert context.parent.closed and context.child.closed
+    assert context.process_calls == 0
+    assert (
+        detector.connection,
+        detector.child_connection,
+        detector.process,
+        detector.process_group,
+    ) == (None, None, None, None)
+    assert detector.joined is True
+
+    detector.abort()
+    assert context.parent.closed and context.child.closed
 
 
 def test_oversized_confidentiality_abort_kills_resistant_group_descendant(tmp_path):
@@ -2378,6 +2512,62 @@ print(json.dumps({{"type":"summary","files":files,"bytes":total,"findings":0}}),
 """
 
 
+_RETAINED_STDOUT_PROTOCOL_TEMPLATE = """#!__PYTHON__
+import hashlib,json,os,signal,struct,subprocess,sys
+from pathlib import Path
+ready=__READY__
+args=dict(zip(sys.argv[1::2],sys.argv[2::2],strict=True))
+fd=int(args["--config-fd"]); data=os.pread(fd,os.fstat(fd).st_size,0)
+if hashlib.sha256(data).hexdigest()!=ready["config_sha256"]: raise SystemExit(2)
+transport="mapped" if "--record-fd" in args else "streamed"
+outcome=__OUTCOME__ if transport==__TRANSPORT__ else "valid"
+child_options={"stderr":subprocess.DEVNULL}
+if outcome!="exit_during_transfer": child_options["stdin"]=subprocess.DEVNULL
+child=subprocess.Popen(
+ [sys.executable,"-c","import signal;signal.signal(signal.SIGTERM,signal.SIG_IGN);signal.pause()"],
+ **child_options,
+)
+Path(__MARKER__).write_text(str(child.pid))
+print(json.dumps(ready),flush=True)
+if outcome=="exit_during_transfer": raise SystemExit(0)
+def emit_result(data,ordinal):
+ print(json.dumps({"type":"result","ordinal":ordinal,"bytes":len(data),"sha256":hashlib.sha256(data).hexdigest(),"findings":[]}),flush=True)
+def finish(files,total):
+ if outcome!="missing_summary":
+  print(json.dumps({"type":"summary","files":files,"bytes":total,"findings":0}),flush=True)
+ if outcome=="extra":
+  print(json.dumps({"type":"unexpected"}),flush=True)
+ raise SystemExit(7 if outcome=="exit_mismatch" else 0)
+if transport=="mapped":
+ rfd=int(args["--record-fd"]); size=int(args["--record-length"])
+ data=os.pread(rfd,size,0); emit_result(data,int(args["--record-ordinal"]))
+ finish(1,size)
+ordinal=int(args.get("--ordinal-base",0));files=total=0
+while True:
+ header=sys.stdin.buffer.read(8)
+ if not header: break
+ if len(header)!=8: raise SystemExit(2)
+ size=struct.unpack(">Q",header)[0]; data=sys.stdin.buffer.read(size)
+ if len(data)!=size: raise SystemExit(2)
+ ordinal+=1;files+=1;total+=size;emit_result(data,ordinal)
+finish(files,total)
+"""
+
+
+def _retained_stdout_protocol_script(ready, marker, transport, outcome):
+    replacements = {
+        "__PYTHON__": sys.executable,
+        "__READY__": repr(ready),
+        "__MARKER__": repr(str(marker)),
+        "__TRANSPORT__": repr(transport),
+        "__OUTCOME__": repr(outcome),
+    }
+    result = _RETAINED_STDOUT_PROTOCOL_TEMPLATE
+    for token, value in replacements.items():
+        result = result.replace(token, value)
+    return result
+
+
 def _protocol_helper(authorization, tmp_path, *, descendant_marker=None):
     """An executable framing fixture, not Gitleaks or a native qualification."""
     ready = _protocol_ready(authorization)
@@ -2389,6 +2579,233 @@ def _protocol_helper(authorization, tmp_path, *, descendant_marker=None):
     helper.chmod(0o700)
     fixture_tools_receipt(authorization, tmp_path, ready)
     return authorization
+
+
+def _retained_stdout_protocol_helper(
+    authorization, tmp_path, marker, transport, outcome
+):
+    ready = _protocol_ready(authorization)
+    helper = tmp_path / f"retained-stdout-{transport}-{outcome}"
+    script = _retained_stdout_protocol_script(ready, marker, transport, outcome)
+    authorization["helper"] = {
+        **write(helper, script.encode()),
+        "ready_sha256": W.sha(W.canonical(ready)),
+    }
+    helper.chmod(0o700)
+    fixture_tools_receipt(authorization, tmp_path, ready)
+    return authorization
+
+
+class _PidfdTrackingDetector(W.Detector):
+    """Record every pidfd that scanner lifecycle cleanup closes."""
+
+    def __init__(self, *args):
+        self.closed_pidfds = []
+        super().__init__(*args)
+
+    def _close_pidfd(self):
+        if self.pidfd is not None:
+            self.closed_pidfds.append(self.pidfd)
+        return super()._close_pidfd()
+
+
+def _assert_pidfds_closed(detector):
+    assert detector.closed_pidfds
+    assert detector.pidfd is None
+    for descriptor in detector.closed_pidfds:
+        with pytest.raises(OSError) as caught:
+            os.fstat(descriptor)
+        assert caught.value.errno == errno.EBADF
+
+
+def _exercise_protocol_transport(detector, transport, tmp_path):
+    payload = b"retained stdout protocol record"
+    if transport == "streamed":
+        detector.begin(len(payload))
+        detector.write(payload)
+        detector.submit(len(payload), digest(payload))
+        assert detector.collect() == []
+        return detector.finish()
+    spill = W._PrivateSpill(tmp_path)
+    try:
+        spill.write(payload)
+        descriptor = spill.finish(len(payload), digest(payload))
+        detector.scan_spilled(descriptor, len(payload), digest(payload))
+        assert detector.collect() == []
+        return detector.finish()
+    finally:
+        spill.close()
+
+
+@pytest.mark.timeout(15)
+@pytest.mark.parametrize("transport", ["streamed", "mapped"])
+@pytest.mark.parametrize(
+    ("outcome", "expected_error"),
+    [
+        ("valid", None),
+        ("missing_summary", "helper_unexpected_eof"),
+        ("extra", "helper_extra_response"),
+        ("exit_mismatch", "helper_exit_status"),
+    ],
+)
+def test_direct_exit_contains_descendant_retaining_stdout(
+    tmp_path, transport, outcome, expected_error
+):
+    marker = tmp_path / f"{transport}-{outcome}-descendant.pid"
+    authorization = _retained_stdout_protocol_helper(
+        fixture(tmp_path),
+        tmp_path,
+        marker,
+        transport,
+        outcome,
+    )
+    sibling = subprocess.Popen(
+        [sys.executable, "-c", "import signal;signal.pause()"],
+        start_new_session=True,
+    )
+    detector = None
+    try:
+        detector = _PidfdTrackingDetector(
+            authorization,
+            tmp_path / f"{transport}-{outcome}.stderr",
+        )
+        if expected_error is None:
+            result = _exercise_protocol_transport(detector, transport, tmp_path)
+            assert result["files"] == 1
+        else:
+            with pytest.raises(W.ScanError, match=f"^{expected_error}$"):
+                _exercise_protocol_transport(detector, transport, tmp_path)
+
+        descendant = int(marker.read_text())
+        process_group = detector.process.pid
+        assert detector.process_group is None
+        assert not W._process_group_survived(process_group)
+        assert descendant != process_group
+        assert sibling.poll() is None
+        _assert_pidfds_closed(detector)
+    finally:
+        if detector is not None:
+            detector.abort()
+        sibling.terminate()
+        sibling.wait()
+
+
+@pytest.mark.timeout(15)
+def test_transfer_observes_exit_when_descendant_retains_both_pipes(tmp_path):
+    marker = tmp_path / "transfer-descendant.pid"
+    authorization = _retained_stdout_protocol_helper(
+        fixture(tmp_path),
+        tmp_path,
+        marker,
+        "streamed",
+        "exit_during_transfer",
+    )
+    sibling = subprocess.Popen(
+        [sys.executable, "-c", "import signal;signal.pause()"],
+        start_new_session=True,
+    )
+    detector = _PidfdTrackingDetector(
+        authorization,
+        tmp_path / "transfer.stderr",
+    )
+    process_group = detector.process_group
+    try:
+        with pytest.raises(W.ScanError, match="^helper_unexpected_eof$"):
+            detector.begin(4 * W.CHUNK)
+            detector.write(b"x" * (4 * W.CHUNK))
+
+        assert detector.pidfd is None
+        assert detector.process_group is None
+        assert not W._process_group_survived(process_group)
+        assert sibling.poll() is None
+        _assert_pidfds_closed(detector)
+    finally:
+        detector.abort()
+        sibling.terminate()
+        sibling.wait()
+
+
+@pytest.mark.timeout(15)
+def test_helper_exit_status_precedes_terminal_cleanup_failure(tmp_path):
+    marker = tmp_path / "exit-precedence-descendant.pid"
+    authorization = _retained_stdout_protocol_helper(
+        fixture(tmp_path),
+        tmp_path,
+        marker,
+        "streamed",
+        "exit_mismatch",
+    )
+
+    class CleanupFailureDetector(_PidfdTrackingDetector):
+        def _close_current_streams(self):
+            super()._close_current_streams()
+            return True
+
+    detector = CleanupFailureDetector(
+        authorization,
+        tmp_path / "exit-precedence.stderr",
+    )
+    try:
+        with pytest.raises(W.ScanError, match="^helper_exit_status$"):
+            _exercise_protocol_transport(detector, "streamed", tmp_path)
+        assert detector.process_group is None
+        _assert_pidfds_closed(detector)
+    finally:
+        try:
+            detector.abort()
+        except W.ScanError:
+            pass
+
+
+def test_detector_construction_failure_closes_owned_pidfd(tmp_path, monkeypatch):
+    authorization = _protocol_helper(fixture(tmp_path), tmp_path)
+    failure = OSError(errno.EMFILE, "synthetic nonblocking setup failure")
+
+    class ConstructionFailureDetector(_PidfdTrackingDetector):
+        instance = None
+
+        def __init__(self, *args):
+            type(self).instance = self
+            super().__init__(*args)
+
+    def fail_nonblocking(_descriptor, _blocking):
+        raise failure
+
+    monkeypatch.setattr(W.os, "set_blocking", fail_nonblocking)
+    with pytest.raises(OSError) as caught:
+        ConstructionFailureDetector(
+            authorization,
+            tmp_path / "construction.stderr",
+        )
+
+    detector = ConstructionFailureDetector.instance
+    assert caught.value is failure
+    assert detector.process_group is None
+    assert detector.process.returncode is not None
+    assert detector.joined is True
+    _assert_pidfds_closed(detector)
+    detector.abort()
+
+
+def test_detector_abort_closes_pidfd_and_owned_group(tmp_path):
+    marker = tmp_path / "abort-descendant.pid"
+    authorization = _protocol_helper(
+        fixture(tmp_path),
+        tmp_path,
+        descendant_marker=marker,
+    )
+    detector = _PidfdTrackingDetector(
+        authorization,
+        tmp_path / "abort.stderr",
+    )
+    process_group = detector.process_group
+
+    detector.abort()
+
+    assert detector.process_group is None
+    assert detector.joined is True
+    assert not W._process_group_survived(process_group)
+    _assert_pidfds_closed(detector)
 
 
 @pytest.mark.parametrize(

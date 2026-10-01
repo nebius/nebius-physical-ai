@@ -554,7 +554,7 @@ def _open_spill_writer(directory_fd):
         try:
             return os.open(
                 ".",
-                os.O_RDWR | os.O_TMPFILE | os.O_CLOEXEC,
+                os.O_RDWR | os.O_TMPFILE | os.O_EXCL | os.O_CLOEXEC,
                 0o600,
                 dir_fd=directory_fd,
             )
@@ -1211,6 +1211,10 @@ class Detector:
     def __init__(self, authorization, stderr_path):
         self.authorization = authorization
         self.process = self.process_group = self.stderr = None
+        self.pidfd = None
+        self.direct_status = None
+        self.direct_exited = False
+        self.current_cleanup_failed = False
         self.joined = False
         self.ordinal = self.bytes = self.findings = 0
         self.session_records = self.session_bytes = self.session_findings = 0
@@ -1246,15 +1250,16 @@ class Detector:
     def _start_process(self, arguments=(), inherited=(), *, stream):
         self.responses = bytearray()
         self.stdout_closed = False
+        self.stdout_fd = self.stdin_fd = self.pidfd = None
+        self.process = self.process_group = None
+        self.direct_status = None
+        self.direct_exited = False
+        self.current_cleanup_failed = False
         with _helper_descriptors(self.authorization) as (helper_fd, config_fd):
             self._spawn_process(
                 helper_fd, config_fd, arguments, inherited, stream=stream
             )
         require(not _CANCEL_REQUESTED, "scan_cancelled")
-        self.stdout_fd = self.process.stdout.fileno()
-        self.stdin_fd = self.process.stdin.fileno() if stream else None
-        if stream:
-            os.set_blocking(self.stdin_fd, False)
         self._validate_ready(self.authorization)
 
     def _spawn_process(self, helper_fd, config_fd, arguments, inherited, *, stream):
@@ -1276,22 +1281,31 @@ class Detector:
                 start_new_session=True,
                 pass_fds=(helper_fd, config_fd, *inherited),
             )
-            process_id = self.process.pid
-            require(
-                type(process_id) is int and process_id > 0,
-                "helper_process_group",
-            )
-            self.process_group = process_id
-            try:
-                isolated = (
-                    os.getsid(process_id) == process_id
-                    and os.getpgid(process_id) == process_id
-                )
-            except ProcessLookupError:
-                isolated = self.process.poll() is not None
-            require(isolated, "helper_process_group")
+            self._own_spawned_process(stream)
         finally:
             _SPAWNING = False
+
+    def _own_spawned_process(self, stream):
+        process_id = self.process.pid
+        require(
+            type(process_id) is int and process_id > 0,
+            "helper_process_group",
+        )
+        self.process_group = process_id
+        self.pidfd = os.pidfd_open(process_id, 0)
+        self.stdout_fd = self.process.stdout.fileno()
+        os.set_blocking(self.stdout_fd, False)
+        if stream:
+            self.stdin_fd = self.process.stdin.fileno()
+            os.set_blocking(self.stdin_fd, False)
+        try:
+            isolated = (
+                os.getsid(process_id) == process_id
+                and os.getpgid(process_id) == process_id
+            )
+        except ProcessLookupError:
+            isolated = False
+        require(isolated, "helper_process_group")
 
     def _start_stream(self):
         arguments = ("--ordinal-base", str(self.ordinal)) if self.ordinal else ()
@@ -1342,11 +1356,12 @@ class Detector:
             "helper_pkcs12_selector",
         )
 
-    def _absorb(self):
-        """Read one batch of helper output into the response buffer.
+    def _read_stdout(self, *, drain=False):
+        """Read available nonblocking helper output into the response buffer.
 
         Args:
-            None.
+            drain: Continue until the pipe would block instead of reading one
+                batch.
 
         Returns:
             None.
@@ -1354,15 +1369,94 @@ class Detector:
         Raises:
             None.
         """
-        chunk = os.read(self.stdout_fd, CHUNK)
-        if not chunk:
-            self.stdout_closed = True
+        while self.stdout_fd is not None and not self.stdout_closed:
+            try:
+                chunk = os.read(self.stdout_fd, CHUNK)
+            except BlockingIOError:
+                return
+            if not chunk:
+                self.stdout_closed = True
+                return
+            self.responses += chunk
+            require(
+                len(self.responses) - self.responses.rfind(b"\n") - 1
+                <= HELPER_RESPONSE_LIMIT,
+                "helper_response_limit",
+            )
+            if not drain:
+                return
+
+    def _close_stdin(self):
+        if self.process is None or self.process.stdin is None:
+            self.stdin_fd = None
+            return False
+        failed = False
+        if not self.process.stdin.closed:
+            try:
+                self.process.stdin.close()
+            except OSError:
+                failed = True
+        self.stdin_fd = None
+        return failed
+
+    def _close_pidfd(self):
+        pidfd, self.pidfd = self.pidfd, None
+        if pidfd is None:
+            return False
+        try:
+            os.close(pidfd)
+        except OSError:
+            return True
+        return False
+
+    def _contain_direct_exit(self):
+        if self.direct_exited:
             return
-        self.responses += chunk
-        require(
-            len(self.responses) - self.responses.rfind(b"\n") - 1
-            <= HELPER_RESPONSE_LIMIT,
-            "helper_response_limit",
+        self.current_cleanup_failed = self._close_stdin() or self.current_cleanup_failed
+        process_group = self.process_group
+        self.current_cleanup_failed = (
+            _signal_process_group(process_group) or self.current_cleanup_failed
+        )
+        self.process_group = None
+        try:
+            self.direct_status = self.process.wait()
+        except (OSError, subprocess.SubprocessError):
+            self.current_cleanup_failed = True
+        self.direct_exited = True
+        read_error = None
+        try:
+            self._read_stdout(drain=True)
+        except BaseException as error:
+            read_error = error
+        self.current_cleanup_failed = self._close_pidfd() or self.current_cleanup_failed
+        if read_error is not None:
+            raise read_error
+
+    def _service_process_events(self, *, writable=False):
+        poller = select.poll()
+        if self.pidfd is not None:
+            poller.register(self.pidfd, select.POLLIN | select.POLLERR | select.POLLHUP)
+        if self.stdout_fd is not None and not self.stdout_closed:
+            poller.register(
+                self.stdout_fd,
+                select.POLLIN | select.POLLERR | select.POLLHUP,
+            )
+        if writable and self.stdin_fd is not None:
+            poller.register(
+                self.stdin_fd,
+                select.POLLOUT | select.POLLERR | select.POLLHUP,
+            )
+        events = dict(poller.poll())
+        if self.pidfd is not None and self.pidfd in events:
+            self._contain_direct_exit()
+        elif self.stdout_fd is not None and self.stdout_fd in events:
+            self._read_stdout()
+        return (
+            writable
+            and not self.direct_exited
+            and self.stdin_fd is not None
+            and self.stdin_fd in events
+            and bool(events[self.stdin_fd] & select.POLLOUT)
         )
 
     def _transfer(self, data):
@@ -1389,14 +1483,15 @@ class Detector:
         """
         view = memoryview(data)
         while view:
-            readable, writable, _ = select.select(
-                [] if self.stdout_closed else [self.stdout_fd], [self.stdin_fd], ()
+            require(
+                not self.direct_exited and self.stdin_fd is not None,
+                "helper_unexpected_eof",
             )
-            if readable:
-                self._absorb()
-            if writable:
+            if self._service_process_events(writable=True):
                 try:
-                    view = view[os.write(self.stdin_fd, view) :]
+                    written = os.write(self.stdin_fd, view)
+                    require(written > 0, "helper_unexpected_eof")
+                    view = view[written:]
                 except BlockingIOError:
                     continue
                 except BrokenPipeError:
@@ -1412,17 +1507,11 @@ class Detector:
                 result = json_object(line)
                 require(isinstance(result, dict), "helper_response_schema")
                 return result
-            require(not self.stdout_closed, "helper_unexpected_eof")
-            chunk = os.read(self.stdout_fd, CHUNK)
-            if not chunk:
-                self.stdout_closed = True
-                require(False, "helper_unexpected_eof")
-            self.responses += chunk
             require(
-                len(self.responses) - self.responses.rfind(b"\n") - 1
-                <= HELPER_RESPONSE_LIMIT,
-                "helper_response_limit",
+                not self.direct_exited and not self.stdout_closed,
+                "helper_unexpected_eof",
             )
+            self._service_process_events()
 
     def _close_current_streams(self):
         if self.process is None:
@@ -1434,21 +1523,36 @@ class Detector:
                     stream.close()
                 except OSError:
                     failed = True
+        self.stdin_fd = self.stdout_fd = None
+        self.stdout_closed = True
         return failed
 
     def _cleanup_exited_current(self):
-        process_group, self.process_group = self.process_group, None
-        failed = _signal_process_group(process_group)
-        failed = _process_group_survived(process_group) or failed
+        failed = self.current_cleanup_failed
+        self.current_cleanup_failed = False
+        failed = self._close_pidfd() or failed
         failed = self._close_current_streams() or failed
         self.stream_active = False
         return failed
+
+    def _await_direct_exit(self):
+        while not self.direct_exited:
+            self._service_process_events()
+
+    def _finish_current_process(self, expected_status):
+        self._await_direct_exit()
+        extra_response = bool(self.responses)
+        status_error = self.direct_status != expected_status
+        cleanup_failed = self._cleanup_exited_current()
+        require(not extra_response, "helper_extra_response")
+        require(not status_error, "helper_exit_status")
+        require(not cleanup_failed, "helper_cleanup_failed")
 
     def _finish_stream(self):
         if not self.stream_active:
             return
         require(not self.outstanding, "helper_unfinished_records")
-        self.process.stdin.close()
+        self.current_cleanup_failed = self._close_stdin() or self.current_cleanup_failed
         expected = {
             "type": "summary",
             "files": self.session_records,
@@ -1456,13 +1560,7 @@ class Detector:
             "findings": self.session_findings,
         }
         require(self._response() == expected, "helper_summary_receipt")
-        require(not self.responses, "helper_extra_response")
-        require(os.read(self.stdout_fd, 1) == b"", "helper_extra_response")
-        code = self.process.wait()
-        status_error = code != (1 if self.session_findings else 0)
-        cleanup_failed = self._cleanup_exited_current()
-        require(not status_error, "helper_exit_status")
-        require(not cleanup_failed, "helper_cleanup_failed")
+        self._finish_current_process(1 if self.session_findings else 0)
 
     def scan_spilled(self, fd, length, digest):
         """Scan one immutable oversized record in an isolated mapped helper."""
@@ -1516,36 +1614,33 @@ class Detector:
         return findings
 
     def _finish_mapped_process(self, findings):
-        require(not self.responses, "helper_extra_response")
-        require(os.read(self.stdout_fd, 1) == b"", "helper_extra_response")
-        code = self.process.wait()
-        status_error = code != (1 if findings else 0)
-        cleanup_failed = self._cleanup_exited_current()
-        require(not status_error, "helper_exit_status")
-        require(not cleanup_failed, "helper_cleanup_failed")
+        self._finish_current_process(1 if findings else 0)
 
     def _abort_current(self):
-        if self.process is None:
-            return
-        failed = False
-        if self.process.poll() is None:
-            if self.process_group is not None:
-                group_failed = _signal_process_group(self.process_group)
-                failed = group_failed
-            else:
-                group_failed = True
-            if group_failed:
+        failed = self.current_cleanup_failed
+        self.current_cleanup_failed = False
+        failed = self._close_stdin() or failed
+        if self.process is not None and not self.direct_exited:
+            process_group = self.process_group
+            group_failed = _signal_process_group(process_group)
+            self.process_group = None
+            failed = group_failed or failed
+            if process_group is None or group_failed:
                 try:
                     self.process.kill()
                 except ProcessLookupError:
                     pass
                 except OSError:
                     failed = True
-        try:
-            self.process.wait()
-        except (OSError, subprocess.SubprocessError):
-            failed = True
-        failed = self._cleanup_exited_current() or failed
+            try:
+                self.direct_status = self.process.wait()
+            except (OSError, subprocess.SubprocessError):
+                failed = True
+            self.direct_exited = True
+        self.process_group = None
+        failed = self._close_pidfd() or failed
+        failed = self._close_current_streams() or failed
+        self.stream_active = False
         require(not failed, "helper_cleanup_failed")
 
     def begin(self, length):
@@ -2203,8 +2298,8 @@ class _OversizedConfidentialityDetector:
     def scan(self, fd, length, digest, literal_matches):
         _admit_complete_record(length)
         require(self.process is None, "oversized_confidentiality_worker_active")
-        self._configure_worker(fd, length, digest, literal_matches)
         try:
+            self._configure_worker(fd, length, digest, literal_matches)
             self._start_worker()
             result, findings = self._receive_worker_result(length, digest)
             self._join_worker()
