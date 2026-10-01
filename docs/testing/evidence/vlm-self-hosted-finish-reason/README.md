@@ -42,14 +42,17 @@ hardware applicability, and limitations are in [evidence.json](evidence.json).
 - Exact archived source: 80 focused tests passed; one opt-in live-GPU test was
   inapplicable and skipped.
 - Related local VLM surfaces: 109 passed, 2 skipped.
-- Independent skill and documentation checks: 845 passed.
+- Exact publication-tree skill and documentation checks: 846 passed.
 - Ruff, formatting, diff confidentiality, and Gitleaks passed.
 - Independent exact-source review returned `APPROVED_SOURCE` with no findings.
 
 Every matrix request reached a call-site transport substitute under outbound
-socket denial. Observed provider, health, model-list, and outbound socket calls
-were all zero. These are deterministic parser controls, not fixture scores
-presented as a model evaluation.
+socket denial. Transport substitutions, credential-resolver substitutions,
+backend counts, provider calls, and outbound socket attempts were measured;
+provider and socket calls were zero. Source inspection shows that this
+substituted call path contains no health or model-list request, but those two
+zeros were not separately instrumented. These are deterministic parser
+controls, not fixture scores presented as a model evaluation.
 
 ## Hardware applicability
 
@@ -67,9 +70,17 @@ PYTHONPATH="$PWD/npa/src" npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_vlm_eval_token_factory.py \
   npa/tests/workbench/test_vlm_eval_backend.py -q
 
-npa/.venv/bin/python -m pytest \
+PYTHONPATH="$PWD/npa/src" npa/.venv/bin/python -m pytest \
+  npa/tests/workbench/test_vlm_eval_token_factory.py \
+  npa/tests/workbench/test_vlm_eval_backend.py \
+  npa/tests/workbench/test_vlm_eval_loop.py \
+  npa/tests/workbench/test_vlm_eval_loop_e2e.py \
+  npa/tests/cli/test_workbench_vlm_eval_cli.py \
+  npa/tests/workflows/test_vlm_eval_workflow.py -q
+
+PYTHONPATH="$PWD/npa/src" npa/.venv/bin/python -m pytest \
   npa/tests/guardrails/test_skills_index.py \
-  npa/tests/guardrails/test_develop_skills.py -q
+  npa/tests/guardrails/test_documentation_examples.py -q
 ```
 
 The first file contains the cross-backend completion matrix and parser-ordering
@@ -83,7 +94,8 @@ VLM provenance and Kimi branches are refreshed. PRs 596 and 678, plus dependent
 PRs 597, 612, 617, 622, 624, 627, 634, and 647, must preserve the exact-stop
 guard and both migration documents on their resolved combined trees. Each
 refreshed head needs this matrix, applicable skill/documentation checks, and
-fresh exact-head review.
+fresh exact-head review. PR 678 remains blocked until both its PR 596 dependency
+and this combined-tree reconciliation are proven.
 
 ## Limits
 
@@ -94,5 +106,9 @@ fresh exact-head review.
   accept their scores.
 - The exact base has no explicit `message.refusal` guard. Refusal and shared
   response-helper hardening are outside this change.
+- Health and model-list zeros are derived from the reviewed substituted call
+  path, not separate instrumented counters.
+- This source/publication evidence is not current combined-tree,
+  exact-PR-head, required-CI, conflict-free, or merge-readiness approval.
 - No model, threshold, rubric, retry, JSON-repair, physical-correctness, or
   robot-safety claim changes.

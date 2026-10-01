@@ -176,8 +176,9 @@
     "self_hosted_requests": 14,
     "outbound_socket_attempts": 0,
     "provider_calls_observed": 0,
-    "health_calls_observed": 0,
-    "model_list_calls_observed": 0
+    "health_calls_source_derived": 0,
+    "model_list_calls_source_derived": 0,
+    "source_derived_caveat": "The substituted response path contains no health or model-list request, but those two zeros were not separately instrumented."
   },
   "validation": {
     "exact_archive_tests": {
@@ -190,7 +191,7 @@
       "skipped": 2
     },
     "independent_skill_and_documentation_contracts": {
-      "passed": 845
+      "passed": 846
     },
     "ruff": "passed",
     "format": "passed",
@@ -225,7 +226,8 @@
       634,
       647
     ],
-    "resolved_tree_gate": "Preserve the exact-stop guard and both migration documents, rerun this matrix plus skill/documentation checks, and obtain fresh exact-head review."
+    "resolved_tree_gate": "Preserve the exact-stop guard and both migration documents, rerun this matrix plus skill/documentation checks, and obtain fresh exact-head review.",
+    "pr_678_block": "PR 678 remains blocked until both its PR 596 dependency and this combined-tree reconciliation are proven."
   },
   "limitations": [
     "This is deterministic response-metadata evidence, not a real model judgment or visual evaluation.",
@@ -233,6 +235,8 @@
     "Self-hosted adapters that omit finish_reason must be updated before their scores can be accepted.",
     "The exact base has no explicit message.refusal guard; refusal and shared-response-helper hardening are outside this change.",
     "One earlier private harness attempt stopped while recording an intentionally failing mutant and is excluded from acceptance evidence.",
+    "Health and model-list zeros are source-derived from the reviewed substituted call path, not separately instrumented counters.",
+    "This source/publication evidence is not current combined-tree, exact-PR-head, required-CI, conflict-free, or merge-readiness approval.",
     "This does not change models, thresholds, rubrics, retries, JSON repair, physical-correctness claims, or robot-safety claims."
   ]
 }
