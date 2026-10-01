@@ -550,13 +550,6 @@ def regen_sim2real_rrd(
 
     inner_evidence = json.loads(inner_path.read_text(encoding="utf-8"))
     heldout_report = json.loads(heldout_path.read_text(encoding="utf-8"))
-    heldout_policy_metadata = _heldout_policy_metadata(
-        heldout_report,
-        checkpoint_sha256_fallback=str(
-            heldout_report.get("policy_checkpoint_sha256") or ""
-        ),
-        checkpoint_size_fallback=heldout_report.get("policy_checkpoint_size_bytes", 0),
-    )
     report_path = work_dir / "reports" / "sim2real-report.json"
     report = (
         json.loads(report_path.read_text(encoding="utf-8"))
@@ -565,6 +558,19 @@ def regen_sim2real_rrd(
     )
     policy_access = _ensure_policy_access_metadata(
         config, work_dir, storage=storage, report=report
+    )
+    heldout_policy_metadata = _heldout_policy_metadata(
+        heldout_report,
+        checkpoint_fallback=str(policy_access.get("checkpoint_uri") or ""),
+        checkpoint_sha256_fallback=str(
+            policy_access.get("sha256")
+            or heldout_report.get("policy_checkpoint_sha256")
+            or ""
+        ),
+        checkpoint_size_fallback=(
+            policy_access.get("size_bytes")
+            or heldout_report.get("policy_checkpoint_size_bytes", 0)
+        ),
     )
     outer_history = list((report.get("outer_loop") or {}).get("history") or [])
     viewer_command = (
@@ -662,73 +668,170 @@ def regen_sim2real_rrd(
     )
 
 
-def _ensure_policy_access_metadata(
-    config: Sim2RealLoopConfig,
-    local_dir: Path,
-    *,
-    storage: StorageClient,
-    report: dict[str, Any],
-) -> dict[str, Any]:
-    """Resolve candidate bytes and write secret-free access and promotion state."""
-
+def _read_candidate_manifest(local_dir: Path) -> tuple[Path, dict[str, Any]]:
     candidate_path = Path(local_dir) / "checkpoints" / "candidate" / "candidate.json"
     candidate = (
         json.loads(candidate_path.read_text(encoding="utf-8"))
         if candidate_path.is_file()
         else {}
     )
-    checkpoint_uri = str(
-        candidate.get("policy_checkpoint_uri")
-        or ((report.get("outer_loop") or {}).get("latest_decision") or {}).get(
-            "checkpoint_uri"
+    if not isinstance(candidate, dict):
+        raise Sim2RealRerunRegenError(
+            "candidate checkpoint manifest must contain a JSON object"
         )
-        or ""
-    ).strip()
-    deployable = bool(
-        candidate.get("deployable_policy")
-        and checkpoint_uri.startswith("s3://")
-        and checkpoint_uri.endswith(".pt")
+    return candidate_path, candidate
+
+
+def _one_checkpoint_uri(values: tuple[object, ...]) -> str:
+    sources = [str(value).strip() for value in values if str(value or "").strip()]
+    if len(set(sources)) > 1:
+        raise Sim2RealRerunRegenError(
+            "candidate checkpoint URI sources disagree during Rerun regeneration"
+        )
+    return sources[0] if sources else ""
+
+
+def _one_checkpoint_digest(values: tuple[object, ...]) -> str:
+    sources = [
+        str(value).strip().lower() for value in values if str(value or "").strip()
+    ]
+    malformed = any(
+        len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest)
+        for digest in sources
     )
-    bytes_available = bool(
-        (candidate.get("policy_bytes_available") or deployable)
-        and checkpoint_uri.startswith("s3://")
-        and checkpoint_uri.endswith(".pt")
-    )
-    if bytes_available and (
-        not candidate.get("policy_checkpoint_sha256")
-        or not candidate.get("policy_checkpoint_size_bytes")
+    if malformed:
+        raise Sim2RealRerunRegenError(
+            "candidate checkpoint SHA-256 is malformed during Rerun regeneration"
+        )
+    if len(set(sources)) > 1:
+        raise Sim2RealRerunRegenError(
+            "candidate checkpoint SHA-256 sources disagree during Rerun regeneration"
+        )
+    return sources[0] if sources else ""
+
+
+def _one_checkpoint_size(values: tuple[object, ...]) -> int:
+    provided = [value for value in values if value not in (None, "")]
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value <= 0
+        for value in provided
     ):
-        with tempfile.TemporaryDirectory(prefix="npa-policy-regen-") as temporary:
-            local_checkpoint = Path(temporary) / Path(checkpoint_uri).name
-            storage.download_file(checkpoint_uri, str(local_checkpoint))
-            candidate.update(
-                {
-                    "policy_checkpoint_identity": Path(checkpoint_uri).name,
-                    "policy_checkpoint_sha256": hashlib.sha256(
-                        local_checkpoint.read_bytes()
-                    ).hexdigest(),
-                    "policy_checkpoint_size_bytes": local_checkpoint.stat().st_size,
-                }
-            )
-    if bytes_available:
+        raise Sim2RealRerunRegenError(
+            "candidate checkpoint size is malformed during Rerun regeneration"
+        )
+    if len(set(provided)) > 1:
+        raise Sim2RealRerunRegenError(
+            "candidate checkpoint size sources disagree during Rerun regeneration"
+        )
+    return provided[0] if provided else 0
+
+
+def _retained_candidate_identity(
+    candidate: dict[str, Any],
+    report: dict[str, Any],
+) -> tuple[str, str, int, bool]:
+    outer_loop = dict(report.get("outer_loop") or {})
+    decision = dict(
+        outer_loop.get("latest_decision") or outer_loop.get("decision") or {}
+    )
+    selection = dict(report.get("checkpoint_selection") or {})
+    heldout_report = dict(outer_loop.get("latest_heldout_report") or {})
+
+    checkpoint_uri = _one_checkpoint_uri(
+        (
+            candidate.get("policy_checkpoint_uri"),
+            decision.get("checkpoint_uri"),
+            selection.get("checkpoint_uri"),
+        )
+    )
+    checkpoint_sha256 = _one_checkpoint_digest(
+        (
+            candidate.get("policy_checkpoint_sha256"),
+            selection.get("checkpoint_sha256"),
+            heldout_report.get("policy_checkpoint_sha256"),
+        )
+    )
+    checkpoint_size = _one_checkpoint_size(
+        (
+            candidate.get("policy_checkpoint_size_bytes"),
+            heldout_report.get("policy_checkpoint_size_bytes"),
+        )
+    )
+    deployment_claim = (
+        candidate.get("deployable_policy") is True
+        or decision.get("decision") == "promote_checkpoint"
+    )
+    return checkpoint_uri, checkpoint_sha256, checkpoint_size, deployment_claim
+
+
+def _hydrate_candidate_identity(
+    candidate: dict[str, Any],
+    *,
+    checkpoint_uri: str,
+    storage: StorageClient,
+) -> None:
+    if candidate.get("policy_checkpoint_sha256") and candidate.get(
+        "policy_checkpoint_size_bytes"
+    ):
+        return
+    with tempfile.TemporaryDirectory(prefix="npa-policy-regen-") as temporary:
+        local_checkpoint = Path(temporary) / Path(checkpoint_uri).name
+        storage.download_file(checkpoint_uri, str(local_checkpoint))
         candidate.update(
             {
-                "policy_download_command": (
-                    "aws s3 cp "
-                    f"{shlex.quote(checkpoint_uri)} ./model.pt "
-                    '--endpoint-url "$AWS_ENDPOINT_URL"'
-                ),
-                "policy_ui_action": (
-                    "Open Artifacts for this run, select the candidate .pt checkpoint, "
-                    "and choose Download. Check deployable_policy before deployment; "
-                    "the Rerun viewer links the weights but does not execute them."
-                ),
+                "policy_checkpoint_identity": Path(checkpoint_uri).name,
+                "policy_checkpoint_sha256": hashlib.sha256(
+                    local_checkpoint.read_bytes()
+                ).hexdigest(),
+                "policy_checkpoint_size_bytes": local_checkpoint.stat().st_size,
             }
         )
-        candidate_path.parent.mkdir(parents=True, exist_ok=True)
-        candidate_path.write_text(
-            json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
+
+
+def _candidate_identity_complete(candidate: dict[str, Any]) -> bool:
+    digest = str(candidate.get("policy_checkpoint_sha256") or "").lower()
+    return bool(
+        candidate.get("policy_checkpoint_identity")
+        and len(digest) == 64
+        and all(char in "0123456789abcdef" for char in digest)
+        and candidate.get("policy_checkpoint_size_bytes")
+    )
+
+
+def _persist_candidate_access(
+    candidate_path: Path,
+    candidate: dict[str, Any],
+    *,
+    checkpoint_uri: str,
+) -> None:
+    candidate.update(
+        {
+            "policy_download_command": (
+                "aws s3 cp "
+                f"{shlex.quote(checkpoint_uri)} ./model.pt "
+                '--endpoint-url "$AWS_ENDPOINT_URL"'
+            ),
+            "policy_ui_action": (
+                "Open Artifacts for this run, select the candidate .pt checkpoint, "
+                "and choose Download. Check deployable_policy before deployment; "
+                "the Rerun viewer links the weights but does not execute them."
+            ),
+        }
+    )
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_path.write_text(
+        json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _policy_access_record(
+    config: Sim2RealLoopConfig,
+    candidate: dict[str, Any],
+    *,
+    checkpoint_uri: str,
+    bytes_available: bool,
+    deployable: bool,
+) -> dict[str, Any]:
     return {
         "deployable_policy": deployable,
         "policy_bytes_available": bytes_available,
@@ -743,6 +846,77 @@ def _ensure_policy_access_metadata(
         "ui_action": candidate.get("policy_ui_action", ""),
         "viewer_executes_policy": False,
     }
+
+
+def _prepare_candidate_identity(
+    candidate: dict[str, Any],
+    *,
+    checkpoint_uri: str,
+    digest: str,
+    size: int,
+    deployment_claim: bool,
+    storage: StorageClient,
+) -> tuple[bool, bool]:
+    candidate.update(
+        {
+            "policy_checkpoint_identity": (
+                candidate.get("policy_checkpoint_identity")
+                or (Path(checkpoint_uri).name if checkpoint_uri else "")
+            ),
+            "policy_checkpoint_sha256": digest,
+            "policy_checkpoint_size_bytes": size,
+            "policy_checkpoint_uri": checkpoint_uri,
+        }
+    )
+    eligible_uri = checkpoint_uri.startswith("s3://") and checkpoint_uri.endswith(".pt")
+    bytes_available = bool(
+        (candidate.get("policy_bytes_available") is True or deployment_claim)
+        and eligible_uri
+    )
+    if bytes_available:
+        _hydrate_candidate_identity(
+            candidate, checkpoint_uri=checkpoint_uri, storage=storage
+        )
+    deployable = bool(
+        deployment_claim and bytes_available and _candidate_identity_complete(candidate)
+    )
+    candidate["deployable_policy"] = deployable
+    candidate["policy_bytes_available"] = bytes_available
+    return bytes_available, deployable
+
+
+def _ensure_policy_access_metadata(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    *,
+    storage: StorageClient,
+    report: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve candidate bytes and write secret-free access and promotion state."""
+
+    candidate_path, candidate = _read_candidate_manifest(local_dir)
+    checkpoint_uri, digest, size, deployment_claim = _retained_candidate_identity(
+        candidate, report
+    )
+    bytes_available, deployable = _prepare_candidate_identity(
+        candidate,
+        checkpoint_uri=checkpoint_uri,
+        digest=digest,
+        size=size,
+        deployment_claim=deployment_claim,
+        storage=storage,
+    )
+    if bytes_available:
+        _persist_candidate_access(
+            candidate_path, candidate, checkpoint_uri=checkpoint_uri
+        )
+    return _policy_access_record(
+        config,
+        candidate,
+        checkpoint_uri=checkpoint_uri,
+        bytes_available=bytes_available,
+        deployable=deployable,
+    )
 
 
 def rerun_heldout_eval_only(

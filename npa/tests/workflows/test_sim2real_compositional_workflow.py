@@ -1048,6 +1048,160 @@ def test_stage14_derives_heldout_policy_loading_from_gold_report(
     assert heldout_report.get("policy_inference_provenance") is provenance
 
 
+def test_stage14_rejects_mismatched_selected_checkpoint_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    metadata, _heldout_report = _stage14_policy_metadata(
+        monkeypatch,
+        tmp_path,
+        {
+            "checkpoint_uri": "s3://unit/runs/finalize/checkpoints/other.pt",
+            "checkpoint_sha256": "a" * 64,
+            "checkpoint_size_bytes": 128,
+            "loaded_for_inference": True,
+            "stock_or_scripted_policy": False,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": False,
+            "policy_composition": "learned_actor_only",
+            "post_actor_controller": None,
+        },
+    )
+
+    assert metadata["heldout_policy_loaded_for_inference"] is True
+    assert metadata["heldout_policy_identity_verified"] is False
+    assert metadata["heldout_policy_learned_actor_only"] is False
+
+
+@pytest.mark.parametrize(
+    ("report_uri", "report_sha"),
+    [
+        pytest.param("s3://unit/run/checkpoints/other.pt", "a" * 64, id="uri-mismatch"),
+        pytest.param(
+            "s3://unit/run/checkpoints/model.pt", "b" * 64, id="digest-mismatch"
+        ),
+    ],
+)
+def test_stage10_rejects_gold_checkpoint_identity_mismatch(
+    report_uri: str,
+    report_sha: str,
+) -> None:
+    from npa.workflows.sim2real.workflow_stage import (
+        _assert_gold_checkpoint_identity,
+    )
+
+    evidence = {
+        "selected_checkpoint_uri": "s3://unit/run/checkpoints/model.pt",
+        "checkpoint_selection": {
+            "checkpoint_uri": "s3://unit/run/checkpoints/model.pt",
+            "checkpoint_sha256": "a" * 64,
+        },
+    }
+    report = {
+        "policy_checkpoint_sha256": report_sha,
+        "policy_checkpoint_size_bytes": 128,
+        "policy_inference_provenance": {
+            "checkpoint_uri": report_uri,
+            "checkpoint_sha256": report_sha,
+            "checkpoint_size_bytes": 128,
+            "loaded_for_inference": True,
+            "stock_or_scripted_policy": False,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": False,
+            "policy_composition": "learned_actor_only",
+            "post_actor_controller": None,
+        },
+    }
+
+    with pytest.raises(RuntimeError, match="selected checkpoint identity"):
+        _assert_gold_checkpoint_identity(evidence, report)
+
+
+def test_stage10_accepts_exact_learned_actor_checkpoint_identity() -> None:
+    from npa.workflows.sim2real.workflow_stage import (
+        _assert_gold_checkpoint_identity,
+    )
+
+    checkpoint_uri = "s3://unit/run/checkpoints/model.pt"
+    checkpoint_sha256 = "a" * 64
+    evidence = {
+        "selected_checkpoint_uri": checkpoint_uri,
+        "checkpoint_selection": {
+            "checkpoint_uri": checkpoint_uri,
+            "checkpoint_sha256": checkpoint_sha256,
+        },
+    }
+    report = {
+        "policy_checkpoint_sha256": checkpoint_sha256,
+        "policy_checkpoint_size_bytes": 128,
+        "policy_inference_provenance": {
+            "checkpoint_uri": checkpoint_uri,
+            "checkpoint_sha256": checkpoint_sha256,
+            "checkpoint_size_bytes": 128,
+            "loaded_for_inference": True,
+            "stock_or_scripted_policy": False,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": False,
+            "policy_composition": "learned_actor_only",
+            "post_actor_controller": None,
+        },
+    }
+
+    _assert_gold_checkpoint_identity(evidence, report)
+
+
+def test_stage10_checks_checkpoint_identity_before_gold_artifact_processing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.sim2real import workflow_stage
+
+    evidence = {"selected_checkpoint_uri": "s3://unit/run/checkpoints/model.pt"}
+    report = {"evaluation_split": "gold_heldout"}
+    identity_checks: list[tuple[dict, dict]] = []
+
+    class IdentityChecked(Exception):
+        pass
+
+    def stop_after_identity(**_kwargs) -> None:
+        raise IdentityChecked
+
+    monkeypatch.setattr(workflow_stage, "_root", lambda _args: "s3://unit/run")
+    monkeypatch.setattr(workflow_stage, "_work", lambda _stage: tmp_path)
+    monkeypatch.setattr(
+        workflow_stage,
+        "read_json",
+        lambda *_args, **_kwargs: evidence,
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "_run_eval",
+        lambda *_args, **_kwargs: report,
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "_assert_gold_checkpoint_identity",
+        lambda actual_evidence, actual_report: identity_checks.append(
+            (actual_evidence, actual_report)
+        ),
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "_assert_embodiment_evidence",
+        stop_after_identity,
+    )
+
+    with pytest.raises(IdentityChecked):
+        workflow_stage._stage10(
+            Namespace(
+                outer_iteration=1,
+                gold_count=4,
+            )
+        )
+
+    assert identity_checks == [(evidence, report)]
+
+
 def test_stage14_selects_only_consumed_artifacts_and_cleans_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

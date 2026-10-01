@@ -753,6 +753,42 @@ def _stage9(args: argparse.Namespace) -> None:
     )
 
 
+def _assert_gold_checkpoint_identity(
+    evidence: dict[str, Any],
+    report: dict[str, Any],
+) -> None:
+    """Bind gold evaluation bytes to the validation-selected learned actor."""
+
+    from npa.workflows.sim2real.viz_contract import heldout_policy_metadata
+
+    selected_uri = str(evidence.get("selected_checkpoint_uri") or "")
+    selection = dict(evidence.get("checkpoint_selection") or {})
+    selected_sha256 = str(selection.get("checkpoint_sha256") or "")
+    if (
+        not selected_uri
+        or selection.get("checkpoint_uri") != selected_uri
+        or not selected_sha256
+    ):
+        raise RuntimeError(
+            "Stage 10 selected checkpoint identity is incomplete or inconsistent"
+        )
+    metadata = heldout_policy_metadata(
+        report,
+        checkpoint_fallback=selected_uri,
+        checkpoint_sha256_fallback=selected_sha256,
+        checkpoint_size_fallback=report.get("policy_checkpoint_size_bytes", 0),
+    )
+    if (
+        metadata["heldout_policy_identity_verified"] is not True
+        or metadata["heldout_policy_loaded_for_inference"] is not True
+        or metadata["heldout_policy_learned_actor_only"] is not True
+    ):
+        issues = ", ".join(metadata["heldout_policy_identity_errors"]) or (
+            "learned-actor-only provenance is incomplete or contradictory"
+        )
+        raise RuntimeError(f"Stage 10 selected checkpoint identity mismatch: {issues}")
+
+
 def _stage10(args: argparse.Namespace) -> None:
     root, work = _root(args), _work(10)
     evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
@@ -767,6 +803,7 @@ def _stage10(args: argparse.Namespace) -> None:
         output_path=report_path,
         tag=f"gold-o{args.outer_iteration:02d}",
     )
+    _assert_gold_checkpoint_identity(evidence, report)
     gold_embodiment = _assert_embodiment_evidence(
         root=root, payload=report, stage="Stage 10 gold evaluation"
     )

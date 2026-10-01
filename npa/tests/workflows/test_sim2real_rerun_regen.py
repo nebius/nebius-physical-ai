@@ -108,6 +108,10 @@ def test_regen_sim2real_rrd_success(
                 "checkpoint_size_bytes": 128,
                 "loaded_for_inference": True,
                 "stock_or_scripted_policy": False,
+                "actor_is_learned": True,
+                "scripted_post_actor_controller": False,
+                "policy_composition": "learned_actor_only",
+                "post_actor_controller": None,
             },
             True,
             False,
@@ -134,6 +138,8 @@ def test_regen_preserves_strict_heldout_policy_evidence(
         json.dumps(
             {
                 "success_rate": 1.0,
+                "policy_checkpoint_sha256": "a" * 64,
+                "policy_checkpoint_size_bytes": 128,
                 "policy_inference_provenance": provenance,
             }
         ),
@@ -168,6 +174,10 @@ def test_regen_preserves_strict_heldout_policy_evidence(
     assert (
         metadata["heldout_policy_stock_or_scripted_policy"]
         is expected_stock_or_scripted
+    )
+    assert metadata["heldout_policy_identity_verified"] is expected_loaded
+    assert metadata["heldout_policy_learned_actor_only"] is (
+        expected_loaded and expected_stock_or_scripted is False
     )
 
 
@@ -308,6 +318,145 @@ def test_policy_access_metadata_hashes_real_checkpoint_without_secrets(
     assert "$AWS_ENDPOINT_URL" in access["authenticated_download_command"]
     assert access["viewer_executes_policy"] is False
     assert "secret" not in json.dumps(access).lower()
+
+
+@pytest.mark.parametrize(
+    ("field", "claim"),
+    [
+        ("deployable_policy", "true"),
+        ("deployable_policy", 1),
+        ("policy_bytes_available", "true"),
+        ("policy_bytes_available", 1),
+    ],
+)
+def test_policy_access_metadata_rejects_non_boolean_deployment_claims(
+    tmp_path: Path,
+    field: str,
+    claim: object,
+) -> None:
+    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text(
+        json.dumps(
+            {
+                field: claim,
+                "policy_checkpoint_uri": "s3://demo-bucket/run/model_latest.pt",
+            }
+        ),
+        encoding="utf-8",
+    )
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"unexpected-policy-bytes")
+
+    access = _ensure_policy_access_metadata(
+        _config(), tmp_path, storage=FakeStorage(), report={}
+    )
+
+    assert access["deployable_policy"] is False
+    assert access["policy_bytes_available"] is False
+    assert downloads == []
+
+
+def test_policy_access_metadata_consumes_canonical_stage14_decision(
+    tmp_path: Path,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    checkpoint_sha256 = "a" * 64
+
+    class UnusedStorage:
+        def download_file(self, *_args, **_kwargs) -> None:
+            raise AssertionError("complete retained identity must not be redownloaded")
+
+    access = _ensure_policy_access_metadata(
+        _config(),
+        tmp_path,
+        storage=UnusedStorage(),
+        report={
+            "outer_loop": {
+                "decision": {
+                    "decision": "promote_checkpoint",
+                    "checkpoint_uri": checkpoint_uri,
+                },
+                "latest_heldout_report": {
+                    "policy_checkpoint_sha256": checkpoint_sha256,
+                    "policy_checkpoint_size_bytes": 128,
+                },
+            },
+            "checkpoint_selection": {
+                "checkpoint_uri": checkpoint_uri,
+                "checkpoint_sha256": checkpoint_sha256,
+            },
+        },
+    )
+
+    assert access["checkpoint_uri"] == checkpoint_uri
+    assert access["sha256"] == checkpoint_sha256
+    assert access["size_bytes"] == 128
+    assert access["deployable_policy"] is True
+    assert access["identity"] == "model_selected.pt"
+
+
+@pytest.mark.parametrize(
+    "conflict",
+    ["checkpoint_uri", "checkpoint_sha256", "checkpoint_size_bytes"],
+)
+def test_policy_access_metadata_rejects_conflicting_retained_identity(
+    tmp_path: Path,
+    conflict: str,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    checkpoint_sha256 = "a" * 64
+    candidate_path = tmp_path / "checkpoints/candidate/candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_checkpoint_uri": checkpoint_uri,
+                "policy_checkpoint_sha256": checkpoint_sha256,
+                "policy_checkpoint_size_bytes": 128,
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = {
+        "outer_loop": {
+            "decision": {
+                "decision": "promote_checkpoint",
+                "checkpoint_uri": checkpoint_uri,
+            },
+            "latest_heldout_report": {
+                "policy_checkpoint_sha256": checkpoint_sha256,
+                "policy_checkpoint_size_bytes": 128,
+            },
+        },
+        "checkpoint_selection": {
+            "checkpoint_uri": checkpoint_uri,
+            "checkpoint_sha256": checkpoint_sha256,
+        },
+    }
+    if conflict == "checkpoint_uri":
+        report["outer_loop"]["decision"]["checkpoint_uri"] = (
+            "s3://demo-bucket/run/other.pt"
+        )
+    elif conflict == "checkpoint_sha256":
+        report["checkpoint_selection"]["checkpoint_sha256"] = "b" * 64
+    else:
+        report["outer_loop"]["latest_heldout_report"][
+            "policy_checkpoint_size_bytes"
+        ] = 256
+
+    with pytest.raises(Sim2RealRerunRegenError, match="sources disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=object(),
+            report=report,
+        )
 
 
 def test_progress_metrics_embed_all_outer_reward_loss_and_success(

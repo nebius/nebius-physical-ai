@@ -25,6 +25,10 @@ from typing import Any
 
 import numpy as np
 
+from npa.workflows.sim2real.viz_contract import (
+    heldout_policy_metadata as _heldout_policy_metadata,
+)
+
 
 REFERENCE_ROLLOUT_SCHEMA = "npa.sim2real.action_rollout.v1"
 REFERENCE_STUB_FRAME_SHAPE = (32, 32)
@@ -1044,44 +1048,19 @@ def _stage_progress_markdown(
     return "\n".join(rows)
 
 
-def _heldout_policy_metadata(
-    heldout_report: dict[str, Any],
-    *,
-    checkpoint_fallback: str = "",
-    checkpoint_sha256_fallback: str = "",
-    checkpoint_size_fallback: object = 0,
-) -> dict[str, Any]:
-    """Project held-out policy evidence into a strict visualization contract."""
-
-    raw_provenance = heldout_report.get("policy_inference_provenance")
-    provenance = raw_provenance if isinstance(raw_provenance, dict) else {}
-    stock_or_scripted_policy = provenance.get("stock_or_scripted_policy")
-    if stock_or_scripted_policy is not True and stock_or_scripted_policy is not False:
-        stock_or_scripted_policy = None
-    checkpoint_size = provenance.get("checkpoint_size_bytes", checkpoint_size_fallback)
-    if (
-        not isinstance(checkpoint_size, int)
-        or isinstance(checkpoint_size, bool)
-        or checkpoint_size < 0
-    ):
-        checkpoint_size = 0
-    return {
-        "heldout_policy_checkpoint": str(
-            provenance.get("checkpoint_uri") or checkpoint_fallback
-        ),
-        "heldout_policy_checkpoint_sha256": str(
-            provenance.get("checkpoint_sha256") or checkpoint_sha256_fallback
-        ),
-        "heldout_policy_checkpoint_size_bytes": checkpoint_size,
-        "heldout_policy_loaded_for_inference": (
-            provenance.get("loaded_for_inference") is True
-        ),
-        "heldout_policy_stock_or_scripted_policy": stock_or_scripted_policy,
-    }
-
-
 def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
     heldout_loaded = run_metadata.get("heldout_policy_loaded_for_inference") is True
+    identity_verified = run_metadata.get("heldout_policy_identity_verified") is True
+    learned_actor_only = bool(
+        heldout_loaded
+        and identity_verified
+        and run_metadata.get("heldout_policy_stock_or_scripted_policy") is False
+        and run_metadata.get("heldout_policy_actor_is_learned") is True
+        and run_metadata.get("heldout_policy_scripted_post_actor_controller") is False
+        and run_metadata.get("heldout_policy_composition") == "learned_actor_only"
+        and run_metadata.get("heldout_policy_post_actor_controller_declared") is True
+        and run_metadata.get("heldout_policy_post_actor_controller") is None
+    )
     stock_or_scripted_policy = run_metadata.get(
         "heldout_policy_stock_or_scripted_policy"
     )
@@ -1089,20 +1068,28 @@ def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
         inference_statement = (
             "Held-out inference checkpoint loading was not proven in this recording."
         )
+    elif not identity_verified:
+        inference_statement = (
+            "A literal held-out load claim exists, but exact checkpoint identity was "
+            "not proven."
+        )
     else:
         inference_statement = (
             "The synchronized held-out Isaac cameras and 3D point cloud were generated "
             "after loading these exact candidate checkpoint bytes."
         )
-        if stock_or_scripted_policy is False:
-            inference_statement += " `stock_or_scripted_policy=false`."
+        if learned_actor_only:
+            inference_statement += (
+                " The complete learned-actor-only contract is proven, including "
+                "`stock_or_scripted_policy=false`."
+            )
         elif stock_or_scripted_policy is True:
             inference_statement += (
                 " `stock_or_scripted_policy=true`; this is not learned-only evidence."
             )
         else:
             inference_statement += (
-                " The absence of a stock or scripted policy was not proven."
+                " The complete learned-actor-only contract was not proven."
             )
     return "\n".join(
         [
@@ -1116,8 +1103,12 @@ def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
             f"- Deployable: `{run_metadata.get('policy_deployable', False)}`",
             f"- Held-out inference checkpoint: `{run_metadata.get('heldout_policy_checkpoint', '')}`",
             f"- Held-out inference SHA-256: `{run_metadata.get('heldout_policy_checkpoint_sha256', '')}`",
+            f"- Held-out generator policy SHA-256: `{run_metadata.get('heldout_policy_generator_sha256', '')}`",
             f"- Held-out inference size (bytes): `{run_metadata.get('heldout_policy_checkpoint_size_bytes', '')}`",
             f"- Loaded for held-out inference: `{heldout_loaded}`",
+            f"- Exact held-out identity verified: `{identity_verified}`",
+            f"- Learned actor only: `{learned_actor_only}`",
+            f"- Held-out identity issues: `{json.dumps(run_metadata.get('heldout_policy_identity_errors') or [])}`",
             f"- Candidate record: `{run_metadata.get('candidate_s3_uri', '')}`",
             f"- Rerun recording: `{run_metadata.get('rrd_s3_uri', '')}`",
             f"- Artifact root: `{run_metadata.get('artifact_root', '')}`",
@@ -2239,10 +2230,15 @@ def _log_real_isaac_scene_context(
             ),
             recording=recording,
         )
-    raw_provenance = heldout_report.get("policy_inference_provenance")
-    provenance = raw_provenance if isinstance(raw_provenance, dict) else {}
-    loaded_for_inference = provenance.get("loaded_for_inference") is True
-    stock_or_scripted_absent = provenance.get("stock_or_scripted_policy") is False
+    policy_metadata = _heldout_policy_metadata(heldout_report)
+    loaded_for_inference = (
+        policy_metadata["heldout_policy_loaded_for_inference"] is True
+    )
+    identity_verified = policy_metadata["heldout_policy_identity_verified"] is True
+    stock_or_scripted_absent = (
+        policy_metadata["heldout_policy_stock_or_scripted_policy"] is False
+    )
+    learned_actor_only = policy_metadata["heldout_policy_learned_actor_only"] is True
     rr.log(
         "world/task_context/provenance",
         rr.TextDocument(
@@ -2251,11 +2247,13 @@ def _log_real_isaac_scene_context(
             "from the synchronized real Isaac held-out cameras. The translucent "
             "table, cube/goal regions, and Franka home skeleton are nominal task "
             "context—not a synthetic motion claim.\n\n"
-            f"Checkpoint: `{provenance.get('checkpoint_uri', '')}`\n\n"
-            f"SHA-256: `{provenance.get('checkpoint_sha256', '')}`\n\n"
+            f"Checkpoint: `{policy_metadata['heldout_policy_checkpoint']}`\n\n"
+            f"SHA-256: `{policy_metadata['heldout_policy_checkpoint_sha256']}`\n\n"
             f"Loaded for inference (strict proof): `{loaded_for_inference}`\n\n"
+            f"Exact checkpoint identity verified: `{identity_verified}`\n\n"
             "Stock or scripted policy proven absent: "
-            f"`{stock_or_scripted_absent}`",
+            f"`{stock_or_scripted_absent}`\n\n"
+            f"Complete learned-actor-only contract: `{learned_actor_only}`",
             media_type="text/markdown",
         ),
         recording=recording,

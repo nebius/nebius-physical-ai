@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -99,6 +100,25 @@ def test_policy_access_markdown_requires_literal_loading_proof(
     assert "Held-out inference checkpoint loading was not proven" in text
 
 
+def test_policy_access_markdown_requires_verified_checkpoint_identity() -> None:
+    text = viz_module._policy_access_markdown(
+        {
+            "heldout_policy_loaded_for_inference": True,
+            "heldout_policy_identity_verified": False,
+            "heldout_policy_stock_or_scripted_policy": False,
+            "heldout_policy_actor_is_learned": True,
+            "heldout_policy_scripted_post_actor_controller": False,
+            "heldout_policy_composition": "learned_actor_only",
+            "heldout_policy_post_actor_controller": None,
+            "heldout_policy_post_actor_controller_declared": True,
+        }
+    )
+
+    assert "exact candidate checkpoint bytes" not in text
+    assert "exact checkpoint identity was not proven" in text
+    assert "`stock_or_scripted_policy=false`" not in text
+
+
 @pytest.mark.parametrize(
     ("stock_or_scripted", "expected_claim"),
     [
@@ -115,11 +135,285 @@ def test_policy_access_markdown_only_claims_learned_policy_when_proven(
     text = viz_module._policy_access_markdown(
         {
             "heldout_policy_loaded_for_inference": True,
+            "heldout_policy_identity_verified": True,
             "heldout_policy_stock_or_scripted_policy": stock_or_scripted,
+            "heldout_policy_actor_is_learned": True,
+            "heldout_policy_scripted_post_actor_controller": False,
+            "heldout_policy_composition": "learned_actor_only",
+            "heldout_policy_post_actor_controller": None,
+            "heldout_policy_post_actor_controller_declared": True,
         }
     )
 
     assert ("`stock_or_scripted_policy=false`" in text) is expected_claim
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("actor_is_learned", False, id="actor-not-learned"),
+        pytest.param("scripted_post_actor_controller", True, id="scripted-controller"),
+        pytest.param("policy_composition", "scripted_only", id="scripted-composition"),
+        pytest.param("post_actor_controller", "joint_pd", id="post-controller"),
+    ],
+)
+def test_policy_metadata_rejects_contradictory_learned_actor_provenance(
+    field: str,
+    value: object,
+) -> None:
+    provenance = {
+        "checkpoint_uri": "s3://bucket/run/model.pt",
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "loaded_for_inference": True,
+        "stock_or_scripted_policy": False,
+        "actor_is_learned": True,
+        "scripted_post_actor_controller": False,
+        "policy_composition": "learned_actor_only",
+        "post_actor_controller": None,
+    }
+    provenance[field] = value
+
+    metadata = viz_module._heldout_policy_metadata(
+        {
+            "policy_checkpoint_sha256": "a" * 64,
+            "policy_checkpoint_size_bytes": 128,
+            "policy_inference_provenance": provenance,
+        },
+        checkpoint_fallback="s3://bucket/run/model.pt",
+    )
+
+    assert metadata["heldout_policy_identity_verified"] is True
+    assert metadata["heldout_policy_learned_actor_only"] is False
+    assert "`stock_or_scripted_policy=false`" not in viz_module._policy_access_markdown(
+        metadata
+    )
+
+
+def test_policy_metadata_requires_explicit_null_post_actor_controller() -> None:
+    provenance = {
+        "checkpoint_uri": "s3://bucket/run/model.pt",
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "loaded_for_inference": True,
+        "stock_or_scripted_policy": False,
+        "actor_is_learned": True,
+        "scripted_post_actor_controller": False,
+        "policy_composition": "learned_actor_only",
+    }
+
+    metadata = viz_module._heldout_policy_metadata(
+        {"policy_inference_provenance": provenance},
+        checkpoint_fallback="s3://bucket/run/model.pt",
+    )
+
+    assert metadata["heldout_policy_identity_verified"] is True
+    assert metadata["heldout_policy_post_actor_controller_declared"] is False
+    assert metadata["heldout_policy_learned_actor_only"] is False
+    assert "`stock_or_scripted_policy=false`" not in viz_module._policy_access_markdown(
+        metadata
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "expected_identity"),
+    [
+        pytest.param("checkpoint_uri", 7, False, id="non-string-uri"),
+        pytest.param("checkpoint_sha256", "not-a-sha256", False, id="invalid-digest"),
+        pytest.param("checkpoint_size_bytes", True, False, id="boolean-size"),
+        pytest.param("loaded_for_inference", "true", True, id="string-loading-flag"),
+    ],
+)
+def test_policy_metadata_never_promotes_malformed_identity_or_loading(
+    field: str,
+    value: object,
+    expected_identity: bool,
+) -> None:
+    provenance = {
+        "checkpoint_uri": "s3://bucket/run/model.pt",
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "loaded_for_inference": True,
+        "stock_or_scripted_policy": False,
+        "actor_is_learned": True,
+        "scripted_post_actor_controller": False,
+        "policy_composition": "learned_actor_only",
+        "post_actor_controller": None,
+    }
+    provenance[field] = value
+
+    metadata = viz_module._heldout_policy_metadata(
+        {"policy_inference_provenance": provenance}
+    )
+
+    assert metadata["heldout_policy_identity_verified"] is expected_identity
+    assert metadata["heldout_policy_learned_actor_only"] is False
+    text = viz_module._policy_access_markdown(metadata)
+    assert "exact candidate checkpoint bytes" not in text
+    assert "`stock_or_scripted_policy=false`" not in text
+
+
+def test_policy_metadata_preserves_generator_digest_and_requires_hash_agreement() -> (
+    None
+):
+    provenance = {
+        "checkpoint_uri": "s3://bucket/run/model.pt",
+        "checkpoint_sha256": "a" * 64,
+        "generator_policy_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "loaded_for_inference": True,
+        "stock_or_scripted_policy": False,
+        "actor_is_learned": True,
+        "scripted_post_actor_controller": False,
+        "policy_composition": "learned_actor_only",
+        "post_actor_controller": None,
+    }
+    report = {
+        "policy_checkpoint_sha256": "a" * 64,
+        "policy_checkpoint_size_bytes": 128,
+        "policy_inference_provenance": provenance,
+    }
+
+    metadata = viz_module._heldout_policy_metadata(
+        report,
+        checkpoint_fallback="s3://bucket/run/model.pt",
+    )
+    assert metadata["heldout_policy_generator_sha256"] == "a" * 64
+    assert metadata["heldout_policy_identity_verified"] is True
+    assert metadata["heldout_policy_learned_actor_only"] is True
+
+    provenance["generator_policy_sha256"] = "b" * 64
+    contradictory = viz_module._heldout_policy_metadata(
+        report,
+        checkpoint_fallback="s3://bucket/run/model.pt",
+    )
+    assert contradictory["heldout_policy_identity_verified"] is False
+    assert contradictory["heldout_policy_learned_actor_only"] is False
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param(
+            "policy_checkpoint",
+            "s3://bucket/run/other.pt",
+            id="top-level-uri-mismatch",
+        ),
+        pytest.param(
+            "policy_checkpoint_sha256", "b" * 64, id="top-level-hash-mismatch"
+        ),
+        pytest.param("policy_checkpoint_size_bytes", 256, id="top-level-size-mismatch"),
+        pytest.param("policy_checkpoint", 7, id="top-level-uri-malformed"),
+        pytest.param(
+            "policy_checkpoint_sha256",
+            "not-a-sha256",
+            id="top-level-hash-malformed",
+        ),
+        pytest.param(
+            "policy_checkpoint_size_bytes",
+            True,
+            id="top-level-size-malformed",
+        ),
+    ],
+)
+def test_policy_metadata_reconciles_every_authoritative_identity_source(
+    field: str,
+    value: object,
+) -> None:
+    report = {
+        "policy_checkpoint": "s3://bucket/run/model.pt",
+        "policy_checkpoint_sha256": "a" * 64,
+        "policy_checkpoint_size_bytes": 128,
+        "policy_inference_provenance": {
+            "checkpoint_uri": "s3://bucket/run/model.pt",
+            "checkpoint_sha256": "a" * 64,
+            "checkpoint_size_bytes": 128,
+            "loaded_for_inference": True,
+            "stock_or_scripted_policy": False,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": False,
+            "policy_composition": "learned_actor_only",
+            "post_actor_controller": None,
+        },
+    }
+    report[field] = value
+
+    metadata = viz_module._heldout_policy_metadata(
+        report,
+        checkpoint_fallback="s3://bucket/run/model.pt",
+        checkpoint_sha256_fallback="a" * 64,
+        checkpoint_size_fallback=128,
+    )
+
+    assert metadata["heldout_policy_identity_verified"] is False
+    assert metadata["heldout_policy_learned_actor_only"] is False
+    assert "exact candidate checkpoint bytes" not in viz_module._policy_access_markdown(
+        metadata
+    )
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    ["checkpoint_uri", "checkpoint_sha256", "checkpoint_size_bytes"],
+)
+def test_policy_metadata_requires_each_inference_identity_field(
+    missing_field: str,
+) -> None:
+    provenance = {
+        "checkpoint_uri": "s3://bucket/run/model.pt",
+        "checkpoint_sha256": "a" * 64,
+        "generator_policy_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "loaded_for_inference": True,
+        "stock_or_scripted_policy": False,
+        "actor_is_learned": True,
+        "scripted_post_actor_controller": False,
+        "policy_composition": "learned_actor_only",
+        "post_actor_controller": None,
+    }
+    del provenance[missing_field]
+
+    metadata = viz_module._heldout_policy_metadata(
+        {
+            "policy_checkpoint": "s3://bucket/run/model.pt",
+            "policy_checkpoint_sha256": "a" * 64,
+            "policy_checkpoint_size_bytes": 128,
+            "policy_inference_provenance": provenance,
+        },
+        checkpoint_fallback="s3://bucket/run/model.pt",
+        checkpoint_sha256_fallback="a" * 64,
+        checkpoint_size_fallback=128,
+    )
+
+    assert metadata["heldout_policy_identity_verified"] is False
+    assert metadata["heldout_policy_learned_actor_only"] is False
+
+
+@pytest.mark.parametrize(
+    "provenance",
+    [
+        pytest.param("false", id="non-object"),
+        pytest.param({"loaded_for_inference": "false"}, id="string-boolean"),
+    ],
+)
+def test_compat_visualization_metadata_reuses_strict_policy_contract(
+    provenance: object,
+) -> None:
+    from npa.workflows.sim2real.viz_contract import visualization_run_metadata
+
+    metadata = visualization_run_metadata(
+        config=SimpleNamespace(
+            run_id="run",
+            s3_bucket="bucket",
+            s3_prefix="runs",
+            k8s_gpu_product="gpu",
+        ),
+        artifact_root="s3://bucket/runs/run",
+        heldout_report={"policy_inference_provenance": provenance},
+    )
+
+    assert metadata["heldout_policy_loaded_for_inference"] is False
+    assert metadata["heldout_policy_identity_verified"] is False
 
 
 @pytest.mark.parametrize(
