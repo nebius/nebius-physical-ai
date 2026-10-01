@@ -19,14 +19,18 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "Exact target storage must pass operator preflight.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The live native run stored source snapshots, both generated videos, actual edge controls, review and lineage receipts; verified offline export passed. Rejected clips did not enter a dataset.",
+      "evidence": [
+        "workflows/guides/video-variant-sweep.md#native-runtime-evidence"
+      ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "Native full-source generation needs live validation against the selected source.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Both native workers consumed the same 93-frame synthetic warehouse drive. Their complete outputs decoded at 24 fps with zero timestamp error; this proves correspondence, not physical fidelity.",
+      "evidence": [
+        "workflows/guides/video-variant-sweep.md#native-runtime-evidence"
+      ]
     },
     "credentials": {
       "status": "blocked",
@@ -43,9 +47,11 @@
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "Native sweep GPU validation is in progress; unit tests are not completion evidence.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The standard runtime completed both Cosmos3-Nano workers on RTX PRO 6000, paired review and real Postgres/MLflow tracking. The unchanged quality gate rejected both outputs and publication failed as intended. B200 and multi-window execution are not verified by this run.",
+      "evidence": [
+        "workflows/guides/video-variant-sweep.md#native-runtime-evidence"
+      ]
     }
   }
 }

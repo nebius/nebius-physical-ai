@@ -210,6 +210,32 @@ The next-source inventory is for an explicit subsequent run, not a training loop
 Cancel the exact run and wait for terminal jobs before removing task-owned
 controllers/services. Preserve dataset and lineage artifacts.
 
+## Native runtime evidence
+
+A synthetic warehouse forklift drive exercised the standard Cosmos3 graph on
+two RTX PRO 6000 workers. Both outputs retained the complete 93-frame, 24 fps
+timeline with zero timestamp error. Native receipts verified the actual edge
+controls and effective successful text/video guardrails. MiniMax-M3 reviewed
+twelve paired samples per clip; this did not exercise Cosmos3 reasoning.
+
+The first warm/cool pair used structural guidance 2.5/3.0, text guidance 5.0,
+35 steps and disabled CFG normalization. Strong outlines and deformed vehicle/load
+details failed visual inspection. The unchanged 0.80 gate rejected both, scoring
+0.25 and 0.15. Postgres retained two rows and MLflow retained two finished runs
+with acceptance and review-score metrics. Publication correctly failed; no
+dataset or next-source inventory was created, and the operator exported a tracked
+rejection while preserving its nonzero result.
+
+A CPU replay verified both real candidate checkpoints with the inference
+function set to raise if called. It reused both outputs without inference and
+left both worker receipts unchanged. The exported native HTML passed synchronized
+source/candidate/control playback, scrubbing, variant selection, unchanged gate
+decisions, mobile overflow checks and zero external requests.
+
+This validates the executed component path and strict rejection behavior.
+It does not qualify realistic training data, B200 placement, multi-window
+continuity or the default hosted Cosmos3 reasoner.
+
 ## Transfer 2.5 compatibility and evidence
 
 Existing configurations without `generator`, or with `cosmos-transfer2.5`, use

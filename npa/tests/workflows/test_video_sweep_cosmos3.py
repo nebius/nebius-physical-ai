@@ -187,3 +187,17 @@ def test_export_parameters_omit_prompt_text_and_keep_actual_control(
     assert "prompt" not in result["parameters"]
     assert "private" not in str(result)
     assert controls == [{"name": "control-1"}]
+
+
+def test_comparison_film_identifies_the_actual_generator(monkeypatch):
+    from npa.workflows.video_sweep import film
+
+    labels = []
+    monkeypatch.setattr(
+        film, "_text", lambda canvas, xy, text, *args: labels.append(text)
+    )
+    summary = {"threshold": 0.8, "judge": "Selected judge", "samples": 12}
+    row = {"engine": "Cosmos3-Nano", "accepted": False, "seed": 17, "score": 0.2}
+    film._comparison(summary, row, 0)
+    assert "GENERATED  /  COSMOS3-NANO" in labels
+    assert not any("TRANSFER 2.5" in label for label in labels)

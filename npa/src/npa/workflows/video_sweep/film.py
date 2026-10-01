@@ -195,7 +195,8 @@ def _comparison(summary, row, index):
         color,
     )
     _text(canvas, (64, 272), "SOURCE", 20, _MUTED)
-    _text(canvas, (822, 272), "GENERATED  /  COSMOS TRANSFER 2.5", 20, _MUTED)
+    engine = row.get("engine", summary.get("generator", "Cosmos Transfer 2.5"))
+    _text(canvas, (822, 272), f"GENERATED  /  {engine.upper()}", 20, _MUTED)
     _text(
         canvas,
         (64, 745),
