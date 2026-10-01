@@ -104,6 +104,13 @@ guidance, not Transfer 2.5's control weight. Seeds are nonnegative integers;
 sampling steps and text guidance must be positive. No unchecked parameter bag
 is forwarded into inference.
 
+The optional `cfg_normalization` field accepts `enabled` or `disabled` (the
+compatibility default). It forwards the native sampler's guided-prediction
+normalization; it does not blend source pixels into the output. Strong structural
+guidance can produce harsh outlines and distorted details. Compare gentler
+sampling and normalization against the same source, retaining the original
+quality threshold and rejected results. These controls do not guarantee realism.
+
 Source inventories retain their existing schema:
 
 ```json

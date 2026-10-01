@@ -28,6 +28,8 @@ VARIANT = {
         ("num_steps", 0),
         ("seed", False),
         ("edge_threshold", "invented"),
+        ("cfg_normalization", True),
+        ("cfg_normalization", "invented"),
         ("prompt", ""),
         ("extra", "unsupported"),
     ],
@@ -94,7 +96,10 @@ def test_configured_guardrails_are_not_effective_execution(change):
         cosmos3._guarded_transfer({**result, **change})
 
 
-def test_native_transfer_retains_the_whole_source_contract(monkeypatch, tmp_path):
+@pytest.mark.parametrize("normalization", [None, "enabled", "disabled"])
+def test_native_transfer_retains_the_whole_source_contract(
+    monkeypatch, tmp_path, normalization
+):
     from npa.workflows import paidf_cosmos3_media as media
 
     source = tmp_path / "source.mp4"
@@ -104,7 +109,10 @@ def test_native_transfer_retains_the_whole_source_contract(monkeypatch, tmp_path
         "id": "a" * 64,
         "source": {"uri": str(source), "sha256": artifacts.file_digest(source)},
         "prompt": VARIANT["prompt"],
-        "variant": VARIANT,
+        "variant": {
+            **VARIANT,
+            **({"cfg_normalization": normalization} if normalization else {}),
+        },
     }
     calls = []
     monkeypatch.setattr(media, "prepare_reference", lambda *_: {"status": "prepared"})
@@ -126,6 +134,7 @@ def test_native_transfer_retains_the_whole_source_contract(monkeypatch, tmp_path
     assert request["no_guardrails"] is False
     assert request["transfer"].control_guidance == 1.5
     assert request["transfer"].first_chunk_conditional_frames == 0
+    assert request["transfer"].cfg_normalization == (normalization or "disabled")
     assert request["seed"] == 17 and request["num_steps"] == 35
     assert calls[1][0] == "alignment" and calls[1][1][-1] == 24
 

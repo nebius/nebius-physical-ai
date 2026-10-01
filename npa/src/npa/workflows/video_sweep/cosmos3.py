@@ -23,7 +23,7 @@ def validate_variant(variant: dict) -> None:
         ValueError: Fields or control values are invalid.
     """
     fields = {"seed", "control_guidance", "edge_threshold", "guidance", "num_steps"}
-    if not isinstance(variant, dict) or set(variant) not in (
+    if not isinstance(variant, dict) or set(variant) - {"cfg_normalization"} not in (
         fields | {"hint"},
         fields | {"prompt"},
     ):
@@ -52,6 +52,7 @@ def _settings(variant):
         control_guidance=variant["control_guidance"],
         edge_threshold=variant["edge_threshold"],
         first_chunk_conditional_frames=0,
+        cfg_normalization=variant.get("cfg_normalization", "disabled"),
     )
 
 
