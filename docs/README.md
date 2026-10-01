@@ -36,6 +36,7 @@ prepare its project and compute, then inspect the result.
 | Choose an image and GPU | [Public image catalog](workbench/container-image-catalog.md) · [compatibility matrix](workbench/image-gpu-compatibility-matrix.md) |
 | Reuse model downloads | [Model-weight cache](workbench/model-weight-cache.md) |
 | Use preemptible VMs | [Preemptible capacity](workbench/preemptible-vms.md) |
+| Plan a GPU launch | [Quota and capacity](workbench/cookbooks/gpu-capacity-quota-plan.md) |
 | Reproduce a workload | [Cookbooks](workbench/cookbooks/README.md) |
 
 ## Contribute and verify
