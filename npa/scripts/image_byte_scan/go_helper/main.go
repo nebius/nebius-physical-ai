@@ -823,6 +823,9 @@ func run(args []string, input io.Reader, output, stderr io.Writer) (exit int) {
 }
 
 func main() {
+	if code := configureCgroupMemory(); code != "" {
+		os.Exit(failure(os.Stderr, code))
+	}
 	verified := false
 	if info, ok := debug.ReadBuildInfo(); ok {
 		for _, dependency := range info.Deps {

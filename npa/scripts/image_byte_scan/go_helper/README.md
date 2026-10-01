@@ -33,10 +33,32 @@ estimate, not a measurement; larger records have not been measured.
 
 The scanner launches its helper with only `PATH` in the environment to isolate
 it from ambient configuration and credentials. Shell `GOMAXPROCS`, `GOMEMLIMIT`
-and `GODEBUG` settings therefore do not configure a scanner-owned helper. The
-payload budget and periodic garbage collection do not establish a process-memory
-ceiling. If the operating system terminates the helper for resource exhaustion,
-the scan fails and cannot establish a clean result.
+and `GODEBUG` settings therefore do not configure a scanner-owned helper.
+
+Before loading the detector, the helper resolves its cgroup-v2 membership through
+`/proc/self/cgroup` and `/proc/self/mountinfo`. For each readable visible ancestor
+with finite `memory.max`, it subtracts that ancestor's `memory.current`, reserves
+10% of the remaining allowance, and uses the smallest result as Go's
+[`debug.SetMemoryLimit`](https://pkg.go.dev/runtime/debug#SetMemoryLimit). This
+leaves room for the Python parent and other memory already charged to the group;
+subtracting the helper's small startup footprint as well is conservative.
+An already smaller runtime limit is preserved for directly launched helpers.
+
+Unlimited, unavailable or non-v2 metadata leaves the runtime setting unchanged;
+readable ancestor limits still apply when a descendant limit is unavailable.
+Malformed finite-limit data, unavailable usage for a known finite limit, or an
+allowance no larger than the helper's existing runtime memory produces a
+controlled failure before detection. Values above Go's signed addressable range
+are treated as unlimited. The policy is sampled at startup: hidden ancestors,
+later limit changes and competing allocations cannot be predicted.
+
+This is a **soft limit on Go-managed memory**, not a process-memory ceiling or an
+OOM guarantee. The [Go GC guide](https://go.dev/doc/gc-guide#Memory_limit) explains
+that the runtime can exceed the limit to preserve progress. Detector working
+memory and a single oversized record can still exhaust the cgroup; no record is
+truncated or skipped, and the existing payload admission policy is unchanged.
+If the operating system terminates the helper, the scan fails and cannot
+establish a clean result.
 
 Records above the budget run alone, so a small number of large serialized records
 can limit parallelism; quantifying that limit requires a measured time profile,

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,152 @@ import (
 
 var fixtureConfig config.Config
 var fixtureReady ready
+
+func memoryFixture() map[string]string {
+	return map[string]string{
+		"/proc/self/cgroup":                   "0::/batch/worker\n",
+		"/proc/self/mountinfo":                "30 20 0:28 / /cgroup rw - cgroup2 cgroup rw\n",
+		"/cgroup/batch/worker/memory.max":     "1000\n",
+		"/cgroup/batch/worker/memory.current": "100\n",
+		"/cgroup/batch/memory.max":            "max\n",
+	}
+}
+
+func memoryReader(files map[string]string) func(string) ([]byte, error) {
+	return func(path string) ([]byte, error) {
+		if data, present := files[path]; present {
+			return []byte(data), nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+func TestCgroupMemoryHierarchyAndCurrentUsage(t *testing.T) {
+	for _, test := range []struct {
+		name, parentMax, parentCurrent string
+		want                           int64
+	}{
+		{"leaf", "max", "", 810},
+		{"ancestor-limit", "800", "100", 630},
+		{"ancestor-siblings", "3000", "2500", 450},
+		{"looser-parent", "3000", "100", 810},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := memoryFixture()
+			files["/cgroup/batch/memory.max"] = test.parentMax
+			files["/cgroup/batch/memory.current"] = test.parentCurrent
+			got, code := cgroupMemoryLimit(memoryReader(files))
+			if got != test.want || code != "" {
+				t.Fatalf("limit=%d code=%q", got, code)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryMissingAndUnlimited(t *testing.T) {
+	for _, test := range []struct{ path, value string }{
+		{"/proc/self/cgroup", "2:memory:/batch/worker\n"},
+		{"/proc/self/mountinfo", "30 20 0:28 / /cgroup rw - cgroup cgroup rw\n"},
+		{"/cgroup/batch/worker/memory.max", "max\n"},
+		{"/cgroup/batch/worker/memory.max", "18446744073709551615\n"},
+		{"/proc/self/cgroup", "0::/batch/../outside\n"},
+	} {
+		files := memoryFixture()
+		files[test.path] = test.value
+		got, code := cgroupMemoryLimit(memoryReader(files))
+		if got != 0 || code != "" {
+			t.Fatalf("unexpected finite limit or code: %d %q", got, code)
+		}
+	}
+	for _, path := range []string{"/proc/self/cgroup", "/proc/self/mountinfo", "/cgroup/batch/worker/memory.max"} {
+		files := memoryFixture()
+		delete(files, path)
+		got, code := cgroupMemoryLimit(memoryReader(files))
+		if got != 0 || code != "" {
+			t.Fatalf("unavailable metadata: %d %q", got, code)
+		}
+	}
+}
+
+func TestCgroupMemoryInvalidFiniteLimitFailsClosed(t *testing.T) {
+	for _, value := range []string{"", "-1", "+1000", "1.5", "18446744073709551616", "secret-input"} {
+		files := memoryFixture()
+		files["/cgroup/batch/worker/memory.max"] = value
+		got, code := cgroupMemoryLimit(memoryReader(files))
+		if got != 0 || code != "cgroup_memory_limit_invalid" {
+			t.Fatalf("unexpected response %d %q", got, code)
+		}
+	}
+	for _, value := range []string{"", "-1", "max", "18446744073709551616"} {
+		files := memoryFixture()
+		files["/cgroup/batch/worker/memory.current"] = value
+		got, code := cgroupMemoryLimit(memoryReader(files))
+		if got != 0 || code != "cgroup_memory_usage_unavailable" {
+			t.Fatalf("unexpected response %d %q", got, code)
+		}
+	}
+	files := memoryFixture()
+	delete(files, "/cgroup/batch/worker/memory.current")
+	if _, code := cgroupMemoryLimit(memoryReader(files)); code != "cgroup_memory_usage_unavailable" {
+		t.Fatal(code)
+	}
+}
+
+func TestCgroupMemoryExhaustionAndOverflow(t *testing.T) {
+	for _, maximum := range []string{"0", "100", "99"} {
+		files := memoryFixture()
+		files["/cgroup/batch/worker/memory.max"] = maximum
+		if _, code := cgroupMemoryLimit(memoryReader(files)); code != "cgroup_memory_headroom" {
+			t.Fatal(code)
+		}
+	}
+	files := memoryFixture()
+	files["/cgroup/batch/worker/memory.max"] = "9223372036854775807"
+	files["/cgroup/batch/worker/memory.current"] = "0"
+	want := int64(math.MaxInt64 - math.MaxInt64/10)
+	if got, code := cgroupMemoryLimit(memoryReader(files)); got != want || code != "" {
+		t.Fatalf("%d %q", got, code)
+	}
+}
+
+func TestCgroupMemoryMountNamespacesAndAliases(t *testing.T) {
+	for _, test := range []struct{ membership, mounts, leaf, boundary string }{
+		{"0::/\n", "30 20 0:28 / /cgroup rw - cgroup2 cgroup rw", "/cgroup", "/cgroup"},
+		{"0::/tenant/work\n", "30 20 0:28 /tenant /cgroup rw - cgroup2 cgroup rw", "/cgroup/work", "/cgroup"},
+		{"0::/tenant/work\n", "30 20 0:28 /other /cgroup rw - cgroup2 cgroup rw", "", ""},
+		{"0::/work\n", `30 20 0:28 / /cgroup\040mount rw - cgroup2 cgroup rw`, "/cgroup mount/work", "/cgroup mount"},
+		{"0::/tenant/work\n", "30 20 0:28 /tenant /subtree rw - cgroup2 cgroup rw\n31 20 0:28 / /all rw - cgroup2 cgroup rw", "/all/tenant/work", "/all"},
+		{"0::/work\n", "30 20 0:28 / /cgroup/../outside rw - cgroup2 cgroup rw", "", ""},
+	} {
+		leaf, boundary := cgroupDirectory([]byte(test.membership), []byte(test.mounts))
+		if leaf != test.leaf || boundary != test.boundary {
+			t.Fatalf("got %q %q", leaf, boundary)
+		}
+	}
+}
+
+func TestCgroupMemoryAppliesOnlyTighterUsableLimit(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		owned     uint64
+		previous  int64
+		wantCalls []int64
+		code      string
+	}{
+		{"default", 80, math.MaxInt64, []int64{-1, 810}, ""},
+		{"explicit-stricter", 80, 400, []int64{-1}, ""},
+		{"already-too-small", 810, math.MaxInt64, nil, "cgroup_memory_headroom"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls []int64
+			set := func(value int64) int64 { calls = append(calls, value); return test.previous }
+			code := applyCgroupMemoryLimit(memoryReader(memoryFixture()), test.owned, set)
+			if code != test.code || !reflect.DeepEqual(calls, test.wantCalls) {
+				t.Fatalf("calls=%v code=%q", calls, code)
+			}
+		})
+	}
+}
 
 func TestMain(m *testing.M) {
 	zerolog.SetGlobalLevel(zerolog.Disabled)

@@ -1759,6 +1759,7 @@ def fingerprint(path):
 
 GO_SOURCE_NAMES = (
     "main.go",
+    "memory.go",
     "main_test.go",
     "go.mod",
     "go.sum",

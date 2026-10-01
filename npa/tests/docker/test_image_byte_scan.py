@@ -1382,14 +1382,16 @@ def test_added_source_population_is_detected_after_scan(tmp_path, monkeypatch):
     )
 
 
-@pytest.mark.parametrize("change", ["source", "config", "helper"])
+@pytest.mark.parametrize("change", ["source", "memory-source", "config", "helper"])
 def test_stale_or_different_tool_receipt_cannot_be_accepted_as_current(
     tmp_path, change
 ):
     authorization = fixture(tmp_path)
     receipt = W.bound_json(authorization["tools_receipt"])
-    if change == "source":
-        receipt["source"]["main.go"] = "0" * 64
+    if change in {"source", "memory-source"}:
+        name = "memory.go" if change == "memory-source" else "main.go"
+        assert name in receipt["source"]
+        receipt["source"][name] = "0" * 64
     elif change == "config":
         receipt["config"]["sha256"] = "0" * 64
     else:
