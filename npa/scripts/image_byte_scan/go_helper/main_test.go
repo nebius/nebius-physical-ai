@@ -18,7 +18,6 @@ import (
 	"syscall"
 	"testing"
 	"time"
-	"unsafe"
 
 	"github.com/rs/zerolog"
 	"github.com/zricethezav/gitleaks/v8/config"
@@ -29,223 +28,7 @@ import (
 var fixtureConfig config.Config
 var fixtureReady ready
 
-const (
-	processContainmentProbeEnv = "NPA_PROCESS_CONTAINMENT_PROBE"
-	prGetSeccomp               = 21
-	prGetNoNewPrivileges       = 39
-)
-
-type threadContainmentResult struct {
-	noNewPrivileges   uintptr
-	noNewPrivilegeErr syscall.Errno
-	unshareErr        syscall.Errno
-}
-
-func verifyContainedThread() threadContainmentResult {
-	noNewPrivileges, _, noNewPrivilegeErr := syscall.RawSyscall(
-		syscall.SYS_PRCTL,
-		prGetNoNewPrivileges,
-		0,
-		0,
-	)
-	_, _, unshareErr := syscall.RawSyscall(syscallUnshare, 0, 0, 0)
-	return threadContainmentResult{
-		noNewPrivileges:   noNewPrivileges,
-		noNewPrivilegeErr: noNewPrivilegeErr,
-		unshareErr:        unshareErr,
-	}
-}
-
-type processContainmentResult struct {
-	mode              uintptr
-	modeErr           syscall.Errno
-	thread            threadContainmentResult
-	sessionErr        syscall.Errno
-	groupErr          syscall.Errno
-	x32Err            syscall.Errno
-	setNamespaceErr   syscall.Errno
-	clone3Err         syscall.Errno
-	cloneNamespaceErr syscall.Errno
-}
-
-func inspectProcessContainment() processContainmentResult {
-	mode, _, modeErr := syscall.RawSyscall(
-		syscall.SYS_PRCTL,
-		prGetSeccomp,
-		0,
-		0,
-	)
-	thread := verifyContainedThread()
-	_, _, sessionErr := syscall.RawSyscall(syscall.SYS_SETSID, 0, 0, 0)
-	_, _, groupErr := syscall.RawSyscall(syscall.SYS_SETPGID, 0, 0, 0)
-	_, _, x32Err := syscall.RawSyscall(
-		syscallSetProcessGroup|x32SyscallBit,
-		0,
-		0,
-		0,
-	)
-	_, _, setNamespaceErr := syscall.RawSyscall(
-		syscallSetNamespace,
-		^uintptr(0),
-		0,
-		0,
-	)
-	_, _, clone3Err := syscall.RawSyscall(syscallClone3, 0, 0, 0)
-	_, _, cloneNamespaceErr := syscall.RawSyscall6(
-		syscallClone,
-		uintptr(0x20000000|0x00010000|uint32(syscall.SIGCHLD)),
-		0,
-		0,
-		0,
-		0,
-		0,
-	)
-	return processContainmentResult{
-		mode:              mode,
-		modeErr:           modeErr,
-		thread:            thread,
-		sessionErr:        sessionErr,
-		groupErr:          groupErr,
-		x32Err:            x32Err,
-		setNamespaceErr:   setNamespaceErr,
-		clone3Err:         clone3Err,
-		cloneNamespaceErr: cloneNamespaceErr,
-	}
-}
-
-func (result processContainmentResult) valid() bool {
-	return result.modeErr == 0 && result.mode == 2 &&
-		result.thread.noNewPrivilegeErr == 0 &&
-		result.thread.noNewPrivileges == 1 &&
-		result.thread.unshareErr == syscall.EPERM &&
-		result.sessionErr == syscall.EPERM &&
-		result.groupErr == syscall.EPERM &&
-		result.x32Err == syscall.EPERM &&
-		result.setNamespaceErr == syscall.EPERM &&
-		result.clone3Err == syscall.EPERM &&
-		result.cloneNamespaceErr == syscall.EPERM
-}
-
-func verifyProcessContainment() error {
-	result := inspectProcessContainment()
-	if !result.valid() {
-		return fmt.Errorf(
-			"mode=%d mode_errno=%d no_new_privs=%d no_new_privs_errno=%d "+
-				"unshare_errno=%d setsid_errno=%d setpgid_errno=%d "+
-				"x32_errno=%d setns_errno=%d clone3_errno=%d clone_namespace_errno=%d",
-			result.mode,
-			result.modeErr,
-			result.thread.noNewPrivileges,
-			result.thread.noNewPrivilegeErr,
-			result.thread.unshareErr,
-			result.sessionErr,
-			result.groupErr,
-			result.x32Err,
-			result.setNamespaceErr,
-			result.clone3Err,
-			result.cloneNamespaceErr,
-		)
-	}
-	return nil
-}
-
-func inheritedContainmentForkProbe(pipeDescriptors [2]int) error {
-	runtime.LockOSThread()
-	child, _, forkErr := syscall.RawSyscall(syscall.SYS_FORK, 0, 0, 0)
-	if forkErr != 0 {
-		runtime.UnlockOSThread()
-		return fmt.Errorf("fork inherited probe: %w", forkErr)
-	}
-	if child == 0 {
-		_, _, _ = syscall.RawSyscall(
-			syscall.SYS_CLOSE,
-			uintptr(pipeDescriptors[0]),
-			0,
-			0,
-		)
-		value := byte(0)
-		if inspectProcessContainment().valid() {
-			value = 1
-		}
-		_, _, _ = syscall.RawSyscall(
-			syscall.SYS_WRITE,
-			uintptr(pipeDescriptors[1]),
-			uintptr(unsafe.Pointer(&value)),
-			1,
-		)
-		_, _, _ = syscall.RawSyscall(syscall.SYS_EXIT_GROUP, 0, 0, 0)
-		for {
-		}
-	}
-	runtime.UnlockOSThread()
-	if err := syscall.Close(pipeDescriptors[1]); err != nil {
-		return err
-	}
-	result := []byte{0}
-	count, readErr := syscall.Read(pipeDescriptors[0], result)
-	closeErr := syscall.Close(pipeDescriptors[0])
-	var status syscall.WaitStatus
-	_, waitErr := syscall.Wait4(int(child), &status, 0, nil)
-	if readErr != nil || closeErr != nil || waitErr != nil ||
-		count != 1 || result[0] != 1 || !status.Exited() || status.ExitStatus() != 0 {
-		return fmt.Errorf(
-			"inherited probe count=%d result=%d status=%#x read=%v close=%v wait=%v",
-			count,
-			result[0],
-			status,
-			readErr,
-			closeErr,
-			waitErr,
-		)
-	}
-	return nil
-}
-
-func processContainmentProbe() int {
-	var inheritedPipe [2]int
-	if err := syscall.Pipe(inheritedPipe[:]); err != nil {
-		fmt.Fprintf(os.Stderr, "pipe failed: %v\n", err)
-		return 2
-	}
-	threadReady := make(chan struct{})
-	runThreadProbe := make(chan struct{})
-	threadResult := make(chan threadContainmentResult)
-	go func() {
-		runtime.LockOSThread()
-		defer runtime.UnlockOSThread()
-		close(threadReady)
-		<-runThreadProbe
-		threadResult <- verifyContainedThread()
-	}()
-	<-threadReady
-	if err := installProcessContainment(); err != nil {
-		fmt.Fprintf(os.Stderr, "install failed: %v\n", err)
-		return 2
-	}
-	close(runThreadProbe)
-	existingThread := <-threadResult
-	if existingThread.noNewPrivilegeErr != 0 ||
-		existingThread.noNewPrivileges != 1 ||
-		existingThread.unshareErr != syscall.EPERM {
-		fmt.Fprintf(os.Stderr, "pre-existing thread not synchronized: %+v\n", existingThread)
-		return 3
-	}
-	if err := verifyProcessContainment(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 4
-	}
-	if err := inheritedContainmentForkProbe(inheritedPipe); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 5
-	}
-	fmt.Fprintln(os.Stdout, processContainment)
-	return 0
-}
-
 func TestMain(m *testing.M) {
-	if os.Getenv(processContainmentProbeEnv) == "1" {
-		os.Exit(processContainmentProbe())
-	}
 	zerolog.SetGlobalLevel(zerolog.Disabled)
 	var code string
 	fixtureConfig, fixtureReady, code = configuration(configFixturePath())
@@ -256,16 +39,7 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-func TestProcessContainmentBlocksGroupEscape(t *testing.T) {
-	command := exec.Command(os.Args[0], "-test.run=^$")
-	command.Env = append(os.Environ(), processContainmentProbeEnv+"=1")
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("containment probe failed: %v: %s", err, output)
-	}
-	if strings.TrimSpace(string(output)) != processContainment {
-		t.Fatalf("unexpected containment probe output: %q", output)
-	}
+func TestProcessContainmentReadinessIdentity(t *testing.T) {
 	if fixtureReady.ProcessContainment != processContainment {
 		t.Fatalf(
 			"ready containment %q, want %q",
@@ -281,6 +55,28 @@ type seccompFilterInput struct {
 	arg0    uint32
 }
 
+const (
+	testBPFLoadWordAbsolute = 0x20
+	testBPFJumpEqual        = 0x15
+	testBPFJumpSet          = 0x45
+	testBPFReturn           = 0x06
+	testSeccompDataSyscall  = 0
+	testSeccompDataArch     = 4
+	testSeccompDataArg0     = 16
+	testAuditArchX8664      = 0xc000003e
+	testSeccompReturnKill   = 0x80000000
+	testSeccompReturnErrno  = 0x00050000
+	testSeccompReturnAllow  = 0x7fff0000
+	testErrnoNoSys          = 38
+	testX32SyscallBit       = 0x40000000
+	testSyscallClone        = 56
+	testSyscallSetpgid      = 109
+	testSyscallSetsid       = 112
+	testSyscallUnshare      = 272
+	testSyscallSetns        = 308
+	testSyscallClone3       = 435
+)
+
 func evaluateProcessContainmentFilter(
 	filter []sockFilter,
 	input seccompFilterInput,
@@ -289,31 +85,31 @@ func evaluateProcessContainmentFilter(
 	for programCounter := 0; programCounter < len(filter); {
 		instruction := filter[programCounter]
 		switch instruction.Code {
-		case bpfLoadWordAbsolute:
+		case testBPFLoadWordAbsolute:
 			switch instruction.K {
-			case seccompDataSyscall:
+			case testSeccompDataSyscall:
 				accumulator = input.syscall
-			case seccompDataArch:
+			case testSeccompDataArch:
 				accumulator = input.arch
-			case seccompDataArg0:
+			case testSeccompDataArg0:
 				accumulator = input.arg0
 			default:
 				return 0, fmt.Errorf("unsupported load offset %d", instruction.K)
 			}
 			programCounter++
-		case bpfJumpEqual:
+		case testBPFJumpEqual:
 			offset := instruction.Jf
 			if accumulator == instruction.K {
 				offset = instruction.Jt
 			}
 			programCounter += int(offset) + 1
-		case bpfJumpSet:
+		case testBPFJumpSet:
 			offset := instruction.Jf
 			if accumulator&instruction.K != 0 {
 				offset = instruction.Jt
 			}
 			programCounter += int(offset) + 1
-		case bpfReturn:
+		case testBPFReturn:
 			return instruction.K, nil
 		default:
 			return 0, fmt.Errorf("unsupported BPF instruction %#x", instruction.Code)
@@ -324,24 +120,34 @@ func evaluateProcessContainmentFilter(
 
 func TestProcessContainmentFilterCoversEveryEscapeRoute(t *testing.T) {
 	filter := processContainmentFilter()
-	denied := seccompReturnErrno | uint32(syscall.EPERM)
+	denied := uint32(testSeccompReturnErrno | 1)
 	for name, number := range map[string]uint32{
-		"setpgid": syscallSetProcessGroup,
-		"setsid":  syscallSetSession,
-		"unshare": syscallUnshare,
-		"setns":   syscallSetNamespace,
-		"clone3":  syscallClone3,
-		"x32":     syscallSetProcessGroup | x32SyscallBit,
+		"setpgid": testSyscallSetpgid,
+		"setsid":  testSyscallSetsid,
+		"unshare": testSyscallUnshare,
+		"setns":   testSyscallSetns,
+		"x32":     testSyscallSetpgid | testX32SyscallBit,
 	} {
 		t.Run(name, func(t *testing.T) {
 			actual, err := evaluateProcessContainmentFilter(
 				filter,
-				seccompFilterInput{syscall: number, arch: auditArchX8664},
+				seccompFilterInput{syscall: number, arch: testAuditArchX8664},
 			)
 			if err != nil || actual != denied {
 				t.Fatalf("result=%#x error=%v, want %#x", actual, err, denied)
 			}
 		})
+	}
+	clone3, err := evaluateProcessContainmentFilter(
+		filter,
+		seccompFilterInput{
+			syscall: testSyscallClone3,
+			arch:    testAuditArchX8664,
+		},
+	)
+	unsupported := uint32(testSeccompReturnErrno | testErrnoNoSys)
+	if err != nil || clone3 != unsupported {
+		t.Fatalf("clone3 result=%#x error=%v, want %#x", clone3, err, unsupported)
 	}
 	for name, flag := range map[string]uint32{
 		"time":    0x00000080,
@@ -357,9 +163,9 @@ func TestProcessContainmentFilterCoversEveryEscapeRoute(t *testing.T) {
 			actual, err := evaluateProcessContainmentFilter(
 				filter,
 				seccompFilterInput{
-					syscall: syscallClone,
-					arch:    auditArchX8664,
-					arg0:    flag | uint32(syscall.SIGCHLD),
+					syscall: testSyscallClone,
+					arch:    testAuditArchX8664,
+					arg0:    flag | 17,
 				},
 			)
 			if err != nil || actual != denied {
@@ -370,19 +176,19 @@ func TestProcessContainmentFilterCoversEveryEscapeRoute(t *testing.T) {
 	allowed, err := evaluateProcessContainmentFilter(
 		filter,
 		seccompFilterInput{
-			syscall: syscallClone,
-			arch:    auditArchX8664,
-			arg0:    uint32(syscall.SIGCHLD),
+			syscall: testSyscallClone,
+			arch:    testAuditArchX8664,
+			arg0:    17,
 		},
 	)
-	if err != nil || allowed != seccompReturnAllow {
+	if err != nil || allowed != testSeccompReturnAllow {
 		t.Fatalf("ordinary clone result=%#x error=%v", allowed, err)
 	}
 	wrongArch, err := evaluateProcessContainmentFilter(
 		filter,
 		seccompFilterInput{syscall: 0, arch: 0},
 	)
-	if err != nil || wrongArch != seccompReturnKill {
+	if err != nil || wrongArch != testSeccompReturnKill {
 		t.Fatalf("wrong architecture result=%#x error=%v", wrongArch, err)
 	}
 }

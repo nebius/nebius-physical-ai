@@ -246,6 +246,24 @@ def test_ready_rejects_missing_terminal_summary():
         B._ready(ready_raw().splitlines(keepends=True)[0], "a" * 64)
 
 
+def test_containment_probe_accepts_exact_output():
+    B.verify_containment_probe(b"seccomp-process-group-v1\n")
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        b"",
+        b"seccomp-process-group-v1",
+        b"seccomp-process-group-v1\nextra\n",
+        b"other\n",
+    ],
+)
+def test_containment_probe_rejects_nonexact_output(raw):
+    with pytest.raises(B.BuildError, match="^helper_containment_probe$"):
+        B.verify_containment_probe(raw)
+
+
 def test_module_notices_bind_exact_locked_payload(tmp_path):
     cache = tmp_path / "cache"
     folder = cache / "module"

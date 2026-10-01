@@ -15,6 +15,7 @@ import (
 	"log"
 	"math"
 	"os"
+	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"sort"
@@ -73,7 +74,9 @@ const (
 	seccompReturnKill      = 0x80000000
 	seccompReturnErrno     = 0x00050000
 	seccompReturnAllow     = 0x7fff0000
+	prGetSeccomp           = 21
 	prSetNoNewPrivileges   = 38
+	prGetNoNewPrivileges   = 39
 	seccompSetModeFilter   = 1
 	seccompFilterFlagSync  = 1
 	syscallSeccomp         = 317
@@ -85,6 +88,11 @@ const (
 	syscallClone3          = 435
 	x32SyscallBit          = 0x40000000
 	cloneNamespaceFlags    = 0x7e020080
+)
+
+const (
+	processContainmentProbeArgument          = "--containment-probe"
+	inheritedProcessContainmentProbeArgument = "--inherited-containment-probe"
 )
 
 func processContainmentFilter() []sockFilter {
@@ -99,7 +107,6 @@ func processContainmentFilter() []sockFilter {
 		syscallSetSession,
 		syscallUnshare,
 		syscallSetNamespace,
-		syscallClone3,
 	}
 	forbiddenJumps := make([]int, 0, len(forbidden))
 	forbiddenJumps = append(forbiddenJumps, len(filter))
@@ -108,6 +115,8 @@ func processContainmentFilter() []sockFilter {
 		forbiddenJumps = append(forbiddenJumps, len(filter))
 		filter = append(filter, sockFilter{Code: bpfJumpEqual, K: number})
 	}
+	clone3Jump := len(filter)
+	filter = append(filter, sockFilter{Code: bpfJumpEqual, K: syscallClone3})
 	filter = append(
 		filter,
 		sockFilter{Code: bpfJumpEqual, Jf: 2, K: syscallClone},
@@ -115,11 +124,13 @@ func processContainmentFilter() []sockFilter {
 		sockFilter{Code: bpfJumpSet, Jt: 1, K: cloneNamespaceFlags},
 		sockFilter{Code: bpfReturn, K: seccompReturnAllow},
 		sockFilter{Code: bpfReturn, K: seccompReturnErrno | uint32(syscall.EPERM)},
+		sockFilter{Code: bpfReturn, K: seccompReturnErrno | uint32(syscall.ENOSYS)},
 	)
-	errnoIndex := len(filter) - 1
+	errnoIndex := len(filter) - 2
 	for _, index := range forbiddenJumps {
 		filter[index].Jt = uint8(errnoIndex - index - 1)
 	}
+	filter[clone3Jump].Jt = uint8(len(filter) - clone3Jump - 2)
 	return filter
 }
 
@@ -162,6 +173,152 @@ func installProcessContainment() error {
 		return fmt.Errorf("synchronize process containment: thread %d", result)
 	}
 	return nil
+}
+
+type threadContainmentResult struct {
+	noNewPrivileges   uintptr
+	noNewPrivilegeErr syscall.Errno
+	unshareErr        syscall.Errno
+}
+
+func inspectContainedThread() threadContainmentResult {
+	noNewPrivileges, _, noNewPrivilegeErr := syscall.RawSyscall(
+		syscall.SYS_PRCTL,
+		prGetNoNewPrivileges,
+		0,
+		0,
+	)
+	_, _, unshareErr := syscall.RawSyscall(syscallUnshare, 0, 0, 0)
+	return threadContainmentResult{
+		noNewPrivileges:   noNewPrivileges,
+		noNewPrivilegeErr: noNewPrivilegeErr,
+		unshareErr:        unshareErr,
+	}
+}
+
+func (result threadContainmentResult) valid() bool {
+	return result.noNewPrivilegeErr == 0 &&
+		result.noNewPrivileges == 1 &&
+		result.unshareErr == syscall.EPERM
+}
+
+type processContainmentResult struct {
+	mode              uintptr
+	modeErr           syscall.Errno
+	thread            threadContainmentResult
+	sessionErr        syscall.Errno
+	groupErr          syscall.Errno
+	x32Err            syscall.Errno
+	setNamespaceErr   syscall.Errno
+	clone3Err         syscall.Errno
+	cloneNamespaceErr syscall.Errno
+}
+
+func inspectProcessContainment() processContainmentResult {
+	mode, _, modeErr := syscall.RawSyscall(
+		syscall.SYS_PRCTL,
+		prGetSeccomp,
+		0,
+		0,
+	)
+	thread := inspectContainedThread()
+	_, _, sessionErr := syscall.RawSyscall(syscall.SYS_SETSID, 0, 0, 0)
+	_, _, groupErr := syscall.RawSyscall(syscall.SYS_SETPGID, 0, 0, 0)
+	_, _, x32Err := syscall.RawSyscall(
+		syscallSetProcessGroup|x32SyscallBit,
+		0,
+		0,
+		0,
+	)
+	_, _, setNamespaceErr := syscall.RawSyscall(
+		syscallSetNamespace,
+		^uintptr(0),
+		0,
+		0,
+	)
+	_, _, clone3Err := syscall.RawSyscall(syscallClone3, 0, 0, 0)
+	_, _, cloneNamespaceErr := syscall.RawSyscall6(
+		syscallClone,
+		uintptr(0x20000000|0x00010000|uint32(syscall.SIGCHLD)),
+		0,
+		0,
+		0,
+		0,
+		0,
+	)
+	return processContainmentResult{
+		mode:              mode,
+		modeErr:           modeErr,
+		thread:            thread,
+		sessionErr:        sessionErr,
+		groupErr:          groupErr,
+		x32Err:            x32Err,
+		setNamespaceErr:   setNamespaceErr,
+		clone3Err:         clone3Err,
+		cloneNamespaceErr: cloneNamespaceErr,
+	}
+}
+
+func (result processContainmentResult) valid() bool {
+	return result.modeErr == 0 &&
+		result.mode == 2 &&
+		result.thread.valid() &&
+		result.sessionErr == syscall.EPERM &&
+		result.groupErr == syscall.EPERM &&
+		result.x32Err == syscall.EPERM &&
+		result.setNamespaceErr == syscall.EPERM &&
+		result.clone3Err == syscall.ENOSYS &&
+		result.cloneNamespaceErr == syscall.EPERM
+}
+
+func startPreexistingThreadProbe() (chan struct{}, chan struct{}, chan threadContainmentResult) {
+	ready := make(chan struct{})
+	run := make(chan struct{})
+	result := make(chan threadContainmentResult)
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+		close(ready)
+		<-run
+		result <- inspectContainedThread()
+	}()
+	return ready, run, result
+}
+
+func runInheritedProcessContainmentProbe() int {
+	if !inspectProcessContainment().valid() {
+		return failure(os.Stderr, "inherited_process_containment_failed")
+	}
+	fmt.Fprintln(os.Stdout, "inherited-ok")
+	return 0
+}
+
+func runProcessContainmentProbe(
+	runThread chan struct{},
+	threadResult chan threadContainmentResult,
+) int {
+	close(runThread)
+	if !validatePreexistingThread(<-threadResult) {
+		return failure(os.Stderr, "process_containment_tsync_failed")
+	}
+	if !inspectProcessContainment().valid() {
+		return failure(os.Stderr, "process_containment_probe_failed")
+	}
+	command := exec.Command(
+		"/proc/self/exe",
+		inheritedProcessContainmentProbeArgument,
+	)
+	command.Env = []string{}
+	output, err := command.CombinedOutput()
+	if err != nil || string(output) != "inherited-ok\n" {
+		return failure(os.Stderr, "process_containment_inheritance_failed")
+	}
+	fmt.Fprintln(os.Stdout, processContainment)
+	return 0
+}
+
+func validatePreexistingThread(result threadContainmentResult) bool {
+	return result.valid()
 }
 
 type finding struct {
@@ -1183,8 +1340,22 @@ func applyAddressSpaceLimit(requested uint64) (uint64, error) {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == inheritedProcessContainmentProbeArgument {
+		os.Exit(runInheritedProcessContainmentProbe())
+	}
+	probe := len(os.Args) == 2 && os.Args[1] == processContainmentProbeArgument
+	var runThread chan struct{}
+	var threadResult chan threadContainmentResult
+	if probe {
+		ready, run, result := startPreexistingThreadProbe()
+		<-ready
+		runThread, threadResult = run, result
+	}
 	if err := installProcessContainment(); err != nil {
 		os.Exit(failure(os.Stderr, "process_containment_failed"))
+	}
+	if probe {
+		os.Exit(runProcessContainmentProbe(runThread, threadResult))
 	}
 	if _, err := applyAddressSpaceLimit(maxMemoryBytes); err != nil {
 		os.Exit(failure(os.Stderr, "memory_limit_failed"))

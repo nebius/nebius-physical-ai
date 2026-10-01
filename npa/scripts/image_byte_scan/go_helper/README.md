@@ -56,8 +56,11 @@ directory permits one preparation. Failures retain logs without a success
 receipt; retry in a fresh output directory. `--toolchain-archive` accepts an
 already downloaded archive only when its complete SHA-256 matches the same pin.
 The normal Python test suite never downloads or invokes Go. The explicit command
-runs all Go tests, including real detector, process and inherited-descriptor
-canaries. Hermetic bootstrap tests are collected by normal repository CI and can also run separately:
+runs all Go tests, then executes the built helper's production containment
+startup probe. The probe applies the same installation call as normal scans to
+an already-running locked thread, checks every denied syscall route, and launches
+`/proc/self/exe` to prove that a fresh child inherits the policy. Hermetic
+bootstrap tests are collected by normal repository CI and can also run separately:
 
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/docker/test_image_byte_go_build.py -q
@@ -71,7 +74,8 @@ It uses isolated module, compilation and temporary caches, disables automatic
 Go toolchain switching and workspace discovery, verifies the locked module
 checksums, and builds a source snapshot without changing `go.mod` or `go.sum`.
 The output receipt binds the exact source, trusted `.gitleaks.toml`, binary,
-raw readiness JSON, toolchain, downloaded module closure, notices and tests.
+raw readiness JSON, successful built-binary containment probe, toolchain,
+downloaded module closure, notices and tests.
 All path components are opened through descriptors without following symlinks;
 parent traversal is rejected before normalization. Cancellation stops and joins
 the command session owned by the bootstrap, including children that ignore
@@ -114,6 +118,8 @@ wait rather than draining only before each write.
 Before reading configuration or records, the Linux amd64 helper installs an
 inherited seccomp policy that forbids changing process group/session membership
 and creating or joining namespaces. Readiness binds that containment policy.
+`clone3` is reported unavailable so ordinary runtime thread creation falls back
+to `clone`; namespace-bearing `clone` calls are still rejected.
 The caller sends `SIGKILL` to the isolated helper group after direct exit and
 accepts a terminal result only after stdout reaches EOF and no live member of
 that group remains. A missing policy, retained pipe, surviving member, or policy

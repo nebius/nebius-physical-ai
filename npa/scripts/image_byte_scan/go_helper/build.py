@@ -29,6 +29,7 @@ GO_VERSION = "1.27.1"
 GO_ARCHIVE_SHA256 = "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
 GO_ARCHIVE_URL = f"https://go.dev/dl/go{GO_VERSION}.linux-amd64.tar.gz"
 GITLEAKS_VERSION = "v8.28.0"
+PROCESS_CONTAINMENT = "seccomp-process-group-v1"
 SOURCE_NAMES = (
     "main.go",
     "main_test.go",
@@ -469,7 +470,7 @@ def _ready(raw: bytes, config_sha: str) -> dict:
         or ready.get("max_target_megabytes") != 0
         or ready.get("ignore_inline_allow") is not True
         or ready.get("redact") != 100
-        or ready.get("process_containment") != "seccomp-process-group-v1"
+        or ready.get("process_containment") != PROCESS_CONTAINMENT
         or not isinstance(ready.get("rule_count"), int)
         or ready["rule_count"] < 217
         or summary != {"type": "summary", "files": 0, "bytes": 0, "findings": 0}
@@ -479,6 +480,11 @@ def _ready(raw: bytes, config_sha: str) -> dict:
         if not re.fullmatch(r"[0-9a-f]{64}", ready.get(key, "")):
             raise BuildError("helper_handshake_digest")
     return {"value": ready, "raw": rows[0]}
+
+
+def verify_containment_probe(raw: bytes) -> None:
+    if raw != f"{PROCESS_CONTAINMENT}\n".encode():
+        raise BuildError("helper_containment_probe")
 
 
 def locked_modules(sums: bytes) -> list[str]:
@@ -642,6 +648,14 @@ def build(
         logs,
     )
     binary.chmod(0o700)
+    containment = run_step(
+        [str(binary), "--containment-probe"],
+        "containment",
+        stage,
+        env,
+        logs,
+    )
+    verify_containment_probe(containment)
     download_records = json_stream(downloaded)
     verify_module_set(download_records, locked_modules(inputs["go.sum"]))
     for module in download_records:
@@ -690,6 +704,7 @@ def build(
             "native_counts": native_counts,
             "module_verification": "passed",
             "empty_handshake": "passed",
+            "process_containment": PROCESS_CONTAINMENT,
             "logs": str(logs),
         },
     }
