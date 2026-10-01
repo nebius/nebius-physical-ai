@@ -52,7 +52,8 @@ a versioned heading when a release is cut.
 - Closed whole-answer matching now tolerates an omitted final period or one
   matching pair of bold markers, ASCII quotes, or smart quotes. It still
   rejects longer answers, nested or mismatched wrappers, other punctuation,
-  and paraphrases.
+  and paraphrases. Hosted evidence observed only the exact punctuated sentinel;
+  the added formatting cases are deterministic local controls.
 
 ### Studio videos accept S3 output paths
 

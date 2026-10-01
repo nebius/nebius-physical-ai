@@ -112,6 +112,9 @@ quotes. The stored caption remains the model's exact stripped answer. Longer
 answers, nested or mismatched wrappers, other punctuation, and paraphrases do
 not match. Any legitimate complete caption that normalizes to the sentinel can
 therefore false-fail, including an image whose only salient text is that phrase.
+The retained hosted evidence observed only the exact punctuated sentinel;
+periodless and wrapped variants are deterministic local controls, not observed
+hosted outputs.
 The command continues through every selected image once, writes the complete
 failed result, and exits 1 if any image was unavailable. It does not silently
 retry the sentinel.

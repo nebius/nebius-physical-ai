@@ -20,6 +20,7 @@ from npa.workbench.token_factory import (
     CaptionItem,
     CaptionResult,
     TokenFactoryToolError,
+    _is_image_unavailable_answer,
     caption_images,
     generate_text,
     reason_scene,
@@ -40,6 +41,7 @@ def _capturing_client(reply: str, captured: dict) -> TokenFactoryClient:
     import json as _json
 
     def handler(request: httpx.Request) -> httpx.Response:
+        captured["request_count"] = captured.get("request_count", 0) + 1
         captured["body"] = _json.loads(request.content.decode("utf-8"))
         return httpx.Response(200, json={"choices": [{"message": {"content": reply}}]})
 
@@ -270,7 +272,6 @@ def test_caption_images_normalizes_closed_whole_answer_formats(
         pytest.param(
             "I'm sorry, I cannot see any image.", id="natural-language-paraphrase"
         ),
-        pytest.param("", id="empty"),
     ],
 )
 def test_caption_images_leaves_out_of_contract_answers_completed(
@@ -293,6 +294,27 @@ def test_caption_images_leaves_out_of_contract_answers_completed(
         caption=reply,
         status="completed",
     )
+
+
+def test_empty_answer_is_a_classifier_only_non_match() -> None:
+    assert _is_image_unavailable_answer("") is False
+
+
+def test_caption_images_preserves_actual_client_empty_response_error(
+    tmp_path: Path,
+) -> None:
+    image = tmp_path / "images" / "frame.png"
+    _write_image(image, (10, 20, 30))
+    captured: dict = {}
+
+    with pytest.raises(TokenFactoryToolError, match="response missing"):
+        caption_images(
+            input_path=str(image.parent),
+            output_path=str(tmp_path / "out"),
+            client=_capturing_client("", captured),
+        )
+    assert captured["request_count"] == 1
+    assert not (tmp_path / "out" / "captions.json").exists()
 
 
 def test_caption_images_does_not_substring_match_sentinel(tmp_path: Path) -> None:
