@@ -18,6 +18,12 @@ a versioned heading when a release is cut.
 - Unknown-count video compatibility is unchanged. `final` extracts one trailing
   frame; `keyframes` and `sequence` retain the same bounded one-frame-per-second
   fallback with incomplete source provenance.
+- A frozen six-call hosted calibration did not show a label improvement:
+  `keyframes` and `sequence` each scored 2/3 on the three disclosed controls,
+  both missed visibly complete placement, and one `keyframes` gray-control
+  rationale hallucinated absent objects. The precommitted hosted gate failed,
+  so the change remains draft-only under that plan. See the
+  [frame-selection evidence](docs/workbench/evidence/vlm-frame-selection-semantics.md).
 
 ### VLM rich visual reviews remain separate from gates
 

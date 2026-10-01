@@ -25,16 +25,67 @@ video paths are checked separately.
 
 ## Visual evidence status
 
-No hosted call has been made for this change yet. The frozen operational
-regression contains one complete real SO-100 trajectory, a bit-exact
-221-frame prefix ending before visible placement, and a neutral-gray control.
-The exact model, task, rubric, threshold, request order, and six one-shot calls
-are frozen privately. Transport remains prohibited until an independent
-reviewer approves the exact candidate source, production-selected bytes,
-requests, and crash-safe evidence harness.
+The frozen operational regression used one complete real SO-100 trajectory, a
+bit-exact 221-frame prefix ending before visible placement, and a uniform
+neutral-gray control. An independent pre-call review approved the exact
+candidate source, selected PNG bytes, request order, model, task, rubric,
+threshold, and crash-safe evidence harness.
 
-Any later six-call result is a narrow operational regression for those exact
-controls. It cannot qualify a model, estimate error rates, establish
-repeatability, prove that pixels alone caused a difference between strategies,
-generalize to unknown-count videos, or establish task performance, physical
-correctness, policy quality, or robot safety.
+Exactly six one-shot Token Factory calls then ran in the frozen order: one call
+per strategy and control. All six returned HTTP 200 from the exact requested
+and served `openbmb/MiniCPM-V-4_5` model with `finish_reason=stop`, unique
+provider request IDs, and zero retries. The observed labels and scores were:
+
+| Disclosed control | Expected | `sequence` | `keyframes` |
+| --- | --- | --- | --- |
+| C01: complete SO-100 placement | `true` | `false`, 0.0 | `false`, 0.0 |
+| C02: prefix before visible placement | `false` | `false`, 0.0 | `false`, 0.0 |
+| C03: uniform neutral gray | `false` | `false`, 0.0 | `false`, 0.0 |
+
+Both strategies were correct on 2 of 3 disclosed calibration controls: 0 true
+positives, 2 true negatives, 0 false positives, and 1 false negative. This is
+calibration-only accounting, not an accuracy estimate.
+
+Independent pixel-first review found the C01 expected label visibly supported
+by the exact submitted frames. The `sequence` request included source indices
+302 and 453 with the red cube inside the white box; `keyframes` included
+indices 408 and 453 with the same terminal state. Both model rationales denied
+that visible placement. The C02 labels were correct, but both rationales
+overstated the cube's location through submitted frames where it was occluded
+or not visibly locatable. The `sequence` C03 rationale stayed grounded in the
+absence of evidence. The `keyframes` C03 rationale instead claimed that its
+final uniform-gray frame showed a cube on a table, hallucinating objects absent
+from the submitted pixels.
+
+The precommitted gate required `keyframes` to label C01 true, C02 and C03 false,
+avoid regressions where `sequence` was correct, and keep its rationales
+grounded. It therefore **failed** on C01 and rationale grounding. The result
+does not show a hosted label improvement over `sequence`, and this change is
+not merge-ready under that evaluation plan. The deterministic sampler contract
+above remains separately reproducible; a draft may carry this negative hosted
+result for review without presenting it as visual acceptance.
+
+## Evidence identity and applicability
+
+| Item | Identity or applicability |
+| --- | --- |
+| Candidate source | commit `f77226cfb18126478769c97e2cb3a5063011299e`; tree `2b480d4107483db7e0cc5aede3be4cd57817b3f9` |
+| Evaluation plan SHA-256 | `fcbbcacc71583186ebbb3c4c9055169566a7a37f0b97b30e84f0792ed958d70e` |
+| Independent source/call approval SHA-256 | `101b875924924a7d9cf8c605e9fc40b2114cf8f41b96494ab0238a9c9d6b7985` |
+| Frozen request manifest SHA-256 | `9a75fdb683bf9d94da8aa32187d8fc845f1bdc0a8ea4dcbba90de0b5d6ad5061` |
+| Hosted result manifest SHA-256 | `2cd91b69a9dc7a8ec7b601e6e891dddc675f02d2e16a29dfe63a064f7d1be768` |
+| Independent review-input manifest SHA-256 | `334cef017176fb170ea1d0273e126933370ae8a2ed89e84d3877a7c3b7ec8aa9` |
+| Independent hosted review SHA-256 | `77f54079cd97d78724a315e0c4a80e0bcba8b3850eae34eeaee2b8b987a14372` |
+| Deterministic validation | CPU-only source, property, public-path, and mutation checks; no GPU required |
+| Visual inference | Provider-managed hosted execution; no local GPU was used and provider accelerator details were unavailable |
+| Physical system | Previously recorded SO-100 camera trajectory; this evaluation did not actuate a robot |
+
+Exact requests, responses, selected PNGs, contact sheets, provider metadata,
+and recomputed hashes remain in private evidence. No credentials, endpoints,
+object URIs, provider request IDs, or raw responses are published here. The
+unchanged six calls will not be replayed for a preferred result.
+
+This regression cannot qualify a model, estimate operational error rates,
+establish repeatability, prove that pixels alone caused a difference between
+strategies, generalize to unknown-count videos, or establish task performance,
+physical correctness, policy quality, or robot safety.
