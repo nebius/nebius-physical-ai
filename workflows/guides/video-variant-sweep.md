@@ -233,6 +233,14 @@ with acceptance and review-score metrics. Publication correctly failed; no
 dataset or next-source inventory was created, and the operator exported a tracked
 rejection while preserving its nonzero result.
 
+A second pair retained the same source bytes, direct prompts and seeds, using
+structural guidance 1.0, text guidance 3.0 and enabled CFG normalization. Harsh
+outlines improved visibly, and native receipts verified normalization, effective
+guardrails and the same exact timeline. The reviewer still rejected both at
+0.35: the warm clip retained a rendered material appearance, and the cool clip
+failed its sampled motion-fidelity assessment. Both were tracked and withheld
+from publication. Better-looking footage did not override the gate.
+
 A CPU replay verified both real candidate checkpoints with the inference
 function set to raise if called. It reused both outputs without inference and
 left both worker receipts unchanged. The exported native HTML passed synchronized
