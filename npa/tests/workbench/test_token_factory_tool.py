@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+from io import BytesIO
 from pathlib import Path
 
 import httpx
@@ -62,6 +64,43 @@ class _SequenceClient:
         return self.replies[len(self.calls) - 1]
 
 
+_SENTINEL_WRAPPERS = (
+    ("plain", "", ""),
+    ("markdown-asterisks", "**", "**"),
+    ("markdown-underscores", "__", "__"),
+    ("ascii-single", "'", "'"),
+    ("ascii-double", '"', '"'),
+    ("smart-single", "‘", "’"),
+    ("smart-double", "“", "”"),
+)
+_SENTINEL_CORE_VARIANTS = (
+    ("without-period", "NO IMAGE RECEIVED"),
+    ("with-period", "NO IMAGE RECEIVED."),
+)
+_ACCEPTED_SENTINEL_FORMATS = (
+    [
+        pytest.param(f"{opening}{core}{closing}", id=f"{name}-{core_name}")
+        for name, opening, closing in _SENTINEL_WRAPPERS
+        for core_name, core in _SENTINEL_CORE_VARIANTS
+    ]
+    + [
+        pytest.param(
+            f"{opening}  NO IMAGE RECEIVED.  {closing}",
+            id=f"{name}-inner-whitespace",
+        )
+        for name, opening, closing in _SENTINEL_WRAPPERS
+        if name != "plain"
+    ]
+    + [
+        pytest.param(
+            f"{opening}nO iMaGe ReCeIvEd.{closing}",
+            id=f"{name}-case-variation",
+        )
+        for name, opening, closing in _SENTINEL_WRAPPERS
+    ]
+)
+
+
 def test_caption_images_writes_manifest(tmp_path: Path) -> None:
     images = tmp_path / "images"
     _write_image(images / "a.png", (10, 20, 30))
@@ -113,6 +152,20 @@ def test_caption_images_appends_availability_directive(
     assert result.availability_directive == CAPTION_AVAILABILITY_DIRECTIVE
     assert result.request_instruction == expected_request
     assert prompt == expected_request
+    content = captured["body"]["messages"][0]["content"]
+    image_parts = [part for part in content if part["type"] == "image_url"]
+    assert len(image_parts) == 1
+    url = image_parts[0]["image_url"]["url"]
+    assert isinstance(url, str)
+    prefix = "data:image/png;base64,"
+    assert url.startswith(prefix)
+    image_bytes = base64.b64decode(url.removeprefix(prefix), validate=True)
+    assert image_bytes
+    with Image.open(BytesIO(image_bytes)) as submitted:
+        assert submitted.format == "PNG"
+        assert submitted.width > 0
+        assert submitted.height > 0
+        submitted.verify()
 
 
 def test_caption_dataclasses_preserve_positional_bindings() -> None:
@@ -167,6 +220,79 @@ def test_caption_images_marks_exact_sentinel_and_continues(
         "completed",
     ]
     assert result.captions[1].caption == "no image received."
+
+
+@pytest.mark.parametrize("reply", _ACCEPTED_SENTINEL_FORMATS)
+def test_caption_images_normalizes_closed_whole_answer_formats(
+    tmp_path: Path,
+    reply: str,
+) -> None:
+    image = tmp_path / "images" / "frame.png"
+    _write_image(image, (10, 20, 30))
+
+    result = caption_images(
+        input_path=str(image.parent),
+        output_path=str(tmp_path / "out"),
+        client=_SequenceClient([f" \n{reply}\n "]),
+    )
+
+    assert result.status == "failed"
+    assert result.failed_count == 1
+    assert result.captions[0] == CaptionItem(
+        image="frame.png",
+        caption=reply,
+        status="image_unavailable",
+    )
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param("The sign says NO IMAGE RECEIVED.", id="longer-answer"),
+        pytest.param('"The sign says NO IMAGE RECEIVED."', id="wrapped-longer-answer"),
+        pytest.param(
+            "NO IMAGE RECEIVED. Additional explanation.", id="sentinel-prefix"
+        ),
+        pytest.param("NO IMAGE RECEIVED!", id="arbitrary-punctuation"),
+        pytest.param("NO IMAGE RECEIVED..", id="doubled-period"),
+        pytest.param("NO IMAGE RECEIVED…", id="unicode-ellipsis"),
+        pytest.param("NO IMAGE RECEIVED。", id="unicode-full-stop"),
+        pytest.param("**NO IMAGE RECEIVED**.", id="punctuation-after-bold"),
+        pytest.param('"NO IMAGE RECEIVED".', id="punctuation-after-quote"),
+        pytest.param("`NO IMAGE RECEIVED.`", id="inline-code"),
+        pytest.param("```NO IMAGE RECEIVED.```", id="code-fence"),
+        pytest.param('"**NO IMAGE RECEIVED.**"', id="quote-around-bold"),
+        pytest.param('**"NO IMAGE RECEIVED."**', id="bold-around-quote"),
+        pytest.param('“NO IMAGE RECEIVED."', id="mismatched-smart-ascii-double"),
+        pytest.param('"NO IMAGE RECEIVED.”', id="mismatched-ascii-smart-double"),
+        pytest.param("‘NO IMAGE RECEIVED.'", id="mismatched-smart-ascii-single"),
+        pytest.param("'NO IMAGE RECEIVED.’", id="mismatched-ascii-smart-single"),
+        pytest.param(
+            "I'm sorry, I cannot see any image.", id="natural-language-paraphrase"
+        ),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_caption_images_leaves_out_of_contract_answers_completed(
+    tmp_path: Path,
+    reply: str,
+) -> None:
+    image = tmp_path / "images" / "frame.png"
+    _write_image(image, (10, 20, 30))
+
+    result = caption_images(
+        input_path=str(image.parent),
+        output_path=str(tmp_path / "out"),
+        client=_SequenceClient([reply]),
+    )
+
+    assert result.status == "completed"
+    assert result.failed_count == 0
+    assert result.captions[0] == CaptionItem(
+        image="frame.png",
+        caption=reply,
+        status="completed",
+    )
 
 
 def test_caption_images_does_not_substring_match_sentinel(tmp_path: Path) -> None:

@@ -49,6 +49,10 @@ a versioned heading when a release is cut.
   whole-answer match is retained as `image_unavailable`, makes the aggregate
   artifact fail, and exits nonzero after writing it. Later images are still
   attempted once; dry runs emit the failed result without writing.
+- Closed whole-answer matching now tolerates an omitted final period or one
+  matching pair of bold markers, ASCII quotes, or smart quotes. It still
+  rejects longer answers, nested or mismatched wrappers, other punctuation,
+  and paraphrases.
 
 ### Studio videos accept S3 output paths
 
