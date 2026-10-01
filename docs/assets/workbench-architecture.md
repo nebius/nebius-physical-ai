@@ -1,85 +1,105 @@
 # Workbench architecture diagram reference
 
-The [root README](../../README.md#how-workbench-runs-a-task) contains the Mermaid
-flow and [PNG overview](workbench-architecture.png). Both describe the standard
-Kubernetes workflow path. They are a map of responsibilities, not a catalog of
-every tool, deployment mode, or supported GPU.
+The [PNG overview](workbench-architecture.png) maps the solution ecosystem,
+container distribution, control layer, and Nebius services. The
+[README task flow](../../README.md#how-workbench-runs-a-task) describes how an
+individual workflow executes.
 
-## Architecture and sources
+## Platform architecture and sources
 
 | Element | Meaning | Source |
 | --- | --- | --- |
-| You + your coding agent | An external coding agent invokes `npa`; operators can use the CLI and supported Python interfaces directly. | [Agent first run](../workbench/agent-first-run.md), [CLI and Python interfaces](../workbench/cli-sdk-yaml-walkthrough.md) |
-| npa control plane | Configures access, checks readiness, plans work, submits jobs, and inspects results. | [Run lifecycle](../run-lifecycle.md) |
-| npa.workflow YAML | Declares states, tool references, and resource profiles. It is input to the control plane, not a deployed service. | [Workflow guide](../workbench/npa-workflow-guide.md), [tool catalog](../workbench/npa-workflow-tool-catalog.md) |
-| Workflow engine + SkyPilot | The NPA engine evaluates the state graph and plans execution waves; SkyPilot launches the jobs. The operator environment is distinct from the workload containers. | [Runtime implementation](../../npa/src/npa/orchestration/npa_workflow/runtime.py), [SkyPilot setup](../orchestration/skypilot-setup.md) |
-| Containerized tools | GPU and CPU stages run in the selected Nebius Kubernetes environment. The capability labels are categories, not claims that every image supports every GPU. | [Tool catalog](../workbench/npa-workflow-tool-catalog.md), [image/GPU matrix](../workbench/image-gpu-compatibility-matrix.md) |
-| Object Storage · S3 | Tools exchange inputs and outputs; NPA stores and reads durable workflow state and decision artifacts. | [Workflow guide](../workbench/npa-workflow-guide.md), [run lifecycle](../run-lifecycle.md) |
-| Token Factory | Hosted inference is a separate API. Direct CLI calls need no cluster; workflow stages can also call the API from their containers. The clients handle artifact persistence. | [Token Factory integration](../workbench/token-factory.md) |
-| Artifact inspection | Rerun, Foxglove, media viewers, and reports expose the outputs for review. | [Agent viewers](../agent.md), [Foxglove](../workbench/foxglove-export.md) |
+| NVIDIA | Selected integrations: Isaac Lab / Isaac Sim, GR00T, SONIC, Cosmos 3, and Transfer 2.5. | [Public container catalog](../workbench/container-image-catalog.md) |
+| Open ecosystem | Selected integrations: LeRobot, Genesis, FiftyOne, LanceDB, Rerun, and Foxglove. | [Public container catalog](../workbench/container-image-catalog.md) |
+| NPA packaging → GHCR | Repository-selected public runtime images use `ghcr.io/nebius/nebius-physical-ai`. Resolve release tags to digests for reproducibility. | [Image resolver](../../npa/src/npa/deploy/images.py), [release manifest](../../npa/src/npa/deploy/public_release_manifest.json) |
+| Runtime fetch | Some public images contain a bootstrap or source runtime; models and vendor runtimes are obtained separately at execution time where required. | [Packaging contract](../workbench/container-packaging.md), [machine-readable inventory](../../npa/docker/workbench/packaging-contract.yaml) |
+| npa | Operators and coding agents use the CLI and supported Python interfaces to control workloads. | [Agent first run](../workbench/agent-first-run.md), [CLI and Python interfaces](../workbench/cli-sdk-yaml-walkthrough.md) |
+| npa.workflow YAML | Workflow specifications declare states, tool references, and resource profiles for npa to plan and execute. | [Workflow guide](../workbench/npa-workflow-guide.md) |
+| Workflow engine + SkyPilot → Kubernetes | The NPA workflow engine plans execution waves and SkyPilot submits jobs; containerized GPU and CPU workloads execute on Nebius Kubernetes. Kubernetes pulls the selected images from GHCR. | [SkyPilot setup](../orchestration/skypilot-setup.md), [workflow runtime](../../npa/src/npa/orchestration/npa_workflow/runtime.py) |
+| Object Storage | S3 stores inputs, outputs, checkpoints, reports, and durable workflow state. Workload containers read and write artifacts; NPA also persists and reads run state. | [Workflow guide](../workbench/npa-workflow-guide.md), [run lifecycle](../run-lifecycle.md) |
+| Token Factory | A separate hosted inference API, callable directly through NPA or from workload containers. The detailed API connection appears in the README task flow. | [Token Factory integration](../workbench/token-factory.md) |
 
-The cloud boundary encloses workload execution, storage, and hosted inference.
-The workflow/SkyPilot box represents operator-side submission, not the physical
-location of every SkyPilot component: managed-job controllers also run remotely.
-The PNG's downward job arrow emphasizes submission; the Mermaid flow also labels
-returning status and logs. The dashed S3 connection represents artifact and
-durable-state exchange, rather than job scheduling.
+The integrations column is a selection of integrations represented in the public
+catalog, not an exhaustive inventory. Names identify integrations; the
+packaging contract determines which upstream bytes are included. For example,
+the Foxglove image hosts the Embed SDK and NPA glue rather than redistributing the
+Foxglove application. Restricted operator-built images and development
+candidates retain their separate status in the catalog.
 
-Individual tool VM, container, and service paths are documented in the
-[Workbench index](../workbench/README.md). The overview does not imply a universal
-HTTP API, an OSMO integration, Token Factory model export, or a uniform hardware
-support matrix.
+The cloud boundary contains Kubernetes execution, Object Storage, and Token
+Factory. GHCR is an external distribution service. The Workbench column groups
+image distribution and job submission responsibilities; it does not specify
+where every SkyPilot component is hosted. Image pull and job submission are
+separate connections into Kubernetes. Hardware support remains specific to each
+image and workload; see the
+[image/GPU matrix](../workbench/image-gpu-compatibility-matrix.md).
+
+## Task-flow reference
+
+The README Mermaid diagram covers requests and results, workflow YAML, the NPA
+engine's execution waves, SkyPilot jobs, S3 artifacts and durable state, and the
+separate Token Factory API. Its sources are the
+[workflow guide](../workbench/npa-workflow-guide.md),
+[tool catalog](../workbench/npa-workflow-tool-catalog.md), and
+[run lifecycle](../run-lifecycle.md). Individual VM, container, and service
+deployment modes are documented in the [Workbench index](../workbench/README.md).
 
 ## Visual maintenance
 
-Use a white canvas, navy text, electric lime for the control plane, pale blue for
-orchestration and cloud grouping, and a dark S3 card. The Mermaid theme uses the
-navy `#052B42`, lime `#E0FF4F`, and pale blue `#EEF3FF` colors from the
-[Nebius website](https://nebius.com/); the PNG uses a matching inspired palette.
-Keep labels readable at the README's display width and preserve the accessible
-image description and Mermaid `accTitle` / `accDescr`.
+The PNG uses three columns: selected integrations, Workbench, and Nebius AI
+Cloud. Its proportional sans-serif typography and navy, lime, and pale-blue
+palette draw from the [Workbench UI styles](../../npa/src/npa/cli/agent_ui.html).
+The npa control panel and job-submission path are the visual focus; GHCR is a
+quieter supporting component. Keep labels readable at the README's 960-pixel
+display width and retain only a few integration examples. The public catalog
+holds the inventory and the README holds the registry namespace. Preserve the
+accessible image description and the Mermaid `accTitle` / `accDescr`.
 
-The PNG was redrawn with the built-in image-generation tool. Its generation
-brief follows; architecture changes should update this reference, the Mermaid
-source in the README, and the PNG together. Inspect all labels and arrowheads
-after generation. A generated image is not evidence that a capability works.
+The PNG was produced with the built-in image-generation tool. The reusable
+generation brief below records its content and layout. Update this reference,
+the PNG, and its accessible description when the architecture changes. Update
+the Mermaid source when execution relationships change. Check every label and
+connector against the sources above after generation.
 
 <details>
 <summary>PNG generation brief</summary>
 
-Redesign the old architecture diagram completely as a modern technical diagram
-for the root GitHub README. Remove the old content. Use a crisp, flat editorial
-style, modern sans serif, large readable text, generous spacing, rounded
-rectangles, and thin orthogonal arrows. Use deep navy `#0B2436`, electric lime
-`#D6F84C`, off-white `#F5F7F8`, and pale blue `#E6F2FA`. Avoid invented logos,
-illustrations, gradients, shadows, tiny text, 3D, and decorative circuits.
+Create a landscape platform architecture graphic for Nebius Physical AI. Use
+Workbench navy `#0D2A3D`, dark navy `#0A1C2B`, white type, lime `#E5FF4F`, and
+pale blue `#DCEEFF`. Use smooth Inter-style proportional sans-serif typography,
+medium body labels, semibold headings, a precise three-column grid, generous
+spacing, thin borders, and flat panels with restrained six-pixel corners.
+Make npa the focal component and GHCR a quieter, shorter supporting card.
+Keep the title moderate and all labels readable at 960px. Render sharp lettering,
+orthogonal connectors, and compact arrowheads without texture or glow.
+Avoid redundant nested boxes:
+the integration groups and SkyPilot have no inner borders, and the Workbench
+column has no enclosing boundary.
 
-- Header: "Nebius Physical AI"; subtitle: "Workbench architecture"; top-right
-  pill: "STANDARD WORKFLOW PATH".
-- White access card: "You + your coding agent" and "Direct CLI and supported
-  Python interfaces". Connect bidirectionally to the control plane.
-- Lime control-plane card: "npa control plane" and "Configure · preflight ·
-  plan · submit · inspect".
-- White YAML card to its right: "npa.workflow YAML", with an arrow into the
-  control plane.
-- Pale-blue orchestration card below: "Workflow engine + SkyPilot" and
-  "Plan waves · submit jobs · track status". Connect bidirectionally to the
-  control plane and downward to the tools card.
-- A large region titled "Nebius AI Cloud" encloses only the tools, Token
-  Factory, and S3 cards.
-- White tools card: "Containerized tools", "Kubernetes · GPU + CPU",
-  "Simulate · train · generate", and "Curate · reconstruct · evaluate".
-- White Token Factory card to its right: "Token Factory", "Hosted inference
-  API", and "No customer GPU required". A separate bidirectional "Direct API"
-  path connects it to the control plane, bypassing orchestration.
-- Navy storage card beneath the tools: "Object Storage · S3" and "Inputs ·
-  checkpoints · media · reports · run state". Connect bidirectionally to the
-  tools. A dashed bidirectional "Artifacts + durable state" path connects it
-  to the control plane along the left margin. Do not connect Token Factory
-  directly to S3.
-- Footer: "Inspect artifacts with Rerun, Foxglove, media viewers and reports."
+- Header: "WORKBENCH ARCHITECTURE" and "Nebius Physical AI". No tagline.
+- Left column, "Selected integrations": one panel with "NVIDIA" and "Open ecosystem"
+  groups, separated by a fine rule. NVIDIA rows: "Isaac Lab / Isaac Sim",
+  "GR00T · SONIC", and "Cosmos 3 · Transfer 2.5". Open ecosystem rows:
+  "LeRobot · Genesis", "FiftyOne · LanceDB", and "Rerun · Foxglove".
+- Middle column, "Workbench": a secondary "GHCR" panel with "Public container
+  images". Below it, the primary panel with "npa", "CLI · Python · coding agents",
+  "npa.workflow YAML", a downward arrow, and "Workflow engine + SkyPilot".
+  Give the npa panel a restrained lime accent. Do not connect GHCR to npa.
+- Right column, "Nebius AI Cloud": an enclosing boundary with three services:
+  "Kubernetes" / "GPU + CPU workloads", "Object Storage" / "S3 artifacts + run
+  state", and "Token Factory" / "Hosted inference API", stacked vertically.
+- Connect the outer integrations panel to GHCR with a rightward pale-blue
+  "package" arrow representing both integration groups. Align GHCR and Kubernetes
+  for a straight pale-blue "image pull" arrow. Route a lime "jobs" elbow from
+  the workflow engine and SkyPilot through the column gutter into Kubernetes,
+  clear of other lines and text. Connect Kubernetes and Object Storage with a
+  short vertical bidirectional pale-blue "read / write" arrow. Token Factory
+  stands separately.
+- Footer: "Models and vendor runtimes fetched at runtime where required."
 
-Keep labels verbatim. Add no invented connections or components, OSMO, Vault,
-hardware model numbers, partner marketplace, or model export claims.
+Use only these five connections, including npa to the workflow engine and
+SkyPilot. Keep solution names verbatim. Omit the registry namespace, decorative
+icons, circuits, gradients, shadows, invented logos, numbered stages, hardware
+models, and inventory counts.
 
 </details>

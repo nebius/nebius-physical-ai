@@ -4,7 +4,7 @@
 
 **The control plane your coding agent uses to run physical-AI workloads on Nebius.**
 
-<img src="docs/assets/workbench-architecture.png" alt="Workbench architecture: users and coding agents use npa to plan and submit containerized workloads through SkyPilot to Nebius Kubernetes, exchange artifacts and run state through S3, and call Token Factory for hosted inference." width="960" />
+<img src="docs/assets/workbench-architecture.png" alt="Workbench architecture: selected NVIDIA and open-ecosystem integrations are packaged into public GHCR images. npa uses workflow YAML, its workflow engine, and SkyPilot to run workloads on Nebius Kubernetes. Kubernetes pulls images; Object Storage holds artifacts and run state. Token Factory provides hosted inference. Models and vendor runtimes are fetched at runtime where required." width="960" />
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
@@ -76,7 +76,13 @@ flowchart TB
     class storage data;
 ```
 
-Both diagrams show the standard Kubernetes workflow path. The
+The architecture overview maps selected NVIDIA and open-ecosystem solutions to
+NPA's [public GHCR container catalog](docs/workbench/container-image-catalog.md)
+at `ghcr.io/nebius/nebius-physical-ai` and the Nebius services that run and support
+them. Some images fetch models or vendor runtimes at execution time; the
+[packaging contract](docs/workbench/container-packaging.md) records those boundaries.
+
+The task flow above shows the standard Kubernetes workflow path. The
 [workflow engine](docs/workbench/npa-workflow-guide.md#runtime-orchestrator---runtime)
 plans execution waves, submits them through SkyPilot, and uses S3 artifacts and
 durable run state to evaluate decisions and resume runs. The operator-side
