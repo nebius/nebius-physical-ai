@@ -111,6 +111,13 @@ guidance can produce harsh outlines and distorted details. Compare gentler
 sampling and normalization against the same source, retaining the original
 quality threshold and rejected results. These controls do not guarantee realism.
 
+The optional `first_chunk_conditional_frames` is 0 (default) or 1. One retains
+the first source RGB frame as an appearance anchor, while complete source edges
+still condition the whole clip. This can also constrain the first frame's
+lighting and material edits. Use a source frame whose appearance is appropriate
+for the requested variation and inspect transitions; anchoring is not proof of
+photorealism or stable contacts.
+
 Source inventories retain their existing schema:
 
 ```json

@@ -30,6 +30,8 @@ VARIANT = {
         ("edge_threshold", "invented"),
         ("cfg_normalization", True),
         ("cfg_normalization", "invented"),
+        ("first_chunk_conditional_frames", True),
+        ("first_chunk_conditional_frames", 2),
         ("prompt", ""),
         ("extra", "unsupported"),
     ],
@@ -97,8 +99,9 @@ def test_configured_guardrails_are_not_effective_execution(change):
 
 
 @pytest.mark.parametrize("normalization", [None, "enabled", "disabled"])
+@pytest.mark.parametrize("anchor", [None, 1])
 def test_native_transfer_retains_the_whole_source_contract(
-    monkeypatch, tmp_path, normalization
+    monkeypatch, tmp_path, normalization, anchor
 ):
     from npa.workflows import paidf_cosmos3_media as media
 
@@ -112,6 +115,9 @@ def test_native_transfer_retains_the_whole_source_contract(
         "variant": {
             **VARIANT,
             **({"cfg_normalization": normalization} if normalization else {}),
+            **(
+                {"first_chunk_conditional_frames": anchor} if anchor is not None else {}
+            ),
         },
     }
     calls = []
@@ -133,7 +139,7 @@ def test_native_transfer_retains_the_whole_source_contract(
     assert request["mode"] == "video2video" and request["checkpoint"] == "Cosmos3-Nano"
     assert request["no_guardrails"] is False
     assert request["transfer"].control_guidance == 1.5
-    assert request["transfer"].first_chunk_conditional_frames == 0
+    assert request["transfer"].first_chunk_conditional_frames == (anchor or 0)
     assert request["transfer"].cfg_normalization == (normalization or "disabled")
     assert request["seed"] == 17 and request["num_steps"] == 35
     assert calls[1][0] == "alignment" and calls[1][1][-1] == 24
