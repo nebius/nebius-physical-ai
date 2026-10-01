@@ -1,0 +1,13 @@
+{
+  "checked_at": "2026-10-01T21:01:14.522198+00:00",
+  "exact_owned_image_matched_privately": true,
+  "native_running_daemon_zero_watchdog_message_count": 1,
+  "matched_messages": [
+    {
+      "time": "2026-10-01T20:58:04.353821+00:00",
+      "raw_line_sha256": "832ecfb0714121942cd32b6258b900abf7a19726130afc4a3e7491d7b31f950f"
+    }
+  ],
+  "raw_syslog_sha256": "e616649976187c3e4c19460e4e9067658e87f174a2feaa3e621786901becf39c",
+  "read_only": true
+}

@@ -1,0 +1,52 @@
+{
+  "runtime_mode": "transfer service, progress timeout0s",
+  "outcome": "Stalled attempt deliberately interrupted after idle metrics and source inspection; no image-pull success is claimed.",
+  "samples": [
+    {
+      "time": "2026-10-01T21:04:41Z",
+      "cpu_core_nanoseconds": 1096828341000,
+      "filesystem_used_bytes": 10848624640,
+      "filesystem_inodes_used": 177254,
+      "image_filesystem_used_bytes": 3427680256,
+      "image_filesystem_inodes_used": 39102,
+      "network_rx_bytes": 39011874896,
+      "network_tx_bytes": 90184683,
+      "raw_summary_sha256": "62593c85ab687897e17a53f2b4fb0406a8aad2d35eafee8968922568a1565584"
+    },
+    {
+      "time": "2026-10-01T21:05:41Z",
+      "cpu_core_nanoseconds": 1102464598000,
+      "filesystem_used_bytes": 10848849920,
+      "filesystem_inodes_used": 177254,
+      "image_filesystem_used_bytes": 3427680256,
+      "image_filesystem_inodes_used": 39102,
+      "network_rx_bytes": 39013616434,
+      "network_tx_bytes": 93931284,
+      "raw_summary_sha256": "49d809bbf30afcc69d31a5d3fe6cfdd6a8bce20a04477e544915b88f6d327fec"
+    }
+  ],
+  "delta": {
+    "cpu_core_nanoseconds": 5636257000,
+    "filesystem_used_bytes": 225280,
+    "filesystem_inodes_used": 0,
+    "image_filesystem_used_bytes": 0,
+    "image_filesystem_inodes_used": 0,
+    "network_rx_bytes": 1741538,
+    "network_tx_bytes": 3746601
+  },
+  "interpretation": "No image filesystem growth or new image inodes in the sample; near-idle CPU and small aggregate traffic, which includes diagnostic reads. This is not evidence of active layer unpacking.",
+  "source_inference": "In v2.3.3 transfer mode, timeout0 skips the reporter goroutine while Transfer still receives a progress callback that sends to its unbuffered channel. That callback can block without a consumer. A native goroutine dump was not collected.",
+  "source_links": [
+    "https://github.com/containerd/containerd/blob/v2.3.3/internal/cri/server/images/image_pull.go#L278-L302",
+    "https://github.com/containerd/containerd/blob/v2.3.3/internal/cri/server/images/image_pull.go#L859-L865",
+    "https://github.com/containerd/containerd/blob/v2.3.3/internal/cri/server/images/image_pull.go#L919-L942",
+    "https://github.com/containerd/containerd/blob/v2.3.3/internal/cri/server/images/image_pull.go#L978-L984"
+  ],
+  "root_stop_receipt_sha256": "a0670c83ae2b52949e660e982456c3d1e658073238f8b46222c6a27ac1c0aca8",
+  "root_cleanup_receipt_sha256": "baf0cce8bee5d3456a5a140f00949c87a53301f263813e0109c737c4f90ff7a8",
+  "following_adaptation_requires_local_pull_mode": true,
+  "root_recorded_namespace_uid": true,
+  "root_namespace_absence_verified": true,
+  "diagnostic_sample_seconds": 60,
+  "average_node_cpu_cores": 0.09393761666666667
+}

@@ -1,0 +1,357 @@
+{
+  "schema": "npa.private-pull.review-proof.v1",
+  "candidate_commit": "e5cfb4e40f75e9c0d5966d0f760585b53ba9e06b",
+  "production_module_matches_executed_source": true,
+  "status": "passed",
+  "successful_pull_seconds": 590.2817807180109,
+  "runtime_configuration": {
+    "use_local_image_pull": true,
+    "image_pull_progress_timeout": "0s"
+  },
+  "attempts": [
+    {
+      "attempt": "initial-cold",
+      "executed_source": {
+        "head": "5cdf3e428aeef98565aee2c5de5a8dbaa8a3b0cf",
+        "archive_sha256": "c5413a6f89ca76f4616d803b97fbe1ab513371c1de9179882b596d07c2d30bc6"
+      },
+      "selected_index_present_in_initial_node_inventory": false,
+      "provider_reported_image_size_bytes": 14710410879,
+      "index_digest": "sha256:eefb9182c76c2a508a3b2588a27fad16afe03773844ce19bac1200e431a1d63a",
+      "anonymous_manifest_status": "forbidden",
+      "pytest": {
+        "passed": 1,
+        "failed": 1
+      },
+      "probes": [
+        {
+          "timeout_seconds": 1,
+          "seconds": 4.820863428001758,
+          "result": {
+            "status": "timed_out",
+            "digest": "",
+            "cleanup_status": "verified"
+          },
+          "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+        },
+        {
+          "timeout_seconds": 0,
+          "seconds": 526.5494091219734,
+          "result": {
+            "status": "image_pull_failed",
+            "digest": "",
+            "cleanup_status": "verified"
+          },
+          "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+        }
+      ],
+      "admitted_pod_deadlines": [
+        1,
+        null
+      ],
+      "timeout_control_unscheduled": true,
+      "namespace_absence_verified": true,
+      "node_reported_canceled_layer_extraction": true,
+      "retained_inputs": [
+        {
+          "file": "probe-calls.private.json",
+          "sha256": "42e8549e8a190d13e7d7ead8a361d7a2db6206e0a6bf874ba9eb1c78a46fa2f4"
+        },
+        {
+          "file": "events.private.json",
+          "sha256": "b7305b968fd4200f395be742b2827b3d2eb5ba8e37d81ad5cdb89dca562d04a7"
+        },
+        {
+          "file": "cleanup.private.json",
+          "sha256": "865618edbfd01fa16bf627d360dc330b016fa755dd183bdd7a27d43fc7c7799a"
+        },
+        {
+          "file": "pytest-live.private.log",
+          "sha256": "0559e8f20361983c500774f54917a64d832edb429e71bdfb6e300ba0ec1e4e32"
+        },
+        {
+          "file": "source.json",
+          "sha256": "e1b2efe8fd67791a295d0643cbb3515a37f7e9373fe1c8d9012d79df709f6f6c"
+        },
+        {
+          "file": "live-start.private.json",
+          "sha256": "925655489c53d4abe828a5838ebb0c71cb57f0f94878d1f14452c1e49498c82c"
+        }
+      ]
+    },
+    {
+      "attempt": "retry",
+      "executed_source": {
+        "head": "5cdf3e428aeef98565aee2c5de5a8dbaa8a3b0cf",
+        "archive_sha256": "c5413a6f89ca76f4616d803b97fbe1ab513371c1de9179882b596d07c2d30bc6"
+      },
+      "selected_index_present_in_initial_node_inventory": false,
+      "provider_reported_image_size_bytes": 14710410879,
+      "index_digest": "sha256:eefb9182c76c2a508a3b2588a27fad16afe03773844ce19bac1200e431a1d63a",
+      "anonymous_manifest_status": "forbidden",
+      "pytest": {
+        "passed": 1,
+        "failed": 1
+      },
+      "probes": [
+        {
+          "timeout_seconds": 1,
+          "seconds": 4.849895635037683,
+          "result": {
+            "status": "timed_out",
+            "digest": "",
+            "cleanup_status": "verified"
+          },
+          "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+        },
+        {
+          "timeout_seconds": 0,
+          "seconds": 536.0296242880286,
+          "result": {
+            "status": "image_pull_failed",
+            "digest": "",
+            "cleanup_status": "verified"
+          },
+          "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+        }
+      ],
+      "admitted_pod_deadlines": [
+        1,
+        null
+      ],
+      "timeout_control_unscheduled": true,
+      "namespace_absence_verified": true,
+      "node_reported_canceled_layer_extraction": true,
+      "retained_inputs": [
+        {
+          "file": "probe-calls.private.json",
+          "sha256": "b85686d62d8d94325bfba72612ae9b2f726157dfa46f45e99262d091f60cf23f"
+        },
+        {
+          "file": "events.private.json",
+          "sha256": "4aa368bef41de912ea42432f230968e1cba5c14e62f0c65cd529807896f981e9"
+        },
+        {
+          "file": "cleanup.private.json",
+          "sha256": "4138775b186b001e3edff74bc347b09b7b806d69a20f6cffe207cd02dad69b12"
+        },
+        {
+          "file": "pytest-live.private.log",
+          "sha256": "608606801c78423c33280299556616498fb70fee281e81742d55d714f97bf560"
+        },
+        {
+          "file": "source.json",
+          "sha256": "e1b2efe8fd67791a295d0643cbb3515a37f7e9373fe1c8d9012d79df709f6f6c"
+        },
+        {
+          "file": "live-start.private.json",
+          "sha256": "3e7dd89d94006d3f51b6aa0e090b9706d4fb5f8d74704f0a2c49e68ef63d43ea"
+        }
+      ]
+    },
+    {
+      "attempt": "cosmos-image",
+      "executed_source": {
+        "head": "5cdf3e428aeef98565aee2c5de5a8dbaa8a3b0cf",
+        "archive_sha256": "c5413a6f89ca76f4616d803b97fbe1ab513371c1de9179882b596d07c2d30bc6"
+      },
+      "selected_index_present_in_initial_node_inventory": false,
+      "provider_reported_image_size_bytes": 8335264720,
+      "index_digest": "sha256:133be4b8a71357b81c0831514b609776ac74f3d68444a9e36eb549fae339aa35",
+      "anonymous_manifest_status": "forbidden",
+      "pytest": {
+        "passed": 1,
+        "failed": 1
+      },
+      "probes": [
+        {
+          "timeout_seconds": 1,
+          "seconds": 4.849468217988033,
+          "result": {
+            "status": "timed_out",
+            "digest": "",
+            "cleanup_status": "verified"
+          },
+          "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+        },
+        {
+          "timeout_seconds": 0,
+          "seconds": 368.2379917760263,
+          "result": {
+            "status": "image_pull_failed",
+            "digest": "",
+            "cleanup_status": "verified"
+          },
+          "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+        }
+      ],
+      "admitted_pod_deadlines": [
+        1,
+        null
+      ],
+      "timeout_control_unscheduled": true,
+      "namespace_absence_verified": true,
+      "node_reported_canceled_layer_extraction": false,
+      "retained_inputs": [
+        {
+          "file": "probe-calls.private.json",
+          "sha256": "ffd8826cc7f45e246af219d387df14b3e174fff9ac815fb25c13c170815ed38b"
+        },
+        {
+          "file": "events.private.json",
+          "sha256": "e8736d9c134cfbb222b7107efcfd954c8a47f37ffeb2c495b458f423f145c4ad"
+        },
+        {
+          "file": "cleanup.private.json",
+          "sha256": "b4d49773c6c3c108f6f588b7ce4a4ceee9d779dbe405dbe921a113b37c63a463"
+        },
+        {
+          "file": "pytest-live.private.log",
+          "sha256": "26cacc3a1ee01ce2fb8181191efc3430e894eacd15fde94103624b78d8185c14"
+        },
+        {
+          "file": "source.json",
+          "sha256": "e1b2efe8fd67791a295d0643cbb3515a37f7e9373fe1c8d9012d79df709f6f6c"
+        },
+        {
+          "file": "live-start.private.json",
+          "sha256": "5d78d6a3a463b7c83b00b486f48301cae079fbfe9e41c6721b760ef752a81573"
+        }
+      ]
+    },
+    {
+      "attempt": "interrupted-transfer-mode",
+      "executed_source": {
+        "head": "5cdf3e428aeef98565aee2c5de5a8dbaa8a3b0cf",
+        "archive_sha256": "c5413a6f89ca76f4616d803b97fbe1ab513371c1de9179882b596d07c2d30bc6"
+      },
+      "provider_reported_image_size_bytes": 14710410879,
+      "index_digest": "sha256:eefb9182c76c2a508a3b2588a27fad16afe03773844ce19bac1200e431a1d63a",
+      "anonymous_manifest_status": "forbidden",
+      "pytest": {
+        "passed": 1,
+        "interrupted": true
+      },
+      "completed_control": {
+        "timeout_seconds": 1,
+        "seconds": 4.782788915967103,
+        "result": {
+          "status": "timed_out",
+          "digest": "",
+          "cleanup_status": "verified"
+        },
+        "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+      },
+      "second_probe_outcome": "Interrupted without a pull verdict after independently sampled idle node behavior; suspected zero-timeout transfer callback deadlock. Native source/metrics bindings are in node-watchdog.json.",
+      "namespace_absence_verified": true,
+      "retained_inputs": [
+        {
+          "file": "probe-calls.private.json",
+          "sha256": "de1f930e20d2820c603814790d4efcb9ceb1da4bbcc60e9ecd25ca0a1f3d9938"
+        },
+        {
+          "file": "events.private.json",
+          "sha256": "fe91936cf981d67a6b298d90edf1b20977bf1f764669270409c3823c0134ce71"
+        },
+        {
+          "file": "cleanup.private.json",
+          "sha256": "baf0cce8bee5d3456a5a140f00949c87a53301f263813e0109c737c4f90ff7a8"
+        },
+        {
+          "file": "pytest-live.private.log",
+          "sha256": "b49122a3863736119dcdfdd352446cdea236f42ba6423b81551bf98b3b7791b5"
+        },
+        {
+          "file": "source.json",
+          "sha256": "e1b2efe8fd67791a295d0643cbb3515a37f7e9373fe1c8d9012d79df709f6f6c"
+        },
+        {
+          "file": "live-start.private.json",
+          "sha256": "666d023cba444848c37fbad756afa8bd29dd9ba115ebc9e3cf621066cdac0263"
+        },
+        {
+          "file": "root-stop.private.json",
+          "sha256": "a0670c83ae2b52949e660e982456c3d1e658073238f8b46222c6a27ac1c0aca8"
+        }
+      ]
+    },
+    {
+      "attempt": "local-mode-retry",
+      "executed_source": {
+        "head": "5cdf3e428aeef98565aee2c5de5a8dbaa8a3b0cf",
+        "archive_sha256": "c5413a6f89ca76f4616d803b97fbe1ab513371c1de9179882b596d07c2d30bc6"
+      },
+      "selected_index_present_in_initial_node_inventory": false,
+      "provider_reported_image_size_bytes": 14710410879,
+      "index_digest": "sha256:eefb9182c76c2a508a3b2588a27fad16afe03773844ce19bac1200e431a1d63a",
+      "anonymous_manifest_status": "forbidden",
+      "pytest": {
+        "passed": 2
+      },
+      "probes": [
+        {
+          "timeout_seconds": 1,
+          "seconds": 9.84022187901428,
+          "result": {
+            "status": "timed_out",
+            "digest": "",
+            "cleanup_status": "verified"
+          },
+          "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+        },
+        {
+          "timeout_seconds": 0,
+          "seconds": 590.2817807180109,
+          "result": {
+            "status": "verified",
+            "digest": "sha256:eefb9182c76c2a508a3b2588a27fad16afe03773844ce19bac1200e431a1d63a",
+            "cleanup_status": "verified"
+          },
+          "source_sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+        }
+      ],
+      "admitted_pod_deadlines": [
+        1,
+        null
+      ],
+      "timeout_control_unscheduled": true,
+      "namespace_absence_verified": true,
+      "node_reported_canceled_layer_extraction": false,
+      "retained_inputs": [
+        {
+          "file": "probe-calls.private.json",
+          "sha256": "fbdaea4035852f97de16d60481898c6411bcd436edf03475a1e2ef50e05d4660"
+        },
+        {
+          "file": "events.private.json",
+          "sha256": "65e6ba4aa6d2ba932945deb298caf95cf37e8c9ee7152fb47b14cfdb7d270682"
+        },
+        {
+          "file": "cleanup.private.json",
+          "sha256": "04a71c58c81a5efc5b22400a2f5f6a8c5b841f428e3c7c87b8f996b933062d32"
+        },
+        {
+          "file": "pytest-live.private.log",
+          "sha256": "337141c5f8ac66953f030a9773bf504ceb5c0ddb911a274c578b496fdac59328"
+        },
+        {
+          "file": "source.json",
+          "sha256": "e1b2efe8fd67791a295d0643cbb3515a37f7e9373fe1c8d9012d79df709f6f6c"
+        },
+        {
+          "file": "live-start.private.json",
+          "sha256": "d4791b89b7818cd04bb4c3522103e5bb3d5be9ab9979fc4f64eba869f5a2151b"
+        }
+      ]
+    }
+  ],
+  "runtime_adaptation_report": "node-watchdog.json",
+  "limitations": [
+    "The initial 14.7 GB image extraction, its retry, and the 8.3 GB image extraction failed in the node runtime; all three are retained as failures.",
+    "The successful retry uses the original 14.7 GB image after the owned node containerd progress watchdog was changed from 5m0s to 0s and supported local image pull mode was selected. It may reuse partial cached layers; neither stock-default success nor an independently cold download is claimed.",
+    "The separate transfer-mode zero-timeout attempt stalled and was interrupted; it is retained without a successful pull verdict.",
+    "This verifies private container delivery on a CPU node, not a GPU, LeRobot or Cosmos workload.",
+    "Provider-reported image size is not a measurement of bytes transferred in either probe."
+  ],
+  "all_npa_production_source_matches_executed_commit": true
+}

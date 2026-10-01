@@ -1,0 +1,19 @@
+{
+  "source_commit": "f71b70f40c40503057b37f33a631214262090500",
+  "at": "2026-10-01T19:58:54.661577+00:00",
+  "positive_real_project_authority_read": true,
+  "real_nebius_process_forced_timeout_seconds": 0.001,
+  "owned_native_processes_started": 1,
+  "all_started_children_joined": true,
+  "original_journal_and_lease_byte_identical": true,
+  "both_recovery_locks_reacquired": true,
+  "synthetic_local_operation_only": true,
+  "cloud_mutations": false,
+  "absence_inferred": false,
+  "scope_limit": "The native Nebius CLI was started then deadline-killed. This does not assert that a slow server RPC was already in flight. Journal/lease records belong to an isolated synthetic local verifier control, never the active cluster operation.",
+  "module_sha256": {
+    "npa/src/npa/cluster/absence_process.py": "43264669783046d4d68133ab39dd7b22db0e6aae11b1f6096a607c81e4d83da4",
+    "npa/src/npa/cluster/absent_provider.py": "d4ab9c4b1d1a542014860a95defe4ec2eef5758cb5864a7d203b6e56997b5af9",
+    "npa/src/npa/cluster/absent_journal.py": "ed9b03347b40a2a4e21f60b0a025693cedab735b74ca1fa4695c409b6a9c8af7"
+  }
+}

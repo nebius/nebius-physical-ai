@@ -1,0 +1,59 @@
+{
+  "source_commit": "400606df0a904a93af297ef6dd3c0246155c4635",
+  "provider_source": "terraform-provider.storage.eu-north1.nebius.cloud/nebius/nebius",
+  "provider_version": "0.5.279",
+  "cases": [
+    {
+      "case": "positive",
+      "exit": 0,
+      "elapsed_seconds": 0.4686399460188113,
+      "deadline_exceeded": false,
+      "configured_receipt": {
+        "status": "configured",
+        "apply_timeout_minutes": 1,
+        "inserted_defaults": {
+          "auth_timeout": "1m",
+          "per_retry_timeout": "1m",
+          "timeout": "1m"
+        },
+        "preserved_operator_fields": [],
+        "source_sha256": {
+          "main.tf.json": "0ef6d624da9c104a2f0b87462bbeb5d78faf5171c84fee022dbe320acff8a60f"
+        },
+        "materialized_provider_sha256": "9e89124031692f474d9e5decfa60da9c2a860160845134a536be941e472b6520"
+      },
+      "stdout_sha256": "c5122e87501ee57be73dde867c998a76d55fa4a7f7210bcfa868ec11356f7e4e",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "case": "forced-deadline",
+      "exit": 1,
+      "elapsed_seconds": 0.23707471595844254,
+      "deadline_exceeded": true,
+      "configured_receipt": {
+        "status": "unchanged",
+        "apply_timeout_minutes": 1,
+        "inserted_defaults": {},
+        "preserved_operator_fields": [
+          "auth_timeout",
+          "per_retry_timeout",
+          "timeout"
+        ],
+        "source_sha256": {
+          "main.tf.json": "d908cc21f1e75f2291ca7a825b15117cd53ead7746a1cecaa3c9abe8436d5db8"
+        },
+        "materialized_provider_sha256": "d908cc21f1e75f2291ca7a825b15117cd53ead7746a1cecaa3c9abe8436d5db8"
+      },
+      "stdout_sha256": "be4c4bf3bcb5d969983d811abf2f92d49424c2e8c23f2e6ff97d0446b0da3285",
+      "stderr_sha256": "92c9a3e0c9865914c4b7e9cb3187393654f8e6b4fd813aa12e6a4e591b2fc1ed"
+    }
+  ],
+  "cloud_mutations": false,
+  "resources_declared": 0,
+  "data_source": "nebius_iam_v1_project",
+  "scope": "Actual native Terraform provider read-only data source with normal and forced SDK request deadline. A typed deadline failure proves configured provider request handling, not server-side receipt or an induced slow response. Uses same provider binary installed by the concurrent owned CPU recipe.",
+  "provider_binary_sha256": {
+    "terraform-provider-nebius_v0.5.279": "eb51c6b5b02c74975c97f2a851f3963d512ae44e6379f89470a94e3b9382f4b5"
+  },
+  "module_sha256": "09f8f18b4cb09e8393d39f263bae23cddd21acc96ca744ff646c39ba41f84ad1"
+}

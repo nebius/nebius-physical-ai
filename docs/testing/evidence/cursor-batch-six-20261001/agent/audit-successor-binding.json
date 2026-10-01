@@ -1,0 +1,86 @@
+{
+  "schema": "npa.agent.audit-fixture-source-binding.v1",
+  "final_head": "d3401036395b8094b7a374fa5ba8984a0a8d9d8a",
+  "live_producer": "7c0ef9e674eff689a123404b13bc21cd59d202c7",
+  "only_changed_paths": [
+    "npa/tests/scripts/test_audit_agent_capabilities.py"
+  ],
+  "all_production_and_script_bytes_identical_to_live_producer": true,
+  "dependency_files_unchanged": true,
+  "deployed_source_bindings": [
+    {
+      "path": "npa/src/npa/cli/agent.py",
+      "sha256": "ddc46951ca0a588a68a0aa8c0edbc7bbe0a180189b415ab3783e8240ece49b2b"
+    },
+    {
+      "path": "npa/src/npa/cli/agent_access_runtime.py",
+      "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+    },
+    {
+      "path": "npa/src/npa/cli/agent_chat.py",
+      "sha256": "3298728adbcafac40ce36769c3d0e5a4e58663e4059f376fe2467bc44cc72834"
+    },
+    {
+      "path": "npa/src/npa/cli/agent_env_files.py",
+      "sha256": "4229185b5f105e1db48cbed63b2c77372368fa1a4471b637b9bb50ce64f910ab"
+    },
+    {
+      "path": "npa/src/npa/cli/agent_resources.py",
+      "sha256": "cf9295d2d84419dbf9b867ae78a166dd197fdb380a2ad8bc519ff1889d4305f8"
+    },
+    {
+      "path": "npa/src/npa/cli/agent_workflow.py",
+      "sha256": "b7bdbaeee3b24620ce7a28ca888619e83d301e0e95a3d0aaff493b94b22369e8"
+    }
+  ],
+  "rendered_backend_sha256": "e9f34525d16c78c53747a99f4776b401823cbd97348dd723e7d9a15890c1e262",
+  "change": "Positive capability-audit fixture stages instance_metadata; real discovery helper must pin metadata selectors. Missing, unsupported and configured_profile provenance must refuse before provider calls.",
+  "final_audit": {
+    "passed": 10,
+    "failed": 0,
+    "seconds": 28.52
+  },
+  "precheck": {
+    "passed": 266,
+    "failed": 0,
+    "seconds": 13.83,
+    "ruff_version": "0.16.8",
+    "lint_format_and_dependency_lock_passed": true
+  },
+  "retained_prior_full_suite": {
+    "passed": 34869,
+    "failed": 1,
+    "skipped": 157,
+    "xpassed": 1,
+    "scope": "Predecessor combined integration; the sole capability-audit fixture failure is addressed here. No successor full-suite pass is claimed."
+  },
+  "retained_intermediate_focused_run": {
+    "passed": 110,
+    "failed": 1,
+    "skipped": 3,
+    "reason": "A newly added assertion required provider calls in an audit sandbox with no inventory scope. Removed only that new assertion; retained all existing route/capability checks and the separate real-helper positive control. Final audit passed."
+  },
+  "retained_exact_live": {
+    "linux_passed": 437,
+    "live_lifecycle_passed": 1,
+    "live_seconds": 375.68,
+    "owned_cleanup_verified": true,
+    "scope": "Actual execution at the recorded live producer; the successor changes tests only and was not redeployed."
+  },
+  "private_receipt_sha256": [
+    {
+      "name": "pr654-audit-final.log",
+      "sha256": "d9fc269a8515199ff18089cb433beddf460f539eedacc3e75f5db7a4dcb6a0ba"
+    },
+    {
+      "name": "pr654-audit-precheck.log",
+      "sha256": "0fd34d7dc2d4969a6058be7f4a44bd58644effed64ff1ccc45bb9d7ca5ba0419"
+    },
+    {
+      "name": "pr654-audit-focused.log",
+      "sha256": "dbd4c05ea0ec5b5831a75b5bcb321ff012619098eec875712c57487e3addc667"
+    }
+  ],
+  "final_combined_and_hosted_gates": "pending parent validation",
+  "publication_scope": "Prepared and checked locally; public readback is recorded separately."
+}

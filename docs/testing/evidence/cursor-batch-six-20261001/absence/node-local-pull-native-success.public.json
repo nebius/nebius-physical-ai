@@ -1,0 +1,21 @@
+{
+  "exact_owned_image_matched_privately": true,
+  "native_pull_completed": true,
+  "native_completion_messages": [
+    {
+      "time": "2026-10-01T21:21:49.761418+00:00",
+      "raw_line_sha256": "63bcf2563f4e8d776ff54df8a41d7f4221358449ff2a6b9dfc7e1452cb5f8c1e",
+      "watchdog_disabled": false,
+      "canceled": false,
+      "pull_complete": true,
+      "extract_failed": false
+    }
+  ],
+  "native_syslog_sha256": "35b886b6a911c645491b57b479b5ec643e6554ecce87233cd5f65c70673052a3",
+  "parent_committed_probe_success_reported_separately": true,
+  "parent_namespace_absence_verified": true,
+  "parent_cleanup_sha256": "04a71c58c81a5efc5b22400a2f5f6a8c5b841f428e3c7c87b8f996b933062d32",
+  "runtime_mode": "local image pull with progress watchdog0s on one owned ephemeral node",
+  "stock_default_success_claim": false,
+  "fully_cold_download_claim": false
+}

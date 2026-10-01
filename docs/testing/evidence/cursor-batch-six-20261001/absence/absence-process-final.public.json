@@ -1,0 +1,23 @@
+{
+  "source_commit": "400606df0a904a93af297ef6dd3c0246155c4635",
+  "module_sha256": {
+    "npa/src/npa/cluster/absence_process.py": "3d818063875472b1d36a0c81b494e886d9db02115f0d7bbbca9ac2a2b2e02706"
+  },
+  "linux_real_process_tests": 23,
+  "darwin_real_process_tests": 23,
+  "linux_log_sha256": "7bf8dca072a0c95decaacad13599b4354734d89bd14aee2b1a00a0336da38988",
+  "darwin_log_sha256": "63d913207200af5e5d825d7aec0323a74f99675fb1f0388f766f7c7f69db140f",
+  "darwin_producer": "3509dd9aa599884a5a03e6acf43b8b0ee5bd0189",
+  "darwin_to_final_formatting_only_ast_equal": true,
+  "affected_suites_passed": 191,
+  "affected_suites_producer": "b239de838e46e4f3b368e0a7b56c1c9cd470e531",
+  "affected_suites_to_final_formatting_only_ast_equal": true,
+  "affected_suites_log_sha256": "83fb0a483bb5fef9dd97c495a1184e9c4829a4adad5cab8e612673c8f4229965",
+  "ownership_guard_removal_rejected_by_real_external_reap_controls": 2,
+  "mutation_log_sha256": "80b1660017cf2703a70e444744f163ba5b253ed2c9595feab67aa11c79555552",
+  "scope": [
+    "Success, deadline, SIGINT and SIGTERM cleanup of actual descendants; nested reader group ownership; binary capture; output bound; external reaping before cleanup.",
+    "External ownership check fails closed; this does not synchronize with arbitrary competing waitpid/SIGCHLD handlers that could reap after the immediate ownership check.",
+    "No new GPU or VLM workload claim; full combined-tree and hosted CI results reported separately."
+  ]
+}

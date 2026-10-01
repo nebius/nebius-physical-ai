@@ -1,0 +1,20 @@
+{
+  "pr": 692,
+  "head": "222c90aade662f97eb20c0812239cd2e96d450de",
+  "original_job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36929302771/job/110594329085",
+  "original_conclusion": "cancelled",
+  "cause": "Existing five-minute job budget expired during setup-uv post-job cache cleanup after lint and 5719 tests passed;6 skipped.",
+  "source_changed_for_retry": false,
+  "retry_requested": true,
+  "retry_requested_at": "2026-10-01T21:58:29.543388+00:00",
+  "dependent_gate_failure": "security-regression rejected the cancelled precheck; all other component gates passed",
+  "private_log_sha256": {
+    "pr692-precheck-cancelled.private.log": "19ea56ef517f2cce75e117bcae619a2ea9d1fac80008c0a9b23fa2c36dc562d8",
+    "pr692-final-gate-first-attempt.private.log": "f4b14f0be1a099772147e5b0db4ea959c4cb132e228d3a023540e1da527192b1"
+  },
+  "retry_conclusion": "success",
+  "retry_job_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36929302771/job/110603885579",
+  "retry_completed_at": "2026-10-01T22:03:09Z",
+  "dependent_gate_retry_conclusion": "success",
+  "dependent_gate_retry_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36929302771/job/110605486760"
+}

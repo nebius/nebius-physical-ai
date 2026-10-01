@@ -1,0 +1,204 @@
+{
+  "schema": "npa.batch-six.local-validation.v1",
+  "base": "edf875d037cf68532c5e9597795cfb3e0bdff386",
+  "integration_commit": "d817ba9e911e4fe53d01709db6c881048bff0557",
+  "pr_heads": {
+    "652": "3c96e8dd068c9b9994f966794460be960e7a3b9d",
+    "653": "37c1f939533dc81f2e53a0b9206203f14fabd00c",
+    "654": "d3401036395b8094b7a374fa5ba8984a0a8d9d8a",
+    "659": "f82673f72323c797cce0f5ff4fafafc4b2ac279f",
+    "681": "441c11ddaca8e5990624313c175dd49e8185b2c9",
+    "683": "e5cfb4e40f75e9c0d5966d0f760585b53ba9e06b",
+    "686": "5291c09cd84489b6cff4e3f805a1a283d0c79c88",
+    "692": "222c90aade662f97eb20c0812239cd2e96d450de",
+    "709": "db247b50baa2e63992a7a5648cf0f486d14d1bcf",
+    "716": "b8fc146f2e8f932798dc3bb593e2361f570fd5fd"
+  },
+  "gates": [
+    {
+      "gate": "precheck",
+      "exit_code": 0,
+      "seconds": 2.88,
+      "counts": {
+        "passed": 266
+      },
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-precheck.log",
+      "retained_log_sha256": "b2b8be5137eb059da03e0aa6d27266be5b32a4aae546c72879a01149dd224f80"
+    },
+    {
+      "gate": "smoke",
+      "exit_code": 0,
+      "seconds": 9.37,
+      "counts": {
+        "passed": 118
+      },
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-smoke.log",
+      "retained_log_sha256": "6e1c71f72f91ae81b4f8658b10a81ceae4c7e9791a51747674d85b8785123079"
+    },
+    {
+      "gate": "guardrails",
+      "exit_code": 0,
+      "seconds": 56.44,
+      "counts": {
+        "passed": 5020,
+        "skipped": 1
+      },
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-guardrails.log",
+      "retained_log_sha256": "8b65898ab95f76e5379087f3307095d5733c47f27d3d6e869edf530ba626b638"
+    },
+    {
+      "gate": "affected",
+      "exit_code": 0,
+      "seconds": 318.34,
+      "counts": {
+        "passed": 2730,
+        "skipped": 10
+      },
+      "pytest_addopts": "",
+      "retained_log_file": "gate-affected.log",
+      "retained_log_sha256": "a32b8a031e14e78fd537fa0e28ea179d312f99de6aac88056be17ba3226c38cd"
+    },
+    {
+      "gate": "hostile",
+      "exit_code": 0,
+      "seconds": 128.24,
+      "counts": {
+        "passed": 883
+      },
+      "pytest_addopts": "",
+      "retained_log_file": "gate-hostile.log",
+      "retained_log_sha256": "7a07febc63e3fec478bc8722b4bfee2db1fed3cf96ae8fbd0ab4d444035d2469"
+    },
+    {
+      "gate": "full",
+      "exit_code": 0,
+      "seconds": 461.77,
+      "counts": {
+        "passed": 34929,
+        "skipped": 157,
+        "xpassed": 1
+      },
+      "pytest_addopts": "-n 8 --dist=worksteal",
+      "retained_log_file": "gate-full.log",
+      "retained_log_sha256": "2bb6e476047e19a2eeb1dbcb89a19f0c885e68a7fbdc8967c5ff6ec26b9bd6bd"
+    },
+    {
+      "gate": "docs",
+      "exit_code": 0,
+      "seconds": 87.24,
+      "counts": {},
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-docs.log",
+      "retained_log_sha256": "a838f8225d71c8fce892cd9149fa258e3492220dd19c5315b6813f2af913b086"
+    },
+    {
+      "gate": "confidentiality",
+      "exit_code": 0,
+      "seconds": 0.15,
+      "counts": {},
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-confidentiality.log",
+      "retained_log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+    }
+  ],
+  "attempts": [
+    {
+      "gate": "precheck",
+      "exit_code": 0,
+      "seconds": 2.88,
+      "counts": {
+        "passed": 266
+      },
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-precheck.log",
+      "retained_log_sha256": "b2b8be5137eb059da03e0aa6d27266be5b32a4aae546c72879a01149dd224f80"
+    },
+    {
+      "gate": "smoke",
+      "exit_code": 0,
+      "seconds": 9.37,
+      "counts": {
+        "passed": 118
+      },
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-smoke.log",
+      "retained_log_sha256": "6e1c71f72f91ae81b4f8658b10a81ceae4c7e9791a51747674d85b8785123079"
+    },
+    {
+      "gate": "guardrails",
+      "exit_code": 0,
+      "seconds": 56.44,
+      "counts": {
+        "passed": 5020,
+        "skipped": 1
+      },
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-guardrails.log",
+      "retained_log_sha256": "8b65898ab95f76e5379087f3307095d5733c47f27d3d6e869edf530ba626b638"
+    },
+    {
+      "gate": "affected",
+      "exit_code": 0,
+      "seconds": 318.34,
+      "counts": {
+        "passed": 2730,
+        "skipped": 10
+      },
+      "pytest_addopts": "",
+      "retained_log_file": "gate-affected.log",
+      "retained_log_sha256": "a32b8a031e14e78fd537fa0e28ea179d312f99de6aac88056be17ba3226c38cd"
+    },
+    {
+      "gate": "hostile",
+      "exit_code": 0,
+      "seconds": 128.24,
+      "counts": {
+        "passed": 883
+      },
+      "pytest_addopts": "",
+      "retained_log_file": "gate-hostile.log",
+      "retained_log_sha256": "7a07febc63e3fec478bc8722b4bfee2db1fed3cf96ae8fbd0ab4d444035d2469"
+    },
+    {
+      "gate": "full",
+      "exit_code": 0,
+      "seconds": 461.77,
+      "counts": {
+        "passed": 34929,
+        "skipped": 157,
+        "xpassed": 1
+      },
+      "pytest_addopts": "-n 8 --dist=worksteal",
+      "retained_log_file": "gate-full.log",
+      "retained_log_sha256": "2bb6e476047e19a2eeb1dbcb89a19f0c885e68a7fbdc8967c5ff6ec26b9bd6bd"
+    },
+    {
+      "gate": "docs",
+      "exit_code": 0,
+      "seconds": 87.24,
+      "counts": {},
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-docs.log",
+      "retained_log_sha256": "a838f8225d71c8fce892cd9149fa258e3492220dd19c5315b6813f2af913b086"
+    },
+    {
+      "gate": "confidentiality",
+      "exit_code": 0,
+      "seconds": 0.15,
+      "counts": {},
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-confidentiality.log",
+      "retained_log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+    }
+  ],
+  "all_latest_gates_passed": true,
+  "unsuccessful_attempts_retained": [],
+  "limitations": [
+    "The local full suite is not the hosted coverage/browser/interpreter matrix.",
+    "Live CPU, provider, private pull and scanner proofs are recorded separately.",
+    "No GPU or VLM execution is attributed to this control-plane validation."
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "tested_batch_integration": "d817ba9e911e4fe53d01709db6c881048bff0557",
+  "full_suite_base": "edf875d037cf68532c5e9597795cfb3e0bdff386",
+  "later_main": "a60aa8681e2f8bacc0c8bd429cf5535f5e6cbc56",
+  "upstream_pr": 837,
+  "combined_index_tree": "0e7a15c8c511aa7dfd71b10b778f987455022a94",
+  "clean_merge": true,
+  "changed_paths": [
+    ".github/workflows/security-regression.yml",
+    ".github/workflows/test.yml",
+    "CONTRIBUTING.md",
+    "npa/scripts/ci_install_ffmpeg.sh",
+    "npa/tests/guardrails/test_ci_media_setup.py",
+    "npa/tests/guardrails/test_ci_workflows.py",
+    "skills/atomic/guardrail-failures/SKILL.md"
+  ],
+  "runtime_source_unchanged": true,
+  "tests": {
+    "passed": 70,
+    "failed": 0,
+    "platform": "Darwin",
+    "files": [
+      "npa/tests/guardrails/test_ci_media_setup.py",
+      "npa/tests/guardrails/test_ci_workflows.py"
+    ]
+  },
+  "private_test_log_sha256": "bc9bc6b92acd869056eefa5d9245f87795a42b593c304ae4d13749e056f6676a",
+  "scope": "CI installer, workflow-budget and documentation changes only. The70 checks cover the combined later-main tree. The34929-test full suite remains attributed to its original d817 commit and edf875 base; no full-suite rerun on this later tree is claimed. Queue checks still validate the final merge candidate."
+}

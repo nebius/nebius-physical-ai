@@ -1,0 +1,86 @@
+{
+  "status": "ready_for_merge_queue",
+  "base_commit": "5a84f305b95ee29933f49eb4b94a40f68be9eca8",
+  "integration_commit": "c47d1aec50042c74b8b8edb076374d1636df2f52",
+  "pull_requests": [
+    {
+      "number": 652,
+      "head": "3c96e8dd068c9b9994f966794460be960e7a3b9d",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/652",
+      "scope": "Ambiguous Kubernetes readiness"
+    },
+    {
+      "number": 653,
+      "head": "37c1f939533dc81f2e53a0b9206203f14fabd00c",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/653",
+      "scope": "Durable diagnostic redaction"
+    },
+    {
+      "number": 654,
+      "head": "d3401036395b8094b7a374fa5ba8984a0a8d9d8a",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/654",
+      "scope": "Agent identity and inventory"
+    },
+    {
+      "number": 659,
+      "head": "f82673f72323c797cce0f5ff4fafafc4b2ac279f",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/659",
+      "scope": "Nebius storage with Kubernetes execution"
+    },
+    {
+      "number": 681,
+      "head": "441c11ddaca8e5990624313c175dd49e8185b2c9",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/681",
+      "scope": "Complete image-byte scanning"
+    },
+    {
+      "number": 683,
+      "head": "e5cfb4e40f75e9c0d5966d0f760585b53ba9e06b",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/683",
+      "scope": "Kubernetes image-pull authority"
+    },
+    {
+      "number": 686,
+      "head": "49dc46dd51b5971dd0fd5d2ad477baf529874e94",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/686",
+      "scope": "BYOF image-layer SSH keys"
+    },
+    {
+      "number": 692,
+      "head": "222c90aade662f97eb20c0812239cd2e96d450de",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/692",
+      "scope": "Native provider RPC deadlines"
+    },
+    {
+      "number": 709,
+      "head": "db247b50baa2e63992a7a5648cf0f486d14d1bcf",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/709",
+      "scope": "Owned MK8s absence recovery"
+    },
+    {
+      "number": 716,
+      "head": "b8fc146f2e8f932798dc3bb593e2361f570fd5fd",
+      "url": "https://github.com/nebius/nebius-physical-ai/pull/716",
+      "scope": "SkyPilot absence reconciliation"
+    }
+  ],
+  "merge_ready": true,
+  "merge_order": [
+    652,
+    653,
+    654,
+    659,
+    681,
+    683,
+    686,
+    692,
+    709,
+    716
+  ],
+  "dependency_order": [
+    692,
+    709,
+    716
+  ],
+  "hosted_ci_at": "2026-10-01T22:12:07.692931+00:00"
+}

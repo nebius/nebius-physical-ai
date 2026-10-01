@@ -1,0 +1,100 @@
+{
+  "schema": "npa.batch-six.independent-review-closure.v1",
+  "integration_commit": "c47d1aec50042c74b8b8edb076374d1636df2f52",
+  "pr_heads": {
+    "652": "3c96e8dd068c9b9994f966794460be960e7a3b9d",
+    "653": "37c1f939533dc81f2e53a0b9206203f14fabd00c",
+    "654": "d3401036395b8094b7a374fa5ba8984a0a8d9d8a",
+    "659": "f82673f72323c797cce0f5ff4fafafc4b2ac279f",
+    "681": "441c11ddaca8e5990624313c175dd49e8185b2c9",
+    "683": "e5cfb4e40f75e9c0d5966d0f760585b53ba9e06b",
+    "686": "49dc46dd51b5971dd0fd5d2ad477baf529874e94",
+    "692": "222c90aade662f97eb20c0812239cd2e96d450de",
+    "709": "db247b50baa2e63992a7a5648cf0f486d14d1bcf",
+    "716": "b8fc146f2e8f932798dc3bb593e2361f570fd5fd"
+  },
+  "unresolved_confirmed_blockers": 0,
+  "code_review_closed": true,
+  "human_github_approval": false,
+  "review_receipts": [
+    {
+      "receipt": "claude-review.json",
+      "retained_private_sha256": "859e9b1d0977fcc31bfa2a230dff9211e1b54c268442688938bf744a2d2bd713",
+      "completed": true
+    },
+    {
+      "receipt": "claude-control-review.json",
+      "retained_private_sha256": "520e3ad7b9b8d4b45a2e8a438a7a51c3824702afaeef482eee48e49cb72d0bf8",
+      "completed": true
+    },
+    {
+      "receipt": "claude-delta-review.json",
+      "retained_private_sha256": "bbdbe9cc035eb700a6d4371773dcb610a78d693eeb4dd538849423088d8d87c1",
+      "completed": true
+    },
+    {
+      "receipt": "claude-final-control-review.json",
+      "retained_private_sha256": "bba29293d19150406e3554a0ca276587ed16669380924c2b5470ed5977652a6b",
+      "completed": true
+    },
+    {
+      "receipt": "claude-final-delta.json",
+      "retained_private_sha256": "c80b830a80d11380b438c84301f359faeec60422ee695a390a905595d5a32baa",
+      "completed": true
+    }
+  ],
+  "reviewed_scopes": [
+    {
+      "scope": "Original ten-PR findings",
+      "result": "Implemented and reviewed; existing no-change fixes retained with exact evidence scope."
+    },
+    {
+      "scope": "Scanner memory handling and storage diagnostic credential rejection",
+      "result": "Independent Claude delta review approved; native pressure and mutation evidence are separate receipts."
+    },
+    {
+      "scope": "Provider advisory parser, symlink ancestry, mode preservation and operator settings",
+      "result": "Final control review ready at exact222c90a head; direct native provider evidence separately recorded."
+    },
+    {
+      "scope": "Agent inventory unavailable and verified-empty GPU selection",
+      "result": "Final control review conditioned readiness on7c0ef9e; that commit is included and the separate final delta review approves it. d340 successor changes only audit tests; root independently inspected its diff and audit controls passed."
+    },
+    {
+      "scope": "Absence process identity, descendant containment and SkyPilot naming",
+      "result": "Final control review ready. External-reaper guard3509dd9 is included and separately approved; final source/AST binding and real Linux/Darwin controls recorded separately."
+    },
+    {
+      "scope": "Pull deadline and documentation",
+      "result": "Code delta review approved. Live pull, node adaptations and cleanup are independently recorded; code review alone does not qualify them."
+    }
+  ],
+  "nonblocking_followups": [
+    "Darwin child exit before kqueue registration can fail closed; direct120-run probe did not reproduce it without injected delay.",
+    "Unverifiable process ownership refuses signaling; support for arbitrary competing reapers remains outside the synchronization contract.",
+    "Some diagnostic wording, private helper boundaries and additional fallback tests remain review nits."
+  ],
+  "limitations": [
+    "AI source reviews are not a second human GitHub approval and do not replace hosted CI.",
+    "The final control reviewer inspected pinned predecessor ranges after worktree drift. Separately reviewed successors and recorded byte/AST bindings close the gaps; old review results are not relabeled as final-head runs.",
+    "The reviewer executed Darwin controls but lacked the Linux and installed-Sky environments. Separate actual Linux and pinned-wheel receipts supply those checks.",
+    "A redundant151-test rendered-backend review run remained incomplete at reporting; no passing result is claimed for it. The complete combined Linux suite is the authoritative suite record.",
+    "Earlier independent reviews retain their actual reviewed revisions. The v10 binding is a root source comparison and review, not a claim that earlier reviewers executed v10."
+  ],
+  "successor_binding": {
+    "prior_integration_commit": "d817ba9e911e4fe53d01709db6c881048bff0557",
+    "prior_review_closure_sha256": "ea811334903bfcf07166fe57c2e663dc9f16d5f77f90b6f83c1bbefdf9dd0784",
+    "pr686_previous_head": "5291c09cd84489b6cff4e3f805a1a283d0c79c88",
+    "pr686_final_head": "49dc46dd51b5971dd0fd5d2ad477baf529874e94",
+    "pr686_changed_paths": [
+      "CHANGELOG.md"
+    ],
+    "all_other_pr_heads_unchanged": true,
+    "upstream_only_runtime_changes": [
+      "npa/src/npa/agent_backend/trajectory.py",
+      "npa/src/npa/workbench/lerobot/policy_container.py"
+    ],
+    "upstream_runtime_bytes_match_new_main": true,
+    "root_review": "Inspected the release-note relocation and both small upstream strict-boolean changes. All original PR runtime fixes remain unchanged; the current-main combined suite and security comparison are newly executed and recorded separately."
+  }
+}

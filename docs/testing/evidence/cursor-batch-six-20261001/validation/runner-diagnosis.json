@@ -1,0 +1,165 @@
+{
+  "schema": "npa.xdist-runner-diagnosis.v1",
+  "source_commit": "66328ba29e5641061ebe1f6a9a451bc2209ae81c",
+  "diagnosis": "Owned-checkout permission refusal during collection, masked by the installed xdist worker-finish error path.",
+  "original_gate_attempts": [
+    {
+      "attempt": 1,
+      "distribution": "worksteal",
+      "result": "internal error: no active workers",
+      "full_suite_pass": false
+    },
+    {
+      "attempt": 2,
+      "distribution": "load",
+      "result": "internal error: pending test after workerfinished",
+      "full_suite_pass": false
+    },
+    {
+      "attempt": 3,
+      "distribution": "serial",
+      "result": "UsageError: checkout root 0775 and policy file 0664 are untrusted scanner inputs",
+      "full_suite_pass": false
+    }
+  ],
+  "independently_verified_guard": {
+    "guard_source_sha256": "cca545dac6b6e099f17214d0e25056a3d5567e3e7d8edb618341cb5941ac34aa",
+    "root_0775_and_policy_0664_detected": true,
+    "repository_collection_hook_raises_usageerror": true,
+    "same_owned_fixture_0755_and_0644_passes": true,
+    "repository_or_shared_environment_modified": false
+  },
+  "installed_versions": {
+    "pytest": "9.1.1",
+    "pytest_xdist": "3.8.0"
+  },
+  "installed_source_sha256": {
+    "_pytest.main": "8ee2725057ff1811e2ae9ebdf1befb7518195f8f333f9f8ca024d76a4b80780e",
+    "xdist.dsession": "1b78c9e7efe0a1884048e075608fffac56c2c8c5a8e3f9e6a96d9f5137bb387e",
+    "xdist.remote": "86d2f8132b3ef7e190f622c2b3cfd83cde464a4dd07ccd75486b27b161336b3d"
+  },
+  "mechanism": [
+    "The repository collection hook detects selected scanner tests and raises UsageError for group- or other-writable trusted inputs.",
+    "Pytest still calls collection_finish in its finally block, so xdist receives collected item IDs even though collection subsequently exits with usage-error status 4.",
+    "Worker sessionfinish emits workerfinished with exitstatus 4 and no shouldfail/shouldstop marker; no runtestloop is entered.",
+    "The installed controller handles status 2 specially but otherwise removes that node from scheduling. Pending items trigger its crashitem assertion; draining active nodes before scheduling produces the no-active-workers alternative."
+  ],
+  "minimal_external_fixture": {
+    "cases": [
+      {
+        "case": "serial-refusal",
+        "exit_code": 4
+      },
+      {
+        "case": "load-refusal",
+        "exit_code": 3
+      },
+      {
+        "case": "worksteal-refusal",
+        "exit_code": 3
+      },
+      {
+        "case": "load-positive",
+        "exit_code": 0
+      }
+    ],
+    "two_worker_refusal_exitstatuses": [
+      4,
+      4
+    ],
+    "serial_exposes_original_usage_error": true,
+    "both_parallel_refusals_reproduced_pending_test_assertion": true,
+    "original_worksteal_no_active_variant_supported_by_source_trace": true,
+    "positive_parallel_control_passed": true
+  },
+  "separate_collection_probe": {
+    "passed_selected_tests": 1,
+    "scope": "Whole-tree collection with a diagnostic selector retaining only the first item; this is not a full-suite result or permission-fix proof because root was independently correcting permissions."
+  },
+  "repair_scope": "Correct only task-owned checkout permissions and rerun the ordinary gate; leave the trusted-input check and shared dependencies unchanged.",
+  "repository_and_shared_venv_modified_by_diagnostician": false,
+  "owned_diagnostic_namespace_descendants_reaped": true,
+  "remaining_scope": "The ordinary full-suite rerun and its terminal result are parent-owned. This diagnosis makes no merge-readiness or full-suite-pass claim.",
+  "private_receipt_sha256": [
+    {
+      "name": "diagnostic.log",
+      "sha256": "fb3b0f009e7af39fddd61c9c3e925b053a9388273f96d31a10e31dbb2b7f1ab6"
+    },
+    {
+      "name": "gate-full-attempt-1.log",
+      "sha256": "4000c4c5097fc21c10addbdbc7cb62a4c6dae8dae2ef4064977345253f48cba2"
+    },
+    {
+      "name": "gate-full-attempt-2.log",
+      "sha256": "a5ec1d4555d404a8832a9012853a4656e1c38b201a2baef1e1fb7a5f8837b793"
+    },
+    {
+      "name": "gate-full-attempt-3.log",
+      "sha256": "a031b1ebef9cc0fc440266a6063087eaa523c07a64e680af4007930d7ce80b90"
+    },
+    {
+      "name": "load-positive/controller.jsonl",
+      "sha256": "d246446b3595a145c881c14972f31ff3510fcb1353d34b4a2d7cd75fd5814c1a"
+    },
+    {
+      "name": "load-positive/gw0.jsonl",
+      "sha256": "3324c3ae7eb8f112901533ed06a1498f664e4f0d0e37b338de7c2f4311140da1"
+    },
+    {
+      "name": "load-positive/gw1.jsonl",
+      "sha256": "cc3905690d4db197fd5bc2f5a08a9e4c79f667d066195152c69bef548f98468c"
+    },
+    {
+      "name": "load-positive/pytest.log",
+      "sha256": "dea389beef7f24932ee4716207c0d50e37b0df89ae5b1af4de141c42cffd1ef6"
+    },
+    {
+      "name": "load-refusal/controller.jsonl",
+      "sha256": "3d9fcb98348bf5d2259c38d065ba1acf745601f4dbc43d785ee807650b9671e1"
+    },
+    {
+      "name": "load-refusal/gw0.jsonl",
+      "sha256": "aece7ab3eca36c66d655ece607361a2a77b70a4efa78856ea00414399e1425f8"
+    },
+    {
+      "name": "load-refusal/gw1.jsonl",
+      "sha256": "6927cf4b33fc0ca81975efb2accdeab9bb7ecd1f99a5adcb62bd8f4c87503796"
+    },
+    {
+      "name": "load-refusal/pytest.log",
+      "sha256": "87170598383961700a9487650a459e158325cc9358d4beda44152ee49d37ff0b"
+    },
+    {
+      "name": "minimal-results.json",
+      "sha256": "ea2d94ca4ca20e044e1e30cd13422e786d0f6f8fd2beb5010f4a17f2a15058d8"
+    },
+    {
+      "name": "permission-guard-result.json",
+      "sha256": "f28746a84b0bac9888238a3a6616c5ab9e03a073072d4905b8fbec7db701f2cd"
+    },
+    {
+      "name": "serial-refusal/controller.jsonl",
+      "sha256": "15c862218809e7e4230dc0097f64785484ea1f1017121da704e32b4b342beedb"
+    },
+    {
+      "name": "serial-refusal/pytest.log",
+      "sha256": "00b6a1eb5483bd7373d410809799ddba5e8952e691e14b9021b0249bb8771a40"
+    },
+    {
+      "name": "worksteal-refusal/controller.jsonl",
+      "sha256": "3d9fcb98348bf5d2259c38d065ba1acf745601f4dbc43d785ee807650b9671e1"
+    },
+    {
+      "name": "worksteal-refusal/gw0.jsonl",
+      "sha256": "80ac402d6a6715aed7946b836ba440749c238d0c01d15ac8144a84ddeb5f3c6e"
+    },
+    {
+      "name": "worksteal-refusal/gw1.jsonl",
+      "sha256": "df92c5df1848c061d78d652192a6d8ac6eb9b1f57931bcb81d783500c53a57ec"
+    },
+    {
+      "name": "worksteal-refusal/pytest.log",
+      "sha256": "87170598383961700a9487650a459e158325cc9358d4beda44152ee49d37ff0b"
+    }
+  ]
+}

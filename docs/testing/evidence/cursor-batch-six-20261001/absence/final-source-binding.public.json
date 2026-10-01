@@ -1,0 +1,17 @@
+{
+  "final_pr716_head": "b8fc146f2e8f932798dc3bb593e2361f570fd5fd",
+  "live_and_native_producer": "400606df0a904a93af297ef6dd3c0246155c4635",
+  "only_changed_files": [
+    "skills/atomic/guardrail-failures/SKILL.md"
+  ],
+  "all_listed_production_and_native_guardrail_files_byte_identical": true,
+  "module_sha256": {
+    "npa/src/npa/cluster_backends/provider_rpc.py": "09f8f18b4cb09e8393d39f263bae23cddd21acc96ca744ff646c39ba41f84ad1",
+    "npa/src/npa/cluster/absence_process.py": "3d818063875472b1d36a0c81b494e886d9db02115f0d7bbbca9ac2a2b2e02706",
+    "npa/src/npa/cluster/absent_provider.py": "d4ab9c4b1d1a542014860a95defe4ec2eef5758cb5864a7d203b6e56997b5af9",
+    "npa/src/npa/cluster/absent_journal.py": "ed9b03347b40a2a4e21f60b0a025693cedab735b74ca1fa4695c409b6a9c8af7",
+    "npa/src/npa/orchestration/skypilot/absence_naming_contract.py": "3dab5af9fda1faf376044cbdde5097bc0d9bfa8aaea41d3b4e9e3917d5044f1e",
+    "npa/src/npa/orchestration/skypilot/absence_evidence.py": "35468999fc10f7d7647977754b82e84b2d6455465ca408a37fa1ab7cde6da8d8",
+    "npa/tests/guardrails/test_skypilot_absence_contract.py": "d49eb65c6e2319997ccefe763e6ec7b6a5d2d955fdc79503fb10884045c97f97"
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "integration_commit": "c47d1aec50042c74b8b8edb076374d1636df2f52",
+  "tested_scanner_commit": "441c11ddaca8e5990624313c175dd49e8185b2c9",
+  "source_files": 34,
+  "byte_mismatches": [],
+  "native_report_sha256": "31a3ffbd21fa4f4a0b95e54532a8d49ba684638cd08c818a509f5976656308ed"
+}

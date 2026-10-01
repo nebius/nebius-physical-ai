@@ -1,0 +1,330 @@
+{
+  "scope": "Task-owned CPU node investigation for the private image pull evidence. No PR production source was changed by this node operation.",
+  "diagnostic": {
+    "exact_owned_image_matched_privately": true,
+    "events": [
+      {
+        "attempt": "first",
+        "event_count": 1,
+        "event_times": [
+          "2026-10-01T20:22:37Z"
+        ],
+        "raw_events_sha256": "b7305b968fd4200f395be742b2827b3d2eb5ba8e37d81ad5cdb89dca562d04a7"
+      },
+      {
+        "attempt": "retry",
+        "event_count": 1,
+        "event_times": [
+          "2026-10-01T20:34:56Z"
+        ],
+        "raw_events_sha256": "4aa368bef41de912ea42432f230968e1cba5c14e62f0c65cd529807896f981e9"
+      }
+    ],
+    "matched_runtime_log_timeline": [
+      {
+        "time": "2026-10-01T20:22:34.921536+00:00",
+        "reason": "watchdog_cancel",
+        "raw_line_sha256": "3945ecfbb3e2c0db367555d7076ebb1598165e234f580be5f02496c5b4ba0efe",
+        "no_progress_window": "5m0s"
+      },
+      {
+        "time": "2026-10-01T20:22:34.921611+00:00",
+        "reason": "stopped_pull",
+        "raw_line_sha256": "11cefe63d492a91e142629bdc36b3be7c00615e7f50408381005eef2a8b4accb",
+        "active_requests": 1,
+        "bytes_read": 14683357052
+      },
+      {
+        "time": "2026-10-01T20:22:37.471685+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "39cf787d926c30152fd891e1e532d7fb6a294643fa012625e2ee4b1b20e432a5"
+      },
+      {
+        "time": "2026-10-01T20:22:37.544135+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "40a821f532baf1004c276dbeec5a8032734fbc74f30d4dfa8d24bf1e5f7fb9d4"
+      },
+      {
+        "time": "2026-10-01T20:22:37.545873+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "4032a2eb1b6fbdb3f1ee0412dbaf200dc1058da6852153eed18451f867bb8fe8"
+      },
+      {
+        "time": "2026-10-01T20:22:37.545940+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "7ce41a09cd7ecceacff7c82a7b91c9083b8452186374ceaaea16f1cb92eb4627"
+      },
+      {
+        "time": "2026-10-01T20:22:37.817727+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "9ce3cb3e9cd10d0c0872e55c13dac464f209111f84101a011a486566c3703612"
+      },
+      {
+        "time": "2026-10-01T20:34:54.805054+00:00",
+        "reason": "watchdog_cancel",
+        "raw_line_sha256": "5a6bc21da24130cef17799d42cf4fea5838a4ed54b0e1e741e5ccb57442d3e3d",
+        "no_progress_window": "5m0s"
+      },
+      {
+        "time": "2026-10-01T20:34:54.805152+00:00",
+        "reason": "stopped_pull",
+        "raw_line_sha256": "36b91e49f4f0c59494945d6dd70b8668b7cfbf75fa7e1747ba0ad962dc4453b8",
+        "active_requests": 1,
+        "bytes_read": 14692992069
+      },
+      {
+        "time": "2026-10-01T20:34:56.086929+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "eeafe95b3f3ff89f8d3ee1f04dfa6b125949ff4814966ec85eb36f2f544358fe"
+      },
+      {
+        "time": "2026-10-01T20:34:56.120045+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "b40dc1dbcaed4aa2a182b5d53ecc38f9a26fad0955dcd1ed8f1f65d2ee6cb1c1"
+      },
+      {
+        "time": "2026-10-01T20:34:56.131122+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "45a32c8769cdb8654b8acb3744c4e9b1073953ab6b21cc62bf7658e1c91b6706"
+      },
+      {
+        "time": "2026-10-01T20:34:56.216363+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "e135dd1f83d9133fa8077c9855585685361e14a5f55251df46e5d276d659b75e"
+      },
+      {
+        "time": "2026-10-01T20:34:57.242740+00:00",
+        "reason": "extract_failed",
+        "raw_line_sha256": "7d06d4117d34b77be2efe95540653e4d378503203a36f6aacaf0a3295cd8581a"
+      }
+    ],
+    "confirmed": "containerd canceled this image pull after its five-minute no-progress watchdog expired",
+    "not_established": "The exact upstream progress-accounting race is plausible but not proven by these logs. Active requests do not alone establish whether the network request was stalled or the counter was stale.",
+    "mutations": false
+  },
+  "adjustment": {
+    "verified_at": "2026-10-01T20:56:24.667938+00:00",
+    "exact_owned_node_uid_and_machine_matched": true,
+    "node_count": 1,
+    "unrelated_nodes_changed": 0,
+    "debug_image_already_cached": true,
+    "main_config_unchanged": true,
+    "main_config_sha256": "7042d96f7477a8eff941a0f5ffa1d87c7185af2649b1b71f835b001a16138e83",
+    "override_sha256": "b277311688cdeb0cdffce9fc7ce3710ce6d73c1a3e84d88edcb7709cc816bef5",
+    "effective_before_sha256": "6cceececcd560c9b0dbb22d0a69be951ed27bdd01fd95c56275f704b47f67bec",
+    "effective_after_sha256": "36d65a08711cdc88c0c4998b038a7ac35ae0a63438ddb45472197193a44114eb",
+    "only_effective_field_changed": "plugins.io.containerd.cri.v1.images.image_pull_progress_timeout",
+    "before": "5m0s",
+    "after": "0s",
+    "runtime_pid_changed": true,
+    "runtime_active": true,
+    "runtime_ready": true,
+    "network_ready": true,
+    "kubernetes_node_ready": true,
+    "restart_closed_original_exec_stream": true,
+    "independent_postrestart_readback_passed": true,
+    "stock_runtime_default_success_claim": false,
+    "cleanup": "Debug Pod and namespace verified absent. The task-owned node and override remain for private image retry, then owned cluster teardown.",
+    "debug_pod_uid_fenced_deletion_verified": true,
+    "debug_namespace_uid_fenced_deletion_verified": true,
+    "debug_cleanup_completed_at": "2026-10-01T20:57:14.300023+00:00",
+    "raw_private_sha256": {
+      "nodes.private.json": "12e079d67b13e25a13e24d96dcf167e56306865db679162761f1ae950fd5500b",
+      "syslog.private.log": "3514848d6c2510f18bc972ecd11876a4dd5979eacedc1b67554a831a3db2bfe8",
+      "kern.log.private.log": "45015fb25eb72f9a367f331b8c91e9357993685bb56cf6f8143c8f51cc5a5ccb",
+      "debug-host-read.private.json": "3c1bf4aa9ba35554304b8606d177632d90f0fbdc1602c0e9521d53c469f2c166",
+      "effective-before.private.json": "41bf677d9750c54926d1635bda57b630a2d8041001fe07115082d10dc483a2a7",
+      "adaptation-intent.private.json": "c79bdbc035768ee0a545d32ec7cd8233f61cc54925caa72383e4559034dda419",
+      "adaptation-result.private.json": "ba5193e3850ba5dbbe300edf42189ee99a1bd4dd8798c8b2374113cc2d8c72ab",
+      "postrestart-read.private.json": "5bd82d4e2462536f183acd5a3ee5b4f6e03d48ac3817e1d959c99b23e36eace3",
+      "debug-owned.private.json": "a58070e926a6a178215c38c077d6688650efd4467844fcf012cd135c4e595c23"
+    },
+    "effective_comparison_ignores_import_file_enumeration": true,
+    "upstream_zero_timeout_source": "https://github.com/containerd/containerd/blob/v2.3.3/internal/cri/server/images/image_pull.go#L919-L923",
+    "supported_node_debug_procedure": "https://kubernetes.io/docs/tasks/debug/debug-cluster/kubectl-node-debug/",
+    "pull_success_not_yet_claimed": true,
+    "subsequent_pull_may_reuse_partial_cached_layers": true
+  },
+  "limitations": [
+    "The exact upstream progress-accounting race is not proven. Actual native logs prove the five-minute runtime watchdog canceled the two matching pulls.",
+    "The tuned retry uses an explicit node-local runtime adaptation and may reuse partially cached layers. No stock-default success or fully fresh cold download is claimed.",
+    "Private pull result and final owned node/boot-disk cleanup are recorded separately by the operation owners.",
+    "The zero-timeout transfer-mode attempt stalled and was interrupted with verified namespace cleanup. Native logs subsequently confirm local-mode pull completion; root committed probe results are separately reported."
+  ],
+  "privacy": "Only generic roles, timings, counts and content hashes. Exact node, image, namespace, machine and provider identities remain in private evidence.",
+  "running_daemon_confirmation": {
+    "checked_at": "2026-10-01T21:01:14.522198+00:00",
+    "exact_owned_image_matched_privately": true,
+    "native_running_daemon_zero_watchdog_message_count": 1,
+    "matched_messages": [
+      {
+        "time": "2026-10-01T20:58:04.353821+00:00",
+        "raw_line_sha256": "832ecfb0714121942cd32b6258b900abf7a19726130afc4a3e7491d7b31f950f"
+      }
+    ],
+    "raw_syslog_sha256": "e616649976187c3e4c19460e4e9067658e87f174a2feaa3e621786901becf39c",
+    "read_only": true
+  },
+  "zero_timeout_transfer_stall": {
+    "runtime_mode": "transfer service, progress timeout0s",
+    "outcome": "Stalled attempt deliberately interrupted after idle metrics and source inspection; no image-pull success is claimed.",
+    "samples": [
+      {
+        "time": "2026-10-01T21:04:41Z",
+        "cpu_core_nanoseconds": 1096828341000,
+        "filesystem_used_bytes": 10848624640,
+        "filesystem_inodes_used": 177254,
+        "image_filesystem_used_bytes": 3427680256,
+        "image_filesystem_inodes_used": 39102,
+        "network_rx_bytes": 39011874896,
+        "network_tx_bytes": 90184683,
+        "raw_summary_sha256": "62593c85ab687897e17a53f2b4fb0406a8aad2d35eafee8968922568a1565584"
+      },
+      {
+        "time": "2026-10-01T21:05:41Z",
+        "cpu_core_nanoseconds": 1102464598000,
+        "filesystem_used_bytes": 10848849920,
+        "filesystem_inodes_used": 177254,
+        "image_filesystem_used_bytes": 3427680256,
+        "image_filesystem_inodes_used": 39102,
+        "network_rx_bytes": 39013616434,
+        "network_tx_bytes": 93931284,
+        "raw_summary_sha256": "49d809bbf30afcc69d31a5d3fe6cfdd6a8bce20a04477e544915b88f6d327fec"
+      }
+    ],
+    "delta": {
+      "cpu_core_nanoseconds": 5636257000,
+      "filesystem_used_bytes": 225280,
+      "filesystem_inodes_used": 0,
+      "image_filesystem_used_bytes": 0,
+      "image_filesystem_inodes_used": 0,
+      "network_rx_bytes": 1741538,
+      "network_tx_bytes": 3746601
+    },
+    "interpretation": "No image filesystem growth or new image inodes in the sample; near-idle CPU and small aggregate traffic, which includes diagnostic reads. This is not evidence of active layer unpacking.",
+    "source_inference": "In v2.3.3 transfer mode, timeout0 skips the reporter goroutine while Transfer still receives a progress callback that sends to its unbuffered channel. That callback can block without a consumer. A native goroutine dump was not collected.",
+    "source_links": [
+      "https://github.com/containerd/containerd/blob/v2.3.3/internal/cri/server/images/image_pull.go#L278-L302",
+      "https://github.com/containerd/containerd/blob/v2.3.3/internal/cri/server/images/image_pull.go#L859-L865",
+      "https://github.com/containerd/containerd/blob/v2.3.3/internal/cri/server/images/image_pull.go#L919-L942",
+      "https://github.com/containerd/containerd/blob/v2.3.3/internal/cri/server/images/image_pull.go#L978-L984"
+    ],
+    "root_stop_receipt_sha256": "a0670c83ae2b52949e660e982456c3d1e658073238f8b46222c6a27ac1c0aca8",
+    "root_cleanup_receipt_sha256": "baf0cce8bee5d3456a5a140f00949c87a53301f263813e0109c737c4f90ff7a8",
+    "following_adaptation_requires_local_pull_mode": true,
+    "root_recorded_namespace_uid": true,
+    "root_namespace_absence_verified": true,
+    "diagnostic_sample_seconds": 60,
+    "average_node_cpu_cores": 0.09393761666666667
+  },
+  "second_adaptation": {
+    "verified_at": "2026-10-01T21:11:22.817308+00:00",
+    "exact_owned_node_uid_and_machine_matched": true,
+    "node_count": 1,
+    "unrelated_nodes_changed": 0,
+    "debug_image_already_cached": true,
+    "main_config_unchanged": true,
+    "main_config_sha256": "7042d96f7477a8eff941a0f5ffa1d87c7185af2649b1b71f835b001a16138e83",
+    "override_sha256": "d52339924b23713cc194513d975d720c990a8e90ba882cdde22f3190cc05b34e",
+    "effective_before_sha256": "36d65a08711cdc88c0c4998b038a7ac35ae0a63438ddb45472197193a44114eb",
+    "effective_after_sha256": "f8f782deab75c469ffbd62537be5bab504db4afed480f2cedaa6bc98fea866e2",
+    "only_effective_field_changed": "plugins.io.containerd.cri.v1.images.use_local_image_pull",
+    "before": false,
+    "after": true,
+    "progress_watchdog_timeout": "0s",
+    "runtime_pid_changed": true,
+    "runtime_active": true,
+    "runtime_ready": true,
+    "network_ready": true,
+    "kubernetes_node_ready": true,
+    "independent_postrestart_readback_passed": true,
+    "stock_runtime_default_success_claim": false,
+    "cleanup": "Debug Pod and namespace verified absent. The task-owned node and override remain for private image retry, then owned cluster teardown.",
+    "debug_pod_uid_fenced_deletion_verified": true,
+    "debug_namespace_uid_fenced_deletion_verified": true,
+    "debug_cleanup_completed_at": "2026-10-01T21:11:31.190806+00:00",
+    "raw_private_sha256": {
+      "adaptation-intent.private.json": "983e4f7b1e8f14bc447980cf5dd6f3a47d110dae216867e3f0bd184d41d03f4b",
+      "config-probe.private.json": "69933225ca82ee3638bc1f07864cad42637ed011661adf56ae037ad3fbbc7595",
+      "adaptation-intent-v1.private.json": "079835a951afec97fd212fbf550e878a99a6976229a03f254d6afdd34abfd8a4",
+      "postrestart-read.private.json": "4397432f4186cdeb75601f60e64462cef296072fc28e4de4e150ac4129a1078c",
+      "debug-target.private.json": "0350686f09d1b3c7576bdac0285bc6593bb8caf288f31805958c52bac9a2cb76",
+      "restart-intent.private.json": "fa35e0896ee20a9e7c6f7653b86eadf7af9fe46e151210d720780d4b6c4de71c",
+      "debug-owned.private.json": "0978508cb7faa24ecce3e0b5fd850139f1c8584b3f0e2b821f89a0bda4427bbe",
+      "patch-result.private.json": "10c46bfb69010c6258b59cc5c58f0346041114ec288fbe8ff8479828ddde31ef",
+      "patch-result-v1-refused.private.json": "be4dfa33fd4f9ec6dd3e2f4cece96d17ec43ca5e1d81dfbab0071258a82b79bd",
+      "debug-host-read.private.json": "aaf34af067bc919f00d70025ae6c3c3ece338d0b652939c9bd42c87885bfa613",
+      "restart-result.private.json": "732883d74fff105b6916110dd67928d04765fdfa4fce96791f3d3be410b4440f"
+    }
+  },
+  "active_local_unpack": {
+    "runtime_mode": "local image pull with image_pull_progress_timeout0s",
+    "exact_owned_node_uid_matched": true,
+    "read_only": true,
+    "sample_seconds": 90.0,
+    "samples": [
+      {
+        "time": "2026-10-01T21:16:13Z",
+        "cpu_core_nanoseconds": 1224771416000,
+        "image_filesystem_used_bytes": 5734707200,
+        "image_filesystem_inodes_used": 43767,
+        "node_rx_bytes": 53799496580,
+        "root_disk_write_bytes": 117644299264.0,
+        "raw_summary_sha256": "bd4980eb3a9c8a803b54d4ed6f89fe47b6077f37eae0032a742ee6baebd266e1",
+        "raw_cadvisor_sha256": "eeac2856c32828dc4fd77b453a5401504bc1089d591f9dd62c30e2711a818597",
+        "raw_syslog_sha256": "1f75a9db5b1e688402a9a781b4b637029fcada7d816d9caba1ac445d9ebbb618"
+      },
+      {
+        "time": "2026-10-01T21:17:43Z",
+        "cpu_core_nanoseconds": 1289082054000,
+        "image_filesystem_used_bytes": 11637219328,
+        "image_filesystem_inodes_used": 76658,
+        "node_rx_bytes": 53802344331,
+        "root_disk_write_bytes": 123257367552.0,
+        "raw_summary_sha256": "a709b683d51807c3998994e24e98e04db2def4e41d5775752ff2e8a244a28316",
+        "raw_cadvisor_sha256": "8a8f29afe759095fef20304ff7df0f8f4d57be59f8fd20b095136ac25daa18b9",
+        "raw_syslog_sha256": "bdf60a7b0c72460d6ebf600df24bec58ef06de44141c74569c105e7b286411f8"
+      }
+    ],
+    "delta": {
+      "cpu_core_nanoseconds": 64310638000,
+      "image_filesystem_used_bytes": 5902512128,
+      "image_filesystem_inodes_used": 32891,
+      "node_rx_bytes": 2847751,
+      "root_disk_write_bytes": 5613068288.0
+    },
+    "average_node_cpu_cores": 0.7145626444444444,
+    "interpretation": "Actual image filesystem growth and new inodes establish active unpack in this interval. Aggregate node CPU and disk writes support that interpretation; minor network traffic includes diagnostic API reads.",
+    "pull_success_claimed": false,
+    "node_mutations_in_sampling": false
+  },
+  "native_local_pull_success": {
+    "exact_owned_image_matched_privately": true,
+    "native_pull_completed": true,
+    "native_completion_messages": [
+      {
+        "time": "2026-10-01T21:21:49.761418+00:00",
+        "raw_line_sha256": "63bcf2563f4e8d776ff54df8a41d7f4221358449ff2a6b9dfc7e1452cb5f8c1e",
+        "watchdog_disabled": false,
+        "canceled": false,
+        "pull_complete": true,
+        "extract_failed": false
+      }
+    ],
+    "native_syslog_sha256": "35b886b6a911c645491b57b479b5ec643e6554ecce87233cd5f65c70673052a3",
+    "parent_committed_probe_success_reported_separately": true,
+    "parent_namespace_absence_verified": true,
+    "parent_cleanup_sha256": "04a71c58c81a5efc5b22400a2f5f6a8c5b841f428e3c7c87b8f996b933062d32",
+    "runtime_mode": "local image pull with progress watchdog0s on one owned ephemeral node",
+    "stock_default_success_claim": false,
+    "fully_cold_download_claim": false
+  },
+  "final_owned_infrastructure_cleanup": {
+    "report": "provider-final-cleanup.public.json",
+    "sha256": "ea9863500a25ebb359ba9150a64ca86120e29a0b1979c5dec75e6fa59121c760",
+    "verified": true,
+    "infrastructure_absent": true,
+    "task_owned_only": true,
+    "scope": "Original owned cluster, node group, two application releases, node instance and managed boot disk. Temporary runtime override was confined to the now-absent node/disk."
+  }
+}

@@ -1,0 +1,573 @@
+{
+  "pr": 654,
+  "source_commit": "7c0ef9e674eff689a123404b13bc21cd59d202c7",
+  "result": "pass",
+  "changes_verified": [
+    "Cloud and accelerator inventory distinguish successful empty results from unavailable discovery with sanitized error kinds.",
+    "Rendered provisioning and workflow consumers refuse absence-based provisioning on failed discovery; configured contexts remain usable.",
+    "Rendered chat reports unavailable inventory rather than claiming no cloud resources were observed.",
+    "Only bootstrap-staged instance_metadata credentials are accepted, with explicit config/profile pinning and ambient token scrubbing.",
+    "Uncertain process-group cleanup retains the breaker and backs off without signaling unproven or reused groups."
+  ],
+  "linux_tests": {
+    "passed": 437,
+    "failed": 0,
+    "skipped": 0,
+    "seconds": 228.51,
+    "includes_real_subprocess_procfs_denial_recovery": true,
+    "includes_rendered_agent_routes_and_chat": true
+  },
+  "e2e_guardrails": {
+    "passed": 12,
+    "failed": 0,
+    "source_commit": "7849d741f650cd960bcb419393e07e22c17c7f00",
+    "scope": "E2E reachability guards; the successor changed only workflow accelerator validation and its unit regression.",
+    "private_log_sha256": "38540fac3d6b8e5cc0ea1128f0a1198da1a4ee0364712b7e5ec0492d2b13acc0"
+  },
+  "current_live": {
+    "source_commit": "7c0ef9e674eff689a123404b13bc21cd59d202c7",
+    "live_test": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 375.68
+    },
+    "authenticated_http_statuses": {
+      "access": 200,
+      "resources": 200,
+      "kubernetes_inventory": 200
+    },
+    "request_seconds": {
+      "access": 3.9608871899545193,
+      "resources": 5.810778139973991,
+      "inventory": 2.4573586240876466
+    },
+    "anonymous_http_statuses": [
+      401,
+      401,
+      401,
+      401
+    ],
+    "tls": {
+      "hostname_verified": true,
+      "empty_trust_rejected": true,
+      "trust_source": "exact server certificate retrieved through provider-pinned SSH"
+    },
+    "cloud_discovery_status": "available",
+    "cluster_count": 4,
+    "credential_source": "instance_metadata",
+    "access_scope_status": "partial",
+    "deployed_source_bindings": [
+      {
+        "path": "npa/src/npa/cli/agent.py",
+        "sha256": "ddc46951ca0a588a68a0aa8c0edbc7bbe0a180189b415ab3783e8240ece49b2b"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_access_runtime.py",
+        "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_chat.py",
+        "sha256": "3298728adbcafac40ce36769c3d0e5a4e58663e4059f376fe2467bc44cc72834"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_env_files.py",
+        "sha256": "4229185b5f105e1db48cbed63b2c77372368fa1a4471b637b9bb50ce64f910ab"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_resources.py",
+        "sha256": "cf9295d2d84419dbf9b867ae78a166dd197fdb380a2ad8bc519ff1889d4305f8"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_workflow.py",
+        "sha256": "b7bdbaeee3b24620ce7a28ca888619e83d301e0e95a3d0aaff493b94b22369e8"
+      }
+    ],
+    "rendered_backend_sha256": "e9f34525d16c78c53747a99f4776b401823cbd97348dd723e7d9a15890c1e262",
+    "cleanup": {
+      "exact_owned_infrastructure_verified_absent": true,
+      "shared_iam_preserved": true
+    },
+    "private_receipt_sha256": [
+      {
+        "name": "linux-focused.private.log",
+        "sha256": "f153c34471e3cf6b9acdca5fa0672d55c0d3d68f59384a7414b757b962629d40"
+      },
+      {
+        "name": "live-evidence/access.json",
+        "sha256": "a1f58ee6671976c3a89e309157254d31014487d17824ca3ee65d8d2bf47d3743"
+      },
+      {
+        "name": "live-evidence/deploy.stderr",
+        "sha256": "09871317d7652481ea40727270aa3a93f67938d455515a4904ba8fc749268b61"
+      },
+      {
+        "name": "live-evidence/deploy.stdout",
+        "sha256": "35ed315e7fbe635f62e5881a1f0487b648285e4c4db27895ffc2dc2e7a973d7d"
+      },
+      {
+        "name": "live-evidence/deployed-source-hashes.json",
+        "sha256": "8a9a71b3926ff32fda6c9ac90db63f772ce838c562e37859644e68803eef1f2f"
+      },
+      {
+        "name": "live-evidence/deployment.json",
+        "sha256": "966ec3f2fed3c6fc7f3756ccfb8f4d7524c1bd7fb92346b878932cedd96b4bf7"
+      },
+      {
+        "name": "live-evidence/destroy.stderr",
+        "sha256": "640c9f219c97d9ecb4def8764fd677091deaaa915751975a0272bdbe654bda8b"
+      },
+      {
+        "name": "live-evidence/destroy.stdout",
+        "sha256": "bcc2ac687a256ca37c2c928b6dc5a7045628987b449bfc78b608edaa38b44e53"
+      },
+      {
+        "name": "live-evidence/expected-rendered-backend.sha256",
+        "sha256": "70054d169b5fa471c7ab24d2557315368fbf1e7095bc7f743f934aa6be82e13e"
+      },
+      {
+        "name": "live-evidence/kubernetes-inventory.json",
+        "sha256": "2f22dc8ec942257afaa563b933ff87d5971938730330a51fbce1cadb5bb5d01d"
+      },
+      {
+        "name": "live-evidence/resources.json",
+        "sha256": "1b46b4ba018c6d06479645c04769397acd1bbf532ea96c245db3d28ea4ee5291"
+      },
+      {
+        "name": "live-evidence/result.json",
+        "sha256": "5b5c885cfc313a328a510c276fc01d40cb7519814898f21ed618d72ec19ee0b4"
+      },
+      {
+        "name": "live-evidence/server-certificate.pem",
+        "sha256": "aee544b925d84b7b8d4c4d5993c5d0fec5fa9ad1bb2608c48fb31d4a09bc4f0f"
+      },
+      {
+        "name": "live-evidence/status.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "live-evidence/status.stdout",
+        "sha256": "a50328a213271342752b3bcec4cf49f1509a0a278e38c512dcef65e6cbd9b3e4"
+      },
+      {
+        "name": "live-metadata-lifecycle.private.log",
+        "sha256": "f6b10874d03136f964cf37df01a2cd8c18a013729c340bc87b30702116f9e4f0"
+      }
+    ]
+  },
+  "retained_initial_live": {
+    "source_commit": "20a9f94ec112f7a2705c6579e14a23a392130187",
+    "live_test": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 404.2
+    },
+    "authenticated_http_statuses": {
+      "access": 200,
+      "resources": 200,
+      "kubernetes_inventory": 200
+    },
+    "request_seconds": {
+      "access": 4.69782874698285,
+      "resources": 5.309490049956366,
+      "inventory": 2.4303602919680998
+    },
+    "anonymous_http_statuses": [
+      401,
+      401,
+      401,
+      401
+    ],
+    "tls": {
+      "hostname_verified": true,
+      "empty_trust_rejected": true,
+      "trust_source": "exact server certificate retrieved through provider-pinned SSH"
+    },
+    "cloud_discovery_status": "available",
+    "cluster_count": 4,
+    "credential_source": "instance_metadata",
+    "access_scope_status": "partial",
+    "deployed_source_bindings": [
+      {
+        "path": "npa/src/npa/cli/agent.py",
+        "sha256": "ddc46951ca0a588a68a0aa8c0edbc7bbe0a180189b415ab3783e8240ece49b2b"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_access_runtime.py",
+        "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_chat.py",
+        "sha256": "3298728adbcafac40ce36769c3d0e5a4e58663e4059f376fe2467bc44cc72834"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_env_files.py",
+        "sha256": "4229185b5f105e1db48cbed63b2c77372368fa1a4471b637b9bb50ce64f910ab"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_resources.py",
+        "sha256": "80cd1be9a6cfd2ceb9c73ef8cc8f81203ed5d4fe030f33d0cfe0b608b9bd7086"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_workflow.py",
+        "sha256": "4153e993eb0f2b36bf436880c3535e0054955b00ead2322c1c99ac2ce2c390d2"
+      }
+    ],
+    "rendered_backend_sha256": "0ec117dc7164f768038e07683d5b04c7c38a34bc36570173dfa59954bf374e2d",
+    "cleanup": {
+      "exact_owned_infrastructure_verified_absent": true,
+      "shared_iam_preserved": true
+    },
+    "private_receipt_sha256": [
+      {
+        "name": "linux-focused.private.log",
+        "sha256": "67fcde78b7d6117eb886df568dc4acd72e6e046163d003813e64f41c38a775cb"
+      },
+      {
+        "name": "live-evidence/access.json",
+        "sha256": "f89e899734a282b9d0ea0fdc421d13e15359789c940f23795a0befb283208f99"
+      },
+      {
+        "name": "live-evidence/deploy.stderr",
+        "sha256": "9fa68ac0e46d960ebcc1aebec978e95aedacbdd784f6bcc989663fb55e971db8"
+      },
+      {
+        "name": "live-evidence/deploy.stdout",
+        "sha256": "6bd6d5e3b50aab51add5e4bc8c858e228840c122e82a95664054000a771a70a6"
+      },
+      {
+        "name": "live-evidence/deployed-source-hashes.json",
+        "sha256": "9896135deb47de760fe4e6364fd500922e98ad211b9ccdaeedcae781e36ca3aa"
+      },
+      {
+        "name": "live-evidence/deployment.json",
+        "sha256": "f96f9bf7975484fd541447db6e6009bb8e72f8491c80e577e9543aae0c2adb4d"
+      },
+      {
+        "name": "live-evidence/destroy.stderr",
+        "sha256": "640c9f219c97d9ecb4def8764fd677091deaaa915751975a0272bdbe654bda8b"
+      },
+      {
+        "name": "live-evidence/destroy.stdout",
+        "sha256": "a17c5ffe6902914648b1e34a5a982a90f01af6b4062f4dc1f54925eb9398d9b4"
+      },
+      {
+        "name": "live-evidence/expected-rendered-backend.sha256",
+        "sha256": "7164f671e5c2db6a31151c027b51ebe9e49c605f074a6409f80da075f94b2f53"
+      },
+      {
+        "name": "live-evidence/kubernetes-inventory.json",
+        "sha256": "2f22dc8ec942257afaa563b933ff87d5971938730330a51fbce1cadb5bb5d01d"
+      },
+      {
+        "name": "live-evidence/resources.json",
+        "sha256": "b579edc745e3cef22784cb0ddf6967650fd4b3cdad96dc4e914ef7a9ebcb637a"
+      },
+      {
+        "name": "live-evidence/result.json",
+        "sha256": "507bfa19b61360bf68701b474eb83c5055fcdab8d03ad3cff7918156e685e3ee"
+      },
+      {
+        "name": "live-evidence/server-certificate.pem",
+        "sha256": "d1ae97343dbe78220c2095b654c4d42bf369fffbef80ff82bbc392afa9e3c41e"
+      },
+      {
+        "name": "live-evidence/status.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "live-evidence/status.stdout",
+        "sha256": "8854c2df7e10436c8941c71b83603c8e05e933deeae460d8317d36bacd404e37"
+      },
+      {
+        "name": "live-metadata-lifecycle.private.log",
+        "sha256": "bb10d1075d41c3769edb5b765f2c8333c663e0a7b64d91054014cc68e98aea32"
+      }
+    ]
+  },
+  "retained_previous_live": {
+    "source_commit": "cc3082ef6f57f8fe867284f36bfc3cc4b9d70693",
+    "live_test": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 377.89
+    },
+    "authenticated_http_statuses": {
+      "access": 200,
+      "resources": 200,
+      "kubernetes_inventory": 200
+    },
+    "request_seconds": {
+      "access": 4.480289794970304,
+      "resources": 5.120957353035919,
+      "inventory": 2.17442071903497
+    },
+    "anonymous_http_statuses": [
+      401,
+      401,
+      401,
+      401
+    ],
+    "tls": {
+      "hostname_verified": true,
+      "empty_trust_rejected": true,
+      "trust_source": "exact server certificate retrieved through provider-pinned SSH"
+    },
+    "cloud_discovery_status": "available",
+    "cluster_count": 4,
+    "credential_source": "instance_metadata",
+    "access_scope_status": "partial",
+    "deployed_source_bindings": [
+      {
+        "path": "npa/src/npa/cli/agent.py",
+        "sha256": "ddc46951ca0a588a68a0aa8c0edbc7bbe0a180189b415ab3783e8240ece49b2b"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_access_runtime.py",
+        "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_chat.py",
+        "sha256": "3298728adbcafac40ce36769c3d0e5a4e58663e4059f376fe2467bc44cc72834"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_env_files.py",
+        "sha256": "4229185b5f105e1db48cbed63b2c77372368fa1a4471b637b9bb50ce64f910ab"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_resources.py",
+        "sha256": "cf9e2b8bae5d56b1bd66d94532c6ca2fe0140e4c85f388e9bd89806fa307a665"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_workflow.py",
+        "sha256": "4153e993eb0f2b36bf436880c3535e0054955b00ead2322c1c99ac2ce2c390d2"
+      }
+    ],
+    "rendered_backend_sha256": "38ae47feb5d0e3603fd9b4bfdd89fab28097b9008109766eb4308b5c05f9f7f1",
+    "cleanup": {
+      "exact_owned_infrastructure_verified_absent": true,
+      "shared_iam_preserved": true
+    },
+    "private_receipt_sha256": [
+      {
+        "name": "linux-focused.private.log",
+        "sha256": "ad40035f6a1d795e78ea1d16d4d54ac69f903a766e6ce80dda37cf824aa87b5f"
+      },
+      {
+        "name": "live-evidence/access.json",
+        "sha256": "48bdf0349b92286e875f7ca666b4b91a8d979b1c2cfeaef039726f57217aecd0"
+      },
+      {
+        "name": "live-evidence/deploy.stderr",
+        "sha256": "09871317d7652481ea40727270aa3a93f67938d455515a4904ba8fc749268b61"
+      },
+      {
+        "name": "live-evidence/deploy.stdout",
+        "sha256": "772b65d86c176794d741ae1d4300adddcd17864e2ab9447288afd0cc805a2771"
+      },
+      {
+        "name": "live-evidence/deployed-source-hashes.json",
+        "sha256": "fd87082a2958794e97ba7df5fc412fb4a8c9cf7841bfed5acf613dcb8191b64d"
+      },
+      {
+        "name": "live-evidence/deployment.json",
+        "sha256": "2390465c6a91dbffee5e61f5bba33ef130a5b4f9d06453f7a1f1d56dbb525cfb"
+      },
+      {
+        "name": "live-evidence/destroy.stderr",
+        "sha256": "640c9f219c97d9ecb4def8764fd677091deaaa915751975a0272bdbe654bda8b"
+      },
+      {
+        "name": "live-evidence/destroy.stdout",
+        "sha256": "294514aba369e9c72eef6d51c104cab1eef4746d3422ff0e144113dfb3f5d096"
+      },
+      {
+        "name": "live-evidence/expected-rendered-backend.sha256",
+        "sha256": "ce5fc9de49247511b420b8de43ccf08d0ac51e99c6398ab74cb1c93bc9c51c2a"
+      },
+      {
+        "name": "live-evidence/kubernetes-inventory.json",
+        "sha256": "2f22dc8ec942257afaa563b933ff87d5971938730330a51fbce1cadb5bb5d01d"
+      },
+      {
+        "name": "live-evidence/resources.json",
+        "sha256": "9a5d7554c33ec94bbaed4d1c1b633ebbfa64681b2d6f167f49f3a8888d13d89a"
+      },
+      {
+        "name": "live-evidence/result.json",
+        "sha256": "a52660119cba82a458abfcf86ccec8d49644cdb61497fa702318e12beca54dca"
+      },
+      {
+        "name": "live-evidence/server-certificate.pem",
+        "sha256": "81812ca8ef445e9a3e9a3a590aa6626d4092ee0b227ee033b4256aade792bb98"
+      },
+      {
+        "name": "live-evidence/status.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "live-evidence/status.stdout",
+        "sha256": "fc7e4ad889ade9bde76dbefaaa287ee97d832a5819b6e65f163fa2bd3e76d079"
+      },
+      {
+        "name": "live-metadata-lifecycle.private.log",
+        "sha256": "d8925d7aff317149ee7f774ba720a06ba02189eebdcba7131da045bcdc866769"
+      }
+    ]
+  },
+  "retained_intermediate_live": {
+    "source_commit": "7849d741f650cd960bcb419393e07e22c17c7f00",
+    "live_test": {
+      "passed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 370.65
+    },
+    "authenticated_http_statuses": {
+      "access": 200,
+      "resources": 200,
+      "kubernetes_inventory": 200
+    },
+    "request_seconds": {
+      "access": 4.230189403984696,
+      "resources": 5.7854919478995726,
+      "inventory": 2.433662827941589
+    },
+    "anonymous_http_statuses": [
+      401,
+      401,
+      401,
+      401
+    ],
+    "tls": {
+      "hostname_verified": true,
+      "empty_trust_rejected": true,
+      "trust_source": "exact server certificate retrieved through provider-pinned SSH"
+    },
+    "cloud_discovery_status": "available",
+    "cluster_count": 4,
+    "credential_source": "instance_metadata",
+    "access_scope_status": "partial",
+    "deployed_source_bindings": [
+      {
+        "path": "npa/src/npa/cli/agent.py",
+        "sha256": "ddc46951ca0a588a68a0aa8c0edbc7bbe0a180189b415ab3783e8240ece49b2b"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_access_runtime.py",
+        "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_chat.py",
+        "sha256": "3298728adbcafac40ce36769c3d0e5a4e58663e4059f376fe2467bc44cc72834"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_env_files.py",
+        "sha256": "4229185b5f105e1db48cbed63b2c77372368fa1a4471b637b9bb50ce64f910ab"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_resources.py",
+        "sha256": "cf9295d2d84419dbf9b867ae78a166dd197fdb380a2ad8bc519ff1889d4305f8"
+      },
+      {
+        "path": "npa/src/npa/cli/agent_workflow.py",
+        "sha256": "270f8d64086a1c032cf4fb77acae80bda1dfcd7ade1fe1054a1fd42f4e99beaf"
+      }
+    ],
+    "rendered_backend_sha256": "b2ddb61729d13fbb552a3a524aa43dedfb71c20afed73f0593ab4d2c10f70d3c",
+    "cleanup": {
+      "exact_owned_infrastructure_verified_absent": true,
+      "shared_iam_preserved": true
+    },
+    "private_receipt_sha256": [
+      {
+        "name": "linux-focused.private.log",
+        "sha256": "b2ffcff2f0375921a0ba59f465c02ddba7278fa279fce12533a4b74193a82a33"
+      },
+      {
+        "name": "live-evidence/access.json",
+        "sha256": "23b912a3c9e8c9a3cc5f4109355ec72b8bc9e9fa4ba85957d499860830f7bdd9"
+      },
+      {
+        "name": "live-evidence/deploy.stderr",
+        "sha256": "09871317d7652481ea40727270aa3a93f67938d455515a4904ba8fc749268b61"
+      },
+      {
+        "name": "live-evidence/deploy.stdout",
+        "sha256": "6287565225ba3389bfcb3685e392cffd7bbb90f783b71b96f7948f37c06dc75f"
+      },
+      {
+        "name": "live-evidence/deployed-source-hashes.json",
+        "sha256": "f5fff749b1c9acca5034a22cca2ecc7204ffbd352a4285e04b924b71b6a2376f"
+      },
+      {
+        "name": "live-evidence/deployment.json",
+        "sha256": "673bd2e3564a8db7d983da5ebbfd38d80bc23fbdcc8fca2393872449fcf56a22"
+      },
+      {
+        "name": "live-evidence/destroy.stderr",
+        "sha256": "640c9f219c97d9ecb4def8764fd677091deaaa915751975a0272bdbe654bda8b"
+      },
+      {
+        "name": "live-evidence/destroy.stdout",
+        "sha256": "87d374d4b25ca2d7d09546625ebd11f85f15b99ea409b8d9ec3ba8979e45e96e"
+      },
+      {
+        "name": "live-evidence/expected-rendered-backend.sha256",
+        "sha256": "3714107b7513f0e3e14420fae0e60fa8ab92e9afbaa244d394be6e1144efe587"
+      },
+      {
+        "name": "live-evidence/kubernetes-inventory.json",
+        "sha256": "2f22dc8ec942257afaa563b933ff87d5971938730330a51fbce1cadb5bb5d01d"
+      },
+      {
+        "name": "live-evidence/resources.json",
+        "sha256": "3cc409ecd15ae725be50c7ff5a9dbfc86cde3ea0c87c86c5d2f2d997af2766d6"
+      },
+      {
+        "name": "live-evidence/result.json",
+        "sha256": "e6e4d5eb7918c653b1dfd802032b6c91c8fa022c402e5d8e6609320bdedaa22c"
+      },
+      {
+        "name": "live-evidence/server-certificate.pem",
+        "sha256": "14694591a1bb1e43efcffae8f9e5d33daff4c6d09769d4c720fbd52d5799ab63"
+      },
+      {
+        "name": "live-evidence/status.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "name": "live-evidence/status.stdout",
+        "sha256": "6ab380a597299b765a79468305f5c534f0a39b54646ce14a2125eed1558acd9c"
+      },
+      {
+        "name": "live-metadata-lifecycle.private.log",
+        "sha256": "035990fae45d537834514c93b40c6fdf95ba58d7d7cd230fb7632feed4ab5859"
+      }
+    ]
+  },
+  "review_resolution": {
+    "M2": "Unavailable accelerator discovery blocks runnable draft claims, including explicitly requested GPUs; configured backend selection is preserved. Verified empty GPU inventory also rejects requested GPUs, while known-present inventory passes.",
+    "L8": "Reaped-leader clearing was rejected: an actual Linux leader was reaped while its descendant remained alive. The breaker remains open and new commands stay blocked; no reused group is signaled. The isolated test subreaper subsequently released and reaped its owned descendant.",
+    "L9": "Absent and denied procfs produce distinct fixed diagnostic codes, each logged once without changing the safety block.",
+    "L10": "Backend presence uses explicit True, None, and False branches."
+  },
+  "retained_earlier_test_failure": {
+    "suite": "partial local rendered-agent suite before fixture corrections",
+    "passed": 39,
+    "failed": 3,
+    "interrupted": true,
+    "cause": "Provisioning fixtures implicitly assumed successful empty cloud discovery; explicit available inventory is now supplied. Dedicated failure controls remain separate.",
+    "log_sha256": "b9b8109b3d65ed2f9addad1c246f7ef04477c14f894510653f89a5c74aff6e74",
+    "resolution": "All three affected tests passed after correction; final Linux rendered suite passed."
+  },
+  "scope": [
+    "CPU agent identity, TLS, API inventory and process ownership validation; no GPU execution or VLM evaluation is claimed.",
+    "Six installed source modules and the rendered backend were verified at the exact current commit.",
+    "Live evidence exercises healthy attached-identity inventory. Timeout, malformed output, permission denial, unsupported identity, and uncertain cleanup are exercised by focused negative controls; procfs denial also uses a real Linux child process.",
+    "Partial access scope does not imply unrestricted tenant access. Raw identifiers, credentials and provider receipts remain private.",
+    "Combined batch gates and GitHub merge readiness are parent-owned and are not asserted by this focused report."
+  ]
+}

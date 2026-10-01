@@ -1,0 +1,99 @@
+{
+  "at": "2026-10-01T21:35:57.110920+00:00",
+  "producer_source_commit": "39c7e82141149575214f176b8d1d96b74ac655cf",
+  "verifier_source_commit": "400606df0a904a93af297ef6dd3c0246155c4635",
+  "source_git_reads_match_producer": {
+    "npa/src/npa/cli/cluster/terraform_lifecycle.py": "404ccd5811e79ed47c95dc7d5ab6f6d66c15cc2ee576a5150f224db28c07a01f",
+    "npa/src/npa/cluster_backends/mk8s.py": "c00a9d465e2be130a5e4398cbba9fba8bc2b55f13ac7984fa259a6eaf328a828",
+    "npa/src/npa/cluster_backends/mk8s_execution.py": "1a9e45eb3004c12c1d9cee184568d9aa20eb0615ab5490227acc44031fd9fc00"
+  },
+  "supported_destroy_exit": 0,
+  "committed_cleanup_test_passed": true,
+  "original_cloud_resources_exactly_absent": {
+    "cluster": 1,
+    "node_group": 1,
+    "application_releases": 2
+  },
+  "node_instance_and_managed_boot_disk_exactly_absent": true,
+  "complete_owned_cluster_name_and_child_inventories_passed": true,
+  "fresh_read_count": 10,
+  "raw_private_record_sha256": [
+    "c488acc00371e1acaba35d05a5ebc66a93ba5e06e2a45c474bbf6efc2533f731",
+    "4afa95267bde3d5009e5d92a04cdbdf148d9f2d68401fe3c524bcee39658d757",
+    "41b36d6eb043dfa0926de84796de3b02aed9b65dfdb9c3d9328e9ebd18eef764",
+    "8249847a4a133be2dff1ae8fa7fff807c18aab593e8b61835d9615a7ab8ee4b2",
+    "f2aad9ad9cfa435e3ee6e24a9d89018685dcd67a48a4b2aa3d7c76aacec386f4",
+    "55d0f25fd73e41d4810da4c6f5284a4acbdfd8fd7d29358e9ea150a6b5a92dc0",
+    "42cbdecd1f2ffb74506d8246b0b62b1e9689dbf679183a8ded35d2484f677ee9",
+    "50ddb4d61be9b2335277a72e44ad84adf988c53246ed27ea983c39f3d1f49f86",
+    "74a6acafa61447feb96f24cd172bae9123f502969ab5bcede3c44c679fad103e",
+    "347c1f49cd95b780284ef3af89130617600d666f3e53c244e9e442f4c4a81907"
+  ],
+  "absence_inferred_from_timeout": false,
+  "cloud_mutations_in_verifier": false,
+  "adapted_node_and_its_managed_boot_disk_verified_absent": true,
+  "scope": "Fresh actual absence predicates and offline Git source binding after supported destroy of this new CPU cluster. Does not perform or claim a legacy failed-operation journal reconciliation; no GPU/VLM workload claim.",
+  "verified": true,
+  "infrastructure_absent": true,
+  "task_owned_only": true,
+  "supported_destroy_source_commit": "39c7e82141149575214f176b8d1d96b74ac655cf",
+  "cleanup_test_source_commit": "39c7e82141149575214f176b8d1d96b74ac655cf",
+  "fresh_absence_verifier_source_commit": "400606df0a904a93af297ef6dd3c0246155c4635",
+  "positive_same_authority_project_verified": true,
+  "typed_resource_absence": [
+    {
+      "kind": "cluster",
+      "count": 1,
+      "provider_result": "NotFound",
+      "exact_original_ids_used": true
+    },
+    {
+      "kind": "node_group",
+      "count": 1,
+      "provider_result": "NotFound",
+      "exact_original_ids_used": true
+    },
+    {
+      "kind": "application_release",
+      "count": 2,
+      "provider_result": "NotFound",
+      "exact_original_ids_used": true
+    },
+    {
+      "kind": "compute_instance",
+      "count": 1,
+      "provider_result": "NotFound",
+      "exact_original_ids_used": true
+    },
+    {
+      "kind": "managed_boot_disk",
+      "count": 1,
+      "provider_result": "NotFound",
+      "exact_original_ids_used": true
+    }
+  ],
+  "kubernetes_node_absence": {
+    "count": 1,
+    "basis": "Exact backing compute instance and cluster return provider NotFound. No post-destroy Kubernetes Node API404 is claimed.",
+    "uid_and_machine_identity_verified_before_cleanup": true,
+    "original_node_instance_managed_boot_disk_relationship_verified": true
+  },
+  "ownership_scope": "Only the newly created CPU recipe resources and its original node/backing managed boot disk; no other project resources were changed.",
+  "private_evidence_sha256": {
+    "plan.private.json": "cb2f17e438501e1d7781404392cb64ee3d324cd36b15dc1bd0adcdfea942d84e",
+    "owned-resources.private.json": "466e0ece298f37a166713b30b2c6180ea483109d9104ed3f8a5353669be5590b",
+    "owned-node-identities.private.json": "2ba6145f6e6cd5bab3b524e58ed27ed56a0ad0044608b7570a347bc202ba0fc4",
+    "node-instance-before.private.json": "94227821607959541d2d6eaafdd11c517bb963b5b6d52ec8bea2a0c4cb6826b6",
+    "nodes.private.json": "2199c6cb76837378c1099f596c0f381c1b3fb275bbb49b27a53921d33944ddd3",
+    "down-start.private.json": "130392655451a14086ee51ebbe988f92445ea5ff897959bc2c6757fee1380169",
+    "down-result.private.json": "f818a4a317c3dc7d19e1400ee318a7a628e855ecc92f53eeefdb1303317cd183",
+    "cleanup-verifier-result.private.json": "b741f6f33038bb75d88f6256f557cd0f586e84f14b846637a58d2248014b35b7"
+  },
+  "verifier_module_sha256": {
+    "npa/src/npa/cluster/absence_process.py": "3d818063875472b1d36a0c81b494e886d9db02115f0d7bbbca9ac2a2b2e02706",
+    "npa/src/npa/cluster/absent_provider.py": "d4ab9c4b1d1a542014860a95defe4ec2eef5758cb5864a7d203b6e56997b5af9",
+    "npa/src/npa/cluster/absent_evidence.py": "b62d84f86947c00afcf4d3e9e05fde61ccfe87d3f420b04c9ece662f4cb0501c"
+  },
+  "temporary_runtime_override_disposition": "The owning compute instance and managed boot disk are verified NotFound. No restoration on a surviving node was needed.",
+  "shared_iam_or_developer_vm_mutated": false
+}

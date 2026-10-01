@@ -1,0 +1,26 @@
+{
+  "schema": "npa.packet-readiness.v1",
+  "integration_commit": "c47d1aec50042c74b8b8edb076374d1636df2f52",
+  "pr_heads": {
+    "652": "3c96e8dd068c9b9994f966794460be960e7a3b9d",
+    "653": "37c1f939533dc81f2e53a0b9206203f14fabd00c",
+    "654": "d3401036395b8094b7a374fa5ba8984a0a8d9d8a",
+    "659": "f82673f72323c797cce0f5ff4fafafc4b2ac279f",
+    "681": "441c11ddaca8e5990624313c175dd49e8185b2c9",
+    "683": "e5cfb4e40f75e9c0d5966d0f760585b53ba9e06b",
+    "686": "49dc46dd51b5971dd0fd5d2ad477baf529874e94",
+    "692": "222c90aade662f97eb20c0812239cd2e96d450de",
+    "709": "db247b50baa2e63992a7a5648cf0f486d14d1bcf",
+    "716": "b8fc146f2e8f932798dc3bb593e2361f570fd5fd"
+  },
+  "ready_for_merge_queue": true,
+  "local_gates_passed": true,
+  "security_passed": true,
+  "private_pull_verified": true,
+  "owned_cleanup_verified": true,
+  "ai_code_review_closed": true,
+  "hosted_ci_passed": true,
+  "human_github_approval_claimed": false,
+  "scope": "Exact recorded heads cleared local, live, review and hosted gates; required merge-queue validation remains.",
+  "publication": "Anonymous readback is a separate publication receipt."
+}

@@ -1,0 +1,44 @@
+{
+  "source_commit": "39c7e82141149575214f176b8d1d96b74ac655cf",
+  "provision_exit": 0,
+  "committed_live_test_passed": true,
+  "ready_cpu_nodes": 1,
+  "allocatable_ephemeral_storage_bytes": 117736614921,
+  "configured_rpc_deadlines": {
+    "status": "configured",
+    "apply_timeout_minutes": 120,
+    "inserted_defaults": {
+      "auth_timeout": "120m",
+      "per_retry_timeout": "120m",
+      "timeout": "120m"
+    },
+    "preserved_operator_fields": [],
+    "source_sha256": {
+      "applications.tf": "a44b47c754879d82ebf8105b18521cd18839d4eeeb76597b5033dade7dbe87f2",
+      "filesystem.tf": "5354c2320175c979b96e98aa69393a8d6574ae2c5451e787490cb338a7418991",
+      "gpu_cluster.tf": "4213133cf206f93936050c7529723bf734e986c5026f1724674bfc53e3ebda68",
+      "helm.tf": "91a842176ba507fd476793521512ea89a517ffc88cd52938a853069e104e8d37",
+      "locals.tf": "209adc14d89efd60ba47aee8c958bedb2b4c33be2aeec259063b7772105df474",
+      "main.tf": "92750436d798abb903b05f9c62717f4de8be4f00a70fe8dfd41a3095079b738f",
+      "output.tf": "657da422fc710da8f8374f547f75a6ae596e4228796609023312960e8b0028ad",
+      "provider.tf": "12bbc3d5886e305f4b34c31be9f435fb2813d9acf42da513ba3279a887ac4d63",
+      "rbac_bindings.tf": "74e6fae621b0389ddd1af95800a367f5c10a280ded956eecabfe33bdb7acff56",
+      "variables.tf": "524ccda92a577e74b6da2b9b8d8741fffb3e8fd5d7f35798e6803624d614fef0"
+    },
+    "materialized_provider_sha256": "8ad380b8c7491a2c2d884092e5d18e97dafcc4cfe313759caeed711161c55966"
+  },
+  "live_provider_reads": 3,
+  "node_gpu_resources": {},
+  "cleanup": "pending private image pull completion",
+  "retained_input_sha256": {
+    "deployment_sidecar": "d58d9c5940c26447a71088963f86319529552c13f2e0d5fbbe51c515c7b36e2d",
+    "terraform_state": "204feb72932e4f7ca28026169cd3ba7a2acfbd7101d2fb4d1537554d48b22a3b",
+    "materialized_provider": "8ad380b8c7491a2c2d884092e5d18e97dafcc4cfe313759caeed711161c55966",
+    "provision_start": "a3bc4c57a3c8d3eb2528285a563f3170b363dd987d5f0090b08e50abfb62eac1",
+    "provision_result": "0801b7ae7e485c279da92d1e74dbb54e32ddbe6d0c85396c5fbde6128aed659c"
+  },
+  "production_module_sha256": {
+    "npa/src/npa/cluster_backends/provider_rpc.py": "16b3d5f98eb7436b1d8ee956ac2bc261494d12e9ef53a416a7fb1758e21a8df8",
+    "npa/src/npa/cluster_backends/mk8s_execution.py": "1a9e45eb3004c12c1d9cee184568d9aa20eb0615ab5490227acc44031fd9fc00"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "scope": "actual local read subprocess and native version/source controls; no provider or GPU mutation",
+  "source": "f45700deb5025538d820c57fd06ee65a1e6348ac",
+  "results": [
+    {
+      "control": "real child deadline",
+      "current_rejected": true
+    },
+    {
+      "mutation": "remove wait deadline",
+      "regression_detected": true
+    },
+    {
+      "control": "upgraded global pin refuses historical naming contract",
+      "current_rejected": true
+    }
+  ],
+  "module_sha256": {
+    "absence_process": "43264669783046d4d68133ab39dd7b22db0e6aae11b1f6096a607c81e4d83da4",
+    "absence_evidence": "35468999fc10f7d7647977754b82e84b2d6455465ca408a37fa1ab7cde6da8d8"
+  }
+}

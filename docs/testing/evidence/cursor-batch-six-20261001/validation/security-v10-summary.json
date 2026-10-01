@@ -1,0 +1,509 @@
+{
+  "base": "5a84f305b95ee29933f49eb4b94a40f68be9eca8",
+  "head": "c47d1aec50042c74b8b8edb076374d1636df2f52",
+  "tree": "f224f5afbf2e9b8f961b1d7d8ee1620fb36220f5",
+  "policy": {
+    "security_gate.py": "2155d2c8fd9294df346721feda504d9fd0ebba287a48d2df72f6bfe3de4c3905",
+    "security_source.py": "dfe7df9a3da6340fa24d04363850ad0e78fb6a250eb341ebbacd0e37e67d52e4",
+    "security_dependencies.py": "d4a43249c70ad2ae3cee75ffff62f9476e4080cd8ef23b80f1887b900889a9b5",
+    "security_regression_checks.py": "678fdbce69c6429b86f6bf38b9a552d289181c7b256f501e9c5cc8b589852df3",
+    "security_install.sh": "a4b64be8c34ef899b6a9b93b3352b01bfc111d4a623431a15791b7e7ff013151",
+    "security-requirements.txt": "190f4c090d2dc19ce9e1f98e86604848ebb228c99c53d16b83842f43a7d41fae"
+  },
+  "trivy_binary_sha256": "d89bcc6510a267f11b773398cbf1be5520ce39f9e8b6633178c4487f05b7d791",
+  "gate": {
+    "base": "5a84f305b95ee29933f49eb4b94a40f68be9eca8",
+    "head": "c47d1aec50042c74b8b8edb076374d1636df2f52",
+    "base_findings": 681,
+    "candidate_findings": 681,
+    "regressions": [],
+    "blocking_findings": []
+  },
+  "regression_proof": {
+    "source": {
+      "initial_findings": 2,
+      "duplicate_rejected": true,
+      "moved_rejected": true,
+      "existing_tolerated": true,
+      "inline_suppressions_ignored": true
+    },
+    "dependencies": {
+      "findings": 17,
+      "python_rejected": true,
+      "npm_rejected": true,
+      "existing_tolerated": true
+    },
+    "current_dependencies": {
+      "unchanged_rejected": true,
+      "patched_accepted": true
+    },
+    "parse_failure_rejected": true,
+    "fixtures_executed_or_installed": false
+  },
+  "steps": {
+    "freeze": {
+      "exit": 0,
+      "seconds": 0.173
+    },
+    "trivy-version": {
+      "exit": 0,
+      "seconds": 0.061
+    },
+    "real-regressions": {
+      "exit": 0,
+      "seconds": 6.897
+    },
+    "comparison": {
+      "exit": 0,
+      "seconds": 122.576
+    }
+  },
+  "python_tools": [
+    "bandit==1.9.4",
+    "markdown-it-py==4.2.0",
+    "mdurl==0.1.2",
+    "packaging==26.3",
+    "pip==25.0.1",
+    "Pygments==2.21.0",
+    "PyYAML==6.0.3",
+    "rich==15.0.0",
+    "stevedore==5.9.1",
+    "uv==0.12.17",
+    "zizmor==1.30.1"
+  ],
+  "trivy_version": "2026-10-01T21:54:48Z\tINFO\tLoaded\tfile_path=\"trivy.yaml\"\nVersion: 0.74.0",
+  "vulnerability_db_metadata": {
+    "Version": 2,
+    "NextUpdate": "2026-10-02T19:00:16.340316152Z",
+    "UpdatedAt": "2026-10-01T19:00:16.340316472Z",
+    "DownloadedAt": "2026-10-01T21:55:04.183075783Z"
+  },
+  "evidence_file_count": 177,
+  "evidence_manifest_sha256": "a808a14f0582297049ad8c5940c5d7bf19a9b5e78d04dfbe9f8ed32b18cd40d4",
+  "candidate_sources": [
+    {
+      "path": "CHANGELOG.md",
+      "sha256": "7250a3a56a077b0eba59204555e8ce61cf8b25b697bf71c2016ce978083ec17e"
+    },
+    {
+      "path": "deploy/cluster/README.md",
+      "sha256": "1e362b40b78bbd08139744e31dfcea006f3a39540271ff5e4f0c22186199ca87"
+    },
+    {
+      "path": "docs/architecture/skypilot-absence-recovery.md",
+      "sha256": "6279f9cd00bd5c13063ff5fe7fb38afe89a774033d43b77ea177a2bb72c1643a"
+    },
+    {
+      "path": "docs/cli/cluster.md",
+      "sha256": "c699a0163b3a32d7f8a27f0087267dc377ee7401d4631475450a66ed9ba75018"
+    },
+    {
+      "path": "docs/cli/workflow.md",
+      "sha256": "453b21d9e40a411462b86e46423944177072899c76c806299accd6c66429830e"
+    },
+    {
+      "path": "docs/run-lifecycle.md",
+      "sha256": "bcf4fe992679c81e12f61125829e06374c91ea0a6d525940ec3658efe378762d"
+    },
+    {
+      "path": "docs/workbench/npa-workflow-guide.md",
+      "sha256": "b37a0443780082ada4fd4de43407a3c8c792bc810187460cc21c91eb973b224a"
+    },
+    {
+      "path": "npa/README.md",
+      "sha256": "4b217862b55cbf0506d8355046a77619b78482198dc030d7f6d5d643b5e85673"
+    },
+    {
+      "path": "npa/ci/requirements.txt",
+      "sha256": "7a2d6e4cb834e4344cc9a2a310438dedd7b5f37dc058896e4f6687c9d9a90f22"
+    },
+    {
+      "path": "npa/pyproject.toml",
+      "sha256": "44c46be078624e8bd91281471ab6cde42af54fe0040ec1618c7f4379479a59fa"
+    },
+    {
+      "path": "npa/scripts/image_byte_scan/core.py",
+      "sha256": "ef9882c2d0bc30a0a34db6bc78732d51aecb363d1ea404aba943b96d93872c15"
+    },
+    {
+      "path": "npa/scripts/image_byte_scan/go_helper/README.md",
+      "sha256": "3b9400c4285318244bd57a76addb181c94bd36f9f3d719461fb98ad2c73571f1"
+    },
+    {
+      "path": "npa/scripts/image_byte_scan/go_helper/build.py",
+      "sha256": "65dfe356fec40a6dca7ada422f78764d41a9e4687847985331f484a4aa6a2231"
+    },
+    {
+      "path": "npa/scripts/image_byte_scan/go_helper/main.go",
+      "sha256": "d376473aefc60fae5cf9cf741cabb69a55bbd7c9e613b85fbaaef6def095ade4"
+    },
+    {
+      "path": "npa/scripts/image_byte_scan/go_helper/main_test.go",
+      "sha256": "d05f65bc8b6fa8d52a7701c77ecaac365bea57b71cb43a5f851043203ee80409"
+    },
+    {
+      "path": "npa/scripts/image_byte_scan/go_helper/memory.go",
+      "sha256": "a12397897f20fbe333bce6016c15948115e8463e0901b2d1052a44e9afe67c95"
+    },
+    {
+      "path": "npa/scripts/image_byte_scan/real_helper_checks.py",
+      "sha256": "33e034aadfd6cf47e90a688357773e845ac8602a48ad85e814ee56b5b28f0491"
+    },
+    {
+      "path": "npa/scripts/run_byof_repo.py",
+      "sha256": "aa4b6958ed2ac16c434ff0383d161468f337ee2f9d0071261a9c78b0f9a9018c"
+    },
+    {
+      "path": "npa/src/npa/cli/agent.py",
+      "sha256": "ddc46951ca0a588a68a0aa8c0edbc7bbe0a180189b415ab3783e8240ece49b2b"
+    },
+    {
+      "path": "npa/src/npa/cli/agent_access_runtime.py",
+      "sha256": "49df5d6dd66f16d4ab6a180940cc776764a7b8bde1f533891374a3eaa7d785fd"
+    },
+    {
+      "path": "npa/src/npa/cli/agent_chat.py",
+      "sha256": "3298728adbcafac40ce36769c3d0e5a4e58663e4059f376fe2467bc44cc72834"
+    },
+    {
+      "path": "npa/src/npa/cli/agent_resources.py",
+      "sha256": "cf9295d2d84419dbf9b867ae78a166dd197fdb380a2ad8bc519ff1889d4305f8"
+    },
+    {
+      "path": "npa/src/npa/cli/agent_workflow.py",
+      "sha256": "b7bdbaeee3b24620ce7a28ca888619e83d301e0e95a3d0aaff493b94b22369e8"
+    },
+    {
+      "path": "npa/src/npa/cli/cluster/__init__.py",
+      "sha256": "82561502807e783050e13b2ca673258e95c5439812a8df22dcb80e70b07b746c"
+    },
+    {
+      "path": "npa/src/npa/cli/cluster/reconcile_absent.py",
+      "sha256": "206cc30840e20329d00a36b3dd164c3612acb621cfcee44f9eb945a677b52ea7"
+    },
+    {
+      "path": "npa/src/npa/cli/storage.py",
+      "sha256": "bdf654439604b5703cd68b480d9200329e4e6e5d76a1b788be38618635f070db"
+    },
+    {
+      "path": "npa/src/npa/cli/workbench/workflow/__init__.py",
+      "sha256": "d291b56c2c2fe3e5b9924ffd4981d4355d650eadea6905f54278d054971a9411"
+    },
+    {
+      "path": "npa/src/npa/cli/workbench/workflow/absence_recovery.py",
+      "sha256": "d38c0c6476855b83f16f8ed356a9a285993e8028ff95df968a5f6581166185b8"
+    },
+    {
+      "path": "npa/src/npa/cluster/absence_process.py",
+      "sha256": "3d818063875472b1d36a0c81b494e886d9db02115f0d7bbbca9ac2a2b2e02706"
+    },
+    {
+      "path": "npa/src/npa/cluster/absent_evidence.py",
+      "sha256": "b62d84f86947c00afcf4d3e9e05fde61ccfe87d3f420b04c9ece662f4cb0501c"
+    },
+    {
+      "path": "npa/src/npa/cluster/absent_journal.py",
+      "sha256": "ed9b03347b40a2a4e21f60b0a025693cedab735b74ca1fa4695c409b6a9c8af7"
+    },
+    {
+      "path": "npa/src/npa/cluster/absent_provider.py",
+      "sha256": "d4ab9c4b1d1a542014860a95defe4ec2eef5758cb5864a7d203b6e56997b5af9"
+    },
+    {
+      "path": "npa/src/npa/cluster/reconcile_absent.py",
+      "sha256": "50be4bad651edba78f8a0c68bad3692c3ea971bad3891eadbd8863f942f4ce02"
+    },
+    {
+      "path": "npa/src/npa/cluster_backends/mk8s_execution.py",
+      "sha256": "1a9e45eb3004c12c1d9cee184568d9aa20eb0615ab5490227acc44031fd9fc00"
+    },
+    {
+      "path": "npa/src/npa/cluster_backends/provider_rpc.py",
+      "sha256": "09f8f18b4cb09e8393d39f263bae23cddd21acc96ca744ff646c39ba41f84ad1"
+    },
+    {
+      "path": "npa/src/npa/diagnostic_redaction.py",
+      "sha256": "c0e8e3343e0391f39e2a084eaa4a809d059456ad62a2ce3df58e8bf59dbd71e4"
+    },
+    {
+      "path": "npa/src/npa/orchestration/npa_workflow/__init__.py",
+      "sha256": "d0be796b30a6025083ce8a5595868f60bb55553337ef04fbcae10545145f84f9"
+    },
+    {
+      "path": "npa/src/npa/orchestration/npa_workflow/interpreter.py",
+      "sha256": "4d610a5eb3a9dc7d06f53ba7998347fc8b980c21400f97a7e441c880044a8935"
+    },
+    {
+      "path": "npa/src/npa/orchestration/npa_workflow/skypilot_render.py",
+      "sha256": "be4449af1fcc219a1570b0f84289565ab263ad91dcbd8b694be2eeb2748f8352"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/_bin.py",
+      "sha256": "aa29bd1036a452ff43a8c4f0a74426fe672d5cd41d038951a5b1d3855360b2b9"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_evidence.py",
+      "sha256": "35468999fc10f7d7647977754b82e84b2d6455465ca408a37fa1ab7cde6da8d8"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_naming_contract.py",
+      "sha256": "3dab5af9fda1faf376044cbdde5097bc0d9bfa8aaea41d3b4e9e3917d5044f1e"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_native.py",
+      "sha256": "1e8f2fe8d0a3d808e92f31b08212510075b3923a07e3fbbc1e38250f7e6b50de"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_reader.py",
+      "sha256": "f91cbc180b6b469dde67ed9d5ba8714697c3d315c0b130504aa3a9258b8f3077"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_recovery.py",
+      "sha256": "154c337277bf7e05603d14b603a928f43a58ea2b0a51fae3e10655208fab8f43"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_target.py",
+      "sha256": "ca84ad1a224f8e22e051f2432b0010af7f15f37ba7b6029cbebd3bb735a6cc0b"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_trace.py",
+      "sha256": "385f71fa64b45a8f7ce62961445bb7904320d347d8a0b4bbbf4e09b7b15aae2d"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_zero_evidence.py",
+      "sha256": "48bffc675c9ab544f6a96da8a1c765c2dc88d9157af33b77c16aad17979edd42"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_zero_native.py",
+      "sha256": "0fac979916fff8b6b96aad230da7d27fb3b350287c194b6365d0970798ef5030"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_zero_source.py",
+      "sha256": "c69c796b77a19b0f7c58ae50f3dae75572a885ca1f700651bdcbead909ceef40"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/absence_zero_trace.py",
+      "sha256": "bd6b2b510b4b26fe6a4d5a58ec732f6c78628f130a441325e4ab64489df08977"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/cleanup.py",
+      "sha256": "d422ac993ddb99c94563c1e02caf5a74800c1f04e88fdb68e6a53c1ea6372c0b"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/image_bootstrap_contract.py",
+      "sha256": "8db4c61c151fc0881cc2ab33e199d97bad659336ca28e1f8f42ffaad43353e4a"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/launch_transaction.py",
+      "sha256": "0bbe414d6faba3db0e57df89f4ed4dd63489b6363306b36cf0e02d6652595bad"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/registry_preflight.py",
+      "sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/workflow.py",
+      "sha256": "4a06505d8cccaa38040d33dfce1b3e5b7a8cb99ca832f7a0fafecf0fbb442d14"
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/workflow_state.py",
+      "sha256": "c10549cfb48b1dfd0147db916b14b19ed4b929a0517362998b700fff270f68f0"
+    },
+    {
+      "path": "npa/src/npa/verification.py",
+      "sha256": "386515c47efd627844890d3223da90e692baffb0109033e132a27566c5a75b96"
+    },
+    {
+      "path": "npa/tests/cli/test_agent.py",
+      "sha256": "0cbdeaac54dbffc1345425781909fe5f87d8c445a0fca0ede5c9d4ee2df6de92"
+    },
+    {
+      "path": "npa/tests/cli/test_agent_access.py",
+      "sha256": "04b5893376f475210ef0268441022f948441a85644204a60aded0baa27d9607a"
+    },
+    {
+      "path": "npa/tests/cli/test_agent_backend_render.py",
+      "sha256": "0bb535b1c4d7e3a2609ed23ad421d2fd2b4e7ff0702cf4e5d8c149df90f87832"
+    },
+    {
+      "path": "npa/tests/cli/test_agent_cloud_inventory.py",
+      "sha256": "4b7c63c442c37cbf9db1618837ab837a3bf72c398cfa214904b0f334301c1151"
+    },
+    {
+      "path": "npa/tests/cli/test_agent_fixall_security.py",
+      "sha256": "f5b9b63bdf4987025a4d7b12d1a6ea061b1cbc83d888bcaff4673df4a5f5a512"
+    },
+    {
+      "path": "npa/tests/cli/test_agent_resources.py",
+      "sha256": "a61f2d43e371d81e6680b860aa47485343ccb92c5fe6b2f1b0c9f85ba4fe62d2"
+    },
+    {
+      "path": "npa/tests/cli/test_agent_runtime_isolation.py",
+      "sha256": "08288bec97b815e6082cc58372b7388f4482b2cc211933778a94f366889955a7"
+    },
+    {
+      "path": "npa/tests/cli/test_cluster_absence_recovery.py",
+      "sha256": "9c71e30bce58b4ff49f6251f6bb691a545928d43faa276afdec08abaa6fdb8b4"
+    },
+    {
+      "path": "npa/tests/cli/test_storage_service_account.py",
+      "sha256": "de8068ea5243017f952acb72e9efbfa1db6178fa1344b864827e8eaa9ead6386"
+    },
+    {
+      "path": "npa/tests/cli/test_submit_preflight_and_accelerators.py",
+      "sha256": "5a891c6ef1c91ded3bd9c9d6a58839d52acb3df52b0729a2f088c32786c80476"
+    },
+    {
+      "path": "npa/tests/cli/test_workflow_absence_recovery.py",
+      "sha256": "687c915fb4a360604260e1aeb27d490eaf230361f1edd8b0d31453d458def15e"
+    },
+    {
+      "path": "npa/tests/cli/test_workflow_cli.py",
+      "sha256": "c54265f6d2c10fafd754b2c636f91639df94f7adda78fd0612fff6bd97ef1935"
+    },
+    {
+      "path": "npa/tests/cli/test_workflow_runtime_cli.py",
+      "sha256": "ad6f997febcc702ccf812be2742b4d27f50a3fd7cf9061ad400acea6dd467091"
+    },
+    {
+      "path": "npa/tests/cli/test_workflow_submit_preflight.py",
+      "sha256": "a1c3743e50b0708743c34d98d74347ca759f64e97d5a104d33d04609a89b0dfd"
+    },
+    {
+      "path": "npa/tests/conftest.py",
+      "sha256": "cca545dac6b6e099f17214d0e25056a3d5567e3e7d8edb618341cb5941ac34aa"
+    },
+    {
+      "path": "npa/tests/docker/test_image_byte_public_entrypoint.py",
+      "sha256": "ed722265f8043847eabaaa9819da9384d37876c5e40615c44207e9b1f50ce187"
+    },
+    {
+      "path": "npa/tests/docker/test_image_byte_scan.py",
+      "sha256": "2597e3f15be2a7e6a6c0ba0f5338ff7e65b65b35204a59a5c50e66595874936d"
+    },
+    {
+      "path": "npa/tests/e2e/test_agent_metadata_live.py",
+      "sha256": "07de94cf0dc00ed28768f67007ca57f009a7da65a4db18b5c0d09b11d9750d35"
+    },
+    {
+      "path": "npa/tests/e2e/test_cluster_absence_recovery_live.py",
+      "sha256": "e3780b6b010b3dbc4533ad40819dea39e721575093208dbd60ebd907f9f30c33"
+    },
+    {
+      "path": "npa/tests/e2e/test_image_bootstrap_terminal_probe_live.py",
+      "sha256": "c93b8276ede166d4e6044ad8f24ed178f8b7165435a74d5e043a282b2b69728e"
+    },
+    {
+      "path": "npa/tests/e2e/test_mk8s_provider_rpc_live.py",
+      "sha256": "8beec3440522bbb16b7e881a5279de74ca69340b737c9244a27e04b177ea3fe9"
+    },
+    {
+      "path": "npa/tests/e2e/test_workflow_absence_preview_live.py",
+      "sha256": "472fa35b5d09e18ab7c3f836b209befca4599107582875af7f818639305e1dbf"
+    },
+    {
+      "path": "npa/tests/guardrails/test_agent_credential_provenance_isolation.py",
+      "sha256": "6c752a4630866c5c0ca498851a4075bf9ed3b8c39301ce72e19579ba019ced1f"
+    },
+    {
+      "path": "npa/tests/guardrails/test_e2e_gate_reachability.py",
+      "sha256": "4dd0c9bbf4fc2541120b443a6a1698bf32343f8e6b1fa7d09de4bff31dc295ed"
+    },
+    {
+      "path": "npa/tests/guardrails/test_skypilot_absence_contract.py",
+      "sha256": "d49eb65c6e2319997ccefe763e6ec7b6a5d2d955fdc79503fb10884045c97f97"
+    },
+    {
+      "path": "npa/tests/orchestration/npa_workflow/test_skypilot_render.py",
+      "sha256": "aa8e4772e6c3caca615673c0ff0b1c33e2bd86c9050d75de254d2e87640eb9ad"
+    },
+    {
+      "path": "npa/tests/orchestration/skypilot/test_absence_recovery.py",
+      "sha256": "ec394e45e0e41df8c6bd44349d4fb596c2468eb449a7181988c9a47a8b16dc26"
+    },
+    {
+      "path": "npa/tests/orchestration/skypilot/test_bin.py",
+      "sha256": "a91169c4b3e7bd8c87d08248d737b75b5b06513deff2f4efc81593566bffdfc5"
+    },
+    {
+      "path": "npa/tests/orchestration/skypilot/test_diagnostic_redaction.py",
+      "sha256": "7206d3e8606bdb9eac77e3ac9fdabda750c06c3e777d885c74f624d8a9edc11d"
+    },
+    {
+      "path": "npa/tests/orchestration/skypilot/test_image_bootstrap_contract.py",
+      "sha256": "84d1d6f09e2dcf5afbe463538cc3496a41b53a05c325755628ffb202603e6a7d"
+    },
+    {
+      "path": "npa/tests/orchestration/skypilot/test_launch_transaction.py",
+      "sha256": "5cb45ef1a97812e5c3b5f8bd8b06ebdd608c19c7731a4af4c158a7652190f2d3"
+    },
+    {
+      "path": "npa/tests/orchestration/skypilot/test_registry_preflight.py",
+      "sha256": "77bf9c046aa479186a4e9360289fc155f5c5563f0c87cd0deedf5f52ad0545b6"
+    },
+    {
+      "path": "npa/tests/orchestration/skypilot/test_workflow.py",
+      "sha256": "bf0018d6fad07af9460a80956b69206b485ff27e58dd3bca3be1ad25cb41aa83"
+    },
+    {
+      "path": "npa/tests/scripts/test_audit_agent_capabilities.py",
+      "sha256": "d8135c5878e90d15b96c3d2ce82aaa25a57d5252aae356341cc0d30b5111f2b1"
+    },
+    {
+      "path": "npa/tests/test_verification.py",
+      "sha256": "a4c0c2e28ad81a09ea8e4e3b5be881de61396a14d0ab9b88f71633e4998bace5"
+    },
+    {
+      "path": "npa/tests/unit/test_absence_process.py",
+      "sha256": "2bf3a779a57aaa5e19adecdddb52c55eaf8466be8c4e597d9cf84686c0042654"
+    },
+    {
+      "path": "npa/tests/unit/test_cluster_absence_recovery.py",
+      "sha256": "cf38ca6383d5311a7e886f2f927c368ac33b2b7e18182ae8ea04a46550e3df35"
+    },
+    {
+      "path": "npa/tests/unit/test_cluster_absence_source.py",
+      "sha256": "7174b2af945fcb40bc3faaaa5ea65316f6d8626dcb6daed93f53a694be5adfdc"
+    },
+    {
+      "path": "npa/tests/unit/test_fleet_cli.py",
+      "sha256": "a96cf0bdcd0e59d0b986cc924922d72999c74d3f8ecc7f3f565272315facec20"
+    },
+    {
+      "path": "npa/tests/unit/test_fleet_kuberay.py",
+      "sha256": "a47b0ba1d051d9df373581768dd9985feed4d4526c19cd6dbf8193d09d057e0b"
+    },
+    {
+      "path": "npa/tests/unit/test_provider_rpc.py",
+      "sha256": "c4aafa3c83d969962c194a249900388d6e621642f5086fbc0f636806a6164f7f"
+    },
+    {
+      "path": "npa/tests/unit/test_provider_rpc_live_contract.py",
+      "sha256": "702902ef4d6ec8b2a53d6a70ac0c8ea572d36a6085a7465ced07faf0ef219116"
+    },
+    {
+      "path": "npa/tests/workflows/test_byof_repo.py",
+      "sha256": "277e66d52f619094163010e21047b81f66306053b10e1047eded020404f379a8"
+    },
+    {
+      "path": "npa/tests/workflows/test_libero_customer.py",
+      "sha256": "24f2cbdf668c9a1bf9dc0088dc90494af9b24cd5bcac25661be18d58cd11c56c"
+    },
+    {
+      "path": "skills/atomic/guardrail-failures/SKILL.md",
+      "sha256": "b55e45ec06191bcbe9498b310a12926e462ef9787d509083ee311e4936d85850"
+    },
+    {
+      "path": "skills/atomic/submit-workflow/SKILL.md",
+      "sha256": "d09d4b3861aaa7f694515561de00ddae0ef78212ac08f22f224530d738def407"
+    },
+    {
+      "path": "skills/workflows/first-run-setup/SKILL.md",
+      "sha256": "dae6104feca118827b85c92d7a430dd948c0cc731b6578bc7c7365a85a6e19b1"
+    }
+  ],
+  "scope": "Fresh actual pinned scanner execution using policy extracted from the exact target main commit; full Git base/candidate snapshots and freshly downloaded vulnerability database. Existing isolated scanner binaries/environment reused read-only after matching trusted policy and Trivy archive checksum. No candidate application installed or executed by this gate. This source/dependency comparison does not replace image-specific byte or live GPU gates.",
+  "policy_byte_identical_base_candidate": true,
+  "status": "PASS: final explicit-head trusted-base source/dependency security gate.",
+  "supersedes": "Fresh v10 scan against advanced target main. The v9 report remains historical. PR 686 changed only its changelog entry location to resolve the new base; the other nine PR heads are unchanged."
+}

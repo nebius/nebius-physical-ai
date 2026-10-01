@@ -1,0 +1,102 @@
+{
+  "exact_owned_image_matched_privately": true,
+  "events": [
+    {
+      "attempt": "first",
+      "event_count": 1,
+      "event_times": [
+        "2026-10-01T20:22:37Z"
+      ],
+      "raw_events_sha256": "b7305b968fd4200f395be742b2827b3d2eb5ba8e37d81ad5cdb89dca562d04a7"
+    },
+    {
+      "attempt": "retry",
+      "event_count": 1,
+      "event_times": [
+        "2026-10-01T20:34:56Z"
+      ],
+      "raw_events_sha256": "4aa368bef41de912ea42432f230968e1cba5c14e62f0c65cd529807896f981e9"
+    }
+  ],
+  "matched_runtime_log_timeline": [
+    {
+      "time": "2026-10-01T20:22:34.921536+00:00",
+      "reason": "watchdog_cancel",
+      "raw_line_sha256": "3945ecfbb3e2c0db367555d7076ebb1598165e234f580be5f02496c5b4ba0efe",
+      "no_progress_window": "5m0s"
+    },
+    {
+      "time": "2026-10-01T20:22:34.921611+00:00",
+      "reason": "stopped_pull",
+      "raw_line_sha256": "11cefe63d492a91e142629bdc36b3be7c00615e7f50408381005eef2a8b4accb",
+      "active_requests": 1,
+      "bytes_read": 14683357052
+    },
+    {
+      "time": "2026-10-01T20:22:37.471685+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "39cf787d926c30152fd891e1e532d7fb6a294643fa012625e2ee4b1b20e432a5"
+    },
+    {
+      "time": "2026-10-01T20:22:37.544135+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "40a821f532baf1004c276dbeec5a8032734fbc74f30d4dfa8d24bf1e5f7fb9d4"
+    },
+    {
+      "time": "2026-10-01T20:22:37.545873+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "4032a2eb1b6fbdb3f1ee0412dbaf200dc1058da6852153eed18451f867bb8fe8"
+    },
+    {
+      "time": "2026-10-01T20:22:37.545940+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "7ce41a09cd7ecceacff7c82a7b91c9083b8452186374ceaaea16f1cb92eb4627"
+    },
+    {
+      "time": "2026-10-01T20:22:37.817727+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "9ce3cb3e9cd10d0c0872e55c13dac464f209111f84101a011a486566c3703612"
+    },
+    {
+      "time": "2026-10-01T20:34:54.805054+00:00",
+      "reason": "watchdog_cancel",
+      "raw_line_sha256": "5a6bc21da24130cef17799d42cf4fea5838a4ed54b0e1e741e5ccb57442d3e3d",
+      "no_progress_window": "5m0s"
+    },
+    {
+      "time": "2026-10-01T20:34:54.805152+00:00",
+      "reason": "stopped_pull",
+      "raw_line_sha256": "36b91e49f4f0c59494945d6dd70b8668b7cfbf75fa7e1747ba0ad962dc4453b8",
+      "active_requests": 1,
+      "bytes_read": 14692992069
+    },
+    {
+      "time": "2026-10-01T20:34:56.086929+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "eeafe95b3f3ff89f8d3ee1f04dfa6b125949ff4814966ec85eb36f2f544358fe"
+    },
+    {
+      "time": "2026-10-01T20:34:56.120045+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "b40dc1dbcaed4aa2a182b5d53ecc38f9a26fad0955dcd1ed8f1f65d2ee6cb1c1"
+    },
+    {
+      "time": "2026-10-01T20:34:56.131122+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "45a32c8769cdb8654b8acb3744c4e9b1073953ab6b21cc62bf7658e1c91b6706"
+    },
+    {
+      "time": "2026-10-01T20:34:56.216363+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "e135dd1f83d9133fa8077c9855585685361e14a5f55251df46e5d276d659b75e"
+    },
+    {
+      "time": "2026-10-01T20:34:57.242740+00:00",
+      "reason": "extract_failed",
+      "raw_line_sha256": "7d06d4117d34b77be2efe95540653e4d378503203a36f6aacaf0a3295cd8581a"
+    }
+  ],
+  "confirmed": "containerd canceled this image pull after its five-minute no-progress watchdog expired",
+  "not_established": "The exact upstream progress-accounting race is plausible but not proven by these logs. Active requests do not alone establish whether the network request was stalled or the counter was stale.",
+  "mutations": false
+}

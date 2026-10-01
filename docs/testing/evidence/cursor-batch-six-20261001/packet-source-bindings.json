@@ -1,0 +1,384 @@
+{
+  "copied_reports": [
+    {
+      "public_source": "pr681-public-native-proof/README.md",
+      "packet_path": "scanner/readme.md",
+      "original_sha256": "f313f0edffd1b853a4504c6ba174edec4679c7ebe9d423f033224c5f5f5dc1ef",
+      "published_sha256": "f313f0edffd1b853a4504c6ba174edec4679c7ebe9d423f033224c5f5f5dc1ef",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "pr681-public-native-proof/build-memory-probe.py",
+      "packet_path": "scanner/build-memory-probe.py",
+      "original_sha256": "47551f72d4fba8129ed8fc619ef6386762ff2ce43160728d2aac55dd97b50479",
+      "published_sha256": "47551f72d4fba8129ed8fc619ef6386762ff2ce43160728d2aac55dd97b50479",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "pr681-public-native-proof/cgroup-pressure.py",
+      "packet_path": "scanner/cgroup-pressure.py",
+      "original_sha256": "30c53d92c04815d7a36b3b8ef1b8574975b0e1fd60611c755b495bdfafe98b08",
+      "published_sha256": "30c53d92c04815d7a36b3b8ef1b8574975b0e1fd60611c755b495bdfafe98b08",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "pr681-public-native-proof/cgroup-runs.py",
+      "packet_path": "scanner/cgroup-runs.py",
+      "original_sha256": "b5a5d28841dd932644f197b3f068f601c974245f725ab535481257b1b2c81535",
+      "published_sha256": "b5a5d28841dd932644f197b3f068f601c974245f725ab535481257b1b2c81535",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "pr681-public-native-proof/driver-bindings.json",
+      "packet_path": "scanner/driver-bindings.json",
+      "original_sha256": "83757c9572cbbaef9003272f0f1108f0379aedcc3d73f4198a94783fd305d267",
+      "published_sha256": "83757c9572cbbaef9003272f0f1108f0379aedcc3d73f4198a94783fd305d267",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "pr681-public-native-proof/native-mutations.py",
+      "packet_path": "scanner/native-mutations.py",
+      "original_sha256": "c4e8f0415e22d35ef508e7cc03d19ac403271baba25d3a2a96e9cc2097d17533",
+      "published_sha256": "c4e8f0415e22d35ef508e7cc03d19ac403271baba25d3a2a96e9cc2097d17533",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "pr681-public-native-proof/runtime-limit-probe.py",
+      "packet_path": "scanner/runtime-limit-probe.py",
+      "original_sha256": "484d47a2101e5c533504055b2d7be877d1373cf96bc7dfc0d405979b7a17ab28",
+      "published_sha256": "484d47a2101e5c533504055b2d7be877d1373cf96bc7dfc0d405979b7a17ab28",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "pr681-public-native-proof/summary.json",
+      "packet_path": "scanner/summary.json",
+      "original_sha256": "31a3ffbd21fa4f4a0b95e54532a8d49ba684638cd08c818a509f5976656308ed",
+      "published_sha256": "31a3ffbd21fa4f4a0b95e54532a8d49ba684638cd08c818a509f5976656308ed",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "oauth-public-proof/README.md",
+      "packet_path": "oauth/readme.md",
+      "original_sha256": "c35f2182d2531c015b8e2caa2f944c4d4d588dcd332c0647594ee8ea0a452003",
+      "published_sha256": "2c57f55ea8d485190ef3b69428f1d47b3b4aa33136f088881bc99127878c0e33",
+      "transformation": "Remove the reference to an excluded raw test log."
+    },
+    {
+      "public_source": "oauth-public-proof/oauth-compatibility.py",
+      "packet_path": "oauth/oauth-compatibility.py",
+      "original_sha256": "6997dbc323e8051b943a1fd7443083ceadcb6ed8a0b446115f395b6404dc0cf7",
+      "published_sha256": "6997dbc323e8051b943a1fd7443083ceadcb6ed8a0b446115f395b6404dc0cf7",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "oauth-public-proof/summary.json",
+      "packet_path": "oauth/summary.json",
+      "original_sha256": "1430b80529b6e9ff67b210d981457e4f6bff5a52f9aa3aaf74712dfd4086cd78",
+      "published_sha256": "1430b80529b6e9ff67b210d981457e4f6bff5a52f9aa3aaf74712dfd4086cd78",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "pr654-reviewed-public/agent-inventory-live.json",
+      "packet_path": "agent/agent-inventory-live.json",
+      "original_sha256": "c193fa5e4396d5f9ad61f70f807befa8e141252fd8d0f436d1a2b8bc7155b5ce",
+      "published_sha256": "c193fa5e4396d5f9ad61f70f807befa8e141252fd8d0f436d1a2b8bc7155b5ce",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/README.md",
+      "packet_path": "absence/readme.md",
+      "original_sha256": "4158b38b5d5c6bdd59f4c20b2487e0326f1b9c004c8905fd1bc38597a79bd011",
+      "published_sha256": "4158b38b5d5c6bdd59f4c20b2487e0326f1b9c004c8905fd1bc38597a79bd011",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/absence-mutations.public.json",
+      "packet_path": "absence/absence-mutations.public.json",
+      "original_sha256": "8ededa4f3c5cbcad0ca3b21d8a9cb4d27a9b9a72121aaa3f0debdb164077c791",
+      "published_sha256": "8ededa4f3c5cbcad0ca3b21d8a9cb4d27a9b9a72121aaa3f0debdb164077c791",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/absence-process-final.public.json",
+      "packet_path": "absence/absence-process-final.public.json",
+      "original_sha256": "22befffe60c2ef308fb64fe272310e1b5933fdbb3c3f762c1fdbfcae9c8a8828",
+      "published_sha256": "22befffe60c2ef308fb64fe272310e1b5933fdbb3c3f762c1fdbfcae9c8a8828",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/final-source-binding.public.json",
+      "packet_path": "absence/final-source-binding.public.json",
+      "original_sha256": "f5be54e01e30b85874331b5beb0c76b82f0636e3ee5f9ec8d46079f93ecc0fbf",
+      "published_sha256": "f5be54e01e30b85874331b5beb0c76b82f0636e3ee5f9ec8d46079f93ecc0fbf",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/native-sky-contract-final.public.json",
+      "packet_path": "absence/native-sky-contract-final.public.json",
+      "original_sha256": "d780fea9cf0f486c150c2a5368cdf533851fa460d6c5653a17f8b01caa88c6d5",
+      "published_sha256": "d780fea9cf0f486c150c2a5368cdf533851fa460d6c5653a17f8b01caa88c6d5",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/native-sky-contract.public.json",
+      "packet_path": "absence/native-sky-contract.public.json",
+      "original_sha256": "301415b8058057cab35cdd1ca0690104d542f5f6968ae815f93ce70ed7266edf",
+      "published_sha256": "301415b8058057cab35cdd1ca0690104d542f5f6968ae815f93ce70ed7266edf",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/node-local-pull-adjustment.public.json",
+      "packet_path": "absence/node-local-pull-adjustment.public.json",
+      "original_sha256": "5e4f5ed637e31312c031ccc61b6d986465acd47b04ac39cd2a81a7e5350e467d",
+      "published_sha256": "5e4f5ed637e31312c031ccc61b6d986465acd47b04ac39cd2a81a7e5350e467d",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/node-local-pull-native-success.public.json",
+      "packet_path": "absence/node-local-pull-native-success.public.json",
+      "original_sha256": "a61143fdf94e0dc0c9d0e944e8dd0dc8bd3ee5a9cf4014fef9cb0e4854b2a406",
+      "published_sha256": "a61143fdf94e0dc0c9d0e944e8dd0dc8bd3ee5a9cf4014fef9cb0e4854b2a406",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/node-local-pull-progress.public.json",
+      "packet_path": "absence/node-local-pull-progress.public.json",
+      "original_sha256": "0cd7df39ce897e53adbeeaf0a5588c8b7350c7fd02d90499cb40ce75d5770e33",
+      "published_sha256": "0cd7df39ce897e53adbeeaf0a5588c8b7350c7fd02d90499cb40ce75d5770e33",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/node-watchdog-adjustment.public.json",
+      "packet_path": "absence/node-watchdog-adjustment.public.json",
+      "original_sha256": "45b2f680475bbf73e2b079b54bc6885a653f897e301b61c9b68825a7f5d4bac5",
+      "published_sha256": "45b2f680475bbf73e2b079b54bc6885a653f897e301b61c9b68825a7f5d4bac5",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/node-watchdog-diagnostic.public.json",
+      "packet_path": "absence/node-watchdog-diagnostic.public.json",
+      "original_sha256": "0ae98c999f286d048949bfd2a4e8889315757508ff0f91ddbd060d8ec4ad85af",
+      "published_sha256": "0ae98c999f286d048949bfd2a4e8889315757508ff0f91ddbd060d8ec4ad85af",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/node-watchdog-runtime.public.json",
+      "packet_path": "absence/node-watchdog-runtime.public.json",
+      "original_sha256": "777ce30939ee33cfe0630dbbe4f834f8887e2b08963faa29481df0092692a9fc",
+      "published_sha256": "777ce30939ee33cfe0630dbbe4f834f8887e2b08963faa29481df0092692a9fc",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/node-watchdog-zero-stall.public.json",
+      "packet_path": "absence/node-watchdog-zero-stall.public.json",
+      "original_sha256": "4bef5539294d340eac0be98d3326528098512f57209bb1af4c1286945c0f77ef",
+      "published_sha256": "4bef5539294d340eac0be98d3326528098512f57209bb1af4c1286945c0f77ef",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/provider-lifecycle-live.public.json",
+      "packet_path": "absence/provider-lifecycle-live.public.json",
+      "original_sha256": "c62784b2860397ad9cfe20a7490da3edb860b6be0d199268a3b9656dcf7b8a5c",
+      "published_sha256": "c62784b2860397ad9cfe20a7490da3edb860b6be0d199268a3b9656dcf7b8a5c",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/provider-native-deadline-final.public.json",
+      "packet_path": "absence/provider-native-deadline-final.public.json",
+      "original_sha256": "14c12a155e66cb8e5ad4eb3224f68006ac39c9e51f32e10df0f71b81d2080533",
+      "published_sha256": "14c12a155e66cb8e5ad4eb3224f68006ac39c9e51f32e10df0f71b81d2080533",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/provider-native-deadline.public.json",
+      "packet_path": "absence/provider-native-deadline.public.json",
+      "original_sha256": "70d55bbe7818ff5cbbf6baf270fba53507473fdf2b91d9aec8ed8297fd702426",
+      "published_sha256": "70d55bbe7818ff5cbbf6baf270fba53507473fdf2b91d9aec8ed8297fd702426",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/provider-timeout-final.public.json",
+      "packet_path": "absence/provider-timeout-final.public.json",
+      "original_sha256": "3747ddb041e98a2427a3effa1be94828107009328bc66d497c2a4bc9a86d8ae9",
+      "published_sha256": "3747ddb041e98a2427a3effa1be94828107009328bc66d497c2a4bc9a86d8ae9",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/provider-timeout-live.public.json",
+      "packet_path": "absence/provider-timeout-live.public.json",
+      "original_sha256": "adbb654b1502115a97422c98bad48c514c285d3927ece23f86b9b3a585b7fa87",
+      "published_sha256": "adbb654b1502115a97422c98bad48c514c285d3927ece23f86b9b3a585b7fa87",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "pr681-integration-v10-binding.json",
+      "packet_path": "scanner/integration-v10-binding.json",
+      "original_sha256": "4fb40ea756073fdddbcbdf37b39a1ee9d3c229341e7738d9002dfb916764bc6e",
+      "published_sha256": "4fb40ea756073fdddbcbdf37b39a1ee9d3c229341e7738d9002dfb916764bc6e",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-independent-review-v10.json",
+      "packet_path": "absence/independent-review.json",
+      "original_sha256": "8f1d4cc5251cba0798d563f038bff70912af2e26303ebd2791d0413eeda26334",
+      "published_sha256": "8f1d4cc5251cba0798d563f038bff70912af2e26303ebd2791d0413eeda26334",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "review-findings-resolution.public.md",
+      "packet_path": "review-findings.md",
+      "original_sha256": "e252577cc5d3908c545eb1684002a42397eb9c545b9a76c24756cda377d113bf",
+      "published_sha256": "e252577cc5d3908c545eb1684002a42397eb9c545b9a76c24756cda377d113bf",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "ci-recovery.public.json",
+      "packet_path": "validation/ci-recovery.json",
+      "original_sha256": "5b9c33ba705a976cf51c6c90967863ff14a4839c3e36f02752f11e9a770d4bf4",
+      "published_sha256": "5b9c33ba705a976cf51c6c90967863ff14a4839c3e36f02752f11e9a770d4bf4",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "main-ci-drift.public.json",
+      "packet_path": "validation/earlier-v9-main-ci.json",
+      "original_sha256": "5c024a701eeff05268a7eabd28e134c12611fec2ef243b81567bc9174ff95488",
+      "published_sha256": "5c024a701eeff05268a7eabd28e134c12611fec2ef243b81567bc9174ff95488",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "xdist-runner-diagnosis.public.json",
+      "packet_path": "validation/runner-diagnosis.json",
+      "original_sha256": "98d9b6d350af849a755122db72bd8837f4d6cd95b54349db3146c31c5a226887",
+      "published_sha256": "98d9b6d350af849a755122db72bd8837f4d6cd95b54349db3146c31c5a226887",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "linux-v7-public-summary.json",
+      "packet_path": "validation/earlier-v7-result.json",
+      "original_sha256": "7735940ee85aace98adde7389da1e1b44224bc9cb2618ec4dd4148822fd02f5e",
+      "published_sha256": "7735940ee85aace98adde7389da1e1b44224bc9cb2618ec4dd4148822fd02f5e",
+      "transformation": "Byte-identical public source; filename normalized if needed."
+    },
+    {
+      "public_source": "absence-public-candidate/provider-final-cleanup.public.json",
+      "packet_path": "absence/provider-final-cleanup.public.json",
+      "original_sha256": "ea9863500a25ebb359ba9150a64ca86120e29a0b1979c5dec75e6fa59121c760",
+      "published_sha256": "ea9863500a25ebb359ba9150a64ca86120e29a0b1979c5dec75e6fa59121c760",
+      "transformation": "Byte-identical final public receipt."
+    },
+    {
+      "public_source": "independent-review-closure.public.json",
+      "packet_path": "validation/independent-review-closure.json",
+      "original_sha256": "0b9ebf774be93c69afb8959106898c7d2f57c107ef1eb79ca4f0e5198511fbd6",
+      "published_sha256": "0b9ebf774be93c69afb8959106898c7d2f57c107ef1eb79ca4f0e5198511fbd6",
+      "transformation": "Byte-identical final public receipt."
+    },
+    {
+      "public_source": "pr654-audit-source-binding.public.json",
+      "packet_path": "agent/audit-successor-binding.json",
+      "original_sha256": "acdf06ab599f0fda10c9c34aa650e21f07b642df5026fc779d38f46b5bcd39bb",
+      "published_sha256": "acdf06ab599f0fda10c9c34aa650e21f07b642df5026fc779d38f46b5bcd39bb",
+      "transformation": "Byte-identical final public receipt."
+    },
+    {
+      "public_source": "linux-v10-public-summary.json",
+      "packet_path": "validation/linux-v10-summary.json",
+      "original_sha256": "fd842454952f01c19846a38fe4ee00c13c659ab75f3bd1450181b7933ed99fa0",
+      "published_sha256": "fd842454952f01c19846a38fe4ee00c13c659ab75f3bd1450181b7933ed99fa0",
+      "transformation": "Byte-identical final public receipt."
+    },
+    {
+      "public_source": "linux-v9-public-summary.json",
+      "packet_path": "validation/earlier-v9-result.json",
+      "original_sha256": "1200230df2b9eea84fa1bd0b3a16a4808c67c33881267755e6db6248b76910c4",
+      "published_sha256": "1200230df2b9eea84fa1bd0b3a16a4808c67c33881267755e6db6248b76910c4",
+      "transformation": "Byte-identical final public receipt."
+    },
+    {
+      "public_source": "security-v10-public-summary.json",
+      "packet_path": "validation/security-v10-summary.json",
+      "original_sha256": "29e8ce5c27a5a348b3a7681fa7576b98a971dbfb019e151e15dce97570a967ba",
+      "published_sha256": "29e8ce5c27a5a348b3a7681fa7576b98a971dbfb019e151e15dce97570a967ba",
+      "transformation": "Byte-identical final public receipt."
+    },
+    {
+      "public_source": "pr683-private-pull-public.json",
+      "packet_path": "registry/private-pull.json",
+      "original_sha256": "a05445d15de0db74e436eef62dfdc2705150264b9574bde55d47b23bd6d28fc7",
+      "published_sha256": "a05445d15de0db74e436eef62dfdc2705150264b9574bde55d47b23bd6d28fc7",
+      "transformation": "Byte-identical final public receipt."
+    },
+    {
+      "public_source": "pr683-node-watchdog-public.json",
+      "packet_path": "registry/node-watchdog.json",
+      "original_sha256": "dfaac188fea15e4b88eb80494b6cafc19eea317dc68ff8346d02a0e86d618ca2",
+      "published_sha256": "dfaac188fea15e4b88eb80494b6cafc19eea317dc68ff8346d02a0e86d618ca2",
+      "transformation": "Byte-identical final public receipt."
+    }
+  ],
+  "generated_files": [
+    "readme.md",
+    "pr-heads.json",
+    "validation/hosted-ci.json",
+    "packet-validation.json"
+  ],
+  "finalization_inputs": [
+    {
+      "source": "absence-independent-review-v10.json",
+      "sha256": "8f1d4cc5251cba0798d563f038bff70912af2e26303ebd2791d0413eeda26334"
+    },
+    {
+      "source": "absence-public-candidate/provider-final-cleanup.public.json",
+      "sha256": "ea9863500a25ebb359ba9150a64ca86120e29a0b1979c5dec75e6fa59121c760"
+    },
+    {
+      "source": "ci-latest.private.json",
+      "sha256": "e9c589ea63bdf54cbeee4e00bc1749c23509d45007c5528313c406bcabc3f9d4"
+    },
+    {
+      "source": "independent-review-closure.public.json",
+      "sha256": "0b9ebf774be93c69afb8959106898c7d2f57c107ef1eb79ca4f0e5198511fbd6"
+    },
+    {
+      "source": "integration-v10.json",
+      "sha256": "5cd1917d12d1c977d32baeb064367a29a27bcd9de3f185abb6535ca5b55194f5"
+    },
+    {
+      "source": "linux-v10-public-summary.json",
+      "sha256": "fd842454952f01c19846a38fe4ee00c13c659ab75f3bd1450181b7933ed99fa0"
+    },
+    {
+      "source": "linux-v7-public-summary.json",
+      "sha256": "7735940ee85aace98adde7389da1e1b44224bc9cb2618ec4dd4148822fd02f5e"
+    },
+    {
+      "source": "linux-v9-public-summary.json",
+      "sha256": "1200230df2b9eea84fa1bd0b3a16a4808c67c33881267755e6db6248b76910c4"
+    },
+    {
+      "source": "pr654-audit-source-binding.public.json",
+      "sha256": "acdf06ab599f0fda10c9c34aa650e21f07b642df5026fc779d38f46b5bcd39bb"
+    },
+    {
+      "source": "pr681-integration-v10-binding.json",
+      "sha256": "4fb40ea756073fdddbcbdf37b39a1ee9d3c229341e7738d9002dfb916764bc6e"
+    },
+    {
+      "source": "pr683-node-watchdog-public.json",
+      "sha256": "dfaac188fea15e4b88eb80494b6cafc19eea317dc68ff8346d02a0e86d618ca2"
+    },
+    {
+      "source": "pr683-private-pull-public.json",
+      "sha256": "a05445d15de0db74e436eef62dfdc2705150264b9574bde55d47b23bd6d28fc7"
+    },
+    {
+      "source": "security-v10-public-summary.json",
+      "sha256": "29e8ce5c27a5a348b3a7681fa7576b98a971dbfb019e151e15dce97570a967ba"
+    },
+    {
+      "source": "xdist-runner-diagnosis.public.json",
+      "sha256": "98d9b6d350af849a755122db72bd8837f4d6cd95b54349db3146c31c5a226887"
+    }
+  ],
+  "scope": "Generated readiness prose derives from these validated inputs; copied historical receipts keep their original scopes."
+}

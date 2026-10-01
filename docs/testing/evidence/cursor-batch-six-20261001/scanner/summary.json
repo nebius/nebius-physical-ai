@@ -1,0 +1,530 @@
+{
+  "schema": "npa.pr681.cgroup-memory-evidence.v1",
+  "candidate_commit": "441c11ddaca8e5990624313c175dd49e8185b2c9",
+  "baseline_commit": "a09e1e00df1c7762aa388c6eaccc15c55eb2a4a6",
+  "change": "Configure the Go soft memory limit from the tightest usable visible cgroup-v2 startup allowance before detector allocation; reserve ten percent and account existing group usage. Exhausted or too-small samples are advisory; disappearing usage files are skipped while preserving other usable ancestor limits and stricter direct-launch runtime limits. Malformed readable data retains controlled diagnostics. Detection, record admission, oversized-record serialization and final ledger are unchanged.",
+  "source_sha256": {
+    ".gitleaks.toml": "4fabe9d1cb9f0e741bcca5361ec3a0428e6df78490b0a96d815625e1b89be547",
+    "npa/scripts/image_byte_scan/LICENSE-pyahocorasick": "2a7f4000fcb22199112e682ae44400f8836b9ff2500c46a8bed7d0edc93b2185",
+    "npa/scripts/image_byte_scan/__init__.py": "3376200535edc2473808c01c05094340cde29df4e33736e70d0552037abdb9ac",
+    "npa/scripts/image_byte_scan/adjudicate.py": "53bd4c2dca620bf7a1ee61a40e1f7062dba2358cf8968f2ff8e410105d42e468",
+    "npa/scripts/image_byte_scan/aho_matcher.py": "8ab2ea2152684fa7789dc4ba8dfedf5802b00bd08d4f91d8e88808feaa313455",
+    "npa/scripts/image_byte_scan/authorization.schema.json": "350f5f0c43a2bf71e484604d8a34e6015dd769f49a5885d957d4e8c147b93217",
+    "npa/scripts/image_byte_scan/confidentiality.py": "87ef0a153b62c42b42fcbb5c0a72b6f0003b2d0d78d34be9d1ad59ef0165971b",
+    "npa/scripts/image_byte_scan/core.py": "ef9882c2d0bc30a0a34db6bc78732d51aecb363d1ea404aba943b96d93872c15",
+    "npa/scripts/image_byte_scan/dependency-pins.json": "a102c595c12501221f7327d7d39449d73affbfc0dfca0fc2c19019dcbaae6c90",
+    "npa/scripts/image_byte_scan/go_helper/LICENSE-GITLEAKS": "e3884b252b3bfc045e55be43a34d1e80da070bc6f804ac95bf4660e97d62ebc6",
+    "npa/scripts/image_byte_scan/go_helper/LICENSE-GO": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+    "npa/scripts/image_byte_scan/go_helper/README.md": "3b9400c4285318244bd57a76addb181c94bd36f9f3d719461fb98ad2c73571f1",
+    "npa/scripts/image_byte_scan/go_helper/build.py": "65dfe356fec40a6dca7ada422f78764d41a9e4687847985331f484a4aa6a2231",
+    "npa/scripts/image_byte_scan/go_helper/go.mod": "5e3c33a89592652f796d15d3cbdb1d7f10885bf285863aae6e1fad5c5653a7e7",
+    "npa/scripts/image_byte_scan/go_helper/go.sum": "04b4f97a54f93e4cadda0e8073903cc247b1083e6fbc132132bae619165202d3",
+    "npa/scripts/image_byte_scan/go_helper/main.go": "d376473aefc60fae5cf9cf741cabb69a55bbd7c9e613b85fbaaef6def095ade4",
+    "npa/scripts/image_byte_scan/go_helper/main_test.go": "d05f65bc8b6fa8d52a7701c77ecaac365bea57b71cb43a5f851043203ee80409",
+    "npa/scripts/image_byte_scan/go_helper/memory.go": "a12397897f20fbe333bce6016c15948115e8463e0901b2d1052a44e9afe67c95",
+    "npa/scripts/image_byte_scan/habitat_sim_verification.py": "912267e76d938e60ef58032eb4d46ba75319b5294b73b1ff8cae08dd9abf9245",
+    "npa/scripts/image_byte_scan/ncore_verification.py": "bb35c1c9b8fb568435ff979267725a63bee88253dc5f010288c63f6f72e19c17",
+    "npa/scripts/image_byte_scan/oci_graph.py": "93ffa611ab4627e05797beb5e1ff912974e75e11eb4df4cc323e5edc556294a1",
+    "npa/scripts/image_byte_scan/prepare.py": "8077f23205ae77a9e405cd1315ffdffb77ef5180f031287f495a34386f77ed55",
+    "npa/scripts/image_byte_scan/public_native_policy.py": "4777bbae35b8c25b370547154410f5292d09fce12dc921aa9d9e057de8844295",
+    "npa/scripts/image_byte_scan/public_policies/curobo-v2-semantics.json": "31161541290240f45edd6976c15f584f2006a4b6d92905c5862402c9ea6bb71f",
+    "npa/scripts/image_byte_scan/public_policies/curobo-v2-sources.json": "37bbbd8af62c1b5fa292764e43528317382609f4a954dab5795eee4f8e76a9a3",
+    "npa/scripts/image_byte_scan/public_policies/curobo-v2.json": "1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab",
+    "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-payload.json": "e0d30534debe2348b59ed394a4a8daa250e06140a8bbb99b39e5849662976ed6",
+    "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap-proofs.json": "2a650464b6370fbefdd5acc459df61919cce070be0079fb3b2754b655858d888",
+    "npa/scripts/image_byte_scan/public_policies/robotwin-bootstrap.json": "df720d408e03ad08dea051b31af6755159cfffc6276cbb7fa60bd1ec0a37236a",
+    "npa/scripts/image_byte_scan/real_helper_checks.py": "33e034aadfd6cf47e90a688357773e845ac8602a48ad85e814ee56b5b28f0491",
+    "npa/scripts/image_byte_scan/robotwin_verification.py": "4da29697a394f487aa92525abf7e2988f5a657bf7b344dd3365166d6a2bd7785",
+    "npa/scripts/image_byte_scan/synthetic.py": "6f44385c323ca1ea9aac00c6bfe8375b65f9860bd0043d9c2916e3dfe77fab08",
+    "npa/scripts/scan_image_bytes.py": "6fa1303f1273d4ee0f8800f8cf2cb6a71c8194d496bd97d4029dde3f651d5a56",
+    "npa/tests/docker/test_image_byte_go_build.py": "67ca5bbfd211825879a6cfd2fce0799681f88926d28181202f9c9da56afd7b7a"
+  },
+  "gates": {
+    "final-candidate-build": {
+      "exit": 0,
+      "seconds": 65.229
+    },
+    "final-candidate-dependencies": {
+      "exit": 0,
+      "seconds": 0.113
+    },
+    "python-scanner": {
+      "exit": 0,
+      "seconds": 27.757
+    },
+    "native": {
+      "exit": 0,
+      "seconds": 5.54
+    },
+    "native-one-cpu": {
+      "exit": 0,
+      "seconds": 5.976
+    },
+    "race": {
+      "exit": 0,
+      "seconds": 64.809,
+      "counts": {
+        "passed": 74,
+        "declared": 42,
+        "skipped": 0,
+        "failed": 0
+      }
+    },
+    "vet": {
+      "exit": 0,
+      "seconds": 4.487
+    }
+  },
+  "python_tests": {
+    "passed": 807,
+    "failed": 0
+  },
+  "native": {
+    "passed": true,
+    "literal_differential_cases": 200,
+    "archive_checks": [
+      {
+        "cancellation": {
+          "helper_joined": true,
+          "passed": true,
+          "unrelated_sibling_preserved": true
+        },
+        "complete": true,
+        "engine": "reference",
+        "findings": 3524,
+        "helper_findings": 6,
+        "helper_joined": true,
+        "records": 47,
+        "regular_files": 6
+      },
+      {
+        "cancellation": {
+          "helper_joined": true,
+          "passed": true,
+          "unrelated_sibling_preserved": true
+        },
+        "complete": true,
+        "engine": "native",
+        "findings": 3524,
+        "helper_findings": 6,
+        "helper_joined": true,
+        "records": 47,
+        "regular_files": 6
+      }
+    ],
+    "duplex_check": {
+      "caller_depth": 64,
+      "helper_findings": 12000,
+      "helper_workers": 1,
+      "passed": true,
+      "records": 98,
+      "scanned_bytes": 888422
+    },
+    "helper_sha256": "85e4235650690b49bb02e7f5e153b46c4c50b37f48815ab4cfd45c8df04131c4"
+  },
+  "one_cpu_native": {
+    "passed": true,
+    "literal_differential_cases": 200,
+    "archive_checks": [
+      {
+        "cancellation": {
+          "helper_joined": true,
+          "passed": true,
+          "unrelated_sibling_preserved": true
+        },
+        "complete": true,
+        "engine": "reference",
+        "findings": 3524,
+        "helper_findings": 6,
+        "helper_joined": true,
+        "records": 47,
+        "regular_files": 6
+      },
+      {
+        "cancellation": {
+          "helper_joined": true,
+          "passed": true,
+          "unrelated_sibling_preserved": true
+        },
+        "complete": true,
+        "engine": "native",
+        "findings": 3524,
+        "helper_findings": 6,
+        "helper_joined": true,
+        "records": 47,
+        "regular_files": 6
+      }
+    ],
+    "duplex_check": {
+      "caller_depth": 64,
+      "helper_findings": 12000,
+      "helper_workers": 1,
+      "passed": true,
+      "records": 98,
+      "scanned_bytes": 888422
+    }
+  },
+  "full_archive_ledger_equivalence": {
+    "clean-gzip": {
+      "complete": true,
+      "valid": true,
+      "records": 245,
+      "scanned_bytes": 6363331,
+      "regular_files": 70,
+      "findings": 0,
+      "helper_summary": {
+        "bytes": 6363331,
+        "files": 245,
+        "findings": 0,
+        "type": "summary"
+      },
+      "cli_exit": 0,
+      "image_sha256": "fe9a9588a12a04ba228986901d1be5ba5bde917beda21cb6faab7d229144ef39",
+      "ledger_sha256": "716afe7c2a0c1fc043b64513f4b81e08a0d6dcd2291dbbbe4a9d8d430f2405cc",
+      "ledger_lines": 534
+    },
+    "poisoned-gzip": {
+      "complete": true,
+      "valid": false,
+      "records": 245,
+      "scanned_bytes": 6363293,
+      "regular_files": 70,
+      "findings": 6,
+      "helper_summary": {
+        "bytes": 6363293,
+        "files": 245,
+        "findings": 2,
+        "type": "summary"
+      },
+      "cli_exit": 1,
+      "image_sha256": "3d5ee79f35376f50607323ac22ccc34d9cb4e66a0eeeee5b461e3269e45b5263",
+      "ledger_sha256": "b1edeb08addd405de71e6b196774b58015a3e291fc1e73751bd11319e45f90bf",
+      "ledger_lines": 536
+    },
+    "poisoned-tar": {
+      "complete": true,
+      "valid": false,
+      "records": 243,
+      "scanned_bytes": 6360264,
+      "regular_files": 70,
+      "findings": 6,
+      "helper_summary": {
+        "bytes": 6360264,
+        "files": 243,
+        "findings": 2,
+        "type": "summary"
+      },
+      "cli_exit": 1,
+      "image_sha256": "3a724c44b59e69c7608e7b49bc9b076fce9adb46df83e0c4644153ed3e9c44ee",
+      "ledger_sha256": "4c83ec39c94e1b781ddd5962bb759a88c060eaae269f8e33d0f705f6e605b0f2",
+      "ledger_lines": 526
+    }
+  },
+  "memory_protocol_corpus": {
+    "records": 12,
+    "bytes": 100663296,
+    "framed_sha256": "b5d7a974951aac9be7d65787276a3c80c03ba3de37a742f5ef23ae38a011d25b"
+  },
+  "readable_cgroup_runs": {
+    "base-512": {
+      "exit": 1,
+      "seconds": 2.712,
+      "hard_limit_bytes": 536870912,
+      "startup_group_current": 71016448,
+      "group_peak_bytes": null,
+      "sampled_group_peak_bytes": 525656064,
+      "sample_interval_seconds": 0.005,
+      "helper_max_rss_kib": 449544,
+      "oom_events_delta": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "complete": true,
+      "summary": {
+        "type": "summary",
+        "files": 12,
+        "bytes": 100663296,
+        "findings": 4
+      },
+      "response_sha256": "db1af52e667afe19cf6e00e09387808e5a1a05222275878197c65c659a6dde26",
+      "response_bytes": 2961,
+      "binary_sha256": "83af491bd6140eae2237e00ba8adfb79d6eeb97258eea8b3e4b3145f9da67612"
+    },
+    "candidate-512": {
+      "exit": 1,
+      "seconds": 2.624,
+      "hard_limit_bytes": 536870912,
+      "startup_group_current": 71012352,
+      "group_peak_bytes": null,
+      "sampled_group_peak_bytes": 465301504,
+      "sample_interval_seconds": 0.005,
+      "helper_max_rss_kib": 389708,
+      "oom_events_delta": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "complete": true,
+      "summary": {
+        "type": "summary",
+        "files": 12,
+        "bytes": 100663296,
+        "findings": 4
+      },
+      "response_sha256": "db1af52e667afe19cf6e00e09387808e5a1a05222275878197c65c659a6dde26",
+      "response_bytes": 2961,
+      "binary_sha256": "85e4235650690b49bb02e7f5e153b46c4c50b37f48815ab4cfd45c8df04131c4"
+    },
+    "base-1536": {
+      "exit": 1,
+      "seconds": 2.646,
+      "hard_limit_bytes": 1610612736,
+      "startup_group_current": 71106560,
+      "group_peak_bytes": null,
+      "sampled_group_peak_bytes": 480010240,
+      "sample_interval_seconds": 0.005,
+      "helper_max_rss_kib": 405856,
+      "oom_events_delta": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "complete": true,
+      "summary": {
+        "type": "summary",
+        "files": 12,
+        "bytes": 100663296,
+        "findings": 4
+      },
+      "response_sha256": "db1af52e667afe19cf6e00e09387808e5a1a05222275878197c65c659a6dde26",
+      "response_bytes": 2961,
+      "binary_sha256": "83af491bd6140eae2237e00ba8adfb79d6eeb97258eea8b3e4b3145f9da67612"
+    },
+    "candidate-1536": {
+      "exit": 1,
+      "seconds": 2.26,
+      "hard_limit_bytes": 1610612736,
+      "startup_group_current": 71077888,
+      "group_peak_bytes": null,
+      "sampled_group_peak_bytes": 457793536,
+      "sample_interval_seconds": 0.005,
+      "helper_max_rss_kib": 382316,
+      "oom_events_delta": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "complete": true,
+      "summary": {
+        "type": "summary",
+        "files": 12,
+        "bytes": 100663296,
+        "findings": 4
+      },
+      "response_sha256": "db1af52e667afe19cf6e00e09387808e5a1a05222275878197c65c659a6dde26",
+      "response_bytes": 2961,
+      "binary_sha256": "85e4235650690b49bb02e7f5e153b46c4c50b37f48815ab4cfd45c8df04131c4"
+    }
+  },
+  "tighter_pressure_runs": {
+    "base-384": {
+      "exit": 137,
+      "seconds": 0.383,
+      "hard_limit_bytes": 402653184,
+      "startup_group_current": 71016448,
+      "group_peak_bytes": null,
+      "sampled_group_peak_bytes": 402657280,
+      "sample_interval_seconds": 0.005,
+      "helper_max_rss_kib": 330360,
+      "oom_events_delta": {
+        "low": 0,
+        "high": 0,
+        "max": 39,
+        "oom": 2,
+        "oom_kill": 1
+      },
+      "complete": false,
+      "summary": null,
+      "response_sha256": "74ae459efd94f3c927a871cd7b4f0e4edfd1cb13c2d53a1ac7e37007ebcbd04e",
+      "response_bytes": 1017,
+      "binary_sha256": "83af491bd6140eae2237e00ba8adfb79d6eeb97258eea8b3e4b3145f9da67612"
+    },
+    "candidate-384": {
+      "exit": 1,
+      "seconds": 2.822,
+      "hard_limit_bytes": 402653184,
+      "startup_group_current": 71086080,
+      "group_peak_bytes": null,
+      "sampled_group_peak_bytes": 368988160,
+      "sample_interval_seconds": 0.005,
+      "helper_max_rss_kib": 293876,
+      "oom_events_delta": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0
+      },
+      "complete": true,
+      "summary": {
+        "type": "summary",
+        "files": 12,
+        "bytes": 100663296,
+        "findings": 4
+      },
+      "response_sha256": "db1af52e667afe19cf6e00e09387808e5a1a05222275878197c65c659a6dde26",
+      "response_bytes": 2961,
+      "binary_sha256": "85e4235650690b49bb02e7f5e153b46c4c50b37f48815ab4cfd45c8df04131c4"
+    }
+  },
+  "runtime_limit_probe": {
+    "scope": "Standard-library probe compiles byte-identical candidate memory.go and reads debug.SetMemoryLimit after configureCgroupMemory; exact production helper remains covered separately.",
+    "source_sha256": "a12397897f20fbe333bce6016c15948115e8463e0901b2d1052a44e9afe67c95",
+    "cases": {
+      "ancestor": {
+        "configured_limit": 417060864,
+        "failure_code": "",
+        "initial_limit": 9223372036854775807,
+        "parent_limit": 512,
+        "leaf_limit": "max",
+        "sibling_bytes": 67108864,
+        "parent_current_before_probe": 71016448,
+        "explicit_environment_limit": null
+      },
+      "leaf": {
+        "configured_limit": 118628352,
+        "failure_code": "",
+        "initial_limit": 9223372036854775807,
+        "parent_limit": 512,
+        "leaf_limit": 128,
+        "sibling_bytes": 67108864,
+        "parent_current_before_probe": 71110656,
+        "explicit_environment_limit": null
+      },
+      "unlimited": {
+        "configured_limit": 9223372036854775807,
+        "failure_code": "",
+        "initial_limit": 9223372036854775807,
+        "parent_limit": "max",
+        "leaf_limit": "max",
+        "sibling_bytes": 67108864,
+        "parent_current_before_probe": 71016448,
+        "explicit_environment_limit": null
+      },
+      "stricter-direct": {
+        "configured_limit": 67108864,
+        "failure_code": "",
+        "initial_limit": 67108864,
+        "parent_limit": 512,
+        "leaf_limit": "max",
+        "sibling_bytes": 67108864,
+        "parent_current_before_probe": 71008256,
+        "explicit_environment_limit": "64MiB"
+      }
+    }
+  },
+  "mutation_controls": {
+    "skip-ancestors": {
+      "exit": 1,
+      "failed_tests": [
+        "TestCgroupMemoryHierarchyAndCurrentUsage/ancestor-limit",
+        "TestCgroupMemoryHierarchyAndCurrentUsage/ancestor-siblings",
+        "TestCgroupMemoryHierarchyAndCurrentUsage",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors/exhausted-leaf",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors/small-leaf",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors",
+        "TestCgroupMemoryVanishedUsagePreservesOtherLimit/permission-denied",
+        "TestCgroupMemoryVanishedUsagePreservesOtherLimit"
+      ]
+    },
+    "ignore-current": {
+      "exit": 1,
+      "failed_tests": [
+        "TestCgroupMemoryHierarchyAndCurrentUsage/leaf",
+        "TestCgroupMemoryHierarchyAndCurrentUsage/ancestor-limit",
+        "TestCgroupMemoryHierarchyAndCurrentUsage/ancestor-siblings",
+        "TestCgroupMemoryHierarchyAndCurrentUsage/looser-parent",
+        "TestCgroupMemoryHierarchyAndCurrentUsage",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors/exhausted-parent",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors/exhausted-leaf",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors/small-parent",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors/small-leaf",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors",
+        "TestCgroupMemoryVanishedUsagePreservesOtherLimit/disappeared",
+        "TestCgroupMemoryVanishedUsagePreservesOtherLimit/device-removed",
+        "TestCgroupMemoryVanishedUsagePreservesOtherLimit",
+        "TestCgroupMemoryAppliesOnlyTighterUsableLimit/default",
+        "TestCgroupMemoryAppliesOnlyTighterUsableLimit/already-too-small",
+        "TestCgroupMemoryAppliesOnlyTighterUsableLimit/too-small-preserves-explicit",
+        "TestCgroupMemoryAppliesOnlyTighterUsableLimit"
+      ]
+    },
+    "omit-runtime-set": {
+      "exit": 1,
+      "failed_tests": [
+        "TestCgroupMemoryAppliesOnlyTighterUsableLimit/default",
+        "TestCgroupMemoryAppliesOnlyTighterUsableLimit"
+      ]
+    },
+    "fatal-pressure": {
+      "exit": 1,
+      "failed_tests": [
+        "TestCgroupMemoryExhaustionAndOverflow",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors/exhausted-parent",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors/exhausted-leaf",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors/all-exhausted",
+        "TestCgroupMemoryTransientPressurePreservesUsableAncestors"
+      ]
+    },
+    "vanished-usage-fatal": {
+      "exit": 1,
+      "failed_tests": [
+        "TestCgroupMemoryInvalidFiniteLimitFailsClosed",
+        "TestCgroupMemoryVanishedUsagePreservesOtherLimit/disappeared",
+        "TestCgroupMemoryVanishedUsagePreservesOtherLimit/device-removed",
+        "TestCgroupMemoryVanishedUsagePreservesOtherLimit"
+      ]
+    }
+  },
+  "evidence_manifest_sha256": "685929029d0d42a58aaa6e9a0a4d69e2427f7eaf67dbba0dc42cfef1ec09ff5e",
+  "private_evidence_files": 107,
+  "limitations": [
+    "Final source supersedes draft 417bfd6f evidence; the final helper was rebuilt and all applicable native, race, probe, mutation, ledger and constrained-memory gates were repeated.",
+    "Go SetMemoryLimit is soft and covers Go-managed memory, not total RSS; no OOM guarantee.",
+    "Single measurements on a synthetic scanner corpus are functional evidence, not a throughput benchmark or general memory bound.",
+    "The kernel exposes no memory.peak; group peaks are sampled every 5 ms. /usr/bin/time reports exact maximum process RSS.",
+    "The 384 MiB baseline was OOM-killed and has no complete result; candidate completion is compared with complete baseline runs at larger caps.",
+    "Earlier task-owned cgroups had mode 0700, making memory metadata unreadable after privilege drop. Their results exercise fallback only and are superseded by readable-cgroup runs; retained privately.",
+    "A separate initial harness attempt assumed memory.peak existed and failed after its first measurement. Its empty owned namespace was verified and removed.",
+    "GPU tests do not apply to this CPU scanner change.",
+    "Advisory exhausted, too-small and vanished cgroup samples are covered by unit tests and distinguishing mutations. The live 384 MiB constrained scan exercises a usable positive allowance, not the advisory-skip paths."
+  ],
+  "references": [
+    "https://pkg.go.dev/runtime/debug#SetMemoryLimit",
+    "https://go.dev/doc/gc-guide#Memory_limit",
+    "https://docs.kernel.org/admin-guide/cgroup-v2.html"
+  ],
+  "owned_test_cgroups_removed": true,
+  "signed_commit_verified": true,
+  "review_findings": {
+    "PR681-1": {
+      "status": "addressed",
+      "behavior": "Transiently exhausted or too-small memory samples skip tuning at that level; preserve a usable limit from other ancestors or stricter existing runtime setting.",
+      "controls": "Exhausted and too-small leaf/ancestor cases, all exhausted, explicit lower runtime limit; restoring fatal pressure behavior fails four targeted assertions."
+    },
+    "PR681-2": {
+      "status": "addressed",
+      "behavior": "ENOENT/ENODEV reading memory.current skips a vanished sample; malformed readable data and permission failures remain controlled errors.",
+      "controls": "Wrapped ENOENT/ENODEV preserve usable leaf limit; permission control remains fatal; restoring old missing-usage behavior fails three targeted assertions."
+    }
+  }
+}

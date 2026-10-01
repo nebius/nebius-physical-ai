@@ -1,0 +1,73 @@
+{
+  "schema": "npa.oauth4.offline-compatibility.v1",
+  "passed": true,
+  "tests_run": 12,
+  "failed": 0,
+  "errors": 0,
+  "skipped": 0,
+  "test_cases": [
+    "test_authorization_code_pkce_and_bearer",
+    "test_automatic_refresh_persists_new_token",
+    "test_bad_pkce_is_rejected",
+    "test_client_credentials_basic_auth_and_bearer",
+    "test_insecure_transport_refused",
+    "test_invalid_client_is_typed_failure",
+    "test_manual_refresh_and_new_bearer",
+    "test_missing_access_token_is_typed_failure",
+    "test_oauth1_bad_signature_refused",
+    "test_oauth1_full_token_flow_independent_hmac",
+    "test_state_mismatch_refuses_before_http",
+    "test_untrusted_certificate_refused"
+  ],
+  "distribution_versions": {
+    "oauthlib": "4.0.0",
+    "requests-oauthlib": "2.0.0",
+    "requests": "2.34.2",
+    "urllib3": "2.8.0",
+    "certifi": "2026.7.22",
+    "charset-normalizer": "3.5.2",
+    "idna": "3.20"
+  },
+  "harness_sha256": "6997dbc323e8051b943a1fd7443083ceadcb6ed8a0b446115f395b6404dc0cf7",
+  "tls": "Loopback HTTPS with explicitly trusted generated localhost certificate; certificate verification enabled. No insecure-transport environment override.",
+  "requests_by_method_path": {
+    "GET /authorize": 3,
+    "GET /oauth1/resource": 1,
+    "GET /protected": 4,
+    "POST /oauth1/access": 1,
+    "POST /oauth1/request": 1,
+    "POST /oauth1/resource": 1,
+    "POST /token": 6,
+    "POST /token-error": 1,
+    "POST /token-missing": 1
+  },
+  "independently_verified_oauth1_signatures": 3,
+  "successful_refreshes": 2,
+  "limitations": [
+    "Synthetic local reference provider; no live vendor credentials, browser consent, or vendor-specific extensions.",
+    "Checks real installed client interoperability with OAuthlib 4.0.0 and requests-oauthlib 2.0.0; does not certify every upstream server extension.",
+    "The reference provider verifies OAuth1 HMAC signatures independently with the standard library; OAuth2 token payloads and PKCE are checked server-side."
+  ],
+  "references": [
+    "https://github.com/oauthlib/oauthlib/releases/tag/v4.0.0",
+    "https://requests-oauthlib.readthedocs.io/en/latest/oauth2_workflow.html",
+    "https://requests-oauthlib.readthedocs.io/en/latest/oauth1_workflow.html"
+  ],
+  "distribution_python_source_manifests": [
+    {
+      "distribution": "oauthlib",
+      "python_files": 75,
+      "sha256": "76e1b3f31b344e451f70abf52340924887dd00bd55e9708e0b645e24d9cb7eeb"
+    },
+    {
+      "distribution": "requests-oauthlib",
+      "python_files": 15,
+      "sha256": "fae904484c49eb5166626d2d4e96f73679f698967abc774915f9d7a68862bf00"
+    },
+    {
+      "distribution": "requests",
+      "python_files": 19,
+      "sha256": "e10e809818683c6543c1a95f156f7102f718345a997f0a748122b81205e0afe9"
+    }
+  ]
+}

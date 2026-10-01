@@ -1,0 +1,35 @@
+{
+  "schema": "npa.absence-independent-review.v1",
+  "reviewed_commit": "3509dd9aa599884a5a03e6acf43b8b0ee5bd0189",
+  "final_integration_commit": "c47d1aec50042c74b8b8edb076374d1636df2f52",
+  "source_path": "npa/src/npa/cluster/absence_process.py",
+  "tested_source_sha256": "72c1b7c6734ea670032946d1245a07c49d9e6d1c5016fef3dd44230b29584b08",
+  "final_source_sha256": "3d818063875472b1d36a0c81b494e886d9db02115f0d7bbbca9ac2a2b2e02706",
+  "final_source_ast_equivalent_to_tested": true,
+  "test_source_sha256": "2bf3a779a57aaa5e19adecdddb52c55eaf8466be8c4e597d9cf84686c0042654",
+  "verdict": "Approve for supported repository process ownership. No additional merge blocker found in the reviewed guard.",
+  "tests": {
+    "linux_passed": 23,
+    "failed": 0,
+    "mutation": "Removing the immediate reservation check fails all three external-reap controls; 20 other cases deselected.",
+    "mutation_failed_controls": 3
+  },
+  "findings_resolved": [
+    "An exit observer that raises ECHILD after an external waitpid cannot authorize killpg while Popen.returncode is still None.",
+    "Normal completion retains the unreaped leader until owned-descendant signalling; reaped-object and real external-reap paths refuse numeric signalling.",
+    "On Darwin the fallback validates both parent identity and expected process group before signalling."
+  ],
+  "limitations": [
+    "The new check handles ownership already lost before that check. Arbitrary concurrent external waitpid/SIGCHLD reapers between the final check and signal are outside the supported synchronization model; this review does not certify them race-free.",
+    "No global SIGCHLD handler or waitpid(-1) reaper was found in repository source.",
+    "Independent execution covered Linux. The author supplied 23 passing Darwin cases, but this reviewer did not rerun Darwin.",
+    "This is an independent agent code review and test execution, not a GitHub approval by a different human account."
+  ],
+  "evidence_sha256": {
+    "source-sha256.json": "1658a1f488cf1ddef87a1688188b0e32e57eea48145f7b513203c9fb27817c32",
+    "tests.log": "626ce311376618a85a5e95a6a09d291d42ae34a975a6f94e5f3186bd97235da9",
+    "mutation.log": "c92bf478254c777151840f24eafeddde4d3240ef21c2f581a646ff8832b86ace"
+  },
+  "previous_integration_commit": "d817ba9e911e4fe53d01709db6c881048bff0557",
+  "final_source_bytes_unchanged_from_previous_integration": true
+}
