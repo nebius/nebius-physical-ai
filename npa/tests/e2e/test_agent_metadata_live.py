@@ -197,7 +197,14 @@ def _deployed_source_hashes(
     *,
     expected_backend_sha256: str,
 ) -> dict:
-    modules = ["agent", "agent_access_runtime", "agent_resources", "agent_env_files"]
+    modules = [
+        "agent",
+        "agent_access_runtime",
+        "agent_resources",
+        "agent_env_files",
+        "agent_chat",
+        "agent_workflow",
+    ]
     script = (
         "import hashlib, importlib, json; from pathlib import Path; "
         f"names={modules!r}; "
@@ -245,7 +252,12 @@ def test_fresh_metadata_agent_access_and_inventory(deployment, monkeypatch):
     _reject_untrusted_certificate(base)
     auth = agent._load_auth_secret(str(agent._auth_secret_path(project, name)))
     with httpx.Client(base_url=base, verify=tls, timeout=None) as anonymous:
-        for route in ("/", "/api/access?refresh=true", "/api/resources"):
+        for route in (
+            "/",
+            "/api/access?refresh=true",
+            "/api/resources",
+            "/api/infra/k8s",
+        ):
             assert anonymous.get(route).status_code == 401
     with httpx.Client(base_url=base, auth=auth, verify=tls, timeout=None) as client:
         manifest, _ = _request(client, "/api/deployment", evidence, "deployment")
@@ -255,6 +267,12 @@ def test_fresh_metadata_agent_access_and_inventory(deployment, monkeypatch):
         resources, resources_seconds = _request(
             client, "/api/resources", evidence, "resources"
         )
+        inventory, inventory_seconds = _request(
+            client, "/api/infra/k8s", evidence, "kubernetes-inventory"
+        )
+    assert inventory["cloud_discovery"]["status"] == "available"
+    for cluster in inventory["cloud_clusters"]:
+        assert cluster["raw"]["accelerator_discovery"]["status"] == "available"
     expected = agent.build_deployment_manifest(
         project_alias=project,
         name=name,
@@ -286,10 +304,25 @@ def test_fresh_metadata_agent_access_and_inventory(deployment, monkeypatch):
         evidence,
         expected_backend_sha256=expected_backend_sha256,
     )
-    _record_result(evidence, manifest, hashes, access_seconds, resources_seconds)
+    _record_result(
+        evidence,
+        manifest,
+        hashes,
+        access_seconds,
+        resources_seconds,
+        inventory_seconds=inventory_seconds,
+    )
 
 
-def _record_result(evidence, manifest, hashes, access_seconds, resources_seconds):
+def _record_result(
+    evidence,
+    manifest,
+    hashes,
+    access_seconds,
+    resources_seconds,
+    *,
+    inventory_seconds,
+):
     _write_evidence(
         evidence,
         "result.json",
@@ -301,7 +334,10 @@ def _record_result(evidence, manifest, hashes, access_seconds, resources_seconds
                 "access_seconds": access_seconds,
                 "resources_http_status": 200,
                 "resources_seconds": resources_seconds,
-                "anonymous_statuses": [401, 401, 401],
+                "inventory_http_status": 200,
+                "inventory_seconds": inventory_seconds,
+                "cloud_discovery_status": "available",
+                "anonymous_statuses": [401, 401, 401, 401],
                 "tls_hostname_verified": True,
                 "tls_untrusted_certificate_rejected": True,
                 "tls_trust_source": "provider-pinned SSH",

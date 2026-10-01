@@ -126,7 +126,7 @@ def test_resource_discovery_rejects_unknown_source_and_scrubs_tokens(
 
     monkeypatch.setattr(agent_resources, "run_bounded_agent_command", bounded)
     environment = {
-        "NPA_NEBIUS_CREDENTIAL_SOURCE": "configured_profile",
+        "NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata",
         "NEBIUS_IAM_TOKEN": "must-not-propagate",
     }
 
@@ -314,6 +314,7 @@ def test_pipe_close_failure_still_starts_reaper(monkeypatch) -> None:
     assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is True
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Requires Linux waitid and procfs")
 def test_bounded_command_kills_and_reaps_real_descendant_group(monkeypatch) -> None:
     _isolated_process_registry(monkeypatch)
     child = (
@@ -374,6 +375,7 @@ def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(
         "available_accelerators": ["RTXPRO6000"],
         "gpu_platforms": ["cpu-d3", "gpu-rtx6000"],
         "gpu_accelerator": "RTXPRO6000",
+        "accelerator_discovery": {"status": "available"},
     }
 
 

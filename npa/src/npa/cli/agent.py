@@ -1035,7 +1035,7 @@ FOXGLOVE_KEEP_PUBLISHED = 3
 from npa.cli.agent_resources import (
     assemble_k8s_backend_inventory,
     build_resource_inventory,
-    discover_mk8s_accelerators,
+    discover_mk8s_clusters,
     prepare_agent_cloud_environment,
     run_bounded_agent_command,
     run_resource_discovery_command,
@@ -3424,11 +3424,12 @@ def _agent_k8s_backends(project: str = "") -> dict:
     config = _load_agent_config_yaml()
     alias = _agent_project_alias(project)
     ready, reason = _agent_npa_ready()
-    cloud_clusters = _agent_cloud_mk8s_clusters(alias)
+    cloud_discovery = _agent_cloud_mk8s_clusters(alias)
     inventory = assemble_k8s_backend_inventory(
         config=config, alias=alias,
         clusters_root=Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa") / "clusters",
-        cloud_clusters=cloud_clusters, npa_ready=ready,
+        cloud_clusters=cloud_discovery.get("items", []),
+        cloud_discovery=cloud_discovery, npa_ready=ready,
         npa_error=reason, terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
     )
     inventory["agent_exists"] = _configured_healthy_agent_exists(alias, config)
@@ -3618,7 +3619,7 @@ def _agent_workflow_operation_env(
     return command_env
 
 
-def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
+def _agent_cloud_mk8s_clusters(project: str = "") -> dict:
     config = _load_agent_config_yaml()
     projects = config.get("projects")
     if not isinstance(projects, dict):
@@ -3627,53 +3628,7 @@ def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
     if not isinstance(project_block, dict):
         project_block = {{}}
     parent_id = str(os.environ.get("NEBIUS_PROJECT_ID") or project_block.get("project_id") or "").strip()
-    if not parent_id:
-        return []
-    nebius_bin = shutil.which("nebius") or "/usr/local/bin/nebius"
-    if not Path(nebius_bin).exists() and shutil.which(nebius_bin) is None:
-        return []
-    try:
-        command_env, credential_source = prepare_agent_cloud_environment(
-            _agent_command_env()
-        )
-    except ValueError:
-        return []
-    command: list[str] = [nebius_bin]
-    profile = str(command_env.get("NEBIUS_PROFILE") or "").strip()
-    if credential_source == "instance_metadata" and not profile:
-        profile = "cursor-sa"
-    if profile:
-        command.extend(["--profile", profile])
-    try:
-        proc = run_bounded_agent_command(
-            [*command, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
-            env=command_env,
-            timeout_s=30,
-        )
-        if proc.returncode != 0:
-            return []
-        payload = json.loads(proc.stdout or "{{}}")
-    except (OSError, TimeoutError, TypeError, ValueError):
-        return []
-    items = payload.get("items") if isinstance(payload, dict) else []
-    clusters: list[dict] = []
-    if not isinstance(items, list):
-        return clusters
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {{}}
-        status = item.get("status") if isinstance(item.get("status"), dict) else {{}}
-        cluster_id = str(metadata.get("id") or "")
-        raw = discover_mk8s_accelerators(cluster_id, command, command_env) if cluster_id else {{}}
-        clusters.append({{
-            "source": "nebius_mk8s",
-            "id": cluster_id,
-            "name": str(metadata.get("name") or ""),
-            "status": str(status.get("state") or status.get("status") or ""),
-            "raw": raw,
-        }})
-    return clusters
+    return discover_mk8s_clusters(parent_id, _agent_command_env())
 
 
 def _tenant_resource_inventory(*, force_refresh: bool = False) -> dict:
@@ -4712,6 +4667,9 @@ def _provision_agent_infra(
         infra = _agent_k8s_backends(project)
         selected = resolve_workflow_infrastructure(infra)
         selected_context = str(selected.get("context") or "").strip()
+        if not selected_context and (infra.get("cloud_discovery") or {{}}).get("status") == "unavailable":
+            return {{"ok": False, "status": "blocked", "error_category": "inventory_unavailable",
+                    "error": "Cloud inventory is unavailable; absence is unverified. Retry discovery before provisioning."}}
         selected_cluster_name = str(selected.get("cluster_name") or selected_context).strip()
         if (
             gpu_node_group
@@ -5288,7 +5246,7 @@ def _live_runtime_evidence(state: dict, *, preferred_render: str = "") -> dict:
     try:
         infra = _agent_k8s_backends()
     except Exception:
-        infra = {{}}
+        infra = {{"cloud_discovery": {{"status": "unavailable"}}}}
     cloud = infra.get("cloud_clusters") if isinstance(infra.get("cloud_clusters"), list) else []
     statuses: dict[str, int] = {{}}
     allowed_cloud_states = {{"running", "creating", "provisioning", "updating", "degraded", "failed", "stopped", "unknown"}}
@@ -5320,6 +5278,7 @@ def _live_runtime_evidence(state: dict, *, preferred_render: str = "") -> dict:
         artifact_render = "none"
     return {{
         "cloud_status_counts": statuses,
+        "cloud_discovery_status": (infra.get("cloud_discovery") or {{}}).get("status", "unverified"),
         "workflow_status": workflow_status,
         "artifact_loaded": bool(
             artifact_render in {{"rerun", "video"}}
@@ -5477,6 +5436,8 @@ def _maybe_toolground_chat_reply(
             for status, count in sorted(status_counts.items())
             if isinstance(count, int) and count > 0
         ) if isinstance(status_counts, dict) else ""
+        if evidence.get("cloud_discovery_status") == "unavailable":
+            cloud_summary = "unavailable; absence is unverified"
         render = str(evidence.get("artifact_render") or "none")
         if bool(evidence.get("artifact_loaded")):
             artifact_summary = f"real `{{render}}` artifact loaded in **View**"
@@ -10071,6 +10032,10 @@ def submit_npa_workflow(payload: dict):
     # confirmation that establishes the missing context.
     initial_target = resolve_workflow_infrastructure(infra_before)
     has_execution_context = bool(str(initial_target.get("context") or "").strip())
+    if not has_execution_context and (infra_before.get("cloud_discovery") or {{}}).get("status") == "unavailable":
+        blocked = _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
+        blocked.update(status="inventory_unavailable", error="Cloud inventory is unavailable; backend absence is unverified. Retry discovery before provisioning.")
+        return blocked
     cluster_name = requested_cluster_name or "npa-cluster"
     discovered_cluster = _agent_discovered_cluster_for_name(
         infra_before, cluster_name

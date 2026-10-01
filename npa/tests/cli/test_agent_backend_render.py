@@ -792,6 +792,7 @@ def test_rendered_mk8s_provision_forwards_shared_backend_desired_state(
 
     module_name = "npa_rendered_mk8s_provision_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.setattr(module, "_agent_cloud_mk8s_clusters", lambda _project="": {"status": "available", "items": []})
     captured = {}
 
     class Result:
@@ -852,6 +853,7 @@ def test_rendered_mk8s_provision_does_not_promote_unknown_preflight_to_ready(
 
     module_name = "npa_rendered_mk8s_unknown_preflight"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.setattr(module, "_agent_cloud_mk8s_clusters", lambda _project="": {"status": "available", "items": []})
 
     class Result:
         def to_dict(self):
@@ -1088,6 +1090,7 @@ def test_rendered_mk8s_dry_run_backend_validation_error_is_clean_400(
 
     module_name = "npa_rendered_mk8s_backend_validation_error"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.setattr(module, "_agent_cloud_mk8s_clusters", lambda _project="": {"status": "available", "items": []})
     monkeypatch.setattr(module, "_agent_project_alias", lambda _value: "project-alias")
     monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
 
@@ -1915,6 +1918,39 @@ def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
+
+
+def test_rendered_inventory_failure_does_not_offer_absence_based_provisioning(
+    monkeypatch, tmp_path,
+) -> None:
+    from unittest.mock import Mock
+    from npa.cli import agent_resources
+    import npa.provisioning
+
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name="npa_inventory_failure")
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "project-fixture")
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(module, "_agent_command_env", lambda: {"NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata"})
+    monkeypatch.setattr(module, "_load_agent_config_yaml", lambda: {})
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(agent_resources, "run_bounded_agent_command", Mock(side_effect=TimeoutError("agent command timed out")))
+    inventory = module._agent_k8s_backends("demo")
+    assert inventory["cloud_discovery"]["error"]["kind"] == "timeout"
+    assert inventory["has_infra"] is None
+    provision = Mock(side_effect=AssertionError("absence is unverified"))
+    confirmation = Mock(side_effect=AssertionError("do not offer blind provisioning"))
+    monkeypatch.setattr(npa.provisioning, "provision_if_absent", provision)
+    monkeypatch.setattr(module, "_issue_agent_confirm_token", confirmation)
+    result = module._provision_agent_infra("demo", "new-cluster")
+    assert result["status"] == "blocked"
+    monkeypatch.setattr(module, "validate_workflow_yaml_text", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(module, "plan_workflow_yaml_text", lambda *a, **k: {"ok": True})
+    response = module.submit_npa_workflow({"yaml": "workflow", "allow_provision": True, "prepare_execution": True})
+    assert response["ok"] is False and response["status"] == "inventory_unavailable"
+    assert not response.get("needs_confirmation")
+    assert "confirm_token" not in response
+    provision.assert_not_called()
+    confirmation.assert_not_called()
 
 
 def test_artifact_only_load_run_preserves_ui_contract_and_active_state(
@@ -4480,7 +4516,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
             },
         },
     )
-    monkeypatch.setattr(module, "_agent_cloud_mk8s_clusters", lambda _project="": [])
+    monkeypatch.setattr(module, "_agent_cloud_mk8s_clusters", lambda _project="": {"status": "available", "items": []})
     grounded_legacy = module._agent_k8s_backends("configured-project")
     assert grounded_legacy["configured"] == [
         {
@@ -5867,6 +5903,7 @@ def test_rendered_backend_does_not_stat_credential_paths(monkeypatch, tmp_path) 
         lambda _project, _context: module._agent_command_env(),
     )
     monkeypatch.setattr(module, "run_bounded_agent_command", bounded)
+    monkeypatch.setattr("npa.cli.agent_resources.run_bounded_agent_command", bounded)
     monkeypatch.setattr(module, "run_resource_discovery_command", discover)
     try:
         environment = module._agent_command_env()
@@ -5880,7 +5917,7 @@ def test_rendered_backend_does_not_stat_credential_paths(monkeypatch, tmp_path) 
             "instance_metadata",
         )
         assert inventory_env["HOME"] == "/root"
-        assert module._agent_cloud_mk8s_clusters() == []
+        assert module._agent_cloud_mk8s_clusters() == {"status": "available", "items": []}
         module._tenant_resource_inventory(force_refresh=True)
         assert module._run_agent_npa_json(
             ["--help"],
@@ -5893,7 +5930,7 @@ def test_rendered_backend_does_not_stat_credential_paths(monkeypatch, tmp_path) 
             is False
         )
         assert len(calls) == 3
-        assert calls[0][0][:3] == ["/bin/true", "--profile", "cursor-sa"]
+        assert calls[0][0][:5] == ["/bin/true", "--config", "/root/.nebius/config.yaml", "--profile", "cursor-sa"]
         assert calls[0][2] == 30
         assert calls[1][0][-1] == "--help"
         assert calls[1][2] == 300

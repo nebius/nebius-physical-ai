@@ -2695,6 +2695,13 @@ def resolve_workflow_infrastructure(
                 if entry
                 else "no configured, local, or cloud Kubernetes backend is available"
             )
+            if (
+                not entry
+                and (payload.get("cloud_discovery") or {}).get("status")
+                == "unavailable"
+            ):
+                source = "unavailable"
+                reason = "cloud discovery is unavailable; Kubernetes backend absence is unverified"
     raw_value = entry.get("raw")
     raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
     available_raw = raw.get("available_accelerators")
@@ -2725,6 +2732,12 @@ def resolve_workflow_infrastructure(
         "kubeconfig": str(entry.get("kubeconfig") or "").strip(),
         "accelerator": accelerator,
         "available_accelerators": available,
+        "accelerator_discovery_status": (raw.get("accelerator_discovery") or {}).get(
+            "status", "unverified"
+        ),
+        "cloud_discovery_status": (payload.get("cloud_discovery") or {}).get(
+            "status", "unverified"
+        ),
         "gpu_profile": profile,
         "source": source,
         "selection_reason": reason,
@@ -3092,7 +3105,9 @@ def generate_workflow_draft(
             )
     if infrastructure is not None and not bool((infrastructure or {}).get("has_infra")):
         warnings.append(
-            "No Kubernetes backend is currently configured; provision or select one before submit."
+            "Cloud inventory is unavailable; backend absence is unverified. Retry discovery before provisioning."
+            if resolved_infra.get("cloud_discovery_status") == "unavailable"
+            else "No Kubernetes backend is currently configured; provision or select one before submit."
         )
     elif infrastructure is not None and not configured_accel and not requested_accel:
         warnings.append(

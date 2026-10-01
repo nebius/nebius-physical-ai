@@ -820,7 +820,7 @@ def test_agent_nebius_timeout_is_public_safe_and_bounded(monkeypatch) -> None:
     ("staged", "expected"),
     [
         ("instance_metadata", "instance_metadata"),
-        ("configured_profile", "configured_profile"),
+        ("configured_profile", None),
         ("operator-supplied", None),
         ("", None),
     ],
@@ -840,11 +840,8 @@ def test_agent_inventory_credential_source_is_allowlisted(
         assert runtime._agent_inventory_credential_context()[3] == expected
 
 
-@pytest.mark.parametrize(
-    "credential_source", ["configured_profile", "instance_metadata"]
-)
 def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
-    monkeypatch, tmp_path, credential_source
+    monkeypatch, tmp_path
 ) -> None:
     from npa.cli import agent_access_runtime as runtime
 
@@ -866,7 +863,7 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
 
     monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
     monkeypatch.setenv("NPA_NEBIUS_PROFILE", "cursor-sa")
-    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", credential_source)
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     monkeypatch.setattr(runtime.shutil, "which", lambda _name: "/bin/true")
     monkeypatch.setattr(
         runtime,
@@ -893,17 +890,13 @@ def test_agent_nebius_inventory_scrubs_tokens_and_pins_profile_config(
     assert command[:5] == [
         "/bin/true",
         "--config",
-        str(config)
-        if credential_source == "configured_profile"
-        else "/root/.nebius/config.yaml",
+        "/root/.nebius/config.yaml",
         "--profile",
         "cursor-sa",
     ]
     assert env["NEBIUS_PROFILE"] == "cursor-sa"
-    assert env["HOME"] == (
-        str(tmp_path) if credential_source == "configured_profile" else "/root"
-    )
-    assert runtime._agent_inventory_credential_context()[3] == credential_source
+    assert env["HOME"] == "/root"
+    assert runtime._agent_inventory_credential_context()[3] == "instance_metadata"
     assert "NEBIUS_IAM_TOKEN" not in env
     assert "NPA_NEBIUS_IAM_TOKEN" not in env
     assert "TF_VAR_iam_token" not in env

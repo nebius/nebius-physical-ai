@@ -6,6 +6,7 @@ import json
 import os
 import re
 import signal
+import shutil
 import subprocess
 import threading
 import time
@@ -29,7 +30,8 @@ _AGENT_ABANDONED_PROCESS_GROUPS: dict[int, subprocess.Popen[str]] = {}
 _AGENT_COMMAND_BREAKER_OPEN = False
 _AGENT_COMMAND_REAPER: threading.Thread | None = None
 _AGENT_COMMAND_REAPER_INTERVAL_SECONDS = 0.1
-_AGENT_CREDENTIAL_SOURCES = frozenset({"configured_profile", "instance_metadata"})
+_AGENT_COMMAND_REAPER_MAX_INTERVAL_SECONDS = 5.0
+_AGENT_CREDENTIAL_SOURCES = frozenset({"instance_metadata"})
 _AGENT_METADATA_PROFILE = "cursor-sa"
 _AGENT_METADATA_CONFIG = "/root/.nebius/config.yaml"
 _AGENT_METADATA_HOME = "/root"
@@ -130,13 +132,25 @@ def _agent_process_exited_without_reaping(
     return result is not None
 
 
-def _agent_process_group_has_other_members(process_group: int, leader_pid: int) -> bool:
+def _agent_process_group_has_other_members(
+    process_group: int,
+    leader_pid: int,
+) -> bool | None:
     # The unreaped leader keeps its PID/PGID reserved while /proc is inspected.
     uncertain = False
-    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+    leader_seen = False
+    try:
+        processes = tuple(Path("/proc").iterdir())
+    except OSError:
+        return None
+    for process_path in processes:
+        if not process_path.name.isdigit():
+            continue
         try:
-            text = stat_path.read_text(encoding="utf-8")
+            text = (process_path / "stat").read_text(encoding="utf-8")
             closing_parenthesis = text.rfind(")")
+            if closing_parenthesis < 0:
+                raise ValueError("invalid process stat")
             fields = text[closing_parenthesis + 2 :].split()
             pid = int(text.split(" ", 1)[0])
             member_group = int(fields[2])
@@ -145,9 +159,10 @@ def _agent_process_group_has_other_members(process_group: int, leader_pid: int) 
         except (IndexError, OSError, ValueError):
             uncertain = True
             continue
+        leader_seen = leader_seen or pid == leader_pid
         if pid != leader_pid and member_group == process_group:
             return True
-    return uncertain
+    return None if uncertain or not leader_seen else False
 
 
 def _close_agent_process_pipes(process: subprocess.Popen[str]) -> None:
@@ -168,34 +183,46 @@ def _kill_agent_process_group(process_group: int) -> None:
 
 def _reap_abandoned_agent_processes() -> None:
     global _AGENT_COMMAND_BREAKER_OPEN, _AGENT_COMMAND_REAPER
+    interval = _AGENT_COMMAND_REAPER_INTERVAL_SECONDS
     while True:
         with _AGENT_COMMAND_LOCK:
             abandoned = tuple(_AGENT_ABANDONED_PROCESS_GROUPS.items())
+        progressed = False
         for process_group, process in abandoned:
-            exited = _agent_process_exited_without_reaping(process)
-            if exited is False:
-                continue
-            if exited is True and _agent_process_group_has_other_members(
-                process_group, process.pid
-            ):
-                _kill_agent_process_group(process_group)
-                continue
-            if exited is True:
-                try:
-                    process.wait(timeout=0)
-                except subprocess.TimeoutExpired:
-                    continue
-            with _AGENT_COMMAND_LOCK:
-                if _AGENT_ABANDONED_PROCESS_GROUPS.get(process_group) is process:
-                    _AGENT_ABANDONED_PROCESS_GROUPS.pop(process_group, None)
-                if _AGENT_ACTIVE_PROCESSES.get(process_group) is process:
-                    _AGENT_ACTIVE_PROCESSES.pop(process_group, None)
+            progressed = _reap_owned_agent_group(process_group, process) or progressed
         with _AGENT_COMMAND_LOCK:
             if not _AGENT_ABANDONED_PROCESS_GROUPS:
                 _AGENT_COMMAND_BREAKER_OPEN = False
                 _AGENT_COMMAND_REAPER = None
                 return
-        time.sleep(_AGENT_COMMAND_REAPER_INTERVAL_SECONDS)
+        interval = (
+            _AGENT_COMMAND_REAPER_INTERVAL_SECONDS
+            if progressed
+            else min(interval * 2, _AGENT_COMMAND_REAPER_MAX_INTERVAL_SECONDS)
+        )
+        time.sleep(interval)
+
+
+def _reap_owned_agent_group(process_group: int, process: subprocess.Popen[str]) -> bool:
+    # Unknown ownership or /proc visibility cannot prove group absence. Keep
+    # the breaker open; retry slowly without targeting reused IDs.
+    if _agent_process_exited_without_reaping(process) is not True:
+        return False
+    members = _agent_process_group_has_other_members(process_group, process.pid)
+    if members is True:
+        _kill_agent_process_group(process_group)
+    if members is not False:
+        return False
+    try:
+        process.wait(timeout=0)
+    except subprocess.TimeoutExpired:
+        return False
+    with _AGENT_COMMAND_LOCK:
+        if _AGENT_ABANDONED_PROCESS_GROUPS.get(process_group) is process:
+            _AGENT_ABANDONED_PROCESS_GROUPS.pop(process_group, None)
+        if _AGENT_ACTIVE_PROCESSES.get(process_group) is process:
+            _AGENT_ACTIVE_PROCESSES.pop(process_group, None)
+    return True
 
 
 def _start_agent_process_reaper() -> None:
@@ -408,6 +435,7 @@ def assemble_k8s_backend_inventory(
     alias: str,
     clusters_root: Path,
     cloud_clusters: list[dict[str, Any]],
+    cloud_discovery: dict[str, Any] | None = None,
     npa_ready: bool,
     npa_error: str,
     terraform_dir: Path,
@@ -439,11 +467,17 @@ def assemble_k8s_backend_inventory(
         "configured": configured,
         "local_clusters": local_clusters,
         "cloud_clusters": cloud_clusters,
+        "cloud_discovery": {
+            key: value
+            for key, value in (cloud_discovery or {"status": "unverified"}).items()
+            if key != "items"
+        },
         "has_infra": bool(
             configured
             or any(x.get("kubeconfig_exists") for x in local_clusters)
             or cloud_clusters
-        ),
+        )
+        or (None if (cloud_discovery or {}).get("status") == "unavailable" else False),
         "agent_npa_ready": npa_ready,
         "agent_npa_error": npa_error,
         "terraform_dir": str(terraform_dir),
@@ -485,32 +519,44 @@ def validate_resource_inventory(payload: Any) -> dict[str, Any]:
 def discover_mk8s_accelerators(
     cluster_id: str, command: list[str], command_env: dict[str, str]
 ) -> dict[str, Any]:
-    """Return accelerator families grounded in a cluster's live node groups."""
-    try:
-        env, _source = prepare_agent_cloud_environment(command_env)
-        proc = run_bounded_agent_command(
-            [
-                *command,
-                "mk8s",
-                "node-group",
-                "list",
-                "--parent-id",
-                cluster_id,
-                "--format",
-                "json",
-            ],
-            env=env,
-            timeout_s=30,
-        )
-        payload = json.loads(proc.stdout or "{}") if proc.returncode == 0 else {}
-    except Exception:
-        return {"available_accelerators": [], "gpu_platforms": []}
+    """Discover accelerator families without claiming unavailable inventory is empty.
+
+    Args:
+        cluster_id: Exact parent cluster identity.
+        command: Nebius executable prefix; staged metadata selects its identity.
+        command_env: Bootstrap-staged metadata credential environment.
+
+    Returns:
+        Accelerator facts plus a structured ``accelerator_discovery`` status.
+
+    Raises:
+        None.
+    """
+    discovery = _agent_cloud_list("node-group", cluster_id, command_env, command)
+    if discovery["status"] != "available":
+        return {"accelerator_discovery": discovery}
+    result = _node_group_accelerators(discovery["items"])
+    result.setdefault("accelerator_discovery", {"status": "available"})
+    return result
+
+
+def _node_group_accelerators(groups: list[dict[str, Any]]) -> dict[str, Any]:
     platforms: list[str] = []
     accelerators: list[str] = []
-    for group in payload.get("items", []) if isinstance(payload, dict) else []:
+    for group in groups:
         spec = group.get("spec", {}) if isinstance(group, dict) else {}
         template = spec.get("template", {}) if isinstance(spec, dict) else {}
         resources = template.get("resources", {}) if isinstance(template, dict) else {}
+        if (
+            not isinstance(resources, dict)
+            or not isinstance(resources.get("platform"), str)
+            or not resources["platform"].strip()
+        ):
+            return {
+                "accelerator_discovery": _cloud_inventory_unavailable(
+                    "invalid_response"
+                )
+            }
         platform = str(resources.get("platform") or "").strip().lower()
         if platform:
             platforms.append(platform)
@@ -527,6 +573,125 @@ def discover_mk8s_accelerators(
     if len(available) == 1:
         result["gpu_accelerator"] = available[0]
     return result
+
+
+def _cloud_inventory_unavailable(kind: str) -> dict[str, Any]:
+    return {
+        "status": "unavailable",
+        "error": {
+            "kind": kind,
+            "message": "Cloud inventory is unavailable; retry after restoring agent credentials or command availability.",
+        },
+    }
+
+
+def _agent_cloud_list(
+    resource: str,
+    parent_id: str,
+    command_env: dict[str, str],
+    command: list[str] | None = None,
+) -> dict[str, Any]:
+    if not parent_id:
+        return _cloud_inventory_unavailable("not_configured")
+    try:
+        environment, _source = prepare_agent_cloud_environment(command_env)
+    except ValueError:
+        return _cloud_inventory_unavailable("credential_unavailable")
+    executable = (
+        command[0] if command else shutil.which("nebius") or "/usr/local/bin/nebius"
+    )
+    prefix = [
+        executable,
+        "--config",
+        environment["NPA_NEBIUS_CONFIG"],
+        "--profile",
+        environment["NPA_NEBIUS_PROFILE"],
+    ]
+    try:
+        result = run_bounded_agent_command(
+            [
+                *prefix,
+                "mk8s",
+                resource,
+                "list",
+                "--parent-id",
+                parent_id,
+                "--all",
+                "--format",
+                "json",
+            ],
+            env=environment,
+            timeout_s=30,
+        )
+    except TimeoutError as error:
+        kind = (
+            "cleanup_pending"
+            if str(error) == "a prior agent cloud command has not exited"
+            else "timeout"
+        )
+        return _cloud_inventory_unavailable(kind)
+    except OSError:
+        return _cloud_inventory_unavailable("command_unavailable")
+    if result.returncode:
+        kind, _message = classify_discovery_error(result.stderr or result.stdout)
+        return _cloud_inventory_unavailable(kind)
+    return _cloud_list_response(result.stdout)
+
+
+def _cloud_list_response(stdout: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(stdout)
+    except (TypeError, ValueError):
+        return _cloud_inventory_unavailable("invalid_response")
+    if not isinstance(payload, dict):
+        return _cloud_inventory_unavailable("invalid_response")
+    items = payload.get("items", []) if not payload or "items" in payload else None
+    if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
+        return _cloud_inventory_unavailable("invalid_response")
+    if payload.get("next_page_token") or payload.get("nextPageToken"):
+        return _cloud_inventory_unavailable("incomplete_response")
+    return {"status": "available", "items": items}
+
+
+def discover_mk8s_clusters(
+    parent_id: str,
+    command_env: dict[str, str],
+) -> dict[str, Any]:
+    """List clusters with explicit unavailable and successful-empty outcomes.
+
+    Args:
+        parent_id: Configured project identity.
+        command_env: Bootstrap-staged metadata credential environment.
+
+    Returns:
+        Available cluster items or a safe, structured unavailable result.
+
+    Raises:
+        None.
+    """
+    discovery = _agent_cloud_list("cluster", parent_id, command_env)
+    if discovery["status"] != "available":
+        return discovery
+    clusters = []
+    for item in discovery["items"]:
+        metadata = item.get("metadata") or {}
+        status = item.get("status") or {}
+        if (
+            not isinstance(metadata, dict)
+            or not metadata.get("id")
+            or not isinstance(status, dict)
+        ):
+            return _cloud_inventory_unavailable("invalid_response")
+        clusters.append(
+            {
+                "source": "nebius_mk8s",
+                "id": str(metadata["id"]),
+                "name": str(metadata.get("name") or ""),
+                "status": str(status.get("state") or status.get("status") or ""),
+                "raw": discover_mk8s_accelerators(str(metadata["id"]), [], command_env),
+            }
+        )
+    return {"status": "available", "items": clusters}
 
 
 def classify_discovery_error(message: str) -> tuple[str, str]:
@@ -780,7 +945,14 @@ def run_resource_discovery_command(
         env, _source = prepare_agent_cloud_environment(command_env or dict(os.environ))
     except ValueError:
         return 2, "", "agent credential source is unavailable"
-    env["NEBIUS_PROFILE"] = str(command[2])
+    command = [
+        command[0],
+        "--config",
+        env["NPA_NEBIUS_CONFIG"],
+        "--profile",
+        env["NPA_NEBIUS_PROFILE"],
+        *command[3:],
+    ]
     try:
         proc = run_bounded_agent_command(
             command,
