@@ -226,6 +226,7 @@ def emit_sim2real_rerun(
             rr,
             recording,
             heldout_report=heldout_report or {},
+            run_metadata=run_metadata or {},
             counts=counts,
         )
     else:
@@ -2167,6 +2168,7 @@ def _log_real_isaac_scene_context(
     recording: Any,
     *,
     heldout_report: dict[str, Any],
+    run_metadata: dict[str, Any] | None = None,
     counts: dict[str, int],
 ) -> None:
     """Add truthful task geometry around the measured Isaac RGB-D point cloud.
@@ -2230,7 +2232,85 @@ def _log_real_isaac_scene_context(
             ),
             recording=recording,
         )
-    policy_metadata = _heldout_policy_metadata(heldout_report)
+    projected = run_metadata if isinstance(run_metadata, dict) else {}
+    uri_evidence = (
+        (
+            (
+                "run_metadata.heldout_policy_checkpoint",
+                projected["heldout_policy_checkpoint"],
+            ),
+        )
+        if "heldout_policy_checkpoint" in projected
+        else ()
+    )
+    digest_evidence = (
+        (
+            (
+                "run_metadata.heldout_policy_checkpoint_sha256",
+                projected["heldout_policy_checkpoint_sha256"],
+            ),
+        )
+        if "heldout_policy_checkpoint_sha256" in projected
+        else ()
+    )
+    size_evidence = (
+        (
+            (
+                "run_metadata.heldout_policy_checkpoint_size_bytes",
+                projected["heldout_policy_checkpoint_size_bytes"],
+            ),
+        )
+        if "heldout_policy_checkpoint_size_bytes" in projected
+        else ()
+    )
+    generator_evidence = (
+        (
+            (
+                "run_metadata.heldout_policy_generator_sha256",
+                projected["heldout_policy_generator_sha256"],
+            ),
+        )
+        if projected.get("heldout_policy_generator_sha256") not in (None, "")
+        else ()
+    )
+    policy_metadata = _heldout_policy_metadata(
+        heldout_report,
+        checkpoint_uri_evidence=uri_evidence,
+        checkpoint_sha256_evidence=digest_evidence,
+        checkpoint_size_evidence=size_evidence,
+        generator_sha256_evidence=generator_evidence,
+    )
+    if (
+        "heldout_policy_identity_verified" in projected
+        and projected["heldout_policy_identity_verified"] is not True
+    ):
+        policy_metadata["heldout_policy_identity_verified"] = False
+        policy_metadata["heldout_policy_learned_actor_only"] = False
+    if (
+        "heldout_policy_loaded_for_inference" in projected
+        and projected["heldout_policy_loaded_for_inference"] is not True
+    ):
+        policy_metadata["heldout_policy_loaded_for_inference"] = False
+        policy_metadata["heldout_policy_learned_actor_only"] = False
+    declaration_fields = (
+        "heldout_policy_stock_or_scripted_policy",
+        "heldout_policy_actor_is_learned",
+        "heldout_policy_scripted_post_actor_controller",
+        "heldout_policy_composition",
+        "heldout_policy_post_actor_controller",
+        "heldout_policy_post_actor_controller_declared",
+        "heldout_policy_learned_actor_only",
+    )
+    declaration_mismatch = any(
+        key in projected and projected[key] != policy_metadata.get(key)
+        for key in declaration_fields
+    )
+    if declaration_mismatch:
+        if "heldout_policy_stock_or_scripted_policy" in projected and projected[
+            "heldout_policy_stock_or_scripted_policy"
+        ] != policy_metadata.get("heldout_policy_stock_or_scripted_policy"):
+            policy_metadata["heldout_policy_stock_or_scripted_policy"] = None
+        policy_metadata["heldout_policy_learned_actor_only"] = False
     loaded_for_inference = (
         policy_metadata["heldout_policy_loaded_for_inference"] is True
     )

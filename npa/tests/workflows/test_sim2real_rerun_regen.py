@@ -320,6 +320,80 @@ def test_policy_access_metadata_hashes_real_checkpoint_without_secrets(
     assert "secret" not in json.dumps(access).lower()
 
 
+def test_policy_access_metadata_rejects_downloaded_digest_mismatch(
+    tmp_path: Path,
+) -> None:
+    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    checkpoint_uri = "s3://demo-bucket/run/model_latest.pt"
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_checkpoint_uri": checkpoint_uri,
+                "policy_checkpoint_sha256": "a" * 64,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            assert uri == checkpoint_uri
+            Path(destination).write_bytes(b"different-policy-bytes")
+
+    with pytest.raises(
+        Sim2RealRerunRegenError,
+        match="downloaded checkpoint SHA-256 disagrees",
+    ):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=FakeStorage(),
+            report={},
+        )
+
+
+@pytest.mark.parametrize(
+    "checkpoint_uri",
+    [
+        pytest.param("not-a-uri", id="relative"),
+        pytest.param("https://demo-bucket/run/model.pt", id="wrong-scheme"),
+    ],
+)
+def test_policy_access_metadata_rejects_malformed_uri_before_download(
+    tmp_path: Path,
+    checkpoint_uri: str,
+) -> None:
+    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_checkpoint_uri": checkpoint_uri,
+            }
+        ),
+        encoding="utf-8",
+    )
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"unexpected-policy-bytes")
+
+    with pytest.raises(Sim2RealRerunRegenError, match="URI.*malformed"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=FakeStorage(),
+            report={},
+        )
+
+    assert downloads == []
+
+
 @pytest.mark.parametrize(
     ("field", "claim"),
     [
@@ -359,6 +433,9 @@ def test_policy_access_metadata_rejects_non_boolean_deployment_claims(
     assert access["deployable_policy"] is False
     assert access["policy_bytes_available"] is False
     assert downloads == []
+    persisted = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert persisted["deployable_policy"] is False
+    assert persisted["policy_bytes_available"] is False
 
 
 def test_policy_access_metadata_consumes_canonical_stage14_decision(
@@ -456,6 +533,191 @@ def test_policy_access_metadata_rejects_conflicting_retained_identity(
             tmp_path,
             storage=object(),
             report=report,
+        )
+
+
+def test_policy_access_metadata_rejects_conflicting_decision_aliases(
+    tmp_path: Path,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    report = {
+        "outer_loop": {
+            "latest_decision": {
+                "decision": "promote_checkpoint",
+                "checkpoint_uri": checkpoint_uri,
+            },
+            "decision": {
+                "decision": "loop_back_to_inner_loop",
+                "checkpoint_uri": checkpoint_uri,
+            },
+        }
+    }
+
+    with pytest.raises(Sim2RealRerunRegenError, match="decision.*disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=object(),
+            report=report,
+        )
+
+
+def test_policy_access_metadata_never_promotes_loop_back_candidate_claims(
+    tmp_path: Path,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    candidate_path = tmp_path / "checkpoints/candidate/candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_bytes_available": True,
+                "policy_checkpoint_uri": checkpoint_uri,
+            }
+        ),
+        encoding="utf-8",
+    )
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"unexpected-policy-bytes")
+
+    access = _ensure_policy_access_metadata(
+        _config(),
+        tmp_path,
+        storage=FakeStorage(),
+        report={
+            "outer_loop": {
+                "decision": {
+                    "decision": "loop_back_to_inner_loop",
+                    "checkpoint_uri": checkpoint_uri,
+                }
+            }
+        },
+    )
+
+    assert access["deployable_policy"] is False
+    assert access["policy_bytes_available"] is False
+    assert downloads == []
+    persisted = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert persisted["deployable_policy"] is False
+    assert persisted["policy_bytes_available"] is False
+
+
+def test_policy_access_metadata_reconciles_producer_before_download(
+    tmp_path: Path,
+) -> None:
+    candidate_uri = "s3://demo-bucket/run/model_selected.pt"
+    producer_uri = "s3://demo-bucket/run/other.pt"
+    candidate_path = tmp_path / "checkpoints/candidate/candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_bytes_available": True,
+                "policy_checkpoint_uri": candidate_uri,
+            }
+        ),
+        encoding="utf-8",
+    )
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"unexpected-policy-bytes")
+
+    with pytest.raises(Sim2RealRerunRegenError, match="sources disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=FakeStorage(),
+            report={
+                "outer_loop": {
+                    "decision": {
+                        "decision": "promote_checkpoint",
+                        "checkpoint_uri": candidate_uri,
+                    },
+                    "latest_heldout_report": {
+                        "policy_checkpoint_sha256": "a" * 64,
+                        "policy_checkpoint_size_bytes": 128,
+                        "policy_inference_provenance": {
+                            "checkpoint_uri": producer_uri,
+                            "checkpoint_sha256": "a" * 64,
+                            "checkpoint_size_bytes": 128,
+                            "loaded_for_inference": True,
+                            "stock_or_scripted_policy": False,
+                            "actor_is_learned": True,
+                            "scripted_post_actor_controller": False,
+                            "policy_composition": "learned_actor_only",
+                            "post_actor_controller": None,
+                        },
+                    },
+                }
+            },
+        )
+
+    assert downloads == []
+
+
+def test_policy_access_metadata_reconciles_prior_access_record(
+    tmp_path: Path,
+) -> None:
+    candidate_uri = "s3://demo-bucket/run/model_selected.pt"
+    candidate_path = tmp_path / "checkpoints/candidate/candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_bytes_available": True,
+                "policy_checkpoint_uri": candidate_uri,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(Sim2RealRerunRegenError, match="sources disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=object(),
+            report={
+                "policy_access": {
+                    "checkpoint_uri": "s3://demo-bucket/run/other.pt",
+                    "sha256": "a" * 64,
+                    "size_bytes": 128,
+                    "deployable_policy": True,
+                    "policy_bytes_available": True,
+                }
+            },
+        )
+
+
+def test_policy_access_metadata_rejects_duplicate_identity_fields(
+    tmp_path: Path,
+) -> None:
+    candidate_path = tmp_path / "checkpoints/candidate/candidate.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text(
+        (
+            '{"deployable_policy":true,'
+            '"policy_checkpoint_uri":"s3://demo-bucket/run/model.pt",'
+            '"policy_checkpoint_uri":"s3://demo-bucket/run/other.pt"}'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(Sim2RealRerunRegenError, match="duplicate.*field"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=object(),
+            report={},
         )
 
 

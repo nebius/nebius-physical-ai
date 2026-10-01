@@ -17,13 +17,41 @@ def storage() -> StorageClient:
     return StorageClient.from_environment()
 
 
+def parse_json_object(payload: str, *, source: str = "JSON payload") -> dict[str, Any]:
+    """Parse one JSON object while rejecting ambiguous duplicate fields.
+
+    Args:
+        payload: UTF-8-decoded JSON text.
+        source: Human-readable artifact name for validation errors.
+
+    Returns:
+        The decoded JSON object.
+
+    Raises:
+        ValueError: The text is invalid, non-object, or contains duplicate fields.
+    """
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"{source} contains duplicate JSON field {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        decoded = json.loads(payload, object_pairs_hook=unique_object)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{source} is not valid JSON: {exc.msg}") from exc
+    if not isinstance(decoded, dict):
+        raise ValueError(f"{source} must contain a JSON object")
+    return decoded
+
+
 def read_json(uri: str, *, directory: Path) -> dict[str, Any]:
     target = directory / Path(urlparse(uri).path).name
     storage().download_file(uri, str(target))
-    payload = json.loads(target.read_text(encoding="utf-8"))
-    if not isinstance(payload, dict):
-        raise ValueError(f"expected JSON object at {uri}")
-    return payload
+    return parse_json_object(target.read_text(encoding="utf-8"), source=uri)
 
 
 def read_jsonl(uri: str, *, directory: Path) -> list[dict[str, Any]]:

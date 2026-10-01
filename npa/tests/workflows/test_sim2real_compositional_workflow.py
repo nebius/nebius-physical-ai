@@ -961,11 +961,18 @@ def _stage14_policy_metadata(
     monkeypatch: pytest.MonkeyPatch,
     work: Path,
     provenance: object | None,
+    *,
+    selected_sha256: str = "a" * 64,
 ) -> tuple[dict, dict]:
     root = "s3://unit/runs/finalize"
+    selected_checkpoint = f"{root}/checkpoints/model.pt"
     evidence = {
         "iterations": [],
-        "selected_checkpoint_uri": f"{root}/checkpoints/model.pt",
+        "selected_checkpoint_uri": selected_checkpoint,
+        "checkpoint_selection": {
+            "checkpoint_uri": selected_checkpoint,
+            "checkpoint_sha256": selected_sha256,
+        },
     }
     gold = {
         "policy_checkpoint_sha256": "a" * 64,
@@ -1073,6 +1080,76 @@ def test_stage14_rejects_mismatched_selected_checkpoint_identity(
     assert metadata["heldout_policy_learned_actor_only"] is False
 
 
+def test_stage14_rejects_mismatched_selected_checkpoint_digest(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    metadata, _heldout_report = _stage14_policy_metadata(
+        monkeypatch,
+        tmp_path,
+        {
+            "checkpoint_uri": ("s3://unit/runs/finalize/checkpoints/model.pt"),
+            "checkpoint_sha256": "a" * 64,
+            "checkpoint_size_bytes": 128,
+            "loaded_for_inference": True,
+            "stock_or_scripted_policy": False,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": False,
+            "policy_composition": "learned_actor_only",
+            "post_actor_controller": None,
+        },
+        selected_sha256="b" * 64,
+    )
+
+    assert metadata["heldout_policy_identity_verified"] is False
+    assert metadata["heldout_policy_learned_actor_only"] is False
+
+
+def test_stage14_rejects_duplicate_decision_identity_fields(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = "s3://unit/runs/finalize"
+    checkpoint_uri = f"{root}/checkpoints/model.pt"
+    evidence = {
+        "iterations": [],
+        "selected_checkpoint_uri": checkpoint_uri,
+        "checkpoint_selection": {
+            "checkpoint_uri": checkpoint_uri,
+            "checkpoint_sha256": "a" * 64,
+        },
+    }
+    gold = {
+        "policy_checkpoint_sha256": "a" * 64,
+        "policy_checkpoint_size_bytes": 128,
+    }
+    stage14_finalize = _patch_stage14_io(monkeypatch, evidence, gold)
+
+    def materialize_duplicate_decision(_plan, *, local: Path) -> None:
+        _materialize_stage14_inputs(_plan, local=local)
+        (local / "outer_loop" / "decision.json").write_text(
+            (
+                '{"decision":"promote_checkpoint",'
+                f'"checkpoint_uri":"{checkpoint_uri}",'
+                '"checkpoint_uri":"s3://unit/runs/finalize/checkpoints/other.pt"}'
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        stage14_finalize,
+        "materialize_plan",
+        materialize_duplicate_decision,
+    )
+
+    with pytest.raises(ValueError, match="duplicate JSON field"):
+        stage14_finalize.finalize_in_work(
+            Namespace(run_id="run", outer_iteration=1),
+            root=root,
+            work=tmp_path,
+        )
+
+
 @pytest.mark.parametrize(
     ("report_uri", "report_sha"),
     [
@@ -1148,6 +1225,40 @@ def test_stage10_accepts_exact_learned_actor_checkpoint_identity() -> None:
     }
 
     _assert_gold_checkpoint_identity(evidence, report)
+
+
+def test_stage10_rejects_non_s3_checkpoint_uri_even_when_sources_agree() -> None:
+    from npa.workflows.sim2real.workflow_stage import (
+        _assert_gold_checkpoint_identity,
+    )
+
+    checkpoint_uri = "not-a-uri"
+    checkpoint_sha256 = "a" * 64
+    evidence = {
+        "selected_checkpoint_uri": checkpoint_uri,
+        "checkpoint_selection": {
+            "checkpoint_uri": checkpoint_uri,
+            "checkpoint_sha256": checkpoint_sha256,
+        },
+    }
+    report = {
+        "policy_checkpoint_sha256": checkpoint_sha256,
+        "policy_checkpoint_size_bytes": 128,
+        "policy_inference_provenance": {
+            "checkpoint_uri": checkpoint_uri,
+            "checkpoint_sha256": checkpoint_sha256,
+            "checkpoint_size_bytes": 128,
+            "loaded_for_inference": True,
+            "stock_or_scripted_policy": False,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": False,
+            "policy_composition": "learned_actor_only",
+            "post_actor_controller": None,
+        },
+    }
+
+    with pytest.raises(RuntimeError, match="selected checkpoint identity"):
+        _assert_gold_checkpoint_identity(evidence, report)
 
 
 def test_stage10_checks_checkpoint_identity_before_gold_artifact_processing(

@@ -14,6 +14,20 @@ SOURCE_SHA = "1" * 40
 IMAGE = "cr.example/npa/runtime@sha256:" + "2" * 64
 
 
+def test_parse_json_object_rejects_duplicate_nested_identity_fields() -> None:
+    payload = (
+        '{"policy_inference_provenance":{'
+        '"checkpoint_sha256":"'
+        + "a" * 64
+        + '","checkpoint_sha256":"'
+        + "b" * 64
+        + '"}}'
+    )
+
+    with pytest.raises(ValueError, match="duplicate JSON field"):
+        workflow_io.parse_json_object(payload, source="retained report")
+
+
 def test_source_sha_requires_workflow_and_image_attestations_to_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

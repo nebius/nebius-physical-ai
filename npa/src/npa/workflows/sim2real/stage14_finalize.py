@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from npa.workflows.sim2real.workflow_io import (
+    parse_json_object,
     publish_component_record,
     read_json,
     source_sha,
@@ -209,9 +210,13 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
         raise RuntimeError(
             "ComponentRecord tiers violate the 13 WORKS + Stage 12 SEAM contract"
         )
-    decision = json.loads((local / "outer_loop" / "decision.json").read_text())
-    robot_contract = json.loads(
-        (local / "stage_02_assets" / "consumed_robot_spec.json").read_text()
+    decision = parse_json_object(
+        (local / "outer_loop" / "decision.json").read_text(),
+        source="Stage 14 outer-loop decision",
+    )
+    robot_contract = parse_json_object(
+        (local / "stage_02_assets" / "consumed_robot_spec.json").read_text(),
+        source="Stage 14 consumed robot contract",
     )
     report = {
         "schema": "npa.sim2real.e2e_report.v1",
@@ -235,18 +240,50 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
     reports = local / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "sim2real-report.json").write_text(json.dumps(report, indent=2))
+    selection_raw = evidence.get("checkpoint_selection")
+    selection = selection_raw if isinstance(selection_raw, dict) else {}
+    selected_checkpoint = evidence.get("selected_checkpoint_uri", "")
+    uri_evidence = (
+        (
+            "checkpoint_selection.checkpoint_uri",
+            selection.get("checkpoint_uri"),
+        ),
+    )
+    if isinstance(decision, dict) and "checkpoint_uri" in decision:
+        uri_evidence += (
+            ("outer_loop.decision.checkpoint_uri", decision["checkpoint_uri"]),
+        )
+    size_evidence = (
+        (
+            (
+                "checkpoint_selection.checkpoint_size_bytes",
+                selection["checkpoint_size_bytes"],
+            ),
+        )
+        if "checkpoint_size_bytes" in selection
+        else ()
+    )
     heldout_policy_metadata = _heldout_policy_metadata(
         gold,
-        checkpoint_fallback=str(evidence.get("selected_checkpoint_uri") or ""),
-        checkpoint_sha256_fallback=str(gold.get("policy_checkpoint_sha256") or ""),
-        checkpoint_size_fallback=gold.get("policy_checkpoint_size_bytes", 0),
+        checkpoint_fallback=selected_checkpoint,
+        checkpoint_uri_evidence=uri_evidence,
+        checkpoint_sha256_evidence=(
+            (
+                "checkpoint_selection.checkpoint_sha256",
+                selection.get("checkpoint_sha256"),
+            ),
+        ),
+        checkpoint_size_evidence=size_evidence,
     )
     run_metadata = {
         "run_id": args.run_id,
         "artifact_root": root,
-        "policy_checkpoint": evidence.get("selected_checkpoint_uri", ""),
-        "policy_checkpoint_sha256": gold.get("policy_checkpoint_sha256", ""),
-        "policy_checkpoint_size_bytes": gold.get("policy_checkpoint_size_bytes", 0),
+        "policy_checkpoint": selected_checkpoint,
+        "policy_checkpoint_sha256": selection.get("checkpoint_sha256", ""),
+        "policy_checkpoint_size_bytes": selection.get(
+            "checkpoint_size_bytes",
+            gold.get("policy_checkpoint_size_bytes", 0),
+        ),
         **heldout_policy_metadata,
         "rrd_s3_uri": rrd_uri,
         "embodiment": gold.get("embodiment", {}),

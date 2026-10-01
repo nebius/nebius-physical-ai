@@ -2,25 +2,55 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
+from urllib.parse import urlparse
 
 from npa.workflows.sim2real.capture import runtime_parameter_metadata
+
+
+_MISSING = object()
+_SHA256 = re.compile(r"[0-9a-f]{64}")
+IdentityEvidence = tuple[tuple[str, object], ...]
 
 
 def _text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def _sha256(value: object) -> str:
-    digest = _text(value).lower()
-    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
-        return ""
-    return digest
+def _checkpoint_uri(value: object) -> str | None:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or any(ord(char) < 32 for char in value)
+    ):
+        return None
+    parsed = urlparse(value)
+    if (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or any(char in parsed.netloc for char in "@:%")
+        or not parsed.path.lstrip("/")
+        or not parsed.path.endswith(".pt")
+        or parsed.params
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    return value
 
 
-def _positive_size(value: object) -> int:
+def _sha256(value: object) -> str | None:
+    if not isinstance(value, str) or value != value.strip():
+        return None
+    digest = value.lower()
+    return digest if _SHA256.fullmatch(digest) else None
+
+
+def _positive_size(value: object) -> int | None:
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
-        return 0
+        return None
     return value
 
 
@@ -28,132 +58,146 @@ def _strict_bool(value: object) -> bool | None:
     return value if value is True or value is False else None
 
 
-def _provided(value: object, *, zero_is_absent: bool = False) -> bool:
-    if value is None or value == "":
-        return False
-    return not (zero_is_absent and type(value) is int and value == 0)
-
-
 def _reconcile_identity_field(
     *,
-    producer_values: tuple[object, ...],
-    corroborating_values: tuple[object, ...],
+    label: str,
+    evidence: IdentityEvidence,
     normalize: Any,
-    missing_error: str,
-    malformed_error: str,
-    disagreement_error: str,
-    zero_is_absent: bool = False,
-) -> tuple[Any, bool, list[str]]:
-    raw_values = [
-        value
-        for value in (*producer_values, *corroborating_values)
-        if _provided(value, zero_is_absent=zero_is_absent)
-    ]
-    normalized_values = [normalize(value) for value in raw_values if normalize(value)]
-    producer_value = next(
-        (normalize(value) for value in producer_values if normalize(value)),
-        "",
-    )
-    errors = []
-    if not producer_value:
-        errors.append(missing_error)
-    if len(normalized_values) != len(raw_values):
-        errors.append(malformed_error)
-    if len(set(normalized_values)) > 1:
-        errors.append(disagreement_error)
-    verified = bool(
-        producer_value
-        and len(normalized_values) == len(raw_values)
-        and len(set(normalized_values)) == 1
-    )
-    fallback = normalized_values[0] if normalized_values else ""
-    return producer_value or fallback, verified, errors
+) -> tuple[object | None, list[str]]:
+    normalized: list[tuple[str, object]] = []
+    errors: list[str] = []
+    for source, raw_value in evidence:
+        value = normalize(raw_value)
+        if value is None:
+            errors.append(f"{source} {label} is malformed")
+        else:
+            normalized.append((source, value))
+    if len({value for _source, value in normalized}) > 1:
+        errors.append(f"{label} sources disagree")
+    return (normalized[0][1] if normalized else None), errors
 
 
-def _checkpoint_uri_evidence(
+def _field_evidence(
+    payload: dict[str, Any],
+    key: str,
+    source: str,
+) -> IdentityEvidence:
+    return ((source, payload[key]),) if key in payload else ()
+
+
+def _identity_sources(
     report: dict[str, Any],
     provenance: dict[str, Any],
-    fallback: str,
-) -> tuple[str, bool, list[str]]:
-    return _reconcile_identity_field(
-        producer_values=(provenance.get("checkpoint_uri"),),
-        corroborating_values=(
-            fallback,
-            report.get("policy_checkpoint"),
-            report.get("policy_checkpoint_uri"),
-        ),
-        normalize=_text,
-        missing_error="inference checkpoint URI is missing or malformed",
-        malformed_error="checkpoint URI evidence is malformed",
-        disagreement_error="checkpoint URI evidence does not agree",
-    )
-
-
-def _checkpoint_digest_evidence(
-    report: dict[str, Any],
-    provenance: dict[str, Any],
-    fallback: str,
-) -> tuple[str, str, bool, list[str]]:
-    generator = provenance.get("generator_policy_sha256") or report.get(
-        "generator_policy_sha256"
-    )
-    digest, verified, errors = _reconcile_identity_field(
-        producer_values=(provenance.get("checkpoint_sha256"),),
-        corroborating_values=(
-            generator,
-            fallback,
-            report.get("policy_checkpoint_sha256"),
-        ),
-        normalize=_sha256,
-        missing_error="inference checkpoint SHA-256 is missing or malformed",
-        malformed_error="checkpoint SHA-256 evidence is malformed",
-        disagreement_error="checkpoint SHA-256 evidence does not agree",
-    )
-    return digest, _sha256(generator), verified, errors
-
-
-def _checkpoint_size_evidence(
-    report: dict[str, Any],
-    provenance: dict[str, Any],
+    *,
+    provenance_key: str,
+    report_keys: tuple[str, ...],
     fallback: object,
-) -> tuple[int, bool, list[str]]:
-    return _reconcile_identity_field(
-        producer_values=(provenance.get("checkpoint_size_bytes"),),
-        corroborating_values=(fallback, report.get("policy_checkpoint_size_bytes")),
-        normalize=_positive_size,
-        missing_error="inference checkpoint size is missing or malformed",
-        malformed_error="checkpoint size evidence is malformed",
-        disagreement_error="checkpoint size evidence does not agree",
-        zero_is_absent=True,
+    fallback_label: str,
+    additional: IdentityEvidence,
+) -> IdentityEvidence:
+    sources = _field_evidence(
+        provenance,
+        provenance_key,
+        f"policy_inference_provenance.{provenance_key}",
     )
+    for key in report_keys:
+        sources += _field_evidence(report, key, key)
+    if fallback is not _MISSING:
+        sources += ((fallback_label, fallback),)
+    return sources + additional
 
 
 def _checkpoint_identity(
     report: dict[str, Any],
     provenance: dict[str, Any],
     *,
-    uri_fallback: str,
-    digest_fallback: str,
+    uri_fallback: object,
+    digest_fallback: object,
     size_fallback: object,
+    uri_evidence: IdentityEvidence,
+    digest_evidence: IdentityEvidence,
+    size_evidence: IdentityEvidence,
+    generator_evidence: IdentityEvidence,
 ) -> dict[str, Any]:
-    uri, uri_verified, uri_errors = _checkpoint_uri_evidence(
-        report, provenance, uri_fallback
-    )
-    digest, generator, digest_verified, digest_errors = _checkpoint_digest_evidence(
-        report, provenance, digest_fallback
-    )
-    size, size_verified, size_errors = _checkpoint_size_evidence(
-        report, provenance, size_fallback
-    )
-    return {
-        "heldout_policy_checkpoint": uri,
-        "heldout_policy_checkpoint_sha256": digest,
-        "heldout_policy_generator_sha256": generator,
-        "heldout_policy_checkpoint_size_bytes": size,
-        "heldout_policy_identity_verified": (
-            uri_verified and digest_verified and size_verified
+    errors = [
+        f"policy_inference_provenance.{key} is missing"
+        for key in ("checkpoint_uri", "checkpoint_sha256", "checkpoint_size_bytes")
+        if key not in provenance
+    ]
+    uri, field_errors = _reconcile_identity_field(
+        label="checkpoint URI",
+        evidence=_identity_sources(
+            report,
+            provenance,
+            provenance_key="checkpoint_uri",
+            report_keys=("policy_checkpoint", "policy_checkpoint_uri"),
+            fallback=uri_fallback,
+            fallback_label="selected checkpoint URI",
+            additional=uri_evidence,
         ),
-        "heldout_policy_identity_errors": (uri_errors + digest_errors + size_errors),
+        normalize=_checkpoint_uri,
+    )
+    errors.extend(field_errors)
+    digest, field_errors = _reconcile_identity_field(
+        label="checkpoint SHA-256",
+        evidence=_identity_sources(
+            report,
+            provenance,
+            provenance_key="checkpoint_sha256",
+            report_keys=("policy_checkpoint_sha256",),
+            fallback=digest_fallback,
+            fallback_label="selected checkpoint SHA-256",
+            additional=digest_evidence,
+        ),
+        normalize=_sha256,
+    )
+    errors.extend(field_errors)
+    size, field_errors = _reconcile_identity_field(
+        label="checkpoint size",
+        evidence=_identity_sources(
+            report,
+            provenance,
+            provenance_key="checkpoint_size_bytes",
+            report_keys=("policy_checkpoint_size_bytes",),
+            fallback=size_fallback,
+            fallback_label="selected checkpoint size",
+            additional=size_evidence,
+        ),
+        normalize=_positive_size,
+    )
+    errors.extend(field_errors)
+
+    generator_sources = _field_evidence(
+        provenance,
+        "generator_policy_sha256",
+        "policy_inference_provenance.generator_policy_sha256",
+    )
+    generator_sources += _field_evidence(
+        report, "generator_policy_sha256", "generator_policy_sha256"
+    )
+    generator_sources += _field_evidence(
+        report, "policy_generator_sha256", "policy_generator_sha256"
+    )
+    generator_sources += generator_evidence
+    generator: object | None = None
+    if generator_sources:
+        generator, field_errors = _reconcile_identity_field(
+            label="generator checkpoint SHA-256",
+            evidence=generator_sources,
+            normalize=_sha256,
+        )
+        errors.extend(field_errors)
+        if generator is not None and digest is not None and generator != digest:
+            errors.append(
+                "generator checkpoint SHA-256 does not match inference checkpoint"
+            )
+    return {
+        "heldout_policy_checkpoint": str(uri or ""),
+        "heldout_policy_checkpoint_sha256": str(digest or ""),
+        "heldout_policy_generator_sha256": str(generator or ""),
+        "heldout_policy_checkpoint_size_bytes": int(size or 0),
+        "heldout_policy_identity_verified": not errors,
+        "heldout_policy_identity_errors": errors,
     }
 
 
@@ -191,24 +235,33 @@ def _learned_policy_declaration(
 
 
 def _project_heldout_policy_metadata(
-    heldout_report: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
     *,
-    checkpoint_fallback: str = "",
-    checkpoint_sha256_fallback: str = "",
-    checkpoint_size_fallback: object = 0,
+    checkpoint_fallback: object = _MISSING,
+    checkpoint_sha256_fallback: object = _MISSING,
+    checkpoint_size_fallback: object = _MISSING,
+    checkpoint_uri_evidence: IdentityEvidence = (),
+    checkpoint_sha256_evidence: IdentityEvidence = (),
+    checkpoint_size_evidence: IdentityEvidence = (),
+    generator_sha256_evidence: IdentityEvidence = (),
 ) -> dict[str, Any]:
-    raw_provenance = heldout_report.get("policy_inference_provenance")
+    report = heldout_report if isinstance(heldout_report, dict) else {}
+    raw_provenance = report.get("policy_inference_provenance")
     provenance = raw_provenance if isinstance(raw_provenance, dict) else {}
     errors: list[str] = []
-    if raw_provenance is not None and not isinstance(raw_provenance, dict):
-        errors.append("policy_inference_provenance is not an object")
+    if not isinstance(raw_provenance, dict):
+        errors.append("policy_inference_provenance is missing or is not an object")
 
     identity = _checkpoint_identity(
-        heldout_report,
+        report,
         provenance,
         uri_fallback=checkpoint_fallback,
         digest_fallback=checkpoint_sha256_fallback,
         size_fallback=checkpoint_size_fallback,
+        uri_evidence=checkpoint_uri_evidence,
+        digest_evidence=checkpoint_sha256_evidence,
+        size_evidence=checkpoint_size_evidence,
+        generator_evidence=generator_sha256_evidence,
     )
     errors.extend(identity["heldout_policy_identity_errors"])
     identity["heldout_policy_identity_errors"] = errors
@@ -225,11 +278,15 @@ def _project_heldout_policy_metadata(
 
 
 def heldout_policy_metadata(
-    heldout_report: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
     *,
-    checkpoint_fallback: str = "",
-    checkpoint_sha256_fallback: str = "",
-    checkpoint_size_fallback: object = 0,
+    checkpoint_fallback: object = _MISSING,
+    checkpoint_sha256_fallback: object = _MISSING,
+    checkpoint_size_fallback: object = _MISSING,
+    checkpoint_uri_evidence: IdentityEvidence = (),
+    checkpoint_sha256_evidence: IdentityEvidence = (),
+    checkpoint_size_evidence: IdentityEvidence = (),
+    generator_sha256_evidence: IdentityEvidence = (),
 ) -> dict[str, Any]:
     """Project held-out evidence only after sealing exact policy identity.
 
@@ -238,6 +295,10 @@ def heldout_policy_metadata(
         checkpoint_fallback: Validation-selected checkpoint URI.
         checkpoint_sha256_fallback: Validation-selected checkpoint digest.
         checkpoint_size_fallback: Validation-selected checkpoint size.
+        checkpoint_uri_evidence: Additional labeled checkpoint URI sources.
+        checkpoint_sha256_evidence: Additional labeled checkpoint digest sources.
+        checkpoint_size_evidence: Additional labeled checkpoint size sources.
+        generator_sha256_evidence: Additional labeled generator digest sources.
 
     Returns:
         Strict run metadata plus explicit identity errors and policy semantics.
@@ -251,6 +312,10 @@ def heldout_policy_metadata(
         checkpoint_fallback=checkpoint_fallback,
         checkpoint_sha256_fallback=checkpoint_sha256_fallback,
         checkpoint_size_fallback=checkpoint_size_fallback,
+        checkpoint_uri_evidence=checkpoint_uri_evidence,
+        checkpoint_sha256_evidence=checkpoint_sha256_evidence,
+        checkpoint_size_evidence=checkpoint_size_evidence,
+        generator_sha256_evidence=generator_sha256_evidence,
     )
 
 
@@ -261,14 +326,24 @@ def _candidate_policy_metadata(
 ) -> dict[str, Any]:
     return {
         "policy_checkpoint": checkpoint,
-        "policy_checkpoint_identity": candidate.get("policy_checkpoint_identity", ""),
-        "policy_checkpoint_sha256": candidate.get("policy_checkpoint_sha256", ""),
-        "policy_checkpoint_size_bytes": candidate.get(
-            "policy_checkpoint_size_bytes", ""
+        "policy_checkpoint_identity": (
+            candidate.get("policy_checkpoint_identity") or candidate.get("identity", "")
         ),
-        "policy_download_command": candidate.get("policy_download_command", ""),
-        "policy_ui_action": candidate.get("policy_ui_action", ""),
-        "policy_deployable": candidate.get("deployable_policy", False),
+        "policy_checkpoint_sha256": (
+            candidate.get("policy_checkpoint_sha256") or candidate.get("sha256", "")
+        ),
+        "policy_checkpoint_size_bytes": candidate.get(
+            "policy_checkpoint_size_bytes",
+            candidate.get("size_bytes", ""),
+        ),
+        "policy_download_command": (
+            candidate.get("policy_download_command")
+            or candidate.get("authenticated_download_command", "")
+        ),
+        "policy_ui_action": (
+            candidate.get("policy_ui_action") or candidate.get("ui_action", "")
+        ),
+        "policy_deployable": candidate.get("deployable_policy") is True,
     }
 
 
@@ -324,13 +399,43 @@ def visualization_run_metadata(
         None.
     """
 
-    candidate = candidate or {}
-    heldout = heldout_report or {}
+    candidate = candidate if isinstance(candidate, dict) else {}
+    heldout = heldout_report if isinstance(heldout_report, dict) else {}
+    candidate_uri_evidence = _field_evidence(
+        candidate,
+        "policy_checkpoint_uri",
+        "candidate.policy_checkpoint_uri",
+    ) + _field_evidence(
+        candidate,
+        "checkpoint_uri",
+        "candidate.checkpoint_uri",
+    )
+    candidate_digest_evidence = _field_evidence(
+        candidate,
+        "policy_checkpoint_sha256",
+        "candidate.policy_checkpoint_sha256",
+    ) + _field_evidence(candidate, "sha256", "candidate.sha256")
+    candidate_size_evidence = _field_evidence(
+        candidate,
+        "policy_checkpoint_size_bytes",
+        "candidate.policy_checkpoint_size_bytes",
+    ) + _field_evidence(candidate, "size_bytes", "candidate.size_bytes")
+    candidate_generator_evidence = _field_evidence(
+        candidate,
+        "generator_policy_sha256",
+        "candidate.generator_policy_sha256",
+    ) + _field_evidence(
+        candidate,
+        "policy_generator_sha256",
+        "candidate.policy_generator_sha256",
+    )
     heldout_metadata = heldout_policy_metadata(
         heldout,
-        checkpoint_fallback=policy_checkpoint,
-        checkpoint_sha256_fallback=str(heldout.get("policy_checkpoint_sha256") or ""),
-        checkpoint_size_fallback=heldout.get("policy_checkpoint_size_bytes", 0),
+        checkpoint_fallback=(policy_checkpoint if policy_checkpoint else _MISSING),
+        checkpoint_uri_evidence=candidate_uri_evidence,
+        checkpoint_sha256_evidence=candidate_digest_evidence,
+        checkpoint_size_evidence=candidate_size_evidence,
+        generator_sha256_evidence=candidate_generator_evidence,
     )
     return {
         **_artifact_metadata(config, artifact_root, progress=progress),
