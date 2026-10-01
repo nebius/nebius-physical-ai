@@ -6513,7 +6513,10 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
     monkeypatch.setattr(
         module,
         "_agent_k8s_backends",
-        lambda: {"cloud_clusters": [{"status": "RUNNING"}, {"status": "RUNNING"}]},
+        lambda: {
+            "cloud_clusters": [{"status": "RUNNING"}, {"status": "RUNNING"}],
+            "cloud_discovery": {"status": "available"},
+        },
     )
     monkeypatch.setattr(
         module, "_visual_evidence_selection", lambda _state, **_: exact_selection
@@ -6549,6 +6552,7 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
     assert calls == [exact_selection]
     assert response["live_evidence"] == {
         "cloud_status_counts": {"running": 2},
+        "cloud_discovery_status": "available",
         "workflow_status": "succeeded",
         "artifact_loaded": True,
         "artifact_render": "rerun",
@@ -6557,6 +6561,32 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
     assert "2 running" in response["reply"]
     assert "private-bucket" not in response["reply"]
     assert "private/prefix" not in response["reply"]
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_live_evidence_does_not_report_failed_cloud_discovery_as_absence(
+    monkeypatch, tmp_path, raises
+):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="unavailable_live_evidence_backend"
+    )
+
+    def unavailable():
+        if raises:
+            raise TimeoutError("private provider diagnostic")
+        return {"cloud_clusters": [], "cloud_discovery": {"status": "unavailable"}}
+
+    monkeypatch.setattr(module, "_agent_k8s_backends", unavailable)
+    monkeypatch.setattr(module, "_load_state", lambda: {})
+    monkeypatch.setattr(module, "_visual_evidence_selection", lambda *_args, **_kwargs: {})
+    response = module._agent_chat_with_tools(
+        raw_messages=[{"role": "user", "content": "Show live cloud evidence and a real RRD artifact."}],
+        model="unused",
+    )
+    assert response["live_evidence"]["cloud_discovery_status"] == "unavailable"
+    assert "absence is unverified" in response["reply"]
+    assert "none observed" not in response["reply"]
+    assert "private provider diagnostic" not in response["reply"]
 
 
 def test_live_evidence_prefers_a_verified_active_visual_artifact(monkeypatch, tmp_path):

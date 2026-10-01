@@ -597,29 +597,9 @@ def _agent_cloud_list(
         environment, _source = prepare_agent_cloud_environment(command_env)
     except ValueError:
         return _cloud_inventory_unavailable("credential_unavailable")
-    executable = (
-        command[0] if command else shutil.which("nebius") or "/usr/local/bin/nebius"
-    )
-    prefix = [
-        executable,
-        "--config",
-        environment["NPA_NEBIUS_CONFIG"],
-        "--profile",
-        environment["NPA_NEBIUS_PROFILE"],
-    ]
     try:
         result = run_bounded_agent_command(
-            [
-                *prefix,
-                "mk8s",
-                resource,
-                "list",
-                "--parent-id",
-                parent_id,
-                "--all",
-                "--format",
-                "json",
-            ],
+            _agent_cloud_list_command(resource, parent_id, environment, command),
             env=environment,
             timeout_s=30,
         )
@@ -636,6 +616,32 @@ def _agent_cloud_list(
         kind, _message = classify_discovery_error(result.stderr or result.stdout)
         return _cloud_inventory_unavailable(kind)
     return _cloud_list_response(result.stdout)
+
+
+def _agent_cloud_list_command(
+    resource: str,
+    parent_id: str,
+    environment: dict[str, str],
+    command: list[str] | None,
+) -> list[str]:
+    executable = (
+        command[0] if command else shutil.which("nebius") or "/usr/local/bin/nebius"
+    )
+    return [
+        executable,
+        "--config",
+        environment["NPA_NEBIUS_CONFIG"],
+        "--profile",
+        environment["NPA_NEBIUS_PROFILE"],
+        "mk8s",
+        resource,
+        "list",
+        "--parent-id",
+        parent_id,
+        "--all",
+        "--format",
+        "json",
+    ]
 
 
 def _cloud_list_response(stdout: str) -> dict[str, Any]:
@@ -674,24 +680,32 @@ def discover_mk8s_clusters(
         return discovery
     clusters = []
     for item in discovery["items"]:
-        metadata = item.get("metadata") or {}
-        status = item.get("status") or {}
-        if (
-            not isinstance(metadata, dict)
-            or not metadata.get("id")
-            or not isinstance(status, dict)
-        ):
+        cluster = _cluster_inventory_entry(item, command_env)
+        if cluster is None:
             return _cloud_inventory_unavailable("invalid_response")
-        clusters.append(
-            {
-                "source": "nebius_mk8s",
-                "id": str(metadata["id"]),
-                "name": str(metadata.get("name") or ""),
-                "status": str(status.get("state") or status.get("status") or ""),
-                "raw": discover_mk8s_accelerators(str(metadata["id"]), [], command_env),
-            }
-        )
+        clusters.append(cluster)
     return {"status": "available", "items": clusters}
+
+
+def _cluster_inventory_entry(
+    item: dict[str, Any],
+    command_env: dict[str, str],
+) -> dict[str, Any] | None:
+    metadata = item.get("metadata") or {}
+    status = item.get("status") or {}
+    if (
+        not isinstance(metadata, dict)
+        or not metadata.get("id")
+        or not isinstance(status, dict)
+    ):
+        return None
+    return {
+        "source": "nebius_mk8s",
+        "id": str(metadata["id"]),
+        "name": str(metadata.get("name") or ""),
+        "status": str(status.get("state") or status.get("status") or ""),
+        "raw": discover_mk8s_accelerators(str(metadata["id"]), [], command_env),
+    }
 
 
 def classify_discovery_error(message: str) -> tuple[str, str]:
