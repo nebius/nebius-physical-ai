@@ -126,10 +126,12 @@ def policy_inference_provenance(
 ) -> dict[str, Any]:
     """Describe exact learned-actor inference without scripted control."""
 
+    checkpoint_sha256 = str(checkpoint.get("sha256") or "")
     return {
         "backend": "isaac_rsl_rl_inference",
         "checkpoint_uri": checkpoint_uri,
-        "checkpoint_sha256": str(checkpoint.get("sha256") or ""),
+        "checkpoint_sha256": checkpoint_sha256,
+        "generator_policy_sha256": checkpoint_sha256,
         "checkpoint_size_bytes": int(checkpoint.get("size_bytes") or 0),
         "loaded_for_inference": bool(checkpoint),
         "stock_or_scripted_policy": False,

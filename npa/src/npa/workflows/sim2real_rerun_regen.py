@@ -2,21 +2,22 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import hashlib
 import shlex
+import shutil
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient, StorageError
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
-from npa.workflows.sim2real.utils import _artifact_root_uri
+from npa.workflows.sim2real.utils import _artifact_root_uri, _write_json_artifact
+from npa.workflows.sim2real.viz_contract import _checkpoint_uri
 from npa.workflows.sim2real.workflow_io import parse_json_object
 from npa.workflows.sim2real_viz import (
     Sim2RealVizResult,
@@ -152,11 +153,51 @@ def _parse_s3(uri: str) -> tuple[str, str]:
 
 
 def _download_if_exists(client: StorageClient, uri: str, local_path: Path) -> bool:
-    try:
-        client.download_path(uri, str(local_path))
-    except (StorageError, OSError):
-        return False
-    return local_path.exists() and local_path.stat().st_size > 0
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{local_path.name}.", dir=local_path.parent
+    ) as directory:
+        staged = Path(directory) / local_path.name
+        try:
+            client.download_path(uri, str(staged))
+        except (StorageError, OSError):
+            local_path.unlink(missing_ok=True)
+            return False
+        if not staged.is_file() or staged.stat().st_size <= 0:
+            local_path.unlink(missing_ok=True)
+            return False
+        os.replace(staged, local_path)
+    return True
+
+
+def _remove_tree(path: Path) -> None:
+    if path.is_dir():
+        shutil.rmtree(path)
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _download_render_tree(
+    storage: StorageClient,
+    uri: str,
+    renders_dir: Path,
+) -> bool:
+    renders_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{renders_dir.name}.", dir=renders_dir.parent
+    ) as directory:
+        staged = Path(directory) / "renders"
+        try:
+            storage.download_directory(uri, str(staged))
+        except (StorageError, OSError):
+            _remove_tree(renders_dir)
+            return False
+        if not _has_camera_pngs(staged):
+            _remove_tree(renders_dir)
+            return False
+        _remove_tree(renders_dir)
+        os.replace(staged, renders_dir)
+    return True
 
 
 def sync_regen_inputs(
@@ -244,6 +285,88 @@ def sync_regen_inputs(
     )
 
 
+def _heldout_render_source(
+    config: Sim2RealLoopConfig,
+    heldout_report: dict[str, Any],
+) -> tuple[str, bool]:
+    prefix = run_prefix_uri(config)
+    sealed = heldout_report.get("evaluation_split") == "gold_heldout"
+    if sealed:
+        lineage = dict(heldout_report.get("render_lineage") or {})
+        canonical = str(lineage.get("renders_s3_uri") or "").strip()
+        if not canonical:
+            raise Sim2RealRerunRegenError(
+                "sealed gold report has no exact render_lineage.renders_s3_uri"
+            )
+        if lineage.get("evaluation_split") != "gold_heldout":
+            raise Sim2RealRerunRegenError(
+                "sealed gold render lineage has the wrong evaluation split"
+            )
+        return canonical, True
+    return f"{prefix}eval/heldout/renders/", False
+
+
+def _sync_legacy_render_source(
+    storage: StorageClient,
+    root: str,
+    renders_dir: Path,
+    *,
+    render_suffix: str,
+    manifest_suffix: str,
+    manifest_name: str,
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    heldout_report: dict[str, Any],
+) -> bool:
+    bucket, _ = _parse_s3(root)
+    for source_prefix in reversed(sorted(_list_common_prefixes(storage, root))):
+        base_uri = f"s3://{bucket}/{source_prefix}"
+        if not _download_render_tree(
+            storage, f"{base_uri}{render_suffix}", renders_dir
+        ):
+            continue
+        manifest_path = renders_dir.parent / manifest_name
+        if _download_if_exists(storage, f"{base_uri}{manifest_suffix}", manifest_path):
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        else:
+            manifest = _render_manifest_from_png_tree(renders_dir)
+        _write_report_render_manifest(config, local_dir, heldout_report, manifest)
+        return True
+    return False
+
+
+def _sync_legacy_heldout_renders(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    storage: StorageClient,
+    renders_dir: Path,
+    report: dict[str, Any],
+) -> bool:
+    prefix = run_prefix_uri(config)
+    common = {
+        "config": config,
+        "local_dir": local_dir,
+        "heldout_report": report,
+    }
+    return _sync_legacy_render_source(
+        storage,
+        f"{prefix}component-io/heldout-eval/",
+        renders_dir,
+        render_suffix="output/renders/",
+        manifest_suffix="output/render-manifest.json",
+        manifest_name="render-manifest.sibling.json",
+        **common,
+    ) or _sync_legacy_render_source(
+        storage,
+        f"{prefix}byo-eval/",
+        renders_dir,
+        render_suffix="renders/",
+        manifest_suffix="render-manifest.json",
+        manifest_name="render-manifest.byo.json",
+        **common,
+    )
+
+
 def sync_heldout_renders(
     config: Sim2RealLoopConfig,
     local_dir: Path,
@@ -254,75 +377,14 @@ def sync_heldout_renders(
     """Sync the report's exact render tree; never guess for sealed gold."""
 
     storage = client or _storage_client_for_config(config)
-    prefix = run_prefix_uri(config)
-    renders_dir = _renders_dir_for_report(config, local_dir, heldout_report)
-    renders_dir.mkdir(parents=True, exist_ok=True)
-
-    if (heldout_report or {}).get("evaluation_split") == "gold_heldout":
-        lineage = dict((heldout_report or {}).get("render_lineage") or {})
-        canonical = str(lineage.get("renders_s3_uri") or "").strip()
-        if not canonical:
-            raise Sim2RealRerunRegenError(
-                "sealed gold report has no exact render_lineage.renders_s3_uri"
-            )
-        if lineage.get("evaluation_split") != "gold_heldout":
-            raise Sim2RealRerunRegenError(
-                "sealed gold render lineage has the wrong evaluation split"
-            )
-    else:
-        canonical = f"{prefix}eval/heldout/renders/"
-    try:
-        storage.download_directory(canonical, str(renders_dir))
-    except (StorageError, OSError):
-        pass
-    if _has_camera_pngs(renders_dir):
+    report = heldout_report or {}
+    canonical, sealed = _heldout_render_source(config, report)
+    renders_dir = _renders_dir_for_report(config, local_dir, report)
+    if _download_render_tree(storage, canonical, renders_dir):
         return True
-
-    # Gold metrics may only be paired with the exact render prefix recorded by
-    # that evaluation. Lexicographic component/BYO discovery is retained solely
-    # for legacy validation reports where no sealed split is involved.
-    if (heldout_report or {}).get("evaluation_split") == "gold_heldout":
+    if sealed:
         return False
-
-    component_root = f"{prefix}component-io/heldout-eval/"
-    bucket, _ = _parse_s3(component_root)
-    prefixes = sorted(_list_common_prefixes(storage, component_root))
-    for component_prefix in reversed(prefixes):
-        sibling_renders = f"s3://{bucket}/{component_prefix}output/renders/"
-        try:
-            storage.download_directory(sibling_renders, str(renders_dir))
-        except (StorageError, OSError):
-            continue
-        if _has_camera_pngs(renders_dir):
-            manifest_uri = (
-                f"s3://{bucket}/{component_prefix}output/render-manifest.json"
-            )
-            manifest_path = renders_dir.parent / "render-manifest.sibling.json"
-            if _download_if_exists(storage, manifest_uri, manifest_path):
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            else:
-                manifest = _render_manifest_from_png_tree(renders_dir)
-            _write_report_render_manifest(config, local_dir, heldout_report, manifest)
-            return True
-    byo_root = f"{prefix}byo-eval/"
-    bucket, _ = _parse_s3(byo_root)
-    prefixes = sorted(_list_common_prefixes(storage, byo_root))
-    for component_prefix in reversed(prefixes):
-        sibling_renders = f"s3://{bucket}/{component_prefix}renders/"
-        try:
-            storage.download_directory(sibling_renders, str(renders_dir))
-        except (StorageError, OSError):
-            continue
-        if _has_camera_pngs(renders_dir):
-            manifest_uri = f"s3://{bucket}/{component_prefix}render-manifest.json"
-            manifest_path = renders_dir.parent / "render-manifest.byo.json"
-            if _download_if_exists(storage, manifest_uri, manifest_path):
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            else:
-                manifest = _render_manifest_from_png_tree(renders_dir)
-            _write_report_render_manifest(config, local_dir, heldout_report, manifest)
-            return True
-    return _has_camera_pngs(renders_dir)
+    return _sync_legacy_heldout_renders(config, local_dir, storage, renders_dir, report)
 
 
 def _has_camera_pngs(renders_dir: Path) -> bool:
@@ -525,6 +587,248 @@ def publish_regen_mcap(
     return storage.upload_file(str(mcap_path), f"{prefix}reports/sim2real.mcap")
 
 
+@dataclass(frozen=True)
+class _RegenState:
+    inner_evidence: dict[str, Any]
+    heldout_report: dict[str, Any]
+    report_path: Path
+    report: dict[str, Any]
+    policy_access: dict[str, Any]
+
+
+def _regen_paths(
+    config: Sim2RealLoopConfig,
+    local_dir: Path | None,
+    local_rrd_path: Path | None,
+) -> tuple[Path, Path]:
+    work_dir = (
+        Path(local_dir)
+        if local_dir is not None
+        else default_regen_local_dir(config.run_id)
+    )
+    output_rrd = (
+        Path(local_rrd_path)
+        if local_rrd_path is not None
+        else resolve_local_rrd_path(config.run_id, local_dir=work_dir)
+    )
+    return work_dir, output_rrd
+
+
+def _load_regen_state(
+    config: Sim2RealLoopConfig,
+    work_dir: Path,
+    storage: StorageClient,
+    *,
+    sync_inputs: bool,
+) -> _RegenState:
+    if sync_inputs:
+        sync_regen_inputs(config, work_dir, client=storage)
+    inner_path = _latest_local_inner_evidence(work_dir)
+    _rewrite_inner_evidence_paths(work_dir, inner_path)
+    heldout_path = _gold_report_path(config, work_dir)
+    if not inner_path.is_file():
+        raise Sim2RealRerunRegenError(f"missing inner evidence: {inner_path}")
+    if not heldout_path.is_file():
+        raise Sim2RealRerunRegenError(f"missing held-out report: {heldout_path}")
+    inner_evidence = _read_retained_json(inner_path, source="inner-loop evidence")
+    heldout_report = _read_retained_json(heldout_path, source="held-out report")
+    report_path = work_dir / "reports" / "sim2real-report.json"
+    report = (
+        _read_retained_json(report_path, source="Sim2Real final report")
+        if report_path.is_file()
+        else {}
+    )
+    policy_access = _ensure_policy_access_metadata(
+        config,
+        work_dir,
+        storage=storage,
+        report=report,
+        heldout_report=heldout_report,
+    )
+    return _RegenState(
+        inner_evidence,
+        heldout_report,
+        report_path,
+        report,
+        policy_access,
+    )
+
+
+def _heldout_metadata(
+    heldout_report: dict[str, Any],
+    policy_access: dict[str, Any],
+) -> dict[str, Any]:
+    heldout_identity_kwargs: dict[str, object] = {}
+    if policy_access.get("checkpoint_uri"):
+        heldout_identity_kwargs["checkpoint_fallback"] = policy_access["checkpoint_uri"]
+    if policy_access.get("sha256"):
+        heldout_identity_kwargs["checkpoint_sha256_fallback"] = policy_access["sha256"]
+    if policy_access.get("size_bytes"):
+        heldout_identity_kwargs["checkpoint_size_fallback"] = policy_access[
+            "size_bytes"
+        ]
+    return _heldout_policy_metadata(heldout_report, **heldout_identity_kwargs)
+
+
+def _viewer_command(config: Sim2RealLoopConfig) -> str:
+    return (
+        "npa workbench sim2real rerun serve "
+        f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
+        f"--s3-prefix {config.s3_prefix}"
+    )
+
+
+def _regen_run_metadata(
+    config: Sim2RealLoopConfig,
+    state: _RegenState,
+    viewer_command: str,
+) -> dict[str, Any]:
+    prefix = run_prefix_uri(config)
+    policy_access = state.policy_access
+    return {
+        "run_id": config.run_id,
+        "artifact_root": prefix,
+        "rrd_s3_uri": f"{prefix}reports/sim2real.rrd",
+        "candidate_s3_uri": f"{prefix}checkpoints/candidate/candidate.json",
+        "policy_checkpoint": policy_access.get("checkpoint_uri", ""),
+        "policy_checkpoint_identity": policy_access.get("identity", ""),
+        "policy_checkpoint_sha256": policy_access.get("sha256", ""),
+        "policy_checkpoint_size_bytes": policy_access.get("size_bytes", 0),
+        "policy_download_command": policy_access.get(
+            "authenticated_download_command", ""
+        ),
+        "policy_ui_action": policy_access.get("ui_action", ""),
+        "policy_deployable": policy_access.get("deployable_policy", False),
+        **_heldout_metadata(state.heldout_report, policy_access),
+        "orchestrator_job_name": config.run_id,
+        "orchestrator_node_product": config.k8s_gpu_product,
+        "viewer_command": viewer_command,
+    }
+
+
+def _emit_regen_rrd(
+    config: Sim2RealLoopConfig,
+    work_dir: Path,
+    output_rrd: Path,
+    state: _RegenState,
+    outer_history: list[dict[str, Any]],
+    viewer_command: str,
+) -> tuple[Sim2RealVizResult, float]:
+    rerun_started = time.monotonic()
+    result = emit_sim2real_rerun(
+        local_dir=work_dir,
+        inner_evidence=state.inner_evidence,
+        heldout_report=state.heldout_report,
+        stage_components=list(state.report.get("components") or []),
+        outer_history=outer_history,
+        run_metadata=_regen_run_metadata(config, state, viewer_command),
+        output_rrd=output_rrd,
+    )
+    return result, round(time.monotonic() - rerun_started, 3)
+
+
+def _update_stage14_component(
+    component: dict[str, Any],
+    result: Sim2RealVizResult,
+    output_rrd: Path,
+    prefix: str,
+    duration_s: float,
+) -> None:
+    component["tier"] = "WORKS"
+    component["evidence"] = (
+        "Wrote the complete Rerun recording from every persisted pass: "
+        f"{result.rollout_count} real policy rollout(s), "
+        f"{result.frame_count} synchronized policy camera frame(s), and "
+        f"{result.heldout_frame_count} held-out frame(s)."
+    )
+    component.setdefault("artifacts", {}).update(
+        {
+            "rrd": f"{prefix}reports/sim2real.rrd",
+            "rrd_local": str(output_rrd),
+            "rrd_size_bytes": output_rrd.stat().st_size,
+            "duration_s": duration_s,
+        }
+    )
+
+
+def _persist_regen_report(
+    config: Sim2RealLoopConfig,
+    work_dir: Path,
+    output_rrd: Path,
+    state: _RegenState,
+    result: Sim2RealVizResult,
+    outer_history: list[dict[str, Any]],
+    viewer_command: str,
+    duration_s: float,
+) -> None:
+    if not state.report:
+        return
+    from npa.workflows.sim2real.engine import gpu_fallback_report_contract
+
+    prefix = run_prefix_uri(config)
+    state.report["policy_access"] = state.policy_access
+    state.report["progress_metrics"] = build_progress_metrics(work_dir, outer_history)
+    state.report["gpu_fallback_contract"] = gpu_fallback_report_contract(
+        config, list(state.report.get("components") or [])
+    )
+    state.report["visualization"] = {
+        **result.to_dict(),
+        "rrd_s3_uri": f"{prefix}reports/sim2real.rrd",
+        "rrd_size_bytes": output_rrd.stat().st_size,
+        "viewer_command": viewer_command,
+    }
+    for component in state.report.get("components") or []:
+        if component.get("name") == "stage_14_rerun_viz":
+            _update_stage14_component(component, result, output_rrd, prefix, duration_s)
+    state.report_path.write_text(
+        json.dumps(state.report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _publish_regen_recordings(
+    config: Sim2RealLoopConfig,
+    work_dir: Path,
+    storage: StorageClient,
+    *,
+    upload: bool,
+) -> tuple[str, str]:
+    if not upload:
+        return "", ""
+    return (
+        publish_regen_outputs(config, work_dir, client=storage),
+        publish_regen_mcap(config, work_dir, client=storage),
+    )
+
+
+def _finalize_regen_result(
+    config: Sim2RealLoopConfig,
+    work_dir: Path,
+    storage: StorageClient,
+    state: _RegenState,
+    result: Sim2RealVizResult,
+    *,
+    upload: bool,
+) -> RegenResult:
+    mcap_result = emit_sim2real_mcap_if_enabled(
+        local_dir=work_dir,
+        inner_evidence=state.inner_evidence,
+        heldout_report=state.heldout_report,
+        output_mcap=work_dir / "reports" / "sim2real.mcap",
+    )
+    upload_uri, mcap_upload_uri = _publish_regen_recordings(
+        config, work_dir, storage, upload=upload
+    )
+    return _regen_result_from_viz(
+        config.run_id,
+        work_dir,
+        result,
+        upload_uri=upload_uri,
+        mcap_result=mcap_result,
+        mcap_upload_uri=mcap_upload_uri,
+    )
+
+
 def regen_sim2real_rrd(
     config: Sim2RealLoopConfig,
     *,
@@ -536,152 +840,26 @@ def regen_sim2real_rrd(
 ) -> RegenResult:
     """Sync artifacts (optional), emit .rrd locally, optionally upload to S3."""
 
-    work_dir = (
-        Path(local_dir)
-        if local_dir is not None
-        else default_regen_local_dir(config.run_id)
-    )
-    output_rrd = (
-        Path(local_rrd_path)
-        if local_rrd_path is not None
-        else resolve_local_rrd_path(config.run_id, local_dir=work_dir)
-    )
+    work_dir, output_rrd = _regen_paths(config, local_dir, local_rrd_path)
     storage = client or _storage_client_for_config(config)
-
-    if sync_inputs:
-        sync_regen_inputs(config, work_dir, client=storage)
-
-    inner_path = _latest_local_inner_evidence(work_dir)
-    _rewrite_inner_evidence_paths(work_dir, inner_path)
-    heldout_path = _gold_report_path(config, work_dir)
-    if not inner_path.is_file():
-        raise Sim2RealRerunRegenError(f"missing inner evidence: {inner_path}")
-    if not heldout_path.is_file():
-        raise Sim2RealRerunRegenError(f"missing held-out report: {heldout_path}")
-
-    inner_evidence = _read_retained_json(
-        inner_path,
-        source="inner-loop evidence",
+    state = _load_regen_state(config, work_dir, storage, sync_inputs=sync_inputs)
+    outer_history = list((state.report.get("outer_loop") or {}).get("history") or [])
+    viewer_command = _viewer_command(config)
+    result, duration_s = _emit_regen_rrd(
+        config, work_dir, output_rrd, state, outer_history, viewer_command
     )
-    heldout_report = _read_retained_json(
-        heldout_path,
-        source="held-out report",
-    )
-    report_path = work_dir / "reports" / "sim2real-report.json"
-    report = (
-        _read_retained_json(report_path, source="Sim2Real final report")
-        if report_path.is_file()
-        else {}
-    )
-    policy_access = _ensure_policy_access_metadata(
-        config, work_dir, storage=storage, report=report
-    )
-    heldout_identity_kwargs: dict[str, object] = {}
-    if policy_access.get("checkpoint_uri"):
-        heldout_identity_kwargs["checkpoint_fallback"] = policy_access["checkpoint_uri"]
-    if policy_access.get("sha256"):
-        heldout_identity_kwargs["checkpoint_sha256_fallback"] = policy_access["sha256"]
-    if policy_access.get("size_bytes"):
-        heldout_identity_kwargs["checkpoint_size_fallback"] = policy_access[
-            "size_bytes"
-        ]
-    heldout_policy_metadata = _heldout_policy_metadata(
-        heldout_report,
-        **heldout_identity_kwargs,
-    )
-    outer_history = list((report.get("outer_loop") or {}).get("history") or [])
-    viewer_command = (
-        "npa workbench sim2real rerun serve "
-        f"--run-id {config.run_id} --s3-bucket {config.s3_bucket} "
-        f"--s3-prefix {config.s3_prefix}"
-    )
-    rerun_started = time.monotonic()
-    result = emit_sim2real_rerun(
-        local_dir=work_dir,
-        inner_evidence=inner_evidence,
-        heldout_report=heldout_report,
-        stage_components=list(report.get("components") or []),
-        outer_history=outer_history,
-        run_metadata={
-            "run_id": config.run_id,
-            "artifact_root": run_prefix_uri(config),
-            "rrd_s3_uri": f"{run_prefix_uri(config)}reports/sim2real.rrd",
-            "candidate_s3_uri": (
-                f"{run_prefix_uri(config)}checkpoints/candidate/candidate.json"
-            ),
-            "policy_checkpoint": policy_access.get("checkpoint_uri", ""),
-            "policy_checkpoint_identity": policy_access.get("identity", ""),
-            "policy_checkpoint_sha256": policy_access.get("sha256", ""),
-            "policy_checkpoint_size_bytes": policy_access.get("size_bytes", 0),
-            "policy_download_command": policy_access.get(
-                "authenticated_download_command", ""
-            ),
-            "policy_ui_action": policy_access.get("ui_action", ""),
-            "policy_deployable": policy_access.get("deployable_policy", False),
-            **heldout_policy_metadata,
-            "orchestrator_job_name": config.run_id,
-            "orchestrator_node_product": config.k8s_gpu_product,
-            "viewer_command": viewer_command,
-        },
-        output_rrd=output_rrd,
-    )
-    rerun_duration_s = round(time.monotonic() - rerun_started, 3)
-    if report:
-        from npa.workflows.sim2real.engine import gpu_fallback_report_contract
-
-        report["policy_access"] = policy_access
-        report["progress_metrics"] = build_progress_metrics(work_dir, outer_history)
-        report["gpu_fallback_contract"] = gpu_fallback_report_contract(
-            config, list(report.get("components") or [])
-        )
-        report["visualization"] = {
-            **result.to_dict(),
-            "rrd_s3_uri": f"{run_prefix_uri(config)}reports/sim2real.rrd",
-            "rrd_size_bytes": output_rrd.stat().st_size,
-            "viewer_command": viewer_command,
-        }
-        for component in report.get("components") or []:
-            if component.get("name") == "stage_14_rerun_viz":
-                component["tier"] = "WORKS"
-                component["evidence"] = (
-                    f"Wrote the complete Rerun recording from every persisted pass: "
-                    f"{result.rollout_count} real policy rollout(s), "
-                    f"{result.frame_count} synchronized policy camera frame(s), and "
-                    f"{result.heldout_frame_count} held-out frame(s)."
-                )
-                component.setdefault("artifacts", {}).update(
-                    {
-                        "rrd": f"{run_prefix_uri(config)}reports/sim2real.rrd",
-                        "rrd_local": str(output_rrd),
-                        "rrd_size_bytes": output_rrd.stat().st_size,
-                        "duration_s": rerun_duration_s,
-                    }
-                )
-        report_path.write_text(
-            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
-    # The finalize stage emits both viewer recordings from the same inputs, so regen
-    # must too: refreshing only the .rrd leaves the run's MCAP frozen at whatever
-    # the emitter produced when the run first completed. Best-effort, exactly as in
-    # finalize, so a missing mcap writer can never fail a Rerun regen.
-    mcap_result = emit_sim2real_mcap_if_enabled(
-        local_dir=work_dir,
-        inner_evidence=inner_evidence,
-        heldout_report=heldout_report,
-        output_mcap=work_dir / "reports" / "sim2real.mcap",
-    )
-    upload_uri = ""
-    mcap_upload_uri = ""
-    if upload:
-        upload_uri = publish_regen_outputs(config, work_dir, client=storage)
-        mcap_upload_uri = publish_regen_mcap(config, work_dir, client=storage)
-    return _regen_result_from_viz(
-        config.run_id,
+    _persist_regen_report(
+        config,
         work_dir,
+        output_rrd,
+        state,
         result,
-        upload_uri=upload_uri,
-        mcap_result=mcap_result,
-        mcap_upload_uri=mcap_upload_uri,
+        outer_history,
+        viewer_command,
+        duration_s,
+    )
+    return _finalize_regen_result(
+        config, work_dir, storage, state, result, upload=upload
     )
 
 
@@ -709,30 +887,12 @@ def _read_candidate_manifest(local_dir: Path) -> tuple[Path, dict[str, Any]]:
 def _one_checkpoint_uri(evidence: tuple[tuple[str, object], ...]) -> str:
     sources: list[str] = []
     for source, value in evidence:
-        if (
-            not isinstance(value, str)
-            or not value
-            or value != value.strip()
-            or any(ord(char) < 32 for char in value)
-        ):
+        checkpoint_uri = _checkpoint_uri(value)
+        if checkpoint_uri is None:
             raise Sim2RealRerunRegenError(
                 f"candidate checkpoint URI from {source} is malformed"
             )
-        parsed = urlparse(value)
-        if (
-            parsed.scheme != "s3"
-            or not parsed.netloc
-            or any(char in parsed.netloc for char in "@:%")
-            or not parsed.path.lstrip("/")
-            or not parsed.path.endswith(".pt")
-            or parsed.params
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise Sim2RealRerunRegenError(
-                f"candidate checkpoint URI from {source} is malformed"
-            )
-        sources.append(value)
+        sources.append(checkpoint_uri)
     if len(set(sources)) > 1:
         raise Sim2RealRerunRegenError(
             "candidate checkpoint URI sources disagree during Rerun regeneration"
@@ -817,6 +977,7 @@ def _canonical_decision(outer_loop: dict[str, Any]) -> dict[str, Any]:
             "checkpoint_uri",
             "deployable_policy",
             "policy_bytes_available",
+            "candidate",
         ):
             if (
                 field in latest
@@ -837,182 +998,199 @@ class _RetainedPolicySources:
     report: dict[str, Any]
     outer_loop: dict[str, Any]
     decision: dict[str, Any]
+    decision_candidate: dict[str, Any]
     selection: dict[str, Any]
+    selected_candidate: dict[str, Any]
     policy_access: dict[str, Any]
     heldout_report: dict[str, Any]
     producer: dict[str, Any]
+    current_heldout_report: dict[str, Any]
+    current_producer: dict[str, Any]
+
+
+_RETAINED_SOURCE_LABELS = (
+    ("candidate", "candidate"),
+    ("selected_candidate", "selected_checkpoint_candidate"),
+    ("decision_candidate", "outer_loop.decision.candidate"),
+    ("decision", "outer_loop.decision"),
+    ("selection", "checkpoint_selection"),
+    ("policy_access", "policy_access"),
+    ("heldout_report", "latest_heldout_report"),
+    ("producer", "policy_inference_provenance"),
+    ("current_heldout_report", "current_heldout_report"),
+    ("current_producer", "current_policy_inference_provenance"),
+)
+_CHECKPOINT_URI_KEYS = {
+    "candidate": ("policy_checkpoint_uri", "checkpoint_uri"),
+    "selected_candidate": ("policy_checkpoint_uri", "checkpoint_uri"),
+    "decision_candidate": ("policy_checkpoint_uri", "checkpoint_uri"),
+    "decision": ("checkpoint_uri",),
+    "selection": ("checkpoint_uri",),
+    "policy_access": ("checkpoint_uri",),
+    "heldout_report": ("policy_checkpoint", "policy_checkpoint_uri"),
+    "producer": ("checkpoint_uri",),
+    "current_heldout_report": ("policy_checkpoint", "policy_checkpoint_uri"),
+    "current_producer": ("checkpoint_uri",),
+}
+_CHECKPOINT_DIGEST_KEYS = {
+    "candidate": (
+        "policy_checkpoint_sha256",
+        "sha256",
+        "generator_policy_sha256",
+        "policy_generator_sha256",
+    ),
+    "selected_candidate": (
+        "policy_checkpoint_sha256",
+        "checkpoint_sha256",
+        "sha256",
+        "generator_policy_sha256",
+    ),
+    "decision_candidate": (
+        "policy_checkpoint_sha256",
+        "checkpoint_sha256",
+        "sha256",
+        "generator_policy_sha256",
+        "policy_generator_sha256",
+    ),
+    "selection": ("checkpoint_sha256", "generator_policy_sha256"),
+    "policy_access": ("sha256",),
+    "heldout_report": (
+        "policy_checkpoint_sha256",
+        "generator_policy_sha256",
+        "policy_generator_sha256",
+    ),
+    "producer": ("checkpoint_sha256", "generator_policy_sha256"),
+    "current_heldout_report": (
+        "policy_checkpoint_sha256",
+        "generator_policy_sha256",
+        "policy_generator_sha256",
+    ),
+    "current_producer": ("checkpoint_sha256", "generator_policy_sha256"),
+}
+_CHECKPOINT_SIZE_KEYS = {
+    "candidate": ("policy_checkpoint_size_bytes", "size_bytes"),
+    "selected_candidate": (
+        "policy_checkpoint_size_bytes",
+        "checkpoint_size_bytes",
+        "size_bytes",
+    ),
+    "decision_candidate": (
+        "policy_checkpoint_size_bytes",
+        "checkpoint_size_bytes",
+        "size_bytes",
+    ),
+    "selection": ("checkpoint_size_bytes",),
+    "policy_access": ("size_bytes",),
+    "heldout_report": ("policy_checkpoint_size_bytes",),
+    "producer": ("checkpoint_size_bytes",),
+    "current_heldout_report": ("policy_checkpoint_size_bytes",),
+    "current_producer": ("checkpoint_size_bytes",),
+}
+
+
+def _report_policy_children(
+    report: dict[str, Any],
+    decision: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    return {
+        "decision_candidate": _optional_object(
+            decision,
+            "candidate",
+            source="regeneration report.outer_loop.decision",
+        ),
+        "selection": _optional_object(
+            report,
+            "checkpoint_selection",
+            source="regeneration report",
+        ),
+        "selected_candidate": _optional_object(
+            report,
+            "selected_checkpoint_candidate",
+            source="regeneration report",
+        ),
+        "policy_access": _optional_object(
+            report,
+            "policy_access",
+            source="regeneration report",
+        ),
+    }
+
+
+def _producer_sources(
+    retained_heldout: dict[str, Any],
+    current_heldout: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    return {
+        "producer": _optional_object(
+            retained_heldout,
+            "policy_inference_provenance",
+            source="regeneration report.outer_loop.latest_heldout_report",
+        ),
+        "current_producer": _optional_object(
+            current_heldout,
+            "policy_inference_provenance",
+            source="current held-out report",
+        ),
+    }
 
 
 def _retained_policy_sources(
     candidate: dict[str, Any],
     report: dict[str, Any],
+    heldout_report: dict[str, Any] | None = None,
 ) -> _RetainedPolicySources:
     outer_loop = _optional_object(report, "outer_loop", source="regeneration report")
-    heldout_report = _optional_object(
+    retained_heldout = _optional_object(
         outer_loop,
         "latest_heldout_report",
         source="regeneration report.outer_loop",
     )
+    decision = _canonical_decision(outer_loop)
+    current_heldout = heldout_report or {}
     return _RetainedPolicySources(
         candidate=candidate,
         report=report,
         outer_loop=outer_loop,
-        decision=_canonical_decision(outer_loop),
-        selection=_optional_object(
-            report,
-            "checkpoint_selection",
-            source="regeneration report",
-        ),
-        policy_access=_optional_object(
-            report,
-            "policy_access",
-            source="regeneration report",
-        ),
-        heldout_report=heldout_report,
-        producer=_optional_object(
-            heldout_report,
-            "policy_inference_provenance",
-            source="regeneration report.outer_loop.latest_heldout_report",
-        ),
+        decision=decision,
+        heldout_report=retained_heldout,
+        current_heldout_report=current_heldout,
+        **_report_policy_children(report, decision),
+        **_producer_sources(retained_heldout, current_heldout),
     )
 
 
-def _collect_evidence(
-    *fields: tuple[dict[str, Any], str, str],
+def _aliased_evidence(
+    *groups: tuple[dict[str, Any], str, tuple[str, ...]],
 ) -> tuple[tuple[str, object], ...]:
     evidence: tuple[tuple[str, object], ...] = ()
-    for payload, key, label in fields:
-        evidence += _field_evidence(payload, key, label)
+    for payload, source, keys in groups:
+        for key in keys:
+            evidence += _field_evidence(payload, key, f"{source}.{key}")
     return evidence
 
 
-def _retained_checkpoint_uri(sources: _RetainedPolicySources) -> str:
-    return _one_checkpoint_uri(
-        _collect_evidence(
-            (
-                sources.candidate,
-                "policy_checkpoint_uri",
-                "candidate.policy_checkpoint_uri",
-            ),
-            (sources.candidate, "checkpoint_uri", "candidate.checkpoint_uri"),
-            (
-                sources.decision,
-                "checkpoint_uri",
-                "outer_loop.decision.checkpoint_uri",
-            ),
-            (
-                sources.selection,
-                "checkpoint_uri",
-                "checkpoint_selection.checkpoint_uri",
-            ),
-            (
-                sources.policy_access,
-                "checkpoint_uri",
-                "policy_access.checkpoint_uri",
-            ),
-            (
-                sources.heldout_report,
-                "policy_checkpoint",
-                "latest_heldout_report.policy_checkpoint",
-            ),
-            (
-                sources.heldout_report,
-                "policy_checkpoint_uri",
-                "latest_heldout_report.policy_checkpoint_uri",
-            ),
-            (
-                sources.producer,
-                "checkpoint_uri",
-                "policy_inference_provenance.checkpoint_uri",
-            ),
-        )
+def _retained_evidence(
+    sources: _RetainedPolicySources,
+    keys_by_source: dict[str, tuple[str, ...]],
+) -> tuple[tuple[str, object], ...]:
+    groups = (
+        (getattr(sources, name), label, keys_by_source[name])
+        for name, label in _RETAINED_SOURCE_LABELS
+        if name in keys_by_source
     )
+    return _aliased_evidence(*groups)
+
+
+def _retained_checkpoint_uri(sources: _RetainedPolicySources) -> str:
+    return _one_checkpoint_uri(_retained_evidence(sources, _CHECKPOINT_URI_KEYS))
 
 
 def _retained_checkpoint_digest(sources: _RetainedPolicySources) -> str:
-    return _one_checkpoint_digest(
-        _collect_evidence(
-            (
-                sources.candidate,
-                "policy_checkpoint_sha256",
-                "candidate.policy_checkpoint_sha256",
-            ),
-            (
-                sources.candidate,
-                "generator_policy_sha256",
-                "candidate.generator_policy_sha256",
-            ),
-            (
-                sources.candidate,
-                "policy_generator_sha256",
-                "candidate.policy_generator_sha256",
-            ),
-            (
-                sources.selection,
-                "checkpoint_sha256",
-                "checkpoint_selection.checkpoint_sha256",
-            ),
-            (
-                sources.selection,
-                "generator_policy_sha256",
-                "checkpoint_selection.generator_policy_sha256",
-            ),
-            (sources.policy_access, "sha256", "policy_access.sha256"),
-            (
-                sources.heldout_report,
-                "policy_checkpoint_sha256",
-                "latest_heldout_report.policy_checkpoint_sha256",
-            ),
-            (
-                sources.producer,
-                "checkpoint_sha256",
-                "policy_inference_provenance.checkpoint_sha256",
-            ),
-            (
-                sources.producer,
-                "generator_policy_sha256",
-                "policy_inference_provenance.generator_policy_sha256",
-            ),
-            (
-                sources.heldout_report,
-                "generator_policy_sha256",
-                "latest_heldout_report.generator_policy_sha256",
-            ),
-            (
-                sources.heldout_report,
-                "policy_generator_sha256",
-                "latest_heldout_report.policy_generator_sha256",
-            ),
-        )
-    )
+    return _one_checkpoint_digest(_retained_evidence(sources, _CHECKPOINT_DIGEST_KEYS))
 
 
 def _retained_checkpoint_size(sources: _RetainedPolicySources) -> int:
-    return _one_checkpoint_size(
-        _collect_evidence(
-            (
-                sources.candidate,
-                "policy_checkpoint_size_bytes",
-                "candidate.policy_checkpoint_size_bytes",
-            ),
-            (
-                sources.selection,
-                "checkpoint_size_bytes",
-                "checkpoint_selection.checkpoint_size_bytes",
-            ),
-            (sources.policy_access, "size_bytes", "policy_access.size_bytes"),
-            (
-                sources.heldout_report,
-                "policy_checkpoint_size_bytes",
-                "latest_heldout_report.policy_checkpoint_size_bytes",
-            ),
-            (
-                sources.producer,
-                "checkpoint_size_bytes",
-                "policy_inference_provenance.checkpoint_size_bytes",
-            ),
-        )
-    )
+    return _one_checkpoint_size(_retained_evidence(sources, _CHECKPOINT_SIZE_KEYS))
 
 
 def _assert_retained_leaf_identity(
@@ -1021,19 +1199,27 @@ def _assert_retained_leaf_identity(
     checkpoint_uri: str,
 ) -> None:
     expected = Path(checkpoint_uri).name
-    leaf_fields = (
+    evidence = _aliased_evidence(
         (
             sources.candidate,
-            "policy_checkpoint_identity",
-            "candidate checkpoint identity",
+            "candidate",
+            ("policy_checkpoint_identity", "identity"),
         ),
-        (sources.policy_access, "identity", "retained policy-access identity"),
+        (
+            sources.selected_candidate,
+            "selected_checkpoint_candidate",
+            ("policy_checkpoint_identity", "identity"),
+        ),
+        (
+            sources.decision_candidate,
+            "outer_loop.decision.candidate",
+            ("policy_checkpoint_identity", "identity"),
+        ),
+        (sources.policy_access, "policy_access", ("identity",)),
     )
-    for payload, key, label in leaf_fields:
-        if key in payload and (
-            not isinstance(payload[key], str) or payload[key] != expected
-        ):
-            raise Sim2RealRerunRegenError(f"{label} disagrees with checkpoint URI")
+    for source, value in evidence:
+        if not isinstance(value, str) or value != expected:
+            raise Sim2RealRerunRegenError(f"{source} disagrees with checkpoint URI")
 
 
 def _consensus_claim(
@@ -1049,40 +1235,26 @@ def _consensus_claim(
     return all(values) if values else default
 
 
-def _retained_deployment_claim(sources: _RetainedPolicySources) -> bool:
-    evidence = _collect_evidence(
-        (
-            sources.candidate,
-            "deployable_policy",
-            "candidate.deployable_policy",
-        ),
-        (sources.report, "deployable_policy", "report.deployable_policy"),
-        (
-            sources.outer_loop,
-            "deployable_policy",
-            "outer_loop.deployable_policy",
-        ),
-        (
-            sources.selection,
-            "deployable_policy",
-            "checkpoint_selection.deployable_policy",
-        ),
-        (
-            sources.policy_access,
-            "deployable_policy",
-            "policy_access.deployable_policy",
-        ),
-        (
-            sources.heldout_report,
-            "deployable_policy",
-            "latest_heldout_report.deployable_policy",
-        ),
-        (
-            sources.decision,
-            "deployable_policy",
-            "outer_loop.decision.deployable_policy",
-        ),
+def _retained_claim_evidence(
+    sources: _RetainedPolicySources,
+    key: str,
+) -> tuple[tuple[str, object], ...]:
+    return _aliased_evidence(
+        (sources.candidate, "candidate", (key,)),
+        (sources.selected_candidate, "selected_checkpoint_candidate", (key,)),
+        (sources.decision_candidate, "outer_loop.decision.candidate", (key,)),
+        (sources.report, "report", (key,)),
+        (sources.outer_loop, "outer_loop", (key,)),
+        (sources.selection, "checkpoint_selection", (key,)),
+        (sources.policy_access, "policy_access", (key,)),
+        (sources.heldout_report, "latest_heldout_report", (key,)),
+        (sources.current_heldout_report, "current_heldout_report", (key,)),
+        (sources.decision, "outer_loop.decision", (key,)),
     )
+
+
+def _retained_deployment_claim(sources: _RetainedPolicySources) -> bool:
+    evidence = _retained_claim_evidence(sources, "deployable_policy")
     if sources.decision:
         decision_name = sources.decision.get("decision")
         evidence += (
@@ -1101,51 +1273,16 @@ def _retained_bytes_claim(
     *,
     deployment_claim: bool,
 ) -> bool:
-    evidence = _collect_evidence(
-        (
-            sources.candidate,
-            "policy_bytes_available",
-            "candidate.policy_bytes_available",
-        ),
-        (
-            sources.report,
-            "policy_bytes_available",
-            "report.policy_bytes_available",
-        ),
-        (
-            sources.outer_loop,
-            "policy_bytes_available",
-            "outer_loop.policy_bytes_available",
-        ),
-        (
-            sources.selection,
-            "policy_bytes_available",
-            "checkpoint_selection.policy_bytes_available",
-        ),
-        (
-            sources.policy_access,
-            "policy_bytes_available",
-            "policy_access.policy_bytes_available",
-        ),
-        (
-            sources.heldout_report,
-            "policy_bytes_available",
-            "latest_heldout_report.policy_bytes_available",
-        ),
-        (
-            sources.decision,
-            "policy_bytes_available",
-            "outer_loop.decision.policy_bytes_available",
-        ),
-    )
+    evidence = _retained_claim_evidence(sources, "policy_bytes_available")
     return _consensus_claim(evidence, default=deployment_claim)
 
 
 def _retained_candidate_identity(
     candidate: dict[str, Any],
     report: dict[str, Any],
+    heldout_report: dict[str, Any] | None = None,
 ) -> tuple[str, str, int, bool, bool]:
-    sources = _retained_policy_sources(candidate, report)
+    sources = _retained_policy_sources(candidate, report, heldout_report)
     checkpoint_uri = _retained_checkpoint_uri(sources)
     checkpoint_sha256 = _retained_checkpoint_digest(sources)
     checkpoint_size = _retained_checkpoint_size(sources)
@@ -1170,10 +1307,6 @@ def _hydrate_candidate_identity(
     checkpoint_uri: str,
     storage: StorageClient,
 ) -> None:
-    if candidate.get("policy_checkpoint_sha256") and candidate.get(
-        "policy_checkpoint_size_bytes"
-    ):
-        return
     with tempfile.TemporaryDirectory(prefix="npa-policy-regen-") as temporary:
         local_checkpoint = Path(temporary) / Path(checkpoint_uri).name
         storage.download_file(checkpoint_uri, str(local_checkpoint))
@@ -1193,6 +1326,7 @@ def _hydrate_candidate_identity(
             {
                 "policy_checkpoint_identity": Path(checkpoint_uri).name,
                 "policy_checkpoint_sha256": actual_digest,
+                "generator_policy_sha256": actual_digest,
                 "policy_checkpoint_size_bytes": actual_size,
             }
         )
@@ -1245,10 +1379,17 @@ def _write_candidate_manifest(
     candidate_path: Path,
     candidate: dict[str, Any],
 ) -> None:
-    candidate_path.parent.mkdir(parents=True, exist_ok=True)
-    candidate_path.write_text(
-        json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    _write_json_artifact(candidate_path, candidate)
+
+
+def _clear_candidate_access(candidate: dict[str, Any]) -> None:
+    for key in (
+        "policy_download_command",
+        "authenticated_download_command",
+        "policy_ui_action",
+        "ui_action",
+    ):
+        candidate.pop(key, None)
 
 
 def _policy_access_record(
@@ -1259,6 +1400,10 @@ def _policy_access_record(
     bytes_available: bool,
     deployable: bool,
 ) -> dict[str, Any]:
+    download_command = (
+        candidate.get("policy_download_command", "") if bytes_available else ""
+    )
+    ui_action = candidate.get("policy_ui_action", "") if bytes_available else ""
     return {
         "deployable_policy": deployable,
         "policy_bytes_available": bytes_available,
@@ -1269,8 +1414,8 @@ def _policy_access_record(
         "candidate_manifest_uri": (
             f"{run_prefix_uri(config)}checkpoints/candidate/candidate.json"
         ),
-        "authenticated_download_command": candidate.get("policy_download_command", ""),
-        "ui_action": candidate.get("policy_ui_action", ""),
+        "authenticated_download_command": download_command,
+        "ui_action": ui_action,
         "viewer_executes_policy": False,
     }
 
@@ -1285,6 +1430,7 @@ def _prepare_candidate_identity(
     bytes_claim: bool,
     storage: StorageClient,
 ) -> tuple[bool, bool]:
+    _clear_candidate_access(candidate)
     candidate.update(
         {
             "policy_checkpoint_identity": (
@@ -1296,7 +1442,7 @@ def _prepare_candidate_identity(
             "policy_checkpoint_uri": checkpoint_uri,
         }
     )
-    bytes_available = bool(deployment_claim and bytes_claim and checkpoint_uri)
+    bytes_available = bool(bytes_claim and checkpoint_uri)
     if bytes_available:
         _hydrate_candidate_identity(
             candidate, checkpoint_uri=checkpoint_uri, storage=storage
@@ -1314,31 +1460,49 @@ def _prepare_candidate_identity(
     return bytes_available, deployable
 
 
+def _prepare_retained_candidate(
+    candidate_path: Path,
+    candidate: dict[str, Any],
+    report: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+    storage: StorageClient,
+) -> tuple[str, bool, bool]:
+    uri, digest, size, deployment_claim, bytes_claim = _retained_candidate_identity(
+        candidate, report, heldout_report
+    )
+    try:
+        bytes_available, deployable = _prepare_candidate_identity(
+            candidate,
+            checkpoint_uri=uri,
+            digest=digest,
+            size=size,
+            deployment_claim=deployment_claim,
+            bytes_claim=bytes_claim,
+            storage=storage,
+        )
+    except BaseException:
+        _clear_candidate_access(candidate)
+        candidate["deployable_policy"] = False
+        candidate["policy_bytes_available"] = False
+        if candidate_path.is_file():
+            _write_candidate_manifest(candidate_path, candidate)
+        raise
+    return uri, bytes_available, deployable
+
+
 def _ensure_policy_access_metadata(
     config: Sim2RealLoopConfig,
     local_dir: Path,
     *,
     storage: StorageClient,
     report: dict[str, Any],
+    heldout_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve candidate bytes and write secret-free access and promotion state."""
 
     candidate_path, candidate = _read_candidate_manifest(local_dir)
-    (
-        checkpoint_uri,
-        digest,
-        size,
-        deployment_claim,
-        bytes_claim,
-    ) = _retained_candidate_identity(candidate, report)
-    bytes_available, deployable = _prepare_candidate_identity(
-        candidate,
-        checkpoint_uri=checkpoint_uri,
-        digest=digest,
-        size=size,
-        deployment_claim=deployment_claim,
-        bytes_claim=bytes_claim,
-        storage=storage,
+    checkpoint_uri, bytes_available, deployable = _prepare_retained_candidate(
+        candidate_path, candidate, report, heldout_report, storage
     )
     if bytes_available:
         _persist_candidate_access(
@@ -1353,6 +1517,61 @@ def _ensure_policy_access_metadata(
         bytes_available=bytes_available,
         deployable=deployable,
     )
+
+
+def _sync_heldout_eval_inputs(
+    config: Sim2RealLoopConfig,
+    work_dir: Path,
+    storage: StorageClient,
+    prefix: str,
+) -> dict[str, Any]:
+    work_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        storage.download_directory(
+            f"{prefix}envs/heldout/", str(work_dir / "envs" / "heldout")
+        )
+    except (StorageError, OSError) as exc:
+        raise Sim2RealRerunRegenError(
+            f"failed to sync envs/heldout for {config.run_id}: {exc}"
+        ) from exc
+
+    inner_path = work_dir / "inner_loop/outer-01/evidence.json"
+    inner_path.parent.mkdir(parents=True, exist_ok=True)
+    if not _download_if_exists(
+        storage, f"{prefix}inner_loop/outer-01/evidence.json", inner_path
+    ):
+        raise Sim2RealRerunRegenError(
+            f"missing inner evidence at {prefix}inner_loop/outer-01/evidence.json"
+        )
+    return _read_retained_json(inner_path, source="inner-loop evidence")
+
+
+def _sync_heldout_eval_renders(
+    config: Sim2RealLoopConfig,
+    work_dir: Path,
+    storage: StorageClient,
+    report: dict[str, Any],
+) -> None:
+    invocation = report.get("component_invocation") or {}
+    output_uri = str(invocation.get("output_uri") or "").strip()
+    renders_dir = _renders_dir_for_report(config, work_dir, report)
+    synced = bool(
+        output_uri
+        and _download_render_tree(
+            storage,
+            _sibling_uri(output_uri, "renders/"),
+            renders_dir,
+        )
+    )
+    if not synced:
+        synced = sync_heldout_renders(
+            config, work_dir, heldout_report=report, client=storage
+        )
+    if not synced or not _has_camera_pngs(renders_dir):
+        raise Sim2RealRerunRegenError(
+            "held-out rerun completed but no camera-*.png renders were synced; "
+            "check NPA_SIM2REAL_HELDOUT_RENDER_FRAMES=1 and Isaac sibling logs"
+        )
 
 
 def rerun_heldout_eval_only(
@@ -1374,59 +1593,14 @@ def rerun_heldout_eval_only(
     )
     storage = client or _storage_client_for_config(config)
     prefix = run_prefix_uri(config)
-
-    work_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        storage.download_directory(
-            f"{prefix}envs/heldout/", str(work_dir / "envs" / "heldout")
-        )
-    except (StorageError, OSError) as exc:
-        raise Sim2RealRerunRegenError(
-            f"failed to sync envs/heldout for {config.run_id}: {exc}"
-        ) from exc
-
-    inner_path = work_dir / "inner_loop/outer-01/evidence.json"
-    inner_path.parent.mkdir(parents=True, exist_ok=True)
-    if not _download_if_exists(
-        storage, f"{prefix}inner_loop/outer-01/evidence.json", inner_path
-    ):
-        raise Sim2RealRerunRegenError(
-            f"missing inner evidence at {prefix}inner_loop/outer-01/evidence.json"
-        )
-
-    inner_evidence = _read_retained_json(
-        inner_path,
-        source="inner-loop evidence",
-    )
+    inner_evidence = _sync_heldout_eval_inputs(config, work_dir, storage, prefix)
     report = run_heldout_eval(
         config,
         local_dir=work_dir,
         inner_evidence=inner_evidence,
         outer_iteration=outer_iteration,
     )
-
-    invocation = report.get("component_invocation") or {}
-    output_uri = str(invocation.get("output_uri") or "").strip()
-    renders_dir = _renders_dir_for_report(config, work_dir, report)
-    renders_dir.mkdir(parents=True, exist_ok=True)
-    if output_uri:
-        try:
-            storage.download_directory(
-                _sibling_uri(output_uri, "renders/"), str(renders_dir)
-            )
-        except (StorageError, OSError):
-            sync_heldout_renders(
-                config, work_dir, heldout_report=report, client=storage
-            )
-    else:
-        sync_heldout_renders(config, work_dir, heldout_report=report, client=storage)
-
-    if not _has_camera_pngs(renders_dir):
-        raise Sim2RealRerunRegenError(
-            "held-out rerun completed but no camera-*.png renders were synced; "
-            "check NPA_SIM2REAL_HELDOUT_RENDER_FRAMES=1 and Isaac sibling logs"
-        )
-
+    _sync_heldout_eval_renders(config, work_dir, storage, report)
     if publish:
         publish_regen_outputs(config, work_dir, client=storage)
     return report

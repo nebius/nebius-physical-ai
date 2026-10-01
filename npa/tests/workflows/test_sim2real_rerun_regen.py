@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -23,6 +24,13 @@ def _config(run_id: str = "sim2real-staged-20260616t093101z") -> Sim2RealLoopCon
         s3_prefix="sim2real-b",
         s3_endpoint="https://storage.example",
     )
+
+
+def _write_candidate_manifest(tmp_path: Path, candidate: dict) -> Path:
+    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
+    candidate_path.parent.mkdir(parents=True, exist_ok=True)
+    candidate_path.write_text(json.dumps(candidate), encoding="utf-8")
+    return candidate_path
 
 
 def test_resolve_local_rrd_path_env_override(
@@ -105,6 +113,7 @@ def test_regen_sim2real_rrd_success(
             {
                 "checkpoint_uri": "s3://demo-bucket/run/model.pt",
                 "checkpoint_sha256": "a" * 64,
+                "generator_policy_sha256": "a" * 64,
                 "checkpoint_size_bytes": 128,
                 "loaded_for_inference": True,
                 "stock_or_scripted_policy": False,
@@ -165,6 +174,14 @@ def test_regen_preserves_strict_heldout_policy_evidence(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_mcap_if_enabled",
         lambda **_kwargs: {"status": "skipped"},
     )
+
+    if not isinstance(provenance, dict):
+        with pytest.raises(
+            Sim2RealRerunRegenError,
+            match="policy_inference_provenance must be a JSON object",
+        ):
+            regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
+        return
 
     regen_sim2real_rrd(_config(), local_dir=local_dir, sync_inputs=False)
 
@@ -288,17 +305,13 @@ def test_regen_mcap_failure_never_breaks_the_rrd_regen(
 def test_policy_access_metadata_hashes_real_checkpoint_without_secrets(
     tmp_path: Path,
 ) -> None:
-    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
-    candidate_path.parent.mkdir(parents=True)
     checkpoint_uri = "s3://demo-bucket/run/model_latest.pt"
-    candidate_path.write_text(
-        json.dumps(
-            {
-                "deployable_policy": True,
-                "policy_checkpoint_uri": checkpoint_uri,
-            }
-        ),
-        encoding="utf-8",
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+        },
     )
 
     class FakeStorage:
@@ -323,18 +336,14 @@ def test_policy_access_metadata_hashes_real_checkpoint_without_secrets(
 def test_policy_access_metadata_rejects_downloaded_digest_mismatch(
     tmp_path: Path,
 ) -> None:
-    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
-    candidate_path.parent.mkdir(parents=True)
     checkpoint_uri = "s3://demo-bucket/run/model_latest.pt"
-    candidate_path.write_text(
-        json.dumps(
-            {
-                "deployable_policy": True,
-                "policy_checkpoint_uri": checkpoint_uri,
-                "policy_checkpoint_sha256": "a" * 64,
-            }
-        ),
-        encoding="utf-8",
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+            "policy_checkpoint_sha256": "a" * 64,
+        },
     )
 
     class FakeStorage:
@@ -359,22 +368,30 @@ def test_policy_access_metadata_rejects_downloaded_digest_mismatch(
     [
         pytest.param("not-a-uri", id="relative"),
         pytest.param("https://demo-bucket/run/model.pt", id="wrong-scheme"),
+        pytest.param("s3://bad bucket/model.pt", id="authority-space"),
+        pytest.param("s3://Demo-bucket/run/model.pt", id="uppercase-bucket"),
+        pytest.param("s3://demo-bucket./run/model.pt", id="trailing-dot-bucket"),
+        pytest.param("s3://dëmo-bucket/run/model.pt", id="unicode-bucket"),
+        pytest.param("s3://demo-bucket/run/../model.pt", id="parent-segment"),
+        pytest.param(
+            "s3://demo-bucket/run/%2e%2e/model.pt",
+            id="encoded-parent-segment",
+        ),
+        pytest.param("s3://demo-bucket/run//model.pt", id="empty-segment"),
+        pytest.param("s3://demo-bucket/run\\model.pt", id="backslash"),
+        pytest.param("s3://demo-bucket/run/\u202emodel.pt", id="bidi-control"),
     ],
 )
 def test_policy_access_metadata_rejects_malformed_uri_before_download(
     tmp_path: Path,
     checkpoint_uri: str,
 ) -> None:
-    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
-    candidate_path.parent.mkdir(parents=True)
-    candidate_path.write_text(
-        json.dumps(
-            {
-                "deployable_policy": True,
-                "policy_checkpoint_uri": checkpoint_uri,
-            }
-        ),
-        encoding="utf-8",
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+        },
     )
     downloads: list[str] = []
 
@@ -408,16 +425,12 @@ def test_policy_access_metadata_rejects_non_boolean_deployment_claims(
     field: str,
     claim: object,
 ) -> None:
-    candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
-    candidate_path.parent.mkdir(parents=True)
-    candidate_path.write_text(
-        json.dumps(
-            {
-                field: claim,
-                "policy_checkpoint_uri": "s3://demo-bucket/run/model_latest.pt",
-            }
-        ),
-        encoding="utf-8",
+    candidate_path = _write_candidate_manifest(
+        tmp_path,
+        {
+            field: claim,
+            "policy_checkpoint_uri": "s3://demo-bucket/run/model_latest.pt",
+        },
     )
     downloads: list[str] = []
 
@@ -442,16 +455,19 @@ def test_policy_access_metadata_consumes_canonical_stage14_decision(
     tmp_path: Path,
 ) -> None:
     checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
-    checkpoint_sha256 = "a" * 64
+    checkpoint_bytes = b"selected-policy"
+    checkpoint_sha256 = hashlib.sha256(checkpoint_bytes).hexdigest()
+    downloads: list[str] = []
 
-    class UnusedStorage:
-        def download_file(self, *_args, **_kwargs) -> None:
-            raise AssertionError("complete retained identity must not be redownloaded")
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(checkpoint_bytes)
 
     access = _ensure_policy_access_metadata(
         _config(),
         tmp_path,
-        storage=UnusedStorage(),
+        storage=FakeStorage(),
         report={
             "outer_loop": {
                 "decision": {
@@ -460,7 +476,7 @@ def test_policy_access_metadata_consumes_canonical_stage14_decision(
                 },
                 "latest_heldout_report": {
                     "policy_checkpoint_sha256": checkpoint_sha256,
-                    "policy_checkpoint_size_bytes": 128,
+                    "policy_checkpoint_size_bytes": len(checkpoint_bytes),
                 },
             },
             "checkpoint_selection": {
@@ -472,9 +488,10 @@ def test_policy_access_metadata_consumes_canonical_stage14_decision(
 
     assert access["checkpoint_uri"] == checkpoint_uri
     assert access["sha256"] == checkpoint_sha256
-    assert access["size_bytes"] == 128
+    assert access["size_bytes"] == len(checkpoint_bytes)
     assert access["deployable_policy"] is True
     assert access["identity"] == "model_selected.pt"
+    assert downloads == [checkpoint_uri]
 
 
 @pytest.mark.parametrize(
@@ -487,18 +504,14 @@ def test_policy_access_metadata_rejects_conflicting_retained_identity(
 ) -> None:
     checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
     checkpoint_sha256 = "a" * 64
-    candidate_path = tmp_path / "checkpoints/candidate/candidate.json"
-    candidate_path.parent.mkdir(parents=True)
-    candidate_path.write_text(
-        json.dumps(
-            {
-                "deployable_policy": True,
-                "policy_checkpoint_uri": checkpoint_uri,
-                "policy_checkpoint_sha256": checkpoint_sha256,
-                "policy_checkpoint_size_bytes": 128,
-            }
-        ),
-        encoding="utf-8",
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+            "policy_checkpoint_sha256": checkpoint_sha256,
+            "policy_checkpoint_size_bytes": 128,
+        },
     )
     report = {
         "outer_loop": {
@@ -566,24 +579,20 @@ def test_policy_access_metadata_never_promotes_loop_back_candidate_claims(
     tmp_path: Path,
 ) -> None:
     checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
-    candidate_path = tmp_path / "checkpoints/candidate/candidate.json"
-    candidate_path.parent.mkdir(parents=True)
-    candidate_path.write_text(
-        json.dumps(
-            {
-                "deployable_policy": True,
-                "policy_bytes_available": True,
-                "policy_checkpoint_uri": checkpoint_uri,
-            }
-        ),
-        encoding="utf-8",
+    candidate_path = _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+        },
     )
     downloads: list[str] = []
 
     class FakeStorage:
         def download_file(self, uri: str, destination: str) -> None:
             downloads.append(uri)
-            Path(destination).write_bytes(b"unexpected-policy-bytes")
+            Path(destination).write_bytes(b"below-threshold-policy-bytes")
 
     access = _ensure_policy_access_metadata(
         _config(),
@@ -600,11 +609,12 @@ def test_policy_access_metadata_never_promotes_loop_back_candidate_claims(
     )
 
     assert access["deployable_policy"] is False
-    assert access["policy_bytes_available"] is False
-    assert downloads == []
+    assert access["policy_bytes_available"] is True
+    assert downloads == [checkpoint_uri]
     persisted = json.loads(candidate_path.read_text(encoding="utf-8"))
     assert persisted["deployable_policy"] is False
-    assert persisted["policy_bytes_available"] is False
+    assert persisted["policy_bytes_available"] is True
+    assert checkpoint_uri in persisted["policy_download_command"]
 
 
 def test_policy_access_metadata_reconciles_producer_before_download(
@@ -612,17 +622,13 @@ def test_policy_access_metadata_reconciles_producer_before_download(
 ) -> None:
     candidate_uri = "s3://demo-bucket/run/model_selected.pt"
     producer_uri = "s3://demo-bucket/run/other.pt"
-    candidate_path = tmp_path / "checkpoints/candidate/candidate.json"
-    candidate_path.parent.mkdir(parents=True)
-    candidate_path.write_text(
-        json.dumps(
-            {
-                "deployable_policy": True,
-                "policy_bytes_available": True,
-                "policy_checkpoint_uri": candidate_uri,
-            }
-        ),
-        encoding="utf-8",
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": candidate_uri,
+        },
     )
     downloads: list[str] = []
 
@@ -664,21 +670,265 @@ def test_policy_access_metadata_reconciles_producer_before_download(
     assert downloads == []
 
 
+def _promoted_candidate_report(
+    checkpoint_uri: str,
+    candidate: dict | None = None,
+) -> dict:
+    decision = {
+        "decision": "promote_checkpoint",
+        "checkpoint_uri": checkpoint_uri,
+    }
+    if candidate is not None:
+        decision["candidate"] = candidate
+    return {"outer_loop": {"decision": decision}}
+
+
+def test_policy_access_metadata_reconciles_embedded_decision_candidate(
+    tmp_path: Path,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+            "policy_checkpoint_sha256": "a" * 64,
+            "policy_checkpoint_size_bytes": 128,
+        },
+    )
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"unexpected-policy-bytes")
+
+    with pytest.raises(Sim2RealRerunRegenError, match="sources disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=FakeStorage(),
+            report=_promoted_candidate_report(
+                checkpoint_uri,
+                {
+                    "deployable_policy": True,
+                    "policy_bytes_available": True,
+                    "policy_checkpoint_uri": "s3://demo-bucket/run/other.pt",
+                    "policy_checkpoint_sha256": "b" * 64,
+                    "policy_checkpoint_size_bytes": 256,
+                },
+            ),
+        )
+
+    assert downloads == []
+
+
+def _embedded_candidate_report(
+    checkpoint_uri: str,
+    checkpoint_sha256: str,
+    checkpoint_size: int,
+) -> dict:
+    return _promoted_candidate_report(
+        checkpoint_uri,
+        {
+            "deployable_policy": False,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+            "policy_checkpoint_sha256": checkpoint_sha256,
+            "generator_policy_sha256": checkpoint_sha256,
+            "policy_checkpoint_size_bytes": checkpoint_size,
+        },
+    )
+
+
+def test_policy_access_metadata_reconciles_embedded_candidate_deployment_claim(
+    tmp_path: Path,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    checkpoint_bytes = b"selected-policy"
+    digest = hashlib.sha256(checkpoint_bytes).hexdigest()
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(checkpoint_bytes)
+
+    access = _ensure_policy_access_metadata(
+        _config(),
+        tmp_path,
+        storage=FakeStorage(),
+        report=_embedded_candidate_report(
+            checkpoint_uri, digest, len(checkpoint_bytes)
+        ),
+    )
+
+    assert access["policy_bytes_available"] is True
+    assert access["deployable_policy"] is False
+    assert downloads == [checkpoint_uri]
+
+
+@pytest.mark.parametrize(
+    ("alias", "value"),
+    [
+        pytest.param("checkpoint_uri", "s3://demo-bucket/run/other.pt", id="uri"),
+        pytest.param("sha256", "b" * 64, id="digest"),
+        pytest.param("size_bytes", 256, id="size"),
+        pytest.param("identity", "other.pt", id="identity"),
+    ],
+)
+def test_policy_access_metadata_rejects_embedded_candidate_alias_conflicts(
+    tmp_path: Path,
+    alias: str,
+    value: object,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    candidate = {
+        "deployable_policy": True,
+        "policy_bytes_available": True,
+        "policy_checkpoint_uri": checkpoint_uri,
+        "policy_checkpoint_identity": "model_selected.pt",
+        "policy_checkpoint_sha256": "a" * 64,
+        "policy_checkpoint_size_bytes": 128,
+        alias: value,
+    }
+
+    with pytest.raises(Sim2RealRerunRegenError, match="disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=object(),
+            report={
+                "outer_loop": {
+                    "decision": {
+                        "decision": "promote_checkpoint",
+                        "checkpoint_uri": checkpoint_uri,
+                        "candidate": candidate,
+                    }
+                },
+                "checkpoint_selection": {
+                    "checkpoint_uri": checkpoint_uri,
+                    "checkpoint_sha256": "a" * 64,
+                    "checkpoint_size_bytes": 128,
+                },
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("alias", "value"),
+    [
+        pytest.param("checkpoint_uri", "s3://demo-bucket/run/other.pt", id="uri"),
+        pytest.param("sha256", "b" * 64, id="digest"),
+        pytest.param("size_bytes", 256, id="size"),
+        pytest.param("identity", "other.pt", id="identity"),
+    ],
+)
+def test_policy_access_metadata_rejects_manifest_candidate_alias_conflicts(
+    tmp_path: Path,
+    alias: str,
+    value: object,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    candidate = {
+        "deployable_policy": True,
+        "policy_bytes_available": True,
+        "policy_checkpoint_uri": checkpoint_uri,
+        "policy_checkpoint_identity": "model_selected.pt",
+        "policy_checkpoint_sha256": "a" * 64,
+        "policy_checkpoint_size_bytes": 128,
+        alias: value,
+    }
+    _write_candidate_manifest(tmp_path, candidate)
+
+    with pytest.raises(Sim2RealRerunRegenError, match="disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=object(),
+            report={},
+        )
+
+
+def test_policy_access_metadata_reconciles_current_heldout_before_download(
+    tmp_path: Path,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+            "policy_checkpoint_sha256": "a" * 64,
+            "policy_checkpoint_size_bytes": 128,
+        },
+    )
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"unexpected-policy-bytes")
+
+    with pytest.raises(Sim2RealRerunRegenError, match="sources disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=FakeStorage(),
+            report=_promoted_candidate_report(checkpoint_uri),
+            heldout_report={
+                "policy_inference_provenance": {
+                    "checkpoint_uri": "s3://demo-bucket/run/other.pt",
+                    "checkpoint_sha256": "a" * 64,
+                    "checkpoint_size_bytes": 128,
+                }
+            },
+        )
+
+    assert downloads == []
+
+
+def test_policy_access_metadata_clears_stale_instructions_when_unavailable(
+    tmp_path: Path,
+) -> None:
+    candidate_path = _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": False,
+            "policy_bytes_available": False,
+            "policy_checkpoint_uri": "s3://demo-bucket/run/model.pt",
+            "policy_download_command": "stale download command",
+            "policy_ui_action": "stale UI action",
+        },
+    )
+
+    access = _ensure_policy_access_metadata(
+        _config(),
+        tmp_path,
+        storage=object(),
+        report={},
+    )
+
+    assert access["authenticated_download_command"] == ""
+    assert access["ui_action"] == ""
+    persisted = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert "policy_download_command" not in persisted
+    assert "policy_ui_action" not in persisted
+
+
 def test_policy_access_metadata_reconciles_prior_access_record(
     tmp_path: Path,
 ) -> None:
     candidate_uri = "s3://demo-bucket/run/model_selected.pt"
-    candidate_path = tmp_path / "checkpoints/candidate/candidate.json"
-    candidate_path.parent.mkdir(parents=True)
-    candidate_path.write_text(
-        json.dumps(
-            {
-                "deployable_policy": True,
-                "policy_bytes_available": True,
-                "policy_checkpoint_uri": candidate_uri,
-            }
-        ),
-        encoding="utf-8",
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": candidate_uri,
+        },
     )
 
     with pytest.raises(Sim2RealRerunRegenError, match="sources disagree"):
@@ -883,6 +1133,39 @@ def test_gold_render_sync_uses_only_explicit_lineage(tmp_path: Path) -> None:
         / "gold-0001"
         / "camera-000.png"
     ).read_bytes() == b"gold-frame"
+
+
+def test_gold_render_sync_never_reuses_stale_frames_after_download_failure(
+    tmp_path: Path,
+) -> None:
+    config = _config("gold-run")
+    local_dir = tmp_path / "run"
+    renders_dir = local_dir / "eval" / "gold-heldout" / "outer-03" / "renders"
+    stale_frame = renders_dir / "stale" / "camera-000.png"
+    stale_frame.parent.mkdir(parents=True)
+    stale_frame.write_bytes(b"stale-frame")
+
+    class FailingStorage:
+        def download_directory(self, _uri: str, _destination: str) -> None:
+            raise OSError("current render tree unavailable")
+
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 3,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "renders_s3_uri": ("s3://demo-bucket/sim2real-b/gold-run/current/renders/"),
+        },
+    }
+
+    assert not sync_heldout_renders(
+        config,
+        local_dir,
+        heldout_report=report,
+        client=FailingStorage(),
+    )
+    assert not stale_frame.exists()
+    assert not renders_dir.exists()
 
 
 def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) -> None:

@@ -11,6 +11,7 @@ from npa.workflows.sim2real.capture import runtime_parameter_metadata
 
 _MISSING = object()
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_S3_BUCKET = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?")
 IdentityEvidence = tuple[tuple[str, object], ...]
 
 
@@ -23,16 +24,24 @@ def _checkpoint_uri(value: object) -> str | None:
         not isinstance(value, str)
         or not value
         or value != value.strip()
-        or any(ord(char) < 32 for char in value)
+        or not value.isascii()
+        or not value.startswith("s3://")
+        or any(ord(char) < 33 or ord(char) > 126 for char in value)
     ):
         return None
     parsed = urlparse(value)
+    key = parsed.path.lstrip("/")
     if (
         parsed.scheme != "s3"
         or not parsed.netloc
-        or any(char in parsed.netloc for char in "@:%")
-        or not parsed.path.lstrip("/")
-        or not parsed.path.endswith(".pt")
+        or _S3_BUCKET.fullmatch(parsed.netloc) is None
+        or any(token in parsed.netloc for token in ("..", ".-", "-."))
+        or not key
+        or parsed.path != f"/{key}"
+        or not key.endswith(".pt")
+        or "\\" in key
+        or "%" in key
+        or any(part in {"", ".", ".."} for part in key.split("/"))
         or parsed.params
         or parsed.query
         or parsed.fragment
@@ -121,7 +130,12 @@ def _checkpoint_identity(
 ) -> dict[str, Any]:
     errors = [
         f"policy_inference_provenance.{key} is missing"
-        for key in ("checkpoint_uri", "checkpoint_sha256", "checkpoint_size_bytes")
+        for key in (
+            "checkpoint_uri",
+            "checkpoint_sha256",
+            "generator_policy_sha256",
+            "checkpoint_size_bytes",
+        )
         if key not in provenance
     ]
     uri, field_errors = _reconcile_identity_field(
@@ -179,18 +193,16 @@ def _checkpoint_identity(
         report, "policy_generator_sha256", "policy_generator_sha256"
     )
     generator_sources += generator_evidence
-    generator: object | None = None
-    if generator_sources:
-        generator, field_errors = _reconcile_identity_field(
-            label="generator checkpoint SHA-256",
-            evidence=generator_sources,
-            normalize=_sha256,
+    generator, field_errors = _reconcile_identity_field(
+        label="generator checkpoint SHA-256",
+        evidence=generator_sources,
+        normalize=_sha256,
+    )
+    errors.extend(field_errors)
+    if generator is not None and digest is not None and generator != digest:
+        errors.append(
+            "generator checkpoint SHA-256 does not match inference checkpoint"
         )
-        errors.extend(field_errors)
-        if generator is not None and digest is not None and generator != digest:
-            errors.append(
-                "generator checkpoint SHA-256 does not match inference checkpoint"
-            )
     return {
         "heldout_policy_checkpoint": str(uri or ""),
         "heldout_policy_checkpoint_sha256": str(digest or ""),
@@ -316,6 +328,44 @@ def heldout_policy_metadata(
         checkpoint_sha256_evidence=checkpoint_sha256_evidence,
         checkpoint_size_evidence=checkpoint_size_evidence,
         generator_sha256_evidence=generator_sha256_evidence,
+    )
+
+
+def selected_checkpoint_policy_metadata(
+    heldout_report: dict[str, Any],
+    selection: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Bind held-out metadata to the validation-selected candidate."""
+
+    return heldout_policy_metadata(
+        heldout_report,
+        checkpoint_fallback=selection["checkpoint_uri"],
+        checkpoint_sha256_fallback=selection["checkpoint_sha256"],
+        checkpoint_size_fallback=selection["checkpoint_size_bytes"],
+        checkpoint_uri_evidence=(
+            ("checkpoint_selection.checkpoint_uri", selection["checkpoint_uri"]),
+            ("selected candidate checkpoint_uri", candidate["checkpoint_uri"]),
+        ),
+        checkpoint_sha256_evidence=(
+            ("selected candidate checkpoint_sha256", candidate["checkpoint_sha256"]),
+        ),
+        checkpoint_size_evidence=(
+            (
+                "selected candidate checkpoint_size_bytes",
+                candidate["checkpoint_size_bytes"],
+            ),
+        ),
+        generator_sha256_evidence=(
+            (
+                "checkpoint_selection.generator_policy_sha256",
+                selection["generator_policy_sha256"],
+            ),
+            (
+                "selected candidate generator_policy_sha256",
+                candidate["generator_policy_sha256"],
+            ),
+        ),
     )
 
 

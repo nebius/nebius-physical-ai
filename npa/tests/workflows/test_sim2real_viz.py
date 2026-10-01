@@ -164,6 +164,7 @@ def test_policy_metadata_rejects_contradictory_learned_actor_provenance(
     provenance = {
         "checkpoint_uri": "s3://bucket/run/model.pt",
         "checkpoint_sha256": "a" * 64,
+        "generator_policy_sha256": "a" * 64,
         "checkpoint_size_bytes": 128,
         "loaded_for_inference": True,
         "stock_or_scripted_policy": False,
@@ -194,6 +195,7 @@ def test_policy_metadata_requires_explicit_null_post_actor_controller() -> None:
     provenance = {
         "checkpoint_uri": "s3://bucket/run/model.pt",
         "checkpoint_sha256": "a" * 64,
+        "generator_policy_sha256": "a" * 64,
         "checkpoint_size_bytes": 128,
         "loaded_for_inference": True,
         "stock_or_scripted_policy": False,
@@ -232,6 +234,7 @@ def test_policy_metadata_never_promotes_malformed_identity_or_loading(
     provenance = {
         "checkpoint_uri": "s3://bucket/run/model.pt",
         "checkpoint_sha256": "a" * 64,
+        "generator_policy_sha256": "a" * 64,
         "checkpoint_size_bytes": 128,
         "loaded_for_inference": True,
         "stock_or_scripted_policy": False,
@@ -336,6 +339,15 @@ def test_policy_metadata_reconciles_every_generator_digest_source(
         pytest.param("https://bucket/run/model.pt", id="wrong-scheme"),
         pytest.param("s3://bucket", id="missing-object"),
         pytest.param("s3://bucket/run/model.pt?version=other", id="query"),
+        pytest.param("s3://bad bucket/model.pt", id="authority-space"),
+        pytest.param("s3://Bucket/run/model.pt", id="uppercase-bucket"),
+        pytest.param("s3://bucket./run/model.pt", id="trailing-dot-bucket"),
+        pytest.param("s3://bücket/run/model.pt", id="unicode-bucket"),
+        pytest.param("s3://bucket/run/../model.pt", id="parent-segment"),
+        pytest.param("s3://bucket/run/%2e%2e/model.pt", id="encoded-parent-segment"),
+        pytest.param("s3://bucket/run//model.pt", id="empty-segment"),
+        pytest.param("s3://bucket/run\\model.pt", id="backslash"),
+        pytest.param("s3://bucket/run/\u202emodel.pt", id="bidi-control"),
     ],
 )
 def test_policy_metadata_rejects_malformed_checkpoint_uri(
@@ -426,7 +438,12 @@ def test_policy_metadata_reconciles_every_authoritative_identity_source(
 
 @pytest.mark.parametrize(
     "missing_field",
-    ["checkpoint_uri", "checkpoint_sha256", "checkpoint_size_bytes"],
+    [
+        "checkpoint_uri",
+        "checkpoint_sha256",
+        "generator_policy_sha256",
+        "checkpoint_size_bytes",
+    ],
 )
 def test_policy_metadata_requires_each_inference_identity_field(
     missing_field: str,
@@ -577,6 +594,45 @@ def test_real_scene_provenance_reconciles_projected_run_identity() -> None:
             "heldout_policy_checkpoint": "s3://bucket/run/other.pt",
             "heldout_policy_checkpoint_sha256": "a" * 64,
             "heldout_policy_checkpoint_size_bytes": 128,
+        },
+        counts={},
+    )
+
+    payload = next(
+        value
+        for entity, value in fake.logged_payloads
+        if entity == "world/task_context/provenance"
+    )
+    assert "Exact checkpoint identity verified: `False`" in payload["text"]
+    assert "Complete learned-actor-only contract: `False`" in payload["text"]
+
+
+def test_real_scene_provenance_rejects_empty_projected_generator_digest() -> None:
+    fake = _FakeRerun()
+    viz_module._log_real_isaac_scene_context(
+        fake,
+        _FakeRecording(),
+        heldout_report={
+            "policy_checkpoint_sha256": "a" * 64,
+            "policy_checkpoint_size_bytes": 128,
+            "policy_inference_provenance": {
+                "checkpoint_uri": "s3://bucket/run/model.pt",
+                "checkpoint_sha256": "a" * 64,
+                "generator_policy_sha256": "a" * 64,
+                "checkpoint_size_bytes": 128,
+                "loaded_for_inference": True,
+                "stock_or_scripted_policy": False,
+                "actor_is_learned": True,
+                "scripted_post_actor_controller": False,
+                "policy_composition": "learned_actor_only",
+                "post_actor_controller": None,
+            },
+        },
+        run_metadata={
+            "heldout_policy_checkpoint": "s3://bucket/run/model.pt",
+            "heldout_policy_checkpoint_sha256": "a" * 64,
+            "heldout_policy_checkpoint_size_bytes": 128,
+            "heldout_policy_generator_sha256": "",
         },
         counts={},
     )

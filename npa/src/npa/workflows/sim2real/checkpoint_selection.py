@@ -11,6 +11,11 @@ from typing import Any
 # distance, which is the best possible outcome, not a missing-data signal.
 # Finite (unlike math.inf) so rank_key stays valid JSON in written artifacts.
 _MISSING_DISTANCE = 1.0e9
+_IDENTITY_FIELDS = (
+    "checkpoint_sha256",
+    "checkpoint_size_bytes",
+    "generator_policy_sha256",
+)
 
 
 def _finite_metric(value: Any, *, field: str) -> float:
@@ -162,6 +167,65 @@ def select_best_checkpoint(candidates: list[dict[str, Any]]) -> dict[str, Any]:
         for item in ranked
     ]
     return best
+
+
+def _selection_for_uri(
+    evidence: dict[str, Any],
+    selected_uri: str,
+) -> dict[str, Any]:
+    selection = evidence.get("checkpoint_selection")
+    if (
+        not isinstance(selection, dict)
+        or selection.get("checkpoint_uri") != selected_uri
+    ):
+        raise ValueError("checkpoint selection URI disagrees with selected checkpoint")
+    return selection
+
+
+def _candidate_for_uri(
+    evidence: dict[str, Any],
+    selected_uri: str,
+) -> dict[str, Any]:
+    raw_candidates = evidence.get("checkpoint_candidates")
+    if not isinstance(raw_candidates, list) or not all(
+        isinstance(item, dict) for item in raw_candidates
+    ):
+        raise ValueError("checkpoint candidates are missing or malformed")
+    candidates = [
+        item for item in raw_candidates if item.get("checkpoint_uri") == selected_uri
+    ]
+    if len(candidates) != 1:
+        raise ValueError("selected checkpoint must resolve to exactly one candidate")
+    return candidates[0]
+
+
+def _assert_matching_identity(
+    selection: dict[str, Any],
+    candidate: dict[str, Any],
+) -> None:
+    for field in _IDENTITY_FIELDS:
+        if field not in selection or field not in candidate:
+            raise ValueError(f"selected checkpoint {field} is missing")
+        if selection[field] != candidate[field]:
+            raise ValueError(f"selected checkpoint {field} sources disagree")
+    if selection["generator_policy_sha256"] != selection["checkpoint_sha256"]:
+        raise ValueError("selected checkpoint generator digest disagrees with bytes")
+
+
+def resolve_selected_checkpoint(
+    evidence: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Return the one candidate bound to the persisted checkpoint selection."""
+    selected_uri = evidence.get("selected_checkpoint_uri")
+    final_uri = evidence.get("final_checkpoint_uri")
+    if not isinstance(selected_uri, str) or not selected_uri:
+        raise ValueError("selected checkpoint URI is missing")
+    if final_uri != selected_uri:
+        raise ValueError("final checkpoint URI disagrees with selected checkpoint")
+    selection = _selection_for_uri(evidence, selected_uri)
+    candidate = _candidate_for_uri(evidence, selected_uri)
+    _assert_matching_identity(selection, candidate)
+    return dict(selection), dict(candidate)
 
 
 def assert_no_split_leakage(

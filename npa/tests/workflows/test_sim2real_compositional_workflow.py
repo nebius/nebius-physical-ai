@@ -957,6 +957,62 @@ def _patch_stage14_io(
     return stage14_finalize
 
 
+def _selected_checkpoint_evidence(
+    checkpoint_uri: str,
+    checkpoint_sha256: str,
+    *,
+    candidate_sha256: str | None = None,
+) -> dict:
+    candidate_digest = (
+        checkpoint_sha256 if candidate_sha256 is None else candidate_sha256
+    )
+    candidate = {
+        "checkpoint_uri": checkpoint_uri,
+        "checkpoint_sha256": candidate_digest,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": candidate_digest,
+    }
+    selection = {
+        "checkpoint_uri": checkpoint_uri,
+        "checkpoint_sha256": checkpoint_sha256,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": checkpoint_sha256,
+    }
+    return {
+        "iterations": [],
+        "selected_checkpoint_uri": checkpoint_uri,
+        "final_checkpoint_uri": checkpoint_uri,
+        "checkpoint_candidates": [candidate],
+        "checkpoint_selection": selection,
+    }
+
+
+def _learned_actor_report(
+    checkpoint_uri: str,
+    checkpoint_sha256: str,
+    *,
+    include_generator: bool = True,
+) -> dict:
+    provenance = {
+        "checkpoint_uri": checkpoint_uri,
+        "checkpoint_sha256": checkpoint_sha256,
+        "checkpoint_size_bytes": 128,
+        "loaded_for_inference": True,
+        "stock_or_scripted_policy": False,
+        "actor_is_learned": True,
+        "scripted_post_actor_controller": False,
+        "policy_composition": "learned_actor_only",
+        "post_actor_controller": None,
+    }
+    if include_generator:
+        provenance["generator_policy_sha256"] = checkpoint_sha256
+    return {
+        "policy_checkpoint_sha256": checkpoint_sha256,
+        "policy_checkpoint_size_bytes": 128,
+        "policy_inference_provenance": provenance,
+    }
+
+
 def _stage14_policy_metadata(
     monkeypatch: pytest.MonkeyPatch,
     work: Path,
@@ -966,14 +1022,7 @@ def _stage14_policy_metadata(
 ) -> tuple[dict, dict]:
     root = "s3://unit/runs/finalize"
     selected_checkpoint = f"{root}/checkpoints/model.pt"
-    evidence = {
-        "iterations": [],
-        "selected_checkpoint_uri": selected_checkpoint,
-        "checkpoint_selection": {
-            "checkpoint_uri": selected_checkpoint,
-            "checkpoint_sha256": selected_sha256,
-        },
-    }
+    evidence = _selected_checkpoint_evidence(selected_checkpoint, selected_sha256)
     gold = {
         "policy_checkpoint_sha256": "a" * 64,
         "policy_checkpoint_size_bytes": 128,
@@ -1105,6 +1154,28 @@ def test_stage14_rejects_mismatched_selected_checkpoint_digest(
     assert metadata["heldout_policy_learned_actor_only"] is False
 
 
+def test_stage14_rejects_selected_candidate_digest_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = "s3://unit/runs/finalize"
+    checkpoint_uri = f"{root}/checkpoints/model.pt"
+    evidence = _selected_checkpoint_evidence(
+        checkpoint_uri, "a" * 64, candidate_sha256="b" * 64
+    )
+    gold = _learned_actor_report(checkpoint_uri, "a" * 64)
+    stage14_finalize = _patch_stage14_io(monkeypatch, evidence, gold)
+    captured = _capture_stage14_encoders(monkeypatch)
+
+    with pytest.raises(RuntimeError, match="checkpoint_sha256 sources disagree"):
+        stage14_finalize.finalize_in_work(
+            Namespace(run_id="run", outer_iteration=1),
+            root=root,
+            work=tmp_path,
+        )
+    assert captured == {}
+
+
 def test_stage14_rejects_duplicate_decision_identity_fields(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1167,28 +1238,11 @@ def test_stage10_rejects_gold_checkpoint_identity_mismatch(
         _assert_gold_checkpoint_identity,
     )
 
-    evidence = {
-        "selected_checkpoint_uri": "s3://unit/run/checkpoints/model.pt",
-        "checkpoint_selection": {
-            "checkpoint_uri": "s3://unit/run/checkpoints/model.pt",
-            "checkpoint_sha256": "a" * 64,
-        },
-    }
-    report = {
-        "policy_checkpoint_sha256": report_sha,
-        "policy_checkpoint_size_bytes": 128,
-        "policy_inference_provenance": {
-            "checkpoint_uri": report_uri,
-            "checkpoint_sha256": report_sha,
-            "checkpoint_size_bytes": 128,
-            "loaded_for_inference": True,
-            "stock_or_scripted_policy": False,
-            "actor_is_learned": True,
-            "scripted_post_actor_controller": False,
-            "policy_composition": "learned_actor_only",
-            "post_actor_controller": None,
-        },
-    }
+    evidence = _selected_checkpoint_evidence(
+        "s3://unit/run/checkpoints/model.pt",
+        "a" * 64,
+    )
+    report = _learned_actor_report(report_uri, report_sha)
 
     with pytest.raises(RuntimeError, match="selected checkpoint identity"):
         _assert_gold_checkpoint_identity(evidence, report)
@@ -1201,30 +1255,41 @@ def test_stage10_accepts_exact_learned_actor_checkpoint_identity() -> None:
 
     checkpoint_uri = "s3://unit/run/checkpoints/model.pt"
     checkpoint_sha256 = "a" * 64
-    evidence = {
-        "selected_checkpoint_uri": checkpoint_uri,
-        "checkpoint_selection": {
-            "checkpoint_uri": checkpoint_uri,
-            "checkpoint_sha256": checkpoint_sha256,
-        },
-    }
-    report = {
-        "policy_checkpoint_sha256": checkpoint_sha256,
-        "policy_checkpoint_size_bytes": 128,
-        "policy_inference_provenance": {
-            "checkpoint_uri": checkpoint_uri,
-            "checkpoint_sha256": checkpoint_sha256,
-            "checkpoint_size_bytes": 128,
-            "loaded_for_inference": True,
-            "stock_or_scripted_policy": False,
-            "actor_is_learned": True,
-            "scripted_post_actor_controller": False,
-            "policy_composition": "learned_actor_only",
-            "post_actor_controller": None,
-        },
-    }
+    evidence = _selected_checkpoint_evidence(checkpoint_uri, checkpoint_sha256)
+    report = _learned_actor_report(checkpoint_uri, checkpoint_sha256)
 
     _assert_gold_checkpoint_identity(evidence, report)
+
+
+def test_stage10_rejects_missing_generator_digest() -> None:
+    from npa.workflows.sim2real.workflow_stage import (
+        _assert_gold_checkpoint_identity,
+    )
+
+    checkpoint_uri = "s3://unit/run/checkpoints/model.pt"
+    checkpoint_sha256 = "a" * 64
+    evidence = _selected_checkpoint_evidence(checkpoint_uri, checkpoint_sha256)
+    report = _learned_actor_report(
+        checkpoint_uri, checkpoint_sha256, include_generator=False
+    )
+
+    with pytest.raises(RuntimeError, match="selected checkpoint identity"):
+        _assert_gold_checkpoint_identity(evidence, report)
+
+
+def test_stage10_rejects_selected_candidate_digest_disagreement() -> None:
+    from npa.workflows.sim2real.workflow_stage import (
+        _assert_gold_checkpoint_identity,
+    )
+
+    checkpoint_uri = "s3://unit/run/checkpoints/model.pt"
+    evidence = _selected_checkpoint_evidence(
+        checkpoint_uri, "a" * 64, candidate_sha256="b" * 64
+    )
+    report = _learned_actor_report(checkpoint_uri, "a" * 64)
+
+    with pytest.raises(RuntimeError, match="selected checkpoint identity"):
+        _assert_gold_checkpoint_identity(evidence, report)
 
 
 def test_stage10_rejects_non_s3_checkpoint_uri_even_when_sources_agree() -> None:
@@ -1234,28 +1299,8 @@ def test_stage10_rejects_non_s3_checkpoint_uri_even_when_sources_agree() -> None
 
     checkpoint_uri = "not-a-uri"
     checkpoint_sha256 = "a" * 64
-    evidence = {
-        "selected_checkpoint_uri": checkpoint_uri,
-        "checkpoint_selection": {
-            "checkpoint_uri": checkpoint_uri,
-            "checkpoint_sha256": checkpoint_sha256,
-        },
-    }
-    report = {
-        "policy_checkpoint_sha256": checkpoint_sha256,
-        "policy_checkpoint_size_bytes": 128,
-        "policy_inference_provenance": {
-            "checkpoint_uri": checkpoint_uri,
-            "checkpoint_sha256": checkpoint_sha256,
-            "checkpoint_size_bytes": 128,
-            "loaded_for_inference": True,
-            "stock_or_scripted_policy": False,
-            "actor_is_learned": True,
-            "scripted_post_actor_controller": False,
-            "policy_composition": "learned_actor_only",
-            "post_actor_controller": None,
-        },
-    }
+    evidence = _selected_checkpoint_evidence(checkpoint_uri, checkpoint_sha256)
+    report = _learned_actor_report(checkpoint_uri, checkpoint_sha256)
 
     with pytest.raises(RuntimeError, match="selected checkpoint identity"):
         _assert_gold_checkpoint_identity(evidence, report)

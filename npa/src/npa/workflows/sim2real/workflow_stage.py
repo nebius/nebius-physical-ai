@@ -692,6 +692,12 @@ def _stage9(args: argparse.Namespace) -> None:
         "training_iteration": args.ppo_iterations,
         "checkpoint_uri": checkpoint_uri,
         "checkpoint_sha256": validation.get("policy_checkpoint_sha256", ""),
+        "checkpoint_size_bytes": validation.get("policy_checkpoint_size_bytes", 0),
+        "generator_policy_sha256": (
+            (validation.get("policy_inference_provenance") or {}).get(
+                "generator_policy_sha256", ""
+            )
+        ),
         "validation_report_uri": validation_uri,
         "validation_report": validation,
         "embodiment": training_embodiment,
@@ -756,28 +762,23 @@ def _stage9(args: argparse.Namespace) -> None:
 def _assert_gold_checkpoint_identity(
     evidence: dict[str, Any],
     report: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
     """Bind gold evaluation bytes to the validation-selected learned actor."""
 
-    from npa.workflows.sim2real.viz_contract import heldout_policy_metadata
+    from npa.workflows.sim2real.checkpoint_selection import (
+        resolve_selected_checkpoint,
+    )
+    from npa.workflows.sim2real.viz_contract import (
+        selected_checkpoint_policy_metadata,
+    )
 
-    selected_uri = str(evidence.get("selected_checkpoint_uri") or "")
-    selection = dict(evidence.get("checkpoint_selection") or {})
-    selected_sha256 = str(selection.get("checkpoint_sha256") or "")
-    if (
-        not selected_uri
-        or selection.get("checkpoint_uri") != selected_uri
-        or not selected_sha256
-    ):
+    try:
+        selection, candidate = resolve_selected_checkpoint(evidence)
+    except ValueError as exc:
         raise RuntimeError(
             "Stage 10 selected checkpoint identity is incomplete or inconsistent"
-        )
-    metadata = heldout_policy_metadata(
-        report,
-        checkpoint_fallback=selected_uri,
-        checkpoint_sha256_fallback=selected_sha256,
-        checkpoint_size_fallback=report.get("policy_checkpoint_size_bytes", 0),
-    )
+        ) from exc
+    metadata = selected_checkpoint_policy_metadata(report, selection, candidate)
     if (
         metadata["heldout_policy_identity_verified"] is not True
         or metadata["heldout_policy_loaded_for_inference"] is not True
@@ -787,6 +788,7 @@ def _assert_gold_checkpoint_identity(
             "learned-actor-only provenance is incomplete or contradictory"
         )
         raise RuntimeError(f"Stage 10 selected checkpoint identity mismatch: {issues}")
+    return candidate
 
 
 def _stage10(args: argparse.Namespace) -> None:
@@ -803,20 +805,11 @@ def _stage10(args: argparse.Namespace) -> None:
         output_path=report_path,
         tag=f"gold-o{args.outer_iteration:02d}",
     )
-    _assert_gold_checkpoint_identity(evidence, report)
+    selected_candidate = _assert_gold_checkpoint_identity(evidence, report)
     gold_embodiment = _assert_embodiment_evidence(
         root=root, payload=report, stage="Stage 10 gold evaluation"
     )
     if gold_embodiment:
-        selected_uri = str(evidence.get("selected_checkpoint_uri") or "")
-        selected_candidate = next(
-            (
-                dict(item)
-                for item in evidence.get("checkpoint_candidates") or []
-                if str(item.get("checkpoint_uri") or "") == selected_uri
-            ),
-            {},
-        )
         selected_embodiment = dict(selected_candidate.get("embodiment") or {})
         if not selected_embodiment:
             raise RuntimeError(

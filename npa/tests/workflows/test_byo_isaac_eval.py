@@ -40,6 +40,7 @@ def test_policy_inference_provenance_requires_learned_actor_only() -> None:
         checkpoint_uri="s3://bucket/model.pt",
         checkpoint={"sha256": "a" * 64, "size_bytes": 123},
     )
+    assert provenance["generator_policy_sha256"] == "a" * 64
     assert provenance["actor_is_learned"] is True
     assert provenance["policy_composition"] == "learned_actor_only"
     assert provenance["scripted_post_actor_controller"] is False

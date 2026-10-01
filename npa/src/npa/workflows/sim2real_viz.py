@@ -2270,7 +2270,7 @@ def _log_real_isaac_scene_context(
                 projected["heldout_policy_generator_sha256"],
             ),
         )
-        if projected.get("heldout_policy_generator_sha256") not in (None, "")
+        if "heldout_policy_generator_sha256" in projected
         else ()
     )
     policy_metadata = _heldout_policy_metadata(
