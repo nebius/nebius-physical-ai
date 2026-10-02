@@ -116,3 +116,21 @@ Output is a policy checkpoint on S3.
   benchmark. See the D3/D6 resolution in
   [the version audit](../../../docs/workbench/lerobot-version-support-audit-20260813.md#060-image-follow-up--2026-09-12)
   and merged [PR #462](https://github.com/nebius/nebius-physical-ai/pull/462).
+
+
+## FLUX 3 Action SO-101 task LoRA
+
+The pinned PickOrange example is
+`workflows/partners/bfl/flux3-action-so101-finetune.yaml`. It uses
+`workbench.lerobot.flux3_so101_finetune`, the dedicated CUDA 12.8/LeRobot
+image, and one H100 GPU. The Workbench command is
+`npa workbench lerobot flux3-so101-finetune --output-path s3://.../ --run-id NAME --steps 60000`.
+The runner converts the pinned LeIsaac v2.1 dataset to v3, applies the
+documented SO-101 motor-to-policy calibration, checks model/data dimensions,
+then uses BFL's LoRA preset. Raw and EMA checkpoint directories, a training log,
+and calibration report go to the run prefix. `COMPLETE.json` is written after
+the final raw adapter SHA-256 and marker readback. It proves training and
+publication only; closed-loop policy quality needs separate paired evaluation.
+The image is a candidate until its local build, payload scan, and Nebius GPU
+run pass. Supply an immutable reviewed image, an operator bucket, and an existing
+Kubernetes image pull Secret when submitting the private validation image.

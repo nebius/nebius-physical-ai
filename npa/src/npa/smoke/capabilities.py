@@ -9,6 +9,11 @@ from __future__ import annotations
 
 # Each value is an ordered list of concrete checks the golden eval runs.
 GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
+    "lerobot-flux3": [
+        "pinned LeRobot FLUX 3, Torch 2.11, and NATTEN imports",
+        "pinned SO-101 recipe and camera/action contract",
+        "real CUDA LoRA training and complete S3 checkpoint readback require live GPU validation",
+    ],
     "antioch": [
         "FastAPI service authentication boundary",
         "CPU-only system-info contract",

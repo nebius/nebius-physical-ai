@@ -64,6 +64,7 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.isaac_lab": "isaac-lab",
     "workbench.isaac_arena": "isaac-arena",
     "workbench.openarm": "openarm",
+    "workbench.lerobot.flux3_so101_finetune": "lerobot-flux3",
     "workbench.lerobot": "lerobot",
     "workbench.sonic": "sonic",
     "workbench.mjlab": "mjlab",
@@ -104,6 +105,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # fetch can exceed the anonymous Hub rate limit. Forward an operator token
     # only through the workflow secret channel when one is available.
     "workbench.flex_pi": ("HF_TOKEN",),
+    "workbench.lerobot.flux3_so101_finetune": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
@@ -254,6 +256,7 @@ TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
     "workflow.xr1": ("/opt/conda/bin/python",),
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
+    "workbench.lerobot.flux3_so101_finetune": ("/opt/lerobot/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
     # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
     # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with

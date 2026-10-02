@@ -420,6 +420,11 @@ images:
       runtime-payload.json and its unchanged full-layer/source/512 MiB guards;
       they are not the public build target. All public full-SHA builds require
       exact-image absence/source, security, SBOM/provenance and GPU validation.
+  lerobot-flux3:
+    dockerfile: lerobot-flux3/Dockerfile
+    tier: job
+    passwordless_root_exemption: "SkyPilot Kubernetes bootstrap installs task prerequisites through sudo as the non-root ubuntu user; no SSH service starts by default and no credentials are baked."
+    redistribution: public
   lerobot:
     dockerfile: lerobot/Dockerfile
     tier: service

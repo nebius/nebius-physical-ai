@@ -154,6 +154,7 @@ CONTAINER_IMAGE_NAMES = {
     "openpi": "npa-openpi",
     "habitat-sim": "npa-habitat-sim",
     "lerobot": "npa-lerobot",
+    "lerobot-flux3": "npa-lerobot-flux3",
     "sim2real-control": "npa-sim2real-control",
     "lerobot-policy": "npa-lerobot-policy",
     "genesis": "npa-genesis",
@@ -302,7 +303,7 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 # Independent OSS catalog additions stay quarantined as soon as their image
 # names are registered. An absent tool is not added to the publication inventory.
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
-    {"openpi", "curobo", "ncore", "libero", "sam3"}
+    {"openpi", "curobo", "ncore", "libero", "sam3", "lerobot-flux3"}
 ) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
 VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
 # A development candidate may use the trusted full-SHA builder before it has
@@ -454,6 +455,7 @@ SUPPORTED_TOOL_VERSIONS = {
     # Default LeRobot image release. Selectable package versions and their
     # image tags live in lerobot_version_manifest.json.
     "lerobot": "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
+    "lerobot-flux3": "cuda12-flux3-so101-1bc0bdf-unbuilt",
     "sim2real-control": "0.1.2-sim2real-coherent-20260904",
     "lerobot-policy": "0.1.1",
     "genesis": "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",

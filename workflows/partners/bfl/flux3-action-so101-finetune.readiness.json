@@ -1,0 +1,75 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "5d285e308ea67a16746c34fbbd1a8fedf617a24640bc81f407dc92dbd98f0dac",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "NPA validate-spec and plan-spec --check-render pass for the one-H100 task. A live four-microstep smoke reached terminal success; full 60,000-step acceptance remains pending.",
+      "evidence": [
+        "validate-spec and plan-spec --check-render PASS, one H100 task",
+        "386 focused workflow/toolRef/readiness tests PASS",
+        "target-cluster image pull with task-owned Secret PASS",
+        "managed H100 smoke reached terminal SUCCEEDED"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "CLI and toolRef are implemented; local help, argv guardrail, validate-spec, and plan-spec --check-render passed.",
+      "evidence": [
+        "focused CLI/catalog tests",
+        "local render one H100 task"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The configured project bucket probe passed. The live smoke published COMPLETE.json and both numbered adapter variants; independent S3 reads and SHA-256 checks passed.",
+      "evidence": [
+        "bucket upload/readback/delete PASS",
+        "smoke checkpoint 000004 raw and EMA adapters independently stream-hashed",
+        "smoke COMPLETE.json and declared result files independently read from S3"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The pinned dataset converted all 60 episodes from LeRobot v2.1 to v3 locally and in the live H100 smoke; the trainer opened 48 training episodes and 12 evaluation episodes.",
+      "evidence": [
+        "60 episodes, 36,293 frames, sampled rows 0/18146/36292 verified",
+        "real pinned AV1 clip decoded with PyAV 15.1.0",
+        "live H100 conversion and trainer split 48/12 episodes PASS"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "HF model access and S3 access passed in the live smoke. The operator federation session expired before the full run could pass mandatory Nebius project identity verification; interactive renewal is required.",
+      "evidence": [
+        "smoke pinned HF downloads and S3 publication PASS",
+        "full-run project IAM request timed out; no managed job launched",
+        "operator reauthentication requested"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The private linux/amd64 validation image uses the previously scanned Dockerfile build plus the tested runner fix. Its immutable digest passed registry manifest, exact pull, target-cluster pull, full restricted-payload scan, and live H100 smoke. Public publication remains quarantined.",
+      "evidence": [
+        "private validation digest sha256:ef3fd51f957dfd511aef853b393eee66639cca62bd2a73e3e46157b6f597497d",
+        "registry manifest and linux/amd64 pull PASS",
+        "target-cluster pull with task-owned Secret PASS",
+        "full image scan: 114313 entries, zero restricted payload/history hits",
+        "live H100 smoke SUCCEEDED using this digest"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "The four-microstep H100 smoke reached managed-job SUCCEEDED with finite loss, a step-4 checkpoint, six finite adapter action values, and a verified S3 completion marker. The requested 60,000-step run remains unlaunched because the operator Nebius federation session expired during mandatory project identity preflight.",
+      "evidence": [
+        "managed H100 smoke job 3 terminal SUCCEEDED",
+        "four microsteps, one optimizer update, final loss 0.263, peak GPU memory 29 GiB",
+        "raw and EMA adapters each 471775248 bytes with independent SHA-256 verification",
+        "COMPLETE.json, train log, calibration report, and command read from S3",
+        "full-run prefix had zero objects after failed IAM preflight"
+      ]
+    }
+  }
+}

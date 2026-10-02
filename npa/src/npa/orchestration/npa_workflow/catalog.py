@@ -3311,6 +3311,23 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.lerobot.flux3_so101_finetune": ToolEntry(
+        name="workbench.lerobot.flux3_so101_finetune",
+        access_capabilities=("flux3-so101",),
+        description="Fine-tune the pinned BFL FLUX 3 Action SO-101 policy on calibrated PickOrange demonstrations.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "lerobot",
+            "flux3-so101-finetune",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--steps",
+            "{{config.train_steps}}",
+        ],
+    ),
     "workbench.lerobot.policy_train": ToolEntry(
         name="workbench.lerobot.policy_train",
         description=(

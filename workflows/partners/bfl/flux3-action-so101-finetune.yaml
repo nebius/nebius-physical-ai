@@ -1,0 +1,38 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: flux3-action-so101-finetune
+  description: Train BFL's prepared SO-101 task LoRA on calibrated PickOrange demonstrations.
+
+config:
+  bucket: example-bucket
+  prefix: "flux3-action-so101/{{run.id}}"
+  flux3_image: registry.example.invalid/npa-lerobot-flux3:replace-with-reviewed-image
+  image_pull_secret: registry-pull-secret
+  train_steps: "60000"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 14
+    memory: 64Gi
+    disk_size: 90
+    image: "{{config.flux3_image}}"
+    kubernetes:
+      pod_config:
+        spec:
+          imagePullSecrets:
+            - name: "{{config.image_pull_secret}}"
+
+initial: train
+states:
+  train:
+    resources: gpu
+    toolRef: workbench.lerobot.flux3_so101_finetune
+    outputs:
+      - uri: "{{config.output_uri}}COMPLETE.json"
+        schema: npa.flux3-so101.training.v1
+    terminal: true

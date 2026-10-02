@@ -710,6 +710,7 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/lerobot-transfer.yaml
+          - workflows/partners/bfl/flux3-action-so101-finetune.yaml
       - type: cli_help
         args: ["workbench", "lerobot", "train", "--help"]
         contains: "policy"
