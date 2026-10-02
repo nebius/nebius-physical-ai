@@ -582,7 +582,9 @@ class TestLeRobotLibraryLoad:
         info["codebase_version"] = "v2.1"
         info_path.write_text(json.dumps(info))
 
-        with pytest.raises(Exception, match="2.1"):
+        from lerobot.datasets.utils import BackwardCompatibilityError
+
+        with pytest.raises(BackwardCompatibilityError, match=r"v2\.1"):
             self._load(
                 lerobot_dataset_module,
                 output_dir,

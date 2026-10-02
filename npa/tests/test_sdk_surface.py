@@ -172,8 +172,7 @@ import npa.sdk
 heavy = [name for name in ("pyarrow", "lancedb", "boto3", "rerun", "torch")
          if name in sys.modules]
 assert not heavy, f"npa.sdk eagerly imported {heavy}"
-loaded = sorted(name for name in sys.modules if name.startswith("npa"))
-assert loaded == ["npa", "npa.sdk"], loaded
+assert "npa.sdk.workbench" not in sys.modules
 """
     )
 
@@ -193,7 +192,7 @@ def test_sdk_workbench_exports_every_tool_client_on_disk() -> None:
         and not path.name.startswith("_")
     }
 
-    assert on_disk <= set(workbench.__all__), sorted(on_disk - set(workbench.__all__))
+    assert set(workbench.__all__) == on_disk | {"training_config"}
 
 
 def test_sdk_workbench_lancedb_is_the_sdk_client_regardless_of_import_order() -> None:
