@@ -385,18 +385,14 @@ def _open_table(db: Any, table_name: str) -> Any:
 
 def _list_tables(db: Any) -> list[str]:
     list_tables = getattr(db, "list_tables", None)
-    if callable(list_tables):
-        try:
-            return _normalize_table_names(list_tables(limit=10000))
-        except TypeError:
-            return _normalize_table_names(list_tables())
-    table_names = getattr(db, "table_names", None)
-    if callable(table_names):
-        try:
-            return _normalize_table_names(table_names(limit=10000))
-        except TypeError:
-            return _normalize_table_names(table_names())
-    raise MVWriteError("LanceDB connection does not expose table listing")
+    if not callable(list_tables):
+        raise MVWriteError(
+            "LanceDB connection does not expose the required list_tables API"
+        )
+    try:
+        return _normalize_table_names(list_tables(limit=10000))
+    except TypeError:
+        return _normalize_table_names(list_tables())
 
 
 def _normalize_table_names(values: Any) -> list[str]:

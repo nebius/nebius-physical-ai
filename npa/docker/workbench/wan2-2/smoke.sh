@@ -26,9 +26,10 @@ assert easy_dict({"nested": {"value": 7}}).nested.value == 7
 PY
 test -n "$(find /opt/byof/wan -type f -path '*/__pycache__/*.pyc' -print -quit)"
 set +e
-wan-runtime ensure >/tmp/wan-out 2>/tmp/wan-err
+NPA_WAN_RUNTIME_OFFLINE=1 wan-runtime ensure >/tmp/wan-out 2>/tmp/wan-err
 rc=$?
 set -e
-test "$rc" = 78
-grep -q "Nothing has been downloaded" /tmp/wan-err
+test "$rc" = 69
+grep -q "offline cache does not match the current requirements and Python ABI" /tmp/wan-err
 test -z "$(find /workspace/.cache/npa/wan2-2/runtime -mindepth 1 -print -quit)"
+printf '%s\n' 'WAN22_SMOKE_OK source-and-dependency-closure-validated runtime-fetch-absent'

@@ -7,6 +7,67 @@ Gitleaks 8.28.0 `Detector.Detect` API on each complete raw record, including bin
 and empty records. It does not use Gitleaks file discovery, MIME filtering,
 stdin chunking, a baseline, or image-authored ignore files.
 
+Distinct records are detected concurrently, and results are emitted in record
+order. Worker count is sampled from `runtime.GOMAXPROCS(0)` at pipeline startup;
+the pinned Go runtime's default accounts for CPU affinity and Linux cgroup CPU
+quota. The pool does not resize if those limits change during a scan.
+
+Admission reserves raw payload bytes against a 512 MiB budget before allocating
+them; a record larger than the whole budget is admitted alone rather than
+refused, so coverage never depends on a size threshold.
+
+That budget bounds admitted payload bytes, not resident memory: the detector
+holds the raw bytes, a string copy, a lowercased copy and the regexp engine's
+working set. Peak RSS for a single record, read from the helper's `VmHWM` in
+KiB, Linux x86_64, Go toolchain 1.27.1, one record in flight:
+
+| record | peak `VmHWM` | multiple of record size |
+| --- | --- | --- |
+| 16 MiB | 161,440 KiB | 9.85x |
+| 64 MiB | 543,252 KiB | 8.29x |
+| 128 MiB | 1,053,452 KiB | 8.04x |
+
+These are single-record measurements at those three sizes, and the multiple is
+not constant across them. Sizing above 128 MiB by extrapolating it is an
+estimate, not a measurement; larger records have not been measured.
+
+The scanner launches its helper with only `PATH` in the environment to isolate
+it from ambient configuration and credentials. Shell `GOMAXPROCS`, `GOMEMLIMIT`
+and `GODEBUG` settings therefore do not configure a scanner-owned helper.
+
+Before loading the detector, the helper resolves its cgroup-v2 membership through
+`/proc/self/cgroup` and `/proc/self/mountinfo`. For each readable visible ancestor
+with finite `memory.max`, it subtracts that ancestor's `memory.current`, reserves
+10% of the remaining allowance, and uses the smallest result as Go's
+[`debug.SetMemoryLimit`](https://pkg.go.dev/runtime/debug#SetMemoryLimit). This
+leaves room for the Python parent and other memory already charged to the group;
+subtracting the helper's small startup footprint as well is conservative.
+An already smaller runtime limit is preserved for directly launched helpers.
+
+Unlimited, unavailable or non-v2 metadata leaves the runtime setting unchanged;
+readable ancestor limits still apply when a descendant limit is unavailable.
+A sample with no headroom, or no more allowance than the helper already owns, is
+skipped: `memory.current` includes reclaimable page cache, so transient pressure
+must not prevent scanning. Usable limits from other ancestors and an already
+stricter runtime limit remain effective. A usage file disappearing with ENOENT
+or ENODEV is also skipped. Malformed finite-limit or usage data and other usage
+read failures produce a controlled error before detection. Values above Go's
+signed addressable range are treated as unlimited. The policy is sampled at
+startup: hidden ancestors, later limit changes and competing allocations cannot
+be predicted.
+
+This is a **soft limit on Go-managed memory**, not a process-memory ceiling or an
+OOM guarantee. The [Go GC guide](https://go.dev/doc/gc-guide#Memory_limit) explains
+that the runtime can exceed the limit to preserve progress. Detector working
+memory and a single oversized record can still exhaust the cgroup; no record is
+truncated or skipped, and the existing payload admission policy is unchanged.
+If the operating system terminates the helper, the scan fails and cannot
+establish a clean result.
+
+Records above the budget run alone, so a small number of large serialized records
+can limit parallelism; quantifying that limit requires a measured time profile,
+which the helper does not currently emit.
+
 ## Prepare the helper
 
 Run on **Linux amd64**, from an NPA checkout with its development environment
@@ -67,6 +128,14 @@ one JSON result per record, retaining every finding but returning only rule and
 line information, record ordinal, byte count and SHA-256. Clean EOF between
 records produces a final summary. A truncated header or payload is an error.
 The scanner process uses these exit codes:
+
+The caller may keep several records in flight; results are emitted strictly in
+record order, so the response bytes are identical at every depth. Both directions
+are live at once, so a caller must continue reading results while it writes
+records. A caller that blocks in a write without reading deadlocks against a
+helper that has filled its output pipe and stopped reading, which is why
+`core.Detector` transfers record bytes and collects results through one readiness
+wait rather than draining only before each write.
 
 | Code | Meaning |
 | --- | --- |

@@ -1268,7 +1268,7 @@ def _safe_paidf_cli_result(payload: dict[str, Any]) -> dict[str, Any]:
             )
             if key in segmentation
         }
-    safe = {
+    safe: dict[str, Any] = {
         key: payload[key]
         for key in (
             "status",

@@ -1,0 +1,29 @@
+{
+  "schema": "npa.gymnasium-robotics.asset-lock.v1",
+  "status": "reviewed-input-evidence",
+  "source_commit": "4d1ebecbc6436806cfbc0e42ebc36f594d05844e",
+  "asset_notice_sha256": "872d90e6cbbe9e4390ea4d9e2598e5f194ec2782afd5af2a4c083b35a8fd451a",
+  "directly_loaded_xml": {
+    "hand/manipulate_block_touch_sensors.xml": "c1004adf05daea7b57ee57643f8e94945393a2e12b34b18a244be3c1776776b2",
+    "hand/robot_touch_sensors_92.xml": "9b6f70c49c8bb043ce3e52d181a0797c514a3b85f44f0cf59600d9f906df9f64",
+    "hand/shared.xml": "fbc404e52def67e38222a395fcc39c051eacc503dbf8e22a22a5bcce36992524",
+    "hand/shared_asset.xml": "95a9153e6bba4c555ad7cdcea746520eab38e0d57415fa9b3bfaf987dd0418f1",
+    "hand/shared_touch_sensors_92.xml": "248bc2cb73920c88903786842aaa5476262d550bd01c2c716dd5f2ee642f3318"
+  },
+  "directly_loaded_mesh_texture": {
+    "stls/hand/F1.stl": "a2d35742067f71e4888954d1aa55d043dbc6ec0c63f4cc715f339cb45fd13734",
+    "stls/hand/F2.stl": "0eeb932dcc102dd1fc6bef55fe83f6a74d97aebd32c34d6ee7020c19647306c5",
+    "stls/hand/F3.stl": "d11a521ae498e947491ba947df8f999136fdf1401d1ba86d594eec20da656ad1",
+    "stls/hand/TH1_z.stl": "83fd93c9e4c1bf240aa6def2e5fdf5b1adcf4e341c146b05313aeaa8c54fd36a",
+    "stls/hand/TH2_z.stl": "98e26cf013cd8d7f6ed890d3402ba0aceb11ec5c78779e388390ca2cddc7daf2",
+    "stls/hand/TH3_z.stl": "80aae0002a6684428278cf214a31040f7cd7aeb3e2e648bd4b68baa375c2d2ad",
+    "stls/hand/forearm_electric.stl": "01aca61837d9db13c52dd170245cacb6f1cedc8238d66fe7239602c80c7a0130",
+    "stls/hand/forearm_electric_cvx.stl": "874ae2ac813c6c9d873d04f872cb13de3cabd427cb24a8924619d0a1719d6da7",
+    "stls/hand/knuckle.stl": "a8a9c1659aa4391291531b46997ba5eeda1b36e597070ae8a3cd824159937aae",
+    "stls/hand/lfmetacarpal.stl": "b6901da4d4b93059c02b8803650ad484b3f31aebce46badfa411897d521a4877",
+    "stls/hand/palm.stl": "12593bcba03bbf278cd7d7db3ca79ba753ada3cb58ee93e725603e9b5e29fd0c",
+    "stls/hand/wrist.stl": "47d0f252ae456541993746ff76d7022135b1bf54263f8f83b19d61f6f94871c9",
+    "textures/block.png": "d39ffb85a87d00c346764191e38ecac3135f2d6f690f64a8ee5da4783ef18e76",
+    "textures/block_hidden.png": "3649cb94a9a5f74751d15c0f38291dd666b7eecc286977888b64b6c3c626c9d3"
+  }
+}

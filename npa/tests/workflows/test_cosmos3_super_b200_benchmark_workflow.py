@@ -79,7 +79,7 @@ def test_workflow_renders_exact_vendor_digest_and_real_command(monkeypatch) -> N
     assert "--gpu-family B200" in docs[1]["run"]
     hints = secret_env_hints_for_plan(plan.steps)
     assert "HF_TOKEN" in hints
-    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" in hints
+    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" not in hints
 
 
 def test_workflow_can_select_complete_b200_suite(monkeypatch) -> None:

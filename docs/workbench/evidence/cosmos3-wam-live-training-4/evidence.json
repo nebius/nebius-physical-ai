@@ -1,0 +1,23 @@
+{
+  "status": "live-training-observed-full-schedule-pending",
+  "recipe_revision": "8255aa865483c1edffcadee0edda53d69be7fbb8",
+  "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+  "captured_utc": "2026-09-29T18:04:11.025722+00:00",
+  "active_training_gpus": 4,
+  "provisioned_vm_gpus": 8,
+  "nominal_global_batch": 2048,
+  "samples_per_rank": 64,
+  "gradient_accumulation": 8,
+  "seed": 42,
+  "parameter_storage": "float32",
+  "compute": "bfloat16",
+  "ema": true,
+  "full_schedule_completed": false,
+  "timing_repetitions_completed": 0,
+  "policy_quality_measured": false,
+  "files": {
+    "live-training-startup.json": "45ba1900fcc7d706127841d12f5d88793eeda0b3a96f1d25e90df84fa3375795",
+    "live-training-window.csv": "c7dd0488ce5ce2c51bbff0214e7671c5e5ad8fe7c9d741fd5b2d319948bc84d6",
+    "live-training-window.json": "96c5b0168257e0bc3065e8595d7ca1429d0c1dfdbd0b35f844556cf53ba4e3b8"
+  }
+}

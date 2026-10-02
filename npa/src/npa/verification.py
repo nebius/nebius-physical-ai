@@ -10,19 +10,35 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import re
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
+
+from npa.diagnostic_redaction import redact_diagnostic_text
 
 VERIFIED = "VERIFIED"
 VERIFICATION_UNAVAILABLE = "VERIFICATION_UNAVAILABLE"
 CACHED = "CACHED"
 
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?i)\b([a-z0-9_-]*(?:token|password|secret|api[_-]?key|authorization)[a-z0-9_-]*)"
-    r"\s*[:=]\s*(?:bearer\s+)?([^\s,;]+)"
+    r"(?i)([\"']?[a-z0-9_-]*"
+    r"(?:token|password|secret|api[_-]?key|authorization)"
+    r"[a-z0-9_-]*[\"']?\s*[:=]\s*)"
+    r"(?:bearer\s+)?[\"']?([^\s,;}\]\"']+)"
 )
-_PRESIGNED_QUERY = re.compile(r"(?i)(https?://[^\s?]+)\?[^\s]+")
-_BEARER_TOKEN = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]+")
-_URL_USERINFO = re.compile(r"(?i)(https?://)[^/@\s]+@")
+
+
+def redact_failure_text(reason: object, *, secrets: Sequence[str]) -> str:
+    """Redact failure text without changing its display structure.
+
+    Args:
+        reason: Exception or provider diagnostic to make safe for display.
+        secrets: Resolved credential values known at the call boundary.
+    Returns:
+        Redacted text with its original whitespace and line structure.
+    Raises:
+        None.
+    """
+
+    return redact_diagnostic_text(reason, secrets=secrets)
 
 
 def utc_now() -> str:
@@ -37,11 +53,29 @@ def utc_now() -> str:
 def sanitize_reason(reason: object, *, limit: int = 600) -> str:
     """Return a concise diagnostic without secrets or presigned query strings."""
 
-    text = " ".join(str(reason or "").split())
-    text = _SECRET_ASSIGNMENT.sub(lambda match: f"{match.group(1)}=<redacted>", text)
-    text = _PRESIGNED_QUERY.sub(r"\1?<redacted>", text)
-    text = _BEARER_TOKEN.sub("Bearer <redacted>", text)
-    text = _URL_USERINFO.sub(r"\1<redacted>@", text)
+    text = " ".join(redact_failure_text(reason, secrets=()).split())
+    return text[:limit]
+
+
+def sanitize_failure_reason(
+    reason: object,
+    *,
+    secrets: Sequence[str],
+    limit: int = 600,
+) -> str:
+    """Redact explicit and patterned secrets from one failure diagnostic.
+
+    Args:
+        reason: Exception or provider diagnostic to make safe for persistence.
+        secrets: Resolved credential values known at the call boundary.
+        limit: Maximum number of returned characters.
+    Returns:
+        A single-line diagnostic safe for operator-visible state.
+    Raises:
+        None.
+    """
+
+    text = " ".join(redact_failure_text(reason, secrets=secrets).split())
     return text[:limit]
 
 
