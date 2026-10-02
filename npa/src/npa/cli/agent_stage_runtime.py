@@ -9,6 +9,7 @@ from __future__ import annotations
 
 # This source is embedded into backend.py, where these adapter dependencies are
 # defined by the surrounding generated module.
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -50,21 +51,25 @@ if __name__ == "npa.cli.agent_stage_runtime":
         _slug,
         _validated_resolved_prefix,
         _workflow_draft_from_state,
+        Artifact,
+        artifact_role_for_relative_key,
         artifact_bucket_projects,
         build_artifact_backed_stages,
         coerce_authoritative_stage_evidence,
         find_run_artifacts,
         find_run_artifacts_across_buckets,
+        is_inline_render,
         list_artifacts,
         local_demo_run_details,
         merge_stage_evidence,
         parse_stage_evidence_documents,
+        render_hint_for_object,
         resolve_run_source,
         run_owns_workflow_stage_overlay,
         select_preferred_artifact,
         summarize_stage_evidence,
         validate_run_id,
-    ) = (None,) * 28
+    ) = (None,) * 32
 # NPA_EMBED_STANDALONE_END
 
 
@@ -129,6 +134,53 @@ def _read_publication_journal(s3, bucket: str, uri: str) -> bytes | None:
     return payload
 
 
+def _verify_publication_target(s3, bucket: str, target) -> dict:
+    """Bind one immutable object to the size and digest in its journal target."""
+
+    uri = str(target.immutable_uri or "")
+    prefix = f"s3://{bucket}/"
+    if not uri.startswith(prefix):
+        raise PublicationConflict(
+            "committed publication object is outside the selected artifact bucket"
+        )
+    key = uri.removeprefix(prefix)
+    head_object = getattr(s3, "head_object", None)
+    head = {}
+    if callable(head_object):
+        head = head_object(Bucket=bucket, Key=key)
+        if int(head.get("ContentLength") or -1) != int(target.size_bytes):
+            raise PublicationConflict(
+                "committed publication object size disagrees with its journal"
+            )
+        metadata_digest = str((head.get("Metadata") or {}).get("npa-sha256") or "")
+        if metadata_digest and metadata_digest != target.sha256:
+            raise PublicationConflict(
+                "committed publication object digest disagrees with its journal"
+            )
+    body = None
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        body = response["Body"]
+        digest = hashlib.sha256()
+        size = 0
+        while size <= target.size_bytes:
+            chunk = body.read(min(1024 * 1024, target.size_bytes + 1 - size))
+            if not chunk:
+                break
+            material = chunk.encode("utf-8") if isinstance(chunk, str) else bytes(chunk)
+            digest.update(material)
+            size += len(material)
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+    if size != target.size_bytes or digest.hexdigest() != target.sha256:
+        raise PublicationConflict(
+            "committed publication object bytes disagree with its journal"
+        )
+    return head
+
+
 def _run_root_key(artifacts: list, run_id: str) -> str:
     roots: set[str] = set()
     for item in artifacts:
@@ -188,22 +240,27 @@ def _resolve_committed_artifact_key(
 
     requested_uri = f"s3://{bucket}/{normalized_key}"
     if relative in canonical_relatives:
+        target = publication.target(requested_uri)
         resolved_uri = publication.resolve(requested_uri)
         if resolved_uri is None:
             raise PublicationConflict(
                 "the committed publication marks this artifact absent"
             )
     else:
-        committed_uris = {
-            target.immutable_uri
-            for target in publication.objects.values()
-            if target.immutable_uri is not None
-        }
-        if requested_uri not in committed_uris:
+        target = next(
+            (
+                candidate
+                for candidate in publication.objects.values()
+                if candidate.immutable_uri == requested_uri
+            ),
+            None,
+        )
+        if target is None:
             raise PublicationConflict(
                 "artifact does not belong to the committed publication generation"
             )
         resolved_uri = requested_uri
+    _verify_publication_target(s3, bucket, target)
 
     bucket_prefix = f"s3://{bucket}/"
     if not str(resolved_uri).startswith(bucket_prefix):
@@ -255,6 +312,50 @@ def _committed_publication_artifacts(
         raise PublicationConflict(
             "committed publication objects are absent from the artifact inventory"
         )
+    verified_heads = {}
+    for target in publication.objects.values():
+        if target.immutable_uri is not None:
+            verified_heads[str(target.immutable_uri)] = _verify_publication_target(
+                s3, bucket, target
+            )
+    if not require_complete:
+        run_scope = f"{root_key}/"
+        namespace = (
+            root_key[: -len(f"/{run_id}")] if root_key.endswith(f"/{run_id}") else ""
+        )
+        for target in publication.objects.values():
+            uri = str(target.immutable_uri or "")
+            if (
+                not uri
+                or uri in by_uri
+                or not str(target.canonical_uri).endswith(
+                    ("/reports/sim2real.rrd", "/reports/sim2real.mcap")
+                )
+            ):
+                continue
+            key = uri.removeprefix(f"s3://{bucket}/")
+            if not key.startswith(run_scope):
+                raise PublicationConflict(
+                    "committed publication artifact resolved outside its selected run"
+                )
+            relative_key = key[len(run_scope) :]
+            head = verified_heads.get(uri) or {}
+            modified = head.get("LastModified")
+            if hasattr(modified, "isoformat"):
+                modified = modified.isoformat()
+            render = render_hint_for_object(key=key)
+            by_uri[uri] = Artifact(
+                run_id=run_id,
+                key=key,
+                s3_uri=uri,
+                size=int(target.size_bytes),
+                last_modified=str(modified or ""),
+                render=render,
+                inline=is_inline_render(render),
+                role=artifact_role_for_relative_key(relative_key),
+                namespace=namespace or "<bucket-root>",
+                relative_key=relative_key,
+            )
     report_uri = publication.resolve(canonical_report_uri)
     report = by_uri.get(str(report_uri or ""))
     canonical_rrd_uri = f"s3://{bucket}/{root_key}/reports/sim2real.rrd"
@@ -588,17 +689,23 @@ def _artifact_backed_run_details(
         if resource_bucket
         else derived_prefix or settings.get("prefix", "")
     )
-    (
-        visible_artifacts,
-        report_artifact,
-        preferred,
-        authority_keys,
-    ) = _committed_publication_artifacts(
-        s3,
-        run_bucket,
-        run_id,
-        artifacts,
-    )
+    try:
+        (
+            visible_artifacts,
+            report_artifact,
+            preferred,
+            authority_keys,
+        ) = _committed_publication_artifacts(
+            s3,
+            run_bucket,
+            run_id,
+            artifacts,
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     evidence_documents = _stage_evidence_documents(s3, run_bucket, visible_artifacts)
     parsed_evidence = parse_stage_evidence_documents(evidence_documents)
     workflow_steps = _workflow_run_steps(evidence_documents)

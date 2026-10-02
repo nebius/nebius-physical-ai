@@ -71,6 +71,7 @@ def valid_publication_id(value: object) -> bool:
     return (
         isinstance(value, str)
         and 1 <= len(value) <= 128
+        and value not in {".", ".."}
         and all(char.isascii() and (char.isalnum() or char in "._-") for char in value)
     )
 
@@ -93,6 +94,46 @@ def publication_root_from_canonical_uri(canonical_uri: str) -> str:
             if root:
                 return root
     raise ValueError("publication target is not a reserved canonical URI")
+
+
+def canonical_publication_uri(object_uri: str) -> str:
+    """Map a reserved alias or immutable publication object to its alias."""
+
+    try:
+        publication_root_from_canonical_uri(object_uri)
+    except ValueError:
+        pass
+    else:
+        return object_uri
+    if not isinstance(object_uri, str):
+        raise ValueError("publication object is not a reserved URI")
+    generation_marker = "/reports/generations/"
+    if generation_marker in object_uri:
+        root, relative = object_uri.split(generation_marker, 1)
+        parts = relative.split("/")
+        filenames = {
+            REPORT_SUFFIX.rsplit("/", 1)[-1],
+            RRD_SUFFIX.rsplit("/", 1)[-1],
+            MCAP_SUFFIX.rsplit("/", 1)[-1],
+        }
+        if (
+            root
+            and len(parts) == 2
+            and valid_publication_id(parts[0])
+            and parts[1] in filenames
+        ):
+            return f"{root}/reports/{parts[1]}"
+    history_marker = "/components/history/stage_14/"
+    if history_marker in object_uri:
+        root, leaf = object_uri.split(history_marker, 1)
+        if (
+            root
+            and len(leaf) == 69
+            and leaf.endswith(".json")
+            and all(char in "0123456789abcdef" for char in leaf[:-5])
+        ):
+            return f"{root}{STAGE14_SUFFIX}"
+    raise ValueError("publication object is not a reserved URI")
 
 
 def reserved_publication_uris(root: str) -> tuple[str, str, str, str]:

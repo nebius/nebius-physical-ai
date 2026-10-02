@@ -217,12 +217,6 @@ def test_stage4_rejects_a_gpu_less_lane_even_when_another_lane_has_gpu() -> None
         proof.pop(key)
         lane["artifacts"].pop(key)
     _rehash(lane)
-    stage4["artifacts"].update(
-        component_authority.aggregate_parallel_provenance(
-            [item["provenance"] for item in stage4["artifacts"]["shard_provenance"]],
-            stage=4,
-        )
-    )
     _rehash(stage4)
 
     with pytest.raises(ValueError, match="lane|GPU|provenance"):
@@ -390,7 +384,12 @@ def test_artifact_handoff_resolves_the_committed_rrd_generation() -> None:
 
 def test_agent_key_resolution_rejects_alias_and_stale_generation_bypass() -> None:
     root_key = ROOT.removeprefix("s3://demo-bucket/")
-    storage = _Reader({_LOCK_URI: _complete_journal()})
+    storage = _Reader(
+        {
+            _LOCK_URI: _complete_journal(),
+            _IMMUTABLE_RRD: b"committed-rrd",
+        }
+    )
 
     assert agent_stage_runtime._resolve_committed_artifact_key(
         storage,
@@ -502,11 +501,12 @@ def test_agent_run_details_use_one_committed_generation(
     immutable_rrd_key = f"{prefix}/reports/generations/{_TRANSACTION_ID}/sim2real.rrd"
     stale_rrd_key = f"{prefix}/reports/generations/z-stale/sim2real.rrd"
     stage14_key = _IMMUTABLE_STAGE14.removeprefix("s3://demo-bucket/")
-    journal = _complete_journal()
+    committed_report = b'{"visualization":{"source":"committed-source"}}\n'
+    journal = _complete_journal(report=committed_report)
     raw_objects = {
         lock_key: journal,
         canonical_report_key: b'{"visualization":{"source":"stale-source"}}\n',
-        immutable_report_key: (b'{"visualization":{"source":"committed-source"}}\n'),
+        immutable_report_key: committed_report,
         canonical_rrd_key: b"stale-alias",
         immutable_rrd_key: b"committed-rrd",
         stale_rrd_key: b"later-name-stale-rrd",
@@ -605,8 +605,15 @@ def test_agent_inventory_page_hides_aliases_and_uncommitted_generations(
     class _RawS3:
         def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
             assert Bucket == "demo-bucket"
-            assert Key == lock_key
-            return {"Body": io.BytesIO(_complete_journal()), "ETag": "etag"}
+            objects = {
+                lock_key: _complete_journal(),
+                f"{prefix}/reports/generations/{_TRANSACTION_ID}/sim2real-report.json": (
+                    b'{"visualization":{"source":"committed"}}\n'
+                ),
+                immutable_rrd_key: b"committed-rrd",
+                _IMMUTABLE_STAGE14.removeprefix("s3://demo-bucket/"): _STAGE14_BYTES,
+            }
+            return {"Body": io.BytesIO(objects[Key]), "ETag": "etag"}
 
     artifacts = [
         _artifact(lock_key),

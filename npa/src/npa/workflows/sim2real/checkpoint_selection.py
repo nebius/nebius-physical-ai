@@ -288,6 +288,18 @@ def _assert_matching_identity(
         raise ValueError("selected checkpoint generator digest disagrees with bytes")
 
 
+def checkpoint_candidate_has_complete_identity(candidate: object) -> bool:
+    """Return whether one validation candidate has a complete byte identity."""
+
+    if not isinstance(candidate, dict):
+        return False
+    try:
+        _assert_matching_identity(candidate, candidate)
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
 def _identity_value(field: str, value: Any) -> Any:
     if "sha256" in field and isinstance(value, str):
         return value.lower()

@@ -19,7 +19,9 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_S3_ENDPOINT,
 )
 from npa.workflows.sim2real.publication import (
+    read_verified_committed_publication_bytes,
     resolve_committed_publication_snapshot,
+    verify_committed_publication_object,
 )
 
 
@@ -357,7 +359,11 @@ def _resolved_publication_object(
 ) -> tuple[str, str] | None:
     canonical_uri = f"s3://{bucket}/{key}"
     publication = resolve_committed_publication_snapshot(client, canonical_uri)
-    resolved_uri = publication.resolve(canonical_uri)
+    resolved_uri = verify_committed_publication_object(
+        client,
+        publication,
+        canonical_uri,
+    )
     if resolved_uri is None:
         return None
     value = resolved_uri.removeprefix("s3://")
@@ -374,10 +380,20 @@ def _load_publication_json(
     bucket: str,
     key: str,
 ) -> dict[str, Any] | None:
-    resolved = _resolved_publication_object(client, bucket, key)
-    if resolved is None:
+    canonical_uri = f"s3://{bucket}/{key}"
+    publication = resolve_committed_publication_snapshot(client, canonical_uri)
+    payload_bytes = read_verified_committed_publication_bytes(
+        client,
+        publication,
+        canonical_uri,
+    )
+    if payload_bytes is None:
         return None
-    return _load_s3_json(client, *resolved)
+    try:
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _load_workflow_state(

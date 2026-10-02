@@ -5,9 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from npa.agent_backend.publication_reader import valid_publication_id
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
-from npa.workflows.sim2real.publication import replace_unjournaled_legacy_file
+from npa.workflows.sim2real.publication import (
+    replace_unjournaled_legacy_file,
+    upload_immutable_file,
+)
 from npa.workflows.sim2real.utils import _artifact_root_uri
 
 
@@ -20,6 +24,31 @@ _RESERVED_PUBLICATION_PATHS = frozenset(
     }
 )
 _PUBLICATION_JOURNAL_PATH = "reports/.sim2real-publication.json"
+_GENERATION_FILENAMES = frozenset(
+    {
+        "sim2real-report.json",
+        "sim2real.rrd",
+        "sim2real.mcap",
+    }
+)
+
+
+def _is_immutable_publication_path(relative: str) -> bool:
+    parts = relative.split("/")
+    if (
+        len(parts) == 4
+        and parts[:2] == ["reports", "generations"]
+        and valid_publication_id(parts[2])
+        and parts[3] in _GENERATION_FILENAMES
+    ):
+        return True
+    return bool(
+        len(parts) == 4
+        and parts[:3] == ["components", "history", "stage_14"]
+        and len(parts[3]) == 69
+        and parts[3].endswith(".json")
+        and all(char in "0123456789abcdef" for char in parts[3][:-5])
+    )
 
 
 def _upload_final_report(
@@ -62,6 +91,8 @@ def _upload_legacy_tree_without_reserved_aliases(
         uri = f"{destination.rstrip('/')}/{relative}"
         if relative in _RESERVED_PUBLICATION_PATHS:
             replace_unjournaled_legacy_file(client, path, uri)
+        elif _is_immutable_publication_path(relative):
+            upload_immutable_file(client, path, uri)
         else:
             client.upload_file(str(path), uri)
 

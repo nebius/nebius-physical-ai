@@ -244,6 +244,7 @@ def run_heldout_eval(
         + (f"-iter-{inner_iteration:02d}" if inner_iteration else "")
         + (f"-checkpoint-{checkpoint_iteration:04d}" if checkpoint_iteration else "")
     )
+    eval_tag = f"{base_eval_tag}-attempt-{secrets.token_hex(16)}"
     extra = {
         "NPA_SIM2REAL_HELDOUT_ENVS_DIR": str(local_dir / "envs" / split_dir_name),
         "NPA_SIM2REAL_HELDOUT_ENV_COUNT": str(eval_count),
@@ -257,7 +258,7 @@ def run_heldout_eval(
         "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
         "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
         "NPA_SIM2REAL_CAMERAS_URI": config.cameras_uri,
-        "NPA_SIM2REAL_EVAL_TAG": (f"{base_eval_tag}-attempt-{secrets.token_hex(16)}"),
+        "NPA_SIM2REAL_EVAL_TAG": eval_tag,
     }
     if scenario_records_uri:
         # The exact split object is the source of truth across controller Pod
@@ -363,7 +364,7 @@ def run_heldout_eval(
         attempt_id = _component_attempt_id(
             config,
             "heldout_eval",
-            base_eval_tag,
+            eval_tag,
         )
         if scenario_records_uri:
             heldout_envs_uri = scenario_records_uri

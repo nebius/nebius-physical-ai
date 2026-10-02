@@ -107,9 +107,12 @@ def test_parallel_lane_records_preserve_distinct_execution_owners(
     provenances = [
         {
             "image": IMAGE,
+            "image_digest": IMAGE.split("@", 1)[1],
             "source_sha": SOURCE_SHA,
             "workflow_job": f"managed-job-{index}",
+            "execution_mode": "standard_npa_workflow_skypilot",
             "gpu_products": ["NVIDIA RTX PRO 6000"],
+            "gpu_rows": [f"NVIDIA RTX PRO 6000, GPU-test-{index:04d}"],
         }
         for index in range(2)
     ]

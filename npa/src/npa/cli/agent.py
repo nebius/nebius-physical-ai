@@ -7945,6 +7945,11 @@ def sim_viz_load_run(payload: dict | None = None):
             }}
         if requested_bucket:
             raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
@@ -8580,9 +8585,14 @@ def artifacts_for_run(
             page_size=page.page_size,
         )
         role_counts = artifact_inventory_counts(visible_artifacts)
+        summary_artifacts = list(visible_artifacts)
+        if preferred is not None and all(
+            str(item.key) != str(preferred.key) for item in summary_artifacts
+        ):
+            summary_artifacts.append(preferred)
         summary = build_run_summary(
             normalized_run,
-            visible_artifacts,
+            summary_artifacts,
             _summary_documents_for_run(s3, run_bucket, visible_artifacts),
         )
         if exact_source_request:
@@ -8604,7 +8614,7 @@ def artifacts_for_run(
                 resource_bucket=run_bucket,
                 project_id=str(bucket_projects.get(run_bucket) or ""),
                 resolved_prefix=artifact_prefix,
-                artifacts=page.artifacts,
+                artifacts=summary_artifacts,
             )
         return build_artifact_run_detail_response(
             selected=selected,
@@ -8623,6 +8633,11 @@ def artifacts_for_run(
                 "recording_state": str(summary.get("recording_state") or ""),
             }},
         )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
@@ -9296,6 +9311,14 @@ def _foxglove_resolve_artifact_with_access(payload: dict) -> dict:
         (item for item in resolution.artifacts if item.key == authoritative_key),
         None,
     )
+    if artifact is None and exact_source_request:
+        artifact = _authorized_artifact_from_head(
+            s3,
+            run_id=resolution.run_id,
+            bucket=resolution.bucket,
+            source_prefix=source_prefix,
+            key=authoritative_key,
+        )
     if artifact is None:
         raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
     if not exact_source_request:
@@ -9326,9 +9349,11 @@ def _foxglove_resolve_artifact_with_access(payload: dict) -> dict:
             if requested_field == "bucket" and "resource_bucket" in body
             else requested_field
         )
-        if request_key in body and str(body.get(request_key) or "") != str(
-            selected.get(actual_field) or ""
-        ):
+        requested_value = str(body.get(request_key) or "")
+        accepted_values = {{str(selected.get(actual_field) or "")}}
+        if requested_field == "s3_uri":
+            accepted_values.add(f"s3://{{resolution.bucket}}/{{key}}")
+        if request_key in body and requested_value not in accepted_values:
             raise HTTPException(
                 status_code=409,
                 detail=f"the selected Foxglove artifact {{requested_field}} does not match discovery",

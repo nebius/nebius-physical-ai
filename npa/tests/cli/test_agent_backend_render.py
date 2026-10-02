@@ -12,6 +12,7 @@ import ast
 import builtins
 import copy
 import hashlib
+import io
 import json
 import re
 import secrets
@@ -2014,9 +2015,16 @@ def test_rendered_readers_use_only_the_committed_publication_generation(
     class _Body:
         def __init__(self, payload: bytes) -> None:
             self.payload = payload
+            self.offset = 0
 
         def read(self, size: int = -1) -> bytes:
-            return self.payload if size < 0 else self.payload[:size]
+            if size < 0:
+                chunk = self.payload[self.offset :]
+                self.offset = len(self.payload)
+                return chunk
+            chunk = self.payload[self.offset : self.offset + size]
+            self.offset += len(chunk)
+            return chunk
 
         def close(self) -> None:
             return None
@@ -7262,3 +7270,285 @@ def test_rendered_snapshot_continuation_rejects_corrupt_coverage(
     assert restored.json()["pagination_complete"] is True
     assert restored.json()["runs"][0]["run_id"] == "snapshot-run-1"
     discovery.assert_called_once()
+
+
+def _nineteenth_review_publication(
+    *,
+    bucket: str,
+    root_key: str,
+    generation: str,
+    payloads: dict[str, bytes],
+) -> tuple[bytes, dict[str, str]]:
+    aliases = {
+        "report": f"{root_key}/reports/sim2real-report.json",
+        "rrd": f"{root_key}/reports/sim2real.rrd",
+        "mcap": f"{root_key}/reports/sim2real.mcap",
+        "stage14": f"{root_key}/components/stage_14.json",
+    }
+    immutable = {
+        "report": (f"{root_key}/reports/generations/{generation}/sim2real-report.json"),
+        "rrd": f"{root_key}/reports/generations/{generation}/sim2real.rrd",
+        "mcap": f"{root_key}/reports/generations/{generation}/sim2real.mcap",
+        "stage14": (
+            f"{root_key}/components/history/stage_14/"
+            f"{hashlib.sha256(payloads['stage14']).hexdigest()}.json"
+        ),
+    }
+
+    def present(name: str) -> dict[str, object]:
+        payload = payloads[name]
+        return {
+            "uri": f"s3://{bucket}/{aliases[name]}",
+            "state": "present",
+            "sha256": hashlib.sha256(payload).hexdigest(),
+            "size_bytes": len(payload),
+            "immutable_uri": f"s3://{bucket}/{immutable[name]}",
+        }
+
+    journal = (
+        json.dumps(
+            {
+                "schema": "npa.sim2real.mutable_publication.v1",
+                "transaction_id": generation,
+                "attempt_id": "a" * 32,
+                "state": "committed",
+                "objects": [
+                    present("report"),
+                    present("rrd"),
+                    present("mcap"),
+                    present("stage14"),
+                ],
+            },
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode()
+    return journal, {
+        **aliases,
+        **{f"immutable_{name}": key for name, key in immutable.items()},
+    }
+
+
+def test_rendered_paginated_publication_and_foxglove_bind_committed_generation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module_name = "npa_rendered_nineteenth_review_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    bucket = "bucket-test"
+    project = "project-test"
+    source_prefix = "sim2real"
+    run_id = "run-a"
+    root_key = f"{source_prefix}/{run_id}"
+    payloads = {
+        "report": b'{"visualization":{"source":"committed"}}\n',
+        "rrd": b"committed-rrd",
+        "mcap": b"committed-mcap",
+        "stage14": b'{"stage":14}\n',
+    }
+    journal, keys = _nineteenth_review_publication(
+        bucket=bucket,
+        root_key=root_key,
+        generation="generation-a",
+        payloads=payloads,
+    )
+    journal_key = f"{root_key}/reports/.sim2real-publication.json"
+    filler_key = f"{root_key}/input/frame-0001.png"
+    objects = {
+        journal_key: journal,
+        keys["rrd"]: b"stale-rrd-alias",
+        keys["mcap"]: b"stale-mcap-alias",
+        keys["immutable_report"]: payloads["report"],
+        keys["immutable_rrd"]: payloads["rrd"],
+        keys["immutable_mcap"]: payloads["mcap"],
+        keys["immutable_stage14"]: payloads["stage14"],
+        filler_key: b"frame",
+    }
+
+    class S3:
+        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            assert Bucket == bucket
+            if Key not in objects:
+                raise KeyError(Key)
+            return {"Body": io.BytesIO(objects[Key]), "ETag": '"etag"'}
+
+        def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+            assert Bucket == bucket
+            if Key not in objects:
+                raise KeyError(Key)
+            return {
+                "ContentLength": len(objects[Key]),
+                "LastModified": "2026-10-02T00:00:00Z",
+                "ETag": hashlib.sha256(objects[Key]).hexdigest(),
+            }
+
+    s3 = S3()
+
+    def artifact(key: str) -> object:
+        render = module.render_hint_for_object(key=key)
+        return module.Artifact(
+            run_id=run_id,
+            key=key,
+            s3_uri=f"s3://{bucket}/{key}",
+            size=len(objects[key]),
+            last_modified="2026-10-02T00:00:00Z",
+            render=render,
+            inline=module.is_inline_render(render),
+            relative_key=key.removeprefix(f"{root_key}/"),
+            namespace=source_prefix,
+        )
+
+    # The immutable publication objects sort onto a later native S3 page.
+    page_artifacts = [artifact(keys["mcap"]), artifact(filler_key)]
+    visible, _report, preferred, _logical = module._committed_publication_artifacts(
+        s3,
+        bucket,
+        run_id,
+        page_artifacts,
+        require_complete=False,
+    )
+    assert preferred is not None
+    assert preferred.key in {keys["immutable_rrd"], keys["immutable_mcap"]}
+    assert keys["mcap"] not in {item.key for item in visible}
+
+    run_ref = module.encode_run_ref(bucket, source_prefix, run_id)
+    module._clear_foxglove_exact_artifact_inventory()
+    module._remember_foxglove_exact_artifact_inventory(
+        run_id=run_id,
+        run_ref=run_ref,
+        resource_bucket=bucket,
+        project_id=project,
+        resolved_prefix=source_prefix,
+        artifacts=visible,
+    )
+    monkeypatch.setattr(
+        module,
+        "_agent_artifact_s3_client",
+        lambda: (s3, {"bucket": bucket, "prefix": source_prefix}),
+    )
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(
+        module,
+        "_authorize_exact_run_ref_source",
+        lambda **_kwargs: (bucket, project, source_prefix),
+    )
+    selected = module._foxglove_resolve_artifact(
+        {
+            "run_id": run_id,
+            "run_ref": run_ref,
+            "key": keys["mcap"],
+            "s3_uri": f"s3://{bucket}/{keys['mcap']}",
+            "resource_bucket": bucket,
+            "project_id": project,
+            "resolved_prefix": source_prefix,
+        }
+    )
+    assert selected["key"] == keys["immutable_mcap"]
+    assert selected["s3_uri"] == f"s3://{bucket}/{keys['immutable_mcap']}"
+
+
+def test_rendered_publication_conflicts_are_http_409(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    module_name = "npa_rendered_nineteenth_conflict_backend"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    bucket = "bucket-test"
+    project = "project-test"
+    prefix = "sim2real"
+    run_id = "run-a"
+    artifact = module.Artifact(
+        run_id=run_id,
+        key=f"{prefix}/{run_id}/input/frame.png",
+        s3_uri=f"s3://{bucket}/{prefix}/{run_id}/input/frame.png",
+        size=5,
+        last_modified="2026-10-02T00:00:00Z",
+        render="image",
+        inline=True,
+        namespace=prefix,
+        relative_key="input/frame.png",
+    )
+    s3 = object()
+    run_ref = module.encode_run_ref(bucket, prefix, run_id)
+    selected = module.RunSummary(
+        run_id=run_id,
+        last_modified="2026-10-02T00:00:00Z",
+        artifact_count=1,
+        has_viewable=True,
+        bucket=bucket,
+        project_id=project,
+        resolved_prefix=prefix,
+    )
+
+    def conflict(*_args, **_kwargs):
+        raise module.PublicationConflict("publishing")
+
+    monkeypatch.setattr(
+        module,
+        "_agent_artifact_s3_client",
+        lambda: (s3, {"bucket": bucket, "prefix": prefix}),
+    )
+    monkeypatch.setattr(module, "_agent_access_report", lambda: {})
+    monkeypatch.setattr(module, "_begin_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(module, "_end_agent_artifact_access", lambda: None)
+    monkeypatch.setattr(module, "_load_session_run_if_known", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        module,
+        "_load_selected_run_artifacts",
+        lambda **_kwargs: (bucket, project, prefix, [artifact]),
+    )
+    monkeypatch.setattr(module, "_committed_publication_artifacts", conflict)
+
+    with pytest.raises(module.HTTPException) as load_conflict:
+        module.sim_viz_load_run(
+            {
+                "run_id": run_id,
+                "resource_bucket": bucket,
+                "project_id": project,
+                "resolved_prefix": prefix,
+                "source_selected": True,
+            }
+        )
+    assert load_conflict.value.status_code == 409
+
+    with pytest.raises(module.HTTPException) as detail_conflict:
+        module._artifact_backed_run_details(
+            {},
+            run_id,
+            resource_bucket=bucket,
+            project_id=project,
+            resolved_prefix=prefix,
+            source_selected=True,
+        )
+    assert detail_conflict.value.status_code == 409
+
+    monkeypatch.setattr(
+        module,
+        "_authorize_exact_run_ref_source",
+        lambda **_kwargs: (bucket, project, prefix),
+    )
+    monkeypatch.setattr(
+        module,
+        "find_run_sources_across_buckets",
+        lambda *_args, **_kwargs: ([selected], (), True),
+    )
+    monkeypatch.setattr(
+        module,
+        "list_artifacts_page",
+        lambda *_args, **_kwargs: module.ArtifactListPage(
+            artifacts=[artifact],
+            truncated=False,
+            next_cursor="",
+            page_size=1000,
+        ),
+    )
+    with pytest.raises(module.HTTPException) as list_conflict:
+        module.artifacts_for_run(
+            run_ref,
+            resource_bucket=bucket,
+            project_id=project,
+            resolved_prefix=prefix,
+            source_selected=True,
+        )
+    assert list_conflict.value.status_code == 409

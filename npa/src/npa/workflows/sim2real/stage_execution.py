@@ -17,7 +17,6 @@ from typing import Any
 from npa.workflows.sim2real.checkpoint_selection import (
     resolve_selected_checkpoint,
     select_best_checkpoint,
-    validation_checkpoint_candidate,
 )
 from npa.workflows.sim2real.constants import SCHEMA_RL_SIGNAL
 from npa.workflows.sim2real.models import (
@@ -25,6 +24,9 @@ from npa.workflows.sim2real.models import (
     Sim2RealLoopError,
 )
 from npa.workflows.sim2real.utils import _write_json_artifact
+from npa.workflows.sim2real.validation_resume import (
+    resume_or_run_validation_candidate as _resume_or_run_validation_candidate,
+)
 
 
 def run_inner_loop(
@@ -504,14 +506,15 @@ def run_inner_loop(
                     "eval_image": config.eval_image,
                     "isaac_image": config.isaac_image,
                 }
-                validation_unit = durable.load_unit(
-                    f"inner-o{outer_iteration:02d}-i{iteration:02d}-validation-{training_iteration:04d}",
-                    validation_input,
+                validation_unit_name = (
+                    f"inner-o{outer_iteration:02d}-i{iteration:02d}"
+                    f"-validation-{training_iteration:04d}"
                 )
-                if validation_unit is not None:
-                    report = dict(validation_unit["report"])
-                else:
-                    report = run_heldout_eval(
+                report, candidate = _resume_or_run_validation_candidate(
+                    durable,
+                    unit=validation_unit_name,
+                    validation_input=validation_input,
+                    run_evaluation=lambda: run_heldout_eval(
                         config,
                         local_dir=local_dir,
                         inner_evidence=checkpoint_evidence,
@@ -519,22 +522,14 @@ def run_inner_loop(
                         evaluation_split="validation",
                         inner_iteration=iteration,
                         checkpoint_iteration=training_iteration,
-                    )
-                    durable.commit_unit(
-                        f"inner-o{outer_iteration:02d}-i{iteration:02d}-validation-{training_iteration:04d}",
-                        validation_input,
-                        {"report": report},
-                    )
-                validation_reports.append(report)
-                checkpoint_candidates.append(
-                    validation_checkpoint_candidate(
-                        report,
-                        checkpoint_uri=candidate_uri,
-                        outer_iteration=outer_iteration,
-                        inner_iteration=iteration,
-                        training_iteration=training_iteration,
-                    )
+                    ),
+                    checkpoint_uri=candidate_uri,
+                    outer_iteration=outer_iteration,
+                    inner_iteration=iteration,
+                    training_iteration=training_iteration,
                 )
+                validation_reports.append(report)
+                checkpoint_candidates.append(candidate)
 
             interim_selection = select_best_checkpoint(checkpoint_candidates)
             current_checkpoint_uri = str(interim_selection["checkpoint_uri"])

@@ -149,6 +149,40 @@ def source_sha() -> str:
     return actual
 
 
+def _gpu_device_evidence_is_valid(products: object, rows: object) -> bool:
+    if (
+        not isinstance(products, list)
+        or not products
+        or not isinstance(rows, list)
+        or len(rows) != len(products)
+    ):
+        return False
+    seen_uuids: set[str] = set()
+    for product, row in zip(products, rows, strict=True):
+        if (
+            not isinstance(product, str)
+            or not product
+            or product != product.strip()
+            or not isinstance(row, str)
+            or row != row.strip()
+        ):
+            return False
+        fields = row.split(",")
+        if len(fields) != 2:
+            return False
+        row_product, uuid = (field.strip() for field in fields)
+        if (
+            row_product != product
+            or not uuid.startswith("GPU-")
+            or len(uuid) <= 4
+            or any(character.isspace() or character == "," for character in uuid)
+            or uuid in seen_uuids
+        ):
+            return False
+        seen_uuids.add(uuid)
+    return True
+
+
 def image_provenance(*, require_gpu: bool) -> dict[str, Any]:
     image = os.environ.get("NPA_TASK_IMAGE", "").removeprefix("docker:").strip()
     if "@sha256:" not in image:
@@ -176,6 +210,10 @@ def image_provenance(*, require_gpu: bool) -> dict[str, Any]:
         if not rows:
             raise RuntimeError("GPU stage has no nvidia-smi device evidence")
         products = [row.split(",", 1)[0].strip() for row in rows]
+        if not _gpu_device_evidence_is_valid(products, rows):
+            raise RuntimeError(
+                "GPU stage returned malformed nvidia-smi device evidence"
+            )
         proof.update({"gpu_products": products, "gpu_rows": rows})
     return proof
 
@@ -345,16 +383,9 @@ def _record_provenance_is_valid(
             and isinstance(artifacts.get("gpu_products"), list)
             and artifacts["gpu_products"]
         )
-    gpu_valid = bool(
-        isinstance(artifacts.get("gpu_products"), list)
-        and artifacts["gpu_products"]
-        and all(
-            isinstance(product, str) and product.strip()
-            for product in artifacts["gpu_products"]
-        )
-        and isinstance(artifacts.get("gpu_rows"), list)
-        and artifacts["gpu_rows"]
-        and all(isinstance(row, str) and row.strip() for row in artifacts["gpu_rows"])
+    gpu_valid = _gpu_device_evidence_is_valid(
+        artifacts.get("gpu_products"),
+        artifacts.get("gpu_rows"),
     )
     return bool(
         artifacts.get("execution_mode") == "standard_npa_workflow_skypilot"
@@ -676,13 +707,9 @@ def publish_component_lane_record(
     ):
         raise ValueError(f"invalid component lane name: {lane!r}")
     provenance = dict(execution_provenance or image_provenance(require_gpu=require_gpu))
-    if "@sha256:" not in str(provenance.get("image") or ""):
+    if not _record_provenance_is_valid(provenance, stage=stage):
         raise ValueError(
-            f"Stage {stage} lane {safe_lane} execution provenance lacks an image digest"
-        )
-    if require_gpu and not provenance.get("gpu_products"):
-        raise ValueError(
-            f"Stage {stage} lane {safe_lane} execution provenance lacks GPU products"
+            f"Stage {stage} lane {safe_lane} execution provenance is invalid"
         )
     payload = {
         "schema": "npa.sim2real.component_lane_record.v1",
@@ -756,6 +783,16 @@ def aggregate_parallel_provenance(
 
     if not provenances:
         raise ValueError(f"Stage {stage} parallel aggregation has no lane provenance")
+    if any(
+        not _gpu_device_evidence_is_valid(
+            provenance.get("gpu_products"),
+            provenance.get("gpu_rows"),
+        )
+        for provenance in provenances
+    ):
+        raise ValueError(
+            f"Stage {stage} parallel lane GPU provenance is incomplete or inconsistent"
+        )
     images = {str(item.get("image") or "") for item in provenances}
     source_shas = {str(item.get("source_sha") or "") for item in provenances}
     image = next(iter(images)) if len(images) == 1 else ""

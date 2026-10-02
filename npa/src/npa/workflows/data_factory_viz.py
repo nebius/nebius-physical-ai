@@ -385,6 +385,43 @@ def _build_data_factory_blueprint(
     )
 
 
+def _resolve_existing_output_publication(
+    storage_client: Any,
+    output_uri: str,
+    *,
+    inventory_keys: set[str],
+) -> tuple[str, Any | None]:
+    """Resolve an existing reserved RRD through its committed journal."""
+
+    from npa.agent_backend.publication_reader import (
+        JOURNAL_SUFFIX,
+        publication_root_from_canonical_uri,
+    )
+    from npa.workflows.sim2real.publication import (
+        resolve_committed_publication_snapshot,
+    )
+
+    try:
+        publication_root = publication_root_from_canonical_uri(output_uri)
+    except ValueError:
+        _, output_key = _split_s3_object(output_uri)
+        return (output_uri, None) if output_key in inventory_keys else ("", None)
+    _, output_key = _split_s3_object(output_uri)
+    _, journal_key = _split_s3_object(f"{publication_root}{JOURNAL_SUFFIX}")
+    inventory_contains_output = output_key in inventory_keys
+    if journal_key not in inventory_keys:
+        return (output_uri, None) if inventory_contains_output else ("", None)
+    publication = resolve_committed_publication_snapshot(storage_client, output_uri)
+    if not publication.journaled:
+        return (output_uri, None) if inventory_contains_output else ("", None)
+    resolved = publication.resolve(output_uri)
+    if not resolved:
+        raise DataFactoryVizError(
+            "committed publication does not contain the requested RRD"
+        )
+    return resolved, publication
+
+
 def build_run_rrd(
     input_uri: str,
     output_uri: str,
@@ -433,7 +470,9 @@ def build_run_rrd(
     source_inventory: list[dict[str, Any]] = []
     require_colmap_lineage = False
     output_object_key = ""
-    output_exists = False
+    existing_output_uri = ""
+    existing_publication = None
+    inventory_output_key = ""
     preview_bytes = None
     if input_uri.startswith("s3://"):
         if active_storage is None:
@@ -452,7 +491,23 @@ def build_run_rrd(
         require_colmap_lineage = _inventory_has_colmap_lineage(
             source_inventory, source_prefix
         )
-        output_exists = any(row["key"] == output_object_key for row in source_inventory)
+        inventory_keys = {str(row["key"]) for row in source_inventory}
+        existing_output_uri, existing_publication = (
+            _resolve_existing_output_publication(
+                active_storage,
+                output_uri,
+                inventory_keys=inventory_keys,
+            )
+        )
+        inventory_output_key = output_object_key
+        if existing_output_uri:
+            existing_bucket, inventory_output_key = _split_s3_object(
+                existing_output_uri
+            )
+            if existing_bucket != source_bucket:
+                raise DataFactoryVizError(
+                    "committed RRD resolved outside the canonical run bucket"
+                )
 
     with tempfile.TemporaryDirectory(prefix="npa-df-viz-") as tmp:
         local = _materialize_run(
@@ -727,17 +782,27 @@ def build_run_rrd(
         # always contains Rerun's terminal manifest/footer.
         rec.flush()
         rec.disconnect()
-        if output_exists:
+        if existing_output_uri:
             existing_path = Path(tmp) / "existing-sim2real.rrd"
             assert active_storage is not None
-            active_storage.download_file(output_uri, str(existing_path))
+            active_storage.download_file(existing_output_uri, str(existing_path))
+            if existing_publication is not None:
+                from npa.workflows.sim2real.publication import (
+                    verify_committed_publication_file,
+                )
+
+                verify_committed_publication_file(
+                    existing_publication,
+                    output_uri,
+                    existing_path,
+                )
             _verify_terminal_rrd_media(
                 existing_path,
                 variant_records=variant_records,
                 quality_status=quality_status if variant_records else "UNKNOWN",
                 source_video_records=source_video_records,
             )
-            written_uri = output_uri
+            written_uri = existing_output_uri
         else:
             written_uri = _publish(
                 str(out_path), output_uri, storage_client=active_storage
@@ -762,7 +827,7 @@ def build_run_rrd(
     if source_inventory:
         after = _s3_inventory(active_storage, input_uri)
         source_rows = _verify_additive_publication(
-            source_inventory, after, output_object_key
+            source_inventory, after, inventory_output_key
         )
         inventory_proof = {
             "source_inventory_object_count": len(source_rows),

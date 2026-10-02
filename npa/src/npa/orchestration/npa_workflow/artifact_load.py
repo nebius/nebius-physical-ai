@@ -10,6 +10,7 @@ from npa.verification import sanitize_failure_reason
 from npa.workflows.sim2real.publication import (
     PublicationConflict,
     resolve_committed_publication_snapshot,
+    verify_committed_publication_object,
 )
 
 
@@ -93,7 +94,11 @@ def discover_final_rerun_artifact(
     canonical_uri = f"s3://{bucket}/{exact_key}"
     try:
         publication = resolve_committed_publication_snapshot(client, canonical_uri)
-        resolved_uri = publication.resolve(canonical_uri)
+        resolved_uri = verify_committed_publication_object(
+            client,
+            publication,
+            canonical_uri,
+        )
         if resolved_uri is None:
             raise ArtifactLoadError("committed publication contains no Rerun artifact")
         resolved_bucket, resolved_key = _parse_s3_uri(resolved_uri)

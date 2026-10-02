@@ -56,9 +56,9 @@ from npa.workflows.sim2real.publication import (
     remote_object_version,
     replace_unjournaled_legacy_file,
     resolve_committed_publication_snapshot,
-    resolve_committed_publication_uri,
     upload_immutable_file,
     upload_immutable_tree,
+    verify_committed_publication_file,
 )
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri, _write_json_artifact
@@ -684,6 +684,16 @@ def _download_regen_single_files(
             dest,
             containment_root=local_dir,
         )
+        if downloaded[rel] and rel == "reports/sim2real-report.json":
+            try:
+                verify_committed_publication_file(
+                    publication_snapshot,
+                    canonical_report_uri,
+                    dest,
+                )
+            except PublicationConflict as exc:
+                _discard_download_destination(dest, local_dir)
+                raise Sim2RealRerunRegenError(str(exc)) from exc
     return downloaded
 
 
@@ -1387,7 +1397,8 @@ def download_rrd_from_s3(
         containment_root=containment_root,
     )
     try:
-        uri = resolve_committed_publication_uri(storage, canonical_uri)
+        publication = resolve_committed_publication_snapshot(storage, canonical_uri)
+        uri = publication.resolve(canonical_uri)
     except PublicationConflict as exc:
         raise Sim2RealRerunRegenError(str(exc)) from exc
     if uri is None:
@@ -1399,6 +1410,15 @@ def download_rrd_from_s3(
         containment_root=containment_root,
     ):
         raise Sim2RealRerunRegenError(f"Rerun recording not found at {uri}")
+    try:
+        verify_committed_publication_file(
+            publication,
+            canonical_uri,
+            absolute_dest,
+        )
+    except PublicationConflict as exc:
+        _discard_download_destination(absolute_dest, containment_root)
+        raise Sim2RealRerunRegenError(str(exc)) from exc
     return dest_path
 
 
@@ -1453,6 +1473,7 @@ def _seal_regen_publication_report(
     journal_uri: str,
 ) -> None:
     report = _read_retained_json(report_path, source="Sim2Real final report")
+    report["publication_id"] = publication_id
     report["publication"] = {
         "generation": publication_id,
         "rrd_uri": rrd_uri,
@@ -2317,6 +2338,16 @@ def _validate_regen_component_authority(
             raise Sim2RealRerunRegenError(
                 f"missing canonical ComponentRecord pointer for Stage {stage}"
             )
+        if stage == 14 and publication_snapshot is not None:
+            try:
+                verify_committed_publication_file(
+                    publication_snapshot,
+                    canonical_pointer_uri,
+                    pointer_path,
+                )
+            except PublicationConflict as exc:
+                _discard_download_destination(pointer_path, work_dir)
+                raise Sim2RealRerunRegenError(str(exc)) from exc
         pointer = _read_retained_json(
             pointer_path, source=f"Stage {stage} ComponentRecord pointer"
         )

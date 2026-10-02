@@ -13,6 +13,7 @@ from typing import Any
 from botocore.exceptions import ClientError
 
 from npa.agent_backend.publication_reader import (
+    canonical_publication_uri,
     CommittedPublicationSnapshot,
     PublicationConflict,
     parse_publication_journal,
@@ -722,6 +723,167 @@ def resolve_committed_publication_uri(
 
     return resolve_committed_publication_snapshot(client, canonical_uri).resolve(
         canonical_uri
+    )
+
+
+def _verify_target_identity(
+    publication: CommittedPublicationSnapshot,
+    canonical_uri: str,
+    *,
+    digest: str,
+    size: int,
+) -> str | None:
+    canonical_uri = canonical_publication_uri(canonical_uri)
+    target = publication.target(canonical_uri)
+    if target.immutable_uri is None:
+        return None
+    if publication.journaled and (digest != target.sha256 or size != target.size_bytes):
+        raise PublicationConflict(
+            f"committed publication object bytes disagree with its journal: "
+            f"{target.immutable_uri}"
+        )
+    return target.immutable_uri
+
+
+def verify_committed_publication_file(
+    publication: CommittedPublicationSnapshot,
+    canonical_uri: str,
+    path: Path,
+) -> str | None:
+    """Verify a downloaded reserved object against its committed byte identity."""
+
+    canonical_uri = canonical_publication_uri(canonical_uri)
+    target = publication.target(canonical_uri)
+    if target.immutable_uri is None:
+        return None
+    digest, size = _file_identity(Path(path))
+    return _verify_target_identity(
+        publication,
+        canonical_uri,
+        digest=digest,
+        size=size,
+    )
+
+
+def read_verified_committed_publication_bytes(
+    client: Any,
+    publication: CommittedPublicationSnapshot,
+    canonical_uri: str,
+    *,
+    max_bytes: int = 1024 * 1024,
+) -> bytes | None:
+    """Read one bounded reserved object and enforce its committed identity."""
+
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("max_bytes must be a positive integer")
+    canonical_uri = canonical_publication_uri(canonical_uri)
+    target = publication.target(canonical_uri)
+    if target.immutable_uri is None:
+        return None
+    if publication.journaled and target.size_bytes > max_bytes:
+        raise PublicationConflict(
+            f"committed publication object exceeds its read bound: "
+            f"{target.immutable_uri}"
+        )
+    reader = getattr(client, "read_small_bytes_with_etag", None)
+    if callable(reader):
+        current = reader(target.immutable_uri, max_bytes=max_bytes)
+    else:
+        reader = getattr(client, "read_bytes_with_etag", None)
+        if not callable(reader):
+            raise RuntimeError("storage client lacks bounded object-read support")
+        current = reader(target.immutable_uri)
+    if current is None:
+        if not publication.journaled:
+            return None
+        raise PublicationConflict(
+            f"committed publication object is missing: {target.immutable_uri}"
+        )
+    payload = bytes(current[0])
+    if len(payload) > max_bytes:
+        raise PublicationConflict(
+            f"committed publication object exceeds its read bound: "
+            f"{target.immutable_uri}"
+        )
+    _verify_target_identity(
+        publication,
+        canonical_uri,
+        digest=hashlib.sha256(payload).hexdigest(),
+        size=len(payload),
+    )
+    return payload
+
+
+def _stream_remote_object_identity(
+    client: Any,
+    uri: str,
+    *,
+    expected_size: int,
+) -> tuple[str, int]:
+    value = uri.removeprefix("s3://")
+    if value == uri or "/" not in value:
+        raise PublicationConflict(f"publication object URI is invalid: {uri}")
+    bucket, key = value.split("/", 1)
+    raw = getattr(client, "_s3", None) or getattr(client, "s3", None)
+    get_object = getattr(raw, "get_object", None)
+    if callable(get_object):
+        body = None
+        try:
+            response = get_object(Bucket=bucket, Key=key)
+            body = response["Body"]
+            digest = hashlib.sha256()
+            size = 0
+            while size <= expected_size:
+                chunk = body.read(min(1024 * 1024, expected_size + 1 - size))
+                if not chunk:
+                    break
+                material = (
+                    chunk.encode("utf-8") if isinstance(chunk, str) else bytes(chunk)
+                )
+                digest.update(material)
+                size += len(material)
+            return digest.hexdigest(), size
+        finally:
+            close = getattr(body, "close", None)
+            if callable(close):
+                close()
+    downloader = getattr(client, "download_file", None)
+    if not callable(downloader):
+        downloader = getattr(client, "download_path", None)
+    if callable(downloader):
+        with tempfile.TemporaryDirectory(prefix="npa-publication-read-") as directory:
+            path = Path(directory) / "object"
+            downloader(uri, str(path))
+            return _file_identity(path)
+    snapshot = remote_object_snapshot(client, uri)
+    if snapshot is None or snapshot.payload is None:
+        raise PublicationConflict(f"committed publication object is missing: {uri}")
+    return snapshot.sha256, snapshot.size_bytes
+
+
+def verify_committed_publication_object(
+    client: Any,
+    publication: CommittedPublicationSnapshot,
+    canonical_uri: str,
+) -> str | None:
+    """Stream-hash one selected journal target before exposing its immutable URI."""
+
+    canonical_uri = canonical_publication_uri(canonical_uri)
+    target = publication.target(canonical_uri)
+    if target.immutable_uri is None:
+        return None
+    if not publication.journaled:
+        return target.immutable_uri
+    digest, size = _stream_remote_object_identity(
+        client,
+        target.immutable_uri,
+        expected_size=target.size_bytes,
+    )
+    return _verify_target_identity(
+        publication,
+        canonical_uri,
+        digest=digest,
+        size=size,
     )
 
 
