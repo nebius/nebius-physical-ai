@@ -124,6 +124,27 @@ a defense against in-image instructions. For S3 output, private access remains
 an operator/storage-policy requirement; the client uses an atomic create-only
 write but does not infer bucket policy or ACL state.
 
+An omitted or empty rubric uses the shared task-completion rubric; supply
+`rubric` or `rubric_path` when comparing other visible qualities. The effective
+rubric is retained in the report. The SDK returns that report and retains a
+private journal; unlike the CLI, it leaves the canonical report write to the
+caller:
+
+```python
+from dataclasses import asdict
+from npa.sdk.workbench.vlm_eval import compare_preference
+from npa.workbench.vlm_eval import write_preference_report
+
+report = compare_preference(request)
+write_preference_report(asdict(report), result_uri=report.result_uri)
+```
+
+If the caller stops after inference, the journal's `report-ready.json` retains
+the complete report. Pass that JSON payload to `write_preference_report` with
+the original result URI to finish the write without another model call. The
+writer refuses an existing canonical report. Preserve the journal; rerunning
+the comparison against that output is deliberately refused.
+
 ## Rich visual review (separate, audit-only record)
 
 `review-visual` records visible task evidence, content fidelity, reviewability,
@@ -283,6 +304,15 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 `evidence.provider` fields to distinguish real inference from a fixture.
 Readers retain `vlm_eval_stub.json` only for historical bundles. Do not declare
 that legacy name in new workflows.
+
+The data-factory `grade_gate` requires consistent retained inference evidence
+before a VLM result can promote a checkpoint. Stub results, score overrides, and
+historical reports without provider evidence produce `loop_back` with an explicit
+reason. The gate checks submitted-frame metadata, request and response hashes,
+and agreement between the retained response and serialized result. These checks
+establish internal consistency, not provider authentication or visual correctness.
+Provider `success` disagreement stays recorded separately; the numeric score and
+threshold still determine the score gate. The Cosmos Evaluator contract is unchanged.
 
 Read the report:
 
