@@ -229,6 +229,10 @@ def test_mcap_notice_is_delivered_and_bound_to_the_installed_package() -> None:
     assert "m.version('mcap')" in text
     assert "'${MCAP_NOTICE_VERSION}'" in text
     assert _build_arg(text, "MCAP_NOTICE_VERSION") == "1.4.0"
+    requirements = (IMAGE / "requirements.txt").read_text(encoding="utf-8")
+    assert (
+        f"mcap=={_build_arg(text, 'MCAP_NOTICE_VERSION')}" in requirements.splitlines()
+    )
 
     index = (IMAGE / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
     assert "notices/mcap-LICENSE.txt" in index

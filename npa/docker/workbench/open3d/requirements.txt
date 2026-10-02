@@ -13,3 +13,7 @@ open3d==0.20.0
 # are import-only. Revisit if upstream makes the visualizer import lazy.
 plotly==7.1.0
 dash==4.4.1
+
+# Keep the installed distribution aligned with the retained upstream MIT notice.
+# The Dockerfile checks both the exact notice bytes and this package version.
+mcap==1.4.0
