@@ -258,6 +258,7 @@ def test_counts_require_every_suite_executed_with_no_skips():
         "failed": 0,
         "skipped": 1,
         "collection_errors": 0,
+        "deselected": 0,
     }
 
 
@@ -265,6 +266,13 @@ def test_no_collection_or_missing_suite_cannot_pass():
     assert not _runner().Results().complete(0)
     results = _completed_results()
     results.collected.pop()
+    assert not results.complete(0)
+
+
+def test_deselected_required_inference_cannot_pass():
+    results = _completed_results()
+    results.pytest_deselected([SimpleNamespace(nodeid="test_kimi_visual_verdict")])
+    assert results.summary()["deselected"] == 1
     assert not results.complete(0)
 
 
@@ -455,6 +463,7 @@ def test_actual_pytest_failure_diagnostics_exclude_private_exception_data(
         "failed": 4,
         "skipped": 0,
         "collection_errors": 0,
+        "deselected": 0,
     }
     expected = {
         "test_call": (
@@ -533,6 +542,36 @@ def test_workflow_limits_credentialed_code_to_reviewed_branches():
     assert negative["env"] == {"NEBIUS_TOKEN_FACTORY_KEY": ""}
     assert 'receipt["pytest_exit_code"] == 2' in negative["run"]
     assert 'all(value == 0 for value in receipt["counts"].values())' in negative["run"]
+
+
+def test_nightly_executes_kimi_and_checks_both_visual_controls():
+    import yaml
+
+    root = Path(__file__).resolve().parents[3]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/token-factory-live.yml").read_text()
+    )
+    steps = workflow["jobs"]["token-factory-live"]["steps"]
+    live = next(
+        step
+        for step in steps
+        if step.get("name") == "Run credentialed suites and Kimi provenance contracts"
+    )
+    assert live["env"]["NPA_TF_RECHECK_REQUIRED_MODELS"].startswith(
+        "moonshotai/Kimi-K3,"
+    )
+    assert "token_factory_live_recheck.py" in live["run"]
+    verify = next(
+        step
+        for step in steps
+        if step.get("name") == "Require executed Kimi visual controls"
+    )
+    assert (
+        "test_live_visual_judge_distinguishes_completion[moonshotai/Kimi-K3-"
+        in verify["run"]
+    )
+    assert "assert len(kimi) == 2" in verify["run"]
+    assert 'receipt["counts"]["deselected"]' in verify["run"]
 
 
 def test_migration_agent_defaults_match_shared_client():

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -19,45 +20,51 @@ def test_self_hosted_result_retains_served_model() -> None:
     if os.environ.get("NPA_INTEGRATION_E2E") != "1" or not config_path:
         pytest.skip("provide an operator-owned NPA_VLM_PROVENANCE_LIVE_CONFIG")
     config = json.loads(Path(config_path).read_text())
-
-    result = CliRunner().invoke(
-        app,
-        [
-            "workbench",
-            "vlm-eval",
-            "run",
-            "--input-path",
-            config["input_path"],
-            "--output-path",
-            config["output_path"],
-            "--task",
-            config["task"],
-            "--backend",
-            "self-hosted",
-            "--endpoint-url",
-            config["endpoint_url"],
-            "--model",
-            config["model"],
-            "--api-key-env",
-            config.get("api_key_env", "VLM_EVAL_API_KEY"),
-            "--frame-selection",
-            "keyframes",
-            "--max-frames",
-            "8",
-            "--success-threshold",
-            "0.8",
-            "--output",
-            "json",
-        ],
-    )
-
+    result = CliRunner().invoke(app, _evaluation_args(config))
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     assert payload["served_model"] == config["expected_served_model"]
     assert payload["model"] == config["model"]
     assert 0 <= payload["score"] <= 1
     assert payload["backend"] == "self-hosted" and not payload["dry_run"]
-    evidence = payload["evidence"]
+    _assert_request_evidence(payload["evidence"], config)
+    _assert_provider_evidence(payload["evidence"]["provider"], config)
+    assert payload.pop("written_uri") == config["output_path"]
+    saved = json.loads(Path(config["output_path"]).read_text())
+    assert saved == payload
+
+
+def _evaluation_args(config: dict) -> list[str]:
+    return [
+        "workbench",
+        "vlm-eval",
+        "run",
+        "--input-path",
+        config["input_path"],
+        "--output-path",
+        config["output_path"],
+        "--task",
+        config["task"],
+        "--backend",
+        "self-hosted",
+        "--endpoint-url",
+        config["endpoint_url"],
+        "--model",
+        config["model"],
+        "--api-key-env",
+        config.get("api_key_env", "VLM_EVAL_API_KEY"),
+        "--frame-selection",
+        "keyframes",
+        "--max-frames",
+        "8",
+        "--success-threshold",
+        "0.8",
+        "--output",
+        "json",
+    ]
+
+
+def _assert_request_evidence(evidence: dict, config: dict) -> None:
     assert evidence["schema_version"] == "npa_vlm_eval_evidence_v1"
     assert evidence["request"]["endpoint_role"] == "self-hosted"
     manifest = json.dumps(
@@ -70,12 +77,6 @@ def test_self_hosted_result_retains_served_model() -> None:
         evidence["request"]["request_manifest_sha256"]
         == hashlib.sha256(manifest.encode()).hexdigest()
     )
-    raw_response = evidence["provider"]["raw_response"]
-    assert (
-        evidence["provider"]["raw_response_sha256"]
-        == hashlib.sha256(raw_response.encode()).hexdigest()
-    )
-    assert evidence["provider"]["parser_version"] == "npa_vlm_eval_compatible_json_v1"
     if not config["input_path"].startswith("s3://"):
         selected = select_rollout_frames(
             config["input_path"], frame_selection="keyframes", max_frames=8
@@ -83,6 +84,27 @@ def test_self_hosted_result_retains_served_model() -> None:
         assert [frame["sha256"] for frame in evidence["request"]["frames"]] == [
             hashlib.sha256(frame.data).hexdigest() for frame in selected
         ]
-    assert payload.pop("written_uri") == config["output_path"]
-    saved = json.loads(Path(config["output_path"]).read_text())
-    assert saved == payload
+
+
+def _assert_provider_evidence(provider: dict, config: dict) -> None:
+    raw_response = provider["raw_response"]
+    assert (
+        provider["raw_response_sha256"]
+        == hashlib.sha256(raw_response.encode()).hexdigest()
+    )
+    assert provider["status_code"] == 200
+    assert provider["returned_model"] == config["expected_served_model"]
+    assert provider["finish_reason"] == "stop"
+    response = json.loads(raw_response)
+    assert response["model"] == config["expected_served_model"]
+    assert response["choices"][0]["finish_reason"] == "stop"
+    content = response["choices"][0]["message"]["content"].strip()
+    fence = re.fullmatch(
+        r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL | re.IGNORECASE
+    )
+    expected_parser = "npa_vlm_eval_compatible_json_v1"
+    if fence:
+        content = fence.group(1)
+        expected_parser += "+markdown-fence-v1"
+    assert provider["parser_version"] == expected_parser
+    assert isinstance(json.loads(content), dict)
