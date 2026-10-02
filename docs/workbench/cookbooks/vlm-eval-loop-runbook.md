@@ -124,6 +124,27 @@ a defense against in-image instructions. For S3 output, private access remains
 an operator/storage-policy requirement; the client uses an atomic create-only
 write but does not infer bucket policy or ACL state.
 
+An omitted or empty rubric uses the shared task-completion rubric; supply
+`rubric` or `rubric_path` when comparing other visible qualities. The effective
+rubric is retained in the report. The SDK returns that report and retains a
+private journal; unlike the CLI, it leaves the canonical report write to the
+caller:
+
+```python
+from dataclasses import asdict
+from npa.sdk.workbench.vlm_eval import compare_preference
+from npa.workbench.vlm_eval import write_preference_report
+
+report = compare_preference(request)
+write_preference_report(asdict(report), result_uri=report.result_uri)
+```
+
+If the caller stops after inference, the journal's `report-ready.json` retains
+the complete report. Pass that JSON payload to `write_preference_report` with
+the original result URI to finish the write without another model call. The
+writer refuses an existing canonical report. Preserve the journal; rerunning
+the comparison against that output is deliberately refused.
+
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
 JSON file containing `input_path`, `output_path` (a local JSON filename),

@@ -1694,7 +1694,9 @@ def compare_vlm_preference(
         request: Frozen image, model, task, rubric, endpoint, and output options.
 
     Returns:
-        An audit-only report retaining both counterbalanced outcomes.
+        An audit-only report retaining both counterbalanced outcomes. Persist
+        it with ``write_preference_report``; the private journal also retains
+        the complete payload in ``report-ready.json`` for write recovery.
 
     Raises:
         VlmEvalError: If input, output, transport, or evidence invariants fail.

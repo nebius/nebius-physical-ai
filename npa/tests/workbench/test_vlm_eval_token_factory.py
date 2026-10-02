@@ -862,6 +862,34 @@ def test_compare_preference_balances_orders_and_maps_candidate(
     _assert_candidate_preference_report(report)
 
 
+def test_sdk_preference_default_rubric_and_journal_finalize_without_transport(
+    monkeypatch, tmp_path
+):
+    from npa.workbench import vlm_eval
+    from npa.sdk.workbench.vlm_eval import compare_preference
+
+    assert compare_preference is vlm_eval.compare_vlm_preference
+    report, calls = _run_preference_comparison(
+        monkeypatch,
+        tmp_path,
+        [_preference_completion("B"), _preference_completion("A")],
+        rubric="",
+    )
+    assert report.rubric == vlm_eval.DEFAULT_RUBRIC
+    destination = Path(report.result_uri)
+    assert not destination.exists()
+    journal = destination.parent / ".vlm_preference_comparison" / "report-ready.json"
+    retained = json.loads(journal.read_text())
+    assert retained == json.loads(json.dumps(asdict(report)))
+
+    vlm_eval.write_preference_report(retained, result_uri=report.result_uri)
+
+    assert json.loads(destination.read_text()) == retained
+    assert len(calls) == 2
+    with pytest.raises(VlmEvalError, match="already exists"):
+        vlm_eval.write_preference_report(retained, result_uri=report.result_uri)
+
+
 def test_kimi_preference_preserves_model_policy_and_reversed_images(
     monkeypatch, tmp_path
 ):
