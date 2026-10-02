@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 from film_brief import _authoring_packet
+from film_output import _output_arguments, _validate_output
 from film_voice import _voice_settings
 
 _ROOT = Path(__file__).parent
@@ -68,6 +69,10 @@ def _render_command(args, project):
         command += ["--music-path", str(project["music_path"])]
     if args.plan:
         command.append("--plan")
+    if args.output_path is not None:
+        command += ["--output-path", args.output_path]
+    if args.storage_project is not None:
+        command += ["--storage-project", args.storage_project]
     return command
 
 
@@ -167,12 +172,21 @@ def _parser():
         help="With narrate, regenerate every speech clip.",
     )
     _brief_arguments(parser)
+    _output_arguments(parser)
     return parser
 
 
 def _main():
     parser = _parser()
     args = parser.parse_args()
+    if (
+        args.output_path is not None or args.storage_project is not None
+    ) and args.command not in {
+        "preview",
+        "final",
+    }:
+        parser.error("S3 output options apply to preview and final")
+    _validate_output(args, parser)
     if args.command != "brief" and any(
         getattr(args, field) is not None
         for field in ("prompt", "audience", "goal", "tone", "cta", "duration")

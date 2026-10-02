@@ -1,0 +1,11 @@
+{
+  "schema": "npa.cosmos3.wam-prospective-window.v1",
+  "recorded_utc": "2026-09-30T02:41:30.948721+00:00",
+  "started_unix": 1790736100.9487202,
+  "ended_unix": 1790736220.9487202,
+  "duration_seconds": 120,
+  "gpus": 32,
+  "nodes": 4,
+  "selection": "First fixed prospective 120-second window selected after the 50-update warmup; no selection based on utilization within the future window",
+  "selected_after_completed_update": 50
+}

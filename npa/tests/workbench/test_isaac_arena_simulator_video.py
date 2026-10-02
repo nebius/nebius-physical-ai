@@ -128,6 +128,8 @@ class _AutoResetEnvironment:
         self.cfg = SimpleNamespace(
             recorders=SimpleNamespace(dataset_export_dir_path=str(directory)),
             sim=SimpleNamespace(render=SimpleNamespace(carb_settings={})),
+            viewer=SimpleNamespace(resolution=(1280, 720), eye=(1, 2, 3)),
+            video_recorder=SimpleNamespace(window_width=1280, window_height=720),
         )
         self.num_envs = 1
         self.device = "cpu"
@@ -753,3 +755,30 @@ def test_explicit_finalization_retains_diagnostic_before_simulator_teardown(
     evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
     assert evidence["unscored_diagnostic"]["path"] == "simulator-unscored-episode.json"
     assert evidence["terminals"] == []
+
+
+def test_film_capture_converges_without_changing_actions_or_camera(
+    simulator_modules, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("NPA_ISAAC_ARENA_VIDEO_PROFILE", "film")
+    env = _AutoResetEnvironment(tmp_path, simulator_modules)
+    assert env.cfg.viewer.resolution == (1280, 720)
+    assert (
+        env.cfg.video_recorder.window_width,
+        env.cfg.video_recorder.window_height,
+    ) == (3840, 2160)
+    assert env.cfg.viewer.eye == (1, 2, 3)
+    assert env.cfg.sim.render.samples_per_pixel == 128
+    env.reset()
+    for _ in range(3):
+        env.step(1)
+    evidence = json.loads((tmp_path / "simulator-video-evidence.json").read_text())
+    assert evidence["rendering"]["profile"] == "film"
+    assert evidence["rendering"]["minimum_settling_renders"] == 32
+    assert env.action_steps == [1, 2, 3]
+    assert env.renders == 4 * 33
+    assert env.physics_time == 0.06
+    _assert_freeze_trace(evidence, [0, 1, 2, 3])
+    assert all(
+        row["settling_render_calls"] == 32 for row in evidence["physics_freeze_checks"]
+    )
