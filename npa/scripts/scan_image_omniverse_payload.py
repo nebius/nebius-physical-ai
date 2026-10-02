@@ -388,7 +388,14 @@ def _saved_descriptor_path(descriptor, sizes):
 
 
 def _check_saved_attestation(
-    name, descriptor, document, documents, scanned_layers, sizes, ancestors, attestations
+    name,
+    descriptor,
+    document,
+    documents,
+    scanned_layers,
+    sizes,
+    ancestors,
+    attestations,
 ):
     """Validate non-filesystem BuildKit metadata without treating JSON as a tar."""
     manifest_type = "application/vnd.oci.image.manifest.v1+json"
@@ -478,7 +485,14 @@ def _check_saved_attestation(
 
 
 def _check_oci_manifest(
-    name, documents, scanned_layers, sizes, ancestors=(), *, descriptor=None, attestations=None
+    name,
+    documents,
+    scanned_layers,
+    sizes,
+    ancestors=(),
+    *,
+    descriptor=None,
+    attestations=None,
 ):
     if name in ancestors:
         raise RuntimeError("Invalid OCI image archive: cyclic index reference")
@@ -514,7 +528,14 @@ def _check_oci_manifest(
         == "attestation-manifest"
     ):
         _check_saved_attestation(
-            name, descriptor, document, documents, scanned_layers, sizes, ancestors, attestations
+            name,
+            descriptor,
+            document,
+            documents,
+            scanned_layers,
+            sizes,
+            ancestors,
+            attestations,
         )
         return
     for descriptor in layers:
