@@ -37,22 +37,27 @@ AT_THE_PINNED_SNAPSHOT = {
 #: they were read from. Retained so a reviewer can re-derive the claim instead of taking
 #: it, and so that moving the pin fails here: these hashes describe one snapshot and
 #: nothing else, and the versions stop being evidence the moment it changes.
-PINNED_SNAPSHOT = "20260913T000000Z"
+PINNED_SNAPSHOT = "20261002T000000Z"
 SNAPSHOT_INDEXES = {
-    "debian trixie Release": {
-        "sha256": "ed56aac47e7911e65ee63aae8d67e29f20e023f840e49f8ed037043a33de138a",
-        "bytes": 138612,
-        "says": "Version 13.7, dated 2026-09-12, which is the point release the fixes shipped in",
+    "debian InRelease": {
+        "sha256": "0584fba32e13e0ab8285fb16c27adea1ec03a73669c18702821094fd6ca86675",
+        "bytes": 140421,
+        "says": "Date: Sat, 12 Sep 2026 07:55:41 UTC",
     },
-    "debian trixie main/binary-amd64/Packages.xz": {
+    "debian main/binary-amd64/Packages.xz": {
         "sha256": "7778d3e3f303b7ddb8ce0fe7c8d57473a076c6bf2e8f241f75421d2396352498",
         "bytes": 9678380,
-        "says": "named by that Release under SHA256, and lists both versions above",
+        "says": "SHA256 and byte count verified against the signed InRelease.",
     },
-    "debian-security trixie-security Release": {
-        "sha256": "5faa5f143a2cfd1dce82502bd15438fd5a4f24c78696432285bea920999caca6",
-        "bytes": 41759,
-        "says": "the security suite at the same snapshot, dated 2026-09-12",
+    "debian-security InRelease": {
+        "sha256": "149086dac63993f431be3e8177971376fd361d2133e765537d7472fc0c49fac2",
+        "bytes": 43409,
+        "says": "Date: Thu, 01 Oct 2026 18:36:23 UTC",
+    },
+    "debian-security main/binary-amd64/Packages.xz": {
+        "sha256": "ccec1667443a165d6989e8c531fa168c0b8b2ac1f7a2c35c4aa28d0f094ccd26",
+        "bytes": 263496,
+        "says": "SHA256 and byte count verified against the signed InRelease.",
     },
 }
 
@@ -269,3 +274,25 @@ def test_open3d_context_excludes_nested_host_bytecode_without_changing_other_ima
     image_rules = set((IMAGE / "Dockerfile.dockerignore").read_text().splitlines())
     assert root_rules <= image_rules
     assert {"**/__pycache__/", "**/*.py[cod]"} <= image_rules
+
+
+def test_fresh_runtime_security_floors_are_enforced_in_the_built_image():
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    for name, fixed in {
+        "MIN_PCRE2_VERSION": "10.46-1~deb13u3",
+        "MIN_OPENSSL_VERSION": "3.5.7-1~deb13u3",
+        "MIN_RSYNC_VERSION": "3.5.0+ds1-0+deb13u1",
+    }.items():
+        assert _build_arg(text, name) == fixed
+    for package, floor in {
+        "libpcre2-8-0": "MIN_PCRE2_VERSION",
+        "libssl3t64": "MIN_OPENSSL_VERSION",
+        "openssl": "MIN_OPENSSL_VERSION",
+        "openssl-provider-legacy": "MIN_OPENSSL_VERSION",
+        "rsync": "MIN_RSYNC_VERSION",
+    }.items():
+        assert f'"{package} ${{{floor}}}"' in text
+    assert text.index("pip==26.2.1 setuptools==84.0.0 wheel==0.48.0") < text.index(
+        "USER ubuntu"
+    )
+    assert "urllib3==2.8.0" in (IMAGE / "requirements.txt").read_text().splitlines()

@@ -42,7 +42,7 @@ TAG="${TAG:-${IMAGE_TAG}}"
 IMAGE="${REGISTRY}/npa-open3d:${TAG}"
 
 echo "Building ${IMAGE} (open3d ${OPEN3D_VERSION}, source ${NPA_SOURCE_SHA})"
-docker build \
+docker buildx build --load \
   --build-arg OPEN3D_VERSION="${OPEN3D_VERSION}" \
   --build-arg NPA_SOURCE_SHA="${NPA_SOURCE_SHA}" \
   -t "${IMAGE}" \

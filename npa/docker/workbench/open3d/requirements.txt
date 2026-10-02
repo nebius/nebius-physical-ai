@@ -17,3 +17,6 @@ dash==4.4.1
 # Keep the installed distribution aligned with the retained upstream MIT notice.
 # The Dockerfile checks both the exact notice bytes and this package version.
 mcap==1.4.0
+
+# Bind the workload HTTP stack to the release fixing the September proxy/chunk advisories.
+urllib3==2.8.0

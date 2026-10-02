@@ -17,7 +17,7 @@ The context is wholly synthetic -- four files under a `FROM scratch` stage, no N
 source, no production image. It carries the same shapes the real one does: nested
 bytecode, nested legitimate source, packaged data a tool needs at runtime, and one
 root-level `.pyc` that even the old rules caught. Each case is run twice, once under the
-old rules and once under the rules now committed, because a test that only shows the fix
+old rules and once under the Open3D-specific rules, because a test that only shows the fix
 passing cannot tell you the fix was needed.
 """
 
@@ -30,7 +30,8 @@ from pathlib import Path
 
 import pytest
 
-DOCKERIGNORE = Path(__file__).resolve().parents[2] / ".dockerignore"
+NPA_ROOT = Path(__file__).resolve().parents[2]
+DOCKERIGNORE = NPA_ROOT / "docker/workbench/open3d/Dockerfile.dockerignore"
 
 #: The rules as they stood when the scan found the bytecode.
 ROOT_ONLY_RULES = "__pycache__/\n*.py[cod]\n"
@@ -57,7 +58,7 @@ PACKAGED_DATA = "ctx/src/npa/smoke/golden_evals.yaml"
 
 
 def _committed_rules() -> str:
-    """The bytecode rules this repository now ships, comments and all."""
+    """The Open3D-specific bytecode rules, comments and all."""
 
     return DOCKERIGNORE.read_text()
 
@@ -87,15 +88,22 @@ def _context_admits(tmp_path: Path, rules: str) -> set[str]:
         path = context / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
-    (context / ".dockerignore").write_text(rules)
-    (context / "Dockerfile").write_text("FROM scratch\nCOPY . /ctx\n")
+    (context / ".dockerignore").write_bytes((NPA_ROOT / ".dockerignore").read_bytes())
+    image_dir = context / "docker/workbench/open3d"
+    image_dir.mkdir(parents=True)
+    (image_dir / "Dockerfile.dockerignore").write_text(rules)
+    dockerfile = image_dir / "Dockerfile"
+    dockerfile.write_text("FROM scratch\nCOPY . /ctx\n")
 
     exported = tmp_path / "exported.tar"
     subprocess.run(
         [
             "docker",
+            "buildx",
             "build",
             "--no-cache",
+            "-f",
+            str(dockerfile),
             "--output",
             f"type=tar,dest={exported}",
             str(context),
@@ -150,3 +158,64 @@ def test_the_fix_changes_only_the_nested_bytecode(
     # the scan found, so nothing else was quietly dropped from the context.
     assert under_old_rules - under_committed_rules == {NESTED_BYTECODE}
     assert under_committed_rules - under_old_rules == set()
+
+
+@requires_docker
+def test_open3d_build_script_uses_buildkit_even_when_legacy_mode_is_requested(tmp_path):
+    import hashlib
+    import os
+
+    context = tmp_path / "npa"
+    image_dir = context / "docker/workbench/open3d"
+    image_dir.mkdir(parents=True)
+    source = context / "src/npa"
+    (source / "__pycache__").mkdir(parents=True)
+    (source / "__pycache__/host.cpython-312.pyc").write_bytes(b"host control")
+    (source / "real.py").write_text("SOURCE = True\n")
+    shutil.copy2(NPA_ROOT / ".dockerignore", context / ".dockerignore")
+    shutil.copy2(DOCKERIGNORE, image_dir / "Dockerfile.dockerignore")
+    script = image_dir / "build.sh"
+    shutil.copy2(DOCKERIGNORE.parent / "build.sh", script)
+    (image_dir / "Dockerfile").write_text("FROM scratch\nCOPY src /proof\n")
+    tag = "ingress-" + hashlib.sha256(str(tmp_path).encode()).hexdigest()[:16]
+    image = "npa-native-test/npa-open3d:" + tag
+    exported = tmp_path / "image.tar"
+    env = {**os.environ, "DOCKER_BUILDKIT": "0", "NPA_SOURCE_SHA": "a" * 40}
+    try:
+        built = subprocess.run(
+            ["bash", str(script), "--registry", "npa-native-test", "--tag", tag],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        assert built.returncode == 0, (built.stdout + built.stderr)[-3000:]
+        subprocess.run(
+            ["docker", "image", "save", "--output", str(exported), image],
+            check=True,
+            capture_output=True,
+            timeout=600,
+        )
+        # Exporting the container filesystem checks the actual helper-built image,
+        # independently of any Dockerfile command or build-log sentinel.
+        container = subprocess.check_output(
+            ["docker", "create", image, "unused"], text=True
+        ).strip()
+        try:
+            filesystem = tmp_path / "filesystem.tar"
+            subprocess.run(
+                ["docker", "export", "--output", str(filesystem), container],
+                check=True,
+                capture_output=True,
+                timeout=600,
+            )
+            with tarfile.open(filesystem) as archive:
+                names = {
+                    member.name for member in archive.getmembers() if member.isfile()
+                }
+            assert "proof/npa/real.py" in names
+            assert not any(name.endswith(".pyc") for name in names)
+        finally:
+            subprocess.run(["docker", "rm", container], check=True, capture_output=True)
+    finally:
+        subprocess.run(["docker", "image", "rm", image], capture_output=True)

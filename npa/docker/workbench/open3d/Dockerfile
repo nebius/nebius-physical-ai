@@ -9,14 +9,13 @@ FROM python:3.11-slim-trixie@sha256:a3ab0b966bc4e91546a033e22093cb840908979487a9
 
 ARG OPEN3D_VERSION=0.20.0
 ARG NPA_SOURCE_SHA
-# Moved forward from 20260801T000000Z, which resolved trixie before the 13.7
-# point release (2026-09-12) and so still carried libglib2.0-0t64
-# 2.84.4-3~deb13u3 and perl-base 5.40.1-6. Those are the versions the image
-# security policy failed on: CVE-2026-58016 for glib, CVE-2026-13221 /
-# CVE-2026-42496 / CVE-2026-8376 for perl.
-ARG DEBIAN_SNAPSHOT=20260913T000000Z
+# The October snapshot retains the earlier glib/perl fixes and adds the
+# September PCRE2, OpenSSL and rsync security updates. Its InRelease signatures
+# and Packages.xz digests were verified against the base image Debian keyring;
+# see docs/workbench/validation/open3d-security-snapshot-20261002.json.
+ARG DEBIAN_SNAPSHOT=20261002T000000Z
 
-# The two packages whose vulnerable versions blocked this image, as the lowest
+# Packages whose vulnerable versions were found in image scans, as the lowest
 # version that carries the fix. `apt-get upgrade` below is what installs them;
 # these are asserted afterwards so a snapshot that silently stops carrying the
 # fix fails the build instead of shipping. Compared with dpkg rather than as
@@ -25,6 +24,10 @@ ARG DEBIAN_SNAPSHOT=20260913T000000Z
 # 2.84.4-3~deb13u4 the scanner named, and no string comparison gets that right.
 ARG MIN_LIBGLIB_VERSION=2.84.4-3~deb13u4
 ARG MIN_PERL_BASE_VERSION=5.40.1-6+deb13u1
+# Debian security updates published after the earlier snapshot.
+ARG MIN_PCRE2_VERSION=10.46-1~deb13u3
+ARG MIN_OPENSSL_VERSION=3.5.7-1~deb13u3
+ARG MIN_RSYNC_VERSION=3.5.0+ds1-0+deb13u1
 
 # The mcap release the retained notice was taken from, and that notice's bytes.
 # mcap ships no licence file in its wheel or its sdist, so this image carries the
@@ -78,7 +81,12 @@ RUN rm -f /etc/apt/sources.list /etc/apt/sources.list.d/*.list \
       ca-certificates curl openssh-client openssh-server procps rsync sudo \
       libgl1 libegl1 libgomp1 libglib2.0-0 libusb-1.0-0 libidn2-0 \
     && for pin in "libglib2.0-0t64 ${MIN_LIBGLIB_VERSION}" \
-                  "perl-base ${MIN_PERL_BASE_VERSION}"; do \
+                  "perl-base ${MIN_PERL_BASE_VERSION}" \
+                  "libpcre2-8-0 ${MIN_PCRE2_VERSION}" \
+                  "libssl3t64 ${MIN_OPENSSL_VERSION}" \
+                  "openssl ${MIN_OPENSSL_VERSION}" \
+                  "openssl-provider-legacy ${MIN_OPENSSL_VERSION}" \
+                  "rsync ${MIN_RSYNC_VERSION}"; do \
          set -- ${pin}; \
          installed="$(dpkg-query --show --showformat='${Version}' "$1")"; \
          dpkg --compare-versions "${installed}" ge "$2" || { \
@@ -119,6 +127,12 @@ COPY --chmod=0444 docker/workbench/open3d/THIRD_PARTY_NOTICES.md \
     /usr/share/doc/npa-open3d/THIRD_PARTY_NOTICES.md
 COPY --chmod=0444 docker/workbench/open3d/notices/mcap-LICENSE.txt \
     /usr/share/doc/npa-open3d/notices/mcap-LICENSE.txt
+
+# Upgrade the root-installed base tooling as well as the runtime user environment.
+# A user-only upgrade leaves vulnerable setuptools/wheel copies in /usr/local.
+RUN python -m pip install --no-cache-dir --upgrade \
+      pip==26.2.1 setuptools==84.0.0 wheel==0.48.0 \
+    && python -m pip check
 
 USER ubuntu
 WORKDIR /workspace
