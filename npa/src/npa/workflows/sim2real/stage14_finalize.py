@@ -9,7 +9,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from npa.workflows.sim2real.checkpoint_selection import resolve_selected_checkpoint
+from npa.workflows.sim2real.checkpoint_selection import (
+    CHECKPOINT_DIGEST_ALIASES,
+    CHECKPOINT_SIZE_ALIASES,
+    CHECKPOINT_URI_ALIASES,
+    GENERATOR_DIGEST_ALIASES,
+    resolve_selected_checkpoint,
+)
 from npa.workflows.sim2real.workflow_io import (
     parse_json_object,
     publish_component_record,
@@ -45,13 +51,13 @@ def _checkpoint_uri_evidence(
     decision_candidate: dict[str, Any],
 ) -> tuple[tuple[str, object], ...]:
     return _aliased_evidence(
-        (selection, "checkpoint_selection", ("checkpoint_uri",)),
-        (candidate, "selected candidate", ("checkpoint_uri",)),
+        (selection, "checkpoint_selection", CHECKPOINT_URI_ALIASES),
+        (candidate, "selected candidate", CHECKPOINT_URI_ALIASES),
         (decision, "outer_loop.decision", ("checkpoint_uri",)),
         (
             decision_candidate,
             "outer_loop.decision.candidate",
-            ("policy_checkpoint_uri", "checkpoint_uri"),
+            CHECKPOINT_URI_ALIASES,
         ),
     )
 
@@ -61,11 +67,11 @@ def _candidate_digest_evidence(
     decision_candidate: dict[str, Any],
 ) -> tuple[tuple[str, object], ...]:
     return _aliased_evidence(
-        (candidate, "selected candidate", ("checkpoint_sha256",)),
+        (candidate, "selected candidate", CHECKPOINT_DIGEST_ALIASES),
         (
             decision_candidate,
             "outer_loop.decision.candidate",
-            ("policy_checkpoint_sha256", "checkpoint_sha256", "sha256"),
+            CHECKPOINT_DIGEST_ALIASES,
         ),
     )
 
@@ -75,15 +81,11 @@ def _candidate_size_evidence(
     decision_candidate: dict[str, Any],
 ) -> tuple[tuple[str, object], ...]:
     return _aliased_evidence(
-        (candidate, "selected candidate", ("checkpoint_size_bytes",)),
+        (candidate, "selected candidate", CHECKPOINT_SIZE_ALIASES),
         (
             decision_candidate,
             "outer_loop.decision.candidate",
-            (
-                "policy_checkpoint_size_bytes",
-                "checkpoint_size_bytes",
-                "size_bytes",
-            ),
+            CHECKPOINT_SIZE_ALIASES,
         ),
     )
 
@@ -94,12 +96,12 @@ def _generator_digest_evidence(
     decision_candidate: dict[str, Any],
 ) -> tuple[tuple[str, object], ...]:
     return _aliased_evidence(
-        (selection, "checkpoint_selection", ("generator_policy_sha256",)),
-        (candidate, "selected candidate", ("generator_policy_sha256",)),
+        (selection, "checkpoint_selection", GENERATOR_DIGEST_ALIASES),
+        (candidate, "selected candidate", GENERATOR_DIGEST_ALIASES),
         (
             decision_candidate,
             "outer_loop.decision.candidate",
-            ("generator_policy_sha256", "policy_generator_sha256"),
+            GENERATOR_DIGEST_ALIASES,
         ),
     )
 

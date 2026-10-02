@@ -348,6 +348,9 @@ def test_policy_metadata_reconciles_every_generator_digest_source(
         pytest.param("s3://bucket/run//model.pt", id="empty-segment"),
         pytest.param("s3://bucket/run\\model.pt", id="backslash"),
         pytest.param("s3://bucket/run/\u202emodel.pt", id="bidi-control"),
+        pytest.param(f"s3://{'a' * 64}/model.pt", id="bucket-too-long"),
+        pytest.param("s3://192.168.0.1/model.pt", id="ipv4-authority"),
+        pytest.param(f"s3://bucket/{'a' * 1022}.pt", id="key-too-long"),
     ],
 )
 def test_policy_metadata_rejects_malformed_checkpoint_uri(
@@ -360,6 +363,7 @@ def test_policy_metadata_rejects_malformed_checkpoint_uri(
             "policy_inference_provenance": {
                 "checkpoint_uri": checkpoint_uri,
                 "checkpoint_sha256": "a" * 64,
+                "generator_policy_sha256": "a" * 64,
                 "checkpoint_size_bytes": 128,
                 "loaded_for_inference": True,
                 "stock_or_scripted_policy": False,
@@ -505,9 +509,37 @@ def test_compat_visualization_metadata_reuses_strict_policy_contract(
     assert metadata["heldout_policy_identity_verified"] is False
 
 
-def test_compat_visualization_metadata_reconciles_candidate_identity() -> None:
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param(
+            "policy_checkpoint_uri",
+            "s3://bucket/run/other.pt",
+            id="canonical-uri",
+        ),
+        pytest.param("policy_checkpoint_sha256", "b" * 64, id="canonical-digest"),
+        pytest.param("policy_checkpoint_size_bytes", 256, id="canonical-size"),
+        pytest.param("checkpoint_uri", "s3://bucket/run/other.pt", id="legacy-uri"),
+        pytest.param("sha256", "b" * 64, id="legacy-digest"),
+        pytest.param("checkpoint_sha256", "b" * 64, id="legacy-checkpoint-digest"),
+        pytest.param("size_bytes", 256, id="legacy-size"),
+        pytest.param("checkpoint_size_bytes", 256, id="legacy-checkpoint-size"),
+        pytest.param("identity", "other.pt", id="legacy-identity"),
+    ],
+)
+def test_compat_visualization_metadata_reconciles_candidate_identity(
+    field: str,
+    value: object,
+) -> None:
     from npa.workflows.sim2real.viz_contract import visualization_run_metadata
 
+    candidate = {
+        "policy_checkpoint_uri": "s3://bucket/run/model.pt",
+        "policy_checkpoint_identity": "model.pt",
+        "policy_checkpoint_sha256": "a" * 64,
+        "policy_checkpoint_size_bytes": 128,
+    }
+    candidate[field] = value
     metadata = visualization_run_metadata(
         config=SimpleNamespace(
             run_id="run",
@@ -517,11 +549,7 @@ def test_compat_visualization_metadata_reconciles_candidate_identity() -> None:
         ),
         artifact_root="s3://bucket/runs/run",
         policy_checkpoint="s3://bucket/run/model.pt",
-        candidate={
-            "policy_checkpoint_uri": "s3://bucket/run/other.pt",
-            "policy_checkpoint_sha256": "a" * 64,
-            "policy_checkpoint_size_bytes": 128,
-        },
+        candidate=candidate,
         heldout_report={
             "policy_checkpoint_sha256": "a" * 64,
             "policy_checkpoint_size_bytes": 128,

@@ -5,12 +5,16 @@ import json
 from pathlib import Path
 
 import pytest
+from botocore.exceptions import ClientError
 
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     _ensure_policy_access_metadata,
+    _gold_report_path,
+    _policy_access_record,
+    _stage_components,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
     sync_heldout_renders,
@@ -104,6 +108,50 @@ def test_regen_sim2real_rrd_success(
     )
     assert result.heldout_frame_count == 4
     assert result.local_rrd_path.endswith("sim2real.rrd")
+
+
+def test_gold_report_path_tracks_latest_completed_outer_iteration(
+    tmp_path: Path,
+) -> None:
+    for outer in (1, 2):
+        evidence = tmp_path / "inner_loop" / f"outer-{outer:02d}" / "evidence.json"
+        report = (
+            tmp_path / "eval" / "gold-heldout" / f"outer-{outer:02d}" / "report.json"
+        )
+        evidence.parent.mkdir(parents=True)
+        report.parent.mkdir(parents=True)
+        evidence.write_text("{}", encoding="utf-8")
+        report.write_text(json.dumps({"outer_iteration": outer}), encoding="utf-8")
+
+    assert _gold_report_path(_config(), tmp_path) == (
+        tmp_path / "eval" / "gold-heldout" / "outer-02" / "report.json"
+    )
+
+
+def test_stage_components_preserves_canonical_component_records() -> None:
+    report = {"component_records": [{"name": "stage_14_rerun_viz", "tier": "SEAM"}]}
+
+    components = _stage_components(report)
+    components[0]["tier"] = "WORKS"
+
+    assert report == {
+        "component_records": [{"name": "stage_14_rerun_viz", "tier": "WORKS"}]
+    }
+    assert "components" not in report
+
+
+def test_stage_components_keeps_equal_compatibility_aliases_synchronized() -> None:
+    canonical = [{"name": "stage_14_rerun_viz", "tier": "SEAM"}]
+    report = {
+        "component_records": canonical,
+        "components": [dict(canonical[0])],
+    }
+
+    components = _stage_components(report)
+    components[0]["tier"] = "WORKS"
+
+    assert report["component_records"] == report["components"]
+    assert report["component_records"] is report["components"]
 
 
 @pytest.mark.parametrize(
@@ -614,7 +662,26 @@ def test_policy_access_metadata_never_promotes_loop_back_candidate_claims(
     persisted = json.loads(candidate_path.read_text(encoding="utf-8"))
     assert persisted["deployable_policy"] is False
     assert persisted["policy_bytes_available"] is True
-    assert checkpoint_uri in persisted["policy_download_command"]
+    assert access["authenticated_download_command"] == ""
+    assert access["ui_action"] == ""
+    assert "policy_download_command" not in persisted
+    assert "policy_ui_action" not in persisted
+
+
+def test_policy_access_record_never_returns_instructions_when_not_deployable() -> None:
+    access = _policy_access_record(
+        _config(),
+        {
+            "policy_download_command": "stale download command",
+            "policy_ui_action": "stale UI action",
+        },
+        checkpoint_uri="s3://demo-bucket/run/model.pt",
+        bytes_available=True,
+        deployable=False,
+    )
+
+    assert access["authenticated_download_command"] == ""
+    assert access["ui_action"] == ""
 
 
 def test_policy_access_metadata_reconciles_producer_before_download(
@@ -774,7 +841,9 @@ def test_policy_access_metadata_reconciles_embedded_candidate_deployment_claim(
     [
         pytest.param("checkpoint_uri", "s3://demo-bucket/run/other.pt", id="uri"),
         pytest.param("sha256", "b" * 64, id="digest"),
+        pytest.param("checkpoint_sha256", "b" * 64, id="checkpoint-digest"),
         pytest.param("size_bytes", 256, id="size"),
+        pytest.param("checkpoint_size_bytes", 256, id="checkpoint-size"),
         pytest.param("identity", "other.pt", id="identity"),
     ],
 )
@@ -821,7 +890,9 @@ def test_policy_access_metadata_rejects_embedded_candidate_alias_conflicts(
     [
         pytest.param("checkpoint_uri", "s3://demo-bucket/run/other.pt", id="uri"),
         pytest.param("sha256", "b" * 64, id="digest"),
+        pytest.param("checkpoint_sha256", "b" * 64, id="checkpoint-digest"),
         pytest.param("size_bytes", 256, id="size"),
+        pytest.param("checkpoint_size_bytes", 256, id="checkpoint-size"),
         pytest.param("identity", "other.pt", id="identity"),
     ],
 )
@@ -890,6 +961,67 @@ def test_policy_access_metadata_reconciles_current_heldout_before_download(
     assert downloads == []
 
 
+@pytest.mark.parametrize("source", ["inner_selection", "current_decision"])
+def test_policy_access_metadata_reconciles_current_control_plane_before_download(
+    tmp_path: Path,
+    source: str,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    other_uri = "s3://demo-bucket/run/other.pt"
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+            "policy_checkpoint_sha256": "a" * 64,
+            "policy_checkpoint_size_bytes": 128,
+        },
+    )
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"unexpected-policy-bytes")
+
+    kwargs: dict[str, object] = {}
+    if source == "inner_selection":
+        kwargs["inner_evidence"] = {
+            "selected_checkpoint_uri": other_uri,
+            "final_checkpoint_uri": other_uri,
+            "checkpoint_selection": {
+                "checkpoint_uri": other_uri,
+                "checkpoint_sha256": "a" * 64,
+                "checkpoint_size_bytes": 128,
+                "generator_policy_sha256": "a" * 64,
+            },
+            "checkpoint_candidates": [
+                {
+                    "checkpoint_uri": other_uri,
+                    "checkpoint_sha256": "a" * 64,
+                    "checkpoint_size_bytes": 128,
+                    "generator_policy_sha256": "a" * 64,
+                }
+            ],
+        }
+    else:
+        kwargs["current_decision"] = {
+            "decision": "promote_checkpoint",
+            "checkpoint_uri": other_uri,
+        }
+
+    with pytest.raises(Sim2RealRerunRegenError, match="sources disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=FakeStorage(),
+            report={},
+            **kwargs,
+        )
+    assert downloads == []
+
+
 def test_policy_access_metadata_clears_stale_instructions_when_unavailable(
     tmp_path: Path,
 ) -> None:
@@ -922,7 +1054,7 @@ def test_policy_access_metadata_reconciles_prior_access_record(
     tmp_path: Path,
 ) -> None:
     candidate_uri = "s3://demo-bucket/run/model_selected.pt"
-    _write_candidate_manifest(
+    candidate_path = _write_candidate_manifest(
         tmp_path,
         {
             "deployable_policy": True,
@@ -945,6 +1077,34 @@ def test_policy_access_metadata_reconciles_prior_access_record(
                     "policy_bytes_available": True,
                 }
             },
+        )
+    persisted = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert persisted["deployable_policy"] is False
+    assert persisted["policy_bytes_available"] is False
+    assert "policy_download_command" not in persisted
+    assert "policy_ui_action" not in persisted
+
+
+def test_policy_access_metadata_reconciles_selected_candidate_generator_alias(
+    tmp_path: Path,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    report = {
+        "selected_checkpoint_candidate": {
+            "policy_checkpoint_uri": checkpoint_uri,
+            "policy_checkpoint_sha256": "a" * 64,
+            "generator_policy_sha256": "a" * 64,
+            "policy_generator_sha256": "b" * 64,
+            "policy_checkpoint_size_bytes": 128,
+        }
+    }
+
+    with pytest.raises(Sim2RealRerunRegenError, match="sources disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=object(),
+            report=report,
         )
 
 
@@ -969,6 +1129,69 @@ def test_policy_access_metadata_rejects_duplicate_identity_fields(
             storage=object(),
             report={},
         )
+
+
+def test_failure_state_persistence_never_masks_primary_validation_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model.pt"
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+        },
+    )
+
+    def fail_write(*_args, **_kwargs) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen._write_candidate_manifest",
+        fail_write,
+    )
+
+    with pytest.raises(Sim2RealRerunRegenError, match="sources disagree"):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=object(),
+            report={
+                "policy_access": {
+                    "checkpoint_uri": "s3://demo-bucket/run/other.pt",
+                }
+            },
+        )
+
+
+def test_process_control_exception_does_not_rewrite_candidate_state(
+    tmp_path: Path,
+) -> None:
+    candidate = {
+        "deployable_policy": True,
+        "policy_bytes_available": True,
+        "policy_checkpoint_uri": "s3://demo-bucket/run/model.pt",
+        "policy_download_command": "retained command",
+        "policy_ui_action": "retained action",
+    }
+    candidate_path = _write_candidate_manifest(tmp_path, candidate)
+    original = candidate_path.read_bytes()
+
+    class InterruptedStorage:
+        def download_file(self, _uri: str, _destination: str) -> None:
+            raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=InterruptedStorage(),
+            report={},
+        )
+
+    assert candidate_path.read_bytes() == original
 
 
 def test_progress_metrics_embed_all_outer_reward_loss_and_success(
@@ -1135,8 +1358,22 @@ def test_gold_render_sync_uses_only_explicit_lineage(tmp_path: Path) -> None:
     ).read_bytes() == b"gold-frame"
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(OSError("current render tree unavailable"), id="os-error"),
+        pytest.param(
+            ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "denied"}},
+                "ListObjectsV2",
+            ),
+            id="provider-client-error",
+        ),
+    ],
+)
 def test_gold_render_sync_never_reuses_stale_frames_after_download_failure(
     tmp_path: Path,
+    error: Exception,
 ) -> None:
     config = _config("gold-run")
     local_dir = tmp_path / "run"
@@ -1147,7 +1384,7 @@ def test_gold_render_sync_never_reuses_stale_frames_after_download_failure(
 
     class FailingStorage:
         def download_directory(self, _uri: str, _destination: str) -> None:
-            raise OSError("current render tree unavailable")
+            raise error
 
     report = {
         "evaluation_split": "gold_heldout",
@@ -1166,6 +1403,134 @@ def test_gold_render_sync_never_reuses_stale_frames_after_download_failure(
     )
     assert not stale_frame.exists()
     assert not renders_dir.exists()
+
+
+def test_gold_render_sync_unlinks_stale_symlink_after_client_error(
+    tmp_path: Path,
+) -> None:
+    config = _config("gold-run")
+    local_dir = tmp_path / "run"
+    renders_dir = local_dir / "eval" / "gold-heldout" / "outer-03" / "renders"
+    outside = tmp_path / "outside-renders"
+    outside_frame = outside / "stale" / "camera-000.png"
+    outside_frame.parent.mkdir(parents=True)
+    outside_frame.write_bytes(b"outside-frame")
+    renders_dir.parent.mkdir(parents=True)
+    renders_dir.symlink_to(outside, target_is_directory=True)
+
+    class FailingStorage:
+        def download_directory(self, _uri: str, _destination: str) -> None:
+            raise ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "denied"}},
+                "ListObjectsV2",
+            )
+
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 3,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "canonical_s3_uri": (
+                "s3://demo-bucket/sim2real-b/gold-run/current/renders/"
+            ),
+        },
+    }
+
+    assert not sync_heldout_renders(
+        config,
+        local_dir,
+        heldout_report=report,
+        client=FailingStorage(),
+    )
+    assert not renders_dir.is_symlink()
+    assert outside_frame.read_bytes() == b"outside-frame"
+
+
+def test_gold_render_sync_preserves_provider_error_when_cleanup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config = _config("gold-run")
+    local_dir = tmp_path / "run"
+    renders_dir = local_dir / "eval" / "gold-heldout" / "outer-03" / "renders"
+    stale_frame = renders_dir / "stale" / "camera-000.png"
+    stale_frame.parent.mkdir(parents=True)
+    stale_frame.write_bytes(b"stale-frame")
+
+    class FailingStorage:
+        def download_directory(self, _uri: str, _destination: str) -> None:
+            raise ClientError(
+                {"Error": {"Code": "AccessDenied", "Message": "denied"}},
+                "ListObjectsV2",
+            )
+
+    def fail_cleanup(_path: Path) -> None:
+        raise OSError("read-only render tree")
+
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen._remove_tree",
+        fail_cleanup,
+    )
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 3,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "canonical_s3_uri": (
+                "s3://demo-bucket/sim2real-b/gold-run/current/renders/"
+            ),
+        },
+    }
+
+    with pytest.raises(ClientError, match="AccessDenied") as caught:
+        sync_heldout_renders(
+            config,
+            local_dir,
+            heldout_report=report,
+            client=FailingStorage(),
+        )
+    assert isinstance(caught.value.__cause__, OSError)
+    assert stale_frame.read_bytes() == b"stale-frame"
+
+
+def test_gold_render_sync_reconciles_canonical_and_legacy_lineage_uri(
+    tmp_path: Path,
+) -> None:
+    exact_uri = "s3://demo-bucket/sim2real-b/gold-run/exact/renders/"
+
+    class FakeStorage:
+        def download_directory(self, uri: str, destination: str) -> None:
+            assert uri == exact_uri
+            episode = Path(destination) / "gold-0001"
+            episode.mkdir(parents=True)
+            (episode / "camera-000.png").write_bytes(b"gold-frame")
+
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 3,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "canonical_s3_uri": exact_uri,
+            "renders_s3_uri": exact_uri,
+        },
+    }
+    assert sync_heldout_renders(
+        _config("gold-run"),
+        tmp_path,
+        heldout_report=report,
+        client=FakeStorage(),
+    )
+
+    report["render_lineage"]["renders_s3_uri"] = (
+        "s3://demo-bucket/sim2real-b/gold-run/other/renders/"
+    )
+    with pytest.raises(Sim2RealRerunRegenError, match="URI sources disagree"):
+        sync_heldout_renders(
+            _config("gold-run"),
+            tmp_path,
+            heldout_report=report,
+            client=FakeStorage(),
+        )
 
 
 def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) -> None:

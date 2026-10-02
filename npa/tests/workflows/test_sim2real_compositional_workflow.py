@@ -1176,6 +1176,53 @@ def test_stage14_rejects_selected_candidate_digest_disagreement(
     assert captured == {}
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param(
+            "policy_checkpoint_uri",
+            "s3://unit/runs/finalize/checkpoints/other.pt",
+            id="policy-uri",
+        ),
+        pytest.param(
+            "policy_checkpoint_sha256",
+            "b" * 64,
+            id="policy-digest",
+        ),
+        pytest.param("policy_checkpoint_size_bytes", 256, id="policy-size"),
+        pytest.param("policy_generator_sha256", "b" * 64, id="generator-digest"),
+    ],
+)
+def test_stage10_and_stage14_reject_selected_candidate_alias_disagreement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    from npa.workflows.sim2real.workflow_stage import (
+        _assert_gold_checkpoint_identity,
+    )
+
+    root = "s3://unit/runs/finalize"
+    checkpoint_uri = f"{root}/checkpoints/model.pt"
+    evidence = _selected_checkpoint_evidence(checkpoint_uri, "a" * 64)
+    evidence["checkpoint_candidates"][0][field] = value
+    gold = _learned_actor_report(checkpoint_uri, "a" * 64)
+
+    with pytest.raises(RuntimeError, match="selected checkpoint identity"):
+        _assert_gold_checkpoint_identity(evidence, gold)
+
+    stage14_finalize = _patch_stage14_io(monkeypatch, evidence, gold)
+    captured = _capture_stage14_encoders(monkeypatch)
+    with pytest.raises(RuntimeError, match="selected checkpoint identity"):
+        stage14_finalize.finalize_in_work(
+            Namespace(run_id="run", outer_iteration=1),
+            root=root,
+            work=tmp_path,
+        )
+    assert captured == {}
+
+
 def test_stage14_rejects_duplicate_decision_identity_fields(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -7,11 +7,18 @@ from typing import Any
 from urllib.parse import urlparse
 
 from npa.workflows.sim2real.capture import runtime_parameter_metadata
+from npa.workflows.sim2real.checkpoint_selection import (
+    CHECKPOINT_DIGEST_ALIASES,
+    CHECKPOINT_SIZE_ALIASES,
+    CHECKPOINT_URI_ALIASES,
+    GENERATOR_DIGEST_ALIASES,
+)
 
 
 _MISSING = object()
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _S3_BUCKET = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?")
+_IPV4_AUTHORITY = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}")
 IdentityEvidence = tuple[tuple[str, object], ...]
 
 
@@ -34,9 +41,12 @@ def _checkpoint_uri(value: object) -> str | None:
     if (
         parsed.scheme != "s3"
         or not parsed.netloc
+        or not 3 <= len(parsed.netloc) <= 63
         or _S3_BUCKET.fullmatch(parsed.netloc) is None
+        or _IPV4_AUTHORITY.fullmatch(parsed.netloc) is not None
         or any(token in parsed.netloc for token in ("..", ".-", "-."))
         or not key
+        or len(key.encode("utf-8")) > 1024
         or parsed.path != f"/{key}"
         or not key.endswith(".pt")
         or "\\" in key
@@ -92,6 +102,14 @@ def _field_evidence(
     source: str,
 ) -> IdentityEvidence:
     return ((source, payload[key]),) if key in payload else ()
+
+
+def _fields_evidence(
+    payload: dict[str, Any],
+    keys: tuple[str, ...],
+    source: str,
+) -> IdentityEvidence:
+    return tuple((f"{source}.{key}", payload[key]) for key in keys if key in payload)
 
 
 def _identity_sources(
@@ -380,11 +398,13 @@ def _candidate_policy_metadata(
             candidate.get("policy_checkpoint_identity") or candidate.get("identity", "")
         ),
         "policy_checkpoint_sha256": (
-            candidate.get("policy_checkpoint_sha256") or candidate.get("sha256", "")
+            candidate.get("policy_checkpoint_sha256")
+            or candidate.get("checkpoint_sha256")
+            or candidate.get("sha256", "")
         ),
         "policy_checkpoint_size_bytes": candidate.get(
             "policy_checkpoint_size_bytes",
-            candidate.get("size_bytes", ""),
+            candidate.get("checkpoint_size_bytes", candidate.get("size_bytes", "")),
         ),
         "policy_download_command": (
             candidate.get("policy_download_command")
@@ -451,33 +471,17 @@ def visualization_run_metadata(
 
     candidate = candidate if isinstance(candidate, dict) else {}
     heldout = heldout_report if isinstance(heldout_report, dict) else {}
-    candidate_uri_evidence = _field_evidence(
-        candidate,
-        "policy_checkpoint_uri",
-        "candidate.policy_checkpoint_uri",
-    ) + _field_evidence(
-        candidate,
-        "checkpoint_uri",
-        "candidate.checkpoint_uri",
+    candidate_uri_evidence = _fields_evidence(
+        candidate, CHECKPOINT_URI_ALIASES, "candidate"
     )
-    candidate_digest_evidence = _field_evidence(
-        candidate,
-        "policy_checkpoint_sha256",
-        "candidate.policy_checkpoint_sha256",
-    ) + _field_evidence(candidate, "sha256", "candidate.sha256")
-    candidate_size_evidence = _field_evidence(
-        candidate,
-        "policy_checkpoint_size_bytes",
-        "candidate.policy_checkpoint_size_bytes",
-    ) + _field_evidence(candidate, "size_bytes", "candidate.size_bytes")
-    candidate_generator_evidence = _field_evidence(
-        candidate,
-        "generator_policy_sha256",
-        "candidate.generator_policy_sha256",
-    ) + _field_evidence(
-        candidate,
-        "policy_generator_sha256",
-        "candidate.policy_generator_sha256",
+    candidate_digest_evidence = _fields_evidence(
+        candidate, CHECKPOINT_DIGEST_ALIASES, "candidate"
+    )
+    candidate_size_evidence = _fields_evidence(
+        candidate, CHECKPOINT_SIZE_ALIASES, "candidate"
+    )
+    candidate_generator_evidence = _fields_evidence(
+        candidate, GENERATOR_DIGEST_ALIASES, "candidate"
     )
     heldout_metadata = heldout_policy_metadata(
         heldout,

@@ -11,10 +11,30 @@ from typing import Any
 # distance, which is the best possible outcome, not a missing-data signal.
 # Finite (unlike math.inf) so rank_key stays valid JSON in written artifacts.
 _MISSING_DISTANCE = 1.0e9
-_IDENTITY_FIELDS = (
+CHECKPOINT_URI_ALIASES = ("policy_checkpoint_uri", "checkpoint_uri")
+CHECKPOINT_DIGEST_ALIASES = (
+    "policy_checkpoint_sha256",
     "checkpoint_sha256",
+    "sha256",
+)
+CHECKPOINT_SIZE_ALIASES = (
+    "policy_checkpoint_size_bytes",
     "checkpoint_size_bytes",
+    "size_bytes",
+)
+GENERATOR_DIGEST_ALIASES = (
     "generator_policy_sha256",
+    "policy_generator_sha256",
+)
+_IDENTITY_FIELDS = (
+    ("checkpoint URI", "checkpoint_uri", CHECKPOINT_URI_ALIASES),
+    ("checkpoint SHA-256", "checkpoint_sha256", CHECKPOINT_DIGEST_ALIASES),
+    ("checkpoint size", "checkpoint_size_bytes", CHECKPOINT_SIZE_ALIASES),
+    (
+        "generator checkpoint SHA-256",
+        "generator_policy_sha256",
+        GENERATOR_DIGEST_ALIASES,
+    ),
 )
 
 
@@ -203,13 +223,30 @@ def _assert_matching_identity(
     selection: dict[str, Any],
     candidate: dict[str, Any],
 ) -> None:
-    for field in _IDENTITY_FIELDS:
+    for label, field, aliases in _IDENTITY_FIELDS:
         if field not in selection or field not in candidate:
             raise ValueError(f"selected checkpoint {field} is missing")
-        if selection[field] != candidate[field]:
+        expected = selection[field]
+        if _identity_value(field, candidate[field]) != _identity_value(field, expected):
             raise ValueError(f"selected checkpoint {field} sources disagree")
-    if selection["generator_policy_sha256"] != selection["checkpoint_sha256"]:
+        for source, payload in (("selection", selection), ("candidate", candidate)):
+            for alias in aliases:
+                if alias in payload and _identity_value(
+                    field, payload[alias]
+                ) != _identity_value(field, expected):
+                    raise ValueError(
+                        f"selected checkpoint {source} {label} aliases disagree"
+                    )
+    if _identity_value(
+        "checkpoint_sha256", selection["generator_policy_sha256"]
+    ) != _identity_value("checkpoint_sha256", selection["checkpoint_sha256"]):
         raise ValueError("selected checkpoint generator digest disagrees with bytes")
+
+
+def _identity_value(field: str, value: Any) -> Any:
+    if "sha256" in field and isinstance(value, str):
+        return value.lower()
+    return value
 
 
 def resolve_selected_checkpoint(

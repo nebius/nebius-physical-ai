@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -13,7 +14,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from botocore.exceptions import ClientError
+
 from npa.clients.storage import StorageClient, StorageError
+from npa.workflows.sim2real.checkpoint_selection import (
+    CHECKPOINT_DIGEST_ALIASES,
+    CHECKPOINT_SIZE_ALIASES,
+    CHECKPOINT_URI_ALIASES,
+    GENERATOR_DIGEST_ALIASES,
+    resolve_selected_checkpoint,
+)
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri, _write_json_artifact
@@ -25,6 +35,8 @@ from npa.workflows.sim2real_viz import (
     emit_sim2real_mcap_if_enabled,
     emit_sim2real_rerun,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class Sim2RealRerunRegenError(ValueError):
@@ -91,12 +103,26 @@ def run_prefix_uri(config: Sim2RealLoopConfig) -> str:
     return f"{_artifact_root_uri(config).rstrip('/')}/"
 
 
-def _gold_eval_relative_dir(config: Sim2RealLoopConfig) -> Path:
-    return Path("eval") / "gold-heldout" / f"outer-{config.outer_iterations:02d}"
+def _gold_eval_relative_dir(inner_evidence: str | Path) -> Path:
+    outer_name = Path(inner_evidence).parent.name
+    try:
+        outer_iteration = int(outer_name.removeprefix("outer-"))
+    except ValueError as exc:
+        raise Sim2RealRerunRegenError(
+            f"inner evidence has no canonical outer iteration: {inner_evidence}"
+        ) from exc
+    if outer_name != f"outer-{outer_iteration:02d}" or outer_iteration <= 0:
+        raise Sim2RealRerunRegenError(
+            f"inner evidence has no canonical outer iteration: {inner_evidence}"
+        )
+    return Path("eval") / "gold-heldout" / outer_name
 
 
-def _gold_report_path(config: Sim2RealLoopConfig, local_dir: Path) -> Path:
-    canonical = Path(local_dir) / _gold_eval_relative_dir(config) / "report.json"
+def _gold_report_path(_config: Sim2RealLoopConfig, local_dir: Path) -> Path:
+    inner_evidence = _latest_local_inner_evidence(local_dir)
+    canonical = (
+        Path(local_dir) / _gold_eval_relative_dir(inner_evidence) / "report.json"
+    )
     legacy = Path(local_dir) / "eval" / "heldout" / "report.json"
     return canonical if canonical.is_file() or not legacy.is_file() else legacy
 
@@ -171,10 +197,17 @@ def _download_if_exists(client: StorageClient, uri: str, local_path: Path) -> bo
 
 
 def _remove_tree(path: Path) -> None:
-    if path.is_dir():
-        shutil.rmtree(path)
-    else:
+    if path.is_symlink() or not path.is_dir():
         path.unlink(missing_ok=True)
+    else:
+        shutil.rmtree(path)
+
+
+def _remove_tree_after_failure(path: Path, failure: BaseException) -> None:
+    try:
+        _remove_tree(path)
+    except OSError as cleanup_error:
+        raise failure from cleanup_error
 
 
 def _download_render_tree(
@@ -189,9 +222,12 @@ def _download_render_tree(
         staged = Path(directory) / "renders"
         try:
             storage.download_directory(uri, str(staged))
-        except (StorageError, OSError):
-            _remove_tree(renders_dir)
+        except (StorageError, OSError, ClientError) as exc:
+            _remove_tree_after_failure(renders_dir, exc)
             return False
+        except BaseException as exc:
+            _remove_tree_after_failure(renders_dir, exc)
+            raise
         if not _has_camera_pngs(staged):
             _remove_tree(renders_dir)
             return False
@@ -214,7 +250,7 @@ def sync_regen_inputs(
     local_dir.mkdir(parents=True, exist_ok=True)
 
     inner_evidence_rel = _latest_inner_evidence_rel(storage, prefix)
-    gold_eval_rel = _gold_eval_relative_dir(config).as_posix()
+    gold_eval_rel = _gold_eval_relative_dir(inner_evidence_rel).as_posix()
     singles = {
         inner_evidence_rel: local_dir / inner_evidence_rel,
         f"{gold_eval_rel}/report.json": local_dir / gold_eval_rel / "report.json",
@@ -285,25 +321,48 @@ def sync_regen_inputs(
     )
 
 
+def _sealed_render_uri(lineage: dict[str, Any]) -> str:
+    evidence = [
+        (key, lineage[key])
+        for key in ("canonical_s3_uri", "renders_s3_uri")
+        if key in lineage
+    ]
+    values: list[str] = []
+    for key, value in evidence:
+        if (
+            not isinstance(value, str)
+            or value != value.strip()
+            or not value.startswith("s3://")
+            or not value.endswith("/")
+        ):
+            raise Sim2RealRerunRegenError(
+                f"sealed gold render lineage {key} is malformed"
+            )
+        values.append(value)
+    if not values:
+        raise Sim2RealRerunRegenError(
+            "sealed gold report has no exact render_lineage URI"
+        )
+    if len(set(values)) != 1:
+        raise Sim2RealRerunRegenError("sealed gold render lineage URI sources disagree")
+    return values[0]
+
+
 def _heldout_render_source(
     config: Sim2RealLoopConfig,
     heldout_report: dict[str, Any],
 ) -> tuple[str, bool]:
     prefix = run_prefix_uri(config)
     sealed = heldout_report.get("evaluation_split") == "gold_heldout"
-    if sealed:
-        lineage = dict(heldout_report.get("render_lineage") or {})
-        canonical = str(lineage.get("renders_s3_uri") or "").strip()
-        if not canonical:
-            raise Sim2RealRerunRegenError(
-                "sealed gold report has no exact render_lineage.renders_s3_uri"
-            )
-        if lineage.get("evaluation_split") != "gold_heldout":
-            raise Sim2RealRerunRegenError(
-                "sealed gold render lineage has the wrong evaluation split"
-            )
-        return canonical, True
-    return f"{prefix}eval/heldout/renders/", False
+    if not sealed:
+        return f"{prefix}eval/heldout/renders/", False
+    lineage = dict(heldout_report.get("render_lineage") or {})
+    render_uri = _sealed_render_uri(lineage)
+    if lineage.get("evaluation_split") != "gold_heldout":
+        raise Sim2RealRerunRegenError(
+            "sealed gold render lineage has the wrong evaluation split"
+        )
+    return render_uri, True
 
 
 def _sync_legacy_render_source(
@@ -596,6 +655,23 @@ class _RegenState:
     policy_access: dict[str, Any]
 
 
+def _stage_components(report: dict[str, Any]) -> list[dict[str, Any]]:
+    canonical = report.get("component_records")
+    legacy = report.get("components")
+    if canonical is not None and legacy is not None and canonical != legacy:
+        raise Sim2RealRerunRegenError("component record sources disagree")
+    components = canonical if canonical is not None else legacy
+    if components is None:
+        return []
+    if not isinstance(components, list) or not all(
+        isinstance(item, dict) for item in components
+    ):
+        raise Sim2RealRerunRegenError("component records must be a list of objects")
+    if canonical is not None and legacy is not None:
+        report["components"] = canonical
+    return components
+
+
 def _regen_paths(
     config: Sim2RealLoopConfig,
     local_dir: Path | None,
@@ -638,12 +714,20 @@ def _load_regen_state(
         if report_path.is_file()
         else {}
     )
+    decision_path = work_dir / "outer_loop" / "decision.json"
+    current_decision = (
+        _read_retained_json(decision_path, source="current outer-loop decision")
+        if decision_path.is_file()
+        else {}
+    )
     policy_access = _ensure_policy_access_metadata(
         config,
         work_dir,
         storage=storage,
         report=report,
         heldout_report=heldout_report,
+        inner_evidence=inner_evidence,
+        current_decision=current_decision,
     )
     return _RegenState(
         inner_evidence,
@@ -719,7 +803,7 @@ def _emit_regen_rrd(
         local_dir=work_dir,
         inner_evidence=state.inner_evidence,
         heldout_report=state.heldout_report,
-        stage_components=list(state.report.get("components") or []),
+        stage_components=list(_stage_components(state.report)),
         outer_history=outer_history,
         run_metadata=_regen_run_metadata(config, state, viewer_command),
         output_rrd=output_rrd,
@@ -768,8 +852,9 @@ def _persist_regen_report(
     prefix = run_prefix_uri(config)
     state.report["policy_access"] = state.policy_access
     state.report["progress_metrics"] = build_progress_metrics(work_dir, outer_history)
+    components = _stage_components(state.report)
     state.report["gpu_fallback_contract"] = gpu_fallback_report_contract(
-        config, list(state.report.get("components") or [])
+        config, list(components)
     )
     state.report["visualization"] = {
         **result.to_dict(),
@@ -777,7 +862,7 @@ def _persist_regen_report(
         "rrd_size_bytes": output_rrd.stat().st_size,
         "viewer_command": viewer_command,
     }
-    for component in state.report.get("components") or []:
+    for component in components:
         if component.get("name") == "stage_14_rerun_viz":
             _update_stage14_component(component, result, output_rrd, prefix, duration_s)
     state.report_path.write_text(
@@ -1001,6 +1086,10 @@ class _RetainedPolicySources:
     decision_candidate: dict[str, Any]
     selection: dict[str, Any]
     selected_candidate: dict[str, Any]
+    current_decision: dict[str, Any]
+    current_decision_candidate: dict[str, Any]
+    current_selection: dict[str, Any]
+    current_selected_candidate: dict[str, Any]
     policy_access: dict[str, Any]
     heldout_report: dict[str, Any]
     producer: dict[str, Any]
@@ -1017,15 +1106,23 @@ _RETAINED_SOURCE_LABELS = (
     ("policy_access", "policy_access"),
     ("heldout_report", "latest_heldout_report"),
     ("producer", "policy_inference_provenance"),
+    ("current_decision", "current_outer_loop.decision"),
+    ("current_decision_candidate", "current_outer_loop.decision.candidate"),
+    ("current_selection", "current_checkpoint_selection"),
+    ("current_selected_candidate", "current_selected_checkpoint_candidate"),
     ("current_heldout_report", "current_heldout_report"),
     ("current_producer", "current_policy_inference_provenance"),
 )
 _CHECKPOINT_URI_KEYS = {
-    "candidate": ("policy_checkpoint_uri", "checkpoint_uri"),
-    "selected_candidate": ("policy_checkpoint_uri", "checkpoint_uri"),
-    "decision_candidate": ("policy_checkpoint_uri", "checkpoint_uri"),
+    "candidate": CHECKPOINT_URI_ALIASES,
+    "selected_candidate": CHECKPOINT_URI_ALIASES,
+    "decision_candidate": CHECKPOINT_URI_ALIASES,
     "decision": ("checkpoint_uri",),
-    "selection": ("checkpoint_uri",),
+    "selection": CHECKPOINT_URI_ALIASES,
+    "current_decision": ("checkpoint_uri",),
+    "current_decision_candidate": CHECKPOINT_URI_ALIASES,
+    "current_selection": CHECKPOINT_URI_ALIASES,
+    "current_selected_candidate": CHECKPOINT_URI_ALIASES,
     "policy_access": ("checkpoint_uri",),
     "heldout_report": ("policy_checkpoint", "policy_checkpoint_uri"),
     "producer": ("checkpoint_uri",),
@@ -1033,26 +1130,17 @@ _CHECKPOINT_URI_KEYS = {
     "current_producer": ("checkpoint_uri",),
 }
 _CHECKPOINT_DIGEST_KEYS = {
-    "candidate": (
-        "policy_checkpoint_sha256",
-        "sha256",
-        "generator_policy_sha256",
-        "policy_generator_sha256",
+    "candidate": CHECKPOINT_DIGEST_ALIASES + GENERATOR_DIGEST_ALIASES,
+    "selected_candidate": CHECKPOINT_DIGEST_ALIASES + GENERATOR_DIGEST_ALIASES,
+    "decision_candidate": CHECKPOINT_DIGEST_ALIASES + GENERATOR_DIGEST_ALIASES,
+    "selection": CHECKPOINT_DIGEST_ALIASES + GENERATOR_DIGEST_ALIASES,
+    "current_decision_candidate": (
+        CHECKPOINT_DIGEST_ALIASES + GENERATOR_DIGEST_ALIASES
     ),
-    "selected_candidate": (
-        "policy_checkpoint_sha256",
-        "checkpoint_sha256",
-        "sha256",
-        "generator_policy_sha256",
+    "current_selection": CHECKPOINT_DIGEST_ALIASES + GENERATOR_DIGEST_ALIASES,
+    "current_selected_candidate": (
+        CHECKPOINT_DIGEST_ALIASES + GENERATOR_DIGEST_ALIASES
     ),
-    "decision_candidate": (
-        "policy_checkpoint_sha256",
-        "checkpoint_sha256",
-        "sha256",
-        "generator_policy_sha256",
-        "policy_generator_sha256",
-    ),
-    "selection": ("checkpoint_sha256", "generator_policy_sha256"),
     "policy_access": ("sha256",),
     "heldout_report": (
         "policy_checkpoint_sha256",
@@ -1068,18 +1156,13 @@ _CHECKPOINT_DIGEST_KEYS = {
     "current_producer": ("checkpoint_sha256", "generator_policy_sha256"),
 }
 _CHECKPOINT_SIZE_KEYS = {
-    "candidate": ("policy_checkpoint_size_bytes", "size_bytes"),
-    "selected_candidate": (
-        "policy_checkpoint_size_bytes",
-        "checkpoint_size_bytes",
-        "size_bytes",
-    ),
-    "decision_candidate": (
-        "policy_checkpoint_size_bytes",
-        "checkpoint_size_bytes",
-        "size_bytes",
-    ),
-    "selection": ("checkpoint_size_bytes",),
+    "candidate": CHECKPOINT_SIZE_ALIASES,
+    "selected_candidate": CHECKPOINT_SIZE_ALIASES,
+    "decision_candidate": CHECKPOINT_SIZE_ALIASES,
+    "selection": CHECKPOINT_SIZE_ALIASES,
+    "current_decision_candidate": CHECKPOINT_SIZE_ALIASES,
+    "current_selection": CHECKPOINT_SIZE_ALIASES,
+    "current_selected_candidate": CHECKPOINT_SIZE_ALIASES,
     "policy_access": ("size_bytes",),
     "heldout_report": ("policy_checkpoint_size_bytes",),
     "producer": ("checkpoint_size_bytes",),
@@ -1134,10 +1217,31 @@ def _producer_sources(
     }
 
 
+def _current_checkpoint_sources(
+    inner_evidence: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    identity_keys = {
+        "selected_checkpoint_uri",
+        "final_checkpoint_uri",
+        "checkpoint_selection",
+        "checkpoint_candidates",
+    }
+    if not identity_keys.intersection(inner_evidence):
+        return {}, {}
+    try:
+        return resolve_selected_checkpoint(inner_evidence)
+    except ValueError as exc:
+        raise Sim2RealRerunRegenError(
+            f"current inner-loop checkpoint identity is invalid: {exc}"
+        ) from exc
+
+
 def _retained_policy_sources(
     candidate: dict[str, Any],
     report: dict[str, Any],
     heldout_report: dict[str, Any] | None = None,
+    inner_evidence: dict[str, Any] | None = None,
+    current_decision: dict[str, Any] | None = None,
 ) -> _RetainedPolicySources:
     outer_loop = _optional_object(report, "outer_loop", source="regeneration report")
     retained_heldout = _optional_object(
@@ -1147,11 +1251,23 @@ def _retained_policy_sources(
     )
     decision = _canonical_decision(outer_loop)
     current_heldout = heldout_report or {}
+    current_selection, current_selected_candidate = _current_checkpoint_sources(
+        inner_evidence or {}
+    )
+    current_decision = current_decision or {}
     return _RetainedPolicySources(
         candidate=candidate,
         report=report,
         outer_loop=outer_loop,
         decision=decision,
+        current_decision=current_decision,
+        current_decision_candidate=_optional_object(
+            current_decision,
+            "candidate",
+            source="current outer-loop decision",
+        ),
+        current_selection=current_selection,
+        current_selected_candidate=current_selected_candidate,
         heldout_report=retained_heldout,
         current_heldout_report=current_heldout,
         **_report_policy_children(report, decision),
@@ -1215,6 +1331,16 @@ def _assert_retained_leaf_identity(
             "outer_loop.decision.candidate",
             ("policy_checkpoint_identity", "identity"),
         ),
+        (
+            sources.current_decision_candidate,
+            "current_outer_loop.decision.candidate",
+            ("policy_checkpoint_identity", "identity"),
+        ),
+        (
+            sources.current_selected_candidate,
+            "current_selected_checkpoint_candidate",
+            ("policy_checkpoint_identity", "identity"),
+        ),
         (sources.policy_access, "policy_access", ("identity",)),
     )
     for source, value in evidence:
@@ -1250,16 +1376,33 @@ def _retained_claim_evidence(
         (sources.heldout_report, "latest_heldout_report", (key,)),
         (sources.current_heldout_report, "current_heldout_report", (key,)),
         (sources.decision, "outer_loop.decision", (key,)),
+        (sources.current_decision, "current_outer_loop.decision", (key,)),
+        (
+            sources.current_decision_candidate,
+            "current_outer_loop.decision.candidate",
+            (key,),
+        ),
+        (sources.current_selection, "current_checkpoint_selection", (key,)),
+        (
+            sources.current_selected_candidate,
+            "current_selected_checkpoint_candidate",
+            (key,),
+        ),
     )
 
 
 def _retained_deployment_claim(sources: _RetainedPolicySources) -> bool:
     evidence = _retained_claim_evidence(sources, "deployable_policy")
-    if sources.decision:
-        decision_name = sources.decision.get("decision")
+    for label, decision in (
+        ("outer_loop.decision.decision", sources.decision),
+        ("current_outer_loop.decision.decision", sources.current_decision),
+    ):
+        if not decision:
+            continue
+        decision_name = decision.get("decision")
         evidence += (
             (
-                "outer_loop.decision.decision",
+                label,
                 decision_name == "promote_checkpoint"
                 if isinstance(decision_name, str) and decision_name
                 else None,
@@ -1281,8 +1424,16 @@ def _retained_candidate_identity(
     candidate: dict[str, Any],
     report: dict[str, Any],
     heldout_report: dict[str, Any] | None = None,
+    inner_evidence: dict[str, Any] | None = None,
+    current_decision: dict[str, Any] | None = None,
 ) -> tuple[str, str, int, bool, bool]:
-    sources = _retained_policy_sources(candidate, report, heldout_report)
+    sources = _retained_policy_sources(
+        candidate,
+        report,
+        heldout_report,
+        inner_evidence,
+        current_decision,
+    )
     checkpoint_uri = _retained_checkpoint_uri(sources)
     checkpoint_sha256 = _retained_checkpoint_digest(sources)
     checkpoint_size = _retained_checkpoint_size(sources)
@@ -1400,10 +1551,11 @@ def _policy_access_record(
     bytes_available: bool,
     deployable: bool,
 ) -> dict[str, Any]:
+    access_allowed = bool(bytes_available and deployable)
     download_command = (
-        candidate.get("policy_download_command", "") if bytes_available else ""
+        candidate.get("policy_download_command", "") if access_allowed else ""
     )
-    ui_action = candidate.get("policy_ui_action", "") if bytes_available else ""
+    ui_action = candidate.get("policy_ui_action", "") if access_allowed else ""
     return {
         "deployable_policy": deployable,
         "policy_bytes_available": bytes_available,
@@ -1460,17 +1612,41 @@ def _prepare_candidate_identity(
     return bytes_available, deployable
 
 
+def _persist_failed_candidate(
+    candidate_path: Path,
+    candidate: dict[str, Any],
+) -> None:
+    _clear_candidate_access(candidate)
+    candidate["deployable_policy"] = False
+    candidate["policy_bytes_available"] = False
+    if not candidate_path.is_file():
+        return
+    try:
+        _write_candidate_manifest(candidate_path, candidate)
+    except Exception:
+        _LOGGER.debug(
+            "Unable to persist fail-closed candidate access metadata",
+            exc_info=True,
+        )
+
+
 def _prepare_retained_candidate(
     candidate_path: Path,
     candidate: dict[str, Any],
     report: dict[str, Any],
     heldout_report: dict[str, Any] | None,
     storage: StorageClient,
+    inner_evidence: dict[str, Any] | None = None,
+    current_decision: dict[str, Any] | None = None,
 ) -> tuple[str, bool, bool]:
-    uri, digest, size, deployment_claim, bytes_claim = _retained_candidate_identity(
-        candidate, report, heldout_report
-    )
     try:
+        uri, digest, size, deployment_claim, bytes_claim = _retained_candidate_identity(
+            candidate,
+            report,
+            heldout_report,
+            inner_evidence,
+            current_decision,
+        )
         bytes_available, deployable = _prepare_candidate_identity(
             candidate,
             checkpoint_uri=uri,
@@ -1480,12 +1656,8 @@ def _prepare_retained_candidate(
             bytes_claim=bytes_claim,
             storage=storage,
         )
-    except BaseException:
-        _clear_candidate_access(candidate)
-        candidate["deployable_policy"] = False
-        candidate["policy_bytes_available"] = False
-        if candidate_path.is_file():
-            _write_candidate_manifest(candidate_path, candidate)
+    except Exception:
+        _persist_failed_candidate(candidate_path, candidate)
         raise
     return uri, bytes_available, deployable
 
@@ -1497,14 +1669,22 @@ def _ensure_policy_access_metadata(
     storage: StorageClient,
     report: dict[str, Any],
     heldout_report: dict[str, Any] | None = None,
+    inner_evidence: dict[str, Any] | None = None,
+    current_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Resolve candidate bytes and write secret-free access and promotion state."""
 
     candidate_path, candidate = _read_candidate_manifest(local_dir)
     checkpoint_uri, bytes_available, deployable = _prepare_retained_candidate(
-        candidate_path, candidate, report, heldout_report, storage
+        candidate_path,
+        candidate,
+        report,
+        heldout_report,
+        storage,
+        inner_evidence,
+        current_decision,
     )
-    if bytes_available:
+    if bytes_available and deployable:
         _persist_candidate_access(
             candidate_path, candidate, checkpoint_uri=checkpoint_uri
         )
