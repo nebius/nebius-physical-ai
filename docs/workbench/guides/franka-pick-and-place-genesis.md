@@ -81,6 +81,11 @@ npa workbench genesis eval-teacher --checkpoint ./checkpoints/teacher/model.pt
 
 ## Go bigger
 
+For a custom scene specification, an object's `fixed` field accepts only JSON
+`true` or `false`. Omit it to use the role default: static objects are fixed;
+other roles are movable. Explicit `null`, strings, and numbers are invalid.
+Replace `"fixed": null` with an omitted field to request the default.
+
 - **Scale up on cloud GPUs.** `train-teacher` (and `generate-demos` /
   `eval-teacher`) run on your local GPU box by default — the Fast path above
   proves the loop there. For full-scale runs, target a GPU workbench VM by

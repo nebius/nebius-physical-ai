@@ -188,6 +188,46 @@ contract is documented in `docs/workbench/guides/nurec-colmap-reconstruct.md`.
   before changing the pending validation status; older NuRec results do not
   qualify.
 
+## Static Navigation Scene Handoff
+
+For actual calibrated metric RGB-D rather than an existing Gaussian artifact,
+use `workflows/testing/rgbd-scan-to-isaac.yaml` and the
+`docs/workbench/guides/rgbd-scan-to-isaac.md` contract. Real Open3D TSDF integration
+derives colored visual and exact collision surfaces from measured depth/poses;
+held-out depth frames gate geometry before the existing USDZ/PhysX handoff.
+The manifest uses column-vector optical-camera poses in metric Z-up world,
+hashes every pair, and requires disjoint integration/validation membership.
+Unknown space stays unknown. CPU reconstruction uses the existing SONIC Open3D
+runtime without Isaac bootstrap, followed by Content Agents OpenUSD assembly and
+RTX Isaac physics. It needs no new weights or image. Runtime/data provenance and
+private capture attribution stay with the sealed artifacts. GPU, industrial
+scene, robot clearance, and policy learning qualification remain separate.
+
+Use `workflows/testing/scan-to-isaac-navigation.yaml` to combine an existing
+NuRec visual USD/USDZ with independently supplied, triangulated collision USD.
+The workflow reuses reconstruction outputs; it does not duplicate NCore or
+COLMAP ingress. See `docs/workbench/guides/scan-to-isaac-navigation.md` for the
+input manifest, module adapters, calibration convention, and live test.
+
+- Require explicit source units, coordinate registration, capture-provenance
+  digest, collision geometry, and expected physics ray intersections. Gaussian
+  splats alone are visual assets, never collision surfaces.
+- Audit raw Sdf layers before composition, recursively including nested USDZ,
+  inactive prims and unselected variants. Reject external dependencies,
+  OmniScripting/OmniGraph declarations, time samples and value clips; preserve
+  ordinary shaders and contained neural volume payloads.
+- Export portable USDZ with static triangle colliders and geometry/input hashes.
+  Publish only to fresh prefixes using permanent conditional claims, immutable
+  member writes, and a verified completion seal. Retry failures in a new prefix.
+- Run the native PhysX probe through the Isaac interpreter on RTX infrastructure.
+  Supply an immutable Isaac image declaration; reports bind both scene and exact
+  assembly-provenance hashes, actual Isaac/PhysX versions, and the declaration's
+  explicitly unverified image-attestation scope.
+- CPU tests prove assembly and containment. Native GPU acceptance, NuRec
+  rendering, metric RGB-D GPU execution, robot clearance, and
+  navigation-policy quality remain unverified. The live test requires operator
+  assets and must run before claiming physics acceptance.
+
 ## The rig -> world Pose Edge (the thing that breaks first)
 
 NRE's NCore data source requires a `("rig", "world")` pose-graph edge:
@@ -211,8 +251,9 @@ ValueError
 Rig-to-world poses are currently required to determine scene extend
 ```
 
-`dataset.frame_generic_data_pose_overwrite=true` does not help either; it needs a
-`T_sensor_worlds` generic-data field these sequences do not carry.
+Some captures carry camera-to-world transforms only in the per-frame
+`T_sensor_worlds` generic-data field. NPA reads that representation when no
+dynamic camera pose edges exist; dynamic edges remain preferred.
 
 `npa workbench nurec fetch` fixes this by default. For a single-camera capture
 the rig **is** the camera, so `rig -> world` is exactly that camera's pose
@@ -227,7 +268,21 @@ data is never modified:
 - selecting a poses group **replaces** the pose set rather than merging, so the
   derived component carries a complete copy of the original edges plus the rig
   edge;
+- the frame-pose fallback validates every camera frame before writing: timestamps
+  must be strictly increasing and each `T_sensor_worlds` value must be a finite
+  4×4 transform. Missing, malformed, duplicate, inconsistent, or non-finite data
+  fails closed without publishing a partial derived sequence;
+- the sidecar records the selected camera and pose source. An explicit reference
+  camera wins; otherwise the longest trajectory wins with camera ID as a stable
+  tie-breaker;
 - `reconstruct` then passes `dataset.poses_component_group=npa_rig`.
+
+The fallback makes exactly one geometric claim: `rig` is the selected camera.
+It does not infer multi-camera extrinsics, and compatibility tests do not prove
+reconstruction quality. Local regression coverage establishes conversion
+compatibility only; recording live workflow readiness still requires a decoded
+NRE reconstruction on applicable RT-core hardware and inspected retained
+artifacts.
 
 Pass `--no-derive-rig` for AV-style sequences that already ship a rig edge (the
 derivation short-circuits with `already_present: true` anyway), and

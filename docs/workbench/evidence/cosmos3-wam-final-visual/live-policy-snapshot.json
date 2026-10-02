@@ -1,0 +1,98 @@
+{
+  "schema": "npa.cosmos3.wam-live-policy-snapshot.v1",
+  "captured_utc": "2026-09-26T18:32:40.880477+00:00",
+  "scope": "Live snapshot of eight policy servers serving the update-2000 checkpoint; not a policy-quality or throughput result. CPU MuJoCo renders the simulator images.",
+  "checkpoint_step": 2000,
+  "evaluation_gpus": 8,
+  "matched_policy_processes": 8,
+  "gpus": [
+    {
+      "gpu_index": 0,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/26 18:32:40.833",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 33404.0,
+      "utilization_percent": 0.0,
+      "power_watts": 187.69,
+      "process_matches_policy_command_checkpoint_and_slurm_cgroup": true
+    },
+    {
+      "gpu_index": 1,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/26 18:32:40.840",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 33402.0,
+      "utilization_percent": 0.0,
+      "power_watts": 187.74,
+      "process_matches_policy_command_checkpoint_and_slurm_cgroup": true
+    },
+    {
+      "gpu_index": 2,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/26 18:32:40.843",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 34142.0,
+      "utilization_percent": 0.0,
+      "power_watts": 190.32,
+      "process_matches_policy_command_checkpoint_and_slurm_cgroup": true
+    },
+    {
+      "gpu_index": 3,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/26 18:32:40.846",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 34170.0,
+      "utilization_percent": 0.0,
+      "power_watts": 249.73,
+      "process_matches_policy_command_checkpoint_and_slurm_cgroup": true
+    },
+    {
+      "gpu_index": 4,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/26 18:32:40.849",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 34210.0,
+      "utilization_percent": 0.0,
+      "power_watts": 187.33,
+      "process_matches_policy_command_checkpoint_and_slurm_cgroup": true
+    },
+    {
+      "gpu_index": 5,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/26 18:32:40.853",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 34278.0,
+      "utilization_percent": 0.0,
+      "power_watts": 186.5,
+      "process_matches_policy_command_checkpoint_and_slurm_cgroup": true
+    },
+    {
+      "gpu_index": 6,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/26 18:32:40.857",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 34128.0,
+      "utilization_percent": 0.0,
+      "power_watts": 186.63,
+      "process_matches_policy_command_checkpoint_and_slurm_cgroup": true
+    },
+    {
+      "gpu_index": 7,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/26 18:32:40.860",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 33470.0,
+      "utilization_percent": 4.0,
+      "power_watts": 187.0,
+      "process_matches_policy_command_checkpoint_and_slurm_cgroup": true
+    }
+  ]
+}

@@ -228,8 +228,8 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
         "'nvidia-nvshmem-cu12==3.2.5'",
     ):
         assert pin in dockerfile
-    assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0314" in dockerfile
-    assert "'rerun-sdk==0.31.4'" in dockerfile
+    assert "pi05-full-droid-rlds-cu128-jax062-nccl2275-rerun0381" in dockerfile
+    assert "'rerun-sdk==0.38.1'" in dockerfile
     assert "'numpy==1.26.4'" in dockerfile
     assert "from transformers import GemmaForCausalLM" in dockerfile
     assert "NPA_OPENPI_RERUN_PYTHON=/opt/rerun-venv/bin/python" in dockerfile
@@ -253,7 +253,7 @@ def test_openpi_uses_system_ffmpeg_without_bundled_payload() -> None:
     assert "'numpy==1.26.4'" in trainer_addons
     assert "rerun-sdk" not in trainer_addons
     assert "'pyyaml==6.0.3'" in rerun_addons
-    assert "'rerun-sdk==0.31.4'" in rerun_addons
+    assert "'rerun-sdk==0.38.1'" in rerun_addons
     assert "pip check --python /opt/rerun-venv/bin/python" in rerun_addons
     assert "google-cloud-storage==3.13.1" in gcs_lock
     assert "--hash=sha256:" in gcs_lock
@@ -317,6 +317,21 @@ def test_isaac_lab_dockerfile_excludes_bundled_imageio_ffmpeg_payload() -> None:
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in runtime_base_layer
     assert "-delete" in runtime_base_layer
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in runtime_base_layer
+
+
+def test_mjlab_removes_bundled_ffmpeg_before_the_dependency_layer_commits() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "mjlab" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    dependency_layer = dockerfile.split("COPY pyproject.toml", 1)[0].rsplit("RUN ", 1)[
+        1
+    ]
+    assert "pip install --no-cache-dir --require-hashes" in dependency_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*' -delete" in dependency_layer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in dependency_layer
+    assert "imageio_ffmpeg.write_frames" in dependency_layer
+    assert "imageio_ffmpeg.read_frames" in dependency_layer
 
 
 @pytest.mark.parametrize("path", PAYLOAD_PATHS)
@@ -480,6 +495,131 @@ def _saved_image_members(format_name):
     ).encode()
     members["oci-layout"] = b'{"imageLayoutVersion":"1.0.0"}'
     return members
+
+
+def _attested_saved_image_members(artifact, mutation):
+    members = {}
+
+    def blob(value, media_type):
+        raw = value if isinstance(value, bytes) else json.dumps(value).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        members["blobs/sha256/" + digest] = raw
+        return {"mediaType": media_type, "digest": "sha256:" + digest, "size": len(raw)}
+
+    manifest_type = "application/vnd.oci.image.manifest.v1+json"
+    config_type = "application/vnd.oci.image.config.v1+json"
+    layer = blob(
+        _tar_bytes({"opt/example/readme.txt": b"example"}),
+        "application/vnd.oci.image.layer.v1.tar",
+    )
+    config = blob(
+        {
+            "architecture": "amd64",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": [layer["digest"]]},
+        },
+        config_type,
+    )
+    runtime = blob(
+        {
+            "schemaVersion": 2,
+            "mediaType": manifest_type,
+            "config": config,
+            "layers": [layer],
+        },
+        manifest_type,
+    )
+    statement = {
+        "_type": "https://in-toto.io/Statement/v0.1",
+        "subject": [{"name": "fixture", "digest": {"sha256": runtime["digest"][7:]}}],
+        "predicateType": "https://slsa.dev/provenance/v0.2",
+        "predicate": {},
+    }
+    if mutation == "subject":
+        statement["subject"][0]["digest"]["sha256"] = "0" * 64
+    elif mutation == "schema":
+        statement["_type"] = "unsupported"
+    elif mutation == "predicate":
+        statement["predicate"] = "not an object"
+    raw_statement = (
+        _tar_bytes({"isaac-sim/kit/libcarb.so": b"payload"})
+        if mutation == "runtime-tar"
+        else statement
+    )
+    predicate = blob(raw_statement, "application/vnd.in-toto+json")
+    predicate["annotations"] = {"in-toto.io/predicate-type": statement["predicateType"]}
+    if mutation == "media-type":
+        predicate["mediaType"] = "application/octet-stream"
+    att_config = blob(
+        {}
+        if artifact
+        else {
+            "architecture": "unknown",
+            "os": "unknown",
+            "rootfs": {"type": "layers", "diff_ids": [predicate["digest"]]},
+        },
+        "application/vnd.oci.empty.v1+json" if artifact else config_type,
+    )
+    if mutation == "runtime-config":
+        att_config = config
+    attestation = {
+        "schemaVersion": 2,
+        "mediaType": manifest_type,
+        "config": att_config,
+        "layers": [predicate],
+    }
+    if artifact:
+        attestation.update(
+            artifactType="application/vnd.docker.attestation.manifest.v1+json",
+            subject=runtime.copy(),
+        )
+    descriptor = blob(attestation, manifest_type)
+    descriptor.update(
+        platform={"os": "unknown", "architecture": "unknown"},
+        annotations={
+            "vnd.docker.reference.type": "attestation-manifest",
+            "vnd.docker.reference.digest": runtime["digest"],
+        },
+    )
+    if mutation == "runtime-platform":
+        descriptor["platform"] = {"os": "linux", "architecture": "amd64"}
+    runtime["platform"] = {"os": "linux", "architecture": "amd64"}
+    members["index.json"] = json.dumps(
+        {"schemaVersion": 2, "manifests": [runtime, descriptor]}
+    ).encode()
+    members["oci-layout"] = b'{"imageLayoutVersion":"1.0.0"}'
+    if mutation == "missing":
+        del members["blobs/sha256/" + predicate["digest"][7:]]
+    return members
+
+
+@pytest.mark.parametrize("artifact", [False, True])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "missing",
+        "subject",
+        "schema",
+        "predicate",
+        "media-type",
+        "runtime-tar",
+        "runtime-config",
+        "runtime-platform",
+    ],
+)
+def test_saved_attestation_requires_metadata_schema_and_runtime_subject(
+    artifact, mutation
+):
+    members = _attested_saved_image_members(artifact, mutation)
+    if mutation:
+        with pytest.raises(RuntimeError, match="image archive"):
+            list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+    else:
+        paths = list(
+            scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*")
+        )
+        assert "opt/example/readme.txt" in paths
 
 
 @pytest.mark.parametrize("format_name", ["docker", "oci"])
@@ -1028,183 +1168,50 @@ def test_registry_digest_must_be_a_sha256(monkeypatch) -> None:
         scanner._image_history("registry.example/image:tag")
 
 
-def _buildkit_attested_members(provenance: bytes | None = None):
-    """An OCI archive shaped the way BuildKit actually saves an attested image.
 
-    `index.json` points at an image index holding two manifests: the platform
-    image, and an attestation manifest whose single "layer" is an in-toto SLSA
-    provenance statement. That blob is JSON, so nothing can walk it as a tar.
-
-    `provenance` substitutes the attestation blob's bytes. It has to be supplied here
-    rather than patched into the returned members, because the descriptor digest and
-    size are derived from the content and a later swap would fail an earlier integrity
-    check instead of the one under test.
-    """
-
-    layer = _tar_bytes({"opt/example/readme.txt": b"hello"})
-    config = json.dumps(
-        {"architecture": "amd64", "rootfs": {"type": "layers"}}
-    ).encode()
-    members = {}
-
-    def add_blob(payload, media_type=None):
-        digest = "sha256:" + hashlib.sha256(payload).hexdigest()
-        members["blobs/" + digest.replace(":", "/")] = payload
-        descriptor = {"digest": digest, "size": len(payload)}
-        if media_type:
-            descriptor["mediaType"] = media_type
-        return descriptor
-
-    image = {
+@pytest.mark.parametrize("artifact", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_scan_reports_only_bound_metadata_descriptors(tmp_path, artifact, reverse):
+    members = _attested_saved_image_members(artifact, None)
+    index = json.loads(members["index.json"])
+    attestation = json.loads(members["blobs/sha256/" + index["manifests"][1]["digest"][7:]])
+    statement = attestation["layers"][0]
+    # A nested image index must preserve reporting through recursive traversal.
+    inner = members["index.json"]
+    inner_digest = hashlib.sha256(inner).hexdigest()
+    members["blobs/sha256/" + inner_digest] = inner
+    members["index.json"] = json.dumps({
         "schemaVersion": 2,
-        "config": add_blob(config),
-        "layers": [add_blob(layer)],
-    }
-    provenance = (
-        provenance
-        if provenance is not None
-        else json.dumps(
-            {"_type": "https://in-toto.io/Statement/v0.1", "subject": []}
-        ).encode()
-    )
-    attestation = {
-        "schemaVersion": 2,
-        "config": add_blob(config),
-        "layers": [add_blob(provenance, "application/vnd.in-toto+json")],
-    }
-    index = {
-        "schemaVersion": 2,
-        "manifests": [
-            add_blob(json.dumps(image).encode()),
-            add_blob(json.dumps(attestation).encode()),
-        ],
-    }
-    members["index.json"] = json.dumps(
-        {"schemaVersion": 2, "manifests": [add_blob(json.dumps(index).encode())]}
-    ).encode()
-    members["oci-layout"] = b'{"imageLayoutVersion":"1.0.0"}'
-    return members
+        "manifests": [{"digest": "sha256:" + inner_digest, "size": len(inner)}],
+    }).encode()
+    if reverse:
+        members = dict(reversed(list(members.items())))
+    archive = tmp_path / "attested.tar"
+    archive.write_bytes(_tar_bytes(members))
+
+    report = scanner.scan(None, tarball=archive)
+
+    assert report.clean
+    assert report.entries_scanned > 0
+    assert report.to_dict()["validated_metadata_layers"] == [{
+        "member": "blobs/sha256/" + statement["digest"][7:],
+        "media_type": "application/vnd.in-toto+json",
+        "statement_type": "https://in-toto.io/Statement/v0.1",
+    }]
 
 
-def test_build_provenance_does_not_abort_the_whole_scan() -> None:
-    """A real 4.1 GB image could not be verified at all before this.
-
-    BuildKit is the default builder, so refusing its provenance blob refused the
-    byte-level evidence that gates publication.
-    """
-
-    attestations: list[dict[str, str]] = []
-    members = _buildkit_attested_members()
-
-    paths = list(
-        scanner._iter_saved_image(
-            io.BytesIO(_tar_bytes(members)), mode="r|*", attestations=attestations
-        )
-    )
-
-    assert "opt/example/readme.txt" in paths
-    assert [entry["media_type"] for entry in attestations] == [
-        "application/vnd.in-toto+json"
-    ]
+def test_filesystem_scan_does_not_claim_metadata_validation(tmp_path):
+    archive = tmp_path / "runtime.tar"
+    archive.write_bytes(_tar_bytes(_saved_image_members("oci")))
+    assert scanner.scan(None, tarball=archive).to_dict()["validated_metadata_layers"] == []
 
 
-def test_a_skipped_metadata_layer_is_reported_not_swallowed() -> None:
-    """Whatever the walk did not cover has to be visible to the reviewer."""
-
-    report = scanner.ScanReport(image="example", source="tarball")
-    report.skipped_metadata_layers = [
-        {"member": "blobs/sha256/abc", "media_type": "application/vnd.in-toto+json"}
-    ]
-    assert report.to_dict()["skipped_metadata_layers"] == report.skipped_metadata_layers
-
-
-@pytest.mark.parametrize(
-    ("case", "blob"),
-    [
-        ("raw_bytes", b"\x7fELF" + b"\x00" * 64),
-        ("json_without_a_type", b'{"predicate": {"anything": "at all"}}'),
-        (
-            "json_with_a_foreign_type",
-            b'{"_type": "https://example.invalid/Statement/v1"}',
-        ),
-        ("type_that_is_not_a_string", b'{"_type": 42}'),
-        (
-            "domain_that_only_looks_like_in_toto",
-            b'{"_type": "https://in-toto.io.evil.example/Statement/v0.1"}',
-        ),
-    ],
-)
-def test_content_labelled_as_build_metadata_must_actually_be_build_metadata(
-    case: str, blob: bytes
-) -> None:
-    """The label is the image builder's to set, so it cannot be the thing that clears a blob.
-
-    The exemption's whole job is to stop a passing scan being withheld from an image whose only
-    unwalkable blob is genuine provenance. Trusting `mediaType` to decide that would convert
-    "cannot be cleared" into "cleared" for arbitrary bytes, and this scanner gates a
-    redistribution claim -- what the image *ships* -- so "it is never mounted as a root
-    filesystem" is not sufficient grounds. An attestation blob is pulled by everyone who pulls
-    the image.
-
-    A blob that parses as tar is walked regardless of its label and is covered by
-    `test_a_real_filesystem_layer_is_still_required`. This is the other direction: not walkable,
-    so the content has to earn the exemption by being an in-toto statement.
-    """
-
-    members = _buildkit_attested_members(provenance=blob)
-
-    with pytest.raises(RuntimeError, match="declared build metadata"):
-        list(
-            scanner._iter_saved_image(
-                io.BytesIO(_tar_bytes(members)), mode="r|*", attestations=[]
-            )
-        )
-
-
-def test_a_real_filesystem_layer_is_still_required() -> None:
-    """The exemption must not become a way to leave a layer unscanned.
-
-    Same archive, but the provenance blob claims an ordinary layer media type, so
-    it has to be walkable and the scan must refuse it.
-    """
-
-    members = _buildkit_attested_members()
-    members = {
-        name: payload
-        for name, payload in members.items()
-        if name not in {"index.json", "oci-layout"}
-    } | {
-        name: payload
-        for name, payload in members.items()
-        if name in {"index.json", "oci-layout"}
-    }
-    patched = json.loads(
-        next(
-            payload
-            for name, payload in members.items()
-            if name.startswith("blobs/")
-            and b"in-toto" in payload
-            and b"layers" in payload
-        )
-    )
-    patched["layers"][0]["mediaType"] = "application/vnd.oci.image.layer.v1.tar+gzip"
-
-    digest = "sha256:" + hashlib.sha256(json.dumps(patched).encode()).hexdigest()
-    members["blobs/" + digest.replace(":", "/")] = json.dumps(patched).encode()
-    index_blob = next(
-        name
-        for name, payload in members.items()
-        if name.startswith("blobs/") and b'"manifests"' in payload
-    )
-    index = json.loads(members[index_blob])
-    index["manifests"][1] = {
-        "digest": digest,
-        "size": len(json.dumps(patched).encode()),
-    }
-    members[index_blob] = json.dumps(index).encode()
-    top = json.loads(members["index.json"])
-    top["manifests"][0]["size"] = len(members[index_blob])
-    members["index.json"] = json.dumps(top).encode()
-
-    with pytest.raises(RuntimeError, match="missing or unreadable layer"):
-        list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+@pytest.mark.parametrize("mutation", ["schema", "subject", "predicate", "runtime-platform"])
+def test_invalid_metadata_is_not_reported_as_validated(mutation):
+    records = []
+    members = _attested_saved_image_members(False, mutation)
+    with pytest.raises(RuntimeError, match="image archive"):
+        list(scanner._iter_saved_image(
+            io.BytesIO(_tar_bytes(members)), mode="r|*", attestations=records
+        ))
+    assert records == []

@@ -225,10 +225,9 @@ class ScanReport:
     #: True when only the layer history was inspected. Recorded in the JSON report so a
     #: consumer can never mistake a fast gate result for a full-filesystem proof.
     history_only: bool = False
-    #: Metadata blobs referenced as layers that carry no filesystem, so there was
-    #: nothing to walk. Recorded rather than silently dropped: a reviewer needs to
-    #: see that something in the archive was present but not scanned as a layer.
-    skipped_metadata_layers: list[dict[str, str]] = field(default_factory=list)
+    #: Non-filesystem BuildKit metadata with verified manifest/config/subject
+    #: bindings. This records schema validation, not a payload-content scan.
+    validated_metadata_layers: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
@@ -254,10 +253,8 @@ class ScanReport:
             "history_hits": self.history_hits,
             "allowlisted_paths_present": sorted(self.allowlisted_hits),
             "weight_shaped_paths": sorted(self.weight_shaped_paths),
-            # Build-metadata blobs that a manifest lists as layers. They were proved
-            # present at their declared size but carry no filesystem, so a reviewer can
-            # see exactly what the walk did not cover instead of having to infer it.
-            "skipped_metadata_layers": self.skipped_metadata_layers,
+            # Safe descriptors only; never copy predicate contents into the report.
+            "validated_metadata_layers": self.validated_metadata_layers,
         }
 
 
@@ -348,63 +345,6 @@ def _require_saved_config(name, documents):
         )
 
 
-#: Layer media types that carry build metadata instead of filesystem content.
-#: BuildKit, which is the default builder, records SLSA provenance and SBOMs as
-#: in-toto statements in a separate attestation manifest alongside the platform
-#: image. Those blobs are JSON rather than tar, so nothing can walk them as a
-#: layer, and requiring them to have been scanned rejects the entire image and
-#: blocks the byte-level verification that gates publication.
-#:
-#: The exemption is narrow in two ways that matter, because this scanner gates a
-#: *redistribution* claim: what the image ships, not only what it can execute.
-#: An attestation blob ships with the image and is pulled by everyone who pulls
-#: it, so "cannot be extracted as a root filesystem" would not be sufficient
-#: grounds on its own.
-#:
-#: First, the exemption never suppresses a scan. A blob that parses as tar is
-#: walked by `_iter_saved_member` whatever the manifest calls it, so it lands in
-#: `scanned_layers` and takes the ordinary path below; a restricted payload in a
-#: tar wearing this label is still found. Second, for a blob that genuinely
-#: cannot be walked, the content is checked against the label rather than
-#: trusted: it must parse as an in-toto statement. Otherwise the media type,
-#: which the image builder controls, would be enough to turn "cannot be cleared"
-#: into "cleared" for arbitrary bytes.
-#:
-#: What this still does not do, stated so it is not mistaken for coverage: the
-#: statement's `predicate` is not inspected, so a well-formed statement carrying
-#: encoded content in its own fields is cleared. Scanning that text for restricted
-#: paths would be worse than leaving it: an SBOM's job is to enumerate every file
-#: in the image, so a legitimate attestation for a restricted image names those
-#: paths by design, and matching on them would fail every honest build while a
-#: base64 field slipped through anyway. Closing it properly needs a predicate-aware
-#: check against the declared predicateType, which is a larger change than the
-#: publication path needs today.
-NON_FILESYSTEM_LAYER_MEDIA_TYPES = frozenset({"application/vnd.in-toto+json"})
-
-#: Every in-toto statement carries this as its `_type`, versioned after the slash.
-IN_TOTO_STATEMENT_TYPE_PREFIX = "https://in-toto.io/Statement/"
-
-
-def _require_in_toto_statement(name, documents):
-    """Refuse a blob that claims to be build metadata but is not an in-toto statement."""
-
-    document = documents.get(name)
-    if not isinstance(document, dict):
-        raise RuntimeError(
-            f"Incomplete image archive: {name} is declared build metadata but does not "
-            "parse as a JSON document"
-        )
-    statement_type = document.get("_type")
-    if not isinstance(statement_type, str) or not statement_type.startswith(
-        IN_TOTO_STATEMENT_TYPE_PREFIX
-    ):
-        raise RuntimeError(
-            f"Incomplete image archive: {name} is declared build metadata but is not an "
-            f"in-toto statement (_type {statement_type!r})"
-        )
-    return statement_type
-
-
 def _require_saved_layer(name, scanned_layers):
     if name not in scanned_layers:
         raise RuntimeError(
@@ -447,8 +387,98 @@ def _saved_descriptor_path(descriptor, sizes):
     return name
 
 
+def _check_saved_attestation(
+    name, descriptor, document, documents, scanned_layers, sizes, ancestors, attestations
+):
+    """Validate non-filesystem BuildKit metadata without treating JSON as a tar."""
+    manifest_type = "application/vnd.oci.image.manifest.v1+json"
+    annotations = descriptor.get("annotations", {})
+    target = annotations.get("vnd.docker.reference.digest", "")
+    if (
+        descriptor.get("mediaType") != manifest_type
+        or document.get("mediaType") != manifest_type
+        or descriptor.get("platform") != {"os": "unknown", "architecture": "unknown"}
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", target) is None
+        or not document["layers"]
+    ):
+        raise RuntimeError("Invalid OCI image archive: attestation manifest identity")
+    config_descriptor = document["config"]
+    config = documents[_saved_descriptor_path(config_descriptor, sizes)]
+    artifact_type = document.get("artifactType")
+    if artifact_type is not None:
+        subject = document.get("subject", {})
+        if (
+            artifact_type != "application/vnd.docker.attestation.manifest.v1+json"
+            or config_descriptor.get("mediaType") != "application/vnd.oci.empty.v1+json"
+            or config != {}
+            or subject.get("mediaType") != manifest_type
+            or subject.get("digest") != target
+        ):
+            raise RuntimeError(
+                "Invalid OCI image archive: attestation artifact binding"
+            )
+        target_name = _saved_descriptor_path(subject, sizes)
+    else:
+        if (
+            "subject" in document
+            or config_descriptor.get("mediaType")
+            != "application/vnd.oci.image.config.v1+json"
+            or config.get("architecture") != "unknown"
+            or config.get("os") != "unknown"
+            or config.get("rootfs")
+            != {
+                "type": "layers",
+                "diff_ids": [layer.get("digest") for layer in document["layers"]],
+            }
+        ):
+            raise RuntimeError("Invalid OCI image archive: attestation config binding")
+        target_name = "blobs/sha256/" + target[7:]
+    # The subject must itself have readable filesystem layers. Its JSON cannot
+    # recursively opt into metadata handling through an attestation annotation.
+    _check_oci_manifest(
+        target_name, documents, scanned_layers, sizes, (*ancestors, name)
+    )
+    for layer in document["layers"]:
+        layer_name = _saved_descriptor_path(layer, sizes)
+        statement = documents.get(layer_name)
+        if (
+            layer.get("mediaType") != "application/vnd.in-toto+json"
+            or not isinstance(statement, dict)
+            or statement.get("_type")
+            not in {
+                "https://in-toto.io/Statement/v0.1",
+                "https://in-toto.io/Statement/v1",
+            }
+            or not isinstance(statement.get("predicate"), dict)
+            or not isinstance(statement.get("predicateType"), str)
+            or not statement["predicateType"]
+            or statement["predicateType"]
+            != layer.get("annotations", {}).get("in-toto.io/predicate-type")
+            or not isinstance(statement.get("subject"), list)
+            or not statement["subject"]
+            or not all(
+                isinstance(subject, dict)
+                and isinstance(subject.get("name"), str)
+                and subject.get("digest") == {"sha256": target[7:]}
+                for subject in statement["subject"]
+            )
+        ):
+            raise RuntimeError(
+                "Invalid OCI image archive: attestation statement binding"
+            )
+
+        if attestations is not None:
+            record = {
+                "member": layer_name,
+                "media_type": layer["mediaType"],
+                "statement_type": statement["_type"],
+            }
+            if record not in attestations:
+                attestations.append(record)
+
+
 def _check_oci_manifest(
-    name, documents, scanned_layers, sizes, ancestors=(), attestations=None
+    name, documents, scanned_layers, sizes, ancestors=(), *, descriptor=None, attestations=None
 ):
     if name in ancestors:
         raise RuntimeError("Invalid OCI image archive: cyclic index reference")
@@ -469,7 +499,8 @@ def _check_oci_manifest(
                 scanned_layers,
                 sizes,
                 (*ancestors, name),
-                attestations,
+                descriptor=descriptor,
+                attestations=attestations,
             )
         return
     config = _saved_descriptor_path(document.get("config"), sizes)
@@ -477,27 +508,17 @@ def _check_oci_manifest(
     layers = document.get("layers")
     if not isinstance(layers, list):
         raise RuntimeError(f"Invalid OCI image archive: missing layer list {name}")
+    if (
+        descriptor
+        and descriptor.get("annotations", {}).get("vnd.docker.reference.type")
+        == "attestation-manifest"
+    ):
+        _check_saved_attestation(
+            name, descriptor, document, documents, scanned_layers, sizes, ancestors, attestations
+        )
+        return
     for descriptor in layers:
         layer = _saved_descriptor_path(descriptor, sizes)
-        if (
-            descriptor.get("mediaType") in NON_FILESYSTEM_LAYER_MEDIA_TYPES
-            and layer not in scanned_layers
-        ):
-            # _saved_descriptor_path already proved the blob is present at the declared
-            # size, and the `scanned_layers` test above means the walk could not read it
-            # as a filesystem -- a tar would have been walked and would take the ordinary
-            # path regardless of what the manifest called it. So this is the only case
-            # where the label buys an exemption, and the content has to earn it.
-            statement_type = _require_in_toto_statement(layer, documents)
-            if attestations is not None:
-                attestations.append(
-                    {
-                        "member": layer,
-                        "media_type": descriptor["mediaType"],
-                        "statement_type": statement_type,
-                    }
-                )
-            continue
         _require_saved_layer(layer, scanned_layers)
 
 
@@ -513,7 +534,7 @@ def _check_saved_image(documents, scanned_layers, sizes, attestations=None):
                 "Incomplete image archive: missing or invalid oci-layout"
             )
         _check_oci_manifest(
-            "index.json", documents, scanned_layers, sizes, (), attestations
+            "index.json", documents, scanned_layers, sizes, attestations=attestations
         )
 
 
@@ -666,7 +687,7 @@ def scan(
         if why:
             report.history_hits.append({"command": command.strip()[:400], "why": why})
 
-    report.skipped_metadata_layers = attestations
+    report.validated_metadata_layers = attestations
     return report
 
 

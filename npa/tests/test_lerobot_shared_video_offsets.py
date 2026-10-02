@@ -12,7 +12,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from rerun.recording import load_recording
+from npa.viz.recordings import load_recording
 
 adapter = importlib.import_module("npa.viz.adapters.lerobot_to_rerun")
 CAMERA = "observation.images.workspace"
@@ -106,7 +106,7 @@ def build_dataset(root: Path, *, shared: bool, include_offset: bool) -> Path:
 def test_episode_camera_frame_matches_state_and_local_timeline(
     tmp_path, shared, include_offset
 ):
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     dataset = build_dataset(tmp_path, shared=shared, include_offset=include_offset)
     output = tmp_path / "recording.rrd"
@@ -187,7 +187,7 @@ def test_episode_camera_frame_matches_state_and_local_timeline(
 
 
 def test_real_rrd_video_offsets_without_encoder(tmp_path, monkeypatch):
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     dataset = tmp_path / "dataset"
     (dataset / "meta/episodes/chunk-000").mkdir(parents=True)

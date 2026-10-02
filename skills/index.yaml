@@ -24,7 +24,12 @@ licenses:
   - path: skills/NOTICE-NVIDIA-SKILLS
     applies_to:
       - physical-ai-data-factory
+      - nvidia-osmo-to-npa-workflow
       - neural-reconstruction
+  - path: skills/NOTICE-NVIDIA-PAIDF
+    applies_to:
+      - physical-ai-data-factory
+      - nvidia-osmo-to-npa-workflow
   - path: skills/NOTICE-PAIDF-STARTER-MEDIA
     applies_to:
       - physical-ai-data-factory
@@ -79,6 +84,17 @@ skills:
         path: npa/tests/guardrails/test_access_approval_skill.py
       - type: file_exists
         path: npa/tests/agent_eval/test_access_approval.py
+  - name: antioch
+    category: tools
+    when_to_use: "Deploy, operate, debug, or compose Antioch simulation, live OpenPI inference, and dataset-based policy training."
+    path: skills/tools/antioch/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "antioch", "run", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/partners/antioch/antioch-offline-policy-train.yaml
   - name: agent-development
     category: atomic
     when_to_use: "Build, enhance, or test the NPA chat agent backend: grounded-first routing, cost-aware Token Factory model selection, the embedded-backend mechanism, and cheap-token test tiers."
@@ -531,6 +547,32 @@ skills:
         path: npa/src/npa/cli/assets/foxglove/npa-foxglove-host.js
       - type: file_exists
         path: npa/src/npa/cli/agent_foxglove.py
+  - name: encord
+    category: tools
+    when_to_use: "Transport S3 media through Encord, import video prelabels into a new project, export and verify labels, or render annotated MP4s."
+    path: skills/tools/encord/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "encord", "push", "--help"]
+        contains: "identity-sidecar"
+      - type: cli_help
+        args: ["workbench", "encord", "pull", "--help"]
+        contains: "label-export"
+      - type: cli_help
+        args: ["workbench", "encord", "verify-roundtrip", "--help"]
+        contains: "receipt-uri"
+      - type: cli_help
+        args: ["workbench", "encord", "import-labels", "--help"]
+        contains: "project-title"
+      - type: cli_help
+        args: ["workbench", "encord", "render-labels", "--help"]
+        contains: "label-receipt-uri"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/partners/encord/encord-push.yaml
+          - workflows/partners/encord/encord-pull.yaml
+          - workflows/partners/encord/encord-roundtrip-smoke.yaml
+          - workflows/partners/encord/encord-labeling-demo.yaml
   - name: insights
     category: tools
     when_to_use: "Turn the reports/manifests other workbench tools emit into a queryable lineage graph + common metrics store; query/compare metrics, trace artifact lineage, or build a run dashboard."
@@ -625,12 +667,16 @@ skills:
           - workflows/testing/groot-1-7-finetune.yaml
   - name: isaac-lab
     category: tools
-    when_to_use: "Isaac Lab RL simulation, deployment, SkyPilot workflows, or custom fork support."
+    when_to_use: "Isaac Lab RL simulation, deployment, calibrated USD RGB-D sensor rigs, SkyPilot workflows, or custom fork support."
     path: skills/tools/isaac-lab/SKILL.md
     smoke:
       - type: cli_help
         args: ["workbench", "isaac-lab", "train", "--help"]
         contains: "task"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/multicamera-rgbd-capture.yaml
+          - workflows/testing/shared-scene-navigation.yaml
   - name: isaac-arena
     category: tools
     when_to_use: "Package, run, validate, or troubleshoot Isaac Lab-Arena policy evaluation, its public runtime-fetch image, zero/replay/RSL-RL modes, and independent B200/RTX PRO 6000 evidence."
@@ -681,7 +727,7 @@ skills:
         path: npa/docker/workbench/leisaac/REDISTRIBUTION.md
   - name: mjlab
     category: tools
-    when_to_use: "MJLab locomotion evaluation, SONIC checkpoint scoring, SkyPilot MJLab YAMLs, or CLI behavior."
+    when_to_use: "Native MJLab training, resume, measured evaluation, ONNX export, service deployment and GPU workflows."
     path: skills/tools/mjlab/SKILL.md
     smoke:
       - type: cli_help
@@ -690,6 +736,19 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/mjlab-eval.yaml
+          - workflows/testing/mjlab-train-eval.yaml
+          - workflows/testing/mjlab-render.yaml
+  - name: development-desktop
+    category: tools
+    when_to_use: "Set up and operate an Ubuntu development desktop through npa tools desktop, with readable Retina rendering and authenticated public HTTPS access."
+    path: skills/tools/development-desktop/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["tools", "desktop", "setup", "--help"]
+        contains: "ssh-host"
+      - type: cli_help
+        args: ["tools", "desktop", "public-access", "--help"]
+        contains: "public-ip"
   - name: nebius-infra
     category: tools
     when_to_use: "Runtime configuration, provision-if-absent setup, registry, storage, Kubernetes, credentials, retained-backup checksum verification and VM maintenance pauses across reboot."
@@ -700,6 +759,36 @@ skills:
         path: skills/tools/nebius-infra/references/backup-verification.md
       - type: file_exists
         path: skills/tools/nebius-infra/references/maintenance-pauses.md
+  - name: newton
+    category: tools
+    when_to_use: "Newton physics engine workbench stages (teacher training, demo generation, evaluation), the Newton XPBD simulation pipeline, or the npa workbench newton CLI."
+    path: skills/tools/newton/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "newton", "train-teacher", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/newton/SKILL.md
+  - name: openvla
+    category: tools
+    when_to_use: "OpenVLA fine-tuning, serving, or evaluation workbench stages, the OpenVLA-OFT LoRA recipe, or the npa workbench openvla CLI."
+    path: skills/tools/openvla/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "openvla", "train", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/openvla/SKILL.md
+  - name: molmoact
+    category: tools
+    when_to_use: "MolmoAct VLA fine-tuning, serving, or evaluation workbench stages, MolmoAct policy configs, or the npa workbench molmoact CLI."
+    path: skills/tools/molmoact/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "molmoact", "finetune", "--help"]
+        contains: "dataset-uri"
+      - type: file_exists
+        path: skills/tools/molmoact/SKILL.md
   - name: fleet
     category: tools
     when_to_use: "Deploy or operate a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an npa.fleet/v0.0.1 spec: strict capacity-block-backed GPU pools, identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe."
@@ -771,6 +860,20 @@ skills:
           - workflows/testing/alpamayo2-ray-hardcases.yaml
       - type: file_exists
         path: npa/docker/workbench/alpamayo2-super/REDISTRIBUTION.md
+  - name: flex-pi
+    category: tools
+    when_to_use: "Run, package, validate, or troubleshoot flex-pi world-action policy inference, its runtime-fetched assets, B200 or RTX PRO 6000 workflow, and action artifacts."
+    path: skills/tools/flex-pi/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "flex-pi", "infer", "--help"]
+        contains: "output-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/flex-pi-b200-inference.yaml
+          - workflows/testing/flex-pi-rtxpro-inference.yaml
+      - type: file_exists
+        path: npa/docker/workbench/flex-pi/REDISTRIBUTION.md
   - name: retargeting
     category: tools
     when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."
@@ -820,7 +923,7 @@ skills:
         contains: "model-repo"
   - name: token-factory
     category: tools
-    when_to_use: "Zero-GPU hosted inference through Nebius Token Factory: captioning, batch text generation, and Cosmos physical-AI reasoning, plus key setup, model availability, and the CPU-only npa.workflow toolRefs that need no cluster."
+    when_to_use: "Hosted inference through Nebius Token Factory: captioning, text generation, physical-AI reasoning, and automatically routed robot SDG that records real MuJoCo camera/action demonstrations in LeRobot format."
     path: skills/tools/token-factory/SKILL.md
     smoke:
       - type: cli_help
@@ -828,6 +931,9 @@ skills:
         contains: "Token Factory"
       - type: cli_help
         args: ["workbench", "token-factory", "caption", "--help"]
+        contains: "input-path"
+      - type: cli_help
+        args: ["workbench", "token-factory", "robot-sdg", "--help"]
         contains: "input-path"
       - type: file_exists
         path: docs/workbench/token-factory.md
@@ -910,18 +1016,6 @@ skills:
           - workflows/testing/cosmos3-ray-batch.yaml
       - type: file_exists
         path: npa/docker/workbench/cosmos3-ray-serve/Dockerfile
-  - name: cosmos3-super-benchmark
-    category: tools
-    when_to_use: "Reproduce, run, validate, or troubleshoot the fixed Cosmos3-Super eight-GPU sweep on B200/H200, the ten-cell B200 public record, or the isolated single-H200 TP-1 suite with durable cell resume."
-    path: skills/tools/cosmos3-super-benchmark/SKILL.md
-    smoke:
-      - type: cli_help
-        args: ["workbench", "cosmos3", "super-benchmark", "--help"]
-        contains: "H200 single-GPU validation"
-      - type: npa_workflow_yaml
-        paths:
-          - workflows/testing/cosmos3-super-b200-benchmark.yaml
-          - workflows/testing/cosmos3-super-h200-benchmark.yaml
   - name: contribute-workbench-image
     category: workflows
     when_to_use: "Carry an external or maintainer-authored NPA image change from a fork PR through license classification, trusted build, immutable public-dev validation, and incremental GHCR publication."
@@ -947,7 +1041,7 @@ skills:
         path: workflows/testing/cosmos3-generate.yaml
   - name: cosmos3-post-training
     category: workflows
-    when_to_use: "Operate the experimental native LIBERO policy workflow or plan and review other Cosmos3 post-training recipes."
+    when_to_use: "Operate the experimental native LIBERO policy workflow, reproduce reserved-B200 multi-node Slurm scaling and profiling including NPA Soperator deployment, or plan and review other Cosmos3 post-training recipes."
     path: skills/workflows/cosmos3-post-training/SKILL.md
     smoke:
       - type: cli_help
@@ -961,6 +1055,9 @@ skills:
       - type: workflow_yaml
         paths:
           - workflows/main/sim2real.yaml
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/field-failure-policy-improvement.yaml
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
@@ -1114,6 +1211,7 @@ skills:
           - workflows/testing/av-night-scene-hardening.yaml
           - workflows/testing/cosmos-synth-fanout-curation.yaml
           - workflows/testing/physical-ai-data-factory.yaml
+          - workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
           - workflows/testing/tokenfactory-cosmos-gate.yaml
           - workflows/testing/token-factory-parallel-fanout.yaml
           - workflows/testing/token-factory-gate-loop.yaml
@@ -1152,6 +1250,8 @@ skills:
         paths:
           - workflows/main/nurec-reconstruct.yaml
           - workflows/testing/nurec-colmap-reconstruct.yaml
+          - workflows/testing/scan-to-isaac-navigation.yaml
+          - workflows/testing/rgbd-scan-to-isaac.yaml
   - name: generate-npa-workflow
     category: workflows
     when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."
@@ -1181,6 +1281,9 @@ skills:
     when_to_use: "Reference npa.workflow specs, runner scripts, cookbooks, customer-adaptable pipeline implementations, and guarded tool-specific YAML examples that are not authoring surfaces."
     path: skills/workflows/workbench-reference-workflows/SKILL.md
     smoke:
+      - type: cli_help
+        args: ["workbench", "workflow", "challenge", "prepare", "--help"]
+        contains: "prescribed DEV cases"
       - type: workflow_yaml
         paths:
           - workflows/testing/cosmos-fetch.yaml
@@ -1195,6 +1298,7 @@ skills:
           - workflows/testing/isaac-lab-rl-sweep.yaml
           - workflows/testing/cosmos3-reason.yaml
           - workflows/testing/mjlab-eval.yaml
+          - workflows/testing/mjlab-train-eval.yaml
           - workflows/testing/token-factory-caption.yaml
           - workflows/testing/token-factory-generate.yaml
           - workflows/testing/token-factory-cosmos-reason.yaml
@@ -1214,12 +1318,17 @@ skills:
           - workflows/testing/openpi-pi05-full-droid-finetune.yaml
   - name: physical-ai-data-factory
     category: workflows
-    when_to_use: "Author, run, submit, or view the NVIDIA Physical AI Data Factory blueprint on Nebius + SkyPilot (no OSMO): annotate -> Cosmos Transfer augment -> Cosmos Evaluator gate -> re-label -> Cosmos Curator + FiftyOne curate -> Rerun visualize."
+    when_to_use: "Author, run, submit, or view the native NVIDIA Physical AI Data Factory VDA, DIG, IAA, and EVG translations or the NPA-specific Cosmos3 VDA alternative on Nebius + SkyPilot."
     path: skills/workflows/physical-ai-data-factory/SKILL.md
     smoke:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/physical-ai-data-factory.yaml
+          - workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
+          - workflows/testing/paidf-defect-image-generation.yaml
+          - workflows/testing/paidf-image-attribute-augmentation.yaml
+          - workflows/testing/paidf-event-video-generation.yaml
+          - workflows/main/paidf-cosmos3.yaml
       - type: cli_help
         args: ["workbench", "cosmos-evaluator", "evaluate", "--help"]
         contains: "--configs-uri"
@@ -1229,6 +1338,16 @@ skills:
       - type: cli_help
         args: ["workbench", "cosmos2", "transfer", "--help"]
         contains: "--mask-prompt"
+  - name: nvidia-osmo-to-npa-workflow
+    category: workflows
+    when_to_use: "Semantically translate a pinned NVIDIA OSMO workflow definition, or a related authoritative Airflow DAG, into npa.workflow/v0.0.1 without claiming control-plane equivalence."
+    path: skills/workflows/nvidia-osmo-to-npa-workflow/SKILL.md
+    smoke:
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml
+      - type: file_exists
+        path: skills/NOTICE-NVIDIA-PAIDF
   - name: solution-licensing
     category: atomic
     when_to_use: "Adding or onboarding a solution, tool, container image, model weights, dataset, or runtime cache: reuse one operator-responsibility/use-scope decision, classify each artifact, design runtime fetch/cache reuse, and decide public vs restricted redistribution from built bytes."

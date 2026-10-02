@@ -42,6 +42,28 @@ Select the model explicitly with one of these submit overrides:
 --var cosmos3_model=nvidia/Cosmos3-Super-Reasoner
 ```
 
+### Token Factory evaluator selection (NVIDIA tooling note)
+
+Stage 8 sends primary-frame images plus an ordered JSON Schema `prefixItems`
+response contract, so the hosted evaluator must be a **vision-language model
+that supports strict structured output**. When choosing "the latest NVIDIA
+tooling on Token Factory" for this role, verify vision support first: as of this
+writing the NVIDIA models served on Nebius Token Factory are the text-only
+Nemotron-3 family (`nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`,
+`nvidia/Nemotron-3_5-Lightning`, `nvidia/nemotron-3-super-120b-a12b`,
+`nvidia/Nemotron-3-Ultra-550b-a55b`). A multimodal request to any of them
+returns `400 {"detail":"This model does not support image input"}`, so they
+**cannot** serve as the Stage 8 evaluator. `hosted_rollout_model_family` fails
+closed on unsupported IDs, so selecting one is rejected before launch rather
+than silently producing an invalid evaluation.
+
+The sound hosted choice is therefore `MiniMaxAI/MiniMax-M3` (the default): a
+Token Factory VLM verified to accept base64 frames and return the ordered
+`prefixItems` schema. If you specifically need an NVIDIA-authored evaluator, use
+the self-hosted `nvidia/Cosmos-Reason2-8B` GPU path (Cosmos Reason), which is a
+different architecture and is not a Token Factory hosted model. Confirm the
+key-scoped model list with `npa workbench token-factory models` before submit.
+
 For a custom endpoint, set `NEBIUS_TOKEN_FACTORY_BASE_URL` privately and also
 pass `--secret-env NEBIUS_TOKEN_FACTORY_BASE_URL` to submit. This keeps the
 local access check and the remote evaluator on the same endpoint. Verify its

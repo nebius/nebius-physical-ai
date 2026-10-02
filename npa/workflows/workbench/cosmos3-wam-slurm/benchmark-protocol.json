@@ -1,0 +1,81 @@
+{
+  "objective": "Reproducible Cosmos3-Nano LIBERO-10 WAM post-training blog with measured Slurm single-node and multi-node results",
+  "hardware": "STRICT reserved NVIDIA B200, us-central1; 8 GPUs per fabric-connected VM",
+  "scheduler": "Native Slurm on dedicated GPU VMs; controller and accounting colocated on the first worker",
+  "full_training": {
+    "topologies": [
+      {
+        "nodes": 1,
+        "gpus": 8
+      },
+      {
+        "nodes": 2,
+        "gpus": 16
+      }
+    ],
+    "optimizer_steps": 2000,
+    "global_batch": 2048,
+    "sample_cap_per_rank": 64,
+    "gradient_accumulation": [
+      4,
+      2
+    ],
+    "seed": 42,
+    "parameter_storage": "native FP32",
+    "ema": "native enabled",
+    "checkpoint_iterations": [
+      500,
+      1000,
+      1500,
+      2000
+    ]
+  },
+  "timing_replicates": {
+    "topologies": [
+      8,
+      16
+    ],
+    "independent_runs_per_topology": 3,
+    "steps_per_run": 200,
+    "warmup_steps_excluded": 50,
+    "purpose": "Measure steady-state and run-to-run variability separately from observed full-schedule duration"
+  },
+  "profiling": {
+    "separate_runs": true,
+    "topologies": [
+      8,
+      16
+    ],
+    "steps": 110,
+    "native_profile_frequency": 100,
+    "warmup": 3,
+    "active": 2,
+    "include": "PyTorch CPU/CUDA timelines, collectives, VAE/input preparation, memory and GPU telemetry"
+  },
+  "quality": {
+    "suite": "libero_10",
+    "tasks": 10,
+    "trials_per_task": 50,
+    "evaluation_seed": 42,
+    "action_semantics": "20 Hz, frame_wise_relative rot6d, quantile_rot, concat front+wrist, native coordinate frame",
+    "threshold_definition": "90 percent overall success across all 500 trials",
+    "time_to_quality": "First scheduled checkpoint meeting threshold; report the preceding checkpoint interval, not an unobserved exact crossing",
+    "checkpoint_selection": "Evaluate 500, 1000, 1500 and 2000 checkpoints for each full run; include all task counts and failures",
+    "visuals": "Actual successful and unsuccessful simulator rollouts tied to checkpoint hashes"
+  },
+  "artifacts": [
+    "source/version pins",
+    "resolved training configs",
+    "Slurm allocation/accounting",
+    "all worker completion records",
+    "NCCL rank and transport evidence",
+    "GPU telemetry",
+    "full checkpoint hashes",
+    "training step distributions",
+    "profile trace summaries",
+    "all evaluation trial results",
+    "actual rollout videos"
+  ],
+  "publication": "Update existing draft PR and blog with measured claims; never substitute inference duration for training duration or extrapolation for observed completion",
+  "protocol_recorded_at": "2026-09-26T02:58:51.321836+00:00"
+}

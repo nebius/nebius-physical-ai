@@ -282,6 +282,9 @@ def discover_agent_access(
     list_projects: Callable[[str], list[Any]],
     list_buckets: Callable[[str], list[Any]],
     probe_bucket: Callable[[str], BucketProbe | dict[str, str]],
+    probe_configured_source: (
+        Callable[[str, str], BucketProbe | dict[str, str]] | None
+    ) = None,
     service_account_id: str = "",
     credential_source: str = "",
     credential_profile: str = "",
@@ -334,11 +337,15 @@ def discover_agent_access(
         if value and value not in configured_fallbacks:
             configured_fallbacks.append(value)
     exact_sources = normalize_configured_artifact_sources(configured_sources)
-    sources_by_project: dict[str, list[str]] = {}
+    sources_by_project: dict[str, dict[str, list[str]]] = {}
     for source in exact_sources:
         source_project = source["project_id"]
         identities.setdefault(source_project, source_project)
-        sources_by_project.setdefault(source_project, []).append(source["bucket"])
+        prefixes = sources_by_project.setdefault(source_project, {}).setdefault(
+            source["bucket"], []
+        )
+        if source["resolved_prefix"] not in prefixes:
+            prefixes.append(source["resolved_prefix"])
 
     # Owner-configured exact sources may introduce a project that tenant-wide
     # enumeration cannot see. Recompute ordering only after those durable
@@ -375,11 +382,16 @@ def discover_agent_access(
                 if name not in known:
                     bucket_items.append(("", name, "agent_configuration"))
                     known.add(name)
-        known = {name for _resource_id, name, _source in bucket_items}
-        for name in sources_by_project.get(project_id, []):
-            if name not in known:
+        # Keep exact-source authorization distinct from any independently
+        # discovered whole-bucket row. A prefix-scoped identity may verify this
+        # row while correctly denying the bucket-root probe; conversely, a
+        # separately verified root row may still support generic discovery.
+        for name in sources_by_project.get(project_id, {}):
+            if not any(
+                bucket_name == name and source == "configured_artifact_source"
+                for _resource_id, bucket_name, source in bucket_items
+            ):
                 bucket_items.append(("", name, "configured_artifact_source"))
-                known.add(name)
         return {
             "project_id": project_id,
             "is_deployment": is_deployment,
@@ -437,11 +449,35 @@ def discover_agent_access(
         )
         error: dict[str, str] | None = None
         try:
-            probe = (
-                BucketProbe("unavailable", "unavailable", shadowed_reason)
-                if shadowed_fallback
-                else _normalize_probe(probe_bucket(bucket_name))
-            )
+            if shadowed_fallback:
+                probe = BucketProbe("unavailable", "unavailable", shadowed_reason)
+            elif source == "configured_artifact_source" and probe_configured_source:
+                source_prefixes = sources_by_project.get(project_id, {}).get(
+                    bucket_name, []
+                )
+                source_probes = [
+                    _normalize_probe(probe_configured_source(bucket_name, prefix))
+                    for prefix in source_prefixes
+                ]
+                if not source_probes:
+                    raise ValueError("configured artifact source has no exact prefix")
+                list_status = _aggregate_status(
+                    [item.list_status for item in source_probes]
+                )
+                read_status = _aggregate_status(
+                    [item.read_status for item in source_probes]
+                )
+                probe = BucketProbe(
+                    list_status,
+                    read_status,
+                    (
+                        "Every configured exact source prefix was listed and read."
+                        if list_status == read_status == "available"
+                        else "At least one configured exact source prefix was not readable."
+                    ),
+                )
+            else:
+                probe = _normalize_probe(probe_bucket(bucket_name))
             list_reason = probe.reason or (
                 "The running agent can list objects in this bucket."
                 if probe.list_status == "available"

@@ -383,3 +383,119 @@ def test_unreachable_statement_guard_catches_fixture(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _unreachable_statement_violations(broken)
+
+
+# Optional in the lightweight precheck environment: an unconditional import
+# can abort collection before a test or fixture can skip a missing dependency.
+HEAVY_TEST_IMPORTS = frozenset(
+    {
+        "torch",
+        "genesis",
+        "lerobot",
+        "isaaclab",
+        "open3d",
+        "mujoco",
+        "fiftyone",
+        "cv2",
+    }
+)
+
+
+def _heavy_module_import_violations(path: Path) -> list[str]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:
+        return []
+    # Scope is deliberately the direct Import/ImportFrom nodes of the module
+    # body. Imports nested at module level, inside if/class/for/with, do execute
+    # at import time but stay outside this guard. Reading the direct body alone
+    # is what lets the supported escapes through untouched: a function-level
+    # import, a try/except ImportError, an `if TYPE_CHECKING` block, and
+    # `pytest.importorskip` are all nested or are calls, never a top-level
+    # Import node.
+    violations = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module] if node.module and not node.level else []
+        else:
+            continue
+        for name in names:
+            if name.split(".")[0] in HEAVY_TEST_IMPORTS:
+                violations.append(
+                    f"{path}:{node.lineno} imports {name} at module level; "
+                    "use pytest.importorskip or an optional-dependency fixture"
+                )
+    return violations
+
+
+def test_tests_do_not_import_heavy_packages_at_module_level() -> None:
+    """Keep optional GPU imports out of unconditional test-module imports.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A test imports an optional package unconditionally.
+    """
+    violations = [
+        violation
+        for path in _test_paths()
+        for violation in _heavy_module_import_violations(path)
+    ]
+    assert not violations, "\n".join(violations)
+
+
+def test_heavy_import_guard_catches_broken_fixture(tmp_path: Path) -> None:
+    """Reject both direct imports and from-imports before CPU collection breaks.
+
+    Args:
+        tmp_path: Isolated source fixture directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Either unconditional import escapes the guard.
+    """
+    bad = tmp_path / "test_bad_heavy_import.py"
+    bad.write_text(
+        "import torch\nfrom genesis import Scene\n\ndef test_x():\n    assert torch\n",
+        encoding="utf-8",
+    )
+
+    violations = _heavy_module_import_violations(bad)
+
+    assert len(violations) == 2
+    assert "module level" in violations[0]
+
+
+def test_heavy_import_guard_allows_the_supported_escapes(tmp_path: Path) -> None:
+    """Allow test-local and explicitly optional dependency imports.
+
+    Args:
+        tmp_path: Isolated source fixture directory.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A supported optional import is rejected.
+    """
+    ok = tmp_path / "test_supported_escapes.py"
+    ok.write_text(
+        "from typing import TYPE_CHECKING\n\n"
+        "import pytest\n\n"
+        "if TYPE_CHECKING:\n"
+        "    import torch\n\n"
+        "try:\n"
+        "    import lerobot\n"
+        "except ImportError:\n"
+        "    lerobot = None\n\n\n"
+        "def test_a():\n"
+        "    torch = pytest.importorskip('torch')\n"
+        "    assert torch\n\n\n"
+        "def test_b():\n"
+        "    import genesis\n\n"
+        "    assert genesis\n",
+        encoding="utf-8",
+    )
+    assert not _heavy_module_import_violations(ok)

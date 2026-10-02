@@ -676,7 +676,7 @@ def test_franka_recording_decodes_camera_and_all_named_joints_without_synthetic_
     tmp_path,
 ):
     pytest.importorskip("rerun")
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     from npa.adapter.isaac_lab_lerobot import LeRobotFeatureSpec, convert
     from npa.workflows.franka_rl_recording import write_recording
