@@ -4,7 +4,7 @@
 
 **The control plane your coding agent uses to run physical-AI workloads on Nebius.**
 
-<img src="docs/assets/workbench-architecture.png" alt="Nebius Physical AI Workbench architecture" width="820" />
+<img src="docs/assets/workbench-architecture.png" alt="Workbench architecture: selected NVIDIA and open-ecosystem integrations are packaged into public GHCR images. npa uses workflow YAML, its workflow engine, and SkyPilot to run workloads on Nebius Kubernetes. Kubernetes pulls images; Object Storage holds artifacts and run state. Token Factory provides hosted inference. Models and vendor runtimes are fetched at runtime where required." width="960" />
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
@@ -15,6 +15,8 @@
 **[Quickstart](docs/quickstart.md)** ·
 **[Guides](docs/workbench/guides/README.md)** ·
 **[Workbench docs](docs/workbench/README.md)** ·
+**[Benchmarks](benchmark/README.md)** ·
+**[Operator tools](docs/tools/README.md)** ·
 **[CLI reference](docs/cli/README.md)** ·
 **[Python & API](docs/workbench/cli-sdk-yaml-walkthrough.md)** ·
 **[Cookbooks](docs/workbench/cookbooks/README.md)** ·
@@ -22,6 +24,9 @@
 
 </div>
 
+
+For shared Kubernetes clusters, use [team namespaces](docs/workbench/namespaces.md) to configure
+namespace selection and private SkyPilot contexts with `npa workbench namespace`.
 
 ## What is Workbench?
 
@@ -35,28 +40,64 @@ tools also expose Python interfaces.
 ### How Workbench runs a task
 
 ```mermaid
+%%{init: {"theme": "base", "fontFamily": "Arial, sans-serif", "themeVariables": {"fontFamily": "Arial, sans-serif", "fontSize": "16px", "primaryColor": "#E0FF4F", "primaryTextColor": "#052B42", "primaryBorderColor": "#052B42", "lineColor": "#526575", "edgeLabelBackground": "#FFFFFF", "clusterBkg": "#EEF3FF", "clusterBorder": "#B4C9DC", "clusterTextColor": "#052B42", "tertiaryTextColor": "#052B42"}, "flowchart": {"htmlLabels": true, "curve": "linear", "nodeSpacing": 32, "rankSpacing": 48}}}%%
 flowchart TB
-    you["You"] <--> agent["Your coding agent<br/>Codex · Claude Code · other"]
-    agent <-->|"requests and results"| npa["Workbench control plane<br/>npa: configure · preflight · plan · submit · inspect"]
-    spec["npa.workflow YAML"] --> npa
+    accTitle: How Workbench runs a task on Nebius
+    accDescr: You use a coding agent or the CLI and supported Python interfaces to control npa. Workflow YAML drives the workflow engine and SkyPilot, which launch containerized GPU and CPU jobs on Nebius Kubernetes. Tools read and write S3 artifacts; npa reads and writes durable run state. Token Factory is a separate hosted inference API. Results return through npa for inspection.
+
+    access["You + your coding agent<br/>or direct CLI / supported Python interfaces"]
+    control["npa control plane<br/>Configure · preflight · plan · submit · inspect"]
+    spec["npa.workflow YAML<br/>States · toolRefs · resource profiles"]
+    workflow["Workflow engine + SkyPilot<br/>Plan waves · submit jobs · track status"]
+
+    access <-->|"requests / results"| control
+    spec --> control
+    control <-->|"submit / monitor / resume"| workflow
 
     subgraph nebius["Nebius AI Cloud"]
-        direction LR
-        sky["SkyPilot orchestration"] --> tools["Containerized tools<br/>simulate · train · generate · evaluate"]
-        tools <--> s3["S3 artifacts<br/>inputs · checkpoints · media · reports"]
-        tf["Token Factory<br/>hosted inference · no cluster"]
+        tools["Containerized tools · Kubernetes<br/>GPU + CPU<br/>Simulate · train · generate<br/>Curate · reconstruct · evaluate"]
+        storage["Object Storage · S3<br/>Inputs · checkpoints · media<br/>Reports · durable run state"]
+        hosted["Token Factory<br/>Hosted inference API<br/>No customer GPU required"]
+        tools <-->|"read / write"| storage
     end
 
-    npa <-->|"plan · submit · status"| sky
-    npa -->|"direct inference"| tf
-    s3 -->|"artifacts"| npa
+    workflow <-->|"jobs / status / logs"| tools
+    control <-->|"direct API"| hosted
+    control <-.->|"artifacts / durable state"| storage
+
+    classDef access fill:#FFFFFF,stroke:#B4C9DC,color:#052B42,stroke-width:1.5px,rx:12,ry:12;
+    classDef control fill:#E0FF4F,stroke:#052B42,color:#052B42,stroke-width:2px,rx:12,ry:12;
+    classDef orchestration fill:#EEF3FF,stroke:#052B42,color:#052B42,stroke-width:1.5px,rx:12,ry:12;
+    classDef service fill:#FFFFFF,stroke:#052B42,color:#052B42,stroke-width:1.5px,rx:12,ry:12;
+    classDef data fill:#052B42,stroke:#052B42,color:#FFFFFF,stroke-width:1.5px,rx:12,ry:12;
+    class access,spec access;
+    class control control;
+    class workflow orchestration;
+    class tools,hosted service;
+    class storage data;
 ```
 
-`npa` gives the agent one bounded interface for readiness checks, infrastructure,
-workflow lifecycle, and artifacts. SkyPilot schedules the selected tools on
-Nebius; Token Factory handles supported hosted inference without a cluster; S3
-carries durable inputs and outputs between stages. You remain in the loop for
-choices and human-bound approvals such as accepting model terms.
+The architecture overview maps selected NVIDIA and open-ecosystem solutions to
+NPA's [public GHCR container catalog](docs/workbench/container-image-catalog.md)
+at `ghcr.io/nebius/nebius-physical-ai` and the Nebius services that run and support
+them. Some images fetch models or vendor runtimes at execution time; the
+[packaging contract](docs/workbench/container-packaging.md) records those boundaries.
+
+The task flow above shows the standard Kubernetes workflow path. The
+[workflow engine](docs/workbench/npa-workflow-guide.md#runtime-orchestrator---runtime)
+plans execution waves, submits them through SkyPilot, and uses S3 artifacts and
+durable run state to evaluate decisions and resume runs. The operator-side
+[SkyPilot environment](docs/orchestration/skypilot-setup.md) submits the jobs;
+the workload containers run on Nebius GPU or CPU nodes.
+
+[Token Factory](docs/workbench/token-factory.md) is a separate hosted inference
+API. Direct calls need no cluster; workflow stages can also call it from their
+containers. Individual tools additionally support the
+[runtime modes documented for that tool](docs/workbench/README.md).
+Inspect the resulting artifacts with Rerun, Foxglove, media viewers, or reports.
+You remain in the loop for choices and human-bound approvals such as accepting
+model terms. The [diagram reference](docs/assets/workbench-architecture.md)
+records the scope and source files behind the visuals.
 
 Start with a [workload guide](#pick-your-first-win). The guide tells you which
 data, model access, GPU, and output to expect.
@@ -247,13 +288,36 @@ Keep credentials and private infrastructure identifiers out of issue text.
 
 ## Contributing
 
+For dedicated CI capacity, operators can set the repository Actions variables
+`NPA_CI_PRIORITY_RUNNER` and `NPA_CI_TEST_RUNNER` to approved Ubuntu runner labels.
+Both default to `ubuntu-latest`; neither reserves capacity by itself. See
+[validation concurrency](CONTRIBUTING.md#validation-concurrency) for routing and setup.
+The [temporary CPU runner guide](.github/ci-runners/README.md) covers disposable
+Nebius workers. `make ci-runners-down` restores routing and safely drains the
+configured pool; `make ci-runners-status` reports its state.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development environment, required
 checks, and PR process. [The package README](npa/README.md#developing-and-testing-npa)
 has the shortest test commands. Update the relevant documentation and
 [root skill](skills/index.yaml) when changing behavior.
+Run `make precheck` for fast local CI checks. After committing, fetch main and run
+`make merge-precheck` to check the combined dependency inputs. The
+[merge-readiness guide](CONTRIBUTING.md#merge-readiness-and-queue-rejections)
+also explains the automatic PR comments for merge-queue rejections.
 Security disclosures: [SECURITY.md](SECURITY.md).
 
 ## License
 
 [Apache License 2.0](LICENSE). Third-party software, models, and datasets retain
 their own licenses and access terms.
+
+### MJLab robot learning
+
+[MJLab integration](docs/workbench/mjlab.md) provides native training and resume,
+measured evaluation, ONNX export, a scoped authenticated service, and CLI/SDK
+clients. Use the [train/evaluate workflow](workflows/testing/mjlab-train-eval.yaml)
+on a Nebius GPU with an explicitly built MJLab image. Native GPU acceptance
+results are recorded in the guide; public image promotion remains gated.
+`eval --video` publishes the rendered MP4 and a self-contained HTML report with
+measured episode results and checkpoint provenance.
+The former deterministic scoring placeholder has been removed.

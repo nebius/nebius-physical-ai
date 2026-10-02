@@ -1,0 +1,250 @@
+{
+  "schema": "npa.public-demo.rl-rejection-evidence.v2",
+  "qualification_date": "2026-09-29",
+  "source_revision": "de63c25f4009aa09b6ec68710170c462bedbd20c",
+  "source_bundle_sha256": "658024315893a1489a500e5a1dfa74b19e85ce884df99526c63007db1cd878c3",
+  "scope": "Verified full training, failure admission, reconstruction, development comparison and rejection. Effective policy promotion is unproven; retain the baseline. This is implementation/orchestration evidence, not a passing policy-quality result.",
+  "native_training_and_development_completed": true,
+  "measurement_verification_passed": true,
+  "workflow_status": "FAILED",
+  "workflow_failure_scope": "Expected quality-selection rejection after completed native training and development.",
+  "native_driver_exit_code": 1,
+  "baseline_retained": true,
+  "eligible": false,
+  "policy_quality_passed": false,
+  "final_evaluated": false,
+  "final_outcomes_consumed": false,
+  "deployment_authorized": false,
+  "baseline_success_count": 3299,
+  "candidate_success_count": 3282,
+  "baseline_success_rate": 0.82475,
+  "candidate_success_rate": 0.8205,
+  "success_rate_gain": -0.00425,
+  "success_rate_gain_percentage_points": -0.425,
+  "candidate_absolute_success_gate_passed": true,
+  "paired_success_gain_gate_passed": false,
+  "regional_non_regression_passed": false,
+  "warehouse_retention_passed": false,
+  "paired_non_regression_passed": false,
+  "paired_cases": 4000,
+  "regressed_cases": 399,
+  "violation_count": 699,
+  "regions": {
+    "office": {
+      "episodes_per_policy": 2000,
+      "baseline_successes": 1300,
+      "candidate_successes": 1284,
+      "baseline_success_rate": 0.65,
+      "candidate_success_rate": 0.642,
+      "regressed_cases": 301,
+      "violation_count": 596,
+      "violations_by_metric": {
+        "success": 169,
+        "collision_steps": 170,
+        "physical_failure_steps": 56,
+        "goal_distance_m": 201
+      },
+      "metrics": {
+        "collision_steps": {
+          "baseline_mean": 0.348,
+          "candidate_mean": 0.352,
+          "change": 0.0040000000000000036
+        },
+        "goal_distance_m": {
+          "baseline_mean": 0.8019355593009957,
+          "candidate_mean": 0.8058713238779369,
+          "change": 0.003935764576941225
+        },
+        "physical_failure_steps": {
+          "baseline_mean": 0.0375,
+          "candidate_mean": 0.0425,
+          "change": 0.0050000000000000044
+        },
+        "success": {
+          "baseline_mean": 0.65,
+          "candidate_mean": 0.642,
+          "change": -0.008000000000000007
+        }
+      },
+      "regional_non_regressing": false
+    },
+    "warehouse": {
+      "episodes_per_policy": 2000,
+      "baseline_successes": 1999,
+      "candidate_successes": 1998,
+      "baseline_success_rate": 0.9995,
+      "candidate_success_rate": 0.999,
+      "regressed_cases": 98,
+      "violation_count": 103,
+      "violations_by_metric": {
+        "success": 2,
+        "collision_steps": 2,
+        "physical_failure_steps": 1,
+        "goal_distance_m": 98
+      },
+      "metrics": {
+        "collision_steps": {
+          "baseline_mean": 0.0005,
+          "candidate_mean": 0.001,
+          "change": 0.0005
+        },
+        "goal_distance_m": {
+          "baseline_mean": 0.31882363582311035,
+          "candidate_mean": 0.3206982015600538,
+          "change": 0.0018745657369434454
+        },
+        "physical_failure_steps": {
+          "baseline_mean": 0.0,
+          "candidate_mean": 0.0005,
+          "change": 0.0005
+        },
+        "success": {
+          "baseline_mean": 0.9995,
+          "candidate_mean": 0.999,
+          "change": -0.000500000000000056
+        }
+      },
+      "regional_non_regressing": false
+    }
+  },
+  "native_reasons": [
+    "office regressed on success",
+    "office regressed on collision_steps",
+    "office regressed on physical_failure_steps",
+    "warehouse regressed on success",
+    "warehouse regressed on collision_steps",
+    "warehouse regressed on physical_failure_steps",
+    "candidate development gain is below one percentage point",
+    "candidate increased development collision_steps",
+    "candidate increased development physical_failure_steps",
+    "candidate has 699 paired development metric violations across 399 cases; final cohort remains untouched"
+  ],
+  "full_training": {
+    "baseline_updates": 1500,
+    "candidate_new_updates": 1500,
+    "robots": 4000,
+    "transitions_per_policy": 48000000,
+    "exact_initial_model_critic_optimizer_preserved": true,
+    "optimizer_states": 13,
+    "initial_optimizer_steps_each": 30000,
+    "final_optimizer_steps_each": 60000,
+    "changed_actor_weight_bias_tensors": 6,
+    "actor_parameters": 45955,
+    "authoritative_linux_actor_weight_bias_delta_l2": 1.903652329775962,
+    "candidate_native_learning_wall_seconds": 13993.868045549985
+  },
+  "anchor": {
+    "original_teacher_preserved": true,
+    "coefficient": 10.0,
+    "verified_kl_updates": 1500,
+    "anchor_sample_exposures": 240000000,
+    "sample_exposures_are_environment_transitions": false,
+    "anchored_interruption_resume_exercised": false
+  },
+  "checkpoint_sha256": {
+    "baseline": "361dec495e371e0666c2a956930238a3dd3457ea7854f55edb9554f6a46d87b9",
+    "candidate": "94ea630c620e28eaedd0e290bafac815b8c560e131013ffa554ef8f364e90b4f"
+  },
+  "plan_sha256": "fff55ff6bf3493873a918e7aa074e68a8665ce51f3d1efd98e2c850823b2015b",
+  "failure_admission": {
+    "public_office_training_episodes": 4000,
+    "observed_simulation_failures": 1488,
+    "exact_predeclared_capture_admitted": true,
+    "physical_robot_failure_log_ingestion_claimed": false
+  },
+  "reconstruction": {
+    "method": "CPU Open3D ScalableTSDFVolume",
+    "exact_collision_triangles": 921645,
+    "ordered_frozen_training_routes": 8000,
+    "integration_depth_frames": 1984,
+    "held_out_depth_frames": 501,
+    "raw_depth_rays_independently_recast": false
+  },
+  "readback": {
+    "candidate_training_and_diagnostics_archives": 5,
+    "candidate_training_and_diagnostics_sealed_payload_files": 1124,
+    "candidate_training_and_diagnostics_sealed_payload_bytes": 1882814067,
+    "complete_run_prefix_inventory_claimed": false,
+    "second_payload_download_claimed": false,
+    "development_sealed_payload_files": 449,
+    "development_sealed_payload_bytes": 747357793,
+    "development_checksum_manifests_excluded": 2,
+    "candidate_training_diagnostic_checksum_manifests_excluded": 5
+  },
+  "controls": {
+    "candidate_training": 4,
+    "training_exposed_diagnostics": 16,
+    "development": 8,
+    "frames_per_control": 31,
+    "state_population": 4000,
+    "observation_population": 1,
+    "training_exposed_diagnostics_used_for_promotion": false
+  },
+  "canonical_html_sha256": "5f8a401ac7d0d77b1ed17cad2ca2d9d3db86e51b1b53caacef053a3d74bf95db",
+  "native_result_sha256": "8748e30f1a0610326bbf0cc182e293411b2ec401aa4cf5f4be9fce09d036ef84",
+  "actual_common_cli_view_byte_equal": true,
+  "native_report_scored_frames": 23,
+  "native_report_scored_frames_per_group": [
+    7,
+    8,
+    8
+  ],
+  "offline_browser_widths": [
+    1440,
+    390
+  ],
+  "sampled_gpu_process_review": {
+    "status": "verified",
+    "receipt_sha256": "a6f56ecbd89ac71e78b20d5c649fe98f86b2bc877ce3076f62b1e3b1e806ca2d",
+    "requested_roles": 9,
+    "roles_with_positive_gpu_activity": 9,
+    "baseline_training_device_samples": 328,
+    "candidate_training_device_samples": 453,
+    "evaluation_device_samples": 59,
+    "metadata_files_rehashed": 1204,
+    "metadata_bytes_rehashed": 8010887,
+    "sampled_after_load_asset_pods": 5,
+    "continuous_gpu_observation_claimed": false,
+    "host_container_pid_equality_claimed": false,
+    "in_process_import_identity_claimed": false,
+    "complete_asset_closure_claimed": false,
+    "scope": "Retained sampled GPU provenance, not a new scientific or quality audit. Device rows are bracketed by first/last sealed-main active observations in the exact owned pod/container/image. Device memory/utilization and GPU process lists are not per-policy allocator measurements; host GPU process identifiers were never equated with container PIDs. Samples do not prove continuous process activity/utilization, startup-to-shutdown coverage, or in-process imports. Five after-load endpoint/cache samples do not pin all loaded/transitive asset bytes. The terminal driver rejected promotion; independent readers completed and reported final isolation."
+  },
+  "source_evidence": {
+    "baseline_training_independent_acceptance_sha256": "b77a101e58310375fe96a559fb0f3beb5071e7e53cd1a5edc361645df4c3a085",
+    "candidate_training_independent_acceptance_sha256": "6a80ffa58324b1c17f24bf999562b5dc8feefdfdcf31ec0db9c4650d6a944329",
+    "observation_admission_independent_acceptance_sha256": "e969cfd310faa8d477d48da06682205114bee30834534663cb239de8dcad4436",
+    "reconstruction_independent_acceptance_sha256": "0fd6ef915999c7aace9356df6af33e242c2020b90db2ec635d09b90d27022218",
+    "development_selection_content_acceptance_sha256": "845d6940ec875159f7d3c9dd5f32e5cac52482c6dfd869aefd0845563f357d32",
+    "development_selection_publication_acceptance_sha256": "b41a6adafae3d612fd42b99ec24e2da65c4583269376e69aa453ac3b3a568e75",
+    "baseline_development_audit_sha256": "d755ec5874f937aad72ac645b15619b86196bda613b6cd3e1d1e7753643f84f5",
+    "candidate_development_audit_sha256": "fe50eef5c03b8ef7435399a2d048f93290351d6a6224243f504460ab92714a0b",
+    "development_raw_controls_audit_sha256": "89b7fed7864c1c032b67a9ab3b9dfb172d47aebcbc4bf4e1db789a69c42a2292",
+    "native_selection_audit_sha256": "cf5b74930db623947b898a68d8d265f5cf65ec9d7c3436b6cb5271efdb0789ea",
+    "original_reader_qualification_sha256": "b91a0f0d53cc2790ed4bbee38d7d9ca1673b30354c956a3db910030e4d478272",
+    "development_source_attestation_index_sha256": "36a96e3fb7a2b414ba0517a15feea14bf58a5d9f7ad0fec4b0c81d5c00685034",
+    "current_publication_and_cli_sha256": "cb8cef5820f81a882ba497e07220bbf3d1be62683403a2d79895af1bdf484894",
+    "offline_browser_sha256": "dd8038f6d18fa4094661981b4fe3a48758ea3992fef2d1ecc3d4b17e97a1f4ef",
+    "report_privacy_and_exact_jpeg_disposition_sha256": "4f8222d44bf6c74d6d5faa9958a1fcdd1b327ffac28bdd8d3876cf184891985a",
+    "root_visual_review_sha256": "b81cb05f70b143b44f9ef73088ba024f8e7425c3ac9bfdbf344ee14ff6fc0e3b",
+    "sampled_gpu_native_provenance_sha256": "a6f56ecbd89ac71e78b20d5c649fe98f86b2bc877ce3076f62b1e3b1e806ca2d"
+  },
+  "review_provenance": {
+    "two_initial_local_report_regeneration_failures_preserved": true,
+    "cause": "Sorted persisted objects changed JSON insertion order in the order-preserving renderer.",
+    "resolution": "Original pure selection/report constructors reproduce original HTML and structured result byte exactly.",
+    "first_failure_log_sha256": "8f493ad69aa9ab920d9d1b06fd2d108e222831ccef4e2e2fb0d9b01d6e1a9021",
+    "second_failure_log_sha256": "f2286e3155f2277fd119df149166d24f2f0e7af778a87c78a1684a6371dd6ed9",
+    "native_report_source_and_quality_gates_changed": false,
+    "authoritative_linux_numeric_receipts_unchanged": true
+  },
+  "limitations": [
+    "The fixed baseline penalty did not improve development success or satisfy regional/per-case retention; there is no successful promotion claim.",
+    "Final outcomes were not evaluated or used for diagnosis. The unchanged final-access guard rejects the actual ineligible candidate.",
+    "Required native bundles and current publication/claim records were checked; no inventory of every run-prefix object or continuous GPU coverage is claimed.",
+    "A postlaunch installed-PPO sample is bound to the sealed candidate main process; this does not establish the in-process imported module or continuous execution.",
+    "Local floating-point reductions differ within recorded bounds. Categorical outcomes and threshold decisions agree; original strict Linux audits and gates remain authoritative.",
+    "Original HTML is unchanged. One infrastructure-pattern match is wholly inside compressed JPEG base64; exact-byte structure, metadata and all remaining text were checked.",
+    "Public simulation inputs only; no private site, physical robot, camera-input navigation policy or raw physical failure-log ingestion is qualified."
+  ]
+}

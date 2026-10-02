@@ -48,6 +48,8 @@
     {
       "id": "sonic-k8s-host-mounted",
       "status": "active",
+      "public_release_status": "quarantined",
+      "public_release_quarantine_reason": "The recorded public tag defaults to root despite the non-root runtime contract and exposes operator-specific build infrastructure in OCI labels. Use an explicit operator-controlled image or a newly scanned immutable development candidate until a repaired release is accepted.",
       "redistribution": "public-runtime-fetch",
       "name": "npa-sonic",
       "tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -134,6 +136,7 @@
     {
       "id": "sonic-mujoco-runtime-fetch",
       "status": "active",
+      "public_release_status": "active",
       "redistribution": "public-runtime-fetch",
       "name": "npa-sonic-mujoco",
       "tag": "0.2.0-runtime",

@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from npa.orchestration.npa_workflow.blueprints import (
     iter_npa_workflow_specs,
@@ -37,6 +41,74 @@ def _load_live_argv():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_live_credential_markers_include_saved_encord_values(monkeypatch) -> None:
+    import npa.clients.credentials as credential_module
+
+    helpers = _load_live_helpers()
+    monkeypatch.setattr(
+        credential_module,
+        "load_credentials",
+        lambda: SimpleNamespace(
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            tokens={
+                "ENCORD_SSH_KEY": "saved-encord-private-key",
+                "ENCORD_SSH_KEY_B64": "saved-encord-base64-key",
+            },
+        ),
+    )
+
+    markers = helpers.live_credential_markers()
+    assert "saved-encord-private-key" in markers
+    assert "saved-encord-base64-key" in markers
+
+
+@pytest.mark.parametrize(
+    "variant", ["image-attribute-augmentation", "event-video-generation"]
+)
+def test_paidf_live_materializer_requires_labeling_digests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, variant: str
+) -> None:
+    helpers = _load_live_helpers()
+    image = "registry.example.invalid/npa-paidf-test@sha256:" + "a" * 64
+    for name in ("NPA_E2E_PAIDF_IAA_IMAGE", "NPA_E2E_PAIDF_EVG_IMAGE"):
+        monkeypatch.setenv(name, image)
+    monkeypatch.delenv("NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE", raising=False)
+    with pytest.raises(
+        pytest.fail.Exception, match="NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE"
+    ):
+        helpers.materialize_live_spec(
+            tmp_path, f"paidf-{variant}.yaml", bucket="example-bucket", run_id="fixture"
+        )
+
+
+def test_paidf_live_materializer_routes_each_exact_labeling_image(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    helpers = _load_live_helpers()
+    variables = {
+        "generation_image": "NPA_E2E_PAIDF_EVG_IMAGE",
+        "attribute_search_image": "NPA_E2E_PAIDF_ATTRIBUTE_SEARCH_IMAGE",
+        "detection_image": "NPA_E2E_PAIDF_DETECTION_IMAGE",
+        "captioning_image": "NPA_E2E_PAIDF_CAPTIONING_IMAGE",
+        "visual_qa_image": "NPA_E2E_PAIDF_VISUAL_QA_IMAGE",
+    }
+    expected = {}
+    for index, (config_key, environment_key) in enumerate(variables.items(), start=1):
+        expected[config_key] = (
+            "registry.example.invalid/npa-paidf-test@sha256:" + str(index) * 64
+        )
+        monkeypatch.setenv(environment_key, expected[config_key])
+    path = helpers.materialize_live_spec(
+        tmp_path,
+        "paidf-event-video-generation.yaml",
+        bucket="example-bucket",
+        run_id="fixture",
+    )
+    spec = yaml.safe_load(path.read_text())
+    assert {key: spec["config"][key] for key in expected} == expected
 
 
 def test_force_accelerators_on_cpu_profiles() -> None:
@@ -127,6 +199,88 @@ def test_plan_submit_argv_forwards_preset_and_config_vars() -> None:
     )
 
 
+def test_live_argv_forwards_runtime_storage_prefix_to_plan_and_run(
+    tmp_path: Path,
+) -> None:
+    argv = _load_live_argv()
+    common = {
+        "path": tmp_path / "insights-smoke.yaml",
+        "run_id": "storage-location-live",
+        "registry": "registry.example/workbench",
+        "project": "operator-project",
+        "workflow_s3_prefix": "owner/runtime-control",
+        "skypilot_config_args": (
+            "--sky-bin",
+            "/owner/sky/bin/sky",
+            "--isolated-config-dir",
+            "/owner/state/run/controller",
+            "--infra",
+            "k8s/operator-context",
+        ),
+    }
+    planned = argv.plan_submit_args(**common)
+    runtime = argv.runtime_submit_args(
+        **common,
+        poll_seconds=2,
+        max_wait_seconds=0,
+        cancel_on_timeout=False,
+    )
+
+    for command in (planned, runtime):
+        index = command.index("--workflow-s3-prefix")
+        assert command[index + 1] == "owner/runtime-control"
+        assert command[command.index("--sky-bin") + 1] == "/owner/sky/bin/sky"
+        assert command[command.index("--isolated-config-dir") + 1] == (
+            "/owner/state/run/controller"
+        )
+        assert command[command.index("--infra") + 1] == "k8s/operator-context"
+    assert "--plan-only" in planned
+    assert "--runtime" in runtime
+
+
+@pytest.mark.parametrize(
+    "value", ["", "s3://bucket/root", "/absolute", "parent//child", "parent/../child"]
+)
+def test_runtime_storage_live_rejects_unsafe_control_parent(
+    value: str,
+) -> None:
+    argv = _load_live_argv()
+
+    with pytest.raises(ValueError, match="safe relative key"):
+        argv._safe_relative_workflow_prefix(value)
+
+
+@pytest.mark.parametrize(
+    ("science", "control"),
+    [("same", "same"), ("science", "science/control"), ("control/science", "control")],
+)
+def test_runtime_storage_live_requires_disjoint_prefixes(
+    science: str, control: str
+) -> None:
+    argv = _load_live_argv()
+    assert not argv._workflow_prefixes_disjoint(science, control)
+
+
+def test_runtime_storage_live_requires_fresh_owned_isolation_root(
+    tmp_path: Path,
+) -> None:
+    argv = _load_live_argv()
+    owned = tmp_path / "owned"
+    owned.mkdir(mode=0o700)
+    assert argv._owned_empty_isolation_root(str(owned)) == owned
+
+    permissive = tmp_path / "permissive"
+    permissive.mkdir(mode=0o755)
+    # Exercise unsafe permissions even when the runner uses an owner-only umask.
+    permissive.chmod(0o755)
+    with pytest.raises(ValueError, match="owner-only"):
+        argv._owned_empty_isolation_root(str(permissive))
+
+    (owned / "prior-run").mkdir()
+    with pytest.raises(ValueError, match="fresh and empty"):
+        argv._owned_empty_isolation_root(str(owned))
+
+
 def test_live_workflow_argv_builders_omit_project_only_when_unselected() -> None:
     argv = _load_live_argv()
     path = Path("/tmp/catalog-spec.yaml")
@@ -210,7 +364,6 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
     plan_only = {
         "adversarial-scenario-hardening.yaml",
-        "av-night-scene-hardening.yaml",
         "byof-droid-policy-learning.yaml",
         "byof-maniskill.yaml",
         "byof-mujoco-playground.yaml",
@@ -226,6 +379,44 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         assert case.plan_only, (
             f"{name} must retain its reviewed plan-only classification"
         )
+
+
+def test_cosmos_synth_fanout_records_runtime_topology_without_live_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name = "cosmos-synth-fanout-curation.yaml"
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == name)
+
+    assert case.runtime
+    assert case.expected_parallel_tasks == 2
+    assert case.plan_only
+    assert "merge-index" in case.plan_only_justification
+    assert "workbench.fiftyone.launch_app" in case.plan_only_justification
+    assert set(case.secret_envs) == {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+    }
+
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS", name)
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS", "multi")
+    assert runtime_submit_cases() == []
+    assert one_shot_submit_cases() == []
+
+
+def test_av_night_scene_rotation_skip_names_real_prerequisites() -> None:
+    case = next(
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.spec == "av-night-scene-hardening.yaml"
+    )
+
+    assert not case.plan_only
+    assert case.rotation_skip
+    assert "LanceDB" in case.skip_reason
+    assert "detection-training" in case.skip_reason
+    assert "BDD100K night subset" in case.skip_reason
+    assert "FiftyOne inspection" in case.notes
 
 
 def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
@@ -296,6 +487,27 @@ def test_groot_case_truthfully_describes_offline_configurable_training() -> None
     assert "one-to-many-GPU" in case.notes
     assert "learning outcome separately from pipeline status" in case.notes
     assert "not closed-loop or physical-robot task evidence" in case.notes
+
+
+def test_robotwin_case_is_plan_only_until_worker_authorization_exists() -> None:
+    case = next(
+        item for item in SUBMIT_LIVE_MATRIX if item.spec == "byof-robotwin.yaml"
+    )
+
+    assert case.tier == "multi"
+    assert case.plan_only
+    assert not case.runtime
+    assert set(case.secret_envs) == {
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    }
+    assert "public worker bridge is disabled" in case.plan_only_justification
+    assert (
+        "independently attested customer authorization" in case.plan_only_justification
+    )
+    assert "normal submit refuses before provider calls" in case.notes
+    assert "Operator-only evidence" in case.notes
 
 
 @pytest.mark.parametrize(
@@ -371,6 +583,126 @@ def test_real_cosmos_cases_seed_an_actual_input_video(
     body = bytes(videos[0]["Body"])
     assert len(body) > 1_000
     assert body[4:8] == b"ftyp"
+
+
+def test_paidf_evg_seed_verifies_source_before_writing(monkeypatch) -> None:
+    helpers = _load_live_helpers()
+    source = b"unit-test source bytes"
+    source_hash = hashlib.sha256(source).hexdigest()
+    writes = []
+    requests = []
+
+    class S3:
+        def put_object(self, **kwargs):
+            writes.append(kwargs)
+
+    class SourceResponse:
+        status_code = 200
+        content = source
+
+        def __init__(self, url):
+            self.url = url
+
+        def raise_for_status(self):
+            return None
+
+    def open_source(url, *, timeout, follow_redirects):
+        requests.append(url)
+        assert timeout == 30.0
+        assert follow_redirects is False
+        return SourceResponse(url)
+
+    monkeypatch.setattr(helpers.httpx, "get", open_source)
+    monkeypatch.setattr(helpers, "_PAIDF_CAMERA_SHA256", source_hash)
+    monkeypatch.setattr(
+        "npa.clients.project_credentials.s3_client_for_project",
+        lambda *_args, **_kwargs: S3(),
+    )
+    helpers.seed_live_workflow_inputs(
+        spec_name="paidf-event-video-generation.yaml",
+        bucket="unit-bucket",
+        run_id="seed-run",
+    )
+    assert requests == [helpers.httpx.URL(helpers._PAIDF_CAMERA_URL)]
+    assert writes[0]["Body"] == source
+    assert writes[0]["ContentType"] == "image/png"
+    assert writes[0]["Key"].endswith("/fixture/seed.png")
+    provenance = json.loads(writes[1]["Body"])
+    assert provenance["sha256"] == source_hash
+    assert provenance["source_revision"] in helpers._PAIDF_CAMERA_URL
+    assert provenance["license"] == "CC0-1.0"
+    assert provenance["bytes"] == len(source)
+    assert len(writes) == 2
+
+
+@pytest.mark.parametrize("failure", ["corrupt", "unavailable"])
+def test_paidf_evg_seed_never_uploads_unverified_input(monkeypatch, failure) -> None:
+    helpers = _load_live_helpers()
+    writes = []
+
+    class S3:
+        def put_object(self, **kwargs):
+            writes.append(kwargs)
+
+    class SourceResponse:
+        status_code = 200
+        content = b"corrupt source bytes"
+
+        def __init__(self, url):
+            self.url = url
+
+        def raise_for_status(self):
+            return None
+
+    def open_source(url, **_kwargs):
+        if failure == "unavailable":
+            raise OSError("source unavailable")
+        return SourceResponse(url)
+
+    monkeypatch.setattr(helpers.httpx, "get", open_source)
+    monkeypatch.setattr(
+        "npa.clients.project_credentials.s3_client_for_project",
+        lambda *_args, **_kwargs: S3(),
+    )
+    with pytest.raises((OSError, pytest.fail.Exception)):
+        helpers.seed_live_workflow_inputs(
+            spec_name="paidf-event-video-generation.yaml",
+            bucket="unit-bucket",
+            run_id="seed-run",
+        )
+    assert writes == []
+
+
+def test_paidf_evg_seed_rejects_non_https_fixture_transport(monkeypatch) -> None:
+    helpers = _load_live_helpers()
+    writes = []
+
+    class S3:
+        def put_object(self, **kwargs):
+            writes.append(kwargs)
+
+    monkeypatch.setattr(
+        helpers,
+        "_PAIDF_CAMERA_URL",
+        helpers._PAIDF_CAMERA_URL.replace("https://", "ftp://", 1),
+    )
+    monkeypatch.setattr(
+        helpers.httpx,
+        "get",
+        lambda *_args, **_kwargs: pytest.fail("network reached"),
+    )
+    monkeypatch.setattr(
+        "npa.clients.project_credentials.s3_client_for_project",
+        lambda *_args, **_kwargs: S3(),
+    )
+
+    with pytest.raises(pytest.fail.Exception, match="pinned HTTPS source"):
+        helpers.seed_live_workflow_inputs(
+            spec_name="paidf-event-video-generation.yaml",
+            bucket="unit-bucket",
+            run_id="seed-run",
+        )
+    assert writes == []
 
 
 def test_lerobot_subtask_proof_seeds_real_parquet_rows(monkeypatch) -> None:
@@ -518,6 +850,26 @@ def test_physical_ai_data_factory_registered_for_live_infra() -> None:
     assert helpers.assume_decision_for(spec) == "promote_checkpoint"
 
 
+def test_nvidia_paidf_vda_registered_for_real_runtime_live_infra() -> None:
+    spec = "nvidia-paidf-vda-cosmos-transfer25.yaml"
+    case = next((item for item in SUBMIT_LIVE_MATRIX if item.spec == spec), None)
+    assert case is not None
+    assert case.tier == "multi"
+    assert case.runtime
+    assert not case.plan_only
+    assert case.requires_token_factory
+    assert dict(case.config_vars) == {"n_augmentations": "1"}
+    assert dict(case.image_overrides) == {
+        "workbench.cosmos2.transfer_execute": "cosmos2-transfer",
+        "workbench.cosmos_evaluator.evaluate": "cosmos-evaluator",
+        "workbench.cosmos_curate.curate": "cosmos-curate",
+        "workbench.fiftyone.curate_augmented": "fiftyone",
+    }
+    helpers = _load_live_helpers()
+    assert spec in helpers.DYNAMIC_SPECS
+    assert helpers.assume_decision_for(spec) == "promote_checkpoint"
+
+
 def test_paidf_cosmos3_registered_for_real_runtime_live_infra() -> None:
     spec = "paidf-cosmos3.yaml"
     case = next((item for item in SUBMIT_LIVE_MATRIX if item.spec == spec), None)
@@ -621,11 +973,15 @@ def test_runtime_specs_are_registered_with_the_right_tiers() -> None:
         assert not case.plan_only, f"{spec} is the live proof; it must not be plan-only"
 
 
-def test_runtime_cases_declare_their_secrets_and_are_not_plan_only() -> None:
+def test_runtime_cases_declare_secrets_and_explain_plan_only_status() -> None:
     for case in (c for c in SUBMIT_LIVE_MATRIX if c.runtime):
         assert case.secret_envs, f"{case.spec} must declare the secrets its tasks need"
         assert "AWS_ACCESS_KEY_ID" in case.secret_envs
-        assert not case.plan_only
+        if case.plan_only:
+            assert case.plan_only_justification.strip(), (
+                f"{case.spec} records runtime topology but does not explain why "
+                "live submission remains disabled"
+            )
 
 
 def test_every_live_case_declares_the_object_store_credentials_setup_needs() -> None:
@@ -791,3 +1147,42 @@ def test_gpu_sweep_live_case_caps_concurrency_for_cost() -> None:
     # 4 members with maxConcurrency 2 means the runtime submits two JobGroups, which
     # is also the only live coverage of the multi-batch path.
     assert sweep.expected_parallel_tasks == 4
+
+
+def test_navigation_live_spec_uses_explicit_operator_inputs(tmp_path, monkeypatch):
+    helpers = _load_live_helpers()
+    image = "registry.example.invalid/navigation@sha256:" + "a" * 64
+    monkeypatch.setenv(
+        "NPA_NAVIGATION_INPUT_URI", "s3://fixture-bucket/navigation-input/"
+    )
+    monkeypatch.setenv("NPA_NAVIGATION_IMAGE", image)
+    path = helpers.materialize_live_spec(
+        tmp_path,
+        "shared-scene-navigation.yaml",
+        bucket="fixture-bucket",
+        run_id="fixture",
+    )
+    spec = yaml.safe_load(path.read_text())
+    config = spec["config"]
+    assert config["byof_image"] == image
+    assert config["input_uri"] == "s3://fixture-bucket/navigation-input/"
+    for stage, input_prefix in (
+        ("train", "prepared_uri"),
+        ("evaluate", "training_uri"),
+    ):
+        prefix = "{{config." + input_prefix + "}}"
+        assert spec["states"][stage]["inputs"] == [
+            {
+                "uri": prefix + "completion.json",
+                "schema": "npa.navigation.publication.v1",
+            }
+        ]
+        assert spec["states"][stage]["run"]["argv"][-2] == prefix
+    monkeypatch.delenv("NPA_NAVIGATION_IMAGE")
+    with pytest.raises(ValueError, match="exact NPA_NAVIGATION_IMAGE"):
+        helpers.materialize_live_spec(
+            tmp_path,
+            "shared-scene-navigation.yaml",
+            bucket="fixture-bucket",
+            run_id="fixture",
+        )

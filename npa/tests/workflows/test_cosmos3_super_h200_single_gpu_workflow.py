@@ -21,8 +21,8 @@ def test_h200_single_gpu_workflow_preserves_exact_isolated_contract() -> None:
     raw = yaml.safe_load(SPEC_PATH.read_text(encoding="utf-8"))
     resources = raw["resources"]["h200-single-gpu"]
     assert resources["accelerators"] == "H200:1"
-    assert resources["cpus"] == 16
-    assert resources["memory"] == "200Gi"
+    assert resources["cpus"] == 12
+    assert resources["memory"] == "180Gi"
     assert raw["config"]["gpu_family"] == "H200"
     assert raw["config"]["topologies"] == "1x1"
     assert raw["config"]["attempts"] == "24"
@@ -52,11 +52,29 @@ def test_h200_single_gpu_workflow_renders_tp1_command(monkeypatch) -> None:
     task = docs[1]
     assert task["resources"]["image_id"] == f"docker:{wrapper}"
     assert task["resources"]["accelerators"] == "H200:1"
-    assert task["resources"]["cpus"] == "16+"
-    assert task["resources"]["memory"] == "200+"
+    assert task["resources"]["cpus"] == "12+"
+    assert task["resources"]["memory"] == "180+"
     assert "--topologies 1x1" in task["run"]
     assert "--suite h200-single-gpu" in task["run"]
     assert "--attempts 24" in task["run"]
     hints = secret_env_hints_for_plan(plan.steps)
     assert "HF_TOKEN" in hints
-    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" in hints
+    assert "NPA_COSMOS3_ACCEPT_NVIDIA_SOFTWARE_LICENSE" not in hints
+
+
+def test_b200_single_gpu_workflow_renders_matching_hardware_and_suite(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src")
+    path = SPEC_PATH.with_name("cosmos3-super-b200-single-gpu.yaml")
+    spec = load_spec_for_submit(path)
+    plan = build_plan(spec, run_id="b200-single-test")
+    rendered = render_skypilot_yaml(
+        spec, plan, run_id="b200-single-test", options=SkypilotRenderOptions()
+    )
+    task = [item for item in yaml.safe_load_all(rendered) if item][1]
+    assert task["resources"]["accelerators"] == "B200:1"
+    assert "--suite b200-single-gpu" in task["run"]
+    assert "--gpu-family B200" in task["run"]
+    assert "--topologies 1x1" in task["run"]
+    assert "--attempts 24" in task["run"]

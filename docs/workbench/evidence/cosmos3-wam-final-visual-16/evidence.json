@@ -1,0 +1,350 @@
+{
+  "schema": "npa.cosmos3.wam-trained-visual.v1",
+  "date": "2026-09-28",
+  "scope": "Actual final sixteen-GPU training checkpoint; ten visual trials, separate from the 500-trial qualification.",
+  "recipe_commit": "315f68f31d0158d848df8d97e5dc72da99328e32",
+  "sources": {
+    "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+  },
+  "checkpoint_step": 2000,
+  "training_gpus": 16,
+  "training_nodes": 2,
+  "model_manifest_sha256": "1aa6f96662ac193e3b22f88aaccb74954c8aca8fda18e53d341db5eba01977b2",
+  "model_component_bytes": 121408256745,
+  "evaluation": {
+    "workers": 8,
+    "envs_per_worker": 1,
+    "trials_per_task": 1,
+    "seed": 42,
+    "num_denoising_steps": 30,
+    "guidance": 1.0,
+    "fps": 20,
+    "action_chunk_size": 16,
+    "record_rollouts": true,
+    "successes": 9,
+    "trials": 10,
+    "full_500_trial_evaluation": false,
+    "process_seconds": 407.07052739900246,
+    "slurm_allocation_seconds": 407,
+    "interpretation": "Checkpoint hashing, setup, parallel simulation and media writing included. Playback duration is not inference latency."
+  },
+  "selection": "First successful task 0 and first unsuccessful task 5; full native recordings and all ten outcomes retained.",
+  "source_hashes": {
+    "model-hashes.json": "bfa1f4714665250b33b3f98f97a18ad7648ecb35e27f6e5e0c4030ebcd00a53a",
+    "quality.json": "e00752fa8ed6d27305f3eca3ad90f100ae18894dfc699e4f6cdae8ce81974202",
+    "settings.json": "ad01eece9a9600f95f7d6d99536b5e2fd7f80488e0dfaabd5a4ba7d6e342c749",
+    "worker-0/commands.json": "29c1bc08409283f31c76a72927e7d455909fb159947f740464c46773caf558e6",
+    "worker-0/completion.json": "f79e1b7363c8f5d09031b727a7cd8b48e0e54f6d2dced8dd14396ce621f42ac6",
+    "worker-0/evaluation.log": "9bd67fd100f777a20d5aa086232c9da1083e290ad4000e9866c3cf1b912b8012",
+    "worker-0/rollouts/actions/task_000/episode_000.json": "dd8147644bc66d40a5d2402e1514c95cfd34aa64f00ef69af1100f20f3899671",
+    "worker-0/rollouts/actions/task_008/episode_000.json": "8296ac58fc026761d849e1d2a035b79788cebd6a885c789552b989a09599f2f5",
+    "worker-0/rollouts/comparisons/task_000/episode_000.gif": "bfba0cef768344dfd795e22358401067a1c4842262235d40cef329251fb7c13a",
+    "worker-0/rollouts/gifs/task_000/episode_000.gif": "36bca4dbd788c123e1fe78bf8d643a86addec01a7f56005d8e880e6d1f8f965e",
+    "worker-0/rollouts/summary.json": "10aa31b43b59d7afda4598fd2f380eafbcee418848970504092c0e289e3d007f",
+    "worker-0/server-info.json": "00bfce3cc6eba5bfb0411fd44ca0822f7e9ce9fe38a8cc2f8fe133fe277038a3",
+    "worker-0/server-output/console.log": "41d96d4511f05c0e327bdd8f648a43e1bf82874f01a6e86cdb4102f855715a73",
+    "worker-0/server-output/debug.log": "2e456d31d7bfdcf620e347384c481b0432f031151684ecdcacca13d8fd2be88e",
+    "worker-0/server.log": "89665cdc99dffffd74174add3f9a356686d8ce60c621cb8dcd56013f0c321df2",
+    "worker-1/commands.json": "35ca4193514424ede45d6af145772f1d088774eb74748883692ccd0104ed5fdd",
+    "worker-1/completion.json": "c714d75c25abd8845a86b2ce18c90cb91f697e8b311926ec49b991d0b082c38a",
+    "worker-1/evaluation.log": "5f25005f56a45d081d50ea4603d1297f5bcc768ad956ba78c99ccb3f13abcd55",
+    "worker-1/rollouts/actions/task_001/episode_000.json": "3fafce1198babbaaa9c60069413af244e49803485f6419ca92fb3c955ee2241b",
+    "worker-1/rollouts/actions/task_009/episode_000.json": "5e2506f2d95b1073c129dda786aae616833f1b4f7b949b896d7f61c8cf293be3",
+    "worker-1/rollouts/summary.json": "2c8151965d49159331cf80cbea9da20e6ef66d5a7bb3f99b60dff36615d8832c",
+    "worker-1/server-info.json": "00bfce3cc6eba5bfb0411fd44ca0822f7e9ce9fe38a8cc2f8fe133fe277038a3",
+    "worker-1/server-output/console.log": "cf288727c5717a478e6a6d74efa1dfad66f86bb1ed2bd23b96eb57781cc9ccd3",
+    "worker-1/server-output/debug.log": "2e315671eb081d5ba47234478c44084ff27ad18e3948291433265a0c43a1ed99",
+    "worker-1/server.log": "ce3d4e89a01437281174fcea0904a45a35288cfba043980e0690a4c8937ff900",
+    "worker-2/commands.json": "6d0c93f0a0e07245445cf372b0f19bdf20579bafd2189de211e7b3cffdafcb7d",
+    "worker-2/completion.json": "c571bbdc4cb14e7f537c0b03a50a941799a83779790758539d61199b442aee0b",
+    "worker-2/evaluation.log": "83abb843b2cda52708cdedce2a953f51b1a588c7bc25f8505a074307f15bbf5a",
+    "worker-2/rollouts/actions/task_002/episode_000.json": "c41cb0f882c1d18392991b3923f66d12470b4d94592494d82718ce729f56d728",
+    "worker-2/rollouts/summary.json": "1cb0343ea48d19b745ff7ed86bb1dc3d83b051fd36a164d13c83f6e57ad523f4",
+    "worker-2/server-info.json": "00bfce3cc6eba5bfb0411fd44ca0822f7e9ce9fe38a8cc2f8fe133fe277038a3",
+    "worker-2/server-output/console.log": "6c49cf5f3aaf73575f67c9dffc45850c9e4e35e6a3a49b6260e52f273c7ef7e2",
+    "worker-2/server-output/debug.log": "f5beb469ab34471492e5723efc285808c0ebf3a7615e428541a0fb05c918bde6",
+    "worker-2/server.log": "2fa307d02d388bf4de4d1a1b700cd5a8a83b9ffc6fdd8d2ce6028916169e1835",
+    "worker-3/commands.json": "d957a8e12b63f1cedfb111d3ab3f70a2f00d09e091d73e43590d59f632d825cf",
+    "worker-3/completion.json": "8075aeae2cfc51401f52948de21f562a0e325d127c5ac83f457bb9a603fd207a",
+    "worker-3/evaluation.log": "13baae404a042d445948af94418e67d035f6e07b578aba69f579a79349eb40ba",
+    "worker-3/rollouts/actions/task_003/episode_000.json": "5839687dd8c30ba5ebef524ca1f1a34e31900e55fb064f06a6bc0860e0b11ff4",
+    "worker-3/rollouts/summary.json": "d7f6a8b3d64001a3c5d2fb5714898225d17ec246eef697700d14b64ba94fd1b6",
+    "worker-3/server-info.json": "00bfce3cc6eba5bfb0411fd44ca0822f7e9ce9fe38a8cc2f8fe133fe277038a3",
+    "worker-3/server-output/console.log": "edcfe15a5ac301595f5b07f457da4a4045f228c3a249f79992786d6578bf5db1",
+    "worker-3/server-output/debug.log": "a29f6468b59d4d3c5e51a18a868ed9e7820c6a884602e1d0d9428c8be2cad601",
+    "worker-3/server.log": "50eeda10a167693b0bd4f937bcb03f617fa615a78885664cf01b44ca0088578d",
+    "worker-4/commands.json": "592f2b6cfcb1fc156405abb181241855a20f0d4c334dea0a67bf11548c087eea",
+    "worker-4/completion.json": "4c385a92016b0abb903da610ec5a7186d3a1e0d87b5eede1961c8066d90d70d4",
+    "worker-4/evaluation.log": "48678396b18f920e7d56341ffa1f6b5ca538b449c65933f772d791d847b2c25b",
+    "worker-4/rollouts/actions/task_004/episode_000.json": "2ed988f42c85ebef56c8bb8c5ed334ef0a95dd737dfbb8eff518418f02398a75",
+    "worker-4/rollouts/summary.json": "21203a3e136becc2b0b5d86f24487063a3febbfa211d282b486e90d5d4b85a48",
+    "worker-4/server-info.json": "00bfce3cc6eba5bfb0411fd44ca0822f7e9ce9fe38a8cc2f8fe133fe277038a3",
+    "worker-4/server-output/console.log": "6b086f3322ebd39dded82b1611cbd92c04a2c7e6b56879a1972480b6da8b1b65",
+    "worker-4/server-output/debug.log": "ab85c184272dc8f34c44e85d913930ef479fbec5f870e1c7e56fc44f95ff9a2b",
+    "worker-4/server.log": "9dd1f37d0efb405407791a07c2b35c946f855e15d24122d413d3973db2503e72",
+    "worker-5/commands.json": "1858491bdc8c50b26b1c561bf16b96a5fd5e11ee7267959c139e18ed6f87202f",
+    "worker-5/completion.json": "4b151c315052dbbe23c76cda22652dbda17ffbe5bcf068f66a2fd7e8e3802920",
+    "worker-5/evaluation.log": "cb63d4b44302429cc368c4a97257b7920c53e22f9dab1660b07f546d149af1c7",
+    "worker-5/rollouts/actions/task_005/episode_000.json": "9fbd14e555910ab1d64773962074ddadb46e2eeb1a23ef17b412cff5503e905b",
+    "worker-5/rollouts/comparisons/task_005/episode_000.gif": "e415eca71b94f1a99ffd94c6142ad077a48b93d0ecc0181ff4241cb55a984fc5",
+    "worker-5/rollouts/gifs/task_005/episode_000.gif": "78de0357b40d81d610a1b31af0785a85c30aa4a3d3ccd9db79d11fd64411ec4d",
+    "worker-5/rollouts/summary.json": "ecd671c1f856b850f456711bfcfe875fd1abf63d47abf33286ab760848f8247e",
+    "worker-5/server-info.json": "00bfce3cc6eba5bfb0411fd44ca0822f7e9ce9fe38a8cc2f8fe133fe277038a3",
+    "worker-5/server-output/console.log": "8c853bba96d72d5f7d39879a1f751879a11256f2f8b6e5fbc61ed006d15cd4c7",
+    "worker-5/server-output/debug.log": "6261a43608f2a88bea0d44b339d8d254ec063b08abfbff9fc16c989aaa5c62f0",
+    "worker-5/server.log": "13ab7c1c44016bd68edc4006186603e037dda52058c85248958a130b267b1620",
+    "worker-6/commands.json": "69e5b5e4c58a27949bd17b4f582e3113228548421361886061bcba7a78443aef",
+    "worker-6/completion.json": "41d2bcf98b7eae3ab6351d187b35bb5a4de3e32a066308300ca082026e0e9443",
+    "worker-6/evaluation.log": "84c2657023d1eba2d32b0f0d4c1438cf0bac1128f700b33c261642b0e4647073",
+    "worker-6/rollouts/actions/task_006/episode_000.json": "1ca21a71160f6eb19a08813947624905578d4f06118134f7e8e3af2460bf83b6",
+    "worker-6/rollouts/summary.json": "2210578290ae77bdded8834b82f95c7b1043aa3ec6bc15a80cb87c9785c1ca71",
+    "worker-6/server-info.json": "00bfce3cc6eba5bfb0411fd44ca0822f7e9ce9fe38a8cc2f8fe133fe277038a3",
+    "worker-6/server-output/console.log": "54120fa84e5c7273edd66372d0b820e2f6ce6d1e3cb1b38058d7ad36b769334b",
+    "worker-6/server-output/debug.log": "484307bb1f82efbcbf05a2182a54ec351570607fec961a921da3ab3af7b40fa8",
+    "worker-6/server.log": "3f032db63b7b00e2e8c45170977e2fbd70bc8416d1e781e679f5b5a5eeac0886",
+    "worker-7/commands.json": "1a1f00a26d52f16d31529acc95ec0c30ef5108fcb77f6e96820cf72ceb9d2957",
+    "worker-7/completion.json": "28cd5aedae6f647290a5a12785c44ef2cbfa9a70d1576398e95353019cdcf1ff",
+    "worker-7/evaluation.log": "daa73740561275a3b61044185bee8f31b1d603b8875e557a45f1206edabdb27e",
+    "worker-7/rollouts/actions/task_007/episode_000.json": "690f1bbe55667f507be35d247b9779abb4e30d8373195f2ce4505b58bb23247a",
+    "worker-7/rollouts/summary.json": "031afe8450c8e4016020acd5ae38631cd41dad62350acc368975fec524acc0a9",
+    "worker-7/server-info.json": "00bfce3cc6eba5bfb0411fd44ca0822f7e9ce9fe38a8cc2f8fe133fe277038a3",
+    "worker-7/server-output/console.log": "34ef1c73b5bea9cc64e9baa532af2a204fe35339cc1e7af9448933c77f5a0900",
+    "worker-7/server-output/debug.log": "a05169324bed0ebd88bd6a686a327008dbd4e996a85426d942cc530f57f9b2f9",
+    "worker-7/server.log": "f94d02e69a59c749d11b7be87c2e0ebf0c9f2cbab6c005765b6e6cec5d136458"
+  },
+  "public_files_sha256": {
+    "model-hashes.json": "bfa1f4714665250b33b3f98f97a18ad7648ecb35e27f6e5e0c4030ebcd00a53a",
+    "quality.json": "e00752fa8ed6d27305f3eca3ad90f100ae18894dfc699e4f6cdae8ce81974202",
+    "task-000-comparison.mp4": "ebcb04ebdf3438e37f78e1ab6756a6fc2611224a076bceb1e65a687e5938655d",
+    "task-000.mp4": "9406a524b5738d3ee2e5835be4c1df2b7f955976bde6f9c410a026ea9f69073c",
+    "task-005-comparison.mp4": "4d405e9ce9221494b13978575359c5d48d1ef5ef6542ba00e5932f5628247fa8",
+    "task-005.mp4": "26f697ee4163b11a24f50fa938a1a70a9a5ebf84662c01803a9fb753f359b001",
+    "policy-gpu-telemetry.csv": "76c1f276b7c5d4b9aad5e568b0d68f621461d0a3fdcada37715f879e8ec0cd34",
+    "telemetry-summary.json": "63492d0ae69b851baf7cfbf851860e9c880121beb5c4bdf1d4e40d570d91b520"
+  },
+  "plotter_sha256": "b6f75d53e8f24401a7cb6f56f4744530eb25b2840dc871bd43c14744f0517852",
+  "samples": [
+    {
+      "task_id": 0,
+      "task_description": "put both the alphabet soup and the tomato sauce in the basket",
+      "trial": 0,
+      "episode": 0,
+      "success": true,
+      "steps": 254,
+      "error": null,
+      "elapsed_s": 116.136,
+      "poster": "task-000-contact.png",
+      "contact_frame_indices": [
+        0,
+        51,
+        102,
+        152,
+        203,
+        254
+      ],
+      "fps": 20,
+      "video": "task-000.mp4",
+      "video_sha256": "9406a524b5738d3ee2e5835be4c1df2b7f955976bde6f9c410a026ea9f69073c",
+      "video_probe": {
+        "width": 256,
+        "height": 256,
+        "r_frame_rate": "20/1",
+        "duration": "12.750000",
+        "nb_read_frames": "255"
+      },
+      "video_source_gif_sha256": "36bca4dbd788c123e1fe78bf8d643a86addec01a7f56005d8e880e6d1f8f965e",
+      "video_source_gif_probe": {
+        "width": 256,
+        "height": 256,
+        "r_frame_rate": "20/1",
+        "duration": "12.750000",
+        "nb_read_frames": "255"
+      },
+      "comparison_video": "task-000-comparison.mp4",
+      "comparison_video_sha256": "ebcb04ebdf3438e37f78e1ab6756a6fc2611224a076bceb1e65a687e5938655d",
+      "comparison_video_probe": {
+        "width": 1028,
+        "height": 272,
+        "r_frame_rate": "20/1",
+        "duration": "12.250000",
+        "nb_read_frames": "245"
+      },
+      "comparison_video_source_gif_sha256": "bfba0cef768344dfd795e22358401067a1c4842262235d40cef329251fb7c13a",
+      "comparison_video_source_gif_probe": {
+        "width": 1028,
+        "height": 272,
+        "r_frame_rate": "20/1",
+        "duration": "12.250000",
+        "nb_read_frames": "245"
+      },
+      "dimensions": [
+        256,
+        256
+      ]
+    },
+    {
+      "task_id": 5,
+      "task_description": "pick up the book and place it in the back compartment of the caddy",
+      "trial": 0,
+      "episode": 0,
+      "success": false,
+      "steps": 520,
+      "error": null,
+      "elapsed_s": 176.621,
+      "poster": "task-005-contact.png",
+      "contact_frame_indices": [
+        0,
+        104,
+        208,
+        312,
+        416,
+        520
+      ],
+      "fps": 20,
+      "video": "task-005.mp4",
+      "video_sha256": "26f697ee4163b11a24f50fa938a1a70a9a5ebf84662c01803a9fb753f359b001",
+      "video_probe": {
+        "width": 256,
+        "height": 256,
+        "r_frame_rate": "20/1",
+        "duration": "26.050000",
+        "nb_read_frames": "521"
+      },
+      "video_source_gif_sha256": "78de0357b40d81d610a1b31af0785a85c30aa4a3d3ccd9db79d11fd64411ec4d",
+      "video_source_gif_probe": {
+        "width": 256,
+        "height": 256,
+        "r_frame_rate": "20/1",
+        "duration": "26.050000",
+        "nb_read_frames": "521"
+      },
+      "comparison_video": "task-005-comparison.mp4",
+      "comparison_video_sha256": "4d405e9ce9221494b13978575359c5d48d1ef5ef6542ba00e5932f5628247fa8",
+      "comparison_video_probe": {
+        "width": 1028,
+        "height": 272,
+        "r_frame_rate": "20/1",
+        "duration": "25.550000",
+        "nb_read_frames": "511"
+      },
+      "comparison_video_source_gif_sha256": "e415eca71b94f1a99ffd94c6142ad077a48b93d0ecc0181ff4241cb55a984fc5",
+      "comparison_video_source_gif_probe": {
+        "width": 1028,
+        "height": 272,
+        "r_frame_rate": "20/1",
+        "duration": "25.550000",
+        "nb_read_frames": "511"
+      },
+      "dimensions": [
+        256,
+        256
+      ]
+    }
+  ],
+  "scheduler": {
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "allocation_seconds": 407
+  },
+  "process_attribution": "Native worker commands, server logs, completion receipts and Slurm allocation retained. No live policy process snapshot was taken for this visual pass. See separate sixteen-rank live training attribution.",
+  "gpu_proof": {
+    "schema": "npa.cosmos3.wam-policy-telemetry.v1",
+    "window_start_utc": "2026-09-28T11:52:59+00:00",
+    "window_end_utc": "2026-09-28T11:57:00+00:00",
+    "samples": 1928,
+    "devices": {
+      "0": {
+        "samples": 241,
+        "maximum_utilization_pct": 40.0,
+        "maximum_memory_mib": 34196.0,
+        "maximum_sample_gap_seconds": 1.1610000133514404
+      },
+      "1": {
+        "samples": 241,
+        "maximum_utilization_pct": 47.0,
+        "maximum_memory_mib": 34236.0,
+        "maximum_sample_gap_seconds": 1.1499998569488525
+      },
+      "2": {
+        "samples": 241,
+        "maximum_utilization_pct": 40.0,
+        "maximum_memory_mib": 34258.0,
+        "maximum_sample_gap_seconds": 1.1519999504089355
+      },
+      "3": {
+        "samples": 241,
+        "maximum_utilization_pct": 42.0,
+        "maximum_memory_mib": 34258.0,
+        "maximum_sample_gap_seconds": 1.1610000133514404
+      },
+      "4": {
+        "samples": 241,
+        "maximum_utilization_pct": 44.0,
+        "maximum_memory_mib": 34236.0,
+        "maximum_sample_gap_seconds": 1.1610000133514404
+      },
+      "5": {
+        "samples": 241,
+        "maximum_utilization_pct": 39.0,
+        "maximum_memory_mib": 34258.0,
+        "maximum_sample_gap_seconds": 1.1610000133514404
+      },
+      "6": {
+        "samples": 241,
+        "maximum_utilization_pct": 40.0,
+        "maximum_memory_mib": 34252.0,
+        "maximum_sample_gap_seconds": 1.1610000133514404
+      },
+      "7": {
+        "samples": 241,
+        "maximum_utilization_pct": 48.0,
+        "maximum_memory_mib": 34258.0,
+        "maximum_sample_gap_seconds": 1.1610000133514404
+      }
+    },
+    "policy_requests_completed": 176,
+    "requests_by_worker": [
+      {
+        "worker": 0,
+        "completed_policy_requests": 40
+      },
+      {
+        "worker": 1,
+        "completed_policy_requests": 31
+      },
+      {
+        "worker": 2,
+        "completed_policy_requests": 15
+      },
+      {
+        "worker": 3,
+        "completed_policy_requests": 14
+      },
+      {
+        "worker": 4,
+        "completed_policy_requests": 14
+      },
+      {
+        "worker": 5,
+        "completed_policy_requests": 32
+      },
+      {
+        "worker": 6,
+        "completed_policy_requests": 13
+      },
+      {
+        "worker": 7,
+        "completed_policy_requests": 17
+      }
+    ],
+    "raw_csv_sha256": "b5e305292b9e82435461e3774c66f0167156c5dd5cea3eaecf39a3550a7e8005",
+    "selected_original_rows_sha256": "2cc5ad8b191f2b459d76c311ac3164f367dc39685c96ecc4d861b33f3f64ee95",
+    "public_csv_sha256": "76c1f276b7c5d4b9aad5e568b0d68f621461d0a3fdcada37715f879e8ec0cd34",
+    "scope": "Eight GPUs on the evaluation host, earliest policy request through one second after latest response; includes simulation, media writing and idle intervals. Sampled device maxima, not allocator or subsecond peaks. No live process snapshot captured for this visual pass."
+  }
+}

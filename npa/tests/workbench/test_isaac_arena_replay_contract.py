@@ -58,6 +58,61 @@ def test_zero_action_replay_is_a_factual_evaluation_input(tmp_path: Path) -> Non
     assert evidence["runtime_outcome_claim"] is False
 
 
+@pytest.mark.parametrize("success", [True, False, np.int8(0), np.uint64(1)])
+@pytest.mark.parametrize("shape", [(), (1,), (1, 1)])
+def test_replay_success_accepts_scalar_or_singleton_boolean_or_binary_integer(
+    tmp_path: Path, success, shape
+) -> None:
+    path = tmp_path / "source-success.hdf5"
+    _replay(path, np.zeros((2, 2)))
+    with h5py.File(path, "a") as dataset:
+        dataset["data/demo_0"].attrs["success"] = np.asarray(success).reshape(shape)
+
+    evidence = _replay_input_evidence(path)
+
+    assert evidence["source_recorded_success"] is bool(success)
+    assert evidence["runtime_outcome_claim"] is False
+
+
+@pytest.mark.parametrize(
+    "success",
+    [
+        "false",
+        1.0,
+        2,
+        np.array([1.0]),
+        np.array([1 + 0j]),
+        np.array([b"true"]),
+        np.array([2]),
+        np.array([-1]),
+        np.array([], dtype=bool),
+        np.array([True, True]),
+    ],
+)
+def test_replay_success_rejects_truthy_values_and_invalid_cardinality(
+    tmp_path: Path, success
+) -> None:
+    path = tmp_path / "invalid-success.hdf5"
+    _replay(path, np.zeros((2, 2)))
+    with h5py.File(path, "a") as dataset:
+        dataset["data/demo_0"].attrs["success"] = success
+
+    with pytest.raises(IsaacArenaError, match="success.*boolean or 0/1"):
+        _replay_input_evidence(path)
+
+
+def test_replay_success_remains_optional(tmp_path: Path) -> None:
+    path = tmp_path / "no-success.hdf5"
+    _replay(path, np.zeros((2, 2)))
+    with h5py.File(path, "a") as dataset:
+        del dataset["data/demo_0"].attrs["success"]
+
+    evidence = _replay_input_evidence(path)
+
+    assert evidence["source_recorded_success"] is None
+    assert evidence["runtime_outcome_claim"] is False
+
+
 def test_static_optional_state_history_is_diagnostic_not_a_rejection(
     tmp_path: Path,
 ) -> None:

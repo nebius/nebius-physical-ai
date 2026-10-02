@@ -26,8 +26,17 @@ _TEMPLATES = (
     "byof",
     "rl-policy-success",
     "physical-ai-data-factory",
+    "paidf-defect-image-generation",
+    "paidf-image-attribute-augmentation",
+    "paidf-event-video-generation",
     "sim2real-staged",
 )
+
+_STATIC_WORKFLOW_TEMPLATES = {
+    "paidf-defect-image-generation": "paidf-defect-image-generation.yaml",
+    "paidf-image-attribute-augmentation": "paidf-image-attribute-augmentation.yaml",
+    "paidf-event-video-generation": "paidf-event-video-generation.yaml",
+}
 
 
 class _FoldedStr(str):
@@ -108,6 +117,15 @@ _TEMPLATE_ALIASES: dict[str, str] = {
     "augment_multiply": "physical-ai-data-factory",
     "multiply": "physical-ai-data-factory",
     "fanout-augment": "physical-ai-data-factory",
+    "dig": "paidf-defect-image-generation",
+    "defect-image-generation": "paidf-defect-image-generation",
+    "defect_image_generation": "paidf-defect-image-generation",
+    "iaa": "paidf-image-attribute-augmentation",
+    "image-attribute-augmentation": "paidf-image-attribute-augmentation",
+    "image_attribute_augmentation": "paidf-image-attribute-augmentation",
+    "evg": "paidf-event-video-generation",
+    "event-video-generation": "paidf-event-video-generation",
+    "event_video_generation": "paidf-event-video-generation",
     "sim2real-staged": "sim2real-staged",
     "sim-to-real": "sim2real-staged",
     "staged-sim2real": "sim2real-staged",
@@ -186,6 +204,21 @@ _TEMPLATE_KEYWORDS: dict[str, tuple[str, ...]] = {
         "scenario variants",
         "cosmos transfer",
         "amplify",
+    ),
+    "paidf-defect-image-generation": (
+        "defect image generation",
+        "anomalygen",
+        "manual roi",
+        "manual-roi",
+    ),
+    "paidf-image-attribute-augmentation": (
+        "image attribute augmentation",
+        "clothing attribute augmentation",
+    ),
+    "paidf-event-video-generation": (
+        "event video generation",
+        "safety event video",
+        "anomaly video generation",
     ),
     "sim2real-staged": (
         "sim2real",
@@ -2162,6 +2195,26 @@ def choose_workflow_template(
     )
     if data_factory_explicit:
         scores["physical-ai-data-factory"] += 10
+    paidf_specific = {
+        "paidf-defect-image-generation": (
+            "defect image generation",
+            "anomalygen",
+            "manual roi",
+            "manual-roi",
+        ),
+        "paidf-image-attribute-augmentation": (
+            "image attribute augmentation",
+            "clothing attribute augmentation",
+        ),
+        "paidf-event-video-generation": (
+            "event video generation",
+            "safety event video",
+            "anomaly video generation",
+        ),
+    }
+    for template, phrases in paidf_specific.items():
+        if any(phrase in text for phrase in phrases):
+            scores[template] += 20
     if ("augment" in text or "cosmos transfer" in text) and any(
         token in text
         for token in (
@@ -2642,6 +2695,13 @@ def resolve_workflow_infrastructure(
                 if entry
                 else "no configured, local, or cloud Kubernetes backend is available"
             )
+            if (
+                not entry
+                and (payload.get("cloud_discovery") or {}).get("status")
+                == "unavailable"
+            ):
+                source = "unavailable"
+                reason = "cloud discovery is unavailable; Kubernetes backend absence is unverified"
     raw_value = entry.get("raw")
     raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
     available_raw = raw.get("available_accelerators")
@@ -2672,6 +2732,12 @@ def resolve_workflow_infrastructure(
         "kubeconfig": str(entry.get("kubeconfig") or "").strip(),
         "accelerator": accelerator,
         "available_accelerators": available,
+        "accelerator_discovery_status": (raw.get("accelerator_discovery") or {}).get(
+            "status", "unverified"
+        ),
+        "cloud_discovery_status": (payload.get("cloud_discovery") or {}).get(
+            "status", "unverified"
+        ),
         "gpu_profile": profile,
         "source": source,
         "selection_reason": reason,
@@ -2804,6 +2870,24 @@ def _build_spec(
     infrastructure: dict[str, Any] | None = None,
 ) -> OrderedDict[str, Any]:
     normalized = _normalize_template(template)
+    if normalized in _STATIC_WORKFLOW_TEMPLATES:
+        from npa.orchestration.npa_workflow.blueprints import (
+            resolve_npa_workflow_spec,
+        )
+
+        path = resolve_npa_workflow_spec(_STATIC_WORKFLOW_TEMPLATES[normalized])
+        if path is None:
+            raise ValueError(f"shipped workflow template is missing: {normalized}")
+        root = yaml.safe_load(path.read_text(encoding="utf-8"))
+        root["metadata"]["name"] = str(name or root["metadata"]["name"])
+        root["config"]["bucket"] = str(bucket)
+        _apply_workflow_infrastructure(
+            root["resources"],
+            template=normalized,
+            params=params or {},
+            infrastructure=infrastructure,
+        )
+        return root
     if normalized in {"vlm-rl-loop", "sim2real-staged"}:
         canonical = _canonical_sim2real_spec(bucket=bucket, name=name)
         if params:
@@ -2989,17 +3073,28 @@ def generate_workflow_draft(
         )
     requested_accel = str((params or {}).get("accelerator") or "").strip()
     configured_accel = str(resolved_infra.get("accelerator") or "").strip()
+    accelerator_unavailable = (
+        resolved_infra.get("accelerator_discovery_status") == "unavailable"
+    )
+    if accelerator_unavailable:
+        context_errors.append(
+            "accelerator availability on the selected backend is unverified because "
+            "node-group discovery is unavailable; retry discovery before submit"
+        )
     available_accels = {
         _accelerator_family(str(value))
         for value in (resolved_infra.get("available_accelerators") or [])
         if str(value).strip()
     }
-    if requested_accel and available_accels:
+    if requested_accel and (
+        available_accels
+        or resolved_infra.get("accelerator_discovery_status") == "available"
+    ):
         requested_base = _accelerator_family(requested_accel)
         if requested_base not in available_accels:
             context_errors.append(
                 f"requested accelerator {requested_base} is unavailable on the selected "
-                f"backend (available: {', '.join(sorted(available_accels))})"
+                f"backend (available: {', '.join(sorted(available_accels)) or 'none'})"
             )
     if requested_accel and configured_accel:
         requested_base = _accelerator_family(requested_accel)
@@ -3021,7 +3116,14 @@ def generate_workflow_draft(
             )
     if infrastructure is not None and not bool((infrastructure or {}).get("has_infra")):
         warnings.append(
-            "No Kubernetes backend is currently configured; provision or select one before submit."
+            "Cloud inventory is unavailable; backend absence is unverified. Retry discovery before provisioning."
+            if resolved_infra.get("cloud_discovery_status") == "unavailable"
+            else "No Kubernetes backend is currently configured; provision or select one before submit."
+        )
+    elif accelerator_unavailable:
+        warnings.append(
+            "Accelerator availability is unverified; failed node-group discovery "
+            "does not establish which accelerators the backend provides."
         )
     elif infrastructure is not None and not configured_accel and not requested_accel:
         warnings.append(
@@ -3033,7 +3135,9 @@ def generate_workflow_draft(
             context_errors.append(
                 "a configured Kubernetes backend is required before Sim2Real submit"
             )
-        elif not configured_accel and not requested_accel:
+        elif (
+            not accelerator_unavailable and not configured_accel and not requested_accel
+        ):
             context_errors.append(
                 "the selected Kubernetes backend must declare an RT-core accelerator"
             )

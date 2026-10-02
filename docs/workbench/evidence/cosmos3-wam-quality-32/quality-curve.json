@@ -1,0 +1,172 @@
+{
+  "schema": "npa.cosmos3.wam-quality-curve.v1",
+  "gpus": 32,
+  "training_process_seconds": 7847.286811628,
+  "quality_threshold": 0.9,
+  "evaluation_contract": {
+    "workers": 8,
+    "envs": 8,
+    "trials": 50,
+    "seed": 42
+  },
+  "points": [
+    {
+      "step": 500,
+      "successes": 237,
+      "trials": 500,
+      "success_rate": 0.474,
+      "wilson_95_interval": [
+        0.43059811407349635,
+        0.5177983516305045
+      ],
+      "threshold_met": false,
+      "checkpoint_ready_train_seconds_interval": [
+        2208.036118030548,
+        2209.036118030548
+      ],
+      "evaluation_process_seconds": 3753.1367764099996,
+      "evaluation_process_gpu_hours": 8.340303947577777,
+      "model_manifest_sha256": "549e1c77da917a82dad78b5255efeb408a0cf78d3fa6b8710e7eb923c80cd63d",
+      "quality_receipt_sha256": "0784454cbca6d50a05c32dddc74f94321310fd657faea97cec5bbfc436a3249a",
+      "task_successes": {
+        "0": 29,
+        "1": 18,
+        "2": 45,
+        "3": 34,
+        "4": 15,
+        "5": 36,
+        "6": 5,
+        "7": 26,
+        "8": 5,
+        "9": 24
+      },
+      "evaluation_contract": {
+        "workers": 8,
+        "envs": 8,
+        "trials": 50,
+        "seed": 42
+      }
+    },
+    {
+      "step": 1000,
+      "successes": 409,
+      "trials": 500,
+      "success_rate": 0.818,
+      "wilson_95_interval": [
+        0.7817973646706083,
+        0.8493535547958443
+      ],
+      "threshold_met": false,
+      "checkpoint_ready_train_seconds_interval": [
+        4072.036118030548,
+        4073.036118030548
+      ],
+      "evaluation_process_seconds": 3561.653009408001,
+      "evaluation_process_gpu_hours": 7.914784465351113,
+      "model_manifest_sha256": "3251587c53481cad64289e29ad4350a5c9a1a7be4c13cef7a1f43eb9f8e07564",
+      "quality_receipt_sha256": "29f2ea7879e4b002d1f92f91c0e28e8fc4cda3f06b8abfe6c5b3e2b43801786b",
+      "task_successes": {
+        "0": 46,
+        "1": 31,
+        "2": 50,
+        "3": 40,
+        "4": 49,
+        "5": 40,
+        "6": 32,
+        "7": 49,
+        "8": 32,
+        "9": 40
+      },
+      "evaluation_contract": {
+        "workers": 8,
+        "envs": 8,
+        "trials": 50,
+        "seed": 42
+      }
+    },
+    {
+      "step": 1500,
+      "successes": 470,
+      "trials": 500,
+      "success_rate": 0.94,
+      "wilson_95_interval": [
+        0.9156389368747802,
+        0.9576516435190539
+      ],
+      "threshold_met": true,
+      "checkpoint_ready_train_seconds_interval": [
+        5942.036118030548,
+        5943.036118030548
+      ],
+      "evaluation_process_seconds": 3299.5882249290007,
+      "evaluation_process_gpu_hours": 7.332418277620001,
+      "model_manifest_sha256": "b682559cb4cedc38e30b3df324d56640f0483df50730aa5403afc6553725794a",
+      "quality_receipt_sha256": "9b49910ca628376db4594bf9b2850eb8941648549055dcd0454c0bad2b152167",
+      "task_successes": {
+        "0": 48,
+        "1": 49,
+        "2": 50,
+        "3": 46,
+        "4": 50,
+        "5": 42,
+        "6": 42,
+        "7": 50,
+        "8": 45,
+        "9": 48
+      },
+      "evaluation_contract": {
+        "workers": 8,
+        "envs": 8,
+        "trials": 50,
+        "seed": 42
+      }
+    },
+    {
+      "step": 2000,
+      "successes": 478,
+      "trials": 500,
+      "success_rate": 0.956,
+      "wilson_95_interval": [
+        0.9342805571276716,
+        0.9707660443713928
+      ],
+      "threshold_met": true,
+      "checkpoint_ready_train_seconds_interval": [
+        7827.036118030548,
+        7828.036118030548
+      ],
+      "evaluation_process_seconds": 3279.512374124999,
+      "evaluation_process_gpu_hours": 7.287805275833331,
+      "model_manifest_sha256": "0baadb3b59d00eba0c817439595a95b2227d48401be33c294177b0454c79bbb3",
+      "quality_receipt_sha256": "b08199dbf45984c2252a60e60780a3c8a2cf502011bbba215bd123f85016f265",
+      "task_successes": {
+        "0": 49,
+        "1": 49,
+        "2": 49,
+        "3": 47,
+        "4": 50,
+        "5": 44,
+        "6": 44,
+        "7": 50,
+        "8": 48,
+        "9": 48
+      },
+      "evaluation_contract": {
+        "workers": 8,
+        "envs": 8,
+        "trials": 50,
+        "seed": 42
+      }
+    }
+  ],
+  "time_to_quality": {
+    "status": "observed_at_scheduled_checkpoint",
+    "step": 1500,
+    "train_seconds_interval": [
+      5942.036118030548,
+      5943.036118030548
+    ],
+    "preceding_evaluated_step": 1000
+  },
+  "interpretation": "Checkpoint times use UTC native log timestamps with one-second resolution. Training-process start is reconstructed from the completion receipt. The first passing scheduled checkpoint is observed; an earlier exact crossing is not inferred. The pooled Wilson interval does not measure seed-to-seed or task-to-task variability. Evaluation time is reported separately."
+}

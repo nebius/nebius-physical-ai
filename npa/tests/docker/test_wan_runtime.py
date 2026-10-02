@@ -101,7 +101,9 @@ def test_security_fixed_runtime_and_baked_image_are_fully_pinned() -> None:
     assert "dependency_closure.py verify-report" in smoke
     assert "resolve_wan_input_contract" in smoke
     assert "test -r /opt/byof/wan/textimage2video.py" not in smoke
-    assert "wan-runtime ensure" in smoke
+    assert "NPA_WAN_RUNTIME_OFFLINE=1 wan-runtime ensure" in smoke
+    assert 'test "$rc" = 69' in smoke
+    assert "WAN22_SMOKE_OK" in smoke
 
 
 def _metadata(name: str, version: str, *requires_dist: str) -> DistributionMetadata:

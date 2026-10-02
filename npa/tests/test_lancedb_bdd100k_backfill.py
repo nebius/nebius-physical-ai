@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from npa.cli.workbench.lancedb import app as lancedb_app
 from npa.workbench.lancedb.backfill import (
     BackfillTableNotFoundError,
+    BackfillWriteError,
     GPUOOMAtMinimumBatchError,
     MissingDependencyError,
     UnknownUDFError,
@@ -406,6 +407,11 @@ def test_backfill_missing_table_raises_typed_error(tmp_path: Path) -> None:
         backfill_column(
             lance_uri=str(tmp_path / "db"), table="missing", udf="has_person"
         )
+
+
+def test_backfill_rejects_an_unknown_database_handle() -> None:
+    with pytest.raises(BackfillWriteError, match="required list_tables API"):
+        backfill_module._list_tables(object())
 
 
 def test_sdk_local_matches_direct_module_call(tmp_path: Path) -> None:

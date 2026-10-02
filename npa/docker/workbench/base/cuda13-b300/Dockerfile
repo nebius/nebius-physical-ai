@@ -1,7 +1,7 @@
 # CUDA 13.0.1 uses the patched PyTorch 2.13.0 cu130 wheel family.
 # The Docker Hub tag uses "cudnn" rather than the non-existent "cudnn9" suffix.
 ARG CUDA_BASE_TAG=13.0.1-cudnn-devel-ubuntu22.04
-FROM nvidia/cuda:${CUDA_BASE_TAG}
+FROM nvidia/cuda:${CUDA_BASE_TAG}@sha256:6ff9753ccda37b8f8d711831310d661afd310254148c35ea29f0cca141c499d7
 
 ARG CUDA_BASE_TAG=13.0.1-cudnn-devel-ubuntu22.04
 ARG BUILD_TS=unknown

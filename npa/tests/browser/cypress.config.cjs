@@ -1105,7 +1105,7 @@ module.exports = defineConfig({
   // The production UI exercises WebGL, media streams, and two viewer SDKs.
   // Release spec state eagerly so long mocked runs stay stable on shared CI
   // hosts instead of accumulating renderer memory.
-  experimentalMemoryManagement: true,
+  manageBrowserMemory: true,
   numTestsKeptInMemory: 0,
   e2e: {
     baseUrl: process.env.NPA_AGENT_BASE_URL || `http://127.0.0.1:${process.env.NPA_AGENT_CYPRESS_PORT || 47867}`,

@@ -239,7 +239,7 @@ def _write_advanced_result(root, report, queries, application):
 
 
 def _chunks(path, entity):
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     return [
         chunk.to_record_batch()
@@ -529,7 +529,7 @@ def test_decoded_physical_chunks_preserve_timeline_coverage(
     modules, request, tmp_path, monkeypatch, producer, damage
 ):
     """Physical chunks need not arrive in timeline order, including within one entity."""
-    import rerun.recording
+    import rerun.chunk
 
     root = request.getfixturevalue(producer)
     if producer == "advanced":
@@ -538,13 +538,13 @@ def test_decoded_physical_chunks_preserve_timeline_coverage(
         events[1]["monotonic_ns"] = events[0]["monotonic_ns"]
         _dump(root / "report.json", report)
         modules[2]._write_cleanup_artifacts(root, [], 1)
-    original = rerun.recording.load_recording
+    original = rerun.chunk.RrdReader
 
     def shuffled(path):
-        recording = original(path)
+        reader = original(path)
         rows = [
             (chunk.entity_path, chunk.to_record_batch().slice(index, 1))
-            for chunk in recording.chunks()
+            for chunk in reader.stream()
             for index in range(chunk.num_rows)
         ]
         index = next(
@@ -565,12 +565,11 @@ def test_decoded_physical_chunks_preserve_timeline_coverage(
             for entity, batch in reversed(rows)
         ]
         return SimpleNamespace(
-            application_id=recording.application_id,
-            recording_id=recording.recording_id,
-            chunks=lambda: iter(chunks),
+            recordings=reader.recordings,
+            stream=lambda **kwargs: iter(chunks),
         )
 
-    monkeypatch.setattr(rerun.recording, "load_recording", shuffled)
+    monkeypatch.setattr(rerun.chunk, "RrdReader", shuffled)
     output = tmp_path / "shuffled.rrd"
     if damage:
         with pytest.raises(ValueError, match="Decoded RRD vectors differ"):

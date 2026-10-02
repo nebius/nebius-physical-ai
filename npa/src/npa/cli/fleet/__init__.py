@@ -274,6 +274,7 @@ def deploy_cmd(
                         "region": spec.region,
                         "clusters": [],
                         "deployed": 0,
+                        "unresolved": 0,
                         "failed": 0,
                     },
                     indent=2,
@@ -308,6 +309,7 @@ def deploy_cmd(
                         "name": spec.name,
                         "clusters": [],
                         "deployed": 0,
+                        "unresolved": 0,
                         "failed": 1,
                         "error": str(exc),
                     },
@@ -321,19 +323,24 @@ def deploy_cmd(
     else:
         typer.echo(
             f"Fleet '{result['name']}' in {result['region']} (tenant {result['tenant_id']}): "
-            f"{result['deployed']} deployed, {result['failed']} failed."
+            f"{result['deployed']} deployed, "
+            f"{result.get('unresolved', 0)} unresolved, {result['failed']} failed."
         )
         for c in result["clusters"]:
-            if c.get("status") == "deployed":
+            if c.get("status") in {"deployed", "running"}:
                 typer.echo(
                     f"  [ok]   {c['project_key']}/{c['cluster_name']} -> {c.get('cluster_id') or '(no id)'} "
                     f"(context {c.get('kube_context')})"
+                )
+            elif c.get("status") in {"provisioning", "reconciling"}:
+                typer.echo(
+                    f"  [wait] {c.get('project_key')}/{c.get('cluster_name')}: {c.get('status')}"
                 )
             else:
                 typer.echo(
                     f"  [FAIL] {c.get('project_key')}/{c.get('cluster_name')}: {c.get('error', c.get('status'))}"
                 )
-    if result.get("failed"):
+    if result.get("failed") or result.get("unresolved"):
         raise typer.Exit(1)
 
 
@@ -402,7 +409,13 @@ def destroy_cmd(
         if json_mode:
             typer.echo(
                 json.dumps(
-                    {"name": spec.name, "clusters": [], "networks": [], "failed": 0},
+                    {
+                        "name": spec.name,
+                        "clusters": [],
+                        "networks": [],
+                        "unresolved": 0,
+                        "failed": 0,
+                    },
                     indent=2,
                 )
             )
@@ -426,6 +439,7 @@ def destroy_cmd(
                         "name": spec.name,
                         "clusters": [],
                         "networks": [],
+                        "unresolved": 0,
                         "failed": 1,
                         "error": str(exc),
                     },
@@ -441,13 +455,13 @@ def destroy_cmd(
             typer.echo(f"  {c['project_key']}/{c['cluster_name']}: {c['status']}")
         for network in result.get("networks", []):
             typer.echo(f"  {network['project_key']}/network: {network['status']}")
-        if result.get("failed"):
+        if result.get("failed") or result.get("unresolved"):
             typer.echo(
                 f"Fleet '{result['name']}' teardown is incomplete; recovery state retained."
             )
         else:
             typer.echo(f"Destroyed fleet '{result['name']}'.")
-    if result.get("failed"):
+    if result.get("failed") or result.get("unresolved"):
         raise typer.Exit(1)
 
 
