@@ -1631,7 +1631,11 @@ def _cross_field_contract_text() -> str:
         "Plausible or unresolved usefulness requires nonempty operation, properties, "
         "hypothesis, and needed test. Unsupported usefulness requires null operation, "
         "hypothesis, and needed test plus empty required_properties. Do not add a "
-        "score, rating, gate, objective verdict, or confirmation field."
+        "score, rating, gate, objective verdict, or confirmation field. "
+        "Refer to image sets only by their neutral A/B labels; use no relational "
+        "source-role wording. Describe downstream usefulness only as a hypothesis "
+        "requiring a future consumer test. Do not claim established measurement, "
+        "validation, certification, correctness, safety, or performance."
     )
 
 

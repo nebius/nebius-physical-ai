@@ -755,6 +755,10 @@ def test_prompt_matches_single_and_paired_parser_contracts() -> None:
     assert "comparison.observations must contain one or more objects" in paired
     assert "nonempty unique A_frame_ids and B_frame_ids" in paired
     assert "confirmation field" in single
+    for prompt in (single, paired):
+        assert "only by their neutral A/B labels" in prompt
+        assert "hypothesis requiring a future consumer test" in prompt
+        assert visual_review._SOURCE_ROLE_PATTERN.search(prompt) is None
 
 
 def _prompt_schema_validator(mode: str):
