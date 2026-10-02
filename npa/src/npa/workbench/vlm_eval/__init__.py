@@ -27,6 +27,8 @@ import numpy as np
 from PIL import Image
 from urllib.parse import urlparse
 
+from npa.clients.token_factory import DEFAULT_VISION_MODEL
+
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
     from npa.clients.token_factory import TokenFactoryChatProfile
@@ -78,7 +80,7 @@ PREFERENCE_RESPONSE_PARSER_VERSION = "npa_vlm_preference_hosted_json_v1"
 SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v1"
 MARKDOWN_FENCE_PARSER_SUFFIX = "+markdown-fence-v1"
 UNPARSED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_unparsed_v1"
-DEFAULT_PRIMARY_JUDGE_MODEL = "MiniMaxAI/MiniMax-M3"
+DEFAULT_PRIMARY_JUDGE_MODEL = DEFAULT_VISION_MODEL
 DEFAULT_SECONDARY_JUDGE_MODEL = "openbmb/MiniCPM-V-4_5"
 DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
 DEFAULT_SAMPLE_BENCHMARK_PATH = (
@@ -1454,6 +1456,8 @@ def _strict_comparison_verdict(
     request: VlmRequestEvidence,
     response: _VlmBackendResponse,
 ) -> VlmStructuredResponse:
+    from npa.clients.token_factory import token_factory_chat_profile
+
     choice, message = _response_choice_and_content(response.data)
     if not isinstance(message, str):
         raise VlmEvalError("Hosted VLM response content must be a JSON string")
@@ -1465,7 +1469,7 @@ def _strict_comparison_verdict(
         backend="api",
         requested_model=model,
         data=response.data,
-        choice=choice,
+        profile=token_factory_chat_profile(model),
         message=message,
     )
     evidence = _build_evaluation_evidence(
@@ -1578,7 +1582,8 @@ def _build_judge_comparison_report(
         schema_version=JUDGE_COMPARISON_SCHEMA_VERSION,
         status=status,
         passed=status == "judges_agree_passed",
-        escalation_required=status in {"judge_error", "judge_disagreement"},
+        escalation_required=status
+        in {"judge_error", "judge_disagreement", "judge_identity_collision"},
         deployment_status="audit_only",
         operational_rate_estimated=False,
         input_path=context.input_path,
@@ -1647,6 +1652,8 @@ def _comparison_status(
         return "judge_error"
     if primary.result is None or secondary.result is None:
         raise VlmEvalError("paired judge result is incomplete")
+    if primary.result.served_model == secondary.result.served_model:
+        return "judge_identity_collision"
     if primary.result.passed != secondary.result.passed:
         return "judge_disagreement"
     if primary.result.passed:
@@ -4604,6 +4611,8 @@ def _extract_video_indices(
         "-y",
         "-i",
         str(video_path),
+        "-map",
+        "0:v:0",
         "-vf",
         f"select={expression}",
         "-vsync",
@@ -4626,6 +4635,8 @@ def _extract_final_video_frame(
         "-0.1",
         "-i",
         str(video_path),
+        "-map",
+        "0:v:0",
         "-frames:v",
         "1",
         str(output_dir / "frame-001.png"),
@@ -4644,6 +4655,8 @@ def _extract_video_sample(
         "-y",
         "-i",
         str(video_path),
+        "-map",
+        "0:v:0",
         "-vf",
         "fps=1",
         "-frames:v",
