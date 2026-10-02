@@ -33,6 +33,28 @@ are complete. Unknown video metadata stays null; a generated extraction ordinal
 is never presented as a source frame index. `coverage_complete` means every
 submitted frame has auditable source-index metadata, not that every available
 source frame was submitted.
+
+For known-count image sequences, NumPy episodes, and videos, the named
+strategies are intentionally different:
+
+- `sequence` preserves uniform full-span sampling.
+- `keyframes` is deterministic terminal-biased temporal stratification. It
+  allocates half of the frame budget to a terminal window covering at least the
+  final 10%. The window widens when needed to hold the unique tail allocation,
+  and the remaining frames span the earlier evidence. This applies when the
+  source exceeds `--max-frames`; shorter sources return every frame. It retains
+  the first and final frames whenever at least two are selected. It does not
+  inspect pixels or detect events.
+- `final` selects only the last frame.
+
+When video frame count is unavailable, compatibility behavior is unchanged:
+`final` uses one trailing-frame extraction, while `keyframes` and `sequence`
+both use the same bounded one-frame-per-second sample from the beginning. That
+fallback retains null source indices, counts, and timestamps plus incomplete
+coverage. Terminal-stratified claims apply only to known-count inputs.
+The [frame-selection evidence note](../evidence/vlm-frame-selection-semantics.md)
+keeps deterministic validation separate from the bounded hosted regression.
+
 The full result still belongs in private run storage because the provider
 response and existing task fields can describe operator data.
 

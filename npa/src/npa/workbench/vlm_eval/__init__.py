@@ -4774,9 +4774,34 @@ def _selected_indices(
     if frame_selection == "final":
         return [count - 1]
     selected = min(max_frames, count)
+    if selected == count:
+        return list(range(count))
     if selected == 1:
         return [count - 1]
-    return sorted({round(i * (count - 1) / (selected - 1)) for i in range(selected)})
+    if frame_selection == "sequence":
+        return sorted(
+            {round(i * (count - 1) / (selected - 1)) for i in range(selected)}
+        )
+
+    # Keep half the budget for the terminal window. Dividing the broad span by
+    # broad_count (not broad_count - 1) intentionally avoids spending its last
+    # slot beside the first terminal sample.
+    tail_count = math.ceil(selected / 2)
+    broad_count = selected - tail_count
+    tail_span = max(tail_count, math.ceil(count / 10))
+    tail_start = count - tail_span
+    broad_indices = [
+        round(i * (tail_start - 1) / broad_count) for i in range(broad_count)
+    ]
+    tail_indices = (
+        [count - 1]
+        if tail_count == 1
+        else [
+            round(tail_start + i * (count - 1 - tail_start) / (tail_count - 1))
+            for i in range(tail_count)
+        ]
+    )
+    return broad_indices + tail_indices
 
 
 def _image_file_to_png(path: Path) -> bytes:

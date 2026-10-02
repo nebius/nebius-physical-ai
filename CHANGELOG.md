@@ -7,6 +7,24 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM frame-selection names now describe distinct known-count behavior
+
+- `vlm-eval` keeps `keyframes` as the default but makes it terminal-biased for
+  known-count image, NumPy, and video inputs: when the source exceeds the frame
+  limit, half of the sample covers a terminal window of at least the final 10%;
+  that window widens when needed to hold the unique tail frames, while the rest
+  spans earlier evidence. Shorter sources return every frame. `sequence`
+  preserves its uniform full-span indices and normalized frame bytes.
+- Unknown-count video compatibility is unchanged. `final` extracts one trailing
+  frame; `keyframes` and `sequence` retain the same bounded one-frame-per-second
+  fallback with incomplete source provenance.
+- A frozen six-call hosted calibration did not show a label improvement:
+  `keyframes` and `sequence` each scored 2/3 on the three disclosed controls,
+  both missed visibly complete placement, and one `keyframes` gray-control
+  rationale hallucinated absent objects. The precommitted hosted gate failed,
+  so the change remains draft-only under that plan. See the
+  [frame-selection evidence](docs/workbench/evidence/vlm-frame-selection-semantics.md).
+
 ### VLM rich visual reviews remain separate from gates
 
 - New API-only `vlm-eval review-visual` CLI and SDK surfaces write a private,
