@@ -1343,7 +1343,7 @@ def _reconcile_tainted_node_groups(
             or not isinstance(payload, dict)
             or not (
                 _tainted_node_group_matches_desired(
-                    provider_payload=payload,
+                    provider_payload=_decode_v1_node_group_preemptibility(payload),
                     state_attributes=attributes,
                     pool=pool,
                     cluster=cluster,
@@ -1605,7 +1605,7 @@ def _repair_exact_stopped_placeholder(
         if (
             not orphan_id
             or not _tainted_node_group_matches_desired(
-                provider_payload=orphan,
+                provider_payload=_decode_v1_node_group_preemptibility(orphan),
                 state_attributes=orphan_state,
                 pool=pool,
                 cluster=cluster,
@@ -1691,7 +1691,7 @@ def _repair_exact_stopped_placeholder(
         "could not read the exact node group before placeholder repair",
     )
     if not _tainted_node_group_matches_desired(
-        provider_payload=live_group,
+        provider_payload=_decode_v1_node_group_preemptibility(live_group),
         state_attributes=attributes,
         pool=pool,
         cluster=cluster,
