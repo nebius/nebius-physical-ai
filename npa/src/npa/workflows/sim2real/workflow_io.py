@@ -622,14 +622,8 @@ def publish_built_component_pointer(
         prefix=f"npa-sim2real-component-{expected_stage:02d}-"
     ) as directory:
         if transaction is not None:
-            path = Path(directory) / "pointer" / Path(urlparse(uri).path).name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(
-                json.dumps(record, indent=2, sort_keys=True) + "\n",
-                encoding="utf-8",
-            )
-            transaction.replace_file(
-                path,
+            transaction.replace_bytes(
+                (json.dumps(record, indent=2, sort_keys=True) + "\n").encode(),
                 uri,
                 snapshot,
                 immutable_uri=immutable_uri,

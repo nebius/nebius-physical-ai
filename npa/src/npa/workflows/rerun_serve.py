@@ -8,13 +8,17 @@ import json
 import os
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
 from npa.clients.config import StorageConfig, resolve_project_storage
 from npa.clients.scoped_credentials import bucket_from_s3_uri
+from npa.workflows.sim2real.publication import (
+    PublicationConflict,
+    resolve_committed_publication_uri,
+)
 
 # rerunio/rerun:* is not published on Docker Hub; serve via PyPI bootstrap or a
 # registry-built npa-rerun-viewer image. Legacy npa-sim2real-rerun-viewer refs still resolve.
@@ -196,16 +200,82 @@ def validate_run_id(run_id: str) -> str:
 validate_staged_run_id = validate_run_id
 
 
+def _resolve_committed_rrd_uri(
+    uri: str,
+    *,
+    get_object: Callable[..., Any],
+) -> str:
+    if not uri.endswith("/reports/sim2real.rrd") or "/reports/generations/" in uri:
+        return uri
+    from botocore.exceptions import ClientError
+
+    class _Reader:
+        @staticmethod
+        def read_bytes_with_etag(object_uri: str) -> tuple[bytes, str] | None:
+            without_scheme = object_uri.removeprefix("s3://")
+            bucket, separator, key = without_scheme.partition("/")
+            if (
+                not object_uri.startswith("s3://")
+                or not bucket
+                or not separator
+                or not key
+            ):
+                raise RerunServeError(f"invalid publication journal URI: {object_uri}")
+            try:
+                response = get_object(Bucket=bucket, Key=key)
+            except ClientError as exc:
+                code = str(exc.response.get("Error", {}).get("Code", ""))
+                if code in {"404", "NoSuchKey", "NotFound"}:
+                    return None
+                raise
+            body = response["Body"]
+            try:
+                payload = body.read(1024 * 1024 + 1)
+            finally:
+                body.close()
+            if len(payload) > 1024 * 1024:
+                raise RerunServeError("publication journal exceeds 1 MiB")
+            etag = str(response.get("ETag") or "").strip()
+            if not etag:
+                raise RerunServeError("publication journal has no ETag")
+            return bytes(payload), etag
+
+    try:
+        resolved = resolve_committed_publication_uri(_Reader(), uri)
+    except PublicationConflict as exc:
+        raise RerunServeError(str(exc)) from exc
+    if resolved is None:
+        raise RerunServeError(f"Rerun recording is disabled at {uri}")
+    return resolved
+
+
 def verify_rrd_exists_on_s3(
     config: RerunServeConfig,
     *,
     head_object: Callable[..., Any] | None = None,
-) -> None:
+    get_object: Callable[..., Any] | None = None,
+) -> str:
     import boto3
     from botocore.config import Config
     from botocore.exceptions import ClientError
 
-    uri = config.rrd_s3_uri
+    client = None
+    if head_object is None and get_object is None:
+        client_kwargs: dict[str, Any] = {
+            "aws_access_key_id": config.aws_access_key_id,
+            "aws_secret_access_key": config.aws_secret_access_key,
+            "config": Config(signature_version="s3v4"),
+            "region_name": config.aws_region,
+        }
+        if config.s3_endpoint:
+            client_kwargs["endpoint_url"] = config.s3_endpoint
+        client = boto3.client("s3", **client_kwargs)
+    journal_reader = get_object or (client.get_object if client is not None else None)
+    uri = (
+        _resolve_committed_rrd_uri(config.rrd_s3_uri, get_object=journal_reader)
+        if journal_reader is not None
+        else config.rrd_s3_uri
+    )
     if not uri.startswith("s3://"):
         raise RerunServeError(f"invalid rrd s3 uri: {uri}")
     without_scheme = uri[5:]
@@ -222,19 +292,12 @@ def verify_rrd_exists_on_s3(
                 f"Rerun recording not found at {uri} ({code}). "
                 "Wait for reports/sim2real.rrd on S3 before rerun serve."
             ) from exc
-        return
-
-    client_kwargs: dict[str, Any] = {
-        "aws_access_key_id": config.aws_access_key_id,
-        "aws_secret_access_key": config.aws_secret_access_key,
-        "config": Config(signature_version="s3v4"),
-        "region_name": config.aws_region,
-    }
-    if config.s3_endpoint:
-        client_kwargs["endpoint_url"] = config.s3_endpoint
-    client = boto3.client("s3", **client_kwargs)
+        return uri
+    effective_get = get_object or (client.get_object if client is not None else None)
+    if effective_get is None:
+        raise RerunServeError("S3 client does not support object existence checks")
     try:
-        response = client.get_object(Bucket=bucket, Key=key, Range="bytes=0-0")
+        response = effective_get(Bucket=bucket, Key=key, Range="bytes=0-0")
         response["Body"].close()
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "missing")
@@ -242,6 +305,7 @@ def verify_rrd_exists_on_s3(
             f"Rerun recording not found at {uri} ({code}). "
             "Wait for reports/sim2real.rrd on S3 before rerun serve."
         ) from exc
+    return uri
 
 
 def _k8s_name_slug(value: str) -> str:
@@ -877,9 +941,17 @@ def apply_rerun_serve(
     clock = now or time.monotonic
     waiter = sleep or time.sleep
 
-    verify_rrd_exists_on_s3(config)
-    sync_token = fetch_rrd_sync_token(config)
-    manifest = build_rerun_serve_manifest(config, rrd_sync_token=sync_token)
+    resolved_uri = verify_rrd_exists_on_s3(config)
+    effective_config = (
+        replace(config, rrd_s3_uri_override=resolved_uri)
+        if isinstance(resolved_uri, str) and resolved_uri != config.rrd_s3_uri
+        else config
+    )
+    sync_token = fetch_rrd_sync_token(effective_config)
+    manifest = build_rerun_serve_manifest(
+        effective_config,
+        rrd_sync_token=sync_token,
+    )
     runner(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=kubeconfig)
     try:
         runner(
@@ -913,7 +985,10 @@ def apply_rerun_serve(
             waiter(5)
 
     return rerun_serve_result(
-        config, status="deployed", public_url=public_url, kubeconfig=kubeconfig
+        effective_config,
+        status="deployed",
+        public_url=public_url,
+        kubeconfig=kubeconfig,
     )
 
 

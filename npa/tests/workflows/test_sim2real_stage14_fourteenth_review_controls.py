@@ -333,7 +333,9 @@ def test_no_sync_upload_still_requests_remote_component_authority(
         verify_remote_authority: bool = False,
         require_canonical_authority: bool = False,
         publication_snapshots: dict[str, Any] | None = None,
+        verified_snapshot_dir: Path | None = None,
     ) -> Any:
+        assert verified_snapshot_dir is not None
         observed.update(
             sync_inputs=sync_inputs,
             verify_remote_authority=verify_remote_authority,
@@ -420,21 +422,27 @@ def test_regen_uses_conditional_canonical_report_as_publication_fence(
         def __init__(self) -> None:
             self.unguarded: list[str] = []
             self.conditional: list[str] = []
+            self.objects: dict[str, bytes] = {}
 
         def upload_file(self, _source: str, destination: str) -> str:
             self.unguarded.append(destination)
             return destination
 
-        def read_bytes_with_etag(self, _destination: str) -> None:
-            return None
+        def read_bytes_with_etag(
+            self,
+            destination: str,
+        ) -> tuple[bytes, str] | None:
+            payload = self.objects.get(destination)
+            return None if payload is None else (payload, '"etag"')
 
         def put_bytes_conditional(
             self,
-            _payload: bytes,
+            payload: bytes,
             destination: str,
             **_kwargs: Any,
         ) -> str:
             self.conditional.append(destination)
+            self.objects[destination] = bytes(payload)
             return '"etag"'
 
     storage = Storage()
@@ -472,19 +480,23 @@ def test_stage14_component_pointer_uses_conditional_replacement(
     class Storage:
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict[str, Any]]] = []
+            self.objects = {pointer_uri: b"old-pointer"}
 
         def read_bytes_with_etag(self, destination: str) -> tuple[bytes, str] | None:
-            if destination == pointer_uri:
-                return b"old-pointer", '"pointer-etag"'
-            return None
+            payload = self.objects.get(destination)
+            if payload is None:
+                return None
+            etag = '"pointer-etag"' if destination == pointer_uri else '"etag"'
+            return payload, etag
 
         def put_bytes_conditional(
             self,
-            _payload: bytes,
+            payload: bytes,
             destination: str,
             **kwargs: Any,
         ) -> str:
             self.calls.append((destination, kwargs))
+            self.objects[destination] = bytes(payload)
             return '"etag"'
 
     storage = Storage()
@@ -516,18 +528,26 @@ def test_disabled_mcap_removes_stale_canonical_object(tmp_path: Path) -> None:
     class Storage:
         def __init__(self) -> None:
             self.deleted: list[str] = []
+            self.objects = {f"{ROOT}/reports/sim2real.mcap": b"stale"}
 
         def read_bytes_with_etag(self, destination: str) -> tuple[bytes, str] | None:
-            if destination == f"{ROOT}/reports/sim2real.mcap":
-                return b"stale", '"stale-etag"'
-            return None
+            payload = self.objects.get(destination)
+            if payload is None:
+                return None
+            etag = (
+                '"stale-etag"'
+                if destination == f"{ROOT}/reports/sim2real.mcap"
+                else '"etag"'
+            )
+            return payload, etag
 
         def put_bytes_conditional(
             self,
-            _payload: bytes,
-            _destination: str,
+            payload: bytes,
+            destination: str,
             **_kwargs: Any,
         ) -> str:
+            self.objects[destination] = bytes(payload)
             return '"etag"'
 
         def delete_file_conditional(
@@ -538,6 +558,7 @@ def test_disabled_mcap_removes_stale_canonical_object(tmp_path: Path) -> None:
         ) -> None:
             assert if_match == '"stale-etag"'
             self.deleted.append(destination)
+            self.objects.pop(destination, None)
 
     storage = Storage()
     regen.publish_regen_outputs(

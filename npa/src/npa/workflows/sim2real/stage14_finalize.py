@@ -33,11 +33,13 @@ from npa.workflows.sim2real.decision_authority import (
 from npa.workflows.sim2real.publication import (
     MutablePublicationTransaction,
     RemoteObjectSnapshot,
+    recover_interrupted_publication,
     remote_object_snapshot,
+    remote_object_version,
     upload_immutable_file,
 )
 from npa.workflows.sim2real.stage10_execution import (
-    validate_materialized_render_tree,
+    materialize_verified_render_snapshot,
 )
 from npa.workflows.sim2real.stage10_authority import validate_stage10_input_scope
 from npa.workflows.sim2real.workflow_io import (
@@ -759,7 +761,7 @@ def _assert_stage14_publication_preconditions(state: _Stage14State) -> None:
     _assert_publishable_policy_metadata(metadata, state.gold)
 
 
-def _validate_stage14_materialized_frames(state: _Stage14State) -> None:
+def _validate_stage14_materialized_frames(state: _Stage14State) -> Path:
     """Revalidate downloaded frames against the sealed Stage 10 byte manifest."""
 
     lineage = state.gold.get("render_lineage")
@@ -775,8 +777,9 @@ def _validate_stage14_materialized_frames(state: _Stage14State) -> None:
         state.root,
         state.args.run_id,
     )
-    validate_materialized_render_tree(
+    return materialize_verified_render_snapshot(
         render_dir,
+        state.work / "verified-stage14-renders",
         manifest,
         candidate,
         require_frame_identity=True,
@@ -922,6 +925,7 @@ def _emit_stage14_outputs(
     report: dict[str, Any],
     heldout_policy_metadata: dict[str, Any],
     reports: Path,
+    verified_renders: Path,
 ) -> tuple[Any, Any]:
     from npa.workflows.sim2real_viz import (
         emit_sim2real_mcap,
@@ -929,10 +933,7 @@ def _emit_stage14_outputs(
     )
 
     localized_gold = json.loads(json.dumps(state.gold))
-    localized_gold["local_renders_dir"] = str(
-        state.local
-        / str((state.gold.get("render_lineage") or {}).get("local_relative_dir") or "")
-    )
+    localized_gold["local_renders_dir"] = str(verified_renders)
     decision = report["outer_loop"]["decision"]
     rrd = emit_sim2real_rerun(
         local_dir=state.local,
@@ -1092,10 +1093,21 @@ def _capture_stage14_publication_snapshots(
         lock_uri,
     )
     client = storage()
+    lock_snapshot = remote_object_snapshot(client, lock_uri)
+    recover_interrupted_publication(
+        client,
+        lock_uri=lock_uri,
+        lock_snapshot=lock_snapshot,
+    )
     return replace(
         state,
         publication_snapshots={
-            uri: remote_object_snapshot(client, uri) for uri in uris
+            uri: (
+                remote_object_snapshot(client, uri)
+                if uri == lock_uri
+                else remote_object_version(client, uri)
+            )
+            for uri in uris
         },
     )
 
@@ -1104,11 +1116,16 @@ def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None
     state = _materialize_stage14(args, root=root, work=work)
     state = _capture_stage14_publication_snapshots(state)
     _assert_stage14_publication_preconditions(state)
-    _validate_stage14_materialized_frames(state)
+    verified_renders = _validate_stage14_materialized_frames(state)
     components = _load_component_records(state)
     report, policy_metadata, reports = _build_stage14_report(state, components)
     rrd, mcap = _emit_stage14_outputs(
-        state, components, report, policy_metadata, reports
+        state,
+        components,
+        report,
+        policy_metadata,
+        reports,
+        verified_renders,
     )
     _publish_stage14_outputs(state, report, reports, rrd, mcap)
 

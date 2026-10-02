@@ -432,6 +432,119 @@ class StorageClient:
             raise StorageError(f"Object storage returned no ETag for {bucket_uri}")
         return bytes(payload), etag
 
+    def read_small_bytes_with_etag(
+        self,
+        bucket_uri: str,
+        *,
+        max_bytes: int = 1024 * 1024,
+    ) -> tuple[bytes, str] | None:
+        """Read a bounded control object and ETag, rejecting oversized bodies."""
+
+        if type(max_bytes) is not int or max_bytes <= 0:
+            raise ValueError("max_bytes must be a positive integer")
+        bucket, key = _parse_bucket_uri(bucket_uri)
+        if not key or key.endswith("/"):
+            raise StorageError(f"Expected an exact S3 object URI, got: {bucket_uri}")
+        try:
+            response = self._s3.get_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
+        body = response["Body"]
+        try:
+            payload = body.read(max_bytes + 1)
+        finally:
+            body.close()
+        if len(payload) > max_bytes:
+            raise StorageError(
+                f"Object exceeds the {max_bytes}-byte control-object limit: "
+                f"{bucket_uri}"
+            )
+        etag = str(response.get("ETag") or "").strip()
+        if not etag:
+            raise StorageError(f"Object storage returned no ETag for {bucket_uri}")
+        return bytes(payload), etag
+
+    def read_object_version(
+        self,
+        bucket_uri: str,
+    ) -> tuple[str, int, str] | None:
+        """Read an object's ETag, size, and publisher SHA without its body."""
+
+        bucket, key = _parse_bucket_uri(bucket_uri)
+        if not key or key.endswith("/"):
+            raise StorageError(f"Expected an exact S3 object URI, got: {bucket_uri}")
+        try:
+            response = self._s3.head_object(Bucket=bucket, Key=key)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
+        etag = str(response.get("ETag") or "").strip()
+        size = response.get("ContentLength")
+        if not etag or type(size) is not int or size < 0:
+            raise StorageError(
+                f"Object storage returned incomplete version data for {bucket_uri}"
+            )
+        metadata = response.get("Metadata") or {}
+        digest = str(metadata.get("npa-sha256") or "")
+        return etag, size, digest
+
+    def put_file_conditional(
+        self,
+        local_file: str,
+        bucket_uri: str,
+        *,
+        if_match: str = "",
+        if_none_match: bool = False,
+        sha256: str = "",
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        """Stream a local file through one conditional PutObject request."""
+
+        if bool(if_match) == bool(if_none_match):
+            raise ValueError("choose exactly one conditional object-write guard")
+        bucket, key = _parse_bucket_uri(bucket_uri)
+        if not key or key.endswith("/"):
+            raise StorageError(f"Expected an exact S3 object URI, got: {bucket_uri}")
+        path = Path(local_file)
+        kwargs: dict[str, object] = {
+            "Bucket": bucket,
+            "Key": key,
+            "ContentLength": path.stat().st_size,
+            "ContentType": content_type,
+        }
+        if sha256:
+            kwargs["Metadata"] = {"npa-sha256": sha256}
+        if if_match:
+            kwargs["IfMatch"] = if_match
+        else:
+            kwargs["IfNoneMatch"] = "*"
+        try:
+            with path.open("rb") as body:
+                response = self._s3.put_object(Body=body, **kwargs)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            status = int(
+                exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0
+            )
+            if code in {
+                "412",
+                "PreconditionFailed",
+                "ConditionalRequestConflict",
+            } or status in {409, 412}:
+                raise StoragePreconditionFailed(
+                    f"conditional object write was superseded for {bucket_uri}"
+                ) from exc
+            raise
+        etag = str(response.get("ETag") or "").strip()
+        if not etag:
+            raise StorageError(f"Object storage returned no ETag for {bucket_uri}")
+        return etag
+
     def put_bytes_conditional(
         self,
         payload: bytes,

@@ -36,6 +36,8 @@ from npa.workflows.sim2real.constants import SCHEMA_E2E_REPORT
 from npa.workflows.sim2real.decision_authority import validate_stage11_decision
 from npa.workflows.sim2real.hashing import sha256_file
 from npa.workflows.sim2real.stage10_execution import (
+    materialize_safe_render_snapshot,
+    materialize_verified_render_snapshot,
     validate_materialized_render_tree,
 )
 from npa.workflows.sim2real.stage10_authority import (
@@ -45,8 +47,12 @@ from npa.workflows.sim2real.stage10_authority import (
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.publication import (
     MutablePublicationTransaction,
+    PublicationConflict,
     RemoteObjectSnapshot,
+    recover_interrupted_publication,
     remote_object_snapshot,
+    remote_object_version,
+    resolve_committed_publication_uri,
     upload_immutable_file,
     upload_immutable_tree,
 )
@@ -1338,7 +1344,7 @@ def download_rrd_from_s3(
     """Download reports/sim2real.rrd for a run to dest_path."""
 
     storage = client or _storage_client_for_config(config)
-    uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
+    canonical_uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
     dest_path = Path(dest_path)
     absolute_dest = Path(os.path.abspath(dest_path))
     default_root = Path(os.path.abspath(DEFAULT_REGEN_ROOT))
@@ -1351,6 +1357,16 @@ def download_rrd_from_s3(
         raise Sim2RealRerunRegenError(
             f"default regeneration root must not be a symlink: {DEFAULT_REGEN_ROOT}"
         )
+    _assert_no_symlinked_ancestors(
+        absolute_dest,
+        containment_root=containment_root,
+    )
+    try:
+        uri = resolve_committed_publication_uri(storage, canonical_uri)
+    except PublicationConflict as exc:
+        raise Sim2RealRerunRegenError(str(exc)) from exc
+    if uri is None:
+        raise Sim2RealRerunRegenError(f"Rerun recording is disabled at {canonical_uri}")
     if not _download_if_exists(
         storage,
         uri,
@@ -1424,7 +1440,7 @@ def _seal_regen_publication_report(
     report["report_uri"] = report_uri
     if mcap_uri:
         report["mcap_uri"] = mcap_uri
-        report["canonical_mcap_uri"] = mcap_uri
+        report["canonical_mcap_uri"] = f"{journal_uri.rsplit('/', 1)[0]}/sim2real.mcap"
     else:
         report.pop("mcap_uri", None)
         report.pop("canonical_mcap_uri", None)
@@ -1637,7 +1653,20 @@ def _capture_regen_publication_snapshots(
         f"{prefix}components/stage_14.json",
         f"{prefix}reports/.sim2real-publication.json",
     )
-    return {uri: remote_object_snapshot(storage, uri) for uri in uris}
+    lock_uri = uris[-1]
+    recover_interrupted_publication(
+        storage,
+        lock_uri=lock_uri,
+        lock_snapshot=remote_object_snapshot(storage, lock_uri),
+    )
+    return {
+        uri: (
+            remote_object_snapshot(storage, uri)
+            if uri == lock_uri
+            else remote_object_version(storage, uri)
+        )
+        for uri in uris
+    }
 
 
 def publish_regen_outputs(
@@ -1944,6 +1973,7 @@ class _RegenState:
     report: dict[str, Any]
     policy_access: dict[str, Any]
     publication_snapshots: dict[str, RemoteObjectSnapshot | None] | None = None
+    verified_renders_dir: Path | None = None
 
 
 def _stage_components(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2255,22 +2285,37 @@ def _validate_regen_materialized_frames(
     config: Sim2RealLoopConfig,
     work_dir: Path,
     inputs: _RegenInputs,
-) -> None:
+    *,
+    snapshot_dir: Path,
+) -> Path:
     """Revalidate canonical local renders against sealed frame-byte authority."""
 
-    if inputs.inner_evidence.get("schema") != "npa.sim2real.inner_loop_evidence.v1":
-        return
+    modern = (
+        inputs.inner_evidence.get("schema") == "npa.sim2real.inner_loop_evidence.v1"
+    )
     try:
-        _selection, candidate = resolve_run_scoped_checkpoint(
-            inputs.inner_evidence,
-            run_root=run_prefix_uri(config).rstrip("/"),
-            run_id=config.run_id,
+        candidate: dict[str, Any] = {}
+        if modern:
+            _selection, candidate = resolve_run_scoped_checkpoint(
+                inputs.inner_evidence,
+                run_root=run_prefix_uri(config).rstrip("/"),
+                run_id=config.run_id,
+            )
+        render_dir = _renders_dir_for_report(
+            config,
+            work_dir,
+            inputs.heldout_report,
         )
-        validate_materialized_render_tree(
-            _renders_dir_for_report(config, work_dir, inputs.heldout_report),
-            inputs.heldout_report.get("render_manifest") or {},
+        manifest = inputs.heldout_report.get("render_manifest") or {}
+        if not modern and not manifest.get("episodes"):
+            return materialize_safe_render_snapshot(render_dir, snapshot_dir)
+        return materialize_verified_render_snapshot(
+            render_dir,
+            snapshot_dir,
+            manifest,
             candidate,
-            require_frame_identity=True,
+            require_checkpoint_identity=modern,
+            require_frame_identity=modern,
         )
     except (RuntimeError, ValueError) as exc:
         raise Sim2RealRerunRegenError(
@@ -2287,6 +2332,7 @@ def _load_regen_state(
     verify_remote_authority: bool | None = None,
     require_canonical_authority: bool = False,
     publication_snapshots: dict[str, RemoteObjectSnapshot | None] | None = None,
+    verified_snapshot_dir: Path | None = None,
 ) -> _RegenState:
     try:
         paths = _selected_regen_paths(config, work_dir, storage, sync_inputs)
@@ -2304,7 +2350,16 @@ def _load_regen_state(
             ),
             require_canonical_authority=require_canonical_authority,
         )
-        _validate_regen_materialized_frames(config, work_dir, inputs)
+        verified_renders = _validate_regen_materialized_frames(
+            config,
+            work_dir,
+            inputs,
+            snapshot_dir=(
+                verified_snapshot_dir
+                if verified_snapshot_dir is not None
+                else work_dir / ".verified-regeneration-renders"
+            ),
+        )
         policy_access = _ensure_policy_access_metadata(
             config,
             work_dir,
@@ -2324,6 +2379,7 @@ def _load_regen_state(
         inputs.report,
         policy_access,
         publication_snapshots,
+        verified_renders,
     )
 
 
@@ -2400,10 +2456,13 @@ def _emit_regen_rrd(
     viewer_command: str,
 ) -> tuple[Sim2RealVizResult, float]:
     rerun_started = time.monotonic()
+    heldout_report = json.loads(json.dumps(state.heldout_report))
+    if state.verified_renders_dir is not None:
+        heldout_report["local_renders_dir"] = str(state.verified_renders_dir)
     result = emit_sim2real_rerun(
         local_dir=work_dir,
         inner_evidence=state.inner_evidence,
-        heldout_report=state.heldout_report,
+        heldout_report=heldout_report,
         stage_components=list(_stage_components(state.report)),
         outer_history=outer_history,
         run_metadata=_regen_run_metadata(config, state, viewer_command),
@@ -2559,10 +2618,13 @@ def _emit_regen_mcap(
     mcap_path = work_dir / "reports" / "sim2real.mcap"
     _assert_no_symlinked_ancestors(mcap_path, containment_root=work_dir)
     mcap_path.unlink(missing_ok=True)
+    heldout_report = json.loads(json.dumps(state.heldout_report))
+    if state.verified_renders_dir is not None:
+        heldout_report["local_renders_dir"] = str(state.verified_renders_dir)
     return emit_sim2real_mcap_if_enabled(
         local_dir=work_dir,
         inner_evidence=state.inner_evidence,
-        heldout_report=state.heldout_report,
+        heldout_report=heldout_report,
         output_mcap=mcap_path,
     )
 
@@ -2619,42 +2681,53 @@ def _regenerate_sim2real_rrd(
     publication_snapshots = (
         _capture_regen_publication_snapshots(config, storage) if upload else None
     )
-    state = _load_regen_state(
-        config,
-        work_dir,
-        storage,
-        sync_inputs=sync_inputs,
-        verify_remote_authority=sync_inputs or upload,
-        require_canonical_authority=upload and not sync_inputs,
-        publication_snapshots=publication_snapshots,
-    )
-    if publication_snapshots is not None and state.publication_snapshots is None:
-        state = replace(state, publication_snapshots=publication_snapshots)
-    outer_history = list((state.report.get("outer_loop") or {}).get("history") or [])
-    viewer_command = _viewer_command(config)
-    result, duration_s = _emit_regen_rrd(
-        config, work_dir, output_rrd, state, outer_history, viewer_command
-    )
-    _assert_regen_heldout_frames(result)
-    _persist_regen_report(
-        config,
-        work_dir,
-        output_rrd,
-        state,
-        result,
-        outer_history,
-        viewer_command,
-        duration_s,
-    )
-    return _finalize_regen_result(
-        config,
-        work_dir,
-        storage,
-        state,
-        result,
-        upload=upload,
-        output_rrd=output_rrd,
-    )
+    with tempfile.TemporaryDirectory(
+        prefix="npa-sim2real-verified-renders-"
+    ) as snapshot_root:
+        state = _load_regen_state(
+            config,
+            work_dir,
+            storage,
+            sync_inputs=sync_inputs,
+            verify_remote_authority=sync_inputs or upload,
+            require_canonical_authority=upload and not sync_inputs,
+            publication_snapshots=publication_snapshots,
+            verified_snapshot_dir=Path(snapshot_root) / "renders",
+        )
+        if publication_snapshots is not None and state.publication_snapshots is None:
+            state = replace(state, publication_snapshots=publication_snapshots)
+        outer_history = list(
+            (state.report.get("outer_loop") or {}).get("history") or []
+        )
+        viewer_command = _viewer_command(config)
+        result, duration_s = _emit_regen_rrd(
+            config,
+            work_dir,
+            output_rrd,
+            state,
+            outer_history,
+            viewer_command,
+        )
+        _assert_regen_heldout_frames(result)
+        _persist_regen_report(
+            config,
+            work_dir,
+            output_rrd,
+            state,
+            result,
+            outer_history,
+            viewer_command,
+            duration_s,
+        )
+        return _finalize_regen_result(
+            config,
+            work_dir,
+            storage,
+            state,
+            result,
+            upload=upload,
+            output_rrd=output_rrd,
+        )
 
 
 def regen_sim2real_rrd(

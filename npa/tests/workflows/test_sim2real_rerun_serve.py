@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from botocore.exceptions import ClientError
 
 from npa.clients.config import StorageConfig
 from npa.workflows.rerun_serve import (
@@ -361,16 +362,28 @@ def test_rrd_probe_uses_ranged_get_without_head(mocker) -> None:
         aws_secret_access_key="sk",
     )
     client = mocker.patch("boto3.client").return_value
+    recording_body = mocker.Mock()
+
+    def get_object(**kwargs):
+        if kwargs["Key"].endswith("reports/.sim2real-publication.json"):
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey"}},
+                "GetObject",
+            )
+        return {"Body": recording_body}
+
+    client.get_object.side_effect = get_object
 
     verify_rrd_exists_on_s3(config)
 
-    client.get_object.assert_called_once_with(
+    client.get_object.assert_any_call(
         Bucket="demo-bucket",
         Key="sim2real-b/sim2real-staged-20260615t180818z/reports/sim2real.rrd",
         Range="bytes=0-0",
     )
+    assert client.get_object.call_count == 2
     client.head_object.assert_not_called()
-    client.get_object.return_value["Body"].close.assert_called_once_with()
+    recording_body.close.assert_called_once_with()
 
 
 def test_redact_manifest_hides_secret_values(mocker) -> None:

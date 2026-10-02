@@ -520,16 +520,24 @@ def test_regen_transaction_fences_convenience_aliases(tmp_path: Path) -> None:
     uploads: list[str] = []
 
     class Storage:
-        def read_bytes_with_etag(self, _destination: str) -> None:
-            return None
+        def __init__(self) -> None:
+            self.objects: dict[str, bytes] = {}
+
+        def read_bytes_with_etag(
+            self,
+            destination: str,
+        ) -> tuple[bytes, str] | None:
+            payload = self.objects.get(destination)
+            return None if payload is None else (payload, '"etag"')
 
         def put_bytes_conditional(
             self,
-            _payload: bytes,
+            payload: bytes,
             destination: str,
             **_kwargs: object,
         ) -> str:
             uploads.append(destination)
+            self.objects[destination] = bytes(payload)
             return '"etag"'
 
         def upload_file(self, _source: str, destination: str) -> str:
@@ -824,16 +832,24 @@ def test_stage14_uses_generation_uris_and_commits_journal_last(
     events: list[str] = []
 
     class Storage:
-        def read_bytes_with_etag(self, _destination: str) -> None:
-            return None
+        def __init__(self) -> None:
+            self.objects: dict[str, bytes] = {}
+
+        def read_bytes_with_etag(
+            self,
+            destination: str,
+        ) -> tuple[bytes, str] | None:
+            payload = self.objects.get(destination)
+            return None if payload is None else (payload, '"etag"')
 
         def put_bytes_conditional(
             self,
-            _payload: bytes,
+            payload: bytes,
             destination: str,
             **_kwargs: object,
         ) -> str:
             events.append(destination)
+            self.objects[destination] = bytes(payload)
             return '"etag"'
 
         def upload_file(self, _source: str, destination: str) -> str:
@@ -841,19 +857,6 @@ def test_stage14_uses_generation_uris_and_commits_journal_last(
             return destination
 
     monkeypatch.setattr(stage14, "storage", lambda: Storage())
-    monkeypatch.setattr(
-        stage14,
-        "publish_built_component_history",
-        lambda **kwargs: events.append(
-            f"{ROOT}/components/history/stage_14/"
-            f"{kwargs['record']['content_sha256']}.json"
-        ),
-    )
-    monkeypatch.setattr(
-        stage14,
-        "publish_built_component_pointer",
-        lambda **_kwargs: events.append(f"{ROOT}/components/stage_14.json"),
-    )
     result = SimpleNamespace(
         heldout_frame_count=1,
         to_dict=lambda: {"heldout_frame_count": 1},
@@ -896,8 +899,15 @@ def test_regen_report_seals_immutable_recording_generation(tmp_path: Path) -> No
     uploads: list[tuple[str, dict[str, Any] | None]] = []
 
     class Storage:
-        def read_bytes_with_etag(self, _destination: str) -> None:
-            return None
+        def __init__(self) -> None:
+            self.objects: dict[str, bytes] = {}
+
+        def read_bytes_with_etag(
+            self,
+            destination: str,
+        ) -> tuple[bytes, str] | None:
+            payload = self.objects.get(destination)
+            return None if payload is None else (payload, '"etag"')
 
         def put_bytes_conditional(
             self,
@@ -907,6 +917,7 @@ def test_regen_report_seals_immutable_recording_generation(tmp_path: Path) -> No
         ) -> str:
             parsed = json.loads(payload) if destination.endswith(".json") else None
             uploads.append((destination, parsed))
+            self.objects[destination] = bytes(payload)
             return '"etag"'
 
         def upload_file(self, source: str, destination: str) -> str:

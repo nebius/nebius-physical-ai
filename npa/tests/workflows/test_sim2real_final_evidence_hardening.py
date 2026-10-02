@@ -649,16 +649,35 @@ def test_relative_regeneration_directory_publishes_absolute_source(
     recording.write_bytes(b"rrd")
 
     class Storage:
-        def read_bytes_with_etag(self, _destination: str) -> None:
-            return None
+        def __init__(self) -> None:
+            self.objects: dict[str, bytes] = {}
+
+        @staticmethod
+        def etag(payload: bytes) -> str:
+            return hashlib.sha256(payload).hexdigest()
+
+        def read_bytes_with_etag(
+            self,
+            destination: str,
+        ) -> tuple[bytes, str] | None:
+            payload = self.objects.get(destination)
+            return None if payload is None else (payload, self.etag(payload))
 
         def put_bytes_conditional(
             self,
-            _payload: bytes,
-            _destination: str,
-            **_kwargs: object,
+            payload: bytes,
+            destination: str,
+            *,
+            if_match: str = "",
+            if_none_match: bool = False,
         ) -> str:
-            return '"etag"'
+            current = self.read_bytes_with_etag(destination)
+            if if_none_match:
+                assert current is None
+            else:
+                assert current is not None and current[1] == if_match
+            self.objects[destination] = bytes(payload)
+            return self.etag(payload)
 
     publication = _prepare_regen_publication(_config(), local_dir, None, "")
     assert publication.local_dir.is_absolute()

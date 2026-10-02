@@ -15,6 +15,60 @@ from npa.workflows.sim2real.stage10_authority import (
     validate_stage10_input_scope,
 )
 
+MAX_RENDER_ENCODED_BYTES = 128 * 1024 * 1024
+MAX_RENDER_PIXELS = 64 * 1024 * 1024
+MAX_RENDER_DIMENSION = 16_384
+MAX_RENDER_DECODED_BYTES = 256 * 1024 * 1024
+
+
+def assert_safe_render_dimensions(
+    width: int,
+    height: int,
+    *,
+    channels: int = 4,
+) -> None:
+    """Reject image dimensions that can exhaust a finalize worker."""
+
+    if (
+        type(width) is not int
+        or type(height) is not int
+        or type(channels) is not int
+        or width <= 0
+        or height <= 0
+        or channels <= 0
+        or width > MAX_RENDER_DIMENSION
+        or height > MAX_RENDER_DIMENSION
+        or width * height > MAX_RENDER_PIXELS
+        or width * height * channels > MAX_RENDER_DECODED_BYTES
+    ):
+        raise ValueError("render dimensions exceed the safe decode budget")
+
+
+def read_validated_render_png(path: Path) -> bytes:
+    """Read one bounded, fully decodable, non-symlink PNG."""
+
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("render frame is missing or unsafe")
+    if path.stat().st_size > MAX_RENDER_ENCODED_BYTES:
+        raise ValueError("render frame exceeds the encoded-byte budget")
+    payload = path.read_bytes()
+    if len(payload) <= 8 or not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("render frame is not PNG")
+    from io import BytesIO
+
+    from PIL import Image
+
+    with Image.open(BytesIO(payload)) as image:
+        if image.format != "PNG":
+            raise ValueError("decoded image is not PNG")
+        assert_safe_render_dimensions(*image.size)
+        image.verify()
+    with Image.open(BytesIO(payload)) as image:
+        assert_safe_render_dimensions(*image.size)
+        image.load()
+    return payload
+
 
 @dataclass(frozen=True)
 class Stage10Operations:
@@ -150,17 +204,30 @@ def _assert_render_frame_bytes(
 ) -> None:
     frame_artifacts = manifest.get("frame_artifacts")
     if not required and frame_artifacts is None:
+        for relative in sorted(declared):
+            try:
+                read_validated_render_png(render_local / relative)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Stage 10 render frame bytes are not a safe decodable PNG: "
+                    f"{relative}"
+                ) from exc
         return
     if not isinstance(frame_artifacts, dict) or set(frame_artifacts) != declared:
         raise RuntimeError("Stage 10 render manifest lacks exact frame-byte authority")
     for relative in sorted(declared):
         identity = frame_artifacts.get(relative)
         path = render_local / relative
-        if not isinstance(identity, dict) or path.is_symlink() or not path.is_file():
+        if not isinstance(identity, dict):
             raise RuntimeError(
                 f"Stage 10 render frame authority is invalid: {relative}"
             )
-        payload = path.read_bytes()
+        try:
+            payload = read_validated_render_png(path)
+        except Exception as exc:
+            raise RuntimeError(
+                f"Stage 10 render frame bytes are not a safe decodable PNG: {relative}"
+            ) from exc
         digest = hashlib.sha256(payload).hexdigest()
         size = identity.get("size_bytes")
         if (
@@ -173,21 +240,6 @@ def _assert_render_frame_bytes(
             raise RuntimeError(
                 f"Stage 10 render frame bytes disagree with manifest: {relative}"
             )
-        try:
-            from io import BytesIO
-
-            from PIL import Image
-
-            with Image.open(BytesIO(payload)) as image:
-                if image.format != "PNG":
-                    raise ValueError("decoded image is not PNG")
-                image.verify()
-            with Image.open(BytesIO(payload)) as image:
-                image.load()
-        except (OSError, SyntaxError, ValueError) as exc:
-            raise RuntimeError(
-                f"Stage 10 render frame bytes are not a decodable PNG: {relative}"
-            ) from exc
 
 
 def validate_materialized_render_tree(
@@ -216,6 +268,76 @@ def validate_materialized_render_tree(
             else require_frame_identity
         ),
     )
+
+
+def materialize_verified_render_snapshot(
+    render_local: Path,
+    destination: Path,
+    manifest: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    require_checkpoint_identity: bool = True,
+    require_frame_identity: bool | None = None,
+) -> Path:
+    """Copy only verified frame bytes into a private encoder input tree."""
+
+    render_local = Path(render_local)
+    destination = Path(destination)
+    if destination.exists() or destination.is_symlink():
+        raise RuntimeError(f"verified render destination already exists: {destination}")
+    validate_materialized_render_tree(
+        render_local,
+        manifest,
+        candidate,
+        require_checkpoint_identity=require_checkpoint_identity,
+        require_frame_identity=require_frame_identity,
+    )
+    declared = _declared_render_frames(
+        manifest,
+        candidate=candidate,
+        require_checkpoint_identity=require_checkpoint_identity,
+    )
+    destination.mkdir(parents=True, mode=0o700)
+    for relative in sorted(declared):
+        payload = read_validated_render_png(render_local / relative)
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+    validate_materialized_render_tree(
+        destination,
+        manifest,
+        candidate,
+        require_checkpoint_identity=require_checkpoint_identity,
+        require_frame_identity=require_frame_identity,
+    )
+    return destination
+
+
+def materialize_safe_render_snapshot(
+    render_local: Path,
+    destination: Path,
+) -> Path:
+    """Snapshot every legacy PNG after bounded decode validation."""
+
+    render_local = Path(render_local)
+    destination = Path(destination)
+    if destination.exists() or destination.is_symlink():
+        raise RuntimeError(f"safe render destination already exists: {destination}")
+    destination.mkdir(parents=True, mode=0o700)
+    if not render_local.is_dir() or render_local.is_symlink():
+        return destination
+    for source in sorted(render_local.rglob("*.png")):
+        relative = source.relative_to(render_local)
+        current = source.parent
+        while current != render_local:
+            if current.is_symlink():
+                raise RuntimeError(f"render frame has a symlinked parent: {source}")
+            current = current.parent
+        payload = read_validated_render_png(source)
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+    return destination
 
 
 def _canonical_render_attempt_tag(

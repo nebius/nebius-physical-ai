@@ -25,6 +25,10 @@ from typing import Any
 
 import numpy as np
 
+from npa.workflows.sim2real.stage10_execution import (
+    MAX_RENDER_ENCODED_BYTES,
+    assert_safe_render_dimensions,
+)
 from npa.workflows.sim2real.viz_contract import (
     heldout_policy_metadata as _heldout_policy_metadata,
 )
@@ -3027,6 +3031,8 @@ def _read_image(path: Path) -> np.ndarray | None:
 
 def _read_png(path: Path) -> np.ndarray | None:
     try:
+        if path.stat().st_size > MAX_RENDER_ENCODED_BYTES:
+            return None
         data = path.read_bytes()
     except OSError:
         return None
@@ -3051,6 +3057,7 @@ def _read_png_with_pillow(data: bytes) -> np.ndarray | None:
         return None
     try:
         with Image.open(io.BytesIO(data)) as image:
+            assert_safe_render_dimensions(*image.size)
             return np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
     except Exception:
         logging.getLogger(__name__).debug("Pillow PNG decode failed", exc_info=True)
@@ -3073,14 +3080,24 @@ def _decode_png_bytes(data: bytes) -> np.ndarray | None:
     import struct
     import zlib
 
+    if len(data) > MAX_RENDER_ENCODED_BYTES:
+        return None
     index = 8
     width = height = 0
     bit_depth = color_type = interlace = 0
     idat = bytearray()
     while index + 8 <= len(data):
         length = struct.unpack("!I", data[index : index + 4])[0]
+        if length > MAX_RENDER_ENCODED_BYTES or index + 12 + length > len(data):
+            return None
         chunk_type = data[index + 4 : index + 8]
         chunk = data[index + 8 : index + 8 + length]
+        expected_crc = struct.unpack(
+            "!I",
+            data[index + 8 + length : index + 12 + length],
+        )[0]
+        if zlib.crc32(chunk_type + chunk) & 0xFFFFFFFF != expected_crc:
+            return None
         index += 12 + length
         if chunk_type == b"IHDR" and len(chunk) >= 13:
             width, height = struct.unpack("!II", chunk[:8])
@@ -3102,12 +3119,22 @@ def _decode_png_bytes(data: bytes) -> np.ndarray | None:
     ):
         return None
     try:
-        raw = zlib.decompress(bytes(idat))
-    except zlib.error:
+        assert_safe_render_dimensions(width, height, channels=channels)
+    except ValueError:
         return None
     row_len = width * channels
     stride = row_len + 1
-    if len(raw) < height * stride:
+    expected_bytes = height * stride
+    try:
+        decompressor = zlib.decompressobj()
+        raw = decompressor.decompress(bytes(idat), expected_bytes + 1)
+    except zlib.error:
+        return None
+    if (
+        len(raw) != expected_bytes
+        or not decompressor.eof
+        or decompressor.unconsumed_tail
+    ):
         return None
     bpp = channels
     # Rows are carried as Python int lists, not numpy rows. Average and Paeth are
