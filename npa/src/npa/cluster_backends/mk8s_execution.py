@@ -1070,6 +1070,43 @@ def _node_group_template_fingerprint(template: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _decode_terraform_node_group_preemptibility(
+    attributes: dict[str, Any],
+) -> dict[str, Any]:
+    """Decode Terraform's optional empty message, retaining legacy booleans."""
+
+    template = attributes.get("template")
+    if not isinstance(template, dict):
+        return attributes
+    value = template.get("preemptible")
+    if value is None:
+        value = False
+    elif isinstance(value, dict) and not value:
+        value = True
+    else:
+        return attributes
+    return {**attributes, "template": {**template, "preemptible": value}}
+
+
+def _gpu_cluster_matches_desired(
+    value: Any, state_value: Any, *, enabled: bool
+) -> bool:
+    """Require one exact attachment ID when this pool needs a GPU cluster."""
+
+    if value != state_value:
+        return False
+    if not enabled:
+        return value is None
+    if not isinstance(value, dict) or set(value) != {"id"}:
+        return False
+    identifier = value["id"]
+    return (
+        isinstance(identifier, str)
+        and bool(identifier)
+        and identifier == identifier.strip()
+    )
+
+
 def _tainted_node_group_matches_desired(
     *,
     provider_payload: dict[str, Any],
@@ -1082,6 +1119,7 @@ def _tainted_node_group_matches_desired(
 ) -> bool:
     """Prove a tainted state entry still owns the exact desired live pool."""
 
+    state_attributes = _decode_terraform_node_group_preemptibility(state_attributes)
     metadata = provider_payload.get("metadata") or {}
     spec = provider_payload.get("spec") or {}
     status = provider_payload.get("status") or {}
@@ -1154,10 +1192,10 @@ def _tainted_node_group_matches_desired(
             return False
     elif filesystems:
         return False
-    expected_gpu_cluster = {} if cluster.resolved_enable_gpu_cluster() else None
-    if (
-        template.get("gpu_cluster") != expected_gpu_cluster
-        or state_template.get("gpu_cluster") != expected_gpu_cluster
+    if not _gpu_cluster_matches_desired(
+        template.get("gpu_cluster"),
+        state_template.get("gpu_cluster"),
+        enabled=pool.is_gpu() and cluster.resolved_enable_gpu_cluster(),
     ):
         return False
     if pool.is_gpu():
@@ -1309,7 +1347,9 @@ def _reconcile_tainted_node_groups(
                 },
                 "spec": {
                     "fixed_node_count": attributes.get("fixed_node_count"),
-                    "template": attributes.get("template"),
+                    "template": _decode_terraform_node_group_preemptibility(
+                        attributes
+                    ).get("template"),
                 },
                 "status": {"state": "PROVISIONING"},
             }

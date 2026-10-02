@@ -13,6 +13,7 @@ import stat
 import sys
 import textwrap
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -2283,7 +2284,7 @@ def _tainted_gpu_reconciliation_fixture(
             "policy": "STRICT",
             "reservation_ids": ["capacityblockgroup-test"],
         },
-        "preemptible": preemptible,
+        "preemptible": {} if preemptible else None,
         "network_interfaces": [{"subnet_id": "vpcsubnet-test"}],
         "filesystems": [
             {
@@ -2365,7 +2366,7 @@ def _enable_gpu_cluster_for_tainted_fixture(state: dict, provider: dict) -> Clus
             "platform": "gpu-h200-sxm",
             "preset": "8gpu-128vcpu-1600gb",
         }
-        template["gpu_cluster"] = {}
+        template["gpu_cluster"] = {"id": "computegpucluster-test"}
     return ClusterSpec(
         name="cluster-test",
         cpu_nodes=NodePoolSpec(count=0),
@@ -2383,10 +2384,19 @@ def _enable_gpu_cluster_for_tainted_fixture(state: dict, provider: dict) -> Clus
     )
 
 
-@pytest.mark.parametrize("preemptible", [False, True])
+@pytest.mark.parametrize(
+    ("preemptible", "state_format"),
+    [
+        (False, "v1"),
+        (False, "boolean"),
+        (False, "omitted"),
+        (True, "v1"),
+        (True, "boolean"),
+    ],
+)
 @pytest.mark.parametrize("wire_format", ["v1", "boolean"])
 def test_tainted_exact_node_group_is_safely_adopted(
-    monkeypatch, tmp_path, preemptible: bool, wire_format: str
+    monkeypatch, tmp_path, preemptible: bool, state_format: str, wire_format: str
 ) -> None:
     from npa.cluster_backends import mk8s_execution as execution
     from npa.cluster_backends.mk8s_model import as_mk8s_desired
@@ -2396,6 +2406,11 @@ def test_tainted_exact_node_group_is_safely_adopted(
     )
     if wire_format == "boolean":
         provider["spec"]["template"]["preemptible"] = preemptible
+    state_template = state["resources"][1]["instances"][0]["attributes"]["template"]
+    if state_format == "boolean":
+        state_template["preemptible"] = preemptible
+    elif state_format == "omitted":
+        state_template.pop("preemptible")
     calls: list[list[str]] = []
 
     def run(args, **_kwargs):  # noqa: ANN001
@@ -2431,9 +2446,7 @@ def test_tainted_exact_node_group_is_safely_adopted(
     ]
 
 
-def test_tainted_exact_gpu_cluster_message_is_safely_adopted(
-    monkeypatch, tmp_path
-) -> None:
+def test_tainted_exact_gpu_cluster_id_is_safely_adopted(monkeypatch, tmp_path) -> None:
     from npa.cluster_backends import mk8s_execution as execution
     from npa.cluster_backends.mk8s_model import as_mk8s_desired
 
@@ -2506,12 +2519,12 @@ def _assert_tainted_reconciliation_refused(
         ("provider", None),
         ("provider", {"unexpected": True}),
         ("state", 1),
-        ("state", {}),
+        ("state", {"unexpected": True}),
         ("state", None),
         ("state", "missing"),
     ],
 )
-def test_tainted_node_group_requires_boolean_preemptibility(
+def test_tainted_node_group_rejects_malformed_or_mismatched_preemptibility(
     monkeypatch, tmp_path, evidence: str, malformed: object
 ) -> None:
     state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
@@ -2550,11 +2563,34 @@ def test_tainted_node_group_requires_boolean_preemptibility(
     )
 
 
+@pytest.mark.parametrize("evidence", ["provider", "state"])
+@pytest.mark.parametrize("malformed", ["false", 0, [], {"unexpected": True}])
+def test_tainted_on_demand_group_rejects_false_like_preemptibility(
+    monkeypatch, tmp_path, evidence: str, malformed: object
+) -> None:
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    template = (
+        provider["spec"]["template"]
+        if evidence == "provider"
+        else state["resources"][1]["instances"][0]["attributes"]["template"]
+    )
+    template["preemptible"] = malformed
+
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
 @pytest.mark.parametrize(
     ("evidence", "malformed"),
-    [("provider", {"unexpected": True}), ("state", "enabled")],
+    [
+        ("provider", {"unexpected": True}),
+        ("state", "enabled"),
+        ("provider", {"id": "computegpucluster-other"}),
+        ("state", {"id": "computegpucluster-other"}),
+    ],
 )
-def test_tainted_node_group_requires_empty_gpu_cluster_message(
+def test_tainted_node_group_requires_matching_gpu_cluster_identity(
     monkeypatch, tmp_path, evidence: str, malformed: object
 ) -> None:
     state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
@@ -2567,11 +2603,65 @@ def test_tainted_node_group_requires_empty_gpu_cluster_message(
         else (state_template, provider_template)
     )
     malformed_template["gpu_cluster"] = malformed
-    assert valid_template["gpu_cluster"] == {}
+    assert valid_template["gpu_cluster"] == {"id": "computegpucluster-test"}
 
     _assert_tainted_reconciliation_refused(
         monkeypatch, tmp_path, state, provider, cluster
     )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        {},
+        {"id": ""},
+        {"id": " "},
+        {"id": None},
+        {"id": 1},
+        {"id": "computegpucluster-test", "unexpected": True},
+    ],
+)
+def test_tainted_node_group_rejects_matching_but_invalid_gpu_cluster_ids(
+    monkeypatch, tmp_path, value: object
+) -> None:
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    state["resources"][1]["instances"][0]["attributes"]["template"]["gpu_cluster"] = (
+        value
+    )
+    provider["spec"]["template"]["gpu_cluster"] = deepcopy(value)
+
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
+@pytest.mark.parametrize("attached", [False, True])
+def test_tainted_cpu_pool_requires_no_gpu_cluster_attachment(attached: bool) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    cpu = NodePoolSpec(count=2, platform="cpu-d3", preset="8vcpu-32gb")
+    desired = as_mk8s_desired(replace(cluster, cpu_nodes=cpu))
+    attributes = state["resources"][1]["instances"][0]["attributes"]
+    for template in (attributes["template"], provider["spec"]["template"]):
+        template["resources"] = {"platform": cpu.platform, "preset": cpu.preset}
+        template["boot_disk"]["size_gibibytes"] = 128
+        template["reservation_policy"] = {}
+        template["gpu_settings"] = {}
+        if not attached:
+            template["gpu_cluster"] = None
+
+    assert execution._tainted_node_group_matches_desired(
+        provider_payload=execution._decode_v1_node_group_preemptibility(provider),
+        state_attributes=attributes,
+        pool=desired.cpu_nodes,
+        cluster=desired,
+        cluster_id="mk8scluster-test",
+        subnet_id="vpcsubnet-test",
+    ) is (not attached)
 
 
 def test_tainted_node_group_mismatch_refuses_before_untaint(
