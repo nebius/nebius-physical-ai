@@ -1214,7 +1214,7 @@ def test_filesystem_scan_does_not_claim_metadata_validation(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "mutation", ["schema", "subject", "predicate", "runtime-platform"]
+    "mutation", ["schema", "subject", "predicate", "runtime-platform", "media-type"]
 )
 def test_invalid_metadata_is_not_reported_as_validated(mutation):
     records = []
@@ -1226,3 +1226,21 @@ def test_invalid_metadata_is_not_reported_as_validated(mutation):
             )
         )
     assert records == []
+
+
+@pytest.mark.parametrize(
+    "source,history_only,expected",
+    [
+        ("registry", False, "not-inspected"),
+        ("local-docker-stream", True, "not-inspected"),
+        ("local-docker-stream", False, "saved-image-manifests"),
+        ("tarball", False, "saved-image-manifests"),
+    ],
+)
+def test_metadata_scope_distinguishes_uninspected_manifests(
+    source, history_only, expected
+):
+    report = scanner.ScanReport(
+        image="example", source=source, history_only=history_only
+    )
+    assert report.to_dict()["metadata_validation_scope"] == expected

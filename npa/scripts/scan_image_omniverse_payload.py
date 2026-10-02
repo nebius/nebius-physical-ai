@@ -255,6 +255,12 @@ class ScanReport:
             "weight_shaped_paths": sorted(self.weight_shaped_paths),
             # Safe descriptors only; never copy predicate contents into the report.
             "validated_metadata_layers": self.validated_metadata_layers,
+            "metadata_validation_scope": (
+                "saved-image-manifests"
+                if self.source in {"tarball", "local-docker-stream"}
+                and not self.history_only
+                else "not-inspected"
+            ),
         }
 
 
@@ -443,7 +449,12 @@ def _check_saved_attestation(
     # The subject must itself have readable filesystem layers. Its JSON cannot
     # recursively opt into metadata handling through an attestation annotation.
     _check_oci_manifest(
-        target_name, documents, scanned_layers, sizes, (*ancestors, name)
+        target_name,
+        documents,
+        scanned_layers,
+        sizes,
+        (*ancestors, name),
+        attestations=attestations,
     )
     for layer in document["layers"]:
         layer_name = _saved_descriptor_path(layer, sizes)
