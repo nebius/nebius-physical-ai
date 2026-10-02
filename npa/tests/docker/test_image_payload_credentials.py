@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 import yaml
@@ -208,6 +209,32 @@ def test_the_carry_covers_every_fixed_marker() -> None:
         for _, pattern in credentials.MARKER_CONTENT
     )
     assert credentials.CARRY >= longest
+
+
+def test_import_with_python310_regex_modules(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Exercise the older stdlib layout even in the Python 3.12 PR job.
+    parser = sys.modules.get("re._parser") or importlib.import_module("sre_parse")
+    legacy_re = ModuleType("re")
+    legacy_re.__dict__.update(
+        (name, value)
+        for name, value in vars(re).items()
+        if name not in {"_parser", "_constants", "__path__"}
+    )
+    with monkeypatch.context() as legacy:
+        legacy.setitem(sys.modules, "re", legacy_re)
+        legacy.delitem(sys.modules, "re._parser", raising=False)
+        legacy.delitem(sys.modules, "re._constants", raising=False)
+        legacy.setitem(sys.modules, "sre_parse", parser)
+        module = importlib.util.module_from_spec(_SPEC)
+        legacy.setitem(sys.modules, _SPEC.name, module)
+        _SPEC.loader.exec_module(module)
+
+    assert module._max_match_length(re.compile(rb"AKIA[0-9A-Z]{16}")) == 20
+    with pytest.raises(ValueError, match="finite maximum width"):
+        module._max_match_length(re.compile(rb"a*"))
+    module.CONTENT_CHUNK = 7
+    assert module.content_credential(io.BytesIO(SYNTHETIC_KEY)) == "private_key_content"
+    assert module.content_credential(io.BytesIO(b"ordinary library text")) is None
 
 
 @pytest.mark.parametrize(

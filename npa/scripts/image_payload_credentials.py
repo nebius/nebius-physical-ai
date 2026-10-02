@@ -38,6 +38,11 @@ import re
 from dataclasses import dataclass
 from typing import IO
 
+try:
+    from re import _parser as _regex_parser
+except ImportError:  # Python 3.10 predates the re._parser module.
+    import sre_parse as _regex_parser
+
 
 def normalise_member_name(name: str) -> str:
     """Return a tar member name resolved to its canonical path form.
@@ -180,14 +185,15 @@ def _max_match_length(pattern: re.Pattern[bytes]) -> int:
     characters and matches 20 bytes, so a carry sized that way would be an
     under-estimate presented as a bound. Ask the parser for the real width.
 
-    ``re._parser`` is private. It is used deliberately, because the alternative
-    is a hand-maintained number that silently goes stale, and there is no public
-    equivalent. If it ever disappears this raises rather than guessing, and the
-    carry is never quietly too small.
+    The regex parser (``sre_parse`` on Python 3.10, ``re._parser`` on newer
+    versions) is private. It is used deliberately, because the alternative is a
+    hand-maintained number that silently goes stale, and there is no public
+    equivalent. If neither parser is available, importing this module raises
+    rather than guessing, and the carry is never quietly too small.
     """
 
-    width = re._parser.parse(pattern.pattern.decode("latin-1")).getwidth()[1]
-    if width >= re._constants.MAXREPEAT:
+    width = _regex_parser.parse(pattern.pattern.decode("latin-1")).getwidth()[1]
+    if width >= _regex_parser.MAXREPEAT:
         raise ValueError("streaming markers must have a finite maximum width")
     return width
 
