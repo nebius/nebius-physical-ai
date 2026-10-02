@@ -243,7 +243,7 @@ def _validate_coverage(report: dict, inventory: dict[str, str], output: Path) ->
 
 
 def _scanner_versions(output: Path) -> None:
-    for scanner, expected in (("trivy", "Version: 0.74.0"), ("uv", "uv 0.12.5")):
+    for scanner, expected in (("trivy", "Version: 0.74.0"), ("uv", "uv 0.12.17")):
         result = subprocess.run(
             [scanner, "--version"], check=True, capture_output=True, text=True
         )

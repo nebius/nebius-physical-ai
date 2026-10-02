@@ -195,7 +195,17 @@ def static_prerequisites(
 
     hf_token = str(secret_values.get("HF_TOKEN") or "").strip()
     if hf_token:
-        repos = ["nvidia/Cosmos-Transfer2.5-2B"]
+        # Derive the gated repos from the sim2real capability's single source of
+        # truth so this pre-launch gate matches `health access --capability
+        # sim2real`. Cosmos Transfer (Stage 3) also fetches the pinned
+        # Predict2.5 tokenizer and the Cosmos Guardrail weights at runtime;
+        # probing only Cosmos-Transfer2.5-2B here let a run pass preflight and
+        # then fail inside Stage 3 on an unaccepted dependency.
+        from npa.workbench.model_access import gated_hf_repos
+
+        repos = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+        if not repos:
+            repos = ["nvidia/Cosmos-Transfer2.5-2B"]
         denied: list[str] = []
         for repo in (item for item in repos if item):
             result = hf_validator(hf_token, repo)
@@ -269,7 +279,7 @@ def _is_rtx_pro_6000(labels: Mapping[str, Any]) -> bool:
     return "rtx-pro-6000" in product or name == "rtx6000"
 
 
-def _managed_driver_isaac_nodes(nodes_json: str) -> list[str]:
+def _managed_driver_isaac_nodes(nodes_json: str, *, placements=None) -> list[str]:
     """Return RTX PRO 6000 nodes serving managed drivers rather than operator drivers.
 
     Isaac Sim's camera-bearing rollouts are validated on Kubernetes only against the
@@ -283,8 +293,16 @@ def _managed_driver_isaac_nodes(nodes_json: str) -> list[str]:
         payload = json.loads(nodes_json or "") or {}
     except json.JSONDecodeError:
         return []
+    from npa.orchestration.npa_workflow.sim2real_driver_preflight import (
+        node_can_host_isaac,
+    )
+
+    if not isinstance(payload, Mapping) or not isinstance(payload.get("items"), list):
+        raise ValueError("Isaac node listing must contain an items list")
     flagged: list[str] = []
-    for node in payload.get("items") or []:
+    for node in payload["items"]:
+        if not isinstance(node, Mapping):
+            raise ValueError("Isaac node listing contains an invalid record")
         metadata = (node or {}).get("metadata") or {}
         labels = metadata.get("labels") or {}
         if not isinstance(labels, Mapping) or not _is_rtx_pro_6000(labels):
@@ -293,21 +311,13 @@ def _managed_driver_isaac_nodes(nodes_json: str) -> list[str]:
         operator = (
             str(labels.get("nvidia.com/gpu.deploy.operands") or "").lower() == "true"
         )
-        if managed and not operator:
+        if managed and not operator and node_can_host_isaac(node, placements):
             flagged.append(str(metadata.get("name") or ""))
     return sorted(name for name in flagged if name)
 
 
-def kubernetes_prerequisites(
-    config: Mapping[str, Any],
-    *,
-    runner: Callable[[list[str]], Any],
-    namespace: str = "default",
-) -> list[Issue]:
-    """Validate cluster objects the real Sim2Real/SkyPilot path consumes."""
-
+def _cpu_placement_issues(nodes) -> list[Issue]:
     issues: list[Issue] = []
-    nodes = runner(["get", "nodes", "-o", "json"])
     if getattr(nodes, "returncode", 1) != 0:
         issues.append(
             (
@@ -329,24 +339,43 @@ def kubernetes_prerequisites(
             )
         )
 
-    if getattr(nodes, "returncode", 1) == 0:
-        managed_driver_nodes = _managed_driver_isaac_nodes(
-            str(getattr(nodes, "stdout", ""))
-        )
-        if managed_driver_nodes:
-            issues.append(
-                (
-                    "Isaac render stages would run on RTX PRO 6000 node(s) serving the "
-                    "Nebius managed-driver image instead of the validated GPU-Operator "
-                    "mounted RTX drivers: " + ", ".join(managed_driver_nodes),
-                    "reprovision the Isaac GPU pool with `npa cluster up "
-                    "--gpu-workload-profile rtx-rendering`, which selects the "
-                    "operator-mounted RTX driver path and its GLX/EGL/Vulkan readiness "
-                    "gate, then rerun `kubectl get nodes -o json` on the selected "
-                    "context",
-                )
-            )
+    return issues
 
+
+def _driver_placement_issues(nodes, placements) -> list[Issue]:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import KubernetesGpuCatalogError
+
+    if getattr(nodes, "returncode", 1) != 0:
+        return []
+    try:
+        names = _managed_driver_isaac_nodes(
+            str(getattr(nodes, "stdout", "")), placements=placements
+        )
+    except (ValueError, KubernetesGpuCatalogError):
+        return [
+            (
+                "Isaac render node placement could not be verified",
+                "verify the selected node listing and the effective Isaac resource "
+                "profile, selectors, affinity, and tolerations",
+            )
+        ]
+    if not names:
+        return []
+    return [
+        (
+            "Isaac render stages could run on eligible RTX PRO 6000 node(s) serving the "
+            "Nebius managed-driver image instead of the validated GPU-Operator "
+            "mounted RTX drivers: " + ", ".join(names),
+            "reprovision the Isaac GPU pool with `npa cluster up "
+            "--gpu-workload-profile rtx-rendering`, which selects the "
+            "operator-mounted RTX driver path and its GLX/EGL/Vulkan readiness "
+            "gate, then rerun `kubectl get nodes -o json` on the selected context",
+        )
+    ]
+
+
+def _isaac_cache_issues(config, runner, namespace) -> list[Issue]:
+    issues: list[Issue] = []
     pvc_name = str(config.get("isaac_cache_pvc") or "").strip()
     if pvc_name:
         pvc_result = runner(["get", "pvc", pvc_name, "-n", namespace, "-o", "json"])
@@ -371,3 +400,30 @@ def kubernetes_prerequisites(
             )
 
     return issues
+
+
+def kubernetes_prerequisites(
+    config: Mapping[str, Any],
+    *,
+    runner: Callable[[list[str]], Any],
+    namespace: str = "default",
+    isaac_placements=None,
+) -> list[Issue]:
+    """Validate cluster objects the real Sim2Real/SkyPilot path consumes.
+
+    Args:
+        config: Resolved workflow configuration.
+        runner: Exact-context Kubernetes reader.
+        namespace: Selected workflow namespace.
+        isaac_placements: Effective render stage placement constraints.
+    Returns:
+        Missing prerequisites and their remediation guidance.
+    Raises:
+        None.
+    """
+    nodes = runner(["get", "nodes", "-o", "json"])
+    return (
+        _cpu_placement_issues(nodes)
+        + _driver_placement_issues(nodes, isaac_placements)
+        + _isaac_cache_issues(config, runner, namespace)
+    )

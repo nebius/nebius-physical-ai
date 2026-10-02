@@ -1,0 +1,43 @@
+{
+  "schema": "npa.cosmos3.wam-final-evidence-archive.v1",
+  "scope": "New sixteen-GPU quality evaluations, visual media, frozen telemetry, derived traces and failed-attempt records. Training checkpoint archives verified separately.",
+  "files_verified": 515,
+  "bytes_read_back_verified": 654845695,
+  "all_objects_fully_downloaded_and_sha256_verified": true,
+  "private_receipt_sha256": "e9685b651e51548eac89585b32e6d6795c8a0a938cc9bde43a44e01976c13824",
+  "local_visual_source_files_matched": 81,
+  "source_deleted": false,
+  "archive_completed_at": "2026-09-28T17:37:35.189657+00:00",
+  "training_archives": [
+    {
+      "role": "full",
+      "files": 295,
+      "bytes_read_back_verified": 710727486636,
+      "private_receipt_sha256": "a5187cb890e670adfa6806b7460300089e51c49d6729ed696824e213634a8c38"
+    },
+    {
+      "role": "profile",
+      "files": 94,
+      "bytes_read_back_verified": 177356748972,
+      "private_receipt_sha256": "25e6629183770dbf3c99ea013f60920c22aff7c436657c4efd57a0be983f1896"
+    },
+    {
+      "role": "repeat-1",
+      "files": 91,
+      "bytes_read_back_verified": 177285708271,
+      "private_receipt_sha256": "bfc5dcb92bcc8a79d8c0f821695ff4573d1287b6b4851f0aa2350e4c2a0c9830"
+    },
+    {
+      "role": "repeat-2",
+      "files": 91,
+      "bytes_read_back_verified": 177285708236,
+      "private_receipt_sha256": "a6d832463eb0b6c87d735d4e63ab729ee2b6361b06022a03f62b72287d48b108"
+    },
+    {
+      "role": "repeat-3",
+      "files": 91,
+      "bytes_read_back_verified": 177285708214,
+      "private_receipt_sha256": "02bcb9d44cced366deed95b3dcf8c2d719bf3ba7394c40ad003c291ccbce983b"
+    }
+  ]
+}

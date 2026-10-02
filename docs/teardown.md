@@ -57,6 +57,20 @@ npa cleanup --full --yes --project "<alias>"
 npa configure --forget-project "<alias>"
 ```
 
+`storage bucket delete` retires the deleted bucket's saved credentials from
+**both** the legacy top-level `storage` section and the exact project's scoped
+credential-store record in the same atomic rewrite, so a later `npa configure
+--project <alias>` cannot rebuild the bucket/access-key view from a stale
+scoped record. The scoped `terraform_state` record (the Terraform S3 backend
+keys, independent from the object-storage access key) is retired in that same
+rewrite when it names the same bucket, so `resolve_terraform_state` cannot
+resurrect it either. IAM ownership evidence (`storage_iam`) is untouched by
+the bucket delete; it survives until the ownership-gated `storage
+service-account delete` retires it too.
+
+Without `--wait`, local retirement follows an accepted purge request while the
+bucket may still be pending deletion. Use `--wait` to confirm provider absence.
+
 ## Cloud spend vs local clutter
 
 `npa cleanup` only touches **local** state. Plain `npa cleanup --yes` keeps your
@@ -174,7 +188,10 @@ is therefore only for adopting an already-live cluster outside that flow. It run
 the same provider identity checks and rejects missing, destroyed, rolled-back, or
 replaced clusters. Cross-project use is refused. `--rebind` is allowed only after
 the managed-job queue is proven terminal; changing an alias for the same
-project/cluster ids is not a rebind.
+project/cluster ids is not a rebind. Only `SUCCEEDED`, `CANCELLED`, and the
+pinned `FAILED`, `FAILED_SETUP`, `FAILED_PRECHECKS`, `FAILED_NO_RESOURCE`, and
+`FAILED_CONTROLLER` states prove terminality; missing, `UNKNOWN`, or future
+status values block both rebind and global SkyPilot-state cleanup.
 
 ### Owned local workflow API
 
@@ -238,6 +255,19 @@ cluster without recoverable owned state fails closed.
 Workflow cancellation reports `NOT_SUBMITTED` only from durable planned or
 reserved evidence. If submission began and S3 or SkyPilot verification is gone,
 it stays `VERIFICATION_UNAVAILABLE` with exit 2 — never silently "already gone".
+
+An exact managed-job lookup can also report absence while durable workflow state
+still says that job is non-terminal. `workflow cancel` preserves that
+contradiction, exits 2, and writes a non-terminal receipt. During an explicit
+`npa destroy --all --yes` transaction, the workflow phase may continue as
+degraded only when the cancel JSON contains `owned_teardown_allowed: true`.
+That narrow result proves every actually live exact job cancelled cleanly and
+all remaining errors are verified-absence contradictions. It does not apply to
+provider failures, malformed ledgers, missing job IDs, or cancellation errors;
+those remain hard dependency blockers before controller or cluster teardown.
+Managed-job drain uses a closed terminal contract: `SUBMITTED`,
+`WINDING_DOWN`, and unrecognized future states remain non-terminal until the
+exact queue reports a terminal state or verified absence.
 
 ## Audit receipts
 

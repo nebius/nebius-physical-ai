@@ -1,0 +1,13 @@
+{
+  "schema": "npa.cosmos3.wam-visual-selection.v1",
+  "recorded_utc": "2026-09-30T04:53:40.650139+00:00",
+  "tasks": [
+    0,
+    5
+  ],
+  "trial": 0,
+  "seed": 42,
+  "visual_job_state_at_selection": "PENDING",
+  "reason": "Fixed tasks matching earlier sixteen-GPU visual examples, selected before this visual job executed.",
+  "publisher_source_sha256": "713c805d72f94ffa36b0ae41605d178863b55149a649f1a7fb9c231e0442d59c"
+}

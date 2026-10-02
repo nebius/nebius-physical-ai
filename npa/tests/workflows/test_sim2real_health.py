@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -21,6 +22,8 @@ from npa.workflows.sim2real_health import (
     run_preflight,
 )
 from npa.workflows.sim2real_loop import build_config_from_env
+
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -156,8 +159,8 @@ def test_s3_pass_and_fail_with_injected_client() -> None:
     assert "NoSuchBucket" in " ".join(bad.details)
 
 
-def test_registry_passes_for_public_default_images() -> None:
-    # Repository-owned defaults are fully qualified anonymous GHCR references.
+def test_registry_passes_for_resolved_default_images() -> None:
+    # Accepted defaults and synthetic operator replacements are fully qualified.
     result = check_registry(
         _config(), probes=DoctorProbes(image_inspector=lambda i: True)
     )
@@ -571,6 +574,91 @@ def test_run_preflight_selects_requested_checks() -> None:
         "config",
         "compositional-workflow-coherence",
     ]
+
+
+def test_run_preflight_runs_checks_concurrently() -> None:
+    """Both selected checks must be in flight at once, proven deterministically.
+
+    A ``threading.Barrier(2)`` only releases once both probes have called
+    ``wait()``. If the checks ran serially, the first would block at the
+    barrier forever (the second never starts) and this test would fail with
+    a deterministic ``BrokenBarrierError`` on timeout rather than a flaky
+    wall-clock measurement.
+    """
+
+    barrier = threading.Barrier(2, timeout=5)
+    registry_blocked_once = {"done": False}
+
+    class _Client:
+        def list_checkpoints(self, uri):
+            barrier.wait()
+            return []
+
+    def _inspector(image):
+        if not registry_blocked_once["done"]:
+            registry_blocked_once["done"] = True
+            barrier.wait()
+        return True
+
+    probes = DoctorProbes(
+        credentials=_Creds(ak="a", sk="s"),
+        s3_client_factory=_Client,
+        image_inspector=_inspector,
+    )
+    results = run_preflight(
+        _config(s3_bucket="b", s3_endpoint="https://endpoint.example"),
+        repo_root=REPO_ROOT,
+        probes=probes,
+        checks=["s3", "registry"],
+    )
+
+    assert [r.name for r in results] == ["s3", "registry"]
+    assert all(r.status == health.PASS for r in results)
+
+
+def test_run_preflight_preserves_order_regardless_of_finish_order() -> None:
+    """Result order follows ALL_CHECKS order even when registry finishes first."""
+
+    registry_done = threading.Event()
+
+    class _Client:
+        def list_checkpoints(self, uri):
+            assert registry_done.wait(timeout=5), "registry never signaled completion"
+            return []
+
+    def _inspector(image):
+        registry_done.set()
+        return True
+
+    probes = DoctorProbes(
+        credentials=_Creds(ak="a", sk="s"),
+        s3_client_factory=_Client,
+        image_inspector=_inspector,
+    )
+    results = run_preflight(
+        _config(s3_bucket="b", s3_endpoint="https://endpoint.example"),
+        repo_root=REPO_ROOT,
+        probes=probes,
+        checks=["s3", "registry"],
+    )
+
+    assert [r.name for r in results] == ["s3", "registry"]
+    assert all(r.status == health.PASS for r in results)
+
+
+def test_run_preflight_propagates_first_ordered_exception() -> None:
+    def _boom(image):
+        raise RuntimeError("registry probe exploded")
+
+    probes = DoctorProbes(image_inspector=_boom)
+
+    with pytest.raises(RuntimeError, match="registry probe exploded"):
+        run_preflight(
+            _config(),
+            repo_root=REPO_ROOT,
+            probes=probes,
+            checks=["registry", "coherence"],
+        )
 
 
 @pytest.mark.parametrize("gpu_resource", ["nvidia.com/gpu"])

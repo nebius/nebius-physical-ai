@@ -1,0 +1,57 @@
+{
+  "schema": "npa.public-demo.rl-rejection-visual-review.v1",
+  "source_revision": "de63c25f4009aa09b6ec68710170c462bedbd20c",
+  "canonical_html_sha256": "5f8a401ac7d0d77b1ed17cad2ca2d9d3db86e51b1b53caacef053a3d74bf95db",
+  "native_result_sha256": "8748e30f1a0610326bbf0cc182e293411b2ec401aa4cf5f4be9fce09d036ef84",
+  "actual_cli_view_byte_equal": true,
+  "browser_receipt_sha256": "dd8038f6d18fa4094661981b4fe3a48758ea3992fef2d1ecc3d4b17e97a1f4ef",
+  "current_publication_receipt_sha256": "cb8cef5820f81a882ba497e07220bbf3d1be62683403a2d79895af1bdf484894",
+  "offline_widths": [
+    1440,
+    390
+  ],
+  "scored_frames_per_group": [
+    7,
+    8,
+    8
+  ],
+  "decoded_jpegs": 23,
+  "decoded_dimensions": [
+    480,
+    360
+  ],
+  "javascript_errors": 0,
+  "network_requests": 0,
+  "public_sample_attribution": {
+    "archive_sha256": "c7cd8e1afb87c80e5744a356214819b110fa09b4744fa4ba0cc2382f9ba59e9c",
+    "attribution": "TUM RGB-D benchmark, fr3/long_office_household; J. Sturm, N. Engelhard, F. Endres, W. Burgard, D. Cremers; A Benchmark for the Evaluation of RGB-D SLAM Systems, IROS 2012. CC BY 4.0. https://cvg.cit.tum.de/data/datasets/rgbd-dataset. Adaptation: associated RGB/depth and interpolated ground-truth poses; every fifth original RGB index withheld from fusion.",
+    "capture_manifest_sha256": "90e822bc5021ecda749fdeb861d80b556200e9394e8b04385c2999e78a37104e",
+    "license": "Creative Commons Attribution 4.0 International",
+    "license_url": "https://creativecommons.org/licenses/by/4.0/",
+    "modifications": "RGB-D capture fused into a measured TSDF surface and rendered in Isaac navigation rollouts. Scored frames are resized and JPEG encoded for display.",
+    "source": "https://cvg.cit.tum.de/data/datasets/rgbd-dataset"
+  },
+  "privacy_review_sha256": "4f8222d44bf6c74d6d5faa9958a1fcdd1b327ffac28bdd8d3876cf184891985a",
+  "compressed_image_dispositions": [
+    {
+      "file": "qualified-rejection-report/index.html",
+      "file_sha256": "5f8a401ac7d0d77b1ed17cad2ca2d9d3db86e51b1b53caacef053a3d74bf95db",
+      "image_index": 14,
+      "image_sha256": "59ff0746857c22a534b3a22f0f13913f50863d947a2bc848d4b0ca781e619fd7",
+      "match_sha256": "5955697146d4403d338a6ed292e0be84323d052f48535066153561ada7f6cb9d",
+      "offset_in_base64": 15897,
+      "length": 36,
+      "scope": "Exact pattern wholly inside original compressed JPEG base64; no textual or metadata identifier."
+    }
+  ],
+  "standard_jfif_metadata_only": true,
+  "exact_terminal_eoi_no_trailing_bytes": true,
+  "original_html_modified": false,
+  "policy_quality_passed": false,
+  "scope": "Actual native rejection HTML, CLI equality, browser interactions, desktop/mobile visual inspection and decoded-media privacy. Sampled GPU/process evidence is bound separately with explicit coverage limits; no policy-effectiveness claim.",
+  "root_visual_review_sha256": "b81cb05f70b143b44f9ef73088ba024f8e7425c3ac9bfdbf344ee14ff6fc0e3b",
+  "desktop_screenshot_sha256": "ab4149d65ff714d33fe80986cad89c9e3ee89913f4071599b8753085e768351c",
+  "mobile_screenshot_sha256": "c2f3446d71f062e20d2bc9adaa8c6e661d8f38d57d65dc0a33b424c170cfeed9",
+  "actual_desktop_mobile_visual_review_completed": true,
+  "sampled_gpu_process_review_sha256": "a6f56ecbd89ac71e78b20d5c649fe98f86b2bc877ce3076f62b1e3b1e806ca2d"
+}

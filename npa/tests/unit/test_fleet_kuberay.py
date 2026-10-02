@@ -630,6 +630,14 @@ def test_deploy_binds_current_materialization_before_first_terraform_command(
         assert saved["kuberay_materialized_sha256"] == kuberay_materialized_digest(
             install
         )
+        assert saved["provider_rpc_deadlines"]["inserted_defaults"] == {
+            "timeout": "120m",
+            "per_retry_timeout": "120m",
+            "auth_timeout": "120m",
+        }
+        provider = (kw["cwd"] / "provider.tf").read_text()
+        for field in ("timeout", "per_retry_timeout", "auth_timeout"):
+            assert f'{field} = "120m"' in provider
         observed.append(saved)
         raise RuntimeError("synthetic initialization failure")
 

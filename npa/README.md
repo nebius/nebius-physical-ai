@@ -12,6 +12,60 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
+and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
+download public sample data automatically and publish compact, offline
+`reports/index.html` previews beside their complete artifacts. NuRec's public
+PPISP sample is pinned; `nurec check --revision` and `nurec fetch --revision`
+select another revision, with `NPA_NUREC_DATASET_REVISION` as the direct CLI/SDK
+default and `config.dataset_revision` as the workflow setting. Stage the
+reviewed checkout so GPU and CPU viewer stages execute the same source.
+
+Durable workflow diagnostics and stage logs use conservative credential
+redaction: URL user information, complete query strings, and bearer-like values
+are removed even when they could be harmless prose. Storage ownership recovery
+rejects explicit credential assignments, recognized tokens and private keys;
+other reasons are accepted and stored with that same conservative redaction.
+Use an unsigned evidence URL without a query to retain a navigable reference.
+
+[flex-pi inference](../docs/workbench/flex-pi.md#cli-and-sdk) emits one JSON
+document on stdout (`--output-format json`, the default); runtime diagnostics
+go to stderr.
+
+[Flex-Pi public training](../docs/workbench/flex-pi.md#public-yam-training)
+uses a pinned real YAM dataset on four GPUs with effective batch 96. Run
+`npa workbench flex-pi train --output-path s3://<artifact-bucket>/<run-prefix>`
+inside the documented GPU workflow; `--mode profile` measures the same workload
+before a complete training epoch. Outputs include full validation and a fresh
+checkpoint-resume check. `--dry-run` returns the fixed contract without GPUs.
+`--memory-fill` (`config.memory_fill` in workflows) defaults to `on`; `off` is
+an unqualified candidate that requires verified normalization and exact parity
+checks before execution.
+`--activation-checkpointing` (`config.activation_checkpointing`) defaults to
+`on`. Selecting `off` retains activations instead of recomputing them during
+backward, using more GPU memory. Qualify each memory policy with a profile,
+numerical parity and fresh resume before a full epoch; durable checkpoints
+remain enabled with either policy.
+`--microbatch-per-rank` (`config.microbatch_per_rank`) accepts `1` (default)
+or `3`, with 24 or 8 accumulation steps respectively. Both keep effective
+batch 96 and the complete 36-sample epoch tail. Larger microbatches use more
+memory and can change numerical results; qualify the selected configuration
+with a profile, fresh resume and held-out validation before accepting it.
+`--cuda-graphs` (`config.cuda_graphs`) defaults to `off`. The experimental
+`mot` option captures mixed-attention training with the pinned Torch 2.7.1
+native CUDA graph API and requires `--activation-checkpointing off`. Input
+preparation, noise sampling, validation and optimizer updates remain eager.
+Capture failures are errors; every rank must report native forward and
+backward graph replays. Qualify the GPU trace, numerical results, full held-out pass
+and fresh resume before accepting a performance claim.
+
+The four-host B300 workflow sets `config.training_nodes: "4"` and requests one
+GPU on each host. `NPA_FLEX_PI_NODE_COUNT` comes from the resolved workflow
+resources; the adapter checks SkyPilot's allocation and publishes only from
+node zero. Provide the same original normalization and run `profile-resume`
+before a full epoch. The [training guide](../docs/workbench/flex-pi.md#public-yam-training)
+documents the per-host checkpoint join, runtime variables and topology caveats.
+
 The package also provides project provisioning, storage, artifact conversion,
 viewers, and an agent interface. Python access includes typed clients, shared
 implementation functions, and wrappers around CLI callbacks; available imports
@@ -19,7 +73,90 @@ and return types vary by tool. See the
 [CLI / SDK / workflow walkthrough](../docs/workbench/cli-sdk-yaml-walkthrough.md)
 before integrating a tool programmatically.
 
+For a first contest evaluation, use the [one-file BEHAVIOR DEV setup](../docs/workbench/challenge-onboarding.md)
+through `npa workbench workflow challenge init`, `check`, and `prepare`.
+The same helpers are available in `npa.sdk.workbench.workflow_challenge`.
+For resumable contest evaluations, see the [BEHAVIOR campaign guide](../docs/workbench/behavior-campaign.md).
+It documents case ownership, verified results, and workflow task activity. The
+guide also documents the CPU-only `policy-identity-inspect` internal command for
+checking checkpoint and serving digests before simulator allocation. The
+optional `NPA_WORKFLOW_TASK_ACTIVITY_LIVE_CONFIG` environment variable points to
+private JSON settings for the read-only live status regression; it is unset by
+default and submits no work.
+
+Campaign workers can serve a parity-qualified selected Comet export with
+`--policy-kind comet-trained`. This kind requires the four managed policy paths,
+`--policy-task-name`, and `--policy-trained-input-root`; the input root contains
+the provider-read parity originals and selected-reader record. The checkpoint
+path contains the admitted BF16 `params/` tree and its exact normalization asset.
+The execution variant defaults to `native`, which is the only accepted value for
+this policy kind. See the
+[selected trained-Comet contract](../docs/workbench/behavior-campaign.md#prescribed-non-reporting-train-panels)
+for the admission boundary and derivative-checkpoint limitations.
+Recorded `comet-trained` TRAIN runs may use `--policy-prompt-override` to test
+one frozen literal prompt while retaining the admitted task slug as the wrapper
+metadata lookup key. The option requires `--train-experience` and a
+non-reporting TRAIN panel; omitting it uses the released task-mapping
+instruction. DEV and REPORT reject it. The campaign guide documents the
+serving-identity and recording contract.
+
+Released Comet12 params checkpoints use the distinct TRAIN-only
+`--policy-kind comet-released`. This admission requires
+`--policy-released-binding` and `--policy-released-input-root`, rechecks the
+complete public checkpoint inventory and archive, and binds the exact TRAIN
+panel, evaluator, RNG, normalization, tokenizer, task mapping, and serving
+sources before startup. It records inference experience and does not claim an
+optimizer or resumable TrainState.
+
+The unchanged Native RLC policy has a separate audit-only TRAIN recorder.
+Pass `--native-train-trace --native-train-admission PATH` with
+`--policy-kind rlc` and the `native` execution variant. The admission is
+required and binds the frozen TRAIN panel, Native checkpoint/source, and
+official semantic-label implementation. This mode records lossless allowed
+decision observations, raw 30-action model chunks, raw post-wrapper 20-action
+chunks, every float32 returned/applied action, and the final allowed observation. It
+keeps Native stage, grasp, inside, and official-Q labels separate from policy
+inputs. It cannot be combined with Comet `--train-experience`, DEV, or REPORT.
+See the [Native RLC TRAIN trace contract](../docs/workbench/behavior-campaign.md#native-rlc-train-semantic-traces).
+
+Fleet recovery can remove a failed CPU pool without charging unchanged reserved
+GPUs against free capacity again. The requested CPU count must be zero, every
+other rendered capacity setting must match, and fresh provider evidence must
+verify the retained pools and the removed CPU group's Terraform ownership.
+Unknown identity or GPU growth still requires the normal capacity preflight.
+
+For [Isaac Arena footage](../docs/workbench/isaac-arena.md#supported-policies),
+`npa workbench isaac-arena evaluate --record-video --video-profile film`
+requests native 4K capture with additional physics-frozen settling renders.
+`standard` remains the default; workflows opt in with `config.video_profile`.
+The updated capture runtime must be present in the selected image or a recorded
+source overlay. Retained live output can be checked with
+`NPA_INTEGRATION_E2E=1 NPA_ARENA_FILM_RESULT=/path/to/result.json npa/.venv/bin/python -m pytest npa/tests/e2e/test_isaac_arena_film_capture_live.py -q`.
+That check reads the complete downloaded output bundle and launches no new job.
+
+For shared Kubernetes clusters, use [team namespaces](../docs/workbench/namespaces.md) to configure
+namespace selection and private SkyPilot contexts with `npa workbench namespace`.
+
 ## Install
+
+For a persistent remote development environment, use
+[`npa tools desktop`](../docs/tools/development-desktop.md). This operator tool
+installs VS Code and Codex on an existing Ubuntu VM, provides a sharp browser
+desktop with adjustable workspace size, and can enable authenticated HTTPS on a
+public IP. Its setup and operation commands live under `npa tools`.
+The browser desktop shares text with your device through copy/paste shortcuts
+and **Paste** / **Copy to device** controls, with a manual clipboard fallback.
+`npa tools desktop chat-setup --connect-vscode` adds authenticated mobile Codex
+chat to the same HTTPS gateway; `npa tools desktop open --chat` opens it. Mobile
+and VS Code share conversations, model/reasoning selections, and live activity.
+The shared runtime setting covers desktop VS Code and Remote SSH clients on the VM.
+Cloud chat setup also enables a persistent browser sign-in, automatic phone
+routing to chat, and an installable Home Screen app using the same login.
+`npa tools desktop chat-setup --local` attaches the same interface to existing Mac
+sessions, including native VS Code views of mobile-owned running chats. Add
+`--gateway-ssh-host <alias>` to use an existing authenticated gateway.
+`npa tools desktop optimize --ssh-host <alias>` reduces desktop effects for faster
+clicking and typing while preserving the running session and display resolution.
 
 From the repository root, with your virtual environment active:
 
@@ -100,6 +237,32 @@ chosen specification, prepare its data and resources, submit it, then inspect
 `npa workbench workflow status`, `logs`, and `artifacts`. The
 [recovery guide](../docs/workbench/troubleshooting/known-footguns.md) covers
 setup and runtime failures.
+
+If an original failed Sky submit still holds a project lease after its controller
+was removed, the [absence-only recovery contract](../docs/architecture/skypilot-absence-recovery.md)
+requires original producer identities and fresh complete Kubernetes reads.
+`npa workbench workflow reconcile-absent --evidence-file /private/evidence.json`
+retains an audit; add `--apply` to commit the bound local lease transition.
+Historical workload outcome remains unknown. This does not delete resources or
+replace the normal preflight and cleanup gates for a new workflow.
+
+[Read-only Sky absence regression](../docs/architecture/skypilot-absence-recovery.md#read-only-live-regression)
+uses `NPA_SKY_ABSENCE_PREVIEW_LIVE_CONFIG` only when an exact original-operation
+preview is explicitly selected; it never applies recovery.
+The separate [never-accepted attempt evidence schema](../docs/architecture/skypilot-absence-recovery.md#issued-attempt-with-no-accepted-managed-id)
+also covers an original single failed launch with no managed ID, while retaining
+its controller-derived first absence decision and missing historical queue-output
+limit. Fresh provider and complete metadata absence remain required.
+
+Custom workflow stages receive `NPA_CONTROL_PYTHON`, the executable interpreter
+recorded by setup, or an empty value when none is available. Use it for NPA
+storage operations alongside a separate policy environment; see
+[Python environments in custom stages](../docs/workbench/npa-workflow-guide.md#python-environments-in-custom-stages).
+
+Workflow image preflight accepts `--image-pull-timeout-seconds` on both
+`preflight-images` and `submit`. Use `0` for no pull deadline. Omitting it
+inherits `--image-bootstrap-timeout-seconds` (1800 seconds by default);
+see the [workflow guide](../docs/workbench/npa-workflow-guide.md).
 
 The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
 retains invalid hosted visual judgments as failed audit evidence. Its
@@ -190,6 +353,13 @@ For artifact conversion and sharing, see the
 [Foxglove export](../docs/workbench/foxglove-export.md), and
 [Rerun sharing](../docs/workbench/rerun-sharing.md).
 
+NPA pins its recording SDK and default hosted/share viewers to Rerun 0.38.1.
+Recording inspection uses the supported streaming reader and accepts existing
+0.31.4 RRD files without rewriting their contents or provenance. A recording
+validator rejects ambiguous multi-recording files unless it selects each store
+explicitly. For a custom viewer image, use a version that supports the producing
+SDK; previously published container pins retain their recorded build versions.
+
 ## Package map
 
 - `npa.cli`: Typer CLI entrypoints
@@ -198,6 +368,17 @@ For artifact conversion and sharing, see the
 - `npa.server`: FastAPI checkpoint-serving and inference server
 - `npa.adapter`: sim demo -> LeRobotDataset v3 conversion
 - `npa.genesis`: teacher training, demo generation, student evaluation
+
+  Genesis teacher training uses RSL-RL 5.5.1 actor/critic models. The loader
+  retains legacy ActorCritic checkpoint support and validates saved dimensions
+  before inference. ONNX export preserves RSL-RL 5 observation normalization.
+  The Genesis extra pins an upstream MoviePy compatibility fix by source revision
+  and archive hash so installation retains Pillow 12.3 or newer. The
+  `genesis-test` extra adds CPU checkpoint regression tests to the complete test
+  stage; the fast precheck does not install PyTorch. Genesis simulation remains
+  in the separate `genesis` extra.
+  The [Genesis skill](../skills/tools/genesis/SKILL.md#teacher-checkpoint-compatibility)
+  describes the live GPU migration check and its numerical report.
 - `npa.lerobot`: local student training helpers
 - `npa.convert`, `npa.demo`, `npa.rerun`, `npa.workbench`, `npa.network`,
   `npa.workflow`: public SDK namespaces mirroring supported CLI commands
@@ -241,9 +422,15 @@ python3 -m venv npa/.venv
 npa/.venv/bin/python -m pip install -e "npa[dev,adapter]"
 
 make test-smoke PYTHON="$(pwd)/npa/.venv/bin/python"  # onboarding CLI checks
-make lint PYTHON="$(pwd)/npa/.venv/bin/python"        # ruff
+make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
+
+After committing, run `git fetch origin main` and `make merge-precheck` before
+pushing. This checks committed HEAD's merge with current main for conflicts and
+inconsistent dependency fingerprints without modifying your index. It does not
+run the full suite. Queue rejections receive a PR comment with failed jobs/steps
+or timeout details; see the [merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
 
 For the **full unit suite**, use CPython 3.12 on Linux with `ffmpeg` and `ffprobe` available.
 Some runtime tests exercise Linux `/proc` and filesystem semantics, so macOS
@@ -252,25 +439,52 @@ The interpreter must provide `os.memfd_create`; some Conda builds omit it.
 Install CI's CPU checkpoint/export dependencies in this same environment:
 
 ```bash
-npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.13.0
+npa/.venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu torch==2.14.0
 npa/.venv/bin/python -m pip install -e "npa[sonic]"
 umask 077  # Private files are required by publication handoff tests.
 PATH="$PWD/npa/.venv/bin:$PATH" NPA_REQUIRE_FFMPEG=1 \
   make test PYTHON="$PWD/npa/.venv/bin/python" PYTEST_ADDOPTS='-n auto'
 ```
 
+To recheck checkpoint selection from a completed GPU validation job, set
+`NPA_E2E_CHECKPOINT_SELECTION_EVIDENCE_CONFIG` to an owner-only JSON file and run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py -q
+```
+
+There is no default evidence target; the live check skips without the variable.
+The [test module](tests/e2e/test_checkpoint_selection_provider_evidence_live_e2e.py)
+documents the required provider identity, digest-pinned image, source archive,
+GPU platform/count, training-output prefix, and minimum episode count. It reads
+existing resources, verifies checkpoint and source bytes, recomputes distances
+from recorded final positions, and reruns selection in both candidate orders.
+The input bundle must come from real policy rollouts; this check does not launch
+training, establish policy quality, or claim a complete Sim2Real pipeline run.
+Use `NPA_CONFIG_DIR` to select an isolated operator configuration.
+
 The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.
 
-Pull requests and merge candidates run the same full Python 3.12 suite,
+Pull requests run the full Python 3.12 suite,
 dedicated Cypress job, focused Python 3.10/3.14 checks, and security gates.
 Five duration-balanced coverage shards run with xdist and cached constrained
 installs, then enforce the merged coverage floor. Full suites include smoke
-and CLI install checks without a duplicate subsystem job. The queue reruns
-these checks against the combined latest-main candidate. Recognized prose-only
+and CLI install checks without a duplicate subsystem job. The queue verifies
+this evidence against its combined latest-main candidate. Recognized prose-only
 edits retain smoke, documentation, lint, guardrail, and security checks while
 skipping runtime suites.
+The five-minute `pr-precheck` checks dependency inputs, lint/format, guardrails, smoke and
+full collection before expensive validation. The merge queue verifies fresh,
+successful PR evidence for its identical Git tree and repeats secret,
+confidentiality, source and dependency scans. Changed combined trees rerun
+all tests, lint, guardrails and hostile-input checks; image checks rerun when
+their inputs changed. Missing, failed or stale proof restores full queue
+validation, so older PRs can adopt the policy without a forced branch refresh. The queue target
+is ten minutes; hosted runner waiting can add delay.
+
 See the [contributor CI guide](../CONTRIBUTING.md) for the conservative selection
 rules and local inspection command. Scheduled/manual audits run the full suite
 on all three supported versions. Every full Python 3.12 run publishes module
@@ -287,6 +501,15 @@ npa/.venv/bin/python -m pytest \
   npa/tests/workbench/test_cosmos3_nano_video_server.py -q
 ```
 
+Mocked browser checks require Google Chrome and run with
+`bash npa/scripts/run_agent_cypress.sh --mock` from the repository root.
+The wrapper installs the locked browser and native Codex adapter dependencies
+when absent, then runs the native protocol tests and mocked desktop/agent specs.
+For direct npm invocation, first run `npm ci --prefix npa/tests/browser` and
+`npm ci --prefix npa/src/npa/tools/desktop/native`.
+They use Chrome's software WebGL renderer for real canvas capture coverage;
+Cypress 16's deprecated Electron browser cannot provide that context in CI.
+
 CI uses cached uv installs constrained by `npa/ci/requirements.txt`. After changing
 CI dependency inputs, run `npa/.venv/bin/python npa/scripts/ci_requirements.py
 --update` with uv 0.12.5 and commit the refreshed pins. Add `--upgrade` only for an
@@ -295,20 +518,34 @@ also explains the automatic `ci-timing-report` job, whose summary and
 JSON artifact separate runner waiting, setup, and execution for completed runs.
 For queue rejections, follow the
 [merge-readiness guide](../CONTRIBUTING.md#merge-readiness-and-queue-rejections).
-The shared [validation concurrency pools](../CONTRIBUTING.md#validation-concurrency)
-allow seven PR jobs, nine merge-candidate jobs, and three background audit jobs at
-once across the repository. Each candidate pool has a separate slot for coverage
-and the final required check. Waiting jobs are retained up to GitHub's queue limit,
-while superseded commits of the same PR still cancel their old checks.
-Full-suite PRs run smoke coverage inside the existing shards, guardrails run in
-parallel, and unsuccessful or cancelled shards no longer queue a coverage job.
+The [validation concurrency policy](../CONTRIBUTING.md#validation-concurrency)
+lets independent jobs use available GitHub runner capacity without shared
+repository-wide job queues. Newer commits still cancel older checks of the same
+PR. The final image-inventory check reports failed scans but stops when a run
+is cancelled, so it cannot hold the replacement run behind an obsolete job.
+Organization runner limits can cause waiting; already queued runs retain
+their original workflow configuration until their branches are refreshed.
+Full-suite PRs retain smoke coverage in their shards; the early precheck runs
+guardrails once before those shards, and unsuccessful or cancelled shards no longer queue a coverage job.
 
 Application and CI dependency scans reject known vulnerabilities even when the
 same pin is already on `main`. Keep the AnyIO security floor at 4.14.2 or newer;
 update `npa/requirements-lock.txt` and regenerate CI pins when changing package
-requirements. `.github/dependabot.yml` schedules daily update proposals for
-Python, browser-test npm, and GitHub Actions dependencies. Reproduce the scan
+requirements. `.github/dependabot.yml` checks Python, browser-test npm, and
+GitHub Actions dependencies daily and groups version updates into one
+`dependencies` PR. Review package declarations and generated locks together,
+regenerate CI pins after Python input changes, and validate the combined batch. Reproduce the scan
 with the [security gate instructions](../docs/security/merge-security-gate.md#reproduce-locally).
+
+The base-image scanner uses Docker with Buildx and the checksum-verified Trivy
+binary. From the repository root, `npa/.venv/bin/python
+npa/scripts/scan_base_images.py --inventory
+npa/docker/workbench/base-image-security.json --cache-dir <private-directory>`
+scans the full inventory. `--matrix` emits every validated entry name without
+starting a scan; `--entry-name <name>` scans exactly that existing entry and
+rejects unknown names. These options are mutually exclusive. CI isolates each
+entry on its own runner and requires every applicable result. See
+[base-image scan storage and cleanup](../docs/security/image-reproducibility.md#cve-scanning).
 
 The required [security check](../docs/security/merge-security-gate.md) is the
 single automatic candidate workflow. It runs secrets, confidentiality, source,
@@ -319,11 +556,11 @@ scan the full image inventory.
 The image security workflow scans the pinned Python base after the same OS
 update and upgrade used by FiftyOne's Dockerfile. It rebuilds this local scan
 target without cache so newly published security fixes are included, then fails
-on fixable CRITICAL OS findings. All seven bases run inside one job with two
-bounded local workers. One Trivy database download is hard-linked into isolated
-worker caches, rather than using seven queued runners or a lock-contended shared
-cache. This baseline check does not replace the
-complete image scans required before publication.
+on fixable CRITICAL OS findings. Each base has its own runner, temporary archive,
+cache, and isolated builder. Owned build state is removed before the archive
+scan; archives and temporary scan data are cleaned after each entry. The required
+inventory aggregate fails when any applicable entry fails or does not finish.
+This baseline check does not replace complete image scans before publication.
 
 Use an **absolute** interpreter path: the recipes change into `npa/` before
 running. Without an override, Make prefers the contributor environment
@@ -336,10 +573,86 @@ authenticated GPU service and writes two synthetic images plus their provenance.
 See the [Cosmos Ray live-check instructions](../docs/workbench/cosmos3-ray-serve.md)
 for the remaining environment variables and the exact test command.
 
+The negative BEHAVIOR specialist-report admission check uses
+`NPA_BEHAVIOR_SPECIALIST_ADMISSION_LIVE_CONFIG` to select an owner-only JSON
+file containing real panel and partition URIs, a fresh empty output prefix, and
+the pinned BEHAVIOR source root. It downloads only those declarations and proves
+missing or malformed authorization exits before runtime identity, case claims,
+or policy startup. See the
+[campaign evidence instructions](../docs/workbench/behavior-campaign.md) for the
+config schema and focused command.
+
+For the real storage-cleanup deletion check, set `NPA_STORAGE_CLEANUP_LIVE_E2E=1`
+plus `NPA_E2E_PROJECT`, a private `NPA_CONFIG_DIR`, and
+`NPA_STORAGE_CLEANUP_LIVE_E2E_EVIDENCE_DIR`; it has no default and deletes the
+configured bucket and storage service account for real. See
+[`tests/e2e/test_config_storage_cleanup_live_e2e.py`](tests/e2e/test_config_storage_cleanup_live_e2e.py)
+for the full env contract and safety preconditions.
+
+For the CPU agent credential lifecycle, set `NPA_AGENT_METADATA_LIVE_CONFIG`
+to an owner-only JSON file containing `deploy_args` (starting with `agent`,
+`deploy`, exactly one unused `--name`, exactly one selected `--project`,
+`--agent-only`, and explicit ingress settings) and `evidence_dir` outside the
+checkout. Use private
+`NPA_CONFIG_DIR` and `NPA_OPERATION_JOURNAL_DIR` directories and complete the
+credential and exact-name capacity preflights first. Run:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_agent_metadata_live.py -q
+```
+
+The check deploys a real CPU agent, verifies metadata-backed access and resource
+inventory with successful project and tenant discovery, rejects anonymous
+requests, and compares deployed Python sources with the tested checkout. It
+also captures the backend bytes rendered by the actual local deploy call and
+requires the deployed backend SHA-256 to match. HTTPS verifies the hostname and
+the server certificate retrieved through provider-pinned SSH, and rejects an
+untrusted certificate. It retains the certificate, deployment manifest and
+matched backend hashes privately, then destroys only the test agent with shared
+IAM preserved. The configuration has no default; without it the test skips.
+
+The deployed agent supports the attached service-account `instance_metadata`
+credential source staged by bootstrap. `configured_profile` is not a deployed
+agent credential mode: inventory and cloud commands reject it, missing markers
+and unknown markers before starting a process. The selected metadata profile and
+configuration are explicit; operator bearer tokens, profile choices and token
+files are not inherited as an alternate identity.
+
+`GET /api/infra/k8s` separates `cloud_discovery.status: available` (including a
+verified empty `cloud_clusters` list) from `unavailable`, with a safe
+`error.kind`. A cluster's `raw.accelerator_discovery` makes the same distinction
+for node-group lookup. Timeout, cleanup-in-progress, missing provenance,
+permission denial and invalid responses do not establish resource absence.
+Without another configured or cached backend, `has_infra` is null and the agent
+refuses absence-based provisioning until discovery succeeds. Configured
+backends remain available for their ordinary target validation.
+If node-group discovery fails for the selected backend, workflow drafts report
+accelerator availability as unverified and remain non-runnable, including when
+the request names an accelerator. Failed cloud discovery does not override an
+independently configured backend.
+
+A timed-out child keeps new cloud commands blocked until its owned process
+group is proven absent and its leader reaped. If procfs visibility or child
+ownership is uncertain, cleanup retains that block and backs off its inspection
+cadence instead of repeatedly scanning at ten times per second. Restored procfs
+visibility permits recovery; lost process ownership needs operator diagnosis
+and a service restart after verifying cleanup. The agent never releases the
+block or signals a reusable PID based on uncertain evidence.
+Reaping the leader alone is insufficient: descendants can outlive it. Missing
+procfs (an unsupported host or missing mount) and denied procfs access retain the
+same safety block but emit distinct `procfs_unavailable` and
+`procfs_permission_denied` diagnostics once per process, without repetitive logs.
+
 See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full test layout and PR
 conventions (branch → PR → squash, one approval, never self-approve).
 
 ## Workbench Studio
+
+Studio `preview` and `final` can also deliver the finished MP4 with
+`--output-path s3://<your-bucket>/<your-key>.mp4`. Optional `--storage-project`
+selects an external NPA project alias. Uploads are verified by SHA-256 readback;
+local renders and caches remain available.
 
 `npa studio init --directory ./my-studio` creates a portable local film editor
 using the installed renderer. Create a project from your own media with
@@ -347,3 +660,18 @@ using the installed renderer. Create a project from your own media with
 Install `npa[studio]` for optional speech generation and FFmpeg separately.
 See the [Studio developer flow](../docs/demos/workbench-studio/README.md) for
 configuration, offline narration, artifact search and privacy boundaries.
+
+### MJLab
+
+Install optional simulator packages with `pip install -e '.[mjlab]'` on Python
+3.10–3.13, or use the dedicated MJLab GPU container recipe. `npa workbench mjlab`
+provides `train`, `eval`, `export`, `list`, `status`, `system-info`, `deploy`, and
+`workflow`; use `--help` for their options. Training preserves upstream defaults
+unless overridden. Public handoffs are S3 URIs; `--dry-run` plans without metrics
+or writes. The service requires `MJLAB_TOKEN` and `MJLAB_ALLOWED_S3_ROOTS` and
+uses existing storage credentials. See the [MJLab guide](../docs/workbench/mjlab.md)
+for request schemas, deployment Secrets, environment variables, validation and
+image publication status.
+`eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
+page alongside the measured evaluation manifest. The SDK and service expose the
+same behavior with `video=True`.
