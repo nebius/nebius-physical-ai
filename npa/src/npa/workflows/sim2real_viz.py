@@ -2543,6 +2543,26 @@ def _heldout_renders_root(
     if raw_lineage is not None and not isinstance(raw_lineage, dict):
         raise Sim2RealVizError("render_lineage must be an object")
     lineage = raw_lineage or {}
+    report_split = report.get("evaluation_split")
+    lineage_split = lineage.get("evaluation_split")
+    for source, split in (
+        ("held-out render report", report_split),
+        ("held-out render lineage", lineage_split),
+    ):
+        if split not in (None, "", "gold_heldout"):
+            raise Sim2RealVizError(f"{source} has the wrong evaluation split")
+    sealed = report_split == "gold_heldout" or lineage_split == "gold_heldout"
+    sealed_default: Path | None = None
+    if sealed:
+        outer = report.get("outer_iteration")
+        if not isinstance(outer, int) or isinstance(outer, bool) or outer <= 0:
+            raise Sim2RealVizError("sealed gold report has an invalid outer iteration")
+        sealed_default = _contained_render_path(
+            local_dir,
+            f"eval/gold-heldout/outer-{outer:02d}/renders",
+            source="default held-out",
+            require_relative=True,
+        )
     candidates: list[tuple[str, Path]] = []
     if report.get("local_renders_dir") not in (None, ""):
         candidates.append(
@@ -2570,21 +2590,16 @@ def _heldout_renders_root(
     if len({path for _source, path in candidates}) > 1:
         raise Sim2RealVizError("render path sources disagree")
     if candidates:
+        if sealed_default is not None and candidates[0][1] != sealed_default:
+            raise Sim2RealVizError(
+                "sealed gold render path disagrees with its outer iteration"
+            )
         return candidates[0][1]
-    sealed = (
-        report.get("evaluation_split") == "gold_heldout"
-        or lineage.get("evaluation_split") == "gold_heldout"
-    )
-    if sealed:
-        outer = report.get("outer_iteration")
-        if not isinstance(outer, int) or isinstance(outer, bool) or outer <= 0:
-            raise Sim2RealVizError("sealed gold report has an invalid outer iteration")
-        relative = f"eval/gold-heldout/outer-{outer:02d}/renders"
-    else:
-        relative = "eval/heldout/renders"
+    if sealed_default is not None:
+        return sealed_default
     return _contained_render_path(
         local_dir,
-        relative,
+        "eval/heldout/renders",
         source="default held-out",
         require_relative=True,
     )
@@ -2655,7 +2670,16 @@ def _heldout_render_episodes(
         for path in renders_root.iterdir()
         if path.is_dir() and not path.is_symlink()
     ):
-        grouped = _camera_paths_by_view(sorted(env_dir.glob("camera-*.png")))
+        grouped = _camera_paths_by_view(
+            [
+                _manifest_child_path(
+                    env_dir,
+                    frame_path.name,
+                    source="render fallback frame",
+                )
+                for frame_path in sorted(env_dir.glob("camera-*.png"))
+            ]
+        )
         views = {
             view_name: _usable_camera_frames(
                 [

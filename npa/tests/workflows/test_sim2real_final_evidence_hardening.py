@@ -342,6 +342,7 @@ def test_singleton_download_rejects_symlinked_ancestor(tmp_path: Path) -> None:
             Storage(),
             "s3://demo-bucket/run/report.json",
             local / "eval/gold-heldout/outer-01/report.json",
+            containment_root=local,
         )
     assert not (outside / "gold-heldout/outer-01/report.json").exists()
 
@@ -380,3 +381,176 @@ def test_duplicate_candidate_parse_failure_persists_fail_closed_state(
     assert payload["policy_bytes_available"] is False
     assert "policy_download_command" not in payload
     assert "policy_ui_action" not in payload
+
+
+def test_explicit_validation_lineage_is_not_final_evidence(
+    tmp_path: Path,
+) -> None:
+    report = {
+        "evaluation_split": "validation",
+        "outer_iteration": 1,
+        "render_lineage": {
+            "evaluation_split": "validation",
+            "canonical_s3_uri": (
+                "s3://demo-bucket/sim2real-b/run-a/eval/gold-heldout/outer-01/renders/"
+            ),
+            "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+        },
+    }
+    with pytest.raises(Sim2RealVizError):
+        _heldout_renders_root(tmp_path, report)
+    with pytest.raises(RuntimeError):
+        download_plan(
+            root="s3://demo-bucket/sim2real-b/run-a",
+            outer_iteration=1,
+            evidence={"iterations": []},
+            gold=report,
+        )
+
+
+def test_present_empty_current_report_suppresses_compatibility_access(
+    tmp_path: Path,
+) -> None:
+    uri = "s3://demo-bucket/sim2real-b/run-a/model.pt"
+    candidate = tmp_path / "checkpoints/candidate/candidate.json"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text(
+        json.dumps({"deployable_policy": True, "policy_checkpoint_uri": uri}),
+        encoding="utf-8",
+    )
+    downloads: list[str] = []
+
+    class Storage:
+        def download_file(self, source: str, destination: str) -> None:
+            downloads.append(source)
+            Path(destination).write_bytes(b"checkpoint")
+
+    access = _ensure_policy_access_metadata(
+        _config(),
+        tmp_path,
+        storage=Storage(),
+        report={},
+        heldout_report={},
+    )
+    assert access["deployable_policy"] is False
+    assert access["policy_bytes_available"] is False
+    assert downloads == []
+
+
+def test_fallback_scan_rejects_symlinked_frame(tmp_path: Path) -> None:
+    renders = tmp_path / "eval/gold-heldout/outer-01/renders"
+    env = renders / "env-0001"
+    env.mkdir(parents=True)
+    outside = tmp_path / "outside.png"
+    Image.new("RGB", (2, 2), (11, 22, 33)).save(outside)
+    (env / "camera-000.png").symlink_to(outside)
+    with pytest.raises(Sim2RealVizError):
+        _heldout_render_episodes(
+            tmp_path,
+            {
+                "local_renders_dir": str(renders),
+                "render_manifest": {"episodes": []},
+            },
+        )
+
+
+def test_complete_checkpoint_identity_rejects_empty_s3_authority() -> None:
+    uri = "s3:///model.pt"
+    identity = {
+        "checkpoint_uri": uri,
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 1,
+        "generator_policy_sha256": "a" * 64,
+    }
+    with pytest.raises(ValueError, match="URI is malformed"):
+        resolve_selected_checkpoint(
+            {
+                "selected_checkpoint_uri": uri,
+                "final_checkpoint_uri": uri,
+                "checkpoint_selection": dict(identity),
+                "checkpoint_candidates": [dict(identity)],
+            }
+        )
+
+
+def test_sealed_render_source_is_exact_run_iteration_prefix() -> None:
+    base = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+        },
+    }
+    for uri in (
+        "s3://demo-bucket/sim2real-b/run-a/",
+        "s3://demo-bucket/sim2real-b/run-a/eval/gold-heldout/outer-03/renders/",
+    ):
+        report = json.loads(json.dumps(base))
+        report["render_lineage"]["canonical_s3_uri"] = uri
+        with pytest.raises(
+            Sim2RealRerunRegenError,
+            match="configured run and iteration",
+        ):
+            _heldout_render_source(_config(), report)
+
+
+def test_stage14_rejects_cross_iteration_render_lineage() -> None:
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "canonical_s3_uri": (
+                "s3://demo-bucket/sim2real-b/run-a/eval/gold-heldout/outer-03/renders/"
+            ),
+            "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+        },
+    }
+    with pytest.raises(RuntimeError, match="safe canonical render lineage"):
+        download_plan(
+            root="s3://demo-bucket/sim2real-b/run-a",
+            outer_iteration=1,
+            evidence={"iterations": []},
+            gold=report,
+        )
+
+
+def test_regeneration_does_not_guess_sealed_outer_iteration(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(
+        Sim2RealRerunRegenError,
+        match="invalid outer iteration",
+    ):
+        _renders_dir_for_report(
+            _config(),
+            tmp_path,
+            {
+                "evaluation_split": "gold_heldout",
+                "render_lineage": {"evaluation_split": "gold_heldout"},
+            },
+        )
+
+
+def test_operator_symlink_above_containment_root_is_allowed(
+    tmp_path: Path,
+) -> None:
+    physical = tmp_path / "physical"
+    local = physical / "run"
+    local.mkdir(parents=True)
+    alias = tmp_path / "alias"
+    alias.symlink_to(physical, target_is_directory=True)
+    destination = alias / "run/input.json"
+
+    class Storage:
+        def download_path(self, _uri: str, target: str) -> None:
+            Path(target).write_text('{"ok":true}', encoding="utf-8")
+
+    assert _download_if_exists(
+        Storage(),
+        "s3://demo-bucket/run/input.json",
+        destination,
+        containment_root=alias / "run",
+    )
+    assert destination.read_text(encoding="utf-8") == '{"ok":true}'

@@ -1502,10 +1502,13 @@ def test_stage14_selects_only_consumed_artifacts_and_cleans_workspace(
         ]
     }
     gold = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
         "render_lineage": {
+            "evaluation_split": "gold_heldout",
             "canonical_s3_uri": f"{root}/eval/gold-heldout/outer-01/renders/",
             "local_relative_dir": "eval/gold-heldout/outer-01/renders",
-        }
+        },
     }
     plan = _stage14_download_plan(
         root=root, outer_iteration=1, evidence=evidence, gold=gold

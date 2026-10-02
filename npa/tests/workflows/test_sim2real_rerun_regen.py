@@ -1505,7 +1505,9 @@ def test_sync_heldout_renders_falls_back_to_byo_eval_tree(tmp_path: Path) -> Non
 def test_gold_render_sync_uses_only_explicit_lineage(tmp_path: Path) -> None:
     config = _config("gold-run")
     local_dir = tmp_path / "run"
-    exact_uri = "s3://demo-bucket/sim2real-b/gold-run/byo-eval/gold-exact/renders/"
+    exact_uri = (
+        "s3://demo-bucket/sim2real-b/gold-run/eval/gold-heldout/outer-03/renders/"
+    )
     downloads: list[str] = []
 
     class FakeStorage:
@@ -1517,6 +1519,7 @@ def test_gold_render_sync_uses_only_explicit_lineage(tmp_path: Path) -> None:
             (episode / "camera-000.png").write_bytes(b"gold-frame")
 
     report = {
+        "evaluation_split": "gold_heldout",
         "outer_iteration": 3,
         "render_lineage": {
             "evaluation_split": "gold_heldout",
@@ -1543,7 +1546,9 @@ def test_gold_render_sync_uses_canonical_relative_lineage_directory(
     tmp_path: Path,
 ) -> None:
     local_dir = tmp_path / "run"
-    exact_uri = "s3://demo-bucket/sim2real-b/gold-run/outer-01/renders/"
+    exact_uri = (
+        "s3://demo-bucket/sim2real-b/gold-run/eval/gold-heldout/outer-01/renders/"
+    )
 
     class FakeStorage:
         def download_directory(self, uri: str, destination: str) -> None:
@@ -1554,7 +1559,7 @@ def test_gold_render_sync_uses_canonical_relative_lineage_directory(
 
     report = {
         "evaluation_split": "gold_heldout",
-        "outer_iteration": 3,
+        "outer_iteration": 1,
         "render_lineage": {
             "evaluation_split": "gold_heldout",
             "canonical_s3_uri": exact_uri,
@@ -1602,13 +1607,16 @@ def test_gold_render_sync_rejects_traversing_relative_lineage(
             _config("gold-run"),
             tmp_path,
             heldout_report={
+                "evaluation_split": "gold_heldout",
+                "outer_iteration": 1,
                 "render_lineage": {
                     "evaluation_split": "gold_heldout",
                     "canonical_s3_uri": (
-                        "s3://demo-bucket/sim2real-b/gold-run/outer-01/renders/"
+                        "s3://demo-bucket/sim2real-b/gold-run/"
+                        "eval/gold-heldout/outer-01/renders/"
                     ),
                     "local_relative_dir": local_relative_dir,
-                }
+                },
             },
             client=UnusedStorage(),
         )
@@ -1623,11 +1631,14 @@ def test_gold_render_sync_rejects_conflicting_local_path_aliases(
             _config("gold-run"),
             tmp_path,
             heldout_report={
+                "evaluation_split": "gold_heldout",
+                "outer_iteration": 1,
                 "local_renders_dir": "eval/gold-heldout/outer-02/renders",
                 "render_lineage": {
                     "evaluation_split": "gold_heldout",
                     "canonical_s3_uri": (
-                        "s3://demo-bucket/sim2real-b/gold-run/outer-01/renders/"
+                        "s3://demo-bucket/sim2real-b/gold-run/"
+                        "eval/gold-heldout/outer-01/renders/"
                     ),
                     "local_relative_dir": "eval/gold-heldout/outer-01/renders",
                 },
@@ -1669,7 +1680,10 @@ def test_gold_render_sync_never_reuses_stale_frames_after_download_failure(
         "outer_iteration": 3,
         "render_lineage": {
             "evaluation_split": "gold_heldout",
-            "renders_s3_uri": ("s3://demo-bucket/sim2real-b/gold-run/current/renders/"),
+            "renders_s3_uri": (
+                "s3://demo-bucket/sim2real-b/gold-run/"
+                "eval/gold-heldout/outer-03/renders/"
+            ),
         },
     }
 
@@ -1709,7 +1723,8 @@ def test_gold_render_sync_unlinks_stale_symlink_after_client_error(
         "render_lineage": {
             "evaluation_split": "gold_heldout",
             "canonical_s3_uri": (
-                "s3://demo-bucket/sim2real-b/gold-run/current/renders/"
+                "s3://demo-bucket/sim2real-b/gold-run/"
+                "eval/gold-heldout/outer-03/renders/"
             ),
         },
     }
@@ -1753,7 +1768,8 @@ def test_gold_render_sync_rejects_symlinked_destination_ancestor(
         "render_lineage": {
             "evaluation_split": "gold_heldout",
             "canonical_s3_uri": (
-                "s3://demo-bucket/sim2real-b/gold-run/current/renders/"
+                "s3://demo-bucket/sim2real-b/gold-run/"
+                "eval/gold-heldout/outer-03/renders/"
             ),
         },
     }
@@ -1801,7 +1817,8 @@ def test_gold_render_sync_preserves_provider_error_when_cleanup_fails(
         "render_lineage": {
             "evaluation_split": "gold_heldout",
             "canonical_s3_uri": (
-                "s3://demo-bucket/sim2real-b/gold-run/current/renders/"
+                "s3://demo-bucket/sim2real-b/gold-run/"
+                "eval/gold-heldout/outer-03/renders/"
             ),
         },
     }
@@ -1820,7 +1837,9 @@ def test_gold_render_sync_preserves_provider_error_when_cleanup_fails(
 def test_gold_render_sync_reconciles_canonical_and_legacy_lineage_uri(
     tmp_path: Path,
 ) -> None:
-    exact_uri = "s3://demo-bucket/sim2real-b/gold-run/exact/renders/"
+    exact_uri = (
+        "s3://demo-bucket/sim2real-b/gold-run/eval/gold-heldout/outer-03/renders/"
+    )
 
     class FakeStorage:
         def download_directory(self, uri: str, destination: str) -> None:

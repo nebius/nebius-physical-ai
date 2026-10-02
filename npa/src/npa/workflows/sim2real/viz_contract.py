@@ -12,13 +12,12 @@ from npa.workflows.sim2real.checkpoint_selection import (
     CHECKPOINT_SIZE_ALIASES,
     CHECKPOINT_URI_ALIASES,
     GENERATOR_DIGEST_ALIASES,
+    normalize_checkpoint_uri,
 )
 
 
 _MISSING = object()
 _SHA256 = re.compile(r"[0-9a-f]{64}")
-_S3_BUCKET = re.compile(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?")
-_IPV4_AUTHORITY = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}")
 IdentityEvidence = tuple[tuple[str, object], ...]
 
 
@@ -27,37 +26,7 @@ def _text(value: object) -> str:
 
 
 def _checkpoint_uri(value: object) -> str | None:
-    if (
-        not isinstance(value, str)
-        or not value
-        or value != value.strip()
-        or not value.isascii()
-        or not value.startswith("s3://")
-        or any(ord(char) < 33 or ord(char) > 126 for char in value)
-    ):
-        return None
-    parsed = urlparse(value)
-    key = parsed.path.lstrip("/")
-    if (
-        parsed.scheme != "s3"
-        or not parsed.netloc
-        or not 3 <= len(parsed.netloc) <= 63
-        or _S3_BUCKET.fullmatch(parsed.netloc) is None
-        or _IPV4_AUTHORITY.fullmatch(parsed.netloc) is not None
-        or any(token in parsed.netloc for token in ("..", ".-", "-."))
-        or not key
-        or len(key.encode("utf-8")) > 1024
-        or parsed.path != f"/{key}"
-        or not key.endswith(".pt")
-        or "\\" in key
-        or "%" in key
-        or any(part in {"", ".", ".."} for part in key.split("/"))
-        or parsed.params
-        or parsed.query
-        or parsed.fragment
-    ):
-        return None
-    return value
+    return normalize_checkpoint_uri(value)
 
 
 def _sha256(value: object) -> str | None:

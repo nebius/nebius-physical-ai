@@ -275,9 +275,17 @@ def download_plan(
         raw_render_relative if isinstance(raw_render_relative, str) else ""
     )
     render_path = Path(render_relative)
+    expected_relative = f"eval/gold-heldout/{outer}/renders"
+    expected_uri = f"{root.rstrip('/')}/{expected_relative}/"
+    recorded_outer = gold.get("outer_iteration")
     if (
-        not render_uri
-        or not render_relative
+        gold.get("evaluation_split") != "gold_heldout"
+        or not isinstance(recorded_outer, int)
+        or isinstance(recorded_outer, bool)
+        or recorded_outer != outer_iteration
+        or lineage.get("evaluation_split") != "gold_heldout"
+        or render_uri != expected_uri
+        or render_relative != expected_relative
         or render_relative != render_relative.strip()
         or render_path.is_absolute()
         or render_path == Path(".")

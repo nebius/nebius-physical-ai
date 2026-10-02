@@ -193,6 +193,32 @@ def _renders_dir_for_report(
             )
         return normalized
 
+    report_split = report.get("evaluation_split")
+    lineage_split = lineage.get("evaluation_split")
+    for source, split in (
+        ("held-out render report", report_split),
+        ("held-out render lineage", lineage_split),
+    ):
+        if split not in (None, "", "gold_heldout"):
+            raise Sim2RealRerunRegenError(f"{source} has the wrong evaluation split")
+    sealed = report_split == "gold_heldout" or lineage_split == "gold_heldout"
+    sealed_default: Path | None = None
+    if sealed:
+        raw_outer = report.get("outer_iteration")
+        if (
+            not isinstance(raw_outer, int)
+            or isinstance(raw_outer, bool)
+            or raw_outer <= 0
+        ):
+            raise Sim2RealRerunRegenError(
+                "sealed gold report has an invalid outer iteration"
+            )
+        sealed_default = contained(
+            f"eval/gold-heldout/outer-{raw_outer:02d}/renders",
+            source="default held-out",
+            require_relative=True,
+        )
+
     candidates: list[tuple[str, Path]] = []
     if report.get("local_renders_dir") not in (None, ""):
         candidates.append(
@@ -218,26 +244,18 @@ def _renders_dir_for_report(
     if len({path for _source, path in candidates}) > 1:
         raise Sim2RealRerunRegenError("render path sources disagree")
     if candidates:
-        return candidates[0][1]
-
-    sealed = (
-        report.get("evaluation_split") == "gold_heldout"
-        or lineage.get("evaluation_split") == "gold_heldout"
-    )
-    if sealed:
-        raw_outer = report.get("outer_iteration", config.outer_iterations)
-        if (
-            not isinstance(raw_outer, int)
-            or isinstance(raw_outer, bool)
-            or raw_outer <= 0
-        ):
+        if sealed_default is not None and candidates[0][1] != sealed_default:
             raise Sim2RealRerunRegenError(
-                "sealed gold report has an invalid outer iteration"
+                "sealed gold render path disagrees with its outer iteration"
             )
-        relative = f"eval/gold-heldout/outer-{raw_outer:02d}/renders"
-    else:
-        relative = "eval/heldout/renders"
-    return contained(relative, source="default held-out", require_relative=True)
+        return candidates[0][1]
+    if sealed_default is not None:
+        return sealed_default
+    return contained(
+        "eval/heldout/renders",
+        source="default held-out",
+        require_relative=True,
+    )
 
 
 def _assert_safe_render_destination(local_dir: Path, renders_dir: Path) -> None:
@@ -302,19 +320,48 @@ def _parse_s3(uri: str) -> tuple[str, str]:
     return _parse_bucket_uri(uri)
 
 
-def _assert_no_symlinked_ancestors(path: Path) -> None:
+def _assert_no_symlinked_ancestors(
+    path: Path,
+    *,
+    containment_root: Path,
+) -> None:
+    root = Path(os.path.abspath(containment_root))
     absolute = Path(os.path.abspath(path))
-    for ancestor in absolute.parents:
-        if ancestor.is_symlink():
+    try:
+        relative = absolute.relative_to(root)
+    except ValueError as exc:
+        raise Sim2RealRerunRegenError(
+            "download destination is outside its containment root"
+        ) from exc
+    if relative == Path("."):
+        raise Sim2RealRerunRegenError(
+            "download destination must be below its containment root"
+        )
+    current = root
+    for part in relative.parts[:-1]:
+        current /= part
+        if current.is_symlink():
             raise Sim2RealRerunRegenError(
-                f"download destination has a symlinked ancestor: {ancestor}"
+                f"download destination has a symlinked ancestor: {current}"
             )
 
 
-def _download_if_exists(client: StorageClient, uri: str, local_path: Path) -> bool:
-    _assert_no_symlinked_ancestors(local_path)
+def _download_if_exists(
+    client: StorageClient,
+    uri: str,
+    local_path: Path,
+    *,
+    containment_root: Path,
+) -> bool:
+    _assert_no_symlinked_ancestors(
+        local_path,
+        containment_root=containment_root,
+    )
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    _assert_no_symlinked_ancestors(local_path)
+    _assert_no_symlinked_ancestors(
+        local_path,
+        containment_root=containment_root,
+    )
     with tempfile.TemporaryDirectory(
         prefix=f".{local_path.name}.", dir=local_path.parent
     ) as directory:
@@ -322,14 +369,23 @@ def _download_if_exists(client: StorageClient, uri: str, local_path: Path) -> bo
         try:
             client.download_path(uri, str(staged))
         except (StorageError, OSError):
-            _assert_no_symlinked_ancestors(local_path)
+            _assert_no_symlinked_ancestors(
+                local_path,
+                containment_root=containment_root,
+            )
             local_path.unlink(missing_ok=True)
             return False
         if not staged.is_file() or staged.stat().st_size <= 0:
-            _assert_no_symlinked_ancestors(local_path)
+            _assert_no_symlinked_ancestors(
+                local_path,
+                containment_root=containment_root,
+            )
             local_path.unlink(missing_ok=True)
             return False
-        _assert_no_symlinked_ancestors(local_path)
+        _assert_no_symlinked_ancestors(
+            local_path,
+            containment_root=containment_root,
+        )
         os.replace(staged, local_path)
     return True
 
@@ -426,7 +482,12 @@ def sync_regen_inputs(
     }
     for rel, dest in singles.items():
         dest.parent.mkdir(parents=True, exist_ok=True)
-        _download_if_exists(storage, f"{prefix}{rel}", dest)
+        _download_if_exists(
+            storage,
+            f"{prefix}{rel}",
+            dest,
+            containment_root=local_dir,
+        )
 
     # The viewer plots improvement across every outer/inner pass, not only the
     # latest evidence object selected for backward compatibility above.
@@ -443,6 +504,7 @@ def sync_regen_inputs(
             storage,
             f"s3://{bucket}/{outer_prefix.rstrip('/')}/evidence.json",
             destination,
+            containment_root=local_dir,
         )
 
     for rel in ("actions", "vlm_eval", "training_signal", "augment", "envs/raw"):
@@ -529,9 +591,15 @@ def _heldout_render_source(
         raise Sim2RealRerunRegenError(
             "sealed gold render lineage has the wrong evaluation split"
         )
-    if not render_uri.startswith(prefix):
+    outer = heldout_report.get("outer_iteration")
+    if not isinstance(outer, int) or isinstance(outer, bool) or outer <= 0:
         raise Sim2RealRerunRegenError(
-            "sealed gold render lineage is outside the configured run"
+            "sealed gold report has an invalid outer iteration"
+        )
+    expected_uri = f"{prefix}eval/gold-heldout/outer-{outer:02d}/renders/"
+    if render_uri != expected_uri:
+        raise Sim2RealRerunRegenError(
+            "sealed gold render lineage disagrees with the configured run and iteration"
         )
     return render_uri, True
 
@@ -559,7 +627,12 @@ def _sync_legacy_render_source(
         ):
             continue
         manifest_path = renders_dir.parent / manifest_name
-        if _download_if_exists(storage, f"{base_uri}{manifest_suffix}", manifest_path):
+        if _download_if_exists(
+            storage,
+            f"{base_uri}{manifest_suffix}",
+            manifest_path,
+            containment_root=local_dir,
+        ):
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         else:
             manifest = _render_manifest_from_png_tree(renders_dir)
@@ -790,7 +863,12 @@ def download_rrd_from_s3(
     uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
     dest_path = Path(dest_path)
     dest_path.parent.mkdir(parents=True, exist_ok=True)
-    if not _download_if_exists(storage, uri, dest_path):
+    if not _download_if_exists(
+        storage,
+        uri,
+        dest_path,
+        containment_root=dest_path.parent,
+    ):
         raise Sim2RealRerunRegenError(f"Rerun recording not found at {uri}")
     return dest_path
 
@@ -1339,6 +1417,7 @@ class _RetainedPolicySources:
     heldout_report: dict[str, Any]
     producer: dict[str, Any]
     current_heldout_report: dict[str, Any]
+    current_heldout_report_present: bool
     current_producer: dict[str, Any]
 
 
@@ -1521,6 +1600,7 @@ def _retained_policy_sources(
         current_selected_candidate=current_selected_candidate,
         heldout_report=retained_heldout,
         current_heldout_report=current_heldout,
+        current_heldout_report_present=heldout_report is not None,
         **_report_policy_children(report, decision),
         **_producer_sources(retained_heldout, current_heldout),
     )
@@ -1660,7 +1740,7 @@ def _retained_deployment_claim(sources: _RetainedPolicySources) -> bool:
             ),
         )
     deployable = _consensus_claim(evidence, default=False)
-    if sources.current_heldout_report:
+    if sources.current_heldout_report_present:
         deployable = bool(
             deployable and sources.current_producer.get("loaded_for_inference") is True
         )
@@ -1986,7 +2066,10 @@ def _sync_heldout_eval_inputs(
     inner_path = work_dir / "inner_loop/outer-01/evidence.json"
     inner_path.parent.mkdir(parents=True, exist_ok=True)
     if not _download_if_exists(
-        storage, f"{prefix}inner_loop/outer-01/evidence.json", inner_path
+        storage,
+        f"{prefix}inner_loop/outer-01/evidence.json",
+        inner_path,
+        containment_root=work_dir,
     ):
         raise Sim2RealRerunRegenError(
             f"missing inner evidence at {prefix}inner_loop/outer-01/evidence.json"
