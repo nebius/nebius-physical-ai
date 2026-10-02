@@ -745,8 +745,9 @@ def test_controller_config_separates_verified_contexts_without_worker_profile_ch
     assert ordinary["kubernetes"]["allowed_contexts"] == ["unit-worker"]
     assert ordinary["jobs"]["controller"]["resources"]["region"] == "unit-worker"
     assert "context_configs" not in ordinary["kubernetes"]
-    assert ordinary["allowed_clouds"] == ["kubernetes"]
-    assert "nebius" not in ordinary
+    assert ordinary["allowed_clouds"] == ["kubernetes", "nebius"]
+    assert ordinary["nebius"]["capabilities"] == ["storage"]
+    assert "remote_identity" not in ordinary["nebius"]
 
 
 @pytest.mark.parametrize("lifted", [False, True])
