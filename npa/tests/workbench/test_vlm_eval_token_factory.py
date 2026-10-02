@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from dataclasses import asdict, replace
 import hashlib
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -74,14 +75,33 @@ def test_api_backend_requires_a_key(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("model", "constrained"),
+    ("model", "constrained", "temperature", "expected_extra"),
     [
-        ("MiniMaxAI/MiniMax-M3", False),
-        ("vendor/explicit-vision", True),
+        (
+            "nvidia/Nemotron-3_5-Lightning",
+            True,
+            True,
+            {"chat_template_kwargs": {"enable_thinking": False}},
+        ),
+        (
+            "MiniMaxAI/MiniMax-M3",
+            False,
+            True,
+            {"chat_template_kwargs": {"thinking_mode": "disabled"}},
+        ),
+        (
+            "moonshotai/Kimi-K3",
+            True,
+            False,
+            {"reasoning_effort": "low"},
+        ),
+        ("vendor/explicit-vision", True, True, {}),
+        ("google/gemma-3-27b-it", True, True, {}),
+        ("openbmb/MiniCPM-V-4_5", True, True, {}),
     ],
 )
-def test_api_judge_uses_model_specific_json_mode(
-    monkeypatch, model, constrained
+def test_api_judge_uses_shared_model_profile(
+    monkeypatch, model, constrained, temperature, expected_extra
 ) -> None:
     from npa.workbench import vlm_eval
 
@@ -104,8 +124,52 @@ def test_api_judge_uses_model_specific_json_mode(
     )
     assert result.score == 0.9
     assert ("response_format" in requests[0]) is constrained
-    if not constrained:
-        assert requests[0]["chat_template_kwargs"] == {"thinking_mode": "disabled"}
+    assert ("temperature" in requests[0]) is temperature
+    assert "max_tokens" not in requests[0]
+    assert "max_completion_tokens" not in requests[0]
+    for key, value in expected_extra.items():
+        assert requests[0][key] == value
+    assert result.evidence is not None
+    assert result.evidence.request.request_manifest["generation_parameters"] == {
+        key: value
+        for key, value in requests[0].items()
+        if key not in {"model", "messages"}
+    }
+    assert "test-key" not in json.dumps(asdict(result.evidence))
+
+
+def test_hosted_model_switch_exists_only_in_shared_client_profile() -> None:
+    from npa.workbench import vlm_eval
+
+    source = inspect.getsource(vlm_eval)
+    assert "moonshotai/Kimi-K3" not in source
+    assert "MiniMaxAI/MiniMax-M3" not in source
+    assert "nvidia/Nemotron-3_5-Lightning" not in source
+
+
+def test_self_hosted_kimi_keeps_generic_request_shape(monkeypatch) -> None:
+    from npa.workbench import vlm_eval
+
+    requests = []
+
+    def post(**kwargs):
+        requests.append(kwargs["request"])
+        return _completion(model="moonshotai/Kimi-K3")
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    vlm_eval._call_openai_compatible(
+        backend="self-hosted",
+        model="moonshotai/Kimi-K3",
+        endpoint_url="https://example.test/v1",
+        api_key_env="TEST_KEY",
+        prompt="Return JSON",
+        frames=[],
+        timeout_s=120,
+    )
+    assert requests[0]["temperature"] == 0
+    assert requests[0]["response_format"] == {"type": "json_object"}
+    assert "reasoning_effort" not in requests[0]
 
 
 def test_malformed_minimax_json_remains_an_error(monkeypatch) -> None:
@@ -699,7 +763,9 @@ def _preference_request_image_urls(request):
 
 def _assert_balanced_preference_requests(report, calls) -> None:
     first, second = (call["request"] for call in calls)
-    assert first["max_tokens"] == second["max_tokens"] == 1000
+    expected_fields = {"model", "temperature", "messages", "chat_template_kwargs"}
+    assert set(first) == set(second) == expected_fields
+    assert "max_tokens" not in first and "max_tokens" not in second
     assert first["chat_template_kwargs"] == {"thinking_mode": "disabled"}
     assert "response_format" not in first
     assert first["messages"][0]["content"][1]["text"] == "IMAGE A"
@@ -1379,12 +1445,17 @@ def test_api_judge_requires_completion_metadata(monkeypatch) -> None:
 @pytest.mark.parametrize("model", [None, "", "  ", 7])
 def test_api_judge_requires_actual_model_identity(monkeypatch, model) -> None:
     with pytest.raises(VlmEvalError, match="identify the served model"):
-        _call_completion(monkeypatch, _completion(model=model))
+        _call_completion(
+            monkeypatch,
+            _completion(model=model),
+            model="moonshotai/Kimi-K3",
+        )
 
 
 @pytest.mark.parametrize(
     "model",
     [
+        "moonshotai/Kimi-K3",
         "MiniMaxAI/MiniMax-M3",
         "google/gemma-3-27b-it",
         "nvidia/Nemotron-3_5-Lightning",
@@ -1645,10 +1716,13 @@ def test_api_judge_rejects_explicit_provider_refusal(monkeypatch, refusal) -> No
         _call_completion(monkeypatch, completion)
 
 
-def test_api_result_retains_exact_http_body_and_header_request_id(monkeypatch) -> None:
+@pytest.mark.parametrize("model", ["MiniMaxAI/MiniMax-M3", "moonshotai/Kimi-K3"])
+def test_api_result_retains_exact_http_body_and_header_request_id(
+    monkeypatch, model
+) -> None:
     from npa.workbench import vlm_eval
 
-    completion = _completion()
+    completion = _completion(model=model)
     raw_body = json.dumps(completion, separators=(",", ":")) + "\n"
 
     class ExactResponse:
@@ -1679,7 +1753,7 @@ def test_api_result_retains_exact_http_body_and_header_request_id(monkeypatch) -
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
     result = vlm_eval._call_openai_compatible(
         backend="api",
-        model="MiniMaxAI/MiniMax-M3",
+        model=model,
         endpoint_url="https://example.test/v1",
         api_key_env="TEST_KEY",
         prompt="Return JSON",
@@ -1775,3 +1849,24 @@ def test_real_benchmark_case_retains_per_request_evidence(
     assert case.evidence.provider.finish_reason == "stop"
     assert case.provider_success is True
     assert case.provider_success_matches_score_gate is True
+
+
+def test_benchmark_case_retains_pre_provenance_positional_constructor() -> None:
+    from npa.workbench.vlm_eval import VlmBenchmarkCaseResult
+
+    case = VlmBenchmarkCaseResult(
+        "case-1",
+        "rollout",
+        True,
+        True,
+        0.9,
+        "passed",
+        True,
+        "move the cube",
+        "visible completion",
+        4,
+        "model",
+    )
+    assert case.evidence is None
+    assert case.score_source == "model"
+    assert case.frame_count == 4

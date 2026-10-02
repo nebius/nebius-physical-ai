@@ -1,0 +1,9 @@
+{
+  "matplotlib": "3.11.2",
+  "numpy": "2.5.3",
+  "quality_curve_sha256": {
+    "8": "e85d3d9fc2261aec88c9d79cda28c441ad1434246cc64970b72304656486554d",
+    "16": "da4fa2d7f58d1a38d76b4705ff67b289616accd52c3c58f8c55ad2500f54d4ec"
+  },
+  "image_sha256": "4398dd3b0360864c78ab768672837fcad1122e5abdc2ec7af1295edfdbc592c3"
+}

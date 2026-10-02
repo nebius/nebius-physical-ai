@@ -1,0 +1,4 @@
+interface:
+  display_name: "flex-pi"
+  short_description: "Run flex-pi action inference on Nebius GPUs"
+  default_prompt: "Use $flex-pi to run and validate real action-only policy inference on a B200 or RTX PRO 6000."

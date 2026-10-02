@@ -19,6 +19,8 @@ import os
 import shutil
 import subprocess
 
+from npa.clients.kubernetes_namespace import context_namespace, validate_namespace
+
 from npa.workbench.model_cache import (
     DEFAULT_MODEL_CACHE_CLAIM,
     MODEL_CACHE_NAMESPACE_ENV,
@@ -29,24 +31,18 @@ from npa.workbench.model_cache import (
 )
 
 LOOKUP_TIMEOUT_SECONDS = 20
-#: Where SkyPilot puts its pods unless told otherwise, matching the namespace the
-#: registry pull-secret preflight writes to.
-DEFAULT_NAMESPACE = "default"
 
 
-def _namespace(explicit: str) -> str:
-    """Resolve the namespace to search, letting the operator name a different one.
+def _namespace(explicit: str, *, context: str, kubeconfig: str) -> str:
+    """Prefer an explicit cache override, otherwise follow actual task placement."""
 
-    A claim only helps the pods that can see it, so an operator whose SkyPilot pods
-    live outside `default` has to be able to say so -- otherwise the lookup quietly
-    finds nothing and the run pays for the download again.
-    """
-
-    return (
+    selected = (
         explicit.strip()
         or str(os.environ.get(MODEL_CACHE_NAMESPACE_ENV, "") or "").strip()
-        or DEFAULT_NAMESPACE
     )
+    if selected:
+        return validate_namespace(selected)
+    return context_namespace(context=context, kubeconfig=kubeconfig)
 
 
 def _already_configured(environ: dict[str, str]) -> bool:
@@ -77,7 +73,13 @@ def find_model_cache_claim(
     binary = shutil.which("kubectl")
     if not binary:
         return ""
-    argv = [binary, "get", "pvc", claim, "-n", _namespace(namespace), "-o", "json"]
+    try:
+        selected_namespace = _namespace(
+            namespace, context=context, kubeconfig=kubeconfig
+        )
+    except ValueError:
+        return ""
+    argv = [binary, "get", "pvc", claim, "-n", selected_namespace, "-o", "json"]
     if context:
         argv[1:1] = ["--context", context]
     env = dict(os.environ)

@@ -15,7 +15,6 @@ from pathlib import Path
 import paramiko
 
 from npa.clients import nebius
-from npa.clients.config import NPA_CONFIG_DIR
 
 
 class HostTrustError(RuntimeError):
@@ -28,7 +27,10 @@ class HostKeyPending(HostTrustError):
 
 def known_hosts_path(host: str) -> Path:
     identity = hashlib.sha256(host.encode()).hexdigest()
-    return NPA_CONFIG_DIR / "ssh" / "hosts" / f"{identity}.known_hosts"
+    config_dir = Path(
+        os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa"
+    )
+    return config_dir / "ssh" / "hosts" / f"{identity}.known_hosts"
 
 
 def _atomic_private_file(path: Path, content: str) -> None:

@@ -1,0 +1,15 @@
+{
+  "schema": "npa.cosmos3.wam-full-multinode-telemetry.v1",
+  "nodes": [
+    {
+      "node_rank": 0,
+      "file": "node-0/evidence.json",
+      "sha256": "b193e22f359ae7e6cc6f1abf604e1e14b3628b85682856ddec8ca364b6b8a656"
+    },
+    {
+      "node_rank": 1,
+      "file": "node-1/evidence.json",
+      "sha256": "f1e5665568ed58fb3c1601907f3548bd931c544ba1d6ac66457db5ace56de1a8"
+    }
+  ]
+}

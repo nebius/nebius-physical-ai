@@ -2,10 +2,19 @@
 
 [Workbench docs](README.md)
 
+For robot demonstrations with actual camera video and actions, use
+[robot SDG and LeRobot export](token-factory-robot-sdg.md). `robot-sdg` routes
+scene planning through Token Factory, then runs MuJoCo and physics acceptance.
+
 Token Factory provides hosted text generation, image captioning, and scene
 reasoning. Use these capabilities to annotate inputs or interpret results from
 your Nebius GPU workloads. Direct CLI calls run from your machine; the
 checked-in NPA workflows run their calling stages on Kubernetes CPUs.
+
+For seed-to-training-data generation, use the
+[automatically routed SDG pipeline](token-factory-sdg.md). It selects a hosted
+open-weight generator per seed, reviews candidates, and exports training JSONL
+with separate rejection and provenance artifacts.
 
 The public defaults were migrated after the August 2026 model retirements. See
 [the verification report](token-factory-deprecation-verification.md) for exact
@@ -35,6 +44,8 @@ catalog. The implementation defaults below are not guaranteed to be available:
 | `caption` | `MiniMaxAI/MiniMax-M3` |
 | `reason` | `MiniMaxAI/MiniMax-M3` |
 | `batch-generate` | `openai/gpt-oss-120b` |
+| `sdg` | Lightning router; Lightning or MiniMax generator; MiniMax reviewer |
+| `robot-sdg` | Lightning router; Lightning or MiniMax scene planner; MuJoCo physics judge |
 
 NPA reads `NEBIUS_TOKEN_FACTORY_KEY` from the environment or
 `tokens.NEBIUS_TOKEN_FACTORY_KEY` in `~/.npa/credentials.yaml`. Keep the file
@@ -44,7 +55,9 @@ mode `0600`. The default API URL is
 
 ## Generate and inspect artifacts
 
-These commands accept local paths or `s3://` URIs. Direct S3 calls require
+The generation, captioning, and reasoning commands below accept local paths or
+`s3://` URIs. The new `sdg` CLI uses S3 handoffs; its SDK also supports local
+development files. Direct S3 calls require
 `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and the correct `AWS_ENDPOINT_URL`
 in the process environment; their storage client does not load those values
 from the NPA credential file. Supply them through your protected credential
@@ -119,6 +132,19 @@ in the verified scope; invalid output is rejected without score repair. Results
 preserve the requested `model` and separately report the actual `served_model`.
 The public replacement IDs must match the provider response exactly; explicit
 custom aliases may resolve to another nonempty model identity.
+
+When `moonshotai/Kimi-K3` is explicitly selected for hosted VLM evaluation, NPA
+requests low reasoning effort and leaves fixed sampling and output-token limits
+unset so the response allowance remains available for visible JSON. The
+returned model must match the requested Kimi-K3 ID exactly. Model availability
+remains key-scoped; verify it with `npa workbench token-factory models` before
+inference.
+
+VLM evaluation records the effective generation settings, including Kimi's
+`reasoning_effort`, together with frame hashes and the exact provider response.
+Request evidence excludes authentication headers. The same provenance path
+preserves the existing request format and model-identity checks for other hosted
+models and self-hosted endpoints.
 
 ## Batch generation
 

@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import json
+import os
 import re
+import subprocess
 
+import pytest
 import yaml
 
 
@@ -52,7 +56,15 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
     text = PUBLISH.read_text(encoding="utf-8")
     spec = _spec(PUBLISH)
     triggers = spec.get("on") or spec[True]
-    assert set(triggers) == {"workflow_dispatch"}
+    # #504: the publisher also runs automatically on main-branch workbench
+    # docker changes and on a weekly refresh cadence. Both automatic triggers
+    # are narrowly scoped; dispatch remains for guarded manual promotion.
+    assert set(triggers) == {"workflow_dispatch", "push", "schedule"}
+    assert triggers["push"] == {
+        "branches": ["main"],
+        "paths": ["npa/docker/workbench/**"],
+    }
+    assert triggers["schedule"] == [{"cron": "0 6 * * 1"}]
     assert spec["permissions"]["packages"] == "write"
     assert spec["permissions"]["attestations"] == "write"
     assert "development_image_for_tool" in text
@@ -68,6 +80,59 @@ def test_public_publisher_builds_only_immutable_public_development_refs() -> Non
         "NPA_PUBLISH_TOOL",
     ):
         assert stale_variable not in text
+
+
+def test_automatic_triggers_build_dev_images_without_promoting() -> None:
+    """#504/#568: push/schedule runs must build dev images; never promote.
+
+    `inputs.*` is only populated for `workflow_dispatch`; on push and schedule
+    events every input is undefined. Tool selection therefore falls back to
+    `_automatic_build_tools`: the weekly schedule rebuilds every public tool
+    and a push rebuilds the tools whose workbench inputs changed, so
+    `dev-<sha>` tags track HEAD automatically. Promotion still requires an
+    explicit `workflow_dispatch` event with `dry_run: false`.
+    """
+    spec = _spec(PUBLISH)
+    jobs = spec["jobs"]
+
+    resolve = next(
+        step
+        for step in jobs["resolve"]["steps"]
+        if step.get("name") == "Resolve immutable public development plan"
+    )
+    # Dispatch inputs remain the explicit-selection path ...
+    assert resolve["env"]["BUILD_TOOLS"] == "${{ inputs.build_development_tools }}"
+    assert resolve["env"]["CLEANUP_TOOLS"] == "${{ inputs.cleanup_development_tools }}"
+    # ... but the plan script must also handle automatic events, where inputs
+    # are undefined, instead of resolving an empty matrix.
+    script = resolve["run"]
+    assert resolve["env"]["EVENT_NAME"] == "${{ github.event_name }}"
+    assert "_automatic_build_tools" in script
+    assert "select_public_image_builds" in script
+    assert 'os.environ.get("EVENT_BEFORE", "")' in script
+    assert 'os.environ.get("EVENT_NAME", "")' in script
+    assert '"schedule"' in script
+    assert "packaging-contract.yaml" in script
+    assert (
+        jobs["build-development"]["if"]
+        == "${{ needs.resolve.outputs.build_count != '0' }}"
+    )
+    assert "cleanup_count != '0'" in jobs["cleanup-requested"]["if"]
+    assert "cleanup-failed-build" not in jobs
+
+    promote_step = next(
+        step
+        for step in jobs["promote"]["steps"]
+        if step.get("name")
+        == "Promote exact validated digests and verify public parity"
+    )
+    assert promote_step["if"] == (
+        "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == false }}"
+    )
+    # The promote job never runs after a build: automatic dev builds must not
+    # fall through into a release preflight or write.
+    assert "needs.resolve.outputs.build_count == '0'" in jobs["promote"]["if"]
+    assert "github.event_name == 'workflow_dispatch'" in jobs["promote"]["if"]
 
 
 def test_public_development_build_runner_is_dispatch_scoped_and_defaults_hosted() -> (
@@ -131,6 +196,7 @@ def test_prepublication_gates_run_before_the_public_dev_push() -> None:
         "scan_image_wan_payload.py",
         "scan_image_alpamayo2_payload.py",
         "scan_image_cosmos3_ray_serve_payload.py",
+        "scan_image_flex_pi_payload.py",
         "test_ltx_runtime_bootstrap.py",
         "test_cosmos3_ray_serve_image_contract.py",
         "--scanners vuln,secret,license",
@@ -165,7 +231,7 @@ def test_large_image_scan_reclaims_only_disposable_build_cache_and_tar() -> None
     )
     script = step["run"]
     assert script.index("docker buildx prune --all --force") < script.index(
-        'docker save --output "$RUNNER_TEMP/${TOOL}.tar"'
+        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar"'
     )
     assert 'rm -f "$RUNNER_TEMP/${TOOL}.tar"' in script
 
@@ -178,27 +244,65 @@ def test_large_image_scan_reclaims_build_cache_and_reuses_large_volume() -> None
     push = text.index("Push only after every pre-publication gate passes")
     assert prepare < scan < sbom < push
     assert "docker buildx prune --all --force" in text[prepare:scan]
-    assert text[scan:push].count("TRIVY_TEMP_DIR: /mnt/npa-trivy") == 2
-    assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 2
-    assert text[scan:push].count("--timeout 2562047h47m16s") == 2
-    assert text[scan:push].count("-e TMPDIR=/tmp/trivy") == 2
+    # Three pinned Trivy invocations reach the push: the CRITICAL policy scan,
+    # the all-severity secret scan, and the SBOM. Every one of them must reuse
+    # the large volume, the shared cache and the unbounded timeout.
+    assert text[scan:push].count("TRIVY_TEMP_DIR: /mnt/npa-trivy") == 3
+    assert text[scan:push].count("--cache-dir /tmp/trivy/cache") == 3
+    assert text[scan:push].count("--timeout 2562047h47m16s") == 3
+    assert text[scan:push].count("-e TMPDIR=/tmp/trivy") == 3
     trivy = "aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e image"
-    assert text[scan:push].count(trivy) == 2
+    assert text[scan:push].count(trivy) == 3
     assert "docker image prune" not in text[scan:push]
+
+
+def test_prepublication_secret_scan_is_not_filtered_to_critical() -> None:
+    """Trivy's --severity applies to every scanner, so secrets need their own scan.
+
+    The combined policy scan asks for CRITICAL, which silently drops the HIGH
+    private-key findings it is named for. A separate all-severity secret scan
+    must reach the push, and it must not inherit the vulnerability ignorefile.
+    """
+
+    spec = _spec(PUBLISH)
+    steps = spec["jobs"]["build-development"]["steps"]
+    names = [str(step.get("name") or "") for step in steps]
+    secret = next(
+        step
+        for step in steps
+        if step.get("name") == "Pre-publication all-severity secret scan"
+    )
+    script = secret["run"]
+    assert (
+        secret["env"]["DOCKER_SOCKET"]
+        == "${{ steps.robotwin-docker.outputs.sock || steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}"
+    )
+    assert 'docker_socket_path="${DOCKER_SOCKET#unix://}"' in script
+    assert '-v "$docker_socket_path:/var/run/docker.sock"' in script
+    assert "--scanners secret" in script
+    assert "--severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL" in script
+    assert "--exit-code 1" in script
+    # An ignorefile suppresses matching secret findings by rule ID whatever the
+    # severity filter says, so inheriting it here would reopen the hole.
+    assert "--ignorefile" not in script
+    assert "--ignore-unfixed" not in script
+    assert names.index("Pre-publication all-severity secret scan") < names.index(
+        "Push only after every pre-publication gate passes"
+    )
 
 
 def test_base_image_scans_do_not_inherit_trivys_five_minute_timeout() -> None:
     script = (ROOT / "npa/scripts/scan_base_images.py").read_text()
     # Tokens, not one contiguous line: ruff format may split the arg list.
     assert '"--timeout"' in script and '"2562047h47m16s"' in script
-    job = _spec(SECURITY_SCAN)["jobs"]["base-image-cve-scan"]
+    job = _spec(SECURITY_SCAN)["jobs"]["base-image-entry"]
     command = next(
         step["run"]
         for step in job["steps"]
-        if step.get("name") == "Scan all pinned bases with three local workers"
+        if step.get("name") == "Scan the exact inventory entry"
     )
     assert "scan_base_images.py" in command
-    assert "--workers 3" in command
+    assert '--entry-name "$SCAN_ENTRY"' in command
 
 
 def test_post_push_and_promotion_gates_are_digest_bound() -> None:
@@ -254,9 +358,9 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
     post_push = text[text.index("Verify pushed bytes") :]
 
     assert 'docker pull "$exact"' in post_push
-    # Two calls bind the pulled digest to the local image; the third binds the
-    # independent cuRobo archive verifier to that same inspected remote image.
-    assert post_push.count("docker image inspect --format '{{.Id}}'") == 3
+    # The remote config digest, pulled image, local image, and independent
+    # cuRobo archive verifier are each bound to the exact inspected image.
+    assert post_push.count("docker image inspect --format '{{.Id}}'") == 4
     assert (
         'test "$(docker image inspect --format \'{{.Id}}\' "$exact")" = \\\n'
         '                "$(docker image inspect --format \'{{.Id}}\' "$IMAGE")"'
@@ -266,7 +370,8 @@ def test_post_push_payload_scan_binds_remote_digest_to_local_full_tar() -> None:
         in post_push
     )
     assert (
-        'docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"' in post_push
+        'docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact"'
+        in post_push
     )
     assert '--tarball "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
     assert 'rm -f "$RUNNER_TEMP/${TOOL}-pushed.tar"' in post_push
@@ -281,15 +386,26 @@ def test_build_and_cleanup_dispatches_cannot_fall_through_to_promotion() -> None
 
 
 def test_failed_development_cleanup_is_exact_and_refuses_shared_digest() -> None:
-    text = PUBLISH.read_text(encoding="utf-8")
-    assert "cleanup-failed-build" in text
+    jobs = _spec(PUBLISH)["jobs"]
+    assert "cleanup-failed-build" not in jobs
+    step = next(
+        step
+        for step in jobs["build-development"]["steps"]
+        if step.get("name")
+        == "Remove an exact run-owned dev tag after this image fails"
+    )
+    assert step["if"] == (
+        "${{ failure() && matrix.tool != 'ncore' && "
+        "(steps.push.outcome == 'success' || steps.push.outcome == 'failure') }}"
+    )
+    text = step["run"]
     assert "metadata.container.tags" in text
     assert "Refusing cleanup: digest also carries tags" in text
     assert "versions/${version_id}" in text
     assert 'if [ "$(jq length "$versions")" = 1 ]' in text
     assert 'gh api --method DELETE "$package_api"' in text
     assert "Deletion does not revoke downloads" in text
-    assert "Requested development tag is already absent" in text
+    assert "Requested development tag is already absent" in PUBLISH.read_text()
 
 
 def test_public_health_is_anonymous_and_read_only() -> None:
@@ -334,7 +450,7 @@ def test_additive_release_inputs_are_scoped_to_promotion() -> None:
         promote["env"]["EXPECTED_SOURCE_DIGEST"]
         == "${{ inputs.expected_source_digest }}"
     )
-    for name in ("build-development", "cleanup-requested", "cleanup-failed-build"):
+    for name in ("build-development", "cleanup-requested"):
         assert "--release-tag" not in "\n".join(
             step.get("run", "") for step in spec["jobs"][name]["steps"]
         )
@@ -423,3 +539,175 @@ def test_additive_workflow_forwards_exact_selector_and_digest_without_shell_expa
         )
         assert result.returncode != 0
     assert len(recorder.read_text().splitlines()) == 3
+
+
+def test_every_prepublication_trivy_scan_uses_the_selected_image_store() -> None:
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    scans = [step for step in steps if "aquasec/trivy:" in step.get("run", "")]
+    assert len(scans) == 3
+    for step in scans:
+        assert step["env"]["DOCKER_SOCKET"] == (
+            "${{ steps.robotwin-docker.outputs.sock || steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}"
+        )
+        assert '-v "$docker_socket_path:/var/run/docker.sock"' in step["run"]
+        assert 'docker_socket_path="${DOCKER_SOCKET#unix://}"' in step["run"]
+
+
+LIBERO_DOC = ROOT / "docs/workbench/byof-libero.md"
+
+
+def test_libero_namespace_claim_requires_continuous_isolation_evidence() -> None:
+    """Sampled inventories must never be presented as run-long isolation proof."""
+
+    text = LIBERO_DOC.read_text(encoding="utf-8")
+    start = text.index("Before a future run,\n")
+    end = text.index("The execution and payload-proof kubeconfig contexts", start)
+    contract = text[start:end]
+    for required in (
+        "not a run-long isolation proof",
+        "admission-enforced exclusive-writer policy",
+        "gap-free Kubernetes watch or audit-log interval",
+        "Every unexpected\ncreate, update, or delete event fails qualification",
+        "must not claim run-long isolation",
+    ):
+        assert required in contract
+
+
+def _capture_build_arguments(tmp_path: Path, tool: str) -> list[str]:
+    """Stop the real workflow shell at Docker and capture its selected arguments."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for name, script in {
+        "git": "#!/bin/sh\nprintf '1234567890\\n'\n",
+        "docker": '#!/bin/sh\nprintf "%s\\n" "$@" > "$DOCKER_ARGV"\nexit 77\n',
+    }.items():
+        executable = bin_dir / name
+        executable.write_text(script)
+        executable.chmod(0o700)
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    step = next(
+        s for s in steps if s.get("name") == "Build immutable development image locally"
+    )
+    env = {
+        **os.environ,
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+        "TOOL": tool,
+        "DEVELOPMENT_SHA": "a" * 40,
+        "LEROBOT_VERSION": "",
+        "RUNNER_TEMP": str(tmp_path),
+        "DOCKER_ARGV": str(tmp_path / "docker-argv"),
+        "DOCKERFILE": "Dockerfile",
+        "IMAGE": "example/image:dev",
+        "GITHUB_REPOSITORY": "example/repository",
+    }
+    result = subprocess.run(
+        ["bash", "-c", step["run"]], env=env, capture_output=True, text=True
+    )
+    assert result.returncode == 77, result.stderr
+    return (tmp_path / "docker-argv").read_text().splitlines()
+
+
+@pytest.mark.parametrize(
+    "tool", ("gymnasium-robotics", "libero", "genesis", "mjlab", "curobo")
+)
+def test_development_build_preserves_each_tools_metadata_and_export(tmp_path, tool):
+    argv = _capture_build_arguments(tmp_path, tool)
+    assert argv[:2] == ["buildx", "build"]
+    assert argv.count("--metadata-file") == (tool in {"gymnasium-robotics", "libero"})
+    assert ("SOURCE_DATE_EPOCH=1234567890" in argv) == (
+        tool in {"curobo", "libero", "mjlab"}
+    )
+    assert ("--load" in argv) == (tool != "libero")
+    assert ("--secret" in argv) == (tool == "gymnasium-robotics")
+    if tool == "gymnasium-robotics":
+        assert argv[argv.index("--metadata-file") + 1] == str(
+            tmp_path / f"{tool}-build-metadata.json"
+        )
+        assert (
+            argv[argv.index("--secret") + 1]
+            == "id=npa_host_ca_bundle,src=/etc/ssl/certs/ca-certificates.crt"
+        )
+    if tool == "libero":
+        assert "--provenance=mode=max" in argv
+        assert "--sbom=true" in argv
+        assert argv[argv.index("--metadata-file") + 1] == str(
+            tmp_path / "libero-build-metadata.json"
+        )
+        assert (
+            argv[argv.index("--output") + 1]
+            == f"type=oci,dest={tmp_path}/libero-build.oci.tar,tar=true,rewrite-timestamp=true,oci-artifact=true"
+        )
+
+
+def _cleanup_environment(tmp_path: Path, versions: list, digest: str) -> dict:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    scripts = {
+        "gh": '#!/bin/sh\nif [ "$2" = "--method" ]; then printf "%s\\n" "$@" >> "$DELETE_LOG"; else cat "$FIXTURE_VERSIONS"; fi\n',
+        "crane": '#!/bin/sh\nprintf "%s\\n" "$FIXTURE_DIGEST"\n',
+    }
+    for name, script in scripts.items():
+        executable = bin_dir / name
+        executable.write_text(script)
+        executable.chmod(0o700)
+    fixture = tmp_path / "versions.json"
+    fixture.write_text(json.dumps([versions]))
+    return {
+        **os.environ,
+        "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
+        "FIXTURE_VERSIONS": str(fixture),
+        "FIXTURE_DIGEST": digest,
+        "DELETE_LOG": str(tmp_path / "deleted"),
+        "IMAGE": "ghcr.io/example/npa-example:dev-" + "a" * 40,
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary"),
+    }
+
+
+@pytest.mark.parametrize("rejection", ["", "shared-tag", "digest-drift", "duplicate"])
+def test_failed_image_cleanup_cannot_delete_successful_sibling_versions(
+    tmp_path, rejection
+):
+    tag = "dev-" + "a" * 40
+    digest = "sha256:" + "1" * 64
+    failed = {"id": 101, "name": digest, "metadata": {"container": {"tags": [tag]}}}
+    sibling = {
+        "id": 102,
+        "name": "sha256:" + "2" * 64,
+        "metadata": {"container": {"tags": ["dev-" + "b" * 40]}},
+    }
+    versions = [failed, sibling]
+    if rejection == "shared-tag":
+        failed["metadata"]["container"]["tags"].append("release")
+    if rejection == "duplicate":
+        sibling["metadata"]["container"]["tags"].append(tag)
+    env = _cleanup_environment(
+        tmp_path,
+        versions,
+        digest if rejection != "digest-drift" else "sha256:" + "3" * 64,
+    )
+    steps = _spec(PUBLISH)["jobs"]["build-development"]["steps"]
+    script = next(
+        step["run"]
+        for step in steps
+        if "after this image fails" in step.get("name", "")
+    )
+    result = subprocess.run(
+        ["bash", "-c", script], env=env, capture_output=True, text=True
+    )
+    _assert_cleanup_result(tmp_path, result, rejection)
+
+
+def _assert_cleanup_result(
+    tmp_path: Path, result: subprocess.CompletedProcess, rejection: str
+) -> None:
+    if rejection:
+        assert result.returncode != 0
+        assert not (tmp_path / "deleted").exists()
+        return
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "deleted").read_text().splitlines() == [
+        "api",
+        "--method",
+        "DELETE",
+        "/orgs/example/packages/container/npa-example/versions/101",
+    ]

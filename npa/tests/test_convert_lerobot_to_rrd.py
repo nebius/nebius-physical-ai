@@ -33,7 +33,7 @@ def _dataset(root: Path) -> tuple[Path, Path]:
 
 
 def _assert_recording(path: Path, *, overlay: bool) -> None:
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     assert path.stat().st_size > 0
     chunks = list(load_recording(path).chunks())
