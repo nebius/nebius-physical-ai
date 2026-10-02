@@ -139,3 +139,18 @@ npa/.venv/bin/python docs/workbench/evidence/cosmos3-wam-reproduction-20261002/p
 The [telemetry render manifest](telemetry-render-manifest.json) records the
 source and output hashes and library versions. A second render produced
 identical PNG bytes.
+
+## Repository validation
+
+The [native Linux validation receipt](offline-validation.json) records 37,258
+passing tests, 186 skips, one expected-failure test that passed, and zero
+failures or errors. The separate security regression gate passed all 898
+tests using the real CPU PyTorch checkpoint runtime. Its source revision and
+private log/report hashes are retained in the receipt.
+
+A first-use Rerun welcome banner exposed an existing brittle test assertion on
+unchanged main. The assertion now requires the exact successful verification
+line while retaining the independent decoded-recording checks. Fresh-configuration
+verification and the full native suite passed after this test-only correction.
+The isolated CPU validation VM and its disk were removed after preserving
+the reports; provider queries verified both absent.
