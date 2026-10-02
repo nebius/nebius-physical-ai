@@ -68,7 +68,7 @@ unique and must be tested with its own upstream-named capabilities.
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
 | evo | `evo_ape` / `evo_rpe` / `evo_traj` | **live-qualified candidate** | `evo-live-20260920t0111z`: digest-pinned CPU Kubernetes execution passed 2 positive and 2 negative controls, decoded 10 native result archives, preserved native KITTI plots plus hash-linked labeled review copies, and passed identify-first hosted-VLM review after exact-prompt cross-swap controls; registry admission remains a maintainer decision |
-| AprilTag 3 | `apriltag_real_image_fiducial_detection` | qualification pending | Acceptance requires the digest-pinned direct BYOF path to match every labeled tag/corner in all three pinned real photographs, reject blank/noise controls, and retain calibrated visual evidence |
+| AprilTag 3 | `apriltag_real_image_fiducial_detection` | **live-qualified private-image candidate** | Standard SkyPilot CPU execution matched all 47 upstream labels across three photographs, rejected blank/noise controls, and reproduced the complete overlay pixels covered by retained calibrated visual review; registry admission and public image publication are not claimed |
 | Open Dreamer | `jax_two_gpu_data_parallel_mesh` | **accepted** | `byof-open-dreamer-mc-20260726T013512Z` (real Minecraft/VPT, jax 0.10.1, 2×RTX PRO 6000 Blackwell, mesh `{data:2, model:1}`) |
 | Open Dreamer | `minecraft_vpt_video_dataloader` | **accepted** | Same run (`dreamer.data.build_iterator` minecraft_vpt batch `[48,24,128,128,3]` sharded across 2 devices) |
 | Open Dreamer | `dreamer4_tokenizer_train_two_gpu` | **accepted** | Same run (`scripts/train_tokenizer.py` exit 0, 15000 steps on real Minecraft; reconstruction closely tracks gameplay — sky/grass/trees/hotbar, see `gt_decoded`) |
@@ -402,16 +402,38 @@ photo attribution and share-alike license.
 | `apriltag_real_image_fiducial_detection` | accepted upstream-parity gate (live CPU) | Reproduced all 47 recorded `tag36h11` IDs/corners across three photographs; precision/recall 1.0 and the 0.000050 px maximum residual describe parity with four-decimal upstream records, not localization accuracy (upstream tolerance: 0.1 px) |
 | `blank_and_noise_false_positive_controls` | accepted objective gate (live CPU) | Blank and fixed-seed random-noise images both produced zero detections |
 | `camera_consumer_observation_export` | accepted (live CPU) | 47 source-hashed records with IDs, centers, ordered corners, margins, and hamming distances |
-| `source_linked_annotation_capture` | accepted objective bytes; visual review unaccepted | Three source-bound annotated PNGs reproduced local hashes exactly; hosted VLM calibration failed and the final call was gated off |
+| `source_linked_annotation_capture` | accepted objective bytes; retained calibrated presentation review | Three source-bound annotated PNGs match the complete overlay pixels in the later qualified Kimi-K3 review sheets; no fresh VLM call was made |
+
+The 2026-10-02 standard SkyPilot CPU rerun used client source
+`3301aa36eb9f386dcca067fc709de3118149c504` and the qualified private image index
+`sha256:7bb4606386f4487eeeb6953ee5843a1e4698a485eac4cde3cbdd7f3a69d6612e`,
+built from `d0057c80bd19563c2484bd793d9f8ef0a443ce4f`. Its recipe and smoke
+commands match the executing client. All 24 output objects were downloaded and
+rehashed. Independent checks matched 47 detections and 376 corner coordinates,
+with aggregate residual RMSE `0.0000273889 px`, zero false positives/negatives,
+and three passing native CTests. The actual task image and CPU requests were
+observed; owned task, controller, and pull-secret cleanup was verified. The
+pod observer reported a connection error on shutdown, retained separately from
+the successful workload and independent resource-absence checks.
+
+Earlier hosted-judge calibration failed, and that attempt's final review was
+correctly gated off; the [original CPU proof](evidence/apriltag-fiducial/README.md)
+retains that history. The later
+[immutable calibrated visual proof](https://github.com/nebius/nebius-physical-ai/blob/e5f4210090dac2d1a1880bdffdc33a9e042c102b/docs/testing/evidence/apriltag-kimi-k3-production-census/README.md)
+records four disclosed controls and four committed holdout cases passing before
+all three production sheets scored `0.95`. The fresh overlays match the entire
+overlay pixels embedded in those retained sheets. Reusing that presentation
+evidence makes no new model-quality claim: the production census overlaps
+calibration inputs and is not an independent holdout or generalization estimate.
 
 The detector produces image-space fiducial observations, not a camera-pose or
 navigation-success claim. Pose accuracy additionally requires calibrated
 intrinsics and known tag size/layout. The three real photographs do not prove
 generalization to arbitrary cameras, lighting, motion blur, occlusion, or tag
-families. The digest-pinned CPU workload and complete filesystem/layer-history
-restricted-payload scan passed. Registry admission remains pending because
-hosted visual-judge calibration did not discriminate its controls and
-independent/current-head review is not yet complete.
+families. The exact image was qualified for private delivery and this CPU
+workflow, including complete-byte review with recorded finding dispositions.
+Registry admission remains a maintainer decision; public image publication and
+current-head CI readiness are not claimed by these workload results.
 
 ### robomimic
 
