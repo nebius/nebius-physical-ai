@@ -62,12 +62,19 @@ URIs. Keep the whole result private because the existing task and provider
 rationale can still describe operator data.
 
 `evidence: null` means no provider call occurred, as with `stub` or `--score`.
-It cannot support a visual claim. Provider refusal, truncation, filtering,
-malformed JSON, or canonical model mismatch is an error rather than a score.
+It cannot support a visual claim. Hosted `api` evaluation rejects provider
+refusal, truncation, filtering, malformed JSON, and any served-model mismatch.
 One complete JSON object wrapped only in a Markdown JSON fence is transport
 de-framed; its retained parser version ends in `+markdown-fence-v1`. Do not
 accept surrounding prose, trailing output, duplicate keys, invalid types, or a
-partial fence.
+partial fence on that hosted path.
+
+The `self-hosted` backend preserves its legacy compatibility parser: it can
+extract embedded JSON, accept duplicate keys and coerced types, clamp scores,
+and retain a verdict even when completion metadata is absent or not `stop`.
+Its evidence records those facts; it does not certify strict completion or
+promotion eligibility. The operator provenance lane separately requires HTTP
+200, `finish_reason=stop`, expected served identity and verifiable framing.
 This evidence proves judge traceability, not physical correctness or safety.
 
 ## Scoring controls that actually change the verdict

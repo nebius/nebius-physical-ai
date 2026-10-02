@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import ast
+import hashlib
+import inspect
 import json
 from pathlib import Path
+import textwrap
 
 import httpx
 import pytest
@@ -515,6 +519,189 @@ def test_replacement_template_parameters_and_explicit_models(model, expected) ->
     )
     assert requests[0]["model"] == model
     assert requests[0].get("chat_template_kwargs") == expected
+
+
+def test_kimi_profile_uses_low_reasoning_without_fixed_sampling_fields() -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    _client(handler).chat_completion_text(
+        model="moonshotai/Kimi-K3",
+        messages=[{"role": "user", "content": "task"}],
+        temperature=0.2,
+    )
+    assert requests[0]["reasoning_effort"] == "low"
+    assert "temperature" not in requests[0]
+    assert "max_tokens" not in requests[0]
+
+
+@pytest.mark.parametrize(
+    ("model", "suffix"),
+    [
+        (
+            "nvidia/Nemotron-3_5-Lightning",
+            b',"temperature":0.0,"chat_template_kwargs":{"enable_thinking":false}}',
+        ),
+        (
+            "MiniMaxAI/MiniMax-M3",
+            b',"temperature":0.0,"chat_template_kwargs":{"thinking_mode":"disabled"}}',
+        ),
+        ("vendor/explicit-model", b',"temperature":0.0}'),
+        ("moonshotai/Kimi-K3", b',"reasoning_effort":"low"}'),
+    ],
+)
+def test_chat_profile_preserves_literal_request_field_order(model, suffix) -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(request.content)
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    _client(handler).chat_completion_text(
+        model=model,
+        messages=[{"role": "user", "content": "task"}],
+    )
+    prefix = (
+        b'{"model":'
+        + json.dumps(model).encode()
+        + b',"messages":[{"role":"user","content":"task"}]'
+    )
+    assert requests == [prefix + suffix]
+
+
+def _stable_ast(value):
+    if (
+        isinstance(value, ast.Expr)
+        and isinstance(value.value, ast.Constant)
+        and isinstance(value.value.value, str)
+    ):
+        return "Docstring"
+    if isinstance(value, ast.AST):
+        fields = (
+            (field, _stable_ast(getattr(value, field)))
+            for field in value._fields
+            # Python 3.12 added an empty field absent from supported 3.10/3.11.
+            if field != "type_params"
+        )
+        return type(value).__name__, tuple(fields)
+    if isinstance(value, list):
+        return tuple(_stable_ast(item) for item in value)
+    return value
+
+
+def _ast_node_sha256(node: ast.AST) -> str:
+    return hashlib.sha256(repr(_stable_ast(node)).encode()).hexdigest()
+
+
+def _ast_sha256(source: str) -> str:
+    return _ast_node_sha256(ast.parse(textwrap.dedent(source)))
+
+
+def _profile_assignment_sha256() -> str:
+    from npa.clients import token_factory
+
+    client_tree = ast.parse(inspect.getsource(token_factory))
+    assignment = next(
+        node
+        for node in ast.walk(client_tree)
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_CHAT_PROFILES"
+            for target in node.targets
+        )
+    )
+    return _ast_node_sha256(assignment)
+
+
+_EXPECTED_POLICY_AST_HASHES = {
+    "profile-assignment": "9fdbc318b41b4b49731e24d7a7ee516cd110cc5f8fec32fccc4e2aaa9a9c3efa",
+    "profile-lookup": "acb9f15d262d592dc8e42223b18b5d9c1056ae914a26538a196858655d43cf5e",
+    "profile-default-extra": "747196a0990c411b8c81c50ee7a0fcede5bb00cf0b837404d0fc946939709512",
+    "default-chat-extra": "b80360e5856bc5d03c05b9008efe78ee72c1c040d999b066fc0530da154d85e8",
+    "client-payload": "9398a00f57375892b9be1844e07a5bb38eb532298382b618e19dbd3df4dcf813",
+    "client-entrypoint": "e71d1c6e9c6ec18770a044ead9a7f668a3682ec14fbb435a3c504d7d85b60459",
+    "hosted-request": "9183ee81e359c6abd170bc9ea51fcdd1aa380552d6e7651c9ba6232aab32ae8a",
+    "hosted-response": "79ec961221a6cd29d6d156785c0d0e4ea3a9643127cea8c144809b37e8f87507",
+    "hosted-call": "68dc806c6fa6ab3ea35e3984137761411a7a1a88f4751a782dce7ba18bb8cbb0",
+    "backend-verdict": "1c24916a004f460e53009dd11a0840f79606d22ada0a08e68fb933ef01547545",
+    "evidence-verdict": "4bb91f68e0fa7ecf98ec40e3c907ef9ce820e9c1745f80016106ce7e95e01680",
+}
+
+
+def _policy_ast_hashes() -> dict[str, str]:
+    from npa.clients import token_factory
+    from npa.workbench import vlm_eval
+
+    functions = {
+        "profile-lookup": token_factory.token_factory_chat_profile,
+        "profile-default-extra": token_factory.TokenFactoryChatProfile.default_extra,
+        "default-chat-extra": token_factory.default_chat_extra,
+        "client-payload": token_factory._chat_completion_payload,
+        "client-entrypoint": token_factory.TokenFactoryClient.chat_completion,
+        "hosted-request": vlm_eval._openai_request,
+        "hosted-response": vlm_eval._hosted_structured_response,
+        "hosted-call": vlm_eval._call_openai_compatible,
+        "backend-verdict": vlm_eval._parse_backend_verdict,
+        "evidence-verdict": vlm_eval._verdict_with_evidence,
+    }
+    hashes = {
+        name: _ast_sha256(inspect.getsource(function))
+        for name, function in functions.items()
+    }
+    return {"profile-assignment": _profile_assignment_sha256(), **hashes}
+
+
+def test_model_discrimination_is_centralized_in_chat_profile() -> None:
+    assert _policy_ast_hashes() == _EXPECTED_POLICY_AST_HASHES
+
+
+@pytest.mark.parametrize("target", ["client-payload", "hosted-request"])
+@pytest.mark.parametrize("mutation", ["alias-default-switch", "helper-switch"])
+def test_policy_fingerprint_kills_indirect_switch_mutants(target, mutation) -> None:
+    from npa.clients import token_factory
+    from npa.workbench import vlm_eval
+
+    function = {
+        "client-payload": token_factory._chat_completion_payload,
+        "hosted-request": vlm_eval._openai_request,
+    }[target]
+    source = textwrap.dedent(inspect.getsource(function))
+    anchor = "profile = token_factory_chat_profile(model)"
+    injected = (
+        "selected_model = model\n"
+        "    if selected_model == DEFAULT_VISION_MODEL:\n"
+        "        pass\n"
+        f"    {anchor}"
+        if mutation == "alias-default-switch"
+        else f"_legacy_model_switch(model)\n    {anchor}"
+    )
+    mutated = source.replace(anchor, injected, 1)
+    assert _ast_sha256(mutated) != _EXPECTED_POLICY_AST_HASHES[target]
+
+
+def test_explicit_kimi_extra_wins_over_direct_output_profile() -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    _client(handler).chat_completion_text(
+        model="moonshotai/Kimi-K3",
+        messages=[{"role": "user", "content": "task"}],
+        extra={"reasoning_effort": "high", "temperature": 1.0},
+    )
+    assert requests[0]["reasoning_effort"] == "high"
+    assert requests[0]["temperature"] == 1.0
 
 
 def test_explicit_thinking_and_other_template_parameters_win() -> None:
