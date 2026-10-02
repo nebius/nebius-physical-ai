@@ -518,3 +518,30 @@ def test_rrd_verifiers_fail_closed_at_decoded_row_bound(
         data_factory_viz._rrd_semantic_sha256(path)
     with pytest.raises(data_factory_viz.DataFactoryVizError, match="bounded"):
         list(data_factory_viz._bounded_recording_batches(path))
+
+
+@pytest.mark.parametrize("media_kind", ["source", "augmented"])
+def test_terminal_rrd_media_rejects_duplicate_entities(
+    media_kind: str,
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.mp4"
+    second = tmp_path / "second.mp4"
+    first.write_bytes(b"first")
+    second.write_bytes(b"second")
+    records = [
+        {"entity": "source/camera", "candidate_id": "candidate-a", "video": first},
+        {"entity": "source/camera", "candidate_id": "candidate-a", "video": second},
+    ]
+    variants = (
+        records
+        if media_kind == "augmented"
+        else [{"candidate_id": "candidate-b", "video": first}]
+    )
+    sources = records if media_kind == "source" else []
+
+    with pytest.raises(
+        data_factory_viz.DataFactoryVizError,
+        match="duplicate media",
+    ):
+        data_factory_viz._expected_terminal_rrd_media(variants, sources)
