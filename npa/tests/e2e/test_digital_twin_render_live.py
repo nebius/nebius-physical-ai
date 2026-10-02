@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,7 @@ def test_real_gpu_twin_has_bound_scene_media_and_portable_html():
 
 
 def test_real_cuda_reference_scene_has_native_gpu_and_portable_outputs():
+    from npa.workflows import digital_twin_scene
     from npa.workflows.digital_twin_render import verify_render
 
     path = os.environ.get("NPA_DIGITAL_TWIN_CUDA_LIVE_DIR", "")
@@ -51,10 +53,28 @@ def test_real_cuda_reference_scene_has_native_gpu_and_portable_outputs():
         pytest.skip("requires a materialized native Blender CUDA run")
     root = Path(path)
     record = verify_render(root)
+    assert (
+        record["scene_script_sha256"]
+        == hashlib.sha256(Path(digital_twin_scene.__file__).read_bytes()).hexdigest()
+    )
     assert record["gpu_models"] in [["NVIDIA B200"], ["NVIDIA RTX PRO 6000"]]
     assert record["telemetry"]["sample_count"] > 0
     assert record["telemetry"]["peak_utilization_percent"] > 0
     assert record["telemetry"]["peak_memory_mib"] > 0
+    _assert_distinct_rendered_views(root, record)
+    glb = (root / "scene.glb").read_bytes()
+    assert struct.unpack_from("<I", glb, 4)[0] == 2
+    assert struct.unpack_from("<I", glb, 8)[0] == len(glb)
+    chunk_length = struct.unpack_from("<I", glb, 12)[0]
+    scene = json.loads(glb[20 : 20 + chunk_length])
+    assert len(scene["meshes"]) > 10 and len(scene["materials"]) >= 5
+    html = (root / "index.html").read_text()
+    assert "connect-src 'none'" in html
+    assert "data:image/jpeg;base64," in html
+    assert "Blender Cycles" in html and "authored demonstrator" in html
+
+
+def _assert_distinct_rendered_views(root, record):
     assert (
         len(
             {
@@ -69,13 +89,3 @@ def test_real_cuda_reference_scene_has_native_gpu_and_portable_outputs():
         with Image.open(path) as image:
             assert image.size == (1280, 720)
             assert max(ImageStat.Stat(image.convert("RGB")).stddev) > 10
-    glb = (root / "scene.glb").read_bytes()
-    assert struct.unpack_from("<I", glb, 4)[0] == 2
-    assert struct.unpack_from("<I", glb, 8)[0] == len(glb)
-    chunk_length = struct.unpack_from("<I", glb, 12)[0]
-    scene = json.loads(glb[20 : 20 + chunk_length])
-    assert len(scene["meshes"]) > 10 and len(scene["materials"]) >= 5
-    html = (root / "index.html").read_text()
-    assert "connect-src 'none'" in html
-    assert "data:image/jpeg;base64," in html
-    assert "Blender Cycles" in html and "authored demonstrator" in html

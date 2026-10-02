@@ -21,29 +21,44 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "unverified",
-      "reason": "Live execution and independent artifact readback have not yet completed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Immutable publication, checksum verification and independent object-storage readback completed for the real rendered bundle.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "worker_input": {
-      "status": "unverified",
-      "reason": "Live execution and independent artifact readback have not yet completed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The source overlay and authored scene executed on the worker; the live acceptance check binds the recorded scene script to the checkout SHA-256.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "Live execution and independent artifact readback have not yet completed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "Project-scoped cloud and storage preflight succeeded; worker publication and independent authenticated readback completed. Exact credentials and receipts remain private.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "Live execution and independent artifact readback have not yet completed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The pinned source image passed image and bootstrap preflight and ran the CUDA renderer; the official Blender runtime archive passed its pinned SHA-256 check.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "Live execution and independent artifact readback have not yet completed.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The workflow succeeded on one NVIDIA B200 with native Blender 4.5.3 Cycles CUDA and CPU render devices disabled. Live artifact checks and offline browser playback passed. RTX/NuRec qualification is separate.",
+      "evidence": [
+        "docs/workbench/guides/digital-twin.md#verified-b200-execution",
+        "npa/tests/e2e/test_digital_twin_render_live.py"
+      ]
     }
   }
 }

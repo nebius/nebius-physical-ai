@@ -175,7 +175,8 @@ npa workbench workflow submit workflows/testing/digital-twin-cuda-render.yaml \
 
 Use the fresh ID returned by `prepare-run` in both run placeholders. Select the
 deployment's verified private kubeconfig through `KUBECONFIG`; do not rely on an
-ambient context. Source staging is automatic. If submission fails, inspect the
+ambient context. The `bucket` override is the bucket name, without `s3://`.
+Source staging is automatic. If submission fails, inspect the
 same run's status and retained diagnostics before using `--resume`; creating a
 second run does not reconcile the first.
 
@@ -214,6 +215,24 @@ The read-only acceptance check requires native CUDA selection, positive observed
 GPU activity, distinct non-flat full-resolution images, a populated glTF scene,
 bound OpenUSD bytes and an offline HTML viewer. The adjacent workflow readiness
 record reports which execution prerequisites have actually been verified.
+
+### Verified B200 execution
+
+The reference workflow completed on one NVIDIA B200 with Blender 4.5.3 Cycles
+CUDA, producing 24 distinct 1280 × 720 PNG views at 64 samples, OpenUSD/glTF
+exports, and portable HTML. Native execution took 318.613 seconds, including
+initial CUDA kernel setup and exports; this is not a steady-state render benchmark.
+Device-wide telemetry collected 311 samples, with 99% peak utilization and
+4308 MiB peak allocated GPU memory. The selected native renderer had CPU devices
+disabled. The executed scene script's SHA-256 was
+`b2ea5a30c7751d480b61e8c957c419ec983bc63a49199dede19ded61592e2f80`.
+
+Immutable publication and independent object-storage readback succeeded. The
+live acceptance test passed against the materialized bundle, including the
+checkout's scene-script hash. Browser inspection verified image decoding,
+24-view scrubbing, and play/pause with zero network requests or JavaScript errors.
+Exact operational receipts remain in access-controlled evidence. This verifies
+the authored CUDA reference on B200; RTX/NuRec execution is separately qualified.
 
 ## Verify a captured NuRec run
 
