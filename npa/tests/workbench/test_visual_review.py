@@ -758,6 +758,7 @@ def test_prompt_matches_single_and_paired_parser_contracts() -> None:
     for prompt in (single, paired):
         assert "only by their neutral A/B labels" in prompt
         assert "hypothesis requiring a future consumer test" in prompt
+        assert "state an infinitive operation" in prompt
         assert visual_review._SOURCE_ROLE_PATTERN.search(prompt) is None
 
 

@@ -1619,7 +1619,9 @@ def _dimension_contract_text() -> str:
         "limitations. impressiveness has exactly status, nonempty visible_basis, "
         "cosmetic_only. physical_ai_usefulness has exactly status, nonempty "
         "visible_basis, downstream_operation, required_properties, hypothesis, and "
-        "measured_consumer_test_needed."
+        "measured_consumer_test_needed. When downstream_operation is not null, "
+        "state an infinitive operation such as 'replay an image sequence', without "
+        "qualifiers about a demonstration's selection stage or temporal role."
     )
 
 
