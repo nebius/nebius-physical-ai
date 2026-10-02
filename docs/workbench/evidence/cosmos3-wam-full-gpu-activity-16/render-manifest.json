@@ -1,0 +1,7 @@
+{
+  "matplotlib": "3.11.2",
+  "numpy": "2.5.3",
+  "evidence_sha256": "aee0f3cc55debd1acdb7f14a65979933d03671ed1e1cb4ca80607ccf9487fa45",
+  "checkpoint_times_sha256": "23f39faed362a649bc1d1f5b23bdcf36d8d99ca0e23f17a15f10a2947ad29271",
+  "image_sha256": "0ba0547c3ebdabc173e4c6a0f873c24d0a6910023cfa8a81b0b346ca5ba0f46c"
+}

@@ -36,6 +36,7 @@ from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 #: against a Typer signature. Pinned so the set can shrink but not silently grow.
 NON_CLI_ARGV = frozenset(
     {
+        "workflow.habitat_sim.smoke",
         "workbench.dataset.report_rejection",
         "workbench.dataset.write_quality_decision",
         "workbench.lancedb.backfill_cpu_bundle",
@@ -75,6 +76,21 @@ NON_CLI_ARGV = frozenset(
         "workbench.content_agents.physics",
         "workbench.content_agents.validate",
         "workbench.content_agents.package",
+        "workflow.paidf.prepare_images",
+        "workflow.paidf.build_configs",
+        "workflow.paidf.run_iaa_augmentation",
+        "workflow.paidf.run_evg_augmentation",
+        "workflow.paidf.validate_augmentation",
+        "workflow.paidf.postprocess_iaa",
+        "workflow.paidf.run_detection",
+        "workflow.paidf.run_captioning",
+        "workflow.paidf.run_visual_qa",
+        "workflow.paidf.run_attribute_search",
+        "workflow.paidf.finalize_dataset",
+        "workflow.paidf.validate_dataset",
+        "workflow.paidf.dig_infer",
+        "workflow.paidf.dig_train",
+        "workflow.paidf.dig_prepare_pretrained",
     }
 )
 
@@ -85,6 +101,7 @@ NON_CLI_ARGV = frozenset(
 #: remains genuinely exempt is inline `python -c` source.
 AUDITED_ELSEWHERE = frozenset(
     {
+        "workflow.habitat_sim.smoke",
         "workbench.lancedb.backfill_cpu_bundle",
         "workbench.lancedb.create_failure_views",
         "workbench.sim2real_envgen.split",
@@ -159,6 +176,15 @@ def test_no_tool_ref_argv_passes_a_flag_its_cli_rejects() -> None:
         "these specs would crash in the pod after a successful render:\n"
         + "\n".join(f"  {ref}: {flags}" for ref, flags in sorted(drift.items()))
     )
+
+
+def test_habitat_snapshot_contract_does_not_leak_into_generic_byof_toolrefs() -> None:
+    """The dedicated Habitat image owns its snapshot; generic BYOF does not."""
+
+    for tool_ref in ("workbench.byof.repo", "workbench.isaac_lab.byof_repo"):
+        entry = TOOL_CATALOG[tool_ref]
+        assert "--apt-snapshot" not in entry.argv_template
+        assert "apt_snapshot" not in entry.config_defaults
 
 
 #: Top-level CLI groups a toolRef may invoke. `workbench` is the tool layer;

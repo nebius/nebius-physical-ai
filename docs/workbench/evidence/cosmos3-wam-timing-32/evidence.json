@@ -1,0 +1,92 @@
+{
+  "schema": "npa.cosmos3.wam-timing-evidence.v1",
+  "date": "2026-09-30",
+  "scope": "Three unprofiled 32-GPU repetitions from the same base checkpoint and seed; separate Soperator cohort.",
+  "conditions": "Warm runtime and filesystem caches; no evaluation or archival overlapped these runs. Final checkpoint writing is outside timed iterations and included in native process time.",
+  "files_sha256": {
+    "repeat-1/measurement.json": "af726bfe9815bbdc11f764c59c41784e8ef1084c7a5130c56eff4be131429826",
+    "repeat-1/iteration-series.csv": "ef466ea571366d997cbfd38072d713f17be828a691f490b2cf8a593aed0b5f32",
+    "repeat-1/checkpoint-hashes.json": "6945b2ed877ce833083ce5b794ab1737c732961c066efac6ab7d53e760049270",
+    "repeat-1/distributed-preflight.json": "d8472f9b84efe9667413ac4a618aa405398845f89c48f0cadb02a9bdbaad353a",
+    "repeat-2/measurement.json": "b9977c53811f210ec2c96bd9977e3c9008ba46162c4d1ea51446e85c8274936c",
+    "repeat-2/iteration-series.csv": "9986e93b57fb0f37d68a7f866299c6943fe2f99f585885dac3c8e999afb9f60b",
+    "repeat-2/checkpoint-hashes.json": "0677e2265e825588c02c2950809c137820e5331124dfa22dbc9acc4d9584d3dc",
+    "repeat-2/distributed-preflight.json": "d8472f9b84efe9667413ac4a618aa405398845f89c48f0cadb02a9bdbaad353a",
+    "repeat-3/measurement.json": "3d353e255930988eb99eaf78ae3fea82b9262d2aadf12681301ec8cf1449aa03",
+    "repeat-3/iteration-series.csv": "c9afde510949e9013810d3b7070559f68567ca403641c2c66035ef8e6868aa4f",
+    "repeat-3/checkpoint-hashes.json": "5ed4f225936aea630274cd60be88f6684a65a5a7abf710f271307a9bb38acedc",
+    "repeat-3/distributed-preflight.json": "d8472f9b84efe9667413ac4a618aa405398845f89c48f0cadb02a9bdbaad353a",
+    "repeated-timing.json": "539b7a552eb7a5dcf102bf5559a96474ba5791d98a09c5486dce1fc046a43ac0"
+  },
+  "repetitions": [
+    {
+      "repetition": 1,
+      "completion_receipts_sha256": {
+        "0": "2c9d81a9dba029396eae3c28b8c76276a311a00fc57b3cbd2e3e8b97c5857cf4",
+        "1": "4d0ab621971b34afb04008eebe69c30c7be8f6e2ba5ba7a802bf27329865e3d7",
+        "2": "c25d6fae58281dfb263b7dc3d8f537d6e9050aca6a731a11ceaa2c5a193788ea",
+        "3": "d96a2581345d0c4da7c68cb36d30480372076a48d30a1f9db1df738893dfeb1e"
+      },
+      "run_settings_sha256": "3bd4e5898a391280de9d91ad88c2efe0a0048407fe28e086b5a385467d9cc53e",
+      "checkpoint_files": 132,
+      "checkpoint_bytes": 177285229368,
+      "scheduler": {
+        "state": "COMPLETED",
+        "exit_code": "0:0",
+        "allocation_seconds": 1376,
+        "allocated_gpus": 32,
+        "allocated_nodes": 4,
+        "allocated_cpus": 640,
+        "started_utc": "2026-09-30T04:43:56Z",
+        "ended_utc": "2026-09-30T05:06:52Z",
+        "allocated_gpu_hours": 12.231111111111112
+      }
+    },
+    {
+      "repetition": 2,
+      "completion_receipts_sha256": {
+        "0": "3d30946a8e672f4f6006a9e9d0786a25ae8e075a3d78d7a0c250b5db5113d239",
+        "1": "ebf9ce9cb292573b02894c9e2037fae38c9d56eb5fa586f869abad1e1376a2c6",
+        "2": "ba8f443a688c57a9ae06cf126b4211554bb325f40e467b4e9613e42939d37f44",
+        "3": "502b16b976b22a4992a050e42657b9753c158f32d818e15c6212d820b93318d2"
+      },
+      "run_settings_sha256": "c47a68cf73d0a5534db2b91ebbdb84e432869a825e9554a1306f814de7a1a230",
+      "checkpoint_files": 132,
+      "checkpoint_bytes": 177285229368,
+      "scheduler": {
+        "state": "COMPLETED",
+        "exit_code": "0:0",
+        "allocation_seconds": 1361,
+        "allocated_gpus": 32,
+        "allocated_nodes": 4,
+        "allocated_cpus": 640,
+        "started_utc": "2026-09-30T05:07:23Z",
+        "ended_utc": "2026-09-30T05:30:04Z",
+        "allocated_gpu_hours": 12.097777777777777
+      }
+    },
+    {
+      "repetition": 3,
+      "completion_receipts_sha256": {
+        "0": "0f19050f5586289c10b48df0130546687150d8242f26efc828e3aa9dd5bf6504",
+        "1": "ceefb3a6a6250b0384e2f6de946cb9284d2c61d6ab4091627d59487e02b38745",
+        "2": "8137b4aba01b6b3c41af48430871c2dcc1f99f5c614da98232bf79bce3dacdf7",
+        "3": "f8ae70a4336dbef479f5c3cf2f2706c99c92da639994cf18f923d91c0d97d591"
+      },
+      "run_settings_sha256": "d3e939e83278f62c868b0bea0b656b85ee88a511b6f44d6ec6ffcb71d3b90af0",
+      "checkpoint_files": 132,
+      "checkpoint_bytes": 177285229368,
+      "scheduler": {
+        "state": "COMPLETED",
+        "exit_code": "0:0",
+        "allocation_seconds": 1376,
+        "allocated_gpus": 32,
+        "allocated_nodes": 4,
+        "allocated_cpus": 640,
+        "started_utc": "2026-09-30T05:30:33Z",
+        "ended_utc": "2026-09-30T05:53:29Z",
+        "allocated_gpu_hours": 12.231111111111112
+      }
+    }
+  ]
+}

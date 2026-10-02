@@ -1,0 +1,3608 @@
+{
+  "schema": "npa.cosmos3.wam-quality.v1",
+  "model_manifest_sha256": "e51478fcf539415a2dd206f66d664d4544de4e92841bcbc68032132cadc7bd12",
+  "step": 1000,
+  "trials": 500,
+  "successes": 428,
+  "success_rate": 0.856,
+  "wilson_95_interval": [
+    0.8225095437017246,
+    0.8840619258896502
+  ],
+  "full_500_trial_evaluation": true,
+  "threshold": 0.9,
+  "threshold_met": false,
+  "elapsed_seconds": 2353.3895849809996,
+  "task_results": [
+    {
+      "task_id": 0,
+      "task_description": "put both the alphabet soup and the tomato sauce in the basket",
+      "episodes": 50,
+      "successes": 50,
+      "success_rate": 1.0,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 303,
+          "error": null,
+          "elapsed_s": 20.999
+        },
+        {
+          "episode": 1,
+          "success": true,
+          "steps": 279,
+          "error": null,
+          "elapsed_s": 20.999
+        },
+        {
+          "episode": 2,
+          "success": true,
+          "steps": 285,
+          "error": null,
+          "elapsed_s": 20.999
+        },
+        {
+          "episode": 3,
+          "success": true,
+          "steps": 297,
+          "error": null,
+          "elapsed_s": 20.999
+        },
+        {
+          "episode": 4,
+          "success": true,
+          "steps": 302,
+          "error": null,
+          "elapsed_s": 20.999
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 295,
+          "error": null,
+          "elapsed_s": 20.999
+        },
+        {
+          "episode": 6,
+          "success": true,
+          "steps": 290,
+          "error": null,
+          "elapsed_s": 20.999
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 318,
+          "error": null,
+          "elapsed_s": 20.999
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 272,
+          "error": null,
+          "elapsed_s": 14.624
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 283,
+          "error": null,
+          "elapsed_s": 14.624
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 272,
+          "error": null,
+          "elapsed_s": 14.624
+        },
+        {
+          "episode": 11,
+          "success": true,
+          "steps": 297,
+          "error": null,
+          "elapsed_s": 14.624
+        },
+        {
+          "episode": 12,
+          "success": true,
+          "steps": 297,
+          "error": null,
+          "elapsed_s": 14.624
+        },
+        {
+          "episode": 13,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 14.624
+        },
+        {
+          "episode": 14,
+          "success": true,
+          "steps": 295,
+          "error": null,
+          "elapsed_s": 14.624
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 290,
+          "error": null,
+          "elapsed_s": 14.624
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 327,
+          "error": null,
+          "elapsed_s": 17.075
+        },
+        {
+          "episode": 17,
+          "success": true,
+          "steps": 281,
+          "error": null,
+          "elapsed_s": 17.075
+        },
+        {
+          "episode": 18,
+          "success": true,
+          "steps": 290,
+          "error": null,
+          "elapsed_s": 17.075
+        },
+        {
+          "episode": 19,
+          "success": true,
+          "steps": 326,
+          "error": null,
+          "elapsed_s": 17.075
+        },
+        {
+          "episode": 20,
+          "success": true,
+          "steps": 288,
+          "error": null,
+          "elapsed_s": 17.075
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 285,
+          "error": null,
+          "elapsed_s": 17.075
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 387,
+          "error": null,
+          "elapsed_s": 17.075
+        },
+        {
+          "episode": 23,
+          "success": true,
+          "steps": 312,
+          "error": null,
+          "elapsed_s": 17.075
+        },
+        {
+          "episode": 24,
+          "success": true,
+          "steps": 289,
+          "error": null,
+          "elapsed_s": 19.207
+        },
+        {
+          "episode": 25,
+          "success": true,
+          "steps": 270,
+          "error": null,
+          "elapsed_s": 19.207
+        },
+        {
+          "episode": 26,
+          "success": true,
+          "steps": 271,
+          "error": null,
+          "elapsed_s": 19.207
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 493,
+          "error": null,
+          "elapsed_s": 19.207
+        },
+        {
+          "episode": 28,
+          "success": true,
+          "steps": 281,
+          "error": null,
+          "elapsed_s": 19.207
+        },
+        {
+          "episode": 29,
+          "success": true,
+          "steps": 285,
+          "error": null,
+          "elapsed_s": 19.207
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 275,
+          "error": null,
+          "elapsed_s": 19.207
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 285,
+          "error": null,
+          "elapsed_s": 19.207
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 389,
+          "error": null,
+          "elapsed_s": 17.89
+        },
+        {
+          "episode": 33,
+          "success": true,
+          "steps": 269,
+          "error": null,
+          "elapsed_s": 17.89
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 280,
+          "error": null,
+          "elapsed_s": 17.89
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 369,
+          "error": null,
+          "elapsed_s": 17.89
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 337,
+          "error": null,
+          "elapsed_s": 17.89
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 403,
+          "error": null,
+          "elapsed_s": 17.89
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 373,
+          "error": null,
+          "elapsed_s": 17.89
+        },
+        {
+          "episode": 39,
+          "success": true,
+          "steps": 272,
+          "error": null,
+          "elapsed_s": 17.89
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 362,
+          "error": null,
+          "elapsed_s": 20.036
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 301,
+          "error": null,
+          "elapsed_s": 20.036
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 465,
+          "error": null,
+          "elapsed_s": 20.036
+        },
+        {
+          "episode": 43,
+          "success": true,
+          "steps": 369,
+          "error": null,
+          "elapsed_s": 20.036
+        },
+        {
+          "episode": 44,
+          "success": true,
+          "steps": 274,
+          "error": null,
+          "elapsed_s": 20.036
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 291,
+          "error": null,
+          "elapsed_s": 20.036
+        },
+        {
+          "episode": 46,
+          "success": true,
+          "steps": 287,
+          "error": null,
+          "elapsed_s": 20.036
+        },
+        {
+          "episode": 47,
+          "success": true,
+          "steps": 281,
+          "error": null,
+          "elapsed_s": 20.036
+        },
+        {
+          "episode": 48,
+          "success": true,
+          "steps": 304,
+          "error": null,
+          "elapsed_s": 42.613
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 290,
+          "error": null,
+          "elapsed_s": 42.613
+        }
+      ]
+    },
+    {
+      "task_id": 1,
+      "task_description": "put both the cream cheese box and the butter in the basket",
+      "episodes": 50,
+      "successes": 40,
+      "success_rate": 0.8,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 292,
+          "error": null,
+          "elapsed_s": 26.674
+        },
+        {
+          "episode": 1,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 26.674
+        },
+        {
+          "episode": 2,
+          "success": true,
+          "steps": 257,
+          "error": null,
+          "elapsed_s": 26.674
+        },
+        {
+          "episode": 3,
+          "success": true,
+          "steps": 263,
+          "error": null,
+          "elapsed_s": 26.674
+        },
+        {
+          "episode": 4,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 26.674
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 282,
+          "error": null,
+          "elapsed_s": 26.674
+        },
+        {
+          "episode": 6,
+          "success": true,
+          "steps": 310,
+          "error": null,
+          "elapsed_s": 26.674
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 283,
+          "error": null,
+          "elapsed_s": 26.674
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 287,
+          "error": null,
+          "elapsed_s": 20.317
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 261,
+          "error": null,
+          "elapsed_s": 20.317
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 261,
+          "error": null,
+          "elapsed_s": 20.317
+        },
+        {
+          "episode": 11,
+          "success": true,
+          "steps": 283,
+          "error": null,
+          "elapsed_s": 20.317
+        },
+        {
+          "episode": 12,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 20.317
+        },
+        {
+          "episode": 13,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 20.317
+        },
+        {
+          "episode": 14,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 20.317
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 20.317
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 407,
+          "error": null,
+          "elapsed_s": 22.943
+        },
+        {
+          "episode": 17,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 22.943
+        },
+        {
+          "episode": 18,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 22.943
+        },
+        {
+          "episode": 19,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 22.943
+        },
+        {
+          "episode": 20,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 22.943
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 265,
+          "error": null,
+          "elapsed_s": 22.943
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 22.943
+        },
+        {
+          "episode": 23,
+          "success": true,
+          "steps": 255,
+          "error": null,
+          "elapsed_s": 22.943
+        },
+        {
+          "episode": 24,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 22.134
+        },
+        {
+          "episode": 25,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 22.134
+        },
+        {
+          "episode": 26,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 22.134
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 273,
+          "error": null,
+          "elapsed_s": 22.134
+        },
+        {
+          "episode": 28,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 22.134
+        },
+        {
+          "episode": 29,
+          "success": true,
+          "steps": 323,
+          "error": null,
+          "elapsed_s": 22.134
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 274,
+          "error": null,
+          "elapsed_s": 22.134
+        },
+        {
+          "episode": 31,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 22.134
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 18.831
+        },
+        {
+          "episode": 33,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 18.831
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 267,
+          "error": null,
+          "elapsed_s": 18.831
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 269,
+          "error": null,
+          "elapsed_s": 18.831
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 275,
+          "error": null,
+          "elapsed_s": 18.831
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 261,
+          "error": null,
+          "elapsed_s": 18.831
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 254,
+          "error": null,
+          "elapsed_s": 18.831
+        },
+        {
+          "episode": 39,
+          "success": true,
+          "steps": 275,
+          "error": null,
+          "elapsed_s": 18.831
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 326,
+          "error": null,
+          "elapsed_s": 13.982
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 291,
+          "error": null,
+          "elapsed_s": 13.982
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 254,
+          "error": null,
+          "elapsed_s": 13.982
+        },
+        {
+          "episode": 43,
+          "success": true,
+          "steps": 293,
+          "error": null,
+          "elapsed_s": 13.982
+        },
+        {
+          "episode": 44,
+          "success": true,
+          "steps": 309,
+          "error": null,
+          "elapsed_s": 13.982
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 275,
+          "error": null,
+          "elapsed_s": 13.982
+        },
+        {
+          "episode": 46,
+          "success": true,
+          "steps": 282,
+          "error": null,
+          "elapsed_s": 13.982
+        },
+        {
+          "episode": 47,
+          "success": true,
+          "steps": 266,
+          "error": null,
+          "elapsed_s": 13.982
+        },
+        {
+          "episode": 48,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 66.035
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 294,
+          "error": null,
+          "elapsed_s": 66.035
+        }
+      ]
+    },
+    {
+      "task_id": 2,
+      "task_description": "turn on the stove and put the moka pot on it",
+      "episodes": 50,
+      "successes": 48,
+      "success_rate": 0.96,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 251,
+          "error": null,
+          "elapsed_s": 20.329
+        },
+        {
+          "episode": 1,
+          "success": true,
+          "steps": 266,
+          "error": null,
+          "elapsed_s": 20.329
+        },
+        {
+          "episode": 2,
+          "success": true,
+          "steps": 261,
+          "error": null,
+          "elapsed_s": 20.329
+        },
+        {
+          "episode": 3,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 20.329
+        },
+        {
+          "episode": 4,
+          "success": true,
+          "steps": 238,
+          "error": null,
+          "elapsed_s": 20.329
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 20.329
+        },
+        {
+          "episode": 6,
+          "success": true,
+          "steps": 277,
+          "error": null,
+          "elapsed_s": 20.329
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 272,
+          "error": null,
+          "elapsed_s": 20.329
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 247,
+          "error": null,
+          "elapsed_s": 15.448
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 264,
+          "error": null,
+          "elapsed_s": 15.448
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 245,
+          "error": null,
+          "elapsed_s": 15.448
+        },
+        {
+          "episode": 11,
+          "success": true,
+          "steps": 272,
+          "error": null,
+          "elapsed_s": 15.448
+        },
+        {
+          "episode": 12,
+          "success": true,
+          "steps": 249,
+          "error": null,
+          "elapsed_s": 15.448
+        },
+        {
+          "episode": 13,
+          "success": true,
+          "steps": 272,
+          "error": null,
+          "elapsed_s": 15.448
+        },
+        {
+          "episode": 14,
+          "success": true,
+          "steps": 257,
+          "error": null,
+          "elapsed_s": 15.448
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 252,
+          "error": null,
+          "elapsed_s": 15.448
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 261,
+          "error": null,
+          "elapsed_s": 23.225
+        },
+        {
+          "episode": 17,
+          "success": true,
+          "steps": 245,
+          "error": null,
+          "elapsed_s": 23.225
+        },
+        {
+          "episode": 18,
+          "success": true,
+          "steps": 248,
+          "error": null,
+          "elapsed_s": 23.225
+        },
+        {
+          "episode": 19,
+          "success": true,
+          "steps": 259,
+          "error": null,
+          "elapsed_s": 23.225
+        },
+        {
+          "episode": 20,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 23.225
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 242,
+          "error": null,
+          "elapsed_s": 23.225
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 252,
+          "error": null,
+          "elapsed_s": 23.225
+        },
+        {
+          "episode": 23,
+          "success": true,
+          "steps": 256,
+          "error": null,
+          "elapsed_s": 23.225
+        },
+        {
+          "episode": 24,
+          "success": true,
+          "steps": 253,
+          "error": null,
+          "elapsed_s": 16.018
+        },
+        {
+          "episode": 25,
+          "success": true,
+          "steps": 254,
+          "error": null,
+          "elapsed_s": 16.018
+        },
+        {
+          "episode": 26,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 16.018
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 243,
+          "error": null,
+          "elapsed_s": 16.018
+        },
+        {
+          "episode": 28,
+          "success": true,
+          "steps": 280,
+          "error": null,
+          "elapsed_s": 16.018
+        },
+        {
+          "episode": 29,
+          "success": true,
+          "steps": 271,
+          "error": null,
+          "elapsed_s": 16.018
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 243,
+          "error": null,
+          "elapsed_s": 16.018
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 256,
+          "error": null,
+          "elapsed_s": 16.018
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 239,
+          "error": null,
+          "elapsed_s": 14.207
+        },
+        {
+          "episode": 33,
+          "success": true,
+          "steps": 244,
+          "error": null,
+          "elapsed_s": 14.207
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 14.207
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 289,
+          "error": null,
+          "elapsed_s": 14.207
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 261,
+          "error": null,
+          "elapsed_s": 14.207
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 263,
+          "error": null,
+          "elapsed_s": 14.207
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 266,
+          "error": null,
+          "elapsed_s": 14.207
+        },
+        {
+          "episode": 39,
+          "success": true,
+          "steps": 246,
+          "error": null,
+          "elapsed_s": 14.207
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 267,
+          "error": null,
+          "elapsed_s": 13.769
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 254,
+          "error": null,
+          "elapsed_s": 13.769
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 269,
+          "error": null,
+          "elapsed_s": 13.769
+        },
+        {
+          "episode": 43,
+          "success": true,
+          "steps": 256,
+          "error": null,
+          "elapsed_s": 13.769
+        },
+        {
+          "episode": 44,
+          "success": true,
+          "steps": 254,
+          "error": null,
+          "elapsed_s": 13.769
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 262,
+          "error": null,
+          "elapsed_s": 13.769
+        },
+        {
+          "episode": 46,
+          "success": true,
+          "steps": 269,
+          "error": null,
+          "elapsed_s": 13.769
+        },
+        {
+          "episode": 47,
+          "success": true,
+          "steps": 274,
+          "error": null,
+          "elapsed_s": 13.769
+        },
+        {
+          "episode": 48,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 79.235
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 247,
+          "error": null,
+          "elapsed_s": 79.235
+        }
+      ]
+    },
+    {
+      "task_id": 3,
+      "task_description": "put the black bowl in the bottom drawer of the cabinet and close it",
+      "episodes": 50,
+      "successes": 41,
+      "success_rate": 0.82,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 226,
+          "error": null,
+          "elapsed_s": 24.416
+        },
+        {
+          "episode": 1,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 24.416
+        },
+        {
+          "episode": 2,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 24.416
+        },
+        {
+          "episode": 3,
+          "success": true,
+          "steps": 210,
+          "error": null,
+          "elapsed_s": 24.416
+        },
+        {
+          "episode": 4,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 24.416
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 211,
+          "error": null,
+          "elapsed_s": 24.416
+        },
+        {
+          "episode": 6,
+          "success": true,
+          "steps": 237,
+          "error": null,
+          "elapsed_s": 24.416
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 227,
+          "error": null,
+          "elapsed_s": 24.416
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 295,
+          "error": null,
+          "elapsed_s": 19.415
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 226,
+          "error": null,
+          "elapsed_s": 19.415
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 279,
+          "error": null,
+          "elapsed_s": 19.415
+        },
+        {
+          "episode": 11,
+          "success": true,
+          "steps": 222,
+          "error": null,
+          "elapsed_s": 19.415
+        },
+        {
+          "episode": 12,
+          "success": true,
+          "steps": 250,
+          "error": null,
+          "elapsed_s": 19.415
+        },
+        {
+          "episode": 13,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.415
+        },
+        {
+          "episode": 14,
+          "success": true,
+          "steps": 237,
+          "error": null,
+          "elapsed_s": 19.415
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 221,
+          "error": null,
+          "elapsed_s": 19.415
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 223,
+          "error": null,
+          "elapsed_s": 9.75
+        },
+        {
+          "episode": 17,
+          "success": true,
+          "steps": 227,
+          "error": null,
+          "elapsed_s": 9.75
+        },
+        {
+          "episode": 18,
+          "success": true,
+          "steps": 223,
+          "error": null,
+          "elapsed_s": 9.75
+        },
+        {
+          "episode": 19,
+          "success": true,
+          "steps": 212,
+          "error": null,
+          "elapsed_s": 9.75
+        },
+        {
+          "episode": 20,
+          "success": true,
+          "steps": 229,
+          "error": null,
+          "elapsed_s": 9.75
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 252,
+          "error": null,
+          "elapsed_s": 9.75
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 207,
+          "error": null,
+          "elapsed_s": 9.75
+        },
+        {
+          "episode": 23,
+          "success": true,
+          "steps": 208,
+          "error": null,
+          "elapsed_s": 9.75
+        },
+        {
+          "episode": 24,
+          "success": true,
+          "steps": 221,
+          "error": null,
+          "elapsed_s": 18.286
+        },
+        {
+          "episode": 25,
+          "success": true,
+          "steps": 255,
+          "error": null,
+          "elapsed_s": 18.286
+        },
+        {
+          "episode": 26,
+          "success": true,
+          "steps": 230,
+          "error": null,
+          "elapsed_s": 18.286
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 251,
+          "error": null,
+          "elapsed_s": 18.286
+        },
+        {
+          "episode": 28,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 18.286
+        },
+        {
+          "episode": 29,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 18.286
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 237,
+          "error": null,
+          "elapsed_s": 18.286
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 226,
+          "error": null,
+          "elapsed_s": 18.286
+        },
+        {
+          "episode": 32,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 18.034
+        },
+        {
+          "episode": 33,
+          "success": true,
+          "steps": 226,
+          "error": null,
+          "elapsed_s": 18.034
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 246,
+          "error": null,
+          "elapsed_s": 18.034
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 221,
+          "error": null,
+          "elapsed_s": 18.034
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 18.034
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 220,
+          "error": null,
+          "elapsed_s": 18.034
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 248,
+          "error": null,
+          "elapsed_s": 18.034
+        },
+        {
+          "episode": 39,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 18.034
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 227,
+          "error": null,
+          "elapsed_s": 19.858
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 211,
+          "error": null,
+          "elapsed_s": 19.858
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 245,
+          "error": null,
+          "elapsed_s": 19.858
+        },
+        {
+          "episode": 43,
+          "success": true,
+          "steps": 264,
+          "error": null,
+          "elapsed_s": 19.858
+        },
+        {
+          "episode": 44,
+          "success": true,
+          "steps": 229,
+          "error": null,
+          "elapsed_s": 19.858
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 227,
+          "error": null,
+          "elapsed_s": 19.858
+        },
+        {
+          "episode": 46,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.858
+        },
+        {
+          "episode": 47,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.858
+        },
+        {
+          "episode": 48,
+          "success": true,
+          "steps": 238,
+          "error": null,
+          "elapsed_s": 29.945
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 228,
+          "error": null,
+          "elapsed_s": 29.945
+        }
+      ]
+    },
+    {
+      "task_id": 4,
+      "task_description": "put the white mug on the left plate and put the yellow and white mug on the right plate",
+      "episodes": 50,
+      "successes": 49,
+      "success_rate": 0.98,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 21.138
+        },
+        {
+          "episode": 1,
+          "success": true,
+          "steps": 244,
+          "error": null,
+          "elapsed_s": 21.138
+        },
+        {
+          "episode": 2,
+          "success": true,
+          "steps": 237,
+          "error": null,
+          "elapsed_s": 21.138
+        },
+        {
+          "episode": 3,
+          "success": true,
+          "steps": 255,
+          "error": null,
+          "elapsed_s": 21.138
+        },
+        {
+          "episode": 4,
+          "success": true,
+          "steps": 255,
+          "error": null,
+          "elapsed_s": 21.138
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 254,
+          "error": null,
+          "elapsed_s": 21.138
+        },
+        {
+          "episode": 6,
+          "success": true,
+          "steps": 316,
+          "error": null,
+          "elapsed_s": 21.138
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 252,
+          "error": null,
+          "elapsed_s": 21.138
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 241,
+          "error": null,
+          "elapsed_s": 9.128
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 256,
+          "error": null,
+          "elapsed_s": 9.128
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 243,
+          "error": null,
+          "elapsed_s": 9.128
+        },
+        {
+          "episode": 11,
+          "success": true,
+          "steps": 246,
+          "error": null,
+          "elapsed_s": 9.128
+        },
+        {
+          "episode": 12,
+          "success": true,
+          "steps": 249,
+          "error": null,
+          "elapsed_s": 9.128
+        },
+        {
+          "episode": 13,
+          "success": true,
+          "steps": 236,
+          "error": null,
+          "elapsed_s": 9.128
+        },
+        {
+          "episode": 14,
+          "success": true,
+          "steps": 236,
+          "error": null,
+          "elapsed_s": 9.128
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 254,
+          "error": null,
+          "elapsed_s": 9.128
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 266,
+          "error": null,
+          "elapsed_s": 10.146
+        },
+        {
+          "episode": 17,
+          "success": true,
+          "steps": 222,
+          "error": null,
+          "elapsed_s": 10.146
+        },
+        {
+          "episode": 18,
+          "success": true,
+          "steps": 237,
+          "error": null,
+          "elapsed_s": 10.146
+        },
+        {
+          "episode": 19,
+          "success": true,
+          "steps": 273,
+          "error": null,
+          "elapsed_s": 10.146
+        },
+        {
+          "episode": 20,
+          "success": true,
+          "steps": 257,
+          "error": null,
+          "elapsed_s": 10.146
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 238,
+          "error": null,
+          "elapsed_s": 10.146
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 232,
+          "error": null,
+          "elapsed_s": 10.146
+        },
+        {
+          "episode": 23,
+          "success": true,
+          "steps": 245,
+          "error": null,
+          "elapsed_s": 10.146
+        },
+        {
+          "episode": 24,
+          "success": true,
+          "steps": 254,
+          "error": null,
+          "elapsed_s": 11.727
+        },
+        {
+          "episode": 25,
+          "success": true,
+          "steps": 237,
+          "error": null,
+          "elapsed_s": 11.727
+        },
+        {
+          "episode": 26,
+          "success": true,
+          "steps": 262,
+          "error": null,
+          "elapsed_s": 11.727
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 239,
+          "error": null,
+          "elapsed_s": 11.727
+        },
+        {
+          "episode": 28,
+          "success": true,
+          "steps": 244,
+          "error": null,
+          "elapsed_s": 11.727
+        },
+        {
+          "episode": 29,
+          "success": true,
+          "steps": 288,
+          "error": null,
+          "elapsed_s": 11.727
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 335,
+          "error": null,
+          "elapsed_s": 11.727
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 240,
+          "error": null,
+          "elapsed_s": 11.727
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 227,
+          "error": null,
+          "elapsed_s": 11.424
+        },
+        {
+          "episode": 33,
+          "success": true,
+          "steps": 271,
+          "error": null,
+          "elapsed_s": 11.424
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 253,
+          "error": null,
+          "elapsed_s": 11.424
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 11.424
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 239,
+          "error": null,
+          "elapsed_s": 11.424
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 305,
+          "error": null,
+          "elapsed_s": 11.424
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 300,
+          "error": null,
+          "elapsed_s": 11.424
+        },
+        {
+          "episode": 39,
+          "success": true,
+          "steps": 232,
+          "error": null,
+          "elapsed_s": 11.424
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 255,
+          "error": null,
+          "elapsed_s": 11.228
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 257,
+          "error": null,
+          "elapsed_s": 11.228
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 240,
+          "error": null,
+          "elapsed_s": 11.228
+        },
+        {
+          "episode": 43,
+          "success": true,
+          "steps": 255,
+          "error": null,
+          "elapsed_s": 11.228
+        },
+        {
+          "episode": 44,
+          "success": true,
+          "steps": 271,
+          "error": null,
+          "elapsed_s": 11.228
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 244,
+          "error": null,
+          "elapsed_s": 11.228
+        },
+        {
+          "episode": 46,
+          "success": true,
+          "steps": 234,
+          "error": null,
+          "elapsed_s": 11.228
+        },
+        {
+          "episode": 47,
+          "success": true,
+          "steps": 251,
+          "error": null,
+          "elapsed_s": 11.228
+        },
+        {
+          "episode": 48,
+          "success": true,
+          "steps": 244,
+          "error": null,
+          "elapsed_s": 31.129
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 285,
+          "error": null,
+          "elapsed_s": 31.129
+        }
+      ]
+    },
+    {
+      "task_id": 5,
+      "task_description": "pick up the book and place it in the back compartment of the caddy",
+      "episodes": 50,
+      "successes": 42,
+      "success_rate": 0.84,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 192,
+          "error": null,
+          "elapsed_s": 23.222
+        },
+        {
+          "episode": 1,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 23.222
+        },
+        {
+          "episode": 2,
+          "success": true,
+          "steps": 198,
+          "error": null,
+          "elapsed_s": 23.222
+        },
+        {
+          "episode": 3,
+          "success": true,
+          "steps": 200,
+          "error": null,
+          "elapsed_s": 23.222
+        },
+        {
+          "episode": 4,
+          "success": true,
+          "steps": 165,
+          "error": null,
+          "elapsed_s": 23.222
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 215,
+          "error": null,
+          "elapsed_s": 23.222
+        },
+        {
+          "episode": 6,
+          "success": true,
+          "steps": 172,
+          "error": null,
+          "elapsed_s": 23.222
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 195,
+          "error": null,
+          "elapsed_s": 23.222
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 170,
+          "error": null,
+          "elapsed_s": 8.832
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 186,
+          "error": null,
+          "elapsed_s": 8.832
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 176,
+          "error": null,
+          "elapsed_s": 8.832
+        },
+        {
+          "episode": 11,
+          "success": true,
+          "steps": 169,
+          "error": null,
+          "elapsed_s": 8.832
+        },
+        {
+          "episode": 12,
+          "success": true,
+          "steps": 185,
+          "error": null,
+          "elapsed_s": 8.832
+        },
+        {
+          "episode": 13,
+          "success": true,
+          "steps": 170,
+          "error": null,
+          "elapsed_s": 8.832
+        },
+        {
+          "episode": 14,
+          "success": true,
+          "steps": 212,
+          "error": null,
+          "elapsed_s": 8.832
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 178,
+          "error": null,
+          "elapsed_s": 8.832
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 187,
+          "error": null,
+          "elapsed_s": 15.441
+        },
+        {
+          "episode": 17,
+          "success": true,
+          "steps": 184,
+          "error": null,
+          "elapsed_s": 15.441
+        },
+        {
+          "episode": 18,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 15.441
+        },
+        {
+          "episode": 19,
+          "success": true,
+          "steps": 184,
+          "error": null,
+          "elapsed_s": 15.441
+        },
+        {
+          "episode": 20,
+          "success": true,
+          "steps": 195,
+          "error": null,
+          "elapsed_s": 15.441
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 189,
+          "error": null,
+          "elapsed_s": 15.441
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 169,
+          "error": null,
+          "elapsed_s": 15.441
+        },
+        {
+          "episode": 23,
+          "success": true,
+          "steps": 170,
+          "error": null,
+          "elapsed_s": 15.441
+        },
+        {
+          "episode": 24,
+          "success": true,
+          "steps": 234,
+          "error": null,
+          "elapsed_s": 16.779
+        },
+        {
+          "episode": 25,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.779
+        },
+        {
+          "episode": 26,
+          "success": true,
+          "steps": 184,
+          "error": null,
+          "elapsed_s": 16.779
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 196,
+          "error": null,
+          "elapsed_s": 16.779
+        },
+        {
+          "episode": 28,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.779
+        },
+        {
+          "episode": 29,
+          "success": true,
+          "steps": 189,
+          "error": null,
+          "elapsed_s": 16.779
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 168,
+          "error": null,
+          "elapsed_s": 16.779
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 183,
+          "error": null,
+          "elapsed_s": 16.779
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 184,
+          "error": null,
+          "elapsed_s": 15.548
+        },
+        {
+          "episode": 33,
+          "success": true,
+          "steps": 201,
+          "error": null,
+          "elapsed_s": 15.548
+        },
+        {
+          "episode": 34,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 15.548
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 202,
+          "error": null,
+          "elapsed_s": 15.548
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 182,
+          "error": null,
+          "elapsed_s": 15.548
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 166,
+          "error": null,
+          "elapsed_s": 15.548
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 233,
+          "error": null,
+          "elapsed_s": 15.548
+        },
+        {
+          "episode": 39,
+          "success": true,
+          "steps": 198,
+          "error": null,
+          "elapsed_s": 15.548
+        },
+        {
+          "episode": 40,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.263
+        },
+        {
+          "episode": 41,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.263
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 187,
+          "error": null,
+          "elapsed_s": 16.263
+        },
+        {
+          "episode": 43,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.263
+        },
+        {
+          "episode": 44,
+          "success": true,
+          "steps": 177,
+          "error": null,
+          "elapsed_s": 16.263
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 190,
+          "error": null,
+          "elapsed_s": 16.263
+        },
+        {
+          "episode": 46,
+          "success": true,
+          "steps": 178,
+          "error": null,
+          "elapsed_s": 16.263
+        },
+        {
+          "episode": 47,
+          "success": true,
+          "steps": 179,
+          "error": null,
+          "elapsed_s": 16.263
+        },
+        {
+          "episode": 48,
+          "success": true,
+          "steps": 184,
+          "error": null,
+          "elapsed_s": 22.509
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 190,
+          "error": null,
+          "elapsed_s": 22.509
+        }
+      ]
+    },
+    {
+      "task_id": 6,
+      "task_description": "put the white mug on the plate and put the chocolate pudding to the right of the plate",
+      "episodes": 50,
+      "successes": 26,
+      "success_rate": 0.52,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 23.11
+        },
+        {
+          "episode": 1,
+          "success": true,
+          "steps": 264,
+          "error": null,
+          "elapsed_s": 23.11
+        },
+        {
+          "episode": 2,
+          "success": true,
+          "steps": 277,
+          "error": null,
+          "elapsed_s": 23.11
+        },
+        {
+          "episode": 3,
+          "success": true,
+          "steps": 231,
+          "error": null,
+          "elapsed_s": 23.11
+        },
+        {
+          "episode": 4,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 23.11
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 234,
+          "error": null,
+          "elapsed_s": 23.11
+        },
+        {
+          "episode": 6,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 23.11
+        },
+        {
+          "episode": 7,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 23.11
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 234,
+          "error": null,
+          "elapsed_s": 19.453
+        },
+        {
+          "episode": 9,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.453
+        },
+        {
+          "episode": 10,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.453
+        },
+        {
+          "episode": 11,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.453
+        },
+        {
+          "episode": 12,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.453
+        },
+        {
+          "episode": 13,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.453
+        },
+        {
+          "episode": 14,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.453
+        },
+        {
+          "episode": 15,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.453
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 16.536
+        },
+        {
+          "episode": 17,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.536
+        },
+        {
+          "episode": 18,
+          "success": true,
+          "steps": 236,
+          "error": null,
+          "elapsed_s": 16.536
+        },
+        {
+          "episode": 19,
+          "success": true,
+          "steps": 269,
+          "error": null,
+          "elapsed_s": 16.536
+        },
+        {
+          "episode": 20,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.536
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 16.536
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 231,
+          "error": null,
+          "elapsed_s": 16.536
+        },
+        {
+          "episode": 23,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.536
+        },
+        {
+          "episode": 24,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 15.836
+        },
+        {
+          "episode": 25,
+          "success": true,
+          "steps": 295,
+          "error": null,
+          "elapsed_s": 15.836
+        },
+        {
+          "episode": 26,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 15.836
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 299,
+          "error": null,
+          "elapsed_s": 15.836
+        },
+        {
+          "episode": 28,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 15.836
+        },
+        {
+          "episode": 29,
+          "success": true,
+          "steps": 234,
+          "error": null,
+          "elapsed_s": 15.836
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 250,
+          "error": null,
+          "elapsed_s": 15.836
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 255,
+          "error": null,
+          "elapsed_s": 15.836
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 246,
+          "error": null,
+          "elapsed_s": 16.01
+        },
+        {
+          "episode": 33,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.01
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 235,
+          "error": null,
+          "elapsed_s": 16.01
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 290,
+          "error": null,
+          "elapsed_s": 16.01
+        },
+        {
+          "episode": 36,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.01
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 351,
+          "error": null,
+          "elapsed_s": 16.01
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 228,
+          "error": null,
+          "elapsed_s": 16.01
+        },
+        {
+          "episode": 39,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.01
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 253,
+          "error": null,
+          "elapsed_s": 15.885
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 243,
+          "error": null,
+          "elapsed_s": 15.885
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 229,
+          "error": null,
+          "elapsed_s": 15.885
+        },
+        {
+          "episode": 43,
+          "success": true,
+          "steps": 228,
+          "error": null,
+          "elapsed_s": 15.885
+        },
+        {
+          "episode": 44,
+          "success": true,
+          "steps": 250,
+          "error": null,
+          "elapsed_s": 15.885
+        },
+        {
+          "episode": 45,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 15.885
+        },
+        {
+          "episode": 46,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 15.885
+        },
+        {
+          "episode": 47,
+          "success": true,
+          "steps": 275,
+          "error": null,
+          "elapsed_s": 15.885
+        },
+        {
+          "episode": 48,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 52.97
+        },
+        {
+          "episode": 49,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 52.97
+        }
+      ]
+    },
+    {
+      "task_id": 7,
+      "task_description": "put both the alphabet soup and the cream cheese box in the basket",
+      "episodes": 50,
+      "successes": 48,
+      "success_rate": 0.96,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 325,
+          "error": null,
+          "elapsed_s": 26.05
+        },
+        {
+          "episode": 1,
+          "success": true,
+          "steps": 272,
+          "error": null,
+          "elapsed_s": 26.05
+        },
+        {
+          "episode": 2,
+          "success": true,
+          "steps": 283,
+          "error": null,
+          "elapsed_s": 26.05
+        },
+        {
+          "episode": 3,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 26.05
+        },
+        {
+          "episode": 4,
+          "success": true,
+          "steps": 326,
+          "error": null,
+          "elapsed_s": 26.05
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 26.05
+        },
+        {
+          "episode": 6,
+          "success": true,
+          "steps": 274,
+          "error": null,
+          "elapsed_s": 26.05
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 26.05
+        },
+        {
+          "episode": 8,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 19.727
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 255,
+          "error": null,
+          "elapsed_s": 19.727
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 274,
+          "error": null,
+          "elapsed_s": 19.727
+        },
+        {
+          "episode": 11,
+          "success": true,
+          "steps": 267,
+          "error": null,
+          "elapsed_s": 19.727
+        },
+        {
+          "episode": 12,
+          "success": true,
+          "steps": 294,
+          "error": null,
+          "elapsed_s": 19.727
+        },
+        {
+          "episode": 13,
+          "success": true,
+          "steps": 256,
+          "error": null,
+          "elapsed_s": 19.727
+        },
+        {
+          "episode": 14,
+          "success": true,
+          "steps": 281,
+          "error": null,
+          "elapsed_s": 19.727
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 277,
+          "error": null,
+          "elapsed_s": 19.727
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 13.777
+        },
+        {
+          "episode": 17,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 13.777
+        },
+        {
+          "episode": 18,
+          "success": true,
+          "steps": 269,
+          "error": null,
+          "elapsed_s": 13.777
+        },
+        {
+          "episode": 19,
+          "success": true,
+          "steps": 274,
+          "error": null,
+          "elapsed_s": 13.777
+        },
+        {
+          "episode": 20,
+          "success": true,
+          "steps": 253,
+          "error": null,
+          "elapsed_s": 13.777
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 275,
+          "error": null,
+          "elapsed_s": 13.777
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 13.777
+        },
+        {
+          "episode": 23,
+          "success": true,
+          "steps": 332,
+          "error": null,
+          "elapsed_s": 13.777
+        },
+        {
+          "episode": 24,
+          "success": true,
+          "steps": 273,
+          "error": null,
+          "elapsed_s": 11.086
+        },
+        {
+          "episode": 25,
+          "success": true,
+          "steps": 256,
+          "error": null,
+          "elapsed_s": 11.086
+        },
+        {
+          "episode": 26,
+          "success": true,
+          "steps": 277,
+          "error": null,
+          "elapsed_s": 11.086
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 266,
+          "error": null,
+          "elapsed_s": 11.086
+        },
+        {
+          "episode": 28,
+          "success": true,
+          "steps": 259,
+          "error": null,
+          "elapsed_s": 11.086
+        },
+        {
+          "episode": 29,
+          "success": true,
+          "steps": 275,
+          "error": null,
+          "elapsed_s": 11.086
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 11.086
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 11.086
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 272,
+          "error": null,
+          "elapsed_s": 11.131
+        },
+        {
+          "episode": 33,
+          "success": true,
+          "steps": 275,
+          "error": null,
+          "elapsed_s": 11.131
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 11.131
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 269,
+          "error": null,
+          "elapsed_s": 11.131
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 11.131
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 11.131
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 11.131
+        },
+        {
+          "episode": 39,
+          "success": true,
+          "steps": 264,
+          "error": null,
+          "elapsed_s": 11.131
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 269,
+          "error": null,
+          "elapsed_s": 11.308
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 243,
+          "error": null,
+          "elapsed_s": 11.308
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 11.308
+        },
+        {
+          "episode": 43,
+          "success": true,
+          "steps": 284,
+          "error": null,
+          "elapsed_s": 11.308
+        },
+        {
+          "episode": 44,
+          "success": true,
+          "steps": 268,
+          "error": null,
+          "elapsed_s": 11.308
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 270,
+          "error": null,
+          "elapsed_s": 11.308
+        },
+        {
+          "episode": 46,
+          "success": true,
+          "steps": 253,
+          "error": null,
+          "elapsed_s": 11.308
+        },
+        {
+          "episode": 47,
+          "success": true,
+          "steps": 252,
+          "error": null,
+          "elapsed_s": 11.308
+        },
+        {
+          "episode": 48,
+          "success": true,
+          "steps": 436,
+          "error": null,
+          "elapsed_s": 51.272
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 51.272
+        }
+      ]
+    },
+    {
+      "task_id": 8,
+      "task_description": "put both moka pots on the stove",
+      "episodes": 50,
+      "successes": 45,
+      "success_rate": 0.9,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": true,
+          "steps": 418,
+          "error": null,
+          "elapsed_s": 22.0
+        },
+        {
+          "episode": 1,
+          "success": true,
+          "steps": 428,
+          "error": null,
+          "elapsed_s": 22.0
+        },
+        {
+          "episode": 2,
+          "success": true,
+          "steps": 395,
+          "error": null,
+          "elapsed_s": 22.0
+        },
+        {
+          "episode": 3,
+          "success": true,
+          "steps": 422,
+          "error": null,
+          "elapsed_s": 22.0
+        },
+        {
+          "episode": 4,
+          "success": true,
+          "steps": 450,
+          "error": null,
+          "elapsed_s": 22.0
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 436,
+          "error": null,
+          "elapsed_s": 22.0
+        },
+        {
+          "episode": 6,
+          "success": true,
+          "steps": 434,
+          "error": null,
+          "elapsed_s": 22.0
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 411,
+          "error": null,
+          "elapsed_s": 22.0
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 461,
+          "error": null,
+          "elapsed_s": 24.312
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 437,
+          "error": null,
+          "elapsed_s": 24.312
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 499,
+          "error": null,
+          "elapsed_s": 24.312
+        },
+        {
+          "episode": 11,
+          "success": true,
+          "steps": 403,
+          "error": null,
+          "elapsed_s": 24.312
+        },
+        {
+          "episode": 12,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 24.312
+        },
+        {
+          "episode": 13,
+          "success": true,
+          "steps": 519,
+          "error": null,
+          "elapsed_s": 24.312
+        },
+        {
+          "episode": 14,
+          "success": true,
+          "steps": 438,
+          "error": null,
+          "elapsed_s": 24.312
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 407,
+          "error": null,
+          "elapsed_s": 24.312
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 402,
+          "error": null,
+          "elapsed_s": 22.676
+        },
+        {
+          "episode": 17,
+          "success": true,
+          "steps": 488,
+          "error": null,
+          "elapsed_s": 22.676
+        },
+        {
+          "episode": 18,
+          "success": true,
+          "steps": 429,
+          "error": null,
+          "elapsed_s": 22.676
+        },
+        {
+          "episode": 19,
+          "success": true,
+          "steps": 426,
+          "error": null,
+          "elapsed_s": 22.676
+        },
+        {
+          "episode": 20,
+          "success": true,
+          "steps": 434,
+          "error": null,
+          "elapsed_s": 22.676
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 405,
+          "error": null,
+          "elapsed_s": 22.676
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 435,
+          "error": null,
+          "elapsed_s": 22.676
+        },
+        {
+          "episode": 23,
+          "success": true,
+          "steps": 470,
+          "error": null,
+          "elapsed_s": 22.676
+        },
+        {
+          "episode": 24,
+          "success": true,
+          "steps": 408,
+          "error": null,
+          "elapsed_s": 23.992
+        },
+        {
+          "episode": 25,
+          "success": true,
+          "steps": 502,
+          "error": null,
+          "elapsed_s": 23.992
+        },
+        {
+          "episode": 26,
+          "success": true,
+          "steps": 413,
+          "error": null,
+          "elapsed_s": 23.992
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 428,
+          "error": null,
+          "elapsed_s": 23.992
+        },
+        {
+          "episode": 28,
+          "success": true,
+          "steps": 434,
+          "error": null,
+          "elapsed_s": 23.992
+        },
+        {
+          "episode": 29,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 23.992
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 446,
+          "error": null,
+          "elapsed_s": 23.992
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 406,
+          "error": null,
+          "elapsed_s": 23.992
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 464,
+          "error": null,
+          "elapsed_s": 24.198
+        },
+        {
+          "episode": 33,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 24.198
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 426,
+          "error": null,
+          "elapsed_s": 24.198
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 450,
+          "error": null,
+          "elapsed_s": 24.198
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 466,
+          "error": null,
+          "elapsed_s": 24.198
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 397,
+          "error": null,
+          "elapsed_s": 24.198
+        },
+        {
+          "episode": 38,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 24.198
+        },
+        {
+          "episode": 39,
+          "success": true,
+          "steps": 428,
+          "error": null,
+          "elapsed_s": 24.198
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 439,
+          "error": null,
+          "elapsed_s": 23.435
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 409,
+          "error": null,
+          "elapsed_s": 23.435
+        },
+        {
+          "episode": 42,
+          "success": true,
+          "steps": 425,
+          "error": null,
+          "elapsed_s": 23.435
+        },
+        {
+          "episode": 43,
+          "success": true,
+          "steps": 434,
+          "error": null,
+          "elapsed_s": 23.435
+        },
+        {
+          "episode": 44,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 23.435
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 442,
+          "error": null,
+          "elapsed_s": 23.435
+        },
+        {
+          "episode": 46,
+          "success": true,
+          "steps": 434,
+          "error": null,
+          "elapsed_s": 23.435
+        },
+        {
+          "episode": 47,
+          "success": true,
+          "steps": 423,
+          "error": null,
+          "elapsed_s": 23.435
+        },
+        {
+          "episode": 48,
+          "success": true,
+          "steps": 396,
+          "error": null,
+          "elapsed_s": 63.21
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 414,
+          "error": null,
+          "elapsed_s": 63.21
+        }
+      ]
+    },
+    {
+      "task_id": 9,
+      "task_description": "put the yellow and white mug in the microwave and close it",
+      "episodes": 50,
+      "successes": 39,
+      "success_rate": 0.78,
+      "episode_results": [
+        {
+          "episode": 0,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.704
+        },
+        {
+          "episode": 1,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.704
+        },
+        {
+          "episode": 2,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.704
+        },
+        {
+          "episode": 3,
+          "success": true,
+          "steps": 248,
+          "error": null,
+          "elapsed_s": 16.704
+        },
+        {
+          "episode": 4,
+          "success": true,
+          "steps": 393,
+          "error": null,
+          "elapsed_s": 16.704
+        },
+        {
+          "episode": 5,
+          "success": true,
+          "steps": 257,
+          "error": null,
+          "elapsed_s": 16.704
+        },
+        {
+          "episode": 6,
+          "success": true,
+          "steps": 270,
+          "error": null,
+          "elapsed_s": 16.704
+        },
+        {
+          "episode": 7,
+          "success": true,
+          "steps": 261,
+          "error": null,
+          "elapsed_s": 16.704
+        },
+        {
+          "episode": 8,
+          "success": true,
+          "steps": 276,
+          "error": null,
+          "elapsed_s": 11.467
+        },
+        {
+          "episode": 9,
+          "success": true,
+          "steps": 291,
+          "error": null,
+          "elapsed_s": 11.467
+        },
+        {
+          "episode": 10,
+          "success": true,
+          "steps": 251,
+          "error": null,
+          "elapsed_s": 11.467
+        },
+        {
+          "episode": 11,
+          "success": true,
+          "steps": 264,
+          "error": null,
+          "elapsed_s": 11.467
+        },
+        {
+          "episode": 12,
+          "success": true,
+          "steps": 342,
+          "error": null,
+          "elapsed_s": 11.467
+        },
+        {
+          "episode": 13,
+          "success": true,
+          "steps": 262,
+          "error": null,
+          "elapsed_s": 11.467
+        },
+        {
+          "episode": 14,
+          "success": true,
+          "steps": 260,
+          "error": null,
+          "elapsed_s": 11.467
+        },
+        {
+          "episode": 15,
+          "success": true,
+          "steps": 270,
+          "error": null,
+          "elapsed_s": 11.467
+        },
+        {
+          "episode": 16,
+          "success": true,
+          "steps": 256,
+          "error": null,
+          "elapsed_s": 16.8
+        },
+        {
+          "episode": 17,
+          "success": true,
+          "steps": 256,
+          "error": null,
+          "elapsed_s": 16.8
+        },
+        {
+          "episode": 18,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.8
+        },
+        {
+          "episode": 19,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.8
+        },
+        {
+          "episode": 20,
+          "success": true,
+          "steps": 281,
+          "error": null,
+          "elapsed_s": 16.8
+        },
+        {
+          "episode": 21,
+          "success": true,
+          "steps": 274,
+          "error": null,
+          "elapsed_s": 16.8
+        },
+        {
+          "episode": 22,
+          "success": true,
+          "steps": 262,
+          "error": null,
+          "elapsed_s": 16.8
+        },
+        {
+          "episode": 23,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.8
+        },
+        {
+          "episode": 24,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.605
+        },
+        {
+          "episode": 25,
+          "success": true,
+          "steps": 264,
+          "error": null,
+          "elapsed_s": 16.605
+        },
+        {
+          "episode": 26,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.605
+        },
+        {
+          "episode": 27,
+          "success": true,
+          "steps": 286,
+          "error": null,
+          "elapsed_s": 16.605
+        },
+        {
+          "episode": 28,
+          "success": true,
+          "steps": 287,
+          "error": null,
+          "elapsed_s": 16.605
+        },
+        {
+          "episode": 29,
+          "success": true,
+          "steps": 263,
+          "error": null,
+          "elapsed_s": 16.605
+        },
+        {
+          "episode": 30,
+          "success": true,
+          "steps": 274,
+          "error": null,
+          "elapsed_s": 16.605
+        },
+        {
+          "episode": 31,
+          "success": true,
+          "steps": 263,
+          "error": null,
+          "elapsed_s": 16.605
+        },
+        {
+          "episode": 32,
+          "success": true,
+          "steps": 335,
+          "error": null,
+          "elapsed_s": 11.504
+        },
+        {
+          "episode": 33,
+          "success": true,
+          "steps": 278,
+          "error": null,
+          "elapsed_s": 11.504
+        },
+        {
+          "episode": 34,
+          "success": true,
+          "steps": 302,
+          "error": null,
+          "elapsed_s": 11.504
+        },
+        {
+          "episode": 35,
+          "success": true,
+          "steps": 291,
+          "error": null,
+          "elapsed_s": 11.504
+        },
+        {
+          "episode": 36,
+          "success": true,
+          "steps": 265,
+          "error": null,
+          "elapsed_s": 11.504
+        },
+        {
+          "episode": 37,
+          "success": true,
+          "steps": 288,
+          "error": null,
+          "elapsed_s": 11.504
+        },
+        {
+          "episode": 38,
+          "success": true,
+          "steps": 272,
+          "error": null,
+          "elapsed_s": 11.504
+        },
+        {
+          "episode": 39,
+          "success": true,
+          "steps": 291,
+          "error": null,
+          "elapsed_s": 11.504
+        },
+        {
+          "episode": 40,
+          "success": true,
+          "steps": 257,
+          "error": null,
+          "elapsed_s": 16.773
+        },
+        {
+          "episode": 41,
+          "success": true,
+          "steps": 269,
+          "error": null,
+          "elapsed_s": 16.773
+        },
+        {
+          "episode": 42,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.773
+        },
+        {
+          "episode": 43,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.773
+        },
+        {
+          "episode": 44,
+          "success": true,
+          "steps": 286,
+          "error": null,
+          "elapsed_s": 16.773
+        },
+        {
+          "episode": 45,
+          "success": true,
+          "steps": 261,
+          "error": null,
+          "elapsed_s": 16.773
+        },
+        {
+          "episode": 46,
+          "success": true,
+          "steps": 258,
+          "error": null,
+          "elapsed_s": 16.773
+        },
+        {
+          "episode": 47,
+          "success": false,
+          "steps": 520,
+          "error": null,
+          "elapsed_s": 16.773
+        },
+        {
+          "episode": 48,
+          "success": true,
+          "steps": 248,
+          "error": null,
+          "elapsed_s": 32.783
+        },
+        {
+          "episode": 49,
+          "success": true,
+          "steps": 295,
+          "error": null,
+          "elapsed_s": 32.783
+        }
+      ]
+    }
+  ]
+}

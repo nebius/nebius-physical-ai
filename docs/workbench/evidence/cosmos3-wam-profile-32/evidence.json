@@ -1,0 +1,103 @@
+{
+  "schema": "npa.cosmos3.wam-profile-timeline.v1",
+  "gpus": 32,
+  "bin_seconds": 0.25,
+  "ranks": [
+    {
+      "rank": 0,
+      "trace_sha256": "06bb272237d9c6f3c43160703651e04fb04d014d57f881440d88e42162a9ef1e",
+      "trace_bytes": 17969163,
+      "profile_window_seconds": 7.893612147460938,
+      "steps": [
+        {
+          "name": "ProfilerStep#98",
+          "start_seconds": 0.0,
+          "stop_seconds": 3.9553706806640627
+        },
+        {
+          "name": "ProfilerStep#99",
+          "start_seconds": 3.9554077119140625,
+          "stop_seconds": 7.893612147460938
+        }
+      ],
+      "timeline": {
+        "file": "rank-0-timeline.csv",
+        "rows": 192,
+        "sha256": "15537ba6569b34a397653233c3973dc6ce44cf86735cd0ce4579e3792a6d4f5d"
+      }
+    },
+    {
+      "rank": 8,
+      "trace_sha256": "bfc613eca88c622a7200d2e8193dc2c27e8e675fe8f2917c28ed8948098d26ae",
+      "trace_bytes": 18021786,
+      "profile_window_seconds": 7.892750467773437,
+      "steps": [
+        {
+          "name": "ProfilerStep#98",
+          "start_seconds": 0.0,
+          "stop_seconds": 3.9556679033203124
+        },
+        {
+          "name": "ProfilerStep#99",
+          "start_seconds": 3.9557052216796875,
+          "stop_seconds": 7.892750467773437
+        }
+      ],
+      "timeline": {
+        "file": "rank-8-timeline.csv",
+        "rows": 192,
+        "sha256": "9fa0a099d596de8108307432266572fe2d9f9591e567ed6bdb38e670e3e70632"
+      }
+    },
+    {
+      "rank": 16,
+      "trace_sha256": "9bff1c9c016c3c7fc081886141d760a0f9f49423c6c2ddd41f599f83e3deba54",
+      "trace_bytes": 17969896,
+      "profile_window_seconds": 7.892677807617187,
+      "steps": [
+        {
+          "name": "ProfilerStep#98",
+          "start_seconds": 0.0,
+          "stop_seconds": 3.955641080078125
+        },
+        {
+          "name": "ProfilerStep#99",
+          "start_seconds": 3.9556808779296877,
+          "stop_seconds": 7.892677807617187
+        }
+      ],
+      "timeline": {
+        "file": "rank-16-timeline.csv",
+        "rows": 192,
+        "sha256": "b427b2add5ec5a0933769e0f46bc962f0519be9ddc28ef9be20875490885f7cf"
+      }
+    },
+    {
+      "rank": 24,
+      "trace_sha256": "a3f1470ca68efecc48481913f085b009236be8dd7e510095c6b36454d8e6da68",
+      "trace_bytes": 17998351,
+      "profile_window_seconds": 7.892797811523438,
+      "steps": [
+        {
+          "name": "ProfilerStep#98",
+          "start_seconds": 0.0,
+          "stop_seconds": 3.9557560478515623
+        },
+        {
+          "name": "ProfilerStep#99",
+          "start_seconds": 3.955796751953125,
+          "stop_seconds": 7.892797811523438
+        }
+      ],
+      "timeline": {
+        "file": "rank-24-timeline.csv",
+        "rows": 192,
+        "sha256": "63889a924d6a8cb87d40550ce03d0d571edd7044253e55414897580d5eb7bc34"
+      }
+    }
+  ],
+  "profile_summary_sha256": "486d85ef9a6a034550e2362207ddbe5a0211fb58cc57ee438071f7fae546a1a2",
+  "profile_report_source_sha256": "f82508b56c1a9b30c19b1f9efa61d6add972b7cb967998b23ecd6ae72c1f8ad5",
+  "exporter_sha256": "12afce29cc17531b6519308ed24af1b7eea6b9fc3ddc813eec209ade06ea02ba",
+  "interpretation": "Per-category interval unions in each bin; categories overlap and must not be stacked. All-kernel activity excludes memcpy, CPU work and unobserved activity. Categories prefer linked CPU operators; NCCL and unlinked kernels use names. Profiles are excluded from throughput comparisons."
+}

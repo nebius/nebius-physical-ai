@@ -1,0 +1,255 @@
+{
+  "schema": "npa.cosmos3.wam-soperator-hardware.v1",
+  "captured_utc": "2026-09-30T01:26:37.941021+00:00",
+  "nodes": 4,
+  "gpus_per_node": 8,
+  "unique_b200_gpus": 32,
+  "scope": "Direct NVIDIA device inventory from all four running Soperator workers; no training claim",
+  "raw_receipt_sha256": "b187ef6df3110c193cf017b14d11febc140e03cde178d577519fbd8a54a980dd",
+  "workers": [
+    {
+      "worker": 0,
+      "gpus": [
+        {
+          "index": "0",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.819"
+        },
+        {
+          "index": "1",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.832"
+        },
+        {
+          "index": "2",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.832"
+        },
+        {
+          "index": "3",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.832"
+        },
+        {
+          "index": "4",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.832"
+        },
+        {
+          "index": "5",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.832"
+        },
+        {
+          "index": "6",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.832"
+        },
+        {
+          "index": "7",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.832"
+        }
+      ]
+    },
+    {
+      "worker": 1,
+      "gpus": [
+        {
+          "index": "0",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.737"
+        },
+        {
+          "index": "1",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.744"
+        },
+        {
+          "index": "2",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.744"
+        },
+        {
+          "index": "3",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.744"
+        },
+        {
+          "index": "4",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.744"
+        },
+        {
+          "index": "5",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.744"
+        },
+        {
+          "index": "6",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.744"
+        },
+        {
+          "index": "7",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.744"
+        }
+      ]
+    },
+    {
+      "worker": 2,
+      "gpus": [
+        {
+          "index": "0",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.900"
+        },
+        {
+          "index": "1",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.908"
+        },
+        {
+          "index": "2",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.908"
+        },
+        {
+          "index": "3",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.908"
+        },
+        {
+          "index": "4",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.908"
+        },
+        {
+          "index": "5",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.909"
+        },
+        {
+          "index": "6",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.909"
+        },
+        {
+          "index": "7",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.909"
+        }
+      ]
+    },
+    {
+      "worker": 3,
+      "gpus": [
+        {
+          "index": "0",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.729"
+        },
+        {
+          "index": "1",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.733"
+        },
+        {
+          "index": "2",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.733"
+        },
+        {
+          "index": "3",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.733"
+        },
+        {
+          "index": "4",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.733"
+        },
+        {
+          "index": "5",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.733"
+        },
+        {
+          "index": "6",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.733"
+        },
+        {
+          "index": "7",
+          "name": "NVIDIA B200",
+          "driver_version": "580.159.04",
+          "memory.total": "183359",
+          "timestamp": "2026/09/30 01:26:37.733"
+        }
+      ]
+    }
+  ]
+}

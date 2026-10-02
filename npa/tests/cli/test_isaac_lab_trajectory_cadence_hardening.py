@@ -10,7 +10,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from rerun.recording import load_recording
+from npa.viz.recordings import load_recording
 
 from npa.adapter.isaac_lab_lerobot import LeRobotFeatureSpec, convert
 from npa.cli.isaac_lab import _build_train_trajectory_export_script

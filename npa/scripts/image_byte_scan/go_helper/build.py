@@ -31,6 +31,7 @@ GO_ARCHIVE_URL = f"https://go.dev/dl/go{GO_VERSION}.linux-amd64.tar.gz"
 GITLEAKS_VERSION = "v8.28.0"
 SOURCE_NAMES = (
     "main.go",
+    "memory.go",
     "main_test.go",
     "go.mod",
     "go.sum",
@@ -40,7 +41,7 @@ SOURCE_NAMES = (
     "README.md",
 )
 TEST_SOURCE_NAME = "npa/tests/docker/test_image_byte_go_build.py"
-GO_NAMES = ("main.go", "main_test.go", "go.mod", "go.sum")
+GO_NAMES = ("main.go", "memory.go", "main_test.go", "go.mod", "go.sum")
 
 
 class BuildError(Exception):
