@@ -561,8 +561,12 @@ def test_inventory_quarantines_malformed_cordon_state(malformed: object) -> None
         preflight_kubernetes_gpu_gang(inventory, accelerator="B200:1", node_count=1)
 
 
-@pytest.mark.parametrize("malformed", ["false", "true", 0, 1, None, [], {}])
-def test_mixed_cordon_inventory_retains_healthy_placement(malformed):
+@pytest.mark.parametrize(
+    "bad_spec",
+    [{"unschedulable": value} for value in ["false", "true", 0, 1, None, [], {}]]
+    + [None, [], "invalid"],
+)
+def test_mixed_cordon_inventory_retains_healthy_placement(bad_spec):
     def runner(cmd, **_kwargs):
         nodes = [
             {
@@ -570,14 +574,14 @@ def test_mixed_cordon_inventory_retains_healthy_placement(malformed):
                     "name": name,
                     "labels": {"nvidia.com/gpu.product": "NVIDIA-B200"},
                 },
-                "spec": {"unschedulable": flag},
+                "spec": spec,
                 "status": {
                     "conditions": [{"type": "Ready", "status": "True"}],
                     "capacity": {"nvidia.com/gpu": "8"},
                     "allocatable": {"nvidia.com/gpu": "8", "pods": "110"},
                 },
             }
-            for name, flag in [("bad", malformed), ("good", False)]
+            for name, spec in [("bad", bad_spec), ("good", {"unschedulable": False})]
         ]
         payload = {"items": [] if "pods" in cmd else nodes}
         return subprocess.CompletedProcess(
@@ -593,7 +597,7 @@ def test_mixed_cordon_inventory_retains_healthy_placement(malformed):
     assert fit["selected_nodes"] == ["good"]
     with pytest.raises(UnsatisfiableAcceleratorError):
         preflight_kubernetes_gpu_gang(inventory, accelerator="B200:8", node_count=2)
-    with pytest.raises(KubernetesGpuCatalogError, match="spec.unschedulable"):
+    with pytest.raises(KubernetesGpuCatalogError, match="malformed spec"):
         label_known_kubernetes_gpus_for_skypilot(
             context="ctx",
             inventory=inventory,

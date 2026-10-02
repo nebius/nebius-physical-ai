@@ -733,7 +733,23 @@ def discover_kubernetes_gpu_inventory(
     diagnostics: list[str] = []
     for item in payload.get("items", []):
         metadata = item.get("metadata") or {}
-        spec = item.get("spec") or {}
+        name = str(metadata.get("name") or "")
+        spec = item.get("spec", {})
+        cordon_error = ""
+        if not isinstance(spec, dict):
+            cordon_error = (
+                f"Kubernetes node {name or '<unnamed>'!r} has malformed spec: "
+                "expected an object; refusing to infer node schedulability"
+            )
+            spec = {}
+        else:
+            try:
+                blocked = _node_is_unschedulable(spec, node_name=name or "<unnamed>")
+            except KubernetesGpuCatalogError as exc:
+                cordon_error = str(exc)
+        if cordon_error:
+            diagnostics.append(cordon_error)
+            blocked = True
         status = item.get("status") or {}
         ready = any(
             condition.get("type") == "Ready" and condition.get("status") == "True"
@@ -773,16 +789,8 @@ def discover_kubernetes_gpu_inventory(
             for key, value in all_labels.items()
             if "gpu" in str(key).casefold() or "accelerator" in str(key).casefold()
         }
-        name = str(metadata.get("name") or "")
         if name:
             labels_by_node[name] = raw_labels
-        cordon_error = ""
-        try:
-            blocked = _node_is_unschedulable(spec, node_name=name or "<unnamed>")
-        except KubernetesGpuCatalogError as exc:
-            cordon_error = str(exc)
-            diagnostics.append(cordon_error)
-            blocked = True
         blocked = blocked or disallowed_taint
         node_products: set[str] = set()
         for key, value in raw_labels.items():
