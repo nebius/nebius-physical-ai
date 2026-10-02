@@ -22,17 +22,18 @@
   "prerequisites": {
     "output_storage": {
       "status": "verified",
-      "reason": "Selected project storage credential and provider ownership checks passed; generated artifact readback remains pending.",
+      "reason": "All four stage manifests passed complete storage readback; all 36 original videos and the gallery matched native SHA-256 receipts.",
       "evidence": [
-        "Private operator preflight record, 2026-10-02"
+        "docs/workbench/physis-lang-validation.md",
+        "docs/workbench/validation/physis-lang.json"
       ]
     },
     "worker_input": {
       "status": "verified",
-      "reason": "Exact pinned public Wan weight payload access returned HTTP 200. Inputs are six original scenarios; model-produced prompts remain pending.",
+      "reason": "Pinned Wan weights loaded on both GPU workers; six real model-produced physical descriptions and negative prompts were frozen in the shared recipe before generation.",
       "evidence": [
-        "Private exact-revision weight access record, 2026-10-01",
-        "npa/src/npa/workflows/physis_lang_contract.py"
+        "docs/workbench/physis-lang-validation.md",
+        "docs/workbench/validation/physis-lang.json"
       ]
     },
     "credentials": {
@@ -51,9 +52,12 @@
       ]
     },
     "target_runtime": {
-      "status": "unverified",
-      "reason": "Linux isolated SkyPilot and provider ownership checks passed; complete GPU execution and report qualification remain pending.",
-      "evidence": []
+      "status": "verified",
+      "reason": "The complete standard SkyPilot workflow succeeded on two RTX PRO 6000 GPUs: 36 full 720p/81-frame/50-step native videos, 108 blinded assertion verdicts, and independently verified artifacts.",
+      "evidence": [
+        "docs/workbench/physis-lang-validation.md",
+        "docs/workbench/validation/physis-lang.json"
+      ]
     }
   }
 }

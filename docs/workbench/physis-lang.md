@@ -17,8 +17,8 @@ retrieval, or supervised fine-tuning, and it does not reproduce paper scores.
 
 | Capability | Implementation and runtime | Evidence / status |
 | --- | --- | --- |
-| Paired physical descriptions and negative conditioning | Original NPA `prepare` → native Diffusers Wan 2.1 generation; two RTX PRO 6000 GPUs | Frozen recipe, native generation receipts, and original MP4s; qualification pending |
-| Blinded physical-assertion comparison | Original NPA `evaluate`; CPU decoding plus hosted vision inference | Exact paired coverage, per-assertion verdicts, hashes, and gallery; qualification pending |
+| Paired physical descriptions and negative conditioning | Original NPA `prepare` → native Diffusers Wan 2.1 generation; two RTX PRO 6000 GPUs | [Qualified](physis-lang-validation.md): all 36 full native videos and 2,916 decoded frames verified |
+| Blinded physical-assertion comparison | Original NPA `evaluate`; CPU decoding plus hosted vision inference | [Qualified](physis-lang-validation.md): 108 verdicts, raw responses, paired scores, hashes, and original-video gallery verified |
 | PhysThinker and self-evolving physical guidelines | Upstream implementation/checkpoints are unreleased at the recorded revision | Deferred; no executable upstream API to onboard |
 | PhysCapBench, retrieval, and fine-tuning | Upstream benchmark/training implementation and artifacts are unreleased at the recorded revision | Deferred; no benchmark or training claim |
 
@@ -48,6 +48,11 @@ assertions; it receives neither the arm label nor the expanded prompt.
 Unknown assertions count as unproven, not passing. Negative experimental results
 are preserved. These sampled-frame judgments cannot establish unobserved contact
 or full physical correctness; review the original videos in the gallery.
+
+The [full GPU qualification](physis-lang-validation.md) measured assertion pass
+rates of 72.2% for baseline, 77.8% for physical descriptions, and 72.2% with
+negative guidance. Keep the method experimental; this small comparison does not
+establish a reliable physics improvement or reproduce the paper's scores.
 
 ## Run
 
