@@ -100,6 +100,8 @@ states:
         schema: npa.open3d.reconstruction.v1
       - uri: "{{config.surface_uri}}mesh.ply"
         schema: application/octet-stream
+      - uri: "{{config.surface_uri}}mesh_uncropped.ply"
+        schema: application/octet-stream
     next: visualize
   visualize:
     toolRef: workbench.open3d.visualize
@@ -110,6 +112,11 @@ states:
     inputs:
       - uri: "{{config.surface_uri}}result.json"
       - uri: "{{config.surface_uri}}mesh.ply"
+      - uri: "{{config.surface_uri}}mesh_uncropped.ply"
+      - uri: "{{config.graph_uri}}result.json"
+      - uri: "{{config.graph_uri}}pose_graph.json"
+      - uri: "{{config.graph_uri}}fused.ply"
+      - uri: "{{config.prepared_uri}}manifest.json"
     outputs:
       - uri: "{{config.reports_uri}}point_cloud.rrd"
         schema: application/vnd.rerun.rrd

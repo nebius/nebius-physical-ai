@@ -126,3 +126,32 @@ def test_sdk_and_cli_drive_the_same_operations(monkeypatch):
     assert seen["prepare"].input_path == "s3://example-bucket/scans"
     assert seen["reconstruct"].poisson_depth == 8
     assert seen["visualize"].run_id == "r"
+
+
+def test_reference_workflow_declares_every_visualization_parent_artifact():
+    from pathlib import Path
+
+    import yaml
+
+    root = Path(__file__).resolve().parents[3]
+    document = yaml.safe_load(
+        (root / "workflows/testing/open3d-registration.yaml").read_text()
+    )
+    states = document["states"]
+    required = {
+        "{{config.surface_uri}}result.json",
+        "{{config.surface_uri}}mesh.ply",
+        "{{config.surface_uri}}mesh_uncropped.ply",
+        "{{config.graph_uri}}result.json",
+        "{{config.graph_uri}}pose_graph.json",
+        "{{config.graph_uri}}fused.ply",
+        "{{config.prepared_uri}}manifest.json",
+    }
+    inputs = {entry["uri"] for entry in states["visualize"]["inputs"]}
+    produced = {
+        entry["uri"]
+        for name in ("stage", "multiway", "reconstruct")
+        for entry in states[name]["outputs"]
+    }
+    assert inputs == required
+    assert required <= produced
