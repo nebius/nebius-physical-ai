@@ -95,6 +95,16 @@ def _sim_viz(state: dict) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _export_boolean(body: dict, field: str, http_error: Any) -> bool:
+    """Return an export flag only when it is a JSON boolean."""
+    if field not in body:
+        return False
+    value = body[field]
+    if type(value) is not bool:
+        raise http_error(status_code=400, detail=f"{field} must be a JSON boolean")
+    return value
+
+
 def _reusable_canonical_transport(sim_viz: dict, path: Path | None) -> bool:
     """Return true only when the active public bytes match canonical state."""
     if path is None or not path.is_file():
@@ -340,6 +350,9 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
         """
         route_started = time.perf_counter()
         body = payload if isinstance(payload, dict) else {}
+        force_convert = _export_boolean(body, "force_convert", http_error)
+        open_web = _export_boolean(body, "open_web", http_error)
+        cloud_import = _export_boolean(body, "cloud_import", http_error)
         state = deps.load_state()
         sim_viz = _sim_viz(state)
         requested_run = str(body.get("run_id") or sim_viz.get("run_id") or "").strip()
@@ -499,7 +512,7 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
         )
         selected_cache_reused = bool(
             exact_selection
-            and not body.get("force_convert")
+            and not force_convert
             and _reusable_selected_transport(sim_viz, active_path, selected_artifact)
         )
         if (
@@ -584,7 +597,7 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             summary = None
             canonical = {}
         elif (
-            bool(body.get("force_convert"))
+            force_convert
             or not active_url
             or requested_run != active_run
             or active_path is None
@@ -654,7 +667,7 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             )
             state["sim_viz"] = sim_viz
             deps.save_state(state)
-        if bool(body.get("open_web")):
+        if open_web:
             provenance = dict(export.get("provenance") or {})
             layout: dict[str, Any] = {}
             if deps.ensure_cloud_layout is not None and (
@@ -701,7 +714,7 @@ def register_foxglove_routes(app: Any, deps: FoxgloveDeps, http_error: Any) -> N
             sim_viz["foxglove_cloud_layout"] = layout
             state["sim_viz"] = sim_viz
             deps.save_state(state)
-        if bool(body.get("cloud_import")):
+        if cloud_import:
             if deps.ensure_cloud_recording is None:
                 raise http_error(
                     status_code=503,

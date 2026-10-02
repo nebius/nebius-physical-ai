@@ -239,7 +239,7 @@ def _dhash_bytes(raw: bytes) -> int:
     with Image.open(io.BytesIO(raw)) as image:
         resampling = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
         grayscale = image.convert("L").resize((9, 8), resampling)
-        pixels = list(grayscale.getdata())
+        pixels = list(grayscale.get_flattened_data())
     value = 0
     bit = 0
     for row in range(8):

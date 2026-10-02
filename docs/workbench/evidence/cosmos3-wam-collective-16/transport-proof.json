@@ -1,0 +1,21 @@
+{
+  "schema": "npa.cosmos3.collective-transport-proof.v1",
+  "raw_logs": [
+    {
+      "sha256": "bb842da6b26e28ecbeb412af3a17025c4c3507f842b414fd14538a3064810202",
+      "bytes": 1669807,
+      "stream": "stdout"
+    },
+    {
+      "sha256": "a07a12ed58aff21e8256d9e0b6acd43922c79a11b3df3e6e29bf3c22fce45840",
+      "bytes": 268,
+      "stream": "stderr"
+    }
+  ],
+  "ranks_reporting_network_ib": 16,
+  "ranks_reporting_network_socket": 0,
+  "net_ib_mentions": 3344,
+  "gdrdma_mentions": 1088,
+  "tracebacks": 0,
+  "accounting": "COMPLETED|0:0|34|billing=320,cpu=320,gres/gpu=16,mem=3579558M,node=2"
+}

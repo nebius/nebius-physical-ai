@@ -433,7 +433,7 @@ def test_factual_rrd_round_trip(tmp_path):
         check=True,
     ).stdout
     for entity in (
-        "npa.curobo",
+        "npa-curobo",
         "unit-rrd",
         "problem_index",
         "trajectory_time",

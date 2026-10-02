@@ -1,0 +1,55 @@
+{
+  "schema": "npa.cosmos3.wam-post-campaign-bootstrap.v1",
+  "scope": "Current public bootstrap reconciled after completed GPU measurements. This is a separate reconciliation and all-worker qualification, not the image used for the timed training run or a new initial deployment.",
+  "status": "qualified",
+  "finished_utc": "2026-09-30T07:54:38.259583+00:00",
+  "public_source_revision": "9bd511da5fdd00d893f97a2af8f1e4b486f934ca",
+  "lifecycle_source_sha256": "39c4590bc7296f8bdf3b4027fd88c5df072b70f196c1600018473fb8492fb0b1",
+  "npa_deployment_status": "ready",
+  "validation": {
+    "status": "passed",
+    "check": "gpu-creation"
+  },
+  "replacement_guard": {
+    "status": "passed",
+    "plans_checked": 2,
+    "replacement_count": 0,
+    "safe_local_replacements_applied": 2
+  },
+  "gpu_creation_checks": [
+    {
+      "nodes": 4,
+      "gpus_per_node": 8,
+      "tests": [
+        "deviceQuery",
+        "vectorAdd",
+        "simpleMultiGPU",
+        "p2pBandwidthLatencyTest"
+      ],
+      "status": "PASS"
+    }
+  ],
+  "unprivileged_userns_workers_passed": 4,
+  "public_image_init_completion": {
+    "recorded_utc": "2026-09-30T07:54:38.254561+00:00",
+    "configured_image": "docker.io/library/busybox:stable",
+    "observed_image_ids": [
+      "docker.io/library/busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
+    ],
+    "daemonset_nodes": 10,
+    "updated_ready_available_nodes": 10,
+    "gpu_workers_with_verified_init_completion": 4,
+    "init_exit_code": 0,
+    "scope": "Post-campaign public bootstrap image qualification, separate from benchmark deployment."
+  },
+  "private_source_sha256": {
+    "deploy.json": "cca267c9b31bee9a929ecb32e5f01e1b8e68c114a8770b10a47d80309fe88cde",
+    "deploy.stderr": "18705299e4b44557a736d7713987e3f1832d16726e1c2423dd58a1920bb0e3dc",
+    "userns-test.log": "6d90e673f1ac71900f0c594d2e6094dcef33e126ee34b9de5768351d84281bef",
+    "userns/userns-live.json": "f8349823e5ad6663acbf6e27fe7f93cf4082b820209ca88c8b1c119f6b3c0630",
+    "node-configurator-daemonset.json": "31d139ba857b835fef08fc7fc7a7a86c53134b83874c35f4eef6baa8d5dcd240",
+    "node-configurator-pods.json": "6ca36d75c39b30e55034f459999779bae86161038a70e1cf95a9bc57eee2c58c",
+    "worker-pods.json": "74f64c4f6396694befc0d4bf70e10ed65d5ac4bbe91a10757c411dabf7fc6eab",
+    "public-image-init-proof.json": "abffd80be22f089b502ec72d9e0f6f715351a4949f732579e6a520a26df2de6f"
+  }
+}

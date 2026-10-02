@@ -1,0 +1,31 @@
+# Replace this local-only placeholder with the operator's assigned Antioch
+# project ID before dispatch. Never commit a live project or session ID.
+id: "replace-at-runtime"
+name: "npa-openpi-live"
+scenario_paths: ["src/scenario_v2.py"]
+
+services:
+  sim:
+    build:
+      context: "."
+      dockerfile: "Dockerfile"
+    environment:
+      # Antioch's livestream lease chmods its tempfile root to 0700. The
+      # service entrypoint creates this uid-owned child beneath the required
+      # platform Kit portable root.
+      TMPDIR: "/antioch/renderer-cache/npa-live-tmp"
+    ports:
+      # The cluster controller owns `antioch service ports --serve` in the same
+      # pod and binds this named route only on localhost. The persistent sim
+      # service terminates authenticated TLS here; the bounded relay carries the
+      # other verified WSS leg to the policy gateway.
+      - name: policy-relay
+        port: 8444
+        protocol: tcp
+        direction: client-to-service
+
+suites:
+  mk8s_native:
+    description: "Cluster-native Franka camera-to-policy live demonstration"
+    select:
+      - tags: ["mk8s-native"]

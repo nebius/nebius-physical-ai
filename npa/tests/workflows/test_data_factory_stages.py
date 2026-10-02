@@ -4,12 +4,69 @@ from __future__ import annotations
 
 import io
 import json
+import multiprocessing
+import subprocess
+import time
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 import typer
 
 from npa.workflows import data_factory_stages as dfs
+
+
+class _SharedConditionalStorage:
+    """Small process-shared implementation of the StorageClient CAS contract."""
+
+    def __init__(self, objects, guard, sequence) -> None:
+        self.objects = objects
+        self.guard = guard
+        self.sequence = sequence
+
+    def read_bytes_with_etag(self, uri: str):
+        with self.guard:
+            item = self.objects.get(uri)
+            return None if item is None else (bytes(item[0]), str(item[1]))
+
+    def put_bytes_conditional(
+        self,
+        payload: bytes,
+        uri: str,
+        *,
+        if_match: str = "",
+        if_none_match: bool = False,
+        content_type: str = "application/octet-stream",
+    ) -> str:
+        del content_type
+        from npa.clients.storage import StoragePreconditionFailed
+
+        with self.guard:
+            current = self.objects.get(uri)
+            if if_none_match:
+                if current is not None:
+                    raise StoragePreconditionFailed("synthetic collision")
+            elif not current or str(current[1]) != if_match:
+                raise StoragePreconditionFailed("synthetic stale etag")
+            self.sequence.value += 1
+            etag = f'"etag-{self.sequence.value}"'
+            self.objects[uri] = (bytes(payload), etag)
+            return etag
+
+
+def _selection_lock_process_worker(
+    storage, selection_uri: str, active, peak, counter_guard, entered
+) -> None:
+    dfs._storage = lambda: storage
+    with dfs._candidate_selection_destination_lock(selection_uri):
+        with counter_guard:
+            active.value += 1
+            peak.value = max(peak.value, active.value)
+            entered.value += 1
+        time.sleep(0.15)
+        with counter_guard:
+            active.value -= 1
 
 
 def _stub_real_fiftyone(
@@ -128,6 +185,93 @@ def test_prompt_from_combo_is_appearance_only() -> None:
     assert "non-identity-bearing backdrop" in prompt
     assert "Preserve the exact foreground objects" in prompt
     assert "cloth" not in prompt
+
+
+def test_source_fidelity_prompt_policy_is_deterministic_and_fail_mode_specific(
+    tmp_path: Path,
+) -> None:
+    first = dfs.generate_configs(
+        str(tmp_path / "first.json"),
+        n_augmentations=4,
+        seed="run-a",
+        augmentation_seed="controlled-vda-quality",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+    second = dfs.generate_configs(
+        str(tmp_path / "second.json"),
+        n_augmentations=4,
+        seed="run-b",
+        augmentation_seed="controlled-vda-quality",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+
+    assert first["prompt_policy"] == "source-fidelity-v3"
+    assert first["augmentations"] == second["augmentations"]
+    for combo in first["augmentations"]:
+        assert combo["negative_prompt"] == dfs.SOURCE_FIDELITY_NEGATIVE_PROMPT
+        assert "cyan or blue color cast" in combo["negative_prompt"]
+        assert "repeated action" in combo["negative_prompt"]
+        assert "input video is the authoritative scene" in combo["prompt"]
+        assert "contact relationship" in combo["prompt"]
+        assert "Preserve each foreground object's source color" in combo["prompt"]
+        assert "horizontal work surface" in combo["prompt"]
+        assert "do not treat walls, cabinets" in combo["prompt"]
+        assert combo["color_grade"] in combo["prompt"]
+        assert "cool blue" not in combo["prompt"].lower()
+
+    production_seed = dfs.generate_configs(
+        str(tmp_path / "production-seed.json"),
+        n_augmentations=2,
+        augmentation_seed="profile4",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+    # The controlled production seed deliberately uses high-signal backdrop
+    # attributes. The previous subtle off-white/matte and overcast/matte pairs
+    # each failed two of four independent attribute checks.
+    for combo in production_seed["augmentations"]:
+        assert "clear" in combo["lighting"]
+        assert combo["background"] in {
+            "solid warm-beige work surface beneath the manipulation",
+            "solid terracotta work surface beneath the manipulation",
+        }
+        assert combo["surface_finish"] in {
+            "satin softly reflective work-surface finish",
+            "matte low-gloss work-surface finish",
+        }
+        assert "blue" not in combo["prompt"].lower()
+
+    corrected_quality_seed = dfs.generate_configs(
+        str(tmp_path / "corrected-quality-seed.json"),
+        n_augmentations=2,
+        augmentation_seed="4",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY,
+    )
+    assert corrected_quality_seed["augmentations"][1]["surface_finish"] == (
+        "matte low-gloss work-surface finish"
+    )
+    assert (
+        "matte low-gloss work-surface finish"
+        in (corrected_quality_seed["augmentations"][1]["prompt"])
+    )
+
+
+def test_source_fidelity_v2_prompt_policy_remains_replay_compatible(
+    tmp_path: Path,
+) -> None:
+    result = dfs.generate_configs(
+        str(tmp_path / "v2.json"),
+        n_augmentations=2,
+        augmentation_seed="profile4",
+        prompt_policy=dfs.SOURCE_FIDELITY_PROMPT_POLICY_V2,
+    )
+
+    assert result["prompt_policy"] == "source-fidelity-v2"
+    assert result["augmentations"][0]["background"] == "solid warm beige backdrop"
+    assert "horizontal work surface" not in result["augmentations"][0]["prompt"]
+    assert (
+        result["augmentations"][0]["negative_prompt"]
+        == dfs.SOURCE_FIDELITY_NEGATIVE_PROMPT
+    )
 
 
 def test_generate_configs_is_deterministic_by_seed(tmp_path: Path) -> None:
@@ -288,6 +432,7 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
 ) -> None:
     augment_uri = "s3://b/run/cosmos_augmented/iteration-1/"
     selection_uri = "s3://b/run/selection/iteration-1/"
+    attempt_uri = f"{selection_uri}_attempts/fence-1/"
     source_rows = [
         {
             "key": "run/cosmos_augmented/iteration-1/manifest.json",
@@ -363,27 +508,73 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
             },
         ],
     }
+    ranking_uri = "s3://b/run/grade/iteration-1/ranking/cosmos_evaluator.json"
+    stored_json = {ranking_uri: ranking}
+    copied_keys: list[str] = []
+    lock_state: dict[str, object] = {"synthetic": True, "generation": 1}
+    if expected_selected:
+        # A crashed owner may have conditionally committed one media object
+        # before its lease expired. Recovery must preserve it and finish the
+        # missing objects/evidence without overwriting the committed byte set.
+        destination_rows.append(
+            {
+                **source_rows[1],
+                "key": (
+                    "run/selection/iteration-1/_attempts/fence-1/"
+                    "candidate-a/augmented_video.mp4"
+                ),
+            }
+        )
 
     def inventory(uri: str) -> list[dict]:
         if uri == augment_uri:
             return [dict(row) for row in source_rows]
-        if uri == selection_uri:
+        if uri == attempt_uri:
             return [dict(row) for row in destination_rows]
         raise AssertionError(uri)
 
-    class FakeS3:
-        def copy_object(self, *, Bucket: str, CopySource: dict, Key: str) -> None:
-            assert Bucket == "b"
-            source = next(row for row in source_rows if row["key"] == CopySource["Key"])
-            destination_rows.append({**source, "key": Key})
+    @contextmanager
+    def destination_lock(_uri: str):
+        yield lock_state
 
-    def upload(payload: dict, uri: str) -> str:
-        if uri == f"{selection_uri}manifest.json":
+    def commit_lock(lock: dict, commit: dict) -> None:
+        lock["_committed_record"] = dict(commit)
+
+    def immutable_copy(
+        *, source_bucket, source_row, destination_bucket, destination_key
+    ):
+        assert source_bucket == destination_bucket == "b"
+        if not any(row["key"] == destination_key for row in destination_rows):
+            destination_rows.append({**source_row, "key": destination_key})
+            copied_keys.append(destination_key)
+
+    def immutable_json(payload: dict, uri: str, *, label: str) -> str:
+        del label
+        if uri in stored_json:
+            if stored_json[uri] != payload:
+                raise dfs.RefinementStateError(
+                    "candidate selection prior evidence differs from deterministic replay"
+                )
+            return uri
+        stored_json[uri] = json.loads(json.dumps(payload))
+        if uri == f"{attempt_uri}manifest.json":
             destination_rows.append(
                 {
-                    "key": "run/selection/iteration-1/manifest.json",
+                    "key": (
+                        "run/selection/iteration-1/_attempts/fence-1/manifest.json"
+                    ),
                     "size": 100,
                     "etag": "sm",
+                }
+            )
+        elif uri == f"{attempt_uri}selection.json":
+            destination_rows.append(
+                {
+                    "key": (
+                        "run/selection/iteration-1/_attempts/fence-1/selection.json"
+                    ),
+                    "size": 100,
+                    "etag": "sr",
                 }
             )
         return uri
@@ -392,9 +583,12 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
     monkeypatch.setattr(
         dfs, "_committed_augment_manifest", lambda *_args, **_kwargs: manifest
     )
-    monkeypatch.setattr(dfs, "_download_json", lambda _uri: ranking)
-    monkeypatch.setattr(dfs, "_s3_client", lambda: FakeS3())
-    monkeypatch.setattr(dfs, "_upload_json", upload)
+    monkeypatch.setattr(dfs, "_download_json", lambda uri: stored_json[uri])
+    monkeypatch.setattr(dfs, "_candidate_selection_destination_lock", destination_lock)
+    monkeypatch.setattr(dfs, "_renew_candidate_selection_lock", lambda _lock: None)
+    monkeypatch.setattr(dfs, "_commit_candidate_selection_lock", commit_lock)
+    monkeypatch.setattr(dfs, "_immutable_candidate_copy", immutable_copy)
+    monkeypatch.setattr(dfs, "_put_immutable_json", immutable_json)
 
     result = dfs.select_hard_passing_candidates(
         augment_uri,
@@ -410,9 +604,306 @@ def test_candidate_selection_is_additive_and_preserves_complete_ranking_pool(
     assert any(row["key"].endswith("manifest.json") for row in destination_rows)
     if expected_selected:
         assert any(
-            "candidate-a/augmented_video.mp4" in row["key"] for row in destination_rows
+            "/_attempts/fence-1/candidate-a/augmented_video.mp4" in row["key"]
+            for row in destination_rows
+        )
+        assert not any(
+            "/_attempts/fence-1/candidate-a/augmented_video.mp4" in key
+            for key in copied_keys
+        )
+        assert any(
+            "/_attempts/fence-1/candidate-a/metadata.json" in key for key in copied_keys
         )
     assert not any("candidate-b/" in row["key"] for row in destination_rows)
+
+    copied_once = list(copied_keys)
+    replay = dfs.select_hard_passing_candidates(
+        augment_uri,
+        "s3://b/run/grade/iteration-1/ranking/",
+        selection_uri,
+        "s3://b/run/selection/iteration-1/selection.json",
+        0.75,
+    )
+    assert {key: value for key, value in replay.items() if key != "replayed"} == {
+        key: value for key, value in result.items() if key != "replayed"
+    }
+    assert replay["replayed"] is True
+    assert copied_keys == copied_once
+
+    original_etag = destination_rows[0]["etag"]
+    destination_rows[0]["etag"] = '"tampered"'
+    with pytest.raises(
+        dfs.CandidateSelectionLockError,
+        match="committed generation inventory changed",
+    ):
+        dfs.select_hard_passing_candidates(
+            augment_uri,
+            "s3://b/run/grade/iteration-1/ranking/",
+            selection_uri,
+            "s3://b/run/selection/iteration-1/selection.json",
+            0.75,
+        )
+    destination_rows[0]["etag"] = original_etag
+
+    stored_json[f"{selection_uri}selection.json"]["selected_count"] = 99
+    with pytest.raises(RuntimeError, match="prior evidence differs"):
+        dfs.select_hard_passing_candidates(
+            augment_uri,
+            "s3://b/run/grade/iteration-1/ranking/",
+            selection_uri,
+            "s3://b/run/selection/iteration-1/selection.json",
+            0.75,
+        )
+
+
+def test_candidate_selection_lock_serializes_independent_processes() -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        objects = manager.dict()
+        storage_guard = manager.RLock()
+        sequence = manager.Value("i", 0)
+        storage = _SharedConditionalStorage(objects, storage_guard, sequence)
+        active = manager.Value("i", 0)
+        peak = manager.Value("i", 0)
+        entered = manager.Value("i", 0)
+        counter_guard = manager.RLock()
+        args = (
+            storage,
+            "s3://synthetic/run/selection/iteration-1/",
+            active,
+            peak,
+            counter_guard,
+            entered,
+        )
+        processes = [
+            context.Process(target=_selection_lock_process_worker, args=args)
+            for _ in range(2)
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(10)
+            assert process.exitcode == 0
+
+        assert entered.value == 2
+        assert peak.value == 1
+
+
+def test_candidate_selection_lock_heartbeats_during_slow_object_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        selection_uri = "s3://synthetic/run/selection/slow-copy/"
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+        monkeypatch.setattr(dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15)
+
+        with dfs._candidate_selection_destination_lock(selection_uri) as acquired:
+            initial_etag = acquired["etag"]
+            time.sleep(0.18)
+            assert acquired["etag"] != initial_etag
+            raw, observed_etag = storage.read_bytes_with_etag(acquired["uri"])
+            observed = dfs._candidate_selection_lock_record(
+                raw, label="candidate selection lock"
+            )
+            assert observed["state"] == "held"
+            assert observed["owner"] == acquired["owner"]
+            assert observed["generation"] == acquired["generation"]
+            assert observed_etag == acquired["etag"]
+            assert observed["_expires"] > datetime.now(timezone.utc)
+
+
+def test_candidate_selection_lock_recovers_stale_owner_and_fences_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        objects = manager.dict()
+        guard = manager.RLock()
+        sequence = manager.Value("i", 1)
+        storage = _SharedConditionalStorage(objects, guard, sequence)
+        selection_uri = "s3://synthetic/run/selection/iteration-2/"
+        lock_uri = dfs._candidate_selection_lock_uri(selection_uri)
+        stale_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+        stale = dfs._candidate_selection_lock_payload(
+            owner="stale-owner", generation=4, state="held", now=stale_time
+        )
+        objects[lock_uri] = (dfs._canonical_json_bytes(stale), '"etag-1"')
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+
+        with pytest.raises(
+            dfs.CandidateSelectionLockError,
+            match="lost during the critical section",
+        ):
+            with dfs._candidate_selection_destination_lock(selection_uri) as acquired:
+                assert acquired["generation"] == 5
+                successor = dfs._candidate_selection_lock_payload(
+                    owner="recovery-successor",
+                    generation=6,
+                    state="held",
+                    now=datetime.now(timezone.utc),
+                )
+                acquired_etag = acquired["etag"]
+                successor_etag = storage.put_bytes_conditional(
+                    dfs._canonical_json_bytes(successor),
+                    lock_uri,
+                    if_match=acquired_etag,
+                )
+
+        raw, final_etag = storage.read_bytes_with_etag(lock_uri)
+        final = dfs._candidate_selection_lock_record(
+            raw, label="candidate selection lock"
+        )
+        assert final["owner"] == "recovery-successor"
+        assert final["state"] == "held"
+        assert final_etag == successor_etag
+
+
+def test_stale_selection_owner_cannot_publish_after_continuing_attempt_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale writer may finish only in its private generation, never commit it."""
+
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        selection_uri = "s3://synthetic/run/selection/fenced/"
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+
+        with pytest.raises(
+            dfs.CandidateSelectionLockError,
+            match="lost during the critical section",
+        ):
+            with dfs._candidate_selection_destination_lock(selection_uri) as stale:
+                stale_attempt = dfs._candidate_selection_attempt_uri(
+                    selection_uri, stale
+                )
+                successor_owner = "successor"
+                successor_generation = int(stale["generation"]) + 1
+                successor_payload = dfs._candidate_selection_lock_payload(
+                    owner=successor_owner,
+                    generation=successor_generation,
+                    state="held",
+                    now=datetime.now(timezone.utc),
+                )
+                successor_etag = storage.put_bytes_conditional(
+                    dfs._canonical_json_bytes(successor_payload),
+                    stale["uri"],
+                    if_match=stale["etag"],
+                )
+
+                # The expired process can still finish an in-flight object call,
+                # but that byte lands only in its generation-scoped attempt.
+                objects = storage.objects
+                objects[stale_attempt + "candidate/media.mp4"] = (
+                    b"stale-attempt-byte",
+                    '"stale-object"',
+                )
+                successor = {
+                    "storage": storage,
+                    "uri": stale["uri"],
+                    "owner": successor_owner,
+                    "generation": successor_generation,
+                    "etag": successor_etag,
+                    "_guard": multiprocessing.RLock(),
+                    "_lost": False,
+                }
+                successor_attempt = dfs._candidate_selection_attempt_uri(
+                    selection_uri, successor
+                )
+                assert successor_attempt != stale_attempt
+                commit = {
+                    "attempt_uri": successor_attempt,
+                    "manifest_uri": successor_attempt + "manifest.json",
+                    "report_uri": successor_attempt + "selection.json",
+                    "canonical_manifest_uri": selection_uri + "manifest.json",
+                    "canonical_report_uri": selection_uri + "selection.json",
+                    "manifest_sha256": "a" * 64,
+                    "report_sha256": "b" * 64,
+                    "attempt_inventory_sha256": "c" * 64,
+                }
+                dfs._commit_candidate_selection_lock(successor, commit)
+                with pytest.raises(dfs.CandidateSelectionLockError):
+                    dfs._commit_candidate_selection_lock(stale, commit)
+
+        raw, _etag = storage.read_bytes_with_etag(
+            dfs._candidate_selection_lock_uri(selection_uri)
+        )
+        committed = dfs._candidate_selection_lock_record(
+            raw, label="candidate selection lock"
+        )
+        assert committed["state"] == "committed"
+        assert committed["owner"] == "successor"
+        assert committed["commit"]["attempt_uri"] == successor_attempt
+
+
+def test_selection_heartbeat_accepts_its_own_terminal_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+        monkeypatch.setattr(dfs, "_CANDIDATE_SELECTION_LOCK_LEASE_SECONDS", 0.15)
+        selection_uri = "s3://synthetic/run/selection/committed/"
+        with dfs._candidate_selection_destination_lock(selection_uri) as lock:
+            attempt_uri = dfs._candidate_selection_attempt_uri(selection_uri, lock)
+            dfs._commit_candidate_selection_lock(
+                lock,
+                {
+                    "attempt_uri": attempt_uri,
+                    "manifest_uri": attempt_uri + "manifest.json",
+                    "report_uri": attempt_uri + "selection.json",
+                    "canonical_manifest_uri": selection_uri + "manifest.json",
+                    "canonical_report_uri": selection_uri + "selection.json",
+                    "manifest_sha256": "a" * 64,
+                    "report_sha256": "b" * 64,
+                    "attempt_inventory_sha256": "c" * 64,
+                },
+            )
+            time.sleep(0.12)
+            assert lock["_lost"] is False
+
+
+def test_candidate_selection_lock_releases_after_stage_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context = multiprocessing.get_context("fork")
+    with context.Manager() as manager:
+        storage = _SharedConditionalStorage(
+            manager.dict(), manager.RLock(), manager.Value("i", 0)
+        )
+        selection_uri = "s3://synthetic/run/selection/iteration-error/"
+        monkeypatch.setattr(dfs, "_storage", lambda: storage)
+
+        with pytest.raises(RuntimeError, match="synthetic stage failure"):
+            with dfs._candidate_selection_destination_lock(selection_uri):
+                raise RuntimeError("synthetic stage failure")
+
+        raw, _etag = storage.read_bytes_with_etag(
+            dfs._candidate_selection_lock_uri(selection_uri)
+        )
+        record = dfs._candidate_selection_lock_record(
+            raw, label="candidate selection lock"
+        )
+        assert record["state"] == "released"
+
+
+def test_candidate_selection_copy_requires_source_version_identity() -> None:
+    with pytest.raises(RuntimeError, match="lacks immutable identity"):
+        dfs._immutable_candidate_copy(
+            source_bucket="synthetic",
+            source_row={"key": "run/candidate.mp4", "size": 20, "etag": ""},
+            destination_bucket="synthetic",
+            destination_key="run/selected/candidate.mp4",
+        )
 
 
 def test_rejected_review_fields_are_truthful_and_never_promotion_eligible() -> None:
@@ -1287,6 +1778,47 @@ def test_quality_disposition_accepts_only_a_complete_hard_check_pass(
     assert json.loads(disposition.read_text())["quality_status"] == "accepted"
 
 
+def test_quality_disposition_preserves_per_criterion_evaluator_evidence(
+    tmp_path: Path,
+) -> None:
+    scores = tmp_path / "cosmos_evaluator.json"
+    disposition = tmp_path / "quality_disposition.json"
+    criteria = {
+        "attribute_verification": {
+            "passed": True,
+            "passed_checks": 4,
+            "total_checks": 4,
+            "checks": [{"variable": "background", "score": 1.0, "passed": True}],
+        },
+        "hallucination": {"passed": True, "score": 0.91},
+        "temporal_consistency": {"passed": False, "score": 0.42},
+        "appearance_fidelity": {"passed": True, "score": 0.88},
+    }
+    report = {
+        "status": "completed",
+        "score": 0.81,
+        "passed": True,
+        "clips": [
+            {"clip_id": "candidate-0", "score": 0.81, "passed": True, **criteria}
+        ],
+    }
+    scores.write_text(json.dumps(report), encoding="utf-8")
+
+    result = dfs.enforce_quality_disposition(
+        str(scores), str(disposition), threshold=0.75
+    )
+
+    assert result["score"] == report["score"]
+    assert result["evaluator_report_sha256"] == dfs._payload_sha256(report)
+    assert result["criterion_evidence"] == [
+        {"clip_id": "candidate-0", "score": 0.81, "passed": True, **criteria}
+    ]
+    assert (
+        json.loads(disposition.read_text())["criterion_evidence"]
+        == result["criterion_evidence"]
+    )
+
+
 @pytest.mark.parametrize(
     ("report", "expected_status", "expected_decision"),
     [
@@ -1795,8 +2327,30 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
     from npa.workbench.cosmos import transfer as tx
     from npa.workflows.data_factory_viz import build_run_rrd
 
+    source_frame = _png(tmp_path / "source.png")
     video = tmp_path / "out.mp4"
-    video.write_bytes(b"x" * 200_000)
+    encoded = subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-loop",
+            "1",
+            "-i",
+            str(source_frame),
+            "-t",
+            "0.2",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            str(video),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert encoded.returncode == 0, encoded.stderr
 
     # Mock frame extraction (no cosmos venv here); write real PNGs into dest.
     def fake_extract(vp, dest, max_frames=8):
@@ -1819,7 +2373,7 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
             return uri
 
     manifest = tx.publish_transfer_to_s3(
-        {"video_path": str(video), "video_bytes": 200_000, "spec": "s"},
+        {"video_path": str(video), "video_bytes": video.stat().st_size, "spec": "s"},
         "s3://bkt/run1/cosmos_augmented/",
         run_id="run1",
         variables={"weather": "rainy", "time_of_day": "night"},
@@ -1845,6 +2399,9 @@ def test_publish_transfer_layout_interoperates_with_curate_and_viz(
     assert "manifest.json" not in report["clip_ids"]
 
     # (b) build_run_rrd must consume the same per-clip layout (frames + metadata).
+    input_frame = mirror / "run1" / "input" / "source-frame.png"
+    input_frame.parent.mkdir(parents=True)
+    input_frame.write_bytes(source_frame.read_bytes())
     out_rrd = tmp_path / "reports" / "sim2real.rrd"
     result = build_run_rrd(str(mirror / "run1"), str(out_rrd))
     assert result["frames_logged"] >= 3
@@ -1926,6 +2483,95 @@ def test_finalize_counts_only_latest_append_only_augmentation_iteration(
     assert report["variant_count"] == 2
 
 
+def test_finalize_counts_only_committed_hard_pass_selection(monkeypatch) -> None:
+    root = "s3://b/physical-ai-data-factory/run1/"
+    keys = [
+        "physical-ai-data-factory/run1/cosmos_augmented/manifest.json",
+        "physical-ai-data-factory/run1/cosmos_augmented/rejected/augmented_video.mp4",
+        "physical-ai-data-factory/run1/cosmos_augmented/accepted/augmented_video.mp4",
+        "physical-ai-data-factory/run1/selection/iteration-1/manifest.json",
+        "physical-ai-data-factory/run1/selection/iteration-1/accepted/augmented_video.mp4",
+    ]
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: list(keys))
+    monkeypatch.setattr(
+        dfs,
+        "_committed_augment_manifest",
+        lambda uri, **_kwargs: (
+            {"variant_count": 1} if "/selection/" in uri else {"variant_count": 2}
+        ),
+    )
+    monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+
+    report = dfs.finalize(
+        root,
+        root + "reports/final.json",
+        selection_uri=root + "selection/iteration-1/",
+    )
+
+    assert report["multiply_mode"] == "single-variant"
+    assert report["variant_count"] == 1
+
+
+def test_finalize_publishes_latest_iteration_at_canonical_contract_paths(
+    monkeypatch,
+) -> None:
+    root = "s3://b/physical-ai-data-factory/run1/"
+    keys = [
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-2/manifest.json",
+        "physical-ai-data-factory/run1/cosmos_augmented/iteration-2/clip/augmented_video.mp4",
+        "physical-ai-data-factory/run1/grade/iteration-2/cosmos_evaluator.json",
+        "physical-ai-data-factory/run1/grade/iteration-2/decision.json",
+    ]
+    payloads = {
+        root + "cosmos_augmented/iteration-2/manifest.json": {
+            "schema": "npa.cosmos2.transfer.v1",
+            "mode": "cosmos_transfer2.5_gpu",
+            "status": "executed",
+            "node_count": 1,
+            "variant_count": 1,
+            "variants": [
+                {
+                    "clip": "clip",
+                    "augmented_video_uri": (
+                        root + "cosmos_augmented/iteration-2/clip/augmented_video.mp4"
+                    ),
+                }
+            ],
+        },
+        root + "grade/iteration-2/cosmos_evaluator.json": {
+            "schema": "npa.cosmos_evaluator.report.v1",
+            "status": "completed",
+        },
+        root + "grade/iteration-2/decision.json": {
+            "schema": "npa.sim2real.threshold_decision.v1",
+            "decision": "promote_checkpoint",
+        },
+    }
+    uploads: dict[str, dict] = {}
+    monkeypatch.setattr(dfs, "_list_keys", lambda _uri: list(keys))
+    monkeypatch.setattr(dfs, "_download_json", lambda uri: payloads.get(uri, {}))
+    monkeypatch.setattr(
+        dfs,
+        "_upload_json",
+        lambda payload, uri: uploads.setdefault(uri, payload) or uri,
+    )
+    monkeypatch.setattr(
+        dfs,
+        "_read_json_key",
+        lambda _bucket, key: uploads[root + key.split("run1/", 1)[-1]],
+    )
+
+    report = dfs.finalize(root, root + "reports/final.json")
+
+    for relative, source_relative in {
+        "cosmos_augmented/manifest.json": "cosmos_augmented/iteration-2/manifest.json",
+        "grade/cosmos_evaluator.json": "grade/iteration-2/cosmos_evaluator.json",
+        "grade/decision.json": "grade/iteration-2/decision.json",
+    }.items():
+        assert uploads[root + relative] == payloads[root + source_relative]
+    assert report["augmentation_engine"] == "cosmos_transfer2.5_gpu"
+
+
 def test_all_augmentations_reads_every_combo(tmp_path: Path) -> None:
     from npa.cli.workbench.cosmos2 import _all_augmentations, _first_augmentation
 
@@ -1955,14 +2601,32 @@ def test_finalize_aggregates_stage_artifacts(tmp_path: Path, monkeypatch) -> Non
     ]
     monkeypatch.setattr(dfs, "_list_keys", lambda uri: keys)
     monkeypatch.setattr(dfs, "_upload_json", lambda payload, uri: uri)
+    upstream = {
+        "schema": "npa.paidf.upstream.v1",
+        "run_id": "run1",
+        "workflow_variant": "cosmos-transfer2.5",
+        "sources": ["official"],
+    }
+    monkeypatch.setattr(dfs, "_download_json", lambda _uri: upstream)
     report = dfs.finalize(
         "s3://b/physical-ai-data-factory/run1/",
         "s3://b/physical-ai-data-factory/run1/reports/final.json",
+        upstream_variant="cosmos-transfer2.5",
+        run_id="run1",
     )
     assert report["artifact_count"] == 3
     assert report["has_rrd"] is True
     assert report["stages"]["input"] == 1
     assert report["multiply_mode"] == "single-variant"
+    assert report["upstream"] == upstream
+    upstream["run_id"] = "foreign-run"
+    with pytest.raises(RuntimeError, match="does not match"):
+        dfs.finalize(
+            "s3://b/physical-ai-data-factory/run1/",
+            "s3://b/physical-ai-data-factory/run1/reports/final.json",
+            upstream_variant="cosmos-transfer2.5",
+            run_id="run1",
+        )
 
 
 def test_curation_and_final_reports_carry_input_provenance(

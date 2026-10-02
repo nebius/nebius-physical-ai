@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
 from pathlib import Path
+from urllib.parse import urlsplit
 
-import yaml
 import pytest
+import yaml
 
 from npa.deploy.images import (
     DEFAULT_PUBLIC_CONTAINER_REGISTRY,
@@ -14,18 +14,48 @@ from npa.deploy.images import (
     publicly_publishable_tools,
 )
 from npa.workflows.sim2real.config import build_config_from_env
-from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.spec import load_spec
 from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
 
 
-WORKFLOW_DIR = Path(__file__).resolve().parents[3] / "workflows"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+WORKFLOW_DIR = REPO_ROOT / "workflows"
+PACKAGING_CONTRACT = REPO_ROOT / "npa/docker/workbench/packaging-contract.yaml"
 # Synthetic offline renderer input, never a publication or acceptance record.
 NCORE_VALIDATION_IMAGE = (
     f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-ncore@sha256:{'0' * 64}"
 )
+
+
+def _is_restricted_operator_placeholder(image: str) -> bool:
+    """A non-runnable BYO default must name a restricted packaging entry."""
+
+    parsed = urlsplit(f"https://{image}")
+    if parsed.hostname != "registry.example.invalid":
+        return False
+    name, separator, digest = parsed.path.removeprefix("/npa-").partition("@sha256:")
+    if not separator or digest != "0" * 64 or "/" in name:
+        return False
+    contract = yaml.safe_load(PACKAGING_CONTRACT.read_text())
+    return contract["images"].get(name, {}).get("redistribution") == "restricted"
+
+
+def test_only_restricted_non_runnable_defaults_are_operator_placeholders() -> None:
+    suffix = "@sha256:" + "0" * 64
+    assert _is_restricted_operator_placeholder(
+        "registry.example.invalid/npa-paidf-anomalygen-sky" + suffix
+    )
+    assert not _is_restricted_operator_placeholder(
+        "registry.example.invalid/npa-rerun-viewer" + suffix
+    )
+    assert not _is_restricted_operator_placeholder(
+        "registry.invalid/npa-paidf-anomalygen-sky" + suffix
+    )
+    assert not _is_restricted_operator_placeholder(
+        "registry.example.invalid/npa-paidf-anomalygen-sky@sha256:" + "a" * 64
+    )
 
 
 def test_every_published_tool_ignores_ambient_private_registry(monkeypatch) -> None:
@@ -38,20 +68,13 @@ def test_every_published_tool_ignores_ambient_private_registry(monkeypatch) -> N
     assert all(image.startswith(prefix) for image in images)
 
 
-def test_sim2real_owned_images_ignore_generic_registry_configuration(
+def test_sim2real_default_fails_closed_despite_generic_registry_configuration(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("NPA_REGISTRY", "registry.invalid/operator/private")
     monkeypatch.delenv("NPA_SIM2REAL_REGISTRY", raising=False)
-    prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/"
-
-    config = build_config_from_env(run_id="registry-guard")
-    image_fields = [
-        item.name for item in fields(Sim2RealLoopConfig) if item.name.endswith("_image")
-    ]
-
-    assert image_fields
-    assert all(str(getattr(config, name)).startswith(prefix) for name in image_fields)
+    with pytest.raises(ValueError, match="quarantined"):
+        build_config_from_env(run_id="registry-guard")
 
 
 def test_sim2real_custom_registry_is_scoped_and_explicit(monkeypatch) -> None:
@@ -72,15 +95,24 @@ def _prepare_registry_workflow(spec_path):
         "on",
     }
     public_prefix = f"{DEFAULT_PUBLIC_CONTAINER_REGISTRY}/npa-"
-    image_overrides = (
-        {"*": f"{public_prefix}runtime@sha256:{'0' * 64}"}
-        if requires_baked_image
-        else {}
-    )
+    image_overrides = {"*": f"{public_prefix}runtime@sha256:{'0' * 64}"}
+    if spec_path.name == "byof-gymnasium-robotics.yaml":
+        # This neutral BYOF candidate intentionally keeps no-new-privileges;
+        # the ownership guard must not reclassify it as a trusted first-party
+        # image whose SkyPilot bootstrap requires passwordless sudo.
+        image_overrides["workbench.byof.repo"] = (
+            "registry.example.invalid/gymnasium-robotics@sha256:" + "0" * 64
+        )
     if spec_path.name == "nurec-colmap-reconstruct.yaml":
         # This validation workflow documents a required per-tool override
         # until genuine exact-image acceptance permits default selection.
         image_overrides["workbench.nurec.convert_colmap"] = NCORE_VALIDATION_IMAGE
+    if spec_path.name == "habitat-sim-smoke.yaml":
+        # Habitat requires an immutable reference even in a plan-only ownership
+        # check; no image or runtime acceptance is asserted by this inert digest.
+        image_overrides["workflow.habitat_sim.smoke"] = (
+            f"{public_prefix}habitat-sim@sha256:{'0' * 64}"
+        )
     return prepare_npa_workflow_for_submit(
         spec_path,
         run_id=f"registry-guard-{spec_path.stem}",
@@ -128,7 +160,7 @@ def test_every_shipped_workflow_keeps_owned_images_on_public_ghcr(
     assert NCORE_VALIDATION_IMAGE in rendered_images
     assert not any(hostile_registry in image for image in rendered_images)
     assert all(
-        image.startswith(public_prefix)
+        image.startswith(public_prefix) or _is_restricted_operator_placeholder(image)
         for image in rendered_images
         if image.rsplit("/", 1)[-1].startswith("npa-")
     )

@@ -40,10 +40,15 @@ deploying or configuring a tool; do not inherit another cluster's regional
 endpoint. Prove the selected bucket and credentials together with
 `health-preflight` before provisioning or submitting.
 
-Kubernetes namespace split:
-
-- `workbench`: deployed workbench services.
-- `default`: SkyPilot task pods.
+Kubernetes workflows follow the selected kubeconfig context namespace; an unset
+namespace means `default`. Use `npa workbench namespace apply <name> --context
+<context>` to create a namespace or reuse it unchanged, then `namespace context`
+to prepare private kubeconfig and SkyPilot configuration using existing access.
+The context command preserves existing SkyPilot settings and workload identities;
+it does not create service accounts or grant RBAC. See
+`docs/workbench/namespaces.md`. Registry pull-secret checks, model-cache lookup,
+controller probes, and diagnostics follow the context namespace. Service commands
+retain their explicit `--namespace` options and historical defaults.
 
 ## Cross-Tool Data Flow
 

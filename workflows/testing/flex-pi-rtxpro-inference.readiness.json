@@ -1,0 +1,58 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "65946a95b9e96560e3c29a6936883b8a66e0547e49f63188c6880cf9efb6f13d",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec and plan-spec both completed successfully.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/flex-pi-rtxpro-inference.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/flex-pi-rtxpro-inference.yaml --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The stage invokes the pinned upstream checkpoint and policy adapter, then requires a finite 32x14 action chunk.",
+      "evidence": [
+        "docs/workbench/flex-pi.md#artifacts-and-acceptance"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "The selected project's object-storage credential preflight passed before allocation.",
+      "evidence": [
+        "npa workbench health preflight --checks nebius,s3 --json (sanitized private record)"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The public input manifest pins every source object and SHA-256 digest.",
+      "evidence": [
+        "npa/docker/workbench/flex-pi/public_robotwin_sample.json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Exact pinned checkpoint, observation, tokenizer, DINOv3, and converted Wan asset endpoints were reachable before allocation.",
+      "evidence": [
+        "sanitized private access-preflight record; no credential values retained"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "The exact 0.1.0-cu128-r2 release digest passed source, licensing, full-layer payload, configured vulnerability/secret policy, SBOM/provenance, and anonymous full-layer pull gates.",
+      "evidence": [
+        "npa/src/npa/deploy/public_release_manifest.json"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The exact r2 digest completed strict checkpoint loading and real compiled four-step action-only inference on one RTX PRO 6000, with terminal success, zero restarts, finite 32x14 actions, and three read-back-verified JSON artifacts. Earlier fan-out and paired benchmarks remain historical evidence for the original digest.",
+      "evidence": [
+        "docs/workbench/flex-pi.md#r2-exact-image-acceptance"
+      ]
+    }
+  }
+}

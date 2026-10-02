@@ -213,7 +213,7 @@ def super_benchmark_cmd(
     topologies: str = typer.Option(
         ",".join(SUPER_BENCHMARK_TOPOLOGIES),
         "--topologies",
-        help="Comma-separated ordered subset of 1x8,2x4,4x2,8x1.",
+        help="Ordered subset of 1x8,2x4,4x2,8x1; use 1x1 for single-GPU suites.",
     ),
     attempts: int = typer.Option(24, "--attempts", min=1),
     suite: str = typer.Option(
@@ -221,7 +221,7 @@ def super_benchmark_cmd(
         "--suite",
         help=(
             "Benchmark suite: primary (four concurrency-one cells), b200-full "
-            "(the exact ten-cell, 240-attempt public record), or h200-single-gpu "
+            "(the exact ten-cell, 240-attempt public record), h200-single-gpu, or b200-single-gpu "
             "(one TP-1 service and 24 sequential requests; not a paper cell)."
         ),
     ),
@@ -238,7 +238,7 @@ def super_benchmark_cmd(
         help="Print the immutable benchmark plan without touching a GPU.",
     ),
 ) -> None:
-    """Run a fixed Cosmos3-Super node benchmark or H200 single-GPU validation."""
+    """Run a fixed Cosmos3-Super node benchmark or single-GPU validation."""
 
     try:
         payload = run_super_benchmark(

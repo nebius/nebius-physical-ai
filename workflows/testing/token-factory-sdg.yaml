@@ -1,0 +1,35 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: token-factory-sdg
+  description: Route text seeds to hosted open-weight models, generate instruction/answer pairs, review, deduplicate, and export training JSONL.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/token-factory-sdg"
+  prompts_uri: "s3://{{config.bucket}}/{{config.prefix}}/prompts.jsonl"
+  sdg_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/dataset"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+
+initial: generate-dataset
+states:
+  generate-dataset:
+    description: Token Factory router → generator → structured review → dataset and provenance.
+    toolRef: workbench.token_factory.sdg
+    resources: cpu
+    outputs:
+      - uri: "{{config.sdg_output_uri}}/dataset.jsonl"
+        schema: npa.token_factory.sdg.messages.v1
+      - uri: "{{config.sdg_output_uri}}/rejected.jsonl"
+        schema: npa.token_factory.sdg.rejections.v1
+      - uri: "{{config.sdg_output_uri}}/provenance.jsonl"
+        schema: npa.token_factory.sdg.provenance.v1
+      - uri: "{{config.sdg_output_uri}}/report.json"
+        schema: npa.token_factory.sdg.v1
+    terminal: true

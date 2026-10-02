@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -232,6 +233,29 @@ def test_cleanup_json_distinguishes_terminal_only_queue_from_verified_empty(
     payload = __import__("json").loads(result.output)
     assert payload["managed_job_queue_state"] == "verified_terminal_only"
     assert payload["nonterminal_job_ids"] == []
+
+
+@pytest.mark.parametrize(
+    "status",
+    ["DRAINING_V2", "PROVISIONING", "UNKNOWN", ""],
+)
+def test_cleanup_unknown_managed_job_status_remains_active(
+    monkeypatch: pytest.MonkeyPatch,
+    status: str,
+) -> None:
+    from npa.orchestration.skypilot import cleanup as cleanup_runtime
+
+    snapshot = cleanup_runtime.JobQueueSnapshot(
+        "verified_jobs",
+        ({"job_id": "17", "status": status},),
+    )
+    monkeypatch.setattr(cleanup_runtime, "_all_jobs", lambda **_kwargs: snapshot)
+
+    assert cleanup_cli._nonterminal_jobs() == (
+        ["17"],
+        "",
+        "verified_active_jobs",
+    )
 
 
 def test_cleanup_iam_note_names_the_storage_service_account(monkeypatch) -> None:

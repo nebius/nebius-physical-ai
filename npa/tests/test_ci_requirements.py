@@ -5,6 +5,7 @@ import shutil
 import sys
 
 from packaging.requirements import Requirement
+from packaging.version import Version
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -29,6 +30,32 @@ def test_committed_ci_pins_match_dependency_inputs() -> None:
         ValueError: The dependency fingerprint is stale.
     """
     ci_requirements._check(ci_requirements._ROOT)
+
+
+def test_oauthlib_security_floor_is_locked() -> None:
+    """Keep the CI environment above the two oauthlib 3.3.1 vulnerabilities."""
+
+    constraints = [
+        Requirement(line)
+        for line in (ci_requirements._ROOT / "npa/ci/constraints.in")
+        .read_text()
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    oauthlib_constraint = next(item for item in constraints if item.name == "oauthlib")
+    assert Version("3.3.1") not in oauthlib_constraint.specifier
+    assert Version("4.0.0") in oauthlib_constraint.specifier
+
+    pins = [
+        Requirement(line)
+        for line in (ci_requirements._ROOT / "npa/ci/requirements.txt")
+        .read_text()
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    oauthlib_pin = next(item for item in pins if item.name == "oauthlib")
+    assert str(oauthlib_pin.specifier).startswith("==")
+    assert Version(str(oauthlib_pin.specifier).removeprefix("==")) >= Version("4.0.0")
 
 
 @pytest.mark.parametrize("name", ["pyproject.toml", "ci/constraints.in"])
@@ -71,6 +98,48 @@ def test_non_dependency_changes_do_not_require_refresh(tmp_path: Path) -> None:
     ci_requirements._check(tmp_path)
 
 
+def test_direct_generated_pin_changes_require_refresh(tmp_path: Path) -> None:
+    """Reject Dependabot-style edits to the generated constraints body.
+
+    Args:
+        tmp_path: Isolated input repository.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Edited pins retain a valid generated-content seal.
+    """
+    _copy_inputs(tmp_path)
+    path = tmp_path / "npa/ci/requirements.txt"
+    updated = path.read_text().replace("websockets==16.1.1", "websockets==17.1")
+    path.write_text(updated)
+    with pytest.raises(ValueError, match="CI generated pins changed"):
+        ci_requirements._check(tmp_path)
+
+
+def test_websockets_transport_pins_match_project_dependency() -> None:
+    """Keep standalone transport environments aligned with the core pin.
+
+    Raises:
+        AssertionError: A desktop or Antioch transport drifts from the project.
+    """
+    project = ci_requirements.tomllib.loads(
+        (ci_requirements._ROOT / "npa/pyproject.toml").read_text()
+    )["project"]
+    requirement = next(
+        Requirement(item)
+        for item in project["dependencies"]
+        if Requirement(item).name == "websockets"
+    )
+    pinned = f"websockets{requirement.specifier}"
+    assert str(requirement.specifier).startswith("==")
+    for relative in (
+        "npa/docker/workbench/antioch/requirements.txt",
+        "npa/examples/antioch-openpi-live/Dockerfile",
+        "npa/src/npa/tools/desktop/chat_setup.py",
+    ):
+        assert pinned in (ci_requirements._ROOT / relative).read_text(), relative
+
+
 @pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])
 def test_ci_pins_select_one_cpu_runtime_per_interpreter(version: str) -> None:
     """Resolve marker-qualified pins without admitting a CUDA dependency.
@@ -106,7 +175,7 @@ def test_ci_pins_select_one_cpu_runtime_per_interpreter(version: str) -> None:
     assert not any(name.startswith(("nvidia-", "triton")) for name in names)
     assert (
         str(next(item for item in active if item.name == "torch").specifier)
-        == "==2.13.0+cpu"
+        == "==2.14.0+cpu"
     )
 
 
