@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+from npa.literal_values import require_integer
+
 from npa.cluster.gpu_driver import (
     inspect_recipe_declared_variables,
     resolve_gpu_driver_strategy,
@@ -1107,6 +1109,51 @@ def _gpu_cluster_matches_desired(
     )
 
 
+_NODE_GROUP_PROVIDER_ALIASES = {
+    "parentId": "parent_id",
+    "fixedNodeCount": "fixed_node_count",
+    "bootDisk": "boot_disk",
+    "sizeGibibytes": "size_gibibytes",
+    "reservationPolicy": "reservation_policy",
+    "reservationIds": "reservation_ids",
+    "networkInterfaces": "network_interfaces",
+    "subnetId": "subnet_id",
+    "existingFilesystem": "existing_filesystem",
+    "mountTag": "mount_tag",
+    "attachMode": "attach_mode",
+    "gpuCluster": "gpu_cluster",
+    "gpuSettings": "gpu_settings",
+    "driversPreset": "drivers_preset",
+}
+
+
+def _provider_node_group_integer(value: Any, *, field: str) -> int:
+    """Decode protobuf integer strings while refusing scalar coercion."""
+
+    if isinstance(value, str) and value.isascii() and value.isdecimal():
+        value = int(value)
+    return require_integer(value, field=field, minimum=0)
+
+
+def _normalize_node_group_provider_fields(value: Any) -> Any:
+    """Normalize known CLI spellings without discarding contradictory evidence."""
+
+    if isinstance(value, list):
+        return [_normalize_node_group_provider_fields(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    normalized: dict[str, Any] = {}
+    for key, item in value.items():
+        canonical = _NODE_GROUP_PROVIDER_ALIASES.get(key, key)
+        item = _normalize_node_group_provider_fields(item)
+        if canonical in normalized and json.dumps(
+            normalized[canonical], sort_keys=True
+        ) != json.dumps(item, sort_keys=True):
+            raise ValueError(f"Conflicting provider spellings for {canonical}")
+        normalized[canonical] = item
+    return normalized
+
+
 def _tainted_node_group_matches_desired(
     *,
     provider_payload: dict[str, Any],
@@ -1119,6 +1166,10 @@ def _tainted_node_group_matches_desired(
 ) -> bool:
     """Prove a tainted state entry still owns the exact desired live pool."""
 
+    try:
+        provider_payload = _normalize_node_group_provider_fields(provider_payload)
+    except ValueError:
+        return False
     state_attributes = _decode_terraform_node_group_preemptibility(state_attributes)
     metadata = provider_payload.get("metadata") or {}
     spec = provider_payload.get("spec") or {}
@@ -1134,7 +1185,9 @@ def _tainted_node_group_matches_desired(
     if parent_id is _PROVIDER_FIELD_MISSING:
         return False
     try:
-        fixed_node_count = int(spec.get("fixed_node_count"))
+        fixed_node_count = _provider_node_group_integer(
+            spec.get("fixed_node_count"), field="fixed_node_count"
+        )
     except (TypeError, ValueError):
         return False
     if (
@@ -1160,7 +1213,10 @@ def _tainted_node_group_matches_desired(
         else (pool.disk_size_gib or 128)
     )
     try:
-        boot_disk_size = int((template.get("boot_disk") or {}).get("size_gibibytes"))
+        boot_disk_size = _provider_node_group_integer(
+            (template.get("boot_disk") or {}).get("size_gibibytes"),
+            field="boot_disk.size_gibibytes",
+        )
     except (TypeError, ValueError):
         return False
     if (

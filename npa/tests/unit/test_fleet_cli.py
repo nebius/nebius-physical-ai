@@ -2480,6 +2480,93 @@ def test_tainted_exact_gpu_cluster_id_is_safely_adopted(monkeypatch, tmp_path) -
     assert calls[-1][1:2] == ["untaint"]
 
 
+def _camel_case_node_group_fixture(value):
+    if isinstance(value, list):
+        return [_camel_case_node_group_fixture(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {}
+    for key, item in value.items():
+        first, *rest = key.split("_")
+        result[first + "".join(part.title() for part in rest)] = (
+            _camel_case_node_group_fixture(item)
+        )
+    return result
+
+
+@pytest.mark.parametrize("duplicate_spellings", [False, True])
+def test_tainted_gpu_attachment_accepts_camel_case_provider_fields(
+    duplicate_spellings: bool,
+) -> None:
+    from npa.cluster_backends import mk8s_execution as execution
+    from npa.cluster_backends.mk8s_model import as_mk8s_desired
+
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    attributes = state["resources"][1]["instances"][0]["attributes"]
+    camel = _camel_case_node_group_fixture(provider)
+    if duplicate_spellings:
+        camel["spec"].update(provider["spec"])
+        camel["spec"]["template"].update(
+            _camel_case_node_group_fixture(provider["spec"]["template"])
+        )
+    desired = as_mk8s_desired(cluster)
+    original = deepcopy(camel)
+    assert execution._tainted_node_group_matches_desired(
+        provider_payload=execution._decode_v1_node_group_preemptibility(camel),
+        state_attributes=attributes,
+        pool=desired.gpu_nodes,
+        cluster=desired,
+        cluster_id="mk8scluster-test",
+        subnet_id="vpcsubnet-test",
+    )
+    assert camel == original
+
+
+@pytest.mark.parametrize(
+    ("path", "alias", "conflict"),
+    [
+        (("spec",), "fixedNodeCount", 3),
+        (("spec",), "fixedNodeCount", True),
+        (("metadata",), "parentId", "other-cluster"),
+        (("spec", "template"), "gpuCluster", None),
+        (("spec", "template"), "reservationPolicy", {}),
+        (("spec", "template"), "bootDisk", {}),
+        (("spec", "template"), "gpuSettings", {}),
+        (("spec", "template"), "networkInterfaces", []),
+        (("spec", "template", "boot_disk"), "sizeGibibytes", True),
+        (("spec", "template", "reservation_policy"), "reservationIds", []),
+        (("spec", "template", "network_interfaces", 0), "subnetId", None),
+        (("spec", "template", "filesystems", 0), "mountTag", None),
+        (("spec", "template", "filesystems", 0), "attachMode", None),
+        (("spec", "template", "filesystems", 0), "existingFilesystem", None),
+    ],
+)
+def test_tainted_node_group_refuses_conflicting_provider_aliases(
+    monkeypatch, tmp_path, path: tuple, alias: str, conflict: object
+) -> None:
+    state, provider, _cluster = _tainted_gpu_reconciliation_fixture()
+    cluster = _enable_gpu_cluster_for_tainted_fixture(state, provider)
+    target = provider
+    for part in path:
+        target = target[part]
+    target[alias] = conflict
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
+@pytest.mark.parametrize("value", [True, False, 2.5, "2.0", " 2", None])
+def test_tainted_node_group_rejects_coerced_node_counts(
+    monkeypatch, tmp_path, value: object
+) -> None:
+    state, provider, cluster = _tainted_gpu_reconciliation_fixture()
+    provider["spec"]["fixed_node_count"] = value
+    _assert_tainted_reconciliation_refused(
+        monkeypatch, tmp_path, state, provider, cluster
+    )
+
+
 def _assert_tainted_reconciliation_refused(
     monkeypatch, tmp_path, state: dict, provider: dict, cluster: ClusterSpec
 ) -> None:
