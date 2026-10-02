@@ -701,7 +701,7 @@ def parse_feedback_batch(
             raise PolicyContainerError("feedback rationale must not be empty")
         parsed.append(
             FeedbackItem(
-                success=bool(item["success"]),
+                success=_boolean_field(item, "success", default=False),
                 score=score,
                 rationale=rationale,
                 source=str(item.get("source") or "vlm"),
