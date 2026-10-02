@@ -4236,3 +4236,58 @@ def test_deploy_reservation_failure_stops_before_render_init_or_provider_mutatio
 
     with pytest.raises(ValueError, match="reserved capacity is insufficient"):
         lifecycle.deploy_cluster(spec, terraform_dir=recipe)
+
+
+@pytest.mark.parametrize(
+    "field, malformed",
+    [
+        ("size", True),
+        ("size", False),
+        ("size", "2"),
+        ("size", 1.5),
+        ("size", None),
+        ("size", []),
+        ("size", {}),
+        ("size", 0),
+        ("size", -1),
+        ("fabric", True),
+        ("fabric", 1),
+        ("fabric", None),
+        ("fabric", []),
+        ("fabric", {}),
+    ],
+)
+def test_worker_scalars_reject_yaml_before_deploy(
+    tmp_path, monkeypatch, field, malformed
+):
+    import yaml
+    from npa.soperator import lifecycle
+
+    def unexpected_deploy(*args, **kwargs):
+        pytest.fail("malformed spec reached deployment")
+
+    monkeypatch.setattr(lifecycle, "deploy_cluster", unexpected_deploy)
+    data = _base_spec_mapping()
+    data["workers"][1][field] = malformed
+    path = tmp_path / "cluster.yaml"
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(SoperatorSpecError, match=field):
+        load_spec(path)
+    result = runner.invoke(app, ["soperator", "deploy", "--spec", str(path)])
+    assert result.exit_code != 0
+    assert field in result.output
+
+
+def test_worker_scalar_yaml_defaults_and_explicit_values(tmp_path):
+    import yaml
+
+    data = _base_spec_mapping()
+    path = tmp_path / "cluster.yaml"
+    path.write_text(yaml.safe_dump(data))
+    spec = load_spec(path)
+    assert spec.workers[0].size == 1
+    assert spec.workers[0].fabric == ""
+    assert spec.workers[1].size == 2
+    assert spec.workers[1].fabric == "us-central1-b"
+    result = runner.invoke(app, ["soperator", "plan", "--spec", str(path)])
+    assert result.exit_code == 0, result.output

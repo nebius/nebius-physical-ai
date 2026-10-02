@@ -20,6 +20,8 @@ from typing import Any
 
 import yaml
 
+from npa.literal_values import require_boolean, require_integer
+
 API_VERSION = "npa.soperator/v0.0.1"
 DEFAULT_SOLUTIONS_LIBRARY_REF = "7046fb3c68314a940cdb47ff5c4fd23c01a6711e"
 DEFAULT_SLURM_OPERATOR_VERSION = "4.1.6"
@@ -77,10 +79,12 @@ def _exact_boolean(
 
     if key not in values:
         return False
-    value = values[key]
-    if not isinstance(value, bool):
-        raise SoperatorSpecError(f"{field_name or key} must be a boolean when supplied")
-    return value
+    try:
+        return require_boolean(values[key], field=field_name or key)
+    except ValueError as exc:
+        raise SoperatorSpecError(
+            f"{field_name or key} must be a boolean when supplied"
+        ) from exc
 
 
 def sizing_tier_for_worker_count(worker_count: int) -> str:
@@ -197,8 +201,16 @@ class WorkerPoolSpec:
             raise SoperatorSpecError(
                 f"worker pool name must be alphanumeric/dash: {self.name!r}"
             )
-        if self.size < 1:
-            raise SoperatorSpecError(f"worker pool {self.name}: size must be >= 1")
+        try:
+            require_integer(
+                self.size, field=f"worker pool {self.name}: size", minimum=1
+            )
+        except ValueError as exc:
+            raise SoperatorSpecError(str(exc)) from exc
+        if type(self.fabric) is not str:
+            raise SoperatorSpecError(
+                f"worker pool {self.name}: fabric must be a string"
+            )
         if self.is_gpu() and not self.fabric:
             # 1-GPU SXM presets cannot join a fabric; the recipe requires a
             # fabric for any GPU preset, so GPU pools must be fabric-capable
@@ -417,9 +429,9 @@ def spec_from_mapping(data: dict[str, Any]) -> SoperatorSpec:
                 name=str(entry.get("name", "")),
                 platform=str(entry.get("platform", "cpu-d3")),
                 preset=str(entry.get("preset", "8vcpu-32gb")),
-                size=int(entry.get("size", 1)),
+                size=entry.get("size", 1),
                 boot_disk_gib=int(entry.get("boot_disk_gib", 512)),
-                fabric=str(entry.get("fabric", "")),
+                fabric=entry.get("fabric", ""),
                 preemptible=_exact_boolean(
                     entry,
                     "preemptible",
@@ -453,8 +465,8 @@ def spec_from_mapping(data: dict[str, Any]) -> SoperatorSpec:
     if not isinstance(legacy_keys, list):
         raise SoperatorSpecError("ssh_public_keys must be a list")
     rest_value = data.get("slurm_rest_enabled")
-    if rest_value is not None and not isinstance(rest_value, bool):
-        raise SoperatorSpecError("slurm_rest_enabled must be a boolean when set")
+    if rest_value is not None:
+        rest_value = _exact_boolean(data, "slurm_rest_enabled")
     spec = SoperatorSpec(
         name=str(data.get("name", "")),
         region=str(data.get("region", "")),
