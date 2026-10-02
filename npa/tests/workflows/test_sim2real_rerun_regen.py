@@ -13,8 +13,11 @@ from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
     _ensure_policy_access_metadata,
     _gold_report_path,
+    _latest_completed_inner_evidence_rel,
+    _latest_inner_evidence_rel,
     _policy_access_record,
     _stage_components,
+    _update_stage14_component,
     regen_sim2real_rrd,
     resolve_local_rrd_path,
     sync_heldout_renders,
@@ -125,6 +128,93 @@ def test_gold_report_path_tracks_latest_completed_outer_iteration(
 
     assert _gold_report_path(_config(), tmp_path) == (
         tmp_path / "eval" / "gold-heldout" / "outer-02" / "report.json"
+    )
+
+
+def test_gold_report_path_ignores_aliases_and_incomplete_newer_outer(
+    tmp_path: Path,
+) -> None:
+    completed_evidence = tmp_path / "inner_loop/outer-01/evidence.json"
+    completed_report = tmp_path / "eval/gold-heldout/outer-01/report.json"
+    alias_evidence = tmp_path / "inner_loop/outer-1/evidence.json"
+    incomplete_evidence = tmp_path / "inner_loop/outer-02/evidence.json"
+    for path in (
+        completed_evidence,
+        completed_report,
+        alias_evidence,
+        incomplete_evidence,
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{}", encoding="utf-8")
+
+    assert _gold_report_path(_config(), tmp_path) == completed_report
+
+
+def test_latest_remote_inner_evidence_ignores_unpadded_runtime_alias() -> None:
+    run_prefix = "sim2real-b/run/"
+
+    class FakePaginator:
+        def paginate(self, *, Bucket: str, Prefix: str, Delimiter: str):
+            assert Bucket == "demo-bucket"
+            assert Prefix == run_prefix + "inner_loop/"
+            assert Delimiter == "/"
+            return [
+                {
+                    "CommonPrefixes": [
+                        {"Prefix": run_prefix + "inner_loop/outer-01/"},
+                        {"Prefix": run_prefix + "inner_loop/outer-1/"},
+                    ]
+                }
+            ]
+
+    class FakeS3:
+        def get_paginator(self, name: str) -> FakePaginator:
+            assert name == "list_objects_v2"
+            return FakePaginator()
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    assert (
+        _latest_inner_evidence_rel(
+            FakeStorage(),
+            "s3://demo-bucket/sim2real-b/run/",
+        )
+        == "inner_loop/outer-01/evidence.json"
+    )
+
+
+def test_latest_remote_inner_evidence_requires_completed_report_pair() -> None:
+    run_prefix = "sim2real-b/run/"
+
+    class FakePaginator:
+        def paginate(self, *, Bucket: str, Prefix: str, Delimiter: str):
+            assert Bucket == "demo-bucket"
+            assert Delimiter == "/"
+            if Prefix == run_prefix + "inner_loop/":
+                names = ("outer-01", "outer-02")
+            elif Prefix == run_prefix + "eval/gold-heldout/":
+                names = ("outer-01",)
+            else:
+                raise AssertionError(Prefix)
+            return [
+                {"CommonPrefixes": [{"Prefix": f"{Prefix}{name}/"} for name in names]}
+            ]
+
+    class FakeS3:
+        def get_paginator(self, name: str) -> FakePaginator:
+            assert name == "list_objects_v2"
+            return FakePaginator()
+
+    class FakeStorage:
+        _s3 = FakeS3()
+
+    assert (
+        _latest_completed_inner_evidence_rel(
+            FakeStorage(),
+            "s3://demo-bucket/sim2real-b/run/",
+        )
+        == "inner_loop/outer-01/evidence.json"
     )
 
 
@@ -540,6 +630,45 @@ def test_policy_access_metadata_consumes_canonical_stage14_decision(
     assert access["deployable_policy"] is True
     assert access["identity"] == "model_selected.pt"
     assert downloads == [checkpoint_uri]
+
+
+def test_policy_access_metadata_rejects_promotion_decision_without_checkpoint_uri(
+    tmp_path: Path,
+) -> None:
+    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    _write_candidate_manifest(
+        tmp_path,
+        {
+            "deployable_policy": True,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": checkpoint_uri,
+        },
+    )
+    downloads: list[str] = []
+
+    class FakeStorage:
+        def download_file(self, uri: str, destination: str) -> None:
+            downloads.append(uri)
+            Path(destination).write_bytes(b"unexpected-policy-bytes")
+
+    with pytest.raises(
+        Sim2RealRerunRegenError,
+        match="promotion decision.*checkpoint URI",
+    ):
+        _ensure_policy_access_metadata(
+            _config(),
+            tmp_path,
+            storage=FakeStorage(),
+            report={
+                "outer_loop": {
+                    "decision": {
+                        "decision": "promote_checkpoint",
+                    }
+                }
+            },
+        )
+
+    assert downloads == []
 
 
 @pytest.mark.parametrize(
@@ -1166,6 +1295,46 @@ def test_failure_state_persistence_never_masks_primary_validation_error(
         )
 
 
+def test_parse_failure_clears_stale_positive_candidate_state(
+    tmp_path: Path,
+) -> None:
+    local_dir = _regen_fixture(tmp_path)
+    candidate_path = _write_candidate_manifest(
+        local_dir,
+        {
+            "deployable_policy": True,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": "s3://demo-bucket/run/model.pt",
+            "policy_download_command": "stale download command",
+            "policy_ui_action": "stale UI action",
+        },
+    )
+    decision_path = local_dir / "outer_loop" / "decision.json"
+    decision_path.parent.mkdir(parents=True)
+    decision_path.write_text(
+        (
+            '{"decision":"promote_checkpoint",'
+            '"checkpoint_uri":"s3://demo-bucket/run/model.pt",'
+            '"checkpoint_uri":"s3://demo-bucket/run/other.pt"}'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="duplicate JSON field"):
+        regen_sim2real_rrd(
+            _config(),
+            local_dir=local_dir,
+            sync_inputs=False,
+            client=object(),
+        )
+
+    persisted = json.loads(candidate_path.read_text(encoding="utf-8"))
+    assert persisted["deployable_policy"] is False
+    assert persisted["policy_bytes_available"] is False
+    assert "policy_download_command" not in persisted
+    assert "policy_ui_action" not in persisted
+
+
 def test_process_control_exception_does_not_rewrite_candidate_state(
     tmp_path: Path,
 ) -> None:
@@ -1335,7 +1504,6 @@ def test_gold_render_sync_uses_only_explicit_lineage(tmp_path: Path) -> None:
             (episode / "camera-000.png").write_bytes(b"gold-frame")
 
     report = {
-        "evaluation_split": "gold_heldout",
         "outer_iteration": 3,
         "render_lineage": {
             "evaluation_split": "gold_heldout",
@@ -1356,6 +1524,103 @@ def test_gold_render_sync_uses_only_explicit_lineage(tmp_path: Path) -> None:
         / "gold-0001"
         / "camera-000.png"
     ).read_bytes() == b"gold-frame"
+
+
+def test_gold_render_sync_uses_canonical_relative_lineage_directory(
+    tmp_path: Path,
+) -> None:
+    local_dir = tmp_path / "run"
+    exact_uri = "s3://demo-bucket/sim2real-b/gold-run/outer-01/renders/"
+
+    class FakeStorage:
+        def download_directory(self, uri: str, destination: str) -> None:
+            assert uri == exact_uri
+            episode = Path(destination) / "gold-0001"
+            episode.mkdir(parents=True)
+            (episode / "camera-000.png").write_bytes(b"gold-frame")
+
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 3,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "canonical_s3_uri": exact_uri,
+            "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+        },
+    }
+
+    assert sync_heldout_renders(
+        _config("gold-run"),
+        local_dir,
+        heldout_report=report,
+        client=FakeStorage(),
+    )
+    assert (
+        local_dir
+        / "eval"
+        / "gold-heldout"
+        / "outer-01"
+        / "renders"
+        / "gold-0001"
+        / "camera-000.png"
+    ).read_bytes() == b"gold-frame"
+    assert not (local_dir / "eval/gold-heldout/outer-03/renders").exists()
+
+
+@pytest.mark.parametrize(
+    "local_relative_dir",
+    [
+        "../outside-renders",
+        "eval/gold-heldout/../outer-01/renders",
+    ],
+)
+def test_gold_render_sync_rejects_traversing_relative_lineage(
+    tmp_path: Path,
+    local_relative_dir: str,
+) -> None:
+    downloads: list[str] = []
+
+    class UnusedStorage:
+        def download_directory(self, uri: str, _destination: str) -> None:
+            downloads.append(uri)
+
+    with pytest.raises(Sim2RealRerunRegenError, match="parent traversal"):
+        sync_heldout_renders(
+            _config("gold-run"),
+            tmp_path,
+            heldout_report={
+                "render_lineage": {
+                    "evaluation_split": "gold_heldout",
+                    "canonical_s3_uri": (
+                        "s3://demo-bucket/sim2real-b/gold-run/outer-01/renders/"
+                    ),
+                    "local_relative_dir": local_relative_dir,
+                }
+            },
+            client=UnusedStorage(),
+        )
+    assert downloads == []
+
+
+def test_gold_render_sync_rejects_conflicting_local_path_aliases(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(Sim2RealRerunRegenError, match="render path sources disagree"):
+        sync_heldout_renders(
+            _config("gold-run"),
+            tmp_path,
+            heldout_report={
+                "local_renders_dir": "eval/gold-heldout/outer-02/renders",
+                "render_lineage": {
+                    "evaluation_split": "gold_heldout",
+                    "canonical_s3_uri": (
+                        "s3://demo-bucket/sim2real-b/gold-run/outer-01/renders/"
+                    ),
+                    "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+                },
+            },
+            client=object(),
+        )
 
 
 @pytest.mark.parametrize(
@@ -1444,6 +1709,52 @@ def test_gold_render_sync_unlinks_stale_symlink_after_client_error(
     )
     assert not renders_dir.is_symlink()
     assert outside_frame.read_bytes() == b"outside-frame"
+
+
+def test_gold_render_sync_rejects_symlinked_destination_ancestor(
+    tmp_path: Path,
+) -> None:
+    local_dir = tmp_path / "run"
+    local_dir.mkdir()
+    outside_eval = tmp_path / "outside-eval"
+    stale_frame = (
+        outside_eval
+        / "gold-heldout"
+        / "outer-03"
+        / "renders"
+        / "stale"
+        / "camera-000.png"
+    )
+    stale_frame.parent.mkdir(parents=True)
+    stale_frame.write_bytes(b"outside-frame")
+    (local_dir / "eval").symlink_to(outside_eval, target_is_directory=True)
+    downloads: list[str] = []
+
+    class UnusedStorage:
+        def download_directory(self, uri: str, _destination: str) -> None:
+            downloads.append(uri)
+
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 3,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "canonical_s3_uri": (
+                "s3://demo-bucket/sim2real-b/gold-run/current/renders/"
+            ),
+        },
+    }
+
+    with pytest.raises(Sim2RealRerunRegenError, match="symlink.*ancestor"):
+        sync_heldout_renders(
+            _config("gold-run"),
+            local_dir,
+            heldout_report=report,
+            client=UnusedStorage(),
+        )
+
+    assert downloads == []
+    assert stale_frame.read_bytes() == b"outside-frame"
 
 
 def test_gold_render_sync_preserves_provider_error_when_cleanup_fails(
@@ -1558,3 +1869,45 @@ def test_gold_render_sync_rejects_missing_or_validation_lineage(tmp_path: Path) 
             },
             client=UnusedStorage(),
         )
+
+
+def test_stage14_component_digest_is_refreshed_after_regen_mutation(
+    tmp_path: Path,
+) -> None:
+    output_rrd = tmp_path / "reports" / "sim2real.rrd"
+    output_rrd.parent.mkdir(parents=True)
+    output_rrd.write_bytes(b"rrd-bytes")
+
+    class Result:
+        output_rrd_path = str(output_rrd)
+        heldout_frame_count = 4
+        rollout_count = 1
+        frame_count = 4
+
+    component = {
+        "schema_version": "npa.component_record.v1",
+        "stage_id": "14",
+        "status": "completed",
+        "content_sha256": "0" * 64,
+    }
+    _update_stage14_component(
+        component,
+        Result(),
+        output_rrd,
+        "s3://demo-bucket/run/",
+        1.5,
+    )
+
+    digest_material = {
+        key: value for key, value in component.items() if key != "content_sha256"
+    }
+    assert (
+        component["content_sha256"]
+        == hashlib.sha256(
+            json.dumps(
+                digest_material,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+    )

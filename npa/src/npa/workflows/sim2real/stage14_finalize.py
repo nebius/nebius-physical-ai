@@ -106,6 +106,48 @@ def _generator_digest_evidence(
     )
 
 
+def _candidate_leaf_evidence(
+    candidate: dict[str, Any],
+    decision_candidate: dict[str, Any],
+) -> tuple[tuple[str, object], ...]:
+    return _aliased_evidence(
+        (
+            candidate,
+            "selected candidate",
+            ("policy_checkpoint_identity", "identity"),
+        ),
+        (
+            decision_candidate,
+            "outer_loop.decision.candidate",
+            ("policy_checkpoint_identity", "identity"),
+        ),
+    )
+
+
+def _assert_promotion_checkpoint_uri(decision: dict[str, Any]) -> None:
+    if decision.get("decision") != "promote_checkpoint":
+        return
+    from npa.workflows.sim2real.viz_contract import _checkpoint_uri
+
+    if _checkpoint_uri(decision.get("checkpoint_uri")) is None:
+        raise RuntimeError("Stage 14 promotion decision lacks a valid checkpoint URI")
+
+
+def _assert_candidate_leaf_identity(
+    candidate: dict[str, Any],
+    decision_candidate: dict[str, Any],
+    *,
+    checkpoint_uri: str,
+) -> None:
+    expected = Path(checkpoint_uri).name
+    for source, value in _candidate_leaf_evidence(candidate, decision_candidate):
+        if not isinstance(value, str) or value != expected:
+            raise RuntimeError(
+                f"Stage 14 selected checkpoint identity: {source} "
+                "disagrees with checkpoint URI"
+            )
+
+
 def _stage14_policy_metadata(
     evidence: dict[str, Any],
     decision: dict[str, Any],
@@ -113,6 +155,7 @@ def _stage14_policy_metadata(
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     from npa.workflows.sim2real_viz import _heldout_policy_metadata
 
+    _assert_promotion_checkpoint_uri(decision)
     try:
         selection, candidate = resolve_selected_checkpoint(evidence)
     except ValueError as exc:
@@ -120,6 +163,11 @@ def _stage14_policy_metadata(
     decision_candidate = decision.get("candidate", {})
     if not isinstance(decision_candidate, dict):
         raise RuntimeError("Stage 14 decision candidate must be an object")
+    _assert_candidate_leaf_identity(
+        candidate,
+        decision_candidate,
+        checkpoint_uri=selection["checkpoint_uri"],
+    )
     metadata = _heldout_policy_metadata(
         gold,
         checkpoint_fallback=evidence["selected_checkpoint_uri"],
@@ -136,6 +184,9 @@ def _stage14_policy_metadata(
         ),
         generator_sha256_evidence=_generator_digest_evidence(
             selection, candidate, decision_candidate
+        ),
+        checkpoint_identity_evidence=_candidate_leaf_evidence(
+            candidate, decision_candidate
         ),
     )
     return metadata, selection, candidate

@@ -524,6 +524,11 @@ def test_compat_visualization_metadata_reuses_strict_policy_contract(
         pytest.param("checkpoint_sha256", "b" * 64, id="legacy-checkpoint-digest"),
         pytest.param("size_bytes", 256, id="legacy-size"),
         pytest.param("checkpoint_size_bytes", 256, id="legacy-checkpoint-size"),
+        pytest.param(
+            "policy_checkpoint_identity",
+            "other.pt",
+            id="canonical-identity",
+        ),
         pytest.param("identity", "other.pt", id="legacy-identity"),
     ],
 )
@@ -556,6 +561,7 @@ def test_compat_visualization_metadata_reconciles_candidate_identity(
             "policy_inference_provenance": {
                 "checkpoint_uri": "s3://bucket/run/model.pt",
                 "checkpoint_sha256": "a" * 64,
+                "generator_policy_sha256": "a" * 64,
                 "checkpoint_size_bytes": 128,
                 "loaded_for_inference": True,
                 "stock_or_scripted_policy": False,
@@ -569,6 +575,32 @@ def test_compat_visualization_metadata_reconciles_candidate_identity(
 
     assert metadata["heldout_policy_identity_verified"] is False
     assert metadata["heldout_policy_learned_actor_only"] is False
+
+
+def test_compat_visualization_metadata_hides_access_for_non_deployable_policy() -> None:
+    from npa.workflows.sim2real.viz_contract import visualization_run_metadata
+
+    metadata = visualization_run_metadata(
+        config=SimpleNamespace(
+            run_id="run",
+            s3_bucket="bucket",
+            s3_prefix="runs",
+            k8s_gpu_product="gpu",
+        ),
+        artifact_root="s3://bucket/runs/run",
+        policy_checkpoint="s3://bucket/run/model.pt",
+        candidate={
+            "deployable_policy": False,
+            "policy_bytes_available": True,
+            "policy_checkpoint_uri": "s3://bucket/run/model.pt",
+            "policy_download_command": "stale download command",
+            "policy_ui_action": "stale UI action",
+        },
+    )
+
+    assert metadata["policy_deployable"] is False
+    assert metadata["policy_download_command"] == ""
+    assert metadata["policy_ui_action"] == ""
 
 
 @pytest.mark.parametrize(
@@ -1586,6 +1618,84 @@ def test_heldout_pointcloud_frames_fuses_synchronized_camera_views(
     xyz, rgb = frames[0]
     assert xyz.shape == (1500, 3)
     assert rgb.shape == (1500, 3)
+
+
+def test_heldout_pointcloud_frames_use_canonical_render_lineage(
+    tmp_path: Path,
+) -> None:
+    import numpy as np
+
+    cloud_dir = (
+        tmp_path
+        / "eval"
+        / "gold-heldout"
+        / "outer-01"
+        / "renders"
+        / viz_module.POINTCLOUD_SUBDIR
+        / "env-0001"
+    )
+    cloud_dir.mkdir(parents=True)
+    np.savez_compressed(
+        cloud_dir / "cloud-0000.npz",
+        xyz=np.ones((3, 3), dtype="float32"),
+        rgb=np.ones((3, 3), dtype="uint8"),
+    )
+
+    frames = viz_module._heldout_pointcloud_frames(
+        tmp_path,
+        {
+            "render_lineage": {
+                "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+            }
+        },
+    )
+
+    assert len(frames) == 1
+
+
+@pytest.mark.parametrize(
+    "local_relative_dir",
+    [
+        "../outside-renders",
+        "eval/gold-heldout/../outer-01/renders",
+    ],
+)
+def test_heldout_render_lineage_rejects_parent_traversal(
+    tmp_path: Path,
+    local_relative_dir: str,
+) -> None:
+    outside = tmp_path.parent / "outside-renders"
+    _write_test_png(
+        outside / "env-0001" / "camera-000.png",
+        red=40,
+        green=120,
+        blue=200,
+    )
+
+    with pytest.raises(Sim2RealVizError, match="render.*contained"):
+        viz_module._heldout_render_episodes(
+            tmp_path,
+            {
+                "render_lineage": {
+                    "local_relative_dir": local_relative_dir,
+                }
+            },
+        )
+
+
+def test_heldout_render_lineage_rejects_conflicting_local_path_aliases(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(Sim2RealVizError, match="render path sources disagree"):
+        viz_module._heldout_render_episodes(
+            tmp_path,
+            {
+                "local_renders_dir": "eval/gold-heldout/outer-02/renders",
+                "render_lineage": {
+                    "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+                },
+            },
+        )
 
 
 def test_emit_mcap_includes_pointclouds(tmp_path: Path) -> None:

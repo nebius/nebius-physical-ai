@@ -1036,6 +1036,23 @@ def _stage14_policy_metadata(
     return captured["run_metadata"], captured["heldout_report"]
 
 
+def test_stage14_rejects_promote_decision_without_checkpoint_uri() -> None:
+    from npa.workflows.sim2real.stage14_finalize import (
+        _stage14_policy_metadata as build_policy_metadata,
+    )
+
+    checkpoint_uri = "s3://unit/runs/finalize/checkpoints/model.pt"
+    evidence = _selected_checkpoint_evidence(checkpoint_uri, "a" * 64)
+    gold = _learned_actor_report(checkpoint_uri, "a" * 64)
+
+    with pytest.raises(RuntimeError, match="promotion decision.*checkpoint URI"):
+        build_policy_metadata(
+            evidence,
+            {"decision": "promote_checkpoint"},
+            gold,
+        )
+
+
 @pytest.mark.parametrize(
     ("provenance", "expected_loaded", "expected_stock_or_scripted"),
     [
@@ -1191,6 +1208,11 @@ def test_stage14_rejects_selected_candidate_digest_disagreement(
         ),
         pytest.param("policy_checkpoint_size_bytes", 256, id="policy-size"),
         pytest.param("policy_generator_sha256", "b" * 64, id="generator-digest"),
+        pytest.param(
+            "policy_checkpoint_identity",
+            "other.pt",
+            id="checkpoint-identity",
+        ),
     ],
 )
 def test_stage10_and_stage14_reject_selected_candidate_alias_disagreement(
@@ -1306,6 +1328,66 @@ def test_stage10_accepts_exact_learned_actor_checkpoint_identity() -> None:
     report = _learned_actor_report(checkpoint_uri, checkpoint_sha256)
 
     _assert_gold_checkpoint_identity(evidence, report)
+
+
+def test_stage10_seals_report_split_and_outer_iteration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.sim2real import workflow_stage
+
+    root = "s3://unit/run"
+    checkpoint_uri = f"{root}/checkpoints/model.pt"
+    evidence = _selected_checkpoint_evidence(checkpoint_uri, "a" * 64)
+    report = _learned_actor_report(checkpoint_uri, "a" * 64)
+    report["render_manifest"] = {
+        "renders_s3_uri": f"{root}/raw-renders/",
+        "episodes": [{"env_id": "gold-0001", "frames": ["camera-000.png"]}],
+    }
+    written: dict[str, object] = {}
+
+    class FakeStorage:
+        def download_directory(self, _uri: str, destination: str) -> None:
+            frame = Path(destination) / "gold-0001" / "camera-000.png"
+            frame.parent.mkdir(parents=True)
+            frame.write_bytes(b"png")
+
+        def upload_directory(self, _local: str, _uri: str) -> None:
+            return None
+
+    monkeypatch.setattr(workflow_stage, "_root", lambda _args: root)
+    monkeypatch.setattr(workflow_stage, "_work", lambda _stage: tmp_path)
+    monkeypatch.setattr(
+        workflow_stage,
+        "read_json",
+        lambda *_args, **_kwargs: evidence,
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "_run_eval",
+        lambda *_args, **_kwargs: report,
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "_assert_embodiment_evidence",
+        lambda **_kwargs: {},
+    )
+    monkeypatch.setattr(workflow_stage, "storage", FakeStorage)
+    monkeypatch.setattr(
+        workflow_stage,
+        "write_loop_output",
+        lambda _uri, payload, _directory, _outer: written.update(payload) or "",
+    )
+    monkeypatch.setattr(
+        workflow_stage,
+        "publish_component_record",
+        lambda **_kwargs: {},
+    )
+
+    workflow_stage._stage10(Namespace(outer_iteration=1, gold_count=1))
+
+    assert written["evaluation_split"] == "gold_heldout"
+    assert written["outer_iteration"] == 1
 
 
 def test_stage10_rejects_missing_generator_digest() -> None:

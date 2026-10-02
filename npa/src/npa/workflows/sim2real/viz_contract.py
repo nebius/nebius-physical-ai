@@ -77,6 +77,20 @@ def _strict_bool(value: object) -> bool | None:
     return value if value is True or value is False else None
 
 
+def _checkpoint_leaf(value: object) -> str | None:
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or not value.isascii()
+        or "/" in value
+        or "\\" in value
+        or value in {".", ".."}
+    ):
+        return None
+    return value
+
+
 def _reconcile_identity_field(
     *,
     label: str,
@@ -145,6 +159,7 @@ def _checkpoint_identity(
     digest_evidence: IdentityEvidence,
     size_evidence: IdentityEvidence,
     generator_evidence: IdentityEvidence,
+    leaf_evidence: IdentityEvidence,
 ) -> dict[str, Any]:
     errors = [
         f"policy_inference_provenance.{key} is missing"
@@ -170,6 +185,16 @@ def _checkpoint_identity(
         normalize=_checkpoint_uri,
     )
     errors.extend(field_errors)
+    leaf, field_errors = _reconcile_identity_field(
+        label="checkpoint identity",
+        evidence=leaf_evidence,
+        normalize=_checkpoint_leaf,
+    )
+    errors.extend(field_errors)
+    if leaf is not None and uri is not None:
+        uri_leaf = urlparse(str(uri)).path.rsplit("/", 1)[-1]
+        if leaf != uri_leaf:
+            errors.append("checkpoint identity does not match checkpoint URI")
     digest, field_errors = _reconcile_identity_field(
         label="checkpoint SHA-256",
         evidence=_identity_sources(
@@ -274,6 +299,7 @@ def _project_heldout_policy_metadata(
     checkpoint_sha256_evidence: IdentityEvidence = (),
     checkpoint_size_evidence: IdentityEvidence = (),
     generator_sha256_evidence: IdentityEvidence = (),
+    checkpoint_identity_evidence: IdentityEvidence = (),
 ) -> dict[str, Any]:
     report = heldout_report if isinstance(heldout_report, dict) else {}
     raw_provenance = report.get("policy_inference_provenance")
@@ -292,6 +318,7 @@ def _project_heldout_policy_metadata(
         digest_evidence=checkpoint_sha256_evidence,
         size_evidence=checkpoint_size_evidence,
         generator_evidence=generator_sha256_evidence,
+        leaf_evidence=checkpoint_identity_evidence,
     )
     errors.extend(identity["heldout_policy_identity_errors"])
     identity["heldout_policy_identity_errors"] = errors
@@ -317,6 +344,7 @@ def heldout_policy_metadata(
     checkpoint_sha256_evidence: IdentityEvidence = (),
     checkpoint_size_evidence: IdentityEvidence = (),
     generator_sha256_evidence: IdentityEvidence = (),
+    checkpoint_identity_evidence: IdentityEvidence = (),
 ) -> dict[str, Any]:
     """Project held-out evidence only after sealing exact policy identity.
 
@@ -329,6 +357,7 @@ def heldout_policy_metadata(
         checkpoint_sha256_evidence: Additional labeled checkpoint digest sources.
         checkpoint_size_evidence: Additional labeled checkpoint size sources.
         generator_sha256_evidence: Additional labeled generator digest sources.
+        checkpoint_identity_evidence: Additional labeled checkpoint leaf names.
 
     Returns:
         Strict run metadata plus explicit identity errors and policy semantics.
@@ -346,6 +375,7 @@ def heldout_policy_metadata(
         checkpoint_sha256_evidence=checkpoint_sha256_evidence,
         checkpoint_size_evidence=checkpoint_size_evidence,
         generator_sha256_evidence=generator_sha256_evidence,
+        checkpoint_identity_evidence=checkpoint_identity_evidence,
     )
 
 
@@ -384,6 +414,34 @@ def selected_checkpoint_policy_metadata(
                 candidate["generator_policy_sha256"],
             ),
         ),
+        checkpoint_identity_evidence=_fields_evidence(
+            candidate,
+            ("policy_checkpoint_identity", "identity"),
+            "selected candidate",
+        ),
+    )
+
+
+def deployable_policy_access(candidate: dict[str, Any]) -> tuple[Any, Any]:
+    """Return policy access instructions only for a deployable candidate.
+
+    Args:
+        candidate: Candidate manifest or compatibility policy-access record.
+
+    Returns:
+        The authenticated download command and UI action, or two empty strings
+        when the candidate is not explicitly deployable.
+
+    Raises:
+        None.
+    """
+
+    if candidate.get("deployable_policy") is not True:
+        return "", ""
+    return (
+        candidate.get("policy_download_command")
+        or candidate.get("authenticated_download_command", ""),
+        candidate.get("policy_ui_action") or candidate.get("ui_action", ""),
     )
 
 
@@ -392,6 +450,8 @@ def _candidate_policy_metadata(
     *,
     checkpoint: str,
 ) -> dict[str, Any]:
+    deployable = candidate.get("deployable_policy") is True
+    download_command, ui_action = deployable_policy_access(candidate)
     return {
         "policy_checkpoint": checkpoint,
         "policy_checkpoint_identity": (
@@ -406,14 +466,9 @@ def _candidate_policy_metadata(
             "policy_checkpoint_size_bytes",
             candidate.get("checkpoint_size_bytes", candidate.get("size_bytes", "")),
         ),
-        "policy_download_command": (
-            candidate.get("policy_download_command")
-            or candidate.get("authenticated_download_command", "")
-        ),
-        "policy_ui_action": (
-            candidate.get("policy_ui_action") or candidate.get("ui_action", "")
-        ),
-        "policy_deployable": candidate.get("deployable_policy") is True,
+        "policy_download_command": download_command,
+        "policy_ui_action": ui_action,
+        "policy_deployable": deployable,
     }
 
 
@@ -483,6 +538,11 @@ def visualization_run_metadata(
     candidate_generator_evidence = _fields_evidence(
         candidate, GENERATOR_DIGEST_ALIASES, "candidate"
     )
+    candidate_identity_evidence = _fields_evidence(
+        candidate,
+        ("policy_checkpoint_identity", "identity"),
+        "candidate",
+    )
     heldout_metadata = heldout_policy_metadata(
         heldout,
         checkpoint_fallback=(policy_checkpoint if policy_checkpoint else _MISSING),
@@ -490,6 +550,7 @@ def visualization_run_metadata(
         checkpoint_sha256_evidence=candidate_digest_evidence,
         checkpoint_size_evidence=candidate_size_evidence,
         generator_sha256_evidence=candidate_generator_evidence,
+        checkpoint_identity_evidence=candidate_identity_evidence,
     )
     return {
         **_artifact_metadata(config, artifact_root, progress=progress),

@@ -60,7 +60,7 @@ from npa.workflows.sim2real.utils import (
     _utc_now,
     _write_json_artifact,
 )
-from npa.workflows.sim2real.viz_contract import visualization_run_metadata
+from npa.workflows.sim2real import viz_contract
 from npa.workflows.sim2real.workflow_state_io import (
     _read_workflow_state,
     _workflow_state_path,  # noqa: F401 - legacy engine import surface
@@ -767,6 +767,7 @@ def run_finalize(
         if candidate_path.is_file()
         else {}
     )
+    policy_access = viz_contract.deployable_policy_access(candidate_payload)
     final_iterations = list(final_inner.get("iterations") or [])
     final_update = dict(
         (final_iterations[-1].get("update") or {}) if final_iterations else {}
@@ -824,10 +825,8 @@ def run_finalize(
             "size_bytes": candidate_payload.get("policy_checkpoint_size_bytes", 0),
             "checkpoint_uri": candidate_payload.get("policy_checkpoint_uri", ""),
             "candidate_manifest_uri": f"{_artifact_root_uri(config)}/checkpoints/candidate/candidate.json",
-            "authenticated_download_command": candidate_payload.get(
-                "policy_download_command", ""
-            ),
-            "ui_action": candidate_payload.get("policy_ui_action", ""),
+            "authenticated_download_command": policy_access[0],
+            "ui_action": policy_access[1],
             "viewer_executes_policy": False,
         },
         "image_completeness": {
@@ -999,7 +998,7 @@ def _run_sim2real_viz_stage(
             heldout_report=heldout_report,
             stage_components=stage_components,
             outer_history=outer_history,
-            run_metadata=visualization_run_metadata(
+            run_metadata=viz_contract.visualization_run_metadata(
                 config=config,
                 artifact_root=_artifact_root_uri(config),
                 policy_checkpoint=str(

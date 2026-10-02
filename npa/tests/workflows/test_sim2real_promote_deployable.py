@@ -73,7 +73,22 @@ def test_promote_stub_without_real_checkpoint(tmp_path):
     assert not (tmp_path / "outer_loop" / "loopback.json").exists()
 
 
-def test_below_threshold_real_checkpoint_remains_packaged_candidate(tmp_path):
+def test_below_threshold_real_checkpoint_remains_packaged_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.workflows.sim2real import decision as decision_module
+
+    class FakeStorage:
+        def download_file(self, _uri: str, local_path: str) -> str:
+            Path(local_path).write_bytes(b"real-checkpoint")
+            return local_path
+
+    monkeypatch.setattr(
+        decision_module.StorageClient,
+        "from_environment",
+        lambda **_kwargs: FakeStorage(),
+    )
     report = _real_report(0.125)
 
     decision = threshold_decision(
@@ -92,6 +107,8 @@ def test_below_threshold_real_checkpoint_remains_packaged_candidate(tmp_path):
     assert candidate["threshold_met"] is False
     assert candidate["promotion_decision"] == "loop_back_to_inner_loop"
     assert candidate["candidate_status"] == "below_threshold_policy_artifact"
+    assert "policy_download_command" not in candidate
+    assert "policy_ui_action" not in candidate
     assert decision["candidate"] == candidate
     assert candidate["promoted_at"] == ""
     loopback = json.loads((tmp_path / "outer_loop" / "loopback.json").read_text())

@@ -14,6 +14,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
+from npa.workflows.sim2real.checkpoint_selection import (
+    resolve_selected_checkpoint,
+    select_best_checkpoint,
+    validation_checkpoint_candidate,
+)
 from npa.workflows.sim2real.constants import SCHEMA_RL_SIGNAL
 from npa.workflows.sim2real.models import (
     Sim2RealLoopConfig,
@@ -522,20 +527,14 @@ def run_inner_loop(
                     )
                 validation_reports.append(report)
                 checkpoint_candidates.append(
-                    {
-                        "evaluation_split": "validation",
-                        "outer_iteration": outer_iteration,
-                        "inner_iteration": iteration,
-                        "training_iteration": training_iteration,
-                        "checkpoint_uri": candidate_uri,
-                        "checkpoint_sha256": report.get("policy_checkpoint_sha256", ""),
-                        "validation_report_uri": report["report_uri"],
-                        "validation_report": report,
-                    }
+                    validation_checkpoint_candidate(
+                        report,
+                        checkpoint_uri=candidate_uri,
+                        outer_iteration=outer_iteration,
+                        inner_iteration=iteration,
+                        training_iteration=training_iteration,
+                    )
                 )
-            from npa.workflows.sim2real.checkpoint_selection import (
-                select_best_checkpoint,
-            )
 
             interim_selection = select_best_checkpoint(checkpoint_candidates)
             current_checkpoint_uri = str(interim_selection["checkpoint_uri"])
@@ -612,8 +611,6 @@ def run_inner_loop(
     selected_checkpoint_uri = current_checkpoint_uri
     selected_validation_report: dict[str, Any] | None = None
     if checkpoint_candidates:
-        from npa.workflows.sim2real.checkpoint_selection import select_best_checkpoint
-
         checkpoint_selection = select_best_checkpoint(checkpoint_candidates)
         selected_checkpoint_uri = str(checkpoint_selection["checkpoint_uri"])
         selected_validation_report = dict(
@@ -665,6 +662,14 @@ def run_inner_loop(
         "selected_validation_report": selected_validation_report,
         "resumed_from_checkpoint_uri": str(resume_checkpoint_uri or "").strip(),
     }
+    if checkpoint_candidates:
+        evidence["checkpoint_candidates"] = checkpoint_candidates
+        try:
+            resolve_selected_checkpoint(evidence)
+        except ValueError as exc:
+            raise Sim2RealLoopError(
+                f"legacy inner-loop checkpoint identity is incomplete: {exc}"
+            ) from exc
     evidence_path = (
         local_dir / "inner_loop" / f"outer-{outer_iteration:02d}" / "evidence.json"
     )

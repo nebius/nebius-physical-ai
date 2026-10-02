@@ -805,6 +805,18 @@ def _stage10(args: argparse.Namespace) -> None:
         output_path=report_path,
         tag=f"gold-o{args.outer_iteration:02d}",
     )
+    recorded_split = report.get("evaluation_split")
+    if recorded_split not in (None, "", "gold_heldout"):
+        raise RuntimeError("Stage 10 report evaluation split disagrees with gold")
+    recorded_outer = report.get("outer_iteration")
+    if recorded_outer is not None and (
+        not isinstance(recorded_outer, int)
+        or isinstance(recorded_outer, bool)
+        or recorded_outer != args.outer_iteration
+    ):
+        raise RuntimeError("Stage 10 report outer iteration disagrees with execution")
+    report["evaluation_split"] = "gold_heldout"
+    report["outer_iteration"] = args.outer_iteration
     selected_candidate = _assert_gold_checkpoint_identity(evidence, report)
     gold_embodiment = _assert_embodiment_evidence(
         root=root, payload=report, stage="Stage 10 gold evaluation"

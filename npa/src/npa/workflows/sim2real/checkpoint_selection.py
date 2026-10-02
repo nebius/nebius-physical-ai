@@ -116,6 +116,46 @@ def _mean_distance(summary: dict[str, Any]) -> float:
     return distance
 
 
+def validation_checkpoint_candidate(
+    report: dict[str, Any],
+    *,
+    checkpoint_uri: str,
+    outer_iteration: int,
+    inner_iteration: int,
+    training_iteration: int,
+) -> dict[str, Any]:
+    """Build complete validation evidence for one checkpoint.
+
+    Args:
+        report: Validation report produced by the checkpoint.
+        checkpoint_uri: Exact checkpoint object evaluated by the report.
+        outer_iteration: Outer-loop iteration that produced the checkpoint.
+        inner_iteration: Inner-loop iteration that produced the checkpoint.
+        training_iteration: Training iteration recorded by the checkpoint.
+
+    Returns:
+        A validation candidate with complete checkpoint identity and provenance.
+
+    Raises:
+        KeyError: If the validation report does not declare its report URI.
+    """
+
+    provenance = report.get("policy_inference_provenance")
+    provenance = provenance if isinstance(provenance, dict) else {}
+    return {
+        "evaluation_split": "validation",
+        "outer_iteration": outer_iteration,
+        "inner_iteration": inner_iteration,
+        "training_iteration": training_iteration,
+        "checkpoint_uri": checkpoint_uri,
+        "checkpoint_sha256": report.get("policy_checkpoint_sha256", ""),
+        "checkpoint_size_bytes": report.get("policy_checkpoint_size_bytes", 0),
+        "generator_policy_sha256": provenance.get("generator_policy_sha256", ""),
+        "validation_report_uri": report["report_uri"],
+        "validation_report": report,
+    }
+
+
 def checkpoint_rank_key(candidate: dict[str, Any]) -> tuple[Any, ...]:
     """Rank strict manipulation success first, with deterministic tie breaks.
 

@@ -2506,28 +2506,84 @@ def is_reference_stub_rollout(rollout_dir: Path, frames: list[np.ndarray]) -> bo
     return "quality" in manifest
 
 
+def _contained_render_path(
+    local_dir: Path,
+    value: object,
+    *,
+    source: str,
+    require_relative: bool = False,
+) -> Path:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise Sim2RealVizError(f"{source} render path is malformed")
+    root = Path(local_dir).resolve()
+    candidate = Path(value)
+    if require_relative and candidate.is_absolute():
+        raise Sim2RealVizError(f"{source} render path must be relative and contained")
+    if ".." in candidate.parts:
+        raise Sim2RealVizError(
+            f"{source} render path must be contained without parent traversal"
+        )
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        resolved = candidate.resolve()
+    except OSError as exc:
+        raise Sim2RealVizError(f"{source} render path cannot be resolved") from exc
+    if not resolved.is_relative_to(root):
+        raise Sim2RealVizError(f"{source} render path must be contained in local_dir")
+    return resolved
+
+
+def _heldout_renders_root(
+    local_dir: Path,
+    heldout_report: dict[str, Any] | None,
+) -> Path:
+    report = heldout_report if isinstance(heldout_report, dict) else {}
+    raw_lineage = report.get("render_lineage")
+    if raw_lineage is not None and not isinstance(raw_lineage, dict):
+        raise Sim2RealVizError("render_lineage must be an object")
+    lineage = raw_lineage or {}
+    candidates: list[tuple[str, Path]] = []
+    if report.get("local_renders_dir") not in (None, ""):
+        candidates.append(
+            (
+                "local_renders_dir",
+                _contained_render_path(
+                    local_dir,
+                    report["local_renders_dir"],
+                    source="local_renders_dir",
+                ),
+            )
+        )
+    if lineage.get("local_relative_dir") not in (None, ""):
+        candidates.append(
+            (
+                "render_lineage.local_relative_dir",
+                _contained_render_path(
+                    local_dir,
+                    lineage["local_relative_dir"],
+                    source="render_lineage.local_relative_dir",
+                    require_relative=True,
+                ),
+            )
+        )
+    if len({path for _source, path in candidates}) > 1:
+        raise Sim2RealVizError("render path sources disagree")
+    if candidates:
+        return candidates[0][1]
+    return _contained_render_path(
+        local_dir,
+        "eval/heldout/renders",
+        source="default held-out",
+        require_relative=True,
+    )
+
+
 def _heldout_render_episodes(
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
 ) -> list[tuple[str, dict[str, list[np.ndarray]]]]:
-    report = heldout_report or {}
-    renders_value = str(report.get("local_renders_dir") or "")
-    recorded = Path(renders_value) if renders_value else Path()
-    try:
-        usable_recorded = bool(
-            renders_value
-            and recorded.resolve().is_relative_to(Path(local_dir).resolve())
-        )
-    except OSError:
-        usable_recorded = False
-    relative = str((report.get("render_lineage") or {}).get("local_relative_dir") or "")
-    renders_root = (
-        recorded
-        if usable_recorded
-        else local_dir / relative
-        if relative
-        else local_dir / "eval" / "heldout" / "renders"
-    )
+    renders_root = _heldout_renders_root(local_dir, heldout_report)
     manifest = (heldout_report or {}).get("render_manifest") or {}
     episodes: list[tuple[str, dict[str, list[np.ndarray]]]] = []
     for item in manifest.get("episodes") or []:
@@ -2618,12 +2674,7 @@ def _heldout_pointcloud_frames(
     reconstructed sim geometry. Empty when no point clouds were captured.
     """
 
-    renders_value = str((heldout_report or {}).get("local_renders_dir") or "")
-    renders_root = (
-        Path(renders_value)
-        if renders_value
-        else local_dir / "eval" / "heldout" / "renders"
-    )
+    renders_root = _heldout_renders_root(local_dir, heldout_report)
     root = renders_root / POINTCLOUD_SUBDIR
     if not root.is_dir():
         return []

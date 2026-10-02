@@ -2339,6 +2339,107 @@ def test_default_inner_loop_provenance_is_reference(tmp_path: Path) -> None:
     assert evidence["signal_converter_source"] == "reference"
 
 
+def test_legacy_inner_loop_retains_complete_selected_checkpoint_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from npa.workflows.sim2real import engine as engine_module
+    from npa.workflows.sim2real.checkpoint_selection import (
+        resolve_selected_checkpoint,
+    )
+    from npa.workflows.sim2real import resume_state
+
+    checkpoint_uri = "s3://bucket/run/model.pt"
+    candidate = {
+        "evaluation_split": "validation",
+        "outer_iteration": 1,
+        "inner_iteration": 1,
+        "training_iteration": 1,
+        "checkpoint_uri": checkpoint_uri,
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": "a" * 64,
+        "validation_report_uri": "s3://bucket/run/validation/report.json",
+        "validation_report": {
+            "success_rate": 1.0,
+            "per_env": [{"env_id": "validation-0001", "success": True}],
+        },
+    }
+    completed = {
+        "iteration_record": {
+            "mean_reward": 0.5,
+            "signal_calibration": {},
+            "policy_delta_vs_control": 0.25,
+        },
+        "signals": [{"mean_reward": 0.5}],
+        "checkpoint_candidates": [candidate],
+        "loss_trend_entry": {"before": 1.0, "after": 0.5},
+        "quality": 1.0,
+        "reward_head": 0.2,
+        "action_bias": 0.1,
+        "current_checkpoint_uri": checkpoint_uri,
+    }
+
+    class FakeDurableStateStore:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def load_unit(self, name: str, _payload: dict) -> dict | None:
+            return completed if name.endswith("-complete") else None
+
+    monkeypatch.setattr(resume_state, "DurableStateStore", FakeDurableStateStore)
+    monkeypatch.setattr(
+        engine_module,
+        "_signal_diversity_report",
+        lambda _signals: {
+            "degenerate": False,
+            "distinct_scores": 1,
+            "distinct_mean_rewards": 1,
+            "total_rollouts": 1,
+            "score_values": [0.5],
+        },
+    )
+    config = Sim2RealLoopConfig(
+        run_id="legacy-complete-checkpoint-evidence",
+        output_dir=tmp_path,
+        inner_iterations=1,
+    )
+
+    evidence = run_inner_loop(config, local_dir=tmp_path, initial_quality=0.4)
+
+    selection, selected = resolve_selected_checkpoint(evidence)
+    assert selection["checkpoint_size_bytes"] == 128
+    assert selection["generator_policy_sha256"] == "a" * 64
+    assert selected == candidate
+
+
+def test_legacy_validation_candidate_carries_complete_checkpoint_identity() -> None:
+    from npa.workflows.sim2real.checkpoint_selection import (
+        validation_checkpoint_candidate,
+    )
+
+    report = {
+        "report_uri": "s3://bucket/run/validation/report.json",
+        "policy_checkpoint_sha256": "a" * 64,
+        "policy_checkpoint_size_bytes": 128,
+        "policy_inference_provenance": {
+            "generator_policy_sha256": "a" * 64,
+        },
+    }
+
+    candidate = validation_checkpoint_candidate(
+        report,
+        checkpoint_uri="s3://bucket/run/model.pt",
+        outer_iteration=1,
+        inner_iteration=2,
+        training_iteration=3,
+    )
+
+    assert candidate["checkpoint_sha256"] == "a" * 64
+    assert candidate["checkpoint_size_bytes"] == 128
+    assert candidate["generator_policy_sha256"] == "a" * 64
+
+
 def test_full_loop_writes_rerun_recording_by_default(tmp_path: Path) -> None:
     command = _component_command(tmp_path)
     config = Sim2RealLoopConfig(

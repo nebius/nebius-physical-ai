@@ -103,22 +103,50 @@ def run_prefix_uri(config: Sim2RealLoopConfig) -> str:
     return f"{_artifact_root_uri(config).rstrip('/')}/"
 
 
+def _canonical_outer_index(name: str) -> int | None:
+    if not name.startswith("outer-"):
+        return None
+    try:
+        index = int(name.removeprefix("outer-"))
+    except ValueError:
+        return None
+    if index <= 0 or name != f"outer-{index:02d}":
+        return None
+    return index
+
+
 def _gold_eval_relative_dir(inner_evidence: str | Path) -> Path:
     outer_name = Path(inner_evidence).parent.name
-    try:
-        outer_iteration = int(outer_name.removeprefix("outer-"))
-    except ValueError as exc:
-        raise Sim2RealRerunRegenError(
-            f"inner evidence has no canonical outer iteration: {inner_evidence}"
-        ) from exc
-    if outer_name != f"outer-{outer_iteration:02d}" or outer_iteration <= 0:
+    outer_iteration = _canonical_outer_index(outer_name)
+    if outer_iteration is None:
         raise Sim2RealRerunRegenError(
             f"inner evidence has no canonical outer iteration: {inner_evidence}"
         )
     return Path("eval") / "gold-heldout" / outer_name
 
 
+def _completed_local_outer_pair(local_dir: Path) -> tuple[Path, Path] | None:
+    pairs: list[tuple[int, Path, Path]] = []
+    for evidence_path in (Path(local_dir) / "inner_loop").glob("outer-*/evidence.json"):
+        outer_name = evidence_path.parent.name
+        outer_index = _canonical_outer_index(outer_name)
+        if outer_index is None:
+            continue
+        report_path = (
+            Path(local_dir) / "eval" / "gold-heldout" / outer_name / "report.json"
+        )
+        if report_path.is_file():
+            pairs.append((outer_index, evidence_path, report_path))
+    if not pairs:
+        return None
+    _outer, evidence, report = max(pairs, key=lambda item: item[0])
+    return evidence, report
+
+
 def _gold_report_path(_config: Sim2RealLoopConfig, local_dir: Path) -> Path:
+    completed = _completed_local_outer_pair(local_dir)
+    if completed is not None:
+        return completed[1]
     inner_evidence = _latest_local_inner_evidence(local_dir)
     canonical = (
         Path(local_dir) / _gold_eval_relative_dir(inner_evidence) / "report.json"
@@ -133,20 +161,101 @@ def _renders_dir_for_report(
     heldout_report: dict[str, Any] | None,
 ) -> Path:
     report = heldout_report or {}
-    recorded = Path(str(report.get("local_renders_dir") or ""))
-    try:
-        if recorded.is_absolute() and recorded.resolve().is_relative_to(
-            Path(local_dir).resolve()
-        ):
-            return recorded
-    except OSError:
-        pass
-    if report.get("evaluation_split") == "gold_heldout":
-        outer = int(report.get("outer_iteration") or config.outer_iterations)
-        return (
-            Path(local_dir) / "eval" / "gold-heldout" / f"outer-{outer:02d}" / "renders"
+    raw_lineage = report.get("render_lineage")
+    if raw_lineage is not None and not isinstance(raw_lineage, dict):
+        raise Sim2RealRerunRegenError("render_lineage must be an object")
+    lineage = raw_lineage or {}
+    root = Path(os.path.abspath(local_dir))
+
+    def contained(
+        value: object,
+        *,
+        source: str,
+        require_relative: bool = False,
+    ) -> Path:
+        if not isinstance(value, str) or not value or value != value.strip():
+            raise Sim2RealRerunRegenError(f"{source} render path is malformed")
+        candidate = Path(value)
+        if require_relative and candidate.is_absolute():
+            raise Sim2RealRerunRegenError(
+                f"{source} render path must be relative and contained"
+            )
+        if ".." in candidate.parts:
+            raise Sim2RealRerunRegenError(
+                f"{source} render path must be contained without parent traversal"
+            )
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        normalized = Path(os.path.abspath(candidate))
+        if not normalized.is_relative_to(root):
+            raise Sim2RealRerunRegenError(
+                f"{source} render path must be contained in regeneration root"
+            )
+        return normalized
+
+    candidates: list[tuple[str, Path]] = []
+    if report.get("local_renders_dir") not in (None, ""):
+        candidates.append(
+            (
+                "local_renders_dir",
+                contained(
+                    report["local_renders_dir"],
+                    source="local_renders_dir",
+                ),
+            )
         )
-    return Path(local_dir) / "eval" / "heldout" / "renders"
+    if lineage.get("local_relative_dir") not in (None, ""):
+        candidates.append(
+            (
+                "render_lineage.local_relative_dir",
+                contained(
+                    lineage["local_relative_dir"],
+                    source="render_lineage.local_relative_dir",
+                    require_relative=True,
+                ),
+            )
+        )
+    if len({path for _source, path in candidates}) > 1:
+        raise Sim2RealRerunRegenError("render path sources disagree")
+    if candidates:
+        return candidates[0][1]
+
+    sealed = (
+        report.get("evaluation_split") == "gold_heldout"
+        or lineage.get("evaluation_split") == "gold_heldout"
+    )
+    if sealed:
+        raw_outer = report.get("outer_iteration", config.outer_iterations)
+        if (
+            not isinstance(raw_outer, int)
+            or isinstance(raw_outer, bool)
+            or raw_outer <= 0
+        ):
+            raise Sim2RealRerunRegenError(
+                "sealed gold report has an invalid outer iteration"
+            )
+        relative = f"eval/gold-heldout/outer-{raw_outer:02d}/renders"
+    else:
+        relative = "eval/heldout/renders"
+    return contained(relative, source="default held-out", require_relative=True)
+
+
+def _assert_safe_render_destination(local_dir: Path, renders_dir: Path) -> None:
+    root = Path(os.path.abspath(local_dir))
+    target = Path(os.path.abspath(renders_dir))
+    try:
+        relative = target.relative_to(root)
+    except ValueError as exc:
+        raise Sim2RealRerunRegenError(
+            "render destination must be contained in regeneration root"
+        ) from exc
+    current = root
+    for part in relative.parts[:-1]:
+        current /= part
+        if current.is_symlink():
+            raise Sim2RealRerunRegenError(
+                f"render destination has a symlinked ancestor: {current}"
+            )
 
 
 def _sibling_uri(uri: str, filename: str) -> str:
@@ -214,8 +323,12 @@ def _download_render_tree(
     storage: StorageClient,
     uri: str,
     renders_dir: Path,
+    *,
+    containment_root: Path,
 ) -> bool:
+    _assert_safe_render_destination(containment_root, renders_dir)
     renders_dir.parent.mkdir(parents=True, exist_ok=True)
+    _assert_safe_render_destination(containment_root, renders_dir)
     with tempfile.TemporaryDirectory(
         prefix=f".{renders_dir.name}.", dir=renders_dir.parent
     ) as directory:
@@ -223,14 +336,18 @@ def _download_render_tree(
         try:
             storage.download_directory(uri, str(staged))
         except (StorageError, OSError, ClientError) as exc:
+            _assert_safe_render_destination(containment_root, renders_dir)
             _remove_tree_after_failure(renders_dir, exc)
             return False
         except BaseException as exc:
+            _assert_safe_render_destination(containment_root, renders_dir)
             _remove_tree_after_failure(renders_dir, exc)
             raise
         if not _has_camera_pngs(staged):
+            _assert_safe_render_destination(containment_root, renders_dir)
             _remove_tree(renders_dir)
             return False
+        _assert_safe_render_destination(containment_root, renders_dir)
         _remove_tree(renders_dir)
         os.replace(staged, renders_dir)
     return True
@@ -249,7 +366,7 @@ def sync_regen_inputs(
     local_dir = Path(local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
 
-    inner_evidence_rel = _latest_inner_evidence_rel(storage, prefix)
+    inner_evidence_rel = _latest_completed_inner_evidence_rel(storage, prefix)
     gold_eval_rel = _gold_eval_relative_dir(inner_evidence_rel).as_posix()
     singles = {
         inner_evidence_rel: local_dir / inner_evidence_rel,
@@ -288,7 +405,7 @@ def sync_regen_inputs(
         storage, f"{prefix.rstrip('/')}/inner_loop/"
     ):
         outer_name = Path(outer_prefix.rstrip("/")).name
-        if not outer_name.startswith("outer-"):
+        if _canonical_outer_index(outer_name) is None:
             continue
         destination = local_dir / "inner_loop" / outer_name / "evidence.json"
         destination.parent.mkdir(parents=True, exist_ok=True)
@@ -353,12 +470,25 @@ def _heldout_render_source(
     heldout_report: dict[str, Any],
 ) -> tuple[str, bool]:
     prefix = run_prefix_uri(config)
-    sealed = heldout_report.get("evaluation_split") == "gold_heldout"
+    raw_lineage = heldout_report.get("render_lineage")
+    if raw_lineage is not None and not isinstance(raw_lineage, dict):
+        raise Sim2RealRerunRegenError("render_lineage must be an object")
+    lineage = raw_lineage or {}
+    report_split = heldout_report.get("evaluation_split")
+    lineage_split = lineage.get("evaluation_split")
+    if report_split not in (None, "", lineage_split) and lineage_split not in (
+        None,
+        "",
+    ):
+        raise Sim2RealRerunRegenError(
+            "sealed gold render lineage has the wrong evaluation split: "
+            "report and lineage disagree"
+        )
+    sealed = report_split == "gold_heldout" or lineage_split == "gold_heldout"
     if not sealed:
         return f"{prefix}eval/heldout/renders/", False
-    lineage = dict(heldout_report.get("render_lineage") or {})
     render_uri = _sealed_render_uri(lineage)
-    if lineage.get("evaluation_split") != "gold_heldout":
+    if lineage_split not in (None, "gold_heldout"):
         raise Sim2RealRerunRegenError(
             "sealed gold render lineage has the wrong evaluation split"
         )
@@ -381,7 +511,10 @@ def _sync_legacy_render_source(
     for source_prefix in reversed(sorted(_list_common_prefixes(storage, root))):
         base_uri = f"s3://{bucket}/{source_prefix}"
         if not _download_render_tree(
-            storage, f"{base_uri}{render_suffix}", renders_dir
+            storage,
+            f"{base_uri}{render_suffix}",
+            renders_dir,
+            containment_root=local_dir,
         ):
             continue
         manifest_path = renders_dir.parent / manifest_name
@@ -439,7 +572,13 @@ def sync_heldout_renders(
     report = heldout_report or {}
     canonical, sealed = _heldout_render_source(config, report)
     renders_dir = _renders_dir_for_report(config, local_dir, report)
-    if _download_render_tree(storage, canonical, renders_dir):
+    _assert_safe_render_destination(local_dir, renders_dir)
+    if _download_render_tree(
+        storage,
+        canonical,
+        renders_dir,
+        containment_root=local_dir,
+    ):
         return True
     if sealed:
         return False
@@ -462,11 +601,8 @@ def _latest_inner_evidence_rel(client: StorageClient, prefix_uri: str) -> str:
         client, f"{prefix_uri.rstrip('/')}/inner_loop/"
     ):
         outer_name = Path(outer_prefix.rstrip("/")).name
-        if not outer_name.startswith("outer-"):
-            continue
-        try:
-            outer_index = int(outer_name.removeprefix("outer-"))
-        except ValueError:
+        outer_index = _canonical_outer_index(outer_name)
+        if outer_index is None:
             continue
         key = f"{outer_prefix.rstrip('/')}/evidence.json"
         candidates.append(
@@ -477,14 +613,46 @@ def _latest_inner_evidence_rel(client: StorageClient, prefix_uri: str) -> str:
     return sorted(candidates)[-1][1]
 
 
+def _latest_completed_inner_evidence_rel(
+    client: StorageClient,
+    prefix_uri: str,
+) -> str:
+    _bucket, run_prefix = _parse_s3(prefix_uri)
+    if run_prefix and not run_prefix.endswith("/"):
+        run_prefix += "/"
+
+    def canonical_prefixes(category: str) -> dict[int, str]:
+        result: dict[int, str] = {}
+        for outer_prefix in _list_common_prefixes(
+            client,
+            f"{prefix_uri.rstrip('/')}/{category}/",
+        ):
+            outer_name = Path(outer_prefix.rstrip("/")).name
+            outer_index = _canonical_outer_index(outer_name)
+            if outer_index is not None:
+                result[outer_index] = outer_prefix
+        return result
+
+    inner = canonical_prefixes("inner_loop")
+    gold = canonical_prefixes("eval/gold-heldout")
+    completed = sorted(set(inner).intersection(gold))
+    if not completed:
+        return _latest_inner_evidence_rel(client, prefix_uri)
+    outer_prefix = inner[completed[-1]]
+    key = f"{outer_prefix.rstrip('/')}/evidence.json"
+    return key[len(run_prefix) :] if key.startswith(run_prefix) else key
+
+
 def _latest_local_inner_evidence(local_dir: Path) -> Path:
+    completed = _completed_local_outer_pair(local_dir)
+    if completed is not None:
+        return completed[0]
     candidates: list[tuple[int, Path]] = []
     for evidence_path in sorted(
         (Path(local_dir) / "inner_loop").glob("outer-*/evidence.json")
     ):
-        try:
-            outer_index = int(evidence_path.parent.name.removeprefix("outer-"))
-        except ValueError:
+        outer_index = _canonical_outer_index(evidence_path.parent.name)
+        if outer_index is None:
             continue
         candidates.append((outer_index, evidence_path))
     if candidates:
@@ -697,38 +865,42 @@ def _load_regen_state(
     *,
     sync_inputs: bool,
 ) -> _RegenState:
-    if sync_inputs:
-        sync_regen_inputs(config, work_dir, client=storage)
-    inner_path = _latest_local_inner_evidence(work_dir)
-    _rewrite_inner_evidence_paths(work_dir, inner_path)
-    heldout_path = _gold_report_path(config, work_dir)
-    if not inner_path.is_file():
-        raise Sim2RealRerunRegenError(f"missing inner evidence: {inner_path}")
-    if not heldout_path.is_file():
-        raise Sim2RealRerunRegenError(f"missing held-out report: {heldout_path}")
-    inner_evidence = _read_retained_json(inner_path, source="inner-loop evidence")
-    heldout_report = _read_retained_json(heldout_path, source="held-out report")
-    report_path = work_dir / "reports" / "sim2real-report.json"
-    report = (
-        _read_retained_json(report_path, source="Sim2Real final report")
-        if report_path.is_file()
-        else {}
-    )
-    decision_path = work_dir / "outer_loop" / "decision.json"
-    current_decision = (
-        _read_retained_json(decision_path, source="current outer-loop decision")
-        if decision_path.is_file()
-        else {}
-    )
-    policy_access = _ensure_policy_access_metadata(
-        config,
-        work_dir,
-        storage=storage,
-        report=report,
-        heldout_report=heldout_report,
-        inner_evidence=inner_evidence,
-        current_decision=current_decision,
-    )
+    try:
+        if sync_inputs:
+            sync_regen_inputs(config, work_dir, client=storage)
+        inner_path = _latest_local_inner_evidence(work_dir)
+        _rewrite_inner_evidence_paths(work_dir, inner_path)
+        heldout_path = _gold_report_path(config, work_dir)
+        if not inner_path.is_file():
+            raise Sim2RealRerunRegenError(f"missing inner evidence: {inner_path}")
+        if not heldout_path.is_file():
+            raise Sim2RealRerunRegenError(f"missing held-out report: {heldout_path}")
+        inner_evidence = _read_retained_json(inner_path, source="inner-loop evidence")
+        heldout_report = _read_retained_json(heldout_path, source="held-out report")
+        report_path = work_dir / "reports" / "sim2real-report.json"
+        report = (
+            _read_retained_json(report_path, source="Sim2Real final report")
+            if report_path.is_file()
+            else {}
+        )
+        decision_path = work_dir / "outer_loop" / "decision.json"
+        current_decision = (
+            _read_retained_json(decision_path, source="current outer-loop decision")
+            if decision_path.is_file()
+            else {}
+        )
+        policy_access = _ensure_policy_access_metadata(
+            config,
+            work_dir,
+            storage=storage,
+            report=report,
+            heldout_report=heldout_report,
+            inner_evidence=inner_evidence,
+            current_decision=current_decision,
+        )
+    except Exception:
+        _fail_closed_local_candidate(work_dir)
+        raise
     return _RegenState(
         inner_evidence,
         heldout_report,
@@ -736,6 +908,18 @@ def _load_regen_state(
         report,
         policy_access,
     )
+
+
+def _fail_closed_local_candidate(work_dir: Path) -> None:
+    try:
+        candidate_path, candidate = _read_candidate_manifest(work_dir)
+    except Exception:
+        _LOGGER.debug(
+            "Unable to parse candidate while persisting fail-closed state",
+            exc_info=True,
+        )
+        return
+    _persist_failed_candidate(candidate_path, candidate)
 
 
 def _heldout_metadata(
@@ -833,6 +1017,16 @@ def _update_stage14_component(
             "duration_s": duration_s,
         }
     )
+    digest_material = {
+        key: value for key, value in component.items() if key != "content_sha256"
+    }
+    component["content_sha256"] = hashlib.sha256(
+        json.dumps(
+            digest_material,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
 
 
 def _persist_regen_report(
@@ -1411,6 +1605,17 @@ def _retained_deployment_claim(sources: _RetainedPolicySources) -> bool:
     return _consensus_claim(evidence, default=False)
 
 
+def _assert_promoted_decision_identity(sources: _RetainedPolicySources) -> None:
+    for label, decision in (
+        ("retained promotion decision", sources.decision),
+        ("current promotion decision", sources.current_decision),
+    ):
+        if decision.get("decision") != "promote_checkpoint":
+            continue
+        if _checkpoint_uri(decision.get("checkpoint_uri")) is None:
+            raise Sim2RealRerunRegenError(f"{label} lacks a valid checkpoint URI")
+
+
 def _retained_bytes_claim(
     sources: _RetainedPolicySources,
     *,
@@ -1434,6 +1639,7 @@ def _retained_candidate_identity(
         inner_evidence,
         current_decision,
     )
+    _assert_promoted_decision_identity(sources)
     checkpoint_uri = _retained_checkpoint_uri(sources)
     checkpoint_sha256 = _retained_checkpoint_digest(sources)
     checkpoint_size = _retained_checkpoint_size(sources)
@@ -1741,6 +1947,7 @@ def _sync_heldout_eval_renders(
             storage,
             _sibling_uri(output_uri, "renders/"),
             renders_dir,
+            containment_root=work_dir,
         )
     )
     if not synced:
