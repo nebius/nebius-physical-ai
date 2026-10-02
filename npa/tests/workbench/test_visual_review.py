@@ -757,6 +757,210 @@ def test_prompt_matches_single_and_paired_parser_contracts() -> None:
     assert "confirmation field" in single
 
 
+def _prompt_schema_validator(mode: str):
+    from jsonschema import Draft202012Validator
+
+    prompt = visual_review._review_prompt("Inspect pixels.", "Stay bounded.", mode)
+    schema = json.loads(prompt.splitlines()[-1])
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema)
+
+
+@pytest.mark.parametrize("mode", ["single", "paired"])
+def test_prompt_schema_accepts_strict_response_shapes(mode: str) -> None:
+    payload = (
+        _single_payload() if mode == "single" else _paired_payload(current_is_A=True)
+    )
+
+    _prompt_schema_validator(mode).validate(payload)
+    vlm_eval.parse_visual_review_response(
+        json.dumps(payload),
+        mode=mode,
+        A_frame_ids=["A0001"],
+        B_frame_ids=["B0001"] if mode == "paired" else [],
+    )
+
+
+@pytest.mark.parametrize(
+    ("dimension", "field", "malformed"),
+    [
+        ("task_evidence", "observations", "An uncited observation."),
+        ("task_evidence", "observations", ["An uncited observation."]),
+        ("task_evidence", "hidden_state_limits", "Unseen state."),
+        ("artifact_fidelity", "uncertainty", ["Unseen views."]),
+        ("reviewability", "strengths", "Visible details."),
+        ("reviewability", "limitations", ["Uncited limitation."]),
+        ("impressiveness", "visible_basis", ["Uncited impression."]),
+        ("impressiveness", "cosmetic_only", "false"),
+        ("physical_ai_usefulness", "visible_basis", "Uncited hypothesis."),
+        ("physical_ai_usefulness", "required_properties", None),
+    ],
+)
+def test_prompt_schema_and_parser_reject_observed_hosted_type_failures(
+    dimension: str, field: str, malformed: object
+) -> None:
+    from jsonschema import ValidationError
+
+    payload = _single_payload()
+    payload["arm"][dimension][field] = malformed
+
+    with pytest.raises(ValidationError):
+        _prompt_schema_validator("single").validate(payload)
+    with pytest.raises(vlm_eval.VlmVisualReviewError):
+        _parse_single(payload)
+
+
+@pytest.mark.parametrize(("_name", "mutate"), _mutations())
+def test_prompt_schema_rejects_parser_structure_failures(_name, mutate) -> None:
+    from jsonschema import ValidationError
+
+    payload = _single_payload()
+    mutate(payload)
+
+    with pytest.raises(ValidationError):
+        _prompt_schema_validator("single").validate(payload)
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"fidelity_status": "issues_visible"},
+        {"fidelity_status": "unclear"},
+        {"reviewability": "limited"},
+        {"reviewability": "unreviewable"},
+        {"task_status": "no_evidence", "impressiveness": "none"},
+    ],
+)
+def test_prompt_schema_accepts_nonpositive_dimensions(options: dict) -> None:
+    payload = {"arm": _arm("A0001", **options)}
+
+    _prompt_schema_validator("single").validate(payload)
+    _parse_single(payload)
+
+
+def test_prompt_schema_rejects_unreviewable_with_a_strength() -> None:
+    from jsonschema import ValidationError
+
+    payload = {"arm": _arm("A0001", reviewability="unreviewable")}
+    payload["arm"]["reviewability"]["strengths"] = [_assertion("A0001")]
+
+    with pytest.raises(ValidationError):
+        _prompt_schema_validator("single").validate(payload)
+    with pytest.raises(vlm_eval.VlmVisualReviewError):
+        _parse_single(payload)
+
+
+@pytest.mark.parametrize("status", ["plausible", "unsupported", "unresolved"])
+@pytest.mark.parametrize(
+    "field",
+    ["downstream_operation", "hypothesis", "measured_consumer_test_needed"],
+)
+def test_prompt_schema_preserves_usefulness_null_contract(
+    status: str, field: str
+) -> None:
+    from jsonschema import ValidationError
+
+    payload = {"arm": _arm("A0001", usefulness=status)}
+    validator = _prompt_schema_validator("single")
+    validator.validate(payload)
+    _parse_single(payload)
+    payload["arm"]["physical_ai_usefulness"][field] = (
+        "A bounded hypothesis." if status == "unsupported" else None
+    )
+
+    with pytest.raises(ValidationError):
+        validator.validate(payload)
+    with pytest.raises(vlm_eval.VlmVisualReviewError):
+        _parse_single(payload)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("visible_evidence_difference", "A appears better."), ("preferred_set", "tie")],
+)
+def test_prompt_schema_rejects_invalid_comparisons(field: str, value: str) -> None:
+    from jsonschema import ValidationError
+
+    payload = _paired_payload(current_is_A=True)
+    payload["comparison"][field] = value
+
+    with pytest.raises(ValidationError):
+        _prompt_schema_validator("paired").validate(payload)
+    with pytest.raises(vlm_eval.VlmVisualReviewError):
+        vlm_eval.parse_visual_review_response(
+            json.dumps(payload),
+            mode="paired",
+            A_frame_ids=["A0001"],
+            B_frame_ids=["B0001"],
+        )
+
+
+@pytest.mark.parametrize(
+    ("model", "settings"),
+    [
+        (
+            "moonshotai/Kimi-K3",
+            {"reasoning_effort": "low", "response_format": {"type": "json_object"}},
+        ),
+        (
+            MODEL,
+            {"temperature": 0, "chat_template_kwargs": {"thinking_mode": "disabled"}},
+        ),
+        (
+            "openbmb/MiniCPM-V-4_5",
+            {"temperature": 0, "response_format": {"type": "json_object"}},
+        ),
+    ],
+)
+def test_review_uses_model_profile_and_retains_effective_settings(
+    monkeypatch, tmp_path: Path, model: str, settings: dict
+) -> None:
+    request = replace(_request(tmp_path), model=model)
+    calls = _install_transport(
+        monkeypatch, [_completion(_single_payload(), model=model)]
+    )
+
+    report = vlm_eval.review_visual(request)
+
+    actual = {
+        key: value
+        for key, value in calls[0].items()
+        if key not in {"model", "messages"}
+    }
+    assert actual == settings
+    outcome = report.outcomes[0]
+    assert outcome.request.request_manifest["generation_parameters"] == settings
+    assert report.status == "completed"
+    assert report.score_gate_affected is False
+    assert outcome.transport_request_sha256 == vlm_eval._sha256_json(calls[0])
+    assert outcome.provider.returned_model == model
+
+
+def test_kimi_paired_prompts_stay_identical_for_unequal_source_counts(
+    tmp_path: Path,
+) -> None:
+    request = replace(
+        _request(tmp_path, paired=True), model="moonshotai/Kimi-K3", max_frames=5
+    )
+    context = visual_review._prepare_context(
+        request, vlm_eval.visual_review_result_uri_for(request.output_path)
+    )
+    first, second = context.attempts
+
+    visual_review._assert_neutral_attempts(context.attempts)
+    assert len(first.A_frames) != len(first.B_frames)
+    assert (
+        first.request["messages"][0]["content"][0]
+        == second.request["messages"][0]["content"][0]
+    )
+    assert "temperature" not in first.request
+    assert "max_tokens" not in first.request
+    assert first.request["response_format"] == {"type": "json_object"}
+    assert visual_review._request_settings(
+        first.request
+    ) == visual_review._request_settings(second.request)
+
+
 def test_paired_review_counterbalances_and_maps_visible_improvement(
     monkeypatch, tmp_path: Path
 ) -> None:

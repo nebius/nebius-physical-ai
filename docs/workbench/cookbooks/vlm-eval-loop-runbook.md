@@ -147,6 +147,13 @@ The JSON console response contains exactly `schema_version`, `status`,
 raw provider text, rationale, request IDs, credentials, and endpoints remain
 only in private evidence.
 
+The neutral prompt includes a typed JSON Schema for the rich record. Hosted
+request settings follow the shared model profile: Kimi-K3 uses low reasoning
+effort and JSON object mode with no temperature or output-token cap; MiniMax-M3
+retains its provider-compatible omission of JSON mode. JSON mode ensures neither
+schema conformance nor grounded judgments. The client still rejects malformed
+records, unsubmitted frame citations, and inconsistent fields without repair.
+
 Without `--baseline-path`, single mode sends one neutral set A request and code
 sets comparison status to `not_provided`. With a baseline, paired mode sends two
 separately journaled requests with the source order reversed behind neutral A/B
