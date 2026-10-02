@@ -801,6 +801,7 @@ def test_driver_replacement_timeout_is_actionable(monkeypatch) -> None:  # noqa:
 
 def test_driver_replacement_rejects_false_like_container_readiness(
     monkeypatch,
+    tmp_path: Path,
 ) -> None:  # noqa: ANN001
     clock = [10.0]
     commands: list[list[str]] = []
@@ -835,7 +836,7 @@ def test_driver_replacement_rejects_false_like_container_readiness(
     ):
         _replace_driver_pod(
             kubectl_bin="kubectl",
-            kubeconfig=Path("/tmp/kubeconfig"),
+            kubeconfig=tmp_path / "kubeconfig",
             pod_name="driver-old",
             pod_uid="old",
             node="gpu-node-0",
@@ -902,6 +903,7 @@ def test_driver_reconciliation_restores_only_its_own_cordon(
 
 def test_driver_reconciliation_rejects_malformed_node_state_before_mutation(
     monkeypatch,
+    tmp_path: Path,
 ) -> None:  # noqa: ANN001
     driver_pods = {
         "items": [
@@ -936,7 +938,7 @@ def test_driver_reconciliation_rejects_malformed_node_state_before_mutation(
     ):
         _reconcile_ondelete_driver(
             "kubectl",
-            Path("/tmp/kubeconfig"),
+            tmp_path / "kubeconfig",
             deadline=30.0,
             sleep_fn=lambda _seconds: None,
             monotonic_fn=lambda: 0.0,
