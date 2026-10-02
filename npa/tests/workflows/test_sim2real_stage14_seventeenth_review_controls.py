@@ -55,6 +55,7 @@ _IMMUTABLE_STAGE14 = (
     f"{ROOT}/components/history/stage_14/"
     f"{hashlib.sha256(_STAGE14_BYTES).hexdigest()}.json"
 )
+_TEST_IMAGE = f"ghcr.io/example/sim2real-test@sha256:{'0' * 64}"
 
 
 def _present(uri: str, immutable_uri: str, payload: bytes) -> dict[str, object]:
@@ -135,6 +136,13 @@ def test_partial_regen_cannot_replace_a_journaled_generation(tmp_path: Path) -> 
         s3_bucket="demo-bucket",
         s3_prefix="sim2real",
         s3_endpoint="https://storage.example",
+        augment_image=_TEST_IMAGE,
+        envgen_image=_TEST_IMAGE,
+        policy_image=_TEST_IMAGE,
+        trainer_image=_TEST_IMAGE,
+        vlm_image=_TEST_IMAGE,
+        eval_image=_TEST_IMAGE,
+        isaac_image=_TEST_IMAGE,
     )
     snapshots = regen._capture_regen_publication_snapshots(config, storage)
 
@@ -159,6 +167,13 @@ def test_partial_regen_keeps_legacy_no_journal_runs_usable(tmp_path: Path) -> No
         s3_bucket="demo-bucket",
         s3_prefix="sim2real",
         s3_endpoint="https://storage.example",
+        augment_image=_TEST_IMAGE,
+        envgen_image=_TEST_IMAGE,
+        policy_image=_TEST_IMAGE,
+        trainer_image=_TEST_IMAGE,
+        vlm_image=_TEST_IMAGE,
+        eval_image=_TEST_IMAGE,
+        isaac_image=_TEST_IMAGE,
     )
 
     result = regen.publish_regen_outputs(

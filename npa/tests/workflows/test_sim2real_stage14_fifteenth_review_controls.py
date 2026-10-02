@@ -49,6 +49,8 @@ from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
     _stage14_component,
 )
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 VALID_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"

@@ -906,22 +906,36 @@ if ! command -v kubectl >/dev/null 2>&1; then
   sudo install -m 0755 /tmp/kubectl /usr/local/bin/kubectl
   rm -f /tmp/kubectl
 fi
+metadata_env=(env -u IAM_TOKEN -u NEBIUS_ENDPOINT -u NEBIUS_IAM_TOKEN -u NEBIUS_IAM_TOKEN_FILE -u NPA_NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN_FILE -u NPA_REUSE_IAM_TOKEN -u TF_VAR_iam_token)
+root_metadata_env=(env -u IAM_TOKEN -u NEBIUS_ENDPOINT -u NEBIUS_IAM_TOKEN -u NEBIUS_IAM_TOKEN_FILE -u NPA_NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN_FILE -u NPA_REUSE_IAM_TOKEN -u TF_VAR_iam_token HOME=/root)
 if [ -s /mnt/cloud-metadata/token ]; then
-  if ! "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
-    "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  if ! "${{metadata_env[@]}}" "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
+    "${{metadata_env[@]}}" "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
   fi
   # The backend systemd service runs as root. Provision the same rotating
   # metadata profile under root's CLI home so tenant inventory does not fail
   # merely because bootstrap itself ran through the SSH user's home.
-  if ! sudo -H "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
-    sudo -H "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  if ! sudo "${{root_metadata_env[@]}}" "$NEBIUS_BIN" profile create --endpoint api.eu.nebius.cloud --token-file /mnt/cloud-metadata/token --profile {nebius_profile} --parent-id {nebius_parent_id} >/dev/null 2>&1; then
+    sudo "${{root_metadata_env[@]}}" "$NEBIUS_BIN" --profile {nebius_profile} iam get-access-token >/dev/null
+  fi
+  if ! user_token_file="$("${{metadata_env[@]}}" "$NEBIUS_BIN" --config "$HOME/.nebius/config.yaml" --profile {nebius_profile} config get token-file --format text)"; then
+    echo "attached metadata profile provenance verification failed" >&2
+    exit 1
+  fi
+  if ! root_token_file="$(sudo "${{root_metadata_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} config get token-file --format text)"; then
+    echo "attached metadata profile provenance verification failed" >&2
+    exit 1
+  fi
+  if [ "$user_token_file" != /mnt/cloud-metadata/token ] || [ "$root_token_file" != /mnt/cloud-metadata/token ]; then
+    echo "attached metadata profile provenance verification failed" >&2
+    exit 1
   fi
   # Inventory must use the exact attached identity and its rotating metadata
   # token. Scrub any operator/bootstrap token inherited by SSH before verifying.
   expected_sa={expected_agent_service_account_id}
   expected_tenant={expected_agent_tenant_id}
   expected_project={nebius_parent_id}
-  inventory_env=(env -u NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN -u TF_VAR_iam_token -u NPA_REUSE_IAM_TOKEN HOME=/root NEBIUS_PROFILE={nebius_profile})
+  inventory_env=(env -u IAM_TOKEN -u NEBIUS_ENDPOINT -u NEBIUS_IAM_TOKEN -u NEBIUS_IAM_TOKEN_FILE -u NPA_NEBIUS_IAM_TOKEN -u NPA_NEBIUS_IAM_TOKEN_FILE -u NPA_REUSE_IAM_TOKEN -u TF_VAR_iam_token HOME=/root NEBIUS_PROFILE={nebius_profile})
   whoami_json="$(sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam whoami --format json)"
   if [ -n "$expected_sa" ] && ! python3 -c 'import json, sys; expected = sys.argv[1]; matches = lambda value: any(map(matches, value.values())) if isinstance(value, dict) else any(map(matches, value)) if isinstance(value, list) else isinstance(value, str) and value == expected; raise SystemExit(0 if matches(json.load(sys.stdin)) else 1)' "$expected_sa" <<<"$whoami_json"; then
     echo "attached service-account verification failed" >&2
@@ -935,6 +949,9 @@ if [ -s /mnt/cloud-metadata/token ]; then
       sudo "${{inventory_env[@]}}" "$NEBIUS_BIN" --config /root/.nebius/config.yaml --profile {nebius_profile} iam project get --id "$expected_project" --format json >/dev/null
     fi
   fi
+else
+  echo "attached metadata credential source is unavailable" >&2
+  exit 1
 fi
 sudo mkdir -p /opt/npa-agent
 printf '%s' {shlex.quote(deployment_b64)} | base64 -d | sudo tee /opt/npa-agent/deployment.json >/dev/null
@@ -1018,8 +1035,11 @@ FOXGLOVE_KEEP_PUBLISHED = 3
 from npa.cli.agent_resources import (
     assemble_k8s_backend_inventory,
     build_resource_inventory,
-    discover_mk8s_accelerators,
+    discover_mk8s_clusters,
+    prepare_agent_cloud_environment,
+    run_bounded_agent_command,
     run_resource_discovery_command,
+    staged_agent_credential_source,
 )
 {_AGENT_S3_GUARD_EMBED}
 
@@ -3404,11 +3424,12 @@ def _agent_k8s_backends(project: str = "") -> dict:
     config = _load_agent_config_yaml()
     alias = _agent_project_alias(project)
     ready, reason = _agent_npa_ready()
-    cloud_clusters = _agent_cloud_mk8s_clusters(alias)
+    cloud_discovery = _agent_cloud_mk8s_clusters(alias)
     inventory = assemble_k8s_backend_inventory(
         config=config, alias=alias,
         clusters_root=Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa") / "clusters",
-        cloud_clusters=cloud_clusters, npa_ready=ready,
+        cloud_clusters=cloud_discovery.get("items", []),
+        cloud_discovery=cloud_discovery, npa_ready=ready,
         npa_error=reason, terraform_dir=NPA_CLUSTER_TERRAFORM_DIR,
     )
     inventory["agent_exists"] = _configured_healthy_agent_exists(alias, config)
@@ -3439,6 +3460,11 @@ def _configured_healthy_agent_exists(alias: str, config: dict | None = None) -> 
         and str(record.get("project_id") or project_id).strip() == project_id
         and str(record.get("public_ip") or "").strip()
     )
+
+
+def _agent_uses_metadata_credentials(environment: dict | None = None) -> bool:
+    # Bootstrap stages this marker only after binding the attached-identity profile.
+    return staged_agent_credential_source(environment) == "instance_metadata"
 
 
 def _agent_command_env() -> dict:
@@ -3490,7 +3516,7 @@ def _agent_command_env() -> dict:
     kubeconfig = _agent_exact_kubeconfig()
     if kubeconfig:
         env["KUBECONFIG"] = kubeconfig
-    if Path("/mnt/cloud-metadata/token").is_file():
+    if _agent_uses_metadata_credentials(env):
         env.setdefault("NEBIUS_PROFILE", "cursor-sa")
     if not env.get("TF_VAR_ssh_public_key"):
         for candidate in ("/home/ubuntu/.ssh/id_ed25519.pub", "/root/.ssh/id_ed25519.pub"):
@@ -3593,7 +3619,7 @@ def _agent_workflow_operation_env(
     return command_env
 
 
-def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
+def _agent_cloud_mk8s_clusters(project: str = "") -> dict:
     config = _load_agent_config_yaml()
     projects = config.get("projects")
     if not isinstance(projects, dict):
@@ -3602,50 +3628,7 @@ def _agent_cloud_mk8s_clusters(project: str = "") -> list[dict]:
     if not isinstance(project_block, dict):
         project_block = {{}}
     parent_id = str(os.environ.get("NEBIUS_PROJECT_ID") or project_block.get("project_id") or "").strip()
-    if not parent_id:
-        return []
-    nebius_bin = shutil.which("nebius") or "/usr/local/bin/nebius"
-    if not Path(nebius_bin).exists() and shutil.which(nebius_bin) is None:
-        return []
-    command_env = _agent_command_env()
-    command: list[str] = [nebius_bin]
-    if Path("/mnt/cloud-metadata/token").is_file():
-        for key in ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE"):
-            command_env.pop(key, None)
-        command.extend(["--profile", "cursor-sa"])
-    try:
-        proc = subprocess.run(
-            [*command, "mk8s", "cluster", "list", "--parent-id", parent_id, "--format", "json"],
-            env=command_env,
-            text=True,
-            capture_output=True,
-            timeout=30,
-            check=False,
-        )
-        if proc.returncode != 0:
-            return []
-        payload = json.loads(proc.stdout or "{{}}")
-    except Exception:
-        return []
-    items = payload.get("items") if isinstance(payload, dict) else []
-    clusters: list[dict] = []
-    if not isinstance(items, list):
-        return clusters
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {{}}
-        status = item.get("status") if isinstance(item.get("status"), dict) else {{}}
-        cluster_id = str(metadata.get("id") or "")
-        raw = discover_mk8s_accelerators(cluster_id, command, command_env) if cluster_id else {{}}
-        clusters.append({{
-            "source": "nebius_mk8s",
-            "id": cluster_id,
-            "name": str(metadata.get("name") or ""),
-            "status": str(status.get("state") or status.get("status") or ""),
-            "raw": raw,
-        }})
-    return clusters
+    return discover_mk8s_clusters(parent_id, _agent_command_env())
 
 
 def _tenant_resource_inventory(*, force_refresh: bool = False) -> dict:
@@ -3655,7 +3638,7 @@ def _tenant_resource_inventory(*, force_refresh: bool = False) -> dict:
         runner=lambda command: run_resource_discovery_command(
             command, command_env=_agent_command_env()
         ),
-        metadata_token_available=Path("/mnt/cloud-metadata/token").is_file(),
+        metadata_token_available=_agent_uses_metadata_credentials(),
         force_refresh=force_refresh,
     )
 
@@ -3687,21 +3670,34 @@ def _run_agent_npa_json(
         raise HTTPException(status_code=409, detail=reason)
     try:
         command_env = _agent_command_env()
+        credential_source = staged_agent_credential_source(command_env)
         if extra_env:
             command_env.update({{str(key): str(value) for key, value in extra_env.items()}})
-        proc = subprocess.run(
+        command_env["NPA_NEBIUS_CREDENTIAL_SOURCE"] = credential_source
+        command_env, _credential_source = prepare_agent_cloud_environment(command_env)
+        proc = run_bounded_agent_command(
             [str(NPA_CLI), *args],
             cwd=str(NPA_SOURCE_ROOT),
             env=command_env,
-            text=True,
-            capture_output=True,
-            timeout=timeout_s if timeout_s and timeout_s > 0 else None,
-            check=False,
+            timeout_s=timeout_s,
         )
-    except subprocess.TimeoutExpired as exc:
+    except TimeoutError as exc:
+        if timeout_s is None or str(exc) != "agent command timed out":
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Agent command execution is temporarily unavailable while "
+                    "subprocess cleanup completes."
+                ),
+            ) from exc
         raise HTTPException(
             status_code=502,
             detail=f"NPA command timed out after {{timeout_s}}s: {{args}}",
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent credential source is unavailable.",
         ) from exc
     except OSError as exc:
         raise HTTPException(status_code=502, detail=f"NPA command failed to start: {{exc}}") from exc
@@ -3926,14 +3922,14 @@ def _run_sim2real_pipeline_background(run_id: str, selection: dict) -> None:
     _update_sim2real_run(run_id, mutate=_start)
     cmd = _sim2real_agent_command(run_id, output_dir)
     try:
-        proc = subprocess.run(
+        command_env, _credential_source = prepare_agent_cloud_environment(
+            _agent_command_env()
+        )
+        proc = run_bounded_agent_command(
             cmd,
             cwd=str(NPA_SOURCE_ROOT),
-            env=_agent_command_env(),
-            text=True,
-            capture_output=True,
-            timeout=900,
-            check=False,
+            env=command_env,
+            timeout_s=900,
         )
     except Exception as exc:
         def _fail_exc(details: dict) -> dict:
@@ -4493,10 +4489,15 @@ def _workflow_yaml_requests_gpu(yaml_text: str) -> bool:
 def _agent_context_has_schedulable_gpu(*, project: str, kubernetes_context: str) -> bool:
     # Check selected-context GPU capacity without exposing node metadata to the browser.
 
-    environment = _agent_workflow_operation_env(project, kubernetes_context)
+    try:
+        environment, _credential_source = prepare_agent_cloud_environment(
+            _agent_workflow_operation_env(project, kubernetes_context)
+        )
+    except ValueError:
+        return False
     kubectl = str(environment.get("NPA_KUBECTL_BIN") or "kubectl")
     try:
-        result = subprocess.run(
+        result = run_bounded_agent_command(
             [
                 kubectl,
                 "get",
@@ -4508,15 +4509,12 @@ def _agent_context_has_schedulable_gpu(*, project: str, kubernetes_context: str)
                 "--request-timeout=20s",
             ],
             env=environment,
-            text=True,
-            capture_output=True,
-            timeout=30,
-            check=False,
+            timeout_s=30,
         )
         if result.returncode:
             return False
         payload = json.loads(result.stdout or "{{}}")
-    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+    except (OSError, TimeoutError, ValueError, TypeError):
         return False
     items = payload.get("items") if isinstance(payload, dict) else []
     if not isinstance(items, list):
@@ -4669,6 +4667,9 @@ def _provision_agent_infra(
         infra = _agent_k8s_backends(project)
         selected = resolve_workflow_infrastructure(infra)
         selected_context = str(selected.get("context") or "").strip()
+        if not selected_context and (infra.get("cloud_discovery") or {{}}).get("status") == "unavailable":
+            return {{"ok": False, "status": "blocked", "error_category": "inventory_unavailable",
+                    "error": "Cloud inventory is unavailable; absence is unverified. Retry discovery before provisioning."}}
         selected_cluster_name = str(selected.get("cluster_name") or selected_context).strip()
         if (
             gpu_node_group
@@ -5245,7 +5246,7 @@ def _live_runtime_evidence(state: dict, *, preferred_render: str = "") -> dict:
     try:
         infra = _agent_k8s_backends()
     except Exception:
-        infra = {{}}
+        infra = {{"cloud_discovery": {{"status": "unavailable"}}}}
     cloud = infra.get("cloud_clusters") if isinstance(infra.get("cloud_clusters"), list) else []
     statuses: dict[str, int] = {{}}
     allowed_cloud_states = {{"running", "creating", "provisioning", "updating", "degraded", "failed", "stopped", "unknown"}}
@@ -5277,6 +5278,7 @@ def _live_runtime_evidence(state: dict, *, preferred_render: str = "") -> dict:
         artifact_render = "none"
     return {{
         "cloud_status_counts": statuses,
+        "cloud_discovery_status": (infra.get("cloud_discovery") or {{}}).get("status", "unverified"),
         "workflow_status": workflow_status,
         "artifact_loaded": bool(
             artifact_render in {{"rerun", "video"}}
@@ -5434,6 +5436,8 @@ def _maybe_toolground_chat_reply(
             for status, count in sorted(status_counts.items())
             if isinstance(count, int) and count > 0
         ) if isinstance(status_counts, dict) else ""
+        if evidence.get("cloud_discovery_status") == "unavailable":
+            cloud_summary = "unavailable; absence is unverified"
         render = str(evidence.get("artifact_render") or "none")
         if bool(evidence.get("artifact_loaded")):
             artifact_summary = f"real `{{render}}` artifact loaded in **View**"
@@ -10098,6 +10102,10 @@ def submit_npa_workflow(payload: dict):
     # confirmation that establishes the missing context.
     initial_target = resolve_workflow_infrastructure(infra_before)
     has_execution_context = bool(str(initial_target.get("context") or "").strip())
+    if not has_execution_context and (infra_before.get("cloud_discovery") or {{}}).get("status") == "unavailable":
+        blocked = _workflow_no_infra_response(validation=validation, plan=plan, run_id=run_id, infra=infra_before)
+        blocked.update(status="inventory_unavailable", error="Cloud inventory is unavailable; backend absence is unverified. Retry discovery before provisioning.")
+        return blocked
     cluster_name = requested_cluster_name or "npa-cluster"
     discovered_cluster = _agent_discovered_cluster_for_name(
         infra_before, cluster_name
@@ -10375,8 +10383,15 @@ def submit_sim2real(payload: dict | None = None):
     live_submit = None
     if script.is_file():
         try:
-            proc = subprocess.run([str(script), run_id], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30, check=False)
-        except subprocess.TimeoutExpired as exc:
+            command_env, _credential_source = prepare_agent_cloud_environment(
+                _agent_command_env()
+            )
+            proc = run_bounded_agent_command(
+                [str(script), run_id],
+                env=command_env,
+                timeout_s=30,
+            )
+        except TimeoutError as exc:
             live_submit = {{"ok": False, "error": f"live sim2real submit timed out after 30s: {{exc}}"}}
             state["latest_submit"]["live_submit"] = live_submit
             details["result"] = "failed"
@@ -10398,7 +10413,7 @@ def submit_sim2real(payload: dict | None = None):
                     "live_submit": live_submit,
                 }},
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             live_submit = {{"ok": False, "error": f"live sim2real submit failed to start: {{exc}}"}}
         else:
             if proc.returncode == 0:

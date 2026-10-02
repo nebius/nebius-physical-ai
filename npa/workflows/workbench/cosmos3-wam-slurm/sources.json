@@ -1,0 +1,8 @@
+{
+  "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+  "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+  "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+  "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+  "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+  "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+}

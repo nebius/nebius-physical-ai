@@ -20,6 +20,8 @@ import npa.workflows.sim2real_rerun_regen as regen
 from npa.workflows.sim2real_rerun_regen import Sim2RealRerunRegenError
 import npa.workflows.sim2real_viz as viz
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 CHECKPOINT_BYTES = b"policy-checkpoint-bytes"
 CHECKPOINT_SHA256 = hashlib.sha256(CHECKPOINT_BYTES).hexdigest()

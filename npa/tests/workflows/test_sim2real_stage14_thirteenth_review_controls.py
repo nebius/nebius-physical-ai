@@ -24,6 +24,8 @@ from npa.workflows.sim2real.models import Sim2RealLoopConfig
 import npa.workflows.sim2real.stage14_finalize as stage14
 import npa.workflows.sim2real_rerun_regen as regen
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 RUN_ID = "run-a"
 ROOT = f"s3://demo-bucket/sim2real/{RUN_ID}"

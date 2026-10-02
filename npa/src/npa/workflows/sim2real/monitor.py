@@ -12,8 +12,12 @@ from typing import Any
 import yaml
 
 from npa.clients.storage import StorageClient
-from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
-from npa.workflows.sim2real.constants import DEFAULT_PREFIX, DEFAULT_S3_ENDPOINT
+from npa.workflows.sim2real.config import artifact_uris_for_run
+from npa.workflows.sim2real.constants import (
+    DEFAULT_OUTER_ITERATIONS,
+    DEFAULT_PREFIX,
+    DEFAULT_S3_ENDPOINT,
+)
 from npa.workflows.sim2real.publication import (
     resolve_committed_publication_snapshot,
 )
@@ -648,14 +652,14 @@ def _stage_states(
     run_id: str,
     s3_prefix: str,
     endpoint: str,
+    outer_iterations: int = DEFAULT_OUTER_ITERATIONS,
 ) -> dict[str, dict[str, Any]]:
-    config = build_config_from_env(
+    uris = artifact_uris_for_run(
         run_id=run_id,
         s3_bucket=bucket,
         s3_prefix=s3_prefix,
-        s3_endpoint=endpoint,
+        outer_iterations=outer_iterations,
     )
-    uris = artifact_uris(config)
     client = StorageClient.from_environment(endpoint_url=endpoint)
     run_prefix = f"{s3_prefix.rstrip('/')}/{run_id}"
     workflow_state: dict[str, Any] | None = None
@@ -1020,6 +1024,9 @@ def get_sim2real_workflow_status(
         run_id=run_id,
         s3_prefix=s3_prefix,
         endpoint=endpoint,
+        outer_iterations=int(
+            os.environ.get("OUTER_ITERATIONS", DEFAULT_OUTER_ITERATIONS)
+        ),
     )
     k8s = _missing_k8s_status(run_id)
     siblings: list[dict[str, Any]] = []

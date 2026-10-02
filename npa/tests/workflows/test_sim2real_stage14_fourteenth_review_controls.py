@@ -34,6 +34,8 @@ from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
     _stage14_component,
 )
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 def _replace_checkpoint(payload: dict[str, Any], checkpoint: str) -> dict[str, Any]:
     return json.loads(json.dumps(payload).replace(CHECKPOINT, checkpoint))

@@ -22,6 +22,7 @@ import yaml
 
 from npa.cli.main import app
 from npa.cli.workbench import workflow as workflow_cli
+from npa.orchestration.npa_workflow.skypilot_render import ImagePullRequirements
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 from npa.orchestration.npa_workflow.robotwin_preflight import (
     CUSTOMER_ENTITLEMENT_ENV as ROBOTWIN_ENTITLEMENT_ENV,
@@ -36,6 +37,8 @@ from npa.orchestration.npa_workflow.robotwin_preflight import (
 
 runner = CliRunner()
 _REAL_EXECUTION_TARGET_PREFLIGHT = workflow_cli._execution_target_preflight
+
+_OPERATOR_REGISTRY = "registry.example.invalid/operator/workbench"
 
 SPEC = (
     Path(__file__).resolve().parents[3]
@@ -118,6 +121,8 @@ def _submit(*args: str):
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
+            "--registry",
+            _OPERATOR_REGISTRY,
             *args,
         ],
     )
@@ -136,6 +141,8 @@ def _submit_cosmos3(*args: str):
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
+            "--registry",
+            _OPERATOR_REGISTRY,
             *args,
         ],
     )
@@ -170,6 +177,8 @@ def _submit_nvidia_vda(*args: str):
             "--assume-decision",
             "promote_checkpoint",
             "--no-deploy-if-absent",
+            "--registry",
+            _OPERATOR_REGISTRY,
             *args,
         ],
     )
@@ -1538,6 +1547,32 @@ def test_plan_only_skips_runtime_only_prerequisites(
     assert "example-bucket" in result.output
 
 
+def test_plan_only_reports_quarantined_default_as_cli_error() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "submit",
+            str(SPEC),
+            "--run-id",
+            "quarantine-cli-contract",
+            "--assume-decision",
+            "promote_checkpoint",
+            "--no-deploy-if-absent",
+            "--plan-only",
+            "--var",
+            "bucket=real-bucket",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert result.output.startswith("Error: ")
+    assert "no consumable public release" in result.output
+    assert "operator-controlled registry/image" in result.output
+    assert not isinstance(result.exception, ValueError)
+
+
 def test_plan_only_without_source_uri_is_read_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker
 ) -> None:
@@ -2108,6 +2143,8 @@ def test_pinned_b300_without_effective_overlay_needs_no_staged_source(baked) -> 
 
 def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None:
     """An empty canonical image input must be overridable before pull probes."""
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
     checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
@@ -2117,6 +2154,10 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
         "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
         return_value=[],
     )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
     args = [
         "workbench",
         "workflow",
@@ -2124,6 +2165,8 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
         str(SIM2REAL_SPEC),
         "--assume-decision",
         "promote_checkpoint",
+        "--infra",
+        "k8s/target-context",
     ]
     for name in (
         "controller_image",
@@ -2142,15 +2185,492 @@ def test_preflight_images_accepts_the_same_config_vars_as_submit(mocker) -> None
     assert set(checked_images) == {digest_image}
 
 
-def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> None:
+def test_image_pull_execution_paths_preserve_each_rendered_target() -> None:
+    requirements = {
+        "vm": ImagePullRequirements(requires_operator=True),
+        "kubernetes": ImagePullRequirements(requires_kubernetes=True),
+        "mixed": ImagePullRequirements(
+            requires_operator=True,
+            requires_kubernetes=True,
+        ),
+    }
+
+    operator, kubernetes = workflow_cli._image_pull_execution_paths(
+        images=list(requirements),
+        requirements=requirements,
+    )
+
+    assert operator == {"vm", "mixed"}
+    assert kubernetes == {"kubernetes", "mixed"}
+
+
+def _write_pull_authority_spec(
+    tmp_path: Path,
+    clouds: tuple[str, ...],
+    *,
+    parallel: bool = False,
+    region: str = "",
+) -> Path:
+    image = f"registry.example.invalid/workflow@sha256:{'a' * 64}"
+    resources = {}
+    states = {}
+    for index, cloud in enumerate(clouds):
+        name = f"step-{index}"
+        resources[name] = {
+            "image": image,
+            "kubernetes": {
+                "pod_config": {
+                    "spec": {
+                        "serviceAccountName": name,
+                        "imagePullSecrets": [{"name": f"pull-{index}"}],
+                        "nodeSelector": {"test.example.invalid/pool": name},
+                    }
+                }
+            },
+        }
+        if cloud:
+            resources[name]["cloud"] = cloud
+        if region:
+            resources[name]["region"] = region
+        states[name] = {"resources": name, "run": {"shell": "true"}}
+        if not parallel:
+            if index == len(clouds) - 1:
+                states[name]["terminal"] = True
+            else:
+                states[name]["next"] = f"step-{index + 1}"
+    initial = "step-0"
+    if parallel:
+        initial = "fan-out"
+        states[initial] = {"parallel": list(states), "next": "done"}
+        states["done"] = {"terminal": True}
+    path = tmp_path / "pull-authorities.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "apiVersion": "npa.workflow/v0.0.1",
+                "kind": "Workflow",
+                "metadata": {"name": "pull-authorities"},
+                "resources": resources,
+                "initial": initial,
+                "states": states,
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize("cloud", ["", "nebius", "kubernetes"])
+def test_single_task_infra_override_preserves_kubernetes_authority(
+    tmp_path: Path, cloud: str
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    spec = workflow_cli.load_spec(_write_pull_authority_spec(tmp_path, (cloud,)))
+    images, requirements = workflow_cli._plan_preflight_image_requirements(
+        spec,
+        run_id="single",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        assume_decision="",
+        infra="k8s/target-context",
+    )
+
+    assert workflow_cli._image_pull_execution_paths(
+        images=images, requirements=requirements
+    ) == (set(), set(images))
+    requirement = requirements[images[0]]
+    assert requirement.service_account_names == ("step-0",)
+    assert requirement.pull_secret_name_sets == (("pull-0",),)
+    assert json.loads(requirement.pod_placement_specs[0]) == {
+        "nodeSelector": {"test.example.invalid/pool": "step-0"}
+    }
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_multitask_infra_keeps_declared_and_overridden_pull_authorities(
+    tmp_path: Path, parallel: bool
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    spec = workflow_cli.load_spec(
+        _write_pull_authority_spec(
+            tmp_path, ("nebius", "kubernetes"), parallel=parallel
+        )
+    )
+    images, requirements = workflow_cli._plan_preflight_image_requirements(
+        spec,
+        run_id="multi",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        assume_decision="",
+        infra="k8s/target-context",
+    )
+
+    # Pinned SkyPilot ignores --infra for chain DAGs and JobGroups. Runtime
+    # singleton waves may apply it, so neither authority can be discarded.
+    assert workflow_cli._image_pull_execution_paths(
+        images=images, requirements=requirements
+    ) == (set(images), set(images))
+    requirement = requirements[images[0]]
+    assert set(requirement.service_account_names) == {"step-0", "step-1"}
+    assert set(requirement.pull_secret_name_sets) == {("pull-0",), ("pull-1",)}
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_multitask_infra_cannot_resolve_an_ignored_cloud_override(
+    tmp_path: Path, parallel: bool
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    spec = workflow_cli.load_spec(
+        _write_pull_authority_spec(tmp_path, ("", "kubernetes"), parallel=parallel)
+    )
+    images, requirements = workflow_cli._plan_preflight_image_requirements(
+        spec,
+        run_id="unresolved",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        assume_decision="",
+        infra="k8s/target-context",
+    )
+
+    assert requirements[images[0]].target_unresolved
+    assert workflow_cli._image_pull_execution_paths(
+        images=images, requirements=requirements
+    ) == (set(), set())
+
+
+def test_multitask_different_context_fails_before_registry_or_cluster_checks(
+    tmp_path: Path, mocker
+) -> None:
+    path = _write_pull_authority_spec(
+        tmp_path, ("kubernetes", "kubernetes"), region="declared-context"
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials"
+    )
+    target = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(path),
+            "--infra",
+            "k8s/other",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "SkyPilot ignores resource overrides for multi-task YAML" in result.output
+    pulls.assert_not_called()
+    target.assert_not_called()
+
+
+@pytest.mark.parametrize("infra_prefix", ["k8s", "kubernetes"])
+@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("declared_context", ["foo/bar", "foo"])
+def test_multitask_context_with_slash_requires_exact_probe_target(
+    tmp_path: Path,
+    mocker,
+    infra_prefix: str,
+    parallel: bool,
+    declared_context: str,
+) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    path = _write_pull_authority_spec(
+        tmp_path,
+        ("kubernetes", "kubernetes"),
+        parallel=parallel,
+        region=declared_context,
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    target = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
+    bootstrap = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
+        return_value=[],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            "preflight-images",
+            str(path),
+            "--infra",
+            f"{infra_prefix}/foo/bar",
+        ],
+    )
+
+    if declared_context == "foo/bar":
+        assert result.exit_code == 0, result.output
+        assert target.call_args.kwargs["context"] == "foo/bar"
+        assert pulls.call_args.kwargs["context"] == "foo/bar"
+        assert bootstrap.call_args.kwargs["context"] == "foo/bar"
+    else:
+        assert result.exit_code == 1
+        assert "different --infra context" in result.output
+        target.assert_not_called()
+        pulls.assert_not_called()
+        bootstrap.assert_not_called()
+
+
+@pytest.mark.parametrize("parallel", [False, True])
+def test_multitask_submit_manifest_gate_cannot_skip_declared_vm_failure(
+    tmp_path: Path, mocker, parallel: bool
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
+
+    path = _write_pull_authority_spec(
+        tmp_path, ("nebius", "kubernetes"), parallel=parallel
+    )
+    pulls = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        side_effect=lambda images, **_kwargs: [
+            ImagePullCheck(image=image, status="denied", detail="operator denied")
+            for image in images
+        ],
+    )
+
+    with pytest.raises(typer.Exit):
+        workflow_cli._preflight_submit_image_manifests(
+            path,
+            options=SkypilotRenderOptions(materialize_registry_secrets=False),
+            assume_decision="",
+            enabled=True,
+            infra="k8s/target-context",
+        )
+
+    pulls.assert_called_once()
+
+
+def test_effective_pull_secret_sets_do_not_union_distinct_paths() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("path-a",), ("path-b",)),
+        )
+    }
+
+    effective = workflow_cli._image_pull_secret_sets(
+        images=["image"],
+        requirements=requirements,
+        kubernetes_images={"image"},
+        inherited_pull_secrets=("global-primary", "global-secondary"),
+    )
+
+    assert effective == {
+        "image": (
+            ("path-a", "global-secondary"),
+            ("path-b", "global-secondary"),
+        )
+    }
+
+
+def test_effective_pull_paths_preserve_service_account_authority() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("shared",), ("shared",)),
+            service_account_names=("service-account-a", "service-account-b"),
+        )
+    }
+
+    effective = workflow_cli._image_pull_paths(
+        images=["image"],
+        requirements=requirements,
+        kubernetes_images={"image"},
+        inherited_service_account_name="base-service-account",
+    )
+
+    assert effective == {
+        "image": (
+            (("shared",), "service-account-a", "{}"),
+            (("shared",), "service-account-b", "{}"),
+        )
+    }
+
+
+def test_effective_pull_paths_merge_global_and_task_placement() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("shared",),),
+            service_account_names=("service-account",),
+            pod_placement_specs=(
+                json.dumps(
+                    {
+                        "nodeSelector": {"nebius.com/node-group": "gpu"},
+                        "runtimeClassName": "nvidia",
+                    }
+                ),
+            ),
+        )
+    }
+
+    effective = workflow_cli._image_pull_paths(
+        images=["image"],
+        requirements=requirements,
+        kubernetes_images={"image"},
+        inherited_service_account_name="base-service-account",
+        inherited_pod_placement_json=json.dumps(
+            {"nodeSelector": {"kubernetes.io/os": "linux"}}
+        ),
+    )
+
+    assert effective == {
+        "image": (
+            (
+                ("shared",),
+                "service-account",
+                (
+                    '{"nodeSelector":{"kubernetes.io/os":"linux",'
+                    '"nebius.com/node-group":"gpu"},'
+                    '"runtimeClassName":"nvidia"}'
+                ),
+            ),
+        )
+    }
+
+
+def test_unresolved_cloud_is_not_certified_as_operator_pull() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            target_unresolved=True,
+        )
+    }
+
+    operator_images, kubernetes_images = workflow_cli._image_pull_execution_paths(
+        images=["image"],
+        requirements=requirements,
+    )
+
+    assert operator_images == set()
+    assert kubernetes_images == set()
+
+
+def test_effective_pull_secret_sets_reject_invalid_multi_entry_override() -> None:
+    from npa.orchestration.skypilot.registry_preflight import RegistryPreflightError
+
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("task-a", "task-b"),),
+        )
+    }
+
+    with pytest.raises(RegistryPreflightError, match="exactly one entry"):
+        workflow_cli._image_pull_secret_sets(
+            images=["image"],
+            requirements=requirements,
+            kubernetes_images={"image"},
+            inherited_pull_secrets=("global",),
+        )
+
+
+def test_effective_pull_secret_sets_reject_empty_task_override_with_base() -> None:
+    from npa.orchestration.skypilot.registry_preflight import RegistryPreflightError
+
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=((),),
+        )
+    }
+
+    with pytest.raises(RegistryPreflightError):
+        workflow_cli._image_pull_secret_sets(
+            images=["image"],
+            requirements=requirements,
+            kubernetes_images={"image"},
+            inherited_pull_secrets=("global",),
+        )
+
+
+def test_effective_pull_secret_sets_reject_task_override_after_empty_base() -> None:
+    from npa.orchestration.skypilot.registry_preflight import RegistryPreflightError
+
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("task",),),
+        )
+    }
+
+    with pytest.raises(RegistryPreflightError):
+        workflow_cli._image_pull_secret_sets(
+            images=["image"],
+            requirements=requirements,
+            kubernetes_images={"image"},
+            inherited_pull_secrets=(),
+            inherited_pull_secrets_configured=True,
+        )
+
+
+def test_effective_pull_secret_sets_accept_initial_multi_entry_task_list() -> None:
+    requirements = {
+        "image": ImagePullRequirements(
+            requires_kubernetes=True,
+            pull_secret_name_sets=(("task-a", "task-b"),),
+        )
+    }
+
+    effective = workflow_cli._image_pull_secret_sets(
+        images=["image"],
+        requirements=requirements,
+        kubernetes_images={"image"},
+    )
+
+    assert effective == {"image": (("task-a", "task-b"),)}
+
+
+@pytest.mark.parametrize(
+    ("timeout_args", "pull_timeout", "bootstrap_timeout"),
+    [
+        ([], 1800, 1800),
+        (["--image-pull-timeout-seconds", "0"], 0, 1800),
+        (["--image-pull-timeout-seconds", "3600"], 3600, 1800),
+        (["--image-bootstrap-timeout-seconds", "0"], 0, 0),
+        (
+            [
+                "--image-pull-timeout-seconds",
+                "0",
+                "--image-bootstrap-timeout-seconds",
+                "45",
+            ],
+            0,
+            45,
+        ),
+    ],
+)
+def test_preflight_images_scopes_explicit_pull_secret_to_bootstrap(
+    mocker, timeout_args, pull_timeout, bootstrap_timeout
+) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
-    mocker.patch(
+    checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         return_value=[],
     )
     contracts = mocker.patch(
         "npa.cli.workbench.workflow._preflight_image_bootstrap_contracts",
         return_value=[],
+    )
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
     )
     args = [
         "workbench",
@@ -2161,6 +2681,8 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
         "promote_checkpoint",
         "--image-pull-secret",
         "operator-registry",
+        "--infra",
+        "k8s/target-context",
     ]
     for name in (
         "controller_image",
@@ -2172,23 +2694,87 @@ def test_preflight_images_adds_explicit_pull_secret_to_every_image(mocker) -> No
     ):
         args.extend(["--var", f"{name}={digest_image}"])
 
-    result = runner.invoke(app, args)
+    result = runner.invoke(app, args + timeout_args)
 
     assert result.exit_code == 0, result.output
+    assert checks.call_args.kwargs["pull_secrets_by_image"] == {digest_image: ()}
+    assert checks.call_args.kwargs["context"] == "target-context"
+    assert checks.call_args.kwargs["namespace"] == "target-namespace"
+    assert checks.call_args.kwargs["pull_secret_sets_by_image"] == {digest_image: ((),)}
+    assert checks.call_args.kwargs["service_account_names_by_image"] == {
+        digest_image: ("skypilot-service-account",)
+    }
+    assert checks.call_args.kwargs["operator_images"] == set()
+    assert checks.call_args.kwargs["kubernetes_images"] == {digest_image}
+    assert checks.call_args.kwargs["target_pull_timeout_seconds"] == pull_timeout
+    assert (
+        contracts.call_args.kwargs["observation_timeout_seconds"] == bootstrap_timeout
+    )
     assert contracts.call_args.kwargs["pull_secrets_by_image"] == {
         digest_image: ("operator-registry",)
     }
+    assert contracts.call_args.kwargs["service_accounts_by_image"] == {
+        digest_image: "skypilot-service-account"
+    }
+    assert contracts.call_args.kwargs["context"] == "target-context"
+
+
+@pytest.mark.parametrize("pull_timeout", [None, 0, 3600])
+def test_submit_image_preflight_keeps_pull_and_bootstrap_deadlines_separate(
+    mocker, pull_timeout
+) -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+
+    image = "docker.io/library/alpine:3.22.0"
+    mocker.patch.object(
+        workflow_cli,
+        "_plan_preflight_image_requirements",
+        return_value=([image], {}),
+    )
+    checks = mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
+        return_value=[],
+    )
+    contracts = mocker.patch.object(
+        workflow_cli, "_preflight_image_bootstrap_contracts", return_value=[]
+    )
+    workflow_cli._preflight_submit_images(
+        SIM2REAL_SPEC,
+        spec=SimpleNamespace(name="probe"),
+        options=SkypilotRenderOptions(),
+        assume_decision="",
+        enabled=True,
+        image_bootstrap_timeout_seconds=45,
+        image_pull_timeout_seconds=pull_timeout,
+    )
+    assert checks.call_args.kwargs["target_pull_timeout_seconds"] == (
+        45 if pull_timeout is None else pull_timeout
+    )
+    assert contracts.call_args.kwargs["observation_timeout_seconds"] == 45
 
 
 def test_preflight_images_deduplicates_declared_and_explicit_pull_secret(
     mocker,
 ) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
     digest_image = f"cr.example.invalid/npa@sha256:{'a' * 64}"
     mocker.patch(
         "npa.cli.workbench.workflow._plan_preflight_image_requirements",
         return_value=(
             [digest_image],
-            {digest_image: ("operator-registry",)},
+            {
+                digest_image: ImagePullRequirements(
+                    requires_kubernetes=True,
+                    pull_secret_name_sets=(("operator-registry",),),
+                    service_account_names=(None,),
+                    pod_placement_specs=("{}",),
+                )
+            },
         ),
     )
     checks = mocker.patch(
@@ -2207,6 +2793,10 @@ def test_preflight_images_deduplicates_declared_and_explicit_pull_secret(
             "workflow",
             "preflight-images",
             str(COSMOS3_SPEC),
+            "--infra",
+            "k8s/unit-context",
+            "--registry",
+            _OPERATOR_REGISTRY,
             "--image-pull-secret",
             "operator-registry",
         ],
@@ -2219,6 +2809,12 @@ def test_preflight_images_deduplicates_declared_and_explicit_pull_secret(
 
 
 def test_preflight_images_covers_every_decision_branch(mocker) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
     checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         return_value=[],
@@ -2235,6 +2831,10 @@ def test_preflight_images_covers_every_decision_branch(mocker) -> None:
             "workflow",
             "preflight-images",
             str(COSMOS3_SPEC),
+            "--infra",
+            "k8s/unit-context",
+            "--registry",
+            _OPERATOR_REGISTRY,
             "--image-pull-secret",
             "operator-registry",
         ],
@@ -2246,7 +2846,7 @@ def test_preflight_images_covers_every_decision_branch(mocker) -> None:
     assert any("npa-cosmos-curate:" in image for image in checked_images)
     assert any("npa-fiftyone:" in image for image in checked_images)
     assert checks.call_args.kwargs["pull_secrets_by_image"] == {
-        image: ("operator-registry",) for image in checked_images
+        image: () for image in checked_images
     }
 
 
@@ -2317,6 +2917,12 @@ def test_preflight_images_reports_planning_failure_before_pull_checks(
 def test_preflight_images_uses_selected_cluster_context_for_pull_authority(
     mocker,
 ) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
     checks = mocker.patch(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         return_value=[],
@@ -2333,6 +2939,8 @@ def test_preflight_images_uses_selected_cluster_context_for_pull_authority(
             "workflow",
             "preflight-images",
             str(COSMOS3_SPEC),
+            "--registry",
+            _OPERATOR_REGISTRY,
             "--infra",
             "k8s/unit-context",
         ],
@@ -2344,6 +2952,12 @@ def test_preflight_images_uses_selected_cluster_context_for_pull_authority(
 
 
 def test_preflight_images_fails_on_branch_only_image(mocker) -> None:
+    from npa.orchestration.skypilot.registry_preflight import KubernetesPullTarget
+
+    mocker.patch(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        return_value=KubernetesPullTarget(namespace="target-namespace"),
+    )
     from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
 
     def branch_failure(images, **_kwargs):
@@ -2375,6 +2989,8 @@ def test_preflight_images_fails_on_branch_only_image(mocker) -> None:
             "workflow",
             "preflight-images",
             str(COSMOS3_SPEC),
+            "--registry",
+            _OPERATOR_REGISTRY,
         ],
     )
 
@@ -2852,6 +3468,7 @@ def test_submit_fails_clearly_when_provisioning_left_no_context(
     )
     # Registry pull semantics are covered independently; this test reaches the
     # post-provision context diagnostic.
+    mocker.patch("npa.cli.workbench.workflow._preflight_submit_image_manifests")
     mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
     launched = mocker.patch("npa.orchestration.skypilot.workflow.submit_workflow")
 
@@ -2882,8 +3499,9 @@ def test_submit_fails_clearly_when_provisioning_left_no_context(
     assert not launched.called
 
 
+@pytest.mark.parametrize("pull_timeout", [0, 3600])
 def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
-    monkeypatch, tmp_path, mocker
+    monkeypatch, tmp_path, mocker, pull_timeout
 ) -> None:
     """The preflight used to reject the context that --deploy-if-absent creates."""
     monkeypatch.setenv("KUBECONFIG", str(_write_kubeconfig(tmp_path, "other-ctx")))
@@ -2891,6 +3509,7 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
     _mock_sky_bin_ok(monkeypatch)
     planned_targets = []
     provisioned_targets = []
+    phases: list[str] = []
 
     def plan(targets, *, mutation):
         assert mutation is True
@@ -2898,6 +3517,7 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
         return {"submit-context": mocker.Mock()}
 
     def ensure(targets, **_kwargs):
+        phases.append("provision")
         provisioned_targets.extend(targets)
         return []
 
@@ -2909,9 +3529,16 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
         "npa.orchestration.npa_workflow.deploy.plan_infra_present",
         side_effect=plan,
     )
-    # Registry pull semantics are covered independently; this test reaches the
-    # deploy-if-absent delegation path.
-    mocker.patch("npa.cli.workbench.workflow._preflight_submit_images")
+    mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_image_manifests",
+        side_effect=lambda *args, **kwargs: phases.append("manifest"),
+    )
+    target_preflight = mocker.patch(
+        "npa.cli.workbench.workflow._preflight_submit_images",
+        side_effect=lambda *args, **kwargs: phases.append("target") or {},
+    )
+    mocker.patch("npa.cli.workbench.workflow._adopt_npa_kubeconfig", return_value=True)
+    mocker.patch("npa.cli.workbench.workflow._verify_submit_controller_owner")
     mocker.patch(
         "npa.orchestration.npa_workflow.submit.prepare_npa_workflow_for_submit",
         side_effect=RuntimeError("stop after deployIfAbsent"),
@@ -2926,6 +3553,8 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
             str(HARDENING_SPEC),
             "--run-id",
             "self-provision-demo",
+            "--image-pull-timeout-seconds",
+            str(pull_timeout),
             "--project",
             "submit-project",
             "--infra",
@@ -2943,3 +3572,8 @@ def test_submit_lets_a_deploy_if_absent_spec_provision_its_own_context(
     assert all(target.project == "submit-project" for target in planned_targets)
     assert all(target.cluster_name == "submit-context" for target in planned_targets)
     assert all(target.context == "submit-context" for target in planned_targets)
+    assert phases == ["manifest", "provision", "target"]
+    target_preflight.assert_called_once()
+    assert (
+        target_preflight.call_args.kwargs["image_pull_timeout_seconds"] == pull_timeout
+    )

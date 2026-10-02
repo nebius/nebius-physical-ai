@@ -21,6 +21,14 @@ with an actionable migration to this canonical spec.
 2. Require registry-qualified immutable digests for controller, Transfer,
    EnvGen, Reason, Isaac, and viewer images. Confirm each image attests the exact
    source SHA; never use source overlays or best-effort bootstrap.
+   The checked-in public resolver fails closed while any Sim2Real component is
+   publication-quarantined. In particular, stale Genesis, LeRobot, Isaac Lab,
+   VLM-RL, loop-eval, and reference-policy releases cannot be made runnable by
+   naming their old public tags. Until repaired releases are accepted, pass one
+   independently scanned immutable digest per affected toolRef with repeated
+   `--image-override TOOL_REF=IMAGE@sha256:DIGEST`, then run
+   `preflight-images` against the exact same override set. A default-resolution
+   failure is expected policy enforcement, not a registry outage.
 3. Validate the task-aligned seed manifest, HF/NGC access, S3 read/write, image
    pulls, and primary/side/overhead capture before a full run.
    Inspect the primary frames selected for hosted evaluation for object and

@@ -36,6 +36,8 @@ from npa.workflows.sim2real_viz import (
     _heldout_renders_root,
 )
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 def _config() -> Sim2RealLoopConfig:
     return Sim2RealLoopConfig(

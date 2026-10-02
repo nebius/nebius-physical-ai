@@ -39,6 +39,46 @@ artifact contracts, and customer-adaptable pipeline implementations.
 6. Run `validate-spec`, then `plan-spec --run-id preview`, before live submit.
    Register every shipped spec in `SUBMIT_LIVE_MATRIX`.
 
+For `field-failure-policy-improvement.yaml`, the native reference adapters join
+metric RGB-D reconstruction and shared-scene Isaac navigation. Follow the
+[native adapter contract](../../../docs/workbench/cookbooks/field-failure-policy-improvement.md#native-metric-capture-and-isaac-reference).
+Include both components in the reviewed source distribution, pin the navigation
+module inventory separately from the immutable image, and preserve source-overlay
+provenance. TSDF reconstruction is CPU work; native renderer/learner execution on
+RTX supplies the GPU evidence. Retain before/after replays of training-exposed
+failures separately from the untouched paired cohort. Only the latter may drive
+promotion; valid losing baseline episodes must not be discarded by a standalone
+success threshold. Public reference results do not establish compatibility with
+an undisclosed proprietary policy or calibration.
+
+For the public scan-to-policy sample, derive the parked isolation-control pose
+from dense rotated stance support and exact source topology before learning.
+Preserve its measured selection evidence in `support.json`; five corner/center
+rays or a large center clearance alone cannot exclude a small hole or a source
+boundary beneath a foot. Keep the free/obstacle controls, action sequence,
+native contact classification, cohort sizes and success gates unchanged when
+repairing initial parking placement. Initial CPU support evidence does not
+replace native control and full training/evaluation qualification.
+
+For `field-failure-reference-demo.yaml`, freeze training, development and final
+cohorts and the simulation-failure admission rule before learning. Evaluate the
+exact baseline on every frozen office training route before admitting its public
+capture; recompute complete native outcomes, bind admission into the public bundle
+reference, and reverify it before reconstruction and training. A crashed or
+control-failed observation cannot admit a capture; zero failures publish an honest
+terminal report without continuation or final evaluation. Preserve the distinction
+between these observed simulation failures and operator-supplied physical logs.
+Before admitting final evaluation, development selection
+must pair the exact case IDs and seeds and apply every per-case regression bound
+from the frozen `plan.metrics`, using the final comparator's strict boundary.
+Compute success gain as the mean paired success delta so an improvement of exactly
+one percentage point passes without an epsilon or a weakened threshold. Failed
+development selection must publish the measured violations in the HTML report
+and leave final evaluation untouched.
+Interrupted selection/report publication may accept identical retained bytes
+to finish missing report files. Reject different bytes without overwriting
+evidence; report recovery must not change eligibility or consume final cases.
+
 ## Current Reference YAMLs
 
 For a first BEHAVIOR DEV evaluation, use

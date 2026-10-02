@@ -23,6 +23,9 @@ from npa.workflows.sim2real_rerun_regen import (
     sync_heldout_renders,
 )
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+_TEST_IMAGE = f"ghcr.io/example/sim2real-test@sha256:{'0' * 64}"
+
 
 def _config(run_id: str = "sim2real-staged-20260616t093101z") -> Sim2RealLoopConfig:
     return Sim2RealLoopConfig(
@@ -30,6 +33,13 @@ def _config(run_id: str = "sim2real-staged-20260616t093101z") -> Sim2RealLoopCon
         s3_bucket="demo-bucket",
         s3_prefix="sim2real-b",
         s3_endpoint="https://storage.example",
+        augment_image=_TEST_IMAGE,
+        envgen_image=_TEST_IMAGE,
+        policy_image=_TEST_IMAGE,
+        trainer_image=_TEST_IMAGE,
+        vlm_image=_TEST_IMAGE,
+        eval_image=_TEST_IMAGE,
+        isaac_image=_TEST_IMAGE,
     )
 
 

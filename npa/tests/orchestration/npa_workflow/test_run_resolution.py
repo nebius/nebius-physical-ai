@@ -1217,3 +1217,56 @@ def test_planned_receipt_is_not_not_submitted_when_later_evidence_unavailable(
     resolved = resolve_run(run_id, project="paidf", allow_local_not_submitted=True)
     assert resolved.not_submitted is False
     assert resolved.verification_unavailable is True
+
+
+def test_pending_manifest_lookup_uses_selected_durable_credentials(
+    resolver_env, monkeypatch, tmp_path
+):
+    import os
+    from npa.orchestration.skypilot.cleanup import sky_environment
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
+
+    update_submission_state(
+        "selected",
+        "pending-storage",
+        {
+            "workflow": {
+                "name": "sample",
+                "run_prefix_uri": "s3://alias-bucket/pending-storage",
+                "steps": [{"state": "prepare"}],
+            },
+            "launch": {"status": "submitted", "sky_job_id": "17"},
+        },
+    )
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "other-ambient-key")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "other-ambient-secret")
+    before = dict(os.environ)
+    calls = []
+
+    def lookup(*args, **kwargs):
+        env = sky_environment()
+        calls.append(True)
+        assert kwargs["sky_bin"] == "/opt/pinned-sky"
+        assert kwargs["isolated_config_dir"] == tmp_path
+        assert env["AWS_ACCESS_KEY_ID"] == "fixture-access"
+        assert env["AWS_SECRET_ACCESS_KEY"] == "fixture-secret"
+        assert env["NPA_SKYPILOT_PROJECT"] == "selected"
+        assert all(
+            env[name] == "https://storage.alias.invalid"
+            for name in STORAGE_ENDPOINT_ENV_NAMES
+        )
+        return ManagedJobEvidence("absent")
+
+    monkeypatch.setattr(
+        "npa.orchestration.npa_workflow.run_resolution.lookup_managed_job", lookup
+    )
+    resolution = resolve_run(
+        "pending-storage",
+        project="selected",
+        sky_bin="/opt/pinned-sky",
+        isolated_config_dir=tmp_path,
+    )
+    assert resolution.found and resolution.manifest_pending and calls
+    assert dict(os.environ) == before and sky_environment() == before

@@ -792,6 +792,11 @@ def test_rendered_mk8s_provision_forwards_shared_backend_desired_state(
 
     module_name = "npa_rendered_mk8s_provision_backend"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.setattr(
+        module,
+        "_agent_cloud_mk8s_clusters",
+        lambda _project="": {"status": "available", "items": []},
+    )
     captured = {}
 
     class Result:
@@ -852,6 +857,11 @@ def test_rendered_mk8s_provision_does_not_promote_unknown_preflight_to_ready(
 
     module_name = "npa_rendered_mk8s_unknown_preflight"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.setattr(
+        module,
+        "_agent_cloud_mk8s_clusters",
+        lambda _project="": {"status": "available", "items": []},
+    )
 
     class Result:
         def to_dict(self):
@@ -1088,6 +1098,11 @@ def test_rendered_mk8s_dry_run_backend_validation_error_is_clean_400(
 
     module_name = "npa_rendered_mk8s_backend_validation_error"
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    monkeypatch.setattr(
+        module,
+        "_agent_cloud_mk8s_clusters",
+        lambda _project="": {"status": "available", "items": []},
+    )
     monkeypatch.setattr(module, "_agent_project_alias", lambda _value: "project-alias")
     monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
 
@@ -2156,6 +2171,92 @@ def test_rendered_readers_use_only_the_committed_publication_generation(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_chat_blocks_draft_when_accelerator_discovery_is_unavailable(
+    monkeypatch, tmp_path
+):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_unverified_accelerator_draft"
+    )
+    state = {}
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(module, "_save_state", lambda payload: state.update(payload))
+    monkeypatch.setattr(module, "_agent_s3_settings", lambda: {"bucket": "bucket"})
+    monkeypatch.setattr(
+        module,
+        "_agent_k8s_backends",
+        lambda: {
+            "has_infra": True,
+            "cloud_discovery": {"status": "available"},
+            "cloud_clusters": [
+                {
+                    "name": "chosen",
+                    "raw": {
+                        "accelerator_discovery": {
+                            "status": "unavailable",
+                            "error": {"kind": "permission_denied"},
+                        },
+                    },
+                }
+            ],
+        },
+    )
+    reply, _used, _suggested, yaml_text, validation, intent = (
+        module._maybe_toolground_chat_reply("create sim2real yaml on RTX PRO 6000")
+    )
+    assert intent == "create_vlm_rl_workflow"
+    assert yaml_text is None and validation["ok"] is False
+    assert "accelerator availability" in reply and "unverified" in reply
+    assert state["workflow_draft"]["runnable"] is False
+
+
+def test_rendered_inventory_failure_does_not_offer_absence_based_provisioning(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from unittest.mock import Mock
+    from npa.cli import agent_resources
+    import npa.provisioning
+
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_inventory_failure"
+    )
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "project-fixture")
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setattr(
+        module,
+        "_agent_command_env",
+        lambda: {"NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata"},
+    )
+    monkeypatch.setattr(module, "_load_agent_config_yaml", lambda: {})
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(
+        agent_resources,
+        "run_bounded_agent_command",
+        Mock(side_effect=TimeoutError("agent command timed out")),
+    )
+    inventory = module._agent_k8s_backends("demo")
+    assert inventory["cloud_discovery"]["error"]["kind"] == "timeout"
+    assert inventory["has_infra"] is None
+    provision = Mock(side_effect=AssertionError("absence is unverified"))
+    confirmation = Mock(side_effect=AssertionError("do not offer blind provisioning"))
+    monkeypatch.setattr(npa.provisioning, "provision_if_absent", provision)
+    monkeypatch.setattr(module, "_issue_agent_confirm_token", confirmation)
+    result = module._provision_agent_infra("demo", "new-cluster")
+    assert result["status"] == "blocked"
+    monkeypatch.setattr(
+        module, "validate_workflow_yaml_text", lambda *a, **k: {"ok": True}
+    )
+    monkeypatch.setattr(module, "plan_workflow_yaml_text", lambda *a, **k: {"ok": True})
+    response = module.submit_npa_workflow(
+        {"yaml": "workflow", "allow_provision": True, "prepare_execution": True}
+    )
+    assert response["ok"] is False and response["status"] == "inventory_unavailable"
+    assert not response.get("needs_confirmation")
+    assert "confirm_token" not in response
+    provision.assert_not_called()
+    confirmation.assert_not_called()
+
+
 def test_artifact_only_load_run_preserves_ui_contract_and_active_state(
     monkeypatch, tmp_path
 ) -> None:
@@ -2535,7 +2636,11 @@ states:
     monkeypatch.setattr(
         module,
         "_agent_workflow_operation_env",
-        lambda _project, _context: {"PATH": "/usr/bin"},
+        lambda _project, _context: {
+            "PATH": "/usr/bin",
+            "NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata",
+            "NEBIUS_IAM_TOKEN": "must-not-propagate",
+        },
     )
 
     class Completed:
@@ -2559,7 +2664,12 @@ states:
             }
         )
 
-    monkeypatch.setattr(module.subprocess, "run", lambda *_args, **_kwargs: Completed())
+    def bounded(_args, *, env, timeout_s):
+        assert "NEBIUS_IAM_TOKEN" not in env
+        assert timeout_s == 30
+        return Completed()
+
+    monkeypatch.setattr(module, "run_bounded_agent_command", bounded)
     assert module._agent_context_has_schedulable_gpu(
         project="demo", kubernetes_context="context"
     )
@@ -3413,6 +3523,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         "npa.cli.agent._stage_agent_npa_source", lambda *_args, **_kwargs: None
     )
     module_name = "npa_rendered_artifact_history_backend"
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     access, external = _isolate_rrd_history_access(monkeypatch, module)
     recordings = tmp_path / "recordings"
@@ -3831,6 +3942,7 @@ def test_rendered_artifact_routes_reject_foreign_buckets_and_malformed_keys(
     import sys
 
     module_name = "npa_rendered_artifact_security_backend"
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
     module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
     monkeypatch.setattr(
         module,
@@ -4723,7 +4835,11 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
             },
         },
     )
-    monkeypatch.setattr(module, "_agent_cloud_mk8s_clusters", lambda _project="": [])
+    monkeypatch.setattr(
+        module,
+        "_agent_cloud_mk8s_clusters",
+        lambda _project="": {"status": "available", "items": []},
+    )
     grounded_legacy = module._agent_k8s_backends("configured-project")
     assert grounded_legacy["configured"] == [
         {
@@ -6076,6 +6192,189 @@ def test_rendered_backend_uses_dedicated_agent_skypilot_state(
         sys.modules.pop(module_name, None)
 
 
+def test_rendered_backend_does_not_stat_credential_paths(monkeypatch, tmp_path) -> None:
+    import sys
+
+    module_name = "npa_rendered_bounded_credential_paths"
+    module = _import_rendered_backend(monkeypatch, tmp_path, module_name=module_name)
+    config_path = "/agent-home/.nebius/config.yaml"
+    denied = {"/mnt/cloud-metadata/token", config_path}
+    real_stat = module.os.stat
+    calls: list[tuple[list[str], dict[str, str], float]] = []
+
+    def reject_credential_stat(path, *args, **kwargs):
+        if module.os.fspath(path) in denied:
+            raise AssertionError("credential paths must not be preflight statted")
+        return real_stat(path, *args, **kwargs)
+
+    class Result:
+        returncode = 0
+        stdout = '{"items": []}'
+        stderr = ""
+
+    def bounded(command, *, env, timeout_s, **_kwargs):
+        calls.append((list(command), dict(env), float(timeout_s)))
+        return Result()
+
+    def discover(command, *, command_env):
+        assert command_env["NPA_NEBIUS_CREDENTIAL_SOURCE"] == "instance_metadata"
+        assert "NEBIUS_IAM_TOKEN" not in command_env
+        return 0, '{"items": []}', ""
+
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "npa"))
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", config_path)
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
+    monkeypatch.setenv("NEBIUS_PROJECT_ID", "project-test")
+    monkeypatch.setenv("NEBIUS_IAM_TOKEN", "must-not-propagate")
+    monkeypatch.setattr(module.os, "stat", reject_credential_stat)
+    monkeypatch.setattr(module.shutil, "which", lambda _name: "/bin/true")
+    monkeypatch.setattr(module, "_agent_exact_kubeconfig", lambda: "")
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(module, "_load_agent_config_yaml", lambda: {})
+    monkeypatch.setattr(module, "_load_state", lambda: {})
+    monkeypatch.setattr(
+        module,
+        "_agent_workflow_operation_env",
+        lambda _project, _context: module._agent_command_env(),
+    )
+    monkeypatch.setattr(module, "run_bounded_agent_command", bounded)
+    monkeypatch.setattr("npa.cli.agent_resources.run_bounded_agent_command", bounded)
+    monkeypatch.setattr(module, "run_resource_discovery_command", discover)
+    try:
+        environment = module._agent_command_env()
+        assert environment["NEBIUS_PROFILE"] == "cursor-sa"
+        inventory_env, profile, config, source = (
+            module._agent_inventory_credential_context()
+        )
+        assert (profile, config, source) == (
+            "cursor-sa",
+            "/root/.nebius/config.yaml",
+            "instance_metadata",
+        )
+        assert inventory_env["HOME"] == "/root"
+        assert module._agent_cloud_mk8s_clusters() == {
+            "status": "available",
+            "items": [],
+        }
+        module._tenant_resource_inventory(force_refresh=True)
+        assert module._run_agent_npa_json(
+            ["--help"],
+            extra_env={"NPA_NEBIUS_CREDENTIAL_SOURCE": "configured_profile"},
+        ) == {"items": []}
+        assert (
+            module._agent_context_has_schedulable_gpu(
+                project="project-test", kubernetes_context="context-test"
+            )
+            is False
+        )
+        assert len(calls) == 3
+        assert calls[0][0][:5] == [
+            "/bin/true",
+            "--config",
+            "/root/.nebius/config.yaml",
+            "--profile",
+            "cursor-sa",
+        ]
+        assert calls[0][2] == 30
+        assert calls[1][0][-1] == "--help"
+        assert calls[1][2] == 300
+        assert calls[2][0][1:3] == ["get", "nodes"]
+        assert calls[2][2] == 30
+        assert all("NEBIUS_IAM_TOKEN" not in env for _command, env, _timeout in calls)
+        assert all(
+            env["NPA_NEBIUS_CONFIG"] == "/root/.nebius/config.yaml"
+            and env["NPA_NEBIUS_PROFILE"] == "cursor-sa"
+            and env["NPA_NEBIUS_CREDENTIAL_SOURCE"] == "instance_metadata"
+            for _command, env, _timeout in calls
+        )
+
+        def cleanup_pending(*_args, **_kwargs):
+            raise TimeoutError("a prior agent cloud command has not exited")
+
+        monkeypatch.setattr(module, "run_bounded_agent_command", cleanup_pending)
+        with pytest.raises(module.HTTPException) as exc_info:
+            module._run_agent_npa_json(["workflow", "run"], timeout_s=None)
+        assert exc_info.value.status_code == 503
+        assert "None" not in str(exc_info.value.detail)
+    finally:
+        sys.modules.pop(module_name, None)
+
+
+class _ExistingAgentScript:
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+    def __str__(self) -> str:
+        return self.path
+
+    def is_file(self) -> bool:
+        return True
+
+
+def _submit_sim2real_timeout(module, monkeypatch):
+    state = {
+        "selection": {"robot_preset": "franka", "sim_backend": "isaac"},
+        "sim_viz": {"camera": "workspace"},
+    }
+    saved: list[dict[str, object]] = []
+    monkeypatch.setattr(module, "Path", _ExistingAgentScript)
+    monkeypatch.setattr(module, "_load_state", lambda: state)
+    monkeypatch.setattr(
+        module, "_save_state", lambda value: saved.append(copy.deepcopy(value))
+    )
+    monkeypatch.setattr(
+        module,
+        "_wire_sim2real_run_preview",
+        lambda _state, *, run_id, camera: {
+            "run_id": run_id,
+            "camera": camera,
+            "rerun_ready": False,
+        },
+    )
+    response = module.submit_sim2real({"run_id": "timeout-run"})
+    return response, json.loads(response.body), saved
+
+
+def test_rendered_backend_surfaces_bounded_command_timeouts(
+    monkeypatch, tmp_path
+) -> None:
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_command_timeouts"
+    )
+    timeout_calls: list[tuple[list[str], float | None]] = []
+
+    def timed_out(command, *, timeout_s, **_kwargs):
+        timeout_calls.append((list(command), timeout_s))
+        raise TimeoutError("agent command timed out")
+
+    monkeypatch.setattr(module, "_agent_npa_ready", lambda: (True, ""))
+    monkeypatch.setattr(
+        module,
+        "_agent_command_env",
+        lambda: {"NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata"},
+    )
+    monkeypatch.setattr(module, "run_bounded_agent_command", timed_out)
+    with pytest.raises(module.HTTPException) as error:
+        module._run_agent_npa_json(["workflow", "run"], timeout_s=17)
+    assert error.value.status_code == 502
+    assert error.value.detail == (
+        "NPA command timed out after 17s: ['workflow', 'run']"
+    )
+
+    response, payload, saved = _submit_sim2real_timeout(module, monkeypatch)
+    assert response.status_code == 502
+    assert payload["error"] == (
+        "live sim2real submit timed out after 30s: agent command timed out"
+    )
+    assert payload["submit_mode"] == "live-k8s-timeout"
+    assert payload["run_id"] == "timeout-run"
+    assert saved[-1]["latest_submit"]["live_submit"]["ok"] is False
+    assert timeout_calls == [
+        ([str(module.NPA_CLI), "workflow", "run"], 17),
+        (["/opt/npa-agent/run-live-sim2real.sh", "timeout-run"], 30),
+    ]
+
+
 def test_rendered_backend_preserves_metadata_profile_home(
     monkeypatch, tmp_path
 ) -> None:
@@ -6558,7 +6857,10 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
     monkeypatch.setattr(
         module,
         "_agent_k8s_backends",
-        lambda: {"cloud_clusters": [{"status": "RUNNING"}, {"status": "RUNNING"}]},
+        lambda: {
+            "cloud_clusters": [{"status": "RUNNING"}, {"status": "RUNNING"}],
+            "cloud_discovery": {"status": "available"},
+        },
     )
     monkeypatch.setattr(
         module, "_visual_evidence_selection", lambda _state, **_: exact_selection
@@ -6594,6 +6896,7 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
     assert calls == [exact_selection]
     assert response["live_evidence"] == {
         "cloud_status_counts": {"running": 2},
+        "cloud_discovery_status": "available",
         "workflow_status": "succeeded",
         "artifact_loaded": True,
         "artifact_render": "rerun",
@@ -6602,6 +6905,39 @@ def test_live_evidence_chat_loads_exact_artifact_without_exposing_source(
     assert "2 running" in response["reply"]
     assert "private-bucket" not in response["reply"]
     assert "private/prefix" not in response["reply"]
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_live_evidence_does_not_report_failed_cloud_discovery_as_absence(
+    monkeypatch, tmp_path, raises
+):
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="unavailable_live_evidence_backend"
+    )
+
+    def unavailable():
+        if raises:
+            raise TimeoutError("private provider diagnostic")
+        return {"cloud_clusters": [], "cloud_discovery": {"status": "unavailable"}}
+
+    monkeypatch.setattr(module, "_agent_k8s_backends", unavailable)
+    monkeypatch.setattr(module, "_load_state", lambda: {})
+    monkeypatch.setattr(
+        module, "_visual_evidence_selection", lambda *_args, **_kwargs: {}
+    )
+    response = module._agent_chat_with_tools(
+        raw_messages=[
+            {
+                "role": "user",
+                "content": "Show live cloud evidence and a real RRD artifact.",
+            }
+        ],
+        model="unused",
+    )
+    assert response["live_evidence"]["cloud_discovery_status"] == "unavailable"
+    assert "absence is unverified" in response["reply"]
+    assert "none observed" not in response["reply"]
+    assert "private provider diagnostic" not in response["reply"]
 
 
 def test_live_evidence_prefers_a_verified_active_visual_artifact(monkeypatch, tmp_path):

@@ -12,6 +12,8 @@ import pytest
 from npa.workflows.sim2real.config import build_config_from_env
 from npa.workflows.sim2real.engine import threshold_decision
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 def _cfg(tmp_path):
     return build_config_from_env(

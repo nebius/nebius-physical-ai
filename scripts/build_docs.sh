@@ -161,13 +161,27 @@ document_command() {
   shift
   local command_path=("$@")
   local display_path=("$NPA_DISPLAY_BIN" "${command_path[@]:1}")
+  # Existing top-level links keep their filenames. A same-named nested group
+  # uses its command path, so adding `workbench workflow demo` preserves demo.md.
+  local top_level
+  if [ "${#command_path[@]}" -gt 2 ]; then
+    for top_level in $groups; do
+      if [ "$output_name" = "$top_level" ]; then
+        output_name="$(IFS=-; printf '%s' "${command_path[*]:1}")"
+        break
+      fi
+    done
+  fi
   local output="${DOCS_DIR}/${output_name}.md"
-  # Pages are keyed by leaf group name. Generation starts from a clean slate, so
-  # a pre-existing file here means two distinct subgroups share a leaf name and
-  # would silently overwrite each other. Fail loudly instead.
+  # Distinct nested groups can also share a leaf. Keep the first existing name
+  # and disambiguate the additional path instead of overwriting its page.
+  if [ -f "$output" ]; then
+    output_name="$(IFS=-; printf '%s' "${command_path[*]:1}")"
+    output="${DOCS_DIR}/${output_name}.md"
+  fi
   if [ -f "$output" ]; then
     echo "ERROR: doc name collision for '${output_name}' (${command_path[*]}); a" \
-         "same-named subgroup already generated ${output}. Use a unique group name." >&2
+         "command path already generated ${output}." >&2
     exit 1
   fi
   help_for "${command_path[@]}" > "$tmp"
@@ -229,9 +243,6 @@ done
 prefetch_help "${top_paths[@]}"
 
 for group in $groups; do
-  # A nested group may share a leaf name with a top-level command. The public
-  # reference page for that filename belongs to the top-level command.
-  rm -f "$DOCS_DIR/${group}.md"
   if is_group "$NPA_BIN" "$group"; then
     document_group_recursive "$group" "$NPA_BIN" "$group"
   else
