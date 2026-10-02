@@ -1,0 +1,115 @@
+{
+  "schema": "npa.cosmos3.wam-live-training-snapshot.v1",
+  "captured_utc": "2026-09-29T18:04:11.025722+00:00",
+  "scope": "Four active training GPUs on one exclusively allocated eight-B200 VM; snapshot is execution proof, not completed training or policy quality",
+  "training_gpus": 4,
+  "provisioned_vm_gpus": 8,
+  "last_observed_optimizer_update": 6,
+  "native_update_evidence": "on_training_step_end warmup callback",
+  "training_processes_matched": 4,
+  "distributed_preflight": {
+    "world_size": 4,
+    "hosts": 1,
+    "backend": "nccl",
+    "all_reduce_sum": 10.0,
+    "status": "passed"
+  },
+  "gpus": [
+    {
+      "gpu_index": 0,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/29 18:04:10.978",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 0.0,
+      "utilization_percent": 0.0,
+      "power_watts": 143.26,
+      "process_matches_training_command_and_slurm_cgroup": false,
+      "training_rank": null
+    },
+    {
+      "gpu_index": 1,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/29 18:04:10.984",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 0.0,
+      "utilization_percent": 0.0,
+      "power_watts": 139.63,
+      "process_matches_training_command_and_slurm_cgroup": false,
+      "training_rank": null
+    },
+    {
+      "gpu_index": 2,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/29 18:04:10.989",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 0.0,
+      "utilization_percent": 0.0,
+      "power_watts": 138.47,
+      "process_matches_training_command_and_slurm_cgroup": false,
+      "training_rank": null
+    },
+    {
+      "gpu_index": 3,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/29 18:04:10.993",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 0.0,
+      "utilization_percent": 0.0,
+      "power_watts": 138.71,
+      "process_matches_training_command_and_slurm_cgroup": false,
+      "training_rank": null
+    },
+    {
+      "gpu_index": 4,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/29 18:04:10.997",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 81946.0,
+      "utilization_percent": 0.0,
+      "power_watts": 437.77,
+      "process_matches_training_command_and_slurm_cgroup": true,
+      "training_rank": 0
+    },
+    {
+      "gpu_index": 5,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/29 18:04:10.999",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 82136.0,
+      "utilization_percent": 0.0,
+      "power_watts": 410.17,
+      "process_matches_training_command_and_slurm_cgroup": true,
+      "training_rank": 1
+    },
+    {
+      "gpu_index": 6,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/29 18:04:11.002",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 82024.0,
+      "utilization_percent": 0.0,
+      "power_watts": 415.39,
+      "process_matches_training_command_and_slurm_cgroup": true,
+      "training_rank": 2
+    },
+    {
+      "gpu_index": 7,
+      "name": "NVIDIA B200",
+      "driver": "580.173.02",
+      "sample_utc": "2026/09/29 18:04:11.004",
+      "memory_total_mib": 183359.0,
+      "memory_used_mib": 81910.0,
+      "utilization_percent": 0.0,
+      "power_watts": 382.94,
+      "process_matches_training_command_and_slurm_cgroup": true,
+      "training_rank": 3
+    }
+  ]
+}

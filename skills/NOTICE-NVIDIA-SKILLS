@@ -2,8 +2,9 @@ NVIDIA Physical AI Skills
 
 Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES.
 
-The NPA `physical-ai-data-factory` skill and the blueprint it documents
-(`workflows/testing/physical-ai-data-factory.yaml`) are an
+The NPA `physical-ai-data-factory` and `nvidia-osmo-to-npa-workflow` skills and
+the separately named direct VDA blueprint they document
+(`workflows/testing/nvidia-paidf-vda-cosmos-transfer25.yaml`) are an
 NPA-native re-implementation on Nebius + SkyPilot of the NVIDIA Physical AI Data
 Factory / Video Data Augmentation workflow. The design analysis was adapted from
 NVIDIA agent skills:
@@ -43,8 +44,9 @@ runs from the public NGC `-ga` repositories with the operator's own NGC API key.
 
 NPA does not use NVIDIA OSMO. The upstream skills orchestrate on OSMO; the NPA
 skills orchestrate on SkyPilot and compose existing NPA workbench tools. The
-NPA-native `physical-ai-data-factory` and `neural-reconstruction` capabilities are
-shipped as live skills; the remaining capabilities stay design/roadmap in
+NPA-native `physical-ai-data-factory`, semantic OSMO translation, and
+`neural-reconstruction` capabilities are shipped as live skills; the remaining
+capabilities stay design/roadmap in
 `docs/architecture/partner-skills-roadmap.md` until they land on Nebius +
 SkyPilot with tests.
 

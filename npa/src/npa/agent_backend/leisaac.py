@@ -496,7 +496,9 @@ def validate_health(manifest: dict, payload: dict | None) -> tuple[dict | None, 
     for key in attestation_keys:
         if str(data.get(key) or "") != str(manifest.get(key) or ""):
             return None, f"LeIsaac service attestation mismatch: {key}"
-    stream_ready = bool(data.get("stream_ready", data.get("webrtc_ready")))
+    readiness_value = (
+        data.get("stream_ready") if "stream_ready" in data else data.get("webrtc_ready")
+    )
     stream_transport = str(data.get("stream_transport") or "webrtc")
     if stream_transport not in {"webrtc", "jpeg-poll", "websocket-v1"}:
         return None, "LeIsaac service returned an unsupported stream transport"
@@ -524,8 +526,8 @@ def validate_health(manifest: dict, payload: dict | None) -> tuple[dict | None, 
         )
     ):
         return None, "LeIsaac service returned an invalid hardware video contract"
-    if str(data.get("state") or "") != "ready" or not stream_ready:
-        detail = str(data.get("detail") or data.get("state") or "starting")
+    if str(data.get("state") or "") != "ready" or readiness_value is not True:
+        detail = str(data.get("detail") or data.get("state") or "starting")[:256]
         return None, f"LeIsaac service is not ready: {detail}"
     if _integer(data.get("signal_port")) != LEISAAC_SIGNAL_PORT:
         return None, "LeIsaac service signaling port mismatch"
@@ -640,6 +642,9 @@ def validate_health(manifest: dict, payload: dict | None) -> tuple[dict | None, 
         return None, "LeIsaac service returned invalid mode-transition telemetry"
     if not math.isfinite(transition_latency_ms) or transition_latency_ms < 0:
         return None, "LeIsaac service returned invalid mode-transition telemetry"
+    view_orbit = data.get("view_orbit", False)
+    if not isinstance(view_orbit, bool):
+        return None, "LeIsaac service returned invalid view-orbit telemetry"
     if health_schema == LEISAAC_HEALTH_SCHEMA and (
         safe_recorder.get("task") != manifest.get("task")
         or safe_recorder.get("environment_id") != manifest.get("environment_id")
@@ -670,7 +675,7 @@ def validate_health(manifest: dict, payload: dict | None) -> tuple[dict | None, 
         "cameras": cameras,
         "secondary_frame_bytes": _integer(data.get("secondary_frame_bytes")) or 0,
         "secondary_frame_sequence": _integer(data.get("secondary_frame_sequence")) or 0,
-        "view_orbit": bool(data.get("view_orbit")),
+        "view_orbit": view_orbit,
         "view_mode_contract": VIEW_MODE_CONTRACT,
         "recording_camera_contract": RECORDING_CAMERA_CONTRACT,
         "requested_view_mode": requested_view_mode.value,

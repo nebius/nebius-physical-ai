@@ -36,6 +36,27 @@ def cli_tree():
     return get_command(app)
 
 
+def test_benchmark_workflow_copies_match_catalog() -> None:
+    """Keep the showcase's complete workflow set identical to its live catalog.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A workflow is missing, added, or differs from its source.
+    """
+    catalog = REPO_ROOT / "workflows/testing"
+    showcase = REPO_ROOT / "benchmark/cosmos3-super"
+    sources = {path.name: path for path in catalog.glob("cosmos3-super-*.yaml")}
+    copies = {path.name: path for path in showcase.glob("*.yaml")}
+    assert sources
+    assert copies.keys() == sources.keys()
+    for name, source in sources.items():
+        assert not copies[name].is_symlink(), name
+        assert copies[name].read_bytes() == source.read_bytes(), name
+
+
 @pytest.mark.parametrize(
     "path", DOCUMENTS, ids=lambda path: str(path.relative_to(REPO_ROOT))
 )
@@ -163,6 +184,12 @@ def test_heading_anchors_handle_formatting_and_duplicate_collisions(
         ("npa studio demo draft --invented", "unknown option --invented"),
         ("npa studio demo unknown", "unknown film command unknown"),
         ("npa studio demo final --open", ""),
+        ("npa studio demo review --judge token-factory --strict --open", ""),
+        (
+            "npa studio demo review --assessment ./assessment.json --shot-list ./edit.json",
+            "",
+        ),
+        ("npa studio demo review --invented", "unknown option --invented"),
         ("npa workbench nurec check --output json | jq .", ""),
     ],
 )

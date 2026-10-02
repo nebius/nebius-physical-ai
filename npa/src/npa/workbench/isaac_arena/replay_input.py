@@ -10,6 +10,7 @@ from .errors import IsaacArenaError
 from .hashing import file_sha256 as _sha256
 from .replay_quaternions import dataset_format_version, normalize_pose_representation
 from .replay_target_poses import validate_recorded_target_poses
+from .success import success_flag
 
 if TYPE_CHECKING:
     from .runtime import IsaacArenaRequest
@@ -137,7 +138,11 @@ def _episode_input_evidence(dataset: Any, h5py: Any, np: Any) -> dict[str, Any]:
         "episode": episode_name,
         "dataset_format_version": dataset_format_version(dataset),
         "source_recorded_success": (
-            bool(episode.attrs["success"]) if "success" in episode.attrs else None
+            success_flag(
+                episode.attrs["success"], source="replay source success metadata"
+            )
+            if "success" in episode.attrs
+            else None
         ),
         **statistics,
         "state_max_range": state_ranges[0][1] if state_ranges else None,

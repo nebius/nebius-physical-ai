@@ -525,6 +525,11 @@ overview tracks from the same capture groups. Older one-camera commits show an
 explicit single-camera fallback. Unrecognized committed artifacts remain
 visible as downloads instead of disappearing.
 
+Timeline `success`, `terminated`, `truncated`, and `done` values must be JSON
+booleans. Older records that omit these flags retain their false defaults.
+Explicit non-boolean values reject episode detail and timeline requests with
+HTTP 502 instead of displaying inferred outcome evidence.
+
 **Describe this frame** captures the pixels from the video element currently
 displayed in the episode player and submits them with the visible episode and
 timeline metadata. If capture fails or the frame is blank, the UI reports that

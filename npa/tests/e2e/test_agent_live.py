@@ -65,7 +65,7 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
     mp4_run_id = ""
     mp4_run_ref = ""
     mp4_key = ""
-    mp4_uri = ""
+    mp4_source: dict[str, object] = {}
     for entry in run_list[:20]:
         # Incomplete summaries are intentionally non-authoritative: the secure
         # loader refuses them until the operator selects an exact, fully
@@ -75,13 +75,18 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
         run_id = str((entry or {}).get("run_id") or "").strip()
         if not run_id:
             continue
+        run_ref = str((entry or {}).get("run_ref") or "").strip()
+        project_id = str((entry or {}).get("project_id") or "").strip()
+        resource_bucket = str((entry or {}).get("bucket") or "").strip()
+        resolved_prefix = str((entry or {}).get("resolved_prefix") or "").strip()
+        if not run_ref or not project_id or not resource_bucket:
+            continue
         source_params = {
-            "resource_bucket": str((entry or {}).get("bucket") or ""),
-            "project_id": str((entry or {}).get("project_id") or ""),
-            "resolved_prefix": str((entry or {}).get("resolved_prefix") or ""),
+            "resource_bucket": resource_bucket,
+            "project_id": project_id,
+            "resolved_prefix": resolved_prefix,
             "source_selected": "1",
         }
-        source_params = {key: value for key, value in source_params.items() if value}
         source_query = str(httpx.QueryParams(source_params))
         listed = ctx.get(
             f"/api/artifacts/run/{run_id}"
@@ -94,9 +99,13 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
             render = str((art or {}).get("render") or "")
             if render == "video" or key.lower().endswith(".mp4"):
                 mp4_run_id = run_id
-                mp4_run_ref = str((entry or {}).get("run_ref") or "").strip()
+                mp4_run_ref = run_ref
                 mp4_key = key
-                mp4_uri = str((art or {}).get("s3_uri") or "")
+                mp4_source = {
+                    "project_id": project_id,
+                    "resource_bucket": resource_bucket,
+                    "resolved_prefix": resolved_prefix,
+                }
                 break
         if mp4_key:
             break
@@ -107,7 +116,9 @@ def test_agent_mp4_artifact_preview_media_type(ctx: AgentLiveContext) -> None:
             json={
                 "run_id": mp4_run_id,
                 "run_ref": mp4_run_ref,
-                "s3_uri": mp4_uri,
+                "key": mp4_key,
+                **mp4_source,
+                "source_selected": True,
             },
             timeout=None,
         )

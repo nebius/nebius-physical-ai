@@ -1750,13 +1750,14 @@ def test_new_capture_does_not_merge_a_previous_cached_capture(tmp_path):
             assert operation == "list_objects_v2"
             return self
 
-        def paginate(self, *, Bucket, Prefix):
+        def paginate(self, *, Bucket, Prefix, PaginationConfig=None):
             assert Bucket == "test-bucket"
-            yield {
-                "Contents": [{"Key": key} for key in objects if key.startswith(Prefix)]
-            }
+            contents = [{"Key": key} for key in objects if key.startswith(Prefix)]
+            if PaginationConfig:
+                contents = contents[: PaginationConfig.get("MaxItems") or len(contents)]
+            yield {"Contents": contents}
 
-        def download_file(self, bucket, key, destination):
+        def download_file(self, bucket, key, destination, **_kwargs):
             assert bucket == "test-bucket"
             Path(destination).write_bytes(objects[key])
 
@@ -1771,32 +1772,36 @@ def test_new_capture_does_not_merge_a_previous_cached_capture(tmp_path):
     assert (old / "sequence.json").exists()
 
 
-@pytest.mark.parametrize("claimed", [False, True])
-def test_empty_remote_prefix_never_returns_a_previous_cached_capture(tmp_path, claimed):
+def _apply_publication_claim(cache) -> None:
+    """Mark a converted cache as published, matching a real immutable-prefix claim."""
+
     import hashlib
 
+    report_path = cache / colmap.CONVERSION_REPORT
+    report = json.loads(report_path.read_text())
+    report["publication"] = {
+        "mode": "immutable-prefix-v1",
+        "claim": colmap.PUBLICATION_CLAIM,
+    }
+    report_path.write_text(json.dumps(report))
+    (cache / colmap.PUBLICATION_CLAIM).write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "report_sha256": hashlib.sha256(report_path.read_bytes()).hexdigest(),
+            }
+        )
+    )
+
+
+@pytest.mark.parametrize("claimed", [False, True])
+def test_empty_remote_prefix_never_returns_a_previous_cached_capture(tmp_path, claimed):
     from npa.clients.storage import StorageClient
     from npa.workbench.nurec.nurec import find_ncore_json, materialize_uri
 
     cache = write_inventory_fixture(tmp_path / "cache")
     if claimed:
-        report_path = cache / colmap.CONVERSION_REPORT
-        report = json.loads(report_path.read_text())
-        report["publication"] = {
-            "mode": "immutable-prefix-v1",
-            "claim": colmap.PUBLICATION_CLAIM,
-        }
-        report_path.write_text(json.dumps(report))
-        (cache / colmap.PUBLICATION_CLAIM).write_text(
-            json.dumps(
-                {
-                    "schema_version": 1,
-                    "report_sha256": hashlib.sha256(
-                        report_path.read_bytes()
-                    ).hexdigest(),
-                }
-            )
-        )
+        _apply_publication_claim(cache)
     colmap.verify_conversion_inventory(cache)
     previous = {path.name: path.read_bytes() for path in cache.iterdir()}
 
@@ -1805,7 +1810,7 @@ def test_empty_remote_prefix_never_returns_a_previous_cached_capture(tmp_path, c
             assert operation == "list_objects_v2"
             return self
 
-        def paginate(self, *, Bucket, Prefix):
+        def paginate(self, *, Bucket, Prefix, PaginationConfig=None):
             assert Bucket == "test-bucket"
             assert Prefix == "empty/"
             yield {}

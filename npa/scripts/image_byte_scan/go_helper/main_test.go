@@ -5,12 +5,17 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -23,6 +28,204 @@ import (
 
 var fixtureConfig config.Config
 var fixtureReady ready
+
+func memoryFixture() map[string]string {
+	return map[string]string{
+		"/proc/self/cgroup":                   "0::/batch/worker\n",
+		"/proc/self/mountinfo":                "30 20 0:28 / /cgroup rw - cgroup2 cgroup rw\n",
+		"/cgroup/batch/worker/memory.max":     "1000\n",
+		"/cgroup/batch/worker/memory.current": "100\n",
+		"/cgroup/batch/memory.max":            "max\n",
+	}
+}
+
+func memoryReader(files map[string]string) func(string) ([]byte, error) {
+	return func(path string) ([]byte, error) {
+		if data, present := files[path]; present {
+			return []byte(data), nil
+		}
+		return nil, os.ErrNotExist
+	}
+}
+
+func TestCgroupMemoryHierarchyAndCurrentUsage(t *testing.T) {
+	for _, test := range []struct {
+		name, parentMax, parentCurrent string
+		want                           int64
+	}{
+		{"leaf", "max", "", 810},
+		{"ancestor-limit", "800", "100", 630},
+		{"ancestor-siblings", "3000", "2500", 450},
+		{"looser-parent", "3000", "100", 810},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := memoryFixture()
+			files["/cgroup/batch/memory.max"] = test.parentMax
+			files["/cgroup/batch/memory.current"] = test.parentCurrent
+			got, code := cgroupMemoryLimit(memoryReader(files), 0)
+			if got != test.want || code != "" {
+				t.Fatalf("limit=%d code=%q", got, code)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryMissingAndUnlimited(t *testing.T) {
+	for _, test := range []struct{ path, value string }{
+		{"/proc/self/cgroup", "2:memory:/batch/worker\n"},
+		{"/proc/self/mountinfo", "30 20 0:28 / /cgroup rw - cgroup cgroup rw\n"},
+		{"/cgroup/batch/worker/memory.max", "max\n"},
+		{"/cgroup/batch/worker/memory.max", "18446744073709551615\n"},
+		{"/proc/self/cgroup", "0::/batch/../outside\n"},
+	} {
+		files := memoryFixture()
+		files[test.path] = test.value
+		got, code := cgroupMemoryLimit(memoryReader(files), 0)
+		if got != 0 || code != "" {
+			t.Fatalf("unexpected finite limit or code: %d %q", got, code)
+		}
+	}
+	for _, path := range []string{"/proc/self/cgroup", "/proc/self/mountinfo", "/cgroup/batch/worker/memory.max"} {
+		files := memoryFixture()
+		delete(files, path)
+		got, code := cgroupMemoryLimit(memoryReader(files), 0)
+		if got != 0 || code != "" {
+			t.Fatalf("unavailable metadata: %d %q", got, code)
+		}
+	}
+}
+
+func TestCgroupMemoryInvalidFiniteLimitFailsClosed(t *testing.T) {
+	for _, value := range []string{"", "-1", "+1000", "1.5", "18446744073709551616", "secret-input"} {
+		files := memoryFixture()
+		files["/cgroup/batch/worker/memory.max"] = value
+		got, code := cgroupMemoryLimit(memoryReader(files), 0)
+		if got != 0 || code != "cgroup_memory_limit_invalid" {
+			t.Fatalf("unexpected response %d %q", got, code)
+		}
+	}
+	for _, value := range []string{"", "-1", "max", "18446744073709551616"} {
+		files := memoryFixture()
+		files["/cgroup/batch/worker/memory.current"] = value
+		got, code := cgroupMemoryLimit(memoryReader(files), 0)
+		if got != 0 || code != "cgroup_memory_usage_unavailable" {
+			t.Fatalf("unexpected response %d %q", got, code)
+		}
+	}
+	files := memoryFixture()
+	delete(files, "/cgroup/batch/worker/memory.current")
+	if got, code := cgroupMemoryLimit(memoryReader(files), 0); got != 0 || code != "" {
+		t.Fatal(code)
+	}
+}
+
+func TestCgroupMemoryExhaustionAndOverflow(t *testing.T) {
+	for _, maximum := range []string{"0", "100", "99"} {
+		files := memoryFixture()
+		files["/cgroup/batch/worker/memory.max"] = maximum
+		if got, code := cgroupMemoryLimit(memoryReader(files), 0); got != 0 || code != "" {
+			t.Fatal(code)
+		}
+	}
+	files := memoryFixture()
+	files["/cgroup/batch/worker/memory.max"] = "9223372036854775807"
+	files["/cgroup/batch/worker/memory.current"] = "0"
+	want := int64(math.MaxInt64 - math.MaxInt64/10)
+	if got, code := cgroupMemoryLimit(memoryReader(files), 0); got != want || code != "" {
+		t.Fatalf("%d %q", got, code)
+	}
+}
+
+func TestCgroupMemoryTransientPressurePreservesUsableAncestors(t *testing.T) {
+	for _, test := range []struct {
+		name, leafCurrent, parentCurrent string
+		want                             int64
+	}{
+		{"exhausted-parent", "100", "1000", 810},
+		{"exhausted-leaf", "1000", "100", 810},
+		{"small-parent", "100", "999", 810},
+		{"small-leaf", "999", "100", 810},
+		{"all-exhausted", "1000", "1000", 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := memoryFixture()
+			files["/cgroup/batch/worker/memory.current"] = test.leafCurrent
+			files["/cgroup/batch/memory.max"] = "1000"
+			files["/cgroup/batch/memory.current"] = test.parentCurrent
+			if got, code := cgroupMemoryLimit(memoryReader(files), 80); got != test.want || code != "" {
+				t.Fatalf("limit=%d code=%q", got, code)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryVanishedUsagePreservesOtherLimit(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		failure error
+		code    string
+	}{
+		{"disappeared", os.ErrNotExist, ""},
+		{"device-removed", syscall.ENODEV, ""},
+		{"permission-denied", os.ErrPermission, "cgroup_memory_usage_unavailable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			files := memoryFixture()
+			files["/cgroup/batch/memory.max"] = "1000"
+			read := memoryReader(files)
+			reader := func(path string) ([]byte, error) {
+				if path == "/cgroup/batch/memory.current" {
+					return nil, &os.PathError{Op: "read", Path: path, Err: test.failure}
+				}
+				return read(path)
+			}
+			got, code := cgroupMemoryLimit(reader, 80)
+			if code != test.code || (code == "" && got != 810) {
+				t.Fatalf("limit=%d code=%q", got, code)
+			}
+		})
+	}
+}
+
+func TestCgroupMemoryMountNamespacesAndAliases(t *testing.T) {
+	for _, test := range []struct{ membership, mounts, leaf, boundary string }{
+		{"0::/\n", "30 20 0:28 / /cgroup rw - cgroup2 cgroup rw", "/cgroup", "/cgroup"},
+		{"0::/tenant/work\n", "30 20 0:28 /tenant /cgroup rw - cgroup2 cgroup rw", "/cgroup/work", "/cgroup"},
+		{"0::/tenant/work\n", "30 20 0:28 /other /cgroup rw - cgroup2 cgroup rw", "", ""},
+		{"0::/work\n", `30 20 0:28 / /cgroup\040mount rw - cgroup2 cgroup rw`, "/cgroup mount/work", "/cgroup mount"},
+		{"0::/tenant/work\n", "30 20 0:28 /tenant /subtree rw - cgroup2 cgroup rw\n31 20 0:28 / /all rw - cgroup2 cgroup rw", "/all/tenant/work", "/all"},
+		{"0::/work\n", "30 20 0:28 / /cgroup/../outside rw - cgroup2 cgroup rw", "", ""},
+	} {
+		leaf, boundary := cgroupDirectory([]byte(test.membership), []byte(test.mounts))
+		if leaf != test.leaf || boundary != test.boundary {
+			t.Fatalf("got %q %q", leaf, boundary)
+		}
+	}
+}
+
+func TestCgroupMemoryAppliesOnlyTighterUsableLimit(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		owned     uint64
+		previous  int64
+		wantCalls []int64
+		code      string
+	}{
+		{"default", 80, math.MaxInt64, []int64{-1, 810}, ""},
+		{"explicit-stricter", 80, 400, []int64{-1}, ""},
+		{"already-too-small", 810, math.MaxInt64, nil, ""},
+		{"too-small-preserves-explicit", 810, 400, nil, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls []int64
+			set := func(value int64) int64 { calls = append(calls, value); return test.previous }
+			code := applyCgroupMemoryLimit(memoryReader(memoryFixture()), test.owned, set)
+			if code != test.code || !reflect.DeepEqual(calls, test.wantCalls) {
+				t.Fatalf("calls=%v code=%q", calls, code)
+			}
+		})
+	}
+}
 
 func TestMain(m *testing.M) {
 	zerolog.SetGlobalLevel(zerolog.Disabled)
@@ -277,6 +480,423 @@ func TestConfigPathCollisionIsBlocking(t *testing.T) {
 	var output, errors bytes.Buffer
 	if process(bytes.NewReader(framed([]byte(syntheticPAT()))), &output, &errors, d, fixtureReady) != 2 || !strings.Contains(errors.String(), "controlled_path_matches_config") {
 		t.Fatal("configuration path silently skipped fragment")
+	}
+}
+
+// rawProtocol returns the exact protocol bytes so concurrency can be compared
+// byte for byte rather than through a decoded and reordered view.
+func rawProtocol(t *testing.T, payload []byte) (int, []byte, string) {
+	t.Helper()
+	var output, errors bytes.Buffer
+	exit := process(bytes.NewReader(payload), &output, &errors, scanner(), fixtureReady)
+	return exit, output.Bytes(), errors.String()
+}
+
+// mixedCorpus builds records of several sizes and contents, including empty and
+// secret-bearing ones, so ordering bugs cannot hide behind uniform records.
+func mixedCorpus() [][]byte {
+	records := [][]byte{nil, []byte("plain"), []byte(syntheticPAT())}
+	for index := 0; index < 24; index++ {
+		size := 1 + index*4096
+		body := bytes.Repeat([]byte{byte(index), 'a', 0, 255}, size/4+1)[:size]
+		if index%5 == 0 {
+			body = append(body, []byte(syntheticPAT())...)
+		}
+		records = append(records, body)
+	}
+	return append(records, []byte(syntheticPrivateKey()), nil)
+}
+
+func TestConcurrentDetectionIsByteIdenticalToSequential(t *testing.T) {
+	payload := framed(mixedCorpus()...)
+	restore := runtime.GOMAXPROCS(1)
+	sequentialExit, sequentialOutput, sequentialErrors := rawProtocol(t, payload)
+	runtime.GOMAXPROCS(restore)
+	if sequentialErrors != "" {
+		t.Fatalf("sequential run failed: %s", sequentialErrors)
+	}
+	for _, procs := range []int{2, 4, 8} {
+		t.Run(fmt.Sprintf("procs-%d", procs), func(t *testing.T) {
+			previous := runtime.GOMAXPROCS(procs)
+			defer runtime.GOMAXPROCS(previous)
+			exit, output, errors := rawProtocol(t, payload)
+			if exit != sequentialExit || errors != sequentialErrors {
+				t.Fatalf("exit or stderr changed: exit=%d errors=%q", exit, errors)
+			}
+			if !bytes.Equal(output, sequentialOutput) {
+				t.Fatal("concurrent output differs from sequential output")
+			}
+		})
+	}
+}
+
+func TestRecordsAdmittedBeforeTruncationAreStillEmitted(t *testing.T) {
+	// A sequential scanner emits every complete record before reporting the
+	// truncation. Overlapping detection must not swallow that earlier output.
+	complete := framed([]byte(syntheticPAT()), []byte("second record"))
+	truncated := append(append([]byte(nil), complete...), 0, 0, 0, 0, 0, 0, 0, 9, 'x')
+	for _, procs := range []int{1, 8} {
+		previous := runtime.GOMAXPROCS(procs)
+		exit, output, errors := rawProtocol(t, truncated)
+		runtime.GOMAXPROCS(previous)
+		if exit != 2 || !strings.Contains(errors, "truncated_payload") {
+			t.Fatalf("truncation was not fail-closed at procs=%d", procs)
+		}
+		rows := bytes.Count(bytes.TrimRight(output, "\n"), []byte("\n")) + 1
+		if rows != 3 {
+			t.Fatalf("expected ready plus two results at procs=%d, got %d rows", procs, rows)
+		}
+		if bytes.Contains(output, []byte(`"type":"summary"`)) {
+			t.Fatal("a failed stream produced a summary")
+		}
+	}
+}
+
+func TestControlledPathGuardStopsAfterEarlierRecords(t *testing.T) {
+	detector := scanner()
+	detector.Config.Path = recordPath(2)
+	var output, errors bytes.Buffer
+	previous := runtime.GOMAXPROCS(8)
+	exit := process(bytes.NewReader(framed([]byte("first"), []byte("second"))), &output, &errors, detector, fixtureReady)
+	runtime.GOMAXPROCS(previous)
+	if exit != 2 || !strings.Contains(errors.String(), "controlled_path_matches_config") {
+		t.Fatal("configuration path collision was not fail-closed")
+	}
+	if !bytes.Contains(output.Bytes(), []byte(`"ordinal":1`)) {
+		t.Fatal("the record preceding the collision was not emitted")
+	}
+	if bytes.Contains(output.Bytes(), []byte(`"ordinal":2`)) {
+		t.Fatal("the colliding record was scanned anyway")
+	}
+}
+
+func TestByteBudgetAdmitsOversizedRecordAlone(t *testing.T) {
+	budget := newByteBudget(1024)
+	reserved, granted := budget.acquire(4096)
+	if !granted || reserved != 1024 {
+		t.Fatalf("oversized reservation was not clamped to capacity: %d %v", reserved, granted)
+	}
+	admitted := make(chan int64)
+	go func() {
+		amount, _ := budget.acquire(512)
+		admitted <- amount
+	}()
+	select {
+	case <-admitted:
+		t.Fatal("budget admitted a second record while it was fully reserved")
+	case <-time.After(50 * time.Millisecond):
+	}
+	budget.release(reserved)
+	select {
+	case second := <-admitted:
+		if second != 512 {
+			t.Fatalf("unexpected second reservation: %d", second)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("released budget did not wake the waiting record")
+	}
+}
+
+func TestCancelledByteBudgetStopsAWaitingReader(t *testing.T) {
+	budget := newByteBudget(1024)
+	if _, granted := budget.acquire(1024); !granted {
+		t.Fatal("the whole capacity was not reservable")
+	}
+	waited := make(chan bool)
+	go func() {
+		_, granted := budget.acquire(512)
+		waited <- granted
+	}()
+	select {
+	case <-waited:
+		t.Fatal("budget admitted a record while it was fully reserved")
+	case <-time.After(50 * time.Millisecond):
+	}
+	budget.cancel()
+	select {
+	case granted := <-waited:
+		if granted {
+			t.Fatal("a cancelled budget granted a reservation")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the budget did not release the waiting reader")
+	}
+}
+
+// openInput serves a fixed prefix and then parks, like a producer that is
+// waiting for a response before sending its next record. Tests use it to prove
+// the helper stops on its own rather than on end of input.
+type openInput struct {
+	data    []byte
+	mutex   sync.Mutex
+	offset  int
+	release chan struct{}
+}
+
+func (r *openInput) Read(destination []byte) (int, error) {
+	r.mutex.Lock()
+	if r.offset < len(r.data) {
+		count := copy(destination, r.data[r.offset:])
+		r.offset += count
+		r.mutex.Unlock()
+		return count, nil
+	}
+	r.mutex.Unlock()
+	<-r.release
+	return 0, io.EOF
+}
+
+func (r *openInput) consumed() int {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return r.offset
+}
+
+// brokenOutput accepts a fixed number of writes and then fails, which is how a
+// closed consumer looks to the helper.
+type brokenOutput struct{ remaining int }
+
+func (w *brokenOutput) Write(data []byte) (int, error) {
+	if w.remaining <= 0 {
+		return 0, errors.New("output closed")
+	}
+	w.remaining--
+	return len(data), nil
+}
+
+// runWhileInputStaysOpen runs one scan whose producer never sends EOF, and
+// fails the test if the scan does not return on its own.
+func runWhileInputStaysOpen(t *testing.T, detector *detect.Detector, output io.Writer) (int, string) {
+	t.Helper()
+	previous := runtime.GOMAXPROCS(4)
+	defer runtime.GOMAXPROCS(previous)
+	input := &openInput{
+		data:    framed([]byte(syntheticPAT()), []byte("second record")),
+		release: make(chan struct{}),
+	}
+	defer close(input.release)
+	var errors bytes.Buffer
+	finished := make(chan int, 1)
+	go func() { finished <- process(input, output, &errors, detector, fixtureReady) }()
+	select {
+	case exit := <-finished:
+		return exit, errors.String()
+	case <-time.After(60 * time.Second):
+		t.Fatal("a contained failure waited for the producer to close its input")
+		return 0, ""
+	}
+}
+
+func TestOutputFailureStopsWhileProducerInputStaysOpen(t *testing.T) {
+	// The ready line is written, then the first record's result fails. A serial
+	// producer is still holding its input open awaiting that result, so the
+	// helper has to end the scan itself.
+	exit, errors := runWhileInputStaysOpen(t, scanner(), &brokenOutput{remaining: 1})
+	if exit != 2 || !strings.Contains(errors, "output_error") {
+		t.Fatalf("output failure was not fail-closed: exit=%d errors=%q", exit, errors)
+	}
+}
+
+func TestContainedWorkerPanicStopsWhileProducerInputStaysOpen(t *testing.T) {
+	detector := scanner()
+	// A nil allowlist is ignored by the admission path's PathAllowed check and
+	// dereferenced inside Detect, so exactly one detection worker panics.
+	detector.Config.Allowlists = append(detector.Config.Allowlists, nil)
+	var output bytes.Buffer
+	exit, errors := runWhileInputStaysOpen(t, detector, &output)
+	if exit != 2 || !strings.Contains(errors, "internal_panic") {
+		t.Fatalf("worker panic was not fail-closed: exit=%d errors=%q", exit, errors)
+	}
+	if bytes.Contains(output.Bytes(), []byte(`"type":"summary"`)) {
+		t.Fatal("a panicking scan produced a summary")
+	}
+}
+
+func TestAdmissionReservesBeforeReadingTheNextPayload(t *testing.T) {
+	// Nothing detects the admitted job, so its reservation stays held and the
+	// budget is exhausted while the reader looks at the next record.
+	const size = 64
+	budget := newByteBudget(size)
+	input := &openInput{
+		data:    framed(bytes.Repeat([]byte("a"), size), bytes.Repeat([]byte("b"), size)),
+		release: make(chan struct{}),
+	}
+	defer close(input.release)
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	stopped := make(chan string, 1)
+	go func() {
+		stopped <- admitRecords(input, scanner(), budget, dispatch, ordered, make(chan struct{}))
+	}()
+	select {
+	case job := <-ordered:
+		if job.ordinal != 1 || len(job.payload) != size {
+			t.Fatalf("first record was not admitted whole: ordinal=%d bytes=%d", job.ordinal, len(job.payload))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first record was never admitted")
+	}
+	// The reader may have taken the second header, but must not have taken the
+	// second payload, which it has no room to allocate.
+	time.Sleep(200 * time.Millisecond)
+	if consumed := input.consumed(); consumed > 8+size+8 {
+		t.Fatalf("the next payload was read into memory while the budget was exhausted: %d bytes", consumed)
+	}
+	budget.cancel()
+	select {
+	case code := <-stopped:
+		if code != "" {
+			t.Fatalf("a cancelled budget reported a scan failure: %q", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("cancelling the budget did not stop the reader")
+	}
+}
+
+func TestAdjacentOversizedRecordsRunAloneAndStayCovered(t *testing.T) {
+	// Each record is larger than the whole budget, so each is admitted alone and
+	// neither is skipped or truncated for its size.
+	const size = 128
+	budget := newByteBudget(size / 4)
+	first := bytes.Repeat([]byte("a"), size)
+	second := bytes.Repeat([]byte("b"), size)
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	stopped := make(chan string, 1)
+	go func() {
+		input := bytes.NewReader(framed(first, second))
+		stopped <- admitRecords(input, scanner(), budget, dispatch, ordered, make(chan struct{}))
+	}()
+	for ordinal, expected := range [][]byte{first, second} {
+		var job *scanJob
+		select {
+		case job = <-ordered:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("record %d was never admitted", ordinal+1)
+		}
+		if !bytes.Equal(job.payload, expected) {
+			t.Fatalf("record %d was not admitted whole", ordinal+1)
+		}
+		select {
+		case <-ordered:
+			t.Fatalf("an oversized record was admitted alongside record %d", ordinal+1)
+		case <-time.After(100 * time.Millisecond):
+		}
+		budget.release(job.reserved)
+	}
+	select {
+	case code := <-stopped:
+		if code != "" {
+			t.Fatalf("oversized records reported a scan failure: %q", code)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the reader did not finish the stream")
+	}
+}
+
+func TestFailedAdmissionReturnsItsReservation(t *testing.T) {
+	const capacity = 256
+	budget := newByteBudget(capacity)
+	truncated := append(framed(bytes.Repeat([]byte("a"), 8)), 0, 0, 0, 0, 0, 0, 0, 64, 'x')
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	input := bytes.NewReader(truncated)
+	stopped := make(chan string, 1)
+	go func() {
+		stopped <- admitRecords(input, scanner(), budget, dispatch, ordered, make(chan struct{}))
+	}()
+	first := <-ordered
+	budget.release(first.reserved)
+	if code := <-stopped; code != "truncated_payload" {
+		t.Fatalf("truncation was not fail-closed: %q", code)
+	}
+	// Only a reader that released the truncated record's reservation leaves the
+	// whole capacity free.
+	reclaimed := make(chan int64, 1)
+	go func() {
+		amount, _ := budget.acquire(capacity)
+		reclaimed <- amount
+	}()
+	select {
+	case amount := <-reclaimed:
+		if amount != capacity {
+			t.Fatalf("unexpected reservation after truncation: %d", amount)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the truncated record's reservation was never returned")
+	}
+}
+
+// reclaimsWholeCapacity reports whether the budget has nothing outstanding,
+// which is only true when every reservation taken so far was released.
+func reclaimsWholeCapacity(budget *byteBudget, capacity int64) bool {
+	reclaimed := make(chan int64, 1)
+	go func() {
+		amount, _ := budget.acquire(capacity)
+		reclaimed <- amount
+	}()
+	select {
+	case amount := <-reclaimed:
+		return amount == capacity
+	case <-time.After(5 * time.Second):
+		return false
+	}
+}
+
+func TestControlledPathFailureReturnsItsReservation(t *testing.T) {
+	const capacity = 256
+	budget := newByteBudget(capacity)
+	detector := scanner()
+	// The second record's controlled label collides with the configuration
+	// path, so admission fails after its reservation has already been taken.
+	detector.Config.Path = recordPath(2)
+	dispatch := make(chan *scanJob, 4)
+	ordered := make(chan *scanJob, 4)
+	input := bytes.NewReader(framed(bytes.Repeat([]byte("a"), 8), bytes.Repeat([]byte("b"), 8)))
+	stopped := make(chan string, 1)
+	go func() {
+		stopped <- admitRecords(input, detector, budget, dispatch, ordered, make(chan struct{}))
+	}()
+	first := <-ordered
+	budget.release(first.reserved)
+	if code := <-stopped; code != "controlled_path_matches_config" {
+		t.Fatalf("controlled path collision was not fail-closed: %q", code)
+	}
+	if !reclaimsWholeCapacity(budget, capacity) {
+		t.Fatal("the rejected record's reservation was never returned")
+	}
+}
+
+func TestDetectionReturnsItsReservation(t *testing.T) {
+	const capacity = 32
+	budget := newByteBudget(capacity)
+	job := &scanJob{ordinal: 1, length: capacity, payload: bytes.Repeat([]byte("a"), capacity), done: make(chan struct{})}
+	reserved, granted := budget.acquire(capacity)
+	if !granted {
+		t.Fatal("a fresh budget refused the whole capacity")
+	}
+	job.reserved = reserved
+	detectRecord(job, scanner(), budget)
+	<-job.done
+	// Only a worker that released the detected record's reservation leaves the
+	// whole capacity free for the next one.
+	if !reclaimsWholeCapacity(budget, capacity) {
+		t.Fatal("the detected record's reservation was never returned")
+	}
+}
+
+func TestEmptyRecordFloodStaysBounded(t *testing.T) {
+	// Empty records consume no byte budget, so only the job bound stops an
+	// unbounded number of them from being admitted at once.
+	empties := make([][]byte, 5000)
+	previous := runtime.GOMAXPROCS(8)
+	exit, output, errors := rawProtocol(t, framed(empties...))
+	runtime.GOMAXPROCS(previous)
+	if exit != 0 || errors != "" {
+		t.Fatalf("empty record flood failed: exit=%d errors=%s", exit, errors)
+	}
+	if !bytes.Contains(output, []byte(`"files":5000`)) {
+		t.Fatal("empty record flood lost records")
 	}
 }
 
