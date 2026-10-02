@@ -187,9 +187,9 @@ def _renders_dir_for_report(
         if not candidate.is_absolute():
             candidate = root / candidate
         normalized = Path(os.path.abspath(candidate))
-        if not normalized.is_relative_to(root):
+        if normalized == root or not normalized.is_relative_to(root):
             raise Sim2RealRerunRegenError(
-                f"{source} render path must be contained in regeneration root"
+                f"{source} render path must be below regeneration root"
             )
         return normalized
 
@@ -243,6 +243,10 @@ def _renders_dir_for_report(
 def _assert_safe_render_destination(local_dir: Path, renders_dir: Path) -> None:
     root = Path(os.path.abspath(local_dir))
     target = Path(os.path.abspath(renders_dir))
+    if target == root:
+        raise Sim2RealRerunRegenError(
+            "render destination must be below regeneration root"
+        )
     try:
         relative = target.relative_to(root)
     except ValueError as exc:
@@ -281,14 +285,36 @@ def _list_common_prefixes(client: StorageClient, prefix_uri: str) -> list[str]:
     return [name for name in names if name]
 
 
+def _s3_object_exists(client: StorageClient, bucket: str, key: str) -> bool:
+    try:
+        response = client._s3.head_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return False
+        raise
+    return int(response.get("ContentLength") or 0) > 0
+
+
 def _parse_s3(uri: str) -> tuple[str, str]:
     from npa.clients.storage import _parse_bucket_uri
 
     return _parse_bucket_uri(uri)
 
 
+def _assert_no_symlinked_ancestors(path: Path) -> None:
+    absolute = Path(os.path.abspath(path))
+    for ancestor in absolute.parents:
+        if ancestor.is_symlink():
+            raise Sim2RealRerunRegenError(
+                f"download destination has a symlinked ancestor: {ancestor}"
+            )
+
+
 def _download_if_exists(client: StorageClient, uri: str, local_path: Path) -> bool:
+    _assert_no_symlinked_ancestors(local_path)
     local_path.parent.mkdir(parents=True, exist_ok=True)
+    _assert_no_symlinked_ancestors(local_path)
     with tempfile.TemporaryDirectory(
         prefix=f".{local_path.name}.", dir=local_path.parent
     ) as directory:
@@ -296,11 +322,14 @@ def _download_if_exists(client: StorageClient, uri: str, local_path: Path) -> bo
         try:
             client.download_path(uri, str(staged))
         except (StorageError, OSError):
+            _assert_no_symlinked_ancestors(local_path)
             local_path.unlink(missing_ok=True)
             return False
         if not staged.is_file() or staged.stat().st_size <= 0:
+            _assert_no_symlinked_ancestors(local_path)
             local_path.unlink(missing_ok=True)
             return False
+        _assert_no_symlinked_ancestors(local_path)
         os.replace(staged, local_path)
     return True
 
@@ -476,6 +505,14 @@ def _heldout_render_source(
     lineage = raw_lineage or {}
     report_split = heldout_report.get("evaluation_split")
     lineage_split = lineage.get("evaluation_split")
+    if report_split not in (None, "", "gold_heldout"):
+        raise Sim2RealRerunRegenError(
+            "held-out render report has the wrong evaluation split"
+        )
+    if lineage_split not in (None, "", "gold_heldout"):
+        raise Sim2RealRerunRegenError(
+            "held-out render lineage has the wrong evaluation split"
+        )
     if report_split not in (None, "", lineage_split) and lineage_split not in (
         None,
         "",
@@ -491,6 +528,10 @@ def _heldout_render_source(
     if lineage_split not in (None, "gold_heldout"):
         raise Sim2RealRerunRegenError(
             "sealed gold render lineage has the wrong evaluation split"
+        )
+    if not render_uri.startswith(prefix):
+        raise Sim2RealRerunRegenError(
+            "sealed gold render lineage is outside the configured run"
         )
     return render_uri, True
 
@@ -617,7 +658,7 @@ def _latest_completed_inner_evidence_rel(
     client: StorageClient,
     prefix_uri: str,
 ) -> str:
-    _bucket, run_prefix = _parse_s3(prefix_uri)
+    bucket, run_prefix = _parse_s3(prefix_uri)
     if run_prefix and not run_prefix.endswith("/"):
         run_prefix += "/"
 
@@ -635,12 +676,18 @@ def _latest_completed_inner_evidence_rel(
 
     inner = canonical_prefixes("inner_loop")
     gold = canonical_prefixes("eval/gold-heldout")
-    completed = sorted(set(inner).intersection(gold))
-    if not completed:
-        return _latest_inner_evidence_rel(client, prefix_uri)
-    outer_prefix = inner[completed[-1]]
-    key = f"{outer_prefix.rstrip('/')}/evidence.json"
-    return key[len(run_prefix) :] if key.startswith(run_prefix) else key
+    for outer_index in reversed(sorted(set(inner).intersection(gold))):
+        evidence_key = f"{inner[outer_index].rstrip('/')}/evidence.json"
+        report_key = f"{gold[outer_index].rstrip('/')}/report.json"
+        if _s3_object_exists(client, bucket, evidence_key) and _s3_object_exists(
+            client, bucket, report_key
+        ):
+            return (
+                evidence_key[len(run_prefix) :]
+                if evidence_key.startswith(run_prefix)
+                else evidence_key
+            )
+    return _latest_inner_evidence_rel(client, prefix_uri)
 
 
 def _latest_local_inner_evidence(local_dir: Path) -> Path:
@@ -1156,10 +1203,14 @@ def _read_candidate_manifest(local_dir: Path) -> tuple[Path, dict[str, Any]]:
     candidate_path = Path(local_dir) / "checkpoints" / "candidate" / "candidate.json"
     if not candidate_path.is_file():
         return candidate_path, {}
-    candidate = _read_retained_json(
-        candidate_path,
-        source="candidate checkpoint manifest",
-    )
+    try:
+        candidate = _read_retained_json(
+            candidate_path,
+            source="candidate checkpoint manifest",
+        )
+    except Sim2RealRerunRegenError:
+        _persist_failed_candidate(candidate_path, {})
+        raise
     return candidate_path, candidate
 
 
@@ -1422,6 +1473,12 @@ def _current_checkpoint_sources(
     }
     if not identity_keys.intersection(inner_evidence):
         return {}, {}
+    if all(
+        inner_evidence.get(key) in (None, "", {}, [])
+        for key in identity_keys
+        if key in inner_evidence
+    ):
+        return {}, {}
     try:
         return resolve_selected_checkpoint(inner_evidence)
     except ValueError as exc:
@@ -1602,7 +1659,12 @@ def _retained_deployment_claim(sources: _RetainedPolicySources) -> bool:
                 else None,
             ),
         )
-    return _consensus_claim(evidence, default=False)
+    deployable = _consensus_claim(evidence, default=False)
+    if sources.current_heldout_report:
+        deployable = bool(
+            deployable and sources.current_producer.get("loaded_for_inference") is True
+        )
+    return deployable
 
 
 def _assert_promoted_decision_identity(sources: _RetainedPolicySources) -> None:

@@ -2529,8 +2529,8 @@ def _contained_render_path(
         resolved = candidate.resolve()
     except OSError as exc:
         raise Sim2RealVizError(f"{source} render path cannot be resolved") from exc
-    if not resolved.is_relative_to(root):
-        raise Sim2RealVizError(f"{source} render path must be contained in local_dir")
+    if resolved == root or not resolved.is_relative_to(root):
+        raise Sim2RealVizError(f"{source} render path must be below local_dir")
     return resolved
 
 
@@ -2571,12 +2571,39 @@ def _heldout_renders_root(
         raise Sim2RealVizError("render path sources disagree")
     if candidates:
         return candidates[0][1]
+    sealed = (
+        report.get("evaluation_split") == "gold_heldout"
+        or lineage.get("evaluation_split") == "gold_heldout"
+    )
+    if sealed:
+        outer = report.get("outer_iteration")
+        if not isinstance(outer, int) or isinstance(outer, bool) or outer <= 0:
+            raise Sim2RealVizError("sealed gold report has an invalid outer iteration")
+        relative = f"eval/gold-heldout/outer-{outer:02d}/renders"
+    else:
+        relative = "eval/heldout/renders"
     return _contained_render_path(
         local_dir,
-        "eval/heldout/renders",
+        relative,
         source="default held-out",
         require_relative=True,
     )
+
+
+def _manifest_child_path(root: Path, value: object, *, source: str) -> Path:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise Sim2RealVizError(f"{source} must be a non-empty relative path")
+    relative = Path(value)
+    if relative.is_absolute() or relative == Path(".") or ".." in relative.parts:
+        raise Sim2RealVizError(f"{source} must be contained in the render root")
+    candidate = root
+    for part in relative.parts:
+        candidate /= part
+        if candidate.is_symlink():
+            raise Sim2RealVizError(f"{source} traverses a symlink")
+    if not candidate.resolve().is_relative_to(root.resolve()):
+        raise Sim2RealVizError(f"{source} must be contained in the render root")
+    return candidate
 
 
 def _heldout_render_episodes(
@@ -2589,17 +2616,29 @@ def _heldout_render_episodes(
     for item in manifest.get("episodes") or []:
         if not isinstance(item, dict):
             continue
-        env_id = str(item.get("env_id") or "")
-        if not env_id:
-            continue
-        env_dir = renders_root / env_id
+        raw_env_id = item.get("env_id")
+        env_dir = _manifest_child_path(
+            renders_root, raw_env_id, source="render manifest env_id"
+        )
+        env_id = str(raw_env_id)
         view_names = item.get("camera_views") or {"primary": item.get("frames") or []}
         views = {
             str(view_name): _usable_camera_frames(
                 [
                     frame
                     for name in names or []
-                    if (frame := _read_image(env_dir / str(name))) is not None
+                    if (
+                        (
+                            frame := _read_image(
+                                _manifest_child_path(
+                                    env_dir,
+                                    name,
+                                    source="render manifest frame",
+                                )
+                            )
+                        )
+                        is not None
+                    )
                 ]
             )
             for view_name, names in view_names.items()
@@ -2611,7 +2650,11 @@ def _heldout_render_episodes(
         return episodes
     if not renders_root.is_dir():
         return []
-    for env_dir in sorted(path for path in renders_root.iterdir() if path.is_dir()):
+    for env_dir in sorted(
+        path
+        for path in renders_root.iterdir()
+        if path.is_dir() and not path.is_symlink()
+    ):
         grouped = _camera_paths_by_view(sorted(env_dir.glob("camera-*.png")))
         views = {
             view_name: _usable_camera_frames(

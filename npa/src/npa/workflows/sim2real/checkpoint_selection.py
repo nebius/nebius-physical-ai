@@ -266,14 +266,15 @@ def _assert_matching_identity(
     for label, field, aliases in _IDENTITY_FIELDS:
         if field not in selection or field not in candidate:
             raise ValueError(f"selected checkpoint {field} is missing")
-        expected = selection[field]
-        if _identity_value(field, candidate[field]) != _identity_value(field, expected):
+        expected = _complete_identity_value(field, selection[field])
+        if _complete_identity_value(field, candidate[field]) != expected:
             raise ValueError(f"selected checkpoint {field} sources disagree")
         for source, payload in (("selection", selection), ("candidate", candidate)):
             for alias in aliases:
-                if alias in payload and _identity_value(
-                    field, payload[alias]
-                ) != _identity_value(field, expected):
+                if (
+                    alias in payload
+                    and _complete_identity_value(field, payload[alias]) != expected
+                ):
                     raise ValueError(
                         f"selected checkpoint {source} {label} aliases disagree"
                     )
@@ -287,6 +288,28 @@ def _identity_value(field: str, value: Any) -> Any:
     if "sha256" in field and isinstance(value, str):
         return value.lower()
     return value
+
+
+def _complete_identity_value(field: str, value: Any) -> Any:
+    normalized = _identity_value(field, value)
+    if field == "checkpoint_uri":
+        if (
+            not isinstance(value, str)
+            or value != value.strip()
+            or not value.startswith("s3://")
+            or "/" not in value.removeprefix("s3://")
+        ):
+            raise ValueError("selected checkpoint URI is malformed")
+    elif "sha256" in field:
+        if (
+            not isinstance(normalized, str)
+            or len(normalized) != 64
+            or any(char not in "0123456789abcdef" for char in normalized)
+        ):
+            raise ValueError(f"selected checkpoint {field} is malformed")
+    elif not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError("selected checkpoint size is malformed")
+    return normalized
 
 
 def resolve_selected_checkpoint(

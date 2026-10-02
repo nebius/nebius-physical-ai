@@ -270,8 +270,19 @@ def download_plan(
         )
     lineage = dict(gold.get("render_lineage") or {})
     render_uri = str(lineage.get("canonical_s3_uri") or "")
-    render_relative = str(lineage.get("local_relative_dir") or "").strip("/")
-    if not render_uri or not render_relative or ".." in Path(render_relative).parts:
+    raw_render_relative = lineage.get("local_relative_dir")
+    render_relative = (
+        raw_render_relative if isinstance(raw_render_relative, str) else ""
+    )
+    render_path = Path(render_relative)
+    if (
+        not render_uri
+        or not render_relative
+        or render_relative != render_relative.strip()
+        or render_path.is_absolute()
+        or render_path == Path(".")
+        or ".." in render_path.parts
+    ):
         raise RuntimeError("Stage 14 gold report lacks safe canonical render lineage")
     entries.append((render_uri, render_relative, True))
 
@@ -280,10 +291,14 @@ def download_plan(
     root_prefix = root.rstrip("/") + "/"
     for source, destination, is_prefix in entries:
         normalized = source.rstrip("/") + "/" if is_prefix else source
+        destination_path = Path(destination)
         if (
             not source.startswith(root_prefix)
             or normalized == root_prefix
             or not destination
+            or destination_path.is_absolute()
+            or destination_path == Path(".")
+            or ".." in destination_path.parts
         ):
             raise RuntimeError(
                 f"Stage 14 rejected unscoped artifact selection: {source}"
@@ -297,9 +312,11 @@ def download_plan(
 
 def materialize_plan(plan: list[tuple[str, str, bool]], *, local: Path) -> None:
     client = storage()
+    root = local.resolve()
     for source, destination, is_prefix in plan:
         target = local / destination
-        if not target.resolve().is_relative_to(local.resolve()):
+        resolved = target.resolve()
+        if resolved == root or not resolved.is_relative_to(root):
             raise RuntimeError(f"Stage 14 rejected unsafe local path: {destination}")
         if is_prefix:
             client.download_directory(source, str(target))

@@ -206,6 +206,19 @@ def test_latest_remote_inner_evidence_requires_completed_report_pair() -> None:
             assert name == "list_objects_v2"
             return FakePaginator()
 
+        def head_object(self, *, Bucket: str, Key: str) -> dict[str, int]:
+            assert Bucket == "demo-bucket"
+            if Key in {
+                run_prefix + "inner_loop/outer-01/evidence.json",
+                run_prefix + "eval/gold-heldout/outer-01/report.json",
+                run_prefix + "inner_loop/outer-02/evidence.json",
+            }:
+                return {"ContentLength": 2}
+            raise ClientError(
+                {"Error": {"Code": "404", "Message": "not found"}},
+                "HeadObject",
+            )
+
     class FakeStorage:
         _s3 = FakeS3()
 

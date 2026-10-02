@@ -1,0 +1,382 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+
+import pytest
+from botocore.exceptions import ClientError
+from PIL import Image
+
+from npa.workflows.sim2real.checkpoint_selection import resolve_selected_checkpoint
+from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.stage14_finalize import download_plan
+from npa.workflows.sim2real_rerun_regen import (
+    Sim2RealRerunRegenError,
+    _current_checkpoint_sources,
+    _download_if_exists,
+    _download_render_tree,
+    _ensure_policy_access_metadata,
+    _heldout_render_source,
+    _latest_completed_inner_evidence_rel,
+    _renders_dir_for_report,
+    regen_sim2real_rrd,
+    sync_heldout_renders,
+)
+from npa.workflows.sim2real_viz import (
+    Sim2RealVizError,
+    _heldout_render_episodes,
+    _heldout_renders_root,
+)
+
+
+def _config() -> Sim2RealLoopConfig:
+    return Sim2RealLoopConfig(
+        run_id="run-a",
+        s3_bucket="demo-bucket",
+        s3_prefix="sim2real-b",
+        s3_endpoint="https://storage.example",
+        outer_iterations=3,
+    )
+
+
+def _root_render_lineage() -> dict[str, object]:
+    return {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "canonical_s3_uri": (
+                "s3://demo-bucket/sim2real-b/run-a/eval/gold-heldout/outer-01/renders/"
+            ),
+            "local_relative_dir": ".",
+        },
+    }
+
+
+def test_render_destination_cannot_equal_regeneration_root(tmp_path: Path) -> None:
+    with pytest.raises(Sim2RealRerunRegenError):
+        _renders_dir_for_report(_config(), tmp_path, _root_render_lineage())
+    with pytest.raises(Sim2RealVizError):
+        _heldout_renders_root(tmp_path, _root_render_lineage())
+    with pytest.raises(RuntimeError):
+        download_plan(
+            root="s3://demo-bucket/sim2real-b/run-a",
+            outer_iteration=1,
+            evidence={"iterations": []},
+            gold=_root_render_lineage(),
+        )
+
+
+def test_failed_root_render_transfer_preserves_run_tree(tmp_path: Path) -> None:
+    class FailingStorage:
+        def download_directory(self, _uri: str, _destination: str) -> None:
+            raise OSError("forced transfer failure")
+
+    marker = tmp_path / "must-survive.txt"
+    marker.write_text("sentinel", encoding="utf-8")
+    with pytest.raises(Sim2RealRerunRegenError):
+        sync_heldout_renders(
+            _config(),
+            tmp_path,
+            heldout_report=_root_render_lineage(),
+            client=FailingStorage(),
+        )
+    assert marker.read_text(encoding="utf-8") == "sentinel"
+
+
+def test_destructive_render_sink_rejects_run_root(tmp_path: Path) -> None:
+    class FailingStorage:
+        def download_directory(self, _uri: str, _destination: str) -> None:
+            raise OSError("forced transfer failure")
+
+    marker = tmp_path / "must-survive.txt"
+    marker.write_text("sentinel", encoding="utf-8")
+    with pytest.raises(Sim2RealRerunRegenError):
+        _download_render_tree(
+            FailingStorage(),
+            "s3://demo-bucket/run/renders/",
+            tmp_path,
+            containment_root=tmp_path,
+        )
+    assert marker.read_text(encoding="utf-8") == "sentinel"
+
+
+def test_remote_completed_pair_requires_exact_nonempty_objects() -> None:
+    run_prefix = "runs/run-a/"
+    objects = {
+        run_prefix + "inner_loop/outer-01/evidence.json",
+        run_prefix + "inner_loop/outer-02/evidence.json",
+        run_prefix + "eval/gold-heldout/outer-01/report.json",
+        run_prefix + "eval/gold-heldout/outer-02/renders/env/camera-000.png",
+    }
+
+    class Paginator:
+        def paginate(self, *, Bucket: str, Prefix: str, Delimiter: str):
+            assert Bucket == "demo-bucket"
+            children = sorted(
+                {
+                    Prefix + key[len(Prefix) :].split(Delimiter, 1)[0] + Delimiter
+                    for key in objects
+                    if key.startswith(Prefix) and Delimiter in key[len(Prefix) :]
+                }
+            )
+            return [{"CommonPrefixes": [{"Prefix": item} for item in children]}]
+
+    class S3:
+        def get_paginator(self, name: str) -> Paginator:
+            assert name == "list_objects_v2"
+            return Paginator()
+
+        def head_object(self, *, Bucket: str, Key: str):
+            if Bucket == "demo-bucket" and Key in objects:
+                return {"ContentLength": 2}
+            raise ClientError(
+                {"Error": {"Code": "404", "Message": "not found"}},
+                "HeadObject",
+            )
+
+    class Storage:
+        _s3 = S3()
+
+    assert (
+        _latest_completed_inner_evidence_rel(
+            Storage(), "s3://demo-bucket/" + run_prefix
+        )
+        == "inner_loop/outer-01/evidence.json"
+    )
+
+
+def test_authoritative_heldout_load_failure_suppresses_access(
+    tmp_path: Path,
+) -> None:
+    checkpoint = b"checkpoint"
+    digest = hashlib.sha256(checkpoint).hexdigest()
+    uri = "s3://demo-bucket/sim2real-b/run-a/model.pt"
+    heldout = {
+        "policy_checkpoint_uri": uri,
+        "policy_checkpoint_sha256": digest,
+        "policy_checkpoint_size_bytes": len(checkpoint),
+        "policy_inference_provenance": {
+            "checkpoint_uri": uri,
+            "checkpoint_sha256": digest,
+            "generator_policy_sha256": digest,
+            "checkpoint_size_bytes": len(checkpoint),
+            "loaded_for_inference": False,
+            "stock_or_scripted_policy": False,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": False,
+            "policy_composition": "learned_actor_only",
+            "post_actor_controller": None,
+        },
+    }
+    candidate = tmp_path / "checkpoints/candidate/candidate.json"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_bytes_available": True,
+                "policy_checkpoint_uri": uri,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class Storage:
+        def download_file(self, _uri: str, destination: str) -> None:
+            Path(destination).write_bytes(checkpoint)
+
+    access = _ensure_policy_access_metadata(
+        _config(),
+        tmp_path,
+        storage=Storage(),
+        report={},
+        heldout_report=heldout,
+    )
+    assert access["deployable_policy"] is False
+    assert access["authenticated_download_command"] == ""
+    assert access["ui_action"] == ""
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("checkpoint_uri", ""),
+        ("checkpoint_sha256", ""),
+        ("checkpoint_size_bytes", 0),
+        ("generator_policy_sha256", ""),
+    ],
+)
+def test_selected_checkpoint_requires_complete_identity(
+    field: str,
+    invalid: object,
+) -> None:
+    uri = "s3://demo-bucket/sim2real-b/run-a/model.pt"
+    incomplete = {
+        "checkpoint_uri": uri,
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": "a" * 64,
+    }
+    incomplete[field] = invalid
+    selected_uri = str(incomplete["checkpoint_uri"])
+    with pytest.raises(ValueError):
+        resolve_selected_checkpoint(
+            {
+                "selected_checkpoint_uri": selected_uri,
+                "final_checkpoint_uri": selected_uri,
+                "checkpoint_selection": dict(incomplete),
+                "checkpoint_candidates": [dict(incomplete)],
+            }
+        )
+
+
+def test_wholly_empty_checkpoint_reference_is_absent() -> None:
+    assert _current_checkpoint_sources(
+        {
+            "selected_checkpoint_uri": "",
+            "final_checkpoint_uri": "",
+            "checkpoint_selection": {},
+        }
+    ) == ({}, {})
+
+
+def test_viewer_uses_canonical_lineage_without_local_alias(tmp_path: Path) -> None:
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 3,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "canonical_s3_uri": (
+                "s3://demo-bucket/sim2real-b/run-a/eval/gold-heldout/outer-03/renders/"
+            ),
+        },
+    }
+    expected = tmp_path / "eval/gold-heldout/outer-03/renders"
+    assert _renders_dir_for_report(_config(), tmp_path, report) == expected
+    assert _heldout_renders_root(tmp_path, report) == expected
+
+
+def test_explicit_validation_report_cannot_use_legacy_render_fallback() -> None:
+    with pytest.raises(Sim2RealRerunRegenError):
+        _heldout_render_source(_config(), {"evaluation_split": "validation"})
+
+
+def test_cross_run_canonical_render_uri_is_rejected() -> None:
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "canonical_s3_uri": (
+                "s3://demo-bucket/sim2real-b/run-b/eval/gold-heldout/outer-01/renders/"
+            ),
+            "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+        },
+    }
+    with pytest.raises(Sim2RealRerunRegenError):
+        _heldout_render_source(_config(), report)
+
+
+@pytest.mark.parametrize("kind", ["absolute", "traversal", "symlink"])
+def test_manifest_environment_path_cannot_escape_render_root(
+    tmp_path: Path,
+    kind: str,
+) -> None:
+    renders = tmp_path / "eval/gold-heldout/outer-01/renders"
+    renders.mkdir(parents=True)
+    outside = tmp_path / "outside-env"
+    outside.mkdir()
+    Image.new("RGB", (2, 2), (17, 99, 201)).save(outside / "camera-000.png")
+    if kind == "absolute":
+        env_id = str(outside.resolve())
+    elif kind == "traversal":
+        env_id = os.path.relpath(outside, renders)
+    else:
+        real_env = renders / "real-env"
+        real_env.mkdir()
+        (renders / "linked-env").symlink_to(real_env, target_is_directory=True)
+        env_id = "linked-env"
+    report = {
+        "local_renders_dir": str(renders),
+        "render_manifest": {
+            "episodes": [{"env_id": env_id, "frames": ["camera-000.png"]}]
+        },
+    }
+    with pytest.raises(Sim2RealVizError):
+        _heldout_render_episodes(tmp_path, report)
+
+
+def test_manifest_frame_cannot_be_a_symlink(tmp_path: Path) -> None:
+    renders = tmp_path / "eval/gold-heldout/outer-01/renders"
+    env = renders / "env-0001"
+    env.mkdir(parents=True)
+    target = env / "real-camera.png"
+    Image.new("RGB", (2, 2), (17, 99, 201)).save(target)
+    (env / "camera-000.png").symlink_to(target)
+    report = {
+        "local_renders_dir": str(renders),
+        "render_manifest": {
+            "episodes": [{"env_id": "env-0001", "frames": ["camera-000.png"]}]
+        },
+    }
+    with pytest.raises(Sim2RealVizError):
+        _heldout_render_episodes(tmp_path, report)
+
+
+def test_singleton_download_rejects_symlinked_ancestor(tmp_path: Path) -> None:
+    local = tmp_path / "run"
+    local.mkdir()
+    outside = tmp_path / "outside-eval"
+    outside.mkdir()
+    (local / "eval").symlink_to(outside, target_is_directory=True)
+
+    class Storage:
+        def download_path(self, _uri: str, destination: str) -> None:
+            Path(destination).write_text('{"source":"remote"}', encoding="utf-8")
+
+    with pytest.raises(Sim2RealRerunRegenError):
+        _download_if_exists(
+            Storage(),
+            "s3://demo-bucket/run/report.json",
+            local / "eval/gold-heldout/outer-01/report.json",
+        )
+    assert not (outside / "gold-heldout/outer-01/report.json").exists()
+
+
+def test_duplicate_candidate_parse_failure_persists_fail_closed_state(
+    tmp_path: Path,
+) -> None:
+    inner = tmp_path / "inner_loop/outer-01/evidence.json"
+    heldout = tmp_path / "eval/heldout/report.json"
+    candidate = tmp_path / "checkpoints/candidate/candidate.json"
+    inner.parent.mkdir(parents=True)
+    heldout.parent.mkdir(parents=True)
+    candidate.parent.mkdir(parents=True)
+    inner.write_text("{}", encoding="utf-8")
+    heldout.write_text("{}", encoding="utf-8")
+    candidate.write_text(
+        (
+            '{"deployable_policy":false,"deployable_policy":true,'
+            '"policy_bytes_available":true,'
+            '"policy_download_command":"stale download",'
+            '"policy_ui_action":"stale action"}'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(Sim2RealRerunRegenError):
+        regen_sim2real_rrd(
+            _config(),
+            local_dir=tmp_path,
+            sync_inputs=False,
+            client=object(),
+        )
+
+    payload = json.loads(candidate.read_text(encoding="utf-8"))
+    assert payload["deployable_policy"] is False
+    assert payload["policy_bytes_available"] is False
+    assert "policy_download_command" not in payload
+    assert "policy_ui_action" not in payload
