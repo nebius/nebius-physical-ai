@@ -2279,28 +2279,40 @@ def submit_cmd(
                     isaac_render_placements,
                 )
                 from npa.orchestration.skypilot._bin import resolve_global_config_path
+                from yaml import YAMLError
 
-                isaac_placements = isaac_render_placements(
-                    merged_npa_spec,
-                    context=infra_context,
-                    global_config_path=resolve_global_config_path(config_path),
-                    allowed_nodes=_skypilot_allowed_nodes(
-                        sky_bin=sky_bin,
-                        config_path=config_path,
-                        isolated_config_dir=isolated_config_dir,
-                    ),
-                )
-                missing.extend(
-                    kubernetes_prerequisites(
-                        spec_config,
-                        runner=_run_sim2real_kubectl,
-                        isaac_placements=isaac_placements,
-                        namespace=(
-                            os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
-                            or "default"
+                try:
+                    isaac_placements = isaac_render_placements(
+                        merged_npa_spec,
+                        context=infra_context,
+                        global_config_path=resolve_global_config_path(config_path),
+                        allowed_nodes=_skypilot_allowed_nodes(
+                            sky_bin=sky_bin,
+                            config_path=config_path,
+                            isolated_config_dir=isolated_config_dir,
                         ),
                     )
-                )
+                except (OSError, ValueError, RuntimeError, YAMLError):
+                    missing.append(
+                        (
+                            "Isaac render placement configuration could not be verified",
+                            "verify the selected SkyPilot configuration is readable YAML "
+                            "with mapping-valued Kubernetes settings and valid Isaac "
+                            "resource profiles, selectors, affinity, and tolerations",
+                        )
+                    )
+                else:
+                    missing.extend(
+                        kubernetes_prerequisites(
+                            spec_config,
+                            runner=_run_sim2real_kubectl,
+                            isaac_placements=isaac_placements,
+                            namespace=(
+                                os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+                                or "default"
+                            ),
+                        )
+                    )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
