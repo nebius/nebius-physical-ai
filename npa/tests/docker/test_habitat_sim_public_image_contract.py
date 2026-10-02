@@ -1072,8 +1072,9 @@ def test_habitat_development_evidence_reuse_requires_unchanged_image_inputs() ->
         assert manifest["release_authorized"] is False
         assert manifest["supported_release_selection"] == "quarantined"
         for name in ("container-image-catalog.md", "byof-habitat-sim.md"):
-            assert "requires fresh image qualification" in (
-                ROOT / "docs/workbench" / name
-            ).read_text()
+            assert (
+                "requires fresh image qualification"
+                in (ROOT / "docs/workbench" / name).read_text()
+            )
     else:
         assert not reuse.get("changed_inputs")
