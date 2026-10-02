@@ -440,9 +440,13 @@ def test_known_b200_label_value_is_lowercase_for_skypilot() -> None:
     # "B200" label is written to the node but never matches the optimizer and
     # trips FAILED_PRECHECKS. Guard the lowercase invariant for every product
     # alias NPA bridges.
-    from npa.orchestration.skypilot.k8s_gpu_catalog import _KNOWN_SKYPILOT_LABELS
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        _KNOWN_SKYPILOT_LABELS,
+        _normalize,
+    )
 
     for source, value in _KNOWN_SKYPILOT_LABELS.items():
+        assert source == _normalize(source), source
         assert value == value.lower(), (source, value)
 
 
