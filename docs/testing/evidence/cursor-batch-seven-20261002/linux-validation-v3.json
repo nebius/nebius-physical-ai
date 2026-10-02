@@ -1,0 +1,90 @@
+{
+  "schema": "npa.batch-seven.local-validation.v1",
+  "base": "46a09350e706182eb5bb00f05cc62b8619672942",
+  "integration_commit": "f006cde3b990ece18a13296507ac3334f2b16155",
+  "pr_heads": {
+    "596": "7b5167e7fccee392bdb3520a30b66901938cb0d2",
+    "678": "04b1c0e62b63bd871d590c5de1abf736544f59c3",
+    "597": "4234889e93e4d6536d117a2a6664297284dfec5d",
+    "612": "c90bb069d67f586a51b70405247ee655928088b1",
+    "617": "a88f46bf4c82e9f1257f9a67d97c20219431c5c6",
+    "622": "df54d1bde09e28445a18f5f1c5f2f46b71e919a0",
+    "624": "0093ed54df4041976900d3154a01aa7884ed9bce",
+    "627": "79e4b0863f859a9c9063665da5a81dd15db2c8a6",
+    "634": "e59c95cdc9582a01ec5c67abd1e8f086ccde1efa",
+    "647": "f006cde3b990ece18a13296507ac3334f2b16155"
+  },
+  "gates": [
+    {
+      "gate": "full",
+      "exit_code": 0,
+      "seconds": 494.58,
+      "counts": {
+        "passed": 36174,
+        "skipped": 157,
+        "xpassed": 1
+      },
+      "pytest_addopts": "-n 8 --dist=worksteal",
+      "retained_log_file": "gate-full.log",
+      "retained_log_sha256": "b09704d593b85786a271c894ca07372c74695917120827fe31da41f80be970eb"
+    },
+    {
+      "gate": "docs",
+      "exit_code": 0,
+      "seconds": 90.67,
+      "counts": {},
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-docs.log",
+      "retained_log_sha256": "fadb43f61f0bd3a6a65af0bb605091a037d4ff699be48f354756d4584358f27b"
+    },
+    {
+      "gate": "confidentiality",
+      "exit_code": 0,
+      "seconds": 0.12,
+      "counts": {},
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-confidentiality.log",
+      "retained_log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+    }
+  ],
+  "attempts": [
+    {
+      "gate": "full",
+      "exit_code": 0,
+      "seconds": 494.58,
+      "counts": {
+        "passed": 36174,
+        "skipped": 157,
+        "xpassed": 1
+      },
+      "pytest_addopts": "-n 8 --dist=worksteal",
+      "retained_log_file": "gate-full.log",
+      "retained_log_sha256": "b09704d593b85786a271c894ca07372c74695917120827fe31da41f80be970eb"
+    },
+    {
+      "gate": "docs",
+      "exit_code": 0,
+      "seconds": 90.67,
+      "counts": {},
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-docs.log",
+      "retained_log_sha256": "fadb43f61f0bd3a6a65af0bb605091a037d4ff699be48f354756d4584358f27b"
+    },
+    {
+      "gate": "confidentiality",
+      "exit_code": 0,
+      "seconds": 0.12,
+      "counts": {},
+      "pytest_addopts": "-n 8",
+      "retained_log_file": "gate-confidentiality.log",
+      "retained_log_sha256": "80ce1012249c31ad0182418840799432a4e2577239da80db1c0dd5bf65ca7bf8"
+    }
+  ],
+  "all_latest_gates_passed": true,
+  "unsuccessful_attempts_retained": [],
+  "limitations": [
+    "The local full suite is not the hosted coverage/browser/interpreter matrix.",
+    "Live VLM provider proofs are recorded separately.",
+    "No GPU or VLM execution is attributed to this control-plane validation."
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "all_failures_retained": true,
+  "artifact_sha256": {
+    "final-architecture-review-v2.json": "a514b94f4bd9edb083c7d39a48ec6749bd2060f4be086a20613c953da160e3ad",
+    "final-architecture-review.json": "239895a3da6642ecda68865bae6a459f5b18b16a33247cc2d03815b69b82b7ef",
+    "final-ci-snapshot.json": "c7647e32b7990c568c79f741b80512fcc7b5f286060f9630054a82f5fc112af1",
+    "final-independent-review-public-v1-v3.md": "1411e0dc48ac9a941335c915b2e91b8cf2988fab308bea6234a7e4a13c3f7d44",
+    "final-independent-review-public.md": "54a1f6f64b7029d763306e1ff0a0bcb401a557b96961a2c83c36acc3bf9bb4d5",
+    "final-independent-review-v1-v3.json": "c8b7fabe22297432d1f7bbca8f0b5a5876fe9703f8b973c482dbdbe6ff687979",
+    "live-test-backport-review.json": "1a74c1e53489cfba750c9b6030f67057300b7c8227e569abb90c2a26ba232ea4",
+    "pixel-review-private/independent-chain-audit-v1.json": "6020a06a7748b366bcc0b6687fe3e0da7551e1f81cc089a9eaecc3e7161d72e6",
+    "pixel-review-private/independent-grounding-review-v1.json": "a1c868463f95f496994277e58b472059b8c4d5073f254c254bea467d3dbac5e4",
+    "pixel-review-private/v2/independent-chain-audit-v2.json": "3f4407ea4445dfc5960ec7f781e63036b2a089b6b1bde4af08b14c81d0c4c36f",
+    "pixel-review-private/v2/independent-grounding-review-v2.json": "a3ea54f8d63fd004a7b721d2ec46b2866766653a51705d742dddfd16a3532592",
+    "pixel-review-private/v3-profiles/independent-chain-audit-v3-profiles.json": "8558d0cfa64f4da46fa3330d404d4fe4e265c150b9b946b95ceca9e5042bc8b8",
+    "pixel-review-private/v3-profiles/independent-grounding-review-v3-profiles.json": "d38867ea041dfa81d6591979f73b4d69d2bb503829c8092edd4edba14ff6f51f",
+    "pixel-review-private/v4-mergeable-nine/independent-chain-audit-v4-mergeable-nine.json": "dcebc9e9badd6801e299c1daa554a873f9e694732fe43b8cd4b821dd257443a6",
+    "pixel-review-private/v4-mergeable-nine/independent-freeze-audit-v4.json": "60b8dcc797ed44bbf9095c27ffd0ee87337e023e930f45a645db3f86c2e3e55e",
+    "pixel-review-private/v4-mergeable-nine/independent-grounding-review-v4-mergeable-nine.json": "d5a8c3c1412f5ba3acb2c6c96d5f95b42a7ebe604eed2bc6ac461be93870c3b4"
+  },
+  "audit_test_cases_failed": 5,
+  "audit_test_cases_passed": 8,
+  "code_blockers": [],
+  "completed_at": "2026-10-02T04:59:16.014288+00:00",
+  "final_integrated_head": "c0757b55ffc00432f49d236746b35a47e6fb8f9a",
+  "final_integrated_tree_identical_to_live_source": true,
+  "hold_draft": {
+    "647": "Positive paired-rich live acceptance unsatisfied; all three positive cases failed the frozen criterion. Audit-only failure handling and code/CI correctness do not replace the required live pass."
+  },
+  "new_ci_query_by_reviewer": false,
+  "new_retained_grounding_flaw": "MiniMax shipping-source paired rationale cites frames7-11 although exactly7 images were submitted. Numeric visible-terminal classification is supported; cited range is not.",
+  "positive_paired_rich_cases_attempted": 3,
+  "positive_paired_rich_cases_passed": 0,
+  "provider_attempts": 29,
+  "public_summary_scans": {
+    "confidentiality_unresolved": 0,
+    "gitleaks_findings": 0
+  },
+  "recommend_merge_after_exact_head_ci": [
+    596,
+    678,
+    597,
+    612,
+    617,
+    622,
+    624,
+    627,
+    634
+  ],
+  "response_repair": false,
+  "reviewer_workload_inference_calls": 0,
+  "schema": "npa-batch-seven-final-independent-review",
+  "shipping_source_commit": "afa83be5230667c2377f774da6dfb37007e59487",
+  "shipping_source_live_cases_failed": 0,
+  "shipping_source_live_cases_passed": 2,
+  "shipping_source_tree": "02dafd818ce8ae8f661f70e68eb4e376746c2c0b",
+  "source_commit": "61476e8425039df2058d4488b66adf748f194bb0",
+  "strict_response_invalid": 3,
+  "strict_response_valid": 26,
+  "updated_at": "2026-10-02T05:16:36.808369+00:00"
+}

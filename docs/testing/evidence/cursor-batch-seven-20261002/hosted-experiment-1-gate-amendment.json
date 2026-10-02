@@ -1,0 +1,42 @@
+{
+  "execution_kind": "offline_public_grade_gate_on_unchanged_fresh_reports",
+  "freeze_sha256": "13df1270c43e233750857ab2425a636119f7a22741d04eb3a837909196f66e36",
+  "original_summary_sha256": "5e937964808ff710a0a8ad0741d1721303056f69174cc9d81ca28a2a31243b93",
+  "provider_calls_made": 0,
+  "reason": "Frozen harness used promote instead of public API enum promote_checkpoint for its expected positive decision. Original failed comparison remains unchanged.",
+  "results": [
+    {
+      "actual": "promote_checkpoint",
+      "decision_sha256": "5aaf5eff90aead0d1ccad4bbb484429ba6b86995f3bc8112c7f184183d0ea439",
+      "expected": "promote_checkpoint",
+      "job": "score-complete",
+      "label_match": true,
+      "original_expected": "promote",
+      "original_label_match": false,
+      "source_report_sha256": "f4f7e30b3929030ca3e432e1aa3f1acbd16795daa23ba33893c6429dad4fa550"
+    },
+    {
+      "actual": "loop_back",
+      "decision_sha256": "48d62ec5755e787dea6c489f671c57aee1a94a7ba21f46e16d9da3813566cd4f",
+      "expected": "loop_back",
+      "job": "score-truncated",
+      "label_match": true,
+      "original_expected": "loop_back",
+      "original_label_match": true,
+      "source_report_sha256": "1cea42871e1b414048a5d6ecb592a88c395a7311b36eb08346ab3a647ccce146"
+    },
+    {
+      "actual": "loop_back",
+      "decision_sha256": "efff0bddc70336c8f2ee7e9026cee123c28bde97c6d3bb489c5f03e4c2d87a23",
+      "expected": "loop_back",
+      "job": "score-gray",
+      "label_match": true,
+      "original_expected": "loop_back",
+      "original_label_match": true,
+      "source_report_sha256": "81cb16310f57c72730de17c757f8eba2f2501121cc4a4400b22dd05cb93cbdc3"
+    }
+  ],
+  "schema": "npa.grade-gate-harness-enum-amendment/v1",
+  "source_commit": "f006cde3b990ece18a13296507ac3334f2b16155",
+  "source_sha256": "3a35185f8bc8342a1dddc3034b9d1187cec4021afd8aedb3057400881f34e846"
+}

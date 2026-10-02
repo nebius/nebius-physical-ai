@@ -1,0 +1,52 @@
+{
+  "integration_commit": "61476e8425039df2058d4488b66adf748f194bb0",
+  "focused": {
+    "passed": 552,
+    "skipped": 1,
+    "log_sha256": "ec4322630f9658f18f686b9e8e7a0d11445f162f1c1837420066bda659fac6cb"
+  },
+  "precheck": {
+    "passed": 270,
+    "exit_code": 0,
+    "log_sha256": "8200fac6878d341d91dbe01041e57fd76e18b3cbc8d5854959c60bdbd72a49cb"
+  },
+  "gitleaks": {
+    "exit_code": 0,
+    "report_sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+  },
+  "retained_unsuccessful_attempts": [
+    {
+      "source": "a00d1ad0675a3e77875bbe12f46887f1762705a0",
+      "kind": "full_linux_suite",
+      "passed": 35999,
+      "failed": 139,
+      "cause": "Group-writable task directory ancestor made trusted-path fixtures fail before their intended boundary. Only owned environment permissions were corrected; no production/test bypass.",
+      "log_sha256": "459bf15fd5223d094a65ebd6101ba04ac21264c2246e831834d4a05b20b9fc75",
+      "unchanged_failed_suites_rechecked": {
+        "passed": 347,
+        "failed": 0,
+        "log_sha256": "984a6d0c70062c43f81d9ef40ff9cab5def723584b8154971c9e0e0faa924eda"
+      }
+    }
+  ],
+  "limits": [
+    "Focused tests and local precheck are separate from hosted coverage, browser and interpreter CI.",
+    "Earlier broad macOS suites had five baseline codec/optional Rerun failures reproduced on clean main. They are not presented as a passing full suite; the provisioned Linux run is the full-suite gate."
+  ],
+  "final_head": "c0757b55ffc00432f49d236746b35a47e6fb8f9a",
+  "final_tree_equals_validated_tree": true,
+  "gitleaks_final_history": {
+    "exit_code": 0,
+    "commits_scanned": 72,
+    "report_sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+  },
+  "live_test_backport": {
+    "only_changed_path": "npa/tests/e2e/test_vlm_audits_live.py",
+    "pr622_collected_cases": 1,
+    "pr627_collected_cases": 2,
+    "ruff_check": "passed",
+    "ruff_format": "passed",
+    "confidentiality": "passed",
+    "log_sha256": "1fb51d71ecf8542b349bfb013c6c017471609700dbdc4086260b9b0fabb11da3"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "file_name": "batch-seven-vlm-20261002.html",
+  "byte_count": 5172004,
+  "sha256": "178144653006c2411105fe9a64339885572aa6f40e00daf7d476273319e784f2",
+  "original_control_images": 21,
+  "original_provider_message_contents": 29,
+  "self_contained": true,
+  "external_resources": false,
+  "distribution": "private_operator_handoff_only"
+}

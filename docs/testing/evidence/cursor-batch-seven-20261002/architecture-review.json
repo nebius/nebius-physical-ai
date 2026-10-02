@@ -1,0 +1,51 @@
+{
+  "format": "npa-batch-seven-architecture-review-v1",
+  "architecture_status": "no_remaining_correctness_blocker_found",
+  "reviewed_integrated_head": "f006cde3b990ece18a13296507ac3334f2b16155",
+  "reviewer_role": "distinct Codex reviewer supervising separate no-tools Claude Code architecture review",
+  "final_followup_review": {
+    "B1": "Resolved: incompatible paired profile rejected before side effects, preference profile symmetrical; same-request-except-model invariant preserved.",
+    "B2": "Resolved: committed retained-evidence helper independently inspected; six core-generated stub/override cases independently repeated and all blocked at grade_gate, with stable reasons. Synthetic real-response regression coverage reported separately by builder.",
+    "B3": "Accepted documented default: omitted preference rubric uses shared task rubric; explicit rubric recommended for other qualities.",
+    "B4": "Resolved: exact extraction count required before known-index provenance assignment. Real ffmpeg regression verifies fewer outputs fail closed; no unsupported B-frame ordering rewrite.",
+    "B5": "Accepted documented core-return contract: report-ready evidence finalizes through write_preference_report without second transport; canonical no-clobber preserved.",
+    "N1": "Resolved: neutral prompt states source-label/hypothesis constraints without literal forbidden role words; parser unchanged.",
+    "other_nonblocking_notes": "Adjudications retain scope/compatibility/usability notes without weakening safety checks."
+  },
+  "final_scoped_static_findings": [],
+  "not_claimed": [
+    "Human GitHub review approval",
+    "Current hosted CI completion",
+    "Fresh hosted VLM grounding result",
+    "Physical correctness or robot safety",
+    "Measured downstream usefulness",
+    "GPU execution by this reviewer"
+  ],
+  "file_sha256": {
+    "docs/workbench/cookbooks/vlm-eval-loop-runbook.md": "a702b971c42b68d1283ade9d0855ec47ae6a004e080c8ffc3ff5edf35655bd5e",
+    "npa/src/npa/workbench/vlm_eval/__init__.py": "2366d7732d092959014c07390385d340bf051d1f57559fb3ee870a4476124ae0",
+    "npa/src/npa/workbench/vlm_eval/visual_review.py": "397bb13b436e1af2f34c0f70cb7808beb22a85d30fc49bbaa4654495c4f22eee",
+    "npa/src/npa/workbench/vlm_eval/visual_review_schema.py": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2",
+    "npa/src/npa/workflows/data_factory_stages.py": "3a35185f8bc8342a1dddc3034b9d1187cec4021afd8aedb3057400881f34e846",
+    "npa/src/npa/workflows/vlm_grade_evidence.py": "3bf4417bbfd04e1257063c71241dd1fbe7137db3e15aeed5b9d3cd5b498c70c9",
+    "npa/tests/e2e/test_vlm_audits_live.py": "56ac3f01458262ebc0b618b4deda0218d0931a5c297bf0fd46b5966808d3f157"
+  },
+  "receipt_sha256": "239895a3da6642ecda68865bae6a459f5b18b16a33247cc2d03815b69b82b7ef",
+  "distinct_claude_reviews": [
+    {
+      "head": "741f76c1277723b359bdf898ab1234869b489c32",
+      "exact_output_sha256": "a9d3560b57b4db1af76f92d49cb1e8670bd024b6a02d841b9ae20b524795dd7e"
+    },
+    {
+      "head": "bab7ba7be62e185363731024687d388ac14a2287",
+      "exact_output_sha256": "8bbd7af4a99b4382aa63aaf8abc77df001f86c04df16a886e6b9548c7fc3f0a9"
+    }
+  ],
+  "pixel_review": {
+    "count": 21,
+    "byte_rgb_dimension_bindings_verified": true,
+    "before_fresh_responses": true,
+    "historical_control_semantics_already_in_context": true,
+    "receipt_sha256": "f15464d6cf89c8bcb2fbfbac75e4e0e8fa5abb52df514f68d5f66e426d074c65"
+  }
+}

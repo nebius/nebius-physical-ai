@@ -1,0 +1,23 @@
+{
+  "base": "46a09350e706182eb5bb00f05cc62b8619672942",
+  "head": "c0757b55ffc00432f49d236746b35a47e6fb8f9a",
+  "heads": {
+    "596": "7b5167e7fccee392bdb3520a30b66901938cb0d2",
+    "678": "04b1c0e62b63bd871d590c5de1abf736544f59c3",
+    "597": "4234889e93e4d6536d117a2a6664297284dfec5d",
+    "612": "c90bb069d67f586a51b70405247ee655928088b1",
+    "617": "a88f46bf4c82e9f1257f9a67d97c20219431c5c6",
+    "622": "00fff528c3a3c8f9e09a541dcf3976e999195ed3",
+    "624": "d65de5fe9a1d4cae34026d7ab94b4fb55642e7a7",
+    "627": "5cdda09616f2f08645ddd3f1679938b31161e12f",
+    "634": "afa83be5230667c2377f774da6dfb37007e59487",
+    "647": "c0757b55ffc00432f49d236746b35a47e6fb8f9a"
+  },
+  "tree": "bedaf63d527f65f5ee9e88a8ac9afadbe1953c41",
+  "unchanged_validated_tree_from": "61476e8425039df2058d4488b66adf748f194bb0",
+  "recommended_merge_tip": "afa83be5230667c2377f774da6dfb37007e59487",
+  "recommended_merge_tree": "02dafd818ce8ae8f661f70e68eb4e376746c2c0b",
+  "held_prs": [
+    647
+  ]
+}

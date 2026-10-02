@@ -1,0 +1,98 @@
+{
+  "final_integrated_head": "c0757b55ffc00432f49d236746b35a47e6fb8f9a",
+  "final_integrated_tree": "bedaf63d527f65f5ee9e88a8ac9afadbe1953c41",
+  "findings": [],
+  "frozen_live_source": "61476e8425039df2058d4488b66adf748f194bb0",
+  "full_integrated_tree_identical": true,
+  "full_live_test_file_byte_identical": true,
+  "new_inference": false,
+  "product_changes": false,
+  "schema": "npa-live-test-subset-independent-review",
+  "scope": "Read-only AST/source review. These test-only backports preserve active request dispatch, report persistence and all assertions from the actual frozen live tests. No new live calls or repaired outputs.",
+  "subsets": [
+    {
+      "active_dispatch_and_test_path_ast_identical": true,
+      "cases": [
+        "paired-judges"
+      ],
+      "changed_files": [
+        "npa/tests/e2e/test_vlm_audits_live.py"
+      ],
+      "head": "00fff528c3a3c8f9e09a541dcf3976e999195ed3",
+      "pr": 622,
+      "source_sha256": "2354e4a703aa43f7f7bdf436ac05382c4d97a15d28b44ff31ca89cda4e78ca84",
+      "unchanged_assertion_helpers": [
+        "_canonical_sha256",
+        "_assert_request_evidence",
+        "_assert_provider_evidence",
+        "_assert_private_local_report",
+        "_assert_judges",
+        "_assert_expected_controls"
+      ]
+    },
+    {
+      "active_dispatch_and_test_path_ast_identical": true,
+      "cases": [
+        "paired-judges"
+      ],
+      "changed_files": [
+        "npa/tests/e2e/test_vlm_audits_live.py"
+      ],
+      "head": "d65de5fe9a1d4cae34026d7ab94b4fb55642e7a7",
+      "pr": 624,
+      "source_sha256": "2354e4a703aa43f7f7bdf436ac05382c4d97a15d28b44ff31ca89cda4e78ca84",
+      "unchanged_assertion_helpers": [
+        "_canonical_sha256",
+        "_assert_request_evidence",
+        "_assert_provider_evidence",
+        "_assert_private_local_report",
+        "_assert_judges",
+        "_assert_expected_controls"
+      ]
+    },
+    {
+      "active_dispatch_and_test_path_ast_identical": true,
+      "cases": [
+        "paired-judges",
+        "blinded-preference"
+      ],
+      "changed_files": [
+        "npa/tests/e2e/test_vlm_audits_live.py"
+      ],
+      "head": "5cdda09616f2f08645ddd3f1679938b31161e12f",
+      "pr": 627,
+      "source_sha256": "a9f519e316c9cdf9f89dc4ceefd2a08e9f666bf8acf311c5325d5ca59e1bba45",
+      "unchanged_assertion_helpers": [
+        "_canonical_sha256",
+        "_assert_request_evidence",
+        "_assert_provider_evidence",
+        "_assert_private_local_report",
+        "_assert_judges",
+        "_assert_expected_controls",
+        "_assert_preference"
+      ]
+    },
+    {
+      "active_dispatch_and_test_path_ast_identical": true,
+      "cases": [
+        "paired-judges",
+        "blinded-preference"
+      ],
+      "changed_files": [
+        "npa/tests/e2e/test_vlm_audits_live.py"
+      ],
+      "head": "afa83be5230667c2377f774da6dfb37007e59487",
+      "pr": 634,
+      "source_sha256": "a9f519e316c9cdf9f89dc4ceefd2a08e9f666bf8acf311c5325d5ca59e1bba45",
+      "unchanged_assertion_helpers": [
+        "_canonical_sha256",
+        "_assert_request_evidence",
+        "_assert_provider_evidence",
+        "_assert_private_local_report",
+        "_assert_judges",
+        "_assert_expected_controls",
+        "_assert_preference"
+      ]
+    }
+  ]
+}

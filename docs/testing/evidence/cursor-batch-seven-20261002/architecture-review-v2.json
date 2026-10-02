@@ -1,0 +1,51 @@
+{
+  "core_function_changes": [
+    "_preference_prompt",
+    "_preference_verdict_from_payload"
+  ],
+  "enum_expansion_ast_equal": true,
+  "file_sha256": [
+    {
+      "path": "docs/workbench/cookbooks/vlm-eval-loop-runbook.md",
+      "sha256": "8f5cc3b7066a049c3862a09a036f4fb428de15d292de77c3724dc0f96c484a90"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "75ef65df44ab9e78d30c7f149c6cf6c50456ee4aae1a0ac60233f713edd5456e"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/preference_schema.py",
+      "sha256": "94cd606b289e9b62a670bb1109d20a508c6e96fa18e94ea3a749f7c8a3308308"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/visual_review.py",
+      "sha256": "88ce10e363f8ae01c05e94397bba8dad8be2ef60aad56a4aab2932586b8b2de3"
+    },
+    {
+      "path": "npa/tests/workbench/test_visual_review.py",
+      "sha256": "01a975b7a5ae725a584b7329db3a4e26645dc97068f8e0c6a2c8ae453d7175db"
+    },
+    {
+      "path": "npa/tests/workbench/test_vlm_eval_token_factory.py",
+      "sha256": "3d81c066321a950e47f9688e07b909ec74d699a8ad153341a4ced0f012089414"
+    }
+  ],
+  "format": "npa-batch-seven-architecture-review-v2",
+  "new_inference_calls_by_reviewer": 0,
+  "notes": [
+    "Preference schema exactly mirrors required keys/types/enums and nonempty string/list contracts. No empty defect-array exception introduced.",
+    "Absence of a visible defect uses a truthful textual statement; positive evidence belongs in observable_support. This does not certify semantic grounding.",
+    "Rich downstream-operation prompt is neutral and carries no source labels or threshold/confidence changes.",
+    "Original malformed response and lexical failures remain rejected; no response repair, new retries or output-limit changes.",
+    "New frozen live matrix is separate; v1 failures and gray speckle hallucination remain preserved."
+  ],
+  "parser_semantics_preserved": true,
+  "previous_reviewed_head": "f006cde3b990ece18a13296507ac3334f2b16155",
+  "reviewed_head": "61476e8425039df2058d4488b66adf748f194bb0",
+  "rich_function_changes": [
+    "_dimension_contract_text"
+  ],
+  "scoped_findings": [],
+  "status": "no_correctness_blocker_found",
+  "tree": "bedaf63d527f65f5ee9e88a8ac9afadbe1953c41"
+}

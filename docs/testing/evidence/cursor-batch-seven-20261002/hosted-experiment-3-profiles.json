@@ -1,0 +1,330 @@
+{
+  "attempts": [
+    {
+      "exact_model_match": true,
+      "finish_reason_stop": true,
+      "image_count": 2,
+      "job": "blinded-preference",
+      "latency_s": 2.3640233249752782,
+      "ordinal": 1,
+      "raw_body_sha256": "c483207632885c989ada22a0d9a286bdad379163ab0dd6322f033546d0a0ce11",
+      "requested_model": "moonshotai/Kimi-K3",
+      "response_received": true,
+      "status_code": 200,
+      "usage": {
+        "completion_tokens": 195,
+        "prompt_tokens": 1480,
+        "total_tokens": 1675
+      },
+      "wire_sha256": "ba0402a4b9b77d896473275fd71851048072eae2ffed3d2b6b5eeaa7f537c061"
+    },
+    {
+      "exact_model_match": true,
+      "finish_reason_stop": true,
+      "image_count": 2,
+      "job": "blinded-preference",
+      "latency_s": 2.162872965040151,
+      "ordinal": 2,
+      "raw_body_sha256": "3c6787614129d2516988a6863a2f40fb54dcbb6b88a890e95a1d8cdfb00cdc4a",
+      "requested_model": "moonshotai/Kimi-K3",
+      "response_received": true,
+      "status_code": 200,
+      "usage": {
+        "completion_tokens": 165,
+        "prompt_tokens": 1480,
+        "total_tokens": 1645
+      },
+      "wire_sha256": "d7a96c8278a8c02a4ea68f6ff4bd13515e9459ca961b91e5acb9accbefb3812b"
+    },
+    {
+      "exact_model_match": true,
+      "finish_reason_stop": true,
+      "image_count": 14,
+      "job": "rich-pair",
+      "latency_s": 7.666921522992197,
+      "ordinal": 3,
+      "raw_body_sha256": "d171e2301544a48e343fcdbb305484805222ff61db279cd2eead08b85d382159",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "response_received": true,
+      "status_code": 200,
+      "usage": {
+        "completion_tokens": 1799,
+        "prompt_tokens": 7711,
+        "total_tokens": 9510
+      },
+      "wire_sha256": "1b93de13e301967161e24bc2ca1b762d5c48595e732cc72af88c44fdff210154"
+    },
+    {
+      "exact_model_match": true,
+      "finish_reason_stop": true,
+      "image_count": 14,
+      "job": "rich-pair",
+      "latency_s": 5.9030567889567465,
+      "ordinal": 4,
+      "raw_body_sha256": "cf097de856c4b81a15a39f86910913efa2d156b8bd48ac95988d0ff45e27fd31",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "response_received": true,
+      "status_code": 200,
+      "usage": {
+        "completion_tokens": 1111,
+        "prompt_tokens": 7711,
+        "total_tokens": 8822
+      },
+      "wire_sha256": "047b5edbf8e8298e93254a20a2dd54d7d23e05ad969792cc3150e08a9b5e65ec"
+    },
+    {
+      "exact_model_match": true,
+      "finish_reason_stop": true,
+      "image_count": 7,
+      "job": "rich-gray",
+      "latency_s": 1.9159807580290362,
+      "ordinal": 5,
+      "raw_body_sha256": "586898fd001b517987501dcc9803516af885c40acd3306a2ee6c8fc02b7a58c4",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "response_received": true,
+      "status_code": 200,
+      "usage": {
+        "completion_tokens": 372,
+        "prompt_tokens": 4565,
+        "total_tokens": 4937
+      },
+      "wire_sha256": "50023dd05535d094e617d6a2349f61f99a4026300c5f7defb4eb46357f1b012c"
+    }
+  ],
+  "committed_live_pytest": {
+    "cases_started": [
+      "blinded-preference",
+      "rich-pair",
+      "rich-gray"
+    ],
+    "exit_code": 1,
+    "reports": [
+      {
+        "case": "blinded-preference",
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "case": "blinded-preference",
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "case": "blinded-preference",
+        "outcome": "passed",
+        "phase": "teardown"
+      },
+      {
+        "case": "rich-pair",
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "case": "rich-pair",
+        "outcome": "failed",
+        "phase": "call"
+      },
+      {
+        "case": "rich-pair",
+        "outcome": "passed",
+        "phase": "teardown"
+      },
+      {
+        "case": "rich-gray",
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "case": "rich-gray",
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "case": "rich-gray",
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ]
+  },
+  "execution": "hosted_api_with_local_cpu_client",
+  "finished_at": "2026-10-02T04:48:11.531799+00:00",
+  "freeze_sha256": "483eae070a4a62721f8970975f4c5d5aeead9f5f831f03b2199aae4b988e58c7",
+  "limitations": [
+    "All prior failures and inconclusive outcomes remain retained.",
+    "This tests model-profile code branches, not an operational model ranking.",
+    "Semantic expectations remain unchanged and failures remain failed.",
+    "No physical correctness, measured downstream usefulness, or robot safety claim."
+  ],
+  "local_gpu": false,
+  "prior_freeze_sha256": "f98804e6a27b8a390caf4574efa105e60c7d84805d91201e2567cd6994b7f483",
+  "provider_attempts": 5,
+  "provider_hardware": "not_reported",
+  "provider_retries": 0,
+  "reports": [
+    {
+      "agreement_eligible": true,
+      "deployment_status": "audit_only",
+      "escalation_required": false,
+      "evidence_chain": {
+        "provider_bodies": 2,
+        "request_manifests": 2,
+        "status": "verified",
+        "transport_payloads": 2
+      },
+      "job": "blinded-preference",
+      "report_sha256": "73b61a1572f0ad6d853ced8abd5da94d26e4a3d71a895be4c8385dcd63198842",
+      "returned_report": true,
+      "status": "consistent_candidate_preference"
+    },
+    {
+      "deployment_status": "audit_only",
+      "escalation_required": true,
+      "evidence_chain": {
+        "provider_bodies": 2,
+        "request_manifests": 2,
+        "status": "verified",
+        "transport_payloads": 2
+      },
+      "job": "rich-pair",
+      "pixel_grounding": "pending_independent_review",
+      "report_sha256": "4dfc81fa7437c59987ce6ca7bd373b73edb9a771ecac56b9a2af53067f5e711f",
+      "returned_report": true,
+      "semantic_checks": {
+        "audit_only": true,
+        "complete_arm_visible_status": false,
+        "same_mapped_preference_high_confidence": false,
+        "score_gate_unchanged": true,
+        "strict_report_completed": false,
+        "truncated_arm_partial_status": false
+      },
+      "status": "judge_error"
+    },
+    {
+      "deployment_status": "audit_only",
+      "escalation_required": false,
+      "evidence_chain": {
+        "provider_bodies": 1,
+        "request_manifests": 1,
+        "status": "verified",
+        "transport_payloads": 1
+      },
+      "job": "rich-gray",
+      "pixel_grounding": "pending_independent_review",
+      "report_sha256": "97648c18e29c7677a52d72b548a51ce0aaef071bac57d480300ca1985a3bf11f",
+      "returned_report": true,
+      "semantic_checks": {
+        "audit_only": true,
+        "gray_no_measured_usefulness_claim": true,
+        "gray_no_task_evidence": true,
+        "gray_unreviewable": true,
+        "gray_usefulness_unsupported": true,
+        "score_gate_unchanged": true,
+        "strict_report_completed": true
+      },
+      "status": "completed"
+    }
+  ],
+  "schema": "npa.vlm-profile-coverage-summary/v1",
+  "source": {
+    "commit": "61476e8425039df2058d4488b66adf748f194bb0",
+    "harness_sha256": "f153b616d4064470c46cae021d1af23a2c6dff72a93a8b62c6365351705be4d6",
+    "profile_harness_sha256": "9ed5b28faf963f25635552940afd374bff980ef03077675388d9ce76f1717fa5",
+    "source_sha256": [
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "2e013c61cebe242803f5d76cec94c17c54549fcb337e4814bf1694b016b7f1aa"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "75ef65df44ab9e78d30c7f149c6cf6c50456ee4aae1a0ac60233f713edd5456e"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json",
+        "sha256": "d5e72ec39bf0e09777e6f3251296a10a59da397cdc83de44f0c5910c82d8d612"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/align-tool-pass/frame-000.ppm",
+        "sha256": "15efc7dc971789e54f0d7113002165ef159a07faacbe09aca4ac175572f1fa00"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/align-tool-pass/manifest.json",
+        "sha256": "54cc9f27ea8df070859ff15415140ff434cf175129a4db224828749e6edf0b75"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/missed-target-fail/frame-000.ppm",
+        "sha256": "4c9e7ec0a80bad9f03fa84c00ac493455d064c0c20494af8fb1ad5b60a58732c"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/missed-target-fail/manifest.json",
+        "sha256": "e5eca4cfb0e7d900e20d51e352049f298e36945a85e13b20cbe5060fdedae074"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/place-block-clear-pass/frame-000.ppm",
+        "sha256": "862ddbfc5ce146f0746429ac74d5485bc8806e6d974f13a49beb24a024f59dc7"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/place-block-clear-pass/manifest.json",
+        "sha256": "a23f3712fc45f762d96522f3e34d479f22111419acde9436bf33a7ddca0a5081"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/progress-without-terminal-fail/frame-000.ppm",
+        "sha256": "95569003e44244651cb2693b6c33d15730ccc9dfaa2204b5c6d3cad56170be60"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/progress-without-terminal-fail/frame-001.ppm",
+        "sha256": "205e48fb5237f9721749f713cf8b915c1177d53ad38400cd6e13ed0b93f06a4f"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/progress-without-terminal-fail/frame-002.ppm",
+        "sha256": "6254dd35ff1493c197a1a131713ad02c756bd23b8f9ac512072762f5586d80b3"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/progress-without-terminal-fail/manifest.json",
+        "sha256": "879388ebc5327e2756f7fe3c2ad4bd07444e5dc06672d291ba15aa818bea8091"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/unstable-end-state-fail/frame-000.ppm",
+        "sha256": "ce883137e5530f2a38c038dd18df35f3d88f7c4d841f8212a7dc21e6e7b07dfe"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/unstable-end-state-fail/manifest.json",
+        "sha256": "5ad4cbcaf3e85edee6947014daf524ffacb55eb3f0c290e499a9cc3425b75cf5"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/preference_schema.py",
+        "sha256": "94cd606b289e9b62a670bb1109d20a508c6e96fa18e94ea3a749f7c8a3308308"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/temporal.py",
+        "sha256": "f1ac759706f56ab65320f4e6188062a5e6bad58b1c4b5a3f952ca54143936acf"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/visual_review.py",
+        "sha256": "88ce10e363f8ae01c05e94397bba8dad8be2ef60aad56a4aab2932586b8b2de3"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/visual_review_schema.py",
+        "sha256": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2"
+      },
+      {
+        "path": "npa/src/npa/workflows/data_factory_stages.py",
+        "sha256": "3a35185f8bc8342a1dddc3034b9d1187cec4021afd8aedb3057400881f34e846"
+      },
+      {
+        "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+        "sha256": "3bf4417bbfd04e1257063c71241dd1fbe7137db3e15aeed5b9d3cd5b498c70c9"
+      },
+      {
+        "path": "npa/tests/e2e/test_vlm_audits_live.py",
+        "sha256": "56ac3f01458262ebc0b618b4deda0218d0931a5c297bf0fd46b5966808d3f157"
+      }
+    ],
+    "tree": "bedaf63d527f65f5ee9e88a8ac9afadbe1953c41"
+  },
+  "publication_derivation": {
+    "original_summary_sha256": "9a1d77d2c50349b8a32ee791fbdfb4faa206b4da44df6129c1763a37fdde713c",
+    "changes": [
+      "Represent source hashes as path/sha256 objects to avoid a secret-scanner false positive. No results changed."
+    ]
+  }
+}

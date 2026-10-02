@@ -1,0 +1,282 @@
+{
+  "attempts": [
+    {
+      "exact_model_match": true,
+      "finish_reason_stop": true,
+      "image_count": 7,
+      "job": "paired-judges",
+      "latency_s": 3.5731337220058776,
+      "ordinal": 1,
+      "raw_body_sha256": "34261847d36e2bf3c656c49afb30ae4cde90bd4a8da2cddcf01cd79f114d2f9b",
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "response_received": true,
+      "status_code": 200,
+      "usage": {
+        "completion_tokens": 441,
+        "prompt_tokens": 3107,
+        "total_tokens": 3548
+      },
+      "wire_sha256": "daf8185d696fadae381fc676fa9a15cd66ac47b48872c5d68893d6d0e0f05948"
+    },
+    {
+      "exact_model_match": true,
+      "finish_reason_stop": true,
+      "image_count": 7,
+      "job": "paired-judges",
+      "latency_s": 2.209673309000209,
+      "ordinal": 2,
+      "raw_body_sha256": "856447c0abae0ff800396575e75f4f2732c7975e405956b7444ef49d25c220c0",
+      "requested_model": "openbmb/MiniCPM-V-4_5",
+      "response_received": true,
+      "status_code": 200,
+      "usage": {
+        "completion_tokens": 60,
+        "prompt_tokens": 1603,
+        "total_tokens": 1663
+      },
+      "wire_sha256": "f07695b4a11c963b3837087a8b16bec9e1441578df2d073fabf95f3731ff21ee"
+    },
+    {
+      "exact_model_match": true,
+      "finish_reason_stop": true,
+      "image_count": 2,
+      "job": "blinded-preference",
+      "latency_s": 2.100500203028787,
+      "ordinal": 3,
+      "raw_body_sha256": "776c4efb232bfacdfa6be61b4c66e14ad47c0d70246d578394b230a2baeaf1f2",
+      "requested_model": "moonshotai/Kimi-K3",
+      "response_received": true,
+      "status_code": 200,
+      "usage": {
+        "completion_tokens": 176,
+        "prompt_tokens": 1480,
+        "total_tokens": 1656
+      },
+      "wire_sha256": "ba0402a4b9b77d896473275fd71851048072eae2ffed3d2b6b5eeaa7f537c061"
+    },
+    {
+      "exact_model_match": true,
+      "finish_reason_stop": true,
+      "image_count": 2,
+      "job": "blinded-preference",
+      "latency_s": 3.0160225150175393,
+      "ordinal": 4,
+      "raw_body_sha256": "0429af80fb1fdcc8c1eb10a2704bcb64bd31b668d95f8390a3cc6e683764760f",
+      "requested_model": "moonshotai/Kimi-K3",
+      "response_received": true,
+      "status_code": 200,
+      "usage": {
+        "completion_tokens": 329,
+        "prompt_tokens": 1480,
+        "total_tokens": 1809
+      },
+      "wire_sha256": "d7a96c8278a8c02a4ea68f6ff4bd13515e9459ca961b91e5acb9accbefb3812b"
+    }
+  ],
+  "committed_live_pytest": {
+    "cases_started": [
+      "paired-judges",
+      "blinded-preference"
+    ],
+    "exit_code": 0,
+    "reports": [
+      {
+        "case": "paired-judges",
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "case": "paired-judges",
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "case": "paired-judges",
+        "outcome": "passed",
+        "phase": "teardown"
+      },
+      {
+        "case": "blinded-preference",
+        "outcome": "passed",
+        "phase": "setup"
+      },
+      {
+        "case": "blinded-preference",
+        "outcome": "passed",
+        "phase": "call"
+      },
+      {
+        "case": "blinded-preference",
+        "outcome": "passed",
+        "phase": "teardown"
+      }
+    ]
+  },
+  "execution": "hosted_api_with_local_cpu_client",
+  "finished_at": "2026-10-02T05:13:00.184160+00:00",
+  "freeze_sha256": "c55a2795b35ce48f06977433386986e1e1b6c52fdf814d086a9452a6ab57d7ab",
+  "limitations": [
+    "All prior failures and inconclusive outcomes remain retained.",
+    "This qualifies the exact independently mergeable nine-PR source transport, not an operational model ranking.",
+    "Semantic expectations remain unchanged and failures remain failed.",
+    "No physical correctness, measured downstream usefulness, or robot safety claim."
+  ],
+  "local_gpu": false,
+  "observed_controls": {
+    "paired_judges": {
+      "passed": true,
+      "requested_models": [
+        "MiniMaxAI/MiniMax-M3",
+        "openbmb/MiniCPM-V-4_5"
+      ],
+      "requests_differ_only_by_model": true,
+      "scores": [
+        1.0,
+        1.0
+      ]
+    },
+    "preference": {
+      "agreement_eligible": true,
+      "confidence": [
+        "high",
+        "high"
+      ],
+      "mapped_preferences": [
+        "candidate",
+        "candidate"
+      ],
+      "requested_model": "moonshotai/Kimi-K3"
+    }
+  },
+  "original_file_manifest_sha256": "30e51f407cb5afe406fd82f73d4da224f885a0cf3fb55ded9e5d51b041f126a5",
+  "original_files_verified": 28,
+  "original_summary_sha256": "195071f01dfc04363e5edfdddeba25009797aee6768bd74e88f2e88cbc27399c",
+  "prior_freeze_sha256": [
+    "f98804e6a27b8a390caf4574efa105e60c7d84805d91201e2567cd6994b7f483",
+    "483eae070a4a62721f8970975f4c5d5aeead9f5f831f03b2199aae4b988e58c7"
+  ],
+  "provider_attempts": 4,
+  "provider_hardware": "not_reported",
+  "provider_retries": 0,
+  "qualification_scope": "Exact independently mergeable nine-PR source and its pre-rich-review HTTP transport. Prior25 calls remain retained under their original source scope.",
+  "reports": [
+    {
+      "deployment_status": "audit_only",
+      "escalation_required": false,
+      "evidence_chain": {
+        "provider_bodies": 2,
+        "request_manifests": 2,
+        "status": "verified",
+        "transport_payloads": 0
+      },
+      "job": "paired-judges",
+      "report_sha256": "35488109c453afeb721c2e6cfcb2a61e95002598e2d9dc89edde00f2cac174e8",
+      "returned_report": true,
+      "status": "judges_agree_passed"
+    },
+    {
+      "agreement_eligible": true,
+      "deployment_status": "audit_only",
+      "escalation_required": false,
+      "evidence_chain": {
+        "provider_bodies": 2,
+        "request_manifests": 2,
+        "status": "verified",
+        "transport_payloads": 2
+      },
+      "job": "blinded-preference",
+      "report_sha256": "41d1e2eea8226a2b8788dc8f0c0ef90ee9ad264b157f726265ef52a83b3c0e31",
+      "returned_report": true,
+      "status": "consistent_candidate_preference"
+    }
+  ],
+  "schema": "npa.vlm-mergeable-nine-summary/v1",
+  "source": {
+    "commit": "afa83be5230667c2377f774da6dfb37007e59487",
+    "harness_sha256": "f153b616d4064470c46cae021d1af23a2c6dff72a93a8b62c6365351705be4d6",
+    "shipping_harness_sha256": "7c6d3eadf06fc4d6b3359e005734afc30098b7d24201531dfa3dd18d4d40f662",
+    "source_files": [
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "2e013c61cebe242803f5d76cec94c17c54549fcb337e4814bf1694b016b7f1aa"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "6eb881185856d690c64333d4ef6307443d6f5380a77687f577b875b961cd470d"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/benchmark.json",
+        "sha256": "d5e72ec39bf0e09777e6f3251296a10a59da397cdc83de44f0c5910c82d8d612"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/align-tool-pass/frame-000.ppm",
+        "sha256": "15efc7dc971789e54f0d7113002165ef159a07faacbe09aca4ac175572f1fa00"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/align-tool-pass/manifest.json",
+        "sha256": "54cc9f27ea8df070859ff15415140ff434cf175129a4db224828749e6edf0b75"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/missed-target-fail/frame-000.ppm",
+        "sha256": "4c9e7ec0a80bad9f03fa84c00ac493455d064c0c20494af8fb1ad5b60a58732c"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/missed-target-fail/manifest.json",
+        "sha256": "e5eca4cfb0e7d900e20d51e352049f298e36945a85e13b20cbe5060fdedae074"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/place-block-clear-pass/frame-000.ppm",
+        "sha256": "862ddbfc5ce146f0746429ac74d5485bc8806e6d974f13a49beb24a024f59dc7"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/place-block-clear-pass/manifest.json",
+        "sha256": "a23f3712fc45f762d96522f3e34d479f22111419acde9436bf33a7ddca0a5081"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/progress-without-terminal-fail/frame-000.ppm",
+        "sha256": "95569003e44244651cb2693b6c33d15730ccc9dfaa2204b5c6d3cad56170be60"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/progress-without-terminal-fail/frame-001.ppm",
+        "sha256": "205e48fb5237f9721749f713cf8b915c1177d53ad38400cd6e13ed0b93f06a4f"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/progress-without-terminal-fail/frame-002.ppm",
+        "sha256": "6254dd35ff1493c197a1a131713ad02c756bd23b8f9ac512072762f5586d80b3"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/progress-without-terminal-fail/manifest.json",
+        "sha256": "879388ebc5327e2756f7fe3c2ad4bd07444e5dc06672d291ba15aa818bea8091"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/unstable-end-state-fail/frame-000.ppm",
+        "sha256": "ce883137e5530f2a38c038dd18df35f3d88f7c4d841f8212a7dc21e6e7b07dfe"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/fixtures/sample_benchmark/rollouts/unstable-end-state-fail/manifest.json",
+        "sha256": "5ad4cbcaf3e85edee6947014daf524ffacb55eb3f0c290e499a9cc3425b75cf5"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/preference_schema.py",
+        "sha256": "94cd606b289e9b62a670bb1109d20a508c6e96fa18e94ea3a749f7c8a3308308"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/temporal.py",
+        "sha256": "f1ac759706f56ab65320f4e6188062a5e6bad58b1c4b5a3f952ca54143936acf"
+      },
+      {
+        "path": "npa/src/npa/workflows/data_factory_stages.py",
+        "sha256": "3a35185f8bc8342a1dddc3034b9d1187cec4021afd8aedb3057400881f34e846"
+      },
+      {
+        "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+        "sha256": "3bf4417bbfd04e1257063c71241dd1fbe7137db3e15aeed5b9d3cd5b498c70c9"
+      },
+      {
+        "path": "npa/tests/e2e/test_vlm_audits_live.py",
+        "sha256": "a9f519e316c9cdf9f89dc4ceefd2a08e9f666bf8acf311c5325d5ca59e1bba45"
+      }
+    ],
+    "tree": "02dafd818ce8ae8f661f70e68eb4e376746c2c0b"
+  }
+}
