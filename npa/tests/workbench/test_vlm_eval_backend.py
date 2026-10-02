@@ -506,6 +506,73 @@ def test_select_rollout_frames_retains_video_indices_and_timestamps(
     assert all(frame.source_kind == "video" for frame in selected)
 
 
+def _write_multistream_provenance_video(path: Path) -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:size=16x16:rate=10:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=blue:size=32x32:rate=20:duration=1",
+            "-map",
+            "0:v",
+            "-map",
+            "1:v",
+            "-c:v",
+            "mpeg4",
+            "-disposition:v:0",
+            "0",
+            "-disposition:v:1",
+            "default",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="ffmpeg and ffprobe are required for video sampling provenance",
+)
+@pytest.mark.parametrize("strategy", ["sequence", "final"])
+@pytest.mark.parametrize("unknown_count", [False, True])
+def test_video_pixels_and_provenance_use_the_same_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    strategy: str,
+    unknown_count: bool,
+) -> None:
+    from io import BytesIO
+
+    video = tmp_path / "two-streams.mp4"
+    _write_multistream_provenance_video(video)
+    if unknown_count:
+        monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: None)
+    selected = select_rollout_frames(video, frame_selection=strategy, max_frames=3)
+    assert selected
+    for frame in selected:
+        with Image.open(BytesIO(frame.data)) as image:
+            assert image.size == (16, 16)
+            red, green, blue = image.convert("RGB").getpixel((0, 0))
+            assert red > 200 and green < 30 and blue < 30
+        if unknown_count:
+            assert frame.source_count is None
+            assert frame.source_timestamp_s is None
+        else:
+            assert frame.source_count == 10
+            assert frame.source_timestamp_s == pytest.approx(frame.source_index / 10)
+
+
 def test_video_timestamps_use_structured_ffprobe_output(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
