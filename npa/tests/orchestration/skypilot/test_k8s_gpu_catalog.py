@@ -549,15 +549,66 @@ def test_inventory_accepts_only_absent_or_exact_boolean_cordon_state(
     ["false", 0, None, [], {}],
     ids=["string", "integer", "null", "list", "mapping"],
 )
-def test_inventory_rejects_malformed_cordon_state(malformed: object) -> None:
-    with pytest.raises(
-        KubernetesGpuCatalogError,
-        match=(
-            r"node 'gpu-node'.*spec\.unschedulable.*exact boolean.*"
-            "refusing to infer node schedulability"
-        ),
-    ):
-        _inventory_with_node_spec({"unschedulable": malformed})
+def test_inventory_quarantines_malformed_cordon_state(malformed: object) -> None:
+    inventory = _inventory_with_node_spec({"unschedulable": malformed})
+    assert "No verified eligible GPU capacity" in inventory.error
+    assert "spec.unschedulable" in inventory.diagnostics[0]
+    assert not inventory.nodes[0].schedulable
+    assert inventory.nodes[0].capacity == 2
+    assert inventory.nodes[0].exclusion == inventory.diagnostics[0]
+    assert inventory.allocatable == 0
+    with pytest.raises(KubernetesGpuCatalogError, match="spec.unschedulable"):
+        preflight_kubernetes_gpu_gang(inventory, accelerator="B200:1", node_count=1)
+
+
+@pytest.mark.parametrize("malformed", ["false", "true", 0, 1, None, [], {}])
+def test_mixed_cordon_inventory_retains_healthy_placement(malformed):
+    def runner(cmd, **_kwargs):
+        nodes = [
+            {
+                "metadata": {
+                    "name": name,
+                    "labels": {"nvidia.com/gpu.product": "NVIDIA-B200"},
+                },
+                "spec": {"unschedulable": flag},
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "capacity": {"nvidia.com/gpu": "8"},
+                    "allocatable": {"nvidia.com/gpu": "8", "pods": "110"},
+                },
+            }
+            for name, flag in [("bad", malformed), ("good", False)]
+        ]
+        payload = {"items": [] if "pods" in cmd else nodes}
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout=json.dumps(payload), stderr=""
+        )
+
+    inventory = discover_kubernetes_gpu_inventory(context="ctx", runner=runner)
+    assert not inventory.error
+    assert inventory.capacity == inventory.allocatable == 8
+    assert inventory.eligible_gpu_nodes == 1
+    assert "node 'bad'" in inventory.to_dict()["diagnostics"][0]
+    fit = preflight_kubernetes_gpu_gang(inventory, accelerator="B200:8", node_count=1)
+    assert fit["selected_nodes"] == ["good"]
+    with pytest.raises(UnsatisfiableAcceleratorError):
+        preflight_kubernetes_gpu_gang(inventory, accelerator="B200:8", node_count=2)
+    with pytest.raises(KubernetesGpuCatalogError, match="spec.unschedulable"):
+        label_known_kubernetes_gpus_for_skypilot(
+            context="ctx",
+            inventory=inventory,
+            runner=lambda *_args, **_kwargs: pytest.fail("mutation before validation"),
+        )
+
+
+def test_empty_inventory_is_verified_zero_not_unknown():
+    def runner(cmd, **_kwargs):
+        return subprocess.CompletedProcess(cmd, 0, stdout='{"items": []}', stderr="")
+
+    inventory = discover_kubernetes_gpu_inventory(runner=runner)
+    assert not inventory.error
+    assert inventory.diagnostics == ()
+    assert gpu_catalog.kubernetes_allocatable_gpu_count(runner=runner) == 0
 
 
 def test_unknown_gpu_is_never_fuzzy_labelled() -> None:
@@ -1442,3 +1493,39 @@ def test_validation_environment_migrates_changed_config_only_after_safe_recovery
     assert yaml.safe_load(stale_config.read_text(encoding="utf-8"))[
         "allowed_clouds"
     ] == ["kubernetes"]
+
+
+def test_readiness_retries_quarantined_snapshot_before_healthy_inventory(monkeypatch):
+    invalid = _inventory_with_node_spec({"unschedulable": "false"})
+    healthy = KubernetesGpuInventory("ctx", 1, 1, 8, 8, ("NVIDIA-B200",), {})
+    snapshots = iter([invalid, healthy])
+    monkeypatch.setattr(
+        gpu_catalog,
+        "discover_kubernetes_gpu_inventory",
+        lambda **_kwargs: next(snapshots),
+    )
+    sleeps = []
+    catalog_calls = []
+
+    def discover():
+        catalog_calls.append(True)
+        return parse_kubernetes_gpu_catalog(LIVE_OUTPUT)
+
+    result = wait_for_kubernetes_accelerators(
+        ["RTXPRO6000:1"],
+        context="ctx",
+        discover=discover,
+        monotonic=lambda: 0,
+        sleeper=sleeps.append,
+    )
+    assert "RTXPRO6000:1" in result
+    assert len(sleeps) == 1
+    assert len(catalog_calls) == 1
+
+
+def test_quarantined_inventory_count_is_unknown(monkeypatch):
+    inventory = _inventory_with_node_spec({"unschedulable": None})
+    monkeypatch.setattr(
+        gpu_catalog, "discover_kubernetes_gpu_inventory", lambda **_kwargs: inventory
+    )
+    assert gpu_catalog.kubernetes_allocatable_gpu_count() is None
