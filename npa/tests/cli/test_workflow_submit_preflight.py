@@ -3594,9 +3594,15 @@ def test_sim2real_submit_reports_invalid_placement_config_before_cloud_work(
     result = runner.invoke(
         app,
         [
-            "workbench", "workflow", "submit", str(SIM2REAL_SPEC),
-            "--run-id", "sim2real-invalid-placement",
-            "--no-deploy-if-absent", "--var", "bucket=real-bucket",
+            "workbench",
+            "workflow",
+            "submit",
+            str(SIM2REAL_SPEC),
+            "--run-id",
+            "sim2real-invalid-placement",
+            "--no-deploy-if-absent",
+            "--var",
+            "bucket=real-bucket",
         ],
     )
     assert result.exit_code == 1, result.output
