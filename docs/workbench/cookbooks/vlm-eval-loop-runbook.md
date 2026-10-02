@@ -124,6 +124,14 @@ a defense against in-image instructions. For S3 output, private access remains
 an operator/storage-policy requirement; the client uses an atomic create-only
 write but does not infer bucket policy or ACL state.
 
+Both image orders receive the same neutral typed JSON Schema. The strict
+response contract requires a nonempty `critical_defects` list for each image:
+when no critical defect is visible, use a truthful absence statement without
+inventing defects. Positive observations belong in `observable_support`.
+The exact `uncertainty` field must contain text describing what the views cannot
+establish. Schema validity alone does not establish that observations are grounded
+in the pixels; retain both outcomes for review.
+
 An omitted or empty rubric uses the shared task-completion rubric; supply
 `rubric` or `rubric_path` when comparing other visible qualities. The effective
 rubric is retained in the report. The SDK returns that report and retains a
