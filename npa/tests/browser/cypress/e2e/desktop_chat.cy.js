@@ -230,8 +230,7 @@ it("quarantines malformed archival metadata during refresh and disables the open
   cy.wait("@quarantined");
   cy.get("#prompt").should("be.disabled");
   cy.get("#send").should("be.disabled");
+  cy.get("#notice").should("be.visible").and("contain.text", "archiv");
   cy.get("#menu").click();
   cy.get(".session-title").should("have.length", 1).and("have.text", "Healthy chat");
-  cy.get("#menu").click();
-  cy.get("#notice").should("be.visible").and("contain.text", "archiv");
 });
