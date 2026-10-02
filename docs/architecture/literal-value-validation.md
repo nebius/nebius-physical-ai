@@ -25,10 +25,3 @@ Choose failure behavior by the operation:
 Standalone generated backend modules that cannot import the package may maintain
 an intentional local adapter. Document that packaging boundary and test its
 behavior against this scalar contract; do not introduce alternate coercion rules.
-
-Foxglove MCAP conversion validates every present simulator ground-truth flag
-and the ground-truth object before creating or truncating the output. Missing
-flags default to false; present null, strings, numbers, and containers fail with
-the source filename, action index, and flag name. Completion reasons still
-control the phase, while `success` retains its measured `placement_stable`
-meaning. Phase and status fields consume the same validated evidence.
