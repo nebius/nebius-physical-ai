@@ -232,3 +232,47 @@ def test_the_hash_the_image_checks_is_still_the_retained_grant():
     assert len(raw) == 1077
     # The in-image check is the read that failed, so it must stay in the build.
     assert "sha256sum --check --status" in _dockerfile()
+
+
+@requires_docker
+def test_open3d_context_filter_excludes_nested_host_bytecode():
+    """Exercise Dockerfile-specific precedence with the real context filters."""
+    with tempfile.TemporaryDirectory() as workspace:
+        context = Path(workspace)
+        image_dir = context / "docker/workbench/open3d"
+        image_dir.mkdir(parents=True)
+        shutil.copy2(ROOT / "npa/.dockerignore", context / ".dockerignore")
+        shutil.copy2(
+            IMAGE / "Dockerfile.dockerignore", image_dir / "Dockerfile.dockerignore"
+        )
+        source = context / "src/npa/nested"
+        (source / "__pycache__").mkdir(parents=True)
+        (source / "module.py").write_text("# genuine source\n")
+        (source / "module.pyc").write_bytes(b"host bytecode control")
+        (source / "__pycache__/module.cpython-312.pyc").write_bytes(b"nested control")
+        dockerfile = image_dir / "Dockerfile"
+        dockerfile.write_text(
+            f"FROM {_base_image()}\n"
+            "COPY src /proof\n"
+            "RUN test -f /proof/npa/nested/module.py "
+            "&& test ! -e /proof/npa/nested/module.pyc "
+            "&& test ! -e /proof/npa/nested/__pycache__\n"
+        )
+        finished = subprocess.run(
+            [
+                "docker",
+                "build",
+                "--no-cache",
+                "--progress=plain",
+                "--output",
+                "type=cacheonly",
+                "-f",
+                str(dockerfile),
+                ".",
+            ],
+            cwd=context,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        assert finished.returncode == 0, (finished.stdout + finished.stderr)[-3000:]

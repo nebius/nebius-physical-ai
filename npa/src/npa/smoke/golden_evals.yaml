@@ -1370,6 +1370,8 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_open3d_functional
       command: python -m npa.smoke.test_open3d_functional
+      # Optional shared-project Serverless placement; the payload remains CPU-only.
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 300
       status: ready

@@ -252,7 +252,7 @@ def test_open3d_image_keeps_its_cpu_and_non_root_contract() -> None:
     ]
     # This runtime compiles no bytecode of its own, which is how a `cpython-312.pyc`
     # found in a layer was identifiable as copied from the build host rather than
-    # produced here. The exclusion that keeps it out lives in `npa/.dockerignore`.
+    # produced here. The image-specific context excludes host bytecode at every depth.
     assert "PYTHONDONTWRITEBYTECODE=1" in text
     assert "USER ubuntu" in text
     assert "useradd -m -s /bin/bash -u 1000 ubuntu" in text
@@ -260,3 +260,12 @@ def test_open3d_image_keeps_its_cpu_and_non_root_contract() -> None:
     assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
     assert "python -m pip check" in text
     assert 'ENTRYPOINT ["/opt/npa/docker/workbench/open3d/entrypoint.sh"]' in text
+
+
+def test_open3d_context_excludes_nested_host_bytecode_without_changing_other_images() -> (
+    None
+):
+    root_rules = set((ROOT / "npa/.dockerignore").read_text().splitlines())
+    image_rules = set((IMAGE / "Dockerfile.dockerignore").read_text().splitlines())
+    assert root_rules <= image_rules
+    assert {"**/__pycache__/", "**/*.py[cod]"} <= image_rules
