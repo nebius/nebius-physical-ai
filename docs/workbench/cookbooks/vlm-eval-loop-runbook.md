@@ -185,6 +185,15 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 Readers retain `vlm_eval_stub.json` only for historical bundles. Do not declare
 that legacy name in new workflows.
 
+The data-factory `grade_gate` requires consistent retained inference evidence
+before a VLM result can promote a checkpoint. Stub results, score overrides, and
+historical reports without provider evidence produce `loop_back` with an explicit
+reason. The gate checks submitted-frame metadata, request and response hashes,
+and agreement between the retained response and serialized result. These checks
+establish internal consistency, not provider authentication or visual correctness.
+Provider `success` disagreement stays recorded separately; the numeric score and
+threshold still determine the score gate. The Cosmos Evaluator contract is unchanged.
+
 Read the report:
 
 ```bash
