@@ -925,7 +925,9 @@ def _comparison_models(primary: str, secondary: str) -> tuple[str, str]:
         raise VlmEvalError("paired judges require two nonempty model IDs")
     if models[0] == models[1]:
         raise VlmEvalError("paired judges require two distinct model IDs")
-    if any(not token_factory_chat_profile(model).include_temperature for model in models):
+    if any(
+        not token_factory_chat_profile(model).include_temperature for model in models
+    ):
         raise VlmEvalError(
             "paired judges require models compatible with the shared temperature "
             "request; use individual evaluation for incompatible model profiles"
