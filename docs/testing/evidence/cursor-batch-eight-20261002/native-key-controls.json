@@ -1,0 +1,435 @@
+{
+  "source_hashes": [
+    {
+      "file": "image_payload_credentials.py",
+      "sha256": "5c45c28f86a3d398a2763a8331c893284df0641ede7adf1935c5cff014b8235a"
+    },
+    {
+      "file": "scan_image_alpamayo2_payload.py",
+      "sha256": "7b6f82f2fe6f3b56dd885b27f9ec891e8f0ad0130e398060736fd9cf384e0c9b"
+    },
+    {
+      "file": "scan_image_cosmos3_serving_payload.py",
+      "sha256": "693e8ff27c219dbd7da629d2cda79a772907c234f45d298b301c1fbad297b441"
+    },
+    {
+      "file": "scan_image_cosmos3_ray_serve_payload.py",
+      "sha256": "cf57c3707efec2f8878d956501363239a90bd99e9f8393b809f402f8b78ac1aa"
+    }
+  ],
+  "retained_cases": [
+    {
+      "case": "ec_application",
+      "archive_sha256": "ef81c8a658d340c35e1a118ee296d36e166400c5d181f717db114007f2bd5155",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 1,
+        "cosmos3_serving": 1,
+        "cosmos3_ray_serve": 1
+      },
+      "scope_change": null
+    },
+    {
+      "case": "ec_outside",
+      "archive_sha256": "6bdb01920b0610e304924786295a4c574eed538bea53ef8294b3672ab6d84909",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 1,
+        "cosmos3_serving": 1,
+        "cosmos3_ray_serve": 1
+      },
+      "scope_change": null
+    },
+    {
+      "case": "encrypted_application",
+      "archive_sha256": "1757c354a037a934cabc5a6dc0f513d50b2baa6535eca33197b5f37bd5b7b1a2",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 1,
+        "cosmos3_serving": 1,
+        "cosmos3_ray_serve": 1
+      },
+      "scope_change": null
+    },
+    {
+      "case": "encrypted_outside",
+      "archive_sha256": "bda40b9c8ba20ac494ff2f7e2ffcc4189e18b45be4eedcb0a2a8f2494c85ac2c",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 1,
+        "cosmos3_serving": 1,
+        "cosmos3_ray_serve": 1
+      },
+      "scope_change": null
+    },
+    {
+      "case": "assignment_application",
+      "archive_sha256": "5c6f6d02837d6fb77bc3209dd9ce7b720cd63134305e1171c74be0e9ac4fb580",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 1,
+        "cosmos3_serving": 1,
+        "cosmos3_ray_serve": 1
+      },
+      "scope_change": "generic Dockerfile assignment rule is not applied to arbitrary layer bytes"
+    },
+    {
+      "case": "assignment_outside",
+      "archive_sha256": "498e83ccb70d1c1cde499ef7c25942db47f2392cbe3a259f999cd6bfe6a04a18",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 1,
+        "cosmos3_serving": 1,
+        "cosmos3_ray_serve": 1
+      },
+      "scope_change": "generic Dockerfile assignment rule is not applied to arbitrary layer bytes"
+    },
+    {
+      "case": "clean",
+      "archive_sha256": "c02044bc43a193ca219199647f8b738df5786759c5400dca96bb2776eb6a01b2",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 0,
+        "cosmos3_serving": 0,
+        "cosmos3_ray_serve": 0
+      },
+      "scope_change": null
+    },
+    {
+      "case": "libcrypto.so.3",
+      "archive_sha256": "ec0383953fce4506cc427155cc9c11cbc053fc45714fc4af4a864603d960b623",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 0,
+        "cosmos3_serving": 0,
+        "cosmos3_ray_serve": 0
+      },
+      "scope_change": null
+    },
+    {
+      "case": "ssh-keygen",
+      "archive_sha256": "5513f07d046134fb56dbe71f7d93e2853ed69e1c77aca0183b2bb743dea52a94",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 0,
+        "cosmos3_serving": 0,
+        "cosmos3_ray_serve": 0
+      },
+      "scope_change": null
+    },
+    {
+      "case": "sshd-auth",
+      "archive_sha256": "ab4d9988b598e3d1c3336a8f7801a2adfc089b506541d07dc212db3603236b68",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 0,
+        "cosmos3_serving": 0,
+        "cosmos3_ray_serve": 0
+      },
+      "scope_change": null
+    },
+    {
+      "case": "ssh-keygen_with_appended_disposable_key",
+      "archive_sha256": "1cb7fb7713526d23eb8a69b3b905feac08fddcc4212c3ac0fba53b03c9cb5d34",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 1,
+        "cosmos3_serving": 1,
+        "cosmos3_ray_serve": 1
+      },
+      "scope_change": null
+    },
+    {
+      "case": "sshd-auth_with_appended_disposable_key",
+      "archive_sha256": "459ecbf47e7f7567a377f6a1021766cd6d681d5b38594f0647698fdea39c368f",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        }
+      },
+      "former_outcomes": {
+        "alpamayo2": 1,
+        "cosmos3_serving": 1,
+        "cosmos3_ray_serve": 1
+      },
+      "scope_change": null
+    }
+  ],
+  "appended_long_gap_controls": [
+    {
+      "case": "ssh-keygen-long-whitespace-key",
+      "carrier_sha256": "4a16f170f7c80d6643d3ffada36d396c9d7b1d63238a218628e37af38d6107c0",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        }
+      }
+    },
+    {
+      "case": "sshd-auth-long-whitespace-key",
+      "carrier_sha256": "2b1ca22b077b106a6fb02ed229c13b9311f392267bea2e4d42933934e3c06afa",
+      "outcomes": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected"
+        }
+      }
+    }
+  ],
+  "mutation_controls": [
+    {
+      "scanner": "alpamayo2",
+      "candidate": {
+        "exit_code": 1,
+        "scan_complete": true,
+        "verdict": "runtime-only-payload-detected"
+      },
+      "bounded-whitespace-mutant": {
+        "exit_code": 0,
+        "scan_complete": true,
+        "verdict": "clean"
+      }
+    },
+    {
+      "scanner": "cosmos3_serving",
+      "candidate": {
+        "exit_code": 1,
+        "scan_complete": true,
+        "verdict": "restricted-payload-detected"
+      },
+      "bounded-whitespace-mutant": {
+        "exit_code": 0,
+        "scan_complete": true,
+        "verdict": "clean"
+      }
+    },
+    {
+      "scanner": "cosmos3_ray_serve",
+      "candidate": {
+        "exit_code": 1,
+        "scan_complete": true,
+        "verdict": "restricted-payload-detected"
+      },
+      "bounded-whitespace-mutant": {
+        "exit_code": 0,
+        "scan_complete": true,
+        "verdict": "clean"
+      }
+    }
+  ],
+  "native_invocations": 48,
+  "parse_valid_key_confirmed": true,
+  "source_head": "30cda6f696ae7860758469cd4aa2a9e3e7592e82",
+  "qualification_scope": "Synthetic tar fixtures and real executable carriers with disposable native-generated keys; these controls are not production-image qualification."
+}

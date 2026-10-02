@@ -1,0 +1,13 @@
+{
+  "source_head": "3d147e3096285811290eb43551309ba5b25c50ec",
+  "python": "3.12.14",
+  "upstream_reader": "lerobot==0.5.1",
+  "tests_passed": 4,
+  "tests_failed": 0,
+  "seconds": 64.09,
+  "claims": [
+    "Real upstream reader loads exported state, action and video samples.",
+    "Wrong dataset codebase version rejected by the upstream exception."
+  ],
+  "scope": "Separate reader environment; full NPA and LeRobot pins are not claimed co-installable. Final SDK PR changes after this test did not alter adapter or reader tests."
+}

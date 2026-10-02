@@ -1,0 +1,282 @@
+{
+  "schema": "npa.open3d.managed-validation.v1",
+  "producer_sha": "07968922ab665c53114a1c6b3bfad9fd03edbb03",
+  "review_head": "eaacc3ef33090b52dcd357d2190c1c9d44e6566a",
+  "image_oci_index": "sha256:87f56160459db0c55a6839521a3d3f90d701898b387471546ad44b134e7e94b7",
+  "image_scope": "Operator-controlled private validation image; no public image publication or supported-release promotion. Complete-byte traversal and separate independent exact-content review are complete; all 266 raw findings remain and raw valid=false is preserved. The automated adjudicator does not support the NCore verification schema, and no automated adjudication pass or public-image release clearance is claimed. Results apply only to this exact built digest; floating transitive packaging prevents a claim of fully reproducible Python closure.",
+  "execution": {
+    "route": "Public npa workflow submit through standard SkyPilot managed jobs on existing Kubernetes capacity",
+    "managed_terminal": "SUCCEEDED",
+    "stages": 6,
+    "workers_with_exact_installed_module_hashes": 6,
+    "installed_open3d_module_count": 6,
+    "nonroot_uid": 1000,
+    "observed_resources": [
+      {},
+      {
+        "requests": {
+          "cpu": "8",
+          "memory": "32G"
+        }
+      }
+    ],
+    "source_overlay": false,
+    "gpu_requested": false,
+    "downloaded_objects": 20,
+    "downloaded_bytes": 45048844,
+    "all_downloaded_object_hashes_reverified_locally": true,
+    "versions": {
+      "npa": "0.1.0",
+      "open3d": "0.20.0",
+      "rerun-sdk": "0.38.1",
+      "mcap": "1.4.0",
+      "numpy": "2.4.6",
+      "scipy": "1.17.1"
+    },
+    "captured_pod_uids": 7,
+    "captured_pod_scope": "Includes image/bootstrap preflight pod plus six actual stage workers; all captured UIDs absent after owned cleanup.",
+    "public_submit_cli_exit": 0,
+    "actual_runtime_image_indices": [
+      "sha256:87f56160459db0c55a6839521a3d3f90d701898b387471546ad44b134e7e94b7"
+    ],
+    "separate_polling_snapshots": 145,
+    "separate_polling_observer_exit": 0
+  },
+  "geometry": {
+    "fragment_count": 3,
+    "source_points": 528065,
+    "fused_points": 6339,
+    "graph_nodes": 3,
+    "graph_edges": 3,
+    "voxel_size": 0.05,
+    "meshes": [
+      {
+        "artifact": "mesh",
+        "vertices": 14738,
+        "triangles": 28216,
+        "surface_area": 10.51454058426838,
+        "unsupported_area_fraction": 0.0,
+        "unsupported_area_beyond_3_voxels": 0.0,
+        "is_edge_manifold": false,
+        "is_vertex_manifold": false,
+        "is_watertight": false
+      },
+      {
+        "artifact": "mesh_uncropped",
+        "vertices": 18408,
+        "triangles": 36654,
+        "surface_area": 22.247512058182494,
+        "unsupported_area_fraction": 0.5273835313912686,
+        "unsupported_area_beyond_3_voxels": 0.3849929066861452,
+        "is_edge_manifold": false,
+        "is_vertex_manifold": true,
+        "is_watertight": false
+      }
+    ],
+    "coverage": {
+      "samples": 6339,
+      "fraction_within_voxel": 0.9927433349108692,
+      "sample_to_surface_rmse": 0.010820007883012295
+    },
+    "removed_triangles": 8438
+  },
+  "reconstruction_parameters": {
+    "poisson_depth": 9,
+    "density_quantile": 0.02,
+    "support_distance_factor": 1.0
+  },
+  "units": "Scene units; no independent metric-scale calibration claimed.",
+  "negative_control": {
+    "source_sha": "07968922ab665c53114a1c6b3bfad9fd03edbb03",
+    "image_id": "sha256:87f56160459db0c55a6839521a3d3f90d701898b387471546ad44b134e7e94b7",
+    "original_mesh_sha256": "9a5fb53d7fcd629e1fe337ffc4f650d219077e27b0e5b273ae5e5dc80a152693",
+    "mutated_mesh_sha256": "bf026b8f2b879674e69e60d9c5e74d9822785ad6f8a9f8fe207fc8ec78dfb205",
+    "unchanged_report_sha256": "6a5b04385c39be43b9e959d68caa635c81c346b64896a71735b6aa7347a2af47",
+    "valid_ply_vertices": 14738,
+    "valid_ply_triangles": 28216,
+    "translation": [
+      0.125,
+      0,
+      0
+    ],
+    "failure": {
+      "error_class": "Open3dError",
+      "error": "recording mesh does not match its recorded SHA256"
+    },
+    "published_output_count": 0,
+    "scope": "Real baked public visualize API and actual S3 bytes; original run untouched; no runner, digest or storage mocks."
+  },
+  "original_surface_readback_after_negative_control": {
+    "original_artifacts": [
+      {
+        "artifact": "mesh.ply",
+        "sha256": "9a5fb53d7fcd629e1fe337ffc4f650d219077e27b0e5b273ae5e5dc80a152693",
+        "bytes": 1118770,
+        "original_unchanged": true
+      },
+      {
+        "artifact": "mesh_uncropped.ply",
+        "sha256": "78d503e2dbf127df122324d7a50fc05276ecfcd93ae35468772db2433fe37265",
+        "bytes": 1415634,
+        "original_unchanged": true
+      },
+      {
+        "artifact": "result.json",
+        "sha256": "6a5b04385c39be43b9e959d68caa635c81c346b64896a71735b6aa7347a2af47",
+        "bytes": 3114,
+        "original_unchanged": true
+      }
+    ],
+    "negative_output_count": 0,
+    "scope": "Fresh S3 readback after actual negative visualize call; original surface bytes unchanged and sibling negative output prefix still empty."
+  },
+  "recording": {
+    "name": "point-cloud.rrd",
+    "bytes": 8092582,
+    "sha256": "1089e2202e39fdce9d459c42e0976fc9f5d240c90e3649553ff70b28b4598ba2",
+    "geometry_arrays_decoded_and_compared": 8,
+    "position_tolerance_absolute": 1e-06,
+    "triangle_indices": "exact",
+    "timeline": "fragment_index:0,1,2",
+    "all_recording_and_blueprint_chunks_decoded": 33,
+    "privacy": "Every recording/blueprint chunk decoded; no infrastructure/credential/URI/path values found other than factual operational run identity. Original is retained privately, unchanged.",
+    "original_bytes_unmodified": true,
+    "publication": "Original recording intentionally private because its factual recording/provenance includes an operational run identity; public proof uses safe static media and this exact original hash."
+  },
+  "media": [
+    {
+      "name": "distance-removed-surface.png",
+      "bytes": 325169,
+      "sha256": "a84f35b0234d19b3238441ed1aaa540bd851401951c7564410d8de5450414198",
+      "kind": "Actual geometry orthographic plot, not viewer screenshot"
+    },
+    {
+      "name": "observed-fused-samples.png",
+      "bytes": 399504,
+      "sha256": "90f668d19059d7da1e2c0007d4b7e4678c19942ce5db83ceefd035373f7c5968",
+      "kind": "Actual geometry orthographic plot, not viewer screenshot"
+    },
+    {
+      "name": "retained-surface.png",
+      "bytes": 510163,
+      "sha256": "6fb77e337d5b27a8eae984dad066f15094547ef2ec22f797725646a569e7d3cf",
+      "kind": "Actual geometry orthographic plot, not viewer screenshot"
+    },
+    {
+      "name": "uncropped-surface.png",
+      "bytes": 692840,
+      "sha256": "6f2f52925bb83fafd4c69a79fffe82e32447f2736296c324af3deb5487661820",
+      "kind": "Actual geometry orthographic plot, not viewer screenshot"
+    }
+  ],
+  "cleanup": {
+    "captured_worker_uids_absent": true,
+    "pull_secret_absent": true,
+    "controller_cleanup_verified": true,
+    "remaining_pull_secret_references": 0,
+    "worker_absence_basis": "Fresh exact-context UID census: all7 captured podUIDs absent and no references to the owned pull secret. Workload cleanup helper removed resources with no errors but did not set verified/remote_absence_verified; those flags are not claimed as proof.",
+    "workload_helper_verified": false,
+    "workload_helper_remote_absence_verified": false
+  },
+  "retained_failures": [
+    {
+      "attempt": "first",
+      "outcome": "Registry metadata preflight failed before managed submission; owned secret later removed by exact UID."
+    },
+    {
+      "attempt": "second",
+      "outcome": "Canonical8CPU/32G worker could not schedule; exact managed job cancelled and owned worker/controller/secret cleanup verified before relocation."
+    },
+    {
+      "attempt": "third-observation",
+      "outcome": "Public npa CLI submit exited0 and product managed-job status reachedSUCCEEDED. Separate private PodCapture harness watcher retained40 rows then recorded urllib3 ProtocolError wrapping BrokenPipeError32 in its read-only Kubernetes watch/list transport loop. Its stop/check raised RuntimeError, causing the private outer harness to exit1. No traceback was retained to identify the exact transport call. Independent polling observer exited0, recorded145 snapshots and all6 worker source attestations; geometry and cleanup were independently verified."
+    },
+    {
+      "attempt": "optional-offscreen-renderer",
+      "outcome": "Open3D Vulkan offscreen renderer unavailable on dev host; actual geometry plotted with MatplotlibCPU. Product RRD and actual browser viewing are separate."
+    }
+  ],
+  "limitations": [
+    "Official DemoICPPointClouds / augmented ICL-NUIM synthetic benchmark scene; actual native and managed execution, not real sensor capture.",
+    "Observation distance establishes sample support, not ground-truth correctness or proof that removed geometry was physically wrong.",
+    "Retained mesh is non-manifold and non-watertight; no collision-safety, simulation-ready or robot-readiness certification.",
+    "No GPU capability claim.",
+    "No model-quality or VLM-gate claim from these numeric checks; independent visual review is separate.",
+    "The upstream init.log provides transformation metadata without independently established ground-truth provenance; this workflow did not compare its output poses against that file. Reported registration residuals are not ground-truth pose accuracy."
+  ],
+  "attribution": {
+    "license": "CC BY3.0",
+    "license_url": "https://creativecommons.org/licenses/by/3.0/",
+    "upstream_license_declaration": "https://raw.githubusercontent.com/isl-org/Open3D/v0.20.0/cpp/open3d/data/Dataset.h",
+    "data": "Open3D DemoICPPointClouds; Redwood augmented ICL-NUIM living-room benchmark",
+    "authors": [
+      "Sungjoon Choi, Qian-Yi Zhou, Vladlen Koltun. Robust Reconstruction of Indoor Scenes. CVPR2015.",
+      "Ankur Handa, Thomas Whelan, John McDonald, Andrew J. Davison. A Benchmark for RGB-D Visual Odometry, 3D Reconstruction and SLAM. ICRA2014."
+    ],
+    "modifications": "Registration, fusion, Poisson reconstruction, density trimming, observation-distance filtering, Rerun recording, orthographic projections."
+  },
+  "registration": {
+    "graph_journal_sha256": "3d0d0aef54612173619138b66f84e267645ec1cf3d7a91f730be2a9a43cb402d",
+    "fpfh_dimension": 33,
+    "multiway_pair_measurements": [
+      {
+        "pair_ordinal": 0,
+        "global_registration": {
+          "correspondence_count": 3209,
+          "fitness": 0.6741596638655463,
+          "inlier_rmse": 0.030972292881520973
+        },
+        "icp": {
+          "correspondence_count": 123490,
+          "fitness": 0.6210677194658888,
+          "inlier_rmse": 0.006564739538932219
+        },
+        "wall_seconds": 0.43565522274002433
+      },
+      {
+        "pair_ordinal": 1,
+        "global_registration": {
+          "correspondence_count": 3697,
+          "fitness": 0.7766806722689076,
+          "inlier_rmse": 0.03271990574177519
+        },
+        "icp": {
+          "correspondence_count": 134126,
+          "fitness": 0.6745593079689189,
+          "inlier_rmse": 0.006424206387243556
+        },
+        "wall_seconds": 0.490899960976094
+      },
+      {
+        "pair_ordinal": 2,
+        "global_registration": {
+          "correspondence_count": 2777,
+          "fitness": 0.8072674418604651,
+          "inlier_rmse": 0.02930301642349003
+        },
+        "icp": {
+          "correspondence_count": 102819,
+          "fitness": 0.7459679467181299,
+          "inlier_rmse": 0.007243658005133797
+        },
+        "wall_seconds": 0.39112261589616537
+      }
+    ],
+    "pair_stage_summary": {
+      "icp_fitness": {
+        "max": 0.7459679467181299,
+        "mean": 0.6835178330920093,
+        "min": 0.6210677194658888
+      },
+      "icp_inlier_rmse": {
+        "max": 0.0072436419764808505,
+        "mean": 0.006904190757706531,
+        "min": 0.006564739538932212
+      },
+      "input_points": 336668,
+      "pair_count": 2,
+      "pairs_refined_by_icp": 2
+    },
+    "scope": "Actual Open3D feature/global registration and ICP correspondence measurements on overlapping benchmark fragments; pair-stage and multiway-graph journals are distinct executions. These overlap residuals are not ground-truth pose accuracy."
+  }
+}

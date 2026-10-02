@@ -1,0 +1,35 @@
+{
+  "recording_name": "point-cloud.rrd",
+  "recording_bytes": 2347104,
+  "recording_sha256": "36c556500ac4c9c452387203d9e41822f0e688f9924cb01c994da4c69007a350",
+  "browser": "154.0.8037.95",
+  "webgpu": true,
+  "canvas_count": 1,
+  "page_errors": [],
+  "viewer_origin": "https://app.rerun.io",
+  "viewer_version": "0.38.1",
+  "image_digest": "sha256:87f56160459db0c55a6839521a3d3f90d701898b387471546ad44b134e7e94b7",
+  "source_binding": {
+    "source_sha": "07968922ab665c53114a1c6b3bfad9fd03edbb03",
+    "open3d_version": "0.20.0",
+    "mcap_version": "1.4.0",
+    "modules": {
+      "artifacts.py": "36707a1c07cf45566a19be70414986ec8ce0d9a25008360b78b7f2ecfa5fbc11",
+      "schemas.py": "17f1b3a6131fd6ccbc2d138807dd06a2698ab3132145b2df69857b0625042a4b",
+      "runner.py": "7ec3c2df0ff6363b0c9cb26b5a8119960280ae743a5e4bed042c9b46cc155faf",
+      "runtime.py": "4a6359587cd8876238b4935cf0d24eb7e8e61b42c9571805057e39f759c3b075",
+      "__init__.py": "9f1026a7fdc9a7367092c0ac39385054703c4e85081989a110d416e93dff713a",
+      "lineage.py": "f00a688902b0ec24749e7612ef71233a4ce90b71dc2202c19005155ad5da2507"
+    },
+    "test_sha256": "19694eadb7fc6fb94388551cd3159094a25ae16a2339cf60276ee698b7ffe2c8",
+    "scope": "Unchanged committed real CPU functional workload; only temporary-directory cleanup replaced to retain outputs. No mocked Open3D, geometry, RRD or result validation."
+  },
+  "screenshot_sha256": "71bb31515d625adb89f7d7123c11eb6c579f7520af0f5b3be76910d2468851fe",
+  "visual_review": "The actual viewer shows the synthetic sphere, box and separate cylinder, the supported surface, and an observed-points comparison pane. The isolated cylinder remains separate; no apparent wide unsupported sheet spans the gap.",
+  "scope": "Known synthetic functional fixture from the actual built CPU image; this is not a real-world scene or the later standard cloud workflow. The unmodified recording was opened via the browser file chooser. The screenshot is an unedited capture of the real Rerun viewer.",
+  "limits": [
+    "Geometry support-distance filtering is not a collision-safety or ground-truth guarantee.",
+    "Browser load succeeds with no JavaScript errors; incidental upstream UI warnings are retained privately.",
+    "This local-file viewer check does not establish anonymous download/link operation; publication readback is separate."
+  ]
+}

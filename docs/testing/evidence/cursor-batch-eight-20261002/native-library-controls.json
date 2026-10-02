@@ -1,0 +1,277 @@
+{
+  "source_sha": "30cda6f696ae7860758469cd4aa2a9e3e7592e82",
+  "python": "3.12.12 (main, Oct  9 2025, 11:07:00) [Clang 17.0.0 (clang-1700.6.3.2)]",
+  "native_generator": "LibreSSL 3.3.6",
+  "generated_key_parse_verified": true,
+  "key_bytes_never_retained": true,
+  "packages": {
+    "pip": {
+      "version": "26.0",
+      "bytes": 23722,
+      "sha256": "a611486c79b69269621c35c9d1e34fc6018fe36dd9a6f66830a2ad275fd9be3b"
+    },
+    "pydantic": {
+      "version": "2.13.5",
+      "bytes": 105961,
+      "sha256": "7e961c1a702770ae108da166de366da98c31258cc1eeb2493df025f3d7a6cf24"
+    }
+  },
+  "source_hashes": [
+    {
+      "file": "image_payload_credentials.py",
+      "sha256": "5c45c28f86a3d398a2763a8331c893284df0641ede7adf1935c5cff014b8235a"
+    },
+    {
+      "file": "scan_image_alpamayo2_payload.py",
+      "sha256": "7b6f82f2fe6f3b56dd885b27f9ec891e8f0ad0130e398060736fd9cf384e0c9b"
+    },
+    {
+      "file": "scan_image_cosmos3_serving_payload.py",
+      "sha256": "693e8ff27c219dbd7da629d2cda79a772907c234f45d298b301c1fbad297b441"
+    },
+    {
+      "file": "scan_image_cosmos3_ray_serve_payload.py",
+      "sha256": "cf57c3707efec2f8878d956501363239a90bd99e9f8393b809f402f8b78ac1aa"
+    }
+  ],
+  "cases": [
+    {
+      "case": "pip-benign",
+      "member_paths": [
+        "srv/arbitrary/a.txt"
+      ],
+      "member_bytes": 23722,
+      "archive_bytes": 40960,
+      "archive_sha256": "2ae209e5d9e2d65cb2b947e882491749314ec4e81c08f673c050272edfdfd31e",
+      "expected_exit": 0,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean",
+          "elapsed_seconds": 0.044149499968625605,
+          "report_sha256": "869937e2d130a846d4b88879aa579cff6f624c967bff3a5d168f9d5dd1123054"
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean",
+          "elapsed_seconds": 0.045818209007848054,
+          "report_sha256": "0e13ba4da2242ac567b01819664c94fcf46dce3ce3a7e5e4265ce908a30441c8"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean",
+          "elapsed_seconds": 0.04736925003817305,
+          "report_sha256": "a6821856c6b6bca14168f04842cae569e9b3daa6ab855e280cc34effa0d007fb"
+        }
+      }
+    },
+    {
+      "case": "pip-native-key-appended",
+      "member_paths": [
+        "srv/arbitrary/a.txt"
+      ],
+      "member_bytes": 25427,
+      "archive_bytes": 40960,
+      "archive_sha256": "e406509ae4de1aa89514135ac4fabab56a4dc508ac88a1e57a78b16663c771bd",
+      "expected_exit": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected",
+          "elapsed_seconds": 0.04997912497492507,
+          "report_sha256": "bba1a6c59809bac2cb280d10268c09f1fcd5ecd1fe2a594090c3d1c8cacd2355"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected",
+          "elapsed_seconds": 0.04899641696829349,
+          "report_sha256": "c56abfb0ced925a6507cf6cdbf5336622f757bab9137c092dfff0f371946c200"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected",
+          "elapsed_seconds": 0.04950504202861339,
+          "report_sha256": "593fd1277f2a01e6747717d3f77e911ba6bc6276069782273d8245c02bb8ee6e"
+        }
+      }
+    },
+    {
+      "case": "pip-long-gap-native-key-appended",
+      "member_paths": [
+        "srv/arbitrary/a.txt"
+      ],
+      "member_bytes": 1074039,
+      "archive_bytes": 1095680,
+      "archive_sha256": "006ec4e6d50c6ee3f85c2f782016979bcdb7d32de8889dc42620d97472682392",
+      "expected_exit": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected",
+          "elapsed_seconds": 0.07437983300769702,
+          "report_sha256": "bba1a6c59809bac2cb280d10268c09f1fcd5ecd1fe2a594090c3d1c8cacd2355"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected",
+          "elapsed_seconds": 0.07822550000855699,
+          "report_sha256": "c56abfb0ced925a6507cf6cdbf5336622f757bab9137c092dfff0f371946c200"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected",
+          "elapsed_seconds": 0.07604729197919369,
+          "report_sha256": "593fd1277f2a01e6747717d3f77e911ba6bc6276069782273d8245c02bb8ee6e"
+        }
+      }
+    },
+    {
+      "case": "pydantic-benign",
+      "member_paths": [
+        "var/opaque/b.dat"
+      ],
+      "member_bytes": 105961,
+      "archive_bytes": 122880,
+      "archive_sha256": "288deb24bfa0b34334a2fec4070083d8204290594d7ed18a1cef4e89221acd68",
+      "expected_exit": 0,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean",
+          "elapsed_seconds": 0.04529404203640297,
+          "report_sha256": "869937e2d130a846d4b88879aa579cff6f624c967bff3a5d168f9d5dd1123054"
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean",
+          "elapsed_seconds": 0.0509368329658173,
+          "report_sha256": "0e13ba4da2242ac567b01819664c94fcf46dce3ce3a7e5e4265ce908a30441c8"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean",
+          "elapsed_seconds": 0.05253741698106751,
+          "report_sha256": "a6821856c6b6bca14168f04842cae569e9b3daa6ab855e280cc34effa0d007fb"
+        }
+      }
+    },
+    {
+      "case": "pydantic-native-key-appended",
+      "member_paths": [
+        "var/opaque/b.dat"
+      ],
+      "member_bytes": 107666,
+      "archive_bytes": 122880,
+      "archive_sha256": "5bacee73308c5895f08d35c5c0f47833f22910677694337feb4e1483850bee8c",
+      "expected_exit": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected",
+          "elapsed_seconds": 0.04976824996992946,
+          "report_sha256": "7951ff8eed21789a934ea672ab20fe93ffcf540a8d7fc93f4bf43740954b1f25"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected",
+          "elapsed_seconds": 0.05011099996045232,
+          "report_sha256": "b7c51e8fe3d86c9b58bb3fb01c082cce8422544ae9e38d123e6073d8f1ac4509"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected",
+          "elapsed_seconds": 0.08613037498435006,
+          "report_sha256": "7d083e46931d6f4acd49aa889037a93d30a1f05345286b104d0d00b642283733"
+        }
+      }
+    },
+    {
+      "case": "pydantic-long-gap-native-key-appended",
+      "member_paths": [
+        "var/opaque/b.dat"
+      ],
+      "member_bytes": 1156278,
+      "archive_bytes": 1177600,
+      "archive_sha256": "14754775406820717dfbd20efec6bdafa49d0cbd82a86f683cdff7e1579300bc",
+      "expected_exit": 1,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "runtime-only-payload-detected",
+          "elapsed_seconds": 0.06380458298372105,
+          "report_sha256": "7951ff8eed21789a934ea672ab20fe93ffcf540a8d7fc93f4bf43740954b1f25"
+        },
+        "cosmos3_serving": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected",
+          "elapsed_seconds": 0.06286133296089247,
+          "report_sha256": "b7c51e8fe3d86c9b58bb3fb01c082cce8422544ae9e38d123e6073d8f1ac4509"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 1,
+          "scan_complete": true,
+          "verdict": "restricted-payload-detected",
+          "elapsed_seconds": 0.06613116699736565,
+          "report_sha256": "7d083e46931d6f4acd49aa889037a93d30a1f05345286b104d0d00b642283733"
+        }
+      }
+    },
+    {
+      "case": "both-benign",
+      "member_paths": [
+        "srv/arbitrary/a.txt",
+        "var/opaque/b.dat"
+      ],
+      "member_bytes": 129683,
+      "archive_bytes": 143360,
+      "archive_sha256": "169d00a386ae6c17bbec208b0c6653e50d59adf1cd8ceafb5d54a7dadbc7303b",
+      "expected_exit": 0,
+      "scanners": {
+        "alpamayo2": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean",
+          "elapsed_seconds": 0.056776124984025955,
+          "report_sha256": "869937e2d130a846d4b88879aa579cff6f624c967bff3a5d168f9d5dd1123054"
+        },
+        "cosmos3_serving": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean",
+          "elapsed_seconds": 0.05742670898325741,
+          "report_sha256": "3482048c072cb3edaf985d6bb8ab9c9d2bdfb9ff2bac7945cd115406f4514453"
+        },
+        "cosmos3_ray_serve": {
+          "exit_code": 0,
+          "scan_complete": true,
+          "verdict": "clean",
+          "elapsed_seconds": 0.05597458395641297,
+          "report_sha256": "3013279455e9e6348e0b9c13857e385c6f66a605243f628533cec14ad7dca543"
+        }
+      }
+    }
+  ],
+  "scanner_cli_invocations": 21,
+  "benign_passes": 9,
+  "key_rejections": 12,
+  "elapsed_seconds": 1.385427457978949,
+  "scope": "Real installed library files at arbitrary non-library paths; no path allowlist. Native-generated canonical and >1MiB-whitespace private keys appended to each file are rejected by all three real CLIs.",
+  "qualification_scope": "Actual installed library bytes packaged into synthetic tar fixtures, plus disposable native-generated keys. This is a scanner regression test, not production-image qualification."
+}

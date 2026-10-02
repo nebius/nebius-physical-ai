@@ -1,0 +1,101 @@
+{
+  "review_type": "Independent AI source and evidence review; not human GitHub approval",
+  "reports": [
+    {
+      "name": "claude-review-phase-one.private.json",
+      "sha256": "b1149a2e99ee162cc6e228f58bee988844530986518704e5bfec33caa6311f5a"
+    },
+    {
+      "name": "claude-review-phase-two.private.json",
+      "sha256": "b1944248f59a2727491409e76f7262a96aa26435de87774c305837dcd8287c63"
+    },
+    {
+      "name": "claude-followup.private.json",
+      "sha256": "170f6462d4ce7619ee5986e2f858d42701dc0251bcac59bc456f8031c196ca24"
+    },
+    {
+      "name": "cpu-runtime-independent-review.json",
+      "sha256": "bdca1e57c0933fc473aee9297c403792e272b00ddbeed6aa556ca484ba6d2c8e"
+    },
+    {
+      "name": "publication-draft-initial-review.json",
+      "sha256": "913a9746c93db5defd6081b1a973b4838ea638f0a776561572c05f067ea712b2"
+    },
+    {
+      "name": "result.json",
+      "sha256": "bb7e993a8af758490ba2e179b626af2dfad0354ba9e9e3d6727cf9d84be4167b"
+    },
+    {
+      "name": "source-review-079689.md",
+      "sha256": "561340c7c16bfa0f1711b6df6ad0f54cb63cee505cd796c7963a1e38c1897cc1"
+    },
+    {
+      "name": "claude-open3d-final.private.json",
+      "sha256": "6284f383a56568218370f3209e1bd608d6f2da29a4469299c4fa22f4648e0811"
+    },
+    {
+      "name": "openssl-independent-review.json",
+      "sha256": "677153cae94d4e1ba81ee800f86ef8a325c04e28cd93f72647461fa4a11f65a2"
+    },
+    {
+      "name": "runtime-independent-review.json",
+      "sha256": "a71e3815df7b5495626a0287c790c2b45757deae25d8fa7a9851f26b56fa3ef7"
+    },
+    {
+      "name": "geometry-numerics-independent-review.json",
+      "sha256": "673365f2f995a9d4a7e11e725024a9513a727b3fc049f9aeb6c7217a2d2c9c4d"
+    },
+    {
+      "name": "stale-mesh-independent-review.json",
+      "sha256": "d4da3be61fa52469c0107214e7b4e1ff28e35a6400fdc1323ebac5b640b6ae92"
+    },
+    {
+      "name": "geometry-image-independent-review.json",
+      "sha256": "a4b7e44119a9891b88c0df752e1b46d742952438da40cd093f545d0708464087"
+    },
+    {
+      "name": "publication-final-review.private.json",
+      "sha256": "828324c8113a446736cf180f366b40cd435ca6de64e1d7f2b57a3ccb75a1b5b5"
+    },
+    {
+      "name": "publication-open3d-additions-review.private.json",
+      "sha256": "af15002773f507adde097270c9303d43cd4b0fccc3be32379c7ed56ab2416842"
+    },
+    {
+      "name": "terminal-independent-review.json",
+      "sha256": "c88362df600ddd2c66262dd773e9d84ec4fa515d732e079a0bf0f8638c87c83b"
+    },
+    {
+      "name": "semantic-evidence-final.json",
+      "sha256": "9d62964e6f07b9347099d8926b5ff73e76b29072feef64ca81d9b3536e1ac946"
+    },
+    {
+      "name": "independent-occurrence-dispositions.private.json",
+      "sha256": "8d23570bfacf5214054c8e875caaac10b6320ce0ce4bf32380b3c09fbbcd88ac"
+    },
+    {
+      "name": "publication-final-delta-review.private.json",
+      "sha256": "10d9eda51553fc77428cece8a882b5a9ab6f3680e391f4d0b423f84e1b7ed4b4"
+    }
+  ],
+  "verified": [
+    "The fresh evo and AprilTag runtime receipts, all 92 object hashes, numeric arrays, pixel equality and owned-resource cleanup were independently checked.",
+    "The initial public media and sanitized evidence draft was reviewed; scoped wording and pinned media-license citations were corrected.",
+    "The Open3D079689 build/security source delta has no blocking source finding; both Debian signed indexes and all 9 package rows were independently verified.",
+    "Twenty-two real Docker daemon tests passed. Executable source matches final079689; the two textual differences are Dockerfile comments and a test module docstring.",
+    "Claude final follow-up confirms prior U1 and U3 Docker ingress/BuildKit findings are closed. Its package-installation question is checked separately against the actual successful image build and package inventory.",
+    "Claude B1 missing-openssl-provider-legacy concern was disproven by independent exact-base and exact-image inventories: libssl3t64 explicitly depends on the installed provider package. All three final packages meet the 3.5.7-1~deb13u3 floor. No speculative source edit was needed.",
+    "Six actual Open3D stage workers and 36 installed source-file hashes match producer079; all 20 run objects were independently rehashed. Separate final UID and secret censuses establish cleanup, with the workload helper verification limitation preserved.",
+    "Independent binary-PLY, NumPy and SciPy checks reproduce mesh counts, areas and support fractions, including the exact retained face subset and 8,438 removed triangles.",
+    "The actual stale-mesh control changes only x coordinates by 0.125 scene units; faces, normals, colors and report stay unchanged. The product refuses it before output, and three original surface artifacts are unchanged on fresh readback.",
+    "All four actual geometry plots were independently inspected and hash-verified. Original Rerun recording and expected decoded arrays retain their exact hashes.",
+    "The final managed-run additions, source/image identities, numeric evidence, exact observer attribution, original recording privacy boundary, four geometry plots, browser capture and fresh frozen VLM responses were independently rechecked. Review receipts bind their exact file populations and hashes; later image-byte, GitHub and publication checks have separate receipts.",
+    "Complete-byte physical coverage, all 266 occurrences across 59 records, and the exact scanner-source equivalence were independently reviewed. Zero occurrences remain unresolved; no operational credential was identified. The raw valid=false verdict and unsupported automated adjudicator boundary are retained in the separate image-byte receipt.",
+    "The final public image-byte projection, registration measurements, transformation-metadata limitation, evidence-hash population and ten-PR GitHub snapshot were independently checked. All 266 dispositions bind to raw ledger findings; the final 45 preserve exact typed-symbol/protocol evidence. The GitHub snapshot records 253 successful and 36 skipped checks with all ten exact heads signed, non-draft, mergeable and CLEAN."
+  ],
+  "limits": [
+    "Independent source acceptance does not qualify a replacement image. Final Open3D image-byte and live workflow evidence require their separate receipts.",
+    "Pinned Debian archives and direct dependency pins do not make the transitive Python dependency closure reproducible.",
+    "The initial publication review predates later files. Final publication is subject to complete confidentiality and secret scans."
+  ]
+}

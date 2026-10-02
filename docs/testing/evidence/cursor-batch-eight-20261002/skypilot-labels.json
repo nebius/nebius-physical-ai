@@ -1,0 +1,8 @@
+{
+  "source_sha": "b4560c33280c3263f03edccb38cfe6c442d54df7",
+  "returncode": 0,
+  "stdout": "{\"sky_version\": \"0.12.2\", \"rows\": [{\"alias\": \"b200\", \"value\": \"b200\", \"label_values\": [\"b200\"], \"valid\": [true, \"\"]}, {\"alias\": \"nvidiab200\", \"value\": \"b200\", \"label_values\": [\"b200\"], \"valid\": [true, \"\"]}, {\"alias\": \"rtx6000\", \"value\": \"rtxpro6000\", \"label_values\": [\"rtxpro6000\"], \"valid\": [true, \"\"]}, {\"alias\": \"rtxpro6000\", \"value\": \"rtxpro6000\", \"label_values\": [\"rtxpro6000\"], \"valid\": [true, \"\"]}, {\"alias\": \"rtxpro6000blackwellserveredition\", \"value\": \"rtxpro6000\", \"label_values\": [\"rtxpro6000\"], \"valid\": [true, \"\"]}, {\"alias\": \"nvidiartxpro6000blackwellserveredition\", \"value\": \"rtxpro6000\", \"label_values\": [\"rtxpro6000\"], \"valid\": [true, \"\"]}], \"b200\": [\"b200\"], \"uppercase_negative\": [false, \"Label value 'B200' must be lowercase if using the skypilot.co/accelerator label.\"]}\n",
+  "stderr": "",
+  "rebased_source_sha": "87f782610b222a0d4635b4f9a003acb3b1909284",
+  "rebased_mapping_equal": true
+}

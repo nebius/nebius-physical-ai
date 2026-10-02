@@ -1,0 +1,137 @@
+{
+  "verdict": "PASS_FRESH_STANDARD_SKYPILOT_CPU_ARTIFACTS_AND_CLEANUP_WITH_RETAINED_OBSERVER_LIMITATION",
+  "runs": [
+    {
+      "tool": "evo",
+      "managed_status": "SUCCEEDED",
+      "artifact_objects": 68,
+      "artifact_bytes": 1970264,
+      "client_source": "3301aa36eb9f386dcca067fc709de3118149c504",
+      "actual_pod_observed": true,
+      "cpu_only_requests_verified": true,
+      "observer_shutdown_error_retained": true,
+      "final_controller_cleanup_verified": true,
+      "receipts_sha256": {
+        "terminal.private.json": "8d605a649dcb7d7cf19599eecd9189478adc305aff609fa3e9a72e415d0d72c1",
+        "artifact-manifest.private.json": "1208c9fd829875d86434bf09e4c4e05708949fa7eeb2e4caa652d4cf718a6e34",
+        "ACTUAL-POD-VERDICT.private.json": "04c1c4dc5af5fae6c4b186c2f360f71ebf0ed0040ce30b0167dfbe7a1ed19e62",
+        "scheduler-attempts.private.json": "c4b1282ac8630f2859d119beced69aa5d092346b3506a695ec6f7d574dc73481",
+        "SUPPORTED-CONTROLLER-CLEANUP.private.json": "a080be6bf08e7bbcb9e3114c7abcae891bfeeb727c36ddc3b9683feb1b574d59",
+        "INDEPENDENT-SKY-VERDICT.private.json": "fad81013cdcdb8412ac7959c3f9e533b490dbea89c21668e3588bc481bbfb627"
+      }
+    },
+    {
+      "tool": "apriltag",
+      "managed_status": "SUCCEEDED",
+      "artifact_objects": 24,
+      "artifact_bytes": 3654063,
+      "client_source": "3301aa36eb9f386dcca067fc709de3118149c504",
+      "actual_pod_observed": true,
+      "cpu_only_requests_verified": true,
+      "observer_shutdown_error_retained": true,
+      "final_controller_cleanup_verified": true,
+      "receipts_sha256": {
+        "terminal.private.json": "2da4977f48d3a5376a2a5e0a387094b5e36fab4cb245c4aa367c39c5669f2627",
+        "artifact-manifest.private.json": "901458b9a35e808b8846a454bad97082b308ad5e28f8d47db359f1879511b43c",
+        "ACTUAL-POD-VERDICT.private.json": "4422d1b1ecf0065553f081247165319ac7ab0e4fdcf0be7f515796d5ae66817f",
+        "scheduler-attempts.private.json": "2a16cb2206289f3f66035d67222fa85eae3c36046256ef1ecaca40ff73467bab",
+        "SUPPORTED-CONTROLLER-CLEANUP.private.json": "c0d8dadc038c879c92e7c6a5808f776d396b27839b6608b743f278cf3913d7a7",
+        "ROOT-NUMERIC-VISUAL-VERDICT.private.json": "b8475bab0cecea2f60f1a71450a4a9319627e4c4fd8fc87307031705f27bf7be"
+      }
+    }
+  ],
+  "evo": {
+    "independent_error_values": 690,
+    "native_archives": 10,
+    "true_positive": 2,
+    "true_negative": 2,
+    "false_positive": 0,
+    "false_negative": 0,
+    "plots_entire_pixels_equal_to_prior": 19
+  },
+  "apriltag": {
+    "matched_detections": 47,
+    "coordinate_comparisons": 376,
+    "corner_rmse_px": 2.7388904934718522e-05,
+    "false_positive": 0,
+    "false_negative": 0,
+    "native_ctest_passed": 3,
+    "overlay_regions_equal_to_retained_review_sheets_after_2x_nearest_neighbor_scaling": 3,
+    "model_input_scope": "Submitted 674x768 model PNGs are separately hash-bound; equality above covers complete overlay regions in retained 1598x1822 review sheets, not whole model inputs."
+  },
+  "cleanup": {
+    "at": "2026-10-02T13:29:05.214033+00:00",
+    "verdict": "PASS_OWNED_UID_ABSENCE_AND_FOREIGN_CONTROLLER_PRESERVATION",
+    "runs": [
+      {
+        "tool": "evo",
+        "task_pod_uids_absent": 1,
+        "controller_resource_uids_absent": 3,
+        "foreign_controller_uids_preserved": 11,
+        "pull_secret_uid_absent": true,
+        "cleanup_errors": 0
+      },
+      {
+        "tool": "apriltag",
+        "task_pod_uids_absent": 3,
+        "controller_resource_uids_absent": 3,
+        "foreign_controller_uids_preserved": 11,
+        "pull_secret_uid_absent": true,
+        "cleanup_errors": 0
+      }
+    ],
+    "underlying_cluster_destroyed": false
+  },
+  "source_bindings": {
+    "bindings": [
+      {
+        "tool": "evo",
+        "executing_client": "3301aa36eb9f386dcca067fc709de3118149c504",
+        "image_index": "sha256:2d1e1c074e2b6f066bb49aaee1ac6bf5252ca48689312ee9c368941ca42f15a9",
+        "runtime_config_fields_equal": {
+          "repo_url": true,
+          "repo_ref": true,
+          "base_profile": true,
+          "base_image": true,
+          "build_command": true,
+          "smoke_command": true
+        },
+        "smoke_sha256": "fdc92b72966605921d09c954b49615a99e3e0064cff9f0fca2270a16daa51ca7",
+        "prior_qualified_runtime_reference": "3b12ef19a4724cd16c1af521fd0cbe9dd95c55cb",
+        "baked_image_recipe_source": "841ceb59e051d7e7216992df56318c5cbbf7e7f5",
+        "source_role_note": "3b12 is the previously qualified integrated runtime reference, not the baked producer; immutable2d1 was built from841.",
+        "baked_recipe_to_current_fields_equal": {
+          "repo_url": true,
+          "repo_ref": true,
+          "base_profile": true,
+          "base_image": true,
+          "build_command": true,
+          "smoke_command": true
+        }
+      },
+      {
+        "tool": "apriltag",
+        "qualified_image_source": "d0057c80bd19563c2484bd793d9f8ef0a443ce4f",
+        "executing_client": "3301aa36eb9f386dcca067fc709de3118149c504",
+        "image_index": "sha256:7bb4606386f4487eeeb6953ee5843a1e4698a485eac4cde3cbdd7f3a69d6612e",
+        "runtime_config_fields_equal": {
+          "repo_url": true,
+          "repo_ref": true,
+          "base_profile": true,
+          "base_image": true,
+          "build_command": true,
+          "smoke_command": true
+        },
+        "smoke_sha256": "1e954208ef581a4a3462d26eb71184a24b9a061d450e7ecd9e9fb04681eeaaf1"
+      }
+    ],
+    "scope": "Exact config equality for qualified image recipe and runtime command; renderer, submit, pull authority, status, and cleanup execute current integrated client. No rebuilt-image claim."
+  },
+  "limitations": [
+    "Both watch streams raised ProtocolError/BrokenPipe during shutdown. Raw terminal errors remain; actual image/resources/native job identity and final UID absence were independently verified.",
+    "AprilTag had two unscheduled CPU-capacity retries before one executing pod; all three UIDs are absent.",
+    "Initial controller cleanup refused a durable receipt context conflict before mutation; supported task-private NPA_TEARDOWN_RECEIPT_DIR resolved it.",
+    "Current integrated client3301 was executed with retained qualified immutable images; no images rebuilt/published and no GPU workload was requested.",
+    "No fresh VLM calls or new visual-quality/generalization claim. All three complete AprilTag overlay regions match retained review sheets after 2x nearest-neighbor scaling; submitted model PNGs are separately hash-bound. Evo19 plots match prior retained cloud outputs."
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "head": "bee7d282ad826ce9cd64d1de3167a7dfe8d3068b",
+  "base": "a26a2d1c08b3fc9feafe3d973bb6e7bb6a396974",
+  "results": [
+    {
+      "gate": "scanner-freeze",
+      "exit_code": 0,
+      "seconds": 0.165
+    },
+    {
+      "gate": "trivy-version",
+      "exit_code": 0,
+      "seconds": 0.064
+    },
+    {
+      "gate": "real-regressions",
+      "exit_code": 0,
+      "seconds": 6.856
+    },
+    {
+      "gate": "security-comparison",
+      "exit_code": 0,
+      "seconds": 139.559
+    },
+    {
+      "gate": "go-build",
+      "exit_code": 0,
+      "seconds": 89.242
+    },
+    {
+      "gate": "native-dependencies",
+      "exit_code": 0,
+      "seconds": 0.123
+    },
+    {
+      "gate": "complete-byte-native",
+      "exit_code": 0,
+      "seconds": 4.655
+    }
+  ]
+}

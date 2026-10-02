@@ -1,0 +1,14 @@
+{
+  "recording_name": "point-cloud.rrd",
+  "recording_bytes": 8092582,
+  "recording_sha256": "1089e2202e39fdce9d459c42e0976fc9f5d240c90e3649553ff70b28b4598ba2",
+  "browser": "154.0.8037.95",
+  "webgpu": true,
+  "canvas_count": 1,
+  "page_errors": [],
+  "viewer_url": "https://app.rerun.io/",
+  "image_sha256": "f47b4d06a2bec33fc1ba514c96aa8d092cee44aafba459bbf448bb4a34fd4b6c",
+  "producer_sha": "07968922ab665c53114a1c6b3bfad9fd03edbb03",
+  "image_oci_index": "sha256:87f56160459db0c55a6839521a3d3f90d701898b387471546ad44b134e7e94b7",
+  "scope": "Unmodified actual managed-run recording opened in hosted Rerun viewer; unedited screenshot inspected for geometry and private identifiers. Original recording retains factual run identity and stays private. Browser canvas is not a geometry-accuracy or GPU-rendering proof."
+}

@@ -1,0 +1,199 @@
+{
+  "source_head": "00b15a8375e742d100606e83ad6a677d053e4516",
+  "identity_verified": true,
+  "node_count": 2,
+  "gpu_labels": [
+    {
+      "nvidia.com/gpu.product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+      "nebius.com/gpu-name": "RTX6000",
+      "nebius.com/driverful": "true",
+      "nvidia.com/gpu.deploy.operands": "false"
+    }
+  ],
+  "canonical_placement_requests": [
+    {
+      "accelerator": "RTXPRO6000:1",
+      "cpus": "16000m",
+      "memory": "128000000000",
+      "pod_spec": {
+        "containers": [
+          {
+            "env": [
+              {
+                "name": "NPA_SIM2REAL_ISAAC_CACHE_PVC",
+                "value": ""
+              },
+              {
+                "name": "NPA_ISAAC_CACHE_DIR",
+                "value": "/opt/isaac-cache"
+              },
+              {
+                "name": "NPA_ISAAC_CACHE_READONLY",
+                "value": "1"
+              },
+              {
+                "name": "NPA_ISAAC_BOOTSTRAP_OFFLINE",
+                "value": "1"
+              },
+              {
+                "name": "NPA_BAKED_PYTHON",
+                "value": "/opt/npa/sim/venv/bin/python"
+              }
+            ],
+            "name": "ray-node",
+            "volumeMounts": [
+              {
+                "mountPath": "/opt/isaac-cache",
+                "name": "npa-isaac-runtime-cache",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "nodeSelector": {
+          "kubernetes.io/os": "linux"
+        },
+        "tolerations": [
+          {
+            "effect": "NoSchedule",
+            "key": "nvidia.com/gpu",
+            "operator": "Exists"
+          }
+        ],
+        "volumes": [
+          {
+            "name": "npa-isaac-runtime-cache",
+            "persistentVolumeClaim": {
+              "claimName": "",
+              "readOnly": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "accelerator": "RTXPRO6000:1",
+      "cpus": "16000m",
+      "memory": "128000000000",
+      "pod_spec": {
+        "containers": [
+          {
+            "env": [
+              {
+                "name": "NPA_SIM2REAL_ISAAC_CACHE_PVC",
+                "value": ""
+              },
+              {
+                "name": "NPA_ISAAC_CACHE_DIR",
+                "value": "/opt/isaac-cache"
+              },
+              {
+                "name": "NPA_ISAAC_CACHE_READONLY",
+                "value": "1"
+              },
+              {
+                "name": "NPA_ISAAC_BOOTSTRAP_OFFLINE",
+                "value": "1"
+              },
+              {
+                "name": "NPA_BAKED_PYTHON",
+                "value": "/opt/npa/sim/venv/bin/python"
+              }
+            ],
+            "name": "ray-node",
+            "volumeMounts": [
+              {
+                "mountPath": "/opt/isaac-cache",
+                "name": "npa-isaac-runtime-cache",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "nodeSelector": {
+          "kubernetes.io/os": "linux"
+        },
+        "tolerations": [
+          {
+            "effect": "NoSchedule",
+            "key": "nvidia.com/gpu",
+            "operator": "Exists"
+          }
+        ],
+        "volumes": [
+          {
+            "name": "npa-isaac-runtime-cache",
+            "persistentVolumeClaim": {
+              "claimName": "",
+              "readOnly": true
+            }
+          }
+        ]
+      }
+    },
+    {
+      "accelerator": "RTXPRO6000:1",
+      "cpus": "16000m",
+      "memory": "128000000000",
+      "pod_spec": {
+        "containers": [
+          {
+            "env": [
+              {
+                "name": "NPA_SIM2REAL_ISAAC_CACHE_PVC",
+                "value": ""
+              },
+              {
+                "name": "NPA_ISAAC_CACHE_DIR",
+                "value": "/opt/isaac-cache"
+              },
+              {
+                "name": "NPA_ISAAC_CACHE_READONLY",
+                "value": "1"
+              },
+              {
+                "name": "NPA_ISAAC_BOOTSTRAP_OFFLINE",
+                "value": "1"
+              },
+              {
+                "name": "NPA_BAKED_PYTHON",
+                "value": "/opt/npa/sim/venv/bin/python"
+              }
+            ],
+            "name": "ray-node",
+            "volumeMounts": [
+              {
+                "mountPath": "/opt/isaac-cache",
+                "name": "npa-isaac-runtime-cache",
+                "readOnly": true
+              }
+            ]
+          }
+        ],
+        "nodeSelector": {
+          "kubernetes.io/os": "linux"
+        },
+        "tolerations": [
+          {
+            "effect": "NoSchedule",
+            "key": "nvidia.com/gpu",
+            "operator": "Exists"
+          }
+        ],
+        "volumes": [
+          {
+            "name": "npa-isaac-runtime-cache",
+            "persistentVolumeClaim": {
+              "claimName": "",
+              "readOnly": true
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "managed_eligible_node_count": 1,
+  "outcome": "blocked",
+  "scope": "untouched authenticated node response with canonical workflow defaults; no operator config overrides or workloads submitted",
+  "private_evidence_sha256": "5382183137642a8b8b8106dadab03c3be87e9084466b46ed39f6abda7e7eb53b"
+}

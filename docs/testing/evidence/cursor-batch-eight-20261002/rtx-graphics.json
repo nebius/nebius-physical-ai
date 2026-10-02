@@ -1,0 +1,34 @@
+{
+  "source_head": "70c019a60bedeafb750cedfccfd94b8a25d76150",
+  "identity_verified": true,
+  "hardware": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+  "driver_version": "580.173.02",
+  "operator_cluster_policy_enabled": true,
+  "operator_cluster_policy_state": "ready",
+  "status": "healthy",
+  "stabilization_seconds": 120,
+  "cuda_smokes": [
+    {
+      "phase": "Succeeded",
+      "vectoradd": "passed",
+      "tested_gpus": 1,
+      "fabric": "not-exposed"
+    }
+  ],
+  "graphics_smokes": [
+    {
+      "phase": "Succeeded",
+      "glx": "loaded",
+      "egl": "loaded",
+      "vulkan_instance": "created",
+      "vulkan_physical_devices": 1,
+      "nvidia_device": "enumerated",
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-sonic@sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb"
+    }
+  ],
+  "canonical_isaac_placement_eligible": true,
+  "canonical_managed_driver_rejection_count": 0,
+  "remaining_owned_health_pods": 0,
+  "proof_scope": "Real CUDA vectorAdd and host GLX/EGL/Vulkan on one existing operator RTX GPU. Authentic canonical default placement accepted. No Isaac runtime or camera render executed.",
+  "private_evidence_sha256": "e3f8f3a9ca3cbf95a1cbfb2d7a29fca8f5b54479b33739d29d071ec8431ffeeb"
+}

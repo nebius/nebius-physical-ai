@@ -1,0 +1,49 @@
+{
+  "source_sha": "07968922ab665c53114a1c6b3bfad9fd03edbb03",
+  "image_index_digest": "sha256:87f56160459db0c55a6839521a3d3f90d701898b387471546ad44b134e7e94b7",
+  "verdict": "OPENSSL_PROVIDER_LEGACY_OMISSION_CONCERN_DISPROVEN_FOR_EXACT_PINNED_BASE_AND_IMAGE",
+  "base_ref_matches_dockerfile": true,
+  "final_ref_matches_inspected_tag": true,
+  "packages": {
+    "base": {
+      "openssl": {
+        "Status": "install ok installed",
+        "Version": "3.5.6-1~deb13u1",
+        "Depends": "libc6 (>= 2.34), libssl3t64 (>= 3.5.0)"
+      },
+      "openssl-provider-legacy": {
+        "Status": "install ok installed",
+        "Version": "3.5.6-1~deb13u1",
+        "Depends": "libc6 (>= 2.14), libssl3t64 (>= 3.0.3)"
+      },
+      "libssl3t64": {
+        "Status": "install ok installed",
+        "Version": "3.5.6-1~deb13u1",
+        "Depends": "libc6 (>= 2.38), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.1.4), openssl-provider-legacy"
+      }
+    },
+    "final": {
+      "openssl": {
+        "Status": "install ok installed",
+        "Version": "3.5.7-1~deb13u3",
+        "Depends": "libc6 (>= 2.34), libssl3t64 (>= 3.5.0)"
+      },
+      "openssl-provider-legacy": {
+        "Status": "install ok installed",
+        "Version": "3.5.7-1~deb13u3",
+        "Depends": "libc6 (>= 2.14), libssl3t64 (>= 3.0.3)"
+      },
+      "libssl3t64": {
+        "Status": "install ok installed",
+        "Version": "3.5.7-1~deb13u3",
+        "Depends": "libc6 (>= 2.38), libzstd1 (>= 1.5.5), zlib1g (>= 1:1.1.4), openssl-provider-legacy"
+      }
+    }
+  },
+  "reason": "Debian Priority optional is package classification, not absence. libssl3t64 depends on openssl-provider-legacy. All three packages are installed in the exact pinned base and upgraded in the successful final build; final floor passes. No speculative package addition warranted.",
+  "receipts": {
+    "openssl-base-v2.txt": "079b30354a4a40155ac06ce1cde3cf687f3d61fad958ca7ca592ea648aac8be1",
+    "openssl-final-v2.txt": "2457bc4f4f8d5e2c03be96fa662602f9223c14be69128ab84d839bdfb9e93b28",
+    "openssl-inventory.json": "72695f7fb71b6f0c11c0a47656e3af1aa754ed580f74aa89573c4c255fd784b5"
+  }
+}

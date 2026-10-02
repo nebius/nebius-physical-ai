@@ -1,0 +1,53 @@
+{
+  "head": "b2726bff1b398dc73737f9ab82716f85e3fdfe38",
+  "gates": [
+    {
+      "gate": "full",
+      "exit_code": 0,
+      "seconds": 521.88,
+      "tested_head": "b2726bff1b398dc73737f9ab82716f85e3fdfe38",
+      "retained_log": "gate-full.log",
+      "pytest_addopts": "-n 8 --dist=worksteal"
+    },
+    {
+      "gate": "hostile",
+      "exit_code": 0,
+      "seconds": 133.58,
+      "tested_head": "b2726bff1b398dc73737f9ab82716f85e3fdfe38",
+      "retained_log": "gate-hostile.log",
+      "pytest_addopts": ""
+    },
+    {
+      "gate": "docs",
+      "exit_code": 0,
+      "seconds": 87.06,
+      "tested_head": "b2726bff1b398dc73737f9ab82716f85e3fdfe38",
+      "retained_log": "gate-docs.log",
+      "pytest_addopts": "-n 8"
+    },
+    {
+      "gate": "confidentiality",
+      "exit_code": 0,
+      "seconds": 0.19,
+      "tested_head": "b2726bff1b398dc73737f9ab82716f85e3fdfe38",
+      "retained_log": "gate-confidentiality.log",
+      "pytest_addopts": "-n 8"
+    }
+  ],
+  "base": "a26a2d1c08b3fc9feafe3d973bb6e7bb6a396974",
+  "full_counts": {
+    "passed": 37800,
+    "failed": 0,
+    "skipped": 178,
+    "xpassed": 1
+  },
+  "hostile_counts": {
+    "passed": 898,
+    "failed": 0
+  },
+  "limits": [
+    "The complete local make test suite deselects live/GPU markers; actual runtime evidence is recorded separately. Docker ingress tests also have separate real-daemon evidence.",
+    "The full suite applies to the exact recorded integration commit, containing all ten candidate heads at this point. Later proof-only documentation must retain its own focused validation; GitHub checks bind final published heads.",
+    "The initial earlier run had missing USD test dependencies and integration defects. Its failed results remain private; this passing run includes usd-core26.8 in an owned dependency target."
+  ]
+}

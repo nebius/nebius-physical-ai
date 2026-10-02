@@ -1,0 +1,38 @@
+{
+  "full_suite_head": "b2726bff1b398dc73737f9ab82716f85e3fdfe38",
+  "final_integration_head": "f4aa6d1674c26100819cd5045cf766d832ffe2d8",
+  "identical_trees": [
+    {
+      "path": "npa/src",
+      "git_tree": "f6719e28f5be491de47f9b18efecaabbeaea4574",
+      "equal": true
+    },
+    {
+      "path": "npa/tests",
+      "git_tree": "3d84676d8ffc498a3af845b1fadc9f9367132088",
+      "equal": true
+    },
+    {
+      "path": "npa/docker/workbench/open3d",
+      "git_tree": "4f351ecd45922720042b2c28d41516433d021868",
+      "equal": true
+    },
+    {
+      "path": "workflows",
+      "git_tree": "dfeb795546a483f41d1791f06d3cb0178d4a11ed",
+      "equal": true
+    },
+    {
+      "path": ".github",
+      "git_tree": "475ca5aea1cd17855cc919286b6487c9ce745705",
+      "equal": true
+    }
+  ],
+  "only_other_changes": [
+    "docs/workbench/container-image-catalog.md",
+    "docs/workbench/image-gpu-compatibility-matrix.md",
+    "notes text for Open3D in npa/docker/workbench/blackwell-dc-images.json"
+  ],
+  "blackwell_manifest_non_prose_equal": true,
+  "additional_validation": "40 catalog/manifest checks and 17 repository-hygiene guards passed; final #602 precheck, merge-precheck, confidentiality and Gitleaks pass. Exact-head GitHub CI follows the push."
+}
