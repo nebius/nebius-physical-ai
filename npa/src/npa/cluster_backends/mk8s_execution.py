@@ -1145,7 +1145,17 @@ def _normalize_node_group_provider_fields(value: Any) -> Any:
     normalized: dict[str, Any] = {}
     for key, item in value.items():
         canonical = _NODE_GROUP_PROVIDER_ALIASES.get(key, key)
-        item = _normalize_node_group_provider_fields(item)
+        if canonical in {
+            "metadata",
+            "spec",
+            "template",
+            "boot_disk",
+            "reservation_policy",
+            "network_interfaces",
+            "filesystems",
+            "gpu_settings",
+        }:
+            item = _normalize_node_group_provider_fields(item)
         if canonical in normalized and json.dumps(
             normalized[canonical], sort_keys=True
         ) != json.dumps(item, sort_keys=True):

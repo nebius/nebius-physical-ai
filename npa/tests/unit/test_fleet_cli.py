@@ -2511,6 +2511,8 @@ def test_tainted_gpu_attachment_accepts_camel_case_provider_fields(
             _camel_case_node_group_fixture(provider["spec"]["template"])
         )
     desired = as_mk8s_desired(cluster)
+    camel["metadata"]["labels"] = {"gpuCluster": "one", "gpu_cluster": "two"}
+    camel["metadata"]["annotations"] = {"fixedNodeCount": 1, "fixed_node_count": 2}
     original = deepcopy(camel)
     assert execution._tainted_node_group_matches_desired(
         provider_payload=execution._decode_v1_node_group_preemptibility(camel),
