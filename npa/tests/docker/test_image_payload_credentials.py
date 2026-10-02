@@ -313,9 +313,11 @@ def test_real_key_shapes_survive_the_parser_string_fix(key: bytes) -> None:
 
 
 def test_the_longest_marker_is_measured_correctly() -> None:
-    # Pins the derived constant to a number a reader can verify by counting:
-    # "-----BEGIN " is 11, "ENCRYPTED " is 10, "PRIVATE KEY-----" is 16.
-    assert credentials._LONGEST_MARKER == 46
+    # The AWS marker is four literal bytes plus sixteen identifier bytes.
+    assert credentials._LONGEST_MARKER == 20
+    # Only the finite PEM header belongs in carry, never its whitespace suffix.
+    assert credentials._HEADER_CARRY == 37
+    assert credentials.CARRY >= credentials._HEADER_CARRY
 
 
 def test_markers_are_found_when_split_at_a_chunk_boundary() -> None:

@@ -119,12 +119,15 @@ def test_release_specific_evidence_stays_tied_to_current_pins(
             "0.1.2-sim2real-coherent-20260904",
             ["supported", "historical", "historical", "historical", "historical"],
         ),
-        "npa-isaac-lab": (
-            "3.0.0b2.post1-sim2real-coherent-20260904",
-            ["supported", "supported", "verified", "blocked", "blocked"],
-        ),
     }
     published = chart.published_images()
+    for stale in (
+        "npa-cosmos3",
+        "npa-cosmos3-ray-serve",
+        "npa-isaac-lab",
+        "npa-isaac-arena",
+    ):
+        assert stale not in published
     for image, (tag, kinds) in expected.items():
         assert published[image] == tag
         assert [chart.classify(cell, image)[0] for cell in rows[image]] == kinds

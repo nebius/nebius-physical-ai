@@ -74,6 +74,28 @@ environment.
 
 ## Supported policies
 
+For a sharper native capture, select `--record-video --video-profile film`.
+The `film` profile requests 3840 × 2160 pixels, 128 direct and diffuse samples,
+64 reflection samples, and 32 consecutive ready renders with physics frozen
+before each capture. It preserves the task camera pose, physics, and replay
+actions. Every retained frame still requires native renderer readback and
+unchanged-state evidence; lower resolution or a fallback profile fails
+verification. Higher sampling does not itself establish good visual quality or
+task success: inspect the result and retain the existing acceptance checks.
+The declared evidence derivative scales its Gaussian radius from 3.5 pixels at
+720p to 10.5 pixels at native 4K. Motion thresholds stay unchanged, and the raw
+capture remains untouched for editorial finishing.
+
+`standard` remains the CLI/SDK default. Workflows may set
+`config.video_profile: film`; an omitted selector preserves the old argv for
+existing images. The published r4 image predates this option. Use source staging
+with `config.source_overlay: true` on the pinned image, or a newer image that
+contains this implementation. Record the source fingerprint separately from
+the image digest; the r4 release qualification does not qualify a source overlay.
+For subsequent submissions, pin that exact content-addressed source URI in
+`NPA_SRC_S3_URI` and use a fresh isolated runtime directory. A shared project's
+saved source default can change when another operator stages a package.
+
 ```bash
 npa workbench isaac-arena capabilities
 ```

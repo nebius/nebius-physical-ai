@@ -90,34 +90,16 @@ CREDENTIAL_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
 )
 
-# Fixed-length markers. Every one of these has a maximum match length well under
-# MARKER_OVERLAP, so a window with that overlap finds them wherever they fall.
+# PEM permits arbitrarily much whitespace before the body. Only its finite
+# header uses a window; the whitespace phase retains state instead of bytes.
+_PRIVATE_KEY_HEADER = re.compile(
+    rb"-----BEGIN (?:RSA |DSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"
+)
+_PEM_WHITESPACE = re.compile(rb"[ \t\r\n\f\v]*")
+_PEM_BODY_START = re.compile(rb"[A-Za-z0-9+/=]")
+
+# These complete patterns have finite maximum widths and can use a window.
 MARKER_CONTENT: tuple[tuple[str, re.Pattern[bytes]], ...] = (
-    (
-        "private_key_content",
-        # ENCRYPTED is the PKCS#8 passphrase-protected header, which is what
-        # anyone who protected a key with a passphrase produces. A passphrase is
-        # not a reason to leave the key in an image, so it is detected too.
-        #
-        # The trailing requirement is what stops this rejecting any image that
-        # installs OpenSSH. Measured on this host, /usr/bin/ssh, /usr/sbin/sshd
-        # and /usr/bin/ssh-keygen each carry the literal header as a parser
-        # constant, because that is how they recognise the format they read, and
-        # all three were rejected before this clause existed. In a binary the
-        # literal is NUL-terminated:
-        #
-        #     OpenSSH begin-header string, newline, then NUL bytes.
-        #
-        # whereas a real key continues into its base64 body. Requiring one body
-        # character separates the two. This is a discriminator against a
-        # NUL-terminated constant, not proof of key material: a binary that
-        # placed printable text immediately after the literal would still match,
-        # and that is the deliberate direction to err in.
-        re.compile(
-            rb"-----BEGIN (?:RSA |DSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"
-            rb"[ \t\r\n]{0,8}[A-Za-z0-9+/=]"
-        ),
-    ),
     ("aws_access_key_id", re.compile(rb"AKIA[0-9A-Z]{16}")),
 )
 
@@ -173,6 +155,13 @@ DECLARED_CONTENT_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
     MARKER_CONTENT
     + (
         (
+            "private_key_content",
+            re.compile(
+                rb"-----BEGIN (?:RSA |DSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"
+                rb"[ \t\r\n\f\v]*[A-Za-z0-9+/=]"
+            ),
+        ),
+        (
             "credential_assignment",
             re.compile(
                 rb"(?i)(?:aws_secret_access_key|hf_token|ngc_api_key)\s*[=:]\s*[^$<\s][^\s]{7,}"
@@ -194,7 +183,7 @@ CONTENT_CHUNK = 1024 * 1024
 # Headroom for a future marker, not a measurement of the current ones. Review
 # showed this is not load-bearing today: setting it to zero changes no verdict,
 # because the carry takes the largest of the three constants below and the
-# longest marker declared here is 35 bytes.
+# longest finite header declared here is 37 bytes.
 MARKER_OVERLAP = 4096
 # Enough to hold the longest NAME token whole when one straddles a boundary.
 # This is the effective floor on the carry today.
@@ -221,10 +210,39 @@ def _max_match_length(pattern: re.Pattern[bytes]) -> int:
 # An upper bound on any marker match, derived so that adding a longer marker
 # widens the carry automatically instead of silently outgrowing it.
 _LONGEST_MARKER = max(_max_match_length(pattern) for _, pattern in MARKER_CONTENT)
+_HEADER_CARRY = _max_match_length(_PRIVATE_KEY_HEADER)
 # What actually gets carried between chunks, and why: long enough for any marker
 # to be found whole, any NAME token to survive a split, and whatever headroom
 # MARKER_OVERLAP asks for.
-CARRY = max(MARKER_OVERLAP, _NAME_CARRY, _LONGEST_MARKER)
+CARRY = max(MARKER_OVERLAP, _NAME_CARRY, _LONGEST_MARKER, _HEADER_CARRY)
+
+
+class _PrivateKeyMatcher:
+    """Recognize PEM bodies after unbounded whitespace with constant state."""
+
+    def __init__(self) -> None:
+        self._awaiting_body = False
+
+    def feed(self, data: bytes, carried: int) -> bool:
+        """Continue after the prior chunk, revisiting carry only to find headers."""
+        position = carried if self._awaiting_body else max(0, carried - _HEADER_CARRY)
+        while position < len(data):
+            if not self._awaiting_body:
+                header = _PRIVATE_KEY_HEADER.search(data, position)
+                if header is None:
+                    return False
+                position = header.end()
+                self._awaiting_body = True
+            position = _PEM_WHITESPACE.match(data, position).end()
+            if position == len(data):
+                return False
+            # OpenSSH binaries contain NUL-terminated parser constants. A body
+            # byte is required, but its distance from the header is unbounded.
+            if _PEM_BODY_START.match(data, position):
+                return True
+            self._awaiting_body = False
+        return False
+
 
 _SEEK, _GAP_BEFORE_SEP, _GAP_AFTER_SEP, _VALUE = range(4)
 
@@ -333,15 +351,25 @@ def content_credential(stream: IO[bytes]) -> str | None:
     plus a small overlap regardless of member size or match length. Short reads
     are handled: only an empty read ends the scan, because a stream may
     legitimately return fewer bytes than requested.
+
+    Args:
+        stream: Binary member stream to inspect from its current position.
+    Returns:
+        The first detected credential kind, or None when no rule matches.
+    Raises:
+        OSError: If reading the member fails.
     """
 
     matchers = [(rule.kind, _AssignmentMatcher(rule)) for rule in ASSIGNMENT_RULES]
+    private_key = _PrivateKeyMatcher()
     carry = b""
     while True:
         chunk = stream.read(CONTENT_CHUNK)
         if not chunk:
             return None
         window = carry + chunk
+        if private_key.feed(window, len(carry)):
+            return "private_key_content"
         for kind, pattern in MARKER_CONTENT:
             if pattern.search(window):
                 return kind

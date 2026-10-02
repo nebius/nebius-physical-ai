@@ -36,6 +36,13 @@ the whole triage:
   (threshold `--startup-failure-threshold`, default 3). This is infrastructure,
   not your payload.
 
+Use the run's selected `--project` consistently. Status, pending-manifest lookup,
+live logs, and cancellation carry the resolved project and storage credentials into
+their controller calls, including a cold restart of an owned local API. The
+caller environment is unchanged. This does not permit adopting a controller
+under a different principal or ignoring changed credential files; reconcile
+those identity failures before resuming.
+
 All currently recorded jobs can be `SUCCEEDED` between waves while the workflow
 lifecycle remains `RUNNING`. This is a successful observation of incomplete
 workflow evidence, not a failed query: inspect `workflow_lifecycle` for the
@@ -122,6 +129,15 @@ npa workbench workflow preflight-images <spec.yaml> --project <alias> --json
 
 This reproduces the exact manifest fetch a worker performs, with the credentials
 the run injects, and reports each image `ok` / `not_found` / `forbidden`.
+
+A resolver error containing `no consumable public release` or `quarantined` is
+not one of those pull states. It happens before submission because repository
+policy has withdrawn trust from the recorded release bytes. Do not retry, add a
+pull secret, or paste the stale public tag into an override. Either select an
+independently scanned immutable operator image through the explicit `--image`
+or per-tool `--image-override` surface, or wait for a repaired accepted release.
+Read-only status, logs, and artifact discovery for an existing run remain valid
+and should be used for the post-mortem.
 
 - `not_found` → the selected tag or digest was not published in that registry.
   Official NPA release images come from public GHCR; an operator-supplied BYOF

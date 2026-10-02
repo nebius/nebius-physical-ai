@@ -528,6 +528,8 @@ def test_isaac_lab_deploy_runtime_container_starts_image(
             "1gpu-40vcpu-160gb",
             "--runtime",
             "container",
+            "--image",
+            "registry.example.invalid/operator/npa-isaac-lab:rebuilt",
         ],
     )
 
@@ -537,8 +539,8 @@ def test_isaac_lab_deploy_runtime_container_starts_image(
     assert tf_vars["boot_disk_size_gb"] == "250"
     deploy_container.assert_called_once()
     assert deploy_container.call_args.kwargs["container_name"] == "npa-isaac-lab"
-    assert deploy_container.call_args.kwargs["image_ref"].endswith(
-        "/npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260904"
+    assert deploy_container.call_args.kwargs["image_ref"] == (
+        "registry.example.invalid/operator/npa-isaac-lab:rebuilt"
     )
     wb_cfg = write_config.call_args.args[0]["projects"]["proj"]["workbenches"][
         "isaac-container"

@@ -7,6 +7,7 @@ import io
 import json
 import subprocess
 from pathlib import Path
+from threading import Barrier
 from types import SimpleNamespace
 
 from packaging.requirements import Requirement
@@ -47,6 +48,57 @@ def _finding(path: str = "module.py", line: int = 4) -> dict:
         "line": line,
         "message": "Synthetic finding",
     }
+
+
+def _source_with_required_manifests(root: Path) -> None:
+    for manifest in (
+        "npa/pyproject.toml",
+        "npa/requirements-lock.txt",
+        "npa/ci/requirements.txt",
+    ):
+        path = root / manifest
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+
+@pytest.mark.parametrize("failure", [None, "source", "dependencies"])
+def test_concurrent_scanners_preserve_findings_and_fail_closed(
+    security_modules, monkeypatch, tmp_path, failure
+):
+    """Require overlapping scans and reject either scanner's operational failure.
+
+    Args:
+        security_modules: Checked-out gate modules.
+        monkeypatch: Replaces native scanners with synchronized workers.
+        tmp_path: Private source and report paths.
+        failure: Scanner that fails, or None when both return findings.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Work is serialized, findings vanish, or a failure passes.
+    """
+    gate, _ = security_modules
+    _source_with_required_manifests(tmp_path)
+    overlap = Barrier(2)
+
+    def scan(root, output, *args):
+        output.mkdir(parents=True)
+        overlap.wait(timeout=5)
+        if output.name == failure:
+            raise RuntimeError("synthetic scanner failure")
+        return [_finding(output.name)]
+
+    monkeypatch.setattr(gate, "scan_source", scan)
+    monkeypatch.setattr(gate, "scan_dependencies", scan)
+    report = tmp_path / "report"
+    if failure:
+        with pytest.raises(RuntimeError, match="synthetic scanner failure"):
+            gate._scan(tmp_path, report, tmp_path / "cache")
+        assert not (report / "findings.json").exists()
+    else:
+        findings = gate._scan(tmp_path, report, tmp_path / "cache")
+        assert findings == [_finding("source"), _finding("dependencies")]
+        assert json.loads((report / "findings.json").read_text()) == findings
 
 
 @pytest.mark.parametrize(
@@ -831,9 +883,10 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
     workflow = yaml.safe_load(workflow_path.read_text())
     job = workflow["jobs"]["security-regression"]
     assert job["needs"] == [
+        "pr-precheck",
+        "queue-guardrails",
         "test-gate",
         "lint-gate",
-        "guardrails-gate",
         "gitleaks",
         "scan",
         "security-scanners",
@@ -845,9 +898,12 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
     required_step = job["steps"][0]
     assert required_step["env"] == {
         "EVENT_NAME": "${{ github.event_name }}",
+        "PLAN_RESULT": "${{ needs.gitleaks.result }}",
+        "VALIDATION_MODE": "${{ needs.gitleaks.outputs.mode }}",
+        "PRECHECK_RESULT": "${{ needs.pr-precheck.result }}",
         "TEST_RESULT": "${{ needs.test-gate.result }}",
         "LINT_RESULT": "${{ needs.lint-gate.result }}",
-        "GUARDRAIL_RESULT": "${{ needs.guardrails-gate.result }}",
+        "GUARDRAIL_RESULT": "${{ github.event_name == 'merge_group' && needs.queue-guardrails.result || needs.pr-precheck.result }}",
         "GITLEAKS_RESULT": "${{ needs.gitleaks.result }}",
         "CONFIDENTIALITY_RESULT": "${{ needs.scan.result }}",
         "SCANNER_RESULT": "${{ needs.security-scanners.result }}",
@@ -859,6 +915,7 @@ def test_required_security_check_propagates_failure(monkeypatch, result, prerequ
     for name in required_step["env"]:
         if name != "EVENT_NAME":
             monkeypatch.setenv(name, "success")
+    monkeypatch.setenv("VALIDATION_MODE", "full")
     monkeypatch.setenv(prerequisite, result)
     completed = subprocess.run(["bash", "-e", "-c", required_step["run"]], check=False)
     assert (completed.returncode == 0) == (result == "success")
