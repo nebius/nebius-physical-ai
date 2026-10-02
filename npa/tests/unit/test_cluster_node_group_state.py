@@ -52,7 +52,7 @@ def test_node_group_state_rejects_non_boolean_public_ip(
     data["public_ip"] = public_ip
     path.write_text(json.dumps(data))
 
-    with pytest.raises(ClusterStateError, match="public_ip must be a boolean"):
+    with pytest.raises(ClusterStateError, match="public_ip must be a literal boolean"):
         load_node_group_state("cluster-a", "cluster-a-h100-gpu", base_dir=tmp_path)
 
 
@@ -102,3 +102,37 @@ def test_malformed_node_group_state_raises(tmp_path) -> None:
 
     with pytest.raises(ClusterStateError):
         load_node_group_state("cluster-a", "cluster-a-h100-gpu", base_dir=tmp_path)
+
+
+def test_missing_public_ip_preserves_false_default(tmp_path) -> None:
+    path = save_node_group_state(_state(), base_dir=tmp_path)
+    data = json.loads(path.read_text())
+    del data["public_ip"]
+    path.write_text(json.dumps(data))
+    assert (
+        load_node_group_state("cluster-a", _state().name, base_dir=tmp_path).public_ip
+        is False
+    )
+
+
+def test_discovery_quarantines_each_bad_record_without_modifying_it(
+    tmp_path, caplog
+) -> None:
+    healthy = _state("healthy")
+    save_node_group_state(healthy, base_dir=tmp_path)
+    directory = tmp_path / "cluster-a" / "node-groups"
+    malformed = {"bad-json": "{", "bad-object": "[]", "bad-fields": "{}"}
+    data = json.loads(
+        save_node_group_state(_state("bad-flag"), base_dir=tmp_path).read_text()
+    )
+    data["public_ip"] = "false"
+    malformed["bad-flag"] = json.dumps(data)
+    for name, content in malformed.items():
+        (directory / f"{name}.json").write_text(content)
+    assert list_node_group_states("cluster-a", base_dir=tmp_path) == [healthy]
+    assert len(caplog.records) == len(malformed)
+    for name, content in malformed.items():
+        assert f"{name}.json" in caplog.text
+        assert (directory / f"{name}.json").read_text() == content
+        with pytest.raises(ClusterStateError):
+            load_node_group_state("cluster-a", name, base_dir=tmp_path)
