@@ -50,10 +50,11 @@ pytest.importorskip("PIL", reason="Pillow is required to build image fixtures")
     ["placement_stable", "stable_grasp", "gripper_closed", "contact"],
 )
 @pytest.mark.parametrize("malformed", ["false", 1, None, [True], {"value": True}])
-def test_run_phase_ignores_non_boolean_ground_truth(
+def test_run_phase_rejects_non_boolean_ground_truth(
     field: str, malformed: object
 ) -> None:
-    assert _run_phase({field: malformed}, 0.5) == "tracking"
+    with pytest.raises(McapWriteError, match=field):
+        _run_phase({field: malformed}, 0.5)
 
 
 @pytest.mark.parametrize(
