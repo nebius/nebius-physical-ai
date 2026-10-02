@@ -7844,7 +7844,14 @@ def sim_viz_load_run(payload: dict | None = None):
                 run_ref=requested_run_ref,
                 prefix=requested_prefix,
             )
-        preferred = select_preferred_artifact(artifacts)
+        artifacts, _report_artifact, preferred, _authority_keys = (
+            _committed_publication_artifacts(
+                s3,
+                selected_bucket,
+                resolved_run_id,
+                artifacts,
+            )
+        )
         # Prefer a run-scoped Rerun recording over stale history entries.
         if preferred and (preferred.render == "rerun" or (requested_bucket and source_selected)):
             local_name = _artifact_filename(preferred.key)
@@ -8553,12 +8560,26 @@ def artifacts_for_run(
             cursor=cursor,
             s3=s3,
         )
-        preferred = select_preferred_artifact(page.artifacts)
-        role_counts = artifact_inventory_counts(page.artifacts)
+        visible_artifacts, _report_artifact, preferred, _authority_keys = (
+            _committed_publication_artifacts(
+                s3,
+                run_bucket,
+                normalized_run,
+                page.artifacts,
+                require_complete=False,
+            )
+        )
+        page = ArtifactListPage(
+            artifacts=visible_artifacts,
+            truncated=page.truncated,
+            next_cursor=page.next_cursor,
+            page_size=page.page_size,
+        )
+        role_counts = artifact_inventory_counts(visible_artifacts)
         summary = build_run_summary(
             normalized_run,
-            page.artifacts,
-            _summary_documents_for_run(s3, run_bucket, page.artifacts),
+            visible_artifacts,
+            _summary_documents_for_run(s3, run_bucket, visible_artifacts),
         )
         if exact_source_request:
             # The card is rendered immediately before its playback action. Keep
@@ -8692,6 +8713,15 @@ def artifacts_stage(
             )
             if selected_project:
                 bucket_projects[run_bucket] = selected_project
+        artifacts, _report, _preferred, _logical_keys = (
+            _committed_publication_artifacts(
+                s3,
+                run_bucket,
+                normalized_run,
+                artifacts,
+                require_complete=False,
+            )
+        )
         wanted = str(stage_key or "").strip()
         keys = [str(item.key or "") for item in artifacts]
         marker = "/" + normalized_run + "/"
@@ -8795,6 +8825,16 @@ def fiftyone_dataset(
                 prefix=prefix,
             )
 
+        artifacts, _report, _preferred, _logical_keys = (
+            _committed_publication_artifacts(
+                s3,
+                bucket,
+                normalized_run,
+                artifacts,
+                require_complete=False,
+            )
+        )
+
         def _read_json(key: str):
             if not key:
                 return None
@@ -8868,6 +8908,15 @@ def artifacts_run_provenance(
                 run_id=normalized_run,
                 prefix=prefix,
             )
+        artifacts, _report, _preferred, _logical_keys = (
+            _committed_publication_artifacts(
+                s3,
+                run_bucket,
+                normalized_run,
+                artifacts,
+                require_complete=False,
+            )
+        )
         keys = [str(a.key or "") for a in artifacts]
 
         def _read_json(key: str):
@@ -9224,17 +9273,38 @@ def _foxglove_resolve_artifact_with_access(payload: dict) -> dict:
             resolved_prefix=source_prefix,
             artifacts=resolution.artifacts,
         )
-    artifact = next((item for item in resolution.artifacts if item.key == key), None)
+    run_root_key = "/".join(
+        part for part in (resolution.source_prefix, resolution.run_id) if part
+    )
+    try:
+        authoritative_key = _resolve_committed_artifact_key(
+            s3,
+            resolution.bucket,
+            run_root_key,
+            key,
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
+    artifact = next(
+        (item for item in resolution.artifacts if item.key == authoritative_key),
+        None,
+    )
     if artifact is None:
         raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
     if not exact_source_request:
         source_bucket, source_project, source_prefix = _artifact_source_metadata(
-            _agent_access_report(), resolution.bucket, key, resolution.run_id
+            _agent_access_report(),
+            resolution.bucket,
+            authoritative_key,
+            resolution.run_id,
         )
     selected = {{
         "run_id": resolution.run_id,
         "run_ref": resolution.run_ref,
-        "key": key,
+        "key": authoritative_key,
         "s3_uri": str(artifact.s3_uri),
         "bucket": source_bucket or resolution.bucket,
         "resource_bucket": source_bucket or resolution.bucket,

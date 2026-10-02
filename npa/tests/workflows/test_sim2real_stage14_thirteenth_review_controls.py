@@ -153,6 +153,7 @@ def _provenance(*, parallel: bool = False) -> dict[str, Any]:
         "image_digest": f"sha256:{IMAGE_DIGEST}",
         "source_sha": SOURCE_SHA,
         "gpu_products": ["NVIDIA H100"],
+        "gpu_rows": ["NVIDIA H100, GPU-test-0000"],
     }
     if parallel:
         return {

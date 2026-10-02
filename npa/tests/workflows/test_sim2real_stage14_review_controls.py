@@ -721,6 +721,9 @@ def test_remote_selected_pair_cannot_be_displaced_by_stale_local_pair(
     class Storage:
         _s3 = S3()
 
+        def read_bytes_with_etag(self, _destination: str) -> None:
+            return None
+
         def download_path(self, uri: str, path: str) -> str:
             if uri.endswith(
                 (
@@ -780,6 +783,9 @@ def test_failed_directory_sync_cannot_preserve_stale_local_evidence(
 
     class Storage:
         _s3 = S3()
+
+        def read_bytes_with_etag(self, _destination: str) -> None:
+            return None
 
         def download_path(self, uri: str, path: str) -> str:
             if uri.endswith(

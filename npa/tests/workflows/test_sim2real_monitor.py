@@ -551,8 +551,13 @@ def test_sim2real_workflow_status_marks_failed_image_pull(
         lambda **kwargs: [],
     )
 
+    import botocore.exceptions
+
     fake_client = MagicMock()
-    fake_client._s3.head_object.side_effect = Exception("missing")
+    fake_client._s3.head_object.side_effect = botocore.exceptions.ClientError(
+        {"Error": {"Code": "404", "Message": "not found"}},
+        "HeadObject",
+    )
     fake_client._s3.list_objects_v2.return_value = {"KeyCount": 0}
     monkeypatch.setattr(
         "npa.workflows.sim2real.monitor.StorageClient.from_environment",

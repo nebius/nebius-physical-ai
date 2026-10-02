@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from npa.workflows.sim2real.component_authority import (
+    validate_stage4_parallel_inputs,
+)
 from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
 from npa.workflows.sim2real.decision_authority import (
     gold_report_sha256,
@@ -359,20 +362,21 @@ def _stage5(args: argparse.Namespace) -> None:
         )
         for index in range(args.shard_count)
     ]
-    if any(
-        int(item.get("stage") or 0) != 4
-        or item.get("lane") != f"shard-{index:05d}"
-        or int(item.get("artifacts", {}).get("shard_index", -1)) != index
-        or int(item.get("artifacts", {}).get("shard_count") or 0) != args.shard_count
-        or item.get("artifacts", {}).get("image")
-        != shard_provenance[index]["provenance"]["image"]
-        for index, item in enumerate(shard_lane_records)
-    ):
+    try:
+        lane_provenance = validate_stage4_parallel_inputs(
+            root,
+            shard_count=args.shard_count,
+            shard_provenance=shard_provenance,
+            lane_records=shard_lane_records,
+            expected_source_sha=source_sha(),
+        )
+    except ValueError as exc:
         raise RuntimeError(
             "Stage 4 lane records do not match the declared shard fan-out"
-        )
+        ) from exc
     joined_provenance = aggregate_parallel_provenance(
-        [item["provenance"] for item in shard_provenance], stage=4
+        lane_provenance,
+        stage=4,
     )
     publish_component_record(
         root_uri=root,

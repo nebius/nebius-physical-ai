@@ -154,6 +154,7 @@ def _stage4_lane(index: int) -> tuple[dict[str, Any], dict[str, Any]]:
         "execution_mode": "standard_npa_workflow_skypilot",
         "workflow_job": f"job-4-{index}",
         "gpu_products": ["NVIDIA H100"],
+        "gpu_rows": ["NVIDIA H100, GPU-test-0000"],
     }
     proof = {
         "schema": "npa.sim2real.envgen_shard_execution.v1",
@@ -215,6 +216,7 @@ def _component_record(stage: int) -> dict[str, Any]:
                     "workflow_jobs": ["job-4-0", "job-4-1"],
                     "lane_count": 2,
                     "gpu_products": ["NVIDIA H100"],
+                    "gpu_rows": ["NVIDIA H100, GPU-test-0000"],
                 }
             )
         else:
@@ -297,6 +299,7 @@ def test_stage14_encoder_failure_does_not_publish_works_pointer(
         lambda *_a: None,
     )
     monkeypatch.setattr(stage14, "read_json", _record_reader)
+    monkeypatch.setattr(stage14, "source_sha", lambda: SOURCE_SHA)
     for publisher in (
         "publish_built_component_history",
         "publish_built_component_pointer",
@@ -515,7 +518,15 @@ def test_regen_transaction_fences_convenience_aliases(tmp_path: Path) -> None:
     renders.mkdir(parents=True)
     (renders / "camera-000.png").write_bytes(b"png")
     final_report.parent.mkdir(parents=True, exist_ok=True)
-    final_report.write_text("{}", encoding="utf-8")
+    final_report.write_text(
+        json.dumps(
+            {
+                "source_sha": SOURCE_SHA,
+                "component_records": [_component_record(14)],
+            }
+        ),
+        encoding="utf-8",
+    )
     rrd.write_bytes(b"rrd")
     uploads: list[str] = []
 

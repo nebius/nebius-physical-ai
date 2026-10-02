@@ -46,12 +46,16 @@ from npa.workflows.sim2real.stage10_authority import (
 )
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.publication import (
+    CommittedPublicationSnapshot,
     MutablePublicationTransaction,
     PublicationConflict,
     RemoteObjectSnapshot,
+    delete_unjournaled_legacy_file,
     recover_interrupted_publication,
     remote_object_snapshot,
     remote_object_version,
+    replace_unjournaled_legacy_file,
+    resolve_committed_publication_snapshot,
     resolve_committed_publication_uri,
     upload_immutable_file,
     upload_immutable_tree,
@@ -657,13 +661,26 @@ def _download_regen_single_files(
     prefix: str,
     local_dir: Path,
     singles: dict[str, Path],
+    publication_snapshot: CommittedPublicationSnapshot | None = None,
 ) -> dict[str, bool]:
+    canonical_report_uri = f"{prefix}reports/sim2real-report.json"
+    publication_snapshot = publication_snapshot or (
+        resolve_committed_publication_snapshot(storage, canonical_report_uri)
+    )
     downloaded: dict[str, bool] = {}
     for rel, dest in singles.items():
         dest.parent.mkdir(parents=True, exist_ok=True)
+        uri = f"{prefix}{rel}"
+        if rel == "reports/sim2real-report.json":
+            resolved = publication_snapshot.resolve(canonical_report_uri)
+            if resolved is None:
+                raise Sim2RealRerunRegenError(
+                    "committed publication contains no final report"
+                )
+            uri = resolved
         downloaded[rel] = _download_if_exists(
             storage,
-            f"{prefix}{rel}",
+            uri,
             dest,
             containment_root=local_dir,
         )
@@ -758,6 +775,7 @@ def sync_regen_inputs(
     local_dir: Path,
     *,
     client: StorageClient | None = None,
+    publication_snapshot: CommittedPublicationSnapshot | None = None,
 ) -> tuple[Path, Path]:
     """Download artifacts required for Rerun regeneration.
 
@@ -772,6 +790,12 @@ def sync_regen_inputs(
     """
     storage = client or _storage_client_for_config(config)
     prefix = run_prefix_uri(config)
+    publication_snapshot = publication_snapshot or (
+        resolve_committed_publication_snapshot(
+            storage,
+            f"{prefix}reports/sim2real-report.json",
+        )
+    )
     local_dir = Path(local_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
     inner_evidence_rel = _latest_completed_inner_evidence_rel(storage, prefix)
@@ -782,6 +806,7 @@ def sync_regen_inputs(
         prefix,
         local_dir,
         _regen_single_files(local_dir, inner_evidence_rel, gold_eval_rel),
+        publication_snapshot,
     )
     _require_regen_pair_downloads(downloaded, inner_evidence_rel, gold_eval_rel)
     _sync_inner_evidence_history(storage, prefix, local_dir)
@@ -1669,6 +1694,49 @@ def _capture_regen_publication_snapshots(
     }
 
 
+def _publish_unjournaled_legacy_regen_aliases(
+    storage: StorageClient,
+    publication: _RegenPublication,
+    *,
+    mcap_uri: str,
+    snapshots: dict[str, RemoteObjectSnapshot | None],
+    canonical_report_uri: str,
+    canonical_rrd_uri: str,
+    canonical_mcap_uri: str,
+    lock_uri: str,
+) -> None:
+    """Preserve partial legacy regen only when no journal owned the run."""
+
+    lock_snapshot = snapshots[lock_uri]
+    if lock_snapshot is not None:
+        raise PublicationConflict(
+            "journaled regeneration requires report, recording, and "
+            "Stage 14 component authority"
+        )
+    targets = [(publication.rrd_path, canonical_rrd_uri)]
+    if mcap_uri:
+        targets.append(
+            (publication.local_dir / "reports" / "sim2real.mcap", canonical_mcap_uri)
+        )
+    else:
+        delete_unjournaled_legacy_file(
+            storage,
+            canonical_mcap_uri,
+            snapshot=snapshots[canonical_mcap_uri],
+            lock_snapshot=lock_snapshot,
+        )
+    if publication.final_report_path.is_file():
+        targets.append((publication.final_report_path, canonical_report_uri))
+    for path, uri in targets:
+        replace_unjournaled_legacy_file(
+            storage,
+            path,
+            uri,
+            snapshot=snapshots[uri],
+            lock_snapshot=lock_snapshot,
+        )
+
+
 def publish_regen_outputs(
     config: Sim2RealLoopConfig,
     local_dir: Path,
@@ -1726,6 +1794,18 @@ def publish_regen_outputs(
     )
     component_path = _publish_regen_final_report(storage, publication, mcap_uri)
     mcap_path = publication.local_dir / "reports" / "sim2real.mcap"
+    if component_path is None:
+        _publish_unjournaled_legacy_regen_aliases(
+            storage,
+            publication,
+            mcap_uri=mcap_uri,
+            snapshots=snapshots,
+            canonical_report_uri=canonical_report_uri,
+            canonical_rrd_uri=canonical_rrd_uri,
+            canonical_mcap_uri=canonical_mcap_uri,
+            lock_uri=lock_uri,
+        )
+        return canonical_rrd_uri
     with MutablePublicationTransaction(
         storage,
         lock_uri=lock_uri,
@@ -2026,9 +2106,15 @@ def _selected_regen_paths(
     work_dir: Path,
     storage: StorageClient,
     sync_inputs: bool,
+    publication_snapshot: CommittedPublicationSnapshot | None = None,
 ) -> tuple[Path, Path]:
     if sync_inputs:
-        return sync_regen_inputs(config, work_dir, client=storage)
+        return sync_regen_inputs(
+            config,
+            work_dir,
+            client=storage,
+            publication_snapshot=publication_snapshot,
+        )
     return _latest_local_inner_evidence(work_dir), _gold_report_path(config, work_dir)
 
 
@@ -2149,6 +2235,7 @@ def _validate_regen_component_authority(
     *,
     verify_remote_authority: bool,
     require_canonical_authority: bool = False,
+    publication_snapshot: CommittedPublicationSnapshot | None = None,
 ) -> None:
     canonical_architecture = "npa.workflow/v0.0.1_compositional_standard_runtime"
     architecture = inputs.report.get("architecture")
@@ -2211,7 +2298,15 @@ def _validate_regen_component_authority(
     retained: list[dict[str, Any]] = []
     authority_dir = work_dir / "component-authority"
     for stage in range(1, 15):
-        pointer_uri = f"{root}/components/stage_{stage:02d}.json"
+        canonical_pointer_uri = f"{root}/components/stage_{stage:02d}.json"
+        pointer_uri = canonical_pointer_uri
+        if stage == 14 and publication_snapshot is not None:
+            resolved_pointer = publication_snapshot.resolve(canonical_pointer_uri)
+            if resolved_pointer is None:
+                raise Sim2RealRerunRegenError(
+                    "committed publication contains no Stage 14 ComponentRecord"
+                )
+            pointer_uri = resolved_pointer
         pointer_path = authority_dir / f"stage_{stage:02d}.json"
         if not _download_if_exists(
             storage,
@@ -2334,8 +2429,25 @@ def _load_regen_state(
     publication_snapshots: dict[str, RemoteObjectSnapshot | None] | None = None,
     verified_snapshot_dir: Path | None = None,
 ) -> _RegenState:
+    verify_authority = (
+        sync_inputs if verify_remote_authority is None else verify_remote_authority
+    )
     try:
-        paths = _selected_regen_paths(config, work_dir, storage, sync_inputs)
+        publication_authority = (
+            resolve_committed_publication_snapshot(
+                storage,
+                f"{run_prefix_uri(config)}reports/sim2real-report.json",
+            )
+            if sync_inputs or verify_authority
+            else None
+        )
+        paths = _selected_regen_paths(
+            config,
+            work_dir,
+            storage,
+            sync_inputs,
+            publication_authority,
+        )
         inputs = _load_regen_inputs(config, work_dir, *paths)
         _validate_regen_decision(config, inputs)
         _validate_regen_component_authority(
@@ -2343,12 +2455,9 @@ def _load_regen_state(
             work_dir,
             storage,
             inputs,
-            verify_remote_authority=(
-                sync_inputs
-                if verify_remote_authority is None
-                else verify_remote_authority
-            ),
+            verify_remote_authority=verify_authority,
             require_canonical_authority=require_canonical_authority,
+            publication_snapshot=publication_authority,
         )
         verified_renders = _validate_regen_materialized_frames(
             config,
@@ -2681,8 +2790,11 @@ def _regenerate_sim2real_rrd(
     publication_snapshots = (
         _capture_regen_publication_snapshots(config, storage) if upload else None
     )
+    snapshot_parent = Path(work_dir).resolve()
+    snapshot_parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
-        prefix="npa-sim2real-verified-renders-"
+        prefix=".npa-sim2real-verified-renders-",
+        dir=snapshot_parent,
     ) as snapshot_root:
         state = _load_regen_state(
             config,

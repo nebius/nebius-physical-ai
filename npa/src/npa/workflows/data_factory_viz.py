@@ -1886,6 +1886,27 @@ def _publish(
     from npa.clients.storage import StorageClient
 
     client = storage_client or StorageClient.from_environment()
+    from npa.agent_backend.publication_reader import (
+        publication_root_from_canonical_uri,
+    )
+    from npa.workflows.sim2real.publication import (
+        remote_object_snapshot,
+        replace_unjournaled_legacy_file,
+    )
+
+    try:
+        publication_root = publication_root_from_canonical_uri(output_uri)
+    except ValueError:
+        publication_root = ""
+    if publication_root:
+        lock_uri = f"{publication_root}/reports/.sim2real-publication.json"
+        return replace_unjournaled_legacy_file(
+            client,
+            Path(local_path),
+            output_uri,
+            snapshot=None,
+            lock_snapshot=remote_object_snapshot(client, lock_uri),
+        )
     client.put_bytes_conditional(
         Path(local_path).read_bytes(),
         output_uri,

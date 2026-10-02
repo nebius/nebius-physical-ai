@@ -336,6 +336,7 @@ def test_no_sync_upload_still_requests_remote_component_authority(
         verified_snapshot_dir: Path | None = None,
     ) -> Any:
         assert verified_snapshot_dir is not None
+        assert verified_snapshot_dir.resolve().is_relative_to(_work_dir.resolve())
         observed.update(
             sync_inputs=sync_inputs,
             verify_remote_authority=verify_remote_authority,

@@ -10,11 +10,21 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from botocore.exceptions import ClientError
+
+from npa.agent_backend.publication_reader import (
+    CommittedPublicationSnapshot,
+    PublicationConflict,
+    parse_publication_journal,
+    publication_root_from_canonical_uri,
+    publication_root_from_lock_uri,
+    resolve_committed_publication,
+    valid_publication_id,
+)
 from npa.clients.storage import StoragePreconditionFailed
 
 
-class PublicationConflict(RuntimeError):
-    """Raised when another publisher changed an authority object first."""
+_UNSET_SNAPSHOT = object()
 
 
 @dataclass(frozen=True)
@@ -235,6 +245,77 @@ def replace_mutable_file(
     return uri
 
 
+def replace_unjournaled_legacy_file(
+    client: Any,
+    path: Path,
+    uri: str,
+    *,
+    snapshot: RemoteObjectSnapshot | None | object = _UNSET_SNAPSHOT,
+    lock_snapshot: RemoteObjectSnapshot | None | object = _UNSET_SNAPSHOT,
+) -> str:
+    """CAS one legacy alias only while no generation journal exists.
+
+    A journal racing this compatibility write either changes the alias first,
+    causing this CAS to fail, or observes the new alias before publishing its
+    complete plan. If the marker appears after the CAS, report the conflict so
+    the caller never treats the direct write as authoritative.
+    """
+
+    root = publication_root_from_canonical_uri(uri)
+    lock_uri = f"{root}/reports/.sim2real-publication.json"
+    if lock_snapshot is not _UNSET_SNAPSHOT and lock_snapshot is not None:
+        raise PublicationConflict(
+            f"reserved publication alias is journal-controlled: {uri}"
+        )
+    if remote_object_snapshot(client, lock_uri) is not None:
+        raise PublicationConflict(
+            f"reserved publication alias is journal-controlled: {uri}"
+        )
+    expected = (
+        remote_object_version(client, uri) if snapshot is _UNSET_SNAPSHOT else snapshot
+    )
+    if expected is not None and not isinstance(expected, RemoteObjectSnapshot):
+        raise TypeError("legacy publication snapshot is invalid")
+    replace_mutable_file(client, path, uri, expected)
+    if remote_object_snapshot(client, lock_uri) is not None:
+        raise PublicationConflict(
+            f"publication journal raced legacy alias replacement: {uri}"
+        )
+    return uri
+
+
+def delete_unjournaled_legacy_file(
+    client: Any,
+    uri: str,
+    *,
+    snapshot: RemoteObjectSnapshot | None | object = _UNSET_SNAPSHOT,
+    lock_snapshot: RemoteObjectSnapshot | None | object = _UNSET_SNAPSHOT,
+) -> None:
+    """CAS-delete one legacy alias only while no generation journal exists."""
+
+    root = publication_root_from_canonical_uri(uri)
+    lock_uri = f"{root}/reports/.sim2real-publication.json"
+    if lock_snapshot is not _UNSET_SNAPSHOT and lock_snapshot is not None:
+        raise PublicationConflict(
+            f"reserved publication alias is journal-controlled: {uri}"
+        )
+    if remote_object_snapshot(client, lock_uri) is not None:
+        raise PublicationConflict(
+            f"reserved publication alias is journal-controlled: {uri}"
+        )
+    expected = (
+        remote_object_version(client, uri) if snapshot is _UNSET_SNAPSHOT else snapshot
+    )
+    if expected is not None and not isinstance(expected, RemoteObjectSnapshot):
+        raise TypeError("legacy publication snapshot is invalid")
+    if expected is not None:
+        _delete_mutable_object(client, uri, if_match=expected.etag)
+    if remote_object_snapshot(client, lock_uri) is not None:
+        raise PublicationConflict(
+            f"publication journal raced legacy alias deletion: {uri}"
+        )
+
+
 def _replace_mutable_file(
     client: Any,
     path: Path,
@@ -426,21 +507,8 @@ def _journal_bytes(
     )
 
 
-def _strict_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in payload:
-            raise ValueError(f"duplicate JSON key: {key}")
-        payload[key] = value
-    return payload
-
-
 def _valid_publication_id(value: object) -> bool:
-    return (
-        isinstance(value, str)
-        and 1 <= len(value) <= 128
-        and all(char.isascii() and (char.isalnum() or char in "._-") for char in value)
-    )
+    return valid_publication_id(value)
 
 
 def _parse_journal(
@@ -448,148 +516,15 @@ def _parse_journal(
     *,
     lock_uri: str,
 ) -> dict[str, Any]:
-    try:
-        payload = json.loads(
-            snapshot.payload,
-            object_pairs_hook=_strict_json_object,
-        )
-    except (TypeError, ValueError) as exc:
-        raise PublicationConflict(
-            f"publication transaction journal is invalid: {lock_uri}"
-        ) from exc
-    if not isinstance(payload, dict) or set(payload) != {
-        "schema",
-        "transaction_id",
-        "attempt_id",
-        "state",
-        "objects",
-    }:
+    if snapshot.payload is None:
         raise PublicationConflict(
             f"publication transaction journal is invalid: {lock_uri}"
         )
-    transaction_id = payload.get("transaction_id")
-    attempt_id = payload.get("attempt_id")
-    objects = payload.get("objects")
-    if (
-        payload.get("schema") != "npa.sim2real.mutable_publication.v1"
-        or payload.get("state") not in {"publishing", "committed", "aborted"}
-        or not _valid_publication_id(transaction_id)
-        or not isinstance(attempt_id, str)
-        or len(attempt_id) != 32
-        or any(char not in "0123456789abcdef" for char in attempt_id)
-        or not isinstance(objects, list)
-        or not objects
-    ):
-        raise PublicationConflict(
-            f"publication transaction journal is incomplete: {lock_uri}"
-        )
-    seen: set[str] = set()
-    for item in objects:
-        if not isinstance(item, dict):
-            raise PublicationConflict(
-                f"publication transaction journal is invalid: {lock_uri}"
-            )
-        uri = item.get("uri")
-        state = item.get("state")
-        if not isinstance(uri, str) or not uri or uri in seen:
-            raise PublicationConflict(
-                f"publication transaction journal is invalid: {lock_uri}"
-            )
-        seen.add(uri)
-        if state == "absent":
-            valid = set(item) == {"uri", "state"}
-        elif state == "present":
-            digest = item.get("sha256")
-            size = item.get("size_bytes")
-            immutable_uri = item.get("immutable_uri")
-            valid = (
-                set(item) == {"uri", "state", "sha256", "size_bytes", "immutable_uri"}
-                and isinstance(digest, str)
-                and len(digest) == 64
-                and all(char in "0123456789abcdef" for char in digest)
-                and isinstance(size, int)
-                and not isinstance(size, bool)
-                and size > 0
-                and isinstance(immutable_uri, str)
-                and bool(immutable_uri)
-                and immutable_uri != uri
-            )
-        else:
-            valid = False
-        if not valid:
-            raise PublicationConflict(
-                f"publication transaction journal is invalid: {lock_uri}"
-            )
-    _validate_journal_locations(payload, lock_uri=lock_uri)
-    return payload
+    return parse_publication_journal(snapshot.payload, lock_uri=lock_uri)
 
 
 def _publication_root(lock_uri: str) -> str:
-    suffix = "/reports/.sim2real-publication.json"
-    if not lock_uri.endswith(suffix):
-        raise PublicationConflict(f"publication journal URI is invalid: {lock_uri}")
-    root = lock_uri[: -len(suffix)]
-    if not root:
-        raise PublicationConflict(f"publication journal URI is invalid: {lock_uri}")
-    return root
-
-
-def _validate_journal_locations(payload: dict[str, Any], *, lock_uri: str) -> None:
-    root = _publication_root(lock_uri)
-    mutable_targets = {
-        f"{root}/reports/sim2real-report.json",
-        f"{root}/reports/sim2real.rrd",
-        f"{root}/reports/sim2real.mcap",
-        f"{root}/components/stage_14.json",
-    }
-    generation_prefix = f"{root}/reports/generations/"
-    component_prefix = f"{root}/components/history/stage_14/"
-    generation_ids: set[str] = set()
-    for item in payload["objects"]:
-        uri = str(item["uri"])
-        if uri not in mutable_targets:
-            raise PublicationConflict(
-                f"publication transaction target is outside its run: {uri}"
-            )
-        if item["state"] == "absent":
-            if uri != f"{root}/reports/sim2real.mcap":
-                raise PublicationConflict(
-                    f"publication transaction cannot delete required target: {uri}"
-                )
-            continue
-        immutable_uri = str(item["immutable_uri"])
-        if uri == f"{root}/components/stage_14.json":
-            suffix = immutable_uri.removeprefix(component_prefix)
-            valid = (
-                immutable_uri.startswith(component_prefix)
-                and len(suffix) == 69
-                and suffix.endswith(".json")
-                and all(char in "0123456789abcdef" for char in suffix[:-5])
-            )
-        else:
-            generation_path = immutable_uri.removeprefix(generation_prefix)
-            parts = generation_path.split("/")
-            if len(parts) == 2:
-                generation_ids.add(parts[0])
-            valid = (
-                immutable_uri.startswith(generation_prefix)
-                and len(parts) == 2
-                and _valid_publication_id(parts[0])
-                and parts[1] == uri.rsplit("/", 1)[-1]
-            )
-        if not valid:
-            raise PublicationConflict(
-                f"publication immutable source is outside its run: {immutable_uri}"
-            )
-    if len(generation_ids) > 1:
-        raise PublicationConflict(
-            f"publication transaction mixes immutable generations: {lock_uri}"
-        )
-    if generation_ids and generation_ids != {str(payload["transaction_id"])}:
-        raise PublicationConflict(
-            f"publication transaction identity disagrees with its generation: "
-            f"{lock_uri}"
-        )
+    return publication_root_from_lock_uri(lock_uri)
 
 
 def _assert_journal_bytes(
@@ -733,39 +668,61 @@ def recover_interrupted_publication(
     return True
 
 
+def resolve_committed_publication_snapshot(
+    client: Any,
+    canonical_uri: str,
+) -> CommittedPublicationSnapshot:
+    """Read one journal snapshot that resolves every reserved publication target."""
+
+    def read_journal(uri: str) -> bytes | None:
+        typed_reader = getattr(type(client), "read_small_bytes_with_etag", None)
+        typed_fallback = getattr(type(client), "read_bytes_with_etag", None)
+        if callable(typed_reader) or callable(typed_fallback):
+            snapshot = remote_object_snapshot(client, uri)
+            return snapshot.payload if snapshot is not None else None
+        value = uri.removeprefix("s3://")
+        if value == uri or "/" not in value:
+            raise ValueError("publication journal is not an S3 object URI")
+        bucket, key = value.split("/", 1)
+        raw = getattr(client, "_s3", None) or getattr(client, "s3", None)
+        if raw is None:
+            raise RuntimeError("storage client lacks publication journal reads")
+        try:
+            raw.head_object(Bucket=bucket, Key=key)
+        except KeyError:
+            return None
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            if code in {"404", "NoSuchKey", "NotFound"}:
+                return None
+            raise
+        body = None
+        try:
+            response = raw.get_object(Bucket=bucket, Key=key)
+            body = response["Body"]
+            payload = body.read(1024 * 1024 + 1)
+        finally:
+            close = getattr(body, "close", None)
+            if callable(close):
+                close()
+        if len(payload) > 1024 * 1024:
+            raise PublicationConflict(
+                f"publication transaction journal is invalid: {uri}"
+            )
+        return bytes(payload)
+
+    return resolve_committed_publication(read_journal, canonical_uri)
+
+
 def resolve_committed_publication_uri(
     client: Any,
     canonical_uri: str,
 ) -> str | None:
-    """Resolve a canonical alias through its committed generation journal.
+    """Resolve one reserved alias through a complete committed journal snapshot."""
 
-    Runs created before the journal protocol retain their canonical URI. A
-    journaled run is readable only after the journal commits; readers never
-    combine aliases while a complete plan is being applied or recovered.
-    """
-
-    marker = "/reports/"
-    if marker not in canonical_uri:
-        raise ValueError("publication target is not a canonical report URI")
-    root, relative = canonical_uri.rsplit(marker, 1)
-    if not root or "/" in relative or not relative:
-        raise ValueError("publication target is not a canonical report URI")
-    lock_uri = f"{root}/reports/.sim2real-publication.json"
-    lock_snapshot = remote_object_snapshot(client, lock_uri)
-    if lock_snapshot is None:
-        return canonical_uri
-    journal = _parse_journal(lock_snapshot, lock_uri=lock_uri)
-    if journal["state"] != "committed":
-        raise PublicationConflict(
-            f"publication generation is not committed: {lock_uri}"
-        )
-    for item in journal["objects"]:
-        if item["uri"] != canonical_uri:
-            continue
-        if item["state"] == "absent":
-            return None
-        return str(item["immutable_uri"])
-    return canonical_uri
+    return resolve_committed_publication_snapshot(client, canonical_uri).resolve(
+        canonical_uri
+    )
 
 
 class MutablePublicationTransaction:

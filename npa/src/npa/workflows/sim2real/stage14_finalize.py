@@ -779,7 +779,7 @@ def _validate_stage14_materialized_frames(state: _Stage14State) -> Path:
     )
     return materialize_verified_render_snapshot(
         render_dir,
-        state.work / "verified-stage14-renders",
+        state.local / ".verified-stage14-renders",
         manifest,
         candidate,
         require_frame_identity=True,

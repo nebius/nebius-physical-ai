@@ -185,6 +185,78 @@ def _assert_artifact_scope(
         _assert_stage4_parallel_authority(root, component)
 
 
+def validate_stage4_parallel_inputs(
+    root: str,
+    *,
+    shard_count: int,
+    shard_provenance: list[dict[str, Any]],
+    lane_records: list[dict[str, Any]],
+    expected_source_sha: str,
+) -> list[dict[str, Any]]:
+    """Validate every Stage 4 proof/lane pair before the Stage 5 join publishes."""
+
+    if (
+        type(shard_count) is not int
+        or shard_count <= 0
+        or not isinstance(shard_provenance, list)
+        or len(shard_provenance) != shard_count
+        or not isinstance(lane_records, list)
+        or len(lane_records) != shard_count
+    ):
+        raise ValueError("Stage 4 ComponentRecord parallel join is incomplete")
+
+    provenances: list[dict[str, Any]] = []
+    for index, (proof, lane_record) in enumerate(
+        zip(shard_provenance, lane_records, strict=True)
+    ):
+        lane = f"shard-{index:05d}"
+        if (
+            not isinstance(proof, dict)
+            or set(proof) != {"schema", "shard_index", "shard_count", "provenance"}
+            or proof.get("schema") != "npa.sim2real.envgen_shard_execution.v1"
+            or proof.get("shard_index") != index
+            or proof.get("shard_count") != shard_count
+            or not isinstance(proof.get("provenance"), dict)
+        ):
+            raise ValueError(f"Stage 4 shard {index} execution proof is invalid")
+        provenance = proof["provenance"]
+        validate_component_lane_record(
+            lane_record,
+            expected_stage=4,
+            expected_lane=lane,
+            required_artifacts=(
+                "raw_envs",
+                "shard_index",
+                "shard_count",
+                "provenance",
+            ),
+            expected_source_sha=expected_source_sha,
+        )
+        lane_artifacts = lane_record["artifacts"]
+        expected_proof_uri = f"{root.rstrip('/')}/envs/raw/provenance-{index:05d}.json"
+        lane_identity = {
+            "raw_envs",
+            "shard_index",
+            "shard_count",
+            "provenance",
+        }
+        lane_provenance = {
+            key: value
+            for key, value in lane_artifacts.items()
+            if key not in lane_identity
+        }
+        if (
+            lane_artifacts.get("raw_envs") != f"{root.rstrip('/')}/envs/raw/"
+            or lane_artifacts.get("shard_index") != index
+            or lane_artifacts.get("shard_count") != shard_count
+            or lane_artifacts.get("provenance") != expected_proof_uri
+            or lane_provenance != provenance
+        ):
+            raise ValueError(f"Stage 4 lane {lane} disagrees with its shard proof")
+        provenances.append(provenance)
+    return provenances
+
+
 def _assert_stage4_parallel_authority(
     root: str,
     component: dict[str, Any],
@@ -205,46 +277,13 @@ def _assert_stage4_parallel_authority(
     ):
         raise ValueError("Stage 4 ComponentRecord parallel join is incomplete")
 
-    provenances: list[dict[str, Any]] = []
-    for index, (proof, lane_record) in enumerate(
-        zip(shard_provenance, lane_records, strict=True)
-    ):
-        lane = f"shard-{index:05d}"
-        if (
-            not isinstance(proof, dict)
-            or proof.get("schema") != "npa.sim2real.envgen_shard_execution.v1"
-            or proof.get("shard_index") != index
-            or proof.get("shard_count") != shard_count
-            or not isinstance(proof.get("provenance"), dict)
-        ):
-            raise ValueError(f"Stage 4 shard {index} execution proof is invalid")
-        provenance = proof["provenance"]
-        validate_component_lane_record(
-            lane_record,
-            expected_stage=4,
-            expected_lane=lane,
-            required_artifacts=(
-                "raw_envs",
-                "shard_index",
-                "shard_count",
-                "provenance",
-            ),
-            expected_source_sha=artifacts["source_sha"],
-        )
-        lane_artifacts = lane_record["artifacts"]
-        expected_proof_uri = f"{root.rstrip('/')}/envs/raw/provenance-{index:05d}.json"
-        if (
-            lane_artifacts.get("raw_envs") != f"{root.rstrip('/')}/envs/raw/"
-            or lane_artifacts.get("shard_index") != index
-            or lane_artifacts.get("shard_count") != shard_count
-            or lane_artifacts.get("provenance") != expected_proof_uri
-            or any(
-                lane_artifacts.get(key) != value for key, value in provenance.items()
-            )
-        ):
-            raise ValueError(f"Stage 4 lane {lane} disagrees with its shard proof")
-        provenances.append(provenance)
-
+    provenances = validate_stage4_parallel_inputs(
+        root,
+        shard_count=shard_count,
+        shard_provenance=shard_provenance,
+        lane_records=lane_records,
+        expected_source_sha=artifacts["source_sha"],
+    )
     expected_join = aggregate_parallel_provenance(provenances, stage=4)
     if any(artifacts.get(key) != value for key, value in expected_join.items()):
         raise ValueError("Stage 4 ComponentRecord parallel join authority is stale")

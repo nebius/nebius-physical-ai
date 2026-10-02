@@ -65,6 +65,72 @@ def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
     return documents
 
 
+def _publication_bound_artifact_key(
+    s3,
+    bucket: str,
+    run_root_key: str,
+    key: str,
+) -> str:
+    try:
+        return _resolve_committed_artifact_key(
+            s3,
+            bucket,
+            run_root_key,
+            key,
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
+
+
+def _authorized_artifact_from_head(
+    s3,
+    *,
+    run_id: str,
+    bucket: str,
+    source_prefix: str,
+    key: str,
+):
+    run_root_key = "/".join(part for part in (source_prefix, run_id) if part)
+    resolved_key = _publication_bound_artifact_key(
+        s3,
+        bucket,
+        run_root_key,
+        key,
+    )
+    scope = f"{run_root_key}/"
+    if not resolved_key.startswith(scope):
+        raise HTTPException(
+            status_code=404,
+            detail="artifact key is outside the selected run source",
+        )
+    relative_key = resolved_key[len(scope) :]
+    if not relative_key:
+        raise HTTPException(
+            status_code=404,
+            detail="artifact key does not identify an object in the selected run",
+        )
+    head = s3.head_object(Bucket=bucket, Key=resolved_key)
+    modified = head.get("LastModified")
+    if hasattr(modified, "isoformat"):
+        modified = modified.isoformat()
+    render = render_hint_for_object(key=resolved_key)
+    return Artifact(
+        run_id=run_id,
+        key=resolved_key,
+        s3_uri=f"s3://{bucket}/{resolved_key}",
+        size=int(head.get("ContentLength") or 0),
+        last_modified=str(modified or ""),
+        render=render,
+        inline=is_inline_render(render),
+        role=artifact_role_for_relative_key(relative_key),
+        namespace=source_prefix or "<bucket-root>",
+        relative_key=relative_key,
+    )
+
+
 def _resolved_artifact_for_content(
     s3,
     settings,
@@ -100,28 +166,12 @@ def _resolved_artifact_for_content(
                 status_code=404,
                 detail="artifact key is outside the selected run source",
             )
-        relative_key = normalized_key[len(discovered_scope) :]
-        if not relative_key:
-            raise HTTPException(
-                status_code=404,
-                detail="artifact key does not identify an object in the selected run",
-            )
-        head = s3.head_object(Bucket=run_bucket, Key=normalized_key)
-        modified = head.get("LastModified")
-        if hasattr(modified, "isoformat"):
-            modified = modified.isoformat()
-        render = render_hint_for_object(key=normalized_key)
-        artifact = Artifact(
+        artifact = _authorized_artifact_from_head(
+            s3,
             run_id=normalized_run,
+            bucket=run_bucket,
+            source_prefix=source_prefix,
             key=normalized_key,
-            s3_uri=f"s3://{run_bucket}/{normalized_key}",
-            size=int(head.get("ContentLength") or 0),
-            last_modified=str(modified or ""),
-            render=render,
-            inline=is_inline_render(render),
-            role=artifact_role_for_relative_key(relative_key),
-            namespace=source_prefix or "<bucket-root>",
-            relative_key=relative_key,
         )
         return normalized_run, run_bucket, artifact
     if exact_membership:
@@ -140,23 +190,12 @@ def _resolved_artifact_for_content(
         key_parts = [part for part in normalized_key.split("/") if part]
         run_index = key_parts.index(normalized_run)
         source_prefix = "/".join(key_parts[:run_index])
-        relative_key = "/".join(key_parts[run_index + 1 :])
-        head = s3.head_object(Bucket=run_bucket, Key=normalized_key)
-        modified = head.get("LastModified")
-        if hasattr(modified, "isoformat"):
-            modified = modified.isoformat()
-        render = render_hint_for_object(key=normalized_key)
-        artifact = Artifact(
+        artifact = _authorized_artifact_from_head(
+            s3,
             run_id=normalized_run,
+            bucket=run_bucket,
+            source_prefix=source_prefix,
             key=normalized_key,
-            s3_uri=f"s3://{run_bucket}/{normalized_key}",
-            size=int(head.get("ContentLength") or 0),
-            last_modified=str(modified or ""),
-            render=render,
-            inline=is_inline_render(render),
-            role=artifact_role_for_relative_key(relative_key),
-            namespace=source_prefix or "<bucket-root>",
-            relative_key=relative_key,
         )
         return normalized_run, run_bucket, artifact
     try:
@@ -186,7 +225,26 @@ def _resolved_artifact_for_content(
             status_code=404,
             detail="artifact key is not present in the authorized run inventory",
         ) from exc
-    artifact = next(item for item in artifacts if str(item.key) == normalized_key)
+    run_root_key = _run_root_key(artifacts, normalized_run)
+    normalized_key = _publication_bound_artifact_key(
+        s3,
+        run_bucket,
+        run_root_key,
+        normalized_key,
+    )
+    artifact = next(
+        (item for item in artifacts if str(item.key) == normalized_key),
+        None,
+    )
+    if artifact is None:
+        source_prefix = run_root_key[: -(len(normalized_run) + 1)]
+        artifact = _authorized_artifact_from_head(
+            s3,
+            run_id=normalized_run,
+            bucket=run_bucket,
+            source_prefix=source_prefix,
+            key=normalized_key,
+        )
     artifact_bucket, artifact_key = parse_s3_uri(str(artifact.s3_uri))
     if artifact_bucket != run_bucket or artifact_key != normalized_key:
         raise HTTPException(

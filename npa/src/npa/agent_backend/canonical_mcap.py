@@ -9,6 +9,13 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
+from botocore.exceptions import ClientError
+
+from .publication_reader import (
+    PublicationConflict,
+    resolve_committed_publication,
+)
+
 logger = logging.getLogger(__name__)
 
 RICH_VISUALIZATION_CONTRACT = "npa.foxglove.robot-motion.v3"
@@ -82,6 +89,88 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _s3_object_bytes_if_exists(s3: Any, bucket: str, uri: str) -> bytes | None:
+    prefix = f"s3://{bucket}/"
+    if not uri.startswith(prefix):
+        raise RuntimeError("publication journal resolved outside the selected bucket")
+    body = None
+    try:
+        response = s3.get_object(Bucket=bucket, Key=uri.removeprefix(prefix))
+        body = response["Body"]
+        payload = body.read(1024 * 1024 + 1)
+    except KeyError:
+        return None
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        raise
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+    if len(payload) > 1024 * 1024:
+        raise RuntimeError("publication journal exceeds its bounded read limit")
+    return bytes(payload)
+
+
+def _head_s3_object_if_exists(s3: Any, bucket: str, key: str) -> dict[str, Any] | None:
+    try:
+        return dict(s3.head_object(Bucket=bucket, Key=key))
+    except KeyError:
+        return None
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        raise
+
+
+def _put_unjournaled_canonical_mcap(
+    s3: Any,
+    *,
+    bucket: str,
+    canonical_key: str,
+    local_path: Path,
+) -> None:
+    canonical_uri = f"s3://{bucket}/{canonical_key}"
+    snapshot = resolve_committed_publication(
+        lambda uri: _s3_object_bytes_if_exists(s3, bucket, uri),
+        canonical_uri,
+    )
+    if snapshot.journaled:
+        raise RuntimeError(
+            "reserved canonical MCAP is controlled by a publication journal"
+        )
+    current = _head_s3_object_if_exists(s3, bucket, canonical_key)
+    conditions: dict[str, Any]
+    if current is None:
+        conditions = {"IfNoneMatch": "*"}
+    else:
+        etag = str(current.get("ETag") or "").strip()
+        if not etag:
+            raise RuntimeError("canonical MCAP object has no conditional-write ETag")
+        conditions = {"IfMatch": etag}
+    with local_path.open("rb") as body:
+        s3.put_object(
+            Bucket=bucket,
+            Key=canonical_key,
+            Body=body,
+            ContentType="application/octet-stream",
+            Metadata={
+                "npa-sha256": sha256_file(local_path),
+                "npa-canonical": "true",
+            },
+            **conditions,
+        )
+    after = resolve_committed_publication(
+        lambda uri: _s3_object_bytes_if_exists(s3, bucket, uri),
+        canonical_uri,
+    )
+    if after.journaled:
+        raise RuntimeError("publication journal raced canonical MCAP replacement")
 
 
 def has_rich_visualization_contract(info: dict[str, Any]) -> bool:
@@ -188,14 +277,43 @@ def prepare_canonical_mcap(
         str(artifacts[0].key), normalized, safe_key=safe_key
     )
     provenance_key = canonical_key + ".provenance.json"
+    canonical_uri = f"s3://{bucket}/{canonical_key}"
+    try:
+        publication = resolve_committed_publication(
+            lambda uri: _s3_object_bytes_if_exists(s3, bucket, uri),
+            canonical_uri,
+        )
+    except PublicationConflict as exc:
+        raise RuntimeError(str(exc)) from exc
+    committed_mcap_uri = publication.resolve(canonical_uri)
+    if publication.journaled and committed_mcap_uri is None:
+        raise RuntimeError(
+            "the committed publication explicitly contains no canonical MCAP"
+        )
     native = next((item for item in artifacts if str(item.key) == canonical_key), None)
+    native_uri = (
+        committed_mcap_uri
+        if publication.journaled
+        else str(getattr(native, "s3_uri", "") or "")
+    )
+    published_key = (
+        committed_mcap_uri.removeprefix(f"s3://{bucket}/")
+        if publication.journaled and committed_mcap_uri
+        else canonical_key
+    )
     cache_name = hashlib.sha256(canonical_key.encode("utf-8")).hexdigest()[:12]
     local_path = recordings_dir / f"{cache_name}-sim2real.mcap"
-    source = "native-reused" if native is not None else "generated-from-s3-artifacts"
+    source = (
+        "journal-committed-native"
+        if publication.journaled
+        else "native-reused"
+        if native is not None
+        else "generated-from-s3-artifacts"
+    )
     source_keys = [
         str(item.key)
         for item in artifacts
-        if str(item.key) not in {canonical_key, provenance_key}
+        if str(item.key) not in {canonical_key, provenance_key, published_key}
     ]
     rich_run: dict[str, Any] = {}
     rich_manifest = next(
@@ -242,28 +360,33 @@ def prepare_canonical_mcap(
                 max_frames=max_frames,
                 run_id=normalized,
             ).to_dict()
-        with local_path.open("rb") as body:
-            s3.put_object(
-                Bucket=bucket,
-                Key=canonical_key,
-                Body=body,
-                ContentType="application/octet-stream",
-                Metadata={
-                    "npa-sha256": sha256_file(local_path),
-                    "npa-canonical": "true",
-                },
-            )
+        _put_unjournaled_canonical_mcap(
+            s3,
+            bucket=bucket,
+            canonical_key=canonical_key,
+            local_path=local_path,
+        )
         return result
 
-    if native is not None:
-        download(str(native.s3_uri), local_path, s3=s3)
+    if native_uri:
+        download(native_uri, local_path, s3=s3)
         native_info = summarize(local_path).to_dict()
         if rich_run and not has_rich_visualization_contract(native_info):
+            if publication.journaled:
+                raise RuntimeError(
+                    "committed canonical MCAP lacks the required rich visualization "
+                    "contract and cannot be replaced outside its publication journal"
+                )
             converted = generate_rich_canonical()
             source = "regenerated-rich-visualization-v3"
             saved_provenance = {}
-        prior = next(
-            (item for item in artifacts if str(item.key) == provenance_key), None
+        prior = (
+            None
+            if publication.journaled
+            else next(
+                (item for item in artifacts if str(item.key) == provenance_key),
+                None,
+            )
         )
         if prior is not None and not converted:
             try:
@@ -281,7 +404,15 @@ def prepare_canonical_mcap(
     digest = sha256_file(local_path)
     if not info.get("valid_magic") or not int(info.get("message_count") or 0):
         raise RuntimeError("reports/sim2real.mcap is malformed or contains no messages")
-    head = s3.head_object(Bucket=bucket, Key=canonical_key)
+    if publication.journaled:
+        committed = publication.target(canonical_uri)
+        if committed.sha256 != digest or committed.size_bytes != int(
+            info["size_bytes"]
+        ):
+            raise RuntimeError(
+                "committed canonical MCAP bytes disagree with the publication journal"
+            )
+    head = s3.head_object(Bucket=bucket, Key=published_key)
     if int(head.get("ContentLength") or -1) != int(info["size_bytes"]):
         raise RuntimeError(
             "canonical MCAP S3 size does not match the validated local bytes"
@@ -296,8 +427,8 @@ def prepare_canonical_mcap(
     provenance = {
         "schema": "npa.canonical-mcap.v2",
         "run_id": normalized,
-        "canonical_key": canonical_key,
-        "canonical_s3_uri": f"s3://{bucket}/{canonical_key}",
+        "canonical_key": published_key,
+        "canonical_s3_uri": f"s3://{bucket}/{published_key}",
         "sha256": digest,
         "size_bytes": int(info["size_bytes"]),
         "source": source,
@@ -328,12 +459,13 @@ def prepare_canonical_mcap(
     }
     if rich_run:
         provenance["rich_run"] = rich_run
-    s3.put_object(
-        Bucket=bucket,
-        Key=provenance_key,
-        Body=(json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode(),
-        ContentType="application/json",
-    )
+    if not publication.journaled:
+        s3.put_object(
+            Bucket=bucket,
+            Key=provenance_key,
+            Body=(json.dumps(provenance, indent=2, sort_keys=True) + "\n").encode(),
+            ContentType="application/json",
+        )
     invalidate_cache()
     summary = converted or {
         "output": str(local_path),
@@ -347,13 +479,13 @@ def prepare_canonical_mcap(
         "reused_native": True,
     }
     return {
-        "artifact_key": canonical_key,
+        "artifact_key": published_key,
         "s3_uri": provenance["canonical_s3_uri"],
         "local_path": str(local_path),
         "sha256": digest,
         "size_bytes": int(info["size_bytes"]),
         "source": source,
-        "created": native is None or bool(converted),
+        "created": not native_uri or bool(converted),
         "provenance": provenance,
         "summary": summary,
     }

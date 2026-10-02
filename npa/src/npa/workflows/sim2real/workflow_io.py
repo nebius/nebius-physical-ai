@@ -345,10 +345,22 @@ def _record_provenance_is_valid(
             and isinstance(artifacts.get("gpu_products"), list)
             and artifacts["gpu_products"]
         )
+    gpu_valid = bool(
+        isinstance(artifacts.get("gpu_products"), list)
+        and artifacts["gpu_products"]
+        and all(
+            isinstance(product, str) and product.strip()
+            for product in artifacts["gpu_products"]
+        )
+        and isinstance(artifacts.get("gpu_rows"), list)
+        and artifacts["gpu_rows"]
+        and all(isinstance(row, str) and row.strip() for row in artifacts["gpu_rows"])
+    )
     return bool(
         artifacts.get("execution_mode") == "standard_npa_workflow_skypilot"
         and isinstance(artifacts.get("workflow_job"), str)
         and artifacts["workflow_job"].strip()
+        and (stage != 4 or gpu_valid)
     )
 
 

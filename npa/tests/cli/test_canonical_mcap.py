@@ -30,7 +30,10 @@ class _S3:
 
     def head_object(self, *, Bucket, Key):
         del Bucket
-        return {"ContentLength": len(self.objects[Key])}
+        return {
+            "ContentLength": len(self.objects[Key]),
+            "ETag": f'"{hash(self.objects[Key])}"',
+        }
 
 
 def _safe_key(value: str) -> str:

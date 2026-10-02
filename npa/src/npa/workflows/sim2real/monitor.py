@@ -14,6 +14,9 @@ import yaml
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.config import artifact_uris, build_config_from_env
 from npa.workflows.sim2real.constants import DEFAULT_PREFIX, DEFAULT_S3_ENDPOINT
+from npa.workflows.sim2real.publication import (
+    resolve_committed_publication_snapshot,
+)
 
 
 @dataclass(frozen=True)
@@ -343,6 +346,36 @@ def _load_s3_json(
     return payload if isinstance(payload, dict) else None
 
 
+def _resolved_publication_object(
+    client: StorageClient,
+    bucket: str,
+    key: str,
+) -> tuple[str, str] | None:
+    canonical_uri = f"s3://{bucket}/{key}"
+    publication = resolve_committed_publication_snapshot(client, canonical_uri)
+    resolved_uri = publication.resolve(canonical_uri)
+    if resolved_uri is None:
+        return None
+    value = resolved_uri.removeprefix("s3://")
+    if value == resolved_uri or "/" not in value:
+        raise ValueError("publication journal resolved a malformed S3 URI")
+    resolved_bucket, resolved_key = value.split("/", 1)
+    if resolved_bucket != bucket:
+        raise ValueError("publication journal resolved outside the selected bucket")
+    return resolved_bucket, resolved_key
+
+
+def _load_publication_json(
+    client: StorageClient,
+    bucket: str,
+    key: str,
+) -> dict[str, Any] | None:
+    resolved = _resolved_publication_object(client, bucket, key)
+    if resolved is None:
+        return None
+    return _load_s3_json(client, *resolved)
+
+
 def _load_workflow_state(
     client: StorageClient,
     bucket: str,
@@ -401,7 +434,11 @@ def _extract_eval_metrics(
             metrics.setdefault("threshold", decision.get("threshold"))
 
     if any(key not in metrics for key in ("success_rate", "decision", "threshold")):
-        report = _load_s3_json(client, bucket, f"{prefix}/reports/sim2real-report.json")
+        report = _load_publication_json(
+            client,
+            bucket,
+            f"{prefix}/reports/sim2real-report.json",
+        )
         if report:
             outer = report.get("outer_loop") or {}
             latest_eval = outer.get("latest_heldout_report") or {}
@@ -431,6 +468,9 @@ def _artifact_rule_matches(
             if not key.endswith("/"):
                 key = f"{key}/"
             checks.append(_s3_prefix_nonempty(client, bucket, key))
+        elif rel_path == "reports/sim2real-report.json":
+            resolved = _resolved_publication_object(client, bucket, key)
+            checks.append(resolved is not None and _s3_object_exists(client, *resolved))
         else:
             checks.append(_s3_object_exists(client, bucket, key))
     if rule.match == "all":

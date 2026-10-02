@@ -435,11 +435,16 @@ def test_remote_pair_is_bound_to_payload_outer_iteration(
         return evidence, report
 
     monkeypatch.setattr(regen, "sync_regen_inputs", fake_sync)
+
+    class Storage:
+        def read_bytes_with_etag(self, _destination: str) -> None:
+            return None
+
     with pytest.raises(regen.Sim2RealRerunRegenError):
         regen._load_regen_state(
             _config(),
             tmp_path,
-            object(),
+            Storage(),
             sync_inputs=True,
         )
 

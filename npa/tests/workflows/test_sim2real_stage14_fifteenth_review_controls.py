@@ -6,6 +6,7 @@ import json
 import struct
 import zlib
 from argparse import Namespace
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +104,16 @@ def test_stage14_revalidates_downloaded_frame_bytes_before_encoding(
 ) -> None:
     with pytest.raises(RuntimeError, match="frame bytes"):
         stage14._validate_stage14_materialized_frames(_materialized_state(tmp_path))
+
+
+def test_stage14_verified_snapshot_stays_under_encoder_root(tmp_path: Path) -> None:
+    state = _materialized_state(tmp_path)
+    frame = state.local / "eval/gold-heldout/outer-01/renders/env-1/camera-000.png"
+    frame.write_bytes(VALID_PNG)
+
+    snapshot = stage14._validate_stage14_materialized_frames(state)
+
+    assert snapshot.resolve().is_relative_to(state.local.resolve())
 
 
 def test_regen_revalidates_local_frame_bytes_before_encoding(tmp_path: Path) -> None:
@@ -430,6 +441,113 @@ class _StreamingObjectStore(_ObjectStore):
         return local_file
 
 
+def _queue_required_publication_targets(
+    transaction: publication.MutablePublicationTransaction,
+    storage: _ObjectStore,
+    tmp_path: Path,
+) -> None:
+    planned = {item.uri for item in transaction._planned}
+    targets = {
+        "report": f"{ROOT}/reports/sim2real-report.json",
+        "rrd": f"{ROOT}/reports/sim2real.rrd",
+        "mcap": f"{ROOT}/reports/sim2real.mcap",
+        "stage14": f"{ROOT}/components/stage_14.json",
+    }
+    if targets["mcap"] not in planned:
+        current = publication.remote_object_version(storage, targets["mcap"])
+        transaction.delete_file(targets["mcap"], current)
+    for label in ("report", "rrd", "stage14"):
+        uri = targets[label]
+        if uri in planned:
+            continue
+        payload = f"carried-{label}".encode()
+        path = tmp_path / f"{transaction.transaction_id}-{label}"
+        path.write_bytes(payload)
+        if label == "stage14":
+            immutable_uri = (
+                f"{ROOT}/components/history/stage_14/"
+                f"{hashlib.sha256(payload).hexdigest()}.json"
+            )
+        else:
+            immutable_uri = (
+                f"{ROOT}/reports/generations/{transaction.transaction_id}/"
+                f"{uri.rsplit('/', 1)[-1]}"
+            )
+        storage.objects[immutable_uri] = payload
+        transaction.replace_file(
+            path,
+            uri,
+            publication.remote_object_version(storage, uri),
+            immutable_uri=immutable_uri,
+        )
+
+
+@contextmanager
+def _complete_transaction(
+    storage: _ObjectStore,
+    tmp_path: Path,
+    **kwargs: Any,
+):
+    with publication.MutablePublicationTransaction(storage, **kwargs) as transaction:
+        yield transaction
+        _queue_required_publication_targets(transaction, storage, tmp_path)
+
+
+_CARRIED_JOURNAL_PAYLOADS = {
+    f"{ROOT}/reports/sim2real-report.json": b"carried-report",
+    f"{ROOT}/reports/sim2real.rrd": b"carried-rrd",
+    f"{ROOT}/components/stage_14.json": b"carried-stage14",
+}
+
+
+def _complete_journal_objects(
+    transaction_id: str,
+    objects: list[dict[str, object]],
+) -> list[dict[str, object]]:
+    complete = list(objects)
+    seen = {str(item["uri"]) for item in complete}
+    mcap_uri = f"{ROOT}/reports/sim2real.mcap"
+    if mcap_uri not in seen:
+        complete.append({"uri": mcap_uri, "state": "absent"})
+    for uri, payload in _CARRIED_JOURNAL_PAYLOADS.items():
+        if uri in seen:
+            continue
+        if uri.endswith("/components/stage_14.json"):
+            immutable_uri = (
+                f"{ROOT}/components/history/stage_14/"
+                f"{hashlib.sha256(payload).hexdigest()}.json"
+            )
+        else:
+            immutable_uri = (
+                f"{ROOT}/reports/generations/{transaction_id}/{uri.rsplit('/', 1)[-1]}"
+            )
+        complete.append(
+            {
+                "uri": uri,
+                "state": "present",
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+                "immutable_uri": immutable_uri,
+            }
+        )
+    return complete
+
+
+def _seed_carried_journal_sources(
+    storage: _ObjectStore,
+    journal: bytes,
+) -> None:
+    for item in json.loads(journal)["objects"]:
+        if item["state"] != "present":
+            continue
+        payload = _CARRIED_JOURNAL_PAYLOADS.get(str(item["uri"]))
+        if (
+            payload is not None
+            and item["sha256"] == hashlib.sha256(payload).hexdigest()
+        ):
+            storage.objects.setdefault(str(item["immutable_uri"]), payload)
+
+
 def test_large_recording_publication_uses_metadata_and_streaming_paths(
     tmp_path: Path,
 ) -> None:
@@ -442,8 +560,9 @@ def test_large_recording_publication_uses_metadata_and_streaming_paths(
 
     publication.upload_immutable_file(storage, recording, immutable_uri)
     snapshot = publication.remote_object_version(storage, canonical_uri)
-    with publication.MutablePublicationTransaction(
+    with _complete_transaction(
         storage,
+        tmp_path,
         lock_uri=lock_uri,
         lock_snapshot=None,
         transaction_id="generation-a",
@@ -499,8 +618,9 @@ def test_multi_alias_failure_leaves_complete_plan_for_roll_forward(
     storage.fail_once_uri = rrd_uri
 
     with pytest.raises(RuntimeError, match="injected"):
-        with publication.MutablePublicationTransaction(
+        with _complete_transaction(
             storage,
+            tmp_path,
             lock_uri=lock_uri,
             lock_snapshot=None,
             transaction_id="a",
@@ -548,8 +668,9 @@ def test_ambiguous_alias_write_is_reconciled_before_commit(tmp_path: Path) -> No
     report.write_bytes(b"new-report")
     storage.commit_then_fail_once_uri = report_uri
 
-    with publication.MutablePublicationTransaction(
+    with _complete_transaction(
         storage,
+        tmp_path,
         lock_uri=lock_uri,
         lock_snapshot=None,
         transaction_id="a",
@@ -585,15 +706,16 @@ def test_equal_payload_error_cannot_be_misread_as_success(tmp_path: Path) -> Non
     assert [call[:2] for call in storage.calls] == [("put", report_uri)]
 
 
-def test_ambiguous_alias_delete_is_reconciled_before_commit() -> None:
+def test_ambiguous_alias_delete_is_reconciled_before_commit(tmp_path: Path) -> None:
     mcap_uri = f"{ROOT}/reports/sim2real.mcap"
     lock_uri = f"{ROOT}/reports/.sim2real-publication.json"
     storage = _ObjectStore({mcap_uri: b"old-mcap"})
     mcap_snapshot = RemoteObjectSnapshot(b"old-mcap", storage._etag(b"old-mcap"))
     storage.delete_then_fail_once_uri = mcap_uri
 
-    with publication.MutablePublicationTransaction(
+    with _complete_transaction(
         storage,
+        tmp_path,
         lock_uri=lock_uri,
         lock_snapshot=None,
         transaction_id="a",
@@ -603,9 +725,11 @@ def test_ambiguous_alias_delete_is_reconciled_before_commit() -> None:
     journal = json.loads(storage.objects[lock_uri])
     assert mcap_uri not in storage.objects
     assert journal["state"] == "committed"
-    assert journal["objects"] == [
-        {"state": "absent", "uri": mcap_uri},
-    ]
+    assert len(journal["objects"]) == 4
+    assert next(item for item in journal["objects"] if item["uri"] == mcap_uri) == {
+        "state": "absent",
+        "uri": mcap_uri,
+    }
 
 
 def test_ambiguous_journal_commit_is_reconciled_without_rollback(
@@ -623,8 +747,9 @@ def test_ambiguous_journal_commit_is_reconciled_without_rollback(
     storage.commit_then_fail_once_uri = lock_uri
     storage.commit_then_fail_state = "committed"
 
-    with publication.MutablePublicationTransaction(
+    with _complete_transaction(
         storage,
+        tmp_path,
         lock_uri=lock_uri,
         lock_snapshot=None,
         transaction_id="a",
@@ -657,8 +782,9 @@ def test_ambiguous_publishing_journal_write_is_reconciled(
     storage.commit_then_fail_once_uri = lock_uri
     storage.commit_then_fail_state = "publishing"
 
-    with publication.MutablePublicationTransaction(
+    with _complete_transaction(
         storage,
+        tmp_path,
         lock_uri=lock_uri,
         lock_snapshot=None,
         transaction_id="a",
@@ -682,8 +808,9 @@ def test_older_transaction_cannot_delete_same_etag_rewrite(tmp_path: Path) -> No
 
     replacement = tmp_path / "sim2real.mcap"
     replacement.write_bytes(b"same-mcap")
-    with publication.MutablePublicationTransaction(
+    with _complete_transaction(
         storage,
+        tmp_path,
         lock_uri=lock_uri,
         lock_snapshot=None,
         transaction_id="newer",
@@ -696,8 +823,9 @@ def test_older_transaction_cannot_delete_same_etag_rewrite(tmp_path: Path) -> No
         )
 
     with pytest.raises(PublicationConflict, match="transaction|superseded"):
-        with publication.MutablePublicationTransaction(
+        with _complete_transaction(
             storage,
+            tmp_path,
             lock_uri=lock_uri,
             lock_snapshot=None,
             transaction_id="stale",
@@ -719,8 +847,9 @@ def test_prevalidation_snapshot_cannot_overwrite_newer_generation(
     newer_path.write_bytes(b"newer")
     stale_path.write_bytes(b"stale")
 
-    with publication.MutablePublicationTransaction(
+    with _complete_transaction(
         storage,
+        tmp_path,
         lock_uri=lock_uri,
         lock_snapshot=None,
         transaction_id="newer",
@@ -734,18 +863,18 @@ def test_prevalidation_snapshot_cannot_overwrite_newer_generation(
 
     journal = json.loads(storage.objects[lock_uri])
     assert journal["state"] == "committed"
-    assert journal["objects"] == [
-        {
-            "immutable_uri": (f"{ROOT}/reports/generations/newer/sim2real-report.json"),
-            "sha256": hashlib.sha256(b"newer").hexdigest(),
-            "size_bytes": 5,
-            "state": "present",
-            "uri": report_uri,
-        }
-    ]
+    assert len(journal["objects"]) == 4
+    assert next(item for item in journal["objects"] if item["uri"] == report_uri) == {
+        "immutable_uri": (f"{ROOT}/reports/generations/newer/sim2real-report.json"),
+        "sha256": hashlib.sha256(b"newer").hexdigest(),
+        "size_bytes": 5,
+        "state": "present",
+        "uri": report_uri,
+    }
     with pytest.raises(PublicationConflict, match="transaction|superseded"):
-        with publication.MutablePublicationTransaction(
+        with _complete_transaction(
             storage,
+            tmp_path,
             lock_uri=lock_uri,
             lock_snapshot=None,
             transaction_id="stale",
@@ -801,12 +930,13 @@ def test_interrupted_complete_plan_rolls_forward_and_fences_stale_attempt(
         RemoteObjectSnapshot(b"old-rrd", storage._etag(b"old-rrd")),
         immutable_uri=immutable_rrd_uri,
     )
+    _queue_required_publication_targets(interrupted, storage, tmp_path)
     interrupted._begin_journal()
     interrupted._apply_mutation(interrupted._planned[0])
 
     publishing = json.loads(storage.objects[lock_uri])
     assert publishing["state"] == "publishing"
-    assert len(publishing["objects"]) == 2
+    assert len(publishing["objects"]) == 4
     assert storage.objects[report_uri] == b"new-report"
     assert storage.objects[rrd_uri] == b"old-rrd"
 
@@ -837,8 +967,9 @@ def test_planned_local_bytes_cannot_change_before_publication(tmp_path: Path) ->
     storage = _ObjectStore({report_uri: b"old", immutable_uri: b"planned"})
 
     with pytest.raises(PublicationConflict, match="planned publication bytes"):
-        with publication.MutablePublicationTransaction(
+        with _complete_transaction(
             storage,
+            tmp_path,
             lock_uri=lock_uri,
             lock_snapshot=None,
             transaction_id="a",
@@ -888,26 +1019,29 @@ def test_recovery_rejects_mixed_immutable_generations() -> None:
         transaction_id="generation-a",
         attempt_id="a" * 32,
         state="publishing",
-        objects=[
-            {
-                "uri": f"{ROOT}/reports/sim2real.rrd",
-                "state": "present",
-                "sha256": hashlib.sha256(b"rrd").hexdigest(),
-                "size_bytes": 3,
-                "immutable_uri": (
-                    f"{ROOT}/reports/generations/generation-a/sim2real.rrd"
-                ),
-            },
-            {
-                "uri": f"{ROOT}/reports/sim2real-report.json",
-                "state": "present",
-                "sha256": hashlib.sha256(b"report").hexdigest(),
-                "size_bytes": 6,
-                "immutable_uri": (
-                    f"{ROOT}/reports/generations/generation-b/sim2real-report.json"
-                ),
-            },
-        ],
+        objects=_complete_journal_objects(
+            "generation-a",
+            [
+                {
+                    "uri": f"{ROOT}/reports/sim2real.rrd",
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"rrd").hexdigest(),
+                    "size_bytes": 3,
+                    "immutable_uri": (
+                        f"{ROOT}/reports/generations/generation-a/sim2real.rrd"
+                    ),
+                },
+                {
+                    "uri": f"{ROOT}/reports/sim2real-report.json",
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"report").hexdigest(),
+                    "size_bytes": 6,
+                    "immutable_uri": (
+                        f"{ROOT}/reports/generations/generation-b/sim2real-report.json"
+                    ),
+                },
+            ],
+        ),
     )
     storage = _ObjectStore({lock_uri: payload})
 
@@ -926,15 +1060,18 @@ def test_recovery_rejects_transaction_generation_identity_mismatch() -> None:
         transaction_id="generation-b",
         attempt_id="a" * 32,
         state="publishing",
-        objects=[
-            {
-                "uri": f"{ROOT}/reports/sim2real.rrd",
-                "state": "present",
-                "sha256": hashlib.sha256(b"rrd").hexdigest(),
-                "size_bytes": 3,
-                "immutable_uri": immutable_uri,
-            }
-        ],
+        objects=_complete_journal_objects(
+            "generation-a",
+            [
+                {
+                    "uri": f"{ROOT}/reports/sim2real.rrd",
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"rrd").hexdigest(),
+                    "size_bytes": 3,
+                    "immutable_uri": immutable_uri,
+                }
+            ],
+        ),
     )
     storage = _ObjectStore({lock_uri: payload, immutable_uri: b"rrd"})
 
@@ -953,17 +1090,20 @@ def test_recovery_rejects_cross_run_immutable_source() -> None:
         transaction_id="generation-a",
         attempt_id="a" * 32,
         state="publishing",
-        objects=[
-            {
-                "uri": report_uri,
-                "state": "present",
-                "sha256": hashlib.sha256(b"new").hexdigest(),
-                "size_bytes": 3,
-                "immutable_uri": (
-                    "s3://other/run/reports/generations/a/sim2real-report.json"
-                ),
-            }
-        ],
+        objects=_complete_journal_objects(
+            "generation-a",
+            [
+                {
+                    "uri": report_uri,
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"new").hexdigest(),
+                    "size_bytes": 3,
+                    "immutable_uri": (
+                        "s3://other/run/reports/generations/a/sim2real-report.json"
+                    ),
+                }
+            ],
+        ),
     )
     storage = _ObjectStore({lock_uri: payload})
 
@@ -983,15 +1123,18 @@ def test_recovery_rejects_changed_immutable_source_bytes() -> None:
         transaction_id="a",
         attempt_id="a" * 32,
         state="publishing",
-        objects=[
-            {
-                "uri": report_uri,
-                "state": "present",
-                "sha256": hashlib.sha256(b"new").hexdigest(),
-                "size_bytes": 3,
-                "immutable_uri": immutable_uri,
-            }
-        ],
+        objects=_complete_journal_objects(
+            "a",
+            [
+                {
+                    "uri": report_uri,
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"new").hexdigest(),
+                    "size_bytes": 3,
+                    "immutable_uri": immutable_uri,
+                }
+            ],
+        ),
     )
     storage = _ObjectStore(
         {
@@ -1022,15 +1165,18 @@ def test_stage14_snapshot_phase_recovers_interrupted_plan_before_validation(
         transaction_id="a",
         attempt_id="a" * 32,
         state="publishing",
-        objects=[
-            {
-                "uri": rrd_uri,
-                "state": "present",
-                "sha256": hashlib.sha256(b"new-rrd").hexdigest(),
-                "size_bytes": len(b"new-rrd"),
-                "immutable_uri": immutable_uri,
-            }
-        ],
+        objects=_complete_journal_objects(
+            "a",
+            [
+                {
+                    "uri": rrd_uri,
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"new-rrd").hexdigest(),
+                    "size_bytes": len(b"new-rrd"),
+                    "immutable_uri": immutable_uri,
+                }
+            ],
+        ),
     )
     storage = _ObjectStore(
         {
@@ -1039,6 +1185,7 @@ def test_stage14_snapshot_phase_recovers_interrupted_plan_before_validation(
             lock_uri: journal,
         }
     )
+    _seed_carried_journal_sources(storage, journal)
     monkeypatch.setattr(stage14, "storage", lambda: storage)
     state = stage14._stage14_state(
         Namespace(run_id=RUN_ID, outer_iteration=1),
@@ -1072,15 +1219,18 @@ def test_regeneration_reader_resolves_committed_immutable_recording(
         transaction_id="generation-a",
         attempt_id="a" * 32,
         state="committed",
-        objects=[
-            {
-                "uri": canonical_uri,
-                "state": "present",
-                "sha256": hashlib.sha256(b"rrd").hexdigest(),
-                "size_bytes": 3,
-                "immutable_uri": immutable_uri,
-            }
-        ],
+        objects=_complete_journal_objects(
+            "generation-a",
+            [
+                {
+                    "uri": canonical_uri,
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"rrd").hexdigest(),
+                    "size_bytes": 3,
+                    "immutable_uri": immutable_uri,
+                }
+            ],
+        ),
     )
     storage = _ObjectStore({lock_uri: journal, immutable_uri: b"rrd"})
     requested: list[str] = []
@@ -1116,15 +1266,18 @@ def test_regeneration_reader_rejects_in_progress_generation(
         transaction_id="generation-a",
         attempt_id="a" * 32,
         state="publishing",
-        objects=[
-            {
-                "uri": canonical_uri,
-                "state": "present",
-                "sha256": hashlib.sha256(b"rrd").hexdigest(),
-                "size_bytes": 3,
-                "immutable_uri": immutable_uri,
-            }
-        ],
+        objects=_complete_journal_objects(
+            "generation-a",
+            [
+                {
+                    "uri": canonical_uri,
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"rrd").hexdigest(),
+                    "size_bytes": 3,
+                    "immutable_uri": immutable_uri,
+                }
+            ],
+        ),
     )
     storage = _ObjectStore({lock_uri: journal, immutable_uri: b"rrd"})
     monkeypatch.setattr(
@@ -1153,15 +1306,18 @@ def test_rerun_viewer_resolves_committed_immutable_recording() -> None:
         transaction_id="generation-a",
         attempt_id="a" * 32,
         state="committed",
-        objects=[
-            {
-                "uri": canonical_uri,
-                "state": "present",
-                "sha256": hashlib.sha256(b"rrd").hexdigest(),
-                "size_bytes": 3,
-                "immutable_uri": immutable_uri,
-            }
-        ],
+        objects=_complete_journal_objects(
+            "generation-a",
+            [
+                {
+                    "uri": canonical_uri,
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"rrd").hexdigest(),
+                    "size_bytes": 3,
+                    "immutable_uri": immutable_uri,
+                }
+            ],
+        ),
     )
 
     class Body:
@@ -1188,15 +1344,18 @@ def test_rerun_viewer_rejects_in_progress_generation() -> None:
         transaction_id="generation-a",
         attempt_id="a" * 32,
         state="publishing",
-        objects=[
-            {
-                "uri": canonical_uri,
-                "state": "present",
-                "sha256": hashlib.sha256(b"rrd").hexdigest(),
-                "size_bytes": 3,
-                "immutable_uri": immutable_uri,
-            }
-        ],
+        objects=_complete_journal_objects(
+            "generation-a",
+            [
+                {
+                    "uri": canonical_uri,
+                    "state": "present",
+                    "sha256": hashlib.sha256(b"rrd").hexdigest(),
+                    "size_bytes": 3,
+                    "immutable_uri": immutable_uri,
+                }
+            ],
+        ),
     )
 
     class Body:
