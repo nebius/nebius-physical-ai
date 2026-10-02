@@ -1,0 +1,56 @@
+{
+  "schema": "npa.cosmos3.wam-measurement.v1",
+  "status": "measured",
+  "comparison_contract": {
+    "sources": {
+      "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+      "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+      "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+      "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+      "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+    },
+    "steps": 200,
+    "samples_per_rank": 64,
+    "global_batch": 2048,
+    "seed": 42,
+    "profile": false
+  },
+  "nodes": 2,
+  "gpus": 16,
+  "hardware": {
+    "gpu_names": [
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200"
+    ],
+    "torch": "2.10.0+cu130",
+    "cuda": "13.0"
+  },
+  "warmup_steps_excluded": 50,
+  "measured_steps": 149,
+  "step_mean_seconds": 6.894228187919463,
+  "step_p50_seconds": 6.89,
+  "step_p95_seconds": 6.98,
+  "train_process_seconds": 1961.9358391780006,
+  "training_gpu_hours": 8.719611103604443,
+  "checkpoint_manifest_sha256": "a97f83d537a837f99300bf087a8a52e0154fa4ea11a42b43d372ab5704647944",
+  "quality_measured": false,
+  "work": {
+    "measured_tokens": 136145218,
+    "mean_tokens_per_optimizer_step": 913726.2953020134,
+    "tokens_per_second": 132534.96553872514,
+    "timers_overlap": "VAE encoding is included in prepare_data; do not sum them",
+    "vae_rank_mean_seconds": 1.5039060402684563,
+    "vae_rank_max_seconds": 1.6144026845637585,
+    "prepare_rank_mean_seconds": 1.5230402684563757,
+    "prepare_rank_max_seconds": 1.6355906040268455
+  },
+  "timing_scope": "optimizer iterations include checkpoint stalls; process includes model load and final save",
+  "iteration_series_sha256": "16b1a319714e38beed9a1507927f4a30fe7d596fc8e583c2dbf3b6d2affd8243"
+}

@@ -132,6 +132,209 @@ raise SystemExit(W.main())
                 raise W.ScanError("native_cancellation_helper_not_joined")
 
 
+# The caller's queue must be deeper than the helper's so the helper stops reading
+# first; one helper worker holds four records, so this depth is unreachable for it
+# on any host, including a single-CPU one.
+DUPLEX_HELPER_WORKERS = 1
+DUPLEX_CALLER_DEPTH = 64
+DUPLEX_LOUD_SECRETS = 12000
+
+
+def duplex_fixture(helper, config, directory, case):
+    """Build an archive whose first record's result exceeds a pipe buffer.
+
+    Args:
+        helper: The verified helper binding.
+        config: The verified configuration binding.
+        directory: Directory holding the shared tools receipt copy.
+        case: Directory receiving this case's fixture files.
+
+    Returns:
+        The path of the written authorization.
+
+    Raises:
+        None.
+    """
+    token = b"gh" + b"p_" + b"aB3dE6gH9jK2mN5pQ8sT1vW4yZ7bC0eF3hI6"
+    entries = [
+        F.file("opt/loud", (b'token = "' + token + b'"\n') * DUPLEX_LOUD_SECRETS)
+    ]
+    entries += [
+        F.file(f"opt/quiet-{index}", b"plain public control\n" * 512)
+        for index in range(23)
+    ]
+    authorization = F.fixture(case, entries=entries)
+    authorization.update(
+        helper=helper, config=config, tools_receipt=P.binding(directory / "tools.json")
+    )
+    auth = case / "duplex-authorization.json"
+    F.write(auth, F.js(authorization))
+    return auth
+
+
+def duplex_wrapper(case, trusted):
+    """Write a scan entry point with a deep caller queue and a one-worker helper.
+
+    Constraining the helper's own affinity rather than the whole scan reproduces
+    what a cgroup CPU quota does to a Go child: the caller's queue is sized from
+    its own CPUs while the helper runs fewer workers. Both settings are explicit
+    here, so the asymmetry does not depend on how many CPUs the host has.
+
+    Args:
+        case: Directory receiving the wrapper script.
+        trusted: Checkout supplying the scanner package.
+
+    Returns:
+        The path of the written wrapper script.
+
+    Raises:
+        None.
+    """
+    wrapper = case / "duplex-wrapper.py"
+    script = f"""import os,sys
+sys.path.insert(0,{str(trusted / "npa/scripts")!r})
+from image_byte_scan import core as W
+W.PIPELINE_RECORDS={DUPLEX_CALLER_DEPTH}
+cpus=sorted(os.sched_getaffinity(0))[:{DUPLEX_HELPER_WORKERS}]
+spawn=W.subprocess.Popen
+def constrained(*args,**kwargs):
+ kwargs['preexec_fn']=lambda: os.sched_setaffinity(0,cpus)
+ return spawn(*args,**kwargs)
+W.subprocess.Popen=constrained
+raise SystemExit(W.main())
+"""
+    F.write(wrapper, script.encode())
+    return wrapper
+
+
+def scan_argv(wrapper, auth, output):
+    """Build the command line for one wrapped scan.
+
+    Args:
+        wrapper: The scan entry point to run.
+        auth: Authorization path for the case.
+        output: Directory the scan writes into.
+
+    Returns:
+        The argument vector for :class:`subprocess.Popen`.
+
+    Raises:
+        None.
+    """
+    analysis, trusted = W._ROOTS.get()
+    return [
+        sys.executable,
+        str(wrapper),
+        "--analysis-root",
+        str(analysis),
+        "--trusted-root",
+        str(trusted),
+        "--authorization",
+        str(auth),
+        "--output-dir",
+        str(output),
+    ]
+
+
+def run_duplex_scan(wrapper, auth, output):
+    """Run the wrapped scan to completion, failing closed if it stalls.
+
+    Args:
+        wrapper: The scan entry point written by :func:`duplex_wrapper`.
+        auth: Authorization path for the case.
+        output: Directory the scan writes into.
+
+    Returns:
+        None.
+
+    Raises:
+        ScanError: If the scan does not finish, which is the defect this case
+            exists to catch; no deadline here turns stalling into success.
+    """
+    worker = None
+    try:
+        W._SPAWNING = True
+        try:
+            worker = subprocess.Popen(
+                scan_argv(wrapper, auth, output),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+                env={"PATH": os.defpath},
+            )
+        finally:
+            W._SPAWNING = False
+        W.require(not W._CANCEL_REQUESTED, "scan_cancelled")
+        try:
+            worker.communicate(timeout=600)
+        except subprocess.TimeoutExpired:
+            raise W.ScanError("native_duplex_stalled")
+    finally:
+        if worker is not None and worker.poll() is None:
+            worker.terminate()
+            worker.communicate()
+
+
+def duplex_receipt(report):
+    """Require that the saturated-pipe scan completed with nothing lost.
+
+    Args:
+        report: The scan report the wrapped run wrote.
+
+    Returns:
+        None.
+
+    Raises:
+        ScanError: If the scan did not complete or lost records or findings.
+    """
+    W.require(
+        report["complete"] and report["helper_joined"], "native_duplex_completion"
+    )
+    W.require(
+        report["helper_summary"]["findings"] == DUPLEX_LOUD_SECRETS
+        and report["helper_summary"]["files"] == report["records"],
+        "native_duplex_receipt",
+    )
+
+
+def duplex_check(helper, config, directory):
+    """Scan while both pipe directions are saturated and the queues are unequal.
+
+    The first record carries twelve thousand synthetic secrets, so its result is
+    far larger than a pipe buffer and the helper is still writing output while the
+    scan is still writing records. The helper runs fewer workers than the caller's
+    queue depth, so the helper stops reading first. A caller that only drains
+    output before each write stops here with both pipes full and never finishes.
+
+    Args:
+        helper: The verified helper binding.
+        config: The verified configuration binding.
+        directory: Directory receiving the case's fixtures and output.
+
+    Returns:
+        A mapping recording the completed receipt for this case.
+
+    Raises:
+        ScanError: If the scan stalls, fails, or loses records or findings.
+    """
+    case = directory / "duplex"
+    case.mkdir(mode=0o700)
+    _analysis, trusted = W._ROOTS.get()
+    auth = duplex_fixture(helper, config, directory, case)
+    output = case / "output"
+    run_duplex_scan(duplex_wrapper(case, trusted), auth, output)
+    report = W.bound_json(P.binding(output / "report.json"))
+    duplex_receipt(report)
+    return {
+        "passed": True,
+        "records": report["records"],
+        "scanned_bytes": report["scanned_bytes"],
+        "helper_findings": report["helper_summary"]["findings"],
+        "helper_workers": DUPLEX_HELPER_WORKERS,
+        "caller_depth": DUPLEX_CALLER_DEPTH,
+    }
+
+
 def checks(args, directory):
     helper, config = P.tools_bindings(args.tools_receipt)
     engine_binding = P.native_engine(args.native_receipt)
@@ -277,6 +480,8 @@ def checks(args, directory):
         image_results[0]["findings"] == image_results[1]["findings"],
         "native_full_scan_differential",
     )
+    F.write(directory / "tools.json", args.tools_receipt.read_bytes())
+    duplex = duplex_check(helper, config, directory)
     W.recheck_snapshots(snapshots)
     result = {
         "schema_version": "npa.image-byte-native-checks.v1",
@@ -285,6 +490,7 @@ def checks(args, directory):
         "literal_differential_cases": differential_cases,
         "native": native_receipt,
         "archive_checks": image_results,
+        "duplex_check": duplex,
         "helper_sha256": helper["sha256"],
         "source_bindings": W.source_bindings(),
     }

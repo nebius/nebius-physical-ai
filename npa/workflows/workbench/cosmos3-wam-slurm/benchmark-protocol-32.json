@@ -1,0 +1,68 @@
+{
+  "objective": "Measure four nodes of eight reserved B200 GPUs each (32 GPUs total) through the NPA Soperator control plane",
+  "extends_protocol_sha256": "89c8fc0b8286601c23e5e684f740dc4bb6facaf496912f6bf60824774c761ace",
+  "protocol_recorded_at": "2026-09-29T22:12:53.765111+00:00",
+  "hardware": {
+    "nodes": 4,
+    "gpus_per_node": 8,
+    "active_training_gpus": 32,
+    "provisioned_worker_gpus": 32,
+    "capacity": "STRICT reserved B200, us-central1"
+  },
+  "launcher": "NPA Soperator owns deployment and teardown; Slurm starts one task per worker; torchrun starts eight ranks per task; FSDP shard degree eight; HSDP replica degree four",
+  "full_training": {
+    "optimizer_steps": 2000,
+    "sample_cap_per_rank": 64,
+    "global_batch": 2048,
+    "gradient_accumulation": 1,
+    "seed": 42,
+    "checkpoint_iterations": [
+      500,
+      1000,
+      1500,
+      2000
+    ]
+  },
+  "timing_replicates": {
+    "runs": 3,
+    "steps_per_run": 200,
+    "warmup_steps_excluded": 50,
+    "profile": false
+  },
+  "profiling": {
+    "separate_run": true,
+    "steps": 110,
+    "target_ranks": [
+      0,
+      8,
+      16,
+      24
+    ]
+  },
+  "quality": {
+    "tasks": 10,
+    "trials_per_task": 50,
+    "seed": 42,
+    "checkpoints": [
+      500,
+      1000,
+      1500,
+      2000
+    ],
+    "threshold": 0.9,
+    "evaluation_workers": 8,
+    "evaluation_excluded_from_training_time": true
+  },
+  "comparison": "Keep source/model/data revisions, FP32 parameter storage, BF16 compute, EMA, packing, sample cap, global batch and seed identical to the completed eight/sixteen-GPU campaign. Record actual token work; do not assume exact equivalence from nominal batch alone.",
+  "accounting": "Training GPU-hours use 32 GPUs. Report GPU allocation duration, CPU control plane, preparation, profiling and evaluation separately.",
+  "failure_policy": "Preserve any failed attempt and exact native error. No silent precision, model, optimizer, dataset or sample-cap changes to obtain a fit.",
+  "status": "protocol recorded before 32-GPU execution; plan and source preflight passed; reserved capacity insufficient; no provider deployment or measured result",
+  "deployment_comparability": "Prior 8/16-GPU runs used native Slurm. Qualify and record the Soperator driver/CUDA/PyTorch/NCCL stack before execution; disclose deployment differences and reject pooled comparisons if runtime contracts differ. No pure GPU-count causal claim across different environments.",
+  "gpu_proof": [
+    "all-worker CUDA creation checks",
+    "32-rank NCCL and host-placement preflight",
+    "32 training processes attributed to rank, job and configuration",
+    "timestamped telemetry on all four workers",
+    "complete per-worker exit receipts and checkpoint hashes"
+  ]
+}

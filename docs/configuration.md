@@ -253,6 +253,16 @@ npa configure --no-interactive --no-provision \
 This is provider-free project configuration. Add `--provision` to the same
 command only when it should also create or reuse verified writable storage.
 
+In both interactive and non-interactive provisioning, NPA verifies a profile
+rebind that changes both `parent-id` and `tenant-id`. If a write fails, NPA
+either verifies that the profile stayed unchanged or restores and verifies the
+previous values, including values that were unset. A warning that the profile
+is partially updated means rollback could not be verified; inspect and correct
+both values before running another provider command. This is verified
+best-effort rollback, not an atomic transaction across processes: another
+profile writer can observe intermediate values or race the update and rollback.
+Avoid concurrent changes to the active profile during configuration.
+
 For a newly created bucket, automation may also select its create-only storage
 class and size cap without putting credentials on the command line:
 

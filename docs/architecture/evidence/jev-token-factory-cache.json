@@ -1,0 +1,226 @@
+{
+  "schema_version": 1,
+  "mode": "token_factory_only",
+  "prefix_sha256": "d797a271f8bd0d11aa471d3a3e022fd40ecf096e8272f1e7828b49985b432be9",
+  "passed": true,
+  "application_response_cache": false,
+  "records": [
+    {
+      "requested_model": "nvidia/Nemotron-3_5-Lightning",
+      "returned_model": "nvidia/Nemotron-3_5-Lightning",
+      "request_sha256": "9f6165e4c4f647f2822db3ccac88d54f579d05c7a5fd2b710b7cea1b1b0b2867",
+      "response_id_sha256": "fa6c67a52f523c149a31278140884c74503c379a0f3d47cb9afa4bce4f535833",
+      "reply_sha256": "db0fa45967e848c61af10e612f8369488ddbe8434576f4b9526a0fb696eeea5e",
+      "marker_present": true,
+      "finish_reason": "stop",
+      "latency_seconds": 0.871623000013642,
+      "usage": {
+        "prompt_tokens": 5484,
+        "completion_tokens": 6,
+        "total_tokens": 5490,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 5484,
+        "cached_tokens": 0
+      },
+      "transport": {
+        "attempts": 1,
+        "retries": 0,
+        "latency_seconds": 0.864218,
+        "status_code": 200
+      },
+      "reported_cached_tokens": 0,
+      "counter_source": "usage.prompt_cache_hit_tokens",
+      "expected_model": "nvidia/Nemotron-3_5-Lightning",
+      "routing": {},
+      "routing_correct": true,
+      "generation_valid": true
+    },
+    {
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "request_sha256": "9ba5e42a62fc5c784373686c3d451a7eb1c7c696b11307e2c2a0fd7d257afc3b",
+      "response_id_sha256": "2f488f179d505310465c2d3164415a17880113c98ad97d9abf6ef4dc9f151f7f",
+      "reply_sha256": "a3622dec9c16b1ea535937a2bf99e085fed5e0a684ad1423b825ddf507aabd4c",
+      "marker_present": true,
+      "finish_reason": "stop",
+      "latency_seconds": 2.4041396669927053,
+      "usage": {
+        "prompt_tokens": 5259,
+        "completion_tokens": 399,
+        "total_tokens": 5658,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 5259,
+        "cached_tokens": 0
+      },
+      "transport": {
+        "attempts": 1,
+        "retries": 0,
+        "latency_seconds": 2.396,
+        "status_code": 200
+      },
+      "reported_cached_tokens": 0,
+      "counter_source": "usage.prompt_cache_hit_tokens",
+      "expected_model": "MiniMaxAI/MiniMax-M3",
+      "routing": {},
+      "routing_correct": true,
+      "generation_valid": true
+    },
+    {
+      "requested_model": "nvidia/Nemotron-3_5-Lightning",
+      "returned_model": "nvidia/Nemotron-3_5-Lightning",
+      "request_sha256": "5338992a7f7c942906a3bc5f72d5c23a050ca54a821a46e6c83341df11c54a5d",
+      "response_id_sha256": "531b0fd3af59aeba4efd5a602671d7b354c629eada7f7501537c64a843b3d209",
+      "reply_sha256": "0abc00f5377a24f76082d3bcc37ba87f06fafdf9a72ad4db01493d1ff252de45",
+      "marker_present": true,
+      "finish_reason": "stop",
+      "latency_seconds": 0.8213772079907358,
+      "usage": {
+        "prompt_tokens": 5484,
+        "completion_tokens": 6,
+        "total_tokens": 5490,
+        "prompt_cache_hit_tokens": 2096,
+        "prompt_cache_miss_tokens": 3388,
+        "cached_tokens": 2096
+      },
+      "transport": {
+        "attempts": 1,
+        "retries": 0,
+        "latency_seconds": 0.812502,
+        "status_code": 200
+      },
+      "reported_cached_tokens": 2096,
+      "counter_source": "usage.prompt_tokens_details.cached_tokens",
+      "expected_model": "nvidia/Nemotron-3_5-Lightning",
+      "routing": {},
+      "routing_correct": true,
+      "generation_valid": true
+    },
+    {
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "request_sha256": "711793cb126af3cde2d3df7b862dcdf0755b187fb9b1a2a205dbf67145cdcf44",
+      "response_id_sha256": "f7cd92b92e2c237a547960a00f3bce64e76de25d265b2c63a7b29c1fc48276c9",
+      "reply_sha256": "0c7384a22e56a314f80508b609d775d624c95d5c85d8010aa72541cce63fb80f",
+      "marker_present": true,
+      "finish_reason": "stop",
+      "latency_seconds": 2.215555333008524,
+      "usage": {
+        "prompt_tokens": 5259,
+        "completion_tokens": 426,
+        "total_tokens": 5685,
+        "prompt_cache_hit_tokens": 5120,
+        "prompt_cache_miss_tokens": 139,
+        "cached_tokens": 5120
+      },
+      "transport": {
+        "attempts": 1,
+        "retries": 0,
+        "latency_seconds": 2.210709,
+        "status_code": 200
+      },
+      "reported_cached_tokens": 5120,
+      "counter_source": "usage.prompt_cache_hit_tokens",
+      "expected_model": "MiniMaxAI/MiniMax-M3",
+      "routing": {},
+      "routing_correct": true,
+      "generation_valid": true
+    },
+    {
+      "requested_model": "nvidia/Nemotron-3_5-Lightning",
+      "returned_model": "nvidia/Nemotron-3_5-Lightning",
+      "request_sha256": "edf09924f75ae899efa751907b2718466d77b2e20ff9c165834254aa4f956fb1",
+      "response_id_sha256": "8500d1128fa3d8c7a06055c05162d92bc24028d9209ff822ef11e62704a161bc",
+      "reply_sha256": "d35a9108bc037c52741da618d5c3bb07f0c22a93c1e26b16dc364bba5cec2516",
+      "marker_present": true,
+      "finish_reason": "stop",
+      "latency_seconds": 0.8498623329796828,
+      "usage": {
+        "prompt_tokens": 5485,
+        "completion_tokens": 7,
+        "total_tokens": 5492,
+        "prompt_cache_hit_tokens": 2096,
+        "prompt_cache_miss_tokens": 3389,
+        "cached_tokens": 2096
+      },
+      "transport": {
+        "attempts": 1,
+        "retries": 0,
+        "latency_seconds": 0.84328,
+        "status_code": 200
+      },
+      "reported_cached_tokens": 2096,
+      "counter_source": "usage.prompt_tokens_details.cached_tokens",
+      "expected_model": "nvidia/Nemotron-3_5-Lightning",
+      "routing": {},
+      "routing_correct": true,
+      "generation_valid": true
+    },
+    {
+      "requested_model": "MiniMaxAI/MiniMax-M3",
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "request_sha256": "7da04f6a96edf26c6567c5bd9cb13cbbcb2e9d6575ff9c7cb194eee3f0f669bc",
+      "response_id_sha256": "fd37643a09f44c9366b2214549114326f46f89db8eb1af879b31bbc3856482a6",
+      "reply_sha256": "dcd1c843f2347a5cdddd8f93e6a06896dcf8b5b4b94d9eba49ab2b9f31f4567a",
+      "marker_present": true,
+      "finish_reason": "stop",
+      "latency_seconds": 2.4146633749478497,
+      "usage": {
+        "prompt_tokens": 5260,
+        "completion_tokens": 480,
+        "total_tokens": 5740,
+        "prompt_cache_hit_tokens": 5120,
+        "prompt_cache_miss_tokens": 140,
+        "cached_tokens": 5120
+      },
+      "transport": {
+        "attempts": 1,
+        "retries": 0,
+        "latency_seconds": 2.409609,
+        "status_code": 200
+      },
+      "reported_cached_tokens": 5120,
+      "counter_source": "usage.prompt_cache_hit_tokens",
+      "expected_model": "MiniMaxAI/MiniMax-M3",
+      "routing": {},
+      "routing_correct": true,
+      "generation_valid": true
+    }
+  ],
+  "cache_evidence": {
+    "nvidia/Nemotron-3_5-Lightning": {
+      "request_count": 3,
+      "cached_tokens": [
+        0,
+        2096,
+        2096
+      ],
+      "distinct_requests": true,
+      "warm_hit_observed": true
+    },
+    "MiniMaxAI/MiniMax-M3": {
+      "request_count": 3,
+      "cached_tokens": [
+        0,
+        5120,
+        5120
+      ],
+      "distinct_requests": true,
+      "warm_hit_observed": true
+    }
+  },
+  "measured_at": "2026-09-20",
+  "scope": "Live Token Factory only; no Jev inference was performed.",
+  "baseline_revision": "d22893238d75efbb05a69eb75bca1b82eb5fe280",
+  "public_price_usd_per_million_tokens": {
+    "nvidia/Nemotron-3_5-Lightning": {
+      "input": 0.06,
+      "output": 0.24
+    },
+    "MiniMaxAI/MiniMax-M3": {
+      "input": 0.3,
+      "output": 1.2
+    }
+  },
+  "price_source": "https://tokenfactory.nebius.com/api/public/models_info",
+  "evaluation_script_sha256": "c714142beb261c44a4c52f618a60fb5f3b2afdf7f34b65a732119aa1a21c2d04"
+}

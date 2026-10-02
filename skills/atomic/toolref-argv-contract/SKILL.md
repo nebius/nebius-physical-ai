@@ -59,6 +59,13 @@ conditional rendering, so `--flag {{config.x}}` cannot express a paired boolean
 such as `--headless/--no-headless`. Either hardcode the flag or record the
 parameter as an unreachable `spec_gap` in the three-tier contract.
 
+**Keep workflow values exactly typed.** The v0.0.1 parser rejects explicit
+`null` where a mapping/list is declared, every YAML float (including `1.0`)
+where an integer is required, strings where a boolean is required, and duplicate
+state names. Omit absent optional fields, use YAML `true`/`false`, and quote
+template tokens that must remain strings. Validate generated specs and their
+intended `--var` overrides before treating an argv template as reachable.
+
 **Prefer `npa ...` over a wrapper.** Templates that start with `bash` or
 `python` are harder to check. The `bash -c` forms have their embedded `npa`
 commands extracted and audited, and `python -m` forms are parsed against their

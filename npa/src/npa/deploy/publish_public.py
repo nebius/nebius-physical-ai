@@ -41,6 +41,7 @@ import base64
 import hashlib
 import http.client
 import json
+import math
 import os
 import re
 import shutil
@@ -55,6 +56,12 @@ from pathlib import Path
 from typing import Any
 
 from npa.deploy import images
+from npa.deploy.corresponding_source import (
+    ACCEPTED_RECORD as GYMNASIUM_ACCEPTED_RECORD,
+    SOURCE_LOCK as GYMNASIUM_SOURCE_LOCK,
+    CorrespondingSourceError,
+    verify_corresponding_source_delivery,
+)
 from npa.deploy.images import (
     CONTAINER_IMAGE_NAMES,
     is_publicly_redistributable,
@@ -166,10 +173,15 @@ def _development_git_sha(explicit: str | None = None) -> str:
 # --------------------------------------------------------------------------------------
 
 _PREFLIGHT_TIMEOUT_SECONDS = 60
+_FORBIDDEN_OPERATOR_PROVENANCE_LABEL = "npa.base_image"
 _TRIVY_CONTAINER_IMAGE = (
     "docker.io/aquasec/trivy@"
     "sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f"
 )
+# Trivy applies --severity to every enabled scanner at once, so asking it for
+# CRITICAL would drop HIGH private keys from the report before Python can reject
+# them. Ask for everything and filter vulnerabilities to CRITICAL below instead.
+_TRIVY_ALL_SEVERITIES = "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL"
 
 
 def _repository(ref: str) -> str:
@@ -335,6 +347,44 @@ def _trivy_command() -> list[str]:
     return command
 
 
+def _severity_counts(findings: list[dict[str, Any]]) -> str:
+    """Summarise findings by severity without quoting any matched content.
+
+    The rejection reason is printed by the publisher and reaches CI logs, so it
+    carries counts only. Paths, rule matches and match text stay in the private
+    report.
+    """
+
+    counts: dict[str, int] = {}
+    for finding in findings:
+        severity = str(finding.get("Severity") or "UNKNOWN").upper()
+        counts[severity] = counts.get(severity, 0) + 1
+    return ", ".join(f"{name}={counts[name]}" for name in sorted(counts))
+
+
+def _trivy_findings(
+    result: dict[str, Any], section: str, *, subject: str
+) -> list[dict[str, Any]]:
+    """Return one report section, refusing shapes that could hide a finding.
+
+    Skipping entries that are not dictionaries would silently drop a finding
+    whenever the report does not look the way this code expects, which is the
+    one case where guessing is unacceptable: a dropped secret is published.
+    """
+
+    findings = result.get(section)
+    if findings is None:
+        return []
+    if not isinstance(findings, list) or any(
+        not isinstance(finding, dict) for finding in findings
+    ):
+        raise RuntimeError(
+            f"{subject} exact-digest Trivy scan returned an unreadable "
+            f"{section} section"
+        )
+    return findings
+
+
 def _scan_trivy_exact_digest(image_ref: str, *, subject: str) -> dict[str, int]:
     """Rerun Trivy against immutable source bytes immediately before copy."""
 
@@ -347,7 +397,7 @@ def _scan_trivy_exact_digest(image_ref: str, *, subject: str) -> dict[str, int]:
             "--scanners",
             "vuln,secret",
             "--severity",
-            "CRITICAL",
+            _TRIVY_ALL_SEVERITIES,
             "--format",
             "json",
             "--quiet",
@@ -362,35 +412,38 @@ def _scan_trivy_exact_digest(image_ref: str, *, subject: str) -> dict[str, int]:
     if completed.returncode:
         detail = (completed.stderr or completed.stdout or "").strip()
         raise RuntimeError(detail or f"{subject} exact-digest Trivy scan failed")
-    payload = json.loads(completed.stdout)
+    try:
+        payload = json.loads(completed.stdout)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"{subject} exact-digest Trivy scan returned unparsable JSON"
+        ) from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("Results"), list):
         raise RuntimeError(f"{subject} exact-digest Trivy scan returned invalid JSON")
     vulnerabilities: list[dict[str, Any]] = []
     secrets: list[dict[str, Any]] = []
     for result in payload["Results"]:
         if not isinstance(result, dict):
-            raise RuntimeError("Wan exact-digest Trivy result entry is invalid")
+            raise RuntimeError(f"{subject} exact-digest Trivy result entry is invalid")
         vulnerabilities.extend(
             finding
-            for finding in (result.get("Vulnerabilities") or [])
-            if isinstance(finding, dict)
-            and str(finding.get("Severity") or "").upper() == "CRITICAL"
+            for finding in _trivy_findings(result, "Vulnerabilities", subject=subject)
+            if str(finding.get("Severity") or "").upper() == "CRITICAL"
         )
-        secrets.extend(
-            finding
-            for finding in (result.get("Secrets") or [])
-            if isinstance(finding, dict)
-        )
+        secrets.extend(_trivy_findings(result, "Secrets", subject=subject))
     fixed = [
         item for item in vulnerabilities if str(item.get("FixedVersion") or "").strip()
     ]
+    # Secrets are rejected first and at every severity: a fixable CRITICAL
+    # vulnerability is a patch away, a published private key is not recoverable.
+    if secrets:
+        raise RuntimeError(
+            f"{subject} exact-digest Trivy scan found {len(secrets)} secret "
+            f"findings ({_severity_counts(secrets)})"
+        )
     if fixed:
         raise RuntimeError(
             f"{subject} exact-digest Trivy scan found {len(fixed)} fixed CRITICAL vulnerabilities"
-        )
-    if secrets:
-        raise RuntimeError(
-            f"{subject} exact-digest Trivy scan found {len(secrets)} secret findings"
         )
     return {
         "critical_total": len(vulnerabilities),
@@ -422,13 +475,82 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
     left to fail incidentally when the tag turns out not to exist.
     """
 
-    if item.tool not in images.PUBLICATION_QUARANTINE_TOOLS:
+    if item.tool not in (
+        images.PUBLICATION_QUARANTINE_TOOLS
+        | images.PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS
+        | images.DEVELOPMENT_BUILD_QUARANTINE_TOOLS
+    ):
         return True, "not applicable"
     return False, (
-        f"{item.tool} has no accepted image: it has not been built, payload "
-        "scanned, or GPU validated. Publication is blocked until that evidence "
-        "exists and the tool leaves images.PUBLICATION_QUARANTINE_TOOLS."
+        f"{item.tool} has no accepted release image: its corresponding-source "
+        "closure, accepted manifest, supported tag, architecture, payload-scan "
+        "and GPU evidence are not accepted. Development builds may be produced "
+        "for validation, but release publication remains blocked until that "
+        "evidence exists and the tool leaves its development-build quarantine."
     )
+
+
+def verify_publication_provenance_labels(item: PublishItem) -> tuple[bool, str]:
+    """Reject operator-specific base-image provenance in the final OCI config.
+
+    The Dockerfile guard prevents new direct declarations, while this publication
+    gate also catches a forbidden label inherited from an ancestor image. Public
+    provenance must use registry-neutral annotations such as ``npa.base.image``;
+    ``npa.base_image`` historically exposed private operator registry paths.
+    """
+
+    if re.search(r"@sha256:[0-9a-f]{64}$", item.source_ref) is None:
+        return False, "publication source is not pinned by immutable digest"
+    try:
+        config = _crane_json(["config", item.source_ref])
+        nested = config.get("config")
+        nested = nested if isinstance(nested, dict) else {}
+        labels = nested.get("Labels")
+        labels = labels if isinstance(labels, dict) else {}
+        forbidden = sorted(
+            str(key)
+            for key in labels
+            if str(key).strip().lower() == _FORBIDDEN_OPERATOR_PROVENANCE_LABEL
+        )
+        if forbidden:
+            raise RuntimeError(
+                f"forbidden OCI label {_FORBIDDEN_OPERATOR_PROVENANCE_LABEL!r} "
+                "can expose an operator registry path"
+            )
+        return True, "no operator-specific base-image provenance label"
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        return False, str(exc)
+
+
+def verify_gymnasium_corresponding_source(item: PublishItem) -> tuple[bool, str]:
+    """Require exact public corresponding source before Gymnasium release copying."""
+
+    match = re.search(r"@(sha256:[0-9a-f]{64})$", item.source_ref)
+    if match is None:
+        return False, "Gymnasium source image is not pinned by immutable digest"
+    try:
+        manifest = _crane_json(["manifest", item.source_ref])
+        if manifest.get("manifests") is not None:
+            raise RuntimeError("Gymnasium source must be one linux/amd64 manifest")
+        config_digest = manifest.get("config", {}).get("digest")
+        config = _crane_json(["config", item.source_ref]).get("config") or {}
+        labels = config.get("Labels") if isinstance(config, dict) else {}
+        revision = (
+            labels.get("org.opencontainers.image.revision")
+            if isinstance(labels, dict)
+            else None
+        )
+        verify_corresponding_source_delivery(
+            GYMNASIUM_ACCEPTED_RECORD,
+            GYMNASIUM_SOURCE_LOCK,
+            source_revision=str(revision or ""),
+            image_digest=match.group(1),
+            platform_manifest_digest=match.group(1),
+            config_digest=str(config_digest or ""),
+        )
+        return True, "exact anonymous corresponding-source delivery verified"
+    except (CorrespondingSourceError, KeyError, TypeError, RuntimeError) as exc:
+        return False, str(exc)
 
 
 def verify_gpu_accepted_publication_source(item: PublishItem) -> tuple[bool, str]:
@@ -759,6 +881,32 @@ def _scan_content_agents_payload_exact_digest(
     }
 
 
+def _is_finite_manifest_number(value: Any) -> bool:
+    """Return whether a JSON manifest value is a finite, non-boolean number."""
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return not isinstance(value, float) or math.isfinite(value)
+
+
+def _valid_content_agents_rigid_physics(rigid: Any) -> bool:
+    """Validate rigid-physics evidence at the public-promotion boundary."""
+
+    if not isinstance(rigid, dict):
+        return False
+    mass_or_density = rigid.get("mass_or_density")
+    friction = rigid.get("friction")
+    return (
+        rigid.get("rigid_body") is True
+        and rigid.get("collision") is True
+        and rigid.get("fixed") is False
+        and _is_finite_manifest_number(mass_or_density)
+        and mass_or_density > 0
+        and _is_finite_manifest_number(friction)
+        and 0.1 <= friction <= 2.0
+    )
+
+
 def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, str]:
     """Bind Content Agents publication to clean bytes and the accepted RTX run."""
 
@@ -934,14 +1082,7 @@ def verify_content_agents_publication_source(item: PublishItem) -> tuple[bool, s
             ):
                 raise RuntimeError(f"Content Agents RTX proof has no {artifact_name}")
         rigid = proof.get("rigid_physics")
-        if (
-            not isinstance(rigid, dict)
-            or rigid.get("rigid_body") is not True
-            or rigid.get("collision") is not True
-            or rigid.get("fixed") is not False
-            or float(rigid.get("mass_or_density") or 0) <= 0
-            or not 0.1 <= float(rigid.get("friction") or 0) <= 2.0
-        ):
+        if not _valid_content_agents_rigid_physics(rigid):
             raise RuntimeError("Content Agents accepted rigid-physics proof is invalid")
 
         specialized = accepted.get("payload_scan")
@@ -1454,12 +1595,18 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
             detail = f"UNVALIDATED — {detail}"
         if ok:
             ok, detail = _crane_manifest_readable(item.source_ref)
+        if ok:
+            ok, detail = verify_publication_provenance_labels(item)
+            detail = f"PROVENANCE LABEL GATE — {detail}"
         if ok and item.tool in images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS:
             ok, detail = verify_gpu_accepted_publication_source(item)
             detail = f"GPU ACCEPTANCE GATE — {detail}"
         if ok and item.tool in images.SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS:
             ok, detail = verify_bootstrap_publication_source(item)
             detail = f"BOOTSTRAP GATE — {detail}"
+        if ok and item.tool == "gymnasium-robotics":
+            ok, detail = verify_gymnasium_corresponding_source(item)
+            detail = f"CORRESPONDING SOURCE GATE — {detail}"
         if ok and item.tool == "wan2-2":
             ok, detail = verify_wan_publication_source(item)
             detail = f"WAN GATE — {detail}"

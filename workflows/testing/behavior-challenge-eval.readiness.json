@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "cb277c302c16112dab6ee824157b04e03e242eccdeb745ec2ddf853b97f77ca2",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec accepted the workflow and plan-spec rendered the evaluate stage with the pinned module and configured S3 input/output paths. This does not establish runtime readiness.",
+      "evidence": [
+        "workflows/testing/behavior-challenge-eval.yaml",
+        "npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py",
+        "npa/tests/smoke/test_all_workflow_yamls.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Commands invoke the pinned official evaluator for prescribed cases; all 1000 report commands were accepted by upstream argparse. The complete private radio development selection produced one success and mean Q 0.10. Performance on the other 99 tasks is not established.",
+      "evidence": [
+        "npa/tests/workflows/test_behavior_challenge.py",
+        "https://github.com/StanfordVL/BEHAVIOR-1K/tree/v3.9.2/OmniGibson/omnigibson/eval",
+        "docs/workbench/behavior-challenge.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Selected-project storage and exact private-prefix write/read probes passed for development. Operators must still replace the template bucket and verify their own output prefix.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Task-scoped approval was recorded, exact official assets and checkpoint bytes were verified, and all ten development rollouts completed. Licensed inputs remain private; users of the template must supply their own prepared assets and policy configuration.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Selected-project storage and provider authentication passed, and the exact pinned upstream asset and model payloads were accessed. Credentials and licensed payloads remain private.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The template runtime image remains an operator placeholder. Private validation used a digest-pinned public bootstrap with a separately prepared official Isaac Sim 5.1 runtime and completed all ten development cases. This does not add a published BEHAVIOR runtime image.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "The RTX PRO 6000 rendering worker passed stability, CUDA, GLX/EGL, and NVIDIA Vulkan checks. All ten official radio development cases completed: one success, nine failures, mean Q 0.10. Original metrics and complete video decodes passed independent hash verification. Earlier infrastructure and observation-name failures are retained; 24 GB serving compliance is unverified.",
+      "evidence": [
+        "docs/workbench/behavior-challenge.md"
+      ]
+    }
+  }
+}

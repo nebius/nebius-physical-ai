@@ -257,7 +257,7 @@ def test_storage_cors_cli_apply_has_stable_json(mocker) -> None:
     assert result.stdout == (
         json.dumps(json.loads(result.stdout), indent=2, sort_keys=True) + "\n"
     )
-    assert "command diagnostics were separated from JSON stdout" not in result.stderr
+    assert "command diagnostics were removed from JSON stdout" not in result.stderr
 
 
 def test_sdk_routes_configured_project_to_control_plane(mocker) -> None:

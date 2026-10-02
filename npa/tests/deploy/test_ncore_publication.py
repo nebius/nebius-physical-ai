@@ -25,7 +25,7 @@ def accepted():
     return {
         "format": "npa_ncore_accepted_image_manifest_v1",
         "status": "accepted",
-        "tag": images.public_release_tag_for_tool("ncore"),
+        "tag": images.supported_tool_version("ncore"),
         "development_sha": SHA,
         "oci_digest": DIGEST,
         "amd64_manifest": PLATFORM,
@@ -183,7 +183,7 @@ def test_checked_in_ncore_remains_unaccepted():
     assert images.development_image_for_tool("ncore", git_sha=SHA).endswith(
         "dev-" + SHA
     )
-    with pytest.raises(ValueError, match="no accepted release"):
+    with pytest.raises(ValueError, match="no accepted release image"):
         images.container_image_for_tool("ncore")
     with pytest.raises(RuntimeError, match="NCore"):
         images.ncore_accepted_image_manifest()
@@ -340,7 +340,7 @@ def test_release_record_cannot_disagree(accepted, monkeypatch, field, value):
 
 def test_removing_quarantine_alone_does_not_enable_default_resolution(monkeypatch):
     monkeypatch.setattr(images, "PUBLICATION_QUARANTINE_TOOLS", frozenset())
-    with pytest.raises(RuntimeError, match="NCore"):
+    with pytest.raises(ValueError, match="NCore has no accepted release image"):
         images.container_image_for_tool("ncore")
 
 
@@ -465,7 +465,7 @@ def item():
     return publish.PublishItem(
         "ncore",
         REPOSITORY + "@" + DIGEST,
-        REPOSITORY + ":" + images.public_release_tag_for_tool("ncore"),
+        REPOSITORY + ":" + images.supported_tool_version("ncore"),
     )
 
 
@@ -704,6 +704,11 @@ def test_live_artifact_gate_refuses_drift(registry, damage):
 def test_preflight_calls_ncore_gate_after_quarantine_is_lifted(monkeypatch):
     monkeypatch.setattr(images, "PUBLICATION_QUARANTINE_TOOLS", frozenset())
     monkeypatch.setattr(publish, "_crane_manifest_readable", lambda ref: (True, "ok"))
+    monkeypatch.setattr(
+        publish,
+        "verify_publication_provenance_labels",
+        lambda item: (True, "ok"),
+    )
     monkeypatch.setattr(
         publish, "verify_bootstrap_publication_source", lambda item: (True, "ok")
     )

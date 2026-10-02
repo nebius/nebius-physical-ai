@@ -1,0 +1,360 @@
+# syntax=docker/dockerfile:1.7
+
+ARG BASE_IMAGE=ubuntu:22.04@sha256:281c5745f657873d78e5531fc5ba8575f46ab7769b94550ac99543f122679986
+ARG APT_SNAPSHOT=20260903T121500Z
+ARG CA_DEB_SHA256=6e8cdcc8c86103acd4fc14649eac62ff2037108389074a7b167567af33c32245
+ARG OPENSSL_DEB_SHA256=bf5e804a0533d55ea9aa90320bcbce42981996dd41e8d4bcd5d15e41f91c2817
+ARG LIBSSL3_DEB_SHA256=c12bbf0074c44019bdf4b035b058c24eb904fc772c94707b1df801a4d130e146
+ARG CA_CERT_COUNT=121
+ARG CA_CONFIG_BYTES=4809
+ARG CA_CONFIG_SHA256=fe407f6205ff90c56d4f073ffaa2a8abde7835558919c19367a7cd4fd6312dad
+ARG CA_BUNDLE_BYTES=182140
+ARG CA_BUNDLE_SHA256=9481fcd95f41b221f02f14d896535fe500bec539bc563c4cdca1acee483a8bdd
+
+FROM scratch AS npa-ca-bootstrap
+ARG APT_SNAPSHOT
+ARG CA_DEB_SHA256
+ARG OPENSSL_DEB_SHA256
+ARG LIBSSL3_DEB_SHA256
+ADD --checksum=sha256:${CA_DEB_SHA256} \
+    http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/c/ca-certificates/ca-certificates_20260601~22.04.1_all.deb \
+    /ca-certificates.deb
+ADD --checksum=sha256:${OPENSSL_DEB_SHA256} \
+    http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/o/openssl/openssl_3.0.2-0ubuntu1.29_amd64.deb \
+    /openssl.deb
+ADD --checksum=sha256:${LIBSSL3_DEB_SHA256} \
+    http://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/pool/main/o/openssl/libssl3_3.0.2-0ubuntu1.29_amd64.deb \
+    /libssl3.deb
+
+FROM ${BASE_IMAGE} AS npa-ca-trust
+ARG CA_CERT_COUNT
+ARG CA_CONFIG_BYTES
+ARG CA_CONFIG_SHA256
+ARG CA_BUNDLE_BYTES
+ARG CA_BUNDLE_SHA256
+USER root
+RUN --mount=from=npa-ca-bootstrap,source=/ca-certificates.deb,target=/tmp/ca-certificates.deb,ro \
+    --mount=from=npa-ca-bootstrap,source=/openssl.deb,target=/tmp/openssl.deb,ro \
+    --mount=from=npa-ca-bootstrap,source=/libssl3.deb,target=/tmp/libssl3.deb,ro \
+    dpkg-deb -x /tmp/libssl3.deb / && \
+    dpkg-deb -x /tmp/openssl.deb / && \
+    dpkg-deb -x /tmp/ca-certificates.deb / && \
+    npa_bootstrap_ca() { \
+      ca_root="${1%/}"; \
+      ca_cert_dir="${ca_root}/usr/share/ca-certificates"; \
+      ca_config="${ca_root}/etc/ca-certificates.conf"; \
+      ca_bundle="${ca_root}/etc/ssl/certs/ca-certificates.crt"; \
+      test -d "${ca_cert_dir}" && \
+      install -d -m 0755 "${ca_root}/etc/ssl/certs" && \
+      find "${ca_cert_dir}" -type f -name '*.crt' -printf '%P\n' | \
+        LC_ALL=C sort -u > "${ca_config}" && \
+      test "$(wc -l < "${ca_config}")" -eq "${CA_CERT_COUNT}" && \
+      test "$(stat -c %s "${ca_config}")" -eq "${CA_CONFIG_BYTES}" && \
+      printf '%s  %s\n' "${CA_CONFIG_SHA256}" "${ca_config}" | sha256sum -c - && \
+      : > "${ca_bundle}" && \
+      while IFS= read -r certificate; do \
+        certificate_path="${ca_cert_dir}/${certificate}"; \
+        test -f "${certificate_path}" || return 1; \
+        test "$(tail -c 1 "${certificate_path}" | od -An -t u1 | tr -d ' ')" = 10 || return 1; \
+        /usr/bin/openssl x509 -in "${certificate_path}" -noout >/dev/null 2>&1 || return 1; \
+        cat "${certificate_path}" >> "${ca_bundle}" || return 1; \
+      done < "${ca_config}" && \
+      test "$(stat -c %s "${ca_bundle}")" -eq "${CA_BUNDLE_BYTES}" && \
+      printf '%s  %s\n' "${CA_BUNDLE_SHA256}" "${ca_bundle}" | sha256sum -c -; \
+    }; \
+    npa_bootstrap_ca /
+
+FROM ${BASE_IMAGE} AS build
+ARG APT_SNAPSHOT
+ARG CA_CERT_COUNT
+ARG CA_CONFIG_BYTES
+ARG CA_CONFIG_SHA256
+ARG CA_BUNDLE_BYTES
+ARG CA_BUNDLE_SHA256
+ARG NPA_SOURCE_SHA
+ARG NPA_SOURCE_MANIFEST_SHA256
+USER root
+COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
+COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=npa-source-provenance / /opt/npa-source-provenance/
+RUN test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
+    test -n "${NPA_SOURCE_MANIFEST_SHA256}" && \
+    printf '%s' "${NPA_SOURCE_MANIFEST_SHA256}" | grep -Eq '^[0-9a-f]{64}$' && \
+    printf '%s  %s\n' "${NPA_SOURCE_MANIFEST_SHA256}" \
+      /opt/npa-source-provenance/npa-source-manifest.sha256 | sha256sum -c - && \
+    cd /opt/npa-source-provenance && \
+    sha256sum -c npa-source-manifest.sha256 && \
+    sed -n 's/^[0-9a-f]\{64\}  //p' npa-source-manifest.sha256 | \
+      LC_ALL=C sort -u > /tmp/npa-source-expected-paths && \
+    find inputs -type f -printf '%p\n' | LC_ALL=C sort -u \
+      > /tmp/npa-source-observed-paths && \
+    test -s /tmp/npa-source-expected-paths && \
+    cmp /tmp/npa-source-expected-paths /tmp/npa-source-observed-paths && \
+    printf '{"manifest_sha256":"%s","schema_version":"npa.source-provenance.v1","source_revision":"%s"}\n' \
+      "${NPA_SOURCE_MANIFEST_SHA256}" "${NPA_SOURCE_SHA}" \
+      > /opt/npa-source-provenance/npa-source-provenance.json && \
+    rm -f /tmp/npa-source-expected-paths /tmp/npa-source-observed-paths
+RUN --mount=from=npa-source-provenance,source=/inputs/docker/workbench/habitat-sim/verify_apt_artifacts.sh,target=/usr/local/libexec/npa-habitat-verify-apt,ro \
+    --mount=from=npa-source-provenance,source=/inputs/docker/workbench/habitat-sim/verify_apt_source.py,target=/usr/local/libexec/verify_apt_source.py,ro \
+    test -n "${NPA_SOURCE_SHA}" && printf '%s' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' && \
+    test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
+    test "$(stat -c %s /etc/ca-certificates.conf)" -eq "${CA_CONFIG_BYTES}" && \
+    printf '%s  %s\n' "${CA_CONFIG_SHA256}" /etc/ca-certificates.conf | sha256sum -c - && \
+    test "$(stat -c %s /etc/ssl/certs/ca-certificates.crt)" -eq "${CA_BUNDLE_BYTES}" && \
+    printf '%s  %s\n' "${CA_BUNDLE_SHA256}" /etc/ssl/certs/ca-certificates.crt | sha256sum -c - && \
+    printf '%s\n' \
+      'Types: deb deb-src' \
+      "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/" \
+      'Suites: jammy jammy-updates jammy-security' \
+      'Components: main universe' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      'Check-Valid-Until: no' \
+      > /etc/apt/sources.list.d/npa-snapshot.sources && \
+    rm -f /etc/apt/sources.list && \
+    apt-get update && \
+    installed_perl="$(dpkg-query -W -f='${Version}' perl-base)" && \
+    candidate_perl_base="$(apt-cache policy perl-base | sed -n 's/^  Candidate: //p')" && \
+    candidate_perl="$(apt-cache policy perl | sed -n 's/^  Candidate: //p')" && \
+    test "$installed_perl" = '5.34.0-3ubuntu1.8' && \
+    test "$installed_perl" = "$candidate_perl_base" && \
+    test "$installed_perl" = "$candidate_perl" && \
+    npa_require_python_family() { \
+      expected="$1"; \
+      shift; \
+      for package in "$@"; do \
+        candidate="$(apt-cache policy "$package" | sed -n 's/^  Candidate: //p')"; \
+        test "$candidate" = "$expected" || return 1; \
+      done; \
+    }; \
+    npa_require_python_family '3.10.6-1~22.04.1' \
+      python3 libpython3-dev python3-dev python3-venv && \
+    bash /usr/local/libexec/npa-habitat-verify-apt direct-records \
+      /opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/apt-build.lock \
+      /tmp/npa-build-direct-packages && \
+    install -d -m 0700 /tmp/npa-build-direct-debs && \
+    while IFS='|' read -r package version _digest; do \
+      (cd /tmp/npa-build-direct-debs && apt-get download "$package=$version") || exit 1; \
+    done < /tmp/npa-build-direct-packages && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-direct \
+      /tmp/npa-build-direct-packages /tmp/npa-build-direct-debs && \
+    apt-get install -y --no-install-recommends /tmp/npa-build-direct-debs/*.deb && \
+    bash /usr/local/libexec/npa-habitat-verify-apt source-index-record \
+      /opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/apt-runtime.lock \
+      /tmp/npa-runtime-source-index && \
+    IFS='|' read -r source_suite source_path source_bytes source_digest \
+      < /tmp/npa-runtime-source-index && \
+    source_url="https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/${source_path}" && \
+    /usr/bin/python3 -c 'import sys, urllib.request; url=sys.argv[1]; target=sys.argv[2]; expected=int(sys.argv[3]); response=urllib.request.urlopen(url); final=response.geturl(); payload=response.read(expected + 1); response.close(); final == url or sys.exit("source index redirected"); len(payload) == expected or sys.exit("source index size mismatch"); open(target, "xb").write(payload)' \
+      "$source_url" /tmp/npa-runtime-Sources.xz "$source_bytes" && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-file \
+      /tmp/npa-runtime-Sources.xz "$source_bytes" "$source_digest" && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-source \
+      /opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/apt-runtime.lock \
+      /tmp/npa-runtime-Sources.xz && \
+    install -d -m 0755 /opt/rsync-source && \
+    cd /opt/rsync-source && \
+    apt-get source --download-only rsync=3.2.7-0ubuntu0.22.04.7 && \
+    test "$(find . -maxdepth 1 -type f -printf '%f\n' | wc -l)" -eq 4 && \
+    test "$(stat -c %s rsync_3.2.7.orig.tar.gz)" -eq 1149787 && \
+    test "$(stat -c %s rsync_3.2.7.orig.tar.gz.asc)" -eq 195 && \
+    test "$(stat -c %s rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz)" -eq 117112 && \
+    test "$(stat -c %s rsync_3.2.7-0ubuntu0.22.04.7.dsc)" -eq 2402 && \
+    printf '%s  %s\n' \
+      4e7d9d3f6ed10878c58c5fb724a67dacf4b6aac7340b13e488fb2dc41346f2bb rsync_3.2.7.orig.tar.gz \
+      8e054b8e852f371fbcb757de51f1a07de5621ae959ea766d3c3e5439d7b5f4ae rsync_3.2.7.orig.tar.gz.asc \
+      05db0546477de617be806c2abd8d16f8aed4aa2cfe8d2273b3a030750c6cb811 rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz \
+      5e6e79695b709ce1606ddbb63f5c28c7cdc304f857f42e317bd53e753b8ca15d rsync_3.2.7-0ubuntu0.22.04.7.dsc | \
+      sha256sum -c - && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-source \
+      /opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/apt-runtime.lock \
+      /tmp/npa-runtime-Sources.xz /opt/rsync-source && \
+    ! grep -R -nE '^[[:space:]]*URIs:[[:space:]]*http://' /etc/apt/sources.list.d && \
+    rm -rf /tmp/npa-build-direct-debs /tmp/npa-build-direct-packages \
+      /tmp/npa-runtime-source-index /tmp/npa-runtime-Sources.xz \
+      /var/lib/apt/lists/*
+
+WORKDIR /opt/npa-build
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/source-manifest.json source-manifest.json
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/licenses.json licenses.json
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/apt-build.lock apt-build.lock
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/apt-runtime.lock apt-runtime.lock
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/requirements-build.lock requirements-build.lock
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/requirements-runtime.lock requirements-runtime.lock
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/runtime-payload.json runtime-payload.json
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/prepare_source.py prepare_source.py
+RUN python3 prepare_source.py --manifest source-manifest.json --output /opt/habitat-sim \
+      --inventory-output /opt/npa-build/source-projection.json && \
+    python3 -m venv /opt/build-venv && \
+    /opt/build-venv/bin/pip install --disable-pip-version-check --no-cache-dir \
+      --only-binary=:all: --no-deps --require-hashes -r requirements-build.lock && \
+    /opt/build-venv/bin/pip install --disable-pip-version-check --no-cache-dir \
+      --only-binary=:all: --no-deps --require-hashes -r requirements-runtime.lock && \
+    cd /opt/habitat-sim && \
+    HABITAT_BUILD_GUI_VIEWERS=OFF \
+    HABITAT_WITH_BULLET=ON \
+    HABITAT_WITH_CUDA=OFF \
+    HABITAT_WITH_AUDIO=OFF \
+    HABITAT_BUILD_TEST=OFF \
+    HABITAT_BUILD_BASIS_COMPRESSOR=OFF \
+    SKBUILD_CMAKE_BUILD_TYPE=Release \
+    CMAKE_ARGS="-DFETCHCONTENT_SOURCE_DIR_IMATH=/opt/habitat-sim/src/deps/imath -DFETCHCONTENT_FULLY_DISCONNECTED=ON" \
+      /opt/build-venv/bin/pip wheel . --no-build-isolation --no-deps \
+      --wheel-dir /opt/wheelhouse && \
+    python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --disable-pip-version-check --no-cache-dir \
+      --only-binary=:all: --no-deps --require-hashes -r /opt/npa-build/requirements-runtime.lock && \
+    /opt/venv/bin/pip install --disable-pip-version-check --no-cache-dir \
+      --no-deps /opt/wheelhouse/habitat_sim-*.whl && \
+    /opt/venv/bin/pip check && \
+    find /opt/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg-*' -delete && \
+    ! find /opt/venv -type f -path '*/imageio_ffmpeg/binaries/ffmpeg-*' -print -quit | grep -q . && \
+    mkdir -p /opt/source-projection/data/pbr /opt/source-projection/src && \
+    cp /opt/habitat-sim/LICENSE /opt/habitat-sim/MANIFEST.in \
+       /opt/habitat-sim/README.md /opt/habitat-sim/pyproject.toml \
+       /opt/habitat-sim/setup.py /opt/source-projection/ && \
+    cp /opt/habitat-sim/data/default.physics_config.json /opt/source-projection/data/ && \
+    cp -a /opt/habitat-sim/data/pbr/. /opt/source-projection/data/pbr/ && \
+    cp -a /opt/habitat-sim/src/CMakeLists.txt /opt/habitat-sim/src/cmake \
+       /opt/habitat-sim/src/esp /opt/habitat-sim/src/shaders \
+       /opt/habitat-sim/src/utils \
+       /opt/source-projection/src/ && \
+    cp -a /opt/habitat-sim/src_python /opt/source-projection/ && \
+    cp -a /opt/habitat-sim/src/deps /opt/source-projection/src/ && \
+    mkdir -p /opt/notices && \
+    install -d -m 0755 /opt/notices/ubuntu-sources/rsync && \
+    cp /opt/rsync-source/rsync_3.2.7.orig.tar.gz \
+       /opt/rsync-source/rsync_3.2.7.orig.tar.gz.asc \
+       /opt/rsync-source/rsync_3.2.7-0ubuntu0.22.04.7.debian.tar.xz \
+       /opt/rsync-source/rsync_3.2.7-0ubuntu0.22.04.7.dsc \
+       /opt/notices/ubuntu-sources/rsync/ && \
+    cp /opt/npa-build/source-manifest.json /opt/npa-build/source-projection.json \
+       /opt/npa-build/licenses.json /opt/npa-build/apt-build.lock \
+       /opt/npa-build/apt-runtime.lock /opt/npa-build/requirements-runtime.lock \
+       /opt/notices/
+
+FROM ${BASE_IMAGE} AS runtime
+ARG APT_SNAPSHOT
+ARG CA_CERT_COUNT
+ARG CA_CONFIG_BYTES
+ARG CA_CONFIG_SHA256
+ARG CA_BUNDLE_BYTES
+ARG CA_BUNDLE_SHA256
+ARG NPA_SOURCE_SHA
+ARG NPA_SOURCE_MANIFEST_SHA256
+USER root
+COPY --from=npa-ca-trust /etc/ca-certificates.conf /etc/ca-certificates.conf
+COPY --from=npa-ca-trust /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /opt/npa-build/apt-runtime.lock /tmp/npa-apt-runtime.lock
+RUN --mount=from=build,source=/opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/verify_apt_artifacts.sh,target=/usr/local/libexec/npa-habitat-verify-apt,ro \
+    --mount=from=build,source=/opt/npa-source-provenance/inputs/docker/workbench/habitat-sim/verify_apt_source.py,target=/usr/local/libexec/verify_apt_source.py,ro \
+    test "$(wc -l < /etc/ca-certificates.conf)" -eq "${CA_CERT_COUNT}" && \
+    test "$(stat -c %s /etc/ca-certificates.conf)" -eq "${CA_CONFIG_BYTES}" && \
+    printf '%s  %s\n' "${CA_CONFIG_SHA256}" /etc/ca-certificates.conf | sha256sum -c - && \
+    test "$(stat -c %s /etc/ssl/certs/ca-certificates.crt)" -eq "${CA_BUNDLE_BYTES}" && \
+    printf '%s  %s\n' "${CA_BUNDLE_SHA256}" /etc/ssl/certs/ca-certificates.crt | sha256sum -c - && \
+    printf '%s\n' \
+      'Types: deb' \
+      "URIs: https://snapshot.ubuntu.com/ubuntu/${APT_SNAPSHOT}/" \
+      'Suites: jammy jammy-updates jammy-security' \
+      'Components: main universe' \
+      'Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg' \
+      'Check-Valid-Until: no' \
+      > /etc/apt/sources.list.d/npa-snapshot.sources && \
+    rm -f /etc/apt/sources.list && \
+    apt-get update && \
+    installed_perl="$(dpkg-query -W -f='${Version}' perl-base)" && \
+    candidate_perl_base="$(apt-cache policy perl-base | sed -n 's/^  Candidate: //p')" && \
+    candidate_perl="$(apt-cache policy perl | sed -n 's/^  Candidate: //p')" && \
+    test "$installed_perl" = '5.34.0-3ubuntu1.8' && \
+    test "$installed_perl" = "$candidate_perl_base" && \
+    test "$installed_perl" = "$candidate_perl" && \
+    bash /usr/local/libexec/npa-habitat-verify-apt direct-records \
+      /tmp/npa-apt-runtime.lock /tmp/npa-runtime-direct-packages && \
+    install -d -m 0700 /tmp/npa-runtime-direct-debs && \
+    while IFS='|' read -r package version _digest; do \
+      (cd /tmp/npa-runtime-direct-debs && apt-get download "$package=$version") || exit 1; \
+    done < /tmp/npa-runtime-direct-packages && \
+    bash /usr/local/libexec/npa-habitat-verify-apt verify-direct \
+      /tmp/npa-runtime-direct-packages /tmp/npa-runtime-direct-debs && \
+    apt-get install -y --no-install-recommends /tmp/npa-runtime-direct-debs/*.deb && \
+    ! grep -R -nE '^[[:space:]]*URIs:[[:space:]]*http://' /etc/apt/sources.list.d && \
+    rm -rf /tmp/npa-apt-runtime.lock /tmp/npa-runtime-direct-debs \
+      /tmp/npa-runtime-direct-packages /var/lib/apt/lists/* \
+      /var/cache/apt/* /var/cache/debconf/* && \
+    rm -f /etc/ssh/ssh_host_* && \
+    groupadd --gid 1000 ubuntu && \
+    useradd --uid 1000 --gid 1000 --create-home --home-dir /home/ubuntu \
+      --shell /bin/bash --no-log-init ubuntu && \
+    test "$(id -u ubuntu)" -eq 1000 && \
+    test "$(id -g ubuntu)" -eq 1000 && \
+    install -d -o ubuntu -g ubuntu -m 0700 /home/ubuntu/.ssh && \
+    install -d -m 0755 /etc/ssh/sshd_config.d && \
+    printf '%s\n' 'PasswordAuthentication no' 'PermitRootLogin no' \
+      > /etc/ssh/sshd_config.d/99-npa-worker.conf && \
+    printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-npa-skypilot && \
+    chmod 0440 /etc/sudoers.d/90-npa-skypilot
+
+COPY --from=build /opt/venv /opt/venv
+COPY --from=build /opt/source-projection /usr/src/habitat-sim
+COPY --from=build /opt/notices /usr/share/doc/npa-habitat-sim
+COPY --from=build /opt/npa-source-provenance /usr/share/doc/npa-habitat-sim/npa-source-provenance
+COPY --from=npa-source-provenance /inputs/src/npa/__init__.py /opt/npa-runtime/npa/__init__.py
+COPY --from=npa-source-provenance /inputs/src/npa/workflows/__init__.py /opt/npa-runtime/npa/workflows/__init__.py
+COPY --from=npa-source-provenance /inputs/src/npa/workflows/habitat_sim_smoke.py /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/entrypoint.sh /usr/local/bin/npa-habitat-entrypoint
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/REDISTRIBUTION.md /usr/share/doc/npa-habitat-sim/REDISTRIBUTION.md
+COPY --from=npa-source-provenance /inputs/docker/workbench/habitat-sim/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-habitat-sim/THIRD_PARTY_NOTICES.md
+RUN printf '%s  %s\n' "${NPA_SOURCE_MANIFEST_SHA256}" \
+      /usr/share/doc/npa-habitat-sim/npa-source-provenance/npa-source-manifest.sha256 | \
+      sha256sum -c - && \
+    cd /usr/share/doc/npa-habitat-sim/npa-source-provenance && \
+    sha256sum -c npa-source-manifest.sha256 && \
+    printf '{"manifest_sha256":"%s","schema_version":"npa.source-provenance.v1","source_revision":"%s"}\n' \
+      "${NPA_SOURCE_MANIFEST_SHA256}" "${NPA_SOURCE_SHA}" | \
+    cmp - npa-source-provenance.json && \
+    chmod 0755 /usr/local/bin/npa-habitat-entrypoint && \
+    chmod 0644 /opt/npa-runtime/npa/__init__.py \
+      /opt/npa-runtime/npa/workflows/__init__.py \
+      /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py && \
+    chown -R root:root /opt/venv /opt/npa-runtime /usr/src/habitat-sim \
+      /usr/share/doc/npa-habitat-sim && \
+    cmp /usr/share/doc/npa-habitat-sim/npa-source-provenance/inputs/src/npa/__init__.py \
+      /opt/npa-runtime/npa/__init__.py && \
+    cmp /usr/share/doc/npa-habitat-sim/npa-source-provenance/inputs/src/npa/workflows/__init__.py \
+      /opt/npa-runtime/npa/workflows/__init__.py && \
+    cmp /usr/share/doc/npa-habitat-sim/npa-source-provenance/inputs/src/npa/workflows/habitat_sim_smoke.py \
+      /opt/npa-runtime/npa/workflows/habitat_sim_smoke.py && \
+    cmp /usr/share/doc/npa-habitat-sim/npa-source-provenance/inputs/docker/workbench/habitat-sim/entrypoint.sh \
+      /usr/local/bin/npa-habitat-entrypoint && \
+    test "$(id -u ubuntu)" -eq 1000 && test "$(id -g ubuntu)" -eq 1000 && \
+    test "$(stat -c '%u:%g:%a' /home/ubuntu/.ssh)" = '1000:1000:700' && \
+    test "$(stat -c '%u:%g:%a' /etc/sudoers.d/90-npa-skypilot)" = '0:0:440' && \
+    test "$(cat /etc/sudoers.d/90-npa-skypilot)" = \
+      'ubuntu ALL=(ALL) NOPASSWD:ALL' && \
+    test "$(stat -c '%u:%g:%a' /etc/ssh/sshd_config.d/99-npa-worker.conf)" = \
+      '0:0:644' && \
+    ! find / -xdev \( -name 'habitat-test-scenes.zip' -o -name 'skokloster-castle.glb' \
+      -o -name 'skokloster-castle.navmesh' -o -name 'ca-certificates*.deb' \
+      -o -name 'openssl*.deb' -o -name 'libssl3*.deb' \
+      -o -name '.git' -o -name '.gitconfig' \) \
+      -print -quit | grep -q .
+
+ENV PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PYTHONPATH=/opt/npa-runtime \
+    MAGNUM_LOG=verbose \
+    HABITAT_SIM_LOG=verbose \
+    NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility
+LABEL org.opencontainers.image.source="https://github.com/facebookresearch/habitat-sim" \
+      org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.licenses="LicenseRef-Habitat-Sim-Image-Closure-Pending" \
+      npa.tool="habitat-sim" \
+      npa.version="0.3.3-public-unbuilt" \
+      org.nebius.npa.source-manifest-sha256="${NPA_SOURCE_MANIFEST_SHA256}" \
+      org.nebius.npa.source-provenance-schema="npa.source-provenance.v1" \
+      org.nebius.npa.upstream-revision="57ee4941dc4765240f0f91f70b2c97a919bf9038" \
+      org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1" \
+      org.nebius.npa.sudo-bootstrap-contract="habitat-sim-skypilot-0.12.2-v1" \
+      org.nebius.npa.publication-status="quarantined-unbuilt"
+USER ubuntu
+ENTRYPOINT ["/usr/local/bin/npa-habitat-entrypoint"]
+CMD ["python3", "-m", "npa.workflows.habitat_sim_smoke", "--help"]

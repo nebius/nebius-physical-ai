@@ -74,6 +74,7 @@ CHECKED_TOOLREFS = [
     ("workbench.token_factory.caption", "npa.cli.workbench.token_factory", "caption"),
     ("workbench.token_factory.generate", "npa.cli.workbench.token_factory", "generate"),
     ("workbench.token_factory.reason", "npa.cli.workbench.token_factory", "reason"),
+    ("workbench.flex_pi.infer", "npa.cli.workbench.flex_pi", "infer"),
     ("workbench.vlm_eval.run", "npa.cli.workbench.vlm_eval", "run"),
     ("workbench.nurec.visualize", "npa.cli.nurec", "visualize"),
 ]
@@ -172,3 +173,23 @@ def test_hosted_model_override_survives_rendering(tool_ref, config_key, model) -
         assert argv[argv.index("--model") + 1] == model
     else:
         assert "--model" not in argv
+
+
+@pytest.mark.parametrize("profile", ["", "standard", "film"])
+def test_arena_capture_profile_preserves_published_image_default(profile):
+    from npa.orchestration.npa_workflow.catalog import drop_empty_optional_flags
+
+    tool = "workbench.isaac_arena.evaluate_video"
+    entry = TOOL_CATALOG[tool]
+    assert entry.config_defaults["video_profile"] == ""
+    argv = drop_empty_optional_flags(
+        tool,
+        [
+            profile if value == "{{config.video_profile}}" else value
+            for value in entry.argv_template
+        ],
+    )
+    if profile:
+        assert argv[argv.index("--video-profile") + 1] == profile
+    else:
+        assert "--video-profile" not in argv

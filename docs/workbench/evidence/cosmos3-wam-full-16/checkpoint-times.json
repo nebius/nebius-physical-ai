@@ -1,0 +1,40 @@
+{
+  "schema": "npa.cosmos3.wam-completed-checkpoint-times.v1",
+  "training_log_sha256": "4efb57566de9aca7f4a618958b00542014a66ed89c9f4d2aaaa5ff1adeec43ea",
+  "training_log_bytes": 794492874,
+  "events": [
+    {
+      "step": 500,
+      "checkpoint_ready_train_seconds_interval": [
+        4177.653564214706,
+        4178.653564214706
+      ],
+      "checkpoint_bearing_iteration_seconds": 444.94
+    },
+    {
+      "step": 1000,
+      "checkpoint_ready_train_seconds_interval": [
+        8062.653564214706,
+        8063.653564214706
+      ],
+      "checkpoint_bearing_iteration_seconds": 459.33
+    },
+    {
+      "step": 1500,
+      "checkpoint_ready_train_seconds_interval": [
+        11925.653564214706,
+        11926.653564214706
+      ],
+      "checkpoint_bearing_iteration_seconds": 434.85
+    },
+    {
+      "step": 2000,
+      "checkpoint_ready_train_seconds_interval": [
+        15796.653564214706,
+        15797.653564214706
+      ],
+      "checkpoint_bearing_iteration_seconds": 439.85
+    }
+  ],
+  "log_timestamp_resolution_seconds": 1
+}

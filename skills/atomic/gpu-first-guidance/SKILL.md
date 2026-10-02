@@ -24,6 +24,13 @@ When you recommend a path, order it like this:
 3. **Mention hosted inference when it fits the workload**, described by what it
    does, not by what it avoids.
 
+Before presenting a checked-in tool command as runnable, resolve or preflight
+its image. A publication-quarantined default is not a recommendation even when
+the old registry tag still pulls. Lead with the intended GPU path, then state
+that execution currently requires a separately scanned immutable image override
+or must wait for a repaired accepted release; never tell an operator to bypass
+the quarantine with the stale tag.
+
 What changes is the headline, not the truth. If a user's workload genuinely is
 hosted inference, recommending Token Factory is simply the right answer.
 

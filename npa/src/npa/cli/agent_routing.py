@@ -348,10 +348,22 @@ def usage_summary(data: Any) -> dict[str, int]:
     if not isinstance(usage, dict):
         return {}
     summary: dict[str, int] = {}
-    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+    for key in (
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "prompt_cache_hit_tokens",
+        "prompt_cache_miss_tokens",
+    ):
         value = usage.get(key)
         if isinstance(value, bool):
             continue
         if isinstance(value, (int, float)):
             summary[key] = int(value)
+    details = usage.get("prompt_tokens_details")
+    cached = details.get("cached_tokens") if isinstance(details, dict) else None
+    if cached is None:
+        cached = usage.get("prompt_cache_hit_tokens")
+    if type(cached) is int and 0 <= cached <= summary.get("prompt_tokens", 0):
+        summary["cached_tokens"] = cached
     return summary

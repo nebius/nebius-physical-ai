@@ -58,9 +58,9 @@ def test_tree_download_preserves_nested_file_bytes(tmp_path, method, prefix):
     client._s3.get_paginator.return_value.paginate.return_value = [
         {"Contents": [{"Key": prefix + "nested/weights.bin"}]}
     ]
-    client._s3.download_file.side_effect = lambda _b, _k, p: Path(p).write_bytes(
-        b"tensor-data"
-    )
+    client._s3.download_file.side_effect = lambda _b, _k, p, **_kwargs: Path(
+        p
+    ).write_bytes(b"tensor-data")
 
     getattr(client, method)("s3://bucket/" + prefix, str(tmp_path / "cache"))
 

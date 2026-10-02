@@ -1,4 +1,4 @@
-"""Select early PR tests and recognize conservative prose-only merge candidates."""
+"""Apply the same test coverage to PRs and merge candidates, except proven prose."""
 
 from __future__ import annotations
 
@@ -11,22 +11,6 @@ import re
 import subprocess
 
 
-_SUBSYSTEMS = (
-    ("npa/src/npa/cli/", ("npa/tests/cli",)),
-    ("npa/src/npa/agent_backend/", ("npa/tests/cli",)),
-    ("npa/src/npa/workbench/", ("npa/tests/workbench", "npa/tests/cli")),
-    ("npa/src/npa/clients/", ("npa/tests/clients",)),
-    ("npa/src/npa/orchestration/", ("npa/tests/orchestration", "npa/tests/workflows")),
-    ("npa/src/npa/workflows/", ("npa/tests/workflows",)),
-    ("npa/workflows/", ("npa/tests/workflows",)),
-)
-_BROWSER_PREFIXES = (
-    "npa/src/npa/agent_backend/",
-    "npa/src/npa/cli/agent",
-    "npa/tests/cli/test_agent",
-    "npa/tests/browser/",
-    "npa/scripts/run_agent_cypress.sh",
-)
 _PROSE_EXCLUSIONS = ("docs/cli/", "docs/security/", "docs/architecture/decisions/")
 
 
@@ -133,40 +117,20 @@ def _is_prose(repo_root: Path, base: str, head: str, change: _Change) -> bool:
     return _prose_edit(before, after)
 
 
-def _affected_paths(change: _Change) -> tuple[str, ...] | None:
-    if change.status not in {"A", "M"} or change.new_mode != "100644":
-        return None
-    path = change.path
-    if PurePosixPath(path).name in {"conftest.py", "__init__.py"}:
-        return None
-    if path.endswith(".md"):
-        return None
-    if path.startswith("npa/tests/browser/"):
-        return ()
-    if path.startswith("npa/tests/") and PurePosixPath(path).match("test_*.py"):
-        return (path,)
-    if path.startswith("npa/tests/"):
-        return None
-    for prefix, tests in _SUBSYSTEMS:
-        if path.startswith(prefix):
-            return tests
-    return None
-
-
 def _full_scope() -> dict:
-    return {"prose_only": False, "full_suite": True, "browser": True, "test_paths": []}
+    return {"prose_only": False, "full_suite": True, "browser": True}
 
 
 def classify(repo_root: Path, base: str, head: str, event: str) -> dict:
     """Select test work without allowing uncertain changes to skip the suite.
 
     Args:
-        repo_root: Checkout containing both comparison commits and candidate tests.
+        repo_root: Checkout containing both comparison commits.
         base: Full SHA of the trusted target commit.
         head: Full SHA of the candidate actually checked out by CI.
         event: GitHub event name; only PRs and merge groups may reduce work.
     Returns:
-        JSON-compatible scope containing prose, suite, browser, and test selections.
+        JSON-compatible scope containing prose, full-suite, and browser decisions.
     Raises:
         ValueError: A comparison SHA is malformed.
         subprocess.CalledProcessError: Git cannot prove the comparison.
@@ -184,29 +148,8 @@ def classify(repo_root: Path, base: str, head: str, event: str) -> dict:
             "prose_only": True,
             "full_suite": False,
             "browser": False,
-            "test_paths": [],
         }
-    if event == "merge_group":
-        return _full_scope()
-    return _pull_request_scope(repo_root, relevant)
-
-
-def _pull_request_scope(repo_root: Path, changes: list[_Change]) -> dict:
-    tests: set[str] = set()
-    for change in changes:
-        selected = _affected_paths(change)
-        if selected is None:
-            return _full_scope()
-        tests.update(selected)
-    if not all((repo_root / path).exists() for path in tests):
-        return _full_scope()
-    browser = any(change.path.startswith(_BROWSER_PREFIXES) for change in changes)
-    return {
-        "prose_only": False,
-        "full_suite": False,
-        "browser": browser,
-        "test_paths": sorted(tests),
-    }
+    return _full_scope()
 
 
 def main() -> int:
