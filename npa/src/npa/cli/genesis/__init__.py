@@ -2255,6 +2255,11 @@ def deploy_cmd(
     default: bool = typer.Option(
         False, "--default", help="Set this workbench as the default."
     ),
+    image: str = typer.Option(
+        "",
+        "--image",
+        help="Explicit rebuilt Genesis image; required while the public release is quarantined.",
+    ),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", help="Output format."
     ),
@@ -2769,7 +2774,7 @@ def deploy_cmd(
                     service_env,
                     owner=ssh_user,
                 )
-                image_ref = container_image_for_tool("genesis")
+                image_ref = image.strip() or container_image_for_tool("genesis")
                 deploy_workbench_container(
                     ssh,
                     image_ref=image_ref,

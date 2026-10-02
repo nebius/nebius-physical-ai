@@ -130,6 +130,15 @@ npa workbench workflow preflight-images <spec.yaml> --project <alias> --json
 This reproduces the exact manifest fetch a worker performs, with the credentials
 the run injects, and reports each image `ok` / `not_found` / `forbidden`.
 
+A resolver error containing `no consumable public release` or `quarantined` is
+not one of those pull states. It happens before submission because repository
+policy has withdrawn trust from the recorded release bytes. Do not retry, add a
+pull secret, or paste the stale public tag into an override. Either select an
+independently scanned immutable operator image through the explicit `--image`
+or per-tool `--image-override` surface, or wait for a repaired accepted release.
+Read-only status, logs, and artifact discovery for an existing run remain valid
+and should be used for the post-mortem.
+
 - `not_found` → the selected tag or digest was not published in that registry.
   Official NPA release images come from public GHCR; an operator-supplied BYOF
   image must be built and pushed to the registry named in its reference.

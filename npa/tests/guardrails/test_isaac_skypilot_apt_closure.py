@@ -68,20 +68,20 @@ def _fake_dpkg_query(path: Path) -> None:
 
 @pytest.fixture(name="isaac_sources")
 def fixture_isaac_sources() -> tuple[tuple[str, str, str], ...]:
-    """Load canonical and repair sources with their package-block boundaries."""
+    """Load the canonical source with its package-block boundaries.
+
+    Isaac Lab intentionally has no repair derivative: a child layer cannot remove
+    SSH host keys generated in an already-published ancestor layer.
+    """
 
     common = (DOCKER_ROOT / "common" / "install_isaac_runtime_base.sh").read_text()
-    repair = (DOCKER_ROOT / "isaac-lab" / "Dockerfile.k8s-prereqs").read_text()
-    return (
-        (common, 'if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]', "printf 'ubuntu"),
-        (repair, "RUN apt-get update", "&& rm -rf /var/lib/apt/lists/*"),
-    )
+    return ((common, 'if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]', "printf 'ubuntu"),)
 
 
 def test_isaac_sources_bake_skypilot_early_packages(
     isaac_sources: tuple[tuple[str, str, str], ...],
 ) -> None:
-    """Require the canonical installer and derived repair to carry the closure."""
+    """Require the canonical installer to carry the early package closure."""
 
     for source, start, end in isaac_sources:
         _assert_early_package_block(source, start, end)
@@ -99,7 +99,7 @@ def test_status_loop_requires_installed_packages(
     isaac_sources: tuple[tuple[str, str, str], ...],
     tmp_path: Path,
 ) -> None:
-    """Execute both source assertions against installed and invalid dpkg states."""
+    """Execute the source assertion against installed and invalid dpkg states."""
 
     _fake_dpkg_query(tmp_path / "dpkg-query")
     environment = {

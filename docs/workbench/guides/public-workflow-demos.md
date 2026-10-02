@@ -19,6 +19,14 @@ qualification.
 NuRec additionally requires NVIDIA NGC access. Isaac runtime downloads use the
 existing Workbench EULA policy; optional telemetry remains off.
 
+Check the [current image acceptance status](../container-image-catalog.md#2026-09-24-ssh-host-identity-quarantine)
+before starting a new run. The recorded Isaac Lab and SONIC image pins are now
+quarantined under the repository's image-security policy. They remain in these
+recipes to identify the historical GPU experiments; those results do not
+qualify the images for current use. New navigation and synthetic-data execution
+requires replacement images that pass the catalog's acceptance procedure.
+NuRec uses its separately access-controlled NVIDIA NRE image.
+
 Install the complete combined demo revision. A checkout containing only one of
 the original implementation PRs does not contain all the required adapters.
 The launcher stages the installed source automatically for every run.

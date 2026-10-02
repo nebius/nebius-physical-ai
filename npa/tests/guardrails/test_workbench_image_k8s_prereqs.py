@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import re
 
 import pytest
 
@@ -67,7 +68,6 @@ SKYPILOT_HOSTED_IMAGES = (
 DERIVED_PREREQ_IMAGES = (
     "cosmos3-reason",
     "groot",
-    "isaac-lab",
     "lerobot",
     "sim2real-control",
     "sonic",
@@ -78,6 +78,12 @@ DERIVED_PREREQ_IMAGES = (
 #: recursive chmod would rewrite multi-GB layers). Not universal: the lerobot image has
 #: no /isaac-sim at all, so requiring the usermod there would pin a no-op.
 ISAAC_BASED_IMAGES = ("isaac-lab", "sonic")
+
+
+def test_isaac_lab_does_not_offer_a_layer_only_host_key_repair() -> None:
+    """Ancestor SSH identities require rebuilding the canonical image."""
+
+    assert not (DOCKER_ROOT / "isaac-lab" / "Dockerfile.k8s-prereqs").exists()
 
 
 #: What every SkyPilot-hosted image needs, established by bisecting derived images against a
@@ -108,6 +114,114 @@ def _ingredients_for(tool: str) -> tuple[tuple[str, str], ...]:
     if tool in ISAAC_BASED_IMAGES:
         return REQUIRED_INGREDIENTS + (SSH_SERVER_INGREDIENT, PATH_ORDERING_INGREDIENT)
     return REQUIRED_INGREDIENTS
+
+
+def _dockerfile_instructions(text: str) -> list[str]:
+    """Join backslash-continued Dockerfile instructions for layer-local checks."""
+
+    instructions: list[str] = []
+    current: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not current and (not line or line.startswith("#")):
+            continue
+        current.append(line)
+        if not line.endswith("\\"):
+            instructions.append(" ".join(current))
+            current = []
+    if current:
+        instructions.append(" ".join(current))
+    return instructions
+
+
+def _declares_operator_base_image_label(text: str) -> bool:
+    """Detect the retired label without confusing it with safe provenance keys."""
+
+    key = r'(?:npa\.base_image|"npa\.base_image"|\'npa\.base_image\')'
+    assignment = re.compile(rf"(?<!\S){key}\s*=", re.IGNORECASE)
+    legacy_first_key = re.compile(rf"^{key}\s+", re.IGNORECASE)
+    for instruction in _dockerfile_instructions(text):
+        directive, separator, body = instruction.partition(" ")
+        if not separator or directive.upper() != "LABEL":
+            continue
+        if assignment.search(body) or legacy_first_key.search(body):
+            return True
+    return False
+
+
+@pytest.mark.parametrize(
+    ("dockerfile", "expected"),
+    (
+        ('LABEL npa.base_image="${BASE_IMAGE}"', True),
+        ('LABEL "npa.base_image" = "${BASE_IMAGE}"', True),
+        ("LABEL 'npa.base_image' ${BASE_IMAGE}", True),
+        (
+            (
+                'LABEL npa.tool="envgen" \\\n'
+                '      npa.base_image="registry.example/operator/base:tag"'
+            ),
+            True,
+        ),
+        ('LABEL npa.base.image="npa-envgen"', False),
+        ('LABEL description="do not serialize npa.base_image values"', False),
+        ('ARG npa.base_image="${BASE_IMAGE}"', False),
+    ),
+)
+def test_operator_base_image_label_guard_recognizes_only_label_keys(
+    dockerfile: str, expected: bool
+) -> None:
+    assert _declares_operator_base_image_label(dockerfile) is expected
+
+
+def test_no_workbench_dockerfile_serializes_operator_base_image_references() -> None:
+    """OCI config must not disclose the registry path used by a trusted builder."""
+
+    checked: list[str] = []
+    for dockerfile in sorted(DOCKER_ROOT.rglob("Dockerfile*")):
+        checked.append(str(dockerfile.relative_to(DOCKER_ROOT)))
+        assert not _declares_operator_base_image_label(
+            dockerfile.read_text(encoding="utf-8")
+        ), (
+            f"{dockerfile}: npa.base_image exposes the selected base reference in "
+            "the public OCI config; use a registry-neutral provenance label instead"
+        )
+
+    assert checked, "guard did not inspect any workbench Dockerfiles"
+
+
+def test_openssh_install_layers_do_not_bake_reusable_host_keys() -> None:
+    """Every apt-installed sshd must discard build-time keys in that same layer."""
+
+    cleanup = "rm -f /etc/ssh/ssh_host_*"
+    checked: list[str] = []
+    for dockerfile in sorted(DOCKER_ROOT.rglob("Dockerfile*")):
+        for instruction in _dockerfile_instructions(
+            dockerfile.read_text(encoding="utf-8")
+        ):
+            if (
+                "apt-get install" not in instruction
+                or "openssh-server" not in instruction
+            ):
+                continue
+            checked.append(str(dockerfile.relative_to(DOCKER_ROOT)))
+            assert cleanup in instruction, (
+                f"{dockerfile}: openssh-server generated reusable host private keys in "
+                "the image layer"
+            )
+            assert instruction.index("openssh-server") < instruction.index(cleanup)
+
+    for installer in sorted((DOCKER_ROOT / "common").glob("*.sh")):
+        text = installer.read_text(encoding="utf-8")
+        if "apt-get install" not in text or "openssh-server" not in text:
+            continue
+        checked.append(str(installer.relative_to(DOCKER_ROOT)))
+        assert cleanup in text, (
+            f"{installer}: openssh-server generated reusable host private keys in "
+            "the image layer"
+        )
+        assert text.index("openssh-server") < text.index(cleanup)
+
+    assert checked, "guard did not find any openssh-server install layers"
 
 
 @pytest.mark.parametrize("tool", SKYPILOT_HOSTED_IMAGES)
@@ -286,10 +400,18 @@ def test_genesis_derived_workflow_images_pin_the_bootstrap_closure(tool: str) ->
     installer = (
         DOCKER_ROOT / "common" / "install_workflow_runtime_prereqs.sh"
     ).read_text(encoding="utf-8")
-    assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in installer
+    snapshot_config = (
+        DOCKER_ROOT / "common" / "configure_ubuntu_snapshot.sh"
+    ).read_text(encoding="utf-8")
+    assert "configure-ubuntu-snapshot" in installer
+    assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in snapshot_config
+    assert "ubuntu:22.04" in snapshot_config
+    assert "ubuntu:24.04" in snapshot_config
     assert "ubuntu:22.04" in installer
+    assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
+    assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
     assert "apt-get --fix-broken install -y --no-install-recommends" in installer
-    assert "linux-libc-dev=5.15.0-190.200" in installer
+    assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     assert "sudo" in installer and "rsync" in installer
     assert "NOPASSWD" in installer
     assert "sudo -n true" in installer

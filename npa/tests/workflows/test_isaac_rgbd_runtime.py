@@ -265,7 +265,12 @@ def test_render_stages_branch_source_in_gpu_and_cpu_tasks(monkeypatch, workflow)
     monkeypatch.setenv("NPA_SRC_S3_URI", source)
     path = Path(__file__).resolve().parents[3] / f"workflows/testing/{workflow}.yaml"
     prepared = prepare_npa_workflow_for_submit(
-        path, run_id="source-proof", render_options=SkypilotRenderOptions()
+        path,
+        run_id="source-proof",
+        render_options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/workbench",
+            materialize_registry_secrets=False,
+        ),
     )
     try:
         docs = [
@@ -288,3 +293,21 @@ def test_render_stages_branch_source_in_gpu_and_cpu_tasks(monkeypatch, workflow)
         assert "npa-src" in validation["setup"]
     finally:
         prepared.temp_dir.cleanup()
+
+
+def test_capture_rejects_quarantined_public_default_before_submission(monkeypatch):
+    from npa.orchestration.npa_workflow.errors import NpaWorkflowError
+    from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
+    from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/staged-source/npa")
+    path = (
+        Path(__file__).resolve().parents[3]
+        / "workflows/testing/multicamera-rgbd-capture.yaml"
+    )
+    with pytest.raises(NpaWorkflowError, match="isaac-lab.*quarantined"):
+        prepare_npa_workflow_for_submit(
+            path,
+            run_id="quarantine-proof",
+            render_options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        )

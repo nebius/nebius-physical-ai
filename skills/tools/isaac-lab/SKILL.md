@@ -77,13 +77,21 @@ API:
 CLI:
 
 ```bash
-npa workbench isaac-lab deploy
+npa workbench isaac-lab deploy --image <reviewed-image@sha256:digest>
 npa workbench isaac-lab train
 npa workbench isaac-lab eval
 npa workbench isaac-lab status
 npa workbench isaac-lab system-info
 npa workbench isaac-lab list
 ```
+
+The previously accepted public Isaac Lab image is publication-quarantined: its
+layers contain package-generated SSH host private keys. The default container
+resolver therefore refuses it even though the historical tag may still pull.
+For container/BYOVM deployment, pass `--image` with a rebuilt, byte-scanned
+immutable digest; for workflows, use the exact toolRef `--image-override`.
+Never override with the withdrawn public tag. VM-native deployment is a
+different path and does not establish a replacement container release.
 
 ### Standalone checkpoint eval
 
