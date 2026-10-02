@@ -192,7 +192,7 @@ def test_status_and_logs_use_handle_runtime(
         ("logs", "refresh"),
     ],
 )
-@pytest.mark.parametrize("malformed", ["false", 0, 1])
+@pytest.mark.parametrize("malformed", ["false", "true", 0, 1, None, [], {}, 0.0])
 def test_sky_api_bridge_rejects_non_boolean_control_flags_before_api_call(
     monkeypatch: pytest.MonkeyPatch,
     action: str,

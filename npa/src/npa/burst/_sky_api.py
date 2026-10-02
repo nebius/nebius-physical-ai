@@ -105,7 +105,10 @@ def _json_boolean(payload: dict[str, Any], key: str, *, default: bool) -> bool:
     if key not in payload:
         return default
     value = payload[key]
-    if not isinstance(value, bool):
+    # This file runs directly in SkyPilot's venv, where npa is not installed.
+    # Keep this standalone adapter aligned with literal_values.require_boolean;
+    # the contract test covers both decoders without adding an NPA dependency.
+    if type(value) is not bool:
         raise ValueError(f"{key} must be a JSON boolean")
     return value
 
