@@ -1023,10 +1023,11 @@ def test_gang_capacity_waits_for_unbound_pending_gpu_demand() -> None:
         unbound_pending_gpu_requests=1,
     )
 
-    with pytest.raises(PendingGpuPlacementError, match="active unbound GPU pod"):
+    with pytest.raises(PendingGpuPlacementError, match="active unbound GPU pod") as exc:
         preflight_kubernetes_gpu_gang(
             inventory, accelerator="RTXPRO6000:1", node_count=2
         )
+    assert "available placement evidence cannot rule out contention" in str(exc.value)
 
 
 def test_gang_capacity_ignores_pending_pods_for_other_accelerators() -> None:

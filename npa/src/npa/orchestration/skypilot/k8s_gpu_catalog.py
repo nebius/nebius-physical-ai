@@ -1082,8 +1082,9 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
         if pending_pods:
             raise PendingGpuPlacementError(
                 "free shared GPU capacity is indeterminate: Kubernetes has "
-                f"{pending_pods} active unbound GPU pod(s) that could contend for "
-                f"{shape.accelerator.name} requesting {pending_requests} GPU(s); wait "
+                f"{pending_pods} active unbound GPU pod(s) requesting "
+                f"{pending_requests} GPU(s); available placement evidence cannot "
+                f"rule out contention for {shape.accelerator.name}; wait "
                 "for authoritative placement or remove only the owned pending workload"
             )
 
