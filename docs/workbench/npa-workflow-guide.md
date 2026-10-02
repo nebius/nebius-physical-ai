@@ -34,7 +34,33 @@ npa workbench workflow preflight-images "$workflow_spec" \
 ```
 
 Review the resolved GPU shape, image, and output prefix. Image preflight may
-create and delete a temporary probe pod. Then run the workload:
+create and delete a temporary probe pod.
+
+Both `preflight-images` and `submit` accept
+`--image-pull-timeout-seconds` for each target pull and
+`--image-bootstrap-timeout-seconds` for each capability probe. Set the pull
+timeout to `0` to wait without a deadline for a large authenticated cold pull;
+interrupting the command still verifies deletion of its owned probe. When
+omitted, the pull timeout inherits the bootstrap timeout (default: 1800 seconds),
+preserving existing commands, including bootstrap timeout `0`. An explicit pull
+timeout changes only the pull probe. `timed_out` means observation expired; it
+does not prove an access failure. Recovery commands retain the selected value.
+The unlimited setting removes the NPA observation and Pod deadlines. Node
+container-runtime failures still report `image_pull_failed`, including canceled
+layer extraction; inspect the node's pull failure before retrying.
+
+Image preflight follows SkyPilot's resource override behavior. `--infra` replaces
+the declared target for a single task. SkyPilot ignores that override for
+multi-task YAML and JobGroups, while runtime workflows can also launch singleton
+waves. Preflight therefore checks both declared and selected pull authorities
+for a workflow with multiple reachable tasks, including parallel and mutually
+exclusive decision branches. Set an explicit cloud on every resource profile;
+a missing cloud cannot be certified through an override that SkyPilot may ignore.
+Kubernetes resource regions must agree with the complete selected context.
+This conservative check can require operator registry access even when a
+particular runtime execution uses only singleton Kubernetes waves.
+
+Then run the workload:
 
 ```bash
 npa workbench workflow submit "$workflow_spec" \

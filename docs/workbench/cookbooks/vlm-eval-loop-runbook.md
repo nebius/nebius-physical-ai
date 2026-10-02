@@ -84,6 +84,9 @@ the transported request objects differ only in `model`. It writes
 requires escalation on disagreement or judge error. Distinct requested aliases
 that resolve to the same served model produce `judge_identity_collision`, retain
 both complete outcomes, and require escalation instead of reporting agreement.
+Models requiring incompatible generation settings are rejected before input
+preparation or provider calls. In particular, Kimi-K3 cannot participate in this
+shared-temperature experiment; use individual evaluation for that model.
 The report is always
 `audit_only`; agreement does not qualify either model, estimate an operational
 disagreement rate, establish physical correctness, or certify robot safety.
