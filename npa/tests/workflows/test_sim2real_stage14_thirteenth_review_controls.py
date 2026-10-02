@@ -31,7 +31,10 @@ SOURCE_SHA = "b" * 40
 DIGEST = "a" * 64
 IMAGE_DIGEST = "c" * 64
 ATTEMPT = "gold_heldout-outer-01-attempt-" + "d" * 32
-FRAME_BYTES = b"\x89PNG\r\n\x1a\nframe"
+FRAME_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c02"
+    "0000000b4944415478da6364f80f00010501012718e3660000000049454e44ae426082"
+)
 TRAIN_JOB = k8s_job_name("s2r-byo-isaac-train", RUN_ID)
 CHECKPOINT = (
     f"{ROOT}/byo-trainer/{TRAIN_JOB}/{artifact_tag('outer-01-iter-01')}/model_latest.pt"
@@ -712,6 +715,7 @@ def test_stage14_does_not_update_aliases_after_immutable_failure(
             return '"etag"'
 
     monkeypatch.setattr(stage14, "storage", lambda: Storage())
+    state = stage14._capture_stage14_publication_snapshots(state)
     result = SimpleNamespace(
         heldout_frame_count=1,
         to_dict=lambda: {"heldout_frame_count": 1},
@@ -753,6 +757,7 @@ def test_disabled_mcap_removes_every_stale_uri(tmp_path: Path) -> None:
         rrd_uri="s3://new/rrd",
         mcap_uri="",
         report_uri="s3://new/report",
+        journal_uri="s3://new/.sim2real-publication.json",
     )
     sealed = json.loads(path.read_text())
     assert "mcap_uri" not in sealed

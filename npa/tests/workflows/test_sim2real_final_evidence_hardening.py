@@ -15,6 +15,7 @@ from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.stage14_finalize import download_plan
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
+    _capture_regen_publication_snapshots,
     _current_checkpoint_sources,
     _download_if_exists,
     _download_render_tree,
@@ -663,7 +664,13 @@ def test_relative_regeneration_directory_publishes_absolute_source(
     assert publication.local_dir.is_absolute()
     assert publication.rrd_path.is_absolute()
     assert publication.report_path.is_absolute()
-    publish_regen_outputs(_config(), local_dir, client=Storage())
+    storage = Storage()
+    publish_regen_outputs(
+        _config(),
+        local_dir,
+        client=storage,
+        snapshots=_capture_regen_publication_snapshots(_config(), storage),
+    )
 
 
 def test_exact_legacy_gold_render_uri_remains_supported(tmp_path: Path) -> None:

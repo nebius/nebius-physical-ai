@@ -7,7 +7,7 @@ import hashlib
 import json
 import secrets
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -24,15 +24,20 @@ from npa.workflows.sim2real.component_authority import (
     COMPONENT_URI_KEYS as _COMPONENT_URI_KEYS,  # noqa: F401 - compatibility
     stage14_report_authority_sha256,
     validate_component_records,
+    validate_remote_stage4_authority,
 )
 from npa.workflows.sim2real.decision_authority import (
     gold_report_sha256,
     validate_stage11_decision,
 )
 from npa.workflows.sim2real.publication import (
+    MutablePublicationTransaction,
+    RemoteObjectSnapshot,
     remote_object_snapshot,
-    replace_mutable_file,
     upload_immutable_file,
+)
+from npa.workflows.sim2real.stage10_execution import (
+    validate_materialized_render_tree,
 )
 from npa.workflows.sim2real.stage10_authority import validate_stage10_input_scope
 from npa.workflows.sim2real.workflow_io import (
@@ -574,6 +579,7 @@ class _Stage14State:
     canonical_rrd_uri: str = ""
     canonical_mcap_uri: str = ""
     canonical_report_uri: str = ""
+    publication_snapshots: dict[str, RemoteObjectSnapshot | None] | None = None
 
 
 def _localize_iteration_paths(
@@ -722,6 +728,14 @@ def _load_component_records(state: _Stage14State) -> list[dict[str, Any]]:
                 raise ValueError(
                     f"Stage {stage} ComponentRecord pointer/history mismatch"
                 )
+        validate_remote_stage4_authority(
+            state.root,
+            components[3],
+            lambda uri: read_json(
+                uri,
+                directory=state.work / "stage-04-nested-authority",
+            ),
+        )
     except (KeyError, TypeError, ValueError) as exc:
         raise RuntimeError("Stage 14 rejected an invalid ComponentRecord") from exc
     return components
@@ -743,6 +757,30 @@ def _assert_stage14_publication_preconditions(state: _Stage14State) -> None:
         expected_gold_report_sha256=state.gold_report_bytes_sha256,
     )
     _assert_publishable_policy_metadata(metadata, state.gold)
+
+
+def _validate_stage14_materialized_frames(state: _Stage14State) -> None:
+    """Revalidate downloaded frames against the sealed Stage 10 byte manifest."""
+
+    lineage = state.gold.get("render_lineage")
+    manifest = state.gold.get("render_manifest")
+    if not isinstance(lineage, dict) or not isinstance(manifest, dict):
+        raise RuntimeError("Stage 14 gold report lacks render byte authority")
+    relative = lineage.get("local_relative_dir")
+    if not isinstance(relative, str) or not relative:
+        raise RuntimeError("Stage 14 gold report lacks a local render path")
+    render_dir = state.local / relative
+    _selection, candidate = _resolve_stage14_selection(
+        state.evidence,
+        state.root,
+        state.args.run_id,
+    )
+    validate_materialized_render_tree(
+        render_dir,
+        manifest,
+        candidate,
+        require_frame_identity=True,
+    )
 
 
 def _stage14_report_payload(
@@ -779,6 +817,7 @@ def _stage14_report_payload(
         "mcap_uri": state.mcap_uri,
         "report_uri": state.report_uri,
         "publication_id": state.publication_id,
+        "publication_journal_uri": (f"{state.root}/reports/.sim2real-publication.json"),
         "canonical_rrd_uri": state.canonical_rrd_uri or state.rrd_uri,
         "canonical_mcap_uri": state.canonical_mcap_uri or state.mcap_uri,
         "canonical_report_uri": state.canonical_report_uri or state.report_uri,
@@ -974,14 +1013,20 @@ def _publish_stage14_outputs(
     client = storage()
     canonical_report = state.canonical_report_uri or state.report_uri
     component_pointer = f"{state.root}/components/stage_14.json"
-    snapshots = {
-        uri: remote_object_snapshot(client, uri)
-        for uri in (
-            canonical_report,
-            *(alias_uri for _path, _immutable_uri, alias_uri in recordings),
-            component_pointer,
+    lock_uri = f"{state.root}/reports/.sim2real-publication.json"
+    mutable_uris = (
+        canonical_report,
+        *(alias_uri for _path, _immutable_uri, alias_uri in recordings),
+        component_pointer,
+        lock_uri,
+    )
+    snapshots = state.publication_snapshots
+    if snapshots is None:
+        raise RuntimeError(
+            "Stage 14 publication snapshots were not captured before validation"
         )
-    }
+    if any(uri not in snapshots for uri in mutable_uris):
+        raise RuntimeError("Stage 14 publication snapshot set is incomplete")
     for path, immutable_uri, _alias_uri in recordings:
         upload_immutable_file(client, path, immutable_uri)
     _seal_stage14_report(report, rrd, mcap)
@@ -998,31 +1043,68 @@ def _publish_stage14_outputs(
         "required_artifacts": ("rrd", "mcap", "report"),
     }
     publish_built_component_history(**component_kwargs, client=client)
-    if canonical_report != state.report_uri:
-        replace_mutable_file(
-            client,
-            report_path,
-            canonical_report,
-            snapshots[canonical_report],
-        )
-    for path, immutable_uri, alias_uri in recordings:
-        if alias_uri != immutable_uri:
-            replace_mutable_file(
-                client,
-                path,
-                alias_uri,
-                snapshots[alias_uri],
+    with MutablePublicationTransaction(
+        client,
+        lock_uri=lock_uri,
+        lock_snapshot=snapshots[lock_uri],
+        transaction_id=state.publication_id,
+    ) as transaction:
+        for path, immutable_uri, alias_uri in recordings:
+            if alias_uri != immutable_uri:
+                transaction.replace_file(
+                    path,
+                    alias_uri,
+                    snapshots[alias_uri],
+                    immutable_uri=immutable_uri,
+                )
+        if canonical_report != state.report_uri:
+            transaction.replace_file(
+                report_path,
+                canonical_report,
+                snapshots[canonical_report],
+                immutable_uri=state.report_uri,
             )
-    publish_built_component_pointer(
-        **component_kwargs,
-        client=client,
-        snapshot=snapshots[component_pointer],
+        publish_built_component_pointer(
+            **component_kwargs,
+            client=client,
+            snapshot=snapshots[component_pointer],
+            transaction=transaction,
+            immutable_uri=component_record_history_uri(
+                state.root,
+                14,
+                component_record["content_sha256"],
+            ),
+        )
+
+
+def _capture_stage14_publication_snapshots(
+    state: _Stage14State,
+) -> _Stage14State:
+    """Capture mutable authority versions before validating source authority."""
+
+    canonical_report = state.canonical_report_uri or state.report_uri
+    lock_uri = f"{state.root}/reports/.sim2real-publication.json"
+    uris = (
+        canonical_report,
+        state.canonical_rrd_uri or state.rrd_uri,
+        state.canonical_mcap_uri or state.mcap_uri,
+        f"{state.root}/components/stage_14.json",
+        lock_uri,
+    )
+    client = storage()
+    return replace(
+        state,
+        publication_snapshots={
+            uri: remote_object_snapshot(client, uri) for uri in uris
+        },
     )
 
 
 def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None:
     state = _materialize_stage14(args, root=root, work=work)
+    state = _capture_stage14_publication_snapshots(state)
     _assert_stage14_publication_preconditions(state)
+    _validate_stage14_materialized_frames(state)
     components = _load_component_records(state)
     report, policy_metadata, reports = _build_stage14_report(state, components)
     rrd, mcap = _emit_stage14_outputs(

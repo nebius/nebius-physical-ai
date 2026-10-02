@@ -173,6 +173,21 @@ def _assert_render_frame_bytes(
             raise RuntimeError(
                 f"Stage 10 render frame bytes disagree with manifest: {relative}"
             )
+        try:
+            from io import BytesIO
+
+            from PIL import Image
+
+            with Image.open(BytesIO(payload)) as image:
+                if image.format != "PNG":
+                    raise ValueError("decoded image is not PNG")
+                image.verify()
+            with Image.open(BytesIO(payload)) as image:
+                image.load()
+        except (OSError, SyntaxError, ValueError) as exc:
+            raise RuntimeError(
+                f"Stage 10 render frame bytes are not a decodable PNG: {relative}"
+            ) from exc
 
 
 def validate_materialized_render_tree(

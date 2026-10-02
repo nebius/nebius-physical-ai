@@ -13,6 +13,7 @@ from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
 from npa.workflows.sim2real.publication import (
+    MutablePublicationTransaction,
     RemoteObjectSnapshot,
     replace_mutable_file,
     upload_immutable_file,
@@ -604,6 +605,8 @@ def publish_built_component_pointer(
     required_artifacts: tuple[str, ...],
     client: Any | None = None,
     snapshot: RemoteObjectSnapshot | None = None,
+    transaction: MutablePublicationTransaction | None = None,
+    immutable_uri: str = "",
 ) -> dict[str, Any]:
     """Publish only the mutable canonical pointer for an already-built record."""
 
@@ -618,7 +621,20 @@ def publish_built_component_pointer(
     with tempfile.TemporaryDirectory(
         prefix=f"npa-sim2real-component-{expected_stage:02d}-"
     ) as directory:
-        if client is None:
+        if transaction is not None:
+            path = Path(directory) / "pointer" / Path(urlparse(uri).path).name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(record, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            transaction.replace_file(
+                path,
+                uri,
+                snapshot,
+                immutable_uri=immutable_uri,
+            )
+        elif client is None:
             write_json(uri, record, directory=Path(directory) / "pointer")
         else:
             path = Path(directory) / "pointer" / Path(urlparse(uri).path).name

@@ -11,7 +11,7 @@ import shlex
 import shutil
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,7 @@ from npa.workflows.sim2real.checkpoint_selection import (
 from npa.workflows.sim2real.component_authority import (
     stage14_report_authority_sha256,
     validate_component_records,
+    validate_remote_stage4_authority,
     validate_stage14_component_record,
 )
 from npa.workflows.sim2real.constants import SCHEMA_E2E_REPORT
@@ -43,9 +44,9 @@ from npa.workflows.sim2real.stage10_authority import (
 )
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.publication import (
-    delete_mutable_file,
+    MutablePublicationTransaction,
+    RemoteObjectSnapshot,
     remote_object_snapshot,
-    replace_mutable_file,
     upload_immutable_file,
     upload_immutable_tree,
 )
@@ -1408,6 +1409,7 @@ def _seal_regen_publication_report(
     rrd_uri: str,
     mcap_uri: str,
     report_uri: str,
+    journal_uri: str,
 ) -> None:
     report = _read_retained_json(report_path, source="Sim2Real final report")
     report["publication"] = {
@@ -1415,7 +1417,9 @@ def _seal_regen_publication_report(
         "rrd_uri": rrd_uri,
         "mcap_uri": mcap_uri,
         "report_uri": report_uri,
+        "journal_uri": journal_uri,
     }
+    report["publication_journal_uri"] = journal_uri
     report["rrd_uri"] = rrd_uri
     report["report_uri"] = report_uri
     if mcap_uri:
@@ -1582,6 +1586,7 @@ def _publish_regen_final_report(
             rrd_uri=publication.immutable_rrd_uri,
             mcap_uri=mcap_uri,
             report_uri=f"{publication.generation_prefix}sim2real-report.json",
+            journal_uri=(f"{publication.prefix}reports/.sim2real-publication.json"),
         )
         upload_immutable_file(
             storage,
@@ -1618,6 +1623,23 @@ def _publish_regen_final_report(
     return None
 
 
+def _capture_regen_publication_snapshots(
+    config: Sim2RealLoopConfig,
+    storage: StorageClient,
+) -> dict[str, RemoteObjectSnapshot | None]:
+    """Capture every mutable generation target before authority validation."""
+
+    prefix = run_prefix_uri(config)
+    uris = (
+        f"{prefix}reports/sim2real-report.json",
+        f"{prefix}reports/sim2real.rrd",
+        f"{prefix}reports/sim2real.mcap",
+        f"{prefix}components/stage_14.json",
+        f"{prefix}reports/.sim2real-publication.json",
+    )
+    return {uri: remote_object_snapshot(storage, uri) for uri in uris}
+
+
 def publish_regen_outputs(
     config: Sim2RealLoopConfig,
     local_dir: Path,
@@ -1626,6 +1648,7 @@ def publish_regen_outputs(
     publication_id: str = "",
     mcap_uri: str = "",
     client: StorageClient | None = None,
+    snapshots: dict[str, RemoteObjectSnapshot | None] | None = None,
 ) -> str:
     """Publish immutable regeneration evidence before fenced canonical aliases.
 
@@ -1636,6 +1659,7 @@ def publish_regen_outputs(
         publication_id: Optional immutable recording generation.
         mcap_uri: Immutable MCAP URI for the same generation.
         client: Optional configured storage client.
+        snapshots: Mutable targets captured before source-authority validation.
     Returns:
         Canonical uploaded RRD URI.
     Raises:
@@ -1649,15 +1673,22 @@ def publish_regen_outputs(
     canonical_rrd_uri = f"{publication.prefix}reports/sim2real.rrd"
     canonical_mcap_uri = f"{publication.prefix}reports/sim2real.mcap"
     component_pointer_uri = f"{publication.prefix}components/stage_14.json"
-    snapshots = {
-        uri: remote_object_snapshot(storage, uri)
-        for uri in (
-            canonical_report_uri,
-            canonical_rrd_uri,
-            canonical_mcap_uri,
-            component_pointer_uri,
+    lock_uri = f"{publication.prefix}reports/.sim2real-publication.json"
+    mutable_uris = (
+        canonical_report_uri,
+        canonical_rrd_uri,
+        canonical_mcap_uri,
+        component_pointer_uri,
+        lock_uri,
+    )
+    if snapshots is None:
+        raise Sim2RealRerunRegenError(
+            "regeneration publication snapshots were not captured before validation"
         )
-    }
+    if any(uri not in snapshots for uri in mutable_uris):
+        raise Sim2RealRerunRegenError(
+            "regeneration publication snapshot set is incomplete"
+        )
     _publish_regen_supporting_artifacts(storage, publication)
     upload_immutable_file(
         storage,
@@ -1665,40 +1696,53 @@ def publish_regen_outputs(
         publication.immutable_rrd_uri,
     )
     component_path = _publish_regen_final_report(storage, publication, mcap_uri)
-    if publication.final_report_path.is_file():
-        replace_mutable_file(
-            storage,
-            publication.final_report_path,
-            canonical_report_uri,
-            snapshots[canonical_report_uri],
-        )
-    replace_mutable_file(
-        storage,
-        publication.rrd_path,
-        canonical_rrd_uri,
-        snapshots[canonical_rrd_uri],
-    )
     mcap_path = publication.local_dir / "reports" / "sim2real.mcap"
-    if mcap_uri:
-        replace_mutable_file(
-            storage,
-            mcap_path,
-            canonical_mcap_uri,
-            snapshots[canonical_mcap_uri],
+    with MutablePublicationTransaction(
+        storage,
+        lock_uri=lock_uri,
+        lock_snapshot=snapshots[lock_uri],
+        transaction_id=publication.publication_id,
+    ) as transaction:
+        transaction.replace_file(
+            publication.rrd_path,
+            canonical_rrd_uri,
+            snapshots[canonical_rrd_uri],
+            immutable_uri=publication.immutable_rrd_uri,
         )
-    else:
-        delete_mutable_file(
-            storage,
-            canonical_mcap_uri,
-            snapshots[canonical_mcap_uri],
-        )
-    if component_path is not None:
-        replace_mutable_file(
-            storage,
-            component_path,
-            component_pointer_uri,
-            snapshots[component_pointer_uri],
-        )
+        if mcap_uri:
+            transaction.replace_file(
+                mcap_path,
+                canonical_mcap_uri,
+                snapshots[canonical_mcap_uri],
+                immutable_uri=mcap_uri,
+            )
+        else:
+            transaction.delete_file(
+                canonical_mcap_uri,
+                snapshots[canonical_mcap_uri],
+            )
+        if publication.final_report_path.is_file():
+            transaction.replace_file(
+                publication.final_report_path,
+                canonical_report_uri,
+                snapshots[canonical_report_uri],
+                immutable_uri=(f"{publication.generation_prefix}sim2real-report.json"),
+            )
+        if component_path is not None:
+            component = _read_retained_json(
+                component_path,
+                source="regenerated Stage 14 ComponentRecord",
+            )
+            transaction.replace_file(
+                component_path,
+                component_pointer_uri,
+                snapshots[component_pointer_uri],
+                immutable_uri=component_record_history_uri(
+                    publication.prefix.rstrip("/"),
+                    14,
+                    str(component.get("content_sha256") or ""),
+                ),
+            )
     return canonical_rrd_uri
 
 
@@ -1899,6 +1943,7 @@ class _RegenState:
     report_path: Path
     report: dict[str, Any]
     policy_access: dict[str, Any]
+    publication_snapshots: dict[str, RemoteObjectSnapshot | None] | None = None
 
 
 def _stage_components(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2073,6 +2118,7 @@ def _validate_regen_component_authority(
     inputs: _RegenInputs,
     *,
     verify_remote_authority: bool,
+    require_canonical_authority: bool = False,
 ) -> None:
     canonical_architecture = "npa.workflow/v0.0.1_compositional_standard_runtime"
     architecture = inputs.report.get("architecture")
@@ -2085,6 +2131,10 @@ def _validate_regen_component_authority(
         )
     )
     if architecture != canonical_architecture:
+        if require_canonical_authority:
+            raise Sim2RealRerunRegenError(
+                "remote canonical ComponentRecord authority is required for upload"
+            )
         if claims_canonical_authority:
             raise Sim2RealRerunRegenError(
                 "canonical report architecture identity is missing or invalid"
@@ -2170,6 +2220,62 @@ def _validate_regen_component_authority(
         raise Sim2RealRerunRegenError(
             "report ComponentRecords disagree with current immutable history"
         )
+    try:
+
+        def load_stage4_authority(uri: str) -> dict[str, Any]:
+            target = (
+                authority_dir
+                / "stage-04-nested"
+                / f"{hashlib.sha256(uri.encode()).hexdigest()}.json"
+            )
+            if not _download_if_exists(
+                storage,
+                uri,
+                target,
+                containment_root=work_dir,
+            ):
+                raise ValueError(f"missing remote Stage 4 authority: {uri}")
+            return _read_retained_json(
+                target,
+                source=f"Stage 4 nested authority {uri}",
+            )
+
+        validate_remote_stage4_authority(
+            root,
+            components[3],
+            load_stage4_authority,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Sim2RealRerunRegenError(
+            f"remote Stage 4 authority is invalid: {exc}"
+        ) from exc
+
+
+def _validate_regen_materialized_frames(
+    config: Sim2RealLoopConfig,
+    work_dir: Path,
+    inputs: _RegenInputs,
+) -> None:
+    """Revalidate canonical local renders against sealed frame-byte authority."""
+
+    if inputs.inner_evidence.get("schema") != "npa.sim2real.inner_loop_evidence.v1":
+        return
+    try:
+        _selection, candidate = resolve_run_scoped_checkpoint(
+            inputs.inner_evidence,
+            run_root=run_prefix_uri(config).rstrip("/"),
+            run_id=config.run_id,
+        )
+        validate_materialized_render_tree(
+            _renders_dir_for_report(config, work_dir, inputs.heldout_report),
+            inputs.heldout_report.get("render_manifest") or {},
+            candidate,
+            require_frame_identity=True,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise Sim2RealRerunRegenError(
+            f"canonical regeneration frame bytes are invalid: {exc}"
+        ) from exc
 
 
 def _load_regen_state(
@@ -2179,6 +2285,8 @@ def _load_regen_state(
     *,
     sync_inputs: bool,
     verify_remote_authority: bool | None = None,
+    require_canonical_authority: bool = False,
+    publication_snapshots: dict[str, RemoteObjectSnapshot | None] | None = None,
 ) -> _RegenState:
     try:
         paths = _selected_regen_paths(config, work_dir, storage, sync_inputs)
@@ -2194,7 +2302,9 @@ def _load_regen_state(
                 if verify_remote_authority is None
                 else verify_remote_authority
             ),
+            require_canonical_authority=require_canonical_authority,
         )
+        _validate_regen_materialized_frames(config, work_dir, inputs)
         policy_access = _ensure_policy_access_metadata(
             config,
             work_dir,
@@ -2213,6 +2323,7 @@ def _load_regen_state(
         inputs.report_path,
         inputs.report,
         policy_access,
+        publication_snapshots,
     )
 
 
@@ -2403,6 +2514,7 @@ def _publish_regen_recordings(
     upload: bool,
     mcap_result: dict[str, Any],
     output_rrd: Path | None = None,
+    publication_snapshots: dict[str, RemoteObjectSnapshot | None] | None = None,
 ) -> tuple[str, str]:
     if not upload:
         return "", ""
@@ -2430,6 +2542,7 @@ def _publish_regen_recordings(
             publication_id=publication_id,
             mcap_uri=immutable_mcap_uri,
             client=storage,
+            snapshots=publication_snapshots,
         ),
         (
             f"{run_prefix_uri(config)}reports/sim2real.mcap"
@@ -2481,6 +2594,7 @@ def _finalize_regen_result(
         upload=upload,
         mcap_result=mcap_result,
         output_rrd=output_rrd or Path(result.output_rrd_path),
+        publication_snapshots=state.publication_snapshots,
     )
     return _regen_result_from_viz(
         config.run_id,
@@ -2502,13 +2616,20 @@ def _regenerate_sim2real_rrd(
 ) -> RegenResult:
     work_dir, output_rrd = _regen_paths(config, local_dir, local_rrd_path)
     storage = client or _storage_client_for_config(config)
+    publication_snapshots = (
+        _capture_regen_publication_snapshots(config, storage) if upload else None
+    )
     state = _load_regen_state(
         config,
         work_dir,
         storage,
         sync_inputs=sync_inputs,
         verify_remote_authority=sync_inputs or upload,
+        require_canonical_authority=upload and not sync_inputs,
+        publication_snapshots=publication_snapshots,
     )
+    if publication_snapshots is not None and state.publication_snapshots is None:
+        state = replace(state, publication_snapshots=publication_snapshots)
     outer_history = list((state.report.get("outer_loop") or {}).get("history") or [])
     viewer_command = _viewer_command(config)
     result, duration_s = _emit_regen_rrd(

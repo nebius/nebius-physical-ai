@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, Callable
 
 from npa.workflows.sim2real.checkpoint_selection import resolve_selected_checkpoint
 from npa.workflows.sim2real.constants import SCHEMA_E2E_REPORT
@@ -248,6 +248,45 @@ def _assert_stage4_parallel_authority(
     expected_join = aggregate_parallel_provenance(provenances, stage=4)
     if any(artifacts.get(key) != value for key, value in expected_join.items()):
         raise ValueError("Stage 4 ComponentRecord parallel join authority is stale")
+
+
+def validate_remote_stage4_authority(
+    root: str,
+    component: dict[str, Any],
+    load_json: Callable[[str], dict[str, Any]],
+) -> None:
+    """Bind embedded Stage 4 join claims to each durable proof and lane record."""
+
+    _assert_stage4_parallel_authority(root, component)
+    artifacts = component["artifacts"]
+    for index, (proof, lane_record) in enumerate(
+        zip(
+            artifacts["shard_provenance"],
+            artifacts["lane_records"],
+            strict=True,
+        )
+    ):
+        lane = f"shard-{index:05d}"
+        lane_root = f"{root.rstrip('/')}/components/lanes/stage_04/{lane}"
+        authorities = (
+            (
+                f"{root.rstrip('/')}/envs/raw/provenance-{index:05d}.json",
+                proof,
+                "proof",
+            ),
+            (f"{lane_root}.json", lane_record, "pointer"),
+            (
+                f"{lane_root}/history/{lane_record['content_sha256']}.json",
+                lane_record,
+                "history",
+            ),
+        )
+        for uri, expected, label in authorities:
+            actual = load_json(uri)
+            if actual != expected:
+                raise ValueError(
+                    f"Stage 4 lane {lane} remote {label} authority is stale"
+                )
 
 
 def stage14_report_authority_sha256(report: dict[str, Any]) -> str:

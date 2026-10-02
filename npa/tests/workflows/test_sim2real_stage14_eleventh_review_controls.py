@@ -125,7 +125,10 @@ def test_stage10_accepts_exact_byo_render_producer(
         artifact_tag(attempt),
     )
     producer = f"{ROOT}/byo-eval/{job}/renders"
-    frame_bytes = b"\x89PNG\r\n\x1a\nframe"
+    frame_bytes = bytes.fromhex(
+        "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c02"
+        "0000000b4944415478da6364f80f00010501012718e3660000000049454e44ae426082"
+    )
     report = _learned_gold()
     report.update(
         {
@@ -280,6 +283,11 @@ def test_canonical_stage14_rejects_invalid_policy_before_publication(
     )
     robot.write_text("{}", encoding="utf-8")
     monkeypatch.setattr(stage14, "_materialize_stage14", lambda *_a, **_k: state)
+    monkeypatch.setattr(
+        stage14,
+        "_capture_stage14_publication_snapshots",
+        lambda current: current,
+    )
     publication_boundary: list[str] = []
 
     class PublicationBoundaryReached(Exception):

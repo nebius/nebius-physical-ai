@@ -31,7 +31,10 @@ DIGEST = "a" * 64
 SOURCE_SHA = "b" * 40
 IMAGE_DIGEST = "c" * 64
 EVAL_ATTEMPT_TAG = "gold-o01-attempt-" + "d" * 32
-FRAME_BYTES = b"\x89PNG\r\n\x1a\nframe"
+FRAME_BYTES = bytes.fromhex(
+    "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c02"
+    "0000000b4944415478da6364f80f00010501012718e3660000000049454e44ae426082"
+)
 COMPONENT_NAMES = {
     1: "stage_01_trigger",
     2: "stage_02_assets",
@@ -262,6 +265,12 @@ def _state(tmp_path: Path) -> stage14._Stage14State:
 
 
 def _record_reader(uri: str, **_kwargs: Any) -> dict[str, Any]:
+    if "/envs/raw/provenance-" in uri:
+        index = int(uri.rsplit("provenance-", 1)[1][:5])
+        return _component_record(4)["artifacts"]["shard_provenance"][index]
+    if "/components/lanes/stage_04/shard-" in uri:
+        index = int(uri.rsplit("/shard-", 1)[1][:5])
+        return _component_record(4)["artifacts"]["lane_records"][index]
     stage = int(uri.rsplit("stage_", 1)[1][:2])
     return _component_record(stage)
 
@@ -275,7 +284,17 @@ def test_stage14_encoder_failure_does_not_publish_works_pointer(
         stage14, "_materialize_stage14", lambda *_a, **_k: _state(tmp_path)
     )
     monkeypatch.setattr(
+        stage14,
+        "_capture_stage14_publication_snapshots",
+        lambda state: state,
+    )
+    monkeypatch.setattr(
         stage14, "_assert_stage14_publication_preconditions", lambda *_a: None
+    )
+    monkeypatch.setattr(
+        stage14,
+        "_validate_stage14_materialized_frames",
+        lambda *_a: None,
     )
     monkeypatch.setattr(stage14, "read_json", _record_reader)
     for publisher in (
@@ -484,7 +503,7 @@ def test_heldout_only_publishes_only_immutable_attempt_evidence(tmp_path: Path) 
     assert published["report_uri"] == f"{attempt_root}/report.json"
 
 
-def test_regen_report_cas_fences_convenience_aliases(tmp_path: Path) -> None:
+def test_regen_transaction_fences_convenience_aliases(tmp_path: Path) -> None:
     inner = tmp_path / "inner_loop/outer-01/evidence.json"
     report = tmp_path / "eval/gold-heldout/outer-01/report.json"
     renders = report.parent / "renders/env-1"
@@ -521,15 +540,23 @@ def test_regen_report_cas_fences_convenience_aliases(tmp_path: Path) -> None:
             uploads.append(destination)
             return destination
 
-    regen.publish_regen_outputs(_config(), tmp_path, rrd_path=rrd, client=Storage())
+    storage = Storage()
+    regen.publish_regen_outputs(
+        _config(),
+        tmp_path,
+        rrd_path=rrd,
+        client=storage,
+        snapshots=regen._capture_regen_publication_snapshots(_config(), storage),
+    )
     canonical_report = f"{ROOT}/reports/sim2real-report.json"
     canonical_rrd = f"{ROOT}/reports/sim2real.rrd"
-    assert uploads.index(canonical_report) < uploads.index(canonical_rrd)
+    assert uploads.index(canonical_rrd) < uploads.index(canonical_report)
     assert all(
-        uploads.index(uri) < uploads.index(canonical_report)
+        uploads.index(uri) < uploads.index(canonical_rrd)
         for uri in uploads
         if "/reports/generations/" in uri
     )
+    assert uploads[-1] == f"{ROOT}/reports/.sim2real-publication.json"
 
 
 def test_disabled_mcap_does_not_upload_stale_bytes(
@@ -777,7 +804,7 @@ def test_legacy_heldout_report_outer_must_match_selected_inner(tmp_path: Path) -
         )
 
 
-def test_stage14_uses_generation_uris_and_publishes_pointer_last(
+def test_stage14_uses_generation_uris_and_commits_journal_last(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -832,6 +859,7 @@ def test_stage14_uses_generation_uris_and_publishes_pointer_last(
         to_dict=lambda: {"heldout_frame_count": 1},
     )
     report = {"component_records": [_component_record(14)]}
+    state = stage14._capture_stage14_publication_snapshots(state)
 
     stage14._publish_stage14_outputs(
         state,
@@ -842,11 +870,12 @@ def test_stage14_uses_generation_uris_and_publishes_pointer_last(
     )
 
     assert "/reports/generations/" in state.rrd_uri
-    assert events[-1] == f"{ROOT}/components/stage_14.json"
+    assert events[-1] == f"{ROOT}/reports/.sim2real-publication.json"
+    assert events[-2] == f"{ROOT}/components/stage_14.json"
     canonical_report = f"{ROOT}/reports/sim2real-report.json"
-    assert events.index(canonical_report) < events.index(f"{ROOT}/reports/sim2real.rrd")
-    assert events.index(canonical_report) < events.index(
-        f"{ROOT}/reports/sim2real.mcap"
+    assert events.index(f"{ROOT}/reports/sim2real.rrd") < events.index(canonical_report)
+    assert events.index(f"{ROOT}/reports/sim2real.mcap") < events.index(
+        canonical_report
     )
 
 
@@ -893,7 +922,14 @@ def test_regen_report_seals_immutable_recording_generation(tmp_path: Path) -> No
             uploads.append((destination, None))
             return destination
 
-    regen.publish_regen_outputs(_config(), tmp_path, rrd_path=rrd, client=Storage())
+    storage = Storage()
+    regen.publish_regen_outputs(
+        _config(),
+        tmp_path,
+        rrd_path=rrd,
+        client=storage,
+        snapshots=regen._capture_regen_publication_snapshots(_config(), storage),
+    )
 
     canonical_report_uri = f"{ROOT}/reports/sim2real-report.json"
     canonical_payload = next(
@@ -906,7 +942,7 @@ def test_regen_report_seals_immutable_recording_generation(tmp_path: Path) -> No
         index
         for index, (uri, _payload) in enumerate(uploads)
         if uri == canonical_report_uri
-    ) < next(
+    ) > next(
         index
         for index, (uri, _payload) in enumerate(uploads)
         if uri == f"{ROOT}/reports/sim2real.rrd"

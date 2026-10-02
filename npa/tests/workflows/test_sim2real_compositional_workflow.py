@@ -989,6 +989,11 @@ def _patch_stage14_io(
     monkeypatch.setattr(
         stage14_finalize, "materialize_plan", _materialize_stage14_inputs
     )
+    monkeypatch.setattr(
+        stage14_finalize,
+        "_capture_stage14_publication_snapshots",
+        lambda state: state,
+    )
     monkeypatch.setattr(stage14_finalize, "source_sha", lambda: "b" * 40)
     for publisher in (
         "publish_built_component_history",
@@ -1441,7 +1446,10 @@ def test_stage10_seals_report_split_and_outer_iteration(
         "run",
         artifact_tag(attempt_tag),
     )
-    frame_bytes = b"\x89PNG\r\n\x1a\nframe"
+    frame_bytes = bytes.fromhex(
+        "89504e470d0a1a0a0000000d4948445200000001000000010804000000b51c0c02"
+        "0000000b4944415478da6364f80f00010501012718e3660000000049454e44ae426082"
+    )
     report["render_manifest"] = {
         "schema": "npa.sim2real.heldout_renders.v2",
         "renders_s3_uri": f"{root}/byo-eval/{render_job}/renders/",

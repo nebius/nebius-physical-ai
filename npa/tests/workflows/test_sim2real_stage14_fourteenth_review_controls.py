@@ -331,12 +331,23 @@ def test_no_sync_upload_still_requests_remote_component_authority(
         *,
         sync_inputs: bool,
         verify_remote_authority: bool = False,
+        require_canonical_authority: bool = False,
+        publication_snapshots: dict[str, Any] | None = None,
     ) -> Any:
         observed.update(
             sync_inputs=sync_inputs,
             verify_remote_authority=verify_remote_authority,
+            require_canonical_authority=require_canonical_authority,
+            snapshots_captured=publication_snapshots is not None,
         )
         raise Stop
+
+    class Storage:
+        def read_bytes_with_etag(self, _uri: str) -> None:
+            return None
+
+        def put_bytes_conditional(self, *_args: Any, **_kwargs: Any) -> str:
+            return '"etag"'
 
     monkeypatch.setattr(regen, "_load_regen_state", load_state)
     with pytest.raises(Stop):
@@ -346,11 +357,13 @@ def test_no_sync_upload_still_requests_remote_component_authority(
             None,
             True,
             False,
-            object(),
+            Storage(),
         )
     assert observed == {
         "sync_inputs": False,
         "verify_remote_authority": True,
+        "require_canonical_authority": True,
+        "snapshots_captured": True,
     }
 
 
@@ -384,13 +397,15 @@ def test_regen_does_not_publish_alias_before_immutable_report(
                 raise RuntimeError("immutable report failed")
             return '"etag"'
 
+    storage = Storage()
     with pytest.raises(RuntimeError, match="immutable report failed"):
         regen.publish_regen_outputs(
             _config(),
             tmp_path,
             rrd_path=rrd,
             publication_id="generation",
-            client=Storage(),
+            client=storage,
+            snapshots=regen._capture_regen_publication_snapshots(_config(), storage),
         )
     assert f"{ROOT}/reports/sim2real.rrd" not in destinations
     assert f"{ROOT}/reports/sim2real-report.json" not in destinations
@@ -429,6 +444,7 @@ def test_regen_uses_conditional_canonical_report_as_publication_fence(
         rrd_path=rrd,
         publication_id="generation",
         client=storage,
+        snapshots=regen._capture_regen_publication_snapshots(_config(), storage),
     )
     canonical_report = f"{ROOT}/reports/sim2real-report.json"
     assert canonical_report in storage.conditional
@@ -473,6 +489,7 @@ def test_stage14_component_pointer_uses_conditional_replacement(
 
     storage = Storage()
     monkeypatch.setattr(stage14, "storage", lambda: storage)
+    state = stage14._capture_stage14_publication_snapshots(state)
     result = SimpleNamespace(
         heldout_frame_count=1,
         to_dict=lambda: {"heldout_frame_count": 1},
@@ -530,5 +547,6 @@ def test_disabled_mcap_removes_stale_canonical_object(tmp_path: Path) -> None:
         publication_id="generation",
         mcap_uri="",
         client=storage,
+        snapshots=regen._capture_regen_publication_snapshots(_config(), storage),
     )
     assert f"{ROOT}/reports/sim2real.mcap" in storage.deleted

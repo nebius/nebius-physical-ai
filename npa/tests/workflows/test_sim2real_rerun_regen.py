@@ -411,6 +411,10 @@ def test_regen_also_refreshes_the_mcap(
     monkeypatch.setattr(
         "npa.workflows.sim2real_rerun_regen.emit_sim2real_mcap_if_enabled", fake_mcap
     )
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen._validate_regen_component_authority",
+        lambda *_args, **_kwargs: None,
+    )
 
     uploaded: list[tuple[str, str]] = []
 
