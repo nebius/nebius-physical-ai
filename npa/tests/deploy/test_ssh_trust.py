@@ -7,6 +7,7 @@ import json
 import socket
 import threading
 import time
+from pathlib import Path
 
 import paramiko
 import pytest
@@ -34,7 +35,7 @@ def _key():
 
 @pytest.fixture
 def provider(tmp_path, monkeypatch):
-    monkeypatch.setattr(ssh_trust, "NPA_CONFIG_DIR", tmp_path)
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path))
     key, _private = _key()
     state = {
         "args": {
@@ -168,6 +169,46 @@ def test_authenticated_pin_survives_expired_serial_logs(provider):
     assert len(provider["queries"]) == 1
 
 
+def test_host_key_storage_follows_active_config_root(provider, monkeypatch, tmp_path):
+    first_root = tmp_path / "first-config"
+    second_root = tmp_path / "second-config"
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(first_root))
+    first_path = ssh_trust.verify_host_key(**provider["args"])
+    first_evidence = {
+        path.relative_to(first_root): path.read_bytes()
+        for path in first_root.rglob("*")
+        if path.is_file()
+    }
+
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(second_root))
+    expected = ssh_trust.known_hosts_path(provider["args"]["host"])
+    second_path = ssh_trust.verify_host_key(**provider["args"])
+
+    assert expected.parent.is_relative_to(second_root)
+    assert second_path == expected
+    assert second_path.read_bytes() == first_path.read_bytes()
+    assert len(provider["queries"]) == 2
+    assert {
+        path.relative_to(first_root): path.read_bytes()
+        for path in first_root.rglob("*")
+        if path.is_file()
+    } == first_evidence
+
+
+@pytest.mark.parametrize("configured", [None, "", " \t"])
+def test_known_hosts_path_defaults_to_current_home(monkeypatch, tmp_path, configured):
+    home = tmp_path / "current-home"
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    if configured is None:
+        monkeypatch.delenv("NPA_CONFIG_DIR", raising=False)
+    else:
+        monkeypatch.setenv("NPA_CONFIG_DIR", configured)
+
+    path = ssh_trust.known_hosts_path("192.0.2.20")
+
+    assert path.parent == home / ".npa" / "ssh" / "hosts"
+
+
 def test_older_instance_requires_existing_operator_verified_key(
     provider, monkeypatch, tmp_path
 ):
@@ -187,7 +228,7 @@ def test_real_ssh_handshake_authenticates_only_the_verified_host(
     tmp_path, monkeypatch, matching
 ):
     """Run a real loopback SSH exchange, including public-key user auth."""
-    monkeypatch.setattr(ssh_trust, "NPA_CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setenv("NPA_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.delenv("NPA_SSH_KNOWN_HOSTS", raising=False)
     server_key, _ = _key()
     expected = server_key if matching else _key()[0]

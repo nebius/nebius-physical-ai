@@ -130,7 +130,7 @@ def test_availability_surfaces_an_import_failure() -> None:
     assert "cosmos_xenna" in availability.reason()
 
 
-def test_availability_prefers_nvenc_only_with_a_gpu(
+def test_availability_prefers_cpu_encoder_even_with_a_gpu(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     availability = CuratorAvailability(
@@ -142,9 +142,22 @@ def test_availability_prefers_nvenc_only_with_a_gpu(
     monkeypatch.setattr(upstream_mod, "_has_gpu", lambda: False)
     assert availability.encoder == "libopenh264"
     monkeypatch.setattr(upstream_mod, "_has_gpu", lambda: True)
-    assert availability.encoder == "h264_nvenc"
+    assert availability.encoder == "libopenh264"
     assert availability.can_run_in_process
     assert availability.reason() == ""
+
+
+def test_availability_uses_nvenc_when_it_is_the_only_supported_encoder(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    availability = CuratorAvailability(
+        source="/opt/cosmos-curate",
+        importable=True,
+        ffmpeg="/usr/bin/ffmpeg",
+        encoders=("h264_nvenc",),
+    )
+    monkeypatch.setattr(upstream_mod, "_has_gpu", lambda: True)
+    assert availability.encoder == "h264_nvenc"
 
 
 def test_upstream_source_dir_requires_the_pipelines_package(tmp_path: Path) -> None:

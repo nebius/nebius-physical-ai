@@ -366,6 +366,102 @@ def persist_agent_terraform_credentials(
     )
 
 
+def _normalized_bucket_name(value: Any) -> str:
+    """Match ``npa.cli.storage._bucket_name_from_uri``'s exact normalization.
+
+    Duplicated rather than imported: `npa.cli.storage` imports this module, so
+    importing back would create a cycle. Strips whitespace, the ``s3://``
+    scheme, surrounding slashes, and any path past the bucket root, so a
+    scoped record's stored URI compares equal to the caller's bare name
+    regardless of which form either side used.
+    """
+    return str(value or "").strip().removeprefix("s3://").strip("/").split("/", 1)[0]
+
+
+def _bucket_field(section: Any, *keys: str) -> str:
+    """Return the first non-empty, normalized bucket-name field in *section*."""
+    if not isinstance(section, Mapping):
+        return ""
+    for key in keys:
+        candidate = _normalized_bucket_name(section.get(key))
+        if candidate:
+            return candidate
+    return ""
+
+
+def _retire_matching_sections(
+    record: Mapping[str, Any], bucket_name: str
+) -> dict[str, Any] | None:
+    """Clear *record*'s ``storage`` and/or ``terraform_state`` for *bucket_name*.
+
+    Each scoped section names its own bucket independently: a bucket delete
+    must retire whichever of them still points at it, without disturbing the
+    other. ``storage_selected`` is only flipped off when ``storage`` itself
+    matched, not for a terraform-state-only record.
+
+    Returns:
+        The retired record, or ``None`` if neither section matched.
+    """
+    storage_matches = (
+        _bucket_field(record.get("storage"), "checkpoint_bucket", "bucket", "s3_bucket")
+        == bucket_name
+    )
+    terraform_matches = _bucket_field(record.get("terraform_state"), "bucket") == (
+        bucket_name
+    )
+    if not storage_matches and not terraform_matches:
+        return None
+    updated = deepcopy(dict(record))
+    if storage_matches:
+        updated.pop("storage", None)
+        updated["storage_selected"] = False
+    if terraform_matches:
+        updated.pop("terraform_state", None)
+    updated["updated_at"] = _now()
+    return updated
+
+
+def retire_project_bucket_document(
+    document: dict[str, Any],
+    project_id: str,
+    bucket_name: str,
+) -> dict[str, Any]:
+    """Retire one project's ``storage``/``terraform_state`` for a deleted bucket.
+
+    Retiring both records prevents selection or Terraform resolution from
+    restoring the deleted bucket and its credentials.
+
+    Args:
+        document: Full credentials document being rewritten under lock.
+        project_id: Exact Nebius project ID that owned the bucket.
+        bucket_name: Deleted bucket's bare name (no ``s3://`` prefix).
+
+    Returns:
+        The document, with the exact project's matching sections retired.
+        ``storage_iam`` and every unrelated project/field are untouched.
+
+    Raises:
+        ProjectCredentialStoreError: The store's schema is unsupported or its
+            ``projects`` mapping is malformed.
+    """
+    exact = str(project_id or "").strip()
+    name = str(bucket_name or "").strip()
+    if not exact or not name:
+        return document
+    root, projects = _root(document)
+    record = projects.get(exact)
+    retired = (
+        _retire_matching_sections(record, name) if isinstance(record, Mapping) else None
+    )
+    if retired is None:
+        return document
+    projects[exact] = retired
+    root["projects"] = projects
+    document["project_credentials"] = root
+    _compatibility_views(document, root)
+    return document
+
+
 def merge_project_credentials_document(
     document: dict[str, Any],
     project_id: str,

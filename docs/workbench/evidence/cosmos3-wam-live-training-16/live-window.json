@@ -1,0 +1,8 @@
+{
+  "schema": "npa.cosmos3.wam-live-window.v1",
+  "started_unix": 1790562757.8980703,
+  "ended_unix": 1790562877.8980703,
+  "duration_seconds": 120,
+  "gpus": 16,
+  "selection": "Fixed prospective 120-second window chosen after the first per-node process-attribution snapshots; no utilization-based selection."
+}

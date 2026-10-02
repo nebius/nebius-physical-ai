@@ -25,7 +25,7 @@ _NON_USER_DOCS = {"archive", "architecture", "cli", "security", "testing"}
 
 def _documentation_paths(root: Path) -> list[Path]:
     paths = {root / "README.md", root / "CONTRIBUTING.md"}
-    for directory in ("docs", "workflows"):
+    for directory in ("docs", "workflows", "benchmark"):
         paths.update((root / directory).rglob("*.md"))
     for directory in ("npa", "deploy", "workbench", "research"):
         for parent, directories, files in os.walk(root / directory):
@@ -259,7 +259,11 @@ def _studio_parser(command: str):
     renderer = Path(__file__).resolve().parents[2] / "src/npa/studio_renderer"
     sys.path.insert(0, str(renderer))
     try:
-        module = {"draft": "film_draft", "watch": "film_watch"}.get(command, "edit")
+        module = {
+            "draft": "film_draft",
+            "watch": "film_watch",
+            "review": "film_review",
+        }.get(command, "edit")
         return importlib.import_module(module)._parser()
     finally:
         sys.path.remove(str(renderer))
@@ -288,6 +292,7 @@ def _studio_error(arguments: list[str]) -> str:
             "watch",
             "preview",
             "final",
+            "review",
         }:
             return f"npa studio: unknown film command {command}"
     return _argparse_option_error(

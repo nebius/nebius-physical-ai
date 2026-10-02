@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, Callable
 
 import typer
 
+from npa.clients.credentials import load_credentials
 from npa.clients.ssh import SSHClient
 from npa.cli.agent_env_files import _load_agent_llm_config_file, _stage_private_text
 
@@ -39,6 +41,7 @@ def resolve_agent_llm_runtime(
     source = str(requested_file or saved_file).strip()
     if source:
         custom = _load_agent_llm_config_file(source)
+        _model_router_env(custom["provider"])
         persisted = {
             key: custom[key]
             for key in (
@@ -54,6 +57,7 @@ def resolve_agent_llm_runtime(
         }
         return {**custom, "persisted": persisted}
 
+    _model_router_env(default_provider)
     model = str(requested_model or "").strip() or default_model
     extras = requested_models if requested_models else list(default_models)
     models = normalize_models([model, *extras])
@@ -133,11 +137,28 @@ def write_agent_llm_env(
         env_lines.append(
             f"NPA_AGENT_{normalized_provider.upper()}_BASE_URL={base_url.strip().rstrip('/')}"
         )
+    env_lines.extend(_model_router_env(normalized_provider))
     _stage_private_text(
         ssh,
         content="\n".join([*env_lines, ""]),
         target="/opt/npa-agent/llm.env",
     )
+
+
+def _model_router_env(provider: str) -> list[str]:
+    router = os.environ.get("NPA_AGENT_MODEL_ROUTER", "").strip()
+    if not router:
+        return []
+    if router != "jev" or provider not in {"token_factory", "tokenfactory"}:
+        raise ValueError("NPA_AGENT_MODEL_ROUTER supports jev with Token Factory only")
+    key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+    if not key:
+        key = load_credentials().tokens.get("TYPESAFE_API_KEY", "").strip()
+    if not key or any(
+        character.isspace() or not character.isprintable() for character in key
+    ):
+        raise ValueError("Jev routing requires a valid TYPESAFE_API_KEY")
+    return ["NPA_AGENT_MODEL_ROUTER=jev", f"TYPESAFE_API_KEY={key}"]
 
 
 def bootstrap_agent_llm_kwargs(runtime: dict[str, Any]) -> dict[str, Any]:

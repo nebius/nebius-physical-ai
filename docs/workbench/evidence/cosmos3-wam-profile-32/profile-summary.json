@@ -1,0 +1,118 @@
+{
+  "schema": "npa.cosmos3.wam-profile.v1",
+  "ranks": {
+    "0": {
+      "trace_sha256": "06bb272237d9c6f3c43160703651e04fb04d014d57f881440d88e42162a9ef1e",
+      "trace_bytes": 17969163,
+      "profiler_steps": [
+        "ProfilerStep#98",
+        "ProfilerStep#99"
+      ],
+      "profile_window_seconds": 7.893612147460938,
+      "kernel_duration_seconds_by_category": {
+        "other": 1.2157776015625228,
+        "convolution": 0.5346280312500008,
+        "attention": 0.14773237792968738,
+        "collectives": 1.7159552324218765,
+        "matrix_multiply": 1.8077976845703134
+      },
+      "kernel_counts_by_category": {
+        "other": 86416,
+        "convolution": 8448,
+        "attention": 832,
+        "collectives": 320,
+        "matrix_multiply": 3434
+      },
+      "cpu_operator_linked_kernel_count": 99364,
+      "total_kernel_count": 99450,
+      "observed_kernel_busy_seconds_by_device": {
+        "0": 4.0438889921875
+      }
+    },
+    "8": {
+      "trace_sha256": "bfc613eca88c622a7200d2e8193dc2c27e8e675fe8f2917c28ed8948098d26ae",
+      "trace_bytes": 18021786,
+      "profiler_steps": [
+        "ProfilerStep#98",
+        "ProfilerStep#99"
+      ],
+      "profile_window_seconds": 7.892750467773437,
+      "kernel_duration_seconds_by_category": {
+        "other": 1.2130447158202995,
+        "convolution": 0.5262412402343751,
+        "attention": 0.14658713867187492,
+        "collectives": 2.3472345712890643,
+        "matrix_multiply": 1.8011483437499967
+      },
+      "kernel_counts_by_category": {
+        "other": 86416,
+        "convolution": 8448,
+        "attention": 832,
+        "collectives": 320,
+        "matrix_multiply": 3434
+      },
+      "cpu_operator_linked_kernel_count": 99364,
+      "total_kernel_count": 99450,
+      "observed_kernel_busy_seconds_by_device": {
+        "0": 4.072362451171875
+      }
+    },
+    "16": {
+      "trace_sha256": "9bff1c9c016c3c7fc081886141d760a0f9f49423c6c2ddd41f599f83e3deba54",
+      "trace_bytes": 17969896,
+      "profiler_steps": [
+        "ProfilerStep#98",
+        "ProfilerStep#99"
+      ],
+      "profile_window_seconds": 7.892677807617187,
+      "kernel_duration_seconds_by_category": {
+        "other": 1.2163697490234096,
+        "convolution": 0.5286539082031259,
+        "attention": 0.14385311230468772,
+        "collectives": 2.8703746884765615,
+        "matrix_multiply": 1.835293382812501
+      },
+      "kernel_counts_by_category": {
+        "other": 86416,
+        "convolution": 8448,
+        "attention": 832,
+        "collectives": 320,
+        "matrix_multiply": 3434
+      },
+      "cpu_operator_linked_kernel_count": 99364,
+      "total_kernel_count": 99450,
+      "observed_kernel_busy_seconds_by_device": {
+        "0": 4.0783715439453125
+      }
+    },
+    "24": {
+      "trace_sha256": "a3f1470ca68efecc48481913f085b009236be8dd7e510095c6b36454d8e6da68",
+      "trace_bytes": 17998351,
+      "profiler_steps": [
+        "ProfilerStep#98",
+        "ProfilerStep#99"
+      ],
+      "profile_window_seconds": 7.892797811523438,
+      "kernel_duration_seconds_by_category": {
+        "other": 1.2214396025390042,
+        "convolution": 0.5346222988281247,
+        "attention": 0.1462742822265625,
+        "collectives": 1.7831602705078122,
+        "matrix_multiply": 1.8342321035156244
+      },
+      "kernel_counts_by_category": {
+        "other": 86416,
+        "convolution": 8448,
+        "attention": 832,
+        "collectives": 320,
+        "matrix_multiply": 3434
+      },
+      "cpu_operator_linked_kernel_count": 99364,
+      "total_kernel_count": 99450,
+      "observed_kernel_busy_seconds_by_device": {
+        "0": 3.9917513857421874
+      }
+    }
+  },
+  "interpretation": "Kernel categories prefer linked CPU operators; NCCL and unlinked kernels use names. Fused Triton kernels remain other. Distinct host annotations define the profiler steps. Categories may overlap in time. Summed kernel durations are not wall-time fractions or exposed communication stalls. Busy time is the union of observed kernel intervals per device; it excludes memory-copy activities. VAE timing comes from native logs."
+}

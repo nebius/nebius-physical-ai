@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from io import BytesIO
 import logging
 import os
@@ -9,7 +10,12 @@ from botocore.exceptions import ClientError
 import pytest
 from typer.testing import CliRunner
 
-from npa.cli.demo import load_manifest, stage_artifacts, verify_artifacts
+from npa.cli.demo import (
+    DemoManifestError,
+    load_manifest,
+    stage_artifacts,
+    verify_artifacts,
+)
 from npa.cli.main import app
 from npa.errors import ScopedCredentialError
 
@@ -18,13 +24,29 @@ runner = CliRunner()
 HELLO_SHA256 = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 
 
+class TrackingBody(BytesIO):
+    def __init__(self, body: bytes, read_sizes: list[int]) -> None:
+        super().__init__(body)
+        self._read_sizes = read_sizes
+
+    def read(self, size: int = -1) -> bytes:
+        self._read_sizes.append(size)
+        return super().read(size)
+
+
 class DemoStageFakeS3:
     def __init__(self, objects: dict[tuple[str, str], dict] | None = None) -> None:
         self.objects = objects if objects is not None else {}
         self.put_calls: list[tuple[str, str]] = []
         self.copy_calls: list[tuple[str, str, str, str]] = []
+        self.get_calls: list[tuple[str, str]] = []
+        self.read_sizes: list[int] = []
         self.fail_get: Exception | None = None
+        self.fail_get_bucket: str | None = None
         self.fail_put: Exception | None = None
+        self.corrupt_put = False
+        self.list_calls: list[tuple[str, str, str | None]] = []
+        self.list_pages: dict[tuple[str, str, str | None], dict] = {}
 
     def add(
         self, bucket: str, key: str, body: bytes, metadata: dict[str, str] | None = None
@@ -40,10 +62,17 @@ class DemoStageFakeS3:
         return {"ContentLength": len(item["Body"]), "Metadata": dict(item["Metadata"])}
 
     def get_object(self, *, Bucket: str, Key: str):
-        if self.fail_get is not None:
+        if self.fail_get is not None and (
+            self.fail_get_bucket is None or self.fail_get_bucket == Bucket
+        ):
             raise self.fail_get
-        item = self.objects[(Bucket, Key)]
-        return {"Body": BytesIO(item["Body"])}
+        self.get_calls.append((Bucket, Key))
+        item = self.objects.get((Bucket, Key))
+        if item is None:
+            raise ClientError(
+                {"Error": {"Code": "NoSuchKey", "Message": "missing"}}, "GetObject"
+            )
+        return {"Body": TrackingBody(item["Body"], self.read_sizes)}
 
     def put_object(
         self, *, Bucket: str, Key: str, Body: bytes, Metadata: dict[str, str]
@@ -51,7 +80,8 @@ class DemoStageFakeS3:
         if self.fail_put is not None:
             raise self.fail_put
         self.put_calls.append((Bucket, Key))
-        self.add(Bucket, Key, Body, Metadata)
+        stored_body = b"x" * len(Body) if self.corrupt_put else Body
+        self.add(Bucket, Key, stored_body, Metadata)
 
     def copy_object(
         self,
@@ -68,12 +98,51 @@ class DemoStageFakeS3:
     def list_objects_v2(
         self, *, Bucket: str, Prefix: str, ContinuationToken: str | None = None
     ):
+        self.list_calls.append((Bucket, Prefix, ContinuationToken))
+        configured = self.list_pages.get((Bucket, Prefix, ContinuationToken))
+        if configured is not None:
+            return configured
         contents = [
             {"Key": key, "Size": len(item["Body"])}
             for (bucket, key), item in sorted(self.objects.items())
             if bucket == Bucket and key.startswith(Prefix)
         ]
         return {"IsTruncated": False, "KeyCount": len(contents), "Contents": contents}
+
+    def set_list_page(
+        self,
+        bucket: str,
+        prefix: str,
+        token: str | None,
+        page: dict,
+    ) -> None:
+        self.list_pages[(bucket, prefix, token)] = page
+
+    def set_two_page_listing(
+        self,
+        bucket: str,
+        prefix: str,
+        first_contents: list[dict],
+        second_contents: list[dict],
+        *,
+        token: str,
+    ) -> None:
+        self.set_list_page(
+            bucket,
+            prefix,
+            None,
+            {
+                "IsTruncated": True,
+                "NextContinuationToken": token,
+                "Contents": first_contents,
+            },
+        )
+        self.set_list_page(
+            bucket,
+            prefix,
+            token,
+            {"IsTruncated": False, "Contents": second_contents},
+        )
 
 
 def _access_denied() -> ClientError:
@@ -135,6 +204,21 @@ artifacts:
     return path
 
 
+def _same_bucket_manifest(path: Path) -> Path:
+    path.write_text(
+        f"""\
+version: 1
+artifacts:
+  - name: file-one
+    source_uri: s3://shared/source/file.bin
+    target_path: staged/file.bin
+    sha256: {HELLO_SHA256}
+    size_bytes: 5
+"""
+    )
+    return path
+
+
 def test_default_demo_manifest_parses() -> None:
     manifest_path = (
         Path(__file__).resolve().parents[1]
@@ -187,7 +271,7 @@ def test_stage_hash_mismatch_redownloads_and_uploads(tmp_path: Path) -> None:
     assert s3.objects[("target", "staged/file.bin")]["Body"] == body
 
 
-def test_stage_missing_metadata_redownloads_legacy_object(tmp_path: Path) -> None:
+def test_stage_skips_matching_bytes_without_metadata(tmp_path: Path) -> None:
     body = b"hello"
     sha = HELLO_SHA256
     manifest = _manifest(tmp_path / "manifest.yaml", sha=sha)
@@ -199,8 +283,34 @@ def test_stage_missing_metadata_redownloads_legacy_object(tmp_path: Path) -> Non
         target_bucket="target", manifest_path=manifest, s3_client=s3
     )
 
+    assert result == [{"name": "file-one", "action": "skip"}]
+    assert s3.put_calls == []
+
+
+def test_stage_repairs_forged_matching_metadata_with_wrong_bytes(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    s3 = DemoStageFakeS3()
+    s3.add("source", "path/file.bin", b"hello")
+    s3.add("target", "staged/file.bin", b"jello", {"sha256": HELLO_SHA256})
+
+    result = stage_artifacts(
+        target_bucket="target", manifest_path=manifest, s3_client=s3
+    )
+
     assert result == [{"name": "file-one", "action": "upload"}]
-    assert s3.objects[("target", "staged/file.bin")]["Metadata"]["sha256"] == sha
+    assert s3.objects[("target", "staged/file.bin")]["Body"] == b"hello"
+
+
+def test_stage_fails_closed_when_uploaded_bytes_do_not_match(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    s3 = DemoStageFakeS3()
+    s3.add("source", "path/file.bin", b"hello")
+    s3.corrupt_put = True
+
+    with pytest.raises(DemoManifestError, match="upload verification failed"):
+        stage_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
 
 
 def test_stage_does_not_clobber_file_metadata_with_prefix_upload(
@@ -250,6 +360,7 @@ def test_stage_auth_error_raises_scoped_credential_error(tmp_path: Path) -> None
     manifest = _manifest(tmp_path / "manifest.yaml", sha="abc", size=0)
     s3 = DemoStageFakeS3()
     s3.fail_get = _access_denied()
+    s3.fail_get_bucket = "source"
 
     with pytest.raises(ScopedCredentialError, match="source"):
         stage_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
@@ -304,6 +415,41 @@ def test_demo_stage_scoped_creds_fail_with_flag_warns_and_falls_back(
     assert "target" in caplog.text
 
 
+def test_stage_target_readback_never_uses_source_project_for_shared_bucket(
+    tmp_path: Path,
+    mocker,
+) -> None:
+    manifest = _same_bucket_manifest(tmp_path / "manifest.yaml")
+    source_s3 = DemoStageFakeS3()
+    target_s3 = DemoStageFakeS3()
+    source_s3.add("shared", "source/file.bin", b"hello")
+    source_s3.add("shared", "staged/file.bin", b"hello")
+    target_s3.add("shared", "staged/file.bin", b"jello", {"sha256": HELLO_SHA256})
+    mocker.patch(
+        "npa.cli.demo.s3_client_for_project",
+        side_effect=[source_s3, target_s3],
+    )
+    mocker.patch(
+        "npa.cli.demo._host_client_for_project",
+        side_effect=[DemoStageFakeS3(), DemoStageFakeS3()],
+    )
+
+    result = stage_artifacts(
+        target_bucket="shared",
+        manifest_path=manifest,
+        source_project="source-project",
+        target_project="target-project",
+    )
+
+    assert result == [{"name": "file-one", "action": "upload"}]
+    assert source_s3.get_calls == [("shared", "source/file.bin")]
+    assert target_s3.get_calls == [
+        ("shared", "staged/file.bin"),
+        ("shared", "staged/file.bin"),
+    ]
+    assert target_s3.objects[("shared", "staged/file.bin")]["Body"] == b"hello"
+
+
 def test_demo_stage_help_includes_allow_host_creds() -> None:
     result = runner.invoke(app, ["demo", "stage", "--help"])
 
@@ -332,15 +478,10 @@ def test_verify_returns_no_issues_on_clean_state(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("metadata_key", ["sha256", "Sha256", "SHA256", "sHa256"])
-def test_verify_accepts_sha256_metadata_key_case_variants(
-    tmp_path: Path,
-    metadata_key: str,
-) -> None:
-    body = b"hello"
+def test_verify_ignores_sha256_metadata_when_target_bytes_match(tmp_path: Path) -> None:
     manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
     s3 = DemoStageFakeS3()
-    s3.add("target", "staged/file.bin", body, {metadata_key: HELLO_SHA256})
+    s3.add("target", "staged/file.bin", b"hello", {"sha256": "stale"})
 
     assert (
         verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
@@ -348,7 +489,7 @@ def test_verify_accepts_sha256_metadata_key_case_variants(
     )
 
 
-def test_stage_skips_existing_artifact_with_title_case_sha_metadata(
+def test_stage_skips_existing_artifact_after_hashing_target_bytes(
     tmp_path: Path,
 ) -> None:
     body = b"hello"
@@ -363,6 +504,7 @@ def test_stage_skips_existing_artifact_with_title_case_sha_metadata(
 
     assert result == [{"name": "file-one", "action": "skip"}]
     assert s3.put_calls == []
+    assert ("target", "staged/file.bin") in s3.get_calls
 
 
 def test_verify_uses_project_scoped_credentials(tmp_path: Path, mocker) -> None:
@@ -452,46 +594,36 @@ def test_verify_cli_exits_nonzero_on_missing_artifact(tmp_path: Path, mocker) ->
     assert "missing target object" in result.output
 
 
-def test_verify_returns_issue_on_hash_mismatch(tmp_path: Path) -> None:
-    manifest = _manifest(tmp_path / "manifest.yaml", sha="expected", size=5)
-    s3 = DemoStageFakeS3()
-    s3.add("target", "staged/file.bin", b"hello", {"sha256": "actual"})
-
-    issues = verify_artifacts(
-        target_bucket="target", manifest_path=manifest, s3_client=s3
-    )
-
-    assert any("sha256 metadata mismatch" in issue for issue in issues)
-
-
-def test_verify_reports_actual_mismatch_with_title_case_sha_metadata(
+def test_verify_detects_corrupt_bytes_with_matching_metadata_and_size(
     tmp_path: Path,
 ) -> None:
-    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
+    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256, size=5)
     s3 = DemoStageFakeS3()
-    s3.add("target", "staged/file.bin", b"hello", {"Sha256": "different"})
+    s3.add("target", "staged/file.bin", b"jello", {"sha256": HELLO_SHA256})
 
     issues = verify_artifacts(
         target_bucket="target", manifest_path=manifest, s3_client=s3
     )
 
-    assert issues == [
-        f"file-one: sha256 metadata mismatch (expected {HELLO_SHA256}, found different)"
-    ]
+    assert len(issues) == 1
+    assert "sha256 mismatch" in issues[0]
 
 
-def test_verify_reports_missing_sha256_metadata(tmp_path: Path) -> None:
-    manifest = _manifest(tmp_path / "manifest.yaml", sha=HELLO_SHA256)
-    s3 = DemoStageFakeS3()
-    s3.add("target", "staged/file.bin", b"hello")
-
-    issues = verify_artifacts(
-        target_bucket="target", manifest_path=manifest, s3_client=s3
+def test_verify_hashes_target_in_bounded_chunks(tmp_path: Path) -> None:
+    body = b"a" * (1024 * 1024 + 1)
+    manifest = _manifest(
+        tmp_path / "manifest.yaml",
+        sha=hashlib.sha256(body).hexdigest(),
+        size=len(body),
     )
+    s3 = DemoStageFakeS3()
+    s3.add("target", "staged/file.bin", body)
 
-    assert issues == [
-        f"file-one: sha256 metadata mismatch (expected {HELLO_SHA256}, found missing)"
-    ]
+    assert (
+        verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+        == []
+    )
+    assert s3.read_sizes == [1024 * 1024, 1024 * 1024, 1024 * 1024]
 
 
 def test_prefix_artifacts_verified_by_listing(tmp_path: Path) -> None:
@@ -499,6 +631,122 @@ def test_prefix_artifacts_verified_by_listing(tmp_path: Path) -> None:
     s3 = DemoStageFakeS3()
     s3.add("target", "staged/dataset/a.bin", b"abc")
     s3.add("target", "staged/dataset/b.bin", b"defg")
+
+    assert (
+        verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+        == []
+    )
+
+
+def test_stage_prefix_rejects_truncated_source_page_without_token(
+    tmp_path: Path,
+) -> None:
+    manifest = _prefix_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.set_list_page(
+        "source",
+        "dataset/",
+        None,
+        {
+            "IsTruncated": True,
+            "Contents": [{"Key": "dataset/a.bin", "Size": 3}],
+        },
+    )
+
+    with pytest.raises(DemoManifestError, match="missing a continuation token"):
+        stage_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+
+    assert s3.copy_calls == []
+    assert s3.list_calls == [("source", "dataset/", None)]
+
+
+@pytest.mark.parametrize("side", ["source", "target"])
+@pytest.mark.parametrize(
+    "tokens", [("page-2", "page-2"), ("page-2", "page-3", "page-2")]
+)
+def test_stage_prefix_rejects_continuation_token_cycles(
+    tmp_path: Path,
+    side: str,
+    tokens: tuple[str, ...],
+) -> None:
+    manifest = _prefix_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.add("source", "dataset/a.bin", b"abc")
+    s3.add("source", "dataset/b.bin", b"defg")
+    prefix = "dataset/" if side == "source" else "staged/dataset/"
+    previous = None
+    for token in tokens:
+        s3.set_list_page(
+            side,
+            prefix,
+            previous,
+            {
+                "IsTruncated": True,
+                "NextContinuationToken": token,
+                "Contents": [{"Key": prefix + "a.bin", "Size": 3}],
+            },
+        )
+        previous = token
+
+    with pytest.raises(DemoManifestError, match="repeated continuation token"):
+        stage_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+
+    assert s3.copy_calls == []
+    assert [call[2] for call in s3.list_calls if call[0] == side] == [
+        None,
+        *tokens[:-1],
+    ]
+
+
+def test_verify_prefix_rejects_malformed_target_pagination(tmp_path: Path) -> None:
+    manifest = _prefix_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.set_list_page(
+        "target",
+        "staged/dataset/",
+        None,
+        {
+            "IsTruncated": True,
+            "Contents": [{"Key": "staged/dataset/a.bin", "Size": 3}],
+        },
+    )
+
+    with pytest.raises(DemoManifestError, match="missing a continuation token"):
+        verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
+
+
+def test_prefix_staging_and_verification_accept_valid_multi_page_listings(
+    tmp_path: Path,
+) -> None:
+    manifest = _prefix_manifest(tmp_path / "manifest.yaml")
+    s3 = DemoStageFakeS3()
+    s3.add("source", "dataset/a.bin", b"abc")
+    s3.add("source", "dataset/b.bin", b"defg")
+    s3.set_two_page_listing(
+        "source",
+        "dataset/",
+        [{"Key": "dataset/a.bin", "Size": 3}],
+        [{"Key": "dataset/b.bin", "Size": 4}],
+        token="source-page-2",
+    )
+
+    result = stage_artifacts(
+        target_bucket="target", manifest_path=manifest, s3_client=s3
+    )
+
+    assert result == [{"name": "prefix-one", "action": "copy"}]
+    assert s3.copy_calls == [
+        ("source", "dataset/a.bin", "target", "staged/dataset/a.bin"),
+        ("source", "dataset/b.bin", "target", "staged/dataset/b.bin"),
+    ]
+
+    s3.set_two_page_listing(
+        "target",
+        "staged/dataset/",
+        [{"Key": "staged/dataset/a.bin", "Size": 3}],
+        [{"Key": "staged/dataset/b.bin", "Size": 4}],
+        token="target-page-2",
+    )
 
     assert (
         verify_artifacts(target_bucket="target", manifest_path=manifest, s3_client=s3)
