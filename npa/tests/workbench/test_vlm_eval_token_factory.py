@@ -319,6 +319,47 @@ def test_compare_judges_rejects_same_model_before_transport(
     assert called is False
 
 
+@pytest.mark.parametrize(
+    ("second_served_model", "expected_status", "passed", "escalation"),
+    [
+        ("vendor/first", "judge_identity_collision", False, True),
+        ("vendor/second", "judges_agree_passed", True, False),
+    ],
+)
+def test_compare_judges_requires_distinct_returned_models(
+    monkeypatch, tmp_path, second_served_model, expected_status, passed, escalation
+) -> None:
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (8, 8), "green").save(frame)
+    completions = iter(
+        [
+            _completion(model="vendor/first"),
+            _completion(model=second_served_model),
+        ]
+    )
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **_kwargs: "test-key")
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: next(completions)
+    )
+    report = vlm_eval.compare_vlm_judges(
+        vlm_eval.VlmJudgeComparisonRequest(
+            input_path=str(frame),
+            output_path=str(tmp_path / "comparison"),
+            primary_model="alias-one",
+            secondary_model="alias-two",
+        )
+    )
+    assert report.status == expected_status
+    assert report.passed is passed
+    assert report.escalation_required is escalation
+    assert report.primary.result.served_model == "vendor/first"
+    assert report.secondary.result.served_model == second_served_model
+    for outcome in (report.primary, report.secondary):
+        assert outcome.result.evidence.provider.raw_response
+
+
 def test_compare_judges_retains_provider_error_and_other_outcome(
     monkeypatch, tmp_path
 ) -> None:
