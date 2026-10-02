@@ -81,7 +81,10 @@ The direct SDK surface takes a typed
 The command materializes and selects frames once, builds one prompt, and proves
 the transported request objects differ only in `model`. It writes
 `vlm_judge_disagreement.json`, retains each complete result or typed error, and
-requires escalation on disagreement or judge error. The report is always
+requires escalation on disagreement or judge error. Distinct requested aliases
+that resolve to the same served model produce `judge_identity_collision`, retain
+both complete outcomes, and require escalation instead of reporting agreement.
+The report is always
 `audit_only`; agreement does not qualify either model, estimate an operational
 disagreement rate, establish physical correctness, or certify robot safety.
 Markdown-fenced JSON is a typed judge error on this strict path, not repaired
