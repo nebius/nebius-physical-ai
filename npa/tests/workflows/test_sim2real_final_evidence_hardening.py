@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 
+import numpy as np
 import pytest
 from botocore.exceptions import ClientError
 from PIL import Image
@@ -21,11 +22,14 @@ from npa.workflows.sim2real_rerun_regen import (
     _heldout_render_source,
     _latest_completed_inner_evidence_rel,
     _renders_dir_for_report,
+    download_rrd_from_s3,
+    publish_regen_outputs,
     regen_sim2real_rrd,
     sync_heldout_renders,
 )
 from npa.workflows.sim2real_viz import (
     Sim2RealVizError,
+    _heldout_pointcloud_frames,
     _heldout_render_episodes,
     _heldout_renders_root,
 )
@@ -554,3 +558,172 @@ def test_operator_symlink_above_containment_root_is_allowed(
         containment_root=alias / "run",
     )
     assert destination.read_text(encoding="utf-8") == '{"ok":true}'
+
+
+def test_current_loaded_report_requires_complete_matching_identity(
+    tmp_path: Path,
+) -> None:
+    checkpoint = b"checkpoint"
+    uri = "s3://demo-bucket/sim2real-b/run-a/model.pt"
+    candidate = tmp_path / "checkpoints/candidate/candidate.json"
+    candidate.parent.mkdir(parents=True)
+    candidate.write_text(
+        json.dumps(
+            {
+                "deployable_policy": True,
+                "policy_checkpoint_uri": uri,
+            }
+        ),
+        encoding="utf-8",
+    )
+    downloads: list[str] = []
+
+    class Storage:
+        def download_file(self, source: str, destination: str) -> None:
+            downloads.append(source)
+            Path(destination).write_bytes(checkpoint)
+
+    access = _ensure_policy_access_metadata(
+        _config(),
+        tmp_path,
+        storage=Storage(),
+        report={},
+        heldout_report={"policy_inference_provenance": {"loaded_for_inference": True}},
+    )
+    assert access["deployable_policy"] is False
+    assert access["policy_bytes_available"] is False
+    assert access["authenticated_download_command"] == ""
+    assert access["ui_action"] == ""
+    assert downloads == []
+
+
+@pytest.mark.parametrize("symlink_level", ["pointcloud", "env", "view", "sample"])
+def test_pointcloud_loader_rejects_symlinked_source(
+    tmp_path: Path,
+    symlink_level: str,
+) -> None:
+    renders = tmp_path / "eval/gold-heldout/outer-01/renders"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    root = renders / "_pointcloud"
+    env = root / "env-0001"
+    view = env / "primary"
+    if symlink_level == "pointcloud":
+        renders.mkdir(parents=True)
+        root.symlink_to(outside, target_is_directory=True)
+    elif symlink_level == "env":
+        root.mkdir(parents=True)
+        env.symlink_to(outside, target_is_directory=True)
+    elif symlink_level == "view":
+        env.mkdir(parents=True)
+        view.symlink_to(outside, target_is_directory=True)
+    else:
+        view.mkdir(parents=True)
+        target = outside / "cloud-000000.npz"
+        np.savez(target, xyz=np.zeros((1, 3)), rgb=np.zeros((1, 3)))
+        (view / target.name).symlink_to(target)
+
+    with pytest.raises(Sim2RealVizError, match="symlink"):
+        _heldout_pointcloud_frames(
+            tmp_path,
+            {"local_renders_dir": str(renders)},
+        )
+
+
+def test_relative_regeneration_directory_publishes_absolute_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    local_dir = Path("regen")
+    report = local_dir / "eval/heldout/report.json"
+    frame = local_dir / "eval/heldout/renders/env-0001/camera-000.png"
+    recording = local_dir / "reports/sim2real.rrd"
+    report.parent.mkdir(parents=True)
+    frame.parent.mkdir(parents=True)
+    recording.parent.mkdir(parents=True)
+    report.write_text("{}", encoding="utf-8")
+    frame.write_bytes(b"frame")
+    recording.write_bytes(b"rrd")
+    uploads: list[str] = []
+
+    class Storage:
+        def upload_file(self, source: str, destination: str) -> str:
+            uploads.append(source)
+            return destination
+
+        def upload_directory(self, source: str, destination: str) -> str:
+            uploads.append(source)
+            return destination
+
+    publish_regen_outputs(_config(), local_dir, client=Storage())
+    assert uploads
+    assert all(Path(source).is_absolute() for source in uploads)
+
+
+def test_exact_legacy_gold_render_uri_remains_supported(tmp_path: Path) -> None:
+    uri = (
+        "s3://demo-bucket/sim2real-b/run-a/component-io/heldout-eval/"
+        "gold_heldout-outer-01/output/renders/"
+    )
+    downloads: list[str] = []
+
+    class Storage:
+        def download_directory(self, source: str, destination: str) -> None:
+            downloads.append(source)
+            frame = Path(destination) / "env-0001/camera-000.png"
+            frame.parent.mkdir(parents=True)
+            frame.write_bytes(b"frame")
+
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "renders_s3_uri": uri,
+            "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+        },
+    }
+    assert sync_heldout_renders(
+        _config(),
+        tmp_path,
+        heldout_report=report,
+        client=Storage(),
+    )
+    assert downloads == [uri]
+
+
+@pytest.mark.parametrize("symlink_level", ["run", "reports"])
+def test_default_rrd_download_checks_internal_symlinked_ancestor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    symlink_level: str,
+) -> None:
+    default_root = tmp_path / "default"
+    run_root = default_root / "run-a"
+    outside = tmp_path / "outside"
+    default_root.mkdir()
+    outside.mkdir()
+    if symlink_level == "run":
+        run_root.symlink_to(outside, target_is_directory=True)
+        escaped = outside / "reports/sim2real.rrd"
+    else:
+        run_root.mkdir()
+        (run_root / "reports").symlink_to(outside, target_is_directory=True)
+        escaped = outside / "sim2real.rrd"
+    monkeypatch.setattr(
+        "npa.workflows.sim2real_rerun_regen.DEFAULT_REGEN_ROOT",
+        default_root,
+    )
+
+    class Storage:
+        def download_path(self, _uri: str, destination: str) -> None:
+            Path(destination).write_bytes(b"rrd")
+
+    with pytest.raises(Sim2RealRerunRegenError, match="symlinked ancestor"):
+        download_rrd_from_s3(
+            _config(),
+            dest_path=run_root / "reports/sim2real.rrd",
+            client=Storage(),
+        )
+    assert not escaped.exists()

@@ -597,7 +597,15 @@ def _heldout_render_source(
             "sealed gold report has an invalid outer iteration"
         )
     expected_uri = f"{prefix}eval/gold-heldout/outer-{outer:02d}/renders/"
-    if render_uri != expected_uri:
+    expected_legacy_uri = (
+        f"{prefix}component-io/heldout-eval/"
+        f"gold_heldout-outer-{outer:02d}/output/renders/"
+    )
+    has_canonical = lineage.get("canonical_s3_uri") not in (None, "")
+    allowed_uris = (
+        {expected_uri} if has_canonical else {expected_uri, expected_legacy_uri}
+    )
+    if render_uri not in allowed_uris:
         raise Sim2RealRerunRegenError(
             "sealed gold render lineage disagrees with the configured run and iteration"
         )
@@ -862,12 +870,18 @@ def download_rrd_from_s3(
     storage = client or _storage_client_for_config(config)
     uri = f"{run_prefix_uri(config)}reports/sim2real.rrd"
     dest_path = Path(dest_path)
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
+    absolute_dest = Path(os.path.abspath(dest_path))
+    default_root = Path(os.path.abspath(DEFAULT_REGEN_ROOT))
+    containment_root = (
+        default_root
+        if absolute_dest.is_relative_to(default_root)
+        else absolute_dest.parent
+    )
     if not _download_if_exists(
         storage,
         uri,
-        dest_path,
-        containment_root=dest_path.parent,
+        absolute_dest,
+        containment_root=containment_root,
     ):
         raise Sim2RealRerunRegenError(f"Rerun recording not found at {uri}")
     return dest_path
@@ -883,7 +897,7 @@ def publish_regen_outputs(
 
     storage = client or _storage_client_for_config(config)
     prefix = run_prefix_uri(config)
-    local_dir = Path(local_dir)
+    local_dir = Path(os.path.abspath(local_dir))
 
     report_path = _gold_report_path(config, local_dir)
     if report_path.is_file():
@@ -1722,7 +1736,13 @@ def _retained_claim_evidence(
     )
 
 
-def _retained_deployment_claim(sources: _RetainedPolicySources) -> bool:
+def _retained_deployment_claim(
+    sources: _RetainedPolicySources,
+    *,
+    checkpoint_uri: str,
+    checkpoint_sha256: str,
+    checkpoint_size: int,
+) -> bool:
     evidence = _retained_claim_evidence(sources, "deployable_policy")
     for label, decision in (
         ("outer_loop.decision.decision", sources.decision),
@@ -1741,8 +1761,14 @@ def _retained_deployment_claim(sources: _RetainedPolicySources) -> bool:
         )
     deployable = _consensus_claim(evidence, default=False)
     if sources.current_heldout_report_present:
+        metadata = _heldout_policy_metadata(sources.current_heldout_report)
         deployable = bool(
-            deployable and sources.current_producer.get("loaded_for_inference") is True
+            deployable
+            and metadata["heldout_policy_loaded_for_inference"] is True
+            and metadata["heldout_policy_identity_verified"] is True
+            and metadata["heldout_policy_checkpoint"] == checkpoint_uri
+            and metadata["heldout_policy_checkpoint_sha256"] == checkpoint_sha256
+            and metadata["heldout_policy_checkpoint_size_bytes"] == checkpoint_size
         )
     return deployable
 
@@ -1786,7 +1812,12 @@ def _retained_candidate_identity(
     checkpoint_sha256 = _retained_checkpoint_digest(sources)
     checkpoint_size = _retained_checkpoint_size(sources)
     _assert_retained_leaf_identity(sources, checkpoint_uri=checkpoint_uri)
-    deployment_claim = _retained_deployment_claim(sources)
+    deployment_claim = _retained_deployment_claim(
+        sources,
+        checkpoint_uri=checkpoint_uri,
+        checkpoint_sha256=checkpoint_sha256,
+        checkpoint_size=checkpoint_size,
+    )
     bytes_claim = _retained_bytes_claim(
         sources,
         deployment_claim=deployment_claim,

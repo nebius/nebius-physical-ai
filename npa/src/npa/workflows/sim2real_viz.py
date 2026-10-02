@@ -2742,17 +2742,49 @@ def _heldout_pointcloud_frames(
     """
 
     renders_root = _heldout_renders_root(local_dir, heldout_report)
-    root = renders_root / POINTCLOUD_SUBDIR
+    root = _manifest_child_path(
+        renders_root,
+        POINTCLOUD_SUBDIR,
+        source="held-out pointcloud directory",
+    )
     if not root.is_dir():
         return []
-    env_dirs = sorted(path for path in root.iterdir() if path.is_dir())
+    env_dirs: list[Path] = []
+    for candidate in root.iterdir():
+        path = _manifest_child_path(
+            root,
+            candidate.name,
+            source="held-out pointcloud environment directory",
+        )
+        if path.is_dir():
+            env_dirs.append(path)
+    env_dirs.sort()
     if not env_dirs:
         return []
     env_dir = env_dirs[0]
-    view_dirs = sorted(path for path in env_dir.iterdir() if path.is_dir())
+    view_dirs: list[Path] = []
+    for candidate in env_dir.iterdir():
+        path = _manifest_child_path(
+            env_dir,
+            candidate.name,
+            source="held-out pointcloud view directory",
+        )
+        if path.is_dir():
+            view_dirs.append(path)
+    view_dirs.sort()
     if not view_dirs:
         view_dirs = [env_dir]
-    view_frames = [sorted(path.glob("cloud-*.npz")) for path in view_dirs]
+    view_frames = [
+        [
+            _manifest_child_path(
+                path,
+                candidate.name,
+                source="held-out pointcloud sample",
+            )
+            for candidate in sorted(path.glob("cloud-*.npz"))
+        ]
+        for path in view_dirs
+    ]
     frames: list[tuple[np.ndarray, np.ndarray]] = []
     for frame_index in range(max((len(paths) for paths in view_frames), default=0)):
         clouds = [
