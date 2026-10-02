@@ -1,0 +1,47 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "79766133ccc7ef7155223b0b14b3e178b2a6500d1828759c7b1c791ce1411e0a",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and rendered CLI/resource contract passed.",
+      "evidence": [
+        "npa/tests/workflows/test_cosmos3_super_h200_single_gpu_workflow.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Fixed TP-1 workload with 24 measured requests and an explicit single-GPU validation scope.",
+      "evidence": [
+        "npa/tests/workbench/test_cosmos3_super_benchmark.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Operator output prefix requires exact write/read verification at submit.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Pinned Cosmos3-Super weights are runtime-fetched and checked before execution.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Submit verifies the operator credentials for the selected target.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Operator-private wrapper digest and its byte/bootstrap evidence are required.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "One B200 with working CUDA and sufficient CPU/RAM must be available.",
+      "evidence": []
+    }
+  }
+}

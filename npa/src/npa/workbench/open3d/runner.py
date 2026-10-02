@@ -678,9 +678,8 @@ def run_reconstruct(
             )
     mesh.compute_vertex_normals()
 
-    # Publish the pre-crop surface too. The crop below is a claim about which
-    # geometry is observed, and a reviewer must be able to check that claim
-    # against what Poisson actually returned.
+    # Retain the surface after density trimming and before distance filtering,
+    # so reviewers can inspect exactly what the distance filter removed.
     full_path = output / "mesh_uncropped.ply"
     if not o3d.io.write_triangle_mesh(str(full_path), mesh):
         raise Open3dError("Open3D could not write the uncropped mesh")
@@ -713,9 +712,9 @@ def run_reconstruct(
         "mesh_uncropped": _mesh_facts(o3d, mesh, full_path)
         if request.support_distance_factor <= 0.0
         else _uncropped_facts(o3d, full_path),
-        # Both directions, before and after. The pair is the evidence: support
-        # should rise sharply while coverage stays put, and a coverage drop means
-        # the crop took surface that explained real observations.
+        # Support is measured before and after distance filtering. Coverage is
+        # the remaining surface's agreement with the observed samples; it does
+        # not establish that removed geometry was incorrect.
         "support_before_crop": before,
         "support": _support(o3d, mesh, cloud, voxel),
         "coverage": _coverage(o3d, mesh, cloud, voxel),
@@ -1194,6 +1193,7 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
                         "source_version": SOURCE_VERSION,
                         "run_id": run_id,
                         "fused_sha256": pose_graph["fused_sha256"],
+                        "input_provenance": payload.get("input_provenance", {}),
                         "logged_fragments": logged,
                         "camera": camera,
                         "view_cameras": cameras,
@@ -1225,6 +1225,7 @@ def run_visualize(payload: dict[str, Any], output: Path, run_id: str) -> dict[st
         "fused_points": int(len(fused_points)),
         "mesh": mesh_summary,
         "unsupported_triangles_shown": removed_triangles,
+        "input_provenance": payload.get("input_provenance", {}),
         "camera": camera,
         "view_cameras": cameras,
         "up_axis_inference": up,

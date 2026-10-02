@@ -882,17 +882,38 @@ def _visualize_payload(monkeypatch, tmp_path, *, factor, cropped) -> dict:
         ],
         "voxel_size": 0.05,
     }
+    manifest = RegistrationManifest.model_validate(manifest).model_dump(mode="json")
+    graph = {
+        "nodes": [{"fragment_id": key, "pose": IDENTITY} for key in ("a", "b")],
+        "edges": [
+            {
+                "source_node_id": 0,
+                "target_node_id": 1,
+                "transformation": IDENTITY,
+                "uncertain": False,
+            }
+        ],
+        "fused_sha256": sha256_bytes(b"artifact-bytes"),
+    }
+    registration = {
+        "kind": "multiway",
+        "input_path": "s3://example-bucket/prepared",
+        "pose_graph": graph,
+        "manifest_sha256": sha256_bytes(canonical(manifest)),
+        "voxel_size": 0.05,
+    }
     documents = {
         "s3://example-bucket/mesh/result.json": {
             "schema_version": "npa.open3d.reconstruction.v1",
             "registration_path": "s3://example-bucket/graph",
             "support_distance_factor": factor,
             "unsupported_vertices_removed": cropped,
+            "registration_result_sha256": sha256_bytes(canonical(registration)),
+            "mesh": {"sha256": sha256_bytes(b"artifact-bytes")},
+            "mesh_uncropped": {"sha256": sha256_bytes(b"artifact-bytes")},
         },
-        "s3://example-bucket/graph/result.json": {
-            "input_path": "s3://example-bucket/prepared"
-        },
-        "s3://example-bucket/graph/pose_graph.json": {"nodes": []},
+        "s3://example-bucket/graph/result.json": registration,
+        "s3://example-bucket/graph/pose_graph.json": graph,
         "s3://example-bucket/prepared/manifest.json": manifest,
     }
 

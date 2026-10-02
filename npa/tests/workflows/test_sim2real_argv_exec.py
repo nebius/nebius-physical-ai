@@ -24,6 +24,8 @@ from npa.workflows.sim2real.legacy_components import (
 )
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 def _minimal_env() -> dict[str, str]:
     return {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}

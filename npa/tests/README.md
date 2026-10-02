@@ -1,5 +1,20 @@
 # npa/tests
 
+## TLS security regressions
+
+Run the loopback-only AnyIO hostname and worker-process regressions with:
+
+```bash
+npa/.venv/bin/python -m pytest npa/tests/test_anyio_security_regressions.py -q
+```
+
+The TLS cases explicitly enable strict X.509 verification on every supported
+Python version, matching Python 3.13 and newer defaults. Their ephemeral CA and
+leaf certificates must satisfy that verification so the tests reach the intended
+IDNA hostname comparison. Both acceptance of the correct hostname and rejection
+of the spoofed hostname remain required. PR compatibility checks run these tests
+on Python 3.10 and 3.14 before merge, alongside the full Python 3.12 suite.
+
 ## Runtime status diagnostics live check
 
 To check failure diagnostics against an already-run Serverless job, set

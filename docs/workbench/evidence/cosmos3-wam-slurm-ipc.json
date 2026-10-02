@@ -1,0 +1,46 @@
+{
+  "schema": "npa.cosmos3.wam-slurm-ipc.v1",
+  "date_utc": "2026-09-26",
+  "scope": "Observed host IPC failure and independently reproduced fix; not a completed training performance result",
+  "hardware": "One dedicated node with eight reserved NVIDIA B200 GPUs",
+  "scheduler": "Slurm 23.11.4",
+  "host": "Ubuntu 24.04; systemd-logind",
+  "interrupted_training": {
+    "last_completed_step": 302,
+    "log_sha256": "72f368166584d7c1b6a3f3c76b91e428d2d14f160f6b2be241d257a508f77b88",
+    "benchmark_eligible": false,
+    "operator_cancelled": true,
+    "reason": "PyTorch data-loader feeder lost shared memory during logind logout cleanup"
+  },
+  "default_cleanup_probe": {
+    "label": "before",
+    "started_unix": 1790396296.478401,
+    "ended_unix": 1790396306.7942314,
+    "survived_logout": false
+  },
+  "RemoveIPC_no_probe": {
+    "label": "after",
+    "started_unix": 1790396414.8492208,
+    "ended_unix": 1790396444.8996758,
+    "survived_logout": true
+  },
+  "public_recipe_probe": {
+    "started_unix": 1790401354.8424904,
+    "ended_unix": 1790401384.9214323,
+    "survived_logout": true,
+    "observation_window_seconds": 30
+  },
+  "public_probe_sha256": "0b634b9857057488d28361e46c408fefd948b28493f85bf5e9133aba742cfbc0",
+  "configuration_change": "[Login] RemoveIPC=no in /etc/systemd/logind.conf.d/90-wam-slurm-ipc.conf; restarted systemd-logind",
+  "method": "Run the user-owned shared-memory probe as a system service with --uid; close all SSH sessions for that user; inspect the receipt after thirty seconds",
+  "guardrail": "The training reporter rejects Python thread tracebacks even when the trainer continues. The affected partial run is excluded from benchmark results.",
+  "prior_public_recipe_probe": {
+    "observation": {
+      "started_unix": 1790396655.5157633,
+      "ended_unix": 1790396685.5839832,
+      "survived_logout": true,
+      "observation_window_seconds": 30
+    },
+    "source_sha256": "cb8b5c913f70b4c71051223911de6521f1b436c54a312e71495501a97342fab7"
+  }
+}

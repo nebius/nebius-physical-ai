@@ -187,7 +187,7 @@ def reconstruct_cmd(
         "--support-distance-factor",
         help=(
             "Discard surface farther than this many voxel_size units from any "
-            "observed sample. 0 keeps Poisson's closed surface unchanged."
+            "observed sample. 0 disables distance filtering; density trimming still applies."
         ),
     ),
     output_format: OutputFormat = typer.Option(

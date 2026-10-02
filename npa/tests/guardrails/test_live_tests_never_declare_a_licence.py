@@ -38,6 +38,7 @@ DECLARATION_ENVS = frozenset(
     {
         "NPA_LTX_ACCEPT_NVIDIA_RUNTIME_TERMS",
         "NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS",
+        "NPA_ANTIOCH_ACCEPT_TERMS",
         "OMNI_KIT_ACCEPT_EULA",
         "ISAACSIM_ACCEPT_EULA",
     }
@@ -123,6 +124,7 @@ def test_the_scan_would_notice_each_shape_it_claims_to_cover() -> None:
         'monkeypatch.setenv("OMNI_KIT_ACCEPT_EULA", "YES")\n',
         'env = {}\nenv.setdefault("ISAACSIM_ACCEPT_EULA", "YES")\n',
         'run(env={"NPA_WAN_ACCEPT_NVIDIA_RUNTIME_TERMS": "YES"})\n',
+        'run(env={"NPA_ANTIOCH_ACCEPT_TERMS": "YES"})\n',
         'from x import ACCEPT_ENV\nrun(env={ACCEPT_ENV: "YES"})\n',
     )
     with tempfile.TemporaryDirectory() as tmp:

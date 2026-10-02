@@ -14,7 +14,6 @@ from collections.abc import Callable
 
 _WORKFLOW = ".github/workflows/security-regression.yml"
 _REQUIRED_JOBS = {
-    "validation-plan",
     "pr-precheck",
     "gitleaks",
     "scan",
@@ -25,7 +24,6 @@ _REQUIRED_JOBS = {
     "lint-gate / docs-drift",
     "image-security / Image policy and complete-byte security",
     "image-security / Base image CVE inventory",
-    "test-gate / test-scope",
 }
 _SHA = re.compile(r"[0-9a-f]{40}")
 
@@ -95,6 +93,21 @@ def _latest_validation(repository: str, pull: dict, now: datetime) -> dict:
     return run
 
 
+def _test_scope_succeeded(jobs: list[dict]) -> bool:
+    for job in jobs:
+        if job["conclusion"] != "success":
+            continue
+        if job["name"] == "test-gate / test-scope":
+            return True
+        if job["name"] == "gitleaks" and any(
+            step["name"] == "Select tests using the trusted base policy"
+            and step.get("conclusion") == "success"
+            for step in job.get("steps", [])
+        ):
+            return True
+    return False
+
+
 def _verify_jobs(repository: str, run: dict) -> None:
     endpoint = (
         f"repos/{repository}/actions/runs/{run['id']}"
@@ -105,6 +118,7 @@ def _verify_jobs(repository: str, run: dict) -> None:
     _require(
         _REQUIRED_JOBS <= successful, "Required PR checks are missing or unsuccessful"
     )
+    _require(_test_scope_succeeded(jobs), "Trusted test selection did not succeed")
     _require(
         all(
             job["conclusion"] in {"success", "skipped"}
@@ -114,7 +128,7 @@ def _verify_jobs(repository: str, run: dict) -> None:
         "The validation attempt contains an unsuccessful job",
     )
     full_suite = {
-        *(f"test-gate / pytest-3.12-shard-{index}" for index in range(1, 9)),
+        *(f"test-gate / pytest-3.12-shard-{index}" for index in range(1, 7)),
         "test-gate / coverage",
         "test-gate / browser-and-compatibility",
     }

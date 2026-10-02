@@ -80,8 +80,8 @@ be able to open the thing being asserted.
   treat an open surface as a failure, and do not treat a watertight one as proof of
   completeness.
 - `reconstruct` crops the lowest-density Poisson vertices (the upstream tutorial's
-  density quantile). Those vertices are extrapolation past the samples, so the
-  count removed is recorded rather than hidden.
+  density quantile). Low density is a sampling property, not proof that geometry
+  is false; the removed count is recorded.
 - The density quantile alone is nowhere near enough on a partial scan. Poisson
   returns a *closed* surface, so an open capture comes back wrapped in an
   extrapolated shell that renders as smooth opaque geometry indistinguishable
@@ -91,11 +91,10 @@ be able to open the thing being asserted.
   sample coverage within one voxel unchanged at 0.99243 and moved
   sample-to-surface RMSE by 0.00005 m. `--support-distance-factor` (default
   `1.0`) discards surface with no observed sample within that many `voxel_size`
-  units. One voxel is the sampling geometry, not a tuned constant — the cloud is
-  voxel-downsampled, so a surface point interpolating between neighbouring
-  samples sits at most about half a voxel diagonal from one. Pass `0` to publish
-  the closed surface unchanged, which is right when the capture is already
-  complete.
+  units. Voxel downsampling does not bound gaps between observations, so this
+  default is a distance-filter setting, not an interpolation guarantee. Pass `0`
+  to disable distance filtering; density trimming remains controlled separately
+  by `--density-quantile`. Disable both filters to retain the raw Poisson surface.
 - **The default assumes sample spacing well below the voxel, and says so because
   it is measurably wrong otherwise.** A watertight mesh sampled uniformly at 300k
   points, then voxelized at its own median spacing, reports **0.2055 unsupported
@@ -197,8 +196,8 @@ be able to open the thing being asserted.
   is deleting observations from a polar cap while leaving the mesh covering it, so
   the invented fraction is known exactly from the cap angle.
 - Both surfaces ship: `mesh.ply` is the cropped result and `mesh_uncropped.ply`
-  is what Poisson returned, so the crop is a checkable claim rather than a
-  deletion. `reconstruct` also publishes the support measurement before and
+  is the surface after density trimming and before distance filtering, so the
+  latter operation remains inspectable. It is not the untouched Poisson output. `reconstruct` also publishes the support measurement before and
   after the crop plus coverage in the other direction (observed samples to the
   surface), and the stage fails if those disagree — cropping that reported more
   unsupported area than it started with, or surface left beyond the stated limit.
@@ -244,3 +243,16 @@ For a real capability check, run the golden eval inside the built image:
 ```bash
 docker run --rm npa-open3d:<tag> python -m npa.smoke.test_open3d_functional
 ```
+
+## Persisted input identity
+
+Before rendering, `visualize` verifies both mesh hashes, the fused-cloud hash,
+the pose graph against its registration, and the canonical manifest hash. The
+reconstruction also records the exact upstream registration-result hash; replacing
+that result at the same prefix rejects replay. Verified input hashes accompany
+the recording and its manifest. Older reconstruction reports missing that binding
+must be regenerated with `reconstruct` before visualization. These checks detect
+changed artifacts; they do not certify the geometry as physical truth.
+
+Failed native stages retain their private working directory and runtime log.
+Successful stages remove temporary files after publication and verification.

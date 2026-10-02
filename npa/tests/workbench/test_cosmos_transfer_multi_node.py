@@ -1002,12 +1002,13 @@ def test_gang_shard_fails_closed_on_an_inconsistent_identity(
         cosmos2._gang_shard()
 
 
-def test_shard_manifests_merge_into_the_single_node_run_manifest() -> None:
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+def test_shard_manifests_merge_into_the_single_node_run_manifest(field: str) -> None:
     storage = FakeStorage()
     output_uri = "s3://bkt/run1/cosmos_augmented/"
     # Rank 1 finishes first; the merge must still restore sampled combo order.
     _write_shard(
-        [_clip(1), _clip(3)],
+        [_clip(1), {**_clip(3), field: False}],
         output_uri,
         run_id="run1",
         rank=1,
@@ -1047,6 +1048,13 @@ def test_shard_manifests_merge_into_the_single_node_run_manifest() -> None:
     # The join is durable: it lands on the same key a single-node run writes.
     written = json.loads(storage.objects[tx.transfer_manifest_uri_for(output_uri)])
     assert written["clips"] == manifest["clips"]
+    assert written[field] is False
+    assert [variant[field] for variant in written["variants"]] == [
+        True,
+        True,
+        True,
+        False,
+    ]
     assert (
         tx.shard_manifest_uri_for(output_uri, 1, attempt_id=ATTEMPT)
         == "s3://bkt/run1/cosmos_augmented/_attempts/wave-attempt-1/manifest-rank-1.json"

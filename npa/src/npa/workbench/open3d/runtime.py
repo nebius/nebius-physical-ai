@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -48,6 +50,7 @@ from .schemas import (
     StageDemoRequest,
     fragment_id_for,
 )
+from .lineage import verify_digest, verify_registration
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -92,6 +95,19 @@ def _discard(root: Path) -> None:
         shutil.rmtree(root)
     except OSError:
         _LOGGER.warning("Open3D artifacts verified; local working-file cleanup failed")
+
+
+@contextmanager
+def _workspace(prefix: str) -> Iterator[Path]:
+    """Discard successful inputs while retaining private failure diagnostics."""
+
+    root = _work_dir(prefix)
+    try:
+        yield root
+    except BaseException:
+        raise
+    else:
+        _discard(root)
 
 
 def _run_runner(kind: str, payload: dict[str, Any], root: Path, run_id: str) -> Path:
@@ -226,8 +242,7 @@ def stage_demo(request: StageDemoRequest) -> dict[str, Any]:
 
     validate_write_path(request.output_path, tool="open3d", required=True)
     authorize_uri(request.output_path, operation="write")
-    root = _work_dir("npa-open3d-stage-demo-")
-    try:
+    with _workspace("npa-open3d-stage-demo-") as root:
         output = _run_runner("stage-demo", {}, root, "stage-demo")
         staged = json.loads((output / "runner.json").read_text())
         fragments = []
@@ -250,8 +265,6 @@ def stage_demo(request: StageDemoRequest) -> dict[str, Any]:
             entry["id"]: entry["points"] for entry in staged["fragments"]
         }
         return result
-    finally:
-        _discard(root)
 
 
 def _publish_manifest(
@@ -362,8 +375,7 @@ def _download_fragments(manifest: RegistrationManifest, root: Path) -> dict[str,
 def _registration(kind: str, request: RunRequest) -> dict[str, Any]:
     _tool_paths(request)
     manifest = _load_manifest(request.input_path)
-    root = _work_dir(f"npa-open3d-{kind}-")
-    try:
+    with _workspace(f"npa-open3d-{kind}-") as root:
         started = time.perf_counter()
         output = _run_runner(
             kind,
@@ -408,8 +420,6 @@ def _registration(kind: str, request: RunRequest) -> dict[str, Any]:
             report["aligned_uris"] = _publish_aligned(output, request, rows)
         _publish(uri_join(request.output_path, RESULT_FILENAME), canonical(report))
         return report
-    finally:
-        _discard(root)
 
 
 def _expected_pairs(kind: str, manifest: RegistrationManifest) -> list[str]:
@@ -462,8 +472,7 @@ def validate(request: RunRequest) -> dict[str, Any]:
     _tool_paths(request)
     journal = read_bytes_uri(uri_join(request.input_path, PAIRS_JOURNAL))
     report = json.loads(read_bytes_uri(uri_join(request.input_path, RESULT_FILENAME)))
-    root = _work_dir("npa-open3d-validate-")
-    try:
+    with _workspace("npa-open3d-validate-") as root:
         local = root / PAIRS_JOURNAL
         local.write_bytes(journal)
         rows = read_journal(local)
@@ -487,25 +496,21 @@ def validate(request: RunRequest) -> dict[str, Any]:
         }
         _publish(uri_join(request.output_path, "validation.json"), canonical(result))
         return result
-    finally:
-        _discard(root)
 
 
 def reconstruct(request: ReconstructRequest) -> dict[str, Any]:
     """Poisson surface reconstruction over a published multiway fused cloud."""
 
     _tool_paths(request)
-    manifest_report = json.loads(
-        read_bytes_uri(uri_join(request.input_path, RESULT_FILENAME))
-    )
+    registration_bytes = read_bytes_uri(uri_join(request.input_path, RESULT_FILENAME))
+    manifest_report = json.loads(registration_bytes)
     if manifest_report.get("kind") != "multiway":
         raise Open3dError(
             "reconstruct consumes a multiway output prefix; the given prefix holds "
             f"a {manifest_report.get('kind')!r} result"
         )
     pose_graph = manifest_report["pose_graph"]
-    root = _work_dir("npa-open3d-reconstruct-")
-    try:
+    with _workspace("npa-open3d-reconstruct-") as root:
         fused = read_bytes_uri(uri_join(request.input_path, FUSED_FILENAME))
         if sha256_bytes(fused) != pose_graph["fused_sha256"]:
             raise Open3dError("fused cloud does not match the published pose graph")
@@ -535,12 +540,11 @@ def reconstruct(request: ReconstructRequest) -> dict[str, Any]:
         # Carry the registration prefix forward so `visualize` can reach the
         # pose graph and fragments without being told twice.
         report["registration_path"] = request.input_path
+        report["registration_result_sha256"] = sha256_bytes(registration_bytes)
         _publish(uri_join(request.output_path, MESH_FILENAME), mesh)
         _publish(uri_join(request.output_path, UNCROPPED_MESH_FILENAME), uncropped)
         _publish(uri_join(request.output_path, RESULT_FILENAME), canonical(report))
         return report
-    finally:
-        _discard(root)
 
 
 def _load_manifest_voxel(report: dict[str, Any]) -> float:
@@ -556,7 +560,8 @@ def visualize(request: RunRequest) -> dict[str, Any]:
     """Emit and verify an RRD of the optimized fragments, fusion and surface."""
 
     _tool_paths(request)
-    report = json.loads(read_bytes_uri(uri_join(request.input_path, RESULT_FILENAME)))
+    reconstruction_bytes = read_bytes_uri(uri_join(request.input_path, RESULT_FILENAME))
+    report = json.loads(reconstruction_bytes)
     registration_path = report.get("registration_path")
     if report.get("schema_version") != "npa.open3d.reconstruction.v1" or not isinstance(
         registration_path, str
@@ -565,15 +570,23 @@ def visualize(request: RunRequest) -> dict[str, Any]:
             "visualize consumes a reconstruct output prefix; the given prefix does "
             "not hold a reconstruction result"
         )
-    registration = json.loads(
-        read_bytes_uri(uri_join(registration_path, RESULT_FILENAME))
+    registration_bytes = read_bytes_uri(uri_join(registration_path, RESULT_FILENAME))
+    registration_hash = verify_digest(
+        registration_bytes,
+        report.get("registration_result_sha256"),
+        what="reconstruction registration result",
     )
+    registration = json.loads(registration_bytes)
     pose_graph = json.loads(
         read_bytes_uri(uri_join(registration_path, POSE_GRAPH_FILENAME))
     )
     manifest = _load_manifest(registration["input_path"])
-    root = _work_dir("npa-open3d-visualize-")
-    try:
+    provenance = {
+        "reconstruction_result_sha256": sha256_bytes(reconstruction_bytes),
+        "registration_result_sha256": registration_hash,
+        **verify_registration(registration, pose_graph, manifest),
+    }
+    with _workspace("npa-open3d-visualize-") as root:
         fused = root / FUSED_FILENAME
         fused.write_bytes(read_bytes_uri(uri_join(registration_path, FUSED_FILENAME)))
         mesh = root / MESH_FILENAME
@@ -582,6 +595,18 @@ def visualize(request: RunRequest) -> dict[str, Any]:
         uncropped.write_bytes(
             read_bytes_uri(uri_join(request.input_path, UNCROPPED_MESH_FILENAME))
         )
+        for key, local, expected in (
+            ("fused", fused, pose_graph.get("fused_sha256")),
+            ("mesh", mesh, (report.get("mesh") or {}).get("sha256")),
+            (
+                "mesh_uncropped",
+                uncropped,
+                (report.get("mesh_uncropped") or {}).get("sha256"),
+            ),
+        ):
+            provenance[f"{key}_sha256"] = verify_digest(
+                local.read_bytes(), expected, what=f"recording {key}"
+            )
         output = _run_runner(
             "visualize",
             {
@@ -598,6 +623,7 @@ def visualize(request: RunRequest) -> dict[str, Any]:
                     "unsupported_vertices_removed"
                 ),
                 "voxel_size": manifest.voxel_size,
+                "input_provenance": provenance,
             },
             root,
             request.run_id,
@@ -613,5 +639,3 @@ def visualize(request: RunRequest) -> dict[str, Any]:
         _publish(uri_join(request.output_path, RECORDING_FILENAME), payload)
         _publish(uri_join(request.output_path, "rrd-manifest.json"), canonical(result))
         return result
-    finally:
-        _discard(root)
