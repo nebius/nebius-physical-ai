@@ -270,12 +270,21 @@ exact-image byte scans are accepted, so there is **no accepted public release ro
 and no verified anonymous pull claim** for this image. Select development bytes
 only with an explicit immutable image digest.
 
-Its capability is proven locally, not in the public registry: the six
-`npa workbench open3d` verbs ran end to end in the built image against real S3,
-and `npa.smoke.test_open3d_functional` checks the recovered pose against the
-ground-truth transform it applied. The image is CPU-only by construction —
-Open3D's `pipelines.registration` and geometry APIs have no CUDA path — so it
-carries no GPU architecture claim and its workflow stages request no accelerator.
+The current recording contract binds the exact registration report, manifest,
+pose graph, fused cloud, and both mesh artifacts before publishing an RRD.
+Reconstruction reports without `registration_result_sha256` must be regenerated;
+historical six-stage S3 evidence predates this binding and does not qualify
+replacement image bytes. The fresh native functional gate passed in the private
+candidate built from `07968922ab665c53114a1c6b3bfad9fd03edbb03`, checking a known
+pose, real reconstruction, observation-distance filtering, and decoded RRD
+output. Exact-image managed-workflow and complete-byte evidence must be reviewed
+separately before acceptance; this catalog does not admit a public release.
+
+These Open3D `pipelines.registration` and legacy geometry operations run on CPU,
+so the stages request no accelerator and carry no GPU architecture claim. Demo
+inputs are the synthetic augmented ICL-NUIM scene distributed as
+`DemoICPPointClouds` under CC BY 3.0, not real sensor captures. Distance to an
+observed sample does not establish surface correctness or collision safety.
 
 ## 2026-09-04 coherent Sim2Real publication
 

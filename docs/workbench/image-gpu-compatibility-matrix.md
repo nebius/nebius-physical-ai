@@ -193,12 +193,15 @@ proprietary NRE consumer on RTX PRO 6000; CPU compatibility does not make that
 rendering workflow portable to B200/B300. Public release and full live-workflow
 acceptance remain pending for the ingestion candidate.
 
-`npa-open3d` is CPU by construction, not by omission: Open3D's
-`pipelines.registration` and geometry APIs have no CUDA path, so its workflow
-stages request no accelerator and would waste one if they did. Its capability is
-proven locally (a real six-stage S3 run and a golden eval that checks the
-recovered pose against ground truth); public release remains pending exact-image
-byte scans.
+`npa-open3d` uses Open3D's CPU registration and legacy geometry operations; its
+workflow stages request no accelerator. The fresh private candidate's native
+functional gate checks known-pose recovery, reconstruction, support filtering,
+and decoded RRD output. Historical six-stage S3 proof predates the current
+mandatory registration-report hash and does not validate replacement bytes;
+regenerate legacy reconstruction artifacts before recording them. Review fresh
+exact-image managed-workflow and complete-byte evidence separately. The image
+remains a private validation candidate with no accepted public release or GPU
+architecture claim. See the [container catalog](container-image-catalog.md#pending-open3d-registration-image).
 
 
 `npa-robotwin`'s `unknown` / `pending-build` inventory record and the row above
