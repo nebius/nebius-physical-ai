@@ -16,6 +16,12 @@ unique and must be tested with its own upstream-named capabilities.
 
 ## Candidate Matrix
 
+[Physis-Lang physical prompting](physis-lang.md) is an independent NPA
+paper-inspired inference workflow using the existing accepted Diffusers runtime.
+The recorded upstream revision has no released implementation. GPU qualification
+is tracked in its readiness record; this is not registry admission of an upstream
+Physis-Lang image, checkpoint, training recipe, or benchmark reproduction.
+
 | Candidate | Pinned source | Primary (hard-gate) capability | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |
 | Habitat-Sim (**neutral runtime-fetch; development proof only**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
