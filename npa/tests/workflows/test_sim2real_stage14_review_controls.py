@@ -11,6 +11,7 @@ import pytest
 
 from npa.clients.storage import StorageError
 from npa.workflows.sim2real import workflow_stage
+from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
 import npa.workflows.sim2real.engine as engine
 import npa.workflows.sim2real.legacy_orchestration as legacy
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
@@ -33,11 +34,14 @@ def _config() -> Sim2RealLoopConfig:
     )
 
 
-def _same_run_uri() -> str:
-    return (
-        "s3://demo-bucket/sim2real-b/run-a/byo-trainer/job/"
-        "outer-01-iter-01/model_latest.pt"
-    )
+def _same_run_uri(
+    *,
+    outer_iteration: int = 1,
+    inner_iteration: int = 1,
+) -> str:
+    job = k8s_job_name("s2r-byo-isaac-train", "run-a")
+    tag = artifact_tag(f"outer-{outer_iteration:02d}-iter-{inner_iteration:02d}")
+    return f"s3://demo-bucket/sim2real-b/run-a/byo-trainer/{job}/{tag}/model_latest.pt"
 
 
 def _identity(uri: str) -> dict[str, Any]:
@@ -49,14 +53,33 @@ def _identity(uri: str) -> dict[str, Any]:
     }
 
 
-def _inner_evidence(uri: str) -> dict[str, Any]:
+def _inner_evidence(
+    uri: str,
+    *,
+    outer_iteration: int = 1,
+    inner_iteration: int = 1,
+) -> dict[str, Any]:
     identity = _identity(uri)
+    candidate = {
+        **identity,
+        "evaluation_split": "validation",
+        "outer_iteration": outer_iteration,
+        "inner_iteration": inner_iteration,
+        "training_iteration": 10,
+        "validation_report_uri": (
+            "s3://demo-bucket/sim2real-b/run-a/eval/validation/"
+            f"outer-{outer_iteration:02d}/iter-{inner_iteration:02d}/report.json"
+        ),
+    }
     return {
-        "outer_iteration": 1,
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": "run-a",
+        "outer_iteration": outer_iteration,
+        "iterations": [{"iteration": inner_iteration}],
         "selected_checkpoint_uri": uri,
         "final_checkpoint_uri": uri,
-        "checkpoint_selection": dict(identity),
-        "checkpoint_candidates": [dict(identity)],
+        "checkpoint_selection": dict(candidate),
+        "checkpoint_candidates": [dict(candidate)],
     }
 
 
@@ -340,10 +363,10 @@ def test_heldout_only_uses_requested_outer_iteration(
             self.requested.append(uri)
             if "/outer-02/" not in uri:
                 raise StorageError("only requested outer-02 exists")
-            evidence = {
-                **_inner_evidence(_same_run_uri()),
-                "outer_iteration": 2,
-            }
+            evidence = _inner_evidence(
+                _same_run_uri(outer_iteration=2),
+                outer_iteration=2,
+            )
             Path(destination).write_text(json.dumps(evidence), encoding="utf-8")
 
     storage = Storage()
@@ -583,21 +606,34 @@ def test_stage10_rejects_foreign_render_source_before_download(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     root = "s3://unit/current-run"
-    uri = f"{root}/checkpoints/model.pt"
+    run_id = "current-run"
+    job = k8s_job_name("s2r-byo-isaac-train", run_id)
+    uri = f"{root}/byo-trainer/{job}/{artifact_tag('outer-01-iter-01')}/model_latest.pt"
     identity = {
         "checkpoint_uri": uri,
         "checkpoint_sha256": "a" * 64,
         "checkpoint_size_bytes": 128,
         "generator_policy_sha256": "a" * 64,
     }
-    evidence = {
+    candidate = {
+        **identity,
+        "evaluation_split": "validation",
         "outer_iteration": 1,
-        "iterations": [],
+        "inner_iteration": 1,
+        "training_iteration": 10,
+        "validation_report_uri": f"{root}/eval/validation/report.json",
+    }
+    evidence = {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": run_id,
+        "outer_iteration": 1,
+        "iterations": [{"iteration": 1}],
         "selected_checkpoint_uri": uri,
         "final_checkpoint_uri": uri,
-        "checkpoint_candidates": [identity],
-        "checkpoint_selection": dict(identity),
+        "checkpoint_candidates": [candidate],
+        "checkpoint_selection": dict(candidate),
     }
+    attempt = "gold-o01-attempt-" + "d" * 32
     report = {
         "component_invocation": {"mode": "npa_workflow_skypilot_task"},
         "policy_checkpoint_sha256": "a" * 64,
@@ -612,7 +648,13 @@ def test_stage10_rejects_foreign_render_source_before_download(
             "post_actor_controller": None,
         },
         "render_manifest": {
+            "evaluation_attempt_tag": attempt,
             "renders_s3_uri": "s3://other-bucket/other-run/outer-99/renders/",
+            "policy_checkpoint": {
+                "uri": uri,
+                "sha256": "a" * 64,
+                "size_bytes": 128,
+            },
             "episodes": [{"env_id": "e", "frames": ["camera-000.png"]}],
         },
     }
@@ -640,7 +682,9 @@ def test_stage10_rejects_foreign_render_source_before_download(
     monkeypatch.setattr(workflow_stage, "storage", lambda: Storage())
 
     with pytest.raises(RuntimeError, match="exact current heldout-eval"):
-        workflow_stage._stage10(Namespace(outer_iteration=1, gold_count=1))
+        workflow_stage._stage10(
+            Namespace(run_id=run_id, outer_iteration=1, gold_count=1)
+        )
     assert downloaded == []
 
 

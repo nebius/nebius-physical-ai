@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+from npa.workflows.sim2real.decision_authority import gold_report_sha256
 from npa.workflows.sim2real.stage10_authority import (
     expected_byo_render_prefix,
     validate_stage10_input_scope,
@@ -138,6 +139,23 @@ def _assert_exact_render_frames(render_local: Path, declared: set[str]) -> None:
         )
 
 
+def validate_materialized_render_tree(
+    render_local: Path,
+    manifest: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    require_checkpoint_identity: bool = True,
+) -> None:
+    """Bind one local render tree to the manifest and checkpoint that produced it."""
+
+    declared = _declared_render_frames(
+        manifest,
+        candidate=candidate,
+        require_checkpoint_identity=require_checkpoint_identity,
+    )
+    _assert_exact_render_frames(render_local, declared)
+
+
 def _canonical_render_attempt_tag(
     manifest: dict[str, Any],
     *,
@@ -248,15 +266,15 @@ def _materialize_stage10_renders(
         args, root, run_id, evidence, report
     )
     relative = f"eval/gold-heldout/outer-{args.outer_iteration:02d}/renders"
-    declared = _declared_render_frames(
-        manifest,
-        candidate=candidate,
-        require_checkpoint_identity=attempt is not None,
-    )
     local = work / relative
     client = operations.storage()
     client.download_directory(source, str(local))
-    _assert_exact_render_frames(local, declared)
+    validate_materialized_render_tree(
+        local,
+        manifest,
+        candidate,
+        require_checkpoint_identity=attempt is not None,
+    )
     destination = _render_destination(root, args.outer_iteration, relative, attempt)
     client.upload_directory(str(local), destination)
     report["render_lineage"] = {
@@ -292,6 +310,7 @@ def _publish_stage10_report(
         evidence="Isaac loaded the validation-selected checkpoint and evaluated only the untouched gold split with strict 5 cm stable placement.",
         artifacts={
             "report": report_uri,
+            "gold_report_sha256": gold_report_sha256(report),
             "evaluation_split": "gold_heldout",
             "checkpoint": evidence["selected_checkpoint_uri"],
             "checkpoint_sha256": report.get("policy_checkpoint_sha256", ""),

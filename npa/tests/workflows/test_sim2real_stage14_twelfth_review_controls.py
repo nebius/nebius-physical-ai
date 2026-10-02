@@ -9,8 +9,14 @@ from typing import Any
 
 import pytest
 
-from npa.workflows.sim2real import byo_isaac_eval, stage10_authority, workflow_stage
+from npa.workflows.sim2real import (
+    byo_isaac_eval,
+    component_authority,
+    stage10_authority,
+    workflow_stage,
+)
 from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+from npa.workflows.sim2real.decision_authority import gold_report_sha256
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 import npa.workflows.sim2real.stage14_finalize as stage14
 import npa.workflows.sim2real_rerun_regen as regen
@@ -76,12 +82,22 @@ def _evidence(uri: str = CHECKPOINT) -> dict[str, Any]:
         "outer_iteration": 1,
         "inner_iteration": 1,
         "training_iteration": 10,
+        "validation_report_uri": f"{ROOT}/eval/validation/report.json",
     }
     return {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
         "run_id": RUN_ID,
         "outer_iteration": 1,
-        "iterations": [],
+        "iterations": [
+            {
+                "iteration": 1,
+                "actions_uri": f"{ROOT}/actions/train/outer-01/iter-01/",
+                "vlm_eval_uri": (
+                    f"{ROOT}/vlm_eval/train/outer-01/iter-01/evaluations/"
+                ),
+                "signal_uri": (f"{ROOT}/vlm_eval/train/outer-01/iter-01/signals/"),
+            }
+        ],
         "selected_checkpoint_uri": uri,
         "final_checkpoint_uri": uri,
         "checkpoint_selection": dict(candidate),
@@ -98,7 +114,22 @@ def _gold(uri: str = CHECKPOINT) -> dict[str, Any]:
         "policy_checkpoint_sha256": DIGEST,
         "policy_checkpoint_size_bytes": 128,
         "deployable_policy_eval": True,
+        "success_rate": 1.0,
         "per_env": [{"env_id": "env-1", "success": True}],
+        "render_lineage": {
+            "evaluation_split": "gold_heldout",
+            "evaluation_attempt_tag": EVAL_ATTEMPT_TAG,
+            "source_s3_uri": (
+                f"{ROOT}/byo-eval/"
+                f"{k8s_job_name('s2r-byo-isaac-eval', RUN_ID, artifact_tag(EVAL_ATTEMPT_TAG))}/"
+                "renders/"
+            ),
+            "canonical_s3_uri": (
+                f"{ROOT}/eval/gold-heldout/outer-01/attempts/"
+                f"{EVAL_ATTEMPT_TAG}/renders/"
+            ),
+            "local_relative_dir": "eval/gold-heldout/outer-01/renders",
+        },
         "policy_inference_provenance": {
             **_identity(uri),
             "loaded_for_inference": True,
@@ -112,26 +143,51 @@ def _gold(uri: str = CHECKPOINT) -> dict[str, Any]:
 
 
 def _component_record(stage: int) -> dict[str, Any]:
+    authority = component_authority._authority_uris(ROOT, _evidence(), _gold())
     artifacts: dict[str, Any] = {"source_sha": SOURCE_SHA}
     artifacts.update(
         {
             key: (
-                f"{ROOT}/stage-{stage}/{key}.json"
+                authority[stage][key]
                 if key in stage14._COMPONENT_URI_KEYS.get(stage, ())
                 else f"stage-{stage}-{key}"
             )
             for key in REQUIRED_ARTIFACTS[stage]
         }
     )
-    if stage != 12:
+    if stage == 10:
+        artifacts["render_lineage"] = _gold()["render_lineage"]
+        artifacts["gold_report_sha256"] = gold_report_sha256(_gold())
+    if stage == 4:
         artifacts.update(
             {
-                "image": f"ghcr.io/example/npa@sha256:{IMAGE_DIGEST}",
-                "image_digest": f"sha256:{IMAGE_DIGEST}",
-                "execution_mode": "standard_npa_workflow_skypilot",
-                "workflow_job": f"job-{stage}",
+                "shard_count": 2,
+                "shard_provenance": [{}, {}],
+                "lane_records": [{}, {}],
             }
         )
+    if stage != 12:
+        provenance = {
+            "image": f"ghcr.io/example/npa@sha256:{IMAGE_DIGEST}",
+            "image_digest": f"sha256:{IMAGE_DIGEST}",
+        }
+        if stage == 4:
+            provenance.update(
+                {
+                    "execution_mode": "standard_npa_workflow_parallel_join",
+                    "workflow_jobs": ["job-4-0", "job-4-1"],
+                    "lane_count": 2,
+                    "gpu_products": ["NVIDIA H100"],
+                }
+            )
+        else:
+            provenance.update(
+                {
+                    "execution_mode": "standard_npa_workflow_skypilot",
+                    "workflow_job": f"job-{stage}",
+                }
+            )
+        artifacts.update(provenance)
     payload = {
         "schema": "npa.sim2real.component_record.v1",
         "stage": stage,
@@ -154,7 +210,12 @@ def _rehash_component(record: dict[str, Any]) -> dict[str, Any]:
 
 def _state(tmp_path: Path) -> stage14._Stage14State:
     return stage14._Stage14State(
-        args=Namespace(run_id=RUN_ID, outer_iteration=1),
+        args=Namespace(
+            run_id=RUN_ID,
+            outer_iteration=1,
+            threshold=0.5,
+            allow_early_exit=False,
+        ),
         root=ROOT,
         work=tmp_path,
         local=tmp_path / "run",
@@ -167,7 +228,7 @@ def _state(tmp_path: Path) -> stage14._Stage14State:
 
 
 def _record_reader(uri: str, **_kwargs: Any) -> dict[str, Any]:
-    stage = int(uri.rsplit("stage_", 1)[1].split(".", 1)[0])
+    stage = int(uri.rsplit("stage_", 1)[1][:2])
     return _component_record(stage)
 
 
@@ -183,13 +244,15 @@ def test_stage14_encoder_failure_does_not_publish_works_pointer(
         stage14, "_assert_stage14_publication_preconditions", lambda *_a: None
     )
     monkeypatch.setattr(stage14, "read_json", _record_reader)
-    monkeypatch.setattr(
-        stage14,
-        "publish_built_component_record",
-        lambda **kwargs: (
-            published.append(kwargs["expected_stage"]) or _component_record(14)
-        ),
-    )
+    for publisher in (
+        "publish_built_component_history",
+        "publish_built_component_pointer",
+    ):
+        monkeypatch.setattr(
+            stage14,
+            publisher,
+            lambda **kwargs: published.append(kwargs["expected_stage"]),
+        )
     monkeypatch.setattr(
         stage14,
         "_build_stage14_report",
@@ -219,11 +282,6 @@ def test_stage14_rejects_tampered_component_records(
         return record
 
     monkeypatch.setattr(stage14, "read_json", reader)
-    monkeypatch.setattr(
-        stage14,
-        "publish_built_component_record",
-        lambda **_kwargs: _component_record(14),
-    )
     with pytest.raises(RuntimeError):
         stage14._load_component_records(_state(tmp_path))
 
@@ -451,10 +509,28 @@ def test_heldout_only_rejects_foreign_render_producer(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    attempt = "gold_heldout-outer-01-attempt-" + "d" * 32
+    producer = stage10_authority.expected_byo_render_prefix(
+        root=ROOT,
+        run_id=RUN_ID,
+        outer_iteration=1,
+        evaluation_tag=attempt,
+    )
     report = {
         **_gold(),
+        "evaluation_attempt_tag": attempt,
         "component_invocation": {
             "output_uri": "s3://foreign-bucket/other-run/report.json"
+        },
+        "render_manifest": {
+            "evaluation_attempt_tag": attempt,
+            "renders_s3_uri": producer,
+            "policy_checkpoint": {
+                "uri": CHECKPOINT,
+                "sha256": DIGEST,
+                "size_bytes": 128,
+            },
+            "episodes": [{"env_id": "env-1", "frames": ["camera-000.png"]}],
         },
     }
 
@@ -471,7 +547,9 @@ def test_heldout_only_rejects_foreign_render_producer(
 
     monkeypatch.setattr(regen, "_download_render_tree", download)
     with pytest.raises(regen.Sim2RealRerunRegenError):
-        regen._sync_heldout_eval_renders(_config(), tmp_path, object(), report)
+        regen._sync_heldout_eval_renders(
+            _config(), tmp_path, object(), report, _identity()
+        )
 
 
 def test_stage10_rejects_nontrainer_checkpoint_under_run_root() -> None:
@@ -636,7 +714,15 @@ def test_stage14_uses_generation_uris_and_publishes_pointer_last(
     )
     monkeypatch.setattr(
         stage14,
-        "publish_built_component_record",
+        "publish_built_component_history",
+        lambda **kwargs: events.append(
+            f"{ROOT}/components/history/stage_14/"
+            f"{kwargs['record']['content_sha256']}.json"
+        ),
+    )
+    monkeypatch.setattr(
+        stage14,
+        "publish_built_component_pointer",
         lambda **_kwargs: events.append(f"{ROOT}/components/stage_14.json"),
     )
     result = SimpleNamespace(

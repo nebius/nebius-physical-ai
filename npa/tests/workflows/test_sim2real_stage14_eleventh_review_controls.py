@@ -17,7 +17,10 @@ import npa.workflows.sim2real_rerun_regen as regen
 
 RUN_ID = "run-a"
 ROOT = f"s3://demo-bucket/sim2real-b/{RUN_ID}"
-CHECKPOINT = f"{ROOT}/byo-trainer/job/model_latest.pt"
+TRAIN_JOB = k8s_job_name("s2r-byo-isaac-train", RUN_ID)
+CHECKPOINT = (
+    f"{ROOT}/byo-trainer/{TRAIN_JOB}/{artifact_tag('outer-01-iter-01')}/model_latest.pt"
+)
 DIGEST = "a" * 64
 
 
@@ -40,13 +43,23 @@ def _identity(uri: str = CHECKPOINT) -> dict[str, Any]:
 
 def _evidence(uri: str = CHECKPOINT) -> dict[str, Any]:
     identity = _identity(uri)
-    return {
+    candidate = {
+        **identity,
+        "evaluation_split": "validation",
         "outer_iteration": 1,
-        "iterations": [],
+        "inner_iteration": 1,
+        "training_iteration": 10,
+        "validation_report_uri": f"{ROOT}/eval/validation/report.json",
+    }
+    return {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": RUN_ID,
+        "outer_iteration": 1,
+        "iterations": [{"iteration": 1}],
         "selected_checkpoint_uri": uri,
         "final_checkpoint_uri": uri,
-        "checkpoint_selection": dict(identity),
-        "checkpoint_candidates": [dict(identity)],
+        "checkpoint_selection": dict(candidate),
+        "checkpoint_candidates": [dict(candidate)],
     }
 
 
@@ -104,10 +117,11 @@ def test_stage10_accepts_exact_byo_render_producer(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    attempt = "gold-o01-attempt-" + "d" * 32
     job = k8s_job_name(
         "s2r-byo-isaac-eval",
         RUN_ID,
-        artifact_tag("gold-o01"),
+        artifact_tag(attempt),
     )
     producer = f"{ROOT}/byo-eval/{job}/renders"
     report = _learned_gold()
@@ -115,7 +129,13 @@ def test_stage10_accepts_exact_byo_render_producer(
         {
             "component_invocation": {"mode": "npa_workflow_skypilot_task"},
             "render_manifest": {
+                "evaluation_attempt_tag": attempt,
                 "renders_s3_uri": producer,
+                "policy_checkpoint": {
+                    "uri": CHECKPOINT,
+                    "sha256": DIGEST,
+                    "size_bytes": 128,
+                },
                 "episodes": [{"env_id": "env-1", "frames": ["camera-000.png"]}],
             },
         }
@@ -151,7 +171,9 @@ def test_stage10_accepts_exact_byo_render_producer(
 
     workflow_stage._stage10(Namespace(run_id=RUN_ID, outer_iteration=1, gold_count=1))
 
-    assert canonical_uploads == [f"{ROOT}/eval/gold-heldout/outer-01/renders/"]
+    assert canonical_uploads == [
+        f"{ROOT}/eval/gold-heldout/outer-01/attempts/{attempt}/renders/"
+    ]
 
 
 def test_stage10_rejects_foreign_checkpoint_before_evaluation(

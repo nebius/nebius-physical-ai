@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import logging
@@ -25,9 +26,20 @@ from npa.workflows.sim2real.checkpoint_selection import (
     resolve_selected_checkpoint,
     resolve_run_scoped_checkpoint,
 )
+from npa.workflows.sim2real.component_authority import (
+    validate_component_records,
+    validate_stage14_component_record,
+)
+from npa.workflows.sim2real.constants import SCHEMA_E2E_REPORT
 from npa.workflows.sim2real.decision_authority import validate_stage11_decision
 from npa.workflows.sim2real.hashing import sha256_file
-from npa.workflows.sim2real.stage10_authority import expected_byo_render_prefix
+from npa.workflows.sim2real.stage10_execution import (
+    validate_materialized_render_tree,
+)
+from npa.workflows.sim2real.stage10_authority import (
+    expected_byo_render_prefix,
+    validate_stage10_input_scope,
+)
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri, _write_json_artifact
@@ -35,7 +47,10 @@ from npa.workflows.sim2real.viz_contract import (
     _checkpoint_uri,
     selected_checkpoint_policy_metadata,
 )
-from npa.workflows.sim2real.workflow_io import parse_json_object
+from npa.workflows.sim2real.workflow_io import (
+    component_record_history_uri,
+    parse_json_object,
+)
 from npa.workflows.sim2real_viz import (
     Sim2RealVizResult,
     _heldout_policy_metadata,
@@ -915,7 +930,10 @@ def _sync_legacy_render_source(
             manifest_path,
             containment_root=local_dir,
         ):
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest = parse_json_object(
+                manifest_path.read_text(encoding="utf-8"),
+                source=f"{base_uri}{manifest_suffix}",
+            )
         else:
             manifest = _render_manifest_from_png_tree(renders_dir)
         _write_report_render_manifest(config, local_dir, heldout_report, manifest)
@@ -1336,9 +1354,9 @@ def download_rrd_from_s3(
 
 def _assert_regular_publication_file(path: Path) -> None:
     path = Path(path)
-    if path.is_symlink() or not path.is_file():
+    if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
         raise Sim2RealRerunRegenError(
-            f"publication source must be a regular file: {path}"
+            f"publication source must be a non-empty regular file: {path}"
         )
     for parent in path.parents:
         if parent.is_symlink():
@@ -1394,11 +1412,20 @@ def _seal_regen_publication_report(
     report["report_uri"] = report_uri
     if mcap_uri:
         report["mcap_uri"] = mcap_uri
+        report["canonical_mcap_uri"] = mcap_uri
+    else:
+        report.pop("mcap_uri", None)
+        report.pop("canonical_mcap_uri", None)
+        summaries = report.get("recording_summaries")
+        if isinstance(summaries, dict):
+            summaries.pop("mcap", None)
     visualization = report.get("visualization")
     if isinstance(visualization, dict):
         visualization["rrd_s3_uri"] = rrd_uri
         if mcap_uri:
             visualization["mcap_s3_uri"] = mcap_uri
+        else:
+            visualization.pop("mcap_s3_uri", None)
     for component in _stage_components(report):
         if component.get("name") != "stage_14_rerun_viz":
             continue
@@ -1406,6 +1433,8 @@ def _seal_regen_publication_report(
         component["artifacts"]["report"] = report_uri
         if mcap_uri:
             component["artifacts"]["mcap"] = mcap_uri
+        else:
+            component["artifacts"].pop("mcap", None)
         material = {
             key: value for key, value in component.items() if key != "content_sha256"
         }
@@ -1546,6 +1575,36 @@ def _publish_regen_final_report(
         storage.upload_file(
             str(publication.final_report_path),
             f"{publication.prefix}reports/sim2real-report.json",
+        )
+        report = _read_retained_json(
+            publication.final_report_path,
+            source="sealed Sim2Real final report",
+        )
+        components = _stage_components(report)
+        if not components:
+            return
+        stage14_record = components[-1]
+        try:
+            validate_stage14_component_record(
+                stage14_record,
+                report,
+                expected_source_sha=report.get("source_sha"),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise Sim2RealRerunRegenError(
+                f"regenerated Stage 14 ComponentRecord is invalid: {exc}"
+            ) from exc
+        record_path = publication.local_dir / "reports" / "stage_14.component.json"
+        _write_json_artifact(record_path, stage14_record)
+        history_uri = component_record_history_uri(
+            publication.prefix.rstrip("/"),
+            14,
+            stage14_record["content_sha256"],
+        )
+        storage.upload_file(str(record_path), history_uri)
+        storage.upload_file(
+            str(record_path),
+            f"{publication.prefix}components/stage_14.json",
         )
 
 
@@ -1808,6 +1867,7 @@ def _regen_paths(
 class _RegenInputs:
     inner_evidence: dict[str, Any]
     heldout_report: dict[str, Any]
+    heldout_path: Path
     report_path: Path
     report: dict[str, Any]
     current_decision: dict[str, Any]
@@ -1856,7 +1916,14 @@ def _load_regen_inputs(
         if decision_path.is_file()
         else {}
     )
-    return _RegenInputs(inner_evidence, heldout_report, report_path, report, decision)
+    return _RegenInputs(
+        inner_evidence,
+        heldout_report,
+        heldout_path,
+        report_path,
+        report,
+        decision,
+    )
 
 
 def _validate_regen_decision(
@@ -1884,11 +1951,117 @@ def _validate_regen_decision(
             outer_iteration=outer_iteration,
             gold_report=inputs.heldout_report,
             checkpoint_uri=selection["checkpoint_uri"],
+            expected_threshold=config.threshold,
+            expected_early_exit=config.early_exit,
+            gold_report_bytes_sha256=sha256_file(inputs.heldout_path),
         )
     except ValueError as exc:
         raise Sim2RealRerunRegenError(
             f"current Stage 11 decision authority is invalid: {exc}"
         ) from exc
+
+
+def _validate_regen_component_authority(
+    config: Sim2RealLoopConfig,
+    work_dir: Path,
+    storage: StorageClient,
+    inputs: _RegenInputs,
+    *,
+    sync_inputs: bool,
+) -> None:
+    canonical_architecture = "npa.workflow/v0.0.1_compositional_standard_runtime"
+    architecture = inputs.report.get("architecture")
+    claims_canonical_authority = (
+        inputs.report.get("schema") == SCHEMA_E2E_REPORT
+        or "component_records" in inputs.report
+        or architecture == canonical_architecture
+    )
+    if architecture != canonical_architecture:
+        if claims_canonical_authority:
+            raise Sim2RealRerunRegenError(
+                "canonical report architecture identity is missing or invalid"
+            )
+        return
+    if inputs.report.get("schema") != SCHEMA_E2E_REPORT:
+        raise Sim2RealRerunRegenError(
+            "canonical report schema identity is missing or invalid"
+        )
+    if inputs.report.get("run_id") != config.run_id:
+        raise Sim2RealRerunRegenError(
+            "canonical report run identity is missing or invalid"
+        )
+    if "component_records" not in inputs.report:
+        raise Sim2RealRerunRegenError(
+            "canonical report ComponentRecord source is missing"
+        )
+    components = _stage_components(inputs.report)
+    if len(components) != 14:
+        raise Sim2RealRerunRegenError(
+            "canonical report must retain all 14 ComponentRecords"
+        )
+    root = run_prefix_uri(config).rstrip("/")
+    expected_source = inputs.report.get("source_sha")
+    try:
+        validate_component_records(
+            components[:13],
+            root=root,
+            evidence=inputs.inner_evidence,
+            gold=inputs.heldout_report,
+            expected_source_sha=expected_source,
+        )
+        validate_stage14_component_record(
+            components[13],
+            inputs.report,
+            expected_source_sha=expected_source,
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Sim2RealRerunRegenError(
+            f"canonical report ComponentRecord authority is invalid: {exc}"
+        ) from exc
+    if not sync_inputs:
+        return
+    retained: list[dict[str, Any]] = []
+    authority_dir = work_dir / "component-authority"
+    for stage in range(1, 15):
+        pointer_uri = f"{root}/components/stage_{stage:02d}.json"
+        pointer_path = authority_dir / f"stage_{stage:02d}.json"
+        if not _download_if_exists(
+            storage,
+            pointer_uri,
+            pointer_path,
+            containment_root=work_dir,
+        ):
+            raise Sim2RealRerunRegenError(
+                f"missing canonical ComponentRecord pointer for Stage {stage}"
+            )
+        pointer = _read_retained_json(
+            pointer_path, source=f"Stage {stage} ComponentRecord pointer"
+        )
+        history_uri = component_record_history_uri(
+            root, stage, pointer.get("content_sha256", "")
+        )
+        history_path = authority_dir / f"stage_{stage:02d}-history.json"
+        if not _download_if_exists(
+            storage,
+            history_uri,
+            history_path,
+            containment_root=work_dir,
+        ):
+            raise Sim2RealRerunRegenError(
+                f"missing immutable ComponentRecord history for Stage {stage}"
+            )
+        history = _read_retained_json(
+            history_path, source=f"Stage {stage} ComponentRecord history"
+        )
+        if pointer != history:
+            raise Sim2RealRerunRegenError(
+                f"Stage {stage} ComponentRecord pointer/history mismatch"
+            )
+        retained.append(pointer)
+    if retained != components:
+        raise Sim2RealRerunRegenError(
+            "report ComponentRecords disagree with current immutable history"
+        )
 
 
 def _load_regen_state(
@@ -1902,6 +2075,13 @@ def _load_regen_state(
         paths = _selected_regen_paths(config, work_dir, storage, sync_inputs)
         inputs = _load_regen_inputs(config, work_dir, *paths)
         _validate_regen_decision(config, inputs)
+        _validate_regen_component_authority(
+            config,
+            work_dir,
+            storage,
+            inputs,
+            sync_inputs=sync_inputs,
+        )
         policy_access = _ensure_policy_access_metadata(
             config,
             work_dir,
@@ -3187,12 +3367,20 @@ def _resolve_heldout_eval_checkpoint(
             "held-out rerun evidence outer iteration disagrees with the request"
         )
     try:
+        validate_stage10_input_scope(
+            argparse.Namespace(
+                run_id=config.run_id,
+                outer_iteration=outer_iteration,
+            ),
+            root=prefix.rstrip("/"),
+            evidence=evidence,
+        )
         return resolve_run_scoped_checkpoint(
             evidence,
             run_root=prefix.rstrip("/"),
             run_id=config.run_id,
         )
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         raise Sim2RealRerunRegenError(
             "held-out rerun selected checkpoint is not current-run evidence"
         ) from exc
@@ -3249,7 +3437,9 @@ def _assert_current_render_manifest(
     manifest_uri: str,
 ) -> None:
     if not manifest_uri:
-        return
+        raise Sim2RealRerunRegenError(
+            "held-out render manifest lacks its immutable producer URI"
+        )
     outer = report.get("outer_iteration")
     attempt_tag = manifest.get("evaluation_attempt_tag")
     base = f"gold_heldout-outer-{outer:02d}-attempt-" if type(outer) is int else ""
@@ -3283,28 +3473,27 @@ def _sync_heldout_eval_renders(
     work_dir: Path,
     storage: StorageClient,
     report: dict[str, Any],
+    candidate: dict[str, Any],
 ) -> None:
-    output_uri, manifest, manifest_uri = _heldout_render_producer(config, report)
+    _output_uri, manifest, manifest_uri = _heldout_render_producer(config, report)
     _assert_current_render_manifest(config, report, manifest, manifest_uri)
     renders_dir = _renders_dir_for_report(config, work_dir, report)
-    synced = bool(
-        output_uri
-        and _download_render_tree(
-            storage,
-            _sibling_uri(output_uri, "renders/"),
-            renders_dir,
-            containment_root=work_dir,
-        )
+    synced = _download_render_tree(
+        storage,
+        manifest_uri.rstrip("/") + "/",
+        renders_dir,
+        containment_root=work_dir,
     )
     if not synced:
-        synced = sync_heldout_renders(
-            config, work_dir, heldout_report=report, client=storage
-        )
-    if not synced or not _has_camera_pngs(renders_dir):
         raise Sim2RealRerunRegenError(
-            "held-out rerun completed but no camera-*.png renders were synced; "
-            "check NPA_SIM2REAL_HELDOUT_RENDER_FRAMES=1 and Isaac sibling logs"
+            "held-out rerun immutable producer renders could not be synchronized"
         )
+    try:
+        validate_materialized_render_tree(renders_dir, manifest, candidate)
+    except RuntimeError as exc:
+        raise Sim2RealRerunRegenError(
+            f"held-out rerun render authority is invalid: {exc}"
+        ) from exc
 
 
 def _execute_heldout_eval(
@@ -3378,7 +3567,7 @@ def rerun_heldout_eval_only(
     )
     if publish:
         _assert_heldout_report_publishable(report, selection, candidate)
-    _sync_heldout_eval_renders(config, work_dir, storage, report)
+    _sync_heldout_eval_renders(config, work_dir, storage, report, candidate)
     if publish:
         _publish_heldout_eval_outputs(
             config,

@@ -67,7 +67,7 @@ def _assert_modern_trainer_scope(
     candidate: dict[str, Any],
 ) -> None:
     if evidence.get("schema") != "npa.sim2real.inner_loop_evidence.v1":
-        return
+        raise RuntimeError("Stage 10 requires canonical Stage 9 inner-loop evidence")
     if evidence.get("run_id") != run_id:
         raise RuntimeError("Stage 10 evidence run_id disagrees with execution")
     expected_uri = _canonical_trainer_checkpoint_uri(

@@ -13,12 +13,16 @@ from typing import Any
 from urllib.parse import urlparse
 
 from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
-from npa.workflows.sim2real.decision_authority import validate_stage11_decision
+from npa.workflows.sim2real.decision_authority import (
+    gold_report_sha256,
+    validate_stage11_decision,
+)
 from npa.workflows.sim2real.stage10_execution import (
     Stage10Operations,
     assert_gold_checkpoint_identity as _assert_gold_checkpoint_identity,
     run_stage10,
 )
+from npa.workflows.sim2real.stage10_authority import validate_stage10_input_scope
 from npa.workflows.sim2real.stage14_finalize import (
     download_plan as _stage14_download_plan,  # noqa: F401 - compatibility import
     finalize_in_work as _stage14_in_work,
@@ -605,6 +609,14 @@ def _stage9(args: argparse.Namespace) -> None:
     prior: dict[str, Any] = {}
     if list_prefix(evidence_uri):
         prior = read_json(evidence_uri, directory=work / "prior-evidence")
+        if (
+            prior.get("schema") == "npa.sim2real.inner_loop_evidence.v1"
+            and prior.get("run_id") != args.run_id
+        ):
+            raise RuntimeError(
+                "Stage 9 durable evidence lacks the exact current run_id; "
+                "start a new run ID and output root"
+            )
     replay = _stage9_existing_replay(
         prior=prior,
         outer_iteration=args.outer_iteration,
@@ -671,6 +683,7 @@ def _stage9(args: argparse.Namespace) -> None:
     validation_path = work / "validation-report.json"
     validation_evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": args.run_id,
         "selected_checkpoint_uri": checkpoint_uri,
         "final_checkpoint_uri": checkpoint_uri,
     }
@@ -716,6 +729,7 @@ def _stage9(args: argparse.Namespace) -> None:
     selected_validation = dict(selection.get("validation_report") or {})
     evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": args.run_id,
         "outer_iteration": args.outer_iteration,
         "iterations": prior_iterations
         + [
@@ -784,7 +798,7 @@ def _stage11_selection(
     args: argparse.Namespace,
     root: str,
     work: Path,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, Any]]:
     from npa.workflows.sim2real.checkpoint_selection import (
         resolve_run_scoped_checkpoint,
     )
@@ -794,14 +808,15 @@ def _stage11_selection(
         directory=work / "selection",
     )
     try:
-        selection, _candidate = resolve_run_scoped_checkpoint(
+        validate_stage10_input_scope(args, root=root, evidence=evidence)
+        selection, candidate = resolve_run_scoped_checkpoint(
             evidence,
             run_root=root,
             run_id=args.run_id,
         )
     except ValueError as exc:
         raise RuntimeError("Stage 11 checkpoint selection is invalid") from exc
-    return selection
+    return selection, candidate
 
 
 def _stage11_decision(
@@ -810,6 +825,8 @@ def _stage11_decision(
     report_uri: str,
     report: dict[str, Any],
     selection: dict[str, Any],
+    candidate: dict[str, Any],
+    report_sha256: str,
 ) -> dict[str, Any]:
     strict_rate = float(report.get("success_rate") or 0.0)
     promote = args.allow_early_exit and strict_rate >= args.threshold
@@ -826,6 +843,8 @@ def _stage11_decision(
         "checkpoint_uri": report.get("policy_checkpoint_uri", "")
         or (report.get("policy_inference_provenance") or {}).get("checkpoint_uri", ""),
         "gold_report_uri": report_uri,
+        "gold_report_sha256": report_sha256,
+        "candidate": candidate,
     }
     try:
         validate_stage11_decision(
@@ -835,6 +854,9 @@ def _stage11_decision(
             outer_iteration=args.outer_iteration,
             gold_report=report,
             checkpoint_uri=selection["checkpoint_uri"],
+            expected_threshold=args.threshold,
+            expected_early_exit=args.allow_early_exit,
+            gold_report_bytes_sha256=report_sha256,
         )
     except ValueError as exc:
         raise RuntimeError(f"Stage 11 decision authority is invalid: {exc}") from exc
@@ -871,8 +893,22 @@ def _stage11(args: argparse.Namespace) -> None:
         f"{root}/eval/gold-heldout/outer-{args.outer_iteration:02d}/report.json"
     )
     report = read_json(report_uri, directory=work)
-    selection = _stage11_selection(args, root, work)
-    decision = _stage11_decision(args, root, report_uri, report, selection)
+    selection, candidate = _stage11_selection(args, root, work)
+    report_path = work / "report.json"
+    report_sha256 = (
+        hashlib.sha256(report_path.read_bytes()).hexdigest()
+        if report_path.is_file()
+        else gold_report_sha256(report)
+    )
+    decision = _stage11_decision(
+        args,
+        root,
+        report_uri,
+        report,
+        selection,
+        candidate,
+        report_sha256,
+    )
     _publish_stage11(root, work, report_uri, decision)
 
 

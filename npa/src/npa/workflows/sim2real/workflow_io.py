@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -315,7 +316,7 @@ def _record_provenance_is_valid(
         )
     image = artifacts.get("image")
     image_digest = artifacts.get("image_digest")
-    return bool(
+    image_valid = bool(
         isinstance(image, str)
         and "@sha256:" in image
         and isinstance(image_digest, str)
@@ -323,7 +324,23 @@ def _record_provenance_is_valid(
         and image_digest.startswith("sha256:")
         and all(char in "0123456789abcdef" for char in image_digest[7:])
         and image_digest == image.split("@", 1)[1]
-        and artifacts.get("execution_mode") == "standard_npa_workflow_skypilot"
+    )
+    if not image_valid:
+        return False
+    if artifacts.get("execution_mode") == "standard_npa_workflow_parallel_join":
+        jobs = artifacts.get("workflow_jobs")
+        return bool(
+            stage == 4
+            and isinstance(jobs, list)
+            and jobs
+            and all(isinstance(job, str) and job.strip() for job in jobs)
+            and len(set(jobs)) == len(jobs)
+            and artifacts.get("lane_count") == len(jobs)
+            and isinstance(artifacts.get("gpu_products"), list)
+            and artifacts["gpu_products"]
+        )
+    return bool(
+        artifacts.get("execution_mode") == "standard_npa_workflow_skypilot"
         and isinstance(artifacts.get("workflow_job"), str)
         and artifacts["workflow_job"].strip()
     )
@@ -389,12 +406,18 @@ def validate_component_record(
     )
 
 
+def component_record_history_uri(root_uri: str, stage: int, digest: str) -> str:
+    """Return the immutable content-addressed URI for one ComponentRecord."""
+
+    if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+        raise ValueError("ComponentRecord history digest must be lowercase SHA-256")
+    return f"{root_uri.rstrip('/')}/components/history/stage_{stage:02d}/{digest}.json"
+
+
 def _publish_record(root_uri: str, record: dict[str, Any], stage: int) -> None:
     digest = record["content_sha256"]
     work = Path("/tmp/npa-sim2real-component") / f"stage-{stage:02d}"
-    history = (
-        f"{root_uri.rstrip('/')}/components/history/stage_{stage:02d}/{digest}.json"
-    )
+    history = component_record_history_uri(root_uri, stage, digest)
     pointer = f"{root_uri.rstrip('/')}/components/stage_{stage:02d}.json"
     write_json(history, record, directory=work)
     write_json(pointer, record, directory=work)
@@ -492,6 +515,33 @@ def publish_built_component_record(
         ValueError: If the record was changed or is incomplete.
     """
 
+    publish_built_component_history(
+        root_uri=root_uri,
+        record=record,
+        expected_stage=expected_stage,
+        expected_name=expected_name,
+        expected_tier=expected_tier,
+        required_artifacts=required_artifacts,
+    )
+    publish_built_component_pointer(
+        root_uri=root_uri,
+        record=record,
+        expected_stage=expected_stage,
+        expected_name=expected_name,
+        expected_tier=expected_tier,
+        required_artifacts=required_artifacts,
+    )
+    return record
+
+
+def _validate_built_component_record(
+    record: dict[str, Any],
+    *,
+    expected_stage: int,
+    expected_name: str,
+    expected_tier: str,
+    required_artifacts: tuple[str, ...],
+) -> None:
     validate_component_record(
         record,
         expected_stage=expected_stage,
@@ -499,7 +549,59 @@ def publish_built_component_record(
         expected_tier=expected_tier,
         required_artifacts=required_artifacts,
     )
-    _publish_record(root_uri, record, expected_stage)
+
+
+def publish_built_component_history(
+    *,
+    root_uri: str,
+    record: dict[str, Any],
+    expected_stage: int,
+    expected_name: str,
+    expected_tier: str,
+    required_artifacts: tuple[str, ...],
+) -> dict[str, Any]:
+    """Publish only the immutable history object for an already-built record."""
+
+    _validate_built_component_record(
+        record,
+        expected_stage=expected_stage,
+        expected_name=expected_name,
+        expected_tier=expected_tier,
+        required_artifacts=required_artifacts,
+    )
+    uri = component_record_history_uri(
+        root_uri, expected_stage, record["content_sha256"]
+    )
+    with tempfile.TemporaryDirectory(
+        prefix=f"npa-sim2real-component-{expected_stage:02d}-"
+    ) as directory:
+        write_json(uri, record, directory=Path(directory) / "history")
+    return record
+
+
+def publish_built_component_pointer(
+    *,
+    root_uri: str,
+    record: dict[str, Any],
+    expected_stage: int,
+    expected_name: str,
+    expected_tier: str,
+    required_artifacts: tuple[str, ...],
+) -> dict[str, Any]:
+    """Publish only the mutable canonical pointer for an already-built record."""
+
+    _validate_built_component_record(
+        record,
+        expected_stage=expected_stage,
+        expected_name=expected_name,
+        expected_tier=expected_tier,
+        required_artifacts=required_artifacts,
+    )
+    uri = f"{root_uri.rstrip('/')}/components/stage_{expected_stage:02d}.json"
+    with tempfile.TemporaryDirectory(
+        prefix=f"npa-sim2real-component-{expected_stage:02d}-"
+    ) as directory:
+        write_json(uri, record, directory=Path(directory) / "pointer")
     return record
 
 

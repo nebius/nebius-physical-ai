@@ -8,6 +8,7 @@ import pytest
 
 from npa.workflows.sim2real import workflow_io
 from npa.workflows.sim2real import workflow_stage
+from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
 
 
 SOURCE_SHA = "1" * 40
@@ -148,12 +149,24 @@ def test_reduced_proof_records_zero_policy_success_without_failing_pipeline(
 ) -> None:
     written: dict[str, dict[str, object]] = {}
     published: list[dict[str, object]] = []
-    checkpoint = "s3://bucket/run/checkpoint.pt"
+    job = k8s_job_name("s2r-byo-isaac-train", "run")
+    checkpoint = (
+        f"s3://bucket/run/byo-trainer/{job}/"
+        f"{artifact_tag('outer-01-iter-01')}/model_latest.pt"
+    )
     identity = {
         "checkpoint_uri": checkpoint,
         "checkpoint_sha256": "a" * 64,
         "checkpoint_size_bytes": 128,
         "generator_policy_sha256": "a" * 64,
+    }
+    candidate = {
+        **identity,
+        "evaluation_split": "validation",
+        "outer_iteration": 1,
+        "inner_iteration": 1,
+        "training_iteration": 10,
+        "validation_report_uri": "s3://bucket/run/eval/validation/report.json",
     }
     report = {
         "evaluation_split": "gold_heldout",
@@ -162,11 +175,14 @@ def test_reduced_proof_records_zero_policy_success_without_failing_pipeline(
         "policy_checkpoint_uri": checkpoint,
     }
     evidence = {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": "run",
         "outer_iteration": 1,
+        "iterations": [{"iteration": 1}],
         "selected_checkpoint_uri": checkpoint,
         "final_checkpoint_uri": checkpoint,
-        "checkpoint_selection": dict(identity),
-        "checkpoint_candidates": [dict(identity)],
+        "checkpoint_selection": dict(candidate),
+        "checkpoint_candidates": [dict(candidate)],
     }
     monkeypatch.setattr(
         workflow_stage,

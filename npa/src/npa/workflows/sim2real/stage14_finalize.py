@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import secrets
 import tempfile
@@ -18,65 +19,26 @@ from npa.workflows.sim2real.checkpoint_selection import (
     resolve_selected_checkpoint,
     resolve_run_scoped_checkpoint,
 )
-from npa.workflows.sim2real.decision_authority import validate_stage11_decision
+from npa.workflows.sim2real.component_authority import (
+    COMPONENT_CONTRACTS as _COMPONENT_CONTRACTS,  # noqa: F401 - compatibility
+    COMPONENT_URI_KEYS as _COMPONENT_URI_KEYS,  # noqa: F401 - compatibility
+    validate_component_records,
+)
+from npa.workflows.sim2real.decision_authority import (
+    gold_report_sha256,
+    validate_stage11_decision,
+)
 from npa.workflows.sim2real.workflow_io import (
     build_component_record,
+    component_record_history_uri,
     parse_json_object,
-    publish_built_component_record,
+    publish_built_component_history,
+    publish_built_component_pointer,
     read_json,
     source_sha,
     storage,
-    validate_component_record,
     write_json,
 )
-
-
-_COMPONENT_CONTRACTS: dict[int, tuple[str, str, tuple[str, ...]]] = {
-    1: ("stage_01_trigger", "WORKS", ("trigger", "task_contract_digest")),
-    2: (
-        "stage_02_assets",
-        "WORKS",
-        ("task_contract", "scene", "robot_contract"),
-    ),
-    3: ("stage_03_augment", "WORKS", ("manifest", "result", "frames")),
-    4: ("stage_04_envs_raw", "WORKS", ("raw_envs", "shard_provenance")),
-    5: (
-        "stage_05_envs_train",
-        "WORKS",
-        ("manifest", "train_envs", "validation_envs", "gold_envs"),
-    ),
-    6: ("stage_06_tokens", "WORKS", ("tokens", "split_digest")),
-    7: ("stage_07_actions_train", "WORKS", ("prefix", "component_invocation")),
-    8: ("stage_08_vlm_eval_train", "WORKS", ("result", "evaluator_usage")),
-    9: (
-        "stage_09_training_signal",
-        "WORKS",
-        ("evidence", "checkpoint", "validation_report"),
-    ),
-    10: (
-        "stage_10_eval_heldout",
-        "WORKS",
-        ("report", "checkpoint", "renders", "render_lineage"),
-    ),
-    11: ("stage_11_outer_loop", "WORKS", ("decision", "gold_report")),
-    12: ("stage_12_external_validation", "SEAM", ("seam",)),
-    13: ("stage_13_retrigger", "WORKS", ("record", "decision")),
-}
-_COMPONENT_URI_KEYS: dict[int, tuple[str, ...]] = {
-    1: ("trigger",),
-    2: ("task_contract", "scene", "robot_contract"),
-    3: ("manifest", "result", "frames"),
-    4: ("raw_envs",),
-    5: ("manifest", "train_envs", "validation_envs", "gold_envs"),
-    6: ("tokens",),
-    7: ("prefix",),
-    8: ("result",),
-    9: ("evidence", "checkpoint", "validation_report"),
-    10: ("report", "checkpoint", "renders"),
-    11: ("decision", "gold_report"),
-    12: ("seam",),
-    13: ("record", "decision"),
-}
 
 
 def _field_evidence(
@@ -243,6 +205,9 @@ def _assert_stage14_decision_authority(
     selection: dict[str, Any],
     run_root: str | None,
     run_id: str | None,
+    expected_threshold: float,
+    expected_early_exit: bool,
+    expected_gold_report_sha256: str | None,
 ) -> None:
     if run_root is None or run_id is None:
         return
@@ -257,6 +222,9 @@ def _assert_stage14_decision_authority(
             outer_iteration=outer_iteration,
             gold_report=gold,
             checkpoint_uri=selection["checkpoint_uri"],
+            expected_threshold=expected_threshold,
+            expected_early_exit=expected_early_exit,
+            gold_report_bytes_sha256=expected_gold_report_sha256,
         )
     except ValueError as exc:
         raise RuntimeError(f"Stage 14 decision authority: {exc}") from exc
@@ -302,12 +270,23 @@ def _stage14_policy_metadata(
     *,
     run_root: str | None = None,
     run_id: str | None = None,
+    expected_threshold: float = 0.5,
+    expected_early_exit: bool = False,
+    expected_gold_report_sha256: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     _assert_promotion_checkpoint_uri(decision)
     selection, candidate = _resolve_stage14_selection(evidence, run_root, run_id)
     decision_candidate = _validated_decision_candidate(decision, candidate, selection)
     _assert_stage14_decision_authority(
-        evidence, decision, gold, selection, run_root, run_id
+        evidence,
+        decision,
+        gold,
+        selection,
+        run_root,
+        run_id,
+        expected_threshold,
+        expected_early_exit,
+        expected_gold_report_sha256,
     )
     metadata = _heldout_metadata(
         evidence, decision, gold, selection, candidate, decision_candidate
@@ -573,6 +552,7 @@ class _Stage14State:
     rrd_uri: str
     mcap_uri: str
     report_uri: str
+    gold_report_bytes_sha256: str = ""
     publication_id: str = ""
     canonical_rrd_uri: str = ""
     canonical_mcap_uri: str = ""
@@ -627,6 +607,7 @@ def _stage14_state(
     local: Path,
     evidence: dict[str, Any],
     gold: dict[str, Any],
+    gold_report_bytes_sha256: str = "",
 ) -> _Stage14State:
     publication_id = secrets.token_hex(16)
     publication_root = f"{root}/reports/generations/{publication_id}"
@@ -640,6 +621,7 @@ def _stage14_state(
         rrd_uri=f"{publication_root}/sim2real.rrd",
         mcap_uri=f"{publication_root}/sim2real.mcap",
         report_uri=f"{publication_root}/sim2real-report.json",
+        gold_report_bytes_sha256=(gold_report_bytes_sha256 or gold_report_sha256(gold)),
         publication_id=publication_id,
         canonical_rrd_uri=f"{root}/reports/sim2real.rrd",
         canonical_mcap_uri=f"{root}/reports/sim2real.mcap",
@@ -662,6 +644,12 @@ def _materialize_stage14(
         f"{root}/eval/gold-heldout/outer-{outer:02d}/report.json",
         directory=work / "gold-input",
     )
+    gold_path = work / "gold-input" / "report.json"
+    gold_bytes_sha256 = (
+        hashlib.sha256(gold_path.read_bytes()).hexdigest()
+        if gold_path.is_file()
+        else gold_report_sha256(gold)
+    )
     local = work / "run"
     materialize_plan(
         download_plan(
@@ -678,30 +666,15 @@ def _materialize_stage14(
         root=root,
         outer_iteration=outer,
     )
-    gold["local_renders_dir"] = str(
-        local / str((gold.get("render_lineage") or {}).get("local_relative_dir") or "")
+    return _stage14_state(
+        args,
+        root,
+        work,
+        local,
+        evidence,
+        gold,
+        gold_report_bytes_sha256=gold_bytes_sha256,
     )
-    return _stage14_state(args, root, work, local, evidence, gold)
-
-
-def _assert_component_artifact_scope(
-    state: _Stage14State,
-    stage: int,
-    component: dict[str, Any],
-) -> None:
-    root_prefix = state.root.rstrip("/") + "/"
-    for key in _COMPONENT_URI_KEYS[stage]:
-        uri = component["artifacts"][key]
-        suffix = uri[len(root_prefix) :] if isinstance(uri, str) else ""
-        parts = suffix.rstrip("/").split("/")
-        if (
-            not isinstance(uri, str)
-            or not uri.startswith(root_prefix)
-            or not suffix
-            or any(token in suffix for token in ("\\", "%", "?", "#"))
-            or any(part in {"", ".", ".."} for part in parts)
-        ):
-            raise ValueError(f"Stage {stage} ComponentRecord {key} is outside the run")
 
 
 def _load_component_records(state: _Stage14State) -> list[dict[str, Any]]:
@@ -714,17 +687,24 @@ def _load_component_records(state: _Stage14State) -> list[dict[str, Any]]:
     ]
     try:
         expected_source = source_sha()
+        validate_component_records(
+            components,
+            root=state.root,
+            evidence=state.evidence,
+            gold=state.gold,
+            expected_source_sha=expected_source,
+        )
         for stage, component in enumerate(components, start=1):
-            name, tier, required = _COMPONENT_CONTRACTS[stage]
-            validate_component_record(
-                component,
-                expected_stage=stage,
-                expected_name=name,
-                expected_tier=tier,
-                required_artifacts=required,
-                expected_source_sha=expected_source,
+            history = read_json(
+                component_record_history_uri(
+                    state.root, stage, component["content_sha256"]
+                ),
+                directory=state.work / f"component-history-{stage:02d}",
             )
-            _assert_component_artifact_scope(state, stage, component)
+            if history != component:
+                raise ValueError(
+                    f"Stage {stage} ComponentRecord pointer/history mismatch"
+                )
     except (KeyError, TypeError, ValueError) as exc:
         raise RuntimeError("Stage 14 rejected an invalid ComponentRecord") from exc
     return components
@@ -741,6 +721,9 @@ def _assert_stage14_publication_preconditions(state: _Stage14State) -> None:
         state.gold,
         run_root=state.root,
         run_id=state.args.run_id,
+        expected_threshold=float(getattr(state.args, "threshold", 0.5)),
+        expected_early_exit=bool(getattr(state.args, "allow_early_exit", False)),
+        expected_gold_report_sha256=state.gold_report_bytes_sha256,
     )
     _assert_publishable_policy_metadata(metadata, state.gold)
 
@@ -773,9 +756,11 @@ def _stage14_report_payload(
         "embodiment": state.gold.get("embodiment", {}),
         "rrd_uri": state.rrd_uri,
         "mcap_uri": state.mcap_uri,
+        "report_uri": state.report_uri,
         "publication_id": state.publication_id,
         "canonical_rrd_uri": state.canonical_rrd_uri or state.rrd_uri,
         "canonical_mcap_uri": state.canonical_mcap_uri or state.mcap_uri,
+        "canonical_report_uri": state.canonical_report_uri or state.report_uri,
     }
 
 
@@ -810,6 +795,9 @@ def _build_stage14_report(
         state.gold,
         run_root=state.root,
         run_id=state.args.run_id,
+        expected_threshold=float(getattr(state.args, "threshold", 0.5)),
+        expected_early_exit=bool(getattr(state.args, "allow_early_exit", False)),
+        expected_gold_report_sha256=state.gold_report_bytes_sha256,
     )
     _assert_publishable_policy_metadata(heldout_policy_metadata, state.gold)
     components.append(_build_stage14_record(state))
@@ -864,11 +852,16 @@ def _emit_stage14_outputs(
         emit_sim2real_rerun,
     )
 
+    localized_gold = json.loads(json.dumps(state.gold))
+    localized_gold["local_renders_dir"] = str(
+        state.local
+        / str((state.gold.get("render_lineage") or {}).get("local_relative_dir") or "")
+    )
     decision = report["outer_loop"]["decision"]
     rrd = emit_sim2real_rerun(
         local_dir=state.local,
         inner_evidence=state.evidence,
-        heldout_report=state.gold,
+        heldout_report=localized_gold,
         stage_components=components,
         outer_history=[
             {
@@ -883,7 +876,7 @@ def _emit_stage14_outputs(
     mcap = emit_sim2real_mcap(
         local_dir=state.local,
         inner_evidence=state.evidence,
-        heldout_report=state.gold,
+        heldout_report=localized_gold,
         output_mcap=reports / "sim2real.mcap",
     )
     return rrd, mcap
@@ -897,24 +890,19 @@ def _assert_recording_result(label: str, result: Any) -> None:
         )
 
 
-def _upload_stage14_recording(
+def _stage14_recording_path(
     state: _Stage14State,
     reports: Path,
     filename: str,
-    uri: str,
-    alias_uri: str,
-) -> None:
+) -> Path:
     path = reports / filename
     _assert_no_symlinked_ancestors(path, containment_root=state.local)
     if path.stat().st_size <= 0:
         raise RuntimeError(f"Stage 14 produced empty {filename}")
-    storage().upload_file(str(path), uri)
-    if alias_uri != uri:
-        storage().upload_file(str(path), alias_uri)
+    return path
 
 
-def _publish_stage14_reports(
-    state: _Stage14State,
+def _seal_stage14_report(
     report: dict[str, Any],
     rrd: Any,
     mcap: Any,
@@ -923,10 +911,6 @@ def _publish_stage14_reports(
         "rrd": rrd.to_dict(),
         "mcap": mcap.to_dict(),
     }
-    write_json(state.report_uri, report, directory=state.work / "final-report")
-    canonical = state.canonical_report_uri or state.report_uri
-    if canonical != state.report_uri:
-        write_json(canonical, report, directory=state.work / "canonical-final-report")
 
 
 def _publish_stage14_outputs(
@@ -938,29 +922,44 @@ def _publish_stage14_outputs(
 ) -> None:
     _assert_recording_result("Rerun", rrd)
     _assert_recording_result("MCAP", mcap)
-    recordings = (
+    recordings = [
         (
-            "sim2real.rrd",
+            _stage14_recording_path(state, reports, "sim2real.rrd"),
             state.rrd_uri,
             state.canonical_rrd_uri or state.rrd_uri,
         ),
         (
-            "sim2real.mcap",
+            _stage14_recording_path(state, reports, "sim2real.mcap"),
             state.mcap_uri,
             state.canonical_mcap_uri or state.mcap_uri,
         ),
-    )
-    for filename, uri, alias_uri in recordings:
-        _upload_stage14_recording(state, reports, filename, uri, alias_uri)
-    _publish_stage14_reports(state, report, rrd, mcap)
-    publish_built_component_record(
-        root_uri=state.root,
-        record=report["component_records"][-1],
-        expected_stage=14,
-        expected_name="stage_14_rerun_viz",
-        expected_tier="WORKS",
-        required_artifacts=("rrd", "mcap", "report"),
-    )
+    ]
+    client = storage()
+    for path, immutable_uri, _alias_uri in recordings:
+        client.upload_file(str(path), immutable_uri)
+    _seal_stage14_report(report, rrd, mcap)
+    write_json(state.report_uri, report, directory=state.work / "final-report")
+    component_record = report["component_records"][-1]
+    component_kwargs = {
+        "root_uri": state.root,
+        "record": component_record,
+        "expected_stage": 14,
+        "expected_name": "stage_14_rerun_viz",
+        "expected_tier": "WORKS",
+        "required_artifacts": ("rrd", "mcap", "report"),
+    }
+    publish_built_component_history(**component_kwargs)
+    for path, immutable_uri, alias_uri in recordings:
+        if alias_uri != immutable_uri:
+            client.upload_file(str(path), alias_uri)
+    canonical_report = state.canonical_report_uri or state.report_uri
+    if canonical_report != state.report_uri:
+        write_json(
+            canonical_report,
+            report,
+            directory=state.work / "canonical-final-report",
+        )
+    publish_built_component_pointer(**component_kwargs)
 
 
 def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None:

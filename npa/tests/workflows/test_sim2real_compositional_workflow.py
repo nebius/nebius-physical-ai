@@ -88,6 +88,13 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     assert "--reason-backend" not in cosmos3["run"]["argv"]
     assert int(payload["config"]["ppo_iterations"]) == DEFAULT_PPO_ITERATIONS
     assert DEFAULT_PPO_ITERATIONS >= 2_000
+    stage14_argv = payload["states"]["stage-14-visualize"]["run"]["argv"]
+    assert stage14_argv[stage14_argv.index("--threshold") + 1] == (
+        "{{config.threshold}}"
+    )
+    assert stage14_argv[stage14_argv.index("--allow-early-exit") + 1] == (
+        "{{config.allow_early_exit}}"
+    )
 
 
 def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
@@ -461,14 +468,26 @@ def test_stage11_honors_configurable_early_exit(
     expected: str,
 ) -> None:
     decisions: list[dict] = []
-    checkpoint = "s3://unit/run/checkpoint.pt"
+    from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+
+    checkpoint = (
+        "s3://unit/run/byo-trainer/"
+        f"{k8s_job_name('s2r-byo-isaac-train', 'early-exit')}/"
+        f"{artifact_tag('outer-01-iter-01')}/model_latest.pt"
+    )
     identity = {
         "checkpoint_uri": checkpoint,
         "checkpoint_sha256": "a" * 64,
         "checkpoint_size_bytes": 128,
         "generator_policy_sha256": "a" * 64,
+        "outer_iteration": 1,
+        "inner_iteration": 1,
+        "training_iteration": 2,
+        "validation_report_uri": "s3://unit/run/eval/validation/report.json",
     }
     evidence = {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": "early-exit",
         "outer_iteration": 1,
         "selected_checkpoint_uri": checkpoint,
         "final_checkpoint_uri": checkpoint,
@@ -586,6 +605,7 @@ def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
     selection = select_best_checkpoint([candidate])
     evidence = {
         "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": "run",
         "outer_iteration": 1,
         "iterations": [iteration],
         "checkpoint_candidates": [candidate],
@@ -877,6 +897,7 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         component["content_sha256"] = "b" * 64
     args = Namespace(
         root_uri=root,
+        run_id="run",
         outer_iteration=1,
         inner_iteration=1,
         threshold=0.5,
@@ -970,11 +991,15 @@ def _patch_stage14_io(
     )
     monkeypatch.setattr(stage14_finalize, "source_sha", lambda: "b" * 40)
     monkeypatch.setattr(stage14_finalize, "write_json", lambda *_args, **_kwargs: None)
-    monkeypatch.setattr(
-        stage14_finalize,
-        "publish_built_component_record",
-        lambda **_kwargs: {"stage": 14, "tier": "WORKS"},
-    )
+    for publisher in (
+        "publish_built_component_history",
+        "publish_built_component_pointer",
+    ):
+        monkeypatch.setattr(
+            stage14_finalize,
+            publisher,
+            lambda **_kwargs: {"stage": 14, "tier": "WORKS"},
+        )
     monkeypatch.setattr(
         stage14_finalize,
         "storage",
@@ -989,6 +1014,11 @@ def _selected_checkpoint_evidence(
     *,
     candidate_sha256: str | None = None,
 ) -> dict:
+    root = (
+        checkpoint_uri.split("/checkpoints/", 1)[0]
+        if "/checkpoints/" in checkpoint_uri
+        else checkpoint_uri.split("/byo-trainer/", 1)[0]
+    )
     candidate_digest = (
         checkpoint_sha256 if candidate_sha256 is None else candidate_sha256
     )
@@ -997,16 +1027,35 @@ def _selected_checkpoint_evidence(
         "checkpoint_sha256": candidate_digest,
         "checkpoint_size_bytes": 128,
         "generator_policy_sha256": candidate_digest,
+        "outer_iteration": 1,
+        "inner_iteration": 1,
+        "training_iteration": 10,
+        "validation_report_uri": f"{root}/eval/validation/report.json",
     }
     selection = {
         "checkpoint_uri": checkpoint_uri,
         "checkpoint_sha256": checkpoint_sha256,
         "checkpoint_size_bytes": 128,
         "generator_policy_sha256": checkpoint_sha256,
+        "outer_iteration": 1,
+        "inner_iteration": 1,
+        "training_iteration": 10,
+        "validation_report_uri": f"{root}/eval/validation/report.json",
     }
     return {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
+        "run_id": "run",
         "outer_iteration": 1,
-        "iterations": [],
+        "iterations": [
+            {
+                "iteration": 1,
+                "actions_uri": f"{root}/actions/train/outer-01/iter-01/",
+                "vlm_eval_uri": (
+                    f"{root}/vlm_eval/train/outer-01/iter-01/evaluations/"
+                ),
+                "signal_uri": (f"{root}/vlm_eval/train/outer-01/iter-01/signals/"),
+            }
+        ],
         "selected_checkpoint_uri": checkpoint_uri,
         "final_checkpoint_uri": checkpoint_uri,
         "checkpoint_candidates": [candidate],
@@ -1373,18 +1422,29 @@ def test_stage10_seals_report_split_and_outer_iteration(
     from npa.workflows.sim2real import workflow_stage
 
     root = "s3://unit/run"
-    checkpoint_uri = f"{root}/checkpoints/model.pt"
-    evidence = _selected_checkpoint_evidence(checkpoint_uri, "a" * 64)
-    report = _learned_actor_report(checkpoint_uri, "a" * 64)
     from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
 
+    train_job = k8s_job_name("s2r-byo-isaac-train", "run")
+    checkpoint_uri = (
+        f"{root}/byo-trainer/{train_job}/{artifact_tag('outer-01-iter-01')}/"
+        "model_latest.pt"
+    )
+    evidence = _selected_checkpoint_evidence(checkpoint_uri, "a" * 64)
+    report = _learned_actor_report(checkpoint_uri, "a" * 64)
+    attempt_tag = "gold-o01-attempt-" + "e" * 32
     render_job = k8s_job_name(
         "s2r-byo-isaac-eval",
         "run",
-        artifact_tag("gold-o01"),
+        artifact_tag(attempt_tag),
     )
     report["render_manifest"] = {
         "renders_s3_uri": f"{root}/byo-eval/{render_job}/renders/",
+        "evaluation_attempt_tag": attempt_tag,
+        "policy_checkpoint": {
+            "uri": checkpoint_uri,
+            "sha256": "a" * 64,
+            "size_bytes": 128,
+        },
         "episodes": [{"env_id": "gold-0001", "frames": ["camera-000.png"]}],
     }
     written: dict[str, object] = {}
@@ -1427,7 +1487,7 @@ def test_stage10_seals_report_split_and_outer_iteration(
         lambda **_kwargs: {},
     )
 
-    workflow_stage._stage10(Namespace(outer_iteration=1, gold_count=1))
+    workflow_stage._stage10(Namespace(run_id="run", outer_iteration=1, gold_count=1))
 
     assert written["evaluation_split"] == "gold_heldout"
     assert written["outer_iteration"] == 1
@@ -1484,10 +1544,14 @@ def test_stage10_checks_checkpoint_identity_before_gold_artifact_processing(
 ) -> None:
     from npa.workflows.sim2real import workflow_stage
 
-    evidence = _selected_checkpoint_evidence(
-        "s3://unit/run/checkpoints/model.pt",
-        "a" * 64,
+    from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+
+    checkpoint_uri = (
+        "s3://unit/run/byo-trainer/"
+        f"{k8s_job_name('s2r-byo-isaac-train', 'run')}/"
+        f"{artifact_tag('outer-01-iter-01')}/model_latest.pt"
     )
+    evidence = _selected_checkpoint_evidence(checkpoint_uri, "a" * 64)
     report = {"evaluation_split": "gold_heldout"}
     identity_checks: list[tuple[dict, dict]] = []
 
@@ -1525,6 +1589,7 @@ def test_stage10_checks_checkpoint_identity_before_gold_artifact_processing(
     with pytest.raises(IdentityChecked):
         workflow_stage._stage10(
             Namespace(
+                run_id="run",
                 outer_iteration=1,
                 gold_count=4,
             )
