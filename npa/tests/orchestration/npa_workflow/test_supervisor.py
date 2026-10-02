@@ -139,6 +139,9 @@ class RecordingAdapter:
         ("IMAGE_PULL_AUTH", FailureClass.ACTIONABLE_CONFIGURATION),
         ("MISSING_SECRET", FailureClass.ACTIONABLE_CONFIGURATION),
         ("ACCELERATOR_MISMATCH", FailureClass.ACTIONABLE_CONFIGURATION),
+        ("STORAGE_QUOTA_EXCEEDED", FailureClass.ACTIONABLE_CONFIGURATION),
+        ("STORAGE_PROVISIONING_FAILED", FailureClass.ACTIONABLE_CONFIGURATION),
+        ("STORAGE_CAPACITY_UNAVAILABLE", FailureClass.TRANSIENT_INFRASTRUCTURE),
         ("NODE_NOT_READY", FailureClass.TRANSIENT_INFRASTRUCTURE),
         ("CONTAINER_CRASH", FailureClass.PAYLOAD),
         ("SOMETHING_NEW", FailureClass.UNKNOWN),
@@ -175,6 +178,26 @@ def test_configuration_stall_cancels_only_exact_attempt_and_terminalizes() -> No
         "decision",
         "cancellation",
     ]
+
+
+def test_storage_quota_cancels_exact_attempt_without_relaunch() -> None:
+    adapter = RecordingAdapter(
+        BackendObservation(
+            BackendState.QUEUED,
+            reason_code="STORAGE_QUOTA_EXCEEDED",
+            message="disk quota exceeded",
+        )
+    )
+
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(identity(), context())
+
+    assert result["recovery"]["action"] == "cancel_and_terminalize"
+    assert result["recovery"]["relaunch_allowed"] is False
+    assert "storage quota" in result["recovery"]["remediation"]
+    assert adapter.cancelled == ["job-1"]
+    assert adapter.launched == []
 
 
 def test_transient_live_attempt_is_cancelled_verified_then_relaunched() -> None:
@@ -260,6 +283,154 @@ def test_valid_completed_outputs_reuse_wave_without_launch() -> None:
         ),
     )
     assert decision.action is RecoveryAction.REUSE_COMPLETED_WAVE
+
+
+@pytest.mark.parametrize(
+    ("state", "reason_code"),
+    [
+        (BackendState.ABSENT, "PROVIDER_INTERRUPTION"),
+        (BackendState.FAILED, "PREEMPTED"),
+        (BackendState.QUEUED, "NODE_NOT_READY"),
+    ],
+)
+def test_valid_outputs_are_reused_at_infrastructure_recovery_limit(
+    state: BackendState,
+    reason_code: str,
+) -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+    decision = decide_recovery(
+        identity(),
+        BackendObservation(state, reason_code=reason_code),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert decision.action is RecoveryAction.REUSE_COMPLETED_WAVE
+    assert decision.reason_code == "DECLARED_OUTPUTS_VALID"
+    assert not decision.relaunch_allowed
+
+
+def test_live_valid_outputs_cancel_exact_attempt_before_reuse() -> None:
+    adapter = RecordingAdapter(
+        BackendObservation(BackendState.QUEUED, reason_code="NODE_NOT_READY")
+    )
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(
+        identity(),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert result["recovery"]["action"] == "reuse_completed_wave"
+    assert result["cancellation"]["status"] == "cancelled"
+    assert adapter.cancelled == ["job-1"]
+    assert adapter.launched == []
+
+
+def test_live_valid_outputs_block_when_exact_cancellation_is_unverified() -> None:
+    adapter = RecordingAdapter(
+        BackendObservation(BackendState.QUEUED, reason_code="NODE_NOT_READY")
+    )
+    adapter.cancel_exact = lambda _attempt: {  # type: ignore[method-assign]
+        "provider_job_id": "job-1",
+        "status": "cancelling",
+        "exact": True,
+    }
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+
+    result = WorkflowRunSupervisor(
+        adapter=adapter, ledger=SupervisorLedger(MemoryStore())
+    ).reconcile(
+        identity(),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert result["recovery"]["action"] == "block_relaunch"
+    assert result["recovery"]["reason_code"] == "CANCELLATION_UNVERIFIED"
+    assert adapter.launched == []
+
+
+def test_live_valid_outputs_require_exact_provider_job_id() -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+
+    decision = decide_recovery(
+        identity(provider_job_id=""),
+        BackendObservation(BackendState.QUEUED, reason_code="NODE_NOT_READY"),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert decision.action is RecoveryAction.BLOCK_RELAUNCH
+    assert decision.reason_code == "AMBIGUOUS_ATTEMPT_IDENTITY"
+
+
+@pytest.mark.parametrize(
+    ("state", "reason_code", "expected_action"),
+    [
+        (BackendState.QUEUED, "CAPACITY_OR_QUOTA", RecoveryAction.ADOPT_EXACT_ATTEMPT),
+        (BackendState.AMBIGUOUS, "", RecoveryAction.BLOCK_RELAUNCH),
+        (
+            BackendState.QUEUED,
+            "MISSING_CONFIGMAP",
+            RecoveryAction.CANCEL_AND_TERMINALIZE,
+        ),
+        (BackendState.FAILED, "PAYLOAD_EXIT_NONZERO", RecoveryAction.TERMINALIZE),
+    ],
+)
+def test_valid_outputs_do_not_override_stronger_recovery_evidence(
+    state: BackendState,
+    reason_code: str,
+    expected_action: RecoveryAction,
+) -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/runs/run-1/result.json",),
+        valid=("s3://unit-bucket/runs/run-1/result.json",),
+    )
+
+    decision = decide_recovery(
+        identity(),
+        BackendObservation(state, reason_code=reason_code),
+        replace(
+            context(outputs=outputs),
+            infrastructure_recoveries=1,
+            max_infrastructure_recoveries=1,
+        ),
+    )
+
+    assert decision.action is expected_action
 
 
 def test_partial_output_evidence_blocks_transient_relaunch() -> None:
@@ -380,6 +551,220 @@ def test_skypilot_adapter_prefers_typed_event_over_unknown_pod_diagnostic() -> N
     assert classify_observation(observation) is FailureClass.TRANSIENT_INFRASTRUCTURE
 
 
+def test_skypilot_adapter_binds_claims_to_attempt_start() -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    captured: dict[str, object] = {}
+
+    def inspect(**kwargs):
+        captured.update(kwargs)
+        return JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace="workloads",
+                    resource_uid="pvc-uid-1",
+                    event_timestamp="2026-09-22T12:01:00Z",
+                    temporally_bound=True,
+                )
+            ]
+        )
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=inspect,
+        claim_names=("run-workspace",),
+        attempt_started_at="2026-09-22T12:00:00Z",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert captured["claim_names"] == ("run-workspace",)
+    assert captured["event_not_before"] == "2026-09-22T12:00:00Z"
+    assert observation.reason_code == "STORAGE_QUOTA_EXCEEDED"
+    assert classify_observation(observation) is FailureClass.ACTIONABLE_CONFIGURATION
+    blocker = observation.evidence["blockers"][0]
+    assert blocker["source"] == "kubernetes_pvc_event"
+    assert blocker["namespace"] == "workloads"
+    assert blocker["resource_uid"] == "pvc-uid-1"
+    assert blocker["temporally_bound"] is True
+
+
+def test_skypilot_adapter_without_attempt_time_does_not_admit_claim_evidence() -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    captured: dict[str, object] = {}
+
+    def inspect(**kwargs):
+        captured.update(kwargs)
+        return JobBlockerReport(
+            error="no pods found for managed job job-1",
+            error_code="KUBERNETES_PODS_NOT_FOUND",
+        )
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=inspect,
+        claim_names=("run-workspace",),
+        attempt_started_at="",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert "claim_names" not in captured
+    assert "event_not_before" not in captured
+    assert observation.reason_code == ""
+    assert observation.message == "no pods found for managed job job-1"
+
+
+def test_skypilot_adapter_rejects_injected_unbound_storage_blocker() -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace="workloads",
+                    resource_uid="pvc-uid-1",
+                    event_timestamp="2026-09-22T12:01:00Z",
+                    temporally_bound=False,
+                )
+            ]
+        ),
+        claim_names=("run-workspace",),
+        attempt_started_at="2026-09-22T12:00:00Z",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert observation.reason_code == ""
+    assert observation.evidence["blockers"] == []
+
+
+def test_skypilot_adapter_rejects_injected_storage_without_configured_identity() -> (
+    None
+):
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace="workloads",
+                    resource_uid="pvc-uid-1",
+                    event_timestamp="2026-09-22T12:01:00Z",
+                    temporally_bound=True,
+                )
+            ]
+        ),
+    )
+
+    observation = adapter.observe(identity())
+
+    assert observation.reason_code == ""
+    assert observation.evidence["blockers"] == []
+
+
+def test_skypilot_adapter_independently_rejects_stale_claim_event() -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace="workloads",
+                    resource_uid="pvc-uid-1",
+                    event_timestamp="2026-09-22T11:59:59Z",
+                    temporally_bound=True,
+                )
+            ]
+        ),
+        claim_names=("run-workspace",),
+        attempt_started_at="2026-09-22T12:00:00Z",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert observation.reason_code == ""
+    assert observation.evidence["blockers"] == []
+
+
+@pytest.mark.parametrize(
+    ("namespace", "resource_uid"),
+    [("", "pvc-uid-1"), ("workloads", "")],
+)
+def test_skypilot_adapter_rejects_storage_without_pvc_identity(
+    namespace: str, resource_uid: str
+) -> None:
+    from npa.orchestration.skypilot.job_blockers import JobBlockerReport, PodBlocker
+    from npa.orchestration.skypilot.workflow import ManagedJobEvidence
+
+    adapter = SkyPilotSupervisorAdapter(
+        lookup=lambda _name, *, job_id="": ManagedJobEvidence(
+            "found", job_id=job_id, status="PENDING"
+        ),
+        blocker_inspector=lambda **_kwargs: JobBlockerReport(
+            blockers=[
+                PodBlocker(
+                    pod="pvc/run-workspace",
+                    phase="Pending",
+                    reason="ProvisioningFailed",
+                    reason_code="STORAGE_QUOTA_EXCEEDED",
+                    source="kubernetes_pvc_event",
+                    namespace=namespace,
+                    resource_uid=resource_uid,
+                    event_timestamp="2026-09-22T12:01:00Z",
+                    temporally_bound=True,
+                )
+            ]
+        ),
+        claim_names=("run-workspace",),
+        attempt_started_at="2026-09-22T12:00:00Z",
+    )
+
+    observation = adapter.observe(identity())
+
+    assert observation.reason_code == ""
+    assert observation.evidence["blockers"] == []
+
+
 def test_process_restart_reads_content_addressed_immutable_history() -> None:
     objects: dict[str, bytes] = {}
     first = SupervisorLedger(MemoryStore(objects))
@@ -397,6 +782,44 @@ def test_process_restart_reads_content_addressed_immutable_history() -> None:
     assert uri.endswith(".json")
     assert restarted.record(restarted.latest()) == uri  # type: ignore[arg-type]
     assert len(objects) == 1
+
+
+def test_latest_supervision_filters_before_selecting_newest_event() -> None:
+    ledger = SupervisorLedger(MemoryStore())
+    expected = {
+        "recorded_at": "2026-08-30T00:00:00Z",
+        "phase": "decision",
+        "attempt_identity": identity(run_id="requested-run").to_dict(),
+        "classification": "requested",
+    }
+    ledger.record(expected)
+    ledger.record(
+        {
+            "recorded_at": "2026-08-30T00:01:00Z",
+            "phase": "decision",
+            "attempt_identity": identity(run_id="other-run").to_dict(),
+            "classification": "other",
+        }
+    )
+
+    assert ledger.latest(run_id="requested-run")["classification"] == "requested"
+    assert ledger.latest(run_id="absent-run") is None
+
+
+@pytest.mark.parametrize("attempt_identity", [None, {}, {"run_id": 7}])
+def test_latest_supervision_rejects_missing_or_malformed_run_identity(
+    attempt_identity: object,
+) -> None:
+    ledger = SupervisorLedger(MemoryStore())
+    ledger.record(
+        {
+            "recorded_at": "2026-08-30T00:00:00Z",
+            "phase": "decision",
+            "attempt_identity": attempt_identity,
+        }
+    )
+
+    assert ledger.latest(run_id="requested-run") is None
 
 
 def test_immutable_artifact_rejects_conflicting_bytes() -> None:
@@ -559,7 +982,14 @@ def test_failure_record_has_machine_readable_fields() -> None:
 
 
 @pytest.mark.parametrize("state", [BackendState.QUEUED, BackendState.RUNNING])
-@pytest.mark.parametrize("code", ["CAPACITY_OR_QUOTA", "GANG_CAPACITY_UNAVAILABLE"])
+@pytest.mark.parametrize(
+    "code",
+    [
+        "CAPACITY_OR_QUOTA",
+        "GANG_CAPACITY_UNAVAILABLE",
+        "STORAGE_CAPACITY_UNAVAILABLE",
+    ],
+)
 @pytest.mark.parametrize("used", [0, 1])
 def test_live_capacity_wait_keeps_attempt_without_spending_recovery_budget(
     state: BackendState,
@@ -731,3 +1161,59 @@ def test_capacity_wait_cannot_hide_another_pods_fatal_error(
     assert recorder.cancelled == (
         ["job-1"] if action == "cancel_and_terminalize" else []
     )
+
+
+@pytest.mark.parametrize("field", ["workflow_sha256", "source_sha256", "image_digest"])
+@pytest.mark.parametrize("recorded", ["changed", ""])
+def test_succeeded_valid_outputs_require_matching_immutable_identity(
+    field: str,
+    recorded: str,
+) -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/result",),
+        valid=("s3://unit-bucket/result",),
+    )
+
+    decision = decide_recovery(
+        identity(**{field: recorded}),
+        BackendObservation(BackendState.SUCCEEDED),
+        context(outputs=outputs),
+    )
+
+    assert decision.action is RecoveryAction.BLOCK_RELAUNCH
+    assert decision.reason_code == "IMMUTABLE_IDENTITY_MISMATCH"
+
+
+@pytest.mark.parametrize("field", ["workflow_sha256", "source_sha256", "image_digest"])
+def test_succeeded_valid_outputs_reject_two_sided_missing_identity(
+    field: str,
+) -> None:
+    outputs = ArtifactValidation(
+        "valid",
+        declared=("s3://unit-bucket/result",),
+        valid=("s3://unit-bucket/result",),
+    )
+
+    decision = decide_recovery(
+        identity(**{field: ""}),
+        BackendObservation(BackendState.SUCCEEDED),
+        replace(context(outputs=outputs), **{f"expected_{field}": ""}),
+    )
+
+    assert decision.action is RecoveryAction.BLOCK_RELAUNCH
+    assert decision.reason_code == "IMMUTABLE_IDENTITY_MISMATCH"
+
+
+@pytest.mark.parametrize("reason_code", ["", "NODE_NOT_READY"])
+def test_succeeded_missing_outputs_retain_output_integrity_failure(
+    reason_code: str,
+) -> None:
+    decision = decide_recovery(
+        identity(workflow_sha256="changed"),
+        BackendObservation(BackendState.SUCCEEDED, reason_code=reason_code),
+        context(),
+    )
+
+    assert decision.action is RecoveryAction.TERMINALIZE
+    assert decision.reason_code == "DECLARED_OUTPUT_MISSING"

@@ -20,12 +20,26 @@ import pytest
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
+    render_run_preamble_for_tool,
     render_setup_for_tool,
 )
 from npa.orchestration.npa_workflow.spec import load_spec
 
 ROOT = Path(__file__).resolve().parents[3]
 SPECS = ROOT / "workflows" / "testing"
+
+
+def test_robot_sdg_installs_simulator_and_headless_rendering():
+    setup = render_setup_for_tool(
+        "workbench.token_factory.robot_sdg", config={}, options=SkypilotRenderOptions()
+    )
+    assert "robot-sdg" in setup
+    assert "libosmesa6 ffmpeg" in setup
+    preamble = render_run_preamble_for_tool(
+        "workbench.token_factory.robot_sdg", config={}
+    )
+    assert "export MUJOCO_GL=osmesa" in preamble
+    assert "export PYOPENGL_PLATFORM=osmesa" in preamble
 
 
 def _only_step(spec_name: str):
@@ -57,6 +71,16 @@ def _profile(spec, step) -> dict:
             "token-factory-generate.yaml",
             "npa workbench token-factory generate",
             ("--input-path", "--output-path", "--model", "--max-tokens"),
+        ),
+        (
+            "token-factory-sdg.yaml",
+            "npa workbench token-factory sdg",
+            ("--input-path", "--output-path", "--output-format"),
+        ),
+        (
+            "token-factory-robot-sdg.yaml",
+            "npa workbench token-factory robot-sdg",
+            ("--input-path", "--output-path", "--output-format"),
         ),
         (
             "token-factory-cosmos-reason.yaml",

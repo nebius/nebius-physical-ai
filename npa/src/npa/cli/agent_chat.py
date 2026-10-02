@@ -1093,6 +1093,10 @@ def _image_for_tool(tool: str) -> str:
         return container_image_for_tool(tool, tag=tag)
     except KeyError:
         return f"ghcr.io/nebius/nebius-physical-ai/npa-{tool}:{tag}"
+    except ValueError:
+        return (
+            "unavailable (public release quarantined; use an explicit operator image)"
+        )
 
 
 def _format_tool_family_capabilities(
@@ -1321,14 +1325,24 @@ def format_infra_backends(state: dict[str, Any]) -> str:
         if isinstance(infra.get("cloud_clusters"), list)
         else []
     )
+    cloud_unavailable = (infra.get("cloud_discovery") or {}).get(
+        "status"
+    ) == "unavailable"
+    cloud_summary = (
+        "unavailable" if cloud_unavailable else _infra_status_counts(cloud_clusters)
+    )
     lines = [
         "**Kubernetes / workflow infra status**:",
         f"- **agent_npa_ready**: `{bool(infra.get('agent_npa_ready'))}`",
         f"- **configured backends**: `{len(configured)}`",
         f"- **agent-local contexts**: `{len(local_clusters)}`",
-        f"- **Nebius MK8s backends**: `{_infra_status_counts(cloud_clusters)}`",
+        f"- **Nebius MK8s backends**: `{cloud_summary}`",
     ]
-    if not bool(infra.get("has_infra")):
+    if cloud_unavailable:
+        lines.append(
+            "- Cloud discovery failed; backend absence and accelerator availability are unverified. Retry discovery before provisioning. Configured backends remain usable."
+        )
+    elif not bool(infra.get("has_infra")):
         lines.extend(
             [
                 "- **No Kubernetes infra is currently specified or available.**",
@@ -1488,12 +1502,24 @@ def format_load_franka_status(
 
 
 def format_find_artifacts() -> str:
+    """Describe the generic artifact discovery and exact-source load contract.
+
+    Args:
+        None.
+
+    Returns:
+        Grounded Markdown guidance for artifact discovery and loading.
+
+    Raises:
+        None.
+    """
     return "\n".join(
         [
             "**Artifact finder (generic, no workflow allowlist):**",
             "1. Discover runs: `GET /api/artifacts/runs?prefix=&limit=100`",
             "2. Inspect one run: `GET /api/artifacts/run/{run_id}`",
-            "3. Load selected artifact: `POST /api/sim-viz/load-artifact` with `run_id` + `s3_uri` or `run_id` + `key`",
+            "3. Load the selected artifact: `POST /api/sim-viz/load-artifact` with its `key` and complete server-issued `run_id`, `run_ref`, `project_id`, `resource_bucket`, `resolved_prefix`, and `source_selected` fields.",
+            "- `s3_uri` is provenance only; it is never an artifact authorization selector.",
             "- Render hints are additive (`rerun`, `video`, `image`, `json`, `text`, `download`).",
             "- Unknown/new file types are still listed and selectable as `download`.",
             "- Use `GET /api/sim-viz/status` after load to confirm `artifact_render`, `artifact_key`, and `rerun_ready`.",
@@ -1696,6 +1722,15 @@ def format_foxglove_status(state: dict[str, Any]) -> str:
 
     Everything comes from the live ``/api/foxglove/config`` + ``/status`` payloads
     the backend attached to the session state; nothing is assumed.
+
+    Args:
+        state: Live Agent state containing Foxglove and visualization evidence.
+
+    Returns:
+        Grounded Markdown describing viewer availability and the selected source.
+
+    Raises:
+        None.
     """
     foxglove = state.get("foxglove")
     foxglove = foxglove if isinstance(foxglove, dict) else {}
@@ -1747,7 +1782,8 @@ def format_foxglove_status(state: dict[str, Any]) -> str:
             lines.append(
                 "- No recording is loaded yet: pick an `.mcap`/`.bag` artifact in "
                 "**Runs & artifacts** (Type = Foxglove), or "
-                "`POST /api/foxglove/load-artifact` with `run_id`+`s3_uri` or `run_id`+`key`."
+                "`POST /api/foxglove/load-artifact` with its inventory `key` and complete "
+                "server-issued run source tuple; treat `s3_uri` as provenance only."
             )
     else:
         lines.append(

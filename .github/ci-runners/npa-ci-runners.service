@@ -1,0 +1,28 @@
+[Unit]
+Description=Disposable NPA CPU runner controller
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/var/lib/npa-ci-runners/github-app.json
+ConditionPathExists=!/var/lib/npa-ci-runners/controller-stopped
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/opt/npa-ci-controller/npa/.venv/bin/python /opt/npa-ci-controller/npa/scripts/ci_cpu_runners.py serve --state-dir /var/lib/npa-ci-runners
+Restart=on-failure
+RestartSec=20
+Environment=HOME=/var/lib/npa-ci-runners
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/npa-ci-runners
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

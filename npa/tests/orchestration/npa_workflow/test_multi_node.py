@@ -389,6 +389,33 @@ def test_multi_node_profile_reuse_by_unsharded_writer_fails(tmp_path: Path) -> N
         load_spec(path)
 
 
+def test_explicit_forbidden_multi_node_mode_matches_omitted_default(
+    tmp_path: Path,
+) -> None:
+    text = SPEC_TEMPLATE.format(nodes=1).replace(
+        "    multiNodeMode: sharded\n", "    multiNodeMode: forbidden\n", 1
+    )
+    path = tmp_path / "explicit-forbidden.yaml"
+    path.write_text(text, encoding="utf-8")
+
+    spec = load_spec(path)
+
+    assert spec.states["gang-stage"].multi_node_mode == "forbidden"
+
+
+def test_explicit_forbidden_multi_node_mode_reaches_domain_validation(
+    tmp_path: Path,
+) -> None:
+    text = SPEC_TEMPLATE.format(nodes=2).replace(
+        "    multiNodeMode: sharded\n", "    multiNodeMode: forbidden\n", 1
+    )
+    path = tmp_path / "explicit-forbidden-gang.yaml"
+    path.write_text(text, encoding="utf-8")
+
+    with pytest.raises(NpaWorkflowError, match="not declared sharded"):
+        load_spec(path)
+
+
 def test_every_shipped_spec_still_validates() -> None:
     """The new profile validation must not reject anything already in the catalog."""
 

@@ -93,7 +93,7 @@ def _blocked(attempt: Any, reason: str, *, cause: BaseException | None = None) -
 
 def _expected_identity(executor: Any, steps: Any, attempt: Any) -> AttemptIdentity:
     from npa.orchestration.npa_workflow.runtime import (
-        _image_identity,
+        _expected_image_identity,
         _source_identity,
         _workflow_identity,
     )
@@ -115,7 +115,13 @@ def _expected_identity(executor: Any, steps: Any, attempt: Any) -> AttemptIdenti
         ),
         workflow_sha256=_workflow_identity(executor.spec),
         source_sha256=_source_identity(),
-        image_digest=_image_identity(executor.render_options),
+        image_digest=_expected_image_identity(
+            executor.spec,
+            steps,
+            executor.render_options,
+            attempt.image_identity_version,
+            executor.run_id,
+        ),
     )
 
 
@@ -190,10 +196,12 @@ def _terminal_evidence(executor: Any, attempt: Any) -> Any:
         _require_absent(executor, attempt)
         attempt.partial_launch["outputs_absent_before_cancel"] = utc_now()
         executor.ledger.record(attempt)
-        state, error = executor._cancel(attempt.job_id, attempt.job_name)
+        state, error, terminal_status = executor._cancel(
+            attempt.job_id, attempt.job_name
+        )
         attempt.cancellation_state, attempt.cancellation_error = state, error
         executor.ledger.record(attempt)
-        if state != "verified":
+        if state != "verified" or not is_terminal(terminal_status):
             _blocked(attempt, "exact cancellation did not verify a terminal state")
         evidence = _exact_evidence(executor, attempt)
     # Cancellation can race with success. Retain the provider's actual outcome,
@@ -271,6 +279,10 @@ def _refresh_preflight(executor: Any, steps: Any, attempt: Any) -> None:
             project=executor.options.project,
             extra_env=executor._wave_credentials(attempt),
         )
+    # The SDK preflight canonicalizes YAML before checking it. Keep the
+    # original launch hash for immutable identity, and bind the durable
+    # reservation to the exact canonical bytes that this refresh checked.
+    attempt.partial_launch["preflight_wave_sha256"] = digest
     executor._record_submit_preflight(
         attempt, digest, source="default_sdk_recovery_preflight"
     )
@@ -348,7 +360,10 @@ def _require_event_preflight(attempt: Any, run_id: str, event: Any) -> None:
             "run_id": run_id,
             "wave_key": attempt.key,
             "attempt": attempt.attempt,
-            "rendered_wave_sha256": attempt.partial_launch["rendered_wave_sha256"],
+            "rendered_wave_sha256": attempt.partial_launch.get(
+                "preflight_wave_sha256",
+                attempt.partial_launch["rendered_wave_sha256"],
+            ),
         }
     ):
         _blocked(attempt, "durable reservation lacks the exact SDK preflight proof")
@@ -549,13 +564,19 @@ def _adopt_reserved(executor: Any, steps: Any, attempt: Any, evidence: Any) -> A
     executor.attempts.append(attempt)
     executor.ledger.record(attempt)
     try:
+        workflow_status = attempt.sky_status
         if not is_terminal(attempt.sky_status):
-            attempt.sky_status = executor._poll(
-                attempt.job_id, attempt, observe_tasks=len(steps) > 1
+            poll_result = executor._poll(
+                attempt.job_id,
+                attempt,
+                steps=steps,
+                observe_tasks=len(steps) > 1,
             )
-        if not is_terminal_ok(attempt.sky_status):
+            attempt.sky_status = poll_result.provider_status
+            workflow_status = poll_result.workflow_status
+        if not is_terminal_ok(workflow_status):
             raise NpaWorkflowError(
-                f"reserved successor reached terminal status {attempt.sky_status}"
+                f"reserved successor reached terminal status {workflow_status}"
             )
         executor._require_outputs(attempt.outputs, key=attempt.key)
     except BaseException as exc:

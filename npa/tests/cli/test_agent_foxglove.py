@@ -103,7 +103,8 @@ def test_cypress_live_runner_fails_closed_and_keeps_credentials_out_of_arguments
     assert 'npm run "${LIVE_CYPRESS_SCRIPT}" -- --env' not in runner
     assert "screenshotOnRunFailure: process.env.NPA_AGENT_CYPRESS_LIVE" in config
     assert "video: false" in config
-    assert "experimentalMemoryManagement: true" in config
+    assert "manageBrowserMemory: true" in config
+    assert "experimentalMemoryManagement" not in config
     assert "numTestsKeptInMemory: 0" in config
     mock_script = package["scripts"]["cy:mock"]
     assert "cypress/e2e/agent_mocked.cy.js" in mock_script

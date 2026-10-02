@@ -18,12 +18,18 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Candidate | Pinned source | Primary (hard-gate) capability | Artifact | NPA workflow |
 | --- | --- | --- | --- | --- |
+| Habitat-Sim (**neutral runtime-fetch; development proof only**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
+| LIBERO | `Lifelong-Robot-Learning/LIBERO` `8f1084e3…` | `libero_spatial_bc_rnn_train_reload_heldout` | Canonical `libero-smoke.json` + checkpoint digest/reload evidence (checkpoint remains local and is never uploaded) | `byof-libero.yaml` |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
+| Gymnasium-Robotics | `Farama-Foundation/Gymnasium-Robotics` `4d1ebecb…` | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | `gymnasium-robotics-smoke.json` | `byof-gymnasium-robotics.yaml` |
 | RoboCasa | `robocasa/robocasa` `v1.0` | `kitchen_task_registration` | `robocasa_kitchen_env_reset.json` | `byof-robocasa.yaml` |
 | Enactic OpenArm (**accepted public image; Isaac runtime fetch**) | `enactic/openarm_mujoco` `2.2.0` + `enactic/openarm_isaac_lab` `bad82e…` | `openarm_mujoco_bimanual_rollout` + `Isaac-Reach-OpenArm-v0` | MuJoCo/Isaac trajectories and RSL-RL checkpoint | `openarm-simulators.yaml` |
+| RoboTwin 2.0 (**operator BYOF candidate; normal submit blocked**) | `RoboTwin-Platform/RoboTwin` `96c1feab…` | `beat_block_hammer_successful_seed_replay_collection` | operator evidence: `robotwin-smoke.json` + native HDF5 + MP4; registry admission deferred | `byof-robotwin.yaml` |
 | OpenPI | `Physical-Intelligence/openpi` `15a9616a…` | connected direct / cross-pod serve / LoRA optimizer smoke / held-out evaluation, plus the upstream full-DROID fine-tuning recipe | `openpi_pi05_droid_jointpos_polaris_inference.json` plus connected mode reports; full-DROID emits preparation and 100-update qualification RRDs, then immutable run-derived progress RRDs/manifests through the 100,000-update checkpoint | `byof-openpi.yaml` → `openpi-pi05-four-mode.yaml`; trusted public-image build → `openpi-pi05-full-droid-finetune.yaml` |
+| flex-pi (**accepted public image**) | `geyan21/flex-pi` `20c1b2b…` | strict released-checkpoint action-only inference | `actions.json` + input/result provenance | `flex-pi-b200-inference.yaml` / `flex-pi-rtxpro-inference.yaml` |
 | DROID policy learning | `droid-dataset/droid_policy_learning` `9a29c832…` | `rlds_config_generator_contract` | `droid_rlds_config_generator.json` | `byof-droid-policy-learning.yaml` |
+| robomimic | `ARISE-Initiative/robomimic` `d309eae…` | `lift_ph_lowdim_checkpoint_reload_action` (deferred) | `robomimic-smoke.json` (not produced) | `byof-robomimic.yaml` |
 | Open Dreamer (world model, **2-GPU min**) | `next-state/open-dreamer` `2b10640` | `dreamer4_tokenizer_train_two_gpu` | `open_dreamer_world_model_2gpu.json` | `byof-open-dreamer.yaml` |
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
 | Lightricks LTX-2.5 (**accepted public image; entitled runtime fetch**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
@@ -33,11 +39,14 @@ unique and must be tested with its own upstream-named capabilities.
 
 | Solution | Capability | Live status | Run / evidence |
 | --- | --- | --- | --- |
+| Habitat-Sim | `skokloster_castle_rgb_depth_bullet_traversal` / `headless_nvidia_egl_rgb_depth_render` / `bullet_physics_world_step` / `greedy_geodesic_agent_traversal` | **development evidence; supported release quarantined** | [Exact-digest development manifest](validation/habitat-sim-development-image-manifest.json): 19 RGB/depth frame pairs, 19 Bullet steps and 2.2466 metres of navigation on one RTX PRO 6000 Blackwell. Historical producer evidence; no policy-training or long-benchmark claim. |
+| LIBERO | `libero_spatial_bc_rnn_train_reload_heldout` | **qualification pending; payload-free public-development staging permitted; not released** | Requires complete-byte and anonymous-pull proof followed by one STRICT-bound B200 run of the exact candidate digest: eight upstream BC-RNN/Adam steps on the official LIBERO-Spatial demonstration, checkpoint reload, and full trajectory-disjoint held-out evaluation |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
 | ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | **accepted** | `defcap11-maniskill-20260709-043408` (sapien 3.0.3 on CUDA Ubuntu22.04/py3.10; Blackwell render OK) |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
 | MuJoCo Playground | `mjx_cheetah_run_step` | **accepted** | Same runs; CheetahRun reward≈0.0019 |
 | MuJoCo Playground | `train_jax_ppo_cartpole_smoke` | **accepted** | `defcap9-mujoco-playground-20260709-034059` (`brax_ppo_train_api`, jax 0.8.0) |
+| Gymnasium-Robotics | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | **historical private proof; neutral development build release-quarantined** | The accepted `c308945a` result remains bound to its private digest. The redesigned source has a payload-free development-build path but no accepted release or public image proof; any new private receipt remains owner-only. |
 | RoboCasa | `kitchen_task_registration` | **accepted** | `defcap8-robocasa-20260709-024455` (+ prior `…-011138`) |
 | RoboCasa | `download_kitchen_assets_lw` | **accepted** | `defcap17-robocasa-20260709-060243` (IIFAN fixtures+objects; restored git accessories) |
 | RoboCasa | `kitchen_egl_env_reset` | **accepted** | `defcap17-robocasa-20260709-060243` (post-download subprocess; 58 lightwheel cats; obs dict) |
@@ -45,12 +54,14 @@ unique and must be tested with its own upstream-named capabilities.
 | Enactic OpenArm | `openarm_mujoco_bimanual_rollout` | **accepted** | exact public development digest: 500 real `mj_step` calls, finite joint/command/energy trace, and fully decoded 100-frame H.264 render |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` rollout | **accepted** | same digest on RTX PRO 6000: 64 environments × 100 real PhysX/CUDA steps with finite rewards and policy observations |
 | Enactic OpenArm | `Isaac-Reach-OpenArm-v0` RSL-RL training | **accepted** | same digest: upstream trainer completed one iteration and emitted an independently validated serialized Torch checkpoint |
+| RoboTwin 2.0 | `beat_block_hammer_successful_seed_replay_collection` | **operator evidence retained; registry admission deferred** | One RTX PRO 6000 operator run produced 123 state/action pairs and 124 decoded frames. Public CLI execution and the normal-submit worker bridge remain blocked; see [scope and digest](byof-robotwin.md#retained-operator-evidence-and-readiness). |
 | OpenPI | `pi05_droid_jointpos_polaris_checkpoint_download` | **accepted** | Canonical isolated B200 gate: image build/push/digest verification, then 12,434,530,837 runtime-only GCS bytes with 27-object generation-manifest provenance; exact scoped `NPA_OPENPI_ACCEPT_GEMMA_TERMS=YES` is runtime-only |
 | OpenPI | `pi05_droid_jointpos_polaris_direct_infer` | **accepted** | Same digest-pinned B200 `sm_100` gate; deterministic Franka input produced finite `float64[15,8]` joint-position targets |
 | OpenPI | `pi05_droid_jointpos_polaris_served_infer` | **accepted builder regression** | Same gate; upstream WebSocket health + same-pod client round trip produced finite `float64[15,8]` |
 | OpenPI | `pi05_droid_jointpos_polaris_cross_pod_serve` | **accepted** | Isolated single-B200 connected gate: private ClusterIP, ready digest-pinned server Deployment, and a distinct CPU client pod completed two finite `float64[15,8]` requests; exact service cleanup passed |
 | OpenPI | `pi05_droid_jointpos_polaris_lora_optimizer_smoke` | **accepted** | Same connected gate: upstream pi0.5 LoRA forward/backward/AdamW step, finite loss, changed trainable-state hash, and independently reloadable private Orbax checkpoint |
 | OpenPI | `pi05_droid_jointpos_polaris_heldout_evaluate` | **accepted** | Same connected gate: exact trained-checkpoint reload, two samples excluded from the four-sample training split, finite upstream loss and action MAE/MSE, and finite `float64[15,8]` trajectory |
+| flex-pi | `robotwin_action_only_infer` | **accepted** | Current r2 digest independently on one B200 and one RTX PRO 6000: complete checkpoint-state load, compiled four-step inference, finite `float32[32,14]` actions, and three read-back-verified JSON artifacts per target. The historical `0.1.0-cu128` B200 capacity run completed 24 independent one-GPU replicas; that scaling record does not qualify r2. |
 | DROID | `rlds_config_generator_contract` | **accepted** | `defcap8-droid-policy-learning-20260709-024455` (+ prior) |
 | DROID | `droid_100_download` | **accepted** | Same run (`https_meta` `dataset_info.json`) |
 | DROID | `droid_100_config_gen` | **accepted** | Same run (`EXP_NAMES` droid_100 wiring) |
@@ -69,6 +80,81 @@ unique and must be tested with its own upstream-named capabilities.
 
 ## Native Capabilities Per Container
 
+### Habitat-Sim
+
+Pinned MIT source:
+`facebookresearch/habitat-sim@57ee4941dc4765240f0f91f70b2c97a919bf9038`.
+Upstream warns that beyond v0.3.4, Meta internal teams do not officially
+maintain releases or provide active development. Its public build target is a
+neutral Ubuntu/Python bootstrap with accompanying exact Ubuntu source. The
+simulator and scientific/native dependencies are fetched only at runtime.
+Supported release selection remains quarantined. The [development image manifest](validation/habitat-sim-development-image-manifest.json)
+binds the retained exact-digest 19-step managed-workflow result to its image
+producer and evidence hashes.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `skokloster_castle_rgb_depth_bullet_traversal` | development proof; release quarantined | Upstream `Simulator`, `make_cfg`, pathfinder, greedy follower, RGB/depth sensors, and saved observations on the exact Skokloster scene |
+| `headless_nvidia_egl_rgb_depth_render` | development proof; release quarantined | Headless NVIDIA OpenGL strings plus NVIDIA EGL libraries loaded into the renderer process |
+| `bullet_physics_world_step` | development proof; release quarantined | Bullet-enabled build and advancing world time through `Simulator.step(dt=1/60)` |
+| `greedy_geodesic_agent_traversal` | development proof; release quarantined | Navmesh path, upstream follower action sequence, and nonzero start-to-end displacement |
+
+The hard gate fetches the official Meta test-scene archive referenced by the
+pinned Habitat-Sim tree, verifies its 94,590,970-byte SHA-256
+`1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
+extracts only the exact hash-pinned `skokloster-castle.glb` and `.navmesh`, and
+deletes the archive. The runtime installer uses the existing immutable Ubuntu
+snapshot and hash-locked Python/source inputs. The public image contains those
+locks and launchers, without the simulator or scientific runtime payload. Habitat's pinned README and the original asset identify the
+demo as CC BY 4.0; the proof carries attribution, license/original links, and
+modification provenance. Matterport3D, HM3D, Replica, other proprietary or gated
+datasets, semantic annotations, and distributed Habitat-Lab training are
+deferred. The renderer targets exactly one RTX PRO 6000 Blackwell and never B200. See
+[`byof-habitat-sim.md`](byof-habitat-sim.md).
+### LIBERO
+
+Pinned runtime source: `Lifelong-Robot-Learning/LIBERO`
+`8f1084e3132a39270c3a13ebe37270a43ece2a01` (MIT). The narrow admission
+candidate runtime-fetches one official `libero_spatial` demonstration from
+`yifengzhu-hf/LIBERO-datasets@f13aa24a3da8c43c7225569f28c562979fa0e35a`
+and verifies its 508,779,600 bytes against SHA-256
+`ff6f26121653c77280eb40a38773a74141c11a8509f3466058cb56dd2cc60ead`.
+The upstream LIBERO publisher declares its datasets CC BY 4.0; the mirror card's
+conflicting Apache-2.0 tag is not used to broaden rights.
+Task conditioning runtime-fetches the independently pinned Apache-2.0
+`google-bert/bert-base-cased@cd5ef92a9fb2f889e972770a36d4ed042daf221e`
+files and runs the pinned upstream LIBERO `AutoTokenizer`/`AutoModel`
+`pooler_output` path. Neither those model bytes nor the demonstration is baked.
+The public-neutral candidate also bakes no LIBERO, robomimic, MuJoCo, PyTorch,
+CUDA/NVIDIA runtime, task/render asset, populated cache, checkpoint, credential,
+or output byte. It remains absent from the release manifest and public image
+table, and unqualified until byte, provenance, anonymous-pull, and live
+acceptance. Historical private r15 bytes are old-head evidence only.
+The trusted public workflow permits payload-free development publication after
+local image-byte/security gates. The local scan records the complete ordered
+layer and flattened-rootfs inventory; the pushed digest must match it and pass
+anonymous pull. Runtime qualification and customer acknowledgement remain
+separate requirements for execution and supported release promotion.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `libero_official_demo_sha256` | qualification pending | Exact official HDF5 mirror revision, byte size, SHA-256, 50 trajectories, 5,068 samples, task language, BDDL, and initial-state hashes |
+| `libero_upstream_bert_task_conditioning` | qualification pending | Exact Apache-2.0 BERT revision and file hashes, pinned LIBERO embedding-source hash, and finite 768-dimensional upstream `pooler_output` |
+| `libero_trajectory_disjoint_heldout_split` | qualification pending | Deterministic 40-train / 10-held-out trajectory split; no trajectory may appear in both partitions |
+| `libero_spatial_bc_rnn_train_reload_heldout` | hard gate, qualification pending | Upstream BERT task conditioning plus `Sequential.observe` + `BCRNNPolicy` + the upstream-configured `torch.optim.Adam` for exactly eight nonzero optimizer steps, strict upstream checkpoint reload, held-out NLL, and finite reloaded 7-DoF action predictions on exactly one B200 (`sm_100`) |
+
+An authorized runtime sparse-fetch retains the hash-bound BDDL and initial
+states but never fetches the unused render-asset tree. The official
+demonstration is fetched into a manifest-addressed cache outside the artifact
+directory and is never baked or uploaded. A missing, denied, expired, or
+mismatched customer/run authorization refuses before cache or network mutation;
+credentials establish upstream access only, and runtime fetch is delivery, not
+permission. Acceptance
+requires the Pod-observed immutable image digest in `libero-smoke.json`; imports,
+BDDL parsing, dataset inventory, or zero-step training do not pass. Rendered
+closed-loop sweeps, all 130 tasks, lifelong-algorithm comparison, and physical
+robots remain deferred. See [`byof-libero.md`](byof-libero.md).
+
 ### ManiSkill
 
 | Capability | Status | Upstream basis |
@@ -85,6 +171,28 @@ unique and must be tested with its own upstream-named capabilities.
 | `mjx_cartpole_step` | accepted (live) | `registry.load("CartpoleBalance")` reset/step |
 | `mjx_cheetah_run_step` | accepted (live) | Additional registered env beyond Cartpole |
 | `train_jax_ppo_cartpole_smoke` | accepted (live) | brax PPO train API reduced timesteps (jax&lt;0.8.1) |
+
+### Gymnasium-Robotics
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `registered_shadow_hand_environment` | historical private proof only | Upstream `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` registration at exact source commit |
+| `mujoco_physics_steps` / `mujoco_contacts` | historical private proof only | 120 upstream `env.step` calls, 2,400 MuJoCo substeps, finite rewards, contacts, and quantitative state/orientation change |
+| `continuous_touch_sensor_response` | historical private proof only | Official 92-site Shadow Hand `sensordata` vector with nonzero live readings |
+| `egl_rgb_rendering` | historical private proof only | Actual 240×320 RGB frames, distinct hashes, measured rate, and loaded NVIDIA EGL library |
+| `rtx_pro_6000_blackwell_execution` | historical private proof only | One strict RTX PRO 6000 Blackwell (`sm_120`) plus private pushed/pod-observed immutable digest equality |
+
+This remains a minimal BYOF candidate. It has no model, external dataset,
+gated asset, terms acceptance, RL training claim, expert score, other
+environment-family claim, or physical-robot transfer claim. See
+[`byof-gymnasium-robotics.md`](byof-gymnasium-robotics.md).
+The neutral zero-Shadow-payload bootstrap has a development-build path but is
+release-quarantined. An
+owner-only reference build supplied the scanner's exact config and ordered
+20-DiffID anchors, but did not complete the product scan, SBOM, push, or
+immutable-digest gates and left no accepted artifact. Pinned source, Shadow
+assets, MuJoCo/Python runtime, and populated caches are runtime-only; historical
+private evidence does not transfer to redesigned image or executable bytes.
 
 ### RoboCasa
 
@@ -123,6 +231,85 @@ hash-pinned and fetched into the operator's runtime cache through the shared
 acceptance/refusal bootstrap. See [OpenArm](openarm.md) and
 `workflows/testing/openarm-simulators.yaml`.
 
+### RoboTwin 2.0
+
+Pinned bimanual SAPIEN simulation and native data-collection candidate. The
+source is `RoboTwin-Platform/RoboTwin`
+`96c1feab536306b50c26af200044fcdf126e8904`; required runtime assets come from
+`TianxingChen/RoboTwin2.0`
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. The operator workload
+fetches and hash-checks only the aggregate objects and embodiments archives,
+then uses the
+ALOHA-AgileX embodiment and custom `020_hammer` object. No asset bytes are baked
+into the image: the live harness scans the exact image digest's rootfs
+and every layer before it may submit the GPU run.
+
+The workflow describes a CPU-only outer launcher and a fixed one-RTX inner
+profile, but normal `npa workbench workflow submit` remains blocked on
+remote-source and worker identity proof. The public BYOF CLI also refuses
+RoboTwin execution. The standalone operator script can invoke the guarded inner
+launcher after authorization and input checks. Its retained GPU result is
+documented in [the operator guide](byof-robotwin.md#retained-operator-evidence-and-readiness);
+it does not establish agent or normal-submit readiness. Plans and rendered YAML
+retain sanitized placeholders, and registry admission remains deferred.
+
+| Capability | Status | Upstream basis / required evidence |
+| --- | --- | --- |
+| `sapien_vulkan_rt_renderer` | qualification pending | `SapienRenderer`, `rt` camera shader, successful `vulkaninfo`, and SAPIEN device summary from one RTX PRO 6000 (`sm_120`) |
+| `beat_block_hammer_successful_seed_search` | qualification pending | official `scripts/collect_data.py beat_block_hammer demo_clean` seed-search phase, reduced only to one episode |
+| `beat_block_hammer_successful_seed_replay` | qualification pending hard gate | official replay must finish with `check_success()` true; imports, registration, simulator startup, or a planned trajectory do not pass |
+| `robotwin_native_hdf5_collection` | qualification pending hard gate | non-empty native HDF5 with RoboTwin provenance, action/state/vision groups, positive action count, size, and SHA-256 |
+| `robotwin_rendered_mp4` | qualification pending hard gate | fully decoded MP4 with positive dimensions and exactly `action_count + 1` frames, size, and SHA-256 |
+
+The public bootstrap contains none of these bytes. Its implemented customer
+runtime compiles pinned CuRobo v0.7.8 for `sm_120`. CuRobo's NVIDIA license
+limits use to noncommercial research/evaluation. The operator's exact
+`noncommercial` statement for this bounded run is compatible with that field of
+use for containerization and technical workload validation/evaluation; it
+expires with the run and does not authorize hosted service or broader outputs.
+CuRobo's field-of-use limit continues to bind use and service claims and every
+generated workload. No additional generated-output restriction was found in
+the inspected authoritative terms for the five declared classes: native HDF5
+action/state data, decoded MP4, rendered frames, smoke JSON, and summary JSON.
+Hosted-service use remains unapproved even though a
+zero-vendor-payload bootstrap may be eligible for public redistribution after
+exact-byte review. Public artifacts require exact-revision payload probes;
+gated artifacts additionally require the customer's own runtime-only credential
+and an exact provider/artifact/revision/terms access result before provisioning.
+An explicit customer-terminal decision or the existing hosted authorization
+boundary gates runtime delivery. Supported release promotion remains
+quarantined pending validation of the supported submission path, and the candidate
+is absent from the supported public image table. The Hugging Face
+asset repository card classifies the exact locked `embodiments.zip` and
+`objects.zip` members at revision
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad` as MIT. Other embodiments,
+unselected future task assets, training/evaluation, physical deployment, and
+their outputs remain independently deferred. Registry credentials, runtime
+fetch, and the byte-absence scan do not grant permission. Customer-issued
+entitlement for CUDA, cuDNN, and CuRobo plus the exact applicable payload probes
+remain pre-fetch/pre-run gates. See
+[`byof-robotwin.md`](byof-robotwin.md) for the exact license, GPU, workflow, and
+artifact contract.
+
+Deferred: the 50-task sweep, randomized-background coverage, policy training or
+evaluation, other embodiments and object-license review, and physical-robot
+deployment.
+
+### flex-pi
+
+| Capability | Status | Upstream basis / NPA evidence |
+| --- | --- | --- |
+| `robotwin_action_only_infer` | accepted (live) | Released 6B RoboTwin checkpoint; three RGB cameras, 14D state, and language input produced finite 32-step bimanual action chunks independently on B200 and RTX PRO 6000 |
+| `strict_checkpoint_state` | accepted (live) | Maintained fail-closed loader rejected missing/unexpected MoT keys and required proprio, DINO, and pointmap state before the success marker |
+| `action_artifact_provenance` | accepted (live) | Source, checkpoint, data, runtime-asset, input, action, and image identities persisted in three hash-verified JSON artifacts |
+| `blackwell_compiled_infer` | accepted (live) | Current r2 digest passed real compiled inference independently on one B200 and one RTX PRO 6000. Historical `0.1.0-cu128` paired benchmarks measured 2.645× and 2.278× median speedup; those values apply only to the old digest |
+
+> **Promoted to a first-class workbench tool.** flex-pi is available through
+> `npa workbench flex-pi`, `npa.sdk.workbench.flex_pi`, the
+> `workbench.flex_pi.infer` toolRef, and maintained B200 and RTX PRO 6000 workflows.
+> The public image contains no weights, observation media, or populated cache.
+> See `skills/tools/flex-pi/SKILL.md` and `docs/workbench/flex-pi.md`.
+
 ### OpenPI
 
 | Capability | Status | Upstream basis |
@@ -151,6 +338,43 @@ offline evaluation.
 | `rlds_config_generator_contract` | accepted hard gate (live) | `droid_runs_language_conditioned_rlds` module contract |
 | `droid_100_download` | accepted (live) | HTTPS metadata pull of `droid_100/1.0.0/dataset_info.json` |
 | `droid_100_config_gen` | accepted (live) | Documented `EXP_NAMES` debug subset wiring |
+
+### robomimic
+
+Pinned: `ARISE-Initiative/robomimic`
+`d309eaecc18acf4152a830a895a6984b8ac71b05`. The runtime-only input is the
+official Lift PH low-dimensional HDF5 at immutable dataset revision
+`robomimic/robomimic_datasets@74fa018461f479cd9fd15b924a16103012096203`.
+
+Phase A provides an unbuilt, quarantined neutral bootstrap candidate: pinned
+source and Debian/bootstrap packages only. The historical 40-entry hash lock
+is retained as verifier evidence and is not baked into this public bootstrap.
+CUDA/PyTorch and other restricted dependencies are fetched at runtime into a
+customer-owned, exact-inventory environment using the customer's vendor
+entitlement. The official HDF5 is an immutable runtime fetch; pretrained
+weights are unnecessary. No runtime/data bytes were fetched, no image was
+built or published, and no B200 result is claimed. The public, anonymously
+retrievable exact dataset carries its MIT notice and needs no separate NPA
+acceptance. The external CUDA/cuDNN runtime requires a customer-facing notice
+and a customer-created, unexpired authorization bound to the customer, run,
+exact runtime lock and inventory, exact terms set, and expiry. A manager or
+generic human signature is not a substitute. If gated Hugging Face or NGC
+assets are selected later, use the customer's real vendor entitlement probe
+without a duplicate NPA terms boolean. The runtime fetch verifies the fetched
+environment and installed RECORD before use; `NPA_ROBOMIMIC_CUSTOMER_DENYLIST`
+is an explicit customer runtime input, and when unset the built-in safe denylist
+applies. It is not a publication prerequisite. Separate image, infrastructure,
+dataset, and B200 transaction gates still apply.
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `lift_ph_lowdim_bc_train` | pending live B200 acceptance | `robomimic/scripts/train.py`, BC, four serialized Adam steps |
+| `lift_ph_lowdim_heldout_validate` | pending live B200 acceptance | upstream deterministic 90/10 HDF5 masks, disjoint validation loss |
+| `lift_ph_lowdim_checkpoint_reload_action` | pending live B200 acceptance | `policy_from_checkpoint` plus finite held-out seven-dimensional action |
+
+The candidate is deliberately low-dimensional and headless on exactly one B200.
+It does not claim simulator success or convergence. The sole hard-gate artifact
+is `robomimic-smoke.json`; see [the operator contract](byof-robomimic.md).
 
 ### Open Dreamer (world model, 2-GPU minimum)
 

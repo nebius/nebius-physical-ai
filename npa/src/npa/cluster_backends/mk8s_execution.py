@@ -21,6 +21,8 @@ from npa.cluster.gpu_driver import (
     resolve_gpu_driver_strategy,
 )
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
+from npa.cluster_backends.provider_rpc import configure_provider_rpc_deadlines
+
 from npa.cluster_backends.kuberay import (
     KUBERAY_STATE_FILES,
     KubeRaySpec,
@@ -1233,14 +1235,24 @@ def _reconcile_tainted_node_groups(
         for instance in resource.get("instances", []):
             if not isinstance(instance, dict) or instance.get("status") != "tainted":
                 continue
-            if pool is None or pool.count <= 0:
-                raise RuntimeError(
-                    "refusing to reconcile a tainted node group with no exact desired pool"
-                )
             attributes = instance.get("attributes")
             if not isinstance(attributes, dict) or not attributes.get("id"):
                 raise RuntimeError(
                     "refusing to reconcile a tainted node group without exact state identity"
+                )
+            from npa.cluster_backends.mk8s_capacity_reuse import is_removed_cpu_taint
+
+            if is_removed_cpu_taint(
+                resource, instance, pool, cluster_ids, cluster.name
+            ):
+                _log(
+                    on_status,
+                    "retaining owned CPU taint for the requested pool removal",
+                )
+                continue
+            if pool is None or pool.count <= 0:
+                raise RuntimeError(
+                    "refusing to reconcile a tainted node group with no exact desired pool"
                 )
             tainted.append(
                 (_terraform_instance_address(resource, instance), attributes, pool)
@@ -2041,9 +2053,12 @@ def _is_verified_unchanged_target(
                 )
             )
 
-        if capacity_configuration(saved_tfvars) != capacity_configuration(
-            rendered_tfvars
-        ):
+        from npa.cluster_backends.mk8s_capacity_reuse import is_cpu_pool_removal
+
+        previous_capacity = capacity_configuration(saved_tfvars)
+        desired_capacity = capacity_configuration(rendered_tfvars)
+        removes_cpu_pool = is_cpu_pool_removal(previous_capacity, desired_capacity)
+        if previous_capacity != desired_capacity and not removes_cpu_pool:
             return False
         provider_project = _get_project(nebius_bin, project_id, env, profile)
     except (OSError, RuntimeError, ValueError):
@@ -2097,6 +2112,7 @@ def _is_verified_unchanged_target(
             "list",
             "--parent-id",
             cluster_id,
+            "--all",
             "--format",
             "json",
         ],
@@ -2128,7 +2144,7 @@ def _is_verified_unchanged_target(
     ):
         return False
     groups = groups_payload.get("items", [])
-    if not isinstance(groups, list):
+    if not isinstance(groups, list) or groups_payload.get("next_page_token"):
         return False
     expected_pools = [
         pool
@@ -2144,6 +2160,16 @@ def _is_verified_unchanged_target(
             expected_pools.extend(
                 replace(cluster.gpu_nodes, count=per_group) for _ in range(group_count)
             )
+    if removes_cpu_pool or (
+        cluster.cpu_count() == 0 and len(groups) > len(expected_pools)
+    ):
+        from npa.cluster_backends.mk8s_capacity_reuse import retained_node_groups
+
+        groups = retained_node_groups(
+            groups, tfvars_path.with_name("terraform.tfstate"), cluster_id
+        )
+        if groups is None:
+            return False
     if len(groups) != len(expected_pools):
         return False
 
@@ -2431,6 +2457,7 @@ def _deploy_one_cluster(
             ssh_public_key=ssh_public_key,
             on_status=on_status,
         )
+        rpc_deadlines = configure_provider_rpc_deadlines(workdir, timeout_minutes)
         env = _cluster_tf_env(
             nebius_bin,
             tenant_id=tenant_id,
@@ -2459,6 +2486,7 @@ def _deploy_one_cluster(
                 driver.managed_driver_preset if driver.uses_managed_image else ""
             ),
             "status": "provisioning",
+            "provider_rpc_deadlines": rpc_deadlines,
         }
         if guarded.kuberay and guarded.kuberay.enabled:
             sidecar.update(

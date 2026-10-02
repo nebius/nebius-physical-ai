@@ -78,7 +78,10 @@ from npa.workflows.sim2real.task_contract import (
     validate_seed_dataset_manifest,
     validate_task_dataset,
 )
-from npa.workflows.sim2real.temporal_credit import convert_evaluation
+from npa.workflows.sim2real.temporal_credit import (
+    TemporalCreditError,
+    convert_evaluation,
+)
 from npa.workflows.sim2real_envgen import (
     EnvGenConfig,
     SceneSpec,
@@ -688,6 +691,15 @@ def _recorded_visual_fields(step: int) -> dict:
     }
 
 
+_TEMPORAL_TRUTH_BOOLEAN_FIELDS = (
+    "contact",
+    "stable_grasp",
+    "placement_stable",
+    "dropped",
+    "terminated",
+)
+
+
 def test_temporal_credit_is_grounded_bounded_and_non_degenerate() -> None:
     evaluation = {
         "rollout_id": "rollout-1",
@@ -808,6 +820,98 @@ def test_temporal_credit_calibration_rejects_untrustworthy_vlm_rows() -> None:
     assert signal["per_step"][1]["confidence"] == 0.0
 
 
+@pytest.mark.parametrize(
+    ("scope", "field"),
+    [
+        ("evaluation", "success"),
+        ("step", "model_disagreement"),
+        ("truth", "contact"),
+        ("truth", "stable_grasp"),
+        ("truth", "placement_stable"),
+        ("truth", "dropped"),
+        ("truth", "terminated"),
+    ],
+)
+@pytest.mark.parametrize(
+    "hostile_value", ["false", "true", 0, 1, 0.0, 1.0, None, [], {}]
+)
+def test_temporal_credit_rejects_nonliteral_boolean_evidence(
+    scope: str, field: str, hostile_value: Any
+) -> None:
+    truth = {
+        "object_goal_distance_m": 0.01,
+        "end_effector_object_distance_m": 0.01,
+        "contact": False,
+        "stable_grasp": False,
+        "placement_stable": False,
+        "dropped": False,
+        "terminated": False,
+    }
+    evaluation: dict[str, Any] = {
+        "success": False,
+        "per_step": [
+            {
+                "step": 0,
+                "model_disagreement": False,
+                "simulator_ground_truth": truth,
+            }
+        ],
+    }
+    target = evaluation if scope == "evaluation" else evaluation["per_step"][0]
+    if scope == "truth":
+        target = truth
+    target[field] = hostile_value
+
+    with pytest.raises(TemporalCreditError, match=rf"\.{field} must be"):
+        convert_evaluation(evaluation)
+
+
+@pytest.mark.parametrize("explicit", [None, False, True])
+def test_temporal_credit_preserves_literal_boolean_semantics(
+    explicit: bool | None,
+) -> None:
+    truth: dict[str, Any] = {
+        "object_goal_distance_m": 0.01,
+        "end_effector_object_distance_m": 0.01,
+        "termination_reason": "failure",
+    }
+    evaluation: dict[str, Any] = {
+        "per_step": [{"step": 0, "simulator_ground_truth": truth}]
+    }
+    if explicit is not None:
+        evaluation["success"] = explicit
+        evaluation["per_step"][0]["model_disagreement"] = explicit
+        truth.update(dict.fromkeys(_TEMPORAL_TRUTH_BOOLEAN_FIELDS, explicit))
+
+    signal = convert_evaluation(evaluation)
+    row = signal["per_step"][0]
+    components = row["reward_components"]
+    expected = explicit is True
+    assert signal["success"] is expected
+    assert row["model_disagreement"] is expected
+    assert components["contact"] == (0.08 if expected else 0.0)
+    assert components["stable_grasp"] == (0.14 if expected else 0.0)
+    assert components["placement"] == (0.30 if expected else 0.0)
+    assert components["drop_penalty"] == (-0.15 if expected else 0.0)
+    assert components["termination_penalty"] == (-0.10 if expected else 0.0)
+
+
+@pytest.mark.parametrize("truth", [[], [["contact", "false"]], "false", 0, False])
+def test_temporal_credit_rejects_non_object_ground_truth(truth: Any) -> None:
+    evaluation = {"per_step": [{"step": 0, "simulator_ground_truth": truth}]}
+
+    with pytest.raises(TemporalCreditError, match="ground_truth must be an object"):
+        convert_evaluation(evaluation)
+
+
+@pytest.mark.parametrize("fields", [{}, {"simulator_ground_truth": None}])
+def test_temporal_credit_preserves_absent_ground_truth(fields: dict) -> None:
+    signal = convert_evaluation({"per_step": [{"step": 0, **fields}]})
+
+    assert signal["per_step"][0]["simulator_ground_truth"] == {}
+    assert signal["success"] is False
+
+
 def test_checkpoint_selection_uses_validation_and_prefers_earlier_exact_tie() -> None:
     report = {
         "success_rate": 0.25,
@@ -888,6 +992,114 @@ def test_checkpoint_selection_does_not_rank_table_contact_above_reach() -> None:
         ]
     )
     assert selected["checkpoint_uri"] == "s3://bucket/real-reach.pt"
+
+
+def _distance_candidate(name: str, distance: Any) -> dict[str, Any]:
+    return {
+        "evaluation_split": "validation",
+        "training_iteration": 100,
+        "checkpoint_uri": f"s3://bucket/{name}.pt",
+        "validation_report": {
+            "success_rate": 0.0,
+            "per_env": [{"env_id": "validation-0"}],
+            "success_summary": {"mean_object_goal_distance_m": distance},
+            "decomposed_metrics": {},
+        },
+    }
+
+
+def test_checkpoint_selection_prefers_exact_zero_mean_distance() -> None:
+    """A perfect (0.0m) mean distance must beat a worse nonzero distance.
+
+    Regression for a bug where ``float(x or 1e9)`` treated the falsy 0.0m
+    distance as missing evidence and substituted the worst-case sentinel,
+    causing a worse checkpoint to win on the distance tie-break.
+    """
+
+    selected = select_best_checkpoint(
+        [
+            _distance_candidate("perfect", 0.0),
+            _distance_candidate("mediocre", 0.5),
+        ]
+    )
+    assert selected["checkpoint_uri"] == "s3://bucket/perfect.pt"
+
+
+def test_checkpoint_selection_treats_absent_distance_as_worst() -> None:
+    """A candidate with no distance evidence must rank behind one that has any."""
+
+    no_evidence = _distance_candidate("no-evidence", None)
+    del no_evidence["validation_report"]["success_summary"][
+        "mean_object_goal_distance_m"
+    ]
+    selected = select_best_checkpoint(
+        [
+            no_evidence,
+            _distance_candidate("has-evidence", 5.0),
+        ]
+    )
+    assert selected["checkpoint_uri"] == "s3://bucket/has-evidence.pt"
+
+
+@pytest.mark.parametrize(
+    "distance",
+    [math.nan, math.inf, -math.inf, -0.01, "not-a-number"],
+)
+def test_checkpoint_selection_rejects_malformed_distance(distance: Any) -> None:
+    with pytest.raises(ValueError):
+        select_best_checkpoint([_distance_candidate("bad", distance)])
+
+
+@pytest.mark.parametrize("rate", [None, math.nan, math.inf, -0.1, 1.1, "half"])
+def test_checkpoint_selection_rejects_malformed_strict_rate(rate: Any) -> None:
+    """A supplied null rate is invalid; an absent metric is handled separately."""
+    candidate = {
+        "evaluation_split": "validation",
+        "training_iteration": 100,
+        "checkpoint_uri": "s3://bucket/bad.pt",
+        "validation_report": {
+            "success_rate": rate,
+            "per_env": [{"env_id": "validation-0"}],
+            "success_summary": {"mean_object_goal_distance_m": 0.1},
+            "decomposed_metrics": {},
+        },
+    }
+    with pytest.raises(ValueError):
+        select_best_checkpoint([candidate])
+
+
+@pytest.mark.parametrize("rate", [None, math.nan, math.inf, -0.1, 1.1, "half"])
+def test_checkpoint_selection_rejects_malformed_decomposed_rate(rate: Any) -> None:
+    """Do not silently turn an explicit unknown rate into a measured zero."""
+    candidate = {
+        "evaluation_split": "validation",
+        "training_iteration": 100,
+        "checkpoint_uri": "s3://bucket/bad.pt",
+        "validation_report": {
+            "success_rate": 0.0,
+            "per_env": [{"env_id": "validation-0"}],
+            "success_summary": {"mean_object_goal_distance_m": 0.1},
+            "decomposed_metrics": {"place": {"rate": rate}},
+        },
+    }
+    with pytest.raises(ValueError):
+        select_best_checkpoint([candidate])
+
+
+def test_checkpoint_selection_ordering_is_input_order_independent() -> None:
+    """Ranking a candidate first or last must not change the outcome.
+
+    Regression for nonfinite metric values previously breaking Python's
+    Timsort comparisons, which can make the selected winner depend on the
+    input order rather than on the metrics themselves.
+    """
+
+    best = _distance_candidate("best", 0.01)
+    worst = _distance_candidate("worst", 5.0)
+    assert (
+        select_best_checkpoint([best, worst])["checkpoint_uri"]
+        == (select_best_checkpoint([worst, best])["checkpoint_uri"])
+    )
 
 
 def test_eval_is_stratified_and_strict_success_requires_stability() -> None:
