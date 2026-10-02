@@ -1,0 +1,28 @@
+{
+  "previous_head": "e5cfb4e40f75e9c0d5966d0f760585b53ba9e06b",
+  "base": "0580ca7a2ea71f9b8ceaaf04335981283e44ac17",
+  "head": "a4dcc4e8ea54bf0280bacef22a256a8e13413743",
+  "resolution_files": [
+    "npa/tests/cli/test_workflow_submit_preflight.py"
+  ],
+  "resolved_test_cases": [
+    "test_preflight_images_deduplicates_declared_and_explicit_pull_secret",
+    "test_preflight_images_covers_every_decision_branch"
+  ],
+  "resolution": "Both --infra and --registry arguments retained in each invocation.",
+  "matches_normal_merge_except_test_resolution": true,
+  "dependency_files_byte_identical_to_main": true,
+  "live_source_bindings": [
+    {
+      "path": "npa/src/npa/orchestration/skypilot/registry_preflight.py",
+      "sha256": "d7b8422686d00d206e92752c4e53757c514eac16bf9382ec6c319c561c1671be",
+      "unchanged_from_previous_head": true
+    },
+    {
+      "path": "npa/src/npa/orchestration/skypilot/image_bootstrap_contract.py",
+      "sha256": "8db4c61c151fc0881cc2ab33e199d97bad659336ca28e1f8f42ffaad43353e4a",
+      "unchanged_from_previous_head": true
+    }
+  ],
+  "live_evidence_scope": "Previously recorded live producer and runtime adaptations retained; this rebase does not claim a new live pull or GPU/VLM run."
+}

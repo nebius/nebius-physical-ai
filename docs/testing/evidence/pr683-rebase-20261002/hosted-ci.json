@@ -1,0 +1,185 @@
+{
+  "at": "2026-10-02T02:28:18.169303+00:00",
+  "number": 683,
+  "head": "a4dcc4e8ea54bf0280bacef22a256a8e13413743",
+  "state": "open",
+  "draft": false,
+  "mergeable": true,
+  "mergeable_state": "clean",
+  "ready": true,
+  "checks": [
+    {
+      "name": "ci-timing-report",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110678170461",
+      "app_id": 15368
+    },
+    {
+      "name": "security-regression",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110678143776",
+      "app_id": 15368
+    },
+    {
+      "name": "test-gate / coverage",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110677932451",
+      "app_id": 15368
+    },
+    {
+      "name": "image-security / Base image CVE / ${{ matrix.entry }}",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674784582",
+      "app_id": 15368
+    },
+    {
+      "name": "image-security / Base image CVE inventory",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674783820",
+      "app_id": 15368
+    },
+    {
+      "name": "image-security / Omniverse payload scan (built image)",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674700865",
+      "app_id": 15368
+    },
+    {
+      "name": "queue-guardrails",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674700552",
+      "app_id": 15368
+    },
+    {
+      "name": "test-gate / pr-smoke",
+      "status": "completed",
+      "conclusion": "skipped",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674700397",
+      "app_id": 15368
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-2",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699622",
+      "app_id": 15368
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-1",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699600",
+      "app_id": 15368
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-6",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699579",
+      "app_id": 15368
+    },
+    {
+      "name": "lint-gate / docs-drift",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699528",
+      "app_id": 15368
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-4",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699520",
+      "app_id": 15368
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-3",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699498",
+      "app_id": 15368
+    },
+    {
+      "name": "test-gate / pytest-3.12-shard-5",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699466",
+      "app_id": 15368
+    },
+    {
+      "name": "image-security / Image policy and complete-byte security",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699452",
+      "app_id": 15368
+    },
+    {
+      "name": "image-security / Plan base image CVE inventory",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699414",
+      "app_id": 15368
+    },
+    {
+      "name": "lint-gate / ruff",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699398",
+      "app_id": 15368
+    },
+    {
+      "name": "test-gate / browser-and-compatibility",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699381",
+      "app_id": 15368
+    },
+    {
+      "name": "hostile-input-runtime",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674699123",
+      "app_id": 15368
+    },
+    {
+      "name": "gitleaks",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674610951",
+      "app_id": 15368
+    },
+    {
+      "name": "pr-precheck",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674610939",
+      "app_id": 15368
+    },
+    {
+      "name": "scan",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674610936",
+      "app_id": 15368
+    },
+    {
+      "name": "security-scanners",
+      "status": "completed",
+      "conclusion": "success",
+      "html_url": "https://github.com/nebius/nebius-physical-ai/actions/runs/36954579571/job/110674610750",
+      "app_id": 15368
+    }
+  ],
+  "counts": {
+    "success": 20,
+    "skipped": 4
+  },
+  "failures": []
+}
