@@ -6,7 +6,9 @@ from npa.workbench import vlm_eval
 
 
 @pytest.mark.parametrize("kimi_first", [True, False])
-def test_judge_profile_validation_precedes_preparation(monkeypatch, tmp_path, kimi_first):
+def test_judge_profile_validation_precedes_preparation(
+    monkeypatch, tmp_path, kimi_first
+):
     def unexpected(*_args, **_kwargs):
         pytest.fail("incompatible paired model reached a preparation boundary")
 
