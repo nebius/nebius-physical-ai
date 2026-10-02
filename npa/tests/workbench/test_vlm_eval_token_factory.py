@@ -862,6 +862,36 @@ def test_compare_preference_balances_orders_and_maps_candidate(
     _assert_candidate_preference_report(report)
 
 
+def test_kimi_preference_preserves_model_policy_and_reversed_images(
+    monkeypatch, tmp_path
+):
+    model = "moonshotai/Kimi-K3"
+    report, calls = _run_preference_comparison(
+        monkeypatch,
+        tmp_path,
+        [
+            _preference_completion("B", model=model),
+            _preference_completion("A", model=model),
+        ],
+        model=model,
+    )
+    _assert_candidate_preference_report(report)
+    first, second = (call["request"] for call in calls)
+    for request in (first, second):
+        assert "temperature" not in request
+        assert "max_tokens" not in request
+        assert request["reasoning_effort"] == "low"
+        assert request["response_format"] == {"type": "json_object"}
+    assert _preference_request_image_urls(first) == list(
+        reversed(_preference_request_image_urls(second))
+    )
+    for outcome in (report.first_order, report.reversed_order):
+        assert outcome.request.request_manifest["generation_parameters"] == {
+            "reasoning_effort": "low",
+            "response_format": {"type": "json_object"},
+        }
+
+
 @pytest.mark.parametrize(
     ("first", "second", "confidence", "expected_status", "escalation"),
     [
