@@ -1,0 +1,53 @@
+{
+  "schema": "npa.cosmos3.wam-completed-full-run-evidence.v1",
+  "native_return_codes": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "native_completion_receipts_sha256": {
+    "0": "3f3d263dc157e517f005521d49fa9ea098f79a1b23af546b5d3cd23295059c57",
+    "1": "8d94b608f2d15409d68f2cfe1f22e111ffca13008ac0c57ccd307e7c52e25525",
+    "2": "be6433e216856d1949ac6ae8f7aa338249a5c02ad90e1581988e626e6f56e40b",
+    "3": "5576dda0dfb9e3e06908cbf32a11fc39293db03f772f93ce6a137483774ba164"
+  },
+  "run_settings_sha256": "8d6daa67157b0dee8087d349dea882d5fed6b228a173b48ba90b505a93f0333c",
+  "launch_script_sha256": "fd68176e22060e96417c9568d81f21af242e6196e064b9373547efe41b30d855",
+  "training_toml_sha256": "cc28d805ee2203b9762dc21ba8800249bea8e964cef6d82e1c0ef5056b73c21d",
+  "gradient_accumulation": 1,
+  "scheduler": {
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "allocation_seconds": 8124,
+    "allocated_gpus": 32,
+    "allocated_nodes": 4,
+    "allocated_cpus": 640,
+    "started_utc": "2026-09-30T02:27:37Z",
+    "ended_utc": "2026-09-30T04:43:01Z",
+    "allocated_gpu_hours": 72.21333333333334
+  },
+  "files_sha256": {
+    "measurement.json": "10a259072cf79aaca5ba15deda9cb6a789a2221967d13e34a45b9b2f7a1453e8",
+    "iteration-series.csv": "d083644bb3abe93404e8c7d81349493cbc437535e2d6d5e5cbb5b62cd423d0c9",
+    "checkpoint-hashes.json": "a297f683f31101d3fe206421fd3688e3c2b113fbbe7c0d63cdf64841365fadc2",
+    "distributed-preflight.json": "d8472f9b84efe9667413ac4a618aa405398845f89c48f0cadb02a9bdbaad353a",
+    "campaign-accounting.json": "3024a305452e31d19b07b1298eb44da71b21707ccc2423d342d480604b580e60",
+    "checkpoint-times.json": "5dd65a288d2f02b8f7d8afd0f4e48e4421a196c71b8b60e92d95918039f4883d",
+    "dataset-warning-audit.json": "e37031bfd43e5ed3fc0b4991c7af736bfe75388548b80f3e1e62935ecdcf8988"
+  },
+  "conditions": {
+    "scheduler": "Slurm 25.11.3 through NPA Soperator 4.1.6",
+    "driver": "580.159.04",
+    "shared_filesystem": "Soperator shared jail with VirtioFS",
+    "caches": "Runtime and artifacts staged; evaluation and archival did not overlap training",
+    "comparison_scope": "The 32-GPU Soperator cohort is separate from the native-VM 8/16-GPU cohort"
+  },
+  "archive": {
+    "files": 2561,
+    "bytes": 1499302327174,
+    "private_receipt_sha256": "9380cddd2806f52d21894315bd205d4a50ddc8bbf102e9e29e3c5d0984a70c8e",
+    "all_content_read_back_verified": true
+  },
+  "scope": "Complete four-node training and checkpoint integrity; policy quality is evaluated separately."
+}

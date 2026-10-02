@@ -1,0 +1,13 @@
+{
+  "matplotlib": "3.11.2",
+  "outputs": [
+    {
+      "file": "task-000-contact.png",
+      "sha256": "d4e421778b4d3b457e023fdb4e5cebd59615a92a5124bd2d58454cc28abcd50a"
+    },
+    {
+      "file": "task-005-contact.png",
+      "sha256": "2bb7322f8202885ac8764c3b5e8332adeb22ce5e0fc25cb0da7a5c4a130efd02"
+    }
+  ]
+}

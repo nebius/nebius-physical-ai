@@ -173,6 +173,17 @@ def _read_body(body: Any, limit: int, detail: str) -> bytes:
     return bytes(data)
 
 
+def _outcome_flag(row: dict[str, Any], name: str) -> bool:
+    if name not in row:
+        return False
+    value = row[name]
+    if not isinstance(value, bool):
+        raise EpisodeStoreError(
+            "episode timeline outcome flags are malformed", status_code=502
+        )
+    return value
+
+
 def _json_body(response: dict[str, Any], limit: int, detail: str) -> dict[str, Any]:
     try:
         body = _read_body(response["Body"], limit, detail)
@@ -681,10 +692,10 @@ class EpisodeStore:
                     "action": raw.get("action"),
                     "observation_state": raw.get("observation.state"),
                     "reward": raw.get("reward"),
-                    "success": bool(raw.get("success", False)),
-                    "terminated": bool(raw.get("terminated", False)),
-                    "truncated": bool(raw.get("truncated", False)),
-                    "done": bool(raw.get("done", False)),
+                    "success": _outcome_flag(raw, "success"),
+                    "terminated": _outcome_flag(raw, "terminated"),
+                    "truncated": _outcome_flag(raw, "truncated"),
+                    "done": _outcome_flag(raw, "done"),
                     "reset_reason": str(raw.get("reset_reason") or ""),
                     "frame_sha256": str(raw.get("frame_sha256") or ""),
                 }

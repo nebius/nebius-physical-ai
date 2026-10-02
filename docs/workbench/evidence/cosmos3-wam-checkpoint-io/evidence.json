@@ -1,0 +1,58 @@
+{
+  "schema": "npa.cosmos3.wam-checkpoint-io-evidence.v1",
+  "gpus": 8,
+  "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+  "events": [
+    {
+      "step": 1000,
+      "checkpoint_saved_unix": 1790410682.0,
+      "checkpoint_saved_utc": "2026-09-26T08:18:02+00:00",
+      "iteration_seconds": 404.54,
+      "previous_iteration_seconds": 13.39,
+      "following_iteration_seconds": 13.26,
+      "component_bytes": {
+        "model": 121408256743,
+        "optim": 55876182901,
+        "scheduler": 13250,
+        "trainer": 195630
+      },
+      "gpu": {
+        "file": "step-1000-gpu.csv",
+        "rows": 3960,
+        "sha256": "02c31e5e1f4736dac009344f816b3a6595ff7c6a768e803044426916f89461ec"
+      },
+      "disk": {
+        "file": "step-1000-disk.csv",
+        "rows": 496,
+        "sha256": "952ac1043731d9daff9b6e11f533d754aa8ff76a42dff79133ca3fb533eaddec"
+      }
+    },
+    {
+      "step": 1500,
+      "checkpoint_saved_unix": 1790417712.0,
+      "checkpoint_saved_utc": "2026-09-26T10:15:12+00:00",
+      "iteration_seconds": 404.4,
+      "previous_iteration_seconds": 13.28,
+      "following_iteration_seconds": 13.25,
+      "component_bytes": {
+        "model": 121408256743,
+        "optim": 55876182901,
+        "scheduler": 13250,
+        "trainer": 195630
+      },
+      "gpu": {
+        "file": "step-1500-gpu.csv",
+        "rows": 3960,
+        "sha256": "1d4fceee53c7f8d4a68102cb55c224e3f3bc3195ed6fb28cb7c20a332360eb7b"
+      },
+      "disk": {
+        "file": "step-1500-disk.csv",
+        "rows": 496,
+        "sha256": "c76853d3fd2bac3a0abe54ac2beed6260d5516bb27af1a16a9f61aa8a5fcf4eb"
+      }
+    }
+  ],
+  "log_timestamp_resolution_seconds": 1,
+  "scope": "Completed checkpoint iterations within an incomplete full training run; whole-device I/O and sampled GPU utilization, not per-process storage bytes or a CUDA kernel profile",
+  "extractor_sha256": "44049c2b476fb9668c1530660d24e137268cb02a3f07bb438a7845f4586ea09c"
+}

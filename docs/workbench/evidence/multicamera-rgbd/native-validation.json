@@ -1,0 +1,345 @@
+{
+  "scope": "public authored NVIDIA warehouse reference, not a customer scan",
+  "source_url": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.0/Isaac/Environments/Simple_Warehouse/full_warehouse.usd",
+  "license_url": "https://docs.isaacsim.omniverse.nvidia.com/6.0.0/common/licenses.html",
+  "validation": {
+    "cameras": 4,
+    "frames": 265,
+    "fused_points": 976895672,
+    "manifest_sha256": "0e7f5f026d8274febb6bafc4bef98cbc2f078979ce0f9fd714924869df897ef2",
+    "schema": "npa.isaac.rgbd.validation.v1",
+    "valid_depth_pixels": 976895672,
+    "validated": true,
+    "views": 1060
+  },
+  "validation_report_sha256": "d7de728c4ac5ba1ebc43211aedccc633984ecee592a106affbd958cc662687c1",
+  "isaac_sim_version": "6.0.1.0",
+  "replicator_version": "1.13.27",
+  "renderer_clock": "external_static_trajectory",
+  "image": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+  "source_commit": "ab3180aa45cd02906be928e8ba793da2033c5cd5",
+  "source_fingerprint": "45d2515935e60da005ea7c30d3e0a3796faad6552d8f47163e35425f146480f0",
+  "request_sha256": "2a274263bce9bcdf03324a54942ce8b495d409c58a1265cf25b8aa83a7084a5c",
+  "resolution": [
+    1280,
+    720
+  ],
+  "dataset_artifact_count": 4505,
+  "dataset_artifact_bytes": 70447737272,
+  "capture_object_count_including_manifest": 4506,
+  "capture_object_bytes_including_manifest": 70451048116,
+  "input_asset_file_count": 2034,
+  "input_preparation": {
+    "source_commit": "58021a3bd132a00485d4d99b9a6bb62aed333e3c",
+    "request_sha256": "2a274263bce9bcdf03324a54942ce8b495d409c58a1265cf25b8aa83a7084a5c",
+    "reused_immutable_preparation": true,
+    "scope": "Successful native warehouse preparation was reused unchanged for the corrected capture; native material hashes and the original input manifest were verified again."
+  },
+  "camera_ids": [
+    "front",
+    "left",
+    "rear",
+    "right"
+  ],
+  "decoded_stream_statistics": {
+    "front": {
+      "valid_depth_pixels": 244224000,
+      "nonempty_depth_views": 265,
+      "nonconstant_rgb_views": 265
+    },
+    "left": {
+      "valid_depth_pixels": 244223952,
+      "nonempty_depth_views": 265,
+      "nonconstant_rgb_views": 265
+    },
+    "rear": {
+      "valid_depth_pixels": 244224000,
+      "nonempty_depth_views": 265,
+      "nonconstant_rgb_views": 265
+    },
+    "right": {
+      "valid_depth_pixels": 244223720,
+      "nonempty_depth_views": 265,
+      "nonconstant_rgb_views": 265
+    }
+  },
+  "cloud_preview": {
+    "frame": 132,
+    "total_points": 3686400,
+    "displayed_points": 99633,
+    "sampling": "deterministic stride for visualization only"
+  },
+  "route_distance_m": 66,
+  "route_collision_free_verified": false,
+  "synchronization": "Every frame has identical exact rational ReferenceTime across all four cameras; time strictly advances between frames.",
+  "geometry": "Every decoded valid depth pixel independently backprojects to its calibrated world point; fused colors, source camera and source pixel indices verified.",
+  "calibration": [
+    {
+      "T_rig_camera": [
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.15
+        ],
+        [
+          -1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "depth_range_m": [
+        0.05,
+        100.0
+      ],
+      "height": 720,
+      "id": "front",
+      "intrinsics": [
+        [
+          537.0237639534591,
+          0,
+          639.5
+        ],
+        [
+          0,
+          537.0237639534591,
+          359.5
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "width": 1280
+    },
+    {
+      "T_rig_camera": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.15
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "depth_range_m": [
+        0.05,
+        100.0
+      ],
+      "height": 720,
+      "id": "left",
+      "intrinsics": [
+        [
+          537.0237639534591,
+          0,
+          639.5
+        ],
+        [
+          0,
+          537.0237639534591,
+          359.5
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "width": 1280
+    },
+    {
+      "T_rig_camera": [
+        [
+          0.0,
+          0.0,
+          -1.0,
+          -0.15
+        ],
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          -0.0,
+          -1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "depth_range_m": [
+        0.05,
+        100.0
+      ],
+      "height": 720,
+      "id": "rear",
+      "intrinsics": [
+        [
+          537.0237639534591,
+          0,
+          639.5
+        ],
+        [
+          0,
+          537.0237639534591,
+          359.5
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "width": 1280
+    },
+    {
+      "T_rig_camera": [
+        [
+          -1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          -1.0,
+          -0.15
+        ],
+        [
+          0.0,
+          -1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ],
+      "depth_range_m": [
+        0.05,
+        100.0
+      ],
+      "height": 720,
+      "id": "right",
+      "intrinsics": [
+        [
+          537.0237639534591,
+          0,
+          639.5
+        ],
+        [
+          0,
+          537.0237639534591,
+          359.5
+        ],
+        [
+          0,
+          0,
+          1
+        ]
+      ],
+      "width": 1280
+    }
+  ],
+  "video": {
+    "frames": 265,
+    "width": 1280,
+    "height": 768,
+    "fps": "4/1"
+  },
+  "artifacts": {
+    "warehouse-four-camera-route.mp4": "2d8fc241b8192a9a20d37866ed164086b30706e368b06f045c02389eb6a4b884",
+    "warehouse-fused-point-cloud.png": "9d9b01652b9fd2a4da35f868764e0eb4dee3299204d8bc9d1c7aedb0bbe66153",
+    "warehouse-depth-contact-sheet.png": "c6459c418e233249162948c517c3766755fa3faba23d172d692c241902bb0539",
+    "warehouse-rgb-contact-sheet.png": "ea38f25fb3ec327dca10ed680d167c46cb06bdf17732a653793f405add0fcdc8"
+  },
+  "gpu": {
+    "name": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "driver_version": "580.173.02",
+    "memory_total_mib": 97887,
+    "actual_image_id": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+    "requested_image": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+    "maximum_sampled_utilization_percent": 98,
+    "observation_count": 129,
+    "measurement_scope": "Total device memory and maximum observed utilization from periodic nvidia-smi samples; not peak allocated memory or average utilization."
+  },
+  "scratch_measurements": {
+    "capture_after_render": {
+      "total_bytes": 531415142400,
+      "used_bytes": 187078500352,
+      "free_bytes": 344319864832
+    },
+    "validation_worker_first_observation": {
+      "total_bytes": 132011507712,
+      "used_bytes": 12697124864,
+      "free_bytes": 119297605632
+    },
+    "validation_worker_minimum_observed_free_bytes": 46758076416,
+    "measurement_scope": "Filesystem containing /tmp as measured inside each actual worker; not a container disk reservation."
+  },
+  "independent_cpu_validator": {
+    "gpu_resource_limit": 0,
+    "actual_image_id": "us-docker.pkg.dev/sky-dev-465/skypilotk8s/skypilot@sha256:b9d9d001b33da2d1b0a5967eccb67e79fad0a0643f1a54df4ccfdade5f017169",
+    "requested_image": "us-docker.pkg.dev/sky-dev-465/skypilotk8s/skypilot:20250909"
+  },
+  "timing": {
+    "virtual_trajectory_duration_seconds": 66.0,
+    "render_artifact_write_span_seconds": 547.759572742,
+    "render_artifact_write_span_scope": "First completed RGB file modification to final completed fused-cloud file modification; excludes initial scene/shader startup, first view rendering before that file, validation and publication.",
+    "capture_stage_wall_time_seconds": 2734.0,
+    "capture_stage_wall_time_scope": "Standard workflow capture attempt from recorded start to successful end, including scheduling, runtime bootstrap, scene/shader startup, capture, both local decoded validations and immutable publication."
+  },
+  "runtime_materials": {
+    "image": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+    "isaac_sim_version": "6.0.1.0",
+    "library_sha256": "c48d9639ca492024462fe95d666fa3fe6dd9b30b8bdb06b9e818f5c72aca6c7b",
+    "modules": {
+      "OmniPBR.mdl": {
+        "path": "core/Base/OmniPBR.mdl",
+        "sha256": "d384fc800f120e3cad1b7ca8837f9c554f9c34343d194813fca27caa493001f2"
+      }
+    }
+  }
+}

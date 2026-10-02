@@ -1,0 +1,24 @@
+{
+  "schema": "npa.cosmos3.wam-profile-provenance.v1",
+  "native_returncode": 0,
+  "native_process_seconds": 2021.0730454440054,
+  "native_completion_receipt_sha256": "a2229017d163544e2dfd5983c63409093c317d7625fc7ee4d9d841361163a044",
+  "run_settings_sha256": "a4a2962666214ac1e0931fdef1f766b85ab750eacfc084a68526c8c0aeb1b3af",
+  "slurm": {
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "allocation_seconds": 2054
+  },
+  "files_sha256": {
+    "measurement.json": "e5c80deb01d6262c49a6e76da552492c171ce7301dfe998e883696b0e7897f08",
+    "distributed-preflight.json": "de0f497c0716665476578761fc657ca57b6228fe911f7be8ff3cc0bf072bb5fd",
+    "profile-summary.json": "c58bb7e4f26e13c6d01aebc20c3c14a34351c08916502fa833434c4ec2a0f368",
+    "evidence.json": "88ac728359734f0ddaf188710d6aa5160fae60f5bb6e625739e6396194e75ea3"
+  },
+  "reanalysis": {
+    "original_profile_summary_sha256": "d109ffbb43cb6d28c6df11a2a7218ea6d99bc6339dfd7c4c7e19ade3d00cb661",
+    "native_trace_unchanged": true,
+    "training_rerun": false,
+    "reason": "Use linked CPU operators for Blackwell kernel classification and distinct host profiler-step annotations. Original report remains in private archived evidence."
+  }
+}

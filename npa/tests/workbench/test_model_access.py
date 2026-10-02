@@ -76,6 +76,20 @@ def test_assets_for_filters_by_capability() -> None:
     assert assets_for([]) == WORKBENCH_ASSETS
 
 
+def test_super_benchmark_access_matches_disabled_guardrails() -> None:
+    from npa.workbench.cosmos import super_benchmark as benchmark
+
+    assets = assets_for(["cosmos3-super-benchmark"])
+    assert len(assets) == 1
+    assert assets[0].repo == benchmark.MODEL_ID
+    assert assets[0].revision == benchmark.MODEL_REVISION
+    assert assets[0].probe_path.endswith(".safetensors")
+    assert "--no-guardrails" in benchmark.service_command(
+        benchmark.TOPOLOGIES["1x1"], port=8100
+    )
+    assert gated_hf_assets(["cosmos3-serving"])
+
+
 def test_assets_for_unknown_capability_fails_closed() -> None:
     with pytest.raises(UnknownAccessCapabilityError, match="unknown access capability"):
         assets_for(["paidf-dig", "catalog-drift"])

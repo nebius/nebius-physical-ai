@@ -15,7 +15,7 @@ import av
 import numpy as np
 from PIL import Image
 import pytest
-from rerun.recording import load_recording
+from npa.viz.recordings import load_recording
 import yaml
 
 from npa.workflows.paidf_evidence_viz import (
@@ -131,7 +131,7 @@ def _rows(path: Path, entity: str, column: str, timeline: str | None = None) -> 
 
 
 def _merge_recordings(paths: list[Path], destination: Path):
-    from rerun.recording import load_archive
+    from npa.viz.recordings import load_recordings
 
     merged = subprocess.run(
         [
@@ -147,7 +147,7 @@ def _merge_recordings(paths: list[Path], destination: Path):
         check=False,
     )
     assert merged.returncode == 0, merged.stderr
-    return load_archive(destination).all_recordings()
+    return load_recordings(destination)
 
 
 def test_same_run_and_application_merge_with_original_identity(
