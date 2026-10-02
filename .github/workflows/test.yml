@@ -85,6 +85,7 @@ jobs:
             npa/tests/docker/test_base_image_scan.py \
             npa/tests/orchestration/skypilot/test_workflow_logs.py \
             npa/tests/workbench/test_cosmos3_nano_video_server.py \
+            npa/tests/workflows/test_cosmos3_wam_scaling_report.py \
             -q
 
       - name: Set up Python 3.14 compatibility
@@ -105,6 +106,7 @@ jobs:
             npa/tests/docker/test_base_image_scan.py \
             npa/tests/orchestration/skypilot/test_workflow_logs.py \
             npa/tests/workbench/test_cosmos3_nano_video_server.py \
+            npa/tests/workflows/test_cosmos3_wam_scaling_report.py \
             -q
 
   pr-smoke:

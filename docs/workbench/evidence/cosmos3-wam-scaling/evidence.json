@@ -1,0 +1,15 @@
+{
+  "schema": "npa.cosmos3.wam-scaling-evidence.v1",
+  "scope": "Matched eight- and sixteen-GPU timing repetitions, full schedules, and four checkpoint evaluations per topology; one training seed.",
+  "files_sha256": {
+    "repeated-scaling.json": "36087e50cca3a3ac06bf33b63f07c6f3b896870622ed924cebcca949adb9f99d",
+    "plot.py": "2a0227c8495351ce30f6e4a2ae3d3632cb956e67af7cec2d4b648076adb7ff17",
+    "quality_plot.py": "882a25a934ec910c829f13c6a9ea24de0f19fca79707efa69bde038d6e36f1c9",
+    "../cosmos3-wam-full-8/measurement.json": "f31c6db8d006285e6d54c4329617c0450e699d4b289aaccc260b6c6c865fa6a7",
+    "../cosmos3-wam-quality-8/quality-curve.json": "e85d3d9fc2261aec88c9d79cda28c441ad1434246cc64970b72304656486554d",
+    "../cosmos3-wam-quality-8/evidence.json": "3ca3196b76926ae8c2a170651f337b18944e2f66a63bcdb39b94b08b9d0aa24d",
+    "../cosmos3-wam-full-16/measurement.json": "ea9e57576411134d19245622a6feffab96a46779d64ec2fe054f662d2bfb0850",
+    "../cosmos3-wam-quality-16/quality-curve.json": "da4fa2d7f58d1a38d76b4705ff67b289616accd52c3c58f8c55ad2500f54d4ec",
+    "../cosmos3-wam-quality-16/evidence.json": "fb984688ac55e5a88d593fe284401f6dd0af1221cbd4450532387307ddb6f65a"
+  }
+}
