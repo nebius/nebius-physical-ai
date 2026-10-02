@@ -14,6 +14,7 @@ import pytest
 @pytest.fixture
 def runner(monkeypatch):
     directory = Path(__file__).resolve().parents[2] / "scripts"
+    monkeypatch.chdir(directory.parent.parent)
     monkeypatch.syspath_prepend(str(directory))
     spec = importlib.util.spec_from_file_location(
         "provenance_runner_test", directory / "vlm_provenance_live_recheck.py"
@@ -21,6 +22,14 @@ def runner(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_runner_rejects_non_repository_working_directory(runner, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as error:
+        runner.main(["--evidence-dir", str(tmp_path / "receipt")])
+    assert error.value.code == 2
+    assert not (tmp_path / "receipt").exists()
 
 
 @pytest.fixture
