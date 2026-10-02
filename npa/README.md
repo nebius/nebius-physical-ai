@@ -12,6 +12,15 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
+and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
+download public sample data automatically and publish compact, offline
+`reports/index.html` previews beside their complete artifacts. NuRec's public
+PPISP sample is pinned; `nurec check --revision` and `nurec fetch --revision`
+select another revision, with `NPA_NUREC_DATASET_REVISION` as the direct CLI/SDK
+default and `config.dataset_revision` as the workflow setting. Stage the
+reviewed checkout so GPU and CPU viewer stages execute the same source.
+
 Durable workflow diagnostics and stage logs use conservative credential
 redaction: URL user information, complete query strings, and bearer-like values
 are removed even when they could be harmless prose. Storage ownership recovery
@@ -249,6 +258,11 @@ Custom workflow stages receive `NPA_CONTROL_PYTHON`, the executable interpreter
 recorded by setup, or an empty value when none is available. Use it for NPA
 storage operations alongside a separate policy environment; see
 [Python environments in custom stages](../docs/workbench/npa-workflow-guide.md#python-environments-in-custom-stages).
+
+Workflow image preflight accepts `--image-pull-timeout-seconds` on both
+`preflight-images` and `submit`. Use `0` for no pull deadline. Omitting it
+inherits `--image-bootstrap-timeout-seconds` (1800 seconds by default);
+see the [workflow guide](../docs/workbench/npa-workflow-guide.md).
 
 The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
 retains invalid hosted visual judgments as failed audit evidence. Its

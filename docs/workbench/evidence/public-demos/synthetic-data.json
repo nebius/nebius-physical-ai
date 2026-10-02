@@ -1,0 +1,132 @@
+{
+  "demo": "synthetic-data",
+  "native_source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+  "native_artifacts_qualified": true,
+  "artifact_inventory": {
+    "demo": "synthetic-data",
+    "source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+    "objects": 6562,
+    "bytes": 70987686095,
+    "reports": [
+      "reports/index.html"
+    ],
+    "disk_free_bytes": 788293992448
+  },
+  "artifact_readback": {
+    "measurements": {
+      "schema": "npa.isaac.rgbd.validation.v1",
+      "validated": true,
+      "frames": 265,
+      "cameras": 4,
+      "views": 1060,
+      "valid_depth_pixels": 976895672,
+      "fused_points": 976895672
+    },
+    "verified_artifact_count": 4505,
+    "manifest_sha256": "4b21cebba99452f8cacee3864e7ad67ae6139281acd26825ab40aa23173d90cc",
+    "preview": {
+      "sha256": "3aa36fc84a68fd1683abb85326cc8ce092fe240fc220f080b69541a3d2bafa1d",
+      "bytes": 5096231,
+      "timelines": [
+        {
+          "title": "Synchronized camera rig",
+          "frames": 32
+        }
+      ]
+    },
+    "demo_view_identical_bytes": true
+  },
+  "gpu_witness": {
+    "source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+    "matched_record_sha256": "7e19b9d44cf3a1652b673c3dfcfa71e14b00ba57c7a170c9710331c7ece13914",
+    "stages": {
+      "prepare": {
+        "qualification": "matching process workflow run ID and recorded stage time interval",
+        "qualified_samples": 21,
+        "active_samples": 1,
+        "gpu_models": [
+          "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+        ],
+        "peak_memory_used_mib": 2824,
+        "peak_utilization_percent": 15,
+        "first_observed_utc": "2026-09-28T18:38:45.832681+00:00",
+        "last_observed_utc": "2026-09-28T18:49:01.720221+00:00",
+        "image_digests": [
+          "sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6"
+        ],
+        "staged_source_sha256": "effcff30d6ea129e35a49c3dfe7b6409106f20042738071ed33dd9312a81e381",
+        "workflow_sha256": "64c793b0fd2a8d992c46e64a4008c19ea893e3739bffeb6a7f3a187e0fe5ec0b"
+      },
+      "capture": {
+        "qualification": "matching process workflow run ID and recorded stage time interval",
+        "qualified_samples": 80,
+        "active_samples": 4,
+        "gpu_models": [
+          "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+        ],
+        "peak_memory_used_mib": 4948,
+        "peak_utilization_percent": 91,
+        "first_observed_utc": "2026-09-28T18:52:50.625225+00:00",
+        "last_observed_utc": "2026-09-28T19:33:46.962519+00:00",
+        "image_digests": [
+          "sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6"
+        ],
+        "staged_source_sha256": "effcff30d6ea129e35a49c3dfe7b6409106f20042738071ed33dd9312a81e381",
+        "workflow_sha256": "64c793b0fd2a8d992c46e64a4008c19ea893e3739bffeb6a7f3a187e0fe5ec0b"
+      }
+    }
+  },
+  "native_browser": {
+    "report_sha256": "3aa36fc84a68fd1683abb85326cc8ce092fe240fc220f080b69541a3d2bafa1d",
+    "browser_results": [
+      {
+        "width": 1440,
+        "timelines": [
+          {
+            "title": "Synchronized camera rig",
+            "frames": 32,
+            "images": 256
+          }
+        ],
+        "javascript_errors": 0,
+        "network_requests": 0
+      },
+      {
+        "width": 390,
+        "timelines": [
+          {
+            "title": "Synchronized camera rig",
+            "frames": 32,
+            "images": 256
+          }
+        ],
+        "javascript_errors": 0,
+        "network_requests": 0
+      }
+    ]
+  },
+  "actual_demo_view_cli": {
+    "command": "npa workbench workflow demo view",
+    "source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+    "exit_code": 0,
+    "selected_project_credentials": true,
+    "report_sha256": "3aa36fc84a68fd1683abb85326cc8ce092fe240fc220f080b69541a3d2bafa1d",
+    "canonical_report_identical_bytes": true,
+    "browser_open": false
+  },
+  "native_stages": [
+    {
+      "stage": "prepare",
+      "status": "ok"
+    },
+    {
+      "stage": "capture",
+      "status": "ok"
+    },
+    {
+      "stage": "validate",
+      "status": "ok"
+    }
+  ],
+  "scope": "Real Isaac Sim Replicator RGB, metric axial depth and colored world-frame point clouds from a public warehouse; route playback is not autonomous robot navigation."
+}

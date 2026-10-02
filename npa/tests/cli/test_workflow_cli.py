@@ -408,6 +408,37 @@ def test_declarative_recovery_argv_keeps_resume_run_contract(
     assert _recovery_option(argv, "--output-format") == "json"
 
 
+@pytest.mark.parametrize("pull_timeout", [0, 3600])
+def test_recovery_preserves_explicit_image_pull_timeout(pull_timeout: int) -> None:
+    from npa.cli.workbench import workflow
+
+    argv = workflow._workflow_submit_recovery_argv(
+        Path("workflow.yaml"),
+        alias="synthetic",
+        run_id="declarative-run",
+        is_npa_spec=True,
+        arguments={"image_pull_timeout_seconds": pull_timeout},
+    )
+    assert _recovery_option(argv, "--image-pull-timeout-seconds") == str(pull_timeout)
+
+
+@pytest.mark.parametrize("command", ["submit", "preflight-images"])
+def test_negative_image_pull_timeout_fails_cli_validation(command: str) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "workflow",
+            command,
+            "workflow.yaml",
+            "--image-pull-timeout-seconds",
+            "-1",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "image-pull-timeout-seconds" in result.output
+
+
 def test_recovery_serializer_accounts_for_every_submit_argument() -> None:
     import inspect
     import typer
@@ -1985,6 +2016,10 @@ def test_workflow_logs_json_reports_successful_empty_runtime_tail(
 def test_workflow_logs_manifest_job_pending_skips_blocking_log_query(
     monkeypatch, tmp_path: Path
 ) -> None:
+    import os
+
+    from npa.orchestration.skypilot.cleanup import sky_environment
+
     fake_s3 = FakeWorkflowS3()
     _patch_workflow_s3(monkeypatch, fake_s3)
     uri = _put_workflow_log_waves(
@@ -2001,21 +2036,45 @@ def test_workflow_logs_manifest_job_pending_skips_blocking_log_query(
             }
         ],
     )
-    monkeypatch.setattr(
-        "npa.orchestration.skypilot.workflow.workflow_status",
-        lambda *args, **kwargs: WorkflowResult(
-            status="PENDING", job_id="42", returncode=0
-        ),
-    )
-    monkeypatch.setattr(
-        "npa.cli.workbench.workflow._stalled_job_blockers",
-        lambda *args, **kwargs: [
+    for key in (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL_S3",
+        "NPA_SKYPILOT_PROJECT",
+    ):
+        monkeypatch.setenv(key, "unrelated-ambient-identity")
+    before = dict(os.environ)
+    observed = []
+
+    def observe_storage():
+        environment = sky_environment()
+        assert environment["AWS_ACCESS_KEY_ID"] == "test-access"
+        assert environment["AWS_SECRET_ACCESS_KEY"] == "test-secret"
+        assert environment["AWS_ENDPOINT_URL_S3"] == "https://storage.example"
+        assert environment["NPA_SKYPILOT_PROJECT"] == "selected"
+        observed.append(True)
+
+    def pending_status(*args, **kwargs):
+        observe_storage()
+        assert kwargs["isolated_config_dir"] == tmp_path
+        return WorkflowResult(status="PENDING", job_id="42", returncode=0)
+
+    def pending_blockers(*args, **kwargs):
+        observe_storage()
+        assert kwargs["isolated_config_dir"] == tmp_path
+        return [
             {
                 "reason": "DiagnosticsUnavailable",
                 "message": "no worker pod has been scheduled yet",
                 "source": "kubernetes_api",
             }
-        ],
+        ]
+
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.workflow.workflow_status", pending_status
+    )
+    monkeypatch.setattr(
+        "npa.cli.workbench.workflow._stalled_job_blockers", pending_blockers
     )
     monkeypatch.setattr(
         "npa.orchestration.skypilot.workflow_state.tail_live_job_logs",
@@ -2029,6 +2088,8 @@ def test_workflow_logs_manifest_job_pending_skips_blocking_log_query(
             "workflow",
             "logs",
             uri,
+            "--project",
+            "selected",
             "--stage",
             "qualify",
             "--isolated-config-dir",
@@ -2047,6 +2108,8 @@ def test_workflow_logs_manifest_job_pending_skips_blocking_log_query(
     assert payload["live_verified"] is True
     assert payload["log"] == payload["stderr"] == ""
     assert payload["blockers"][0]["source"] == "kubernetes_api"
+    assert len(observed) == 2
+    assert dict(os.environ) == before and sky_environment() == before
 
 
 def test_workflow_status_binds_every_live_query_to_isolated_controller(

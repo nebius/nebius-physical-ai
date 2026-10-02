@@ -40,6 +40,15 @@ MANUAL_GATES = {
         "requires an explicitly selected disposable cluster with administrator access; "
         "creates namespaces, temporary client contexts, and CPU pods"
     ),
+    "NPA_FIELD_FAILURE_LIVE": "Navigation acceptance requires operator-owned failure captures, policy code, and immutable adapters",
+    "NPA_NAVIGATION_LIVE": (
+        "requires the operator's exact Isaac BYOF navigation task image, scene/reset bundle, RT-core GPU and private S3 output; "
+        "run with docs/workbench/guides/shared-scene-navigation.md"
+    ),
+    "NPA_SCAN_TO_ISAAC_LIVE": (
+        "requires operator-supplied scene, calibrated collision geometry, ray probes, "
+        "and an immutable Isaac image; run with docs/workbench/guides/scan-to-isaac-navigation.md"
+    ),
     "NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE": (
         "requires Token Factory credentials, MuJoCo rendering, and an isolated native LeRobot reader; "
         "run with docs/workbench/token-factory-robot-sdg.md"

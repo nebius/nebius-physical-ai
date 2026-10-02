@@ -25,11 +25,12 @@ stage-src  Upload the local npa package to S3 for image-less workflow steps.
 validate-spec  Validate an NPA workflow specification file.
 plan-spec  Expand an NPA workflow spec into an execution plan (dry-run).
 run-spec  Run or plan an NPA workflow spec.
-preflight-images  Prove every image this spec pulls is pullable, with the run's own credentials.
+preflight-images  Prove every image this spec pulls through each selected execution path.
 gpus  Print advertised GPU names using an owned API for a selected context.
 reconcile-controller  Reconcile an orphaned workflow against its original exclusive controller.
 reconcile-absent  Verify original native absence without inferring historical job success.
 trigger  Watch S3-compatible data prefixes and retrigger Workbench workflows.
+demo  Run complete public sample workflows and view their results.
 challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 ```
 
@@ -58,11 +59,12 @@ challenge  Prepare a BEHAVIOR DEV evaluation from one setup file.
 | `validate-spec` | Validate an NPA workflow specification file. |
 | `plan-spec` | Expand an NPA workflow spec into an execution plan (dry-run). |
 | `run-spec` | Run or plan an NPA workflow spec. |
-| `preflight-images` | Prove every image this spec pulls is pullable, with the run's own credentials. |
+| `preflight-images` | Prove every image this spec pulls through each selected execution path. |
 | `gpus` | Print advertised GPU names using an owned API for a selected context. |
 | `reconcile-controller` | Reconcile an orphaned workflow against its original exclusive controller. |
 | `reconcile-absent` | Verify original native absence without inferring historical job success. |
 | `trigger` | Watch S3-compatible data prefixes and retrigger Workbench workflows. |
+| `demo` | Run complete public sample workflows and view their results. |
 | `challenge` | Prepare a BEHAVIOR DEV evaluation from one setup file. |
 
 ## Examples

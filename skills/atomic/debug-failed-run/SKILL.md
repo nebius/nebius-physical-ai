@@ -36,6 +36,13 @@ the whole triage:
   (threshold `--startup-failure-threshold`, default 3). This is infrastructure,
   not your payload.
 
+Use the run's selected `--project` consistently. Status, pending-manifest lookup,
+live logs, and cancellation carry the resolved project and storage credentials into
+their controller calls, including a cold restart of an owned local API. The
+caller environment is unchanged. This does not permit adopting a controller
+under a different principal or ignoring changed credential files; reconcile
+those identity failures before resuming.
+
 All currently recorded jobs can be `SUCCEEDED` between waves while the workflow
 lifecycle remains `RUNNING`. This is a successful observation of incomplete
 workflow evidence, not a failed query: inspect `workflow_lifecycle` for the

@@ -677,12 +677,16 @@ skills:
           - workflows/testing/groot-1-7-finetune.yaml
   - name: isaac-lab
     category: tools
-    when_to_use: "Isaac Lab RL simulation, deployment, SkyPilot workflows, or custom fork support."
+    when_to_use: "Isaac Lab RL simulation, deployment, calibrated USD RGB-D sensor rigs, SkyPilot workflows, or custom fork support."
     path: skills/tools/isaac-lab/SKILL.md
     smoke:
       - type: cli_help
         args: ["workbench", "isaac-lab", "train", "--help"]
         contains: "task"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/multicamera-rgbd-capture.yaml
+          - workflows/testing/shared-scene-navigation.yaml
   - name: isaac-arena
     category: tools
     when_to_use: "Package, run, validate, or troubleshoot Isaac Lab-Arena policy evaluation, its public runtime-fetch image, zero/replay/RSL-RL modes, and independent B200/RTX PRO 6000 evidence."
@@ -1061,6 +1065,9 @@ skills:
       - type: workflow_yaml
         paths:
           - workflows/main/sim2real.yaml
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/field-failure-policy-improvement.yaml
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
@@ -1253,6 +1260,8 @@ skills:
         paths:
           - workflows/main/nurec-reconstruct.yaml
           - workflows/testing/nurec-colmap-reconstruct.yaml
+          - workflows/testing/scan-to-isaac-navigation.yaml
+          - workflows/testing/rgbd-scan-to-isaac.yaml
   - name: generate-npa-workflow
     category: workflows
     when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."

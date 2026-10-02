@@ -744,7 +744,13 @@ def resolve_run(
         result.verification_unavailable = True
         managed = ManagedJobEvidence("unavailable", error=result.controller_route_error)
     else:
-        managed = lookup_managed_job(
+        from npa.orchestration.skypilot.storage_context import (
+            call_with_workflow_storage,
+        )
+
+        managed = call_with_workflow_storage(
+            result.state,
+            lookup_managed_job,
             result.job_name or resolved_id,
             job_id=result.job_id,
             sky_bin=result.sky_bin or None,
