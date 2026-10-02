@@ -84,6 +84,9 @@ the transported request objects differ only in `model`. It writes
 requires escalation on disagreement or judge error. Distinct requested aliases
 that resolve to the same served model produce `judge_identity_collision`, retain
 both complete outcomes, and require escalation instead of reporting agreement.
+Models requiring incompatible generation settings are rejected before input
+preparation or provider calls. In particular, Kimi-K3 cannot participate in this
+shared-temperature experiment; use individual evaluation for that model.
 The report is always
 `audit_only`; agreement does not qualify either model, estimate an operational
 disagreement rate, establish physical correctness, or certify robot safety.
@@ -108,6 +111,9 @@ npa workbench vlm-eval compare-preference \
 The typed SDK request is
 `npa.sdk.workbench.vlm_eval.VlmPreferenceComparisonRequest`; call
 `npa.sdk.workbench.vlm_eval.compare_preference`. The command is hosted API-only
+and uses the shared model profile identically for both image orders. Kimi-K3
+uses low reasoning effort and JSON output without a temperature field;
+MiniMax retains its existing request settings. Neither path adds an output-token cap
 and needs no local GPU. It writes `vlm_preference_comparison.json` exactly once,
 retains both full provider outcomes privately, and escalates errors, unresolved
 or low-confidence output, and

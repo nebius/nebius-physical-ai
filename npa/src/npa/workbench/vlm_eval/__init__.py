@@ -1154,11 +1154,18 @@ def _evaluate_judge_pair(
 
 
 def _comparison_models(primary: str, secondary: str) -> tuple[str, str]:
+    from npa.clients.token_factory import token_factory_chat_profile
+
     models = (primary.strip(), secondary.strip())
     if not all(models):
         raise VlmEvalError("paired judges require two nonempty model IDs")
     if models[0] == models[1]:
         raise VlmEvalError("paired judges require two distinct model IDs")
+    if any(not token_factory_chat_profile(model).include_temperature for model in models):
+        raise VlmEvalError(
+            "paired judges require models compatible with the shared temperature "
+            "request; use individual evaluation for incompatible model profiles"
+        )
     return models
 
 
@@ -1951,9 +1958,14 @@ def _build_preference_request(
         "temperature": 0,
         "messages": [{"role": "user", "content": content}],
     }
-    from npa.clients.token_factory import default_chat_extra
+    from npa.clients.token_factory import token_factory_chat_profile
 
-    request.update(default_chat_extra(model))
+    profile = token_factory_chat_profile(model)
+    request.update(profile.default_extra())
+    if not profile.include_temperature:
+        request.pop("temperature")
+    if profile.use_vlm_response_format:
+        request["response_format"] = {"type": "json_object"}
     return request
 
 
