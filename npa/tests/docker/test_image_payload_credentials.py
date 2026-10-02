@@ -1,12 +1,4 @@
-"""Unit guards for the credential rules shared by the payload scanners.
-
-The important test here is the last one. ``packaging-contract.yaml`` declares
-``security.secret_patterns``, and until now those patterns were enforced only
-against Dockerfile text, never against the bytes in a built layer. That let the
-contract state one thing while the layer scanners checked another. The coverage
-test binds the two together, so a pattern added to the contract fails here until
-the shared rules detect it too.
-"""
+"""Credential shape detection and Dockerfile-versus-library policy boundaries."""
 
 from __future__ import annotations
 
@@ -46,16 +38,6 @@ SYNTHETIC_KEY = (
     b"-----END OPENSSH PRIVATE KEY-----\n"
 )
 
-# One sample per declared contract pattern. Keyed by the pattern itself so that
-# adding a pattern to the contract without a sample fails the coverage test
-# rather than silently going unchecked.
-CONTRACT_SAMPLES: dict[str, bytes] = {
-    "(?i)(api[_-]?key|secret[_-]?key|password)\\s*=\\s*['\\\"][^'\\\"]+['\\\"]": (
-        b'password = "hunter2-synthetic"\n'
-    ),
-    "(?i)BEGIN (RSA |OPENSSH )?PRIVATE KEY": SYNTHETIC_KEY,
-}
-
 
 @pytest.mark.parametrize(
     "path,kind",
@@ -66,6 +48,8 @@ CONTRACT_SAMPLES: dict[str, bytes] = {
         ("home/ubuntu/.ssh/id_ed25519", "ssh_user_key"),
         ("root/.aws/credentials", "cloud_credential_file"),
         ("root/.netrc", "cloud_credential_file"),
+        ("root/.kube/config", "cloud_credential_file"),
+        ("home/ubuntu/.kube/./config", "cloud_credential_file"),
         # Archive entries at the image root. lstrip("./") strips characters
         # rather than a prefix, so it turned these into "netrc" and "ssh/..."
         # and the rules stopped matching. Review found this one.
@@ -336,10 +320,6 @@ CHUNK = credentials.CONTENT_CHUNK
 @pytest.mark.parametrize(
     "sample,kind",
     [
-        # Review's counterexample: a quoted value two chunks long. The whole
-        # declared regex matches it, and an overlap-window reader returned None.
-        (b'password = "' + b"a" * (CHUNK * 2) + b'"', "quoted_secret_assignment"),
-        (b'api_key   =   "' + b"b" * (CHUNK * 3) + b'"', "quoted_secret_assignment"),
         # A whitespace run longer than any window, which is the earlier
         # counterexample. It is matched now rather than defined away.
         (
@@ -348,17 +328,13 @@ CHUNK = credentials.CONTENT_CHUNK
         ),
         # The name itself straddling a chunk boundary: its first half is an
         # incomplete match and its second half alone matches nothing.
-        (b"\x00" * (CHUNK - 5) + b'password = "x"', "quoted_secret_assignment"),
-        (b'password = "hunter2-synthetic"', "quoted_secret_assignment"),
+        (b"\x00" * (CHUNK - 5) + b"hf_token: abcdefghij", "credential_assignment"),
         (b"aws_secret_access_key=abcdefgh", "credential_assignment"),
         (b"hf_token: abcdefghij", "credential_assignment"),
     ],
     ids=[
-        "quoted-value-two-chunks",
-        "quoted-value-three-chunks",
         "whitespace-over-one-chunk",
         "assignment-name-crosses-boundary",
-        "short-quoted-value",
         "aws-assignment",
         "hf-assignment",
     ],
@@ -402,27 +378,39 @@ def test_streaming_matcher_has_negative_controls(sample: bytes) -> None:
 def test_streaming_state_is_bounded_not_buffered() -> None:
     # The point of the state machine: a match spanning megabytes must not mean
     # holding megabytes. The matcher's own state is a phase and a counter.
-    matcher = credentials._AssignmentMatcher(credentials.ASSIGNMENT_RULES[1])
-    matcher.feed(b'password = "' + b"a" * 4096, 0)
+    matcher = credentials._AssignmentMatcher(credentials.ASSIGNMENT_RULES[0])
+    matcher.feed(b"hf_token" + b" " * 4096, 0)
     assert matcher.__dict__.keys() == {"_rule", "_phase", "_seen"}
     assert isinstance(matcher._seen, int)
 
 
-def test_shared_rules_cover_every_declared_contract_secret_pattern() -> None:
+def test_generic_assignment_policy_remains_scoped_to_dockerfiles() -> None:
     declared = yaml.safe_load(CONTRACT.read_text())["security"]["secret_patterns"]
-    assert set(declared) == set(CONTRACT_SAMPLES), (
-        "packaging-contract.yaml security.secret_patterns changed. Add a sample "
-        "and, if needed, a rule in image_payload_credentials.py: a declared "
-        "pattern that the layer scanners do not enforce is the gap this test exists "
-        "to prevent."
-    )
-    for pattern, sample in CONTRACT_SAMPLES.items():
-        assert re.search(pattern.encode(), sample), (
-            f"sample does not match its own declared pattern {pattern}"
-        )
-        assert credentials.content_credential(io.BytesIO(sample)) is not None, (
-            f"declared contract pattern is not enforced against layer bytes: {pattern}"
-        )
+    example = b'password = ":****"'  # pip's URL redaction, not a secret.
+    assert any(re.search(pattern.encode(), example) for pattern in declared)
+    assert credentials.content_credential(io.BytesIO(example)) is None
+
+
+@pytest.mark.parametrize("pattern", [rb"a*", rb"key\\s+value", rb"(?:token){2,}"])
+def test_unbounded_markers_cannot_allocate_an_unbounded_carry(pattern: bytes) -> None:
+    with pytest.raises(ValueError, match="finite maximum width"):
+        credentials._max_match_length(re.compile(pattern))
+
+
+# Actual benign shapes from pip/_internal/utils/misc.py and pydantic/types.py.
+# Paths are deliberately irrelevant: adding a real credential next to an
+# example must still be rejected, including under an ordinary library filename.
+LIBRARY_EXAMPLES = (
+    b'password = ":****"',
+    b"User(username='john', password='password1')",
+)
+
+
+@pytest.mark.parametrize("example", LIBRARY_EXAMPLES)
+@pytest.mark.parametrize("suffix", [b"", SYNTHETIC_KEY, b"AKIA" + b"A" * 16])
+def test_library_examples_do_not_hide_adjacent_credentials(example, suffix) -> None:
+    result = credentials.content_credential(io.BytesIO(example + b"\n" + suffix))
+    assert (result is not None) == bool(suffix)
 
 
 SCANNERS_USING_SHARED_RULES = (
@@ -450,6 +438,26 @@ def _single_layer_archive(path: Path, member: str, payload: bytes) -> Path:
             info.size = len(body)
             archive.addfile(info, io.BytesIO(body))
     return path
+
+
+@pytest.mark.parametrize("scanner", SCANNERS_USING_SHARED_RULES)
+@pytest.mark.parametrize("planted_key", [False, True])
+def test_real_scanner_accepts_library_examples_and_rejects_adjacent_key(
+    tmp_path: Path, scanner: str, planted_key: bool
+) -> None:
+    body = b"\n".join(LIBRARY_EXAMPLES)
+    if planted_key:
+        body += b"\n" + SYNTHETIC_KEY
+    archive = _single_layer_archive(
+        tmp_path / "image.tar", "usr/lib/python3/site-packages/example.py", body
+    )
+    completed = subprocess.run(
+        [sys.executable, str(_MODULE_PATH.parent / scanner), "--tarball", str(archive)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == int(planted_key), completed.stderr
 
 
 @pytest.mark.parametrize("scanner", SCANNERS_USING_SHARED_RULES)

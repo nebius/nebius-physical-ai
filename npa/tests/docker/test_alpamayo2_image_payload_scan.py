@@ -242,7 +242,6 @@ BEYOND_LEGACY_RULES = {
     + b"c3ludGhldGljLWZpeHR1cmUtbm90LWEtcmVhbC1rZXk" * 3
     + b"\n-----END ENCRYPTED PRIVATE KEY-----\n",
     "credential_assignment": b"aws_secret_access_key = c3ludGhldGljLW5vdC1yZWFs\n",
-    "quoted_secret_assignment": b'api_key = "c3ludGhldGljLW5vdC1yZWFs"\n',
 }
 
 # The two families the branch distinguishes. _is_application_content is true

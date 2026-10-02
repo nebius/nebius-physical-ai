@@ -4,8 +4,8 @@ Every ``scan_image_*_payload.py`` grew its own credential rules, and they
 drifted apart. Measured over six scanners and seven planted cases, the rule sets
 did not order cleanly: the two that detected the private-key family missed
 ``.netrc``, and the only scanner that caught ``.netrc`` missed every private
-key. That finite measurement is the reason this module exists — one list, so a
-gap closed here closes in every scanner that imports it.
+key. These shared rules are used by the Alpamayo2, Cosmos3 serving and Cosmos3
+Ray Serve scanners; other image scanners retain their own policies.
 
 Paths are not sufficient on their own. A private key copied to an application
 directory matches no conventional name, so content detection is here too.
@@ -20,12 +20,16 @@ byte is examined.
 *A match on a chunk boundary.* Fixed-size markers are found with an overlap
 between consecutive chunks.
 
-*A match longer than any window.* ``password = "`` followed by two megabytes of
-text and a closing quote is a single match that no fixed overlap can hold. A
-window cannot solve this, so the assignment rules are not matched by a window:
-they are resumable state machines that carry a phase and a counter across
-chunks, never the bytes themselves. That keeps memory bounded while the match
-span stays unbounded, which is what the declared patterns actually mean.
+*Whitespace longer than any window.* Private-key headers and named credential
+assignments can be separated from their values by arbitrarily much whitespace.
+Their matchers retain state across chunks, never the intervening bytes.
+
+Generic quoted assignments are a Dockerfile policy, not proof of a credential
+in arbitrary library bytes: pip and Pydantic contain ordinary password examples.
+These detectors cover the declared paths and credential shapes only. Complete
+image qualification additionally requires the complete-byte/Gitleaks gate and
+its evidence-based disposition; this module cannot prove absence of arbitrary
+plaintext secrets.
 """
 
 from __future__ import annotations
@@ -84,7 +88,7 @@ CREDENTIAL_PATHS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "cloud_credential_file",
         re.compile(
             r"(?:^|\A|/)(?:\.aws/credentials|\.docker/config\.json|\.git-credentials"
-            r"|\.netrc|\.npa/credentials\.yaml|kubeconfig)$",
+            r"|\.netrc|\.npa/credentials\.yaml|\.kube/config|kubeconfig)$",
             re.I,
         ),
     ),
@@ -104,7 +108,6 @@ MARKER_CONTENT: tuple[tuple[str, re.Pattern[bytes]], ...] = (
 )
 
 _WHITESPACE = re.compile(rb"[ \t\r\n\f\v]*")
-_UNTIL_QUOTE = re.compile(rb"[^'\"]*")
 _UNTIL_SPACE = re.compile(rb"[^ \t\r\n\f\v]*")
 
 
@@ -112,16 +115,13 @@ _UNTIL_SPACE = re.compile(rb"[^ \t\r\n\f\v]*")
 class AssignmentRule:
     """A ``NAME <ws> SEP <ws> VALUE`` credential, matched across chunks.
 
-    ``quoted`` rules end at the closing quote and accept a value of any length,
-    which is the shape that cannot be expressed as a fixed window. Unquoted
-    rules need ``min_value`` non-space bytes, and stop looking once they have
-    them.
+    Rules need ``min_value`` non-space bytes, and stop looking once they have
+    them. Whitespace between the name, separator and value has no fixed bound.
     """
 
     kind: str
     names: re.Pattern[bytes]
     separators: bytes
-    quoted: bool
     min_value: int = 0
 
 
@@ -130,19 +130,7 @@ ASSIGNMENT_RULES: tuple[AssignmentRule, ...] = (
         kind="credential_assignment",
         names=re.compile(rb"(?i)aws_secret_access_key|hf_token|ngc_api_key"),
         separators=b"=:",
-        quoted=False,
         min_value=8,
-    ),
-    # packaging-contract.yaml declares this shape under security.secret_patterns,
-    # where it is enforced against Dockerfile text only. A layer scanner that did
-    # not also enforce the declared list would let the contract say one thing and
-    # the bytes check another; test_image_payload_credentials.py holds the two
-    # together and fails if a declared pattern gains no rule here.
-    AssignmentRule(
-        kind="quoted_secret_assignment",
-        names=re.compile(rb"(?i)api[_-]?key|secret[_-]?key|password"),
-        separators=b"=",
-        quoted=True,
     ),
 )
 
@@ -165,12 +153,6 @@ DECLARED_CONTENT_PATTERNS: tuple[tuple[str, re.Pattern[bytes]], ...] = (
             "credential_assignment",
             re.compile(
                 rb"(?i)(?:aws_secret_access_key|hf_token|ngc_api_key)\s*[=:]\s*[^$<\s][^\s]{7,}"
-            ),
-        ),
-        (
-            "quoted_secret_assignment",
-            re.compile(
-                rb"""(?i)(?:api[_-]?key|secret[_-]?key|password)\s*=\s*['"][^'"]+['"]"""
             ),
         ),
     )
@@ -204,7 +186,10 @@ def _max_match_length(pattern: re.Pattern[bytes]) -> int:
     carry is never quietly too small.
     """
 
-    return re._parser.parse(pattern.pattern.decode("latin-1")).getwidth()[1]
+    width = re._parser.parse(pattern.pattern.decode("latin-1")).getwidth()[1]
+    if width >= re._constants.MAXREPEAT:
+        raise ValueError("streaming markers must have a finite maximum width")
+    return width
 
 
 # An upper bound on any marker match, derived so that adding a longer marker
@@ -296,41 +281,21 @@ class _AssignmentMatcher:
                 position = _WHITESPACE.match(data, position).end()
                 if position == end:
                     return False
-                if rule.quoted:
-                    if data[position : position + 1] in (b"'", b'"'):
-                        position += 1
-                        self._phase = _VALUE
-                        self._seen = 0
-                    else:
-                        self._phase = _SEEK
-                elif data[position : position + 1] in (b"$", b"<"):
+                if data[position : position + 1] in (b"$", b"<"):
                     # A shell or template reference is not a baked credential.
                     self._phase = _SEEK
                 else:
                     self._phase = _VALUE
                     self._seen = 0
             else:
-                if rule.quoted:
-                    run = _UNTIL_QUOTE.match(data, position)
-                    self._seen += run.end() - position
-                    position = run.end()
-                    if position == end:
-                        return False
-                    # The value class excludes both quote characters, so the
-                    # first one to appear is the closing quote.
-                    position += 1
-                    if self._seen >= 1:
-                        return True
-                    self._phase = _SEEK
-                else:
-                    run = _UNTIL_SPACE.match(data, position)
-                    self._seen += run.end() - position
-                    position = run.end()
-                    if self._seen >= rule.min_value:
-                        return True
-                    if position == end:
-                        return False
-                    self._phase = _SEEK
+                run = _UNTIL_SPACE.match(data, position)
+                self._seen += run.end() - position
+                position = run.end()
+                if self._seen >= rule.min_value:
+                    return True
+                if position == end:
+                    return False
+                self._phase = _SEEK
         return False
 
 
