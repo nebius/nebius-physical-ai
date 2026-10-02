@@ -7,6 +7,82 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM rich visual reviews remain separate from gates
+
+- New API-only `vlm-eval review-visual` CLI and SDK surfaces write a private,
+  schema-validated `vlm_visual_review.json`. Single reviews use one neutral
+  request; paired reviews reverse neutral A/B order and escalate errors,
+  uncertainty, order effects, or material dimension disagreement. The record is
+  audit-only, retains objective and matched-view references as unverified
+  metadata, and never changes the normalized task-completion score or gate.
+- A retained six-attempt hosted contract smoke failed closed: four HTTP-200
+  outputs violated the strict response schema, and two paired MiniCPM requests
+  exceeded that provider interface's ten-image limit. No report was accepted
+  and no score or gate changed. See the
+  [rich visual review evidence](docs/workbench/evidence/vlm-rich-visual-review.md).
+
+### VLM rollout gates require visible terminal evidence
+
+- The default rollout rubric no longer treats likely progress as completion
+  when submitted frames stop before the requested terminal state. The packaged
+  wiring benchmark adds an illustrative missing-terminal failure so threshold
+  sweeps exercise this false-pass class; its fixture score remains explicitly
+  non-evidentiary and real gates still require task-specific labeled controls.
+- A retained six-call hosted control found both reviewed models produced the
+  expected pass/fail labels, but independent rationale review accepted only
+  MiniCPM on the exact three-item control. MiniMax's negative rationale
+  contradicted visible transfer evidence, so its otherwise-correct score matrix
+  was rejected rather than presented as model qualification.
+
+### VLM image preferences are blinded and order-balanced
+
+- New `vlm-eval compare-preference` API-only audit mode normalizes one matched
+  image pair, hides source roles behind neutral A/B labels, and submits both
+  orders without retries. Its private `vlm_preference_comparison.json` retains
+  exact requests, provider provenance, strict structured verdicts, and typed
+  errors. Errors, unresolved or low-confidence output, and order disagreement
+  require escalation; even consistent preference does not establish geometry
+  accuracy, physical validity, or robot safety. Requests leave the provider
+  response length uncapped rather than imposing a hidden token budget.
+
+### VLM benchmarks expose calibration failures
+
+- `vlm-eval benchmark` reports an explicit 2x2 confusion matrix, false-positive
+  and false-negative rates, and ordered IDs for every false-positive and
+  false-negative example under each model/rubric/threshold configuration.
+  Reports carry schema `npa_vlm_eval_benchmark_report_v2`; historical
+  unversioned reports remain interpretable as v1 and can be recomputed from
+  their complete per-item results. Duplicate benchmark item IDs are rejected so
+  each failure ID resolves unambiguously.
+
+### Paired VLM reviews preserve disagreement
+
+- New `vlm-eval compare-judges` API-only audit mode sends one immutable prompt
+  and normalized frame set to two explicitly distinct hosted models. Its
+  `vlm_judge_disagreement.json` artifact retains both complete outcomes or typed
+  errors, never averages scores, and requires escalation on disagreement or
+  judge error. Markdown-fenced output is retained as a typed error rather than
+  repaired. The report is explicitly audit-only and does not qualify either
+  model, defend against in-image instructions, prove a critical defect absent,
+  or establish physical correctness or safety.
+
+### VLM result artifacts use a backend-neutral filename
+
+- New `vlm-eval run` directory and object-prefix outputs are named
+  `vlm_eval.json`; the payload's `backend` and provider evidence distinguish
+  hosted/self-hosted inference from fixture scoring. Shipped workflow
+  declarations use the same canonical name. Data-factory and artifact-summary
+  readers still accept historical `vlm_eval_stub.json` bundles as a read-only
+  fallback.
+
+### Kimi-K3 direct-output requests preserve a visible answer
+
+- Token Factory and hosted VLM evaluation now share one model request profile.
+  Kimi-K3 defaults to its documented low reasoning effort and omits the ordinary
+  temperature field. Hosted VLM evaluation retains constrained JSON, requires
+  exact returned-model identity, and imposes no output-token cap. Existing
+  Lightning, MiniMax, unknown-model, and self-hosted behavior remains unchanged.
+
 ### LeRobot feedback control mode requires a JSON boolean
 
 - `POST /feedback/train-step` accepts `control: true` or `control: false`;

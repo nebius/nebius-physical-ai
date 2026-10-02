@@ -1,14 +1,15 @@
 ---
 name: vlm-eval
-description: Use to score rollouts with a vision-language model and turn the score into a pipeline gate — single rollout, prefix-wide loop, rubric/threshold benchmark sweeps, backend selection (self-hosted, api, stub), and judging against a plan an earlier stage wrote.
+description: Use to score and gate rollouts, or create a separate audit-only rich visual review — single rollout, prefix-wide loop, benchmark sweeps, hosted/self-hosted backends, and plan-aware judging.
 ---
 
-# VLM eval (scoring rollouts and gating pipelines)
+# VLM eval (scoring, gates, and audit-only visual review)
 
 `vlm-eval` answers "did this rollout complete the task?" as a number, then turns
 that number into a gate. It is the judging half of the loop whose generating half
 is Cosmos/Genesis/Isaac rollouts and whose reasoning half is
-`skills/tools/token-factory/SKILL.md`.
+`skills/tools/token-factory/SKILL.md`. Its separate `review-visual` path creates
+a non-gating rich record for visual audit.
 
 ## Pick the right command
 
@@ -16,6 +17,14 @@ is Cosmos/Genesis/Isaac rollouts and whose reasoning half is
 npa workbench vlm-eval run   --input-path <one-rollout>  --output-path <eval.json>
 npa workbench vlm-eval loop  --input-path <prefix>       --output-path <prefix>
 npa workbench vlm-eval benchmark --dataset <manifest> --output <report.json>
+npa workbench vlm-eval compare-judges --input-path <one-rollout> \
+  --output-path <prefix> --primary-model <model-a> --secondary-model <model-b>
+npa workbench vlm-eval compare-preference \
+  --baseline-path <image-a> --candidate-path <image-b> \
+  --output-path <private-prefix> --task <task> --rubric <rubric>
+npa workbench vlm-eval review-visual \
+  --input-path <visual-artifact> --baseline-path <matched-artifact> \
+  --output-path <private-prefix> --model <hosted-model> --task <neutral-task>
 npa workbench vlm-eval status
 npa workbench vlm-eval list
 npa workbench vlm-eval workflow
@@ -38,12 +47,124 @@ rubric, or model against a labeled set before you trust any of them in a gate.
   `--endpoint-url`. This is the GPU-bearing path.
 - `api` — a hosted OpenAI-compatible endpoint; the key comes from the environment
   variable named by `--api-key-env` (default `VLM_EVAL_API_KEY`). Point this at
-  Token Factory for a zero-GPU judge.
+  Token Factory for a zero-GPU judge. The standard Token Factory key in
+  `~/.npa/credentials.yaml` is also resolved when no key environment variable is
+  set.
 - `stub` — deterministic, no model call. For wiring tests and CI only; a stub
   score is never evidence about a policy.
 
 `--endpoint-url` accepts either a base URL or a full `/chat/completions` URL.
 Default model is `Qwen/Qwen2-VL-7B-Instruct`; `--timeout-s` defaults to 120.
+
+## Evidence retained by real backends
+
+A successful `api` or `self-hosted` call writes an `evidence` object alongside
+the scalar result. It records hashes and dimensions for the exact normalized
+frames sent; source kind, index, count, and video timestamp when known; prompt
+and rubric hashes; a secret-free request-manifest hash; requested/returned model
+identity; request time; finish reason; latency; usage and provider request ID
+when returned; plus the exact provider response and its hash. The manifest's
+`sampling` block records the requested strategy and frame limit, selected
+indices/timestamps, and whether coverage is complete. Unknown source metadata
+stays null rather than turning extraction ordinals into source indices.
+`coverage_complete` means selected-frame provenance is complete, not that all
+available source frames were sent. Real benchmark reports retain this record per
+case.
+
+Directory and object-prefix outputs use the backend-neutral
+`vlm_eval.json`; inspect the payload's `backend` and provider evidence to
+distinguish real inference from fixtures. An explicitly supplied `.json` output
+path remains unchanged. Readers accept the old `vlm_eval_stub.json` name only
+for historical bundles; new workflows must not declare it.
+
+Recompute these hashes before accepting a result. The request manifest must not
+contain authorization, endpoints, local/S3 paths, prompts, base64 bytes, or data
+URIs. Keep the whole result private because the existing task and provider
+rationale can still describe operator data.
+
+`evidence: null` means no provider call occurred, as with `stub` or `--score`.
+It cannot support a visual claim. On the hosted API path, provider refusal,
+truncation, filtering, malformed JSON, or canonical model mismatch is an error
+rather than a score. That strict parser de-frames one complete JSON object
+wrapped only in a Markdown JSON fence and records `+markdown-fence-v1`; it
+rejects surrounding prose, trailing output, duplicate keys, invalid types, and
+partial fences. The self-hosted path retains its older compatibility parser,
+which can extract an object from surrounding text, uses the last duplicate key,
+and coerces compatible score and `success` values. Use the retained parser
+version to distinguish those contracts.
+This evidence proves judge traceability, not physical correctness or safety.
+
+`compare-judges` is an API-only audit path for consequential or disputed
+reviews. It selects and normalizes frames once, sends an otherwise identical
+request to two explicitly distinct hosted models, and writes
+`vlm_judge_disagreement.json`. It retains both complete outcomes, never emits a
+mean score, and sets `passed=false` plus `escalation_required=true` when the
+score-derived verdicts disagree or either judge errors. The artifact is always
+`deployment_status: audit_only`: agreement does not qualify either judge, and a
+weak judge can make disagreement common without making the scene intrinsically
+ambiguous. Unlike ordinary single-judge compatibility parsing, this path
+rejects Markdown-fenced JSON as a typed judge error instead of transforming the
+output. It also does not defend against in-image instructions or prove a
+critical visible defect absent. Full provider responses stay in the private
+artifact; CLI output is a bounded summary.
+
+`passed` and `status` come only from `score >= success_threshold`. The model's
+own `success` boolean is retained as `provider_success` when the response
+actually includes it, and `provider_success_matches_score_gate` exposes
+disagreement. If a self-hosted response omits that boolean, both fields stay
+null rather than presenting an inferred value as provider output. Legacy
+non-boolean values such as `"true"` also stay null in those provenance fields.
+Never substitute the provider boolean for the score-derived gate.
+
+`compare-preference` is an API-only, audit-only matched-image primitive. It
+normalizes each input exactly once, hides source semantics behind neutral A/B
+labels, and sends the pair in both orders with identical prompting and
+generation settings. The private `vlm_preference_comparison.json` retains both
+exact requests and complete provider outcomes. Errors, unresolved output,
+confidence below `high`, or different mapped preferences produce escalation;
+the latter is named `order_disagreement_or_nondeterminism` because one request
+per order cannot isolate an order effect from provider nondeterminism. The
+command never retries or averages preferences, and refuses an existing output.
+Task and rubric text containing `baseline` or `candidate` is rejected before
+transport. Telling the model not to follow image text is not a defense against
+in-image instructions. Its CLI summary omits paths, prompts, visible support,
+uncertainty, request IDs, and raw responses.
+
+`review-visual` is a separate API-only, audit-only rich record. It writes only
+the canonical `vlm_visual_review.json` under a prefix, or accepts that exact
+filename; reject another explicit JSON filename before transport. It never
+changes `VlmEvalResult`, the normalized score, `passed`, or a workflow gate.
+The private report separates visible task evidence, content fidelity,
+reviewability, subjective impressiveness, and a Physical AI usefulness
+hypothesis. Code fixes `deployment_status=audit_only`,
+`score_gate_affected=false`, the normalized score to null, and usefulness to
+`hypothesis_only`.
+
+Single mode makes one request over neutral set A and records comparison status
+`not_provided`. Supplying `--baseline-path` makes two separately journaled
+requests with the sources reversed behind neutral A/B labels. Only two
+high-confidence, non-unresolved outcomes that agree on the mapped comparison
+and every material dimension can produce an eligible comparison; otherwise
+escalate. There are no hosted retries. The CLI prints only `schema_version`,
+`status`, `escalation_required`, `attempt_count`, and `model`; never print
+paths, prompts, references, raw responses, rationale, request IDs, endpoints,
+or credentials.
+
+Load objective locators only through `--objective-evidence-path` and optional
+producer matched-view metadata through `--matched-view-map-path`. Retain both
+privately as unverified metadata; never send either to the provider or convert
+them into visual proof. Keep `current`, `baseline`, and `candidate` out of the
+provider-facing task, rubric, and model text. The Python surface
+`npa.sdk.workbench.vlm_eval.review_visual` takes the same options and returns
+only after the core backend has finalized the canonical report.
+
+Treat every rich record as a review aid, not qualification. Frame citations are
+syntactic provenance and require pixel-first human checking. Pixels cannot
+establish hidden simulator state, objective completion, geometry accuracy,
+physical correctness, release mechanics, stability, measured downstream
+benefit, policy success, or robot safety. Matched-view metadata does not prove
+registration, and instructions embedded in images remain an input-integrity
+risk.
 
 ## Scoring controls that actually change the verdict
 
@@ -65,7 +186,14 @@ npa workbench vlm-eval run \
   judge can actually see. A four-frame view of a long episode judges a summary.
 - `--rubric` / `--rubric-path` carry the scoring instructions. The default rubric
   reserves 1.0 for clear completion and 0.0 for clear failure, with intermediate
-  values for partial progress, and penalizes unsafe or ambiguous outcomes.
+  values for partial progress, and penalizes unsafe or ambiguous outcomes. It
+  also rejects intermediate progress without the requested terminal state:
+  approach, contact, grasp, lift, transfer, or disappearance alone cannot prove
+  placement, release, stability, or completion.
+- Write `--task` as identify-then-judge: ask what the frames show before asking
+  whether they meet the target. A leading confirmation question such as "does
+  this show X rather than a blank?" can make an unrelated negative control pass.
+  Run blank and unrelated controls through the exact same task-plus-rubric prompt.
 - `--success-threshold` (default 0.8) is the gate. In `loop` it applies to the
   **mean** score across rollouts, which is a coarser claim than per-rollout
   success — do not report it as a per-rollout success rate.
@@ -97,9 +225,30 @@ the sweep runs but tells you nothing about your task. `--use-fixture-scores`
 honors recorded `fixture_score` values for non-stub backends; stub always uses
 them when present.
 
+Each `npa_vlm_eval_benchmark_report_v2` configuration includes the full 2x2
+confusion matrix, false-positive and false-negative rates, and ordered
+`false_positive_item_ids` / `false_negative_item_ids`. Resolve those IDs in the
+same configuration's complete `results` list before choosing a threshold; an
+aggregate accuracy can hide the exact false pass that matters. Rates are null
+when the labeled dataset has no examples of the required class. Item IDs must
+be unique. Historical reports without `schema_version` are v1; their counts can
+be recomputed from retained per-item labels and predictions, but absent v2
+fields must not be presented as if the producer emitted them.
+
+The packaged sample's `progress-without-terminal-fail` case makes threshold
+sweeps exercise an omitted-outcome negative, but its tiny synthetic frames and
+prerecorded score remain wiring-only. For a real rollout gate, retain a
+source-matched truncated case with plausible progress and no terminal outcome,
+plus a real complete case and blank or unrelated evidence under the exact same
+task and rubric. Report sampling differences and do not call three controls an
+error-rate estimate or model qualification.
+
 ## In workflows
 
 toolRefs: `workbench.vlm_eval.run`, `.loop`, `.judge_against_plan`, `.benchmark`.
+The reusable audit-only paired primitive is
+`workbench.vlm_eval.compare_judges`. The reusable audit-only blinded primitive
+is `workbench.vlm_eval.compare_preference`.
 Specs under `workflows/testing/`: `vlm-eval-single.yaml`,
 `vlm-eval-loop.yaml`, `vlm-eval-benchmark.yaml`, `vlm-eval-token-factory.yaml`
 (the zero-GPU judge), plus the rollout-judge combinations listed in
@@ -119,8 +268,12 @@ Self-hosted VLM steps need a GPU image; set it with `--image` on
 - **The judge sees only the frames you send it.** A low score with
   `--frame-selection final --max-frames 1` may be a sampling artifact rather than
   a policy failure; re-score with keyframes before believing it.
+- **Inspect retained frame dimensions before judging thin defects.** Image
+  normalization can downscale source pixels enough to erase faceting, skeletons,
+  unsupported surfaces, or other narrow structures.
 - **Benchmark the rubric before trusting it.** Rubric wording moves scores more
-  than most people expect, which is precisely what `benchmark` is for.
+  than most people expect, which is precisely what `benchmark` is for. The task
+  text and rubric form one prompt; changing either invalidates prior calibration.
 - **A green gate does not mean a good policy.** It means the judge, at this
   rubric and threshold, on these frames, said yes.
 

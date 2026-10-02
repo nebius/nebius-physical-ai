@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import io
 import json
 import multiprocessing
@@ -13,7 +14,14 @@ from pathlib import Path
 
 import pytest
 import typer
+from PIL import Image
 
+from npa.workbench import vlm_eval
+from npa.workbench.vlm_eval import (
+    LEGACY_RESULT_FILENAME,
+    RESULT_FILENAME,
+    evaluate_stub,
+)
 from npa.workflows import data_factory_stages as dfs
 
 
@@ -1651,17 +1659,288 @@ def test_prepare_refinement_never_overwrites_conflicting_attempt_history(
     assert not refinement.exists()
 
 
-def test_grade_gate_promotes_above_threshold(tmp_path: Path) -> None:
-    scores = tmp_path / "vlm_eval_stub.json"
-    scores.write_text(json.dumps({"status": "completed", "score": 0.8, "passed": True}))
+def _provider_completion(*, success: bool, metadata: bool) -> dict:
+    data = {
+        "id": "unit-provider-request",
+        "model": "hosted/unit-vision",
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "score": 0.9,
+                            "success": success,
+                            "rationale": "Visible unit-test evidence.",
+                        }
+                    )
+                },
+            }
+        ],
+    }
+    if not metadata:
+        data.pop("id")
+        data.pop("model")
+        data["choices"][0].pop("finish_reason")
+    return data
+
+
+def _provider_vlm_report(
+    monkeypatch, tmp_path: Path, *, backend="api", success=True, metadata=True
+) -> dict:
+    frame = tmp_path / "rollout.png"
+    Image.new("RGB", (4, 4), "gray").save(frame)
+    data = _provider_completion(success=success, metadata=metadata)
+    response = vlm_eval._VlmBackendResponse(data, json.dumps(data), 200, None, 0.01)
+    calls = []
+
+    def post(**kwargs):
+        calls.append(kwargs)
+        return response
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    monkeypatch.setattr(vlm_eval, "_openai_headers", lambda **_kwargs: {})
+    result = vlm_eval.evaluate_vlm(
+        input_path=str(frame),
+        output_path=str(tmp_path),
+        backend=backend,
+        model="hosted/unit-vision",
+        success_threshold=0.5,
+        endpoint_url="https://provider.invalid/v1",
+    )
+    assert len(calls) == 1
+    return asdict(result)
+
+
+def test_grade_gate_promotes_above_threshold(tmp_path: Path, monkeypatch) -> None:
+    scores = tmp_path / RESULT_FILENAME
+    scores.write_text(json.dumps(_provider_vlm_report(monkeypatch, tmp_path)))
     decision_path = tmp_path / "decision.json"
-    decision = dfs.grade_gate(str(scores), str(decision_path), threshold=0.5)
+    decision = dfs.grade_gate(str(tmp_path), str(decision_path), threshold=0.5)
     assert decision == "promote_checkpoint"
     assert json.loads(decision_path.read_text())["decision"] == "promote_checkpoint"
 
 
+@pytest.mark.parametrize("backend", ["stub", "api", "self-hosted"])
+@pytest.mark.parametrize("explicit_path", [False, True])
+def test_grade_gate_rejects_real_core_stub_and_score_override_reports(
+    tmp_path: Path, monkeypatch, backend: str, explicit_path: bool
+) -> None:
+    monkeypatch.setattr(
+        vlm_eval,
+        "_post_with_readiness_retry",
+        lambda **_kw: pytest.fail("no provider call expected"),
+    )
+    if backend == "stub":
+        result = evaluate_stub(
+            input_path="unused", output_path=str(tmp_path), score=0.9
+        )
+    else:
+        result = vlm_eval.evaluate_vlm(
+            input_path="unused",
+            output_path=str(tmp_path),
+            backend=backend,
+            score=0.9,
+        )
+    scores = tmp_path / RESULT_FILENAME
+    scores.write_text(json.dumps(asdict(result)))
+    decision = tmp_path / "decision.json"
+
+    assert (
+        dfs.grade_gate(str(scores if explicit_path else tmp_path), str(decision))
+        == "loop_back"
+    )
+    reason = json.loads(decision.read_text())["reason"]
+    assert reason == (
+        "vlm_non_inference_backend"
+        if backend == "stub"
+        else "vlm_provider_evidence_missing"
+    )
+    assert result.evidence is None
+    assert result.provider_success is None
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        (("evidence",), None),
+        (("evidence",), {}),
+        (("evidence", "schema_version"), "unknown"),
+        (("frame_count",), 0),
+        (("evidence", "request", "frames"), []),
+        (("evidence", "request", "request_manifest_sha256"), "0" * 64),
+        (("evidence", "request", "prompt_sha256"), "0" * 64),
+        (("evidence", "provider", "raw_response_sha256"), "0" * 64),
+        (("evidence", "provider", "status_code"), 500),
+        (("evidence", "provider", "parser_version"), "unknown"),
+        (("evidence", "provider", "returned_model"), "different/model"),
+        (("score",), 0.95),
+        (("provider_success",), False),
+        (("provider_success",), 1),
+        (("provider_success_matches_score_gate",), 1),
+        (("evidence", "request", "requested_at"), True),
+        (("task",), "A different task."),
+    ],
+)
+def test_grade_gate_rejects_missing_or_inconsistent_provider_evidence(
+    tmp_path: Path, monkeypatch, path: tuple[str, ...], value: object
+) -> None:
+    report = _provider_vlm_report(monkeypatch, tmp_path)
+    target = report
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+    (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+    decision = tmp_path / "decision.json"
+
+    assert dfs.grade_gate(str(tmp_path), str(decision)) == "loop_back"
+    assert json.loads(decision.read_text())["reason"] in {
+        "vlm_provider_evidence_missing",
+        "vlm_provider_evidence_invalid",
+    }
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+def test_grade_gate_preserves_provider_disagreement_as_score_gate_metadata(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
+    report = _provider_vlm_report(monkeypatch, tmp_path, backend=backend, success=False)
+    (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+
+    assert report["provider_success_matches_score_gate"] is False
+    assert (
+        dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
+        == "promote_checkpoint"
+    )
+
+
+def test_grade_gate_accepts_self_hosted_optional_completion_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    report = _provider_vlm_report(
+        monkeypatch, tmp_path, backend="self-hosted", metadata=False
+    )
+    (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+
+    assert report["served_model"] is None
+    assert (
+        dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
+        == "promote_checkpoint"
+    )
+
+
+@pytest.mark.parametrize("dry_run", [True, "false", None])
+def test_grade_gate_rejects_dry_run_even_with_copied_provider_evidence(
+    tmp_path: Path, monkeypatch, dry_run: object
+) -> None:
+    report = _provider_vlm_report(monkeypatch, tmp_path)
+    report["dry_run"] = dry_run
+    (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+    decision = tmp_path / "decision.json"
+
+    assert dfs.grade_gate(str(tmp_path), str(decision)) == "loop_back"
+    assert json.loads(decision.read_text())["reason"] == "vlm_non_inference_backend"
+
+
+def test_grade_gate_accepts_retained_v1_inference_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    report = _provider_vlm_report(monkeypatch, tmp_path)
+    report["dry_run"] = False
+    evidence = report["evidence"]
+    request = evidence["request"]
+    manifest = request["request_manifest"]
+    evidence["schema_version"] = manifest["schema_version"] = "npa_vlm_eval_evidence_v1"
+    manifest.pop("sampling")
+    for frame in request["frames"]:
+        for key in (
+            "source_kind",
+            "source_index",
+            "source_count",
+            "source_timestamp_s",
+        ):
+            frame.pop(key)
+    manifest["frames"] = request["frames"]
+    request["request_manifest_sha256"] = vlm_eval._sha256_json(manifest)
+    (tmp_path / LEGACY_RESULT_FILENAME).write_text(json.dumps(report))
+
+    assert (
+        dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
+        == "promote_checkpoint"
+    )
+
+
+def test_grade_gate_does_not_treat_unidentified_vlm_named_result_as_cosmos(
+    tmp_path: Path,
+) -> None:
+    scores = tmp_path / RESULT_FILENAME
+    scores.write_text(json.dumps({"status": "completed", "score": 0.9, "passed": True}))
+    decision = tmp_path / "decision.json"
+
+    assert dfs.grade_gate(str(scores), str(decision)) == "loop_back"
+    assert json.loads(decision.read_text())["reason"] == "vlm_non_inference_backend"
+
+
+def test_grade_gate_rejects_inconsistent_vlm_status(tmp_path: Path) -> None:
+    scores = tmp_path / RESULT_FILENAME
+    scores.write_text(json.dumps({"status": "passed", "score": 0.9, "passed": False}))
+
+    decision = dfs.grade_gate(
+        str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "loop_back"
+
+
+def test_grade_gate_identifies_vlm_result_at_explicit_custom_path(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    custom = tmp_path / "custom-score.json"
+    custom.write_text(json.dumps(_provider_vlm_report(monkeypatch, tmp_path)))
+
+    decision = dfs.grade_gate(
+        str(custom), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "promote_checkpoint"
+
+
+def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    legacy = tmp_path / LEGACY_RESULT_FILENAME
+    legacy.write_text(json.dumps(_provider_vlm_report(monkeypatch, tmp_path)))
+
+    decision = dfs.grade_gate(
+        str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "promote_checkpoint"
+
+
+def test_grade_gate_does_not_fall_back_from_malformed_canonical_vlm_result(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    (tmp_path / RESULT_FILENAME).write_text('{"status": "passed"')
+    (tmp_path / LEGACY_RESULT_FILENAME).write_text(
+        json.dumps(_provider_vlm_report(monkeypatch, tmp_path))
+    )
+    decision_path = tmp_path / "decision.json"
+
+    decision = dfs.grade_gate(str(tmp_path), str(decision_path), threshold=0.5)
+    payload = json.loads(decision_path.read_text())
+
+    assert decision == "loop_back"
+    assert payload["score"] == 0.0
+    assert payload["report_status"] == "missing"
+    assert payload["report_sha256"] == ""
+
+
 def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
-    scores = tmp_path / "vlm_eval_stub.json"
+    scores = tmp_path / RESULT_FILENAME
     scores.write_text(json.dumps({"score": 0.1}))
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
@@ -1676,7 +1955,7 @@ def test_grade_gate_loops_below_threshold(tmp_path: Path, monkeypatch) -> None:
 def test_grade_gate_accepts_string_threshold(tmp_path: Path, monkeypatch) -> None:
     """The blueprint interpolates a quoted config.grade_threshold; grade_gate must
     cast a str threshold (and fall back to 0.5 on a non-numeric value)."""
-    scores = tmp_path / "vlm_eval_stub.json"
+    scores = tmp_path / "cosmos_evaluator.json"
     scores.write_text(json.dumps({"status": "completed", "score": 0.6, "passed": True}))
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
@@ -2021,7 +2300,7 @@ def test_grade_gate_malformed_authoritative_report_fails_closed(
     """A present but malformed newest report must not promote from stale data."""
 
     (tmp_path / "cosmos_evaluator.json").write_text(json.dumps({"score": "n/a"}))
-    (tmp_path / "vlm_eval_stub.json").write_text(json.dumps({"score": 0.9}))
+    (tmp_path / LEGACY_RESULT_FILENAME).write_text(json.dumps({"score": 0.9}))
     monkeypatch.setattr(
         "npa.orchestration.npa_workflow.decisions.write_decision",
         lambda uri, decision: None,
@@ -2030,6 +2309,18 @@ def test_grade_gate_malformed_authoritative_report_fails_closed(
         dfs.grade_gate(str(tmp_path), str(tmp_path / "d.json"), threshold=0.5)
         == "loop_back"
     )
+
+
+def test_grade_gate_rejects_vlm_status_on_cosmos_report(tmp_path: Path) -> None:
+    (tmp_path / "cosmos_evaluator.json").write_text(
+        json.dumps({"status": "passed", "score": 0.9, "passed": True})
+    )
+
+    decision = dfs.grade_gate(
+        str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
+    )
+
+    assert decision == "loop_back"
 
 
 def test_download_json_missing_exact_file_does_not_substitute(
@@ -2049,7 +2340,7 @@ def test_download_json_missing_exact_file_does_not_substitute(
 
     monkeypatch.setattr(dfs, "_storage", lambda: _FakeStorage())
     with pytest.raises(FileNotFoundError):
-        dfs._download_json("s3://bucket/grade/vlm_eval_stub.json")
+        dfs._download_json(f"s3://bucket/grade/{RESULT_FILENAME}")
 
 
 def test_grade_gate_missing_eval_loops_not_reads_decision(

@@ -6,6 +6,7 @@ from dataclasses import replace
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -1024,12 +1025,32 @@ def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
 
 def test_tool_image_key_prefix_match() -> None:
     assert tool_image_key("workbench.vlm_eval.run") == "cosmos"
+    assert tool_image_key("workbench.vlm_eval.compare_judges") is None
+    assert tool_image_key("workbench.vlm_eval.compare_preference") is None
     assert tool_image_key("workbench.token_factory.caption") is None
     assert tool_image_key("workbench.lancedb.import_bdd100k") == "lancedb"
     assert tool_image_key("workbench.sonic.train") == "sonic"
     assert tool_image_key("unknown.tool") is None
     assert tool_requires_staged_npa_source("workbench.sonic.train") is True
     assert tool_requires_staged_npa_source("workbench.cosmos3.generate") is False
+
+
+def test_compare_judges_plan_forwards_token_factory_secret() -> None:
+    step = SimpleNamespace(
+        tool_ref="workbench.vlm_eval.compare_judges",
+        argv=["npa", "workbench", "vlm-eval", "compare-judges"],
+    )
+
+    assert secret_env_hints_for_plan([step]) == ("NEBIUS_TOKEN_FACTORY_KEY",)
+
+
+def test_compare_preference_plan_forwards_only_token_factory_secret() -> None:
+    step = SimpleNamespace(
+        tool_ref="workbench.vlm_eval.compare_preference",
+        argv=["npa", "workbench", "vlm-eval", "compare-preference"],
+    )
+
+    assert secret_env_hints_for_plan([step]) == ("NEBIUS_TOKEN_FACTORY_KEY",)
 
 
 def test_alpamayo2_super_resolves_configured_image() -> None:

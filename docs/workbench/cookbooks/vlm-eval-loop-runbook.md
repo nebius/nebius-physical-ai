@@ -12,6 +12,218 @@ Each evaluation records the requested `model` and the endpoint's returned
 identity must be a nonempty string. Retain the serving deployment's checkpoint
 revision separately: a model name alone does not identify its weight bytes.
 
+Successful real-backend results also contain an `evidence` record. It binds the
+requested and returned model to:
+
+- SHA-256 hashes, dimensions, media types, byte counts, and source-relative
+  labels for the exact normalized image bytes submitted to the model;
+- source kind, zero-based source index, source frame count, and source video
+  timestamp when extraction can establish them;
+- hashes of the prompt, rubric, and secret-free request manifest;
+- request time, endpoint role, HTTP status when available, latency, finish
+  reason, provider request ID and usage when returned;
+- the exact provider response body, its SHA-256 hash, and parser version.
+
+The request manifest intentionally excludes authorization, endpoint addresses,
+input/output locations, prompts, and base64 image data. It contains enough
+information to recompute what was submitted without copying pixels or secrets.
+Its `sampling` block records the strategy, requested frame limit, selected
+indices and timestamps, source count, and whether index and timestamp coverage
+are complete. Unknown video metadata stays null; a generated extraction ordinal
+is never presented as a source frame index. `coverage_complete` means every
+submitted frame has auditable source-index metadata, not that every available
+source frame was submitted.
+The full result still belongs in private run storage because the provider
+response and existing task fields can describe operator data.
+
+`stub` results and `--score` overrides do not contain provider evidence. They are
+wiring checks, never visual proof. Real `benchmark` reports retain the evidence
+for every case so calibration failures and model disagreement remain inspectable.
+The hosted API parser removes a single Markdown JSON fence around one complete
+object and appends `+markdown-fence-v1` to the retained parser version.
+Prefixes, suffixes, duplicate keys, non-finite numbers, invalid types, and
+partial output fail on that strict path. The self-hosted parser deliberately
+keeps its older compatibility behavior: it can extract an object from
+surrounding text, uses the last duplicate key, and coerces compatible score and
+`success` values. Retained parser versions distinguish these paths. None of
+these fields turns a visual judgment into objective task, geometry, collision,
+or safety evidence.
+
+The serialized result retains the effective `rubric`, so the exact prompt can
+be reconstructed from `task`, `rubric`, `frame_selection`, and `frame_count`.
+`passed` is always `score >= success_threshold`. When a real backend actually
+returns a `success` boolean, the result records it as `provider_success` and
+reports whether it agrees in `provider_success_matches_score_gate`.
+Self-hosted responses that omit the boolean leave both fields null rather than
+presenting a score-derived fallback as provider output. Legacy non-boolean
+values such as `"true"` are likewise not promoted to provider booleans. A real
+disagreement is calibration evidence, not permission to replace the
+score-derived label. Before reviewing thin geometry or skeletons, compare
+retained submitted-frame dimensions with the source because normalization can
+remove the defect.
+
+For a consequential or disputed review, `compare-judges` preserves two hosted
+outcomes without averaging:
+
+```bash
+npa workbench vlm-eval compare-judges \
+  --input-path <one-rollout> \
+  --output-path <private-evidence-prefix> \
+  --primary-model <hosted-vision-model-a> \
+  --secondary-model <hosted-vision-model-b> \
+  --task "Describe the exact visible completion evidence."
+```
+
+The direct SDK surface takes a typed
+`npa.sdk.workbench.vlm_eval.VlmJudgeComparisonRequest` and passes it to
+`npa.sdk.workbench.vlm_eval.compare_judges`.
+
+The command materializes and selects frames once, builds one prompt, and proves
+the transported request objects differ only in `model`. It writes
+`vlm_judge_disagreement.json`, retains each complete result or typed error, and
+requires escalation on disagreement or judge error. Distinct requested aliases
+that resolve to the same served model produce `judge_identity_collision`, retain
+both complete outcomes, and require escalation instead of reporting agreement.
+Models requiring incompatible generation settings are rejected before input
+preparation or provider calls. In particular, Kimi-K3 cannot participate in this
+shared-temperature experiment; use individual evaluation for that model.
+The report is always
+`audit_only`; agreement does not qualify either model, estimate an operational
+disagreement rate, establish physical correctness, or certify robot safety.
+Markdown-fenced JSON is a typed judge error on this strict path, not repaired
+into a verdict. The command also does not defend against instructions embedded
+in the submitted pixels or prove that a critical visible defect is absent. Full
+rationales and raw provider responses are written only to the private artifact;
+console output is a bounded summary.
+
+For a matched baseline/candidate image comparison, use neutral labels and both
+orders:
+
+```bash
+npa workbench vlm-eval compare-preference \
+  --baseline-path <matched-image-1> \
+  --candidate-path <matched-image-2> \
+  --output-path <private-evidence-prefix> \
+  --task "Compare two matched scene views." \
+  --rubric "Prefer visible measured detail and penalize unsupported surfaces."
+```
+
+The typed SDK request is
+`npa.sdk.workbench.vlm_eval.VlmPreferenceComparisonRequest`; call
+`npa.sdk.workbench.vlm_eval.compare_preference`. The command is hosted API-only
+and uses the shared model profile identically for both image orders. Kimi-K3
+uses low reasoning effort and JSON output without a temperature field;
+MiniMax retains its existing request settings. Neither path adds an output-token cap
+and needs no local GPU. It writes `vlm_preference_comparison.json` exactly once,
+retains both full provider outcomes privately, and escalates errors, unresolved
+or low-confidence output, and
+`order_disagreement_or_nondeterminism`. Even an order-consistent candidate
+preference is an audit observation, not proof of geometry accuracy, physical
+validity, or robot safety. The prompt's instruction to ignore image text is not
+a defense against in-image instructions. For S3 output, private access remains
+an operator/storage-policy requirement; the client uses an atomic create-only
+write but does not infer bucket policy or ACL state.
+
+Both image orders receive the same neutral typed JSON Schema. The strict
+response contract requires a nonempty `critical_defects` list for each image:
+when no critical defect is visible, use a truthful absence statement without
+inventing defects. Positive observations belong in `observable_support`.
+The exact `uncertainty` field must contain text describing what the views cannot
+establish. Schema validity alone does not establish that observations are grounded
+in the pixels; retain both outcomes for review.
+
+An omitted or empty rubric uses the shared task-completion rubric; supply
+`rubric` or `rubric_path` when comparing other visible qualities. The effective
+rubric is retained in the report. The SDK returns that report and retains a
+private journal; unlike the CLI, it leaves the canonical report write to the
+caller:
+
+```python
+from dataclasses import asdict
+from npa.sdk.workbench.vlm_eval import compare_preference
+from npa.workbench.vlm_eval import write_preference_report
+
+report = compare_preference(request)
+write_preference_report(asdict(report), result_uri=report.result_uri)
+```
+
+If the caller stops after inference, the journal's `report-ready.json` retains
+the complete report. Pass that JSON payload to `write_preference_report` with
+the original result URI to finish the write without another model call. The
+writer refuses an existing canonical report. Preserve the journal; rerunning
+the comparison against that output is deliberately refused.
+
+## Rich visual review (separate, audit-only record)
+
+`review-visual` records visible task evidence, content fidelity, reviewability,
+subjective impressiveness, and a bounded Physical AI usefulness hypothesis. It
+does not modify `vlm_eval.json`, the normalized task-completion score, `passed`,
+or any workflow gate:
+
+```bash
+npa workbench vlm-eval review-visual \
+  --input-path <visual-artifact> \
+  --baseline-path <matched-visual-artifact> \
+  --output-path <private-review-prefix> \
+  --model <hosted-vision-model> \
+  --task "Assess visible task evidence and artifact quality." \
+  --api-key-env VLM_EVAL_API_KEY \
+  --frame-selection keyframes \
+  --max-frames 4 \
+  --output-format json
+```
+
+The output must be a prefix or the exact canonical filename
+`vlm_visual_review.json`; another explicit JSON filename is rejected before
+transport. The backend reserves private append-only evidence, makes no hosted
+retry, and finalizes the canonical report before either the CLI or SDK returns.
+The JSON console response contains exactly `schema_version`, `status`,
+`escalation_required`, `attempt_count`, and `model`. Paths, prompts, references,
+raw provider text, rationale, request IDs, credentials, and endpoints remain
+only in private evidence.
+
+The neutral prompt includes a typed JSON Schema for the rich record. Hosted
+request settings follow the shared model profile: Kimi-K3 uses low reasoning
+effort and JSON object mode with no temperature or output-token cap; MiniMax-M3
+retains its provider-compatible omission of JSON mode. JSON mode ensures neither
+schema conformance nor grounded judgments. The client still rejects malformed
+records, unsubmitted frame citations, and inconsistent fields without repair.
+
+Without `--baseline-path`, single mode sends one neutral set A request and code
+sets comparison status to `not_provided`. With a baseline, paired mode sends two
+separately journaled requests with the source order reversed behind neutral A/B
+labels. An error, unresolved or non-high-confidence comparison, order
+disagreement, or disagreement in a material rich-review dimension requires
+escalation. “Materially better” describes only visible evidence quality for the
+named review task; it is not a policy-performance or physical-correctness claim.
+
+Use `--objective-evidence-path` for a private JSON file containing either a list
+of locator strings or `{"references": [...]}`. Use
+`--matched-view-map-path` for a private JSON object supplied by the producer.
+Both are retained as unverified metadata and never sent to the model or treated
+as proof. Task, rubric, and model text must also omit the private source-role
+words `current`, `baseline`, and `candidate`.
+
+The direct SDK has the same arguments and finalized-report semantics:
+
+```python
+from npa.sdk.workbench.vlm_eval import review_visual
+
+report = review_visual(
+    input_path="<visual-artifact>",
+    output_path="<private-review-prefix>",
+    model="<hosted-vision-model>",
+    task="Assess visible task evidence and artifact quality.",
+)
+```
+
+The rich record is audit-only. Citations prove only that a submitted frame ID
+was named, not that an observation is true. Selected pixels cannot prove hidden
+simulator state, objective completion, physical correctness, release mechanics,
+stability, downstream benefit, policy success, or robot safety. Image-borne
+instructions remain an unresolved input-integrity risk, and paired views or
+matched-view metadata do not establish geometric registration.
+
 To verify this against your existing GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
 JSON file containing `input_path`, `output_path` (a local JSON filename),
@@ -91,10 +303,24 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 
 `scores_uri` receives:
 
-- `rollouts/<rollout-id>/vlm_eval_stub.json`: one structured result per rollout.
+- `rollouts/<rollout-id>/vlm_eval.json`: one structured result per rollout.
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
   per-rollout `{success, score, rationale}` records.
+
+`vlm_eval.json` is backend-neutral; inspect the payload's `backend` and
+`evidence.provider` fields to distinguish real inference from a fixture.
+Readers retain `vlm_eval_stub.json` only for historical bundles. Do not declare
+that legacy name in new workflows.
+
+The data-factory `grade_gate` requires consistent retained inference evidence
+before a VLM result can promote a checkpoint. Stub results, score overrides, and
+historical reports without provider evidence produce `loop_back` with an explicit
+reason. The gate checks submitted-frame metadata, request and response hashes,
+and agreement between the retained response and serialized result. These checks
+establish internal consistency, not provider authentication or visual correctness.
+Provider `success` disagreement stays recorded separately; the numeric score and
+threshold still determine the score gate. The Cosmos Evaluator contract is unchanged.
 
 Read the report:
 
@@ -114,6 +340,15 @@ item, then run the sweep below.
 
 ## Tune
 
+Use neutral identify-then-judge task text. Ask what the frames show before
+asking whether they satisfy the target; do not ask the model to confirm the
+desired answer. A blank and an unrelated rollout must score low under the exact
+same task-plus-rubric prompt before the positive score is usable evidence. Add a
+task-specific missing-terminal control that retains plausible intermediate
+progress but omits the requested outcome. The default rubric treats approach,
+contact, grasp, lift, transfer, or disappearance without the requested terminal
+state as incomplete; selected stills still cannot prove hidden state or safety.
+
 Sweep thresholds, rubrics, and models against labeled rollouts:
 
 ```bash
@@ -132,6 +367,21 @@ Use the best threshold and rubric from the benchmark report to update
 `vlm_success_threshold` in the loop spec (or pass `--var` at submit time).
 `workflows/testing/vlm-eval-benchmark.yaml` runs the same sweep as
 a workflow stage.
+
+Benchmark report schema `npa_vlm_eval_benchmark_report_v2` makes calibration
+errors explicit for every model/rubric/threshold configuration. Inspect its 2x2
+`confusion_matrix`, `false_positive_rate`, `false_negative_rate`, and ordered
+failure item IDs, then resolve each ID in that configuration's complete
+`results` list. A null rate means the labeled set lacked the denominator class;
+it does not mean zero errors. Dataset item IDs must be unique. Reports without
+`schema_version` are legacy v1 records: their complete item results can be
+recomputed, but consumers must not invent v2 fields.
+
+The packaged sample includes an illustrative
+`progress-without-terminal-fail` item so fixture sweeps exercise this class.
+Its prerecorded score and tiny synthetic frames test wiring only. Calibrate the
+exact task, rubric, threshold, frame selection, and hosted model on real labeled
+rollouts before using a gate.
 
 ## Troubleshooting
 
