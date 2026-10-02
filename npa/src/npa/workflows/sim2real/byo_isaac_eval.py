@@ -1007,8 +1007,11 @@ try:
     print("BYO_EVAL_DONE", flush=True)
 except Exception as _e:
     print("inproc_upload_err", repr(_e), flush=True)
+    _upload_succeeded = False
+else:
+    _upload_succeeded = True
 sys.stdout.flush(); sys.stderr.flush()
-os._exit(0)
+os._exit(0 if _upload_succeeded else 1)
 """
 
 
@@ -1555,6 +1558,7 @@ def run_isaac_eval_job(
     global _RENDER_MANIFEST
     _RENDER_MANIFEST = {
         "schema": "npa.sim2real.heldout_renders.v1",
+        "evaluation_attempt_tag": eval_tag,
         "sim_backend": "isaac",
         "isaac_task": task,
         "camera_views": out.get("camera_views") or [],
@@ -1702,6 +1706,7 @@ def main() -> int:
     )
     report["applied_scenario_proof"] = _APPLIED_SCENARIO_AUDIT
     report["scenario_input_provenance"] = _SCENARIO_INPUT_PROVENANCE
+    report["evaluation_attempt_tag"] = _env("NPA_SIM2REAL_EVAL_TAG")
     if _RENDER_MANIFEST.get("episodes"):
         report["render_manifest"] = _RENDER_MANIFEST
     Path(output_json).parent.mkdir(parents=True, exist_ok=True)

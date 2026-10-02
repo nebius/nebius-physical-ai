@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import sys
 import tempfile
 from pathlib import Path
@@ -238,6 +239,11 @@ def run_heldout_eval(
     output_path = output_dir / "report.json"
     inner_path = output_dir / f"inner-evidence-outer-{outer_iteration:02d}.json"
     _write_json_artifact(inner_path, inner_evidence)
+    base_eval_tag = (
+        f"{evaluation_split}-outer-{outer_iteration:02d}"
+        + (f"-iter-{inner_iteration:02d}" if inner_iteration else "")
+        + (f"-checkpoint-{checkpoint_iteration:04d}" if checkpoint_iteration else "")
+    )
     extra = {
         "NPA_SIM2REAL_HELDOUT_ENVS_DIR": str(local_dir / "envs" / split_dir_name),
         "NPA_SIM2REAL_HELDOUT_ENV_COUNT": str(eval_count),
@@ -251,15 +257,7 @@ def run_heldout_eval(
         "NPA_SIM2REAL_SCENE_SPEC_URI": config.scene_spec_uri,
         "NPA_SIM2REAL_ASSETS_URI": config.assets_uri,
         "NPA_SIM2REAL_CAMERAS_URI": config.cameras_uri,
-        "NPA_SIM2REAL_EVAL_TAG": (
-            f"{evaluation_split}-outer-{outer_iteration:02d}"
-            + (f"-iter-{inner_iteration:02d}" if inner_iteration else "")
-            + (
-                f"-checkpoint-{checkpoint_iteration:04d}"
-                if checkpoint_iteration
-                else ""
-            )
-        ),
+        "NPA_SIM2REAL_EVAL_TAG": (f"{base_eval_tag}-attempt-{secrets.token_hex(16)}"),
     }
     if scenario_records_uri:
         # The exact split object is the source of truth across controller Pod
@@ -365,13 +363,7 @@ def run_heldout_eval(
         attempt_id = _component_attempt_id(
             config,
             "heldout_eval",
-            f"{evaluation_split}-outer-{outer_iteration:02d}"
-            + (f"-iter-{inner_iteration:02d}" if inner_iteration else "")
-            + (
-                f"-checkpoint-{checkpoint_iteration:04d}"
-                if checkpoint_iteration
-                else ""
-            ),
+            base_eval_tag,
         )
         if scenario_records_uri:
             heldout_envs_uri = scenario_records_uri

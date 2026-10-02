@@ -62,7 +62,7 @@ def test_regen_sim2real_rrd_requires_heldout_frames(
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
     (local_dir / "eval/heldout").mkdir(parents=True)
     (local_dir / "inner_loop/outer-01/evidence.json").write_text(
-        json.dumps({"iterations": []}),
+        json.dumps({"outer_iteration": 1, "iterations": []}),
         encoding="utf-8",
     )
     (local_dir / "eval/heldout/report.json").write_text(
@@ -92,7 +92,7 @@ def test_regen_sim2real_rrd_success(
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
     (local_dir / "eval/heldout").mkdir(parents=True)
     (local_dir / "inner_loop/outer-01/evidence.json").write_text(
-        json.dumps({"iterations": []}),
+        json.dumps({"outer_iteration": 1, "iterations": []}),
         encoding="utf-8",
     )
     (local_dir / "eval/heldout/report.json").write_text(
@@ -296,7 +296,7 @@ def test_regen_preserves_strict_heldout_policy_evidence(
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
     (local_dir / "eval/heldout").mkdir(parents=True)
     (local_dir / "inner_loop/outer-01/evidence.json").write_text(
-        json.dumps({"iterations": []}),
+        json.dumps({"outer_iteration": 1, "iterations": []}),
         encoding="utf-8",
     )
     (local_dir / "eval/heldout/report.json").write_text(
@@ -359,7 +359,14 @@ def _regen_fixture(tmp_path: Path) -> Path:
     (local_dir / "inner_loop/outer-01").mkdir(parents=True)
     (local_dir / "eval/heldout").mkdir(parents=True)
     (local_dir / "inner_loop/outer-01/evidence.json").write_text(
-        json.dumps({"iterations": [], "reward_trend": [0.1, 0.2]}), encoding="utf-8"
+        json.dumps(
+            {
+                "outer_iteration": 1,
+                "iterations": [],
+                "reward_trend": [0.1, 0.2],
+            }
+        ),
+        encoding="utf-8",
     )
     (local_dir / "eval/heldout/report.json").write_text(
         json.dumps({"success_rate": 1.0}), encoding="utf-8"

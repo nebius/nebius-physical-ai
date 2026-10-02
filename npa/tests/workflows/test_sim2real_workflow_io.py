@@ -54,6 +54,7 @@ def test_component_records_are_content_addressed_and_stage12_is_a_seam(
     monkeypatch.setenv("NPA_IMAGE_SOURCE_SHA", SOURCE_SHA)
     monkeypatch.setenv("NPA_SIM2REAL_SOURCE_SHA", SOURCE_SHA)
     monkeypatch.setenv("NPA_TASK_IMAGE", IMAGE)
+    monkeypatch.setenv("SKYPILOT_TASK_ID", "stage-test-job")
 
     record = workflow_io.publish_component_record(
         root_uri="s3://bucket/run",
@@ -147,13 +148,30 @@ def test_reduced_proof_records_zero_policy_success_without_failing_pipeline(
 ) -> None:
     written: dict[str, dict[str, object]] = {}
     published: list[dict[str, object]] = []
+    checkpoint = "s3://bucket/run/checkpoint.pt"
+    identity = {
+        "checkpoint_uri": checkpoint,
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": "a" * 64,
+    }
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
+        "success_rate": 0.0,
+        "policy_checkpoint_uri": checkpoint,
+    }
+    evidence = {
+        "outer_iteration": 1,
+        "selected_checkpoint_uri": checkpoint,
+        "final_checkpoint_uri": checkpoint,
+        "checkpoint_selection": dict(identity),
+        "checkpoint_candidates": [dict(identity)],
+    }
     monkeypatch.setattr(
         workflow_stage,
         "read_json",
-        lambda *_args, **_kwargs: {
-            "success_rate": 0.0,
-            "policy_checkpoint_uri": "s3://bucket/run/checkpoint.pt",
-        },
+        lambda uri, **_kwargs: evidence if "/inner_loop/" in uri else report,
     )
     monkeypatch.setattr(
         workflow_stage,

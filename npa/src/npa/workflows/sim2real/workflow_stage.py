@@ -6,12 +6,19 @@ import argparse
 import hashlib
 import json
 import os
+import secrets
 import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
+from npa.workflows.sim2real.decision_authority import validate_stage11_decision
+from npa.workflows.sim2real.stage10_execution import (
+    Stage10Operations,
+    assert_gold_checkpoint_identity as _assert_gold_checkpoint_identity,
+    run_stage10,
+)
 from npa.workflows.sim2real.stage14_finalize import (
     download_plan as _stage14_download_plan,  # noqa: F401 - compatibility import
     finalize_in_work as _stage14_in_work,
@@ -521,6 +528,7 @@ def _run_eval(
     evidence_path = output_path.parent / f"{split}-inner-evidence.json"
     evidence_path.write_text(json.dumps(evidence, indent=2))
     env = _common_isaac_env(args, split_uri=f"{_root(args)}/envs/train/envs.jsonl")
+    attempt_tag = f"{tag}-attempt-{secrets.token_hex(16)}"
     env.update(
         {
             "NPA_SIM2REAL_OUTPUT_JSON": output_path,
@@ -528,7 +536,7 @@ def _run_eval(
             "NPA_SIM2REAL_HELDOUT_ENVS_URI": envs_uri,
             "NPA_SIM2REAL_HELDOUT_ENV_COUNT": env_count,
             "NPA_SIM2REAL_EVALUATION_SPLIT": split,
-            "NPA_SIM2REAL_EVAL_TAG": tag,
+            "NPA_SIM2REAL_EVAL_TAG": attempt_tag,
             "NPA_BYO_ISAAC_SUCCESS_DIST_M": "0.05",
         }
     )
@@ -759,136 +767,50 @@ def _stage9(args: argparse.Namespace) -> None:
     )
 
 
-def _assert_gold_checkpoint_identity(
-    evidence: dict[str, Any],
-    report: dict[str, Any],
-) -> dict[str, Any]:
-    """Bind gold evaluation bytes to the validation-selected learned actor."""
-
-    from npa.workflows.sim2real.checkpoint_selection import (
-        resolve_selected_checkpoint,
-    )
-    from npa.workflows.sim2real.viz_contract import (
-        selected_checkpoint_policy_metadata,
-    )
-
-    try:
-        selection, candidate = resolve_selected_checkpoint(evidence)
-    except ValueError as exc:
-        raise RuntimeError(
-            "Stage 10 selected checkpoint identity is incomplete or inconsistent"
-        ) from exc
-    metadata = selected_checkpoint_policy_metadata(report, selection, candidate)
-    if (
-        metadata["heldout_policy_identity_verified"] is not True
-        or metadata["heldout_policy_loaded_for_inference"] is not True
-        or metadata["heldout_policy_learned_actor_only"] is not True
-    ):
-        issues = ", ".join(metadata["heldout_policy_identity_errors"]) or (
-            "learned-actor-only provenance is incomplete or contradictory"
-        )
-        raise RuntimeError(f"Stage 10 selected checkpoint identity mismatch: {issues}")
-    return candidate
-
-
 def _stage10(args: argparse.Namespace) -> None:
-    root, work = _root(args), _work(10)
-    evidence_uri = f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json"
-    evidence = read_json(evidence_uri, directory=work / "input")
-    report_path = work / "report.json"
-    report = _run_eval(
-        args,
-        split="gold_heldout",
-        envs_uri=f"{root}/envs/gold-heldout/envs.jsonl",
-        env_count=args.gold_count,
-        evidence=evidence,
-        output_path=report_path,
-        tag=f"gold-o{args.outer_iteration:02d}",
+    operations = Stage10Operations(
+        read_json=read_json,
+        run_eval=_run_eval,
+        checkpoint_identity=_assert_gold_checkpoint_identity,
+        embodiment_evidence=_assert_embodiment_evidence,
+        storage=storage,
+        write_loop_output=write_loop_output,
+        publish_component_record=publish_component_record,
     )
-    recorded_split = report.get("evaluation_split")
-    if recorded_split not in (None, "", "gold_heldout"):
-        raise RuntimeError("Stage 10 report evaluation split disagrees with gold")
-    recorded_outer = report.get("outer_iteration")
-    if recorded_outer is not None and (
-        not isinstance(recorded_outer, int)
-        or isinstance(recorded_outer, bool)
-        or recorded_outer != args.outer_iteration
-    ):
-        raise RuntimeError("Stage 10 report outer iteration disagrees with execution")
-    report["evaluation_split"] = "gold_heldout"
-    report["outer_iteration"] = args.outer_iteration
-    selected_candidate = _assert_gold_checkpoint_identity(evidence, report)
-    gold_embodiment = _assert_embodiment_evidence(
-        root=root, payload=report, stage="Stage 10 gold evaluation"
+    run_stage10(args, root=_root(args), work=_work(10), operations=operations)
+
+
+def _stage11_selection(
+    args: argparse.Namespace,
+    root: str,
+    work: Path,
+) -> dict[str, Any]:
+    from npa.workflows.sim2real.checkpoint_selection import (
+        resolve_run_scoped_checkpoint,
     )
-    if gold_embodiment:
-        selected_embodiment = dict(selected_candidate.get("embodiment") or {})
-        if not selected_embodiment:
-            raise RuntimeError(
-                "Stage 10 selected checkpoint has no recorded training embodiment"
-            )
-        if gold_embodiment != selected_embodiment:
-            raise RuntimeError(
-                "Stage 10 checkpoint train/eval embodiment parity mismatch"
-            )
-    render_manifest = dict(report.get("render_manifest") or {})
-    render_prefix = str(render_manifest.get("renders_s3_uri") or "")
-    canonical_renders = f"eval/gold-heldout/outer-{args.outer_iteration:02d}/renders"
-    if not render_prefix or not render_manifest.get("episodes"):
-        raise RuntimeError("Stage 10 gold evaluation lacks explicit render lineage")
-    expected_render_prefix = (
-        f"{root}/component-io/heldout-eval/"
-        f"gold_heldout-outer-{args.outer_iteration:02d}/output/renders/"
+
+    evidence = read_json(
+        f"{root}/inner_loop/outer-{args.outer_iteration:02d}/evidence.json",
+        directory=work / "selection",
     )
-    if render_prefix.rstrip("/") + "/" != expected_render_prefix:
-        raise RuntimeError(
-            "Stage 10 render source is not the exact current heldout-eval "
-            "producer output"
+    try:
+        selection, _candidate = resolve_run_scoped_checkpoint(
+            evidence,
+            run_root=root,
+            run_id=args.run_id,
         )
-    render_prefix = expected_render_prefix
-    render_local = work / canonical_renders
-    storage().download_directory(render_prefix, str(render_local))
-    if not any(render_local.rglob("camera-*.png")):
-        raise RuntimeError("Stage 10 gold render prefix contains no camera frames")
-    canonical_render_uri = f"{root}/{canonical_renders}/"
-    storage().upload_directory(str(render_local), canonical_render_uri)
-    report["render_lineage"] = {
-        "evaluation_split": "gold_heldout",
-        "source_s3_uri": render_prefix,
-        "canonical_s3_uri": canonical_render_uri,
-        "local_relative_dir": canonical_renders,
-    }
-    report["local_renders_dir"] = canonical_renders
-    report_uri = (
-        f"{root}/eval/gold-heldout/outer-{args.outer_iteration:02d}/report.json"
-    )
-    write_loop_output(report_uri, report, work / "out", args.outer_iteration)
-    publish_component_record(
-        root_uri=root,
-        stage=10,
-        name="stage_10_eval_heldout",
-        tier="WORKS",
-        evidence="Isaac loaded the validation-selected checkpoint and evaluated only the untouched gold split with strict 5 cm stable placement.",
-        artifacts={
-            "report": report_uri,
-            "evaluation_split": "gold_heldout",
-            "checkpoint": evidence["selected_checkpoint_uri"],
-            "checkpoint_sha256": report.get("policy_checkpoint_sha256", ""),
-            "renders": canonical_render_uri,
-            "render_lineage": report["render_lineage"],
-            "component_invocation": report.get("component_invocation"),
-            "embodiment": gold_embodiment,
-        },
-        require_gpu=True,
-    )
+    except ValueError as exc:
+        raise RuntimeError("Stage 11 checkpoint selection is invalid") from exc
+    return selection
 
 
-def _stage11(args: argparse.Namespace) -> None:
-    root, work = _root(args), _work(11)
-    report_uri = (
-        f"{root}/eval/gold-heldout/outer-{args.outer_iteration:02d}/report.json"
-    )
-    report = read_json(report_uri, directory=work)
+def _stage11_decision(
+    args: argparse.Namespace,
+    root: str,
+    report_uri: str,
+    report: dict[str, Any],
+    selection: dict[str, Any],
+) -> dict[str, Any]:
     strict_rate = float(report.get("success_rate") or 0.0)
     promote = args.allow_early_exit and strict_rate >= args.threshold
     decision = {
@@ -905,8 +827,29 @@ def _stage11(args: argparse.Namespace) -> None:
         or (report.get("policy_inference_provenance") or {}).get("checkpoint_uri", ""),
         "gold_report_uri": report_uri,
     }
+    try:
+        validate_stage11_decision(
+            decision,
+            run_id=args.run_id,
+            root=root,
+            outer_iteration=args.outer_iteration,
+            gold_report=report,
+            checkpoint_uri=selection["checkpoint_uri"],
+        )
+    except ValueError as exc:
+        raise RuntimeError(f"Stage 11 decision authority is invalid: {exc}") from exc
+    return decision
+
+
+def _publish_stage11(
+    root: str,
+    work: Path,
+    report_uri: str,
+    decision: dict[str, Any],
+) -> None:
     uri = f"{root}/outer_loop/decision.json"
     write_json(uri, decision, directory=work)
+    promote = decision["decision"] == "promote_checkpoint"
     publish_component_record(
         root_uri=root,
         stage=11,
@@ -916,10 +859,21 @@ def _stage11(args: argparse.Namespace) -> None:
         artifacts={
             "decision": uri,
             "gold_report": report_uri,
-            "success_rate": strict_rate,
+            "success_rate": decision["success_rate"],
         },
         next_action="CONTINUE" if promote else "LOOP_OR_COMPLETE_BUDGET",
     )
+
+
+def _stage11(args: argparse.Namespace) -> None:
+    root, work = _root(args), _work(11)
+    report_uri = (
+        f"{root}/eval/gold-heldout/outer-{args.outer_iteration:02d}/report.json"
+    )
+    report = read_json(report_uri, directory=work)
+    selection = _stage11_selection(args, root, work)
+    decision = _stage11_decision(args, root, report_uri, report, selection)
+    _publish_stage11(root, work, report_uri, decision)
 
 
 def _stage12(args: argparse.Namespace) -> None:

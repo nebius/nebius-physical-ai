@@ -363,6 +363,39 @@ def resolve_selected_checkpoint(
     return dict(selection), dict(candidate)
 
 
+def resolve_run_scoped_checkpoint(
+    evidence: dict[str, Any],
+    *,
+    run_root: str,
+    run_id: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Resolve one complete checkpoint whose bytes belong to the current run.
+
+    Args:
+        evidence: Persisted inner-loop checkpoint-selection evidence.
+        run_root: Exact S3 artifact root for the current workflow run.
+        run_id: Current workflow run identifier, when the caller has one.
+
+    Returns:
+        The complete selection and its identity-matching candidate.
+
+    Raises:
+        ValueError: If identity is incomplete or does not belong to this run.
+    """
+
+    selection, candidate = resolve_selected_checkpoint(evidence)
+    root = run_root.rstrip("/")
+    checkpoint_uri = selection["checkpoint_uri"]
+    if not root.startswith("s3://") or not checkpoint_uri.startswith(f"{root}/"):
+        raise ValueError("selected checkpoint is outside the current run prefix")
+    declared_run_id = evidence.get("run_id")
+    if declared_run_id is not None and (
+        not isinstance(declared_run_id, str) or not run_id or declared_run_id != run_id
+    ):
+        raise ValueError("inner-loop evidence belongs to a different run_id")
+    return selection, candidate
+
+
 def assert_no_split_leakage(
     train_digests: set[str], validation_digests: set[str], gold_digests: set[str]
 ) -> None:

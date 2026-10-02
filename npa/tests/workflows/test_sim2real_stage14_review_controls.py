@@ -52,6 +52,7 @@ def _identity(uri: str) -> dict[str, Any]:
 def _inner_evidence(uri: str) -> dict[str, Any]:
     identity = _identity(uri)
     return {
+        "outer_iteration": 1,
         "selected_checkpoint_uri": uri,
         "final_checkpoint_uri": uri,
         "checkpoint_selection": dict(identity),
@@ -339,7 +340,11 @@ def test_heldout_only_uses_requested_outer_iteration(
             self.requested.append(uri)
             if "/outer-02/" not in uri:
                 raise StorageError("only requested outer-02 exists")
-            Path(destination).write_text('{"outer_iteration":2}', encoding="utf-8")
+            evidence = {
+                **_inner_evidence(_same_run_uri()),
+                "outer_iteration": 2,
+            }
+            Path(destination).write_text(json.dumps(evidence), encoding="utf-8")
 
     storage = Storage()
 
@@ -546,7 +551,7 @@ def test_heldout_only_does_not_publish_stale_positive_candidate(
     monkeypatch.setattr(
         regen,
         "_sync_heldout_eval_inputs",
-        lambda *_args, **_kwargs: {},
+        lambda *_args, **_kwargs: _inner_evidence(_same_run_uri()),
     )
     monkeypatch.setattr(
         regen,
@@ -562,12 +567,13 @@ def test_heldout_only_does_not_publish_stale_positive_candidate(
         },
     )
 
-    regen.rerun_heldout_eval_only(
-        _config(),
-        local_dir=tmp_path,
-        publish=True,
-        client=storage,
-    )
+    with pytest.raises(Sim2RealRerunRegenError, match="refuses to publish"):
+        regen.rerun_heldout_eval_only(
+            _config(),
+            local_dir=tmp_path,
+            publish=True,
+            client=storage,
+        )
 
     assert storage.uploaded_candidate is None
 
@@ -585,6 +591,7 @@ def test_stage10_rejects_foreign_render_source_before_download(
         "generator_policy_sha256": "a" * 64,
     }
     evidence = {
+        "outer_iteration": 1,
         "iterations": [],
         "selected_checkpoint_uri": uri,
         "final_checkpoint_uri": uri,
@@ -664,7 +671,10 @@ def test_remote_selected_pair_cannot_be_displaced_by_stale_local_pair(
                     "eval/gold-heldout/outer-01/report.json",
                 )
             ):
-                Path(path).write_text("{}", encoding="utf-8")
+                Path(path).write_text(
+                    json.dumps({"outer_iteration": 1}),
+                    encoding="utf-8",
+                )
                 return path
             raise StorageError("missing")
 
@@ -739,6 +749,7 @@ def test_failed_directory_sync_cannot_preserve_stale_local_evidence(
 
 def test_publication_occurs_only_after_heldout_frame_gate(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     calls: list[str] = []
     monkeypatch.setattr(
@@ -755,12 +766,12 @@ def test_publication_occurs_only_after_heldout_frame_gate(
     with pytest.raises(Sim2RealRerunRegenError):
         regen._finalize_regen_result(
             Sim2RealLoopConfig(run_id="r"),
-            Path("/tmp/unused"),
+            tmp_path / "unused",
             object(),
             regen._RegenState(
                 inner_evidence={},
                 heldout_report={},
-                report_path=Path("/tmp/report"),
+                report_path=tmp_path / "report",
                 report={},
                 policy_access={},
             ),
@@ -805,7 +816,11 @@ def test_canonical_iteration_uris_are_localized(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    regen._rewrite_inner_evidence_paths(tmp_path, evidence_path)
+    regen._rewrite_inner_evidence_paths(
+        tmp_path,
+        evidence_path,
+        expected_artifact_root="s3://bucket/r",
+    )
 
     record = json.loads(evidence_path.read_text(encoding="utf-8"))["iterations"][0]
     for key in ("actions_dir", "vlm_eval_dir", "signal_dir"):

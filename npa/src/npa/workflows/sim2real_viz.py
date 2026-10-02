@@ -150,6 +150,7 @@ class Sim2RealMcapResult:
     channel_counts: dict[str, int] = field(default_factory=dict)
     message_count: int = 0
     camera_message_count: int = 0
+    heldout_frame_count: int = 0
     scalar_message_count: int = 0
     log_message_count: int = 0
     pointcloud_message_count: int = 0
@@ -162,6 +163,7 @@ class Sim2RealMcapResult:
             "channel_counts": dict(self.channel_counts),
             "message_count": self.message_count,
             "camera_message_count": self.camera_message_count,
+            "heldout_frame_count": self.heldout_frame_count,
             "scalar_message_count": self.scalar_message_count,
             "log_message_count": self.log_message_count,
             "pointcloud_message_count": self.pointcloud_message_count,
@@ -3589,7 +3591,7 @@ def emit_sim2real_mcap(
                 label="reward_trend",
             )
 
-        _emit_mcap_heldout_cameras(
+        heldout_frame_count = _emit_mcap_heldout_cameras(
             emitter, heldout_episodes, frame_period_ns=heldout_frame_period_ns
         )
         _emit_mcap_pointclouds(
@@ -3646,6 +3648,7 @@ def emit_sim2real_mcap(
         channel_counts=emitter.channel_counts,
         message_count=content_total + emitter.transform_message_count,
         camera_message_count=emitter.camera_message_count,
+        heldout_frame_count=heldout_frame_count,
         scalar_message_count=emitter.scalar_message_count,
         log_message_count=emitter.log_message_count,
         pointcloud_message_count=emitter.pointcloud_message_count,
@@ -3801,7 +3804,8 @@ def _emit_mcap_heldout_cameras(
     episodes: list[tuple[str, dict[str, list[np.ndarray]]]],
     *,
     frame_period_ns: int,
-) -> None:
+) -> int:
+    emitted_frames = 0
     for episode_index, (env_id, episode_views) in enumerate(episodes):
         views = _normalize_camera_views(episode_views)
         root = f"/heldout/camera/{env_id}"
@@ -3812,6 +3816,7 @@ def _emit_mcap_heldout_cameras(
                 if frame_index >= len(frames):
                     continue
                 payload = _png_bytes(frames[frame_index])
+                emitted_frames += 1
                 if view_name != "primary":
                     emitter.log_image_bytes(
                         f"{root}/{view_name}/camera", payload, "png", stamp_ns
@@ -3825,6 +3830,7 @@ def _emit_mcap_heldout_cameras(
                             MCAP_PRIMARY_CAMERA_TOPIC, payload, "png", stamp_ns
                         )
             stamp_ns += frame_period_ns
+    return emitted_frames
 
 
 def _emit_mcap_pointclouds(

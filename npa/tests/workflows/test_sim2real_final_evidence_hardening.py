@@ -407,7 +407,7 @@ def test_explicit_validation_lineage_is_not_final_evidence(
         download_plan(
             root="s3://demo-bucket/sim2real-b/run-a",
             outer_iteration=1,
-            evidence={"iterations": []},
+            evidence={"outer_iteration": 1, "iterations": []},
             gold=report,
         )
 
@@ -515,7 +515,7 @@ def test_stage14_rejects_cross_iteration_render_lineage() -> None:
         download_plan(
             root="s3://demo-bucket/sim2real-b/run-a",
             outer_iteration=1,
-            evidence={"iterations": []},
+            evidence={"outer_iteration": 1, "iterations": []},
             gold=report,
         )
 

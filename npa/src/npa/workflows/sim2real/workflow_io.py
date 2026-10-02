@@ -173,6 +173,258 @@ def image_provenance(*, require_gpu: bool) -> dict[str, Any]:
     return proof
 
 
+def _component_provenance(
+    stage: int,
+    tier: str,
+    require_gpu: bool,
+    execution_provenance: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if stage == 12:
+        if tier != "SEAM":
+            raise ValueError("Stage 12 must remain an explicit SEAM")
+        return {"source_sha": source_sha()}
+    if tier != "WORKS":
+        raise ValueError(f"Stage {stage} must fail closed instead of publishing {tier}")
+    provenance = dict(execution_provenance or image_provenance(require_gpu=require_gpu))
+    if require_gpu and not provenance.get("gpu_products"):
+        raise ValueError(f"Stage {stage} execution provenance lacks GPU products")
+    if not _record_provenance_is_valid(provenance, stage=stage):
+        raise ValueError(f"Stage {stage} execution provenance is invalid")
+    return provenance
+
+
+def _component_record_payload(
+    stage: int,
+    name: str,
+    tier: str,
+    evidence: str,
+    artifacts: dict[str, Any],
+    require_gpu: bool = False,
+    next_action: str = "CONTINUE",
+    execution_provenance: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    provenance = _component_provenance(stage, tier, require_gpu, execution_provenance)
+    payload = {
+        "schema": "npa.sim2real.component_record.v1",
+        "stage": stage,
+        "name": name,
+        "tier": tier,
+        "evidence": evidence,
+        "artifacts": {**artifacts, **provenance},
+        "next_action": next_action,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    payload["content_sha256"] = hashlib.sha256(encoded).hexdigest()
+    return payload
+
+
+def build_component_record(
+    *,
+    stage: int,
+    name: str,
+    tier: str,
+    evidence: str,
+    artifacts: dict[str, Any],
+    require_gpu: bool = False,
+    next_action: str = "CONTINUE",
+    execution_provenance: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build one content-addressed ComponentRecord without publishing it.
+    Args:
+        stage: Canonical one-based workflow stage number.
+        name: Canonical stage component name.
+        tier: ``WORKS`` except for the explicit Stage 12 ``SEAM``.
+        evidence: Human-readable factual completion evidence.
+        artifacts: Stage outputs and lineage fields.
+        require_gpu: Whether execution provenance must name GPU products.
+        next_action: Durable orchestration action after this stage.
+        execution_provenance: Optional already-verified task provenance.
+    Returns:
+        A complete ComponentRecord including its content SHA-256.
+    Raises:
+        ValueError: If tier or execution provenance is invalid.
+        RuntimeError: If ambient image/source provenance is unavailable.
+    """
+
+    return _component_record_payload(
+        stage,
+        name,
+        tier,
+        evidence,
+        artifacts,
+        require_gpu,
+        next_action,
+        execution_provenance,
+    )
+
+
+def _record_shape_is_valid(
+    record: dict[str, Any],
+    *,
+    expected_stage: int,
+    expected_name: str,
+    expected_tier: str,
+    required_artifacts: tuple[str, ...],
+) -> bool:
+    artifacts = record.get("artifacts")
+    material = {key: value for key, value in record.items() if key != "content_sha256"}
+    digest = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return bool(
+        record.get("schema") == "npa.sim2real.component_record.v1"
+        and type(record.get("stage")) is int
+        and record["stage"] == expected_stage
+        and record.get("name") == expected_name
+        and record.get("tier") == expected_tier
+        and isinstance(record.get("evidence"), str)
+        and record["evidence"].strip()
+        and isinstance(record.get("next_action"), str)
+        and record["next_action"]
+        in {
+            "CONTINUE",
+            "LOOP_OR_COMPLETE_BUDGET",
+            "EXTERNAL_OPERATOR_VALIDATION",
+        }
+        and isinstance(artifacts, dict)
+        and all(
+            key in artifacts and artifacts[key] not in (None, "", {}, [])
+            for key in required_artifacts
+        )
+        and record.get("content_sha256") == digest
+    )
+
+
+def _record_provenance_is_valid(
+    artifacts: dict[str, Any],
+    *,
+    stage: int,
+) -> bool:
+    source = artifacts.get("source_sha")
+    source_valid = (
+        isinstance(source, str)
+        and len(source) == 40
+        and all(char in "0123456789abcdef" for char in source)
+    )
+    if not source_valid:
+        return False
+    if stage == 12:
+        return not any(
+            key in artifacts
+            for key in ("image", "image_digest", "execution_mode", "workflow_job")
+        )
+    image = artifacts.get("image")
+    image_digest = artifacts.get("image_digest")
+    return bool(
+        isinstance(image, str)
+        and "@sha256:" in image
+        and isinstance(image_digest, str)
+        and len(image_digest) == 71
+        and image_digest.startswith("sha256:")
+        and all(char in "0123456789abcdef" for char in image_digest[7:])
+        and image_digest == image.split("@", 1)[1]
+        and artifacts.get("execution_mode") == "standard_npa_workflow_skypilot"
+        and isinstance(artifacts.get("workflow_job"), str)
+        and artifacts["workflow_job"].strip()
+    )
+
+
+def _validate_component_record(
+    record: dict[str, Any],
+    expected_stage: int,
+    expected_name: str,
+    expected_tier: str,
+    required_artifacts: tuple[str, ...],
+    expected_source_sha: str | None,
+) -> None:
+    if not isinstance(record, dict):
+        raise ValueError(f"Stage {expected_stage} ComponentRecord must be an object")
+    if not _record_shape_is_valid(
+        record,
+        expected_stage=expected_stage,
+        expected_name=expected_name,
+        expected_tier=expected_tier,
+        required_artifacts=required_artifacts,
+    ):
+        raise ValueError(f"Stage {expected_stage} ComponentRecord is invalid")
+    if not _record_provenance_is_valid(record["artifacts"], stage=expected_stage):
+        raise ValueError(f"Stage {expected_stage} execution provenance is invalid")
+    if (
+        expected_source_sha is not None
+        and record["artifacts"]["source_sha"] != expected_source_sha
+    ):
+        raise ValueError(f"Stage {expected_stage} source revision is stale")
+
+
+def validate_component_record(
+    record: dict[str, Any],
+    *,
+    expected_stage: int,
+    expected_name: str,
+    expected_tier: str,
+    required_artifacts: tuple[str, ...],
+    expected_source_sha: str | None = None,
+) -> None:
+    """Reject incomplete or tampered canonical ComponentRecords.
+
+    Args:
+        record: Decoded ComponentRecord read from durable storage.
+        expected_stage: Stage number selected by the pointer path.
+        expected_name: Canonical component name for that stage.
+        expected_tier: Required ``WORKS`` or ``SEAM`` tier.
+        required_artifacts: Artifact keys required from the stage producer.
+        expected_source_sha: Optional exact workflow source revision.
+    Returns:
+        None.
+    Raises:
+        ValueError: If schema, provenance, artifacts, or digest are invalid.
+    """
+    _validate_component_record(
+        record,
+        expected_stage,
+        expected_name,
+        expected_tier,
+        required_artifacts,
+        expected_source_sha,
+    )
+
+
+def _publish_record(root_uri: str, record: dict[str, Any], stage: int) -> None:
+    digest = record["content_sha256"]
+    work = Path("/tmp/npa-sim2real-component") / f"stage-{stage:02d}"
+    history = (
+        f"{root_uri.rstrip('/')}/components/history/stage_{stage:02d}/{digest}.json"
+    )
+    pointer = f"{root_uri.rstrip('/')}/components/stage_{stage:02d}.json"
+    write_json(history, record, directory=work)
+    write_json(pointer, record, directory=work)
+
+
+def _build_and_publish_record(
+    root_uri: str,
+    stage: int,
+    name: str,
+    tier: str,
+    evidence: str,
+    artifacts: dict[str, Any],
+    require_gpu: bool,
+    next_action: str,
+    execution_provenance: dict[str, Any] | None,
+) -> dict[str, Any]:
+    payload = build_component_record(
+        stage=stage,
+        name=name,
+        tier=tier,
+        evidence=evidence,
+        artifacts=artifacts,
+        require_gpu=require_gpu,
+        next_action=next_action,
+        execution_provenance=execution_provenance,
+    )
+    _publish_record(root_uri, payload, stage)
+    return payload
+
+
 def publish_component_record(
     *,
     root_uri: str,
@@ -185,44 +437,70 @@ def publish_component_record(
     next_action: str = "CONTINUE",
     execution_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if stage == 12:
-        if tier != "SEAM":
-            raise ValueError("Stage 12 must remain an explicit SEAM")
-        provenance: dict[str, Any] = {"source_sha": source_sha()}
-    else:
-        if tier != "WORKS":
-            raise ValueError(
-                f"Stage {stage} must fail closed instead of publishing {tier}"
-            )
-        provenance = dict(
-            execution_provenance or image_provenance(require_gpu=require_gpu)
-        )
-        if "@sha256:" not in str(provenance.get("image") or ""):
-            raise ValueError(
-                f"Stage {stage} execution provenance lacks an image digest"
-            )
-        if require_gpu and not provenance.get("gpu_products"):
-            raise ValueError(f"Stage {stage} execution provenance lacks GPU products")
-    payload = {
-        "schema": "npa.sim2real.component_record.v1",
-        "stage": stage,
-        "name": name,
-        "tier": tier,
-        "evidence": evidence,
-        "artifacts": {**artifacts, **provenance},
-        "next_action": next_action,
-    }
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    digest = hashlib.sha256(encoded).hexdigest()
-    payload["content_sha256"] = digest
-    work = Path("/tmp/npa-sim2real-component") / f"stage-{stage:02d}"
-    history = (
-        f"{root_uri.rstrip('/')}/components/history/stage_{stage:02d}/{digest}.json"
+    """Publish one immutable ComponentRecord history object and live pointer.
+    Args:
+        root_uri: Run-owned artifact root.
+        stage: Canonical one-based workflow stage number.
+        name: Canonical stage component name.
+        tier: ``WORKS`` except for Stage 12 ``SEAM``.
+        evidence: Human-readable factual completion evidence.
+        artifacts: Stage outputs and lineage fields.
+        require_gpu: Whether provenance must name GPU products.
+        next_action: Durable orchestration action after this stage.
+        execution_provenance: Optional already-verified task provenance.
+    Returns:
+        The published content-addressed ComponentRecord.
+    Raises:
+        ValueError or RuntimeError: If validation or provenance fails.
+    """
+    return _build_and_publish_record(
+        root_uri,
+        stage,
+        name,
+        tier,
+        evidence,
+        artifacts,
+        require_gpu,
+        next_action,
+        execution_provenance,
     )
-    pointer = f"{root_uri.rstrip('/')}/components/stage_{stage:02d}.json"
-    write_json(history, payload, directory=work)
-    write_json(pointer, payload, directory=work)
-    return payload
+
+
+def publish_built_component_record(
+    *,
+    root_uri: str,
+    record: dict[str, Any],
+    expected_stage: int,
+    expected_name: str,
+    expected_tier: str,
+    required_artifacts: tuple[str, ...],
+) -> dict[str, Any]:
+    """Publish an already-built ComponentRecord without changing its identity.
+
+    Args:
+        root_uri: Run-owned artifact root.
+        record: Stable record previously embedded in final evidence.
+        expected_stage: Stage number owned by the caller.
+        expected_name: Canonical component name owned by the caller.
+        expected_tier: Canonical publication tier owned by the caller.
+        required_artifacts: Artifact keys required from this producer.
+
+    Returns:
+        The exact published record.
+
+    Raises:
+        ValueError: If the record was changed or is incomplete.
+    """
+
+    validate_component_record(
+        record,
+        expected_stage=expected_stage,
+        expected_name=expected_name,
+        expected_tier=expected_tier,
+        required_artifacts=required_artifacts,
+    )
+    _publish_record(root_uri, record, expected_stage)
+    return record
 
 
 def publish_component_lane_record(

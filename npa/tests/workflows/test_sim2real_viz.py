@@ -1548,6 +1548,7 @@ def test_emit_mcap_primary_camera_prefers_heldout_over_rollout_mirror(
     )
 
     assert result.channel_counts[viz_module.MCAP_PRIMARY_CAMERA_TOPIC] == 2
+    assert result.heldout_frame_count == 2
 
 
 def test_pointcloud_message_packs_xyz_and_rgba() -> None:

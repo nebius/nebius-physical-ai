@@ -461,9 +461,29 @@ def test_stage11_honors_configurable_early_exit(
     expected: str,
 ) -> None:
     decisions: list[dict] = []
+    checkpoint = "s3://unit/run/checkpoint.pt"
+    identity = {
+        "checkpoint_uri": checkpoint,
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "generator_policy_sha256": "a" * 64,
+    }
+    evidence = {
+        "outer_iteration": 1,
+        "selected_checkpoint_uri": checkpoint,
+        "final_checkpoint_uri": checkpoint,
+        "checkpoint_selection": dict(identity),
+        "checkpoint_candidates": [dict(identity)],
+    }
+    report = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
+        "success_rate": success_rate,
+        "policy_checkpoint_uri": checkpoint,
+    }
     monkeypatch.setattr(
         "npa.workflows.sim2real.workflow_stage.read_json",
-        lambda *_args, **_kwargs: {"success_rate": success_rate},
+        lambda uri, **_kwargs: evidence if "/inner_loop/" in uri else report,
     )
     monkeypatch.setattr(
         "npa.workflows.sim2real.workflow_stage.write_json",
@@ -919,11 +939,17 @@ def _capture_stage14_encoders(
     def emit_rerun(**kwargs):
         captured.update(kwargs)
         kwargs["output_rrd"].write_bytes(b"rrd")
-        return Namespace(to_dict=lambda: {"frames": 1})
+        return Namespace(
+            heldout_frame_count=1,
+            to_dict=lambda: {"frames": 1, "heldout_frame_count": 1},
+        )
 
     def emit_mcap(**kwargs):
         kwargs["output_mcap"].write_bytes(b"mcap")
-        return Namespace(to_dict=lambda: {"messages": 1})
+        return Namespace(
+            heldout_frame_count=1,
+            to_dict=lambda: {"messages": 1, "heldout_frame_count": 1},
+        )
 
     monkeypatch.setattr(sim2real_viz, "emit_sim2real_rerun", emit_rerun)
     monkeypatch.setattr(sim2real_viz, "emit_sim2real_mcap", emit_mcap)
@@ -946,7 +972,7 @@ def _patch_stage14_io(
     monkeypatch.setattr(stage14_finalize, "write_json", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         stage14_finalize,
-        "publish_component_record",
+        "publish_built_component_record",
         lambda **_kwargs: {"stage": 14, "tier": "WORKS"},
     )
     monkeypatch.setattr(
@@ -979,6 +1005,7 @@ def _selected_checkpoint_evidence(
         "generator_policy_sha256": checkpoint_sha256,
     }
     return {
+        "outer_iteration": 1,
         "iterations": [],
         "selected_checkpoint_uri": checkpoint_uri,
         "final_checkpoint_uri": checkpoint_uri,
@@ -1007,6 +1034,7 @@ def _learned_actor_report(
     if include_generator:
         provenance["generator_policy_sha256"] = checkpoint_sha256
     return {
+        "deployable_policy_eval": True,
         "policy_checkpoint_sha256": checkpoint_sha256,
         "policy_checkpoint_size_bytes": 128,
         "policy_inference_provenance": provenance,
@@ -1014,8 +1042,8 @@ def _learned_actor_report(
 
 
 def _stage14_policy_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-    work: Path,
+    _monkeypatch: pytest.MonkeyPatch,
+    _work: Path,
     provenance: object | None,
     *,
     selected_sha256: str = "a" * 64,
@@ -1029,11 +1057,19 @@ def _stage14_policy_metadata(
     }
     if provenance is not None:
         gold["policy_inference_provenance"] = provenance
-    stage14_finalize = _patch_stage14_io(monkeypatch, evidence, gold)
-    captured = _capture_stage14_encoders(monkeypatch)
-    args = Namespace(run_id="run", outer_iteration=1)
-    stage14_finalize.finalize_in_work(args, root=root, work=work)
-    return captured["run_metadata"], captured["heldout_report"]
+    from npa.workflows.sim2real.stage14_finalize import (
+        _stage14_policy_metadata as build_policy_metadata,
+    )
+
+    metadata, _selection, _candidate = build_policy_metadata(
+        evidence,
+        {
+            "decision": "promote_checkpoint",
+            "checkpoint_uri": selected_checkpoint,
+        },
+        gold,
+    )
+    return metadata, gold
 
 
 def test_stage14_rejects_promote_decision_without_checkpoint_uri() -> None:
@@ -1340,10 +1376,15 @@ def test_stage10_seals_report_split_and_outer_iteration(
     checkpoint_uri = f"{root}/checkpoints/model.pt"
     evidence = _selected_checkpoint_evidence(checkpoint_uri, "a" * 64)
     report = _learned_actor_report(checkpoint_uri, "a" * 64)
+    from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+
+    render_job = k8s_job_name(
+        "s2r-byo-isaac-eval",
+        "run",
+        artifact_tag("gold-o01"),
+    )
     report["render_manifest"] = {
-        "renders_s3_uri": (
-            f"{root}/component-io/heldout-eval/gold_heldout-outer-01/output/renders/"
-        ),
+        "renders_s3_uri": f"{root}/byo-eval/{render_job}/renders/",
         "episodes": [{"env_id": "gold-0001", "frames": ["camera-000.png"]}],
     }
     written: dict[str, object] = {}
@@ -1443,7 +1484,10 @@ def test_stage10_checks_checkpoint_identity_before_gold_artifact_processing(
 ) -> None:
     from npa.workflows.sim2real import workflow_stage
 
-    evidence = {"selected_checkpoint_uri": "s3://unit/run/checkpoints/model.pt"}
+    evidence = _selected_checkpoint_evidence(
+        "s3://unit/run/checkpoints/model.pt",
+        "a" * 64,
+    )
     report = {"evaluation_split": "gold_heldout"}
     identity_checks: list[tuple[dict, dict]] = []
 
@@ -1494,6 +1538,7 @@ def test_stage14_selects_only_consumed_artifacts_and_cleans_workspace(
 ) -> None:
     root = "s3://unit/runs/finalize"
     evidence = {
+        "outer_iteration": 1,
         "iterations": [
             {
                 "iteration": 1,
@@ -1501,7 +1546,7 @@ def test_stage14_selects_only_consumed_artifacts_and_cleans_workspace(
                 "vlm_eval_uri": f"{root}/vlm_eval/train/outer-01/iter-01/evaluations/",
                 "signal_uri": f"{root}/vlm_eval/train/outer-01/iter-01/signals/",
             }
-        ]
+        ],
     }
     gold = {
         "evaluation_split": "gold_heldout",
