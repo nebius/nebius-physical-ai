@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
 from pathlib import Path
 
 import httpx
@@ -26,7 +27,7 @@ def test_deployed_provision_rejects_malformed_booleans():
     with httpx.Client(
         base_url=config["base_url"],
         auth=(config["username"], config["password"]),
-        verify=False,
+        verify=ssl.create_default_context(cafile=config.get("ca_bundle")),
     ) as client:
         assert client.get("health").json()["ok"] is True
         for route in ("infra/provision", "infra/k8s/provision", "infra/mk8s/provision"):
