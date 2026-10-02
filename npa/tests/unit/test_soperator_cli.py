@@ -2885,6 +2885,30 @@ def test_json_mode_terraform_runner_captures_child_output(
     assert seen["check"] is False
 
 
+def test_json_mode_terraform_error_survives_long_progress_output(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda *args, **kwargs: _Done(
+            returncode=1,
+            stdout="normal Terraform progress\n" * 50,
+            stderr="Error: could not download chart: missing cached repository\n",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="missing cached repository"):
+        lifecycle._run_terraform_command(
+            ["terraform", "apply"],
+            cwd=tmp_path,
+            env={},
+            timeout=42,
+            stream_output=False,
+        )
+
+
 def test_superseded_activechecks_upgrade_aborts_only_old_hook(monkeypatch) -> None:
     from npa.soperator import lifecycle
 
@@ -3442,7 +3466,8 @@ def test_patch_nodeconfigurator_allows_enroot_userns_and_is_idempotent(
     assert "sysctl -w kernel.apparmor_restrict_unprivileged_userns=0" in patched
     assert '[ "${apparmor_enabled}" = "false" ]' in patched
     assert "sysctl -w net.core.rmem_max=536870912" in patched
-    assert patched.index("initContainers:") < patched.index("resources: {}")
+    assert "name: terraform-nodeconfigurator" in patched
+    assert patched.index("initContainers:") > patched.index("resources: {}")
 
     assert lifecycle._patch_nodeconfigurator_userns(tmp_path) is False
     assert template.read_text() == patched

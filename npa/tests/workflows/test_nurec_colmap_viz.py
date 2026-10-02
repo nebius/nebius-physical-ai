@@ -91,7 +91,7 @@ def test_legacy_fetch_with_rig_sidecar_retains_its_capture_summary(colmap_run):
 
 
 def test_rrd_decodes_actual_lineage_documents_and_image_rows(colmap_run, tmp_path):
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     out = tmp_path / "sim2real.rrd"
     viz.build_run_rrd(str(colmap_run), str(out), app_id="neural-reconstruction")

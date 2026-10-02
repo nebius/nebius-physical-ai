@@ -138,6 +138,49 @@ def test_shared_production_loop_observes_through_serverless_adapter() -> None:
     assert adapter.observe_calls == 1
 
 
+def test_shared_serverless_success_rejects_changed_source_identity() -> None:
+    client = FakeServerlessClient()
+    client.jobs["provider-1"] = JobInfo(
+        id="provider-1",
+        name="serverless-run",
+        project_id="project-role",
+        status="succeeded",
+    )
+    adapter = CountingServerlessAdapter(
+        ServerlessRecoverySpec(project_id="project-role"),
+        client=client,
+    )
+    identity = AttemptIdentity(
+        runtime="serverless",
+        run_id="serverless-run",
+        attempt=1,
+        logical_attempt_id="serverless-run:1",
+        provider_job_id="provider-1",
+        provider_job_name="serverless-run",
+        workflow_sha256="w" * 64,
+        source_sha256="old-source",
+        image_digest="i" * 64,
+    )
+
+    with pytest.raises(ServerlessSupervisionError, match="IMMUTABLE_IDENTITY_MISMATCH"):
+        supervise_serverless_job(
+            adapter=adapter,
+            ledger=SupervisorLedger(MemoryStore()),
+            identity=identity,
+            config=ServerlessSupervisionConfig(
+                expected_workflow_sha256="w" * 64,
+                expected_source_sha256="new-source",
+                expected_image_digest="i" * 64,
+                declared_outputs=("s3://unit-bucket/result/summary.json",),
+            ),
+            output_checker=lambda _uri: True,
+            sleeper=lambda _seconds: None,
+        )
+
+    assert adapter.observe_calls == 1
+    assert list(client.jobs) == ["provider-1"]
+
+
 def test_shared_serverless_loop_exhausts_persistent_capacity_recovery() -> None:
     client = FakeServerlessClient()
     client.jobs["provider-1"] = JobInfo(

@@ -118,8 +118,10 @@ finish source staging before starting that API.
 - The standard Kubernetes template derives the provider namespace from the
   selected kubeconfig context. In 0.12.2, native pod creation overwrites
   `pod_config.metadata.namespace` with that provider namespace. Before using
-  existing PVCs or Secrets, configure a workload-specific context with their
-  namespace and verify the resulting pod namespace after submission.
+  existing PVCs or Secrets, use `npa workbench namespace context` to prepare a
+  private workload context and SkyPilot config, following
+  `docs/workbench/namespaces.md`. Preserve its isolated runtime environment for
+  submit/status/cancel, and verify the actual pod namespace after submission.
 
 ## What the Renderer Emits
 

@@ -318,6 +318,14 @@ def kubernetes_sky_environment(
             user_id=validation_user_id,
         ):
             raise
+        # Recovery archives the client configuration along with the stale API.
+        # Recreate the same verified bytes before starting its replacement.
+        with open(
+            config_path, "xb", opener=lambda path, flags: os.open(path, flags, 0o600)
+        ) as handle:
+            handle.write(config_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
         return start_validation_api()
 
 
@@ -438,12 +446,9 @@ class KubernetesGpuInventory:
     nodes: tuple[KubernetesGpuNode, ...] = ()
     unbound_pending_gpu_pods: int = 0
     unbound_pending_gpu_requests: int = 0
-    # One (accelerator-product-selector, gpu_count) entry per unbound pending GPU
-    # pod. An empty product means the pod pins no accelerator and could land on
-    # any GPU node. Used to scope contention to the requested accelerator instead
-    # of blocking on unrelated pending demand (e.g. a stale L40S pod versus a
-    # B200 gang).
-    unbound_pending_gpu_selectors: tuple[tuple[str, int], ...] = ()
+    # Keep Kubernetes label keys: marketing-name aliases do not establish
+    # whether a pending pod can bind a particular candidate node.
+    unbound_pending_gpu_selectors: tuple[tuple[dict[str, str], int], ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         product = (
@@ -672,7 +677,7 @@ def discover_kubernetes_gpu_inventory(
         committed_by_node: dict[str, tuple[int, int, int, int, int]] = {}
         unbound_pending_gpu_pods = 0
         unbound_pending_gpu_requests = 0
-        unbound_pending_gpu_selectors: list[tuple[str, int]] = []
+        unbound_pending_gpu_selectors: list[tuple[dict[str, str], int]] = []
         for pod in pod_payload.get("items", []):
             node_name, gpu, cpu, memory, pod_slots, storage = _pod_commitment(pod)
             if node_name:
@@ -692,15 +697,12 @@ def discover_kubernetes_gpu_inventory(
                 unbound_pending_gpu_pods += 1
                 unbound_pending_gpu_requests += gpu
                 selector = (pod.get("spec") or {}).get("nodeSelector") or {}
-                product = ""
-                if isinstance(selector, dict):
-                    product = str(
-                        selector.get("nvidia.com/gpu.product")
-                        or selector.get("skypilot.co/accelerator")
-                        or selector.get("nebius.com/gpu-name")
-                        or ""
-                    )
-                unbound_pending_gpu_selectors.append((product, gpu))
+                if not isinstance(selector, dict) or not all(
+                    isinstance(key, str) and isinstance(value, str)
+                    for key, value in selector.items()
+                ):
+                    selector = {}
+                unbound_pending_gpu_selectors.append((dict(selector), gpu))
     except (OSError, ValueError, subprocess.SubprocessError, KubernetesGpuCatalogError):
         return KubernetesGpuInventory(
             context,
@@ -1028,6 +1030,34 @@ def _compatible_gang_nodes(inventory: KubernetesGpuInventory, shape: _GangRequir
     ]
 
 
+def _pending_gpu_contention(inventory, candidates) -> tuple[int, int]:
+    """Exclude demand only when exact node selectors prove non-contention."""
+    selectors = inventory.unbound_pending_gpu_selectors
+    if (
+        len(selectors) != inventory.unbound_pending_gpu_pods
+        or sum(count for _, count in selectors)
+        != inventory.unbound_pending_gpu_requests
+    ):
+        return (
+            inventory.unbound_pending_gpu_pods,
+            inventory.unbound_pending_gpu_requests,
+        )
+    contending = [
+        count
+        for selector, count in selectors
+        if not selector
+        or not isinstance(selector, Mapping)
+        or any(
+            not node.labels
+            or all(
+                dict(node.labels).get(key) == value for key, value in selector.items()
+            )
+            for node in candidates
+        )
+    ]
+    return len(contending), sum(contending)
+
+
 def _require_free_gang(inventory, shape, compatible_nodes, candidates):
     if len(candidates) < shape.nodes:
         error = (
@@ -1048,29 +1078,7 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
             "aggregate capacity on one node cannot satisfy multiple gang ranks."
         )
     if inventory.unbound_pending_gpu_pods:
-        # Only pending GPU pods that could actually land on a node compatible
-        # with this gang's accelerator make free capacity indeterminate. A pod
-        # that pins a different, non-alias accelerator (e.g. a stale L40S pod
-        # versus a B200 gang) can never bind to the requested nodes, so it must
-        # not block an otherwise-satisfiable request on a shared cluster. A pod
-        # that pins no accelerator could land anywhere and still counts.
-        selectors = inventory.unbound_pending_gpu_selectors
-        if selectors:
-            wanted = _normalize(shape.accelerator.name)
-            aliases = next(
-                (group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group),
-                frozenset({wanted}),
-            )
-            contending = [
-                (product, count)
-                for product, count in selectors
-                if not _normalize(product) or _normalize(product) in aliases
-            ]
-            pending_pods = len(contending)
-            pending_requests = sum(count for _, count in contending)
-        else:
-            pending_pods = inventory.unbound_pending_gpu_pods
-            pending_requests = inventory.unbound_pending_gpu_requests
+        pending_pods, pending_requests = _pending_gpu_contention(inventory, candidates)
         if pending_pods:
             raise PendingGpuPlacementError(
                 "free shared GPU capacity is indeterminate: Kubernetes has "
@@ -1303,8 +1311,8 @@ def discover_kubernetes_gpu_catalog(
 
 
 _KNOWN_SKYPILOT_LABELS = {
-    "b200": "B200",
-    "nvidiab200": "B200",
+    "b200": "b200",
+    "nvidiab200": "b200",
     "rtx6000": "rtxpro6000",
     "rtxpro6000": "rtxpro6000",
     "rtxpro6000blackwellserveredition": "rtxpro6000",
@@ -1575,11 +1583,47 @@ def wait_for_kubernetes_accelerators(
         sleeper(min(poll_interval, remaining))
 
 
+def accelerator_spec(value: object) -> str:
+    """Return one concrete accelerator request for Kubernetes preflight.
+
+    Args:
+        value: A string request or a resolved single-entry accelerator mapping.
+
+    Returns:
+        A concrete accelerator request, or an empty string when absent.
+
+    Raises:
+        ValueError: The mapping contains alternatives rather than one request.
+    """
+
+    if not isinstance(value, Mapping):
+        return str(value or "").strip()
+    if not value:
+        return ""
+    if len(value) != 1:
+        raise ValueError(
+            "Kubernetes submit requires one concrete accelerator; multi-key "
+            "accelerator mappings are SkyPilot alternatives and cannot be "
+            "preflighted before SkyPilot selects one"
+        )
+    name, count = next(iter(value.items()))
+    return f"{str(name).strip()}:{count}"
+
+
 def spec_accelerators(resources: object) -> list[str]:
     """Return the distinct Kubernetes accelerator specs declared by a spec's profiles.
 
     Only ``cloud: kubernetes`` profiles are considered; Nebius VM profiles are
     validated against the VM catalog instead.
+
+    Args:
+        resources: Workflow resource profiles, after resolving configuration.
+
+    Returns:
+        Distinct requests with each declared accelerator quantity preserved.
+
+    Raises:
+        ValueError: A Kubernetes profile declares unselected alternatives.
     """
 
     found: list[str] = []
@@ -1591,7 +1635,7 @@ def spec_accelerators(resources: object) -> list[str]:
         cloud = str(profile.get("cloud") or "").strip().casefold()
         if cloud not in {"kubernetes", "k8s"}:
             continue
-        accelerator = str(profile.get("accelerators") or "").strip()
+        accelerator = accelerator_spec(profile.get("accelerators"))
         if accelerator and accelerator not in found:
             found.append(accelerator)
     return found

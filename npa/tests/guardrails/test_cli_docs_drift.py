@@ -35,6 +35,43 @@ SCAN_ROOTS = (
 ALLOWLIST: dict[tuple[str, ...], str] = {
     # Positional arguments (spec paths, spec names, tool names, file names)
     # that the extractor reads as subcommand tokens.
+    (
+        "workbench",
+        "workflow",
+        "demo",
+        "run",
+        "real-to-sim",
+    ): "positional public demo name",
+    (
+        "workbench",
+        "workflow",
+        "demo",
+        "run",
+        "synthetic-data",
+    ): "positional public demo name",
+    (
+        "workbench",
+        "workflow",
+        "demo",
+        "run",
+        "rl-improvement",
+    ): "positional public demo name",
+    ("workbench", "workflow", "demo", "run", "nurec"): "positional public demo name",
+    (
+        "workbench",
+        "workflow",
+        "demo",
+        "view",
+        "real-to-sim",
+    ): "positional public demo name",
+    (
+        "workbench",
+        "workflow",
+        "demo",
+        "view",
+        "synthetic-data",
+    ): "positional public demo name",
+    ("workbench", "workflow", "demo", "view", "nurec"): "positional public demo name",
     ("workbench", "workflow", "submit", "workflows"): "positional spec-path arg",
     ("workbench", "workflow", "validate-spec", "workflows"): "positional spec-path arg",
     ("workbench", "workflow", "plan-spec", "workflows"): "positional spec-path arg",
@@ -113,6 +150,14 @@ ALLOWLIST: dict[tuple[str, ...], str] = {
         "retargeting",
         "workflow",
     ): "stale command; #520 tracks fixing the docs",
+    # Design-doc proposals: commands that do not exist yet, proposed in a
+    # design doc and tracked by their issue. Remove the entry when the
+    # command lands.
+    (
+        "workbench",
+        "token-factory",
+        "issue-key",
+    ): "proposed Phase 2 command in docs/workbench/identity-rbac-audit.md; #524",
 }
 
 

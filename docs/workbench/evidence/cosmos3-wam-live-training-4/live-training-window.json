@@ -1,0 +1,17 @@
+{
+  "window_start_utc": "2026-09-29T18:04:11+00:00",
+  "window_end_exclusive_utc": "2026-09-29T18:05:11+00:00",
+  "selection": "Fixed 60 seconds beginning at the first process-attributed snapshot, with timestamp rounded down to a second; all recorded devices and samples retained",
+  "device_samples": 480,
+  "samples_per_device": {
+    "0": 60,
+    "1": 60,
+    "2": 60,
+    "3": 60,
+    "4": 60,
+    "5": 60,
+    "6": 60,
+    "7": 60
+  },
+  "sha256": "c7dd0488ce5ce2c51bbff0214e7671c5e5ad8fe7c9d741fd5b2d319948bc84d6"
+}

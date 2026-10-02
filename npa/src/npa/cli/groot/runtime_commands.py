@@ -16,8 +16,8 @@ def build_status_result(
 ) -> dict[str, Any]:
     """Build the public GR00T health/readiness response from server facts."""
 
-    loaded = bool(data.get("loaded"))
-    ngc_ok = bool(data.get("ngc_credentials_configured"))
+    loaded = data.get("loaded") is True
+    ngc_ok = data.get("ngc_credentials_configured") is True
     # A model that is actually loaded and serving is ready. NGC and HF
     # credentials only matter for downloading future checkpoints.
     readiness: dict[str, Any] = {
@@ -50,10 +50,10 @@ def build_status_result(
                 "NGC credentials not configured - only needed for NGC-hosted checkpoints"
             )
     result: dict[str, Any] = {
+        **data,
         "endpoint": endpoint_url,
         "app_status": "healthy" if loaded else "degraded",
         "server": "up",
-        **data,
         "readiness": readiness,
     }
     if not loaded:

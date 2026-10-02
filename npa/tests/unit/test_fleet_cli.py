@@ -144,6 +144,142 @@ def test_single_gpu_preset_auto_disables_gpu_cluster() -> None:
     assert cluster.resolved_enable_gpu_cluster() is False
 
 
+@pytest.mark.parametrize("invalid_value", ["false", "true", 0, 1, None, [], {}])
+@pytest.mark.parametrize(
+    "field_path",
+    [
+        ("defaults", "cpu_nodes", "preemptible"),
+        ("defaults", "gpu_nodes", "preemptible"),
+        ("defaults", "enable_gpu_cluster"),
+        ("defaults", "enable_filestore"),
+        ("defaults", "allow_unsafe_nvswitch_operator"),
+        ("defaults", "gpu_cuda_smoke"),
+        ("projects", 0, "clusters", 0, "cpu_nodes", "preemptible"),
+        ("projects", 0, "clusters", 0, "gpu_nodes", "preemptible"),
+        ("projects", 0, "clusters", 0, "enable_gpu_cluster"),
+        ("projects", 0, "clusters", 0, "enable_filestore"),
+        ("projects", 0, "clusters", 0, "allow_unsafe_nvswitch_operator"),
+        ("projects", 0, "clusters", 0, "gpu_cuda_smoke"),
+        ("projects", 0, "object_storage", "enabled"),
+    ],
+)
+def test_fleet_boolean_fields_validate_declared_types(
+    field_path: tuple[str | int, ...], invalid_value: object
+) -> None:
+    data = _base_mapping()
+    data["projects"][0]["object_storage"] = {"size_gibibytes": 1}
+    data["projects"][0]["clusters"] = [{"cpu_nodes": {}, "gpu_nodes": {}}]
+    target = data
+    for key in field_path[:-1]:
+        target = target[key]
+    target[field_path[-1]] = invalid_value
+
+    if invalid_value is None and field_path[-1] == "enable_gpu_cluster":
+        cluster = spec_from_mapping(data).projects[0].clusters[0]
+        assert cluster.enable_gpu_cluster is None
+        return
+    with pytest.raises(FleetSpecError, match="must be a boolean"):
+        spec_from_mapping(data)
+
+
+@pytest.mark.parametrize(
+    "inherited,platform,preset,expected",
+    [
+        (True, "gpu-rtx6000", "1gpu-24vcpu-218gb", False),
+        (False, "gpu-h200-sxm", "8gpu-128vcpu-1600gb", True),
+    ],
+)
+@pytest.mark.parametrize("null_location", ["defaults", "cluster"])
+def test_fleet_plan_preserves_null_gpu_cluster_auto_selection(
+    tmp_path: Path,
+    inherited: bool,
+    platform: str,
+    preset: str,
+    expected: bool,
+    null_location: str,
+) -> None:
+    data = _base_mapping()
+    data["defaults"].update(
+        enable_gpu_cluster=inherited,
+        gpu_nodes={"count": 1, "platform": platform, "preset": preset},
+        infiniband_fabric="fabric-a",
+    )
+    data["projects"] = [{"name": "a", "clusters": [{"name": "automatic"}]}]
+    target = data["defaults"]
+    if null_location == "cluster":
+        target = data["projects"][0]["clusters"][0]
+    target["enable_gpu_cluster"] = None
+    path = tmp_path / "fleet.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["fleet", "plan", "--spec", str(path), "--output", "json"]
+    )
+    assert result.exit_code == 0, result.output
+    assert (
+        json.loads(result.output)["projects"][0]["clusters"][0]["enable_gpu_cluster"]
+        is expected
+    )
+    cluster = load_spec(path).projects[0].clusters[0]
+    assert cluster.enable_gpu_cluster is None
+    assert f"enable_gpu_cluster = {str(expected).lower()}" in render_tfvars(cluster)
+
+
+def test_fleet_boolean_fields_preserve_merged_boolean_values() -> None:
+    data = _base_mapping()
+    data["defaults"].update(
+        {
+            "cpu_nodes": {**data["defaults"]["cpu_nodes"], "preemptible": True},
+            "gpu_nodes": {
+                **data["defaults"]["gpu_nodes"],
+                "platform": "gpu-h200-sxm",
+                "preset": "8gpu-128vcpu-1600gb",
+                "preemptible": False,
+            },
+            "enable_gpu_cluster": True,
+            "infiniband_fabric": "fabric-a",
+            "enable_filestore": True,
+            "allow_unsafe_nvswitch_operator": True,
+            "gpu_cuda_smoke": False,
+        }
+    )
+    data["projects"] = [
+        {
+            "name": "a",
+            "object_storage": {"enabled": False},
+            "clusters": [
+                {"name": "default"},
+                {
+                    "name": "overridden",
+                    "cpu_nodes": {"preemptible": False},
+                    "gpu_nodes": {"preemptible": True},
+                    "enable_gpu_cluster": False,
+                    "enable_filestore": False,
+                    "allow_unsafe_nvswitch_operator": False,
+                    "gpu_cuda_smoke": True,
+                },
+            ],
+        }
+    ]
+
+    spec = spec_from_mapping(data)
+    spec.validate()
+    inherited, overridden = spec.projects[0].clusters
+    assert inherited.cpu_nodes.preemptible is True
+    assert inherited.gpu_nodes.preemptible is False
+    assert inherited.enable_gpu_cluster is True
+    assert inherited.enable_filestore is True
+    assert inherited.allow_unsafe_nvswitch_operator is True
+    assert inherited.gpu_cuda_smoke is False
+    assert overridden.cpu_nodes.preemptible is False
+    assert overridden.gpu_nodes.preemptible is True
+    assert overridden.enable_gpu_cluster is False
+    assert overridden.enable_filestore is False
+    assert overridden.allow_unsafe_nvswitch_operator is False
+    assert overridden.gpu_cuda_smoke is True
+    assert spec.projects[0].object_storage.enabled is False
+
+
 def test_rtx_8gpu_preset_auto_disables_gpu_cluster() -> None:
     cluster = ClusterSpec(
         name="rtx",
@@ -1746,10 +1882,13 @@ def _mock_deploy_boundary(monkeypatch, *, apply_fails: bool = False):
     from npa.fleet import lifecycle as L
 
     def fake_prepare(install_dir, **k):
-        install_dir.mkdir(parents=True, exist_ok=True)
-        return install_dir / "k8s-training"
+        workdir = install_dir / "k8s-training"
+        workdir.mkdir(parents=True, exist_ok=True)
+        (workdir / "provider.tf").write_text('provider "nebius" {}\n')
+        return workdir
 
     monkeypatch.setattr(L, "_prepare_install_dir", fake_prepare)
+    monkeypatch.setattr(L, "_run_capture", lambda *a, **k: _Cap("", 0))
     monkeypatch.setattr(L, "_cluster_tf_env", lambda *a, **k: {})
 
     def fake_stream(*a, **k):
@@ -1795,6 +1934,28 @@ def _run_one_cluster(L, tmp_path, *, profile: str = "", cluster=None):
         timeout_minutes=1,
         on_status=None,
     )
+
+
+def test_apply_provider_defaults_use_same_budget_as_outer_deadline(
+    tmp_path, monkeypatch
+):
+    L = _mock_deploy_boundary(monkeypatch)
+    calls = []
+    monkeypatch.setattr(
+        L, "_run_stream", lambda args, **kwargs: calls.append((args, kwargs))
+    )
+    result = _run_one_cluster(L, tmp_path)
+    assert result["status"] == "deployed"
+    apply = [kwargs for args, kwargs in calls if "apply" in args]
+    assert len(apply) == 1
+    assert apply[0]["timeout"] == 60
+    sidecar = json.loads((tmp_path / "a/c" / L._ENV_SIDECAR).read_text())
+    assert sidecar["provider_rpc_deadlines"]["apply_timeout_minutes"] == 1
+    assert sidecar["provider_rpc_deadlines"]["inserted_defaults"] == {
+        "timeout": "1m",
+        "per_retry_timeout": "1m",
+        "auth_timeout": "1m",
+    }
 
 
 def test_deploy_one_cluster_success_promotes_sidecar(tmp_path, monkeypatch) -> None:
@@ -3500,6 +3661,7 @@ def _patch_infra_free_subprocess_boundaries(tmp_path: Path, monkeypatch):
     recipe = tmp_path / "recipe"
     (recipe / "k8s-training").mkdir(parents=True)
     (recipe / "modules").mkdir()
+    (recipe / "k8s-training/provider.tf").write_text('provider "nebius" {}\n')
     work_root = tmp_path / "work"
 
     monkeypatch.setenv("NPA_TERRAFORM_BIN", str(terraform))
@@ -5663,3 +5825,111 @@ def test_spec_rejects_quota_inputs_that_cannot_be_counted() -> None:
         ClusterSpec(
             name="c", gpu_nodes=NodePoolSpec(count=1, platform="gpu-h200", preset="bad")
         ).validate()
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("deployed", {"deployed": 1, "unresolved": 0, "failed": 0}),
+        ("running", {"deployed": 1, "unresolved": 0, "failed": 0}),
+        ("provisioning", {"deployed": 0, "unresolved": 1, "failed": 0}),
+        ("reconciling", {"deployed": 0, "unresolved": 1, "failed": 0}),
+        ("destroyed", {"deployed": 0, "unresolved": 0, "failed": 0}),
+        ("absent", {"deployed": 0, "unresolved": 0, "failed": 0}),
+        ("error", {"deployed": 0, "unresolved": 0, "failed": 1}),
+        ("status-error", {"deployed": 0, "unresolved": 0, "failed": 1}),
+        ("unexpected", {"deployed": 0, "unresolved": 0, "failed": 1}),
+        (None, {"deployed": 0, "unresolved": 0, "failed": 1}),
+    ],
+)
+def test_fleet_recount_distinguishes_transitional_status(status, expected) -> None:
+    from npa.fleet.lifecycle import _recount
+
+    assert _recount([{"status": status}]) == expected
+
+
+def test_deploy_unresolved_status_remains_nonzero(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "deploy_fleet",
+        lambda spec, **kwargs: {
+            "name": spec.name,
+            "region": spec.region,
+            "tenant_id": spec.tenant_id,
+            "deployed": 0,
+            "unresolved": 1,
+            "failed": 0,
+            "clusters": [
+                {
+                    "project_key": "a",
+                    "cluster_name": "cluster",
+                    "status": "provisioning",
+                }
+            ],
+        },
+    )
+
+    result = runner.invoke(
+        app, ["fleet", "deploy", "--spec", str(_spec_file(tmp_path)), "--yes"]
+    )
+
+    assert result.exit_code == 1
+    assert "0 deployed, 1 unresolved, 0 failed" in result.output
+    assert "[wait]" in result.output
+
+
+def test_destroy_unresolved_status_remains_nonzero(tmp_path, monkeypatch) -> None:
+    import npa.fleet.lifecycle as lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "destroy_fleet",
+        lambda spec, **kwargs: {
+            "name": spec.name,
+            "unresolved": 1,
+            "failed": 0,
+            "clusters": [
+                {
+                    "project_key": "a",
+                    "cluster_name": "cluster",
+                    "status": "reconciling",
+                }
+            ],
+            "networks": [],
+        },
+    )
+
+    result = runner.invoke(
+        app, ["fleet", "destroy", "--spec", str(_spec_file(tmp_path)), "--yes"]
+    )
+
+    assert result.exit_code == 1
+    assert "teardown is incomplete" in result.output
+
+
+def test_provider_advisory_is_saved_and_original_apply_still_runs(
+    tmp_path, monkeypatch
+):
+    L = _mock_deploy_boundary(monkeypatch)
+    prepare = L._prepare_install_dir
+
+    def unsupported(*args, **kwargs):
+        workdir = prepare(*args, **kwargs)
+        (workdir / "provider.tf").write_text(
+            'provider /* upstream comment */ "nebius" {}'
+        )
+        return workdir
+
+    monkeypatch.setattr(L, "_prepare_install_dir", unsupported)
+    calls = []
+    monkeypatch.setattr(L, "_run_stream", lambda args, **kwargs: calls.append(args))
+    assert _run_one_cluster(L, tmp_path)["status"] == "deployed"
+    assert len([args for args in calls if "apply" in args]) == 1
+    saved = json.loads((tmp_path / "a/c" / L._ENV_SIDECAR).read_text())
+    assert saved["provider_rpc_deadlines"]["status"] == "advisory"
+    assert saved["provider_rpc_deadlines"]["reason_code"] == "unsupported_recipe_shape"
+    assert (
+        tmp_path / "a/c/k8s-training/provider.tf"
+    ).read_text() == 'provider /* upstream comment */ "nebius" {}'

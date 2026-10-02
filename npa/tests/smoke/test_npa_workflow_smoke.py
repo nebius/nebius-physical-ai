@@ -27,6 +27,10 @@ def _spec(name: str) -> Path:
         "av-night-scene-hardening.yaml",
         "cosmos-synth-fanout-curation.yaml",
         "physical-ai-data-factory.yaml",
+        "nvidia-paidf-vda-cosmos-transfer25.yaml",
+        "paidf-defect-image-generation.yaml",
+        "paidf-image-attribute-augmentation.yaml",
+        "paidf-event-video-generation.yaml",
         "lerobot-transfer.yaml",
     ],
 )

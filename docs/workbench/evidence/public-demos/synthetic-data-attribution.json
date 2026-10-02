@@ -1,0 +1,40 @@
+{
+  "source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+  "creator": "NVIDIA",
+  "source": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.0/Isaac/Environments/Simple_Warehouse/full_warehouse.usd",
+  "license_reference": "https://docs.isaacsim.omniverse.nvidia.com/6.0.0/common/licenses.html",
+  "captured_input_manifest_sha256": "5719c073fd37e43b6a618ce935fd0c2cae3e675680cc6fe05f0656f2545518f4",
+  "public_reference_metadata_sha256": "96d31d0c1ec468a538662f3fba3c5c5f6f2f5f96bc08479d411fa946ddbe0432",
+  "capture_manifest_binds_exact_input_manifest": true,
+  "all_prepared_input_file_hashes_verified": true,
+  "prepared_input_files_verified": 2034,
+  "source_mapping_entries": 2033,
+  "camera_ids": [
+    "front",
+    "left",
+    "rear",
+    "right"
+  ],
+  "camera_resolution": [
+    [
+      1280,
+      720
+    ],
+    [
+      1280,
+      720
+    ],
+    [
+      1280,
+      720
+    ],
+    [
+      1280,
+      720
+    ]
+  ],
+  "poses": 265,
+  "measured_route_distance_m": 66.0,
+  "sample_spacing_m": 0.25,
+  "scope": "Sensor-only rig along a supplied route; synchronized RGB, metric axial depth, and depth-derived colorized world-frame points. Autonomous navigation and collision-free travel are not established."
+}

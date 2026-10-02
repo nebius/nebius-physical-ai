@@ -1,0 +1,29 @@
+{
+  "schema": "npa.robot_sdg.live_validation.v1",
+  "scope": "Real hosted Token Factory inference, local MuJoCo simulation/rendering, LeRobot 0.5.1 loading and training batch, simulator action replay, and failed-grasp negative control. No robot policy optimization, physical robot operation, or remote Kubernetes/S3 execution.",
+  "live_tests": {
+    "passed": 2,
+    "failed": 0,
+    "elapsed_seconds": 83.21
+  },
+  "source_sha256": {
+    "npa/src/npa/workbench/token_factory/robot_scene.py": "9f849659a4ee860042f3e9f7ab009982c75383b5d65c8b73cfe6a07306b04ce8",
+    "npa/src/npa/workbench/token_factory/robot_sim.py": "b3f32928b34c526aaef21676577a879f6479c18c8491fc6f09bc18bae1fa8232",
+    "npa/src/npa/workbench/token_factory/robot_sdg.py": "1f7b3e3bb3012102f5d616dd09b71e90f25571fe8d10c48de99dae2f1937f068",
+    "npa/src/npa/workbench/token_factory/robot_artifacts.py": "52e0be834505e23c9339fee3ca56140f5d234af473636aeb11d3055c0a797ce6",
+    "npa/src/npa/adapter/sim_to_lerobot.py": "612cf52596e480ddc982441bd8951d24fc34818795c19239aaa7e0bb9a1cd07a",
+    "npa/scripts/validate_robot_sdg_lerobot.py": "a59cb25be97d352eef0dda554bd2486f8cc8db2b5e548ac2930ae19cee06ca60",
+    "npa/tests/e2e/test_token_factory_robot_sdg_live.py": "52938b5b9773c34dc6cfb6fddecb747620b56941ab33d913b4d9c429b4752de0"
+  },
+  "preview_source": "episodes/episode_0000/preview.mp4",
+  "preview_sha256": "31b5f59117f3efc9afda40e93871fa8345dd93871cf9e1569bce191293d7f74a",
+  "preview_transform": "none; identical bytes to recorded synchronized two-camera preview",
+  "development_findings": [
+    "Native LeRobot initially read numeric task labels from the shared adapter; fixed Parquet index metadata and verified language labels through the upstream reader.",
+    "The first action replay differed because per-frame render callbacks invoked mj_forward. Moved scene initialization before rollout; final replay matched all 185 pre/post joint states exactly."
+  ],
+  "routing_evaluation": "Six development scenarios, three explicit scene extraction and three spatial planning; not a held-out routing-quality benchmark.",
+  "cache_scope": "Provider-reported prompt-cache counters in a warm development workload; no application response cache or GPU memory inspection.",
+  "native_validator_live_test_sha256": "bcd617960dc2dfcf0390fc98d14e87045dfe3987a13783ffb7daa5955959f247",
+  "native_validator_followup": "Extracted the video-decoding helper for readability after the live test, then reran the final native validator against the same original artifacts; all checks passed."
+}

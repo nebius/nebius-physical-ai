@@ -231,11 +231,14 @@ def _run_semantic(
 
 
 def _fake_embed(texts, dim: int = 32):
+    """Embed fixtures consistently across processes and randomized hash seeds."""
     vectors = []
     for text in texts:
         vec = [0.0] * dim
         for token in str(text).lower().split():
-            vec[hash(token) % dim] += 1.0
+            digest = hashlib.sha256(token.encode("utf-8")).digest()
+            bucket = int.from_bytes(digest, "big") % dim
+            vec[bucket] += 1.0
         vectors.append(vec)
     return vectors
 

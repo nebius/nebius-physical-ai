@@ -54,82 +54,24 @@ def _read_checkpoint_action_space(checkpoint_path: Path) -> str | None:
         return None
 
 
-def _load_teacher_policy(
-    checkpoint_path: Path,
-    env,
-) -> Any:
-    """Load teacher ActorCritic from checkpoint + arch_config.json.
+def _load_teacher_policy(checkpoint_path: Path, env) -> Any:
+    """Load legacy and RSL-RL 5 teacher tensors without executable pickle.
 
-    The arch_config.json is saved alongside the checkpoint by train_teacher
-    and records the exact network hidden dims and action/obs dimensions
-    used during training so we reconstruct an identically-shaped network
-    before loading weights.
-
-    When arch_config.json contains ``num_actions`` or ``num_obs``, those
-    values take precedence over the caller-supplied ``env`` — this prevents
-    action-dimension mismatches when an existing joint-space checkpoint
-    (num_actions=8) is loaded into an env configured for cartesian
-    (act_dim=4).  The env is only used as a fallback for older checkpoints
-    that lack these fields.
+    Args:
+        checkpoint_path: Saved teacher checkpoint.
+        env: Environment supplying fallback dimensions and device.
+    Returns:
+        Deterministic teacher with verified architecture dimensions.
+    Raises:
+        ValueError: The checkpoint architecture or dimensions are unsupported.
+        OSError: Checkpoint or architecture metadata cannot be read.
     """
-    from rsl_rl.modules import ActorCritic
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
+    from npa.genesis.teacher_policy import build_teacher_policy
 
-    # Find arch config: same directory as the checkpoint
     arch_path = checkpoint_path.parent / "arch_config.json"
-    if arch_path.exists():
-        with arch_path.open() as f:
-            arch = json.load(f)
-        policy_cfg = arch.get("policy", {})
-        actor_hidden = policy_cfg.get("actor_hidden_dims", [256, 256, 128])
-        critic_hidden = policy_cfg.get("critic_hidden_dims", [256, 256, 128])
-        activation = policy_cfg.get("activation", "elu")
-        init_noise_std = policy_cfg.get("init_noise_std", 1.0)
-
-        # Use saved dimensions when available — they are authoritative.
-        num_obs = arch.get("num_obs", env.obs_dim)
-        num_actions = arch.get("num_actions", env.act_dim)
-
-        if num_actions != env.act_dim:
-            saved_space = arch.get("action_space", "unknown")
-            logger.warning(
-                "Checkpoint was trained with action_space=%s (num_actions=%d) "
-                "but the current env has act_dim=%d (action_space=%s). "
-                "Using the checkpoint's num_actions=%d for policy reconstruction.",
-                saved_space,
-                num_actions,
-                env.act_dim,
-                env.cfg.action_space,
-                num_actions,
-            )
-    else:
-        logger.warning(
-            "arch_config.json not found at %s — using default network shape. "
-            "This may cause a size mismatch if training used non-default dims.",
-            arch_path,
-        )
-        actor_hidden = [256, 256, 128]
-        critic_hidden = [256, 256, 128]
-        activation = "elu"
-        init_noise_std = 1.0
-        num_obs = env.obs_dim
-        num_actions = env.act_dim
-
-    actor_critic = ActorCritic(
-        num_actor_obs=num_obs,
-        num_critic_obs=num_obs,
-        num_actions=num_actions,
-        actor_hidden_dims=actor_hidden,
-        critic_hidden_dims=critic_hidden,
-        activation=activation,
-        init_noise_std=init_noise_std,
-    ).to("cuda")
-
-    checkpoint = torch.load(
-        str(checkpoint_path), map_location="cuda", weights_only=True
-    )
-    actor_critic.load_state_dict(checkpoint["model_state_dict"])
-    actor_critic.eval()
-    return actor_critic
+    architecture = json.loads(arch_path.read_text()) if arch_path.exists() else {}
+    return build_teacher_policy(checkpoint, architecture, env)
 
 
 def eval_teacher(
@@ -264,13 +206,6 @@ def generate_demos(
             action_space,
         )
         action_space = saved_space
-
-    try:
-        from rsl_rl.modules import ActorCritic  # noqa: F401 — validate import
-    except ImportError as exc:
-        raise DemoGenerationError(
-            "rsl-rl not installed. Install with: pip install rsl-rl-lib==2.2.4"
-        ) from exc
 
     # Create Genesis environment with cameras enabled
     logger.info("Creating Genesis environment (n_envs=%d, cameras=True)...", n_envs)
