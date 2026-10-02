@@ -67,6 +67,7 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
     "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
+    "workbench.eval_harness.run": "public standardized policy-evaluation primitive (single-policy runs with Wilson confidence intervals)",
 }
 
 
@@ -147,6 +148,12 @@ _OPENPI_FULL_DROID_PIPELINE = [
 _MOLMOACT_PIPELINE = ["python3", "-m", "npa.workflows.byof.molmoact_pipeline"]
 _OPENVLA_PIPELINE = ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
 _NEWTON_PIPELINE = ["python3", "-m", "npa.workflows.byof.newton_pipeline"]
+_EVAL_HARNESS_PIPELINE = [
+    "python3",
+    "-m",
+    "npa.workflows.byof.eval_harness_pipeline",
+]
+_MUJOCO_PIPELINE = ["python3", "-m", "npa.workflows.byof.mujoco_pipeline"]
 
 _CONTENT_AGENTS_PIPELINE = [
     "python3",
@@ -2337,6 +2344,88 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.dataset_uri}}",
             "--output-uri",
             "{{config.evaluation_uri}}",
+        ],
+    ),
+    "workbench.eval_harness.run": ToolEntry(
+        name="workbench.eval_harness.run",
+        description=(
+            "Evaluate one policy on a registered manipulation task for N "
+            "episodes; writes JSON + Markdown reports with success rates "
+            "and Wilson confidence intervals."
+        ),
+        argv_template=[
+            *_EVAL_HARNESS_PIPELINE,
+            "run",
+            "--task",
+            "{{config.task}}",
+            "--policy",
+            "{{config.policy}}",
+            "--episodes",
+            "{{config.episodes}}",
+            "--seed",
+            "{{config.seed}}",
+            "--output-uri",
+            "{{config.report_uri}}",
+            "--judge",
+            "{{config.judge}}",
+            "--max-steps",
+            "{{config.max_steps}}",
+            "--vlm-endpoint-url",
+            "{{config.vlm_endpoint_url}}",
+        ],
+    ),
+    "workbench.eval_harness.compare": ToolEntry(
+        name="workbench.eval_harness.compare",
+        description=(
+            "A/B compare two policies on a registered manipulation task "
+            "with paired episode seeds; writes JSON + Markdown comparison "
+            "reports with a bootstrap confidence interval on the "
+            "success-rate difference."
+        ),
+        argv_template=[
+            *_EVAL_HARNESS_PIPELINE,
+            "compare",
+            "--task",
+            "{{config.task}}",
+            "--policy-a",
+            "{{config.policy_a}}",
+            "--policy-b",
+            "{{config.policy_b}}",
+            "--episodes",
+            "{{config.episodes}}",
+            "--seed",
+            "{{config.seed}}",
+            "--output-uri",
+            "{{config.report_uri}}",
+            "--judge",
+            "{{config.judge}}",
+            "--max-steps",
+            "{{config.max_steps}}",
+            "--vlm-endpoint-url",
+            "{{config.vlm_endpoint_url}}",
+        ],
+    ),
+    "workbench.mujoco.run": ToolEntry(
+        name="workbench.mujoco.run",
+        description=(
+            "Run N episodes of a scripted policy on a MuJoCo contact-rich "
+            "manipulation task; writes a trajectories + metrics JSON report."
+        ),
+        argv_template=[
+            *_MUJOCO_PIPELINE,
+            "run",
+            "--task",
+            "{{config.task}}",
+            "--policy",
+            "{{config.policy}}",
+            "--episodes",
+            "{{config.episodes}}",
+            "--seed",
+            "{{config.seed}}",
+            "--output-uri",
+            "{{config.report_uri}}",
+            "--max-steps",
+            "{{config.max_steps}}",
         ],
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(

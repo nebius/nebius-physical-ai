@@ -769,6 +769,26 @@ skills:
         contains: "dataset-uri"
       - type: file_exists
         path: skills/tools/newton/SKILL.md
+  - name: eval-harness
+    category: tools
+    when_to_use: "Standardized policy evaluation, A/B comparing two policies with paired seeds, success-rate confidence intervals, or the npa workbench eval-harness CLI."
+    path: skills/tools/eval-harness/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "eval-harness", "run", "--help"]
+        contains: "output-uri"
+      - type: file_exists
+        path: skills/tools/eval-harness/SKILL.md
+  - name: mujoco
+    category: tools
+    when_to_use: "Contact-rich manipulation simulation (peg insertion, screw driving, reach), scripted-policy MuJoCo rollouts, or the npa workbench mujoco CLI."
+    path: skills/tools/mujoco/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "mujoco", "run", "--help"]
+        contains: "output-uri"
+      - type: file_exists
+        path: skills/tools/mujoco/SKILL.md
   - name: openvla
     category: tools
     when_to_use: "OpenVLA fine-tuning, serving, or evaluation workbench stages, the OpenVLA-OFT LoRA recipe, or the npa workbench openvla CLI."
