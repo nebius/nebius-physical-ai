@@ -611,3 +611,24 @@ def test_real_benchmark_case_retains_per_request_evidence(
     assert case.evidence is not None
     assert case.evidence.request.frames[0].label == "frame.png"
     assert case.evidence.provider.finish_reason == "stop"
+
+
+def test_benchmark_case_retains_pre_provenance_positional_constructor() -> None:
+    from npa.workbench.vlm_eval import VlmBenchmarkCaseResult
+
+    case = VlmBenchmarkCaseResult(
+        "case-1",
+        "rollout",
+        True,
+        True,
+        0.9,
+        "passed",
+        True,
+        "move the cube",
+        "visible completion",
+        4,
+        "model",
+    )
+    assert case.evidence is None
+    assert case.score_source == "model"
+    assert case.frame_count == 4

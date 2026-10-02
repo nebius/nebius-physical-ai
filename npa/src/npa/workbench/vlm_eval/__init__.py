@@ -288,7 +288,7 @@ class VlmBenchmarkCaseResult:
     rationale: str
     frame_count: int
     score_source: str
-    evidence: VlmEvaluationEvidence | None
+    evidence: VlmEvaluationEvidence | None = None
 
 
 @dataclass(frozen=True)
