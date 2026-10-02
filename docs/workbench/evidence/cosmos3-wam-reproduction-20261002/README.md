@@ -12,29 +12,38 @@ separate 110-update profile runs, and 500-trial evaluations at each saved
 checkpoint. Checkpoint upload and complete-object read-back verification run
 between jobs, outside training and profiling windows.
 
-**Measurement status: in progress.** The first eight-GPU timing repetition
-completed successfully. The remaining repetitions, full schedules, profiles,
+**Measurement status: in progress.** The first eight- and sixteen-GPU timing
+repetitions completed successfully. The remaining repetitions, full schedules, profiles,
 and checkpoint evaluations are still pending. These records do not yet
 establish a new scaling aggregate or policy-quality result.
 
-## First completed timing repetition
+## First completed timing pair
 
-The [first fresh measurement](repeat-8-1/measurement.json) covers all 149
-timed updates, 52–200. The unchanged committed reducer validates its
-[numeric series](repeat-8-1/iteration-series.csv) and source/settings contract.
-Its mean is 13.2284 seconds per update, with 69,067.84 processed tokens/s.
-That mean is 0.60% below the original three-repeat eight-GPU mean of
-13.3080 seconds. This is a single repetition, not the campaign aggregate.
+Both measurements cover all 149 timed updates, 52–200. The unchanged committed
+reducer validates their numeric series and matching source/settings contracts.
 
-Slurm recorded successful completion with exit `0:0`. The training process
-took 3,137.80 seconds, including a 399.61-second final checkpoint save that
-is outside the timed iterations. Slurm allocated the worker for 3,172 seconds.
+| GPUs | Mean step time | Processed tokens/s | Measurement |
+| --- | --- | --- | --- |
+| 8 | 13.2284 s | 69,067.84 | [First repeat](repeat-8-1/measurement.json) |
+| 16 | 6.8385 s | 133,614.67 | [First repeat](repeat-16-1/measurement.json) |
+
+The first pair gives 1.9344× step speedup, compared with the original
+three-repeat result of 1.9334×. Token work differs by 0.0068%. The fresh step
+means are 0.60% and 0.65% below the respective original means. One repetition
+per topology does not estimate run-to-run variability; the declared six-run
+reducer remains gated on three completed repetitions per topology.
+
+Both jobs completed with Slurm exit `0:0`. Training-process durations were
+3,137.80 and 1,930.45 seconds, including final checkpoint saves of 399.61 and
+398.64 seconds outside the timed iterations. Slurm allocation durations were
+3,172 and 1,963 seconds, respectively.
 These are durations for a 200-update timing run, not a full 2,000-update
 schedule. The other reserved worker was idle during this baseline; reported
 training GPU-hours do not include that idle capacity or represent a bill.
-The [archive receipt](repeat-8-1/archive-verification.json) confirms that all
-75 files passed complete-object SHA-256 read-back before local checkpoint
-pruning. That archive work did not overlap the next training allocation.
+The archive receipts for [8 GPUs](repeat-8-1/archive-verification.json) and
+[16 GPUs](repeat-16-1/archive-verification.json) confirm that all 75 and 125
+files, respectively, passed complete-object SHA-256 read-back before local
+checkpoint pruning. Archive work did not overlap training allocations.
 
 ## Deployment and inputs
 
@@ -84,6 +93,8 @@ confirms 16 initialized InfiniBand ranks, zero Socket selections, and
 GPUDirect RDMA markers. This is the existing custom PyTorch diagnostic,
 not `nccl-tests`, model-training throughput, or a network link-rate claim.
 Raw failed and successful logs remain private and hash-bound to the receipts.
+The first eight-GPU repetition preceded this cluster-policy fix; subsequent
+runs use it. Model, data, seed, batch, and framework pins were unchanged.
 
 ## Live GPU evidence
 
