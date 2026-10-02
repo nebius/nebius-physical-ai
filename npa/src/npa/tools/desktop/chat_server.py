@@ -313,7 +313,7 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _thread(self, identifier):
         created = self.server.created.get(identifier)
         if created is not None:
-            return created
+            return {**created, "archived": self._archived(created)}
         thread = self.server.rpc.call(
             "thread/read", {"threadId": identifier, "includeTurns": False}
         )["thread"]
@@ -321,10 +321,12 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _archived(thread):
-        return (
-            thread.get("archived") is True
-            or "archived_sessions" in Path(thread.get("path") or "").parts
-        )
+        archived = thread.get("archived", False)
+        # Desktop assets run without npa installed. Keep this standalone boundary
+        # equivalent to npa.literal_values.require_boolean (contract-tested).
+        if type(archived) is not bool:
+            raise ValueError("thread.archived must be a literal boolean")
+        return archived or "archived_sessions" in Path(thread.get("path") or "").parts
 
     def _turns(self, query):
         if query["id"] in self.server.created:
@@ -366,16 +368,20 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "archived": query.get("archived") == "true",
             },
         )
-        return {
-            **page,
-            "data": [
+        entries, errors = [], []
+        for thread in page["data"]:
+            try:
+                archived = self._archived(thread)
+            except ValueError as error:
+                errors.append({"id": thread.get("id"), "error": str(error)})
+                continue
+            entries.append(
                 {
                     **_thread_list_entry(thread),
-                    "archived": query.get("archived") == "true",
+                    "archived": archived or query.get("archived") == "true",
                 }
-                for thread in page["data"]
-            ],
-        }
+            )
+        return {**page, "data": entries, "errors": errors}
 
     def do_POST(self):
         """Apply explicit, same-origin chat actions.
@@ -495,7 +501,7 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _resume(self, identifier):
         created = self.server.created.get(identifier)
         if created is not None:
-            return {"thread": created}
+            return {"thread": self._thread(identifier)}
         rpc = self.server.rpc
         thread = self._thread(identifier)
         if self._archived(thread):
@@ -507,6 +513,10 @@ class ChatHandler(BaseHTTPRequestHandler):
         result = rpc.call(
             "thread/resume", {"threadId": identifier, "excludeTurns": True}
         )
+        result["thread"] = {
+            **result["thread"],
+            "archived": self._archived(result["thread"]),
+        }
         self.server.attached.add(identifier)
         return result
 
