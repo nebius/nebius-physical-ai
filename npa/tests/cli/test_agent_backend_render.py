@@ -4719,6 +4719,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         "download",
         False,
         relative_key="report.bin",
+        source_etag='"report-v1"',
     )
 
     class FakeS3:
@@ -4727,6 +4728,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
 
         def get_object(self, **kwargs):
             assert kwargs["Range"] == "bytes=0-3"
+            assert kwargs["IfMatch"] == '"report-v1"'
             return {
                 "Body": io.BytesIO(b"abcd"),
                 "ContentLength": 4,
@@ -5190,7 +5192,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         run_id="foreign-run-1",
         key="foreign/foreign-run-1/reports/sim2real.rrd",
         s3_uri="s3://bucket-test/foreign/foreign-run-1/reports/sim2real.rrd",
-        size=128,
+        size=len(b"selected-recording"),
         last_modified="2026-08-07T00:00:00Z",
         render="rerun",
         inline=True,
@@ -5962,10 +5964,15 @@ def test_scoped_mp4_content_and_download_stream_real_bytes_for_get_head_and_rang
     class FakeS3:
         def head_object(self, *, Bucket, Key):
             assert (Bucket, Key) == (bucket, key)
-            return {"ContentLength": len(media), "LastModified": "2026-08-19T00:00:00Z"}
+            return {
+                "ContentLength": len(media),
+                "LastModified": "2026-08-19T00:00:00Z",
+                "ETag": '"video-v1"',
+            }
 
         def get_object(self, **kwargs):
             assert (kwargs["Bucket"], kwargs["Key"]) == (bucket, key)
+            assert kwargs["IfMatch"] == '"video-v1"'
             range_value = str(kwargs.get("Range") or "")
             if range_value:
                 match = re.fullmatch(r"bytes=(\d+)-(\d+)", range_value)

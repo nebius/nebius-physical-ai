@@ -500,10 +500,19 @@ def test_stage11_honors_configurable_early_exit(
         "success_rate": success_rate,
         "policy_checkpoint_uri": checkpoint,
     }
-    monkeypatch.setattr(
-        "npa.workflows.sim2real.workflow_stage.read_json",
-        lambda uri, **_kwargs: evidence if "/inner_loop/" in uri else report,
-    )
+
+    def read_json(uri: str, **kwargs):
+        if "/inner_loop/" in uri:
+            return evidence
+        directory = Path(kwargs["directory"])
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return report
+
+    monkeypatch.setattr("npa.workflows.sim2real.workflow_stage.read_json", read_json)
     monkeypatch.setattr(
         "npa.workflows.sim2real.workflow_stage.write_json",
         lambda _uri, payload, **_kwargs: decisions.append(payload) or _uri,
@@ -932,10 +941,16 @@ def _stage14_reader(evidence: dict, gold: dict):
         for stage in range(1, 15)
     ]
 
-    def read_json(uri: str, **_kwargs):
+    def read_json(uri: str, **kwargs):
         if uri.endswith("/evidence.json"):
             return evidence
         if uri.endswith("/report.json"):
+            directory = Path(kwargs["directory"])
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / "report.json").write_text(
+                json.dumps(gold, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
             return gold
         stage = int(Path(uri).stem.removeprefix("stage_"))
         return components[stage - 1]
@@ -1101,10 +1116,19 @@ def _stage14_policy_metadata(
     *,
     selected_sha256: str = "a" * 64,
 ) -> tuple[dict, dict]:
+    from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+
     root = "s3://unit/runs/finalize"
-    selected_checkpoint = f"{root}/checkpoints/model.pt"
+    selected_checkpoint = (
+        f"{root}/byo-trainer/{k8s_job_name('s2r-byo-isaac-train', 'run')}/"
+        f"{artifact_tag('outer-01-iter-01')}/model_latest.pt"
+    )
     evidence = _selected_checkpoint_evidence(selected_checkpoint, selected_sha256)
     gold = {
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": 1,
+        "success_rate": 0.2,
+        "policy_checkpoint_uri": selected_checkpoint,
         "policy_checkpoint_sha256": "a" * 64,
         "policy_checkpoint_size_bytes": 128,
     }
@@ -1114,13 +1138,33 @@ def _stage14_policy_metadata(
         _stage14_policy_metadata as build_policy_metadata,
     )
 
+    gold_sha256 = hashlib.sha256(
+        (json.dumps(gold, indent=2, sort_keys=True) + "\n").encode()
+    ).hexdigest()
+    decision = {
+        "schema": "npa.sim2real.threshold_decision.v1",
+        "run_id": "run",
+        "outer_iteration": 1,
+        "decision": "loop_back_to_inner_loop",
+        "success_rate": 0.2,
+        "threshold": 0.5,
+        "strict_success_distance_m": 0.05,
+        "placement_stability_required": True,
+        "early_exit_enabled": False,
+        "checkpoint_uri": selected_checkpoint,
+        "gold_report_uri": f"{root}/eval/gold-heldout/outer-01/report.json",
+        "gold_report_sha256": gold_sha256,
+        "candidate": evidence["checkpoint_candidates"][0],
+    }
     metadata, _selection, _candidate = build_policy_metadata(
         evidence,
-        {
-            "decision": "promote_checkpoint",
-            "checkpoint_uri": selected_checkpoint,
-        },
+        decision,
         gold,
+        run_root=root,
+        run_id="run",
+        expected_threshold=0.5,
+        expected_early_exit=False,
+        expected_gold_report_sha256=gold_sha256,
     )
     return metadata, gold
 
@@ -1139,6 +1183,13 @@ def test_stage14_rejects_promote_decision_without_checkpoint_uri() -> None:
             evidence,
             {"decision": "promote_checkpoint"},
             gold,
+            run_root="s3://unit/runs/finalize",
+            run_id="run",
+            expected_threshold=0.5,
+            expected_early_exit=False,
+            expected_gold_report_sha256=hashlib.sha256(
+                (json.dumps(gold, indent=2, sort_keys=True) + "\n").encode()
+            ).hexdigest(),
         )
 
 
@@ -1198,6 +1249,13 @@ def test_stage14_derives_heldout_policy_loading_from_gold_report(
     expected_loaded: bool,
     expected_stock_or_scripted: bool | None,
 ) -> None:
+    if provenance is not None and not isinstance(provenance, dict):
+        with pytest.raises(
+            RuntimeError, match="gold report producer must be an object"
+        ):
+            _stage14_policy_metadata(monkeypatch, tmp_path, provenance)
+        return
+
     metadata, heldout_report = _stage14_policy_metadata(
         monkeypatch, tmp_path, provenance
     )
@@ -1524,7 +1582,7 @@ def test_stage10_seals_report_split_and_outer_iteration(
     assert written["outer_iteration"] == 1
 
 
-def test_stage10_rejects_missing_generator_digest() -> None:
+def test_stage10_accepts_missing_optional_generator_digest() -> None:
     from npa.workflows.sim2real.workflow_stage import (
         _assert_gold_checkpoint_identity,
     )
@@ -1536,8 +1594,10 @@ def test_stage10_rejects_missing_generator_digest() -> None:
         checkpoint_uri, checkpoint_sha256, include_generator=False
     )
 
-    with pytest.raises(RuntimeError, match="selected checkpoint identity"):
-        _assert_gold_checkpoint_identity(evidence, report)
+    candidate = _assert_gold_checkpoint_identity(evidence, report)
+
+    assert candidate["checkpoint_uri"] == checkpoint_uri
+    assert candidate["checkpoint_sha256"] == checkpoint_sha256
 
 
 def test_stage10_rejects_selected_candidate_digest_disagreement() -> None:

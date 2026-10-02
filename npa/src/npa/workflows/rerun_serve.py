@@ -327,6 +327,21 @@ def _verify_committed_rrd_bytes(
         )
 
 
+def _assert_legacy_rrd_still_unjournaled(
+    uri: str,
+    *,
+    get_object: Callable[..., Any],
+) -> None:
+    """Linearize a legacy alias read before any first journal publication."""
+
+    resolved, target = _resolve_committed_rrd_target(uri, get_object=get_object)
+    if target is not None or resolved != uri:
+        raise RerunServeError(
+            "publication journal appeared during a legacy Rerun read; retry "
+            "against the committed generation"
+        )
+
+
 def _rrd_verification_result(
     uri: str,
     target: object | None,
@@ -414,12 +429,11 @@ def verify_rrd_exists_on_s3(
                     target=target,
                     get_object=journal_reader,
                 )
-            elif str((head.get("Metadata") or {}).get("npa-sha256") or "") != str(
-                getattr(target, "sha256", "")
-            ):
-                raise RerunServeError(
-                    "committed Rerun digest cannot be verified from object metadata"
-                )
+        elif journal_reader is not None:
+            _assert_legacy_rrd_still_unjournaled(
+                config.rrd_s3_uri,
+                get_object=journal_reader,
+            )
         return _rrd_verification_result(
             uri,
             target,
@@ -442,6 +456,10 @@ def verify_rrd_exists_on_s3(
             )
         response = effective_get(Bucket=bucket, Key=key, Range="bytes=0-0")
         response["Body"].close()
+        _assert_legacy_rrd_still_unjournaled(
+            config.rrd_s3_uri,
+            get_object=effective_get,
+        )
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "missing")
         raise RerunServeError(

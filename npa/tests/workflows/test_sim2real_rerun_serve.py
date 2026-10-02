@@ -381,7 +381,13 @@ def test_rrd_probe_uses_ranged_get_without_head(mocker) -> None:
         Key="sim2real-b/sim2real-staged-20260615t180818z/reports/sim2real.rrd",
         Range="bytes=0-0",
     )
-    assert client.get_object.call_count == 2
+    journal_calls = [
+        call
+        for call in client.get_object.call_args_list
+        if call.kwargs["Key"].endswith("reports/.sim2real-publication.json")
+    ]
+    assert len(journal_calls) == 2
+    assert client.get_object.call_count == 3
     client.head_object.assert_not_called()
     recording_body.close.assert_called_once_with()
 

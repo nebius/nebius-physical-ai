@@ -11,6 +11,9 @@ from npa.workflows.sim2real.models import Sim2RealLoopConfig
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real_rerun_regen import (
     Sim2RealRerunRegenError,
+    _download_directory_fresh,
+    _download_if_exists,
+    _download_render_tree,
     _ensure_policy_access_metadata,
     _gold_report_path,
     _latest_completed_inner_evidence_rel,
@@ -1151,8 +1154,8 @@ def test_policy_access_metadata_reconciles_current_control_plane_before_download
     tmp_path: Path,
     source: str,
 ) -> None:
-    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
-    other_uri = "s3://demo-bucket/run/other.pt"
+    checkpoint_uri = _same_run_checkpoint_uri("model_selected.pt")
+    other_uri = _same_run_checkpoint_uri("other.pt")
     _write_candidate_manifest(
         tmp_path,
         {
@@ -1180,6 +1183,7 @@ def test_policy_access_metadata_reconciles_current_control_plane_before_download
                 "checkpoint_sha256": "a" * 64,
                 "checkpoint_size_bytes": 128,
                 "generator_policy_sha256": "a" * 64,
+                "training_iteration": 1,
             },
             "checkpoint_candidates": [
                 {
@@ -1187,6 +1191,7 @@ def test_policy_access_metadata_reconciles_current_control_plane_before_download
                     "checkpoint_sha256": "a" * 64,
                     "checkpoint_size_bytes": 128,
                     "generator_policy_sha256": "a" * 64,
+                    "training_iteration": 1,
                 }
             ],
         }
@@ -1780,6 +1785,89 @@ def test_gold_render_sync_unlinks_stale_symlink_after_client_error(
     )
     assert not renders_dir.is_symlink()
     assert outside_frame.read_bytes() == b"outside-frame"
+
+
+def test_fresh_directory_download_replaces_symlink_leaf_without_following_target(
+    tmp_path: Path,
+) -> None:
+    containment_root = tmp_path / "run"
+    containment_root.mkdir()
+    destination = containment_root / "envs"
+    outside = tmp_path / "outside-envs"
+    outside.mkdir()
+    outside_file = outside / "untouched.json"
+    outside_file.write_bytes(b"outside")
+    destination.symlink_to(outside, target_is_directory=True)
+
+    class Storage:
+        def download_directory(self, _uri: str, target: str) -> None:
+            staged = Path(target)
+            staged.mkdir(parents=True)
+            (staged / "fresh.json").write_bytes(b"fresh")
+
+    assert _download_directory_fresh(
+        Storage(),
+        "s3://unit/run/envs/",
+        destination,
+        containment_root=containment_root,
+    )
+    assert not destination.is_symlink()
+    assert (destination / "fresh.json").read_bytes() == b"fresh"
+    assert outside_file.read_bytes() == b"outside"
+
+
+def test_single_file_download_replaces_symlink_leaf_without_following_target(
+    tmp_path: Path,
+) -> None:
+    containment_root = tmp_path / "run"
+    containment_root.mkdir()
+    destination = containment_root / "report.json"
+    outside_file = tmp_path / "outside.json"
+    outside_file.write_bytes(b"outside")
+    destination.symlink_to(outside_file)
+
+    class Storage:
+        def download_path(self, _uri: str, target: str) -> None:
+            Path(target).write_bytes(b"fresh")
+
+    assert _download_if_exists(
+        Storage(),
+        "s3://unit/run/report.json",
+        destination,
+        containment_root=containment_root,
+    )
+    assert not destination.is_symlink()
+    assert destination.read_bytes() == b"fresh"
+    assert outside_file.read_bytes() == b"outside"
+
+
+def test_render_tree_download_replaces_symlink_leaf_without_following_target(
+    tmp_path: Path,
+) -> None:
+    containment_root = tmp_path / "run"
+    containment_root.mkdir()
+    destination = containment_root / "renders"
+    outside = tmp_path / "outside-renders"
+    outside.mkdir()
+    outside_file = outside / "untouched.png"
+    outside_file.write_bytes(b"outside")
+    destination.symlink_to(outside, target_is_directory=True)
+
+    class Storage:
+        def download_directory(self, _uri: str, target: str) -> None:
+            episode = Path(target) / "env-1"
+            episode.mkdir(parents=True)
+            (episode / "camera-000.png").write_bytes(b"fresh")
+
+    assert _download_render_tree(
+        Storage(),
+        "s3://unit/run/renders/",
+        destination,
+        containment_root=containment_root,
+    )
+    assert not destination.is_symlink()
+    assert (destination / "env-1/camera-000.png").read_bytes() == b"fresh"
+    assert outside_file.read_bytes() == b"outside"
 
 
 def test_gold_render_sync_rejects_symlinked_destination_ancestor(

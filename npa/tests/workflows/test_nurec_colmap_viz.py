@@ -211,6 +211,9 @@ class _PartialColmapStorage:
         ]
         return [{"Contents": [{"Key": key, "Size": 10, "ETag": key} for key in keys]}]
 
+    def head_object(self, **_kwargs):
+        raise KeyError("no publication journal")
+
     def download_path(self, uri, destination):
         if uri.endswith("/ncore/"):
             raise StorageError("synthetic ncore prefix failure")

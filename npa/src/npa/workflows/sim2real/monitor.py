@@ -19,6 +19,7 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_S3_ENDPOINT,
 )
 from npa.workflows.sim2real.publication import (
+    assert_legacy_publication_unjournaled,
     read_verified_committed_publication_bytes,
     resolve_committed_publication_snapshot,
     verify_committed_publication_object,
@@ -372,6 +373,9 @@ def _resolved_publication_object(
     resolved_bucket, resolved_key = value.split("/", 1)
     if resolved_bucket != bucket:
         raise ValueError("publication journal resolved outside the selected bucket")
+    if not _s3_object_exists(client, resolved_bucket, resolved_key):
+        return None
+    assert_legacy_publication_unjournaled(client, publication)
     return resolved_bucket, resolved_key
 
 
@@ -490,7 +494,7 @@ def _artifact_rule_matches(
             checks.append(_s3_prefix_nonempty(client, bucket, key))
         elif rel_path == "reports/sim2real-report.json":
             resolved = _resolved_publication_object(client, bucket, key)
-            checks.append(resolved is not None and _s3_object_exists(client, *resolved))
+            checks.append(resolved is not None)
         else:
             checks.append(_s3_object_exists(client, bucket, key))
     if rule.match == "all":

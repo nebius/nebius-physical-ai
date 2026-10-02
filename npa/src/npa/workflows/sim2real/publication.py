@@ -669,50 +669,69 @@ def recover_interrupted_publication(
     return True
 
 
+def _read_publication_journal_bytes(client: Any, uri: str) -> bytes | None:
+    """Read one bounded journal object without treating provider failure as absence."""
+
+    typed_reader = getattr(type(client), "read_small_bytes_with_etag", None)
+    typed_fallback = getattr(type(client), "read_bytes_with_etag", None)
+    if callable(typed_reader) or callable(typed_fallback):
+        snapshot = remote_object_snapshot(client, uri)
+        return snapshot.payload if snapshot is not None else None
+    value = uri.removeprefix("s3://")
+    if value == uri or "/" not in value:
+        raise ValueError("publication journal is not an S3 object URI")
+    bucket, key = value.split("/", 1)
+    raw = getattr(client, "_s3", None) or getattr(client, "s3", None)
+    if raw is None:
+        raise RuntimeError("storage client lacks publication journal reads")
+    try:
+        raw.head_object(Bucket=bucket, Key=key)
+    except KeyError:
+        return None
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        raise
+    body = None
+    try:
+        response = raw.get_object(Bucket=bucket, Key=key)
+        body = response["Body"]
+        payload = body.read(1024 * 1024 + 1)
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+    if len(payload) > 1024 * 1024:
+        raise PublicationConflict(f"publication transaction journal is invalid: {uri}")
+    return bytes(payload)
+
+
 def resolve_committed_publication_snapshot(
     client: Any,
     canonical_uri: str,
 ) -> CommittedPublicationSnapshot:
     """Read one journal snapshot that resolves every reserved publication target."""
 
-    def read_journal(uri: str) -> bytes | None:
-        typed_reader = getattr(type(client), "read_small_bytes_with_etag", None)
-        typed_fallback = getattr(type(client), "read_bytes_with_etag", None)
-        if callable(typed_reader) or callable(typed_fallback):
-            snapshot = remote_object_snapshot(client, uri)
-            return snapshot.payload if snapshot is not None else None
-        value = uri.removeprefix("s3://")
-        if value == uri or "/" not in value:
-            raise ValueError("publication journal is not an S3 object URI")
-        bucket, key = value.split("/", 1)
-        raw = getattr(client, "_s3", None) or getattr(client, "s3", None)
-        if raw is None:
-            raise RuntimeError("storage client lacks publication journal reads")
-        try:
-            raw.head_object(Bucket=bucket, Key=key)
-        except KeyError:
-            return None
-        except ClientError as exc:
-            code = str(exc.response.get("Error", {}).get("Code", ""))
-            if code in {"404", "NoSuchKey", "NotFound"}:
-                return None
-            raise
-        body = None
-        try:
-            response = raw.get_object(Bucket=bucket, Key=key)
-            body = response["Body"]
-            payload = body.read(1024 * 1024 + 1)
-        finally:
-            close = getattr(body, "close", None)
-            if callable(close):
-                close()
-        if len(payload) > 1024 * 1024:
-            raise PublicationConflict(
-                f"publication transaction journal is invalid: {uri}"
-            )
-        return bytes(payload)
+    return resolve_committed_publication(
+        lambda uri: _read_publication_journal_bytes(client, uri),
+        canonical_uri,
+    )
 
-    return resolve_committed_publication(read_journal, canonical_uri)
+
+def assert_legacy_publication_unjournaled(
+    client: Any,
+    publication: CommittedPublicationSnapshot,
+) -> None:
+    """Fence a legacy alias read against the first journaled publication."""
+
+    if publication.journaled:
+        return
+    if _read_publication_journal_bytes(client, publication.journal_uri) is not None:
+        raise PublicationConflict(
+            "publication journal appeared during a legacy alias read; retry against "
+            f"the committed generation: {publication.journal_uri}"
+        )
 
 
 def resolve_committed_publication_uri(
@@ -749,6 +768,8 @@ def verify_committed_publication_file(
     publication: CommittedPublicationSnapshot,
     canonical_uri: str,
     path: Path,
+    *,
+    client: Any | None = None,
 ) -> str | None:
     """Verify a downloaded reserved object against its committed byte identity."""
 
@@ -757,12 +778,15 @@ def verify_committed_publication_file(
     if target.immutable_uri is None:
         return None
     digest, size = _file_identity(Path(path))
-    return _verify_target_identity(
+    resolved = _verify_target_identity(
         publication,
         canonical_uri,
         digest=digest,
         size=size,
     )
+    if client is not None:
+        assert_legacy_publication_unjournaled(client, publication)
+    return resolved
 
 
 def read_verified_committed_publication_bytes(
@@ -795,6 +819,7 @@ def read_verified_committed_publication_bytes(
         current = reader(target.immutable_uri)
     if current is None:
         if not publication.journaled:
+            assert_legacy_publication_unjournaled(client, publication)
             return None
         raise PublicationConflict(
             f"committed publication object is missing: {target.immutable_uri}"
@@ -811,6 +836,7 @@ def read_verified_committed_publication_bytes(
         digest=hashlib.sha256(payload).hexdigest(),
         size=len(payload),
     )
+    assert_legacy_publication_unjournaled(client, publication)
     return payload
 
 

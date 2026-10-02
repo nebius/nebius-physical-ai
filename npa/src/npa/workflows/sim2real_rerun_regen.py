@@ -414,6 +414,7 @@ def _assert_safe_render_destination(local_dir: Path, renders_dir: Path) -> None:
             "render destination must be contained in regeneration root"
         ) from exc
     current = root
+    # The staged os.replace below replaces a symlink leaf entry, never its target.
     for part in relative.parts[:-1]:
         current /= part
         if current.is_symlink():
@@ -480,6 +481,7 @@ def _assert_no_symlinked_ancestors(
             "download destination must be below its containment root"
         )
     current = root
+    # Download callers stage then os.replace, which replaces a symlink leaf entry.
     for part in relative.parts[:-1]:
         current /= part
         if current.is_symlink():
@@ -590,6 +592,10 @@ def _download_directory_fresh(
         containment_root=containment_root,
     )
     destination.parent.mkdir(parents=True, exist_ok=True)
+    _assert_no_symlinked_ancestors(
+        destination,
+        containment_root=containment_root,
+    )
     with tempfile.TemporaryDirectory(
         prefix=f".{destination.name}.", dir=destination.parent
     ) as directory:
@@ -690,6 +696,7 @@ def _download_regen_single_files(
                     publication_snapshot,
                     canonical_report_uri,
                     dest,
+                    client=storage,
                 )
             except PublicationConflict as exc:
                 _discard_download_destination(dest, local_dir)
@@ -870,14 +877,6 @@ def _heldout_render_lineage(
     if lineage_split not in (None, "", "gold_heldout"):
         raise Sim2RealRerunRegenError(
             "held-out render lineage has the wrong evaluation split"
-        )
-    if report_split not in (None, "", lineage_split) and lineage_split not in (
-        None,
-        "",
-    ):
-        raise Sim2RealRerunRegenError(
-            "sealed gold render lineage has the wrong evaluation split: "
-            "report and lineage disagree"
         )
     sealed = report_split == "gold_heldout" or lineage_split == "gold_heldout"
     return lineage, sealed
@@ -1204,6 +1203,10 @@ def _rewrite_iteration_path(
 ) -> bool:
     key, uri_key, marker, expected_suffix = spec
     source = record.get(uri_key) or record.get(key)
+    if expected_artifact_root is not None and uri_key not in record:
+        raise Sim2RealRerunRegenError(
+            f"{uri_key} is required for run-scoped regeneration"
+        )
     if uri_key in record:
         expected_uri = (
             f"{expected_artifact_root.rstrip('/')}/{expected_suffix}"
@@ -1415,6 +1418,7 @@ def download_rrd_from_s3(
             publication,
             canonical_uri,
             absolute_dest,
+            client=storage,
         )
     except PublicationConflict as exc:
         _discard_download_destination(absolute_dest, containment_root)
@@ -2344,6 +2348,7 @@ def _validate_regen_component_authority(
                     publication_snapshot,
                     canonical_pointer_uri,
                     pointer_path,
+                    client=storage,
                 )
             except PublicationConflict as exc:
                 _discard_download_destination(pointer_path, work_dir)

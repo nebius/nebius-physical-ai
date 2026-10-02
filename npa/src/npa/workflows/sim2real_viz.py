@@ -540,15 +540,32 @@ def _validation_iteration(value: Any) -> int:
     return value
 
 
+def _requires_checkpoint_bound_validation(
+    payload: dict[str, Any],
+    *,
+    allow_local_only_legacy: bool,
+) -> bool:
+    """Distinguish canonical validation URIs from local-only legacy evidence."""
+
+    for record in payload.get("iterations") or []:
+        if not isinstance(record, dict):
+            raise Sim2RealVizError("Inner-loop iteration evidence must be an object")
+        if "vlm_eval_uri" in record or "signal_uri" in record:
+            return True
+    if not allow_local_only_legacy:
+        raise Sim2RealVizError("Local-only legacy validation evidence is disabled")
+    return False
+
+
 def _validation_candidates(
     payload: dict[str, Any], outer: int
 ) -> dict[int, dict[str, Any]] | None:
     """Require one validation candidate for every pass in canonical evidence."""
 
     if "checkpoint_candidates" not in payload:
-        if any(
-            "vlm_eval_uri" in record or "signal_uri" in record
-            for record in payload.get("iterations") or []
+        if _requires_checkpoint_bound_validation(
+            payload,
+            allow_local_only_legacy=True,
         ):
             raise Sim2RealVizError("Canonical validation candidates are missing")
         return None
@@ -867,7 +884,10 @@ def _log_summary_documents(
         "summary/stage_progress": _stage_progress_markdown(
             stage_components, run_metadata=run_metadata
         ),
-        "summary/policy_access": _policy_access_markdown(run_metadata),
+        "summary/policy_access": _policy_access_markdown(
+            run_metadata,
+            heldout_report,
+        ),
         "summary/embodiment": _embodiment_markdown(run_metadata),
         "summary/augmentation": _augmentation_markdown(index),
         "summary/artifacts": _artifacts_markdown(index),
@@ -1055,20 +1075,84 @@ def _stage_progress_markdown(
     return "\n".join(rows)
 
 
-def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
-    heldout_loaded = run_metadata.get("heldout_policy_loaded_for_inference") is True
-    identity_verified = run_metadata.get("heldout_policy_identity_verified") is True
-    learned_actor_only = bool(
-        heldout_loaded
-        and identity_verified
-        and run_metadata.get("heldout_policy_stock_or_scripted_policy") is False
-        and run_metadata.get("heldout_policy_actor_is_learned") is True
-        and run_metadata.get("heldout_policy_scripted_post_actor_controller") is False
-        and run_metadata.get("heldout_policy_composition") == "learned_actor_only"
-        and run_metadata.get("heldout_policy_post_actor_controller_declared") is True
-        and run_metadata.get("heldout_policy_post_actor_controller") is None
+def _run_metadata_identity_evidence(
+    projected: dict[str, Any],
+    key: str,
+) -> tuple[tuple[str, Any], ...]:
+    if key not in projected:
+        return ()
+    return ((f"run_metadata.{key}", projected[key]),)
+
+
+def _reconciled_heldout_policy_metadata(
+    run_metadata: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Recompute report claims and conservatively reconcile projected metadata."""
+
+    projected = dict(run_metadata) if isinstance(run_metadata, dict) else {}
+    if not isinstance(heldout_report, dict):
+        return projected
+    policy_metadata = _heldout_policy_metadata(
+        heldout_report,
+        checkpoint_uri_evidence=_run_metadata_identity_evidence(
+            projected, "heldout_policy_checkpoint"
+        ),
+        checkpoint_sha256_evidence=_run_metadata_identity_evidence(
+            projected, "heldout_policy_checkpoint_sha256"
+        ),
+        checkpoint_size_evidence=_run_metadata_identity_evidence(
+            projected, "heldout_policy_checkpoint_size_bytes"
+        ),
+        generator_sha256_evidence=_run_metadata_identity_evidence(
+            projected, "heldout_policy_generator_sha256"
+        ),
     )
-    stock_or_scripted_policy = run_metadata.get(
+    for key in (
+        "heldout_policy_identity_verified",
+        "heldout_policy_loaded_for_inference",
+    ):
+        if key in projected and projected[key] is not True:
+            policy_metadata[key] = False
+            policy_metadata["heldout_policy_learned_actor_only"] = False
+    declaration_fields = (
+        "heldout_policy_stock_or_scripted_policy",
+        "heldout_policy_actor_is_learned",
+        "heldout_policy_scripted_post_actor_controller",
+        "heldout_policy_composition",
+        "heldout_policy_post_actor_controller",
+        "heldout_policy_post_actor_controller_declared",
+        "heldout_policy_learned_actor_only",
+    )
+    mismatches = [
+        key
+        for key in declaration_fields
+        if key in projected and projected[key] != policy_metadata.get(key)
+    ]
+    for key in mismatches:
+        policy_metadata[key] = (
+            False if key == "heldout_policy_learned_actor_only" else None
+        )
+    if mismatches:
+        policy_metadata["heldout_policy_learned_actor_only"] = False
+    policy_metadata["heldout_policy_declaration_mismatches"] = mismatches
+    return policy_metadata
+
+
+def _policy_access_markdown(
+    run_metadata: dict[str, Any],
+    heldout_report: dict[str, Any] | None = None,
+) -> str:
+    policy_metadata = _reconciled_heldout_policy_metadata(
+        run_metadata,
+        heldout_report,
+    )
+    heldout_loaded = policy_metadata.get("heldout_policy_loaded_for_inference") is True
+    identity_verified = policy_metadata.get("heldout_policy_identity_verified") is True
+    learned_actor_only = (
+        policy_metadata.get("heldout_policy_learned_actor_only") is True
+    )
+    stock_or_scripted_policy = policy_metadata.get(
         "heldout_policy_stock_or_scripted_policy"
     )
     if not heldout_loaded:
@@ -1098,6 +1182,12 @@ def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
             inference_statement += (
                 " The complete learned-actor-only contract was not proven."
             )
+    mismatches = policy_metadata.get("heldout_policy_declaration_mismatches")
+    if isinstance(mismatches, list) and mismatches:
+        inference_statement += (
+            " Published run metadata and held-out report declarations disagree; "
+            "the conservative verdict is not proven."
+        )
     return "\n".join(
         [
             "# Deployable policy and viewer access",
@@ -2238,85 +2328,10 @@ def _log_real_isaac_scene_context(
             ),
             recording=recording,
         )
-    projected = run_metadata if isinstance(run_metadata, dict) else {}
-    uri_evidence = (
-        (
-            (
-                "run_metadata.heldout_policy_checkpoint",
-                projected["heldout_policy_checkpoint"],
-            ),
-        )
-        if "heldout_policy_checkpoint" in projected
-        else ()
-    )
-    digest_evidence = (
-        (
-            (
-                "run_metadata.heldout_policy_checkpoint_sha256",
-                projected["heldout_policy_checkpoint_sha256"],
-            ),
-        )
-        if "heldout_policy_checkpoint_sha256" in projected
-        else ()
-    )
-    size_evidence = (
-        (
-            (
-                "run_metadata.heldout_policy_checkpoint_size_bytes",
-                projected["heldout_policy_checkpoint_size_bytes"],
-            ),
-        )
-        if "heldout_policy_checkpoint_size_bytes" in projected
-        else ()
-    )
-    generator_evidence = (
-        (
-            (
-                "run_metadata.heldout_policy_generator_sha256",
-                projected["heldout_policy_generator_sha256"],
-            ),
-        )
-        if "heldout_policy_generator_sha256" in projected
-        else ()
-    )
-    policy_metadata = _heldout_policy_metadata(
+    policy_metadata = _reconciled_heldout_policy_metadata(
+        run_metadata,
         heldout_report,
-        checkpoint_uri_evidence=uri_evidence,
-        checkpoint_sha256_evidence=digest_evidence,
-        checkpoint_size_evidence=size_evidence,
-        generator_sha256_evidence=generator_evidence,
     )
-    if (
-        "heldout_policy_identity_verified" in projected
-        and projected["heldout_policy_identity_verified"] is not True
-    ):
-        policy_metadata["heldout_policy_identity_verified"] = False
-        policy_metadata["heldout_policy_learned_actor_only"] = False
-    if (
-        "heldout_policy_loaded_for_inference" in projected
-        and projected["heldout_policy_loaded_for_inference"] is not True
-    ):
-        policy_metadata["heldout_policy_loaded_for_inference"] = False
-        policy_metadata["heldout_policy_learned_actor_only"] = False
-    declaration_fields = (
-        "heldout_policy_stock_or_scripted_policy",
-        "heldout_policy_actor_is_learned",
-        "heldout_policy_scripted_post_actor_controller",
-        "heldout_policy_composition",
-        "heldout_policy_post_actor_controller",
-        "heldout_policy_post_actor_controller_declared",
-        "heldout_policy_learned_actor_only",
-    )
-    declaration_mismatch = any(
-        key in projected and projected[key] != policy_metadata.get(key)
-        for key in declaration_fields
-    )
-    if declaration_mismatch:
-        if "heldout_policy_stock_or_scripted_policy" in projected and projected[
-            "heldout_policy_stock_or_scripted_policy"
-        ] != policy_metadata.get("heldout_policy_stock_or_scripted_policy"):
-            policy_metadata["heldout_policy_stock_or_scripted_policy"] = None
-        policy_metadata["heldout_policy_learned_actor_only"] = False
     loaded_for_inference = (
         policy_metadata["heldout_policy_loaded_for_inference"] is True
     )

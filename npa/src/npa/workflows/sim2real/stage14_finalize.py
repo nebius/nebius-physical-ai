@@ -16,7 +16,6 @@ from npa.workflows.sim2real.checkpoint_selection import (
     CHECKPOINT_SIZE_ALIASES,
     CHECKPOINT_URI_ALIASES,
     GENERATOR_DIGEST_ALIASES,
-    resolve_selected_checkpoint,
     resolve_run_scoped_checkpoint,
 )
 from npa.workflows.sim2real.component_authority import (
@@ -26,10 +25,7 @@ from npa.workflows.sim2real.component_authority import (
     validate_component_records,
     validate_remote_stage4_authority,
 )
-from npa.workflows.sim2real.decision_authority import (
-    gold_report_sha256,
-    validate_stage11_decision,
-)
+from npa.workflows.sim2real.decision_authority import validate_stage11_decision
 from npa.workflows.sim2real.publication import (
     MutablePublicationTransaction,
     RemoteObjectSnapshot,
@@ -178,29 +174,26 @@ def _assert_candidate_leaf_identity(
 
 def _resolve_stage14_selection(
     evidence: dict[str, Any],
-    run_root: str | None,
-    run_id: str | None,
+    run_root: str,
+    run_id: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
-        if run_root is None:
-            selection, candidate = resolve_selected_checkpoint(evidence)
-        else:
-            outer_iteration = evidence.get("outer_iteration")
-            if type(outer_iteration) is not int or run_id is None:
-                raise RuntimeError("Stage 14 selected outer iteration is invalid")
-            validate_stage10_input_scope(
-                argparse.Namespace(
-                    run_id=run_id,
-                    outer_iteration=outer_iteration,
-                ),
-                root=run_root,
-                evidence=evidence,
-            )
-            selection, candidate = resolve_run_scoped_checkpoint(
-                evidence,
-                run_root=run_root,
+        outer_iteration = evidence.get("outer_iteration")
+        if type(outer_iteration) is not int:
+            raise RuntimeError("Stage 14 selected outer iteration is invalid")
+        validate_stage10_input_scope(
+            argparse.Namespace(
                 run_id=run_id,
-            )
+                outer_iteration=outer_iteration,
+            ),
+            root=run_root,
+            evidence=evidence,
+        )
+        selection, candidate = resolve_run_scoped_checkpoint(
+            evidence,
+            run_root=run_root,
+            run_id=run_id,
+        )
     except (RuntimeError, ValueError) as exc:
         raise RuntimeError(f"Stage 14 selected checkpoint identity: {exc}") from exc
     return selection, candidate
@@ -227,14 +220,12 @@ def _assert_stage14_decision_authority(
     decision: dict[str, Any],
     gold: dict[str, Any],
     selection: dict[str, Any],
-    run_root: str | None,
-    run_id: str | None,
+    run_root: str,
+    run_id: str,
     expected_threshold: float,
     expected_early_exit: bool,
-    expected_gold_report_sha256: str | None,
+    expected_gold_report_sha256: str,
 ) -> None:
-    if run_root is None or run_id is None:
-        return
     outer_iteration = evidence.get("outer_iteration")
     if type(outer_iteration) is not int:
         raise RuntimeError("Stage 14 selected outer iteration is invalid")
@@ -292,11 +283,11 @@ def _stage14_policy_metadata(
     decision: dict[str, Any],
     gold: dict[str, Any],
     *,
-    run_root: str | None = None,
-    run_id: str | None = None,
-    expected_threshold: float = 0.5,
-    expected_early_exit: bool = False,
-    expected_gold_report_sha256: str | None = None,
+    run_root: str,
+    run_id: str,
+    expected_threshold: float,
+    expected_early_exit: bool,
+    expected_gold_report_sha256: str,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     _assert_promotion_checkpoint_uri(decision)
     selection, candidate = _resolve_stage14_selection(evidence, run_root, run_id)
@@ -646,7 +637,7 @@ def _stage14_state(
         rrd_uri=f"{publication_root}/sim2real.rrd",
         mcap_uri=f"{publication_root}/sim2real.mcap",
         report_uri=f"{publication_root}/sim2real-report.json",
-        gold_report_bytes_sha256=(gold_report_bytes_sha256 or gold_report_sha256(gold)),
+        gold_report_bytes_sha256=gold_report_bytes_sha256,
         publication_id=publication_id,
         canonical_rrd_uri=f"{root}/reports/sim2real.rrd",
         canonical_mcap_uri=f"{root}/reports/sim2real.mcap",
@@ -670,11 +661,11 @@ def _materialize_stage14(
         directory=work / "gold-input",
     )
     gold_path = work / "gold-input" / "report.json"
-    gold_bytes_sha256 = (
-        hashlib.sha256(gold_path.read_bytes()).hexdigest()
-        if gold_path.is_file()
-        else gold_report_sha256(gold)
-    )
+    if not gold_path.is_file():
+        raise RuntimeError(
+            "Stage 14 exact downloaded gold-report bytes are unavailable"
+        )
+    gold_bytes_sha256 = hashlib.sha256(gold_path.read_bytes()).hexdigest()
     local = work / "run"
     materialize_plan(
         download_plan(

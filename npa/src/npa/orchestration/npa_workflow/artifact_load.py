@@ -9,6 +9,7 @@ from urllib.parse import quote, urlencode
 from npa.verification import sanitize_failure_reason
 from npa.workflows.sim2real.publication import (
     PublicationConflict,
+    assert_legacy_publication_unjournaled,
     resolve_committed_publication_snapshot,
     verify_committed_publication_object,
 )
@@ -106,8 +107,6 @@ def discover_final_rerun_artifact(
             raise ArtifactLoadError(
                 "committed Rerun artifact resolved outside the selected bucket"
             )
-        client.s3.head_object(Bucket=resolved_bucket, Key=resolved_key)
-        return resolved_uri
     except PublicationConflict as exc:
         raise ArtifactLoadError(str(exc)) from exc
     except ArtifactLoadError:
@@ -118,6 +117,28 @@ def discover_final_rerun_artifact(
             f"Could not verify the final Rerun artifact at {canonical_uri}: "
             f"{safe_reason}"
         ) from exc
+    try:
+        client.s3.head_object(Bucket=resolved_bucket, Key=resolved_key)
+    except KeyError as exc:
+        raise ArtifactLoadError(f"no .rrd artifact exists at {canonical_uri}") from exc
+    except Exception as exc:  # noqa: BLE001 - provider-specific read failure
+        response = getattr(exc, "response", {})
+        error = response.get("Error", {}) if isinstance(response, dict) else {}
+        code = str(error.get("Code", "")) if isinstance(error, dict) else ""
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            raise ArtifactLoadError(
+                f"no .rrd artifact exists at {canonical_uri}"
+            ) from exc
+        safe_reason = sanitize_failure_reason(exc, secrets=diagnostic_secrets)
+        raise ArtifactLoadError(
+            f"Could not verify the final Rerun artifact at {canonical_uri}: "
+            f"{safe_reason}"
+        ) from exc
+    try:
+        assert_legacy_publication_unjournaled(client, publication)
+    except PublicationConflict as exc:
+        raise ArtifactLoadError(str(exc)) from exc
+    return resolved_uri
 
 
 def _status_matches(

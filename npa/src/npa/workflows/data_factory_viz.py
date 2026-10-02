@@ -393,27 +393,25 @@ def _resolve_existing_output_publication(
 ) -> tuple[str, Any | None]:
     """Resolve an existing reserved RRD through its committed journal."""
 
-    from npa.agent_backend.publication_reader import (
-        JOURNAL_SUFFIX,
-        publication_root_from_canonical_uri,
-    )
+    from npa.agent_backend.publication_reader import publication_root_from_canonical_uri
     from npa.workflows.sim2real.publication import (
         resolve_committed_publication_snapshot,
     )
 
     try:
-        publication_root = publication_root_from_canonical_uri(output_uri)
+        publication_root_from_canonical_uri(output_uri)
     except ValueError:
         _, output_key = _split_s3_object(output_uri)
         return (output_uri, None) if output_key in inventory_keys else ("", None)
     _, output_key = _split_s3_object(output_uri)
-    _, journal_key = _split_s3_object(f"{publication_root}{JOURNAL_SUFFIX}")
     inventory_contains_output = output_key in inventory_keys
-    if journal_key not in inventory_keys:
-        return (output_uri, None) if inventory_contains_output else ("", None)
     publication = resolve_committed_publication_snapshot(storage_client, output_uri)
     if not publication.journaled:
-        return (output_uri, None) if inventory_contains_output else ("", None)
+        return (
+            (output_uri, publication)
+            if inventory_contains_output
+            else ("", publication)
+        )
     resolved = publication.resolve(output_uri)
     if not resolved:
         raise DataFactoryVizError(
@@ -795,7 +793,9 @@ def build_run_rrd(
                     existing_publication,
                     output_uri,
                     existing_path,
+                    client=active_storage,
                 )
+            _verify_existing_rrd_semantics(existing_path, out_path)
             _verify_terminal_rrd_media(
                 existing_path,
                 variant_records=variant_records,
@@ -1094,6 +1094,61 @@ def _verify_terminal_rrd_media(
         "augmented_video_entities": verified_videos,
         "augmented_disposition_entities": verified_dispositions,
     }
+
+
+def _stable_rrd_value(value: Any) -> Any:
+    if isinstance(value, bytes):
+        return {
+            "sha256": hashlib.sha256(value).hexdigest(),
+            "size_bytes": len(value),
+        }
+    if isinstance(value, memoryview):
+        return _stable_rrd_value(value.tobytes())
+    if isinstance(value, dict):
+        return {
+            str(key): _stable_rrd_value(item)
+            for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+        }
+    if isinstance(value, (list, tuple)):
+        return [_stable_rrd_value(item) for item in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return str(value)
+
+
+def _rrd_semantic_sha256(path: Path) -> str:
+    """Hash decoded RRD rows while excluding writer-generated timing identities."""
+
+    try:
+        from npa.viz.recordings import load_recording
+    except ImportError as exc:  # pragma: no cover - rerun is a runtime dependency
+        raise DataFactoryVizError(
+            "rerun recording loader is required to compare an existing RRD"
+        ) from exc
+    ephemeral = {
+        "rerun.controls.RowId",
+        "log_time",
+        "RecordingInfo:start_time",
+    }
+    rows: list[dict[str, Any]] = []
+    for chunk in load_recording(path).chunks():
+        batch = chunk.to_record_batch()
+        names = [name for name in batch.schema.names if name not in ephemeral]
+        for index in range(batch.num_rows):
+            row = {
+                name: _stable_rrd_value(batch.column(name)[index].as_py())
+                for name in names
+            }
+            if row:
+                rows.append({"entity": str(chunk.entity_path), "row": row})
+    rows.sort(key=lambda row: json.dumps(row, sort_keys=True, separators=(",", ":")))
+    payload = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _verify_existing_rrd_semantics(existing: Path, current: Path) -> None:
+    if _rrd_semantic_sha256(existing) != _rrd_semantic_sha256(current):
+        raise DataFactoryVizError("existing RRD does not match all current run inputs")
 
 
 def _sha256_path(path: Path) -> str:

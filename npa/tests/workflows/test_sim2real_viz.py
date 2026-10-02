@@ -144,6 +144,7 @@ def test_policy_access_markdown_only_claims_learned_policy_when_proven(
             "heldout_policy_composition": "learned_actor_only",
             "heldout_policy_post_actor_controller": None,
             "heldout_policy_post_actor_controller_declared": True,
+            "heldout_policy_learned_actor_only": stock_or_scripted is False,
         }
     )
 
@@ -258,9 +259,7 @@ def test_policy_metadata_never_promotes_malformed_identity_or_loading(
     assert "`stock_or_scripted_policy=false`" not in text
 
 
-def test_policy_metadata_preserves_generator_digest_and_requires_hash_agreement() -> (
-    None
-):
+def test_policy_metadata_preserves_and_reconciles_generator_digest() -> None:
     provenance = {
         "checkpoint_uri": "s3://bucket/run/model.pt",
         "checkpoint_sha256": "a" * 64,
@@ -282,6 +281,7 @@ def test_policy_metadata_preserves_generator_digest_and_requires_hash_agreement(
     metadata = viz_module._heldout_policy_metadata(
         report,
         checkpoint_fallback="s3://bucket/run/model.pt",
+        generator_sha256_evidence=(("selected candidate", "a" * 64),),
     )
     assert metadata["heldout_policy_generator_sha256"] == "a" * 64
     assert metadata["heldout_policy_identity_verified"] is True
@@ -291,6 +291,7 @@ def test_policy_metadata_preserves_generator_digest_and_requires_hash_agreement(
     contradictory = viz_module._heldout_policy_metadata(
         report,
         checkpoint_fallback="s3://bucket/run/model.pt",
+        generator_sha256_evidence=(("selected candidate", "a" * 64),),
     )
     assert contradictory["heldout_policy_identity_verified"] is False
     assert contradictory["heldout_policy_learned_actor_only"] is False
@@ -447,7 +448,6 @@ def test_policy_metadata_reconciles_every_authoritative_identity_source(
     [
         "checkpoint_uri",
         "checkpoint_sha256",
-        "generator_policy_sha256",
         "checkpoint_size_bytes",
     ],
 )
@@ -482,6 +482,35 @@ def test_policy_metadata_requires_each_inference_identity_field(
 
     assert metadata["heldout_policy_identity_verified"] is False
     assert metadata["heldout_policy_learned_actor_only"] is False
+
+
+def test_generator_digest_is_optional_descriptive_provenance() -> None:
+    provenance = {
+        "checkpoint_uri": "s3://bucket/run/model.pt",
+        "checkpoint_sha256": "a" * 64,
+        "checkpoint_size_bytes": 128,
+        "loaded_for_inference": True,
+        "stock_or_scripted_policy": False,
+        "actor_is_learned": True,
+        "scripted_post_actor_controller": False,
+        "policy_composition": "learned_actor_only",
+        "post_actor_controller": None,
+    }
+
+    metadata = viz_module._heldout_policy_metadata(
+        {
+            "policy_checkpoint": "s3://bucket/run/model.pt",
+            "policy_checkpoint_sha256": "a" * 64,
+            "policy_checkpoint_size_bytes": 128,
+            "policy_inference_provenance": provenance,
+        },
+        checkpoint_fallback="s3://bucket/run/model.pt",
+        checkpoint_sha256_fallback="a" * 64,
+        checkpoint_size_fallback=128,
+    )
+
+    assert metadata["heldout_policy_identity_verified"] is True
+    assert metadata["heldout_policy_generator_sha256"] == ""
 
 
 @pytest.mark.parametrize(
@@ -753,8 +782,8 @@ def _build_run_tree(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
             ),
             encoding="utf-8",
         )
+    # This local-only fixture intentionally exercises the schema-less legacy tier.
     inner_evidence = {
-        "schema": "npa.sim2real.inner_loop_evidence.v1",
         "outer_iteration": 1,
         "reward_trend": [0.2, 0.45],
         "iterations": [
@@ -1113,6 +1142,7 @@ def _rrd_training_scalars(path: Path) -> dict[str, Any]:
 
 def _checkpoint_validation_evidence() -> dict[str, Any]:
     evidence: dict[str, Any] = {
+        "schema": "npa.sim2real.inner_loop_evidence.v1",
         "outer_iteration": 2,
         "iterations": [],
         "checkpoint_candidates": [],
@@ -1252,6 +1282,36 @@ def test_canonical_validation_cannot_fall_back_to_legacy_without_candidates(
     evidence["iterations"][0][marker] = "s3://unit/run/signals/"
     with pytest.raises(Sim2RealVizError, match="[Vv]alidation"):
         viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+
+def test_validation_authority_requires_explicit_legacy_policy() -> None:
+    payload = {"iterations": [{"iteration": 1, "actions_dir": "/local/actions"}]}
+
+    with pytest.raises(TypeError, match="allow_local_only_legacy"):
+        viz_module._requires_checkpoint_bound_validation(payload)
+    with pytest.raises(Sim2RealVizError, match="[Ll]ocal-only legacy"):
+        viz_module._requires_checkpoint_bound_validation(
+            payload,
+            allow_local_only_legacy=False,
+        )
+    assert (
+        viz_module._requires_checkpoint_bound_validation(
+            payload,
+            allow_local_only_legacy=True,
+        )
+        is False
+    )
+
+
+def test_schema_alone_does_not_claim_checkpoint_bound_validation(
+    tmp_path: Path,
+) -> None:
+    evidence = _checkpoint_validation_evidence()
+    del evidence["checkpoint_candidates"]
+
+    records = viz_module._all_inner_iteration_records(tmp_path, evidence)
+
+    assert [record["iteration"] for _outer, record in records] == [1, 2]
 
 
 @pytest.mark.parametrize(

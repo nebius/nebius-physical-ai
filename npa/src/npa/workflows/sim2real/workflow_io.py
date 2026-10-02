@@ -387,10 +387,12 @@ def _record_provenance_is_valid(
         artifacts.get("gpu_products"),
         artifacts.get("gpu_rows"),
     )
+    gpu_evidence_present = "gpu_products" in artifacts or "gpu_rows" in artifacts
     return bool(
         artifacts.get("execution_mode") == "standard_npa_workflow_skypilot"
         and isinstance(artifacts.get("workflow_job"), str)
         and artifacts["workflow_job"].strip()
+        and (not gpu_evidence_present or gpu_valid)
         and (stage != 4 or gpu_valid)
     )
 

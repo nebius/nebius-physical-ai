@@ -11,10 +11,7 @@ from typing import Any, Callable
 
 from botocore.exceptions import ClientError
 
-from .publication_reader import (
-    PublicationConflict,
-    resolve_committed_publication,
-)
+from .publication_reader import PublicationConflict, resolve_committed_publication
 
 logger = logging.getLogger(__name__)
 
@@ -154,17 +151,34 @@ def _put_unjournaled_canonical_mcap(
             raise RuntimeError("canonical MCAP object has no conditional-write ETag")
         conditions = {"IfMatch": etag}
     with local_path.open("rb") as body:
-        s3.put_object(
-            Bucket=bucket,
-            Key=canonical_key,
-            Body=body,
-            ContentType="application/octet-stream",
-            Metadata={
-                "npa-sha256": sha256_file(local_path),
-                "npa-canonical": "true",
-            },
-            **conditions,
-        )
+        try:
+            s3.put_object(
+                Bucket=bucket,
+                Key=canonical_key,
+                Body=body,
+                ContentType="application/octet-stream",
+                Metadata={
+                    "npa-sha256": sha256_file(local_path),
+                    "npa-canonical": "true",
+                },
+                **conditions,
+            )
+        except ClientError as exc:
+            error = exc.response.get("Error", {})
+            code = str(error.get("Code", ""))
+            status = int(
+                exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0
+            )
+            if code in {
+                "409",
+                "412",
+                "ConditionalRequestConflict",
+                "PreconditionFailed",
+            } or status in {409, 412}:
+                raise PublicationConflict(
+                    "canonical MCAP was concurrently replaced"
+                ) from exc
+            raise
     after = resolve_committed_publication(
         lambda uri: _s3_object_bytes_if_exists(s3, bucket, uri),
         canonical_uri,
@@ -278,13 +292,10 @@ def prepare_canonical_mcap(
     )
     provenance_key = canonical_key + ".provenance.json"
     canonical_uri = f"s3://{bucket}/{canonical_key}"
-    try:
-        publication = resolve_committed_publication(
-            lambda uri: _s3_object_bytes_if_exists(s3, bucket, uri),
-            canonical_uri,
-        )
-    except PublicationConflict as exc:
-        raise RuntimeError(str(exc)) from exc
+    publication = resolve_committed_publication(
+        lambda uri: _s3_object_bytes_if_exists(s3, bucket, uri),
+        canonical_uri,
+    )
     committed_mcap_uri = publication.resolve(canonical_uri)
     if publication.journaled and committed_mcap_uri is None:
         raise RuntimeError(
@@ -412,6 +423,10 @@ def prepare_canonical_mcap(
             raise RuntimeError(
                 "committed canonical MCAP bytes disagree with the publication journal"
             )
+    elif _s3_object_bytes_if_exists(s3, bucket, publication.journal_uri) is not None:
+        raise PublicationConflict(
+            "publication journal appeared during a legacy canonical MCAP read"
+        )
     head = s3.head_object(Bucket=bucket, Key=published_key)
     if int(head.get("ContentLength") or -1) != int(info["size_bytes"]):
         raise RuntimeError(

@@ -282,7 +282,8 @@ def _committed_publication_artifacts(
     artifacts: list,
     *,
     require_complete: bool = True,
-) -> tuple[list, object | None, object | None, list[str]]:
+    include_snapshot: bool = False,
+) -> tuple:
     keys = [str(item.key or "") for item in artifacts]
     root_key = _run_root_key(artifacts, run_id)
     canonical_report_uri = f"s3://{bucket}/{root_key}/reports/sim2real-report.json"
@@ -299,7 +300,8 @@ def _committed_publication_artifacts(
             ),
             None,
         )
-        return artifacts, report, select_preferred_artifact(artifacts), keys
+        result = (artifacts, report, select_preferred_artifact(artifacts), keys)
+        return (*result, publication) if include_snapshot else result
 
     by_uri = {str(item.s3_uri or ""): item for item in artifacts}
     committed_uris = {
@@ -387,7 +389,23 @@ def _committed_publication_artifacts(
         for target in publication.objects.values()
         if target.immutable_uri is not None
     )
-    return visible, report, preferred, logical_keys
+    result = (visible, report, preferred, logical_keys)
+    return (*result, publication) if include_snapshot else result
+
+
+def _assert_legacy_publication_snapshot_still_unjournaled(
+    s3,
+    bucket: str,
+    publication,
+) -> None:
+    """Fence mutable-alias reads against the first journal publication."""
+
+    if publication.journaled:
+        return
+    if _read_publication_journal(s3, bucket, publication.journal_uri) is not None:
+        raise PublicationConflict(
+            "publication journal appeared during a legacy artifact read"
+        )
 
 
 def _stage_evidence_candidate_rank(key: str) -> int | None:
@@ -562,7 +580,7 @@ def _public_workflow_command(argv) -> str:
             public.append("Bearer")
             pending = "secret"
             continue
-        public.append(value)
+        public.append(_public_workflow_output_uri(value) if "://" in value else value)
     return " ".join(public)[:2000]
 
 
@@ -695,11 +713,13 @@ def _artifact_backed_run_details(
             report_artifact,
             preferred,
             authority_keys,
+            publication_snapshot,
         ) = _committed_publication_artifacts(
             s3,
             run_bucket,
             run_id,
             artifacts,
+            include_snapshot=True,
         )
     except PublicationConflict as exc:
         raise HTTPException(
@@ -746,6 +766,17 @@ def _artifact_backed_run_details(
                     )
                     + "."
                 )
+    try:
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     stage_summary = summarize_stage_evidence(stages)
     authoritative_run_status = str(parsed_evidence.get("run_status") or "").strip()
     return {

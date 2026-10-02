@@ -187,11 +187,19 @@ def test_reduced_proof_records_zero_policy_success_without_failing_pipeline(
         "checkpoint_selection": dict(candidate),
         "checkpoint_candidates": [dict(candidate)],
     }
-    monkeypatch.setattr(
-        workflow_stage,
-        "read_json",
-        lambda uri, **_kwargs: evidence if "/inner_loop/" in uri else report,
-    )
+
+    def read_json(uri: str, **kwargs):
+        if "/inner_loop/" in uri:
+            return evidence
+        directory = Path(kwargs["directory"])
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "report.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        return report
+
+    monkeypatch.setattr(workflow_stage, "read_json", read_json)
     monkeypatch.setattr(
         workflow_stage,
         "write_json",

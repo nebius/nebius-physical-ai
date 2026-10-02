@@ -24,6 +24,8 @@ RESERVED_SUFFIXES = (
 class PublicationConflict(RuntimeError):
     """Raised when publication state cannot identify one complete generation."""
 
+    status_code = 409
+
 
 @dataclass(frozen=True)
 class PublicationObject:

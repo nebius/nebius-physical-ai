@@ -368,6 +368,7 @@ def test_stage14_rejects_rehashed_incomplete_or_foreign_components(
 
 
 def test_stage14_rejects_stale_decision_authority() -> None:
+    gold = _gold()
     decision = {
         "schema": "npa.sim2real.threshold_decision.v1",
         "run_id": "other-run",
@@ -381,9 +382,12 @@ def test_stage14_rejects_stale_decision_authority() -> None:
         stage14._stage14_policy_metadata(
             _evidence(),
             decision,
-            _gold(),
+            gold,
             run_root=ROOT,
             run_id=RUN_ID,
+            expected_threshold=0.5,
+            expected_early_exit=False,
+            expected_gold_report_sha256=gold_report_sha256(gold),
         )
 
 

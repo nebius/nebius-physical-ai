@@ -16,10 +16,7 @@ from npa.workflows.sim2real.component_authority import (
     validate_stage4_parallel_inputs,
 )
 from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
-from npa.workflows.sim2real.decision_authority import (
-    gold_report_sha256,
-    validate_stage11_decision,
-)
+from npa.workflows.sim2real.decision_authority import validate_stage11_decision
 from npa.workflows.sim2real.stage10_execution import (
     Stage10Operations,
     assert_gold_checkpoint_identity as _assert_gold_checkpoint_identity,
@@ -899,11 +896,11 @@ def _stage11(args: argparse.Namespace) -> None:
     report = read_json(report_uri, directory=work)
     selection, candidate = _stage11_selection(args, root, work)
     report_path = work / "report.json"
-    report_sha256 = (
-        hashlib.sha256(report_path.read_bytes()).hexdigest()
-        if report_path.is_file()
-        else gold_report_sha256(report)
-    )
+    if not report_path.is_file():
+        raise RuntimeError(
+            "Stage 11 exact downloaded gold-report bytes are unavailable"
+        )
+    report_sha256 = hashlib.sha256(report_path.read_bytes()).hexdigest()
     decision = _stage11_decision(
         args,
         root,

@@ -114,7 +114,7 @@ def _validate_decision(
     checkpoint_uri: str,
     expected_threshold: float,
     expected_early_exit: bool,
-    gold_report_bytes_sha256: str | None,
+    gold_report_bytes_sha256: str,
 ) -> None:
     _assert_decision_shape(
         decision,
@@ -131,7 +131,7 @@ def _validate_decision(
     _assert_decision_outcome(
         decision,
         report_rate=report_rate,
-        report_sha256=(gold_report_bytes_sha256 or gold_report_sha256(gold_report)),
+        report_sha256=gold_report_bytes_sha256,
         expected_threshold=expected_threshold,
         expected_early_exit=expected_early_exit,
     )
@@ -147,7 +147,7 @@ def validate_stage11_decision(
     checkpoint_uri: str,
     expected_threshold: float,
     expected_early_exit: bool,
-    gold_report_bytes_sha256: str | None = None,
+    gold_report_bytes_sha256: str,
 ) -> None:
     """Validate one decision against the exact run, report, and checkpoint.
 

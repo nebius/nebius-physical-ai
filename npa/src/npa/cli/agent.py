@@ -7814,10 +7814,17 @@ def sim_viz_load_run(payload: dict | None = None):
     session_response = _load_session_run_if_known(body=session_body, run_id=run_id, requested_camera=requested_camera)
     if session_response is not None:
         return session_response
+    requested_bucket, requested_project, requested_resolved_prefix, source_selected = _selected_run_request(body)
+    exact_source_requested = bool(
+        requested_run_ref
+        or requested_bucket
+        or requested_project
+        or "resolved_prefix" in body
+        or source_selected
+    )
     try:
         s3, settings = _agent_artifact_s3_client()
         requested_prefix = str(body.get("prefix") or "")
-        requested_bucket, requested_project, requested_resolved_prefix, source_selected = _selected_run_request(body)
         artifacts = []
         resolution = None
         selected_prefix = ""
@@ -7848,12 +7855,13 @@ def sim_viz_load_run(payload: dict | None = None):
                 run_ref=requested_run_ref,
                 prefix=requested_prefix,
             )
-        artifacts, _report_artifact, preferred, _authority_keys = (
+        artifacts, _report_artifact, preferred, _authority_keys, publication_snapshot = (
             _committed_publication_artifacts(
                 s3,
                 selected_bucket,
                 resolved_run_id,
                 artifacts,
+                include_snapshot=True,
             )
         )
         # Prefer a run-scoped Rerun recording over stale history entries.
@@ -7861,6 +7869,17 @@ def sim_viz_load_run(payload: dict | None = None):
             local_name = _artifact_filename(preferred.key)
             local_path = RECORDINGS_DIR / local_name
             download_s3_uri(preferred.s3_uri, local_path, s3=s3)
+            _verify_downloaded_publication_artifact(
+                s3,
+                selected_bucket,
+                preferred,
+                local_path,
+            )
+            _assert_legacy_publication_snapshot_still_unjournaled(
+                s3,
+                selected_bucket,
+                publication_snapshot,
+            )
             state = _load_state()
             sim_viz = _apply_loaded_artifact(
                 state=state,
@@ -7881,6 +7900,11 @@ def sim_viz_load_run(payload: dict | None = None):
                 "run_ref": resolved_ref,
             }}
         if artifacts:
+            _assert_legacy_publication_snapshot_still_unjournaled(
+                s3,
+                selected_bucket,
+                publication_snapshot,
+            )
             # A selected run is still real and usable when its capability is a
             # service/session artifact rather than an RRD recording. Persist an
             # artifact-backed active context so conditional tabs (LeIsaac in
@@ -7962,7 +7986,19 @@ def sim_viz_load_run(payload: dict | None = None):
         raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
     except HTTPException:
         raise
-    except (ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
+    except (
+        ClientError,
+        BotoCoreError,
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        if exact_source_requested:
+            raise HTTPException(
+                status_code=502,
+                detail="the selected artifact source could not be verified",
+            ) from exc
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
         pass
@@ -8321,6 +8357,11 @@ def artifacts_runs(
             effective_prefix=base,
             source_tuples=source_tuples,
         )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8569,13 +8610,20 @@ def artifacts_for_run(
             cursor=cursor,
             s3=s3,
         )
-        visible_artifacts, _report_artifact, preferred, _authority_keys = (
+        (
+            visible_artifacts,
+            _report_artifact,
+            preferred,
+            _authority_keys,
+            publication_snapshot,
+        ) = (
             _committed_publication_artifacts(
                 s3,
                 run_bucket,
                 normalized_run,
                 page.artifacts,
                 require_complete=False,
+                include_snapshot=True,
             )
         )
         page = ArtifactListPage(
@@ -8594,6 +8642,11 @@ def artifacts_for_run(
             normalized_run,
             summary_artifacts,
             _summary_documents_for_run(s3, run_bucket, visible_artifacts),
+        )
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
         )
         if exact_source_request:
             # The card is rendered immediately before its playback action. Keep
@@ -8732,13 +8785,14 @@ def artifacts_stage(
             )
             if selected_project:
                 bucket_projects[run_bucket] = selected_project
-        artifacts, _report, _preferred, _logical_keys = (
+        artifacts, _report, _preferred, _logical_keys, publication_snapshot = (
             _committed_publication_artifacts(
                 s3,
                 run_bucket,
                 normalized_run,
                 artifacts,
                 require_complete=False,
+                include_snapshot=True,
             )
         )
         wanted = str(stage_key or "").strip()
@@ -8776,6 +8830,11 @@ def artifacts_stage(
                     info[rel] = _public_artifact_info(payload)
             except Exception:
                 continue
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
+        )
         return {{
             "ok": True,
             "run_id": normalized_run,
@@ -8790,6 +8849,11 @@ def artifacts_stage(
             "artifacts": [item.to_dict() for item in stage_arts],
             "info": info,
         }}
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8844,13 +8908,14 @@ def fiftyone_dataset(
                 prefix=prefix,
             )
 
-        artifacts, _report, _preferred, _logical_keys = (
+        artifacts, _report, _preferred, _logical_keys, publication_snapshot = (
             _committed_publication_artifacts(
                 s3,
                 bucket,
                 normalized_run,
                 artifacts,
                 require_complete=False,
+                include_snapshot=True,
             )
         )
 
@@ -8865,6 +8930,11 @@ def fiftyone_dataset(
 
         keys = [str(a.key or "") for a in artifacts]
         dataset = build_fiftyone_dataset(keys, run_id=normalized_run, read_json=_read_json, bucket=bucket)
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            bucket,
+            publication_snapshot,
+        )
         return {{
             "ok": True,
             "run_id": normalized_run,
@@ -8874,6 +8944,11 @@ def fiftyone_dataset(
             "resolved_prefix": exact_prefix,
             **dataset,
         }}
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8927,13 +9002,14 @@ def artifacts_run_provenance(
                 run_id=normalized_run,
                 prefix=prefix,
             )
-        artifacts, _report, _preferred, _logical_keys = (
+        artifacts, _report, _preferred, _logical_keys, publication_snapshot = (
             _committed_publication_artifacts(
                 s3,
                 run_bucket,
                 normalized_run,
                 artifacts,
                 require_complete=False,
+                include_snapshot=True,
             )
         )
         keys = [str(a.key or "") for a in artifacts]
@@ -8948,6 +9024,11 @@ def artifacts_run_provenance(
                 return None
 
         prov = build_run_provenance(keys, run_id=normalized_run, read_json=_read_json)
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
+        )
         return {{
             "ok": True,
             "run_id": normalized_run,
@@ -8956,6 +9037,11 @@ def artifacts_run_provenance(
             "resolved_prefix": exact_prefix,
             **prov,
         }}
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -9026,6 +9112,12 @@ def sim_viz_load_artifact(payload: dict | None = None):
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(s3_uri, local_path, s3=s3)
+        _verify_downloaded_publication_artifact(
+            s3,
+            bucket,
+            artifact,
+            local_path,
+        )
         render = render_hint_for_object(key=key)
         state = _load_state()
         run_summary = build_run_summary(
@@ -9059,6 +9151,11 @@ def sim_viz_load_artifact(payload: dict | None = None):
         ) from exc
     except ArtifactDiscoveryError as exc:
         raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception:

@@ -559,6 +559,7 @@ def _normalize_heldout_report(
         "policy_checkpoint_sha256",
         "policy_checkpoint_size_bytes",
         "policy_inference_provenance",
+        "evaluation_attempt_tag",
         "applied_scenario_proof",
         "capture",
         "camera_metadata",

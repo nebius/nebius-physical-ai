@@ -102,15 +102,26 @@ def test_data_factory_existing_rrd_resolves_through_publication_journal() -> Non
     assert publication is not None and publication.journaled
 
 
-def test_data_factory_skips_journal_reads_when_inventory_has_no_authority() -> None:
+def test_data_factory_probes_journal_when_inventory_omits_it() -> None:
+    class Store:
+        calls: list[str] = []
+
+        def read_small_bytes_with_etag(
+            self, uri: str, *, max_bytes: int = 1024 * 1024
+        ) -> tuple[bytes, str] | None:
+            self.calls.append(uri)
+            return None
+
+    store = Store()
     resolved, publication = data_factory_viz._resolve_existing_output_publication(
-        object(),
+        store,
         _CANONICAL_RRD,
         inventory_keys=set(),
     )
 
     assert resolved == ""
-    assert publication is None
+    assert publication is not None and not publication.journaled
+    assert store.calls == [_LOCK_URI]
 
 
 def test_diagnostic_heldout_reruns_use_unique_component_attempts(

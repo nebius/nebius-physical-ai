@@ -257,6 +257,8 @@ class Artifact:
     role: str = "output"
     namespace: str = ""
     relative_key: str = ""
+    source_etag: str = ""
+    source_version_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data_role = artifact_data_role(self.key, self.run_id)

@@ -56,6 +56,7 @@ def test_stage14_requires_canonical_inner_evidence_identity(field: str) -> None:
             run_id=RUN_ID,
             expected_threshold=0.5,
             expected_early_exit=False,
+            expected_gold_report_sha256=component_authority.gold_report_sha256(gold),
         )
 
 
@@ -74,6 +75,7 @@ def test_stage14_rejects_same_run_nontrainer_checkpoint() -> None:
             run_id=RUN_ID,
             expected_threshold=0.5,
             expected_early_exit=False,
+            expected_gold_report_sha256=component_authority.gold_report_sha256(gold),
         )
 
 

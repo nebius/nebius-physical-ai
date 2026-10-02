@@ -282,6 +282,18 @@ def _assert_matching_identity(
                     raise ValueError(
                         f"selected checkpoint {source} {label} aliases disagree"
                     )
+    selection_iteration = selection.get("training_iteration")
+    candidate_iteration = candidate.get("training_iteration")
+    if (
+        type(selection_iteration) is not int
+        or selection_iteration <= 0
+        or type(candidate_iteration) is not int
+        or candidate_iteration <= 0
+        or selection_iteration != candidate_iteration
+    ):
+        raise ValueError(
+            "selected checkpoint training_iteration sources disagree or are malformed"
+        )
     if _identity_value(
         "checkpoint_sha256", selection["generator_policy_sha256"]
     ) != _identity_value("checkpoint_sha256", selection["checkpoint_sha256"]):
