@@ -250,6 +250,11 @@ recorded by setup, or an empty value when none is available. Use it for NPA
 storage operations alongside a separate policy environment; see
 [Python environments in custom stages](../docs/workbench/npa-workflow-guide.md#python-environments-in-custom-stages).
 
+Workflow image preflight accepts `--image-pull-timeout-seconds` on both
+`preflight-images` and `submit`. Use `0` for no pull deadline. Omitting it
+inherits `--image-bootstrap-timeout-seconds` (1800 seconds by default);
+see the [workflow guide](../docs/workbench/npa-workflow-guide.md).
+
 The [Franka transfer workflow](../docs/workbench/guides/franka-rl-transfer.md)
 retains invalid hosted visual judgments as failed audit evidence. Its
 `npa.workflows.franka_rl visual-evaluate --prior-judgments-path` option accepts
