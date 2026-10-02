@@ -9813,11 +9813,10 @@ def _agent_request_boolean(body: dict, field: str, *, default: bool) -> bool:
     if field not in body:
         return default
     value = body[field]
-    if not isinstance(value, bool):
-        raise HTTPException(
-            status_code=400,
-            detail=f"{{field}} must be a JSON boolean",
-        )
+    # Bootstrap serves this backend without the npa package on its import path.
+    # Keep this standalone boundary equivalent to npa.literal_values.require_boolean.
+    if type(value) is not bool:
+        raise ValueError(f"{{field}} must be a literal boolean")
     return value
 
 
@@ -9832,16 +9831,19 @@ def tenant_resources(refresh: bool = False):
 @app.post("/infra/mk8s/provision")
 def provision_infra(payload: dict | None = None):
     body = payload if isinstance(payload, dict) else {{}}
+    try:
+        dry_run = _agent_request_boolean(body, "dry_run", default=True)
+        validate = _agent_request_boolean(body, "validate", default=True)
+        skip_s3 = _agent_request_boolean(body, "skip_s3", default=True)
+        preemptible = _agent_request_boolean(body, "preemptible", default=False)
+    except ValueError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={{"ok": False, "status": "invalid", "error": str(exc)}},
+        )
     project = _agent_project_alias(str(body.get("project") or ""))
     requested_cluster_name = str(body.get("cluster_name") or "").strip()
     cluster_name = requested_cluster_name or "npa-cluster"
-    # Default dry_run=True — real Terraform apply requires an explicit confirm token.
-    if "dry_run" in body:
-        dry_run = _agent_request_boolean(body, "dry_run", default=True)
-    else:
-        dry_run = bool(body.get("dry_run", True))
-    validate = _agent_request_boolean(body, "validate", default=True)
-    skip_s3 = _agent_request_boolean(body, "skip_s3", default=True)
     desired = {{
         key: body[key]
         for key in (
@@ -9862,7 +9864,6 @@ def provision_infra(payload: dict | None = None):
             content={{"ok": False, "status": "invalid", "error": str(exc)}},
         )
     logical = str(body.get("logical_allocation") or "").strip()
-    preemptible = _agent_request_boolean(body, "preemptible", default=False)
     if logical:
         fallback_records = _load_state().get("gpu_allocation_fallback")
         fallback_records = fallback_records if isinstance(fallback_records, dict) else {{}}

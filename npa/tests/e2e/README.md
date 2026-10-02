@@ -39,3 +39,18 @@ host settings and does not replace the deployment's CUDA creation checks.
 `NPA_E2E_SOPERATOR_NAMESPACE` defaults to `soperator`.
 `NPA_E2E_SOPERATOR_EVIDENCE_DIR` optionally names a private output directory for
 a new `userns-live.json` receipt; an existing receipt is never overwritten.
+
+### Provisioning boolean ingress
+
+`test_agent_provision_boolean_live.py` sends malformed boolean fields to all
+three provisioning route aliases on an isolated, authenticated agent. Every
+request must return HTTP 400 with `ok: false`, `status: invalid`, and a field
+error. These rejected requests must not issue confirmations or start provisioning;
+the rendered-backend unit tests separately verify those side-effect boundaries.
+
+Set `NPA_AGENT_PROVISION_BOOLEAN_LIVE_CONFIG` to an owner-only JSON file outside
+the checkout containing `base_url` (the agent API URL ending in `/api/`),
+`username`, and `password`. This variable has no default; the test skips when
+it is absent. Deploy the candidate to a disposable CPU agent in an isolated
+project first, then run with `NPA_INTEGRATION_E2E=1`. Destroy the exact test agent
+and its owned storage after capturing evidence, following the teardown skill.

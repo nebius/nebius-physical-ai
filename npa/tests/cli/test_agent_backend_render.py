@@ -944,20 +944,60 @@ def test_rendered_mk8s_rejects_ambiguous_booleans_before_side_effects(
         "_issue_agent_confirm_token",
         lambda *_args, **_kwargs: calls.append("confirmation"),
     )
+    for name in ("_agent_project_alias", "_load_state", "_consume_agent_confirm_token"):
+        monkeypatch.setattr(
+            module, name, lambda *_args, **_kwargs: calls.append("state")
+        )
     try:
         client = TestClient(module.app)
         for field in ("dry_run", "validate", "skip_s3", "preemptible"):
-            for value in ("false", 0, 1, None, [], {}):
+            for value in ("false", "true", "", 0, 1, 0.0, 1.0, None, [], {}):
                 response = client.post(
                     "/infra/provision",
-                    json={field: value},
+                    json={
+                        "dry_run": False,
+                        "logical_allocation": "invalid-request-allocation",
+                        "confirm_token": "unused-confirmation-token",
+                        field: value,
+                    },
                 )
                 assert response.status_code == 400
-                assert response.json() == {"detail": f"{field} must be a JSON boolean"}
+                assert response.json() == {
+                    "ok": False,
+                    "status": "invalid",
+                    "error": f"{field} must be a literal boolean",
+                }
     finally:
         sys.modules.pop(module_name, None)
 
     assert calls == []
+
+
+def test_rendered_request_boolean_matches_shared_scalar_contract(monkeypatch, tmp_path):
+    """The standalone deployed adapter preserves shared literal-value semantics."""
+    from npa.literal_values import require_boolean
+
+    module = _import_rendered_backend(
+        monkeypatch, tmp_path, module_name="npa_rendered_boolean_contract"
+    )
+    try:
+        for value in (True, False, "false", "true", "", 0, 1, 0.0, None, [], {}):
+            if type(value) is bool:
+                assert module._agent_request_boolean(
+                    {"flag": value}, "flag", default=False
+                ) is require_boolean(value, field="flag")
+            else:
+                with pytest.raises(ValueError) as expected:
+                    require_boolean(value, field="flag")
+                with pytest.raises(ValueError) as actual:
+                    module._agent_request_boolean(
+                        {"flag": value}, "flag", default=False
+                    )
+                assert str(actual.value) == str(expected.value)
+        for default in (True, False):
+            assert module._agent_request_boolean({}, "flag", default=default) is default
+    finally:
+        sys.modules.pop(module.__name__, None)
 
 
 @pytest.mark.parametrize(
