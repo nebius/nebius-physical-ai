@@ -222,7 +222,29 @@ RTXPRO-6000-BLACKWELL-SERVER-EDITION  1                         2 of 2 free
 
 def _stub_catalog(monkeypatch: pytest.MonkeyPatch, output: str) -> None:
     def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
-        return subprocess.CompletedProcess(cmd, 0, stdout=output, stderr="")
+        response = output
+        if "get" in cmd and "nodes" in cmd:
+            response = json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {
+                                "name": "unit-node",
+                                "labels": {"nvidia.com/gpu.product": "RTXPRO6000"},
+                            },
+                            "spec": {},
+                            "status": {
+                                "conditions": [{"type": "Ready", "status": "True"}],
+                                "capacity": {"nvidia.com/gpu": "8"},
+                                "allocatable": {"nvidia.com/gpu": "8", "pods": "110"},
+                            },
+                        }
+                    ]
+                }
+            )
+        elif "get" in cmd and "pods" in cmd:
+            response = json.dumps({"items": []})
+        return subprocess.CompletedProcess(cmd, 0, stdout=response, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
