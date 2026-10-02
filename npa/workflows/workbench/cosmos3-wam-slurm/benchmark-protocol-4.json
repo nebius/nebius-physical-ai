@@ -1,0 +1,56 @@
+{
+  "objective": "Extend the measured WAM campaign to four active B200 GPUs on one reserved eight-GPU VM",
+  "extends_protocol_sha256": "89c8fc0b8286601c23e5e684f740dc4bb6facaf496912f6bf60824774c761ace",
+  "protocol_recorded_at": "2026-09-29T17:34:58.005753+00:00",
+  "hardware": {
+    "nodes": 1,
+    "active_training_gpus": 4,
+    "provisioned_vm_gpus": 8,
+    "capacity": "STRICT reserved B200, us-central1"
+  },
+  "launcher": "Native Slurm allocates four GPUs; torchrun starts four ranks; FSDP shard degree four",
+  "full_training": {
+    "optimizer_steps": 2000,
+    "sample_cap_per_rank": 64,
+    "global_batch": 2048,
+    "gradient_accumulation": 8,
+    "seed": 42,
+    "checkpoint_iterations": [
+      500,
+      1000,
+      1500,
+      2000
+    ]
+  },
+  "timing_replicates": {
+    "runs": 3,
+    "steps_per_run": 200,
+    "warmup_steps_excluded": 50,
+    "profile": false
+  },
+  "profiling": {
+    "separate_run": true,
+    "steps": 110,
+    "target_ranks": [
+      0
+    ]
+  },
+  "quality": {
+    "tasks": 10,
+    "trials_per_task": 50,
+    "seed": 42,
+    "checkpoints": [
+      500,
+      1000,
+      1500,
+      2000
+    ],
+    "threshold": 0.9,
+    "evaluation_workers": 4,
+    "evaluation_excluded_from_training_time": true
+  },
+  "comparison": "Keep source/model/data revisions, FP32 parameter storage, BF16 compute, EMA, packing, sample cap, global batch and seed identical to the completed eight/sixteen-GPU campaign. Record actual token work; do not assume exact equivalence from nominal batch alone.",
+  "accounting": "Active training GPU-hours use four ranks. Cloud allocation retains eight B200s throughout the VM lifetime and is reported separately; no claim of a four-GPU VM or halved provisioned capacity.",
+  "failure_policy": "Preserve any failed attempt and exact native error. No silent precision, model, optimizer, dataset or sample-cap changes to obtain a fit.",
+  "status": "protocol recorded before four-GPU execution; no measured result yet"
+}

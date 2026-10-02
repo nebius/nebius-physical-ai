@@ -176,6 +176,7 @@ def _assert_recovery(parent, successor, run_id, event):
 
 def _assert_recovery_gates(parent, run_id, event):
     outputs, preflight = event["outputs"], event["preflight"]
+    proof = parent["partial_launch"]
     declared = [
         item["uri"].rstrip("/") + "/"
         if item.get("kind") == "directory"
@@ -192,12 +193,17 @@ def _assert_recovery_gates(parent, run_id, event):
         preflight["checks"][check] == "pass"
         for check in _CHECKS - {"credentials_access"}
     )
+    expected_preflight_hash = proof.get(
+        "preflight_wave_sha256", proof["rendered_wave_sha256"]
+    )
+    assert re.fullmatch("[0-9a-f]{64}", proof["rendered_wave_sha256"])
+    assert re.fullmatch("[0-9a-f]{64}", expected_preflight_hash)
     assert preflight["observed_at"] and preflight["scope"] == dict(
         source="default_sdk_recovery_preflight",
         run_id=run_id,
         wave_key=parent["key"],
         attempt=parent["attempt"],
-        rendered_wave_sha256=parent["partial_launch"]["rendered_wave_sha256"],
+        rendered_wave_sha256=expected_preflight_hash,
     )
     assert re.fullmatch("[0-9a-f]{64}", preflight["scope"]["rendered_wave_sha256"])
 

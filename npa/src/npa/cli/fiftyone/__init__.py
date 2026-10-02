@@ -61,7 +61,6 @@ from npa.clients.config import (
     write_config,
 )
 from npa.clients.credentials import (
-    apply_shared_credential_env,
     load_credentials,
     shared_credential_env,
     storage_endpoint_url,
@@ -69,6 +68,7 @@ from npa.clients.credentials import (
 )
 from npa.clients.endpoint import EndpointError, service_endpoint
 from npa.clients.network import NetworkIngressError
+from npa.clients.project_credential_store import ProjectCredentialStoreError
 from npa.clients.ssh import SSHClient, SSHError, format_remote_failure
 from npa.clients.serverless import (
     EndpointNotFoundError,
@@ -80,10 +80,12 @@ from npa.deploy.byovm import (
     BYOVMTarget,
     RUNTIME_HELP,
     apply_project_storage_vars,
+    deployment_preview_outputs,
     detect_gpu_info,
     gpu_config_fields,
     gpu_env_fields,
     is_byovm_runtime,
+    read_existing_workbench_outputs,
     resolve_byovm_target,
     runtime_uses_container,
     select_visible_devices,
@@ -2185,55 +2187,6 @@ def _deploy_step_count(skip_infra: bool, skip_app: bool, destroy: bool) -> int:
     return count
 
 
-def _read_existing_outputs(
-    proj_alias: str,
-    wb_name: str,
-    tf_dir: str,
-    use_remote_state: bool,
-    merged_vars: dict[str, str],
-) -> dict[str, Any]:
-    if tf_dir:
-        try:
-            return provisioner.outputs(tf_dir=tf_dir)
-        except ProvisionerError:
-            pass
-    elif use_remote_state:
-        work_dir = provisioner.working_dir_path(proj_alias, wb_name)
-        if work_dir.exists():
-            try:
-                provisioner.init(
-                    tf_dir=str(work_dir),
-                    backend_config={
-                        "access_key": merged_vars.get("nebius_api_key", ""),
-                        "secret_key": merged_vars.get("nebius_secret_key", ""),
-                    },
-                )
-                return provisioner.outputs(tf_dir=str(work_dir))
-            except ProvisionerError:
-                pass
-
-    from npa.clients.config import (
-        _deep_get,
-        _load_yaml,
-        _resolve_project_section,
-        _resolve_workbench_in_project,
-    )
-
-    try:
-        yml = _load_yaml()
-        proj = _resolve_project_section(yml, proj_alias)
-        wb = _resolve_workbench_in_project(proj, wb_name, yml)
-    except Exception:
-        wb = {}
-    return {
-        "vm_ip": _deep_get(wb, "ssh", "host", default=""),
-        "ssh_user": _deep_get(wb, "ssh", "user", default="ubuntu"),
-        "ssh_key_path": _deep_get(wb, "ssh", "key_path", default="~/.ssh/id_ed25519"),
-        "storage_bucket": _deep_get(wb, "storage", "checkpoint_bucket", default=""),
-        "storage_endpoint": _deep_get(wb, "storage", "endpoint_url", default=""),
-    }
-
-
 def _saved_workbench_config(project: str | None, name: str) -> WorkbenchConfig | None:
     try:
         return resolve_ssh_config(project=project, name=name)
@@ -3056,7 +3009,7 @@ def deploy_cmd(
         "--storage-endpoint",
         help=(
             "Nebius S3-compatible endpoint override, for example "
-            "storage.eu-north1.nebius.cloud. Also settable with NPA_STORAGE_ENDPOINT."
+            "storage.eu-north1.nebius.cloud."
         ),
     ),
     skip_infra: bool = typer.Option(
@@ -3169,7 +3122,7 @@ def deploy_cmd(
         OutputFormat.text, "--output", help="Output format."
     ),
 ) -> None:
-    """Deploy or destroy a FiftyOne dataset curation VM."""
+    """Deploy or destroy a FiftyOne VM with selected-project storage."""
     address = _normalize_app_address(address)
     byovm = is_byovm_runtime(runtime)
     if _is_serverless_runtime(runtime):
@@ -3211,32 +3164,18 @@ def deploy_cmd(
             _fail(f"Invalid --tf-var format: {item} (expected key=value)")
         k, v = item.split("=", 1)
         extra_vars[k] = v
-    storage_endpoint_override = (
-        storage_endpoint.strip() or os.environ.get("NPA_STORAGE_ENDPOINT", "").strip()
-    )
-    if (
-        storage_endpoint_override
-        and "s3_endpoint" not in extra_vars
-        and not use_remote_state
-    ):
+    storage_endpoint_override = storage_endpoint.strip()
+    if storage_endpoint_override and "s3_endpoint" not in extra_vars:
         extra_vars["s3_endpoint"] = storage_endpoint_url(storage_endpoint_override)
     endpoint_warning = storage_endpoint_warning(
-        storage_endpoint_override
-        or extra_vars.get("s3_endpoint", "")
-        or os.environ.get("NEBIUS_S3_ENDPOINT", "")
-        or os.environ.get("AWS_ENDPOINT_URL", "")
+        storage_endpoint_override or extra_vars.get("s3_endpoint", "")
     )
     if endpoint_warning:
         typer.echo(endpoint_warning)
     # TODO: infer the storage endpoint from the selected Nebius region once all
     # deploy runtimes share a single region-aware storage resolver.
 
-    saved_env = resolve_environment(
-        proj_alias,
-        project_id=project_id or None,
-        tenant_id=tenant_id or None,
-        region=region or None,
-    )
+    saved_env = resolve_environment(proj_alias)
 
     env_project = project_id or (saved_env.project_id if saved_env else "")
     env_tenant = tenant_id or (saved_env.tenant_id if saved_env else "")
@@ -3244,23 +3183,42 @@ def deploy_cmd(
 
     if not proj_alias:
         proj_alias = env_region or ("byovm" if byovm else "default")
+    display_target = "selected workbench"
+
+    selected_storage_vars: dict[str, str] = {}
+    if not destroy:
+        try:
+            apply_project_storage_vars(
+                selected_storage_vars,
+                project=proj_alias,
+                explicit_vars=extra_vars,
+                require_complete=True,
+                project_id=env_project,
+                configured_project_id=(saved_env.project_id if saved_env else ""),
+            )
+        except (ConfigError, ProjectCredentialStoreError):
+            _fail("Selected project storage configuration is unavailable or invalid.")
+            return
+        except ValueError as exc:
+            _fail(str(exc))
+            return
 
     existing_managed_alias = alias_has_terraform_state(proj_alias, wb_name)
     existing_byovm_alias = workbench_is_byovm(proj_alias, wb_name)
     if not destroy and (existing_managed_alias or existing_byovm_alias):
         if replace and existing_byovm_alias:
             _fail(
-                f"{proj_alias}/{wb_name} is a BYOVM alias; --replace is only valid for Terraform-managed aliases."
+                f"{display_target} is a BYOVM alias; --replace is only valid for Terraform-managed aliases."
             )
             return
         if replace:
             if not yes:
                 _confirm_or_exit(
-                    f"--replace will provision replacement infrastructure for '{proj_alias}/{wb_name}'. Continue?"
+                    f"--replace will provision replacement infrastructure for '{display_target}'. Continue?"
                 )
         else:
             console.print(
-                f"Existing alias {proj_alias}/{wb_name} found; updating in place without Terraform."
+                f"Existing alias {display_target} found; updating in place without Terraform."
             )
             skip_infra = True
             use_remote_state = False
@@ -3299,8 +3257,10 @@ def deploy_cmd(
                     "nebius_project_id": env_project,
                     "nebius_region": env_region,
                 }
-            except NebiusError as exc:
-                _fail(f"Nebius auth failed: {exc}")
+            except NebiusError:
+                _fail(
+                    "Nebius authentication failed. Verify saved credentials and retry."
+                )
                 return
 
     if use_remote_state and not skip_infra and not (destroy and has_saved_state):
@@ -3313,14 +3273,11 @@ def deploy_cmd(
             return
 
         if dry_run:
-            console.print("  [dry-run] Would bootstrap Nebius environment:")
-            console.print(f"    project: {env_project}")
-            console.print(f"    tenant:  {env_tenant}")
-            console.print(f"    region:  {env_region}")
+            console.print("  [dry-run] Would bootstrap the selected Nebius environment")
         else:
             from npa.clients.nebius import NebiusError, bootstrap_environment
 
-            console.print(f"Bootstrapping Nebius environment ({proj_alias})...")
+            console.print("Bootstrapping the selected Nebius environment...")
             try:
                 nebius_creds = bootstrap_environment(
                     env_project,
@@ -3328,8 +3285,10 @@ def deploy_cmd(
                     env_region,
                     on_status=lambda msg: console.print(f"  {msg}"),
                 )
-            except NebiusError as exc:
-                _fail(f"Nebius bootstrap failed: {exc}")
+            except NebiusError:
+                _fail(
+                    "Nebius bootstrap failed. Verify the selected environment and retry."
+                )
                 return
             console.print("  Environment ready")
             write_config(
@@ -3344,7 +3303,23 @@ def deploy_cmd(
                 }
             )
 
-    merged_vars: dict[str, str] = {**extra_vars}
+    merged_vars: dict[str, str] = {**selected_storage_vars, **extra_vars}
+    missing_storage_vars = [
+        key
+        for key in (
+            "s3_bucket",
+            "s3_endpoint",
+            "nebius_api_key",
+            "nebius_secret_key",
+        )
+        if not merged_vars.get(key)
+    ]
+    if not destroy and missing_storage_vars:
+        _fail(
+            "Selected project storage overrides must remain complete "
+            f"(missing: {', '.join(missing_storage_vars)})."
+        )
+        return
     for key in (
         "iam_token",
         "service_account_id",
@@ -3355,20 +3330,13 @@ def deploy_cmd(
         "nebius_project_id",
         "nebius_region",
     ):
-        if key in nebius_creds:
+        if key in nebius_creds and key not in merged_vars:
             merged_vars[key] = nebius_creds[key]
-    if use_remote_state and (destroy or skip_infra):
+    if use_remote_state and destroy:
         _apply_saved_terraform_state(
             merged_vars,
             project=proj_alias,
             explicit_vars=extra_vars,
-        )
-    if byovm:
-        apply_project_storage_vars(
-            merged_vars,
-            project=proj_alias,
-            explicit_vars=extra_vars,
-            warn=console.print,
         )
     if not byovm:
         try:
@@ -3408,17 +3376,15 @@ def deploy_cmd(
             yes=yes,
         )
         if byovm:
-            console.print(
-                f"  [1/1] Unregistering BYOVM workbench {proj_alias}/{wb_name}..."
-            )
+            console.print(f"  [1/1] Unregistering BYOVM workbench {display_target}...")
             if not dry_run:
                 remove_workbench_config(proj_alias, wb_name)
             console.print(
-                f"  {proj_alias}/{wb_name} unregistered. BYOVM host was not modified."
+                f"  {display_target} unregistered. BYOVM host was not modified."
             )
             return
 
-        console.print(f"  [1/2] Destroying {proj_alias}/{wb_name}...")
+        console.print(f"  [1/2] Destroying {display_target}...")
         if dry_run:
             console.print("    [dry-run] Would run: terraform destroy")
             return
@@ -3445,8 +3411,8 @@ def deploy_cmd(
                         "secret_key": merged_vars.get("nebius_secret_key", ""),
                     },
                 )
-            except ProvisionerError as exc:
-                _fail(f"Terraform init failed: {exc}")
+            except ProvisionerError:
+                _fail("Terraform initialization failed. Review private Terraform logs.")
                 return
         else:
             resolved_tf_dir = tf_dir
@@ -3472,8 +3438,8 @@ def deploy_cmd(
                     **merged_vars,
                 },
             )
-        except ProvisionerError as exc:
-            _fail(f"Terraform destroy failed: {exc}")
+        except ProvisionerError:
+            _fail("Terraform destroy failed. Review private Terraform logs.")
             return
 
         console.print("  [2/2] Cleaning up config...")
@@ -3510,7 +3476,7 @@ def deploy_cmd(
 
         step += 1
         console.print(
-            f"  [{step}/{total_steps}] Initializing Terraform ({proj_alias}/{wb_name})..."
+            f"  [{step}/{total_steps}] Initializing Terraform ({display_target})..."
         )
         if dry_run:
             console.print("    [dry-run] Would run: terraform init")
@@ -3527,8 +3493,8 @@ def deploy_cmd(
                 provisioner.init(
                     tf_dir=resolved_tf_dir or None, backend_config=backend_cfg
                 )
-            except ProvisionerError as exc:
-                _fail(f"Terraform init failed: {exc}")
+            except ProvisionerError:
+                _fail("Terraform initialization failed. Review private Terraform logs.")
                 return
 
         step += 1
@@ -3544,16 +3510,10 @@ def deploy_cmd(
         }
         compute_label = f"gpu={platform}" if uses_gpu else f"cpu={platform}"
         console.print(
-            f"  [{step}/{total_steps}] Applying Terraform ({compute_label}, region={env_region})..."
+            f"  [{step}/{total_steps}] Applying Terraform ({compute_label})..."
         )
         if dry_run:
-            tf_outputs = {
-                "vm_ip": "<pending>",
-                "ssh_user": "ubuntu",
-                "ssh_key_path": "~/.ssh/id_ed25519",
-                "storage_bucket": "<pending>",
-                "storage_endpoint": f"https://storage.{env_region}.nebius.cloud",
-            }
+            tf_outputs = deployment_preview_outputs()
         else:
             try:
                 plan_output = provisioner.plan(
@@ -3581,10 +3541,9 @@ def deploy_cmd(
                     tf_outputs = provisioner.apply(
                         tf_dir=resolved_tf_dir or None, tf_vars=all_vars
                     )
-            except ProvisionerError as exc:
-                _fail(f"Terraform plan/apply failed: {exc}")
+            except ProvisionerError:
+                _fail("Terraform plan or apply failed. Review private Terraform logs.")
                 return
-        console.print(f"    VM IP: {tf_outputs.get('vm_ip', 'unknown')}")
     else:
         step += 1
         console.print(
@@ -3604,18 +3563,14 @@ def deploy_cmd(
                     ssh_key=ssh_key,
                     ssh_user=ssh_user,
                 )
-                bucket = (
-                    merged_vars.get("s3_bucket", "")
-                    or (saved_wb_cfg.storage.checkpoint_bucket if saved_wb_cfg else "")
-                    or os.environ.get("NPA_CHECKPOINT_BUCKET", "")
-                )
-                storage_ep = (
-                    merged_vars.get("s3_endpoint", "")
-                    or (saved_wb_cfg.storage.endpoint_url if saved_wb_cfg else "")
-                    or os.environ.get("AWS_ENDPOINT_URL", "")
-                )
-                tf_outputs = workbench_storage_outputs(
-                    target=target, bucket=bucket, endpoint=storage_ep
+                bucket = merged_vars.get("s3_bucket", "")
+                storage_ep = merged_vars.get("s3_endpoint", "")
+                tf_outputs = (
+                    deployment_preview_outputs()
+                    if dry_run
+                    else workbench_storage_outputs(
+                        target=target, bucket=bucket, endpoint=storage_ep
+                    )
                 )
                 if not dry_run:
                     ssh = SSHClient(
@@ -3636,11 +3591,14 @@ def deploy_cmd(
                         f"{', '.join(byovm_gpu_info.names)}"
                     )
                     console.print(f"    CUDA_VISIBLE_DEVICES={byovm_visible_devices}")
-            except (ValueError, SSHError) as exc:
-                _fail(str(exc))
+            except ValueError:
+                _fail("The selected BYOVM GPU configuration is invalid.")
+                return
+            except SSHError:
+                _fail("Unable to inspect the selected BYOVM host over SSH.")
                 return
         else:
-            tf_outputs = _read_existing_outputs(
+            tf_outputs = read_existing_workbench_outputs(
                 proj_alias,
                 wb_name,
                 tf_dir,
@@ -3652,6 +3610,15 @@ def deploy_cmd(
                 "No VM IP found. Run without --skip-infra first, or set config manually."
             )
             return
+        if dry_run:
+            tf_outputs = deployment_preview_outputs()
+
+    if not dry_run:
+        tf_outputs = {
+            **tf_outputs,
+            "storage_bucket": merged_vars["s3_bucket"],
+            "storage_endpoint": merged_vars["s3_endpoint"],
+        }
 
     vm_ip = tf_outputs.get("vm_ip", "")
     ssh_user = tf_outputs.get("ssh_user", "ubuntu")
@@ -3734,14 +3701,14 @@ def deploy_cmd(
 
         step += 1
         console.print(
-            f"  [{step}/{total_steps}] Connecting via SSH to {ssh_user}@{vm_ip}..."
+            f"  [{step}/{total_steps}] Connecting to the selected VM over SSH..."
         )
         if not dry_run:
             ssh = SSHClient(ssh_cfg)
             try:
                 code, _, _ = ssh.run("echo connected")
-            except SSHError as exc:
-                fail_app(str(exc))
+            except SSHError:
+                fail_app("SSH connection to the selected VM failed.")
                 return
             if code != 0:
                 fail_app(f"SSH connection test failed (exit {code})")
@@ -3786,9 +3753,17 @@ def deploy_cmd(
                             visible_devices=byovm_visible_devices,
                         ),
                     }
-                    apply_shared_credential_env(
-                        service_env, credentials, include=not no_shared_creds
-                    )
+                    shared_service_env = shared_credential_env(credentials)
+                    for key in (
+                        "AWS_ACCESS_KEY_ID",
+                        "AWS_SECRET_ACCESS_KEY",
+                        "AWS_ENDPOINT_URL",
+                        "NEBIUS_S3_ENDPOINT",
+                        "NEBIUS_S3_BUCKET",
+                    ):
+                        shared_service_env.pop(key, None)
+                    if not no_shared_creds:
+                        service_env.update(shared_service_env)
                     write_remote_docker_env_file(
                         ssh,
                         "/etc/npa-fiftyone/env",
@@ -3835,7 +3810,7 @@ def deploy_cmd(
                         failed_keys = audit_remote_env(
                             ssh,
                             "/etc/npa-fiftyone/env",
-                            shared_credential_env(credentials),
+                            shared_service_env,
                         )
                         if failed_keys:
                             key = failed_keys[0]
@@ -3844,8 +3819,8 @@ def deploy_cmd(
                                 "Deploy may have skipped shared credential injection."
                             )
                             return
-                except SSHError as exc:
-                    fail_app(f"FiftyOne container deployment failed: {exc}")
+                except SSHError:
+                    fail_app("FiftyOne container deployment failed over SSH.")
                     return
                 mark_app_status(APP_STATUS_PROVISIONED)
         else:
@@ -3865,8 +3840,8 @@ def deploy_cmd(
                         stream=True,
                         label="FiftyOne install",
                     )
-                except SSHError as exc:
-                    fail_app(f"FiftyOne installation failed: {exc}")
+                except SSHError:
+                    fail_app("FiftyOne installation failed over SSH.")
                     return
                 mark_app_status(APP_STATUS_PROVISIONED)
 
@@ -3927,43 +3902,57 @@ def deploy_cmd(
 
     step += 1
     console.print(
-        f"  [{step}/{total_steps}] Updating config status ({proj_alias}/{wb_name})..."
+        f"  [{step}/{total_steps}] Updating config status ({display_target})..."
     )
     if not dry_run:
         console.print("    Saved to ~/.npa/config.yaml")
 
     console.print("")
-    console.print(f"[bold green]Deploy complete.[/bold green] ({proj_alias}/{wb_name})")
-    console.print(
-        f"  FiftyOne: {_browser_url_for_strategy(endpoint, recorded_endpoint_strategy)}"
-    )
-    console.print(f"  SSH:      ssh -i {ssh_key} {ssh_user}@{vm_ip}")
-    console.print("")
-    console.print(f"  Try: npa workbench fiftyone -p {proj_alias} -n {wb_name} open")
+    if dry_run:
+        console.print("[bold green]Dry run complete.[/bold green]")
+        console.print("  No infrastructure or remote host was changed.")
+    else:
+        console.print(
+            f"[bold green]Deploy complete.[/bold green] ({proj_alias}/{wb_name})"
+        )
+        console.print(
+            f"  FiftyOne: {_browser_url_for_strategy(endpoint, recorded_endpoint_strategy)}"
+        )
+        console.print(f"  SSH:      ssh -i {ssh_key} {ssh_user}@{vm_ip}")
+        console.print("")
+        console.print(
+            f"  Try: npa workbench fiftyone -p {proj_alias} -n {wb_name} open"
+        )
 
     if output == OutputFormat.json:
-        typer.echo(
-            json.dumps(
-                {
-                    "project": proj_alias,
-                    "name": wb_name,
-                    "endpoint": endpoint,
-                    "browser_url": _browser_url_for_strategy(
-                        endpoint, recorded_endpoint_strategy
-                    ),
-                    "vm_ip": vm_ip,
-                    "ssh_user": ssh_user,
-                    "gpu_platform": platform,
-                    "gpu_preset": preset,
-                    "uses_gpu": uses_gpu,
-                    "runtime": runtime.value,
-                    "app_port": port,
-                    "app_address": address,
-                    "tf_outputs": tf_outputs,
-                },
-                indent=2,
-            )
+        payload = (
+            {
+                "status": "dry-run",
+                "runtime": runtime.value,
+                "uses_gpu": uses_gpu,
+                "app_port": port,
+                "app_address": address,
+            }
+            if dry_run
+            else {
+                "project": proj_alias,
+                "name": wb_name,
+                "endpoint": endpoint,
+                "browser_url": _browser_url_for_strategy(
+                    endpoint, recorded_endpoint_strategy
+                ),
+                "vm_ip": vm_ip,
+                "ssh_user": ssh_user,
+                "gpu_platform": platform,
+                "gpu_preset": preset,
+                "uses_gpu": uses_gpu,
+                "runtime": runtime.value,
+                "app_port": port,
+                "app_address": address,
+                "tf_outputs": tf_outputs,
+            }
         )
+        typer.echo(json.dumps(payload, indent=2))
 
 
 @app.command("launch")

@@ -277,7 +277,9 @@ def test_nurec_workflow_gate_accepts_provider_validated_registry_credential(
         observed.append((key, image))
         return "reachable"
 
-    monkeypatch.setattr("npa.workbench.nurec.nurec.check_ngc_image_access", validate)
+    monkeypatch.setattr(
+        "npa.workbench.model_access.check_ngc_artifact_access", validate
+    )
     spec = SimpleNamespace(
         states={"reconstruct": SimpleNamespace(tool_ref="workbench.nurec.reconstruct")}
     )

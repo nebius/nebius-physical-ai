@@ -37,6 +37,46 @@ a versioned heading when a release is cut.
   readers still accept historical `vlm_eval_stub.json` bundles as a read-only
   fallback.
 
+### Kimi-K3 direct-output requests preserve a visible answer
+
+- Token Factory and hosted VLM evaluation now share one model request profile.
+  Kimi-K3 defaults to its documented low reasoning effort and omits the ordinary
+  temperature field. Hosted VLM evaluation retains constrained JSON, requires
+  exact returned-model identity, and imposes no output-token cap. Existing
+  Lightning, MiniMax, unknown-model, and self-hosted behavior remains unchanged.
+
+### LeRobot feedback control mode requires a JSON boolean
+
+- `POST /feedback/train-step` accepts `control: true` or `control: false`;
+  omitting `control` still defaults to false. Strings (including `"true"`),
+  numbers, and null now return HTTP 400 before any policy update or output
+  directory creation. External clients must send a JSON boolean. Update-result
+  decoding enforces the same contract instead of coercing truthy values.
+
+### Studio videos accept S3 output paths
+
+- `preview` and `final` accept `--output-path` for an exact S3 MP4 destination,
+  with optional `--storage-project` selecting external NPA credentials. Local
+  caches and renders are retained; a full readback verifies the uploaded bytes.
+  Generic Python video tools share `npa.video_output.write_video_output`.
+
+### Studio film reviews expose illustrative cues
+
+- Film-review reports now list accepted `illustrative_cues` in assessment order,
+  alongside problem and pending cues. The field is audit metadata only:
+  illustrative judgments remain reviewed and non-failing under `--strict`.
+
+### Workflow image preflight verifies the actual pull authority
+
+- Kubernetes image checks now require a probe in the selected context and
+  namespace, using the workflow's ServiceAccount, pull Secrets and placement.
+  Host registry access alone no longer proves that a workload can pull.
+- `preflight-images` rejects an unresolved execution target. Select `--infra`
+  or declare the workflow resource cloud so it can verify the correct authority.
+- `--image-pull-secret` applies to bootstrap capability probes, as described in
+  its help. To configure workflow pulls, declare `imagePullSecrets` in the task's
+  Kubernetes Pod configuration or on its selected ServiceAccount.
+
 ### GPU routing selects on workload, not just on the GPU
 
 - SONIC image resolution now intersects the GPU target with the workload. Each
@@ -203,11 +243,10 @@ under `npa/src/npa/workflows/skypilot/`.
   server, and it is registered in the live matrix as a `cpu` case.
 - **`outputs:` declarations corrected in eight specs (eleven stages).** A stage can
   succeed while writing its result somewhere other than the URI the spec declares —
-  before the neutral result-name migration, `vlm-eval` wrote
-  `vlm_eval_stub.json`; `mjlab eval` writes `mjlab_eval.json`, the Cosmos reasoner
-  writes `scene_reasoning.json`, and several specs declared `report.json` /
-  `plan.json`. `test_spec_declared_outputs.py` now compares every stage's declared
-  artifact against the tool's own `*_result_uri_for()` helper.
+  `vlm-eval` writes `vlm_eval_stub.json`, `mjlab eval` writes `mjlab_eval.json`, the
+  Cosmos reasoner writes `scene_reasoning.json`, and several specs declared
+  `report.json` / `plan.json`. `test_spec_declared_outputs.py` now compares every
+  stage's declared artifact against the tool's own `*_result_uri_for()` helper.
 - `npa workbench {mjlab,retargeting,token-factory,vlm-eval} workflow|status` print
   npa.workflow spec paths instead of raw SkyPilot template paths, and
   `vlm-eval workflow|status` gain a `token_factory_workflow` key. A guardrail asserts
