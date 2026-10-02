@@ -514,9 +514,16 @@ def test_agent_run_details_use_one_committed_generation(
     }
 
     class _RawS3:
-        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        def get_object(
+            self, *, Bucket: str, Key: str, **conditions: Any
+        ) -> dict[str, object]:
             assert Bucket == "demo-bucket"
-            return {"Body": io.BytesIO(raw_objects[Key]), "ETag": "etag"}
+            assert not conditions or conditions == {"IfMatch": "etag"}
+            return {
+                "Body": io.BytesIO(raw_objects[Key]),
+                "ContentLength": len(raw_objects[Key]),
+                "ETag": "etag",
+            }
 
     artifacts = [
         _artifact(lock_key),
@@ -675,9 +682,16 @@ def test_agent_reuses_only_byte_bound_committed_mcap(
     put_keys: list[str] = []
 
     class _S3:
-        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        def get_object(
+            self, *, Bucket: str, Key: str, **conditions: Any
+        ) -> dict[str, object]:
             assert Bucket == "demo-bucket"
-            return {"Body": io.BytesIO(raw_objects[Key]), "ETag": "etag"}
+            assert not conditions or conditions == {"IfMatch": "etag"}
+            return {
+                "Body": io.BytesIO(raw_objects[Key]),
+                "ContentLength": len(raw_objects[Key]),
+                "ETag": "etag",
+            }
 
         def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
             assert Bucket == "demo-bucket"

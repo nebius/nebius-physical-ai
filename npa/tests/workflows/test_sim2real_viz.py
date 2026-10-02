@@ -95,7 +95,8 @@ def test_policy_access_markdown_requires_literal_loading_proof(
     loaded_value: object,
 ) -> None:
     text = viz_module._policy_access_markdown(
-        {"heldout_policy_loaded_for_inference": loaded_value}
+        {"heldout_policy_loaded_for_inference": loaded_value},
+        None,
     )
 
     assert "Loaded for held-out inference: `False`" in text
@@ -103,17 +104,22 @@ def test_policy_access_markdown_requires_literal_loading_proof(
 
 
 def test_policy_access_markdown_requires_verified_checkpoint_identity() -> None:
-    text = viz_module._policy_access_markdown(
-        {
-            "heldout_policy_loaded_for_inference": True,
-            "heldout_policy_identity_verified": False,
-            "heldout_policy_stock_or_scripted_policy": False,
-            "heldout_policy_actor_is_learned": True,
-            "heldout_policy_scripted_post_actor_controller": False,
-            "heldout_policy_composition": "learned_actor_only",
-            "heldout_policy_post_actor_controller": None,
-            "heldout_policy_post_actor_controller_declared": True,
+    report = {
+        "policy_inference_provenance": {
+            "checkpoint_uri": "s3://bucket/run/model.pt",
+            "checkpoint_sha256": "not-a-sha256",
+            "checkpoint_size_bytes": 128,
+            "loaded_for_inference": True,
+            "stock_or_scripted_policy": False,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": False,
+            "policy_composition": "learned_actor_only",
+            "post_actor_controller": None,
         }
+    }
+    text = viz_module._policy_access_markdown(
+        viz_module._heldout_policy_metadata(report),
+        report,
     )
 
     assert "exact candidate checkpoint bytes" not in text
@@ -134,18 +140,22 @@ def test_policy_access_markdown_only_claims_learned_policy_when_proven(
     stock_or_scripted: object,
     expected_claim: bool,
 ) -> None:
-    text = viz_module._policy_access_markdown(
-        {
-            "heldout_policy_loaded_for_inference": True,
-            "heldout_policy_identity_verified": True,
-            "heldout_policy_stock_or_scripted_policy": stock_or_scripted,
-            "heldout_policy_actor_is_learned": True,
-            "heldout_policy_scripted_post_actor_controller": False,
-            "heldout_policy_composition": "learned_actor_only",
-            "heldout_policy_post_actor_controller": None,
-            "heldout_policy_post_actor_controller_declared": True,
-            "heldout_policy_learned_actor_only": stock_or_scripted is False,
+    report = {
+        "policy_inference_provenance": {
+            "checkpoint_uri": "s3://bucket/run/model.pt",
+            "checkpoint_sha256": "a" * 64,
+            "checkpoint_size_bytes": 128,
+            "loaded_for_inference": True,
+            "stock_or_scripted_policy": stock_or_scripted,
+            "actor_is_learned": True,
+            "scripted_post_actor_controller": False,
+            "policy_composition": "learned_actor_only",
+            "post_actor_controller": None,
         }
+    }
+    text = viz_module._policy_access_markdown(
+        viz_module._heldout_policy_metadata(report),
+        report,
     )
 
     assert ("`stock_or_scripted_policy=false`" in text) is expected_claim
@@ -178,19 +188,21 @@ def test_policy_metadata_rejects_contradictory_learned_actor_provenance(
     }
     provenance[field] = value
 
+    report = {
+        "policy_checkpoint_sha256": "a" * 64,
+        "policy_checkpoint_size_bytes": 128,
+        "policy_inference_provenance": provenance,
+    }
     metadata = viz_module._heldout_policy_metadata(
-        {
-            "policy_checkpoint_sha256": "a" * 64,
-            "policy_checkpoint_size_bytes": 128,
-            "policy_inference_provenance": provenance,
-        },
+        report,
         checkpoint_fallback="s3://bucket/run/model.pt",
     )
 
     assert metadata["heldout_policy_identity_verified"] is True
     assert metadata["heldout_policy_learned_actor_only"] is False
     assert "`stock_or_scripted_policy=false`" not in viz_module._policy_access_markdown(
-        metadata
+        metadata,
+        report,
     )
 
 
@@ -207,8 +219,9 @@ def test_policy_metadata_requires_explicit_null_post_actor_controller() -> None:
         "policy_composition": "learned_actor_only",
     }
 
+    report = {"policy_inference_provenance": provenance}
     metadata = viz_module._heldout_policy_metadata(
-        {"policy_inference_provenance": provenance},
+        report,
         checkpoint_fallback="s3://bucket/run/model.pt",
     )
 
@@ -216,7 +229,8 @@ def test_policy_metadata_requires_explicit_null_post_actor_controller() -> None:
     assert metadata["heldout_policy_post_actor_controller_declared"] is False
     assert metadata["heldout_policy_learned_actor_only"] is False
     assert "`stock_or_scripted_policy=false`" not in viz_module._policy_access_markdown(
-        metadata
+        metadata,
+        report,
     )
 
 
@@ -248,13 +262,12 @@ def test_policy_metadata_never_promotes_malformed_identity_or_loading(
     }
     provenance[field] = value
 
-    metadata = viz_module._heldout_policy_metadata(
-        {"policy_inference_provenance": provenance}
-    )
+    report = {"policy_inference_provenance": provenance}
+    metadata = viz_module._heldout_policy_metadata(report)
 
     assert metadata["heldout_policy_identity_verified"] is expected_identity
     assert metadata["heldout_policy_learned_actor_only"] is False
-    text = viz_module._policy_access_markdown(metadata)
+    text = viz_module._policy_access_markdown(metadata, report)
     assert "exact candidate checkpoint bytes" not in text
     assert "`stock_or_scripted_policy=false`" not in text
 
@@ -439,7 +452,8 @@ def test_policy_metadata_reconciles_every_authoritative_identity_source(
     assert metadata["heldout_policy_identity_verified"] is False
     assert metadata["heldout_policy_learned_actor_only"] is False
     assert "exact candidate checkpoint bytes" not in viz_module._policy_access_markdown(
-        metadata
+        metadata,
+        report,
     )
 
 
@@ -698,7 +712,17 @@ def test_real_scene_provenance_reconciles_projected_run_identity() -> None:
     assert "Complete learned-actor-only contract: `False`" in payload["text"]
 
 
-def test_real_scene_provenance_rejects_empty_projected_generator_digest() -> None:
+@pytest.mark.parametrize(
+    ("projected_generator", "expected_verified"),
+    [
+        pytest.param("", True, id="optional-absence"),
+        pytest.param("b" * 64, False, id="conflicting-digest"),
+    ],
+)
+def test_real_scene_provenance_reconciles_projected_generator_digest(
+    projected_generator: str,
+    expected_verified: bool,
+) -> None:
     fake = _FakeRerun()
     viz_module._log_real_isaac_scene_context(
         fake,
@@ -723,7 +747,7 @@ def test_real_scene_provenance_rejects_empty_projected_generator_digest() -> Non
             "heldout_policy_checkpoint": "s3://bucket/run/model.pt",
             "heldout_policy_checkpoint_sha256": "a" * 64,
             "heldout_policy_checkpoint_size_bytes": 128,
-            "heldout_policy_generator_sha256": "",
+            "heldout_policy_generator_sha256": projected_generator,
         },
         counts={},
     )
@@ -733,8 +757,13 @@ def test_real_scene_provenance_rejects_empty_projected_generator_digest() -> Non
         for entity, value in fake.logged_payloads
         if entity == "world/task_context/provenance"
     )
-    assert "Exact checkpoint identity verified: `False`" in payload["text"]
-    assert "Complete learned-actor-only contract: `False`" in payload["text"]
+    assert (
+        f"Exact checkpoint identity verified: `{expected_verified}`" in payload["text"]
+    )
+    assert (
+        f"Complete learned-actor-only contract: `{expected_verified}`"
+        in payload["text"]
+    )
 
 
 def _build_run_tree(tmp_path: Path) -> tuple[dict[str, Any], dict[str, Any]]:

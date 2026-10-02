@@ -58,12 +58,9 @@ def _finite_metric(value: Any, *, field: str) -> float:
             input order instead of on the metric itself.
     """
 
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(
-            f"checkpoint metric {field!r} is not numeric: {value!r}"
-        ) from exc
+    if type(value) not in (int, float):
+        raise ValueError(f"checkpoint metric {field!r} is not numeric: {value!r}")
+    number = float(value)
     if not math.isfinite(number):
         raise ValueError(f"checkpoint metric {field!r} is not finite: {value!r}")
     return number

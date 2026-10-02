@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import io
 import inspect
+from argparse import Namespace
 from pathlib import Path
 
 import pytest
@@ -19,6 +22,7 @@ from npa.workflows.sim2real import (
     legacy_heldout,
     publication,
     stage14_finalize,
+    workflow_stage,
     workflow_io,
 )
 from npa.workflows.sim2real.decision_authority import validate_stage11_decision
@@ -69,6 +73,31 @@ class _LegacyRaceStore:
         if uri == _CANONICAL_RRD:
             return self.payload, "alias-etag"
         return None
+
+
+class _TamperedRrdStore:
+    committed = b"committed-rrd"
+    tampered = b"tampered-rrd!"
+
+    def __init__(self) -> None:
+        self.body: io.BytesIO | None = None
+
+    @staticmethod
+    def _uri(bucket: str, key: str) -> str:
+        return f"s3://{bucket}/{key}"
+
+    def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        assert self._uri(Bucket, Key) == _IMMUTABLE_RRD
+        return {
+            "ContentLength": len(self.committed),
+            "Metadata": {"npa-sha256": hashlib.sha256(self.committed).hexdigest()},
+        }
+
+    def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        uri = self._uri(Bucket, Key)
+        payload = _complete_journal() if uri == _LOCK_URI else self.tampered
+        self.body = io.BytesIO(payload)
+        return {"Body": self.body, "ETag": hashlib.sha256(payload).hexdigest()}
 
 
 def test_legacy_alias_read_rechecks_first_journal_publication() -> None:
@@ -145,9 +174,52 @@ def test_canonical_mcap_maps_conditional_write_race_to_publication_conflict(
         )
 
 
-def test_rerun_verification_has_no_metadata_only_digest_tier() -> None:
-    source = inspect.getsource(rerun_serve.verify_rrd_exists_on_s3)
-    assert "npa-sha256" not in source
+def test_rerun_verification_measures_bytes_despite_matching_metadata() -> None:
+    store = _TamperedRrdStore()
+    with pytest.raises(
+        rerun_serve.RerunServeError,
+        match="bytes disagree with the publication journal",
+    ):
+        rerun_serve.verify_rrd_exists_on_s3(
+            rerun_serve.RerunServeConfig(
+                run_id="run-a",
+                s3_bucket="demo-bucket",
+                s3_prefix="sim2real",
+            ),
+            head_object=store.head_object,
+        )
+
+    assert store.body is not None and store.body.closed
+
+
+@pytest.mark.parametrize(
+    ("actual", "expected_size"),
+    [
+        pytest.param(b"short", len(b"committed-rrd"), id="truncated"),
+        pytest.param(b"committed-rrd-extra", len(b"committed-rrd"), id="extended"),
+        pytest.param(b"committed-rrd", None, id="missing-size"),
+    ],
+)
+def test_committed_rrd_measurement_rejects_size_failures(
+    actual: bytes,
+    expected_size: int | None,
+) -> None:
+    target = Namespace(sha256=hashlib.sha256(b"committed-rrd").hexdigest())
+    if expected_size is not None:
+        target.size_bytes = expected_size
+    body = io.BytesIO(actual)
+
+    with pytest.raises(
+        rerun_serve.RerunServeError,
+        match="bytes disagree with the publication journal",
+    ):
+        rerun_serve._verify_committed_rrd_bytes(
+            uri=_IMMUTABLE_RRD,
+            target=target,
+            get_object=lambda **_kwargs: {"Body": body},
+        )
+
+    assert body.closed
 
 
 def test_heldout_normalization_preserves_evaluation_attempt_identity() -> None:
@@ -178,6 +250,19 @@ def test_checkpoint_selection_rejects_training_iteration_disagreement() -> None:
         )
 
 
+@pytest.mark.parametrize("value", [True, False, "1", "0.5"])
+def test_checkpoint_metrics_reject_bool_and_string_coercions(value: object) -> None:
+    with pytest.raises(ValueError, match="not numeric"):
+        checkpoint_selection._finite_metric(value, field="strict_success_rate")
+
+
+def test_committed_file_verification_requires_legacy_fence_client() -> None:
+    client = inspect.signature(
+        publication.verify_committed_publication_file
+    ).parameters["client"]
+    assert client.default is inspect.Parameter.empty
+
+
 def test_stage11_requires_exact_downloaded_report_digest() -> None:
     report = _gold()
     with pytest.raises(TypeError, match="gold_report_bytes_sha256"):
@@ -190,6 +275,47 @@ def test_stage11_requires_exact_downloaded_report_digest() -> None:
             checkpoint_uri=report["policy_checkpoint_uri"],
             expected_threshold=0.5,
             expected_early_exit=False,
+        )
+
+
+def test_stage11_requires_materialized_gold_report_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(workflow_stage, "_work", lambda _stage: tmp_path)
+    monkeypatch.setattr(workflow_stage, "read_json", lambda *_args, **_kwargs: _gold())
+    monkeypatch.setattr(
+        workflow_stage,
+        "_stage11_selection",
+        lambda *_args, **_kwargs: ({}, {}),
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Stage 11 exact downloaded gold-report bytes are unavailable",
+    ):
+        workflow_stage._stage11(
+            Namespace(root_uri=ROOT, run_id="run-a", outer_iteration=1)
+        )
+
+
+def test_stage14_requires_materialized_gold_report_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    def read_json(uri: str, **_kwargs):
+        return _evidence() if "/inner_loop/" in uri else _gold()
+
+    monkeypatch.setattr(stage14_finalize, "read_json", read_json)
+
+    with pytest.raises(
+        RuntimeError,
+        match="Stage 14 exact downloaded gold-report bytes are unavailable",
+    ):
+        stage14_finalize._materialize_stage14(
+            Namespace(outer_iteration=1),
+            root=ROOT,
+            work=tmp_path,
         )
 
 
@@ -236,6 +362,21 @@ def test_policy_markdown_refuses_disagreed_report_declaration() -> None:
     assert "complete learned-actor-only contract is proven" not in markdown
     assert "not proven" in markdown
     assert "disagree" in markdown
+
+
+def test_policy_markdown_refuses_claims_without_report_reconciliation() -> None:
+    metadata = heldout_policy_metadata(_gold())
+    assert metadata["heldout_policy_learned_actor_only"] is True
+
+    markdown = sim2real_viz._policy_access_markdown(metadata, None)
+
+    assert "Held-out report reconciled: `False`" in markdown
+    assert "Loaded for held-out inference: `False`" in markdown
+    assert "complete learned-actor-only contract is proven" not in markdown
+    parameter = inspect.signature(sim2real_viz._policy_access_markdown).parameters[
+        "heldout_report"
+    ]
+    assert parameter.default is inspect.Parameter.empty
 
 
 def test_public_workflow_command_removes_signed_url_suffixes() -> None:
@@ -296,27 +437,52 @@ def test_missing_legacy_final_rrd_is_a_definite_absence() -> None:
         discover_final_rerun_artifact(ROOT, client=Store())
 
 
+def _write_semantic_rrd(
+    rr,
+    rrb,
+    path: Path,
+    body: str,
+    *,
+    recording_id: str = "same-run",
+    blueprint_origin: str = "pipeline/report",
+) -> None:
+    recording = rr.RecordingStream("stage14-review", recording_id=recording_id)
+    blueprint = rrb.Blueprint(
+        rrb.TextDocumentView(origin=blueprint_origin, name="Review evidence")
+    )
+    recording.save(str(path), default_blueprint=blueprint)
+    rr.log(
+        "pipeline/report",
+        rr.TextDocument(body, media_type="text/markdown"),
+        static=True,
+        recording=recording,
+    )
+    recording.flush()
+    recording.disconnect()
+
+
 def test_rrd_semantic_identity_binds_text_documents(tmp_path: Path) -> None:
     rr = pytest.importorskip("rerun")
-
-    def write(path: Path, body: str) -> None:
-        recording = rr.RecordingStream("stage14-review", recording_id="same-run")
-        recording.save(str(path))
-        rr.log(
-            "pipeline/report",
-            rr.TextDocument(body, media_type="text/markdown"),
-            static=True,
-            recording=recording,
-        )
-        recording.flush()
-        recording.disconnect()
+    rrb = pytest.importorskip("rerun.blueprint")
 
     previous = tmp_path / "previous.rrd"
     current = tmp_path / "current.rrd"
     equivalent = tmp_path / "equivalent.rrd"
-    write(previous, "OLD PIPELINE REPORT")
-    write(current, "NEW PIPELINE REPORT")
-    write(equivalent, "NEW PIPELINE REPORT")
+    changed_recording = tmp_path / "changed-recording.rrd"
+    changed_blueprint = tmp_path / "changed-blueprint.rrd"
+    _write_semantic_rrd(rr, rrb, previous, "OLD PIPELINE REPORT")
+    _write_semantic_rrd(rr, rrb, current, "NEW PIPELINE REPORT")
+    _write_semantic_rrd(rr, rrb, equivalent, "NEW PIPELINE REPORT")
+    _write_semantic_rrd(
+        rr, rrb, changed_recording, "NEW PIPELINE REPORT", recording_id="another-run"
+    )
+    _write_semantic_rrd(
+        rr,
+        rrb,
+        changed_blueprint,
+        "NEW PIPELINE REPORT",
+        blueprint_origin="pipeline/other",
+    )
 
     assert data_factory_viz._rrd_semantic_sha256(
         previous
@@ -324,6 +490,31 @@ def test_rrd_semantic_identity_binds_text_documents(tmp_path: Path) -> None:
     assert data_factory_viz._rrd_semantic_sha256(
         current
     ) == data_factory_viz._rrd_semantic_sha256(equivalent)
+    assert data_factory_viz._rrd_semantic_sha256(
+        current
+    ) != data_factory_viz._rrd_semantic_sha256(changed_recording)
+    assert data_factory_viz._rrd_semantic_sha256(
+        current
+    ) != data_factory_viz._rrd_semantic_sha256(changed_blueprint)
     data_factory_viz._verify_existing_rrd_semantics(current, equivalent)
     with pytest.raises(data_factory_viz.DataFactoryVizError, match="all current"):
         data_factory_viz._verify_existing_rrd_semantics(previous, current)
+
+
+def test_rrd_verifiers_fail_closed_at_decoded_row_bound(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rr = pytest.importorskip("rerun")
+    path = tmp_path / "bounded.rrd"
+    recording = rr.RecordingStream("stage14-review", recording_id="bounded")
+    recording.save(str(path))
+    rr.log("pipeline/report", rr.TextDocument("evidence"), recording=recording)
+    recording.flush()
+    recording.disconnect()
+    monkeypatch.setattr(data_factory_viz, "RRD_VERIFY_MAX_ROWS", 0)
+
+    with pytest.raises(data_factory_viz.DataFactoryVizError, match="bounded"):
+        data_factory_viz._rrd_semantic_sha256(path)
+    with pytest.raises(data_factory_viz.DataFactoryVizError, match="bounded"):
+        list(data_factory_viz._bounded_recording_batches(path))

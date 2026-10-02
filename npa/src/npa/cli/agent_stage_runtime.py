@@ -79,15 +79,31 @@ _MAX_PUBLICATION_JOURNAL_BYTES = 1024 * 1024
 
 
 def _read_bounded_json_object(
-    s3, bucket: str, key: str, *, max_bytes: int = _MAX_STAGE_EVIDENCE_BYTES
+    s3,
+    bucket: str,
+    key: str,
+    *,
+    max_bytes: int = _MAX_STAGE_EVIDENCE_BYTES,
+    expected_sha256: str = "",
+    expected_size: int | None = None,
 ):
     """Read one JSON object with a hard byte bound and deterministic cleanup."""
+    if expected_size is not None and expected_size > max_bytes:
+        raise PublicationConflict("committed report exceeds its bounded read limit")
     body = None
     try:
         response = s3.get_object(Bucket=bucket, Key=key)
         body = response["Body"]
         raw = body.read(max_bytes + 1)
         encoded = raw.encode("utf-8") if isinstance(raw, str) else bytes(raw)
+        if expected_size is not None and len(encoded) != expected_size:
+            raise PublicationConflict(
+                "committed report size changed between verification and read"
+            )
+        if expected_sha256 and hashlib.sha256(encoded).hexdigest() != expected_sha256:
+            raise PublicationConflict(
+                "committed report bytes changed between verification and read"
+            )
         if len(encoded) > max_bytes:
             return None
         payload = json.loads(encoded)
@@ -740,8 +756,33 @@ def _artifact_backed_run_details(
     )
     report_note = ""
     if report_artifact:
+        read_identity: dict[str, object] = {}
+        if publication_snapshot.journaled:
+            canonical_report_uri = (
+                f"s3://{run_bucket}/{run_root_key}/reports/sim2real-report.json"
+            )
+            report_target = publication_snapshot.target(canonical_report_uri)
+            if report_target.immutable_uri != str(report_artifact.s3_uri or ""):
+                raise HTTPException(
+                    status_code=409,
+                    detail="the selected publication generation is not committed",
+                )
+            read_identity = {
+                "expected_sha256": report_target.sha256,
+                "expected_size": report_target.size_bytes,
+            }
         try:
-            report = _read_bounded_json_object(s3, run_bucket, report_artifact.key)
+            report = _read_bounded_json_object(
+                s3,
+                run_bucket,
+                report_artifact.key,
+                **read_identity,
+            )
+        except PublicationConflict as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="the selected publication generation is not committed",
+            ) from exc
         except (ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
             report = None
         if report:

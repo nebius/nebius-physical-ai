@@ -769,7 +769,7 @@ def verify_committed_publication_file(
     canonical_uri: str,
     path: Path,
     *,
-    client: Any | None = None,
+    client: Any,
 ) -> str | None:
     """Verify a downloaded reserved object against its committed byte identity."""
 
@@ -784,8 +784,7 @@ def verify_committed_publication_file(
         digest=digest,
         size=size,
     )
-    if client is not None:
-        assert_legacy_publication_unjournaled(client, publication)
+    assert_legacy_publication_unjournaled(client, publication)
     return resolved
 
 

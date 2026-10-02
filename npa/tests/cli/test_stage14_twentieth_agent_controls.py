@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import io
 from pathlib import Path
+import re
 import sys
+from types import SimpleNamespace
 
 import pytest
 from botocore.exceptions import ClientError
@@ -11,17 +15,143 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from npa.cli import agent_stage_runtime  # noqa: E402
+from npa.agent_backend.shipping import SHIPPED_BACKEND_MODULES  # noqa: E402
 from npa.agent_backend.foxglove_routes import (  # noqa: E402
     FoxgloveDeps,
     register_foxglove_routes,
 )
 from npa.agent_backend.publication_reader import PublicationConflict  # noqa: E402
-from tests.cli.test_agent_backend_render import _import_rendered_backend  # noqa: E402
-from tests.workflows.test_sim2real_stage14_seventeenth_review_controls import (  # noqa: E402
-    _IMMUTABLE_RRD,
-    _LOCK_URI,
-    _complete_journal,
+from npa.workflows.sim2real import publication  # noqa: E402
+
+
+def _capture_setup_script(monkeypatch: pytest.MonkeyPatch) -> str:
+    from npa.cli import agent as agent_module
+
+    captured: dict[str, str] = {}
+
+    class DummySsh:
+        def upload_file(self, local_path: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = Path(local_path).read_text(encoding="utf-8")
+
+        def upload_private_text(self, content: str, remote_path: str) -> None:
+            if "npa-agent-bootstrap" in remote_path:
+                captured["setup_script"] = content
+
+        def run_or_raise(self, _command: str, **_kwargs) -> None:
+            return None
+
+        def run(self, _command: str) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "SSHClient", lambda config: DummySsh())
+    monkeypatch.setattr(
+        agent_module, "resolve_ssh_config", lambda **_kwargs: SimpleNamespace(ssh={})
+    )
+    _bootstrap_test_agent(agent_module)
+    return captured["setup_script"]
+
+
+def _bootstrap_test_agent(agent_module) -> None:
+    agent_module._bootstrap_agent_stack(
+        host="203.0.113.50",
+        ssh_user="ubuntu",
+        ssh_key_path="unit-test-ssh-key",
+        project_alias="smoke",
+        project_id="project-id",
+        tenant_id="tenant-id",
+        region="us-central1",
+        auth_user="npa",
+        auth_password="password",
+        agent_port=8088,
+        backend_port=8787,
+        rerun_port=9090,
+        llm_model=agent_module.DEFAULT_LLM_MODEL,
+        llm_models=agent_module.DEFAULT_LLM_MODELS,
+        tf_api_key="",
+        nebius_ai_key="",
+        public_https=True,
+    )
+
+
+def _import_rendered_backend(monkeypatch, tmp_path, *, module_name: str):
+    setup_script = _capture_setup_script(monkeypatch)
+
+    def extract(remote_path: str) -> str:
+        match = re.search(
+            r"cat <<'PY' \| sudo tee "
+            + re.escape(remote_path)
+            + r" >/dev/null\n(.*?)\nPY\n",
+            setup_script,
+            flags=re.DOTALL,
+        )
+        assert match, f"bootstrap does not write {remote_path}"
+        return match.group(1)
+
+    package = tmp_path / "agent_backend"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    for name in SHIPPED_BACKEND_MODULES:
+        (package / f"{name}.py").write_text(
+            extract(f"/opt/npa-agent/agent_backend/{name}.py"), encoding="utf-8"
+        )
+    backend_path = tmp_path / "backend.py"
+    backend_path.write_text(extract("/opt/npa-agent/backend.py"), encoding="utf-8")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    spec = importlib.util.spec_from_file_location(module_name, backend_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+_ROOT = "s3://demo-bucket/sim2real/run-a"
+_TRANSACTION_ID = "generation-a"
+_LOCK_URI = f"{_ROOT}/reports/.sim2real-publication.json"
+_CANONICAL_REPORT = f"{_ROOT}/reports/sim2real-report.json"
+_IMMUTABLE_REPORT = (
+    f"{_ROOT}/reports/generations/{_TRANSACTION_ID}/sim2real-report.json"
 )
+_CANONICAL_RRD = f"{_ROOT}/reports/sim2real.rrd"
+_IMMUTABLE_RRD = f"{_ROOT}/reports/generations/{_TRANSACTION_ID}/sim2real.rrd"
+_CANONICAL_MCAP = f"{_ROOT}/reports/sim2real.mcap"
+_CANONICAL_STAGE14 = f"{_ROOT}/components/stage_14.json"
+_STAGE14_BYTES = b'{"stage":14}\n'
+_IMMUTABLE_STAGE14 = (
+    f"{_ROOT}/components/history/stage_14/"
+    f"{hashlib.sha256(_STAGE14_BYTES).hexdigest()}.json"
+)
+
+
+def _present(uri: str, immutable_uri: str, payload: bytes) -> dict[str, object]:
+    return {
+        "uri": uri,
+        "state": "present",
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+        "immutable_uri": immutable_uri,
+    }
+
+
+def _complete_journal(
+    *,
+    report: bytes = b'{"visualization":{"source":"committed"}}\n',
+    rrd: bytes = b"committed-rrd",
+) -> bytes:
+    objects = [
+        _present(_CANONICAL_REPORT, _IMMUTABLE_REPORT, report),
+        _present(_CANONICAL_RRD, _IMMUTABLE_RRD, rrd),
+        {"uri": _CANONICAL_MCAP, "state": "absent"},
+        _present(_CANONICAL_STAGE14, _IMMUTABLE_STAGE14, _STAGE14_BYTES),
+    ]
+    return publication._journal_bytes(
+        transaction_id=_TRANSACTION_ID,
+        attempt_id="a" * 32,
+        state="committed",
+        objects=objects,
+    )
 
 
 def _artifact(module, *, bucket: str, prefix: str, run_id: str):
@@ -37,6 +167,26 @@ def _artifact(module, *, bucket: str, prefix: str, run_id: str):
         namespace=prefix,
         relative_key="input/frame.png",
     )
+
+
+def test_report_summary_read_rejects_post_head_same_size_replacement() -> None:
+    committed = b'{"visualization":{"source":"committed"}}'
+    replaced = b'{"visualization":{"source":"tampered!"}}'
+    assert len(committed) == len(replaced)
+
+    class S3:
+        def get_object(self, *, Bucket: str, Key: str):
+            del Bucket, Key
+            return {"Body": io.BytesIO(replaced)}
+
+    with pytest.raises(PublicationConflict, match="bytes changed"):
+        agent_stage_runtime._read_bounded_json_object(
+            S3(),
+            "demo-bucket",
+            "sim2real/run-a/reports/generations/g/report.json",
+            expected_sha256=hashlib.sha256(committed).hexdigest(),
+            expected_size=len(committed),
+        )
 
 
 def test_rendered_publication_conflicts_are_409_on_all_consumer_routes(

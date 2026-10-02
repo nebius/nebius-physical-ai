@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -8,12 +9,17 @@ from types import SimpleNamespace
 import pytest
 
 from npa.agent_backend.canonical_mcap import (
+    _assert_s3_snapshot,
+    _download_s3_snapshot,
+    _put_unjournaled_canonical_mcap,
     canonical_key_for_run,
     clear_cross_run_mcap_state,
     has_rich_visualization_contract,
     prepare_canonical_mcap,
     rich_run_provenance_from_manifest,
 )
+from npa.agent_backend.publication_reader import PublicationConflict
+from npa.workflows.sim2real import publication
 
 
 class _S3:
@@ -23,10 +29,18 @@ class _S3:
     def put_object(self, *, Bucket, Key, Body, **_kwargs):
         del Bucket
         self.objects[Key] = Body.read() if hasattr(Body, "read") else bytes(Body)
+        return {"ETag": f'"{hash(self.objects[Key])}"'}
 
-    def get_object(self, *, Bucket, Key):
+    def get_object(self, *, Bucket, Key, **conditions):
         del Bucket
-        return {"Body": io.BytesIO(self.objects[Key])}
+        etag = f'"{hash(self.objects[Key])}"'
+        if "IfMatch" in conditions:
+            assert conditions["IfMatch"] == etag
+        return {
+            "Body": io.BytesIO(self.objects[Key]),
+            "ContentLength": len(self.objects[Key]),
+            "ETag": etag,
+        }
 
     def head_object(self, *, Bucket, Key):
         del Bucket
@@ -34,6 +48,97 @@ class _S3:
             "ContentLength": len(self.objects[Key]),
             "ETag": f'"{hash(self.objects[Key])}"',
         }
+
+
+class _ReplacingMcapS3:
+    def __init__(self, original: bytes, replacement: bytes) -> None:
+        self.original = original
+        self.payload = original
+        self.replacement = replacement
+
+    def head_object(self, *, Bucket, Key):
+        del Bucket, Key
+        return {
+            "ContentLength": len(self.payload),
+            "ETag": f'"{hash(self.payload)}"',
+        }
+
+    def get_object(self, *, Bucket, Key, IfMatch):
+        del Bucket, Key
+        assert IfMatch == f'"{hash(self.original)}"'
+        response = {
+            "Body": io.BytesIO(self.original),
+            "ContentLength": len(self.original),
+            "ETag": IfMatch,
+        }
+        self.payload = self.replacement
+        return response
+
+
+def _journal_present(
+    canonical: str, immutable: str, payload: bytes
+) -> dict[str, object]:
+    return {
+        "uri": canonical,
+        "state": "present",
+        "sha256": hashlib.sha256(payload).hexdigest(),
+        "size_bytes": len(payload),
+        "immutable_uri": immutable,
+    }
+
+
+def _mcap_race_journal(root: str) -> bytes:
+    generation = f"{root}/reports/generations/generation-a"
+    stage_bytes = b"stage14"
+    return publication._journal_bytes(
+        transaction_id="generation-a",
+        attempt_id="a" * 32,
+        state="committed",
+        objects=[
+            _journal_present(
+                f"{root}/reports/sim2real-report.json",
+                f"{generation}/sim2real-report.json",
+                b"report",
+            ),
+            _journal_present(
+                f"{root}/reports/sim2real.rrd",
+                f"{generation}/sim2real.rrd",
+                b"rrd",
+            ),
+            _journal_present(
+                f"{root}/reports/sim2real.mcap",
+                f"{generation}/sim2real.mcap",
+                b"mcap",
+            ),
+            _journal_present(
+                f"{root}/components/stage_14.json",
+                f"{root}/components/history/stage_14/"
+                f"{hashlib.sha256(stage_bytes).hexdigest()}.json",
+                stage_bytes,
+            ),
+        ],
+    )
+
+
+class _JournalRaceS3:
+    def __init__(self, journal: bytes) -> None:
+        self.journal = journal
+        self.journal_visible = False
+
+    def get_object(self, *, Bucket, Key):
+        del Bucket
+        if not self.journal_visible:
+            raise KeyError(Key)
+        return {"Body": io.BytesIO(self.journal)}
+
+    def head_object(self, *, Bucket, Key):
+        del Bucket, Key
+        raise KeyError("missing")
+
+    def put_object(self, **kwargs):
+        kwargs["Body"].read()
+        self.journal_visible = True
+        return {"ETag": '"canonical"'}
 
 
 def _safe_key(value: str) -> str:
@@ -122,6 +227,45 @@ def test_prepare_canonical_mcap_persists_and_reuses_exact_s3_bytes(
     assert provenance["timestamps"] == "synthetic-fps"
     assert provenance["duration_s"] == 0.1
     assert len(invalidations) == 2
+
+
+def test_native_mcap_read_is_pinned_and_same_size_replacement_is_rejected(
+    tmp_path: Path,
+) -> None:
+    original = b"original-mcap"
+    replacement = b"replaced-mcap"
+    assert len(original) == len(replacement)
+    store = _ReplacingMcapS3(original, replacement)
+    destination = tmp_path / "canonical.mcap"
+    snapshot = _download_s3_snapshot(
+        store,
+        bucket="bucket",
+        key="runs/run-1/reports/sim2real.mcap",
+        destination=destination,
+    )
+    assert destination.read_bytes() == original
+    with pytest.raises(PublicationConflict, match="changed before response"):
+        _assert_s3_snapshot(
+            store,
+            bucket="bucket",
+            key="runs/run-1/reports/sim2real.mcap",
+            expected=snapshot,
+            local_path=destination,
+        )
+
+
+def test_first_journal_writer_race_is_a_publication_conflict(tmp_path: Path) -> None:
+    root = "s3://bucket/runs/run-1"
+    canonical_key = "runs/run-1/reports/sim2real.mcap"
+    source = tmp_path / "canonical.mcap"
+    source.write_bytes(b"mcap")
+    with pytest.raises(PublicationConflict, match="journal raced"):
+        _put_unjournaled_canonical_mcap(
+            _JournalRaceS3(_mcap_race_journal(root)),
+            bucket="bucket",
+            canonical_key=canonical_key,
+            local_path=source,
+        )
 
 
 def test_canonical_key_and_cross_run_state_are_strict() -> None:
