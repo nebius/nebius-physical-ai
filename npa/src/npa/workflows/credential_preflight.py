@@ -29,7 +29,11 @@ from npa.workflows.sim2real_health import (
 # Preserve the lightweight default for hosted-inference users. The explicit
 # ``all`` selection also checks the Nebius CLI profile needed for cloud work.
 DEFAULT_CREDENTIAL_CHECKS: tuple[str, ...] = ("hf", "ngc", "s3", "token_factory")
-SUPPORTED_CREDENTIAL_CHECKS: tuple[str, ...] = (*DEFAULT_CREDENTIAL_CHECKS, "nebius")
+SUPPORTED_CREDENTIAL_CHECKS: tuple[str, ...] = (
+    *DEFAULT_CREDENTIAL_CHECKS,
+    "encord",
+    "nebius",
+)
 # Backward-compatible name for callers that use the default check set.
 CREDENTIAL_CHECKS = DEFAULT_CREDENTIAL_CHECKS
 
@@ -49,6 +53,7 @@ class CredentialProbes:
     ngc_validator: Callable[[str], str] | None = None
     s3_client_factory: Callable[[], Any] | None = None
     token_factory_verifier: Callable[[], list[str]] | None = None
+    encord_verifier: Callable[[], str] | None = None
     nebius_profile_verifier: Callable[[], Any] | None = None
 
 
@@ -275,6 +280,46 @@ def check_token_factory(credentials: Any, probes: CredentialProbes) -> CheckResu
     )
 
 
+def check_encord(credentials: Any, probes: CredentialProbes) -> CheckResult:
+    """Check Encord credential presence and optionally perform a read-only probe."""
+
+    from npa.clients.credentials import ENCORD_TOKEN_KEYS
+
+    tokens = getattr(credentials, "tokens", {}) or {}
+    present = [
+        name for name in ENCORD_TOKEN_KEYS if str(tokens.get(name) or "").strip()
+    ]
+    if not present:
+        return CheckResult(
+            name="encord",
+            status=WARN,
+            summary="No Encord SSH credential is set.",
+            remedy=(
+                "Set ENCORD_SSH_KEY, ENCORD_SSH_KEY_B64, or a local "
+                "ENCORD_SSH_KEY_FILE before using the Encord workbench client."
+            ),
+        )
+    if probes.encord_verifier is None:
+        return CheckResult(
+            name="encord",
+            status=PASS,
+            summary=f"{present[0]} is set (not verified against Encord).",
+        )
+    try:
+        summary = probes.encord_verifier()
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(
+            name="encord",
+            status=FAIL,
+            summary="Encord credential did not authenticate.",
+            remedy="Confirm the registered public key and ENCORD_DOMAIN.",
+            details=(str(exc),),
+        )
+    return CheckResult(
+        name="encord", status=PASS, summary=f"Encord authenticated ({summary})."
+    )
+
+
 def check_nebius(_credentials: Any, probes: CredentialProbes) -> CheckResult:
     """Check that the selected Nebius CLI profile can call the control plane."""
 
@@ -345,6 +390,7 @@ _CHECK_FUNCS: dict[str, Callable[[Any, CredentialProbes], CheckResult]] = {
     "ngc": check_ngc,
     "s3": check_s3,
     "token_factory": check_token_factory,
+    "encord": check_encord,
     "nebius": check_nebius,
 }
 
@@ -405,6 +451,7 @@ __all__ = [
     "DEFAULT_CREDENTIAL_CHECKS",
     "SUPPORTED_CREDENTIAL_CHECKS",
     "CredentialProbes",
+    "check_encord",
     "check_hf",
     "check_ngc",
     "check_nebius",

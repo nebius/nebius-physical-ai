@@ -1,0 +1,79 @@
+{
+  "source_revision": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+  "report_sha256": "3aa36fc84a68fd1683abb85326cc8ce092fe240fc220f080b69541a3d2bafa1d",
+  "original_native_report": true,
+  "visually_reviewed": true,
+  "observations": [
+    "The rendered industrial warehouse shows textured racks, aisles, boxes, and structural surfaces.",
+    "Front, left, rear, and right RGB and fixed metric axial-depth previews share each recorded pose.",
+    "The colorized point preview is explicitly sampled from the full fused clouds; full-resolution data remains in the dataset.",
+    "Full measured counts, sensor-only route scope, and collision/navigation limits are visible at desktop and mobile widths."
+  ],
+  "canonical_html_measurements_match_independent_readback": true,
+  "embedded_jpegs": 256,
+  "embedded_jpegs_have_no_exif_comments_or_unexpected_metadata": true,
+  "jpeg_metadata_fields": [
+    "jfif",
+    "jfif_density",
+    "jfif_unit",
+    "jfif_version"
+  ],
+  "sampled_point_counts_per_preview_pose": [
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048,
+    2048
+  ],
+  "sample_attribution_receipt_sha256": "4590c10251c20dd866c0c9ec3a16f26e2f46192800ddd73456f35a833f821d3f",
+  "sample_attribution": {
+    "creator": "NVIDIA",
+    "source": "https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/6.0/Isaac/Environments/Simple_Warehouse/full_warehouse.usd",
+    "license_reference": "https://docs.isaacsim.omniverse.nvidia.com/6.0.0/common/licenses.html"
+  },
+  "screenshots": [
+    {
+      "file": "browser/report-1440.png",
+      "dimensions": [
+        1440,
+        1496
+      ],
+      "sha256": "236172c8c9e687aaf13fab7f6943c96b7feb055f449ae9004e53fe6cdddedd71"
+    },
+    {
+      "file": "browser/report-390.png",
+      "dimensions": [
+        390,
+        3118
+      ],
+      "sha256": "c596fdfd077f2d49f54114e30b79f0bc41263edc931e5cbc9e1239b151018c2c"
+    }
+  ]
+}

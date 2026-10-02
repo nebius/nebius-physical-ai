@@ -415,9 +415,9 @@ def test_nurec_case_is_registered_in_the_live_submit_matrix() -> None:
     assert case is not None, "nurec-reconstruct.yaml is missing from SUBMIT_LIVE_MATRIX"
     assert case.tier == "gpu"
     assert "NGC_API_KEY" in case.secret_envs, "the nre-ga container needs an NGC key"
-    assert "HF_TOKEN" in case.secret_envs, "the PhysicalAI capture needs an HF token"
-    # A ~14 GB image pull plus 30k training steps needs more than the tier default.
-    assert case.max_wait_seconds >= 3600
+    assert "HF_TOKEN" not in case.secret_envs, "the pinned PPISP capture is public"
+    # Keep the native full training budget without adding a matrix deadline.
+    assert case.max_wait_seconds == 0
 
 
 def test_live_e2e_test_exists_and_asserts_the_definition_of_done() -> None:
@@ -601,6 +601,7 @@ def test_renderer_stages_npa_source_into_a_vendor_image(monkeypatch) -> None:
     monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
 
     spec = load_spec(SPEC)
+    spec.config.pop("source_overlay", None)
     plan = build_plan(spec)
     step = next(s for s in plan.steps if s.state == "reconstruct")
     doc = build_skypilot_task_doc(
@@ -633,6 +634,27 @@ def test_renderer_overlay_stays_opt_in(monkeypatch) -> None:
     )
 
     assert doc["envs"]["NPA_SRC_OVERLAY"] == "1"
+
+
+def test_nurec_visualizer_installs_the_submitted_source_revision(monkeypatch):
+    from npa.orchestration.npa_workflow import build_plan, load_spec
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        SkypilotRenderOptions,
+        build_skypilot_task_doc,
+    )
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/reviewed")
+    monkeypatch.delenv("NPA_SRC_OVERLAY", raising=False)
+    spec = load_spec(SPEC)
+    step = next(step for step in build_plan(spec).steps if step.state == "visualize")
+    doc = build_skypilot_task_doc(
+        spec,
+        step,
+        run_id="preview",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    assert doc["envs"]["NPA_SRC_OVERLAY"] == "1"
+    assert doc["envs"]["NPA_SRC_S3_URI"].endswith("/reviewed")
 
 
 def test_spec_cpu_stages_do_not_request_a_gpu(monkeypatch) -> None:

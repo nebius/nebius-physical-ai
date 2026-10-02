@@ -1,0 +1,86 @@
+{
+  "schema": "npa.cosmos3.wam-repeated-timing.v1",
+  "status": "timing_measured",
+  "comparison_contract": {
+    "sources": {
+      "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+      "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+      "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+      "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+      "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+    },
+    "steps": 200,
+    "samples_per_rank": 64,
+    "global_batch": 2048,
+    "seed": 42,
+    "profile": false
+  },
+  "hardware": {
+    "gpu_names": [
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200"
+    ],
+    "torch": "2.10.0+cu130",
+    "cuda": "13.0"
+  },
+  "groups": {
+    "32": {
+      "repetitions": [
+        {
+          "measurement_sha256": "af726bfe9815bbdc11f764c59c41784e8ef1084c7a5130c56eff4be131429826",
+          "iteration_series_sha256": "ef466ea571366d997cbfd38072d713f17be828a691f490b2cf8a593aed0b5f32",
+          "measured_steps": 149,
+          "step_mean_seconds": 3.6038926174496644,
+          "step_p50_seconds": 3.6,
+          "step_p95_seconds": 3.65,
+          "measured_tokens": 136137280,
+          "tokens_per_second": 253523.9301277515
+        },
+        {
+          "measurement_sha256": "b9977c53811f210ec2c96bd9977e3c9008ba46162c4d1ea51446e85c8274936c",
+          "iteration_series_sha256": "9986e93b57fb0f37d68a7f866299c6943fe2f99f585885dac3c8e999afb9f60b",
+          "measured_steps": 149,
+          "step_mean_seconds": 3.6074496644295304,
+          "step_p50_seconds": 3.61,
+          "step_p95_seconds": 3.65,
+          "measured_tokens": 136135308,
+          "tokens_per_second": 253270.2796227047
+        },
+        {
+          "measurement_sha256": "3d353e255930988eb99eaf78ae3fea82b9262d2aadf12681301ec8cf1449aa03",
+          "iteration_series_sha256": "c9afde510949e9013810d3b7070559f68567ca403641c2c66035ef8e6868aa4f",
+          "measured_steps": 149,
+          "step_mean_seconds": 3.60248322147651,
+          "step_p50_seconds": 3.6,
+          "step_p95_seconds": 3.64,
+          "measured_tokens": 136135984,
+          "tokens_per_second": 253620.70160403897
+        }
+      ],
+      "replicate_step_means_seconds": {
+        "mean": 3.6046085011185682,
+        "sample_standard_deviation": 0.0025594444654952375,
+        "minimum": 3.60248322147651,
+        "maximum": 3.6074496644295304
+      },
+      "replicate_token_throughputs": {
+        "mean": 253471.63711816506,
+        "sample_standard_deviation": 180.96908683326527,
+        "minimum": 253270.2796227047,
+        "maximum": 253620.70160403897
+      },
+      "measured_steps": 447,
+      "measured_tokens": 408408572,
+      "pooled_tokens_per_second": 253471.551456624
+    }
+  },
+  "comparison": null,
+  "interpretation": "Three repetitions of one topology; no scaling baseline is assumed. Variability is the sample standard deviation of three run means, not a confidence interval. Repetitions use the same training seed. Final checkpoint writing is outside these timed iterations. Full-schedule duration, allocation time and quality are separate. Cross-environment comparisons require review of driver, scheduler and storage differences beyond this report's recorded contract."
+}

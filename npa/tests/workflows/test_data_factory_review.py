@@ -119,6 +119,8 @@ def test_caption_appearance_model_and_candidate_identity_remain_useful(tmp_path)
         review.text("a robot folds blue cloth under warm light")
         == "a robot folds blue cloth under warm light"
     )
+    ordinary_fields = "stage: augment\npass_rate=0.91\nstatus: completed"
+    assert review.text(ordinary_fields) == ordinary_fields
     assert "unlisted-private-token" not in review.text(
         "blue cloth; token=unlisted-private-token"
     )
@@ -526,7 +528,7 @@ def _json_document(text):
 def test_real_rrd_preserves_review_evidence_and_omits_private_locations(
     tmp_path, monkeypatch, overlapping_hostname
 ):
-    from rerun.recording import load_recording
+    from npa.viz.recordings import load_recording
 
     run = tmp_path / "review-run"
     candidate = _recording_fixture(run)

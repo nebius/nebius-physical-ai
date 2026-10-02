@@ -16,7 +16,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from PIL import Image
 
-APPLICATION_ID = "npa.ray-clip-development"
+APPLICATION_ID = "npa-ray-clip-development"
 _HASH = re.compile(r"[0-9a-f]{64}")
 _BASIC_SOURCES = ("embed.py", "worker.py", "npa_lancedb_bdd100k_udfs.py")
 _ADVANCED_SOURCES = {
@@ -811,24 +811,26 @@ class _DecodedRecording:
     """Keep payloads paired with source indices despite physical chunk ordering."""
 
     def __init__(self, path, run_id):
-        from rerun.recording import load_recording
+        from rerun.chunk import RrdReader
 
-        recording = load_recording(path)
+        reader = RrdReader(path)
+        entries = reader.recordings()
         _require(
-            recording.application_id() == APPLICATION_ID
-            and recording.recording_id() == run_id,
+            len(entries) == 1
+            and entries[0].application_id == APPLICATION_ID
+            and entries[0].recording_id == run_id,
             "Decoded RRD recording identity differs",
         )
         self.chunks = {}
         self.counts = {}
-        for chunk in recording.chunks():
+        for chunk in reader.stream(store=entries[0]):
             entity = str(chunk.entity_path)
             self.counts[entity] = self.counts.get(entity, 0) + chunk.num_rows
             self.chunks.setdefault(entity, []).append(chunk.to_record_batch())
 
     def values(self, entity, column):
         # Physical chunk iteration is not timeline ordered. Keep every payload paired
-        # with its index; log_tick preserves source logging order for equal times.
+        # with its index; RowId preserves source logging order for equal times.
         indexed, static = [], []
         for batch in self.chunks.get("/" + entity, []):
             timeline = next(
@@ -846,11 +848,7 @@ class _DecodedRecording:
             indices = batch.column(timeline).to_pylist()
             if timeline == "coordinator_elapsed":
                 indices = [value.value for value in indices]
-            ticks = (
-                batch.column("log_tick").to_pylist()
-                if "log_tick" in batch.schema.names
-                else [0] * len(payload)
-            )
+            ticks = batch.column("rerun.controls.RowId").to_pylist()
             indexed.extend(zip(indices, ticks, payload, strict=True))
         _require(
             not (indexed and static),

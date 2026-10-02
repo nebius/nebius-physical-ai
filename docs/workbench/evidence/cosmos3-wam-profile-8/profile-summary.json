@@ -1,0 +1,34 @@
+{
+  "schema": "npa.cosmos3.wam-profile.v1",
+  "ranks": {
+    "0": {
+      "trace_sha256": "c637b386775aea9125c4a8d28e1000428aaa1ba1ad15d0268631fdf0020defa5",
+      "trace_bytes": 71058433,
+      "profiler_steps": [
+        "ProfilerStep#98",
+        "ProfilerStep#99"
+      ],
+      "profile_window_seconds": 29.35153751171875,
+      "kernel_duration_seconds_by_category": {
+        "other": 4.799628776366731,
+        "convolution": 2.1418217578126293,
+        "attention": 0.5927641396484364,
+        "collectives": 2.3062322539062525,
+        "matrix_multiply": 7.212981745117189
+      },
+      "kernel_counts_by_category": {
+        "other": 345850,
+        "convolution": 33792,
+        "attention": 3328,
+        "collectives": 906,
+        "matrix_multiply": 13736
+      },
+      "cpu_operator_linked_kernel_count": 397526,
+      "total_kernel_count": 397612,
+      "observed_kernel_busy_seconds_by_device": {
+        "0": 15.1309129375
+      }
+    }
+  },
+  "interpretation": "Kernel categories prefer linked CPU operators; NCCL and unlinked kernels use names. Fused Triton kernels remain other. Distinct host annotations define the profiler steps. Categories may overlap in time. Summed kernel durations are not wall-time fractions or exposed communication stalls. Busy time is the union of observed kernel intervals per device; it excludes memory-copy activities. VAE timing comes from native logs."
+}

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import subprocess
 import threading
 from pathlib import Path
+from unittest.mock import Mock
 
+import pytest
+
+from npa.cli import agent_resources
 from npa.cli.agent_rrd_proxy import (
     file_uri_path_allowed,
     resolve_rrd_proxy_target,
@@ -186,11 +191,64 @@ def test_resolve_workflow_yaml_no_draft_fallback() -> None:
     assert 'payload.get("yaml")' in block
 
 
-def test_subprocess_timeout_handled() -> None:
+def _install_timed_out_owned_process(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Mock, list[int], list[bool]]:
+    process = Mock(pid=981051, returncode=None)
+    process.stdout = Mock(closed=False)
+    process.stderr = Mock(closed=False)
+    process.communicate.side_effect = subprocess.TimeoutExpired(["npa"], 0.01)
+    killed: list[int] = []
+    reaper_starts: list[bool] = []
+
+    monkeypatch.setattr(agent_resources, "_AGENT_ACTIVE_PROCESSES", {})
+    monkeypatch.setattr(agent_resources, "_AGENT_ABANDONED_PROCESS_GROUPS", {})
+    monkeypatch.setattr(agent_resources, "_AGENT_COMMAND_BREAKER_OPEN", False)
+    monkeypatch.setattr(agent_resources, "_AGENT_COMMAND_REAPER", None)
+    monkeypatch.setattr(
+        agent_resources.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        agent_resources, "_agent_process_is_owned_child", lambda _process: True
+    )
+    monkeypatch.setattr(agent_resources, "_kill_agent_process_group", killed.append)
+    monkeypatch.setattr(
+        agent_resources,
+        "_start_agent_process_reaper",
+        lambda: reaper_starts.append(True),
+    )
+    return process, killed, reaper_starts
+
+
+def test_subprocess_timeout_handled(monkeypatch: pytest.MonkeyPatch) -> None:
+    process, killed, reaper_starts = _install_timed_out_owned_process(monkeypatch)
+
+    with pytest.raises(TimeoutError, match="agent command timed out") as error:
+        agent_resources.run_bounded_agent_command(["npa"], timeout_s=0.01)
+
+    assert type(error.value) is TimeoutError
+    assert killed == [process.pid]
+    assert reaper_starts == [True]
+    assert agent_resources._AGENT_ACTIVE_PROCESSES == {process.pid: process}
+    assert agent_resources._AGENT_ABANDONED_PROCESS_GROUPS == {process.pid: process}
+    assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is True
+    process.stdout.close.assert_called_once_with()
+    process.stderr.close.assert_called_once_with()
+
     source = AGENT_PY.read_text(encoding="utf-8")
-    assert "subprocess.TimeoutExpired" in source
-    assert "live sim2real submit timed out" in source
-    assert "NPA command timed out" in source
+    npa_handler = source.split("def _run_agent_npa_json(", 1)[1].split(
+        "_SIM2REAL_STAGE_BY_NUMBER", 1
+    )[0]
+    live_submit_handler = source.split(
+        "def submit_sim2real(payload: dict | None = None):", 1
+    )[1].split("cat <<'PY' | sudo tee /opt/npa-agent/bootstrap_rrd.py", 1)[0]
+    for handler in (npa_handler, live_submit_handler):
+        assert "run_bounded_agent_command(" in handler
+        assert "except TimeoutError as exc:" in handler
+    assert "NPA command timed out" in npa_handler
+    assert "live sim2real submit timed out" in live_submit_handler
 
 
 def test_empty_llm_reply_message() -> None:

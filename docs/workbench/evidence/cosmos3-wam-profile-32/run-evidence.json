@@ -1,0 +1,37 @@
+{
+  "schema": "npa.cosmos3.wam-profile-run-evidence.v1",
+  "native_return_codes": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "files_sha256": {
+    "measurement.json": "23ecf0a47b07ebf973154d70af0f75801c010291a69204960e91fb49a2c0e4c9",
+    "iteration-series.csv": "afdbaf8cc34e653e1c96dcfd563bc0979209addd07fd547959c9a4e18dd0d484",
+    "checkpoint-hashes.json": "8419795883ce5cf3f6f807777000ef70f2faf4d6cc99123741fedbd6d489efbd",
+    "distributed-preflight.json": "d8472f9b84efe9667413ac4a618aa405398845f89c48f0cadb02a9bdbaad353a"
+  },
+  "native_completion_receipts_sha256": {
+    "0": "dec5a4b5eda7596724f3f550868b44f75a1d51e173473e1f387ffc69c1d391e2",
+    "1": "1e71ffebd927b4958f9c8f9b17dba812d57bc1fd2d37bdcc660a39deec4e1a93",
+    "2": "43c15d152bcc17e4df1d0aee6bb6486668c877702f374fac086e3352142511af",
+    "3": "940309a2505ab9c6bf108227807f10fc8bb49f1533b669675d599944067dd287"
+  },
+  "run_settings_sha256": "bc5c1ccdc343f473f5416a25e2c758c82f39b601f85418865f34cd541cfe3371",
+  "launch_script_sha256": "a3a1fe07ad2083acea1b7d8faafa8d3661e0ed566244eee558ba0956ed4daf18",
+  "training_toml_sha256": "24504f6204640093e576f9e0513df77ed368e7d285e005d107f3e3cf3837d3cf",
+  "scheduler": {
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "allocation_seconds": 1060,
+    "allocated_gpus": 32,
+    "allocated_nodes": 4,
+    "allocated_cpus": 640,
+    "started_utc": "2026-09-30T05:54:51Z",
+    "ended_utc": "2026-09-30T06:12:31Z",
+    "allocated_gpu_hours": 9.422222222222222
+  },
+  "private_archive_receipt_sha256": "9380cddd2806f52d21894315bd205d4a50ddc8bbf102e9e29e3c5d0984a70c8e",
+  "scope": "Separate completed 110-update instrumented run; excluded from repeated throughput."
+}

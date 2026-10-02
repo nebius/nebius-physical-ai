@@ -1,0 +1,28 @@
+# BEHAVIOR Comet profile qualification
+
+This reusable GPU smoke loads a private, fully verified Comet checkpoint twice in separate processes and compares the first action for one exact synthetic observation for task 1, picking up trash. The private workflow wrapper supplies checkpoint, source, runtime, and storage locations; this directory contains no model weights or infrastructure identifiers.
+
+Stage the public `comet_policy.py`, `comet_server.py`, `evaluator_versions.py`,
+`evaluator_wire.py`, and both checkpoint inventory JSON files beside these
+scripts. These six files are one dependency closure: the policy imports the
+version registry, while the server imports both the registry and wire adapter.
+Invoke `qualify_comet.py` with `--profile comet12` or `--profile comet50`, the
+pinned CPython 3.11 runtime, the clean Comet source checkout, an extracted
+checkpoint, its full-readback fetch receipt, the frozen observation NPZ,
+`--expected-observation-sha256`, and a new output directory. A private wrapper
+may also pass `--expected-action-sha256` when an earlier qualification produced
+an exact action on the same observation bytes.
+
+Both profiles must produce byte-identical finite floating 23-action results across two fresh processes. Equality is over raw bytes, so signed-zero drift is rejected. The reusable core does not embed a campaign observation or expected action. The private Comet12 wrapper binds the earlier 3abb observation and first-action identities; Comet50 has no historical action to compare.
+
+The receipt is loader and adapter evidence. It does not run an evaluator or simulator, measure Q or success, reproduce an author benchmark, or establish compliance with the official single-24GB policy GPU limit.
+
+## Task 1 training data boundary
+
+Build an isolated training environment from the pinned Comet source's `uv.lock` using `uv sync --frozen --no-dev`. That lock requires Hugging Face LeRobot `577cd10974b84bea1f06b6472eb9e5e74e07f77a` (version 0.3.4), including its dictionary-based episode metadata. Verify the installed revision and dependency inventory before loading data. The retained RLC runtime uses a different LeRobot fork; the first real-batch check rejected its metadata before model loading or training. Keep each policy's environment separate and rerun the batch qualification after changing runtime dependencies.
+
+`npa.workflows.behavior_challenge.comet_training_data.CometTask1Dataset` exposes one reviewed task-1 episode partition to a private Comet training integration. Construct it with the extracted 2026 LeRobot root, the frozen 180/20 episode split, its required `expected_split_sha256`, and either `partition="training"` or `partition="holdout"`. The adapter verifies the raw split bytes before parsing. It fixes the released Comet action horizon at 32, uses 30 Hz action deltas and the dataset's reviewed `5e-4`-second alignment tolerance, requires float32 state/actions, and emits uint8 RGB at the released head and wrist sizes. The pinned LeRobot decoder returns finite `[0, 1]` floating RGB, so the default factory applies Comet's exact `(255 * image).astype(uint8)` rule before validating and mapping the three cameras. Other dtypes, non-finite values, values outside `[0, 1]`, and incorrect dimensions fail closed.
+
+Near an episode boundary, the adapter repeats the final valid action for out-of-range delta queries and emits `action_valid_mask` plus `action_is_pad`. This matches the pinned Comet Behavior loader's clamped query indices and prevents a chunk from reading the next episode. The exact Comet training loss does not consume either mask; they are diagnostic evidence, and the repeated terminal targets still contribute to its unmasked mean loss.
+
+The adapter does not patch the upstream training module, choose a checkpoint, load normalization, or run an optimizer. A private integration must inject it at Comet's `create_behavior_dataset` seam and prove one real transformed batch through the pinned source before training. It must keep the reviewed train and holdout instances in separate adapter objects and use the holdout object only in the independent scorer because the pinned training entrypoint does not implement its declared validation fields.

@@ -545,6 +545,9 @@ def up_cmd(
                     preset=str(
                         _tfvar_value(tfvars, env, "cpu_nodes_preset", "8vcpu-32gb")
                     ),
+                    disk_size_gib=int(
+                        _tfvar_value(tfvars, env, "cpu_disk_size", 128) or 128
+                    ),
                 )
                 if resolved_cpu_nodes
                 else None
@@ -2826,6 +2829,7 @@ def _apply_inherited_plan_tfvars(tfvars: dict[str, Any], plan: Any) -> Any:
             "cpu_nodes_count": topology.cpu_nodes,
             "cpu_nodes_platform": topology.cpu_platform,
             "cpu_nodes_preset": topology.cpu_preset,
+            "cpu_disk_size": topology.cpu_disk_gib,
             "gpu_nodes_platform": topology.gpu_platform,
             "gpu_nodes_preset": topology.gpu_preset,
             "gpu_nodes_preemptible": topology.gpu_preemptible,
