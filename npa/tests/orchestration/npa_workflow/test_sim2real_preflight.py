@@ -443,3 +443,15 @@ def test_kubernetes_preflight_blocks_unknown_managed_node_placement(missing):
 
     issues = kubernetes_prerequisites({}, runner=run)
     assert any("placement could not be verified" in issue for issue, _ in issues)
+
+
+def test_managed_driver_detection_uses_the_scheduler_gpu_label_aliases():
+    labels = {
+        key: value
+        for key, value in _MANAGED_RTX_LABELS.items()
+        if key not in {"nvidia.com/gpu.product", "nebius.com/gpu-name"}
+    }
+    labels["skypilot.co/accelerator"] = "rtxpro6000"
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == ["gpu-0"]
+    labels["skypilot.co/accelerator"] = "rtxpro6000-unreviewed-variant"
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == []

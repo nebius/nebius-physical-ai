@@ -273,10 +273,31 @@ def _ready_schedulable_cpu_nodes(nodes_json: str) -> list[str]:
 
 
 def _is_rtx_pro_6000(labels: Mapping[str, Any]) -> bool:
-    """Return whether a node advertises an RTX PRO 6000 Blackwell accelerator."""
-    product = str(labels.get("nvidia.com/gpu.product") or "").lower()
-    name = str(labels.get("nebius.com/gpu-name") or "").lower()
-    return "rtx-pro-6000" in product or name == "rtx6000"
+    """Use the same reviewed GPU equivalences as workflow placement."""
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        KubernetesGpuCatalog,
+        UnsatisfiableAcceleratorError,
+        resolve_kubernetes_accelerator,
+    )
+
+    for key in (
+        "nvidia.com/gpu.product",
+        "nebius.com/gpu-name",
+        "skypilot.co/accelerator",
+    ):
+        product = str(labels.get(key) or "")
+        if not product:
+            continue
+        catalog = KubernetesGpuCatalog(
+            context="driver-preflight",
+            quantities_by_accelerator={product: frozenset({1})},
+        )
+        try:
+            resolve_kubernetes_accelerator("RTXPRO6000:1", catalog=catalog)
+        except UnsatisfiableAcceleratorError:
+            continue
+        return True
+    return False
 
 
 def _managed_driver_isaac_nodes(nodes_json: str, *, placements=None) -> list[str]:
