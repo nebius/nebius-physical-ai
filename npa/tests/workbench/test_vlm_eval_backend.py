@@ -573,6 +573,24 @@ def test_video_pixels_and_provenance_use_the_same_stream(
             assert frame.source_timestamp_s == pytest.approx(frame.source_index / 10)
 
 
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="ffmpeg and ffprobe are required for video sampling provenance",
+)
+@pytest.mark.parametrize("strategy", ["sequence", "final"])
+def test_inaccurate_video_count_cannot_claim_complete_sampling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, strategy: str
+) -> None:
+    video = tmp_path / "two-streams.mp4"
+    _write_multistream_provenance_video(video)
+    # A stale frame count plans samples beyond the ten actual source frames.
+    # Exercise real extraction: ffmpeg exits successfully with fewer outputs.
+    monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: 110)
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="sampling provenance"):
+        select_rollout_frames(video, frame_selection=strategy, max_frames=4)
+
+
 def test_video_timestamps_use_structured_ffprobe_output(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
