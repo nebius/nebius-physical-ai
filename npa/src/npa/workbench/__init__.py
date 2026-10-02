@@ -48,4 +48,4 @@ def __getattr__(name: str):
 
 
 def __dir__() -> list[str]:
-    return sorted(set(globals()) | set(__all__))
+    return list(__all__)
