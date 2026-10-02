@@ -22,12 +22,19 @@ from npa.workflows.sim2real.checkpoint_selection import (
 from npa.workflows.sim2real.component_authority import (
     COMPONENT_CONTRACTS as _COMPONENT_CONTRACTS,  # noqa: F401 - compatibility
     COMPONENT_URI_KEYS as _COMPONENT_URI_KEYS,  # noqa: F401 - compatibility
+    stage14_report_authority_sha256,
     validate_component_records,
 )
 from npa.workflows.sim2real.decision_authority import (
     gold_report_sha256,
     validate_stage11_decision,
 )
+from npa.workflows.sim2real.publication import (
+    remote_object_snapshot,
+    replace_mutable_file,
+    upload_immutable_file,
+)
+from npa.workflows.sim2real.stage10_authority import validate_stage10_input_scope
 from npa.workflows.sim2real.workflow_io import (
     build_component_record,
     component_record_history_uri,
@@ -37,7 +44,6 @@ from npa.workflows.sim2real.workflow_io import (
     read_json,
     source_sha,
     storage,
-    write_json,
 )
 
 
@@ -172,12 +178,23 @@ def _resolve_stage14_selection(
         if run_root is None:
             selection, candidate = resolve_selected_checkpoint(evidence)
         else:
+            outer_iteration = evidence.get("outer_iteration")
+            if type(outer_iteration) is not int or run_id is None:
+                raise RuntimeError("Stage 14 selected outer iteration is invalid")
+            validate_stage10_input_scope(
+                argparse.Namespace(
+                    run_id=run_id,
+                    outer_iteration=outer_iteration,
+                ),
+                root=run_root,
+                evidence=evidence,
+            )
             selection, candidate = resolve_run_scoped_checkpoint(
                 evidence,
                 run_root=run_root,
                 run_id=run_id,
             )
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         raise RuntimeError(f"Stage 14 selected checkpoint identity: {exc}") from exc
     return selection, candidate
 
@@ -744,6 +761,10 @@ def _stage14_report_payload(
         "architecture": "npa.workflow/v0.0.1_compositional_standard_runtime",
         "component_records": components,
         "outer_loop": {"decision": decision, "latest_heldout_report": state.gold},
+        "policy_gate_config": {
+            "threshold": decision["threshold"],
+            "early_exit": decision["early_exit_enabled"],
+        },
         "checkpoint_selection": selection,
         "selected_checkpoint_candidate": selected_candidate,
         "stage8_evaluator_usage": [
@@ -781,6 +802,21 @@ def _build_stage14_record(state: _Stage14State) -> dict[str, Any]:
     )
 
 
+def _bind_stage14_report_authority(
+    report: dict[str, Any],
+    component: dict[str, Any],
+) -> None:
+    component["artifacts"]["report_authority_sha256"] = stage14_report_authority_sha256(
+        report
+    )
+    material = {
+        key: value for key, value in component.items() if key != "content_sha256"
+    }
+    component["content_sha256"] = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def _build_stage14_report(
     state: _Stage14State,
     components: list[dict[str, Any]],
@@ -813,6 +849,7 @@ def _build_stage14_report(
         selected_candidate,
         robot_contract,
     )
+    _bind_stage14_report_authority(report, components[-1])
     reports = state.local / "reports"
     reports.mkdir(parents=True, exist_ok=True)
     (reports / "sim2real-report.json").write_text(json.dumps(report, indent=2))
@@ -935,10 +972,22 @@ def _publish_stage14_outputs(
         ),
     ]
     client = storage()
+    canonical_report = state.canonical_report_uri or state.report_uri
+    component_pointer = f"{state.root}/components/stage_14.json"
+    snapshots = {
+        uri: remote_object_snapshot(client, uri)
+        for uri in (
+            canonical_report,
+            *(alias_uri for _path, _immutable_uri, alias_uri in recordings),
+            component_pointer,
+        )
+    }
     for path, immutable_uri, _alias_uri in recordings:
-        client.upload_file(str(path), immutable_uri)
+        upload_immutable_file(client, path, immutable_uri)
     _seal_stage14_report(report, rrd, mcap)
-    write_json(state.report_uri, report, directory=state.work / "final-report")
+    report_path = reports / "sim2real-report.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    upload_immutable_file(client, report_path, state.report_uri)
     component_record = report["component_records"][-1]
     component_kwargs = {
         "root_uri": state.root,
@@ -948,18 +997,27 @@ def _publish_stage14_outputs(
         "expected_tier": "WORKS",
         "required_artifacts": ("rrd", "mcap", "report"),
     }
-    publish_built_component_history(**component_kwargs)
+    publish_built_component_history(**component_kwargs, client=client)
+    if canonical_report != state.report_uri:
+        replace_mutable_file(
+            client,
+            report_path,
+            canonical_report,
+            snapshots[canonical_report],
+        )
     for path, immutable_uri, alias_uri in recordings:
         if alias_uri != immutable_uri:
-            client.upload_file(str(path), alias_uri)
-    canonical_report = state.canonical_report_uri or state.report_uri
-    if canonical_report != state.report_uri:
-        write_json(
-            canonical_report,
-            report,
-            directory=state.work / "canonical-final-report",
-        )
-    publish_built_component_pointer(**component_kwargs)
+            replace_mutable_file(
+                client,
+                path,
+                alias_uri,
+                snapshots[alias_uri],
+            )
+    publish_built_component_pointer(
+        **component_kwargs,
+        client=client,
+        snapshot=snapshots[component_pointer],
+    )
 
 
 def finalize_in_work(args: argparse.Namespace, *, root: str, work: Path) -> None:

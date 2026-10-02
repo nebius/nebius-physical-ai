@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from argparse import Namespace
 from pathlib import Path
@@ -124,11 +125,13 @@ def test_stage10_accepts_exact_byo_render_producer(
         artifact_tag(attempt),
     )
     producer = f"{ROOT}/byo-eval/{job}/renders"
+    frame_bytes = b"\x89PNG\r\n\x1a\nframe"
     report = _learned_gold()
     report.update(
         {
             "component_invocation": {"mode": "npa_workflow_skypilot_task"},
             "render_manifest": {
+                "schema": "npa.sim2real.heldout_renders.v2",
                 "evaluation_attempt_tag": attempt,
                 "renders_s3_uri": producer,
                 "policy_checkpoint": {
@@ -137,17 +140,35 @@ def test_stage10_accepts_exact_byo_render_producer(
                     "size_bytes": 128,
                 },
                 "episodes": [{"env_id": "env-1", "frames": ["camera-000.png"]}],
+                "frame_artifacts": {
+                    "env-1/camera-000.png": {
+                        "sha256": hashlib.sha256(frame_bytes).hexdigest(),
+                        "size_bytes": len(frame_bytes),
+                    }
+                },
             },
         }
     )
     canonical_uploads: list[str] = []
 
     class Storage:
+        def read_bytes_with_etag(self, _uri: str) -> None:
+            return None
+
+        def put_bytes_conditional(
+            self,
+            _payload: bytes,
+            destination: str,
+            **_kwargs: object,
+        ) -> str:
+            canonical_uploads.append(destination)
+            return '"etag"'
+
         def download_directory(self, source: str, destination: str) -> None:
             assert source.rstrip("/") == producer
             frame = Path(destination) / "env-1/camera-000.png"
             frame.parent.mkdir(parents=True)
-            frame.write_bytes(b"png")
+            frame.write_bytes(frame_bytes)
 
         def upload_directory(self, _source: str, destination: str) -> None:
             canonical_uploads.append(destination)
@@ -173,6 +194,7 @@ def test_stage10_accepts_exact_byo_render_producer(
 
     assert canonical_uploads == [
         f"{ROOT}/eval/gold-heldout/outer-01/attempts/{attempt}/renders/"
+        "env-1/camera-000.png"
     ]
 
 
@@ -370,7 +392,7 @@ def test_canonical_stage14_rejects_zero_heldout_frames_before_upload(
     )
     monkeypatch.setattr(stage14, "storage", lambda: Storage())
 
-    try:
+    with pytest.raises(RuntimeError, match="zero held-out frames"):
         stage14._publish_stage14_outputs(
             state,
             {"component_records": [{"stage": 14}]},
@@ -378,8 +400,6 @@ def test_canonical_stage14_rejects_zero_heldout_frames_before_upload(
             zero,
             zero,
         )
-    except RuntimeError:
-        pass
     assert uploads == []
 
 

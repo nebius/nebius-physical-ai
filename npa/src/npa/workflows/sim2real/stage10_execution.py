@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from npa.workflows.sim2real.decision_authority import gold_report_sha256
+from npa.workflows.sim2real.publication import upload_immutable_tree
 from npa.workflows.sim2real.stage10_authority import (
     expected_byo_render_prefix,
     validate_stage10_input_scope,
@@ -139,12 +141,47 @@ def _assert_exact_render_frames(render_local: Path, declared: set[str]) -> None:
         )
 
 
+def _assert_render_frame_bytes(
+    render_local: Path,
+    manifest: dict[str, Any],
+    declared: set[str],
+    *,
+    required: bool,
+) -> None:
+    frame_artifacts = manifest.get("frame_artifacts")
+    if not required and frame_artifacts is None:
+        return
+    if not isinstance(frame_artifacts, dict) or set(frame_artifacts) != declared:
+        raise RuntimeError("Stage 10 render manifest lacks exact frame-byte authority")
+    for relative in sorted(declared):
+        identity = frame_artifacts.get(relative)
+        path = render_local / relative
+        if not isinstance(identity, dict) or path.is_symlink() or not path.is_file():
+            raise RuntimeError(
+                f"Stage 10 render frame authority is invalid: {relative}"
+            )
+        payload = path.read_bytes()
+        digest = hashlib.sha256(payload).hexdigest()
+        size = identity.get("size_bytes")
+        if (
+            len(payload) <= 8
+            or not payload.startswith(b"\x89PNG\r\n\x1a\n")
+            or type(size) is not int
+            or size != len(payload)
+            or identity.get("sha256") != digest
+        ):
+            raise RuntimeError(
+                f"Stage 10 render frame bytes disagree with manifest: {relative}"
+            )
+
+
 def validate_materialized_render_tree(
     render_local: Path,
     manifest: dict[str, Any],
     candidate: dict[str, Any],
     *,
     require_checkpoint_identity: bool = True,
+    require_frame_identity: bool | None = None,
 ) -> None:
     """Bind one local render tree to the manifest and checkpoint that produced it."""
 
@@ -154,6 +191,16 @@ def validate_materialized_render_tree(
         require_checkpoint_identity=require_checkpoint_identity,
     )
     _assert_exact_render_frames(render_local, declared)
+    _assert_render_frame_bytes(
+        render_local,
+        manifest,
+        declared,
+        required=(
+            manifest.get("schema") == "npa.sim2real.heldout_renders.v2"
+            if require_frame_identity is None
+            else require_frame_identity
+        ),
+    )
 
 
 def _canonical_render_attempt_tag(
@@ -274,9 +321,10 @@ def _materialize_stage10_renders(
         manifest,
         candidate,
         require_checkpoint_identity=attempt is not None,
+        require_frame_identity=attempt is not None,
     )
     destination = _render_destination(root, args.outer_iteration, relative, attempt)
-    client.upload_directory(str(local), destination)
+    upload_immutable_tree(client, local, destination)
     report["render_lineage"] = {
         "evaluation_split": "gold_heldout",
         "evaluation_attempt_tag": attempt or "",

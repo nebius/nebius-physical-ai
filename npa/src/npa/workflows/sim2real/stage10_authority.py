@@ -47,7 +47,7 @@ def _resolve_stage10_checkpoint(
             run_id=run_id,
         )
     except ValueError as exc:
-        raise RuntimeError("Stage 10 checkpoint is outside the current run") from exc
+        raise RuntimeError(f"Stage 10 selected checkpoint identity: {exc}") from exc
     recorded_outer = evidence.get("outer_iteration")
     if (
         not isinstance(recorded_outer, int)

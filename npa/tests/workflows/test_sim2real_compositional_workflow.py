@@ -990,7 +990,6 @@ def _patch_stage14_io(
         stage14_finalize, "materialize_plan", _materialize_stage14_inputs
     )
     monkeypatch.setattr(stage14_finalize, "source_sha", lambda: "b" * 40)
-    monkeypatch.setattr(stage14_finalize, "write_json", lambda *_args, **_kwargs: None)
     for publisher in (
         "publish_built_component_history",
         "publish_built_component_pointer",
@@ -1260,8 +1259,13 @@ def test_stage14_rejects_selected_candidate_digest_disagreement(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    from npa.workflows.sim2real.byo_isaac_trainer import artifact_tag, k8s_job_name
+
     root = "s3://unit/runs/finalize"
-    checkpoint_uri = f"{root}/checkpoints/model.pt"
+    checkpoint_uri = (
+        f"{root}/byo-trainer/{k8s_job_name('s2r-byo-isaac-train', 'run')}/"
+        f"{artifact_tag('outer-01-iter-01')}/model_latest.pt"
+    )
     evidence = _selected_checkpoint_evidence(
         checkpoint_uri, "a" * 64, candidate_sha256="b" * 64
     )
@@ -1437,7 +1441,9 @@ def test_stage10_seals_report_split_and_outer_iteration(
         "run",
         artifact_tag(attempt_tag),
     )
+    frame_bytes = b"\x89PNG\r\n\x1a\nframe"
     report["render_manifest"] = {
+        "schema": "npa.sim2real.heldout_renders.v2",
         "renders_s3_uri": f"{root}/byo-eval/{render_job}/renders/",
         "evaluation_attempt_tag": attempt_tag,
         "policy_checkpoint": {
@@ -1446,14 +1452,31 @@ def test_stage10_seals_report_split_and_outer_iteration(
             "size_bytes": 128,
         },
         "episodes": [{"env_id": "gold-0001", "frames": ["camera-000.png"]}],
+        "frame_artifacts": {
+            "gold-0001/camera-000.png": {
+                "sha256": hashlib.sha256(frame_bytes).hexdigest(),
+                "size_bytes": len(frame_bytes),
+            }
+        },
     }
     written: dict[str, object] = {}
 
     class FakeStorage:
+        def read_bytes_with_etag(self, _uri: str) -> None:
+            return None
+
+        def put_bytes_conditional(
+            self,
+            _payload: bytes,
+            _uri: str,
+            **_kwargs: object,
+        ) -> str:
+            return '"etag"'
+
         def download_directory(self, _uri: str, destination: str) -> None:
             frame = Path(destination) / "gold-0001" / "camera-000.png"
             frame.parent.mkdir(parents=True)
-            frame.write_bytes(b"png")
+            frame.write_bytes(frame_bytes)
 
         def upload_directory(self, _local: str, _uri: str) -> None:
             return None

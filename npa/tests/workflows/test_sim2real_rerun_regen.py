@@ -415,6 +415,23 @@ def test_regen_also_refreshes_the_mcap(
     uploaded: list[tuple[str, str]] = []
 
     class FakeStorage:
+        def __init__(self) -> None:
+            self.objects: dict[str, bytes] = {}
+
+        def read_bytes_with_etag(self, uri: str) -> tuple[bytes, str] | None:
+            payload = self.objects.get(uri)
+            return None if payload is None else (payload, '"etag"')
+
+        def put_bytes_conditional(
+            self,
+            payload: bytes,
+            uri: str,
+            **_kwargs: object,
+        ) -> str:
+            self.objects[uri] = payload
+            uploaded.append(("<conditional>", uri))
+            return '"etag"'
+
         def upload_file(self, local: str, uri: str) -> str:
             uploaded.append((local, uri))
             return uri

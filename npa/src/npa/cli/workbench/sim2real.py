@@ -967,13 +967,16 @@ def rerun_heldout_only_command(
     no_publish: bool = typer.Option(
         False,
         "--no-publish",
-        help="Skip uploading held-out report/renders to the run prefix on S3.",
+        help="Keep the diagnostic result local instead of publishing immutable attempt evidence.",
     ),
     output: OutputFormat = typer.Option(
         OutputFormat.text, "--output", help="Output format."
     ),
 ) -> None:
-    """Re-run Isaac held-out eval (stage 10) on cluster for an existing run (~5–15 min)."""
+    """Run a diagnostic held-out eval without replacing canonical Stage 10 evidence.
+
+    Successful publication creates immutable attempt evidence only.
+    """
     try:
         config = build_config_from_env(
             run_id=run_id,
@@ -994,6 +997,11 @@ def rerun_heldout_only_command(
 
     payload = {
         "run_id": run_id,
+        "publication_mode": "local_only" if no_publish else "immutable_attempt",
+        "published_report_uri": report.get("report_uri"),
+        "published_renders_uri": (report.get("render_lineage") or {}).get(
+            "canonical_s3_uri"
+        ),
         "success_rate": report.get("success_rate"),
         "render_manifest_episodes": len(
             (report.get("render_manifest") or {}).get("episodes") or []
@@ -1005,5 +1013,10 @@ def rerun_heldout_only_command(
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
     typer.echo(f"run_id: {run_id}")
+    typer.echo(f"publication_mode: {payload['publication_mode']}")
+    if payload["published_report_uri"]:
+        typer.echo(f"published_report_uri: {payload['published_report_uri']}")
+    if payload["published_renders_uri"]:
+        typer.echo(f"published_renders_uri: {payload['published_renders_uri']}")
     typer.echo(f"success_rate: {payload['success_rate']}")
     typer.echo(f"render_manifest_episodes: {payload['render_manifest_episodes']}")

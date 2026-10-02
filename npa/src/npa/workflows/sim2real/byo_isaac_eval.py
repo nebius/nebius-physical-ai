@@ -1282,6 +1282,37 @@ def _download_json(uri: str) -> dict[str, Any]:
     return json.loads(Path(local).read_text())
 
 
+def _render_frame_artifacts(
+    renders_local_dir: str,
+    episodes: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    root = Path(renders_local_dir)
+    artifacts: dict[str, dict[str, Any]] = {}
+    for episode in episodes:
+        env_id = episode.get("env_id")
+        if not isinstance(env_id, str) or not env_id or Path(env_id).name != env_id:
+            raise RuntimeError("held-out render episode has an unsafe environment ID")
+        names = list(episode.get("frames") or [])
+        for values in (episode.get("camera_views") or {}).values():
+            names.extend(values or [])
+        for name in dict.fromkeys(names):
+            if not isinstance(name, str) or Path(name).name != name:
+                raise RuntimeError("held-out render manifest has an unsafe frame name")
+            path = root / env_id / name
+            if path.is_symlink() or not path.is_file():
+                raise RuntimeError(f"held-out render frame is missing: {env_id}/{name}")
+            payload = path.read_bytes()
+            if len(payload) <= 8 or not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise RuntimeError(f"held-out render frame is invalid: {env_id}/{name}")
+            artifacts[f"{env_id}/{name}"] = {
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+    if not artifacts:
+        raise RuntimeError("held-out render manifest has no frame-byte authority")
+    return artifacts
+
+
 def run_isaac_eval_job(
     run_id: str,
     *,
@@ -1557,7 +1588,7 @@ def run_isaac_eval_job(
             print("byo_isaac_eval: render sync failed:", repr(e), flush=True)
     global _RENDER_MANIFEST
     _RENDER_MANIFEST = {
-        "schema": "npa.sim2real.heldout_renders.v1",
+        "schema": "npa.sim2real.heldout_renders.v2",
         "evaluation_attempt_tag": eval_tag,
         "sim_backend": "isaac",
         "isaac_task": task,
@@ -1567,6 +1598,7 @@ def run_isaac_eval_job(
         "policy_checkpoint": checkpoint_provenance,
         "renders_s3_uri": renders_prefix,
         "episodes": episodes,
+        "frame_artifacts": _render_frame_artifacts(_RENDERS_LOCAL_DIR, episodes),
     }
     return per_env_from_distances(
         distances,

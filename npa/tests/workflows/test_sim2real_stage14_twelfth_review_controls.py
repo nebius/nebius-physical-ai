@@ -31,6 +31,7 @@ DIGEST = "a" * 64
 SOURCE_SHA = "b" * 40
 IMAGE_DIGEST = "c" * 64
 EVAL_ATTEMPT_TAG = "gold-o01-attempt-" + "d" * 32
+FRAME_BYTES = b"\x89PNG\r\n\x1a\nframe"
 COMPONENT_NAMES = {
     1: "stage_01_trigger",
     2: "stage_02_assets",
@@ -142,6 +143,38 @@ def _gold(uri: str = CHECKPOINT) -> dict[str, Any]:
     }
 
 
+def _stage4_lane(index: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    provenance = {
+        "image": f"ghcr.io/example/npa@sha256:{IMAGE_DIGEST}",
+        "image_digest": f"sha256:{IMAGE_DIGEST}",
+        "source_sha": SOURCE_SHA,
+        "execution_mode": "standard_npa_workflow_skypilot",
+        "workflow_job": f"job-4-{index}",
+        "gpu_products": ["NVIDIA H100"],
+    }
+    proof = {
+        "schema": "npa.sim2real.envgen_shard_execution.v1",
+        "shard_index": index,
+        "shard_count": 2,
+        "provenance": provenance,
+    }
+    lane = {
+        "schema": "npa.sim2real.component_lane_record.v1",
+        "stage": 4,
+        "lane": f"shard-{index:05d}",
+        "tier": "WORKS",
+        "evidence": f"generated shard {index}",
+        "artifacts": {
+            "raw_envs": f"{ROOT}/envs/raw/",
+            "shard_index": index,
+            "shard_count": 2,
+            "provenance": f"{ROOT}/envs/raw/provenance-{index:05d}.json",
+            **provenance,
+        },
+    }
+    return proof, _rehash_component(lane)
+
+
 def _component_record(stage: int) -> dict[str, Any]:
     authority = component_authority._authority_uris(ROOT, _evidence(), _gold())
     artifacts: dict[str, Any] = {"source_sha": SOURCE_SHA}
@@ -159,11 +192,12 @@ def _component_record(stage: int) -> dict[str, Any]:
         artifacts["render_lineage"] = _gold()["render_lineage"]
         artifacts["gold_report_sha256"] = gold_report_sha256(_gold())
     if stage == 4:
+        lanes = [_stage4_lane(index) for index in range(2)]
         artifacts.update(
             {
                 "shard_count": 2,
-                "shard_provenance": [{}, {}],
-                "lane_records": [{}, {}],
+                "shard_provenance": [proof for proof, _record in lanes],
+                "lane_records": [record for _proof, record in lanes],
             }
         )
     if stage != 12:
@@ -359,6 +393,11 @@ def test_regen_rejects_stale_current_decision_before_policy_access(
         "_ensure_policy_access_metadata",
         lambda *_a, **_k: reached.append("access") or {},
     )
+    monkeypatch.setattr(
+        regen,
+        "_validate_regen_component_authority",
+        lambda *_a, **_k: None,
+    )
 
     with pytest.raises(regen.Sim2RealRerunRegenError):
         regen._load_regen_state(_config(), tmp_path, object(), sync_inputs=False)
@@ -396,36 +435,56 @@ def test_heldout_only_syncs_canonical_gold_environment(
     assert downloads == [f"{ROOT}/envs/gold-heldout/"]
 
 
-def test_heldout_only_publishes_renders_before_sealed_report(tmp_path: Path) -> None:
+def test_heldout_only_publishes_only_immutable_attempt_evidence(tmp_path: Path) -> None:
     renders = tmp_path / "eval/gold-heldout/outer-01/renders/env-1"
     renders.mkdir(parents=True)
     (renders / "camera-000.png").write_bytes(b"png")
-    uploads: list[tuple[str, str]] = []
+    uploads: list[tuple[bytes, str]] = []
 
     class Storage:
+        def read_bytes_with_etag(self, _destination: str) -> None:
+            return None
+
+        def put_bytes_conditional(
+            self,
+            payload: bytes,
+            destination: str,
+            **_kwargs: object,
+        ) -> str:
+            uploads.append((payload, destination))
+            return '"etag"'
+
         def upload_file(self, source: str, destination: str) -> str:
-            uploads.append((source, destination))
+            uploads.append((Path(source).read_bytes(), destination))
             return destination
 
-        def upload_directory(self, source: str, destination: str) -> str:
-            uploads.append((source, destination))
-            return destination
-
+    report = _gold()
+    attempt_tag = "gold_heldout-outer-01-attempt-" + "d" * 32
+    report["evaluation_attempt_tag"] = attempt_tag
+    report["render_manifest"] = {
+        "evaluation_attempt_tag": attempt_tag,
+        "renders_s3_uri": report["render_lineage"]["source_s3_uri"],
+    }
     regen._publish_heldout_eval_outputs(
         _config(),
         tmp_path,
-        _gold(),
+        report,
         outer_iteration=1,
         storage=Storage(),
     )
-    report = json.loads(Path(uploads[-1][0]).read_text(encoding="utf-8"))
-    assert uploads[-1][1] == f"{ROOT}/eval/gold-heldout/outer-01/report.json"
-    assert report["render_lineage"]["canonical_s3_uri"] == (
-        f"{ROOT}/eval/gold-heldout/outer-01/renders/"
+    published = json.loads(uploads[-1][0])
+    attempt_root = f"{ROOT}/eval/gold-heldout/outer-01/attempts/{attempt_tag}"
+    assert [destination for _source, destination in uploads] == [
+        f"{attempt_root}/renders/env-1/camera-000.png",
+        f"{attempt_root}/report.json",
+    ]
+    assert published["render_lineage"]["canonical_s3_uri"] == (
+        f"{attempt_root}/renders/"
     )
+    assert published["report_uri"] == f"{attempt_root}/report.json"
 
 
-def test_regen_final_report_is_the_last_publication_authority(tmp_path: Path) -> None:
+def test_regen_report_cas_fences_convenience_aliases(tmp_path: Path) -> None:
     inner = tmp_path / "inner_loop/outer-01/evidence.json"
     report = tmp_path / "eval/gold-heldout/outer-01/report.json"
     renders = report.parent / "renders/env-1"
@@ -442,6 +501,18 @@ def test_regen_final_report_is_the_last_publication_authority(tmp_path: Path) ->
     uploads: list[str] = []
 
     class Storage:
+        def read_bytes_with_etag(self, _destination: str) -> None:
+            return None
+
+        def put_bytes_conditional(
+            self,
+            _payload: bytes,
+            destination: str,
+            **_kwargs: object,
+        ) -> str:
+            uploads.append(destination)
+            return '"etag"'
+
         def upload_file(self, _source: str, destination: str) -> str:
             uploads.append(destination)
             return destination
@@ -451,7 +522,14 @@ def test_regen_final_report_is_the_last_publication_authority(tmp_path: Path) ->
             return destination
 
     regen.publish_regen_outputs(_config(), tmp_path, rrd_path=rrd, client=Storage())
-    assert uploads[-1] == f"{ROOT}/reports/sim2real-report.json"
+    canonical_report = f"{ROOT}/reports/sim2real-report.json"
+    canonical_rrd = f"{ROOT}/reports/sim2real.rrd"
+    assert uploads.index(canonical_report) < uploads.index(canonical_rrd)
+    assert all(
+        uploads.index(uri) < uploads.index(canonical_report)
+        for uri in uploads
+        if "/reports/generations/" in uri
+    )
 
 
 def test_disabled_mcap_does_not_upload_stale_bytes(
@@ -510,27 +588,26 @@ def test_heldout_only_rejects_foreign_render_producer(
     tmp_path: Path,
 ) -> None:
     attempt = "gold_heldout-outer-01-attempt-" + "d" * 32
-    producer = stage10_authority.expected_byo_render_prefix(
-        root=ROOT,
-        run_id=RUN_ID,
-        outer_iteration=1,
-        evaluation_tag=attempt,
-    )
     report = {
         **_gold(),
         "evaluation_attempt_tag": attempt,
-        "component_invocation": {
-            "output_uri": "s3://foreign-bucket/other-run/report.json"
-        },
+        "component_invocation": {"output_uri": f"{ROOT}/component-output/report.json"},
         "render_manifest": {
+            "schema": "npa.sim2real.heldout_renders.v2",
             "evaluation_attempt_tag": attempt,
-            "renders_s3_uri": producer,
+            "renders_s3_uri": "s3://foreign-bucket/other-run/renders/",
             "policy_checkpoint": {
                 "uri": CHECKPOINT,
                 "sha256": DIGEST,
                 "size_bytes": 128,
             },
             "episodes": [{"env_id": "env-1", "frames": ["camera-000.png"]}],
+            "frame_artifacts": {
+                "env-1/camera-000.png": {
+                    "sha256": hashlib.sha256(FRAME_BYTES).hexdigest(),
+                    "size_bytes": len(FRAME_BYTES),
+                }
+            },
         },
     }
 
@@ -542,7 +619,7 @@ def test_heldout_only_rejects_foreign_render_producer(
     ) -> bool:
         frame = Path(destination) / "env-1/camera-000.png"
         frame.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_bytes(b"png")
+        frame.write_bytes(FRAME_BYTES)
         return True
 
     monkeypatch.setattr(regen, "_download_render_tree", download)
@@ -569,11 +646,22 @@ def _run_stage10_with_frames(
     frame_paths: list[str],
 ) -> None:
     class Storage:
+        def read_bytes_with_etag(self, _uri: str) -> None:
+            return None
+
+        def put_bytes_conditional(
+            self,
+            _payload: bytes,
+            _uri: str,
+            **_kwargs: object,
+        ) -> str:
+            return '"etag"'
+
         def download_directory(self, _source: str, destination: str) -> None:
             for relative in frame_paths:
                 frame = Path(destination) / relative
                 frame.parent.mkdir(parents=True, exist_ok=True)
-                frame.write_bytes(b"png")
+                frame.write_bytes(FRAME_BYTES)
 
         def upload_directory(self, _source: str, _destination: str) -> None:
             return None
@@ -607,6 +695,7 @@ def _stage10_report() -> dict[str, Any]:
     report = _gold()
     report["component_invocation"] = {"mode": "npa_workflow_skypilot_task"}
     report["render_manifest"] = {
+        "schema": "npa.sim2real.heldout_renders.v2",
         "evaluation_attempt_tag": EVAL_ATTEMPT_TAG,
         "renders_s3_uri": producer,
         "policy_checkpoint": {
@@ -615,6 +704,12 @@ def _stage10_report() -> dict[str, Any]:
             "size_bytes": 128,
         },
         "episodes": [{"env_id": "env-1", "frames": ["camera-000.png"]}],
+        "frame_artifacts": {
+            "env-1/camera-000.png": {
+                "sha256": hashlib.sha256(FRAME_BYTES).hexdigest(),
+                "size_bytes": len(FRAME_BYTES),
+            }
+        },
     }
     return report
 
@@ -702,16 +797,23 @@ def test_stage14_uses_generation_uris_and_publishes_pointer_last(
     events: list[str] = []
 
     class Storage:
+        def read_bytes_with_etag(self, _destination: str) -> None:
+            return None
+
+        def put_bytes_conditional(
+            self,
+            _payload: bytes,
+            destination: str,
+            **_kwargs: object,
+        ) -> str:
+            events.append(destination)
+            return '"etag"'
+
         def upload_file(self, _source: str, destination: str) -> str:
             events.append(destination)
             return destination
 
     monkeypatch.setattr(stage14, "storage", lambda: Storage())
-    monkeypatch.setattr(
-        stage14,
-        "write_json",
-        lambda uri, *_a, **_k: events.append(uri) or uri,
-    )
     monkeypatch.setattr(
         stage14,
         "publish_built_component_history",
@@ -741,7 +843,11 @@ def test_stage14_uses_generation_uris_and_publishes_pointer_last(
 
     assert "/reports/generations/" in state.rrd_uri
     assert events[-1] == f"{ROOT}/components/stage_14.json"
-    assert events[-2] == f"{ROOT}/reports/sim2real-report.json"
+    canonical_report = f"{ROOT}/reports/sim2real-report.json"
+    assert events.index(canonical_report) < events.index(f"{ROOT}/reports/sim2real.rrd")
+    assert events.index(canonical_report) < events.index(
+        f"{ROOT}/reports/sim2real.mcap"
+    )
 
 
 def test_regen_report_seals_immutable_recording_generation(tmp_path: Path) -> None:
@@ -761,6 +867,19 @@ def test_regen_report_seals_immutable_recording_generation(tmp_path: Path) -> No
     uploads: list[tuple[str, dict[str, Any] | None]] = []
 
     class Storage:
+        def read_bytes_with_etag(self, _destination: str) -> None:
+            return None
+
+        def put_bytes_conditional(
+            self,
+            payload: bytes,
+            destination: str,
+            **_kwargs: object,
+        ) -> str:
+            parsed = json.loads(payload) if destination.endswith(".json") else None
+            uploads.append((destination, parsed))
+            return '"etag"'
+
         def upload_file(self, source: str, destination: str) -> str:
             payload = (
                 json.loads(Path(source).read_text())
@@ -777,7 +896,18 @@ def test_regen_report_seals_immutable_recording_generation(tmp_path: Path) -> No
     regen.publish_regen_outputs(_config(), tmp_path, rrd_path=rrd, client=Storage())
 
     canonical_report_uri = f"{ROOT}/reports/sim2real-report.json"
-    assert uploads[-1][0] == canonical_report_uri
-    publication = uploads[-1][1]["publication"]
+    canonical_payload = next(
+        payload for uri, payload in uploads if uri == canonical_report_uri
+    )
+    publication = canonical_payload["publication"]
     assert "/reports/generations/" in publication["rrd_uri"]
     assert any(uri == publication["rrd_uri"] for uri, _payload in uploads)
+    assert next(
+        index
+        for index, (uri, _payload) in enumerate(uploads)
+        if uri == canonical_report_uri
+    ) < next(
+        index
+        for index, (uri, _payload) in enumerate(uploads)
+        if uri == f"{ROOT}/reports/sim2real.rrd"
+    )

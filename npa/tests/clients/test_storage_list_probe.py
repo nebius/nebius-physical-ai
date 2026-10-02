@@ -4,7 +4,11 @@ import pytest
 from botocore.exceptions import ClientError
 from botocore.stub import Stubber
 
-from npa.clients.storage import StorageClient, StorageError
+from npa.clients.storage import (
+    StorageClient,
+    StorageError,
+    StoragePreconditionFailed,
+)
 
 
 @pytest.fixture
@@ -64,3 +68,61 @@ def test_probe_preserves_service_denial(storage, code, status):
 def test_probe_rejects_non_s3_destinations_before_request(storage, uri):
     with Stubber(storage.s3), pytest.raises(StorageError, match="Expected s3://"):
         storage.probe_list_access(uri)
+
+
+def test_conditional_delete_forwards_the_observed_etag(storage):
+    with Stubber(storage.s3) as stubber:
+        stubber.add_response(
+            "delete_object",
+            {},
+            {
+                "Bucket": "test-bucket",
+                "Key": "reports/sim2real.mcap",
+                "IfMatch": '"observed-etag"',
+            },
+        )
+        storage.delete_file_conditional(
+            "s3://test-bucket/reports/sim2real.mcap",
+            if_match='"observed-etag"',
+        )
+        stubber.assert_no_pending_responses()
+
+
+@pytest.mark.parametrize(
+    ("code", "status"),
+    [
+        ("PreconditionFailed", 412),
+        ("ConditionalRequestConflict", 409),
+    ],
+)
+def test_conditional_delete_types_superseded_writers(storage, code, status):
+    with Stubber(storage.s3) as stubber:
+        stubber.add_client_error(
+            "delete_object",
+            service_error_code=code,
+            http_status_code=status,
+            expected_params={
+                "Bucket": "test-bucket",
+                "Key": "reports/sim2real.mcap",
+                "IfMatch": '"observed-etag"',
+            },
+        )
+        with pytest.raises(StoragePreconditionFailed, match="superseded"):
+            storage.delete_file_conditional(
+                "s3://test-bucket/reports/sim2real.mcap",
+                if_match='"observed-etag"',
+            )
+
+
+def test_conditional_delete_requires_an_exact_object_and_nonempty_etag(storage):
+    with Stubber(storage.s3):
+        with pytest.raises(StorageError, match="exact S3 object URI"):
+            storage.delete_file_conditional(
+                "s3://test-bucket/reports/",
+                if_match='"observed-etag"',
+            )
+        with pytest.raises(ValueError, match="requires an ETag"):
+            storage.delete_file_conditional(
+                "s3://test-bucket/reports/sim2real.mcap",
+                if_match="",
+            )

@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any
 
 from npa.workflows.sim2real.checkpoint_selection import resolve_selected_checkpoint
+from npa.workflows.sim2real.constants import SCHEMA_E2E_REPORT
 from npa.workflows.sim2real.decision_authority import gold_report_sha256
-from npa.workflows.sim2real.workflow_io import validate_component_record
+from npa.workflows.sim2real.workflow_io import (
+    aggregate_parallel_provenance,
+    validate_component_lane_record,
+    validate_component_record,
+)
 
 
 COMPONENT_CONTRACTS: dict[int, tuple[str, str, tuple[str, ...]]] = {
@@ -175,19 +182,100 @@ def _assert_artifact_scope(
     ) != gold_report_sha256(gold):
         raise ValueError("Stage 10 ComponentRecord gold report digest is stale")
     if stage == 4:
-        artifacts = component["artifacts"]
-        shard_count = artifacts.get("shard_count")
+        _assert_stage4_parallel_authority(root, component)
+
+
+def _assert_stage4_parallel_authority(
+    root: str,
+    component: dict[str, Any],
+) -> None:
+    artifacts = component["artifacts"]
+    shard_count = artifacts.get("shard_count")
+    shard_provenance = artifacts.get("shard_provenance")
+    lane_records = artifacts.get("lane_records")
+    if (
+        artifacts.get("execution_mode") != "standard_npa_workflow_parallel_join"
+        or type(shard_count) is not int
+        or shard_count <= 0
+        or artifacts.get("lane_count") != shard_count
+        or not isinstance(shard_provenance, list)
+        or len(shard_provenance) != shard_count
+        or not isinstance(lane_records, list)
+        or len(lane_records) != shard_count
+    ):
+        raise ValueError("Stage 4 ComponentRecord parallel join is incomplete")
+
+    provenances: list[dict[str, Any]] = []
+    for index, (proof, lane_record) in enumerate(
+        zip(shard_provenance, lane_records, strict=True)
+    ):
+        lane = f"shard-{index:05d}"
         if (
-            artifacts.get("execution_mode") != "standard_npa_workflow_parallel_join"
-            or type(shard_count) is not int
-            or shard_count <= 0
-            or artifacts.get("lane_count") != shard_count
-            or not isinstance(artifacts.get("shard_provenance"), list)
-            or len(artifacts["shard_provenance"]) != shard_count
-            or not isinstance(artifacts.get("lane_records"), list)
-            or len(artifacts["lane_records"]) != shard_count
+            not isinstance(proof, dict)
+            or proof.get("schema") != "npa.sim2real.envgen_shard_execution.v1"
+            or proof.get("shard_index") != index
+            or proof.get("shard_count") != shard_count
+            or not isinstance(proof.get("provenance"), dict)
         ):
-            raise ValueError("Stage 4 ComponentRecord parallel join is incomplete")
+            raise ValueError(f"Stage 4 shard {index} execution proof is invalid")
+        provenance = proof["provenance"]
+        validate_component_lane_record(
+            lane_record,
+            expected_stage=4,
+            expected_lane=lane,
+            required_artifacts=(
+                "raw_envs",
+                "shard_index",
+                "shard_count",
+                "provenance",
+            ),
+            expected_source_sha=artifacts["source_sha"],
+        )
+        lane_artifacts = lane_record["artifacts"]
+        expected_proof_uri = f"{root.rstrip('/')}/envs/raw/provenance-{index:05d}.json"
+        if (
+            lane_artifacts.get("raw_envs") != f"{root.rstrip('/')}/envs/raw/"
+            or lane_artifacts.get("shard_index") != index
+            or lane_artifacts.get("shard_count") != shard_count
+            or lane_artifacts.get("provenance") != expected_proof_uri
+            or any(
+                lane_artifacts.get(key) != value for key, value in provenance.items()
+            )
+        ):
+            raise ValueError(f"Stage 4 lane {lane} disagrees with its shard proof")
+        provenances.append(provenance)
+
+    expected_join = aggregate_parallel_provenance(provenances, stage=4)
+    if any(artifacts.get(key) != value for key, value in expected_join.items()):
+        raise ValueError("Stage 4 ComponentRecord parallel join authority is stale")
+
+
+def stage14_report_authority_sha256(report: dict[str, Any]) -> str:
+    """Hash final factual claims while excluding post-encode viewer summaries."""
+
+    material = json.loads(json.dumps(report))
+    for field in (
+        "recording_summaries",
+        "visualization",
+        "policy_access",
+        "progress_metrics",
+        "gpu_fallback_contract",
+    ):
+        material.pop(field, None)
+    for key in ("component_records", "components"):
+        records = material.get(key)
+        if not isinstance(records, list) or not records:
+            continue
+        stage14_record = records[-1]
+        if not isinstance(stage14_record, dict) or stage14_record.get("stage") != 14:
+            continue
+        stage14_record.pop("content_sha256", None)
+        artifacts = stage14_record.get("artifacts")
+        if isinstance(artifacts, dict):
+            artifacts.pop("report_authority_sha256", None)
+    return hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def validate_component_records(
@@ -229,6 +317,8 @@ def validate_stage14_component_record(
     required = ("rrd", "report")
     if report.get("mcap_uri"):
         required += ("mcap",)
+    if report.get("schema") == SCHEMA_E2E_REPORT:
+        required += ("report_authority_sha256",)
     validate_component_record(
         record,
         expected_stage=14,
@@ -244,3 +334,7 @@ def validate_stage14_component_record(
         or artifacts.get("mcap", "") != report.get("mcap_uri", "")
     ):
         raise ValueError("Stage 14 ComponentRecord artifact authority is stale")
+    if report.get("schema") == SCHEMA_E2E_REPORT and artifacts.get(
+        "report_authority_sha256"
+    ) != stage14_report_authority_sha256(report):
+        raise ValueError("Stage 14 ComponentRecord report authority is stale")

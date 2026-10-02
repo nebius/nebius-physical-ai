@@ -27,6 +27,7 @@ from npa.workflows.sim2real.checkpoint_selection import (
     resolve_run_scoped_checkpoint,
 )
 from npa.workflows.sim2real.component_authority import (
+    stage14_report_authority_sha256,
     validate_component_records,
     validate_stage14_component_record,
 )
@@ -41,6 +42,13 @@ from npa.workflows.sim2real.stage10_authority import (
     validate_stage10_input_scope,
 )
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+from npa.workflows.sim2real.publication import (
+    delete_mutable_file,
+    remote_object_snapshot,
+    replace_mutable_file,
+    upload_immutable_file,
+    upload_immutable_tree,
+)
 from npa.workflows.sim2real.reporting import build_progress_metrics
 from npa.workflows.sim2real.utils import _artifact_root_uri, _write_json_artifact
 from npa.workflows.sim2real.viz_contract import (
@@ -1435,6 +1443,9 @@ def _seal_regen_publication_report(
             component["artifacts"]["mcap"] = mcap_uri
         else:
             component["artifacts"].pop("mcap", None)
+        component["artifacts"]["report_authority_sha256"] = (
+            stage14_report_authority_sha256(report)
+        )
         material = {
             key: value for key, value in component.items() if key != "content_sha256"
         }
@@ -1532,25 +1543,29 @@ def _publish_regen_supporting_artifacts(
 ) -> None:
     if publication.publish_renders:
         _assert_safe_publication_tree(publication.local_dir, publication.renders_dir)
-        storage.upload_directory(
-            str(publication.renders_dir),
+        upload_immutable_tree(
+            storage,
+            publication.renders_dir,
             f"{publication.prefix}"
             f"{publication.renders_dir.relative_to(publication.local_dir).as_posix()}",
         )
     if publication.report_path.is_file():
-        storage.upload_file(
-            str(publication.report_path),
+        upload_immutable_file(
+            storage,
+            publication.report_path,
             f"{publication.prefix}"
             f"{publication.report_path.relative_to(publication.local_dir).as_posix()}",
         )
     if publication.visual_index_path.is_file():
-        storage.upload_file(
-            str(publication.visual_index_path),
+        upload_immutable_file(
+            storage,
+            publication.visual_index_path,
             f"{publication.prefix}reports/sim2real-visual-index.json",
         )
     if publication.candidate_path.is_file():
-        storage.upload_file(
-            str(publication.candidate_path),
+        upload_immutable_file(
+            storage,
+            publication.candidate_path,
             f"{publication.prefix}checkpoints/candidate/candidate.json",
         )
 
@@ -1559,7 +1574,7 @@ def _publish_regen_final_report(
     storage: StorageClient,
     publication: _RegenPublication,
     mcap_uri: str,
-) -> None:
+) -> Path | None:
     if publication.final_report_path.is_file():
         _seal_regen_publication_report(
             publication.final_report_path,
@@ -1568,13 +1583,10 @@ def _publish_regen_final_report(
             mcap_uri=mcap_uri,
             report_uri=f"{publication.generation_prefix}sim2real-report.json",
         )
-        storage.upload_file(
-            str(publication.final_report_path),
+        upload_immutable_file(
+            storage,
+            publication.final_report_path,
             f"{publication.generation_prefix}sim2real-report.json",
-        )
-        storage.upload_file(
-            str(publication.final_report_path),
-            f"{publication.prefix}reports/sim2real-report.json",
         )
         report = _read_retained_json(
             publication.final_report_path,
@@ -1601,11 +1613,9 @@ def _publish_regen_final_report(
             14,
             stage14_record["content_sha256"],
         )
-        storage.upload_file(str(record_path), history_uri)
-        storage.upload_file(
-            str(record_path),
-            f"{publication.prefix}components/stage_14.json",
-        )
+        upload_immutable_file(storage, record_path, history_uri)
+        return record_path
+    return None
 
 
 def publish_regen_outputs(
@@ -1617,7 +1627,7 @@ def publish_regen_outputs(
     mcap_uri: str = "",
     client: StorageClient | None = None,
 ) -> str:
-    """Publish regenerated evidence with the sealed report last.
+    """Publish immutable regeneration evidence before fenced canonical aliases.
 
     Args:
         config: Run configuration identifying the destination prefix.
@@ -1635,14 +1645,61 @@ def publish_regen_outputs(
     publication = _prepare_regen_publication(
         config, local_dir, rrd_path, publication_id
     )
+    canonical_report_uri = f"{publication.prefix}reports/sim2real-report.json"
+    canonical_rrd_uri = f"{publication.prefix}reports/sim2real.rrd"
+    canonical_mcap_uri = f"{publication.prefix}reports/sim2real.mcap"
+    component_pointer_uri = f"{publication.prefix}components/stage_14.json"
+    snapshots = {
+        uri: remote_object_snapshot(storage, uri)
+        for uri in (
+            canonical_report_uri,
+            canonical_rrd_uri,
+            canonical_mcap_uri,
+            component_pointer_uri,
+        )
+    }
     _publish_regen_supporting_artifacts(storage, publication)
-    storage.upload_file(str(publication.rrd_path), publication.immutable_rrd_uri)
-    upload_uri = storage.upload_file(
-        str(publication.rrd_path),
-        f"{publication.prefix}reports/sim2real.rrd",
+    upload_immutable_file(
+        storage,
+        publication.rrd_path,
+        publication.immutable_rrd_uri,
     )
-    _publish_regen_final_report(storage, publication, mcap_uri)
-    return upload_uri
+    component_path = _publish_regen_final_report(storage, publication, mcap_uri)
+    if publication.final_report_path.is_file():
+        replace_mutable_file(
+            storage,
+            publication.final_report_path,
+            canonical_report_uri,
+            snapshots[canonical_report_uri],
+        )
+    replace_mutable_file(
+        storage,
+        publication.rrd_path,
+        canonical_rrd_uri,
+        snapshots[canonical_rrd_uri],
+    )
+    mcap_path = publication.local_dir / "reports" / "sim2real.mcap"
+    if mcap_uri:
+        replace_mutable_file(
+            storage,
+            mcap_path,
+            canonical_mcap_uri,
+            snapshots[canonical_mcap_uri],
+        )
+    else:
+        delete_mutable_file(
+            storage,
+            canonical_mcap_uri,
+            snapshots[canonical_mcap_uri],
+        )
+    if component_path is not None:
+        replace_mutable_file(
+            storage,
+            component_path,
+            component_pointer_uri,
+            snapshots[component_pointer_uri],
+        )
+    return canonical_rrd_uri
 
 
 @dataclass(frozen=True)
@@ -1651,6 +1708,7 @@ class _HeldoutPublication:
     report_path: Path
     prefix: str
     canonical_render_uri: str
+    immutable_report_uri: str
     current_report: dict[str, Any]
     renders_dir: Path
 
@@ -1746,9 +1804,18 @@ def _prepare_heldout_publication(
     if not isinstance(render_manifest, dict):
         raise Sim2RealRerunRegenError("held-out render manifest must be an object")
     attempt_tag = _heldout_publication_attempt(report, render_manifest, outer_iteration)
+    if not attempt_tag:
+        raise Sim2RealRerunRegenError(
+            "held-out publication requires an immutable evaluation attempt"
+        )
     current_report, canonical_render_uri = _heldout_publication_report(
         prefix, report, render_manifest, outer_iteration, attempt_tag
     )
+    immutable_report_uri = (
+        f"{prefix}eval/gold-heldout/outer-{outer_iteration:02d}/"
+        f"attempts/{attempt_tag}/report.json"
+    )
+    current_report["report_uri"] = immutable_report_uri
     renders_dir = _renders_dir_for_report(config, local_dir, current_report)
     if not renders_dir.is_dir() or not _has_camera_pngs(renders_dir):
         raise Sim2RealRerunRegenError(
@@ -1760,6 +1827,7 @@ def _prepare_heldout_publication(
         report_path,
         prefix,
         canonical_render_uri,
+        immutable_report_uri,
         current_report,
         renders_dir,
     )
@@ -1778,16 +1846,19 @@ def _publish_heldout_eval_outputs(
     publication = _prepare_heldout_publication(
         config, local_dir, report, outer_iteration
     )
-    storage.upload_directory(
-        str(publication.renders_dir), publication.canonical_render_uri
+    upload_immutable_tree(
+        storage,
+        publication.renders_dir,
+        publication.canonical_render_uri,
     )
     _write_json_artifact(publication.report_path, publication.current_report)
     report.clear()
     report.update(publication.current_report)
     _assert_regular_publication_file(publication.report_path)
-    report_rel = publication.report_path.relative_to(publication.local_dir).as_posix()
-    storage.upload_file(
-        str(publication.report_path), f"{publication.prefix}{report_rel}"
+    upload_immutable_file(
+        storage,
+        publication.report_path,
+        publication.immutable_report_uri,
     )
 
 
@@ -1812,11 +1883,13 @@ def publish_regen_mcap(
     _assert_regular_publication_file(mcap_path)
     storage = client or _storage_client_for_config(config)
     prefix = run_prefix_uri(config)
-    storage.upload_file(
-        str(mcap_path),
-        f"{prefix}reports/generations/{publication_id}/sim2real.mcap",
+    immutable_uri = f"{prefix}reports/generations/{publication_id}/sim2real.mcap"
+    upload_immutable_file(
+        storage,
+        mcap_path,
+        immutable_uri,
     )
-    return storage.upload_file(str(mcap_path), f"{prefix}reports/sim2real.mcap")
+    return immutable_uri
 
 
 @dataclass(frozen=True)
@@ -1936,14 +2009,46 @@ def _validate_regen_decision(
     ):
         return
     try:
+        outer_iteration = inputs.inner_evidence.get("outer_iteration")
+        if type(outer_iteration) is not int:
+            raise ValueError("selected outer iteration is invalid")
+        validate_stage10_input_scope(
+            argparse.Namespace(
+                run_id=config.run_id,
+                outer_iteration=outer_iteration,
+            ),
+            root=run_prefix_uri(config).rstrip("/"),
+            evidence=inputs.inner_evidence,
+        )
         selection, _candidate = resolve_run_scoped_checkpoint(
             inputs.inner_evidence,
             run_root=run_prefix_uri(config).rstrip("/"),
             run_id=config.run_id,
         )
-        outer_iteration = inputs.inner_evidence.get("outer_iteration")
-        if type(outer_iteration) is not int:
-            raise ValueError("selected outer iteration is invalid")
+        sealed_decision = (inputs.report.get("outer_loop") or {}).get("decision")
+        policy_gate = inputs.report.get("policy_gate_config")
+        if (
+            not isinstance(sealed_decision, dict)
+            or sealed_decision != inputs.current_decision
+        ):
+            raise ValueError(
+                "canonical report does not seal the current Stage 11 decision"
+            )
+        if policy_gate is None:
+            policy_gate = {
+                "threshold": sealed_decision.get("threshold"),
+                "early_exit": sealed_decision.get("early_exit_enabled"),
+            }
+        if not isinstance(policy_gate, dict):
+            raise ValueError("canonical report policy-gate authority is invalid")
+        threshold = policy_gate.get("threshold")
+        early_exit = policy_gate.get("early_exit")
+        if (
+            threshold != sealed_decision.get("threshold")
+            or type(early_exit) is not bool
+            or early_exit != sealed_decision.get("early_exit_enabled")
+        ):
+            raise ValueError("canonical report policy-gate authority is inconsistent")
         validate_stage11_decision(
             inputs.current_decision,
             run_id=config.run_id,
@@ -1951,11 +2056,11 @@ def _validate_regen_decision(
             outer_iteration=outer_iteration,
             gold_report=inputs.heldout_report,
             checkpoint_uri=selection["checkpoint_uri"],
-            expected_threshold=config.threshold,
-            expected_early_exit=config.early_exit,
+            expected_threshold=threshold,
+            expected_early_exit=early_exit,
             gold_report_bytes_sha256=sha256_file(inputs.heldout_path),
         )
-    except ValueError as exc:
+    except (RuntimeError, ValueError) as exc:
         raise Sim2RealRerunRegenError(
             f"current Stage 11 decision authority is invalid: {exc}"
         ) from exc
@@ -1967,7 +2072,7 @@ def _validate_regen_component_authority(
     storage: StorageClient,
     inputs: _RegenInputs,
     *,
-    sync_inputs: bool,
+    verify_remote_authority: bool,
 ) -> None:
     canonical_architecture = "npa.workflow/v0.0.1_compositional_standard_runtime"
     architecture = inputs.report.get("architecture")
@@ -1975,6 +2080,9 @@ def _validate_regen_component_authority(
         inputs.report.get("schema") == SCHEMA_E2E_REPORT
         or "component_records" in inputs.report
         or architecture == canonical_architecture
+        or (
+            inputs.inner_evidence.get("schema") == "npa.sim2real.inner_loop_evidence.v1"
+        )
     )
     if architecture != canonical_architecture:
         if claims_canonical_authority:
@@ -2018,7 +2126,7 @@ def _validate_regen_component_authority(
         raise Sim2RealRerunRegenError(
             f"canonical report ComponentRecord authority is invalid: {exc}"
         ) from exc
-    if not sync_inputs:
+    if not verify_remote_authority:
         return
     retained: list[dict[str, Any]] = []
     authority_dir = work_dir / "component-authority"
@@ -2070,6 +2178,7 @@ def _load_regen_state(
     storage: StorageClient,
     *,
     sync_inputs: bool,
+    verify_remote_authority: bool | None = None,
 ) -> _RegenState:
     try:
         paths = _selected_regen_paths(config, work_dir, storage, sync_inputs)
@@ -2080,7 +2189,11 @@ def _load_regen_state(
             work_dir,
             storage,
             inputs,
-            sync_inputs=sync_inputs,
+            verify_remote_authority=(
+                sync_inputs
+                if verify_remote_authority is None
+                else verify_remote_authority
+            ),
         )
         policy_access = _ensure_policy_access_metadata(
             config,
@@ -2302,7 +2415,7 @@ def _publish_regen_recordings(
         if written_mcap is not None
         else ""
     )
-    mcap_uri = publish_regen_mcap(
+    published_mcap_uri = publish_regen_mcap(
         config,
         work_dir,
         emission=mcap_result,
@@ -2318,7 +2431,11 @@ def _publish_regen_recordings(
             mcap_uri=immutable_mcap_uri,
             client=storage,
         ),
-        mcap_uri,
+        (
+            f"{run_prefix_uri(config)}reports/sim2real.mcap"
+            if published_mcap_uri
+            else ""
+        ),
     )
 
 
@@ -2385,7 +2502,13 @@ def _regenerate_sim2real_rrd(
 ) -> RegenResult:
     work_dir, output_rrd = _regen_paths(config, local_dir, local_rrd_path)
     storage = client or _storage_client_for_config(config)
-    state = _load_regen_state(config, work_dir, storage, sync_inputs=sync_inputs)
+    state = _load_regen_state(
+        config,
+        work_dir,
+        storage,
+        sync_inputs=sync_inputs,
+        verify_remote_authority=sync_inputs or upload,
+    )
     outer_history = list((state.report.get("outer_loop") or {}).get("history") or [])
     viewer_command = _viewer_command(config)
     result, duration_s = _emit_regen_rrd(
@@ -3489,7 +3612,12 @@ def _sync_heldout_eval_renders(
             "held-out rerun immutable producer renders could not be synchronized"
         )
     try:
-        validate_materialized_render_tree(renders_dir, manifest, candidate)
+        validate_materialized_render_tree(
+            renders_dir,
+            manifest,
+            candidate,
+            require_frame_identity=True,
+        )
     except RuntimeError as exc:
         raise Sim2RealRerunRegenError(
             f"held-out rerun render authority is invalid: {exc}"

@@ -12,6 +12,11 @@ from typing import Any
 from urllib.parse import urlparse
 
 from npa.clients.storage import StorageClient
+from npa.workflows.sim2real.publication import (
+    RemoteObjectSnapshot,
+    replace_mutable_file,
+    upload_immutable_file,
+)
 
 
 def storage() -> StorageClient:
@@ -559,6 +564,7 @@ def publish_built_component_history(
     expected_name: str,
     expected_tier: str,
     required_artifacts: tuple[str, ...],
+    client: Any | None = None,
 ) -> dict[str, Any]:
     """Publish only the immutable history object for an already-built record."""
 
@@ -575,7 +581,16 @@ def publish_built_component_history(
     with tempfile.TemporaryDirectory(
         prefix=f"npa-sim2real-component-{expected_stage:02d}-"
     ) as directory:
-        write_json(uri, record, directory=Path(directory) / "history")
+        if client is None:
+            write_json(uri, record, directory=Path(directory) / "history")
+        else:
+            path = Path(directory) / "history" / Path(urlparse(uri).path).name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(record, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            upload_immutable_file(client, path, uri)
     return record
 
 
@@ -587,6 +602,8 @@ def publish_built_component_pointer(
     expected_name: str,
     expected_tier: str,
     required_artifacts: tuple[str, ...],
+    client: Any | None = None,
+    snapshot: RemoteObjectSnapshot | None = None,
 ) -> dict[str, Any]:
     """Publish only the mutable canonical pointer for an already-built record."""
 
@@ -601,7 +618,16 @@ def publish_built_component_pointer(
     with tempfile.TemporaryDirectory(
         prefix=f"npa-sim2real-component-{expected_stage:02d}-"
     ) as directory:
-        write_json(uri, record, directory=Path(directory) / "pointer")
+        if client is None:
+            write_json(uri, record, directory=Path(directory) / "pointer")
+        else:
+            path = Path(directory) / "pointer" / Path(urlparse(uri).path).name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(record, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            replace_mutable_file(client, path, uri, snapshot)
     return record
 
 
@@ -647,11 +673,58 @@ def publish_component_lane_record(
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     digest = hashlib.sha256(encoded).hexdigest()
     payload["content_sha256"] = digest
-    work = Path("/tmp/npa-sim2real-component-lane") / f"stage-{stage:02d}-{safe_lane}"
     prefix = f"{root_uri.rstrip('/')}/components/lanes/stage_{stage:02d}/{safe_lane}"
-    write_json(f"{prefix}/history/{digest}.json", payload, directory=work)
-    write_json(f"{prefix}.json", payload, directory=work)
+    with tempfile.TemporaryDirectory(
+        prefix=f"npa-sim2real-component-lane-{stage:02d}-{safe_lane}-"
+    ) as directory:
+        work = Path(directory)
+        write_json(f"{prefix}/history/{digest}.json", payload, directory=work)
+        write_json(f"{prefix}.json", payload, directory=work)
     return payload
+
+
+def validate_component_lane_record(
+    record: dict[str, Any],
+    *,
+    expected_stage: int,
+    expected_lane: str,
+    required_artifacts: tuple[str, ...],
+    expected_source_sha: str,
+) -> None:
+    """Validate one embedded parallel-lane record and its execution proof."""
+
+    if not isinstance(record, dict):
+        raise ValueError(f"Stage {expected_stage} lane record must be an object")
+    artifacts = record.get("artifacts")
+    material = {key: value for key, value in record.items() if key != "content_sha256"}
+    digest = hashlib.sha256(
+        json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if (
+        record.get("schema") != "npa.sim2real.component_lane_record.v1"
+        or record.get("stage") != expected_stage
+        or record.get("lane") != expected_lane
+        or record.get("tier") != "WORKS"
+        or not isinstance(record.get("evidence"), str)
+        or not record["evidence"].strip()
+        or not isinstance(artifacts, dict)
+        or any(
+            key not in artifacts or artifacts[key] in (None, "", {}, [])
+            for key in required_artifacts
+        )
+        or record.get("content_sha256") != digest
+    ):
+        raise ValueError(
+            f"Stage {expected_stage} lane {expected_lane} record is invalid"
+        )
+    if artifacts.get("source_sha") != expected_source_sha:
+        raise ValueError(
+            f"Stage {expected_stage} lane {expected_lane} source authority is stale"
+        )
+    if not _record_provenance_is_valid(artifacts, stage=expected_stage):
+        raise ValueError(
+            f"Stage {expected_stage} lane {expected_lane} provenance is invalid"
+        )
 
 
 def aggregate_parallel_provenance(

@@ -31,6 +31,7 @@ SOURCE_SHA = "b" * 40
 DIGEST = "a" * 64
 IMAGE_DIGEST = "c" * 64
 ATTEMPT = "gold_heldout-outer-01-attempt-" + "d" * 32
+FRAME_BYTES = b"\x89PNG\r\n\x1a\nframe"
 TRAIN_JOB = k8s_job_name("s2r-byo-isaac-train", RUN_ID)
 CHECKPOINT = (
     f"{ROOT}/byo-trainer/{TRAIN_JOB}/{artifact_tag('outer-01-iter-01')}/model_latest.pt"
@@ -91,6 +92,7 @@ def _producer_render_uri(attempt: str = ATTEMPT) -> str:
 
 def _gold() -> dict[str, Any]:
     manifest = {
+        "schema": "npa.sim2real.heldout_renders.v2",
         "evaluation_attempt_tag": ATTEMPT,
         "renders_s3_uri": _producer_render_uri(),
         "policy_checkpoint": {
@@ -99,6 +101,12 @@ def _gold() -> dict[str, Any]:
             "size_bytes": 128,
         },
         "episodes": [{"env_id": "env-1", "frames": ["camera-000.png"]}],
+        "frame_artifacts": {
+            "env-1/camera-000.png": {
+                "sha256": hashlib.sha256(FRAME_BYTES).hexdigest(),
+                "size_bytes": len(FRAME_BYTES),
+            }
+        },
     }
     return {
         "schema": "npa.sim2real.heldout_eval.v1",
@@ -165,6 +173,34 @@ def _rehash(record: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def _stage4_lane(index: int) -> tuple[dict[str, Any], dict[str, Any]]:
+    provenance = {
+        **_provenance(),
+        "workflow_job": f"lane-{index}",
+    }
+    proof = {
+        "schema": "npa.sim2real.envgen_shard_execution.v1",
+        "shard_index": index,
+        "shard_count": 2,
+        "provenance": provenance,
+    }
+    lane_record = {
+        "schema": "npa.sim2real.component_lane_record.v1",
+        "stage": 4,
+        "lane": f"shard-{index:05d}",
+        "tier": "WORKS",
+        "evidence": f"generated shard {index}",
+        "artifacts": {
+            "raw_envs": f"{ROOT}/envs/raw/",
+            "shard_index": index,
+            "shard_count": 2,
+            "provenance": f"{ROOT}/envs/raw/provenance-{index:05d}.json",
+            **provenance,
+        },
+    }
+    return proof, _rehash(lane_record)
+
+
 def _component(stage: int) -> dict[str, Any]:
     name, tier, required = component_authority.COMPONENT_CONTRACTS[stage]
     authority = component_authority._authority_uris(ROOT, _evidence(), _gold())
@@ -175,11 +211,12 @@ def _component(stage: int) -> dict[str, Any]:
         artifacts["render_lineage"] = _gold()["render_lineage"]
         artifacts["gold_report_sha256"] = gold_report_sha256(_gold())
     if stage == 4:
+        lanes = [_stage4_lane(index) for index in range(2)]
         artifacts.update(
             {
                 "shard_count": 2,
-                "shard_provenance": [{}, {}],
-                "lane_records": [{}, {}],
+                "shard_provenance": [proof for proof, _record in lanes],
+                "lane_records": [record for _proof, record in lanes],
             }
         )
     if stage != 12:
@@ -429,7 +466,7 @@ def test_heldout_only_downloads_exact_manifest_frames(
         downloaded.append(source)
         frame = Path(destination) / "env-1/camera-000.png"
         frame.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_bytes(b"png")
+        frame.write_bytes(FRAME_BYTES)
         return True
 
     monkeypatch.setattr(regen, "_download_render_tree", download)
@@ -460,7 +497,7 @@ def test_heldout_only_rejects_unbound_render_evidence(
         name = "camera-999.png" if defect == "wrong-frame" else "camera-000.png"
         frame = Path(destination) / "env-1" / name
         frame.parent.mkdir(parents=True, exist_ok=True)
-        frame.write_bytes(b"png")
+        frame.write_bytes(FRAME_BYTES)
         return True
 
     monkeypatch.setattr(regen, "_download_render_tree", download)
@@ -615,6 +652,11 @@ def test_regeneration_revalidates_embedded_component_authority(
         report.pop("run_id")
     elif defect == "legacy-component-alias":
         report["components"] = report.pop("component_records")
+    stage14_record = components[-1]
+    stage14_record["artifacts"]["report_authority_sha256"] = (
+        component_authority.stage14_report_authority_sha256(report)
+    )
+    _rehash(stage14_record)
     heldout_path = tmp_path / "heldout.json"
     heldout_path.write_text(json.dumps(_gold()))
     inputs = regen._RegenInputs(
@@ -631,7 +673,7 @@ def test_regeneration_revalidates_embedded_component_authority(
             tmp_path,
             object(),
             inputs,
-            sync_inputs=False,
+            verify_remote_authority=False,
         )
 
 
@@ -655,11 +697,19 @@ def test_stage14_does_not_update_aliases_after_immutable_failure(
     uploaded: list[str] = []
 
     class Storage:
-        def upload_file(self, _source: str, destination: str) -> str:
+        def read_bytes_with_etag(self, _destination: str) -> None:
+            return None
+
+        def put_bytes_conditional(
+            self,
+            _payload: bytes,
+            destination: str,
+            **_kwargs: object,
+        ) -> str:
             uploaded.append(destination)
             if destination == state.mcap_uri:
                 raise RuntimeError("immutable MCAP failed")
-            return destination
+            return '"etag"'
 
     monkeypatch.setattr(stage14, "storage", lambda: Storage())
     result = SimpleNamespace(

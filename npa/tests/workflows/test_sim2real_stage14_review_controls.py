@@ -499,6 +499,19 @@ def test_explicit_rrd_output_is_the_recording_published(
         def __init__(self) -> None:
             self.uploads: dict[str, bytes] = {}
 
+        def read_bytes_with_etag(self, destination: str) -> tuple[bytes, str] | None:
+            payload = self.uploads.get(destination)
+            return None if payload is None else (payload, '"etag"')
+
+        def put_bytes_conditional(
+            self,
+            payload: bytes,
+            destination: str,
+            **_kwargs: object,
+        ) -> str:
+            self.uploads[destination] = payload
+            return '"etag"'
+
         def upload_file(self, source: str, destination: str) -> str:
             self.uploads[destination] = Path(source).read_bytes()
             return destination

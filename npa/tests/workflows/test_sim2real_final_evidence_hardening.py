@@ -21,6 +21,7 @@ from npa.workflows.sim2real_rerun_regen import (
     _ensure_policy_access_metadata,
     _heldout_render_source,
     _latest_completed_inner_evidence_rel,
+    _prepare_regen_publication,
     _renders_dir_for_report,
     download_rrd_from_s3,
     publish_regen_outputs,
@@ -645,20 +646,24 @@ def test_relative_regeneration_directory_publishes_absolute_source(
     report.write_text("{}", encoding="utf-8")
     frame.write_bytes(b"frame")
     recording.write_bytes(b"rrd")
-    uploads: list[str] = []
 
     class Storage:
-        def upload_file(self, source: str, destination: str) -> str:
-            uploads.append(source)
-            return destination
+        def read_bytes_with_etag(self, _destination: str) -> None:
+            return None
 
-        def upload_directory(self, source: str, destination: str) -> str:
-            uploads.append(source)
-            return destination
+        def put_bytes_conditional(
+            self,
+            _payload: bytes,
+            _destination: str,
+            **_kwargs: object,
+        ) -> str:
+            return '"etag"'
 
+    publication = _prepare_regen_publication(_config(), local_dir, None, "")
+    assert publication.local_dir.is_absolute()
+    assert publication.rrd_path.is_absolute()
+    assert publication.report_path.is_absolute()
     publish_regen_outputs(_config(), local_dir, client=Storage())
-    assert uploads
-    assert all(Path(source).is_absolute() for source in uploads)
 
 
 def test_exact_legacy_gold_render_uri_remains_supported(tmp_path: Path) -> None:

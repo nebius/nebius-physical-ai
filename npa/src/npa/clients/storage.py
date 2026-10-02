@@ -376,6 +376,39 @@ class StorageClient:
         self._s3.upload_file(str(local_path), bucket, key)
         return f"s3://{bucket}/{key}"
 
+    def delete_file(self, bucket_uri: str) -> None:
+        """Delete one exact object URI."""
+
+        bucket, key = _parse_bucket_uri(bucket_uri)
+        if not key or key.endswith("/"):
+            raise StorageError(f"Expected an exact S3 object URI, got: {bucket_uri}")
+        self._s3.delete_object(Bucket=bucket, Key=key)
+
+    def delete_file_conditional(self, bucket_uri: str, *, if_match: str) -> None:
+        """Delete one exact object only while its observed ETag still matches."""
+
+        bucket, key = _parse_bucket_uri(bucket_uri)
+        if not key or key.endswith("/"):
+            raise StorageError(f"Expected an exact S3 object URI, got: {bucket_uri}")
+        if not if_match:
+            raise ValueError("conditional object deletion requires an ETag")
+        try:
+            self._s3.delete_object(Bucket=bucket, Key=key, IfMatch=if_match)
+        except ClientError as exc:
+            code = str(exc.response.get("Error", {}).get("Code", ""))
+            status = int(
+                exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0
+            )
+            if code in {
+                "412",
+                "PreconditionFailed",
+                "ConditionalRequestConflict",
+            } or status in {409, 412}:
+                raise StoragePreconditionFailed(
+                    f"conditional object deletion was superseded for {bucket_uri}"
+                ) from exc
+            raise
+
     def read_bytes_with_etag(self, bucket_uri: str) -> tuple[bytes, str] | None:
         """Read one object and its immutable version token, or ``None`` if absent."""
 
