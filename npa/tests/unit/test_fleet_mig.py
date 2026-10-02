@@ -1030,9 +1030,13 @@ def test_driver_reconciliation_validates_later_node_before_any_mutation(
     assert mutations == []
 
 
+@pytest.mark.parametrize("initial_cordon", [False, True])
+@pytest.mark.parametrize("current_cordon", [False, True])
 def test_driver_reconciliation_prevalidates_then_preserves_each_cordon(
     monkeypatch,
     tmp_path: Path,
+    initial_cordon: bool,
+    current_cordon: bool,
 ) -> None:  # noqa: ANN001
     pods = {
         "items": [
@@ -1050,11 +1054,17 @@ def test_driver_reconciliation_prevalidates_then_preserves_each_cordon(
         ]
     }
     events = []
+    reads = {"gpu-node-0": 0, "gpu-node-1": 0}
 
     def kubectl_json(_bin, _config, args, **_kwargs):  # noqa: ANN001, ANN202
         if args[:2] == ["get", "node"]:
-            events.append(("read", args[2]))
-            return {"spec": {} if args[2] == "gpu-node-0" else {"unschedulable": True}}
+            node = args[2]
+            events.append(("read", node))
+            reads[node] += 1
+            if node == "gpu-node-0":
+                return {"spec": {}}
+            cordoned = initial_cordon if reads[node] == 1 else current_cordon
+            return {"spec": {"unschedulable": cordoned}}
         return pods
 
     def run(command, **_kwargs):  # noqa: ANN001, ANN202
@@ -1074,14 +1084,21 @@ def test_driver_reconciliation_prevalidates_then_preserves_each_cordon(
         sleep_fn=lambda _seconds: None,
         monotonic_fn=lambda: 0.0,
     )
-    assert events == [
+    expected = [
         ("read", "gpu-node-0"),
         ("read", "gpu-node-1"),
+        ("read", "gpu-node-0"),
         ("cordon", "gpu-node-0"),
         ("replace", "gpu-node-0"),
         ("uncordon", "gpu-node-0"),
-        ("replace", "gpu-node-1"),
+        ("read", "gpu-node-1"),
     ]
+    if not current_cordon:
+        expected.append(("cordon", "gpu-node-1"))
+    expected.append(("replace", "gpu-node-1"))
+    if not current_cordon:
+        expected.append(("uncordon", "gpu-node-1"))
+    assert events == expected
 
 
 def test_driver_reconciliation_uncordons_after_ambiguous_cordon_timeout(

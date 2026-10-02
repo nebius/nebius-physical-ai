@@ -1087,6 +1087,25 @@ def _active_gpu_workloads(pods_payload: dict[str, Any]) -> tuple[str, ...]:
     return tuple(sorted(set(active)))
 
 
+def _read_node_unschedulable(
+    kubectl_bin: str,
+    kubeconfig: Path,
+    node: str,
+    *,
+    deadline: float,
+    monotonic_fn: Callable[[], float],
+) -> bool:
+    """Read exact current scheduling evidence for one driver replacement."""
+
+    payload = _kubectl_json(
+        kubectl_bin,
+        kubeconfig,
+        ["get", "node", node],
+        timeout_seconds=_remaining_timeout(deadline, monotonic_fn),
+    )
+    return _node_unschedulable(payload.get("spec"), node=node)
+
+
 def _driver_replacement_plan(
     driver_pods: list[dict[str, Any]],
     kubectl_bin: str,
@@ -1094,7 +1113,7 @@ def _driver_replacement_plan(
     *,
     deadline: float,
     monotonic_fn: Callable[[], float],
-) -> list[tuple[str, str, str, bool]]:
+) -> list[tuple[str, str, str]]:
     """Validate every node before allowing a partial driver rollout."""
 
     replacements = []
@@ -1103,14 +1122,14 @@ def _driver_replacement_plan(
         old_name = str(metadata.get("name") or "")
         old_uid = str(metadata.get("uid") or "")
         node = str(pod.get("spec", {}).get("nodeName") or "")
-        node_payload = _kubectl_json(
+        _read_node_unschedulable(
             kubectl_bin,
             kubeconfig,
-            ["get", "node", node],
-            timeout_seconds=_remaining_timeout(deadline, monotonic_fn),
+            node,
+            deadline=deadline,
+            monotonic_fn=monotonic_fn,
         )
-        cordoned_here = not _node_unschedulable(node_payload.get("spec"), node=node)
-        replacements.append((old_name, old_uid, node, cordoned_here))
+        replacements.append((old_name, old_uid, node))
     return replacements
 
 
@@ -1158,7 +1177,15 @@ def _reconcile_ondelete_driver(
         deadline=deadline,
         monotonic_fn=monotonic_fn,
     )
-    for old_name, old_uid, node, cordoned_here in replacements:
+    for old_name, old_uid, node in replacements:
+        # Preserve cordons changed by another actor after the global preflight.
+        cordoned_here = not _read_node_unschedulable(
+            kubectl_bin,
+            kubeconfig,
+            node,
+            deadline=deadline,
+            monotonic_fn=monotonic_fn,
+        )
         primary_error: BaseException | None = None
         try:
             if cordoned_here:
