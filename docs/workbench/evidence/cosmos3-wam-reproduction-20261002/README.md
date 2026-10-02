@@ -12,33 +12,56 @@ separate 110-update profile runs, and 500-trial evaluations at each saved
 checkpoint. Checkpoint upload and complete-object read-back verification run
 between jobs, outside training and profiling windows.
 
-**Measurement status: in progress.** The first eight- and sixteen-GPU timing
-repetitions completed successfully. The remaining repetitions, full schedules, profiles,
-and checkpoint evaluations are still pending. These records do not yet
-establish a new scaling aggregate or policy-quality result.
+**Measurement status: in progress.** All six timing repetitions completed
+successfully, and every run's complete archive passed SHA-256 read-back.
+Profiling is running; full schedules and checkpoint evaluations remain pending. These timing
+records do not establish a new full-schedule duration or policy-quality result.
 
-## First completed timing pair
+## Repeated timing results
 
-Both measurements cover all 149 timed updates, 52–200. The unchanged committed
-reducer validates their numeric series and matching source/settings contracts.
+Each repetition covers all 149 timed updates, 52–200. The unchanged committed
+reducer validates every numeric series and matching source/settings contract.
 
-| GPUs | Mean step time | Processed tokens/s | Measurement |
+| GPUs | Mean of three run means | Sample SD | Pooled tokens/s |
 | --- | --- | --- | --- |
-| 8 | 13.2284 s | 69,067.84 | [First repeat](repeat-8-1/measurement.json) |
-| 16 | 6.8385 s | 133,614.67 | [First repeat](repeat-16-1/measurement.json) |
+| 8 | 13.2651 s | 0.0430 s | 68,874.89 |
+| 16 | 6.8353 s | 0.0039 s | 133,678.87 |
 
-The first pair gives 1.9344× step speedup, compared with the original
-three-repeat result of 1.9334×. Token work differs by 0.0068%. The fresh step
-means are 0.60% and 0.65% below the respective original means. One repetition
-per topology does not estimate run-to-run variability; the declared six-run
-reducer remains gated on three completed repetitions per topology.
+The [six-run reduction](repeated-scaling.json) gives **1.9407× step speedup**
+and **97.03% scaling efficiency**. Actual token work differs by 0.01096%.
+The original campaign measured 1.9334× speedup; fresh step means are 0.32%
+and 0.70% below its eight- and sixteen-GPU means, respectively. These repeats
+measure execution variability under one training seed.
 
-Both jobs completed with Slurm exit `0:0`. Training-process durations were
+Set `WAM_SCALING_REPORT` to a writable output file outside this evidence
+directory. The documented command below reproduces `repeated-scaling.json`
+byte for byte and is exercised by the repository's scaling-report tests:
+
+```bash
+npa/.venv/bin/python npa/workflows/workbench/cosmos3-wam-slurm/scaling_report.py \
+  --run-dirs \
+  docs/workbench/evidence/cosmos3-wam-reproduction-20261002/repeat-8-1 \
+  docs/workbench/evidence/cosmos3-wam-reproduction-20261002/repeat-16-1 \
+  docs/workbench/evidence/cosmos3-wam-reproduction-20261002/repeat-8-2 \
+  docs/workbench/evidence/cosmos3-wam-reproduction-20261002/repeat-16-2 \
+  docs/workbench/evidence/cosmos3-wam-reproduction-20261002/repeat-8-3 \
+  docs/workbench/evidence/cosmos3-wam-reproduction-20261002/repeat-16-3 \
+  --output-path "$WAM_SCALING_REPORT"
+```
+
+![Original and fresh WAM step times and token throughput from three runs each on 8 and 16 B200 GPUs.](repeated-scaling.png)
+
+Bars show arithmetic means across run measurements; dots show individual run
+means and error bars show sample standard deviation. The table reports pooled
+token throughput. Run `plot-scaling.py` to reproduce the figure; its inputs and
+output are hash-bound in the [render manifest](scaling-render-manifest.json).
+
+For the first completed pair, training-process durations were
 3,137.80 and 1,930.45 seconds, including final checkpoint saves of 399.61 and
 398.64 seconds outside the timed iterations. Slurm allocation durations were
 3,172 and 1,963 seconds, respectively.
 These are durations for a 200-update timing run, not a full 2,000-update
-schedule. The other reserved worker was idle during this baseline; reported
+schedule. The other reserved worker was idle during eight-GPU baselines; reported
 training GPU-hours do not include that idle capacity or represent a bill.
 The archive receipts for [8 GPUs](repeat-8-1/archive-verification.json) and
 [16 GPUs](repeat-16-1/archive-verification.json) confirm that all 75 and 125

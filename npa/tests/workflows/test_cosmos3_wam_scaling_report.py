@@ -20,6 +20,11 @@ ROOT = Path(__file__).resolve().parents[3]
     [
         ("cosmos3-wam-scaling", "repeated-scaling.json", "$WAM_SCALING_REPORT"),
         ("cosmos3-wam-timing-32", "repeated-timing.json", "$WAM_TIMING_REPORT"),
+        (
+            "cosmos3-wam-reproduction-20261002",
+            "repeated-scaling.json",
+            "$WAM_SCALING_REPORT",
+        ),
     ],
 )
 def test_documented_command_reproduces_committed_scaling_bytes(
@@ -42,11 +47,20 @@ def test_documented_command_reproduces_committed_scaling_bytes(
     assert output.read_bytes() == (evidence / filename).read_bytes()
 
 
-@pytest.mark.parametrize("gpus", [8, 16, 32])
+@pytest.mark.parametrize(
+    "directory_pattern",
+    [
+        "cosmos3-wam-timing-8/repeat-{repeat}",
+        "cosmos3-wam-timing-16/repeat-{repeat}",
+        "cosmos3-wam-timing-32/repeat-{repeat}",
+        "cosmos3-wam-reproduction-20261002/repeat-8-{repeat}",
+        "cosmos3-wam-reproduction-20261002/repeat-16-{repeat}",
+    ],
+)
 @pytest.mark.parametrize("repeat", [1, 2, 3])
-def test_producer_work_metrics_reproduce_committed_bytes(gpus, repeat):
+def test_producer_work_metrics_reproduce_committed_bytes(directory_pattern, repeat):
     directory = (
-        ROOT / f"docs/workbench/evidence/cosmos3-wam-timing-{gpus}/repeat-{repeat}"
+        ROOT / "docs/workbench/evidence" / directory_pattern.format(repeat=repeat)
     )
     expected = json.loads((directory / "measurement.json").read_text())["work"]
     with (directory / "iteration-series.csv").open() as stream:
