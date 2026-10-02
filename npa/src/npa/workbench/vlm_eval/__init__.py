@@ -1698,7 +1698,9 @@ def compare_vlm_preference(
         request: Frozen image, model, task, rubric, endpoint, and output options.
 
     Returns:
-        An audit-only report retaining both counterbalanced outcomes.
+        An audit-only report retaining both counterbalanced outcomes. Persist
+        it with ``write_preference_report``; the private journal also retains
+        the complete payload in ``report-ready.json`` for write recovery.
 
     Raises:
         VlmEvalError: If input, output, transport, or evidence invariants fail.
@@ -4524,6 +4526,11 @@ def _selected_video_frames(
     timestamps: Sequence[float | None],
 ) -> list[SelectedFrame]:
     extracted = sorted(output_dir.glob("frame-*.png"), key=_video_output_frame_number)
+    if source_count is not None and len(extracted) != len(source_indices):
+        raise VlmEvalError(
+            "Video extraction did not produce every selected source frame; "
+            "sampling provenance cannot be verified"
+        )
     return [
         SelectedFrame(
             label=f"{video_path.name}:{frame.name}",
