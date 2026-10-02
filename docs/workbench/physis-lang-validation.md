@@ -62,7 +62,9 @@ and verified that every gallery MP4 matches its original generation receipt.
 
 ## Provenance and checks
 
-The live run used source commit
+The live run staged the isolated working tree, including its Physis changes,
+from main at `f4eb186ef0e91810b4b8447c7a89f60ad328654c`. Its native module and
+workflow bytes were subsequently verified against commit
 `a364dea310ffb50bdecdac5c87f111f758ac8116`. The source digest, native module
 hashes, workflow hash, image digest, pinned weight revision, recipe hash, report
 hash, and all video hashes are recorded in the linked evidence. After merging

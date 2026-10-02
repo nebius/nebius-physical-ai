@@ -38,6 +38,7 @@
   "image": "ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
   "interpretation": "Exploratory sampled-frame VLM judgments; keep experimental. No upstream reproduction, benchmark-equivalent score, continuous-physics proof, or robot-policy transfer claim.",
   "judge_model": "MiniMaxAI/MiniMax-M3",
+  "matching_implementation_commit": "a364dea310ffb50bdecdac5c87f111f758ac8116",
   "native_settings": {
     "dtype": "bfloat16",
     "fps": 16,
@@ -193,15 +194,16 @@
   },
   "schema": "npa.physis-lang.qualification.v1",
   "source_overlay_sha256": "cd65f9af138ea52718d91b620977904dfaf626f3e98dbf3477bce510b4b27181",
+  "source_staging": "Isolated working tree with Physis changes; native module and workflow bytes subsequently verified against matching_implementation_commit.",
   "stage_checksum_manifest_sha256": {
     "prepared": "a40468724535c90aebdf0db84bb934b77d29f232302e123c54c0d481f2b3bbb4",
     "report": "ba1646687cb29d019fbef7b6eeffc14d3bfc3be76212cb549687c0fffa564220",
     "seed-a": "9d3a6b224b41ada9323b802fbf51655abed75055b4a8c04d88f6b404a044bc64",
     "seed-b": "287f5dca226b93365b1a7158b83e5ef675475c8eb9121d782aa4e22f2d4fcc93"
   },
+  "staged_checkout_base": "f4eb186ef0e91810b4b8447c7a89f60ad328654c",
   "status": "verified",
   "summed_video_elapsed_seconds": 76374.08704173303,
-  "tested_source_commit": "a364dea310ffb50bdecdac5c87f111f758ac8116",
   "upstream_ref": "294121a06fa20bbca6bdb644bbae7229d5c88160",
   "upstream_repo": "https://github.com/Physis-Intelligence/Physis-Lang",
   "upstream_reproduction": false,
