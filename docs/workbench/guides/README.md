@@ -33,17 +33,20 @@ it remains unvalidated end to end. For browser teleoperation measurements, see
 | Generate images with Cosmos 3 | [Generation guide](../cosmos3-generate.md) and [access preflight](../cosmos3-access-preflight.md) |
 | Augment your source video with Cosmos 3 | [PAIDF + Cosmos 3](paidf-cosmos3.md) and [setup/run procedure](../../../workflows/guides/paidf-cosmos3.md) |
 | Assess augmentation across manipulation tasks | [LeRobot realism comparison](paidf-lerobot-realism.md); pinned cup, coffee and simulated cube-lift episodes |
-| Produce a labeled dataset with Cosmos Transfer | [Data Factory deployment](physical-ai-data-factory-deploy.md); its [quickstart](physical-ai-data-factory-deploy.md#quick-start-copy-paste) can seed generated frames |
+| Produce a labeled dataset with Cosmos Transfer | Run the separately named `nvidia-paidf-vda-cosmos-transfer25.yaml` via [Data Factory deployment](physical-ai-data-factory-deploy.md); its [quickstart](physical-ai-data-factory-deploy.md#quick-start-copy-paste) can seed generated frames |
 | Understand Data Factory stages and artifacts | [Component and S3 mapping](physical-ai-data-factory.md) |
+| Audit native DIG, IAA, and EVG image evidence | [Restricted image evidence](paidf-image-evidence.md) |
 | Reuse a verified dataset campaign | [Campaign reuse](paidf-campaign-reuse.md) |
 | Caption or reason about existing artifacts | [Token Factory](../token-factory.md) |
 
 <a id="physical-ai-data-factory-video-data-augmentation"></a>
 
 Data Factory composes annotation, Cosmos augmentation, evaluation, curation, and
-Rerun visualization on Nebius + SkyPilot. Select the actual workflow's inputs
-and model access requirements; generation and input-conditioned augmentation
-have different contracts.
+Rerun visualization on Nebius + SkyPilot. Its native workflow family includes a
+separately named VDA translation, DIG, IAA, and EVG translations, the established
+Transfer blueprint, and the NPA-specific Cosmos 3 alternative.
+Select the actual workflow's inputs and model access requirements; generation
+and input-conditioned augmentation have different contracts.
 
 ## Sim-to-real: the full 14-stage loop
 

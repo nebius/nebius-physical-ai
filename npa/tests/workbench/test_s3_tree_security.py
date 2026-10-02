@@ -113,7 +113,9 @@ def test_tree_downloaders_contain_remote_names(tmp_path, monkeypatch, loader, re
     "relative", ["../../escape", "nested/../../escape", "nested/valid.py"]
 )
 def test_rendered_source_staging_contains_downloads(tmp_path, monkeypatch, relative):
-    blocks = re.findall(r"python3 - <<'PY'\n(.*?)\nPY", default_npa_setup(), re.S)
+    blocks = re.findall(
+        r"^[^\n]+ - <<'PY'\n(.*?)^PY$", default_npa_setup(), re.M | re.S
+    )
     blocks = [block for block in blocks if "s3.download_file" in block]
     assert len(blocks) == 2
     for index, block in enumerate(blocks):

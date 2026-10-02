@@ -20,6 +20,8 @@ from npa.workflows.sim2real_stages import (
     Sim2RealStageError,
 )
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 def test_effective_env_counts_default_to_legacy_rollout_plus_heldout() -> None:
     config = Sim2RealLoopConfig(

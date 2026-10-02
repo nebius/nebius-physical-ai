@@ -744,7 +744,12 @@ describe("NPA agent UI against live infra", () => {
       expect(runsResp.status).to.eq(200);
       const runs = (runsResp.body && runsResp.body.runs) || [];
       expect(runs.length, "discovered runs").to.be.greaterThan(0);
-      const candidates = runs.filter((entry) => String((entry && entry.run_id) || ""));
+      const candidates = runs.filter((entry) =>
+        String((entry && entry.run_id) || "") &&
+        String((entry && entry.run_ref) || "") &&
+        String((entry && entry.project_id) || "") &&
+        String((entry && entry.bucket) || "")
+      );
 
       const findMp4 = (index) => {
         // mp4 presence is a live-data property, not a code contract (the Video viewer
@@ -765,7 +770,6 @@ describe("NPA agent UI against live infra", () => {
             return {
               runId,
               key: String(mp4.key),
-              s3Uri: String(mp4.s3_uri || ""),
               entry,
               role: String(mp4.role || "output"),
             };
@@ -778,10 +782,18 @@ describe("NPA agent UI against live infra", () => {
         cy.log("no mp4 artifact discoverable in live runs — skipping Video viewer assertions");
         return;
       }
-      const { runId, key, s3Uri, entry, role } = found;
+      const { runId, key, entry, role } = found;
       return liveAgentRequest("/api/sim-viz/load-artifact", {
         method: "POST",
-        body: { run_id: runId, run_ref: String(entry.run_ref || ""), s3_uri: s3Uri },
+        body: {
+          run_id: runId,
+          run_ref: String(entry.run_ref || ""),
+          key,
+          project_id: String(entry.project_id || ""),
+          resource_bucket: String(entry.bucket || ""),
+          resolved_prefix: String(entry.resolved_prefix || ""),
+          source_selected: true,
+        },
         timeout: 120000,
       }).then((loadResp) => {
         expect(loadResp.status).to.eq(200);

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
+
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
 
 
 def test_engine_reexports_extracted_decision_and_state_io() -> None:

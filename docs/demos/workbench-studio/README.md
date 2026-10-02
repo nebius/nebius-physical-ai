@@ -46,6 +46,7 @@ npa studio demo draft --scene opening --open
 npa studio demo narrate
 npa studio demo preview --scene opening --open
 npa studio demo final --open
+npa studio demo review --open
 ```
 
 `brief` emits an authoring packet; it does not rewrite the storyboard or call a
@@ -56,11 +57,105 @@ The final MP4, optional captions, offline player and provenance manifest are in
 `projects/demo/renders/final/`. File names are `film.mp4`, `film.srt` and
 `watch.html`. `--plan` on preview/final reports visual cache hits before encoding.
 
+To deliver a rendered video to object storage, use the existing `final` or
+`preview` command with an explicit MP4 output path:
+
+```sh
+npa studio demo final --output-path 's3://<your-bucket>/films/revision-1/video.mp4' \
+  --storage-project '<your-project-alias>'
+```
+
+`--storage-project` selects credentials and the endpoint from external NPA
+configuration; omit it to use the configured default. It requires `--output-path`.
+The destination is an exact MP4 object URI, not a directory. Writing the same
+URI replaces that object; use a new key for each delivery you want to preserve.
+Studio renders and caches locally, then uploads only the completed MP4 and
+verifies its full SHA-256 and byte count by reading it back. Upload or verification
+failure exits nonzero and leaves the local video available. The final JSON record
+reports `output_path`, `sha256`, `bytes`, `verified`, and the provider's optional
+`version_id`. Captions, source media and private provenance stay local.
+`--open` opens the local copy; `--plan` and the renderer's `--check` never upload.
+Without `--output-path`, rendering remains local and needs no storage credentials.
+
+The same options work on `renderer/render.py`; `--output-dir` remains its local
+cache and render directory. Python video tools can deliver an existing MP4 with
+`npa.video_output.write_video_output(local_path, output_path, project=...)` without
+rendering again. This uses the same configuration and verification path.
+
 The optional `narrate` generator sends narration text to Microsoft's Edge speech
 service through edge-tts. For an entirely offline flow, supply one MP3 and SRT per
 scene in the narration directory and run `npa studio demo narrate --recorded`.
-Rendering retained media and recorded speech makes no cloud or model calls.
-Studio does not upload the film or send messages to collaboration services.
+Rendering retained media and recorded speech makes no model calls and stays
+offline unless S3 output is explicitly requested.
+The optional hosted visual review described below sends sampled frames and cue
+context to the selected model. Video uploads require explicit `--output-path`.
+Studio does not send messages to collaboration services.
+
+## Review narration against the finished picture
+
+Successful rendering checks media integrity, duration and provenance hashes;
+it does not establish that a picture communicates the words spoken over it.
+`review` samples the encoded final MP4 at 15%, 50% and 85% of each SRT cue and
+creates an offline page with the transcript, pictures and synchronized playback
+with audio. The initial assessment is **pending**, never an automatic pass.
+
+```bash
+npa studio demo review --open
+# Optional hosted vision assessment; uses external Token Factory configuration.
+npa studio demo review --judge token-factory --strict --open
+```
+
+The default inputs are `renders/final/film.mp4` and its `film.srt` sibling.
+Override these with `--video` and `--captions`. `--output-dir` defaults to
+`renders/review`; each packet gets a directory named by its SHA-256. The packet
+binds the video, captions, optional shot list, transcript and sampled frame bytes.
+Older packets remain available after an edit. Reports identify the reviewer,
+method, visible content and reasoning for every cue. The summary lists
+`illustrative_cues` separately from `problem_cues` and `pending_cues`, preserving
+assessment order so accepted partial-overlap judgments are visible without
+changing review status.
+Reopening the same packet reuses its assessment; `--judge` explicitly requests
+a new model review.
+
+For an assembled picture, pass `--shot-list path/to/edit.json`. Its `shots` array
+must cover the whole film contiguously with `id`, `timeline_start` and
+`timeline_end` in seconds. Optional `role`, `label`, `evidence_type` and
+`review_limitations` describe the footage. A sample is added at the midpoint of
+every shot/cue overlap so short intervening shots are also represented. The
+context fields are declarations, not independently verified provenance.
+
+To review offline, play the film and cues in `review.html`, then edit the packet's
+`assessment.json`: identify `reviewer.name`, `reviewer.kind` (`human`, `agent` or
+`model`) and `reviewer.method`; give every cue a verdict, `visible_content` and
+`reasoning`. Preserve `packet_sha256` and cue IDs. Import the result:
+
+```bash
+npa studio demo review --assessment path/to/assessment.json --strict --open
+```
+
+Repeat the same `--video`, `--captions` and `--shot-list` overrides when importing
+an assessment; changing the reviewed inputs produces a different packet.
+
+Verdicts are `aligned`, `illustrative`, `mismatch`, `uncertain` or `not_reviewed`.
+`illustrative` suits explanatory or aspirational passages; concrete actions need
+visible support. A title repeating a claim does not make unrelated footage
+demonstrate that claim. `--strict` exits 1 for mismatches, uncertainty or pending
+cues. Missing/duplicate cues, stale packet hashes and unfinished model responses
+are rejected. A completed review is a recorded judgment, not factual certification.
+
+`--judge token-factory` explicitly sends the sampled JPEGs, transcript, timing
+and selected shot context to hosted inference. It requires the NPA installation
+and the operator's external Token Factory credentials. `--model` defaults to
+`MiniMaxAI/MiniMax-M3`; availability is checked before review, and an alternative
+must support vision and JSON responses. Per-cue receipts preserve the served
+model, token usage, rubric hash and judgments. The rubric text is retained beside
+the receipts. No GPU provisioning is involved. Keep private
+provenance and infrastructure identifiers out of the selected context and images.
+
+The automated review covers sampled frames and the supplied transcript. It does
+not transcribe the audio, watch every transition or independently validate a
+backend run. Use the page's complete-film playback for continuous audiovisual
+review and inspect original evidence before making execution or outcome claims.
 
 ## Project interface
 
@@ -276,6 +371,60 @@ must fit inside the decoded image. Compute each digest with
 
 ## Renderer development
 
+### Exact picture edits and centered dissolves
+
+For a footage montage with its own shot list and continuous narration, use the
+shared `picture_timeline` Python API from an external production script. This
+composes already encoded shots into a silent picture asset; the existing Studio
+storyboard then supplies narration and music. Shot lengths use integer frames,
+so subsecond cuts do not require splitting or regenerating narration.
+
+```python
+from pathlib import Path
+from npa.studio_renderer.picture_timeline import PictureShot, assemble_picture
+
+report = assemble_picture(
+    [
+        PictureShot(Path("opening.mp4"), frames=90, tail_frames=4),
+        PictureShot(Path("simulation.mp4"), frames=120, head_frames=4),
+        PictureShot(Path("diagram.mp4"), frames=180),
+    ],
+    Path("picture.mp4"),
+    cache_dir=Path(".picture-cache"),
+    fps=30,
+)
+```
+
+A *handle* is extra footage outside a shot's nominal in/out points. The example
+requires 94 frames in `opening.mp4`, 124 in `simulation.mp4`, and 180 in
+`diagram.mp4`, all at 30 fps and the same even dimensions. Four matching handle
+frames form an eight-frame dissolve centered at 3 seconds. The output is exactly
+390 frames (13 seconds); the diagram starts at 7 seconds and remains unobscured
+for all six seconds. Zero handles select a hard cut. The first head and final
+tail must be zero, and each shot must retain at least one clear body frame.
+
+Supply real additional footage when encoding handles. Assembly does not invent
+handles, loop footage, stretch shots, or generate intermediate motion. It blends
+the two shots with a smoothstep opacity curve, normalizes output to BT.709 limited
+range, and leaves audio separate. Record any source retiming or processing in
+your film's own provenance. Keep overlays restrained near dissolves, where two
+shots briefly share the frame.
+
+Verified bodies and transitions are cached separately by their input bytes,
+frame ranges, compositor source and FFmpeg version. A changed shot rebuilds only
+the affected segments; corrupt cache entries rebuild automatically. The return
+value records source hashes, frame counts, handles, output hash and cache reuse.
+Retain that report with the film. Assembly checks media timing and unchanged
+source bytes before atomically replacing its destination. Archive substantial
+editorial revisions as new projects to preserve prior deliveries.
+
+`npa studio init` also copies `picture_timeline.py` and `film_cache.py` into its
+portable renderer. External scripts can import `picture_timeline` from that
+directory without an installed NPA package. Existing storyboard `cut`/`fade`
+semantics are unchanged; dissolves are an explicit picture-assembly operation.
+
+### Validate the shared renderer
+
 The installed source is `npa/src/npa/studio_renderer/`; command dispatch, local
 project creation and artifact search live in `npa/src/npa/studio*.py`. Update the
 shared implementation and its unit tests, then initialize a new local studio to
@@ -287,8 +436,17 @@ are bundled with NPA; the sample storyboards use generic placeholder text.
 npa/.venv/bin/python -m pytest npa/tests/unit/test_studio_entry.py \
   npa/tests/unit/test_studio_artifacts.py npa/tests/unit/test_film_studio.py \
   npa/tests/unit/test_film_brief.py npa/tests/unit/test_executive_film.py \
-  npa/tests/unit/test_executive_film_player.py -q
+  npa/tests/unit/test_executive_film_player.py \
+  npa/tests/unit/test_picture_timeline.py npa/tests/unit/test_video_output.py \
+  npa/tests/unit/test_film_output.py -q
 ```
+
+For a real CPU render and S3 delivery check, set `NPA_INTEGRATION_E2E=1`,
+`NPA_STUDIO_S3_PREFIX=s3://<your-bucket>/<test-prefix>` and optionally
+`NPA_STUDIO_STORAGE_PROJECT=<your-project-alias>`, then run
+`npa/.venv/bin/python -m pytest npa/tests/e2e/test_studio_s3_output_live.py -q`.
+It retains three small synthetic videos under a fresh UUID, verifies their
+downloaded bytes, and checks cache reuse and planning without storage access.
 
 The official Nebius logo and the font retain source and licensing records under
 `npa/src/npa/studio_renderer/brand/` and `fonts/`. Brand display is optional in the

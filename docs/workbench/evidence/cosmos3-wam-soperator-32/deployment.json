@@ -1,0 +1,75 @@
+{
+  "schema": "npa.cosmos3.wam-soperator-deployment.v1",
+  "recorded_utc": "2026-09-30T02:11:30.729685+00:00",
+  "hardware": {
+    "worker_nodes": 4,
+    "gpus_per_node": 8,
+    "total_b200_gpus": 32,
+    "capacity_mode": "STRICT reserved",
+    "region": "us-central1"
+  },
+  "deployment": {
+    "lifecycle": "npa soperator deploy",
+    "status": "ready",
+    "validation": {
+      "status": "passed",
+      "check": "gpu-creation"
+    },
+    "gpu_creation_checks": [
+      {
+        "nodes": 4,
+        "gpus_per_node": 8,
+        "tests": [
+          "deviceQuery",
+          "vectorAdd",
+          "simpleMultiGPU",
+          "p2pBandwidthLatencyTest"
+        ],
+        "status": "PASS"
+      }
+    ],
+    "replacement_guard": {
+      "status": "passed",
+      "plans_checked": 2,
+      "replacement_count": 0,
+      "safe_local_replacements_applied": 2
+    },
+    "warnings": []
+  },
+  "runtime": {
+    "soperator": "4.1.6",
+    "slurm": "25.11.3",
+    "driver": "580.159.04",
+    "solutions_library_commit": "7046fb3c68314a940cdb47ff5c4fd23c01a6711e",
+    "storage": "2 TiB shared jail; VirtioFS on workers"
+  },
+  "user_namespace_live_test": {
+    "workers": 4,
+    "unprivileged_userns": "PASS"
+  },
+  "recovery": [
+    {
+      "failure": "The local Helm repository cache referenced a missing NVIDIA index",
+      "resolution": "Use an isolated Helm repository configuration and cache for this deployment"
+    },
+    {
+      "failure": "Pinned Flux chart ignored the legacy nodeConfigurator.values initContainers patch; Enroot user namespace creation failed",
+      "resolution": "Use the supported terraform-nodeconfigurator valuesFrom ConfigMap; reconcile through NPA; repeat failed container health check and every-worker CUDA gate"
+    }
+  ],
+  "scope": "Cluster deployment, hardware inventory and GPU qualification. WAM training measurements are not established by this receipt.",
+  "private_source_sha256": {
+    "deploy-resume.json": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "deploy-reconcile.log": "7978d787e295ed722eda4e1a509df14dc2e07959c7971907de0198d071623f17",
+    "deploy-isolated-helm.log": "4b8333f05e678624a379aca8a710d0c769488ee1a0056e28b9ce3d2e6a4deb6a",
+    "deploy-fixed.json": "cca267c9b31bee9a929ecb32e5f01e1b8e68c114a8770b10a47d80309fe88cde",
+    "helm-managed-configmaps.yaml": "a3f808dabac0f546679b9d031b0bcf8bd6de1e1ec3d4821d49b4c053feaf754f",
+    "live-userns-after-npa/userns-live.json": "f8349823e5ad6663acbf6e27fe7f93cf4082b820209ca88c8b1c119f6b3c0630"
+  },
+  "public_source_sha256": {
+    "npa/src/npa/soperator/lifecycle.py": "105d71dc92ea5e8651ff5b18416eab04cca91ada5905c71c6f193ee5654edb18",
+    "npa/tests/e2e/test_soperator_userns_live.py": "9b557e00fcf6c3e6d774c30659db07645179d224c152374269fefaa2809ee28c"
+  },
+  "public_source_revision": "9b709082254c584f096f7a4121465647be7e6aed",
+  "source_scope": "Hashes identify the executed deployment snapshot at public_source_revision; later bootstrap changes are not established by this receipt."
+}

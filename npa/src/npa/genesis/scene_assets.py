@@ -253,6 +253,17 @@ def _coerce_scale(value: Any) -> float | tuple[float, float, float]:
     raise SceneSpecError(f"scale must be a number or 3-element list, got {value!r}")
 
 
+def _parse_fixed(raw: dict[str, Any], index: int, role: str) -> bool:
+    if "fixed" not in raw:
+        return role == ROLE_STATIC
+    fixed = raw["fixed"]
+    if not isinstance(fixed, bool):
+        raise SceneSpecError(
+            f"object[{index}].fixed must be a JSON boolean, got {fixed!r}"
+        )
+    return fixed
+
+
 def _object_from_dict(raw: dict[str, Any], index: int) -> ObjectSpec:
     if not isinstance(raw, dict):
         raise SceneSpecError(f"object[{index}] must be a JSON object, got {raw!r}")
@@ -322,7 +333,7 @@ def _object_from_dict(raw: dict[str, Any], index: int) -> ObjectSpec:
         obj.static_friction = float(raw["static_friction"])
     if raw.get("dynamic_friction") is not None:
         obj.dynamic_friction = float(raw["dynamic_friction"])
-    obj.fixed = bool(raw.get("fixed", role == ROLE_STATIC))
+    obj.fixed = _parse_fixed(raw, index, role)
     return obj
 
 
