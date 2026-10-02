@@ -970,10 +970,18 @@ def _quality_gate_contract(
     if raw_passed is not None and not isinstance(raw_passed, bool):
         raise TypeError("expected 'passed' to be a boolean")
     hard_checks_passed = raw_passed is True
+    block_reason = ""
+    if producer == "vlm":
+        from npa.workflows.vlm_grade_evidence import vlm_grade_block_reason
+
+        block_reason = vlm_grade_block_reason(report)
     expected_status = "passed" if producer == "vlm" else "completed"
     decision = (
         "promote_checkpoint"
-        if status == expected_status and hard_checks_passed and score >= threshold
+        if status == expected_status
+        and hard_checks_passed
+        and score >= threshold
+        and not block_reason
         else "loop_back"
     )
     return {
@@ -982,19 +990,19 @@ def _quality_gate_contract(
         "threshold": threshold,
         "report_status": status,
         "hard_checks_passed": hard_checks_passed,
+        **({"reason": block_reason} if block_reason else {}),
     }
 
 
 def _quality_report_producer(
     report: dict[str, Any],
     expected: str | None,
-    vlm_backends: tuple[str, ...],
 ) -> str:
     """Identify an explicit custom JSON result without widening producer contracts."""
 
     if expected is not None:
         return expected
-    return "vlm" if report.get("backend") in vlm_backends else "cosmos"
+    return "vlm" if "backend" in report else "cosmos"
 
 
 def _quality_threshold(value: float | str) -> float:
@@ -1546,12 +1554,15 @@ def grade_gate(
     from npa.workbench.vlm_eval import (
         LEGACY_RESULT_FILENAME as LEGACY_VLM_EVAL_RESULT,
         RESULT_FILENAME as VLM_EVAL_RESULT,
-        SUPPORTED_BACKENDS as VLM_BACKENDS,
     )
 
     threshold = _quality_threshold(threshold)
     if scores_uri.endswith(".json"):
-        candidates: list[tuple[str, str | None]] = [(scores_uri, None)]
+        filename = scores_uri.rsplit("/", 1)[-1]
+        expected_producer = (
+            "vlm" if filename in {VLM_EVAL_RESULT, LEGACY_VLM_EVAL_RESULT} else None
+        )
+        candidates: list[tuple[str, str | None]] = [(scores_uri, expected_producer)]
     else:
         base = scores_uri.rstrip("/")
         candidates = [
@@ -1576,7 +1587,7 @@ def grade_gate(
                 raise TypeError(f"expected a JSON object, got {type(report).__name__}")
             # Parsed inside the try on purpose: malformed reports degrade to a
             # loop-back decision rather than aborting the refinement loop.
-            producer = _quality_report_producer(report, expected_producer, VLM_BACKENDS)
+            producer = _quality_report_producer(report, expected_producer)
             candidate_contract = _quality_gate_contract(
                 report, float(threshold), producer=producer
             )
@@ -1640,6 +1651,7 @@ def grade_gate(
                 "report_contract": "selected" if source else "missing",
                 "report_status": contract["report_status"],
                 "hard_checks_passed": contract["hard_checks_passed"],
+                **({"reason": contract["reason"]} if "reason" in contract else {}),
             }
         )
     )
