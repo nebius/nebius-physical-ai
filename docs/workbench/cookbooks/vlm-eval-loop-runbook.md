@@ -108,6 +108,9 @@ npa workbench vlm-eval compare-preference \
 The typed SDK request is
 `npa.sdk.workbench.vlm_eval.VlmPreferenceComparisonRequest`; call
 `npa.sdk.workbench.vlm_eval.compare_preference`. The command is hosted API-only
+and uses the shared model profile identically for both image orders. Kimi-K3
+uses low reasoning effort and JSON output without a temperature field;
+MiniMax retains its existing request settings. Neither path adds an output-token cap
 and needs no local GPU. It writes `vlm_preference_comparison.json` exactly once,
 retains both full provider outcomes privately, and escalates errors, unresolved
 or low-confidence output, and

@@ -1945,9 +1945,14 @@ def _build_preference_request(
         "temperature": 0,
         "messages": [{"role": "user", "content": content}],
     }
-    from npa.clients.token_factory import default_chat_extra
+    from npa.clients.token_factory import token_factory_chat_profile
 
-    request.update(default_chat_extra(model))
+    profile = token_factory_chat_profile(model)
+    request.update(profile.default_extra())
+    if not profile.include_temperature:
+        request.pop("temperature")
+    if profile.use_vlm_response_format:
+        request["response_format"] = {"type": "json_object"}
     return request
 
 
