@@ -87,9 +87,29 @@ Native Slurm, IPv4/IPv6 filtering, and the service dependency on firewall
 restoration were installed on both workers. The driver, PyTorch, CUDA, and
 NCCL versions match the original native 8/16-GPU cohort.
 
+The controller's 2 TiB `NETWORK_SSD` disk holds the shared inputs and outputs;
+the second worker mounts them through NFS. Input and runtime caches persist
+across jobs and are not explicitly flushed. Full schedules follow the timing
+repeats and profiles, so their process durations are not cold-start measurements.
+Evaluation and archive transfers run outside training allocations. The original
+eight-GPU full run also recorded an overlapping visualization storage reader;
+its observed duration has that separate scope. Use the matched timing repeats
+for the steady-step scaling comparison.
+
 The [input receipt](inputs.json) records the six pinned upstream revisions,
 payload hashes, 379 episodes, 101,469 frames, and ten tasks. Preparation
 validated every action/state row and decoded a frame from each camera file.
+The [fresh native window export](data-window-reproduction.json) reproduced
+the committed sample JSON and both camera PNGs byte for byte. Its loader
+retained 375 training episodes and 94,250 windows; each window pairs 17 video
+frames with 16 actions, converting seven stored action values into ten.
+
+The separate [CPU simulator preflight](simulation-readiness.json) validated
+all 500 evaluation initial states and rendered both cameras for every task.
+All 20 camera-file and decoded-pixel hashes were independently checked after
+collection. The receipt identifies the pinned simulator packages; its camera
+files are retained with the private qualification evidence. This preflight executes no
+model policy and does not establish task success.
 
 The initial four-node Soperator preflight lacked both reserved GPU headroom
 and non-GPU CPU quota. This reproduction therefore started on the documented
@@ -163,7 +183,48 @@ The [telemetry render manifest](telemetry-render-manifest.json) records the
 source and output hashes and library versions. A second render produced
 identical PNG bytes.
 
+## CUDA profiling
+
+The separate 110-update eight-GPU run completed successfully. Its recorded
+rank-zero window covers two native profiler steps in 29.07 seconds.
+The [timeline export](profile-8/timeline/evidence.json) verifies the original
+compressed trace against the completed profile report before computing interval
+unions. The 16-GPU profile remains pending.
+
+![CUDA kernel activity across two recorded steps on rank zero of the eight-B200 profiling run.](profile-8/timeline/cuda-timeline.png)
+
+The heatmap reports kernel interval coverage in 0.25-second bins. Categories
+overlap, so their rows cannot be added into exposed communication stalls or
+wall-time fractions. Only rank zero is sampled here. The profiled run is
+excluded from throughput comparisons.
+
+Set `WAM_PROFILE_RUN` to the retained run directory containing the native trace,
+settings, and `profile.json`; set `WAM_PROFILE_EXPORT` to a new output directory.
+The existing exporter checks trace hashes and regenerates the public numeric
+timeline. The renderer checks its input hashes and aggregate interval unions:
+
+```bash
+npa/.venv/bin/python docs/workbench/evidence/cosmos3-wam-profile-16/export.py \
+  --recipe-dir npa/workflows/workbench/cosmos3-wam-slurm \
+  --run-dir "$WAM_PROFILE_RUN" \
+  --summary-path "$WAM_PROFILE_RUN/profile.json" \
+  --output-dir "$WAM_PROFILE_EXPORT"
+npa/.venv/bin/python docs/workbench/evidence/cosmos3-wam-reproduction-20261002/plot-profile.py \
+  --evidence-dir "$WAM_PROFILE_EXPORT"
+```
+
+For rendering directly from committed numeric data, point `--evidence-dir` at
+`docs/workbench/evidence/cosmos3-wam-reproduction-20261002/profile-8/timeline`.
+A second render produced identical PNG bytes. The render manifest records the
+renderer hash and library versions.
+
 ## Repository validation
+
+[PR validation run 37074416512](https://github.com/nebius/nebius-physical-ai/actions/runs/37074416512)
+passed on `eb51389ca19d85d34315822a4549942059bfb446`: 20 successful jobs,
+four expected skips, and zero failures. This includes the Python 3.12 shards
+and merged coverage, browser/compatibility checks, image policy, and required
+security gate. See the PR checks for validation of later evidence revisions.
 
 The [native Linux validation receipt](offline-validation.json) records 37,258
 passing tests, 186 skips, one expected-failure test that passed, and zero
