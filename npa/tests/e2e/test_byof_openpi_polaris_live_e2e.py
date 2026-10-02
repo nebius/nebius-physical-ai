@@ -43,13 +43,8 @@ from .npa_workflow_live_helpers import live_bucket
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
-OPENPI_SPEC = (
-    REPO_ROOT / "workflows" / "testing" / "byof-openpi.yaml"
-)
-FOUR_MODE_SPEC = (
-    REPO_ROOT
-    / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
-)
+OPENPI_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-openpi.yaml"
+FOUR_MODE_SPEC = REPO_ROOT / "workflows" / "testing" / "openpi-pi05-four-mode.yaml"
 EXPECTED_CAPABILITIES = {
     "pi05_droid_jointpos_polaris_checkpoint_download",
     "pi05_droid_jointpos_polaris_direct_infer",
@@ -873,12 +868,18 @@ cache_roots = [
         Path('/home/ubuntu/.cache/openpi'),
     ) if path.exists() and any(path.rglob('*'))
 ]
+bundled_ffmpeg = [
+    str(path)
+    for path in Path('/opt/venv').glob('lib/python*/site-packages/imageio_ffmpeg/binaries/ffmpeg-*')
+    if path.is_file()
+]
 print(json.dumps({
     'source_metadata': metadata,
     'build_metadata': build_metadata,
     'editable_installs': editable,
     'baked_weight_files': baked_weights,
     'populated_checkpoint_cache_roots': [str(path) for path in cache_roots],
+    'bundled_imageio_ffmpeg': bundled_ffmpeg,
 }))
 """
     payload_proc = subprocess.run(
@@ -915,6 +916,7 @@ print(json.dumps({
     )
     assert payload["baked_weight_files"] == []
     assert payload["populated_checkpoint_cache_roots"] == []
+    assert payload["bundled_imageio_ffmpeg"] == []
 
     bootstrap_proc = subprocess.run(
         [
@@ -1312,9 +1314,7 @@ def test_openpi_polaris_live_b200_all_four_modes(
         "NPA_BYOF_OPENPI_REGISTRY must name an authenticated operator-controlled "
         "registry; restricted OpenPI bytes must not enter the official NPA GHCR namespace"
     )
-    assert project_registry.rstrip("/").lower() != (
-        "ghcr.io/nebius/nebius-physical-ai"
-    )
+    assert project_registry.rstrip("/").lower() != ("ghcr.io/nebius/nebius-physical-ai")
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     build_run_id = f"byof-openpi-polaris-build-{stamp}"
@@ -1372,6 +1372,7 @@ def test_openpi_polaris_live_b200_all_four_modes(
     assert "uv pip install" in str(build["build_command"])
     assert "-e ." in str(build["build_command"])
     assert "nvcc -O2 -arch=sm_100" in str(build["build_command"])
+    assert "imageio_ffmpeg/binaries/ffmpeg-*" in str(build["build_command"])
     build_byte_evidence = _inspect_built_image(
         image_tag, build_command=str(build["build_command"])
     )

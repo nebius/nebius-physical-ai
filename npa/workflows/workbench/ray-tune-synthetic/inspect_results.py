@@ -100,7 +100,9 @@ def inspect(directory: Path) -> dict[str, int]:
         OSError: Artifact bytes cannot be read.
     """
     artifacts = verify_manifest(directory)
-    if {path.name for path in directory.iterdir()} != EXPECTED_ARTIFACTS | {"SHA256SUMS"}:
+    if {path.name for path in directory.iterdir()} != EXPECTED_ARTIFACTS | {
+        "SHA256SUMS"
+    }:
         raise ValueError("result export contains unexpected artifacts")
     result = _load_json(directory, "result.json")
     runtime = _load_json(directory, "runtime.json")
@@ -117,7 +119,11 @@ def inspect(directory: Path) -> dict[str, int]:
         raise ValueError("result source hash differs from the inspector source")
     resumed = _validate_trials(trials)
     _validate_result(result, trials)
-    return {"artifacts_verified": artifacts, "trials_verified": len(trials), "resumed_trials": resumed}
+    return {
+        "artifacts_verified": artifacts,
+        "trials_verified": len(trials),
+        "resumed_trials": resumed,
+    }
 
 
 def main() -> None:

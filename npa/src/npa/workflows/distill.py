@@ -67,7 +67,7 @@ class RunConfig:
     s3_bucket: str = ""
     s3_prefix: str = ""
     # Remote execution
-    sim_workbench: str = ""    # Workbench name for sim stages (genesis env)
+    sim_workbench: str = ""  # Workbench name for sim stages (genesis env)
     train_workbench: str = ""  # Workbench name for training stages (lerobot)
 
 
@@ -197,9 +197,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage train_teacher failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage train_teacher failed: {exc}") from exc
 
     # ── Stage 2: Generate demos ─────────────────────────────────────
     logger.info("[2/5] Generating demonstrations...")
@@ -234,9 +232,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage generate_demos failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage generate_demos failed: {exc}") from exc
 
     # ── Stage 3: Convert to LeRobotDataset ──────────────────────────
     logger.info("[3/5] Converting demos to LeRobotDataset v3...")
@@ -261,9 +257,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage convert failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage convert failed: {exc}") from exc
 
     # ── Stage 4: Train student ──────────────────────────────────────
     logger.info("[4/5] Training student policy...")
@@ -289,9 +283,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage train_student failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage train_student failed: {exc}") from exc
 
     # ── Teacher eval (held-out baseline) ──────────────────────────────
     logger.info("Evaluating teacher under held-out conditions...")
@@ -310,7 +302,9 @@ def _run_local(
             "teacher_success_rate": round(teacher_success_rate, 4),
         }
     except Exception as exc:
-        logger.warning("Teacher eval failed: %s — distillation gap will not be computed.", exc)
+        logger.warning(
+            "Teacher eval failed: %s — distillation gap will not be computed.", exc
+        )
         result["stages"]["eval_teacher"] = {
             "status": "failed",
             "error": str(exc),
@@ -341,9 +335,7 @@ def _run_local(
         }
         failed = True
         _save_result(base_dir, result)
-        raise DistillationError(
-            f"Stage eval_student failed: {exc}"
-        ) from exc
+        raise DistillationError(f"Stage eval_student failed: {exc}") from exc
 
     # ── Upload to S3 (if configured) ────────────────────────────────
     if cfg.s3_bucket:
@@ -375,9 +367,7 @@ def _run_remote(
             name=cfg.sim_workbench or None,
         )
     except ConfigError as exc:
-        raise DistillationError(
-            f"Cannot resolve sim VM config: {exc}"
-        ) from exc
+        raise DistillationError(f"Cannot resolve sim VM config: {exc}") from exc
 
     try:
         train_cfg = resolve_config(
@@ -385,9 +375,7 @@ def _run_remote(
             name=cfg.train_workbench or None,
         )
     except ConfigError as exc:
-        raise DistillationError(
-            f"Cannot resolve train VM config: {exc}"
-        ) from exc
+        raise DistillationError(f"Cannot resolve train VM config: {exc}") from exc
 
     sim_ssh = SSHClient(sim_cfg.ssh)
     train_ssh = SSHClient(train_cfg.ssh)
@@ -396,8 +384,8 @@ def _run_remote(
     s3_base = f"{cfg.s3_bucket.rstrip('/')}/{cfg.s3_prefix}"
 
     # Conda env activation prefixes
-    genesis_activate = "eval \"$(conda shell.bash hook)\" && conda activate genesis && "
-    lerobot_activate = "eval \"$(conda shell.bash hook)\" && conda activate lerobot && "
+    genesis_activate = 'eval "$(conda shell.bash hook)" && conda activate genesis && '
+    lerobot_activate = 'eval "$(conda shell.bash hook)" && conda activate lerobot && '
 
     # Map stage → (ssh_client, conda_prefix, command)
     stage_plan: dict[str, tuple[SSHClient, str, str]] = {
@@ -459,16 +447,20 @@ def _run_remote(
         if stage_name == "train_student" and train_cfg.ssh.host != sim_cfg.ssh.host:
             logger.info("[%s] Downloading dataset from S3 to train VM...", stage_name)
             _s3_sync_dir(
-                train_ssh, lerobot_activate,
+                train_ssh,
+                lerobot_activate,
                 direction="download",
                 s3_uri=f"{s3_base}/dataset/",
                 local_path=f"{remote_base}/dataset/",
             )
 
         if stage_name == "eval_student" and train_cfg.ssh.host != sim_cfg.ssh.host:
-            logger.info("[%s] Downloading student checkpoint from S3 to sim VM...", stage_name)
+            logger.info(
+                "[%s] Downloading student checkpoint from S3 to sim VM...", stage_name
+            )
             _s3_sync_dir(
-                sim_ssh, genesis_activate,
+                sim_ssh,
+                genesis_activate,
                 direction="download",
                 s3_uri=f"{s3_base}/student/",
                 local_path=f"{remote_base}/student/",
@@ -476,11 +468,7 @@ def _run_remote(
 
         logger.info("[%s] Running on %s: %s", stage_name, ssh._config.host, cmd)
 
-        full_cmd = (
-            f"mkdir -p {remote_base} && "
-            f"{conda_prefix}"
-            f"{cmd}"
-        )
+        full_cmd = f"mkdir -p {remote_base} && {conda_prefix}{cmd}"
 
         try:
             exit_code, stdout, stderr = ssh.run(full_cmd, stream=True)
@@ -490,9 +478,7 @@ def _run_remote(
                 "error": f"SSH error: {exc}",
             }
             _save_result(base_dir, result)
-            raise DistillationError(
-                f"Stage {stage_name} failed (SSH): {exc}"
-            ) from exc
+            raise DistillationError(f"Stage {stage_name} failed (SSH): {exc}") from exc
 
         if exit_code != 0:
             result["stages"][stage_name] = {
@@ -501,9 +487,7 @@ def _run_remote(
                 "stderr": stderr.strip()[-500:] if stderr else "",
             }
             _save_result(base_dir, result)
-            raise DistillationError(
-                f"Stage {stage_name} failed (exit {exit_code})"
-            )
+            raise DistillationError(f"Stage {stage_name} failed (exit {exit_code})")
 
         result["stages"][stage_name] = {
             "status": "success",
@@ -514,7 +498,8 @@ def _run_remote(
         if stage_name == "convert" and train_cfg.ssh.host != sim_cfg.ssh.host:
             logger.info("[%s] Uploading dataset to S3...", stage_name)
             _s3_sync_dir(
-                sim_ssh, genesis_activate,
+                sim_ssh,
+                genesis_activate,
                 direction="upload",
                 s3_uri=f"{s3_base}/dataset/",
                 local_path=f"{remote_base}/dataset/",
@@ -523,7 +508,8 @@ def _run_remote(
         if stage_name == "train_student" and train_cfg.ssh.host != sim_cfg.ssh.host:
             logger.info("[%s] Uploading student checkpoint to S3...", stage_name)
             _s3_sync_dir(
-                train_ssh, lerobot_activate,
+                train_ssh,
+                lerobot_activate,
                 direction="upload",
                 s3_uri=f"{s3_base}/student/",
                 local_path=f"{remote_base}/student/",
@@ -602,9 +588,7 @@ def _s3_sync_dir(
         raise DistillationError(f"S3 sync ({direction}) failed: {exc}") from exc
 
     if exit_code != 0:
-        raise DistillationError(
-            f"S3 sync ({direction}) failed (exit {exit_code})"
-        )
+        raise DistillationError(f"S3 sync ({direction}) failed (exit {exit_code})")
 
 
 def _upload_artifacts(
@@ -696,6 +680,4 @@ def get_stage_logs(run_id: str, stage: str) -> str:
         if stage_info:
             return json.dumps(stage_info, indent=2)
 
-    raise DistillationError(
-        f"No logs found for stage '{stage}' in run {run_id}"
-    )
+    raise DistillationError(f"No logs found for stage '{stage}' in run {run_id}")

@@ -190,7 +190,13 @@ class FreshPolicyReview:
     """Internal state created by core.main before its fresh scan; no report CLI."""
 
     def __init__(
-        self, catalog_path, catalog_sha256, authorization, authorization_binding, *, output_fd
+        self,
+        catalog_path,
+        catalog_sha256,
+        authorization,
+        authorization_binding,
+        *,
+        output_fd,
     ):
         import hashlib
         from pathlib import Path
@@ -328,7 +334,9 @@ class FreshPolicyReview:
             "public_policy_scanner_changed",
         )
         W.output_identity(directory, self.output_fd)
-        self.receipt_identity = W.write_private_json(directory, "public-policy-acceptance.json", receipt)
+        self.receipt_identity = W.write_private_json(
+            directory, "public-policy-acceptance.json", receipt
+        )
         self.receipt = receipt
         self.verify_output(directory)
         self.accepted = True
@@ -336,8 +344,18 @@ class FreshPolicyReview:
 
     def verify_output(self, directory):
         """Recheck the separate acceptance and its ledger before CLI success."""
-        W.verify_private_json(directory, self.output_fd, "public-policy-acceptance.json",
-                              self.receipt, self.receipt_identity)
-        W.bound_file({"path": str(directory / "records.jsonl"),
-                      "sha256": self.receipt["records_sha256"]}, secret=True)
+        W.verify_private_json(
+            directory,
+            self.output_fd,
+            "public-policy-acceptance.json",
+            self.receipt,
+            self.receipt_identity,
+        )
+        W.bound_file(
+            {
+                "path": str(directory / "records.jsonl"),
+                "sha256": self.receipt["records_sha256"],
+            },
+            secret=True,
+        )
         W.output_identity(directory, self.output_fd)

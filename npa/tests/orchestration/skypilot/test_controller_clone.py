@@ -1,4 +1,5 @@
 """A controller copy must preserve remote identity without sharing local state."""
+
 from __future__ import annotations
 
 import copy
@@ -14,11 +15,31 @@ import yaml
 from npa.orchestration.skypilot import controller_clone as clone
 
 
-def proxy(key, script, *, context="fixture-context", namespace="fixture", pod="fixture-head",
-          user="skypilot:ssh_user"):
+def proxy(
+    key,
+    script,
+    *,
+    context="fixture-context",
+    namespace="fixture",
+    pod="fixture-head",
+    user="skypilot:ssh_user",
+):
     nested = shlex.join([str(script), "-c", context, "-n", namespace, pod])
-    return shlex.join(["ssh", "-tt", "-i", str(key), "-o", "IdentitiesOnly=yes", "-W",
-                       "[%h]:%p", user + "@127.0.0.1", "-o", "ProxyCommand=" + nested])
+    return shlex.join(
+        [
+            "ssh",
+            "-tt",
+            "-i",
+            str(key),
+            "-o",
+            "IdentitiesOnly=yes",
+            "-W",
+            "[%h]:%p",
+            user + "@127.0.0.1",
+            "-o",
+            "ProxyCommand=" + nested,
+        ]
+    )
 
 
 @pytest.fixture
@@ -44,12 +65,24 @@ def controller(tmp_path, monkeypatch):
     key.write_text("fixture-private-key-data")
     Path(str(key) + ".pub").write_text("fixture-public-key-data")
     script_relative = Path(".sky/kubernetes-port-forward-proxy-command-v2.sh")
-    config = {"cluster_name": name, "provider": {"type": "external", "module": "sky.provision.kubernetes",
-              "context": "fixture-context", "namespace": "fixture"},
-              "auth": {"ssh_private_key": str(source / relative), "ssh_user": "sky",
-                       "ssh_proxy_command": proxy(source / relative, source / script_relative,
-                                                  pod=name + "-head")},
-              "setup_commands": ["operator-owned-command"], "file_mounts": {"target": "operator-input"}}
+    config = {
+        "cluster_name": name,
+        "provider": {
+            "type": "external",
+            "module": "sky.provision.kubernetes",
+            "context": "fixture-context",
+            "namespace": "fixture",
+        },
+        "auth": {
+            "ssh_private_key": str(source / relative),
+            "ssh_user": "sky",
+            "ssh_proxy_command": proxy(
+                source / relative, source / script_relative, pod=name + "-head"
+            ),
+        },
+        "setup_commands": ["operator-owned-command"],
+        "file_mounts": {"target": "operator-input"},
+    }
     original = copy.deepcopy(config)
     writes = []
     tunnels = {name: (12345, 54321)}
@@ -77,7 +110,9 @@ def controller(tmp_path, monkeypatch):
     yamls = {name: copy.deepcopy(config)}
 
     def read_yaml(path):
-        assert Path(path).is_relative_to(home), "must not use Sky's source-file fallback"
+        assert Path(path).is_relative_to(home), (
+            "must not use Sky's source-file fallback"
+        )
         return copy.deepcopy(yamls[Path(path).stem])
 
     def save_yaml(selected, body):
@@ -87,13 +122,27 @@ def controller(tmp_path, monkeypatch):
     state = SimpleNamespace(
         get_cluster_from_name=lambda selected, **kwargs: records.get(selected),
         get_cluster_yaml_dict=read_yaml,
-        get_ssh_keys=lambda user: ("fixture-public-key-data", "fixture-private-key-data", user == "fixture-client"),
+        get_ssh_keys=lambda user: (
+            "fixture-public-key-data",
+            "fixture-private-key-data",
+            user == "fixture-client",
+        ),
         set_cluster_yaml=save_yaml,
-        update_cluster_handle=lambda selected, value: writes.append(("handle", selected, value)),
-        set_cluster_skylet_ssh_tunnel_metadata=lambda selected, value: tunnels.__setitem__(selected, value),
+        update_cluster_handle=lambda selected, value: writes.append(
+            ("handle", selected, value)
+        ),
+        set_cluster_skylet_ssh_tunnel_metadata=lambda selected, value: (
+            tunnels.__setitem__(selected, value)
+        ),
     )
     modules = {}
-    for name_ in ["sky", "sky.backends", "sky.provision", "sky.provision.kubernetes", "sky.utils"]:
+    for name_ in [
+        "sky",
+        "sky.backends",
+        "sky.provision",
+        "sky.provision.kubernetes",
+        "sky.utils",
+    ]:
         modules[name_] = ModuleType(name_)
         modules[name_].__path__ = []
         monkeypatch.setitem(sys.modules, name_, modules[name_])
@@ -107,25 +156,48 @@ def controller(tmp_path, monkeypatch):
     )
     modules["sky.provision.kubernetes"].utils = SimpleNamespace(
         PORT_FORWARD_PROXY_CMD_PATH="~/" + str(script_relative),
-        get_ssh_proxy_command=lambda **kw: proxy(kw["private_key_path"], home / script_relative,
-                                               context=kw["context"], namespace=kw["namespace"], pod=kw["pod_name"]),
+        get_ssh_proxy_command=lambda **kw: proxy(
+            kw["private_key_path"],
+            home / script_relative,
+            context=kw["context"],
+            namespace=kw["namespace"],
+            pod=kw["pod_name"],
+        ),
     )
     modules["sky.utils"].auth_utils = SimpleNamespace(
         create_ssh_key_files_from_db=lambda path: Path(path) == key,
     )
-    return SimpleNamespace(manifest={"clone_root": str(root), "source_home": str(source),
-                                    "controller_names": [name], "context": "fixture-context"},
-                           name=name, home=home, source=source, key=key, handle=handle,
-                           config=config, original=original, yamls=yamls, writes=writes,
-                           tunnels=tunnels, records=records, config_path=config_path)
+    return SimpleNamespace(
+        manifest={
+            "clone_root": str(root),
+            "source_home": str(source),
+            "controller_names": [name],
+            "context": "fixture-context",
+        },
+        name=name,
+        home=home,
+        source=source,
+        key=key,
+        handle=handle,
+        config=config,
+        original=original,
+        yamls=yamls,
+        writes=writes,
+        tunnels=tunnels,
+        records=records,
+        config_path=config_path,
+    )
 
 
 @pytest.mark.parametrize("resolved_user", [False, True])
-def test_relocation_preserves_remote_fields_and_clears_only_copied_tunnel(controller, resolved_user):
+def test_relocation_preserves_remote_fields_and_clears_only_copied_tunnel(
+    controller, resolved_user
+):
     c = controller
     if resolved_user:
-        c.yamls[c.name]["auth"]["ssh_proxy_command"] = c.yamls[c.name]["auth"]["ssh_proxy_command"].replace(
-            "skypilot:ssh_user@127.0.0.1", "sky@127.0.0.1")
+        c.yamls[c.name]["auth"]["ssh_proxy_command"] = c.yamls[c.name]["auth"][
+            "ssh_proxy_command"
+        ].replace("skypilot:ssh_user@127.0.0.1", "sky@127.0.0.1")
         c.yamls[c.name]["auth"]["ssh_user"] = " sky "
     cached = c.handle.cached_cluster_info
     c.tunnels["unrelated-controller"] = (22222, 33333)
@@ -146,10 +218,26 @@ def test_relocation_preserves_remote_fields_and_clears_only_copied_tunnel(contro
     assert c.config == c.original
 
 
-@pytest.mark.parametrize("mutation", ["key_bytes", "linked_key", "foreign_key", "context", "provider",
-                                     "proxy_target", "proxy_flags", "proxy_user", "proxy_user_injection",
-                                     "yaml_path", "missing_target", "external_db"])
-def test_invalid_controller_never_changes_copied_records(controller, mutation, monkeypatch):
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "key_bytes",
+        "linked_key",
+        "foreign_key",
+        "context",
+        "provider",
+        "proxy_target",
+        "proxy_flags",
+        "proxy_user",
+        "proxy_user_injection",
+        "yaml_path",
+        "missing_target",
+        "external_db",
+    ],
+)
+def test_invalid_controller_never_changes_copied_records(
+    controller, mutation, monkeypatch
+):
     c = controller
     config = c.yamls[c.name]
     if mutation == "key_bytes":
@@ -165,12 +253,15 @@ def test_invalid_controller_never_changes_copied_records(controller, mutation, m
     elif mutation == "provider":
         config["provider"]["module"] = "other-provider"
     elif mutation == "proxy_target":
-        config["auth"]["ssh_proxy_command"] = config["auth"]["ssh_proxy_command"].replace("fixture-context", "other-context")
+        config["auth"]["ssh_proxy_command"] = config["auth"][
+            "ssh_proxy_command"
+        ].replace("fixture-context", "other-context")
     elif mutation == "proxy_flags":
         config["auth"]["ssh_proxy_command"] += " -o LocalCommand=unexpected"
     elif mutation == "proxy_user":
-        config["auth"]["ssh_proxy_command"] = config["auth"]["ssh_proxy_command"].replace(
-            "skypilot:ssh_user@127.0.0.1", "another-user@127.0.0.1")
+        config["auth"]["ssh_proxy_command"] = config["auth"][
+            "ssh_proxy_command"
+        ].replace("skypilot:ssh_user@127.0.0.1", "another-user@127.0.0.1")
     elif mutation == "proxy_user_injection":
         config["auth"]["ssh_user"] = "sky -o LocalCommand=unexpected"
     elif mutation == "yaml_path":

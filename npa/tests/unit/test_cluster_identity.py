@@ -127,7 +127,9 @@ def test_provider_name_may_differ_from_unique_local_context(
     )
     monkeypatch.setattr(config, "default_project_name", lambda: "selected")
     monkeypatch.setattr(
-        config, "resolve_environment", lambda project: SimpleNamespace(project_id="project-a")
+        config,
+        "resolve_environment",
+        lambda project: SimpleNamespace(project_id="project-a"),
     )
     monkeypatch.setattr(identity, "load_cluster_state", lambda context: state)
     monkeypatch.setattr(identity, "existing_kubeconfig", lambda context: kubeconfig)
@@ -141,11 +143,18 @@ def test_provider_name_may_differ_from_unique_local_context(
     )
 
     exact = (
-        {"project_id": "project-a", "cluster_id": "cluster-a", "cluster_name": exact_name}
-        if exact_name is not None else {}
+        {
+            "project_id": "project-a",
+            "cluster_id": "cluster-a",
+            "cluster_name": exact_name,
+        }
+        if exact_name is not None
+        else {}
     )
     if exact_name == "unrelated-cluster":
-        with pytest.raises(identity.ClusterIdentityError, match="conflict for cluster_name"):
+        with pytest.raises(
+            identity.ClusterIdentityError, match="conflict for cluster_name"
+        ):
             identity.resolve_verified_cluster_identity(
                 project="selected", context="npa-cluster", client=client, **exact
             )

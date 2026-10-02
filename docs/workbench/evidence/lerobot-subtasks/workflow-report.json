@@ -1,0 +1,89 @@
+{
+  "bucket_is_placeholder": true,
+  "plan": {
+    "api_version": "npa.workflow/v0.0.1",
+    "assume_decision": "",
+    "initial": "prove-subtask",
+    "steps": [
+      {
+        "argv": [
+          "python3",
+          "-m",
+          "npa.workflows.lerobot_subtask_proof",
+          "--dataset-uri",
+          "reviewed",
+          "--proof-uri",
+          "subtask-proof.json",
+          "--expected-label",
+          "grasp"
+        ],
+        "group": "",
+        "inputs": [
+          {
+            "schema": "lerobot.dataset.v3.subtasks",
+            "uri": "reviewed"
+          }
+        ],
+        "iteration": null,
+        "loop_label": "",
+        "outputs": [
+          {
+            "schema": "npa.lerobot.subtask_proof.v1",
+            "uri": "subtask-proof.json"
+          }
+        ],
+        "resources": "cpu",
+        "resources_profile": {
+          "cloud": "kubernetes",
+          "cpus": 2,
+          "memory": "4Gi"
+        },
+        "shell": "",
+        "state": "prove-subtask",
+        "tool_ref": ""
+      }
+    ],
+    "workflow": "lerobot-subtask-proof"
+  },
+  "run_id": "lerobot-subtask-recorded-proof",
+  "run_prefix_uri": "",
+  "status": "completed",
+  "steps": [
+    {
+      "argv": [
+        "python3",
+        "-m",
+        "npa.workflows.lerobot_subtask_proof",
+        "--dataset-uri",
+        "reviewed",
+        "--proof-uri",
+        "subtask-proof.json",
+        "--expected-label",
+        "grasp"
+      ],
+      "inputs": [
+        {
+          "schema": "lerobot.dataset.v3.subtasks",
+          "uri": "reviewed"
+        }
+      ],
+      "iteration": null,
+      "outputs": [
+        {
+          "schema": "npa.lerobot.subtask_proof.v1",
+          "uri": "subtask-proof.json"
+        }
+      ],
+      "resources": "cpu",
+      "resources_profile": {
+        "cloud": "kubernetes",
+        "cpus": 2,
+        "memory": "4Gi"
+      },
+      "returncode": 0,
+      "state": "prove-subtask",
+      "status": "ok"
+    }
+  ],
+  "workflow": "lerobot-subtask-proof"
+}

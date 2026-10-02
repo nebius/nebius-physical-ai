@@ -41,7 +41,9 @@ class TriageError(RuntimeError):
     """Raised when the triage stage cannot produce a report."""
 
 
-def download_textual_artifacts(artifacts_uri: str, dest: Path, *, storage_client: Any = None) -> list[str]:
+def download_textual_artifacts(
+    artifacts_uri: str, dest: Path, *, storage_client: Any = None
+) -> list[str]:
     """Download every textual artifact under ``artifacts_uri`` into ``dest``.
 
     Returns the relative paths fetched, so a caller can tell "no artifacts" from "no text
@@ -77,7 +79,9 @@ def download_textual_artifacts(artifacts_uri: str, dest: Path, *, storage_client
             if not relative:
                 continue
             if not key.startswith(prefix):
-                raise StorageError("Object storage returned a key outside the requested prefix")
+                raise StorageError(
+                    "Object storage returned a key outside the requested prefix"
+                )
             target = safe_s3_download_target(dest, relative, "")
             target.parent.mkdir(parents=True, exist_ok=True)
             client.s3.download_file(bucket, key, str(target))
@@ -172,7 +176,9 @@ def _publish(local: Path, target_uri: str, *, storage_client: Any = None) -> str
     return client.upload_file(str(local), target_uri)
 
 
-def _write_generations(generations: Any, report_uri: str, *, storage_client: Any = None) -> str:
+def _write_generations(
+    generations: Any, report_uri: str, *, storage_client: Any = None
+) -> str:
     from dataclasses import asdict, is_dataclass
 
     from npa.workbench.token_factory import write_generations

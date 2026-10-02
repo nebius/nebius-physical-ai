@@ -27,7 +27,9 @@ def fast_sync():
     Raises:
         ImportError: The harness cannot be loaded.
     """
-    specification = importlib.util.spec_from_file_location("ray_fast_sync_test", EXAMPLE / "fast_sync.py")
+    specification = importlib.util.spec_from_file_location(
+        "ray_fast_sync_test", EXAMPLE / "fast_sync.py"
+    )
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -63,7 +65,9 @@ class _JobsClient:
         self.first_result: dict[str, str] | None = None
         self.instances.append(self)
 
-    def submit_job(self, *, submission_id: str, entrypoint: str, runtime_env: dict[str, str]) -> None:
+    def submit_job(
+        self, *, submission_id: str, entrypoint: str, runtime_env: dict[str, str]
+    ) -> None:
         """Capture the current working-directory module as a remote observation."""
         source = Path(runtime_env["working_dir"]) / "editable_value.py"
         assignment = source.read_text(encoding="utf-8").partition("=")[2].strip()
@@ -138,8 +142,13 @@ def test_qualification_submits_two_working_directories_and_observes_edit(
     assert summary["status"] == "passed"
     assert [row["value"] for row in summary["revisions"]] == ["before", "after"]
     assert len({row["source_sha256"] for row in summary["revisions"]}) == 2
-    assert set(client.jobs) == {"npa-fast-sync-unit-baseline", "npa-fast-sync-unit-changed"}
-    assert all(job["entrypoint"] == "python sync_probe.py" for job in client.jobs.values())
+    assert set(client.jobs) == {
+        "npa-fast-sync-unit-baseline",
+        "npa-fast-sync-unit-changed",
+    }
+    assert all(
+        job["entrypoint"] == "python sync_probe.py" for job in client.jobs.values()
+    )
     assert all("submission_id" not in row for row in summary["revisions"])
     assert evidence.stat().st_mode & 0o077 == 0
     assert all(path.stat().st_mode & 0o077 == 0 for path in evidence.iterdir())
@@ -198,7 +207,9 @@ def test_cleanup_stops_only_owned_nonterminal_jobs(fast_sync):
     assert client.jobs["unrelated"]["status"] == "RUNNING"
 
 
-def test_existing_evidence_directory_fails_before_connecting(fast_sync, tmp_path, monkeypatch):
+def test_existing_evidence_directory_fails_before_connecting(
+    fast_sync, tmp_path, monkeypatch
+):
     """Refuse evidence overwrite before constructing a Jobs client.
 
     Args:
@@ -226,10 +237,16 @@ def test_result_parser_rejects_missing_duplicate_and_invalid_markers(fast_sync):
     Raises:
         AssertionError: Ambiguous or malformed logs are accepted.
     """
-    valid = json.dumps({"ray_version": "2.58.0", "source_sha256": "digest", "value": "before"})
+    valid = json.dumps(
+        {"ray_version": "2.58.0", "source_sha256": "digest", "value": "before"}
+    )
     with pytest.raises(ValueError, match="found 0"):
         fast_sync._parse_result("ordinary log")
     with pytest.raises(ValueError, match="found 2"):
-        fast_sync._parse_result(f"{fast_sync.RESULT_MARKER}{valid}\n{fast_sync.RESULT_MARKER}{valid}")
+        fast_sync._parse_result(
+            f"{fast_sync.RESULT_MARKER}{valid}\n{fast_sync.RESULT_MARKER}{valid}"
+        )
     with pytest.raises(ValueError, match="invalid schema"):
-        fast_sync._parse_result(f'{fast_sync.RESULT_MARKER}{json.dumps({"value": "before"})}')
+        fast_sync._parse_result(
+            f"{fast_sync.RESULT_MARKER}{json.dumps({'value': 'before'})}"
+        )

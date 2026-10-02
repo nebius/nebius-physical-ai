@@ -53,6 +53,7 @@ DEFAULT_NRE_REGISTRY_HOST = "nvcr.io"
 # reconstruction from it is genuine, not synthetic filler. Every coordinate is
 # configuration; nothing here is a hardcoded requirement.
 DEFAULT_DATASET_ID = "nvidia/PhysicalAI-NuRec-PPISP"
+DEFAULT_DATASET_REVISION = "2521064a3af6ab1c1caa2ba1b01ddde7eecded69"
 DEFAULT_SCENE = "struktur28"
 DEFAULT_VARIANT = "auto"
 DEFAULT_NCORE_MEMBER_TEMPLATE = "ncore/{scene}_ncore.zip"
@@ -216,6 +217,7 @@ class NurecConfig:
     entrypoint: str = DEFAULT_NRE_ENTRYPOINT
     docker_bin: str = ""
     dataset_id: str = DEFAULT_DATASET_ID
+    dataset_revision: str = ""
     scene: str = DEFAULT_SCENE
     variant: str = DEFAULT_VARIANT
     cache_dir: Path | str = DEFAULT_CACHE_DIR
@@ -249,6 +251,7 @@ class NurecConfig:
         entrypoint: str = "",
         docker_bin: str = "",
         dataset_id: str = "",
+        dataset_revision: str = "",
         scene: str = "",
         variant: str = "",
         cache_dir: Path | str | None = None,
@@ -299,6 +302,8 @@ class NurecConfig:
             dataset_id=dataset_id
             or env.get("NPA_NUREC_DATASET", "")
             or DEFAULT_DATASET_ID,
+            dataset_revision=dataset_revision
+            or env.get("NPA_NUREC_DATASET_REVISION", ""),
             scene=scene or env.get("NPA_NUREC_SCENE", "") or DEFAULT_SCENE,
             variant=(variant or env.get("NPA_NUREC_VARIANT", "") or DEFAULT_VARIANT),
             cache_dir=cache_dir or env.get("NPA_NUREC_CACHE", "") or DEFAULT_CACHE_DIR,
@@ -365,6 +370,27 @@ class NurecConfig:
         )
 
     # --- derived paths ---------------------------------------------------------------
+    @property
+    def resolved_dataset_revision(self) -> str:
+        """Select the pinned public sample or the explicitly requested HF revision.
+
+        Args:
+            None.
+
+        Returns:
+            An HF revision; unrelated dataset overrides default to main.
+
+        Raises:
+            None.
+        """
+        if self.dataset_revision:
+            return self.dataset_revision
+        return (
+            DEFAULT_DATASET_REVISION
+            if self.dataset_id == DEFAULT_DATASET_ID
+            else "main"
+        )
+
     @property
     def resolved_cache_dir(self) -> Path:
         return Path(self.cache_dir or DEFAULT_CACHE_DIR).expanduser()
@@ -744,11 +770,15 @@ class NurecFetchResult:
     rig_derivation: dict[str, Any] = field(default_factory=dict)
     output_uri: str = ""
     errors: tuple[str, ...] = ()
+    dataset_revision: str = ""
+    archive_sha256: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "status": "ok" if self.ok else "failed",
             "dataset_id": self.dataset_id,
+            "dataset_revision": self.dataset_revision,
+            "archive_sha256": self.archive_sha256,
             "scene": self.scene,
             "variant": self.variant,
             "scene_dir": self.scene_dir,
@@ -1128,7 +1158,7 @@ def _check_hf_dataset(
         headers["Authorization"] = f"Bearer {token}"
     url = (
         f"https://huggingface.co/datasets/{config.dataset_id}"
-        f"/resolve/main/{config.ncore_member}"
+        f"/resolve/{config.resolved_dataset_revision}/{config.ncore_member}"
     )
     try:
         response = httpx.get(
@@ -1219,6 +1249,8 @@ def fetch_nurec_dataset(
             config.dataset_id,
             "--repo-type",
             "dataset",
+            "--revision",
+            config.resolved_dataset_revision,
             "--include",
             member,
             "--local-dir",
@@ -1391,6 +1423,8 @@ def fetch_nurec_dataset(
     return NurecFetchResult(
         ok=True,
         dataset_id=config.dataset_id,
+        dataset_revision=config.resolved_dataset_revision,
+        archive_sha256=_file_sha256(ncore_zip),
         scene=config.scene,
         variant=config.variant,
         scene_dir=str(scene_dir),
@@ -1406,6 +1440,16 @@ def fetch_nurec_dataset(
         reference_camera=reference_camera,
         rig_derivation=rig_derivation,
     )
+
+
+def _file_sha256(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def extract_archive(archive: Path | str, destination: Path | str) -> Path:
@@ -1512,7 +1556,10 @@ def validate_fetch_provenance(
         errors.append(
             f"variant observed={observed_variant!r} != requested={requested_variant!r}"
         )
-    if requested_dataset_id and str(fetched.get("dataset_id") or "") != requested_dataset_id:
+    if (
+        requested_dataset_id
+        and str(fetched.get("dataset_id") or "") != requested_dataset_id
+    ):
         errors.append("dataset_id mismatch")
     return (not errors), errors
 
@@ -1636,6 +1683,7 @@ def reconstruct_scene(
     runner: RunCallable | None = None,
     dry_run: bool = False,
     export_gt: bool = True,
+    gt_frame_step: int = DEFAULT_GT_FRAME_STEP_CAMERA,
     timeout: float | None = None,
 ) -> NurecReconstructResult:
     """Train a 3DGUT Gaussian reconstruction and collect its USDZ + metrics."""
@@ -1712,6 +1760,7 @@ def reconstruct_scene(
         gt_args = build_nre_export_gt_args(
             ncore_json=ncore_json,
             output_dir=str(gt_target),
+            frame_step_camera=gt_frame_step,
         )
         gt_result = _run(
             nre_command(
@@ -1870,7 +1919,9 @@ def parse_metrics_yaml(path: Path | str) -> dict[str, float]:
                 for name, entry in aggregated.items():
                     if isinstance(entry, dict):
                         value = entry.get("value")
-                        if isinstance(value, (int, float)) and not isinstance(value, bool):
+                        if isinstance(value, (int, float)) and not isinstance(
+                            value, bool
+                        ):
                             metrics[str(name)] = float(value)
             return metrics
     except ImportError:

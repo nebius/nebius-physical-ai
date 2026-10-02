@@ -66,11 +66,15 @@ def live_gpu_endpoint(tmp_path_factory: pytest.TempPathFactory) -> LiveGpuEndpoi
     """Serve Qwen2-VL-7B through vLLM on a live SkyPilot GPU cluster."""
 
     if os.environ.get("NPA_RUN_VLM_LIVE_GPU") != "1":
-        pytest.skip("set NPA_RUN_VLM_LIVE_GPU=1 to allow this test to create a live GPU cluster")
+        pytest.skip(
+            "set NPA_RUN_VLM_LIVE_GPU=1 to allow this test to create a live GPU cluster"
+        )
 
     sky_bin = _resolve_sky_bin()
     if sky_bin is None:
-        pytest.skip("SkyPilot CLI not found; set NPA_SKYPILOT_BIN to run the live GPU test")
+        pytest.skip(
+            "SkyPilot CLI not found; set NPA_SKYPILOT_BIN to run the live GPU test"
+        )
 
     _require_skypilot_credentials(sky_bin)
     reuse_cluster_name = os.environ.get("NPA_VLM_EVAL_LIVE_REUSE_CLUSTER", "").strip()
@@ -89,9 +93,15 @@ def live_gpu_endpoint(tmp_path_factory: pytest.TempPathFactory) -> LiveGpuEndpoi
         _sky_down(sky_bin, cluster_name)
 
 
-def test_golden_set_scores_known_good_and_bad_rollouts(monkeypatch, tmp_path: Path) -> None:
-    good_rollout = _write_image_rollout(tmp_path / "good", [(20, 20, 20), (40, 120, 40), (20, 220, 20)])
-    bad_rollout = _write_image_rollout(tmp_path / "bad", [(20, 20, 20), (120, 40, 40), (220, 20, 20)])
+def test_golden_set_scores_known_good_and_bad_rollouts(
+    monkeypatch, tmp_path: Path
+) -> None:
+    good_rollout = _write_image_rollout(
+        tmp_path / "good", [(20, 20, 20), (40, 120, 40), (20, 220, 20)]
+    )
+    bad_rollout = _write_image_rollout(
+        tmp_path / "bad", [(20, 20, 20), (120, 40, 40), (220, 20, 20)]
+    )
 
     def fake_vlm_call(**kwargs):
         assert kwargs["model"] == DEFAULT_MODEL
@@ -284,6 +294,7 @@ def test_select_rollout_frames_from_numpy_final_frame(tmp_path: Path) -> None:
     assert selected[0].media_type == "image/png"
     assert selected[0].data.startswith(b"\x89PNG")
 
+
 def _structured_eval_payload(result) -> dict[str, object]:
     return {
         "success": bool(result.passed),
@@ -310,7 +321,9 @@ def _require_skypilot_credentials(sky_bin: str) -> None:
 
     output = f"{result.stdout}\n{result.stderr}".lower()
     if any(pattern in output for pattern in _CREDENTIAL_ERROR_PATTERNS):
-        pytest.skip("SkyPilot/Nebius credentials are not configured for the live GPU test")
+        pytest.skip(
+            "SkyPilot/Nebius credentials are not configured for the live GPU test"
+        )
     pytest.fail(
         "sky check failed before the live GPU test:\n"
         f"stdout:\n{result.stdout[-2000:]}\n"
@@ -343,7 +356,9 @@ def _launch_live_gpu_endpoint(
             timeout_s=LIVE_GPU_LAUNCH_TIMEOUT_S,
         )
         if result.returncode != 0:
-            errors.append(_format_attempt_error(accelerator, result.stdout, result.stderr))
+            errors.append(
+                _format_attempt_error(accelerator, result.stdout, result.stderr)
+            )
             _sky_down(sky_bin, cluster_name)
             continue
 
@@ -351,7 +366,9 @@ def _launch_live_gpu_endpoint(
             endpoint = _wait_for_endpoint(sky_bin, cluster_name)
         except AssertionError as exc:
             logs = _sky_logs(sky_bin, cluster_name)
-            errors.append(f"{accelerator} endpoint did not become healthy: {exc}\n{logs}")
+            errors.append(
+                f"{accelerator} endpoint did not become healthy: {exc}\n{logs}"
+            )
             _sky_down(sky_bin, cluster_name)
             continue
 
@@ -363,7 +380,9 @@ def _launch_live_gpu_endpoint(
             startup_log=startup_log,
         )
 
-    pytest.fail("No live GPU type could serve Qwen2-VL-7B via vLLM:\n" + "\n\n".join(errors))
+    pytest.fail(
+        "No live GPU type could serve Qwen2-VL-7B via vLLM:\n" + "\n\n".join(errors)
+    )
 
 
 def _existing_live_gpu_endpoint(sky_bin: str, cluster_name: str) -> LiveGpuEndpoint:
@@ -466,8 +485,7 @@ def _sky_down(sky_bin: str, cluster_name: str) -> None:
         return
     result = _run([sky_bin, "down", "--yes", cluster_name], timeout_s=600)
     print(
-        f"NPA_VLM_LIVE_SKY_DOWN cluster={cluster_name} "
-        f"returncode={result.returncode}"
+        f"NPA_VLM_LIVE_SKY_DOWN cluster={cluster_name} returncode={result.returncode}"
     )
 
 
@@ -584,7 +602,9 @@ def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:
 def test_select_rollout_frames_accepts_sample_ppm_fixture() -> None:
     dataset = load_benchmark_dataset(str(DEFAULT_SAMPLE_BENCHMARK_PATH))
 
-    selected = select_rollout_frames(dataset.items[0].rollout, frame_selection="keyframes", max_frames=4)
+    selected = select_rollout_frames(
+        dataset.items[0].rollout, frame_selection="keyframes", max_frames=4
+    )
 
     assert len(selected) == 1
     assert selected[0].media_type == "image/png"
@@ -626,7 +646,9 @@ class _FakeResp:
 
 
 _OK_PAYLOAD = {
-    "choices": [{"message": {"content": '{"success": true, "score": 0.9, "rationale": "ok"}'}}]
+    "choices": [
+        {"message": {"content": '{"success": true, "score": 0.9, "rationale": "ok"}'}}
+    ]
 }
 
 
@@ -683,7 +705,9 @@ def test_self_hosted_retains_server_model_without_inventing_identity(
     payload = dict(_OK_PAYLOAD)
     if served_model is not None:
         payload["model"] = served_model
-    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: payload)
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: payload
+    )
 
     result = _call_single("self-hosted")
 
@@ -694,9 +718,13 @@ def test_self_hosted_retains_server_model_without_inventing_identity(
 
 
 @pytest.mark.parametrize("served_model", ["", "  ", 123, {"name": "model"}])
-def test_self_hosted_rejects_invalid_server_model_identity(monkeypatch, served_model) -> None:
+def test_self_hosted_rejects_invalid_server_model_identity(
+    monkeypatch, served_model
+) -> None:
     payload = dict(_OK_PAYLOAD, model=served_model)
-    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: payload)
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: payload
+    )
 
     with pytest.raises(vlm_eval.VlmEvalError, match="model must be a nonempty string"):
         _call_single("self-hosted")

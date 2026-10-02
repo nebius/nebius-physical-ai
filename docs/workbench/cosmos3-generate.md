@@ -325,3 +325,16 @@ historical runs used the text guardrail plus RetinaFace postprocessing and must
 not be described as having passed generated-media content-safety screening.
 Current `generate` runs additionally require actual
 `VideoContentSafetyFilter` evaluation and an effective receipt.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

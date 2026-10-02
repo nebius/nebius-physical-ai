@@ -65,7 +65,9 @@ def run_cmd(
         "--source-format",
         help="Source format accepted by upstream SONIC preprocessors.",
     ),
-    embodiment: str = typer.Option("unitree-g1", "--embodiment", help="Target robot embodiment."),
+    embodiment: str = typer.Option(
+        "unitree-g1", "--embodiment", help="Target robot embodiment."
+    ),
     retarget_map: str = typer.Option(
         "",
         "--retarget-map",
@@ -77,7 +79,9 @@ def run_cmd(
         "--source-frame-rate",
         help="Source data frame rate in Hz; 0 lets the upstream converter use target FPS.",
     ),
-    max_frames: int = typer.Option(0, "--max-frames", help="Maximum frames to process; 0 means all."),
+    max_frames: int = typer.Option(
+        0, "--max-frames", help="Maximum frames to process; 0 means all."
+    ),
     individual: bool = typer.Option(
         True,
         "--individual/--combined",
@@ -90,8 +94,12 @@ def run_cmd(
         envvar="SONIC_HOME",
         help="Path to a GR00T-WholeBodyControl checkout; defaults to SONIC_HOME or auto-fetch.",
     ),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Plan the preprocess without writing outputs."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Plan the preprocess without writing outputs."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Retarget source motion artifacts into the SONIC embodiment schema."""
 
@@ -127,7 +135,9 @@ def workflow_cmd(
         envvar=DEFAULT_RETARGETING_IMAGE_ENV,
         help="Retargeting workflow image. Also settable with NPA_RETARGETING_IMAGE.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show the npa.workflow spec for retargeting."""
 
@@ -143,7 +153,9 @@ def workflow_cmd(
 
 @app.command("status")
 def status_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Show retargeting tool status."""
 
@@ -160,7 +172,9 @@ def status_cmd(
 
 @app.command("list")
 def list_cmd(
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """List supported retargeting source formats."""
 
@@ -168,7 +182,11 @@ def list_cmd(
 
 
 def _env_dry_run() -> bool:
-    return os.environ.get("NPA_DRY_RUN", "").lower() in {"1", "true", "yes"} or os.environ.get(
+    return os.environ.get("NPA_DRY_RUN", "").lower() in {
+        "1",
+        "true",
+        "yes",
+    } or os.environ.get(
         "DRY_RUN",
         "",
     ).lower() in {"1", "true", "yes"}

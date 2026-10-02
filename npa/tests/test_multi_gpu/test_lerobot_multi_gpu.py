@@ -32,7 +32,10 @@ def test_lerobot_byovm_multi_gpu_training(
     job_name = f"act-{requested_gpus}gpu-{unique_name}"
     output_uri = f"{s3_prefix}lerobot/{requested_gpus}gpu/checkpoint/"
     try:
-        run_npa(deploy_byovm_args("lerobot", byovm_target, name, requested_gpus), timeout=1800)
+        run_npa(
+            deploy_byovm_args("lerobot", byovm_target, name, requested_gpus),
+            timeout=1800,
+        )
         result = run_with_gpu_poll(
             [
                 *npa_args("lerobot", byovm_target, name),
@@ -64,6 +67,8 @@ def test_lerobot_byovm_multi_gpu_training(
 
         losses = parse_loss_values(result.stdout)
         if len(losses) >= 2:
-            assert losses[-1] <= losses[0], f"expected loss to decrease, got first={losses[0]} last={losses[-1]}"
+            assert losses[-1] <= losses[0], (
+                f"expected loss to decrease, got first={losses[0]} last={losses[-1]}"
+            )
     finally:
         cleanup_workbench(run_npa, "lerobot", byovm_target, name)

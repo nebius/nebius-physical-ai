@@ -26,10 +26,17 @@ def sources():
     return module
 
 
-@pytest.mark.parametrize("component", ["runtime", "source", "publication", "advisories"])
-@pytest.mark.parametrize("payload", [b"", b"artifact bytes", bytes(range(256)) * 8193],
-                         ids=["empty", "small", "multiple-chunks"])
-def test_file_hashes_all_bytes_without_file_digest(monkeypatch, tmp_path, sources, component, payload):
+@pytest.mark.parametrize(
+    "component", ["runtime", "source", "publication", "advisories"]
+)
+@pytest.mark.parametrize(
+    "payload",
+    [b"", b"artifact bytes", bytes(range(256)) * 8193],
+    ids=["empty", "small", "multiple-chunks"],
+)
+def test_file_hashes_all_bytes_without_file_digest(
+    monkeypatch, tmp_path, sources, component, payload
+):
     monkeypatch.delattr(hashlib, "file_digest", raising=False)
     path = tmp_path / "artifact"
     path.write_bytes(payload)
@@ -53,7 +60,9 @@ def test_stream_hash_consumes_short_reads_from_current_position(sources, compone
     payload = b"the complete remaining stream contents"
     stream = ShortReads(b"prefix" + payload)
     stream.seek(len(b"prefix"))
-    hash_stream = sources._stream_digest if component == "source" else process.stream_sha
+    hash_stream = (
+        sources._stream_digest if component == "source" else process.stream_sha
+    )
 
     assert hash_stream(stream) == hashlib.sha256(payload).hexdigest()
     assert stream.tell() == len(b"prefix" + payload)

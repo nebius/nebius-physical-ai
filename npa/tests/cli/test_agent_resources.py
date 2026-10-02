@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+import threading
+import time
 
+import pytest
+
+from npa.cli import agent_resources
 from npa.cli.agent_resources import (
     build_resource_inventory,
     category_payload,
@@ -11,10 +18,329 @@ from npa.cli.agent_resources import (
     format_resource_inventory,
     inventory_summary,
     merge_configured_references,
+    prepare_agent_cloud_environment,
+    run_bounded_agent_command,
+    run_resource_discovery_command,
 )
 
 
-def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(monkeypatch) -> None:
+class _Pipe:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _NeverExits:
+    def __init__(self, pid: int, barrier: threading.Barrier | None = None) -> None:
+        self.pid = pid
+        self.returncode = None
+        self.stdout = _Pipe()
+        self.stderr = _Pipe()
+        self.barrier = barrier
+        self.communicate_calls = 0
+        self.wait_calls = 0
+
+    def communicate(self, *, timeout: float):
+        self.communicate_calls += 1
+        if self.barrier is not None:
+            self.barrier.wait(timeout=2)
+        raise subprocess.TimeoutExpired(["nebius"], timeout)
+
+    def wait(self, *, timeout: float):
+        self.wait_calls += 1
+        self.returncode = -9
+        return self.returncode
+
+
+def _isolated_process_registry(monkeypatch) -> None:
+    monkeypatch.setattr(agent_resources, "_AGENT_ACTIVE_PROCESSES", {})
+    monkeypatch.setattr(agent_resources, "_AGENT_ABANDONED_PROCESS_GROUPS", {})
+    monkeypatch.setattr(agent_resources, "_AGENT_COMMAND_BREAKER_OPEN", False)
+    monkeypatch.setattr(agent_resources, "_AGENT_COMMAND_REAPER", None)
+    monkeypatch.setattr(
+        agent_resources,
+        "_agent_process_is_owned_child",
+        lambda process: process.returncode is None,
+    )
+
+
+def test_cloud_environment_requires_provenance_and_scrubs_ambient_tokens() -> None:
+    with pytest.raises(ValueError, match="credential source"):
+        prepare_agent_cloud_environment({"NEBIUS_IAM_TOKEN": "secret"})
+
+    environment, source = prepare_agent_cloud_environment(
+        {
+            "NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata",
+            "HOME": "/must-not-propagate",
+            "NEBIUS_CONFIG_DIR": "/must-not-propagate/.nebius",
+            "NEBIUS_ENDPOINT": "https://must-not-propagate.example",
+            "NEBIUS_PROFILE": "must-not-propagate",
+            "NEBIUS_IAM_TOKEN": "secret",
+            "NEBIUS_IAM_TOKEN_FILE": "/private/token",
+            "NPA_NEBIUS_IAM_TOKEN": "secret",
+            "NPA_NEBIUS_IAM_TOKEN_FILE": "/private/other-token",
+            "NPA_NEBIUS_CONFIG": "/must-not-propagate/config.yaml",
+            "NPA_NEBIUS_PROFILE": "must-not-propagate",
+            "NPA_REUSE_IAM_TOKEN": "1",
+            "TF_VAR_iam_token": "secret",
+            "IAM_TOKEN": "secret",
+        }
+    )
+
+    supported_keys = {
+        "IAM_TOKEN",
+        "NEBIUS_ENDPOINT",
+        "NEBIUS_IAM_TOKEN",
+        "NEBIUS_IAM_TOKEN_FILE",
+        "NPA_NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN_FILE",
+        "NPA_REUSE_IAM_TOKEN",
+        "TF_VAR_iam_token",
+    }
+    assert source == "instance_metadata"
+    assert environment["HOME"] == "/root"
+    assert environment["NEBIUS_CONFIG_DIR"] == "/root/.nebius"
+    assert environment["NEBIUS_PROFILE"] == "cursor-sa"
+    assert environment["NPA_NEBIUS_CONFIG"] == "/root/.nebius/config.yaml"
+    assert environment["NPA_NEBIUS_PROFILE"] == "cursor-sa"
+    assert agent_resources._AMBIENT_NEBIUS_AUTH_KEYS == supported_keys
+    assert supported_keys.isdisjoint(environment)
+
+
+def test_resource_discovery_rejects_unknown_source_and_scrubs_tokens(
+    monkeypatch,
+) -> None:
+    command = ["nebius", "--profile", "cursor-sa", "iam", "project", "list"]
+    assert run_resource_discovery_command(command, command_env={}) == (
+        2,
+        "",
+        "agent credential source is unavailable",
+    )
+    seen: dict[str, object] = {}
+
+    def bounded(argv, *, env, timeout_s):
+        seen.update(argv=list(argv), env=dict(env), timeout=timeout_s)
+        return subprocess.CompletedProcess(argv, 0, '{"items": []}', "")
+
+    monkeypatch.setattr(agent_resources, "run_bounded_agent_command", bounded)
+    environment = {
+        "NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata",
+        "NEBIUS_IAM_TOKEN": "must-not-propagate",
+    }
+
+    assert run_resource_discovery_command(command, command_env=environment) == (
+        0,
+        '{"items": []}',
+        "",
+    )
+    assert seen["timeout"] == 30
+    assert "NEBIUS_IAM_TOKEN" not in seen["env"]
+
+
+def test_bounded_command_times_out_without_waiting_and_opens_breaker(
+    monkeypatch,
+) -> None:
+    _isolated_process_registry(monkeypatch)
+    process = _NeverExits(981001)
+    starts = 0
+    killed: list[int] = []
+
+    def popen(*_args, **_kwargs):
+        nonlocal starts
+        starts += 1
+        return process
+
+    monkeypatch.setattr(agent_resources.subprocess, "Popen", popen)
+    monkeypatch.setattr(agent_resources, "_kill_agent_process_group", killed.append)
+    monkeypatch.setattr(agent_resources, "_start_agent_process_reaper", lambda: None)
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        run_bounded_agent_command(["nebius"], timeout_s=0.01)
+    with pytest.raises(TimeoutError, match="prior agent cloud command"):
+        run_bounded_agent_command(["nebius"], timeout_s=0.01)
+
+    assert starts == 1
+    assert process.communicate_calls == 1
+    assert killed == [process.pid]
+    assert process.stdout.closed and process.stderr.closed
+    assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is True
+
+
+def test_concurrent_timeouts_retain_every_process_group(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    barrier = threading.Barrier(2)
+    processes = [_NeverExits(981011, barrier), _NeverExits(981012, barrier)]
+    starts = iter(processes)
+    failures: list[type[BaseException]] = []
+
+    monkeypatch.setattr(
+        agent_resources.subprocess, "Popen", lambda *_args, **_kwargs: next(starts)
+    )
+    monkeypatch.setattr(agent_resources, "_kill_agent_process_group", lambda _pid: None)
+    monkeypatch.setattr(agent_resources, "_start_agent_process_reaper", lambda: None)
+
+    def invoke() -> None:
+        try:
+            run_bounded_agent_command(["nebius"], timeout_s=0.01)
+        except BaseException as exc:
+            failures.append(type(exc))
+
+    workers = [threading.Thread(target=invoke) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=3)
+
+    assert failures == [TimeoutError, TimeoutError]
+    assert set(agent_resources._AGENT_ABANDONED_PROCESS_GROUPS) == {
+        process.pid for process in processes
+    }
+
+
+def test_reaper_clears_breaker_only_after_process_groups_exit(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    process = _NeverExits(981021)
+    agent_resources._AGENT_ACTIVE_PROCESSES[process.pid] = process
+    agent_resources._AGENT_ABANDONED_PROCESS_GROUPS[process.pid] = process
+    agent_resources._AGENT_COMMAND_BREAKER_OPEN = True
+    exited = iter((False, True))
+
+    monkeypatch.setattr(
+        agent_resources,
+        "_agent_process_exited_without_reaping",
+        lambda _process: next(exited),
+    )
+    monkeypatch.setattr(
+        agent_resources,
+        "_agent_process_group_has_other_members",
+        lambda _group, _leader: False,
+    )
+    monkeypatch.setattr(agent_resources.time, "sleep", lambda _seconds: None)
+
+    agent_resources._reap_abandoned_agent_processes()
+
+    assert process.wait_calls == 1
+    assert agent_resources._AGENT_ABANDONED_PROCESS_GROUPS == {}
+    assert agent_resources._AGENT_ACTIVE_PROCESSES == {}
+    assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is False
+
+
+def test_reaper_thread_is_started_while_registry_lock_is_held(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    starts: list[bool] = []
+
+    class Reaper:
+        alive = False
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def start(self) -> None:
+            starts.append(agent_resources._AGENT_COMMAND_LOCK.locked())
+            self.alive = True
+
+    monkeypatch.setattr(
+        agent_resources.threading,
+        "Thread",
+        lambda **_kwargs: Reaper(),
+    )
+
+    agent_resources._start_agent_process_reaper()
+    agent_resources._start_agent_process_reaper()
+
+    assert starts == [True]
+
+
+def test_successful_completion_does_not_remove_reused_process_slot(
+    monkeypatch,
+) -> None:
+    _isolated_process_registry(monkeypatch)
+    replacement = _NeverExits(981031)
+
+    class Completed(_NeverExits):
+        def communicate(self, *, timeout):
+            agent_resources._AGENT_ACTIVE_PROCESSES[self.pid] = replacement
+            self.returncode = 0
+            return "{}", ""
+
+    process = Completed(replacement.pid)
+    monkeypatch.setattr(
+        agent_resources.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(
+        agent_resources,
+        "_agent_process_group_has_other_members",
+        lambda *_args: pytest.fail(
+            "completed leaders must not inspect reusable groups"
+        ),
+    )
+
+    result = run_bounded_agent_command(["nebius"], timeout_s=None)
+
+    assert result.returncode == 0
+    assert agent_resources._AGENT_ACTIVE_PROCESSES[process.pid] is replacement
+
+
+def test_pipe_close_failure_still_starts_reaper(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    process = _NeverExits(981041)
+    reaper_starts: list[bool] = []
+
+    def fail_close() -> None:
+        raise OSError("synthetic close failure")
+
+    process.stdout.close = fail_close
+    monkeypatch.setattr(
+        agent_resources.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(agent_resources, "_kill_agent_process_group", lambda _pid: None)
+    monkeypatch.setattr(
+        agent_resources,
+        "_start_agent_process_reaper",
+        lambda: reaper_starts.append(True),
+    )
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        run_bounded_agent_command(["nebius"], timeout_s=0.01)
+
+    assert reaper_starts == [True]
+    assert process.stderr.closed is True
+    assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is True
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Requires Linux waitid and procfs")
+def test_bounded_command_kills_and_reaps_real_descendant_group(monkeypatch) -> None:
+    _isolated_process_registry(monkeypatch)
+    child = (
+        "import subprocess, sys, time;"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+        "time.sleep(60)"
+    )
+    started = time.monotonic()
+
+    with pytest.raises(TimeoutError, match="timed out"):
+        run_bounded_agent_command(
+            [sys.executable, "-c", child],
+            timeout_s=0.1,
+        )
+
+    assert time.monotonic() - started < 2
+    deadline = time.monotonic() + 3
+    while agent_resources._AGENT_COMMAND_BREAKER_OPEN and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert agent_resources._AGENT_COMMAND_BREAKER_OPEN is False
+    assert agent_resources._AGENT_ABANDONED_PROCESS_GROUPS == {}
+
+
+def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(
+    monkeypatch,
+) -> None:
     configured = configured_k8s_backends(
         {
             "k8s_context": "customer-context",
@@ -36,12 +362,20 @@ def test_k8s_grounding_normalizes_legacy_config_and_live_node_groups(monkeypatch
             }
         )
 
-    monkeypatch.setattr("npa.cli.agent_resources.subprocess.run", lambda *_a, **_kw: Result())
-    discovered = discover_mk8s_accelerators("cluster-id", ["nebius"], {})
+    monkeypatch.setattr(
+        "npa.cli.agent_resources.run_bounded_agent_command",
+        lambda *_a, **_kw: Result(),
+    )
+    discovered = discover_mk8s_accelerators(
+        "cluster-id",
+        ["nebius"],
+        {"NPA_NEBIUS_CREDENTIAL_SOURCE": "instance_metadata"},
+    )
     assert discovered == {
         "available_accelerators": ["RTXPRO6000"],
         "gpu_platforms": ["cpu-d3", "gpu-rtx6000"],
         "gpu_accelerator": "RTXPRO6000",
+        "accelerator_discovery": {"status": "available"},
     }
 
 
@@ -65,7 +399,9 @@ def test_nested_k8s_grounding_keeps_secret_names_but_redacts_secret_values() -> 
     assert "registry_password" not in configured[0]["raw"]
 
 
-def test_build_inventory_prefers_metadata_profile_and_includes_local_resources() -> None:
+def test_build_inventory_prefers_metadata_profile_and_includes_local_resources() -> (
+    None
+):
     inventory = build_resource_inventory(
         config={
             "default_project": "demo",
@@ -80,7 +416,9 @@ def test_build_inventory_prefers_metadata_profile_and_includes_local_resources()
         env={"NEBIUS_PROFILE": "stale-profile", "NPA_AGENT_NAME": "paidf"},
         state={"latest_submit": {"run_id": "run-test"}},
         tool_refs=["workbench.cosmos_evaluator.evaluate", "workbench.fiftyone.curate"],
-        runner=_runner_for({"compute instance": {"items": [{"metadata": {"name": "paidf"}}]}}),
+        runner=_runner_for(
+            {"compute instance": {"items": [{"metadata": {"name": "paidf"}}]}}
+        ),
         generated_at="2026-08-09T00:00:00Z",
         metadata_token_available=True,
         force_refresh=True,
@@ -119,8 +457,12 @@ def test_discovers_non_empty_and_empty_categories_without_secrets() -> None:
         profile="cursor-sa",
         runner=_runner_for(
             {
-                "iam project": {"metadata": {"id": "project-test", "name": "demo-project"}},
-                "iam tenant": {"metadata": {"id": "tenant-test", "name": "demo-tenant"}},
+                "iam project": {
+                    "metadata": {"id": "project-test", "name": "demo-project"}
+                },
+                "iam tenant": {
+                    "metadata": {"id": "tenant-test", "name": "demo-tenant"}
+                },
                 "compute instance": {
                     "items": [
                         {
@@ -155,11 +497,23 @@ def test_permission_error_is_honest_and_keeps_configured_reference() -> None:
         project_id="project-test",
         tenant_id="tenant-test",
         profile="cursor-sa",
-        runner=lambda _command: (1, "", "PermissionDenied opaque-debug-token-should-not-leak"),
+        runner=lambda _command: (
+            1,
+            "",
+            "PermissionDenied opaque-debug-token-should-not-leak",
+        ),
     )
     categories = merge_configured_references(
         categories,
-        {"storage": [{"kind": "bucket", "name": "configured-bucket", "source": "staged_credentials"}]},
+        {
+            "storage": [
+                {
+                    "kind": "bucket",
+                    "name": "configured-bucket",
+                    "source": "staged_credentials",
+                }
+            ]
+        },
     )
     storage = next(item for item in categories if item["id"] == "storage")
     assert storage["status"] == "error"
@@ -175,11 +529,20 @@ def test_permission_error_is_honest_and_keeps_configured_reference() -> None:
 def test_category_states_and_summary_are_explicit() -> None:
     categories = [
         category_payload("a", "A", discovered=[{"name": "one"}]),
-        category_payload("b", "B", configured=[{"name": "two"}], discovery_attempted=False),
+        category_payload(
+            "b", "B", configured=[{"name": "two"}], discovery_attempted=False
+        ),
         category_payload("c", "C"),
-        category_payload("d", "D", error={"kind": "authentication_error", "message": "no"}),
+        category_payload(
+            "d", "D", error={"kind": "authentication_error", "message": "no"}
+        ),
     ]
-    assert [item["status"] for item in categories] == ["discovered", "configured", "empty", "error"]
+    assert [item["status"] for item in categories] == [
+        "discovered",
+        "configured",
+        "empty",
+        "error",
+    ]
     assert inventory_summary(categories) == {
         "categories": 4,
         "discovered_categories": 1,

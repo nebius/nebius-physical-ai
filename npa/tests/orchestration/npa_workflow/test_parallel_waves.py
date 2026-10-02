@@ -6,6 +6,8 @@ process.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import textwrap
 from pathlib import Path
 
@@ -125,7 +127,9 @@ def test_parallel_group_parses(parallel_spec) -> None:
         ("parallel: [shard-a, join]", "cannot be terminal"),
     ],
 )
-def test_parallel_validation_errors(tmp_path: Path, mutation: str, message: str) -> None:
+def test_parallel_validation_errors(
+    tmp_path: Path, mutation: str, message: str
+) -> None:
     text = PARALLEL_SPEC.replace("parallel: [shard-a, shard-b, shard-c]", mutation)
     with pytest.raises(NpaWorkflowError, match=message):
         load_spec(_write(tmp_path, text))
@@ -151,7 +155,7 @@ def test_parallel_and_sequence_are_exclusive(tmp_path: Path) -> None:
 
 def test_loop_on_parallel_group_rejected(tmp_path: Path) -> None:
     text = PARALLEL_SPEC.replace(
-        "    maxConcurrency: \"{{config.max_concurrency}}\"",
+        '    maxConcurrency: "{{config.max_concurrency}}"',
         "    loop:\n      max: 2",
     )
     with pytest.raises(NpaWorkflowError, match="loop is not supported directly"):
@@ -163,7 +167,9 @@ def test_max_concurrency_requires_parallel(tmp_path: Path) -> None:
         "  join:\n    description: Barrier",
         "  join:\n    maxConcurrency: 2\n    description: Barrier",
     )
-    with pytest.raises(NpaWorkflowError, match="maxConcurrency requires a parallel group"):
+    with pytest.raises(
+        NpaWorkflowError, match="maxConcurrency requires a parallel group"
+    ):
         load_spec(_write(tmp_path, text))
 
 
@@ -179,9 +185,12 @@ def test_bad_params_token_fails_validation(tmp_path: Path) -> None:
 def test_trigger_requires_work_on_the_same_state(tmp_path: Path) -> None:
     text = PARALLEL_SPEC.replace(
         "  join:\n    description: Barrier — aggregate every shard.",
-        "  join:\n    trigger:\n      uri: \"s3://{{config.bucket}}/inbox/\"\n"
+        '  join:\n    trigger:\n      uri: "s3://{{config.bucket}}/inbox/"\n'
         "    description: Barrier — aggregate every shard.",
-    ).replace("    toolRef: workbench.insights.ingest_run\n    resources: cpu\n    terminal: true", "    terminal: true")
+    ).replace(
+        "    toolRef: workbench.insights.ingest_run\n    resources: cpu\n    terminal: true",
+        "    terminal: true",
+    )
     with pytest.raises(NpaWorkflowError, match="trigger requires run or toolRef"):
         load_spec(_write(tmp_path, text))
 
@@ -189,7 +198,7 @@ def test_trigger_requires_work_on_the_same_state(tmp_path: Path) -> None:
 def test_trigger_parses_with_defaults(tmp_path: Path) -> None:
     text = PARALLEL_SPEC.replace(
         "  join:\n    description: Barrier — aggregate every shard.",
-        "  join:\n    trigger:\n      uri: \"s3://{{config.bucket}}/inbox/\"\n"
+        '  join:\n    trigger:\n      uri: "s3://{{config.bucket}}/inbox/"\n'
         "      pollSeconds: 5\n      maxPolls: 3\n"
         "    description: Barrier — aggregate every shard.",
     )
@@ -254,7 +263,9 @@ def test_wave_plan_groups_parallel_members(parallel_spec) -> None:
 
 
 def test_wave_plan_defaults_concurrency_to_group_size(tmp_path: Path) -> None:
-    text = PARALLEL_SPEC.replace('    maxConcurrency: "{{config.max_concurrency}}"\n', "")
+    text = PARALLEL_SPEC.replace(
+        '    maxConcurrency: "{{config.max_concurrency}}"\n', ""
+    )
     spec = load_spec(_write(tmp_path, text))
     wave = build_wave_plan(spec, run_id="p1").waves[0]
     assert wave.max_concurrency == 3
@@ -263,9 +274,7 @@ def test_wave_plan_defaults_concurrency_to_group_size(tmp_path: Path) -> None:
 
 def test_wave_plan_of_serial_spec_is_all_serial() -> None:
     repo_root = Path(__file__).resolve().parents[4]
-    spec = load_spec(
-        repo_root / "workflows" / "testing" / "bdd100k-pipeline.yaml"
-    )
+    spec = load_spec(repo_root / "workflows" / "testing" / "bdd100k-pipeline.yaml")
     wave_plan = build_wave_plan(spec, run_id="serial-1")
     assert {wave.kind for wave in wave_plan.waves} == {WAVE_SERIAL}
     assert all(len(wave.steps) == 1 for wave in wave_plan.waves)
@@ -297,7 +306,9 @@ def test_job_group_render_emits_parallel_header(parallel_spec) -> None:
     assert "/images/c/" in docs[3]["run"]
 
 
-def test_job_group_rejects_unsupported_model_task_name_before_submission(tmp_path) -> None:
+def test_job_group_rejects_unsupported_model_task_name_before_submission(
+    tmp_path,
+) -> None:
     spec = load_spec(_write(tmp_path, PARALLEL_SPEC.replace("shard-a", "model.v1")))
     wave = build_wave_plan(spec, run_id="p1").waves[0]
     with pytest.raises(NpaWorkflowRenderError, match="only ASCII letters"):
@@ -349,11 +360,9 @@ def test_serial_renderer_still_rejects_parallel_option(parallel_spec) -> None:
 
 # --------------------------------------------------------- field type failures
 #
-# NOTE: the shipped JSON Schema is only enforced at the document level — the
-# hand-rolled walker in schema_validation.py does not resolve `$ref`/`$defs`, so
-# `states.<name>.*` bodies have never been schema-checked. Type errors for the new
-# fields therefore have to raise (with an actionable message) from the Python
-# parser/validator, which is what these tests pin.
+# State shapes are checked in both the parser and the lightweight JSON Schema
+# walker. The parser runs first so these domain-specific failures retain an
+# actionable message instead of exposing schema implementation details.
 
 
 @pytest.mark.parametrize(
@@ -408,7 +417,7 @@ def test_non_mapping_trigger_is_rejected(tmp_path: Path) -> None:
 def test_trigger_numeric_fields_are_validated(tmp_path: Path, value: str) -> None:
     text = PARALLEL_SPEC.replace(
         "  join:\n    description: Barrier — aggregate every shard.",
-        "  join:\n    trigger:\n      uri: \"s3://{{config.bucket}}/inbox/\"\n"
+        '  join:\n    trigger:\n      uri: "s3://{{config.bucket}}/inbox/"\n'
         f"      {value}\n"
         "    description: Barrier — aggregate every shard.",
     )
@@ -433,6 +442,43 @@ def test_shipped_fanout_spec_wave_shape() -> None:
     # Each shard captions its own prefix (params overlay reached the argv).
     argvs = [" ".join(step.argv) for step in waves[0].steps]
     assert all(f"/images/shard-{letter}/" in argv for letter, argv in zip("abc", argvs))
+
+
+def test_cosmos_synth_fanout_has_one_parallel_wave_then_serial_stubs() -> None:
+    spec = load_spec(SHIPPED / "cosmos-synth-fanout-curation.yaml")
+    waves = build_wave_plan(spec, run_id="cosmos-fanout").waves
+
+    assert [(wave.kind, wave.name, len(wave.steps)) for wave in waves] == [
+        (WAVE_PARALLEL, "synth-fanout", 2),
+        (WAVE_SERIAL, "merge-index", 1),
+        (WAVE_SERIAL, "curate", 1),
+    ]
+    assert waves[0].max_concurrency == 2
+
+    rendered = render_skypilot_job_group_yaml(
+        spec,
+        waves[0].steps,
+        run_id="cosmos-fanout",
+        options=_render_options(),
+        name="cosmos-synth-shards",
+    )
+    assert_no_unresolved_placeholders(rendered)
+    docs = [doc for doc in yaml.safe_load_all(rendered) if doc is not None]
+    assert docs[0] == {"name": "cosmos-synth-shards", "execution": "parallel"}
+    assert [doc["name"] for doc in docs[1:]] == ["synth-shard-a", "synth-shard-b"]
+    for task, shard, other in ((docs[1], "a", "b"), (docs[2], "b", "a")):
+        assert f"/synthetic/shard-{shard}/" in task["run"]
+        assert f"/synthetic/shard-{other}/" not in task["run"]
+
+
+def test_cosmos_synth_fanout_rejects_mismatched_shard_override() -> None:
+    from npa.orchestration.npa_workflow.submit import merge_config_overrides
+
+    with pytest.raises(NpaWorkflowError, match="parallelCount resolves to 3"):
+        merge_config_overrides(
+            load_spec(SHIPPED / "cosmos-synth-fanout-curation.yaml"),
+            {"synth_shards": "3"},
+        )
 
 
 def test_shipped_sweep_spec_wave_shape() -> None:
@@ -502,7 +548,9 @@ def test_shipped_specs_render_without_placeholders(
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
     spec = load_spec(SHIPPED / name)
     plan = build_plan(spec, run_id="render-1", assume_decision="promote_checkpoint")
-    text = render_skypilot_yaml(spec, plan, run_id="render-1", options=_render_options())
+    text = render_skypilot_yaml(
+        spec, plan, run_id="render-1", options=_render_options()
+    )
     assert_no_unresolved_placeholders(text)
     docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
     assert docs[0]["execution"] == "serial"
@@ -510,11 +558,17 @@ def test_shipped_specs_render_without_placeholders(
     assert all(doc["run"].strip() for doc in docs[1:])
 
     # The parallel waves of the same plan render as a JobGroup.
-    for wave in build_wave_plan(spec, run_id="render-1", assume_decision="promote_checkpoint").waves:
+    for wave in build_wave_plan(
+        spec, run_id="render-1", assume_decision="promote_checkpoint"
+    ).waves:
         if wave.kind != WAVE_PARALLEL:
             continue
         group_text = render_skypilot_job_group_yaml(
-            spec, wave.steps, run_id="render-1", options=_render_options(), name=wave.name
+            spec,
+            wave.steps,
+            run_id="render-1",
+            options=_render_options(),
+            name=wave.name,
         )
         assert_no_unresolved_placeholders(group_text)
         group_docs = [doc for doc in yaml.safe_load_all(group_text) if doc is not None]
@@ -569,7 +623,9 @@ def test_stage_shell_gets_the_right_interpreter(parallel_spec) -> None:
     assert "${" not in run_script  # rendered YAML must stay placeholder-clean
 
 
-def test_staged_source_is_not_published_as_pythonpath(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_staged_source_is_not_published_as_pythonpath(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """PYTHONPATH must NOT be pre-set for staged source.
 
     Doing so was actively harmful on real GPUs: it let an interpreter without npa's
@@ -583,7 +639,10 @@ def test_staged_source_is_not_published_as_pythonpath(monkeypatch: pytest.Monkey
     spec = load_spec(SHIPPED / "token-factory-parallel-fanout.yaml")
     plan = build_plan(spec, run_id="env-1")
     text = render_skypilot_yaml(
-        spec, plan, run_id="env-1", options=SkypilotRenderOptions(image_overrides={"*": ""})
+        spec,
+        plan,
+        run_id="env-1",
+        options=SkypilotRenderOptions(image_overrides={"*": ""}),
     )
     docs = [doc for doc in yaml.safe_load_all(text) if doc is not None]
     for task in docs[1:]:
@@ -618,11 +677,46 @@ def test_setup_uses_uv_when_the_selected_environment_has_no_pip() -> None:
     from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
 
     setup = default_npa_setup()
-    pip_probe = setup.index('"$npa_install_python" -m pip --version')
-    uv_fallback = setup.index('uv pip install -q --python "$npa_install_python"')
+    pip_probe = setup.index('"$npa_setup_python" -m pip --version')
+    uv_fallback = setup.index('uv pip install -q --python "$npa_setup_python"')
     assert pip_probe < uv_fallback
-    assert 'npa_install_python="$(command -v python3)"' in setup
-    assert "python3 has no pip and uv is unavailable" in setup
+    assert 'npa_setup_python="${NPA_BAKED_PYTHON:-}"' in setup
+    assert 'npa_setup_python="$(command -v python3)"' in setup
+    assert "selected python has no pip and uv is unavailable" in setup
+
+
+def test_setup_pip_uses_a_working_baked_interpreter(tmp_path: Path) -> None:
+    """Isaac setup must not probe or mutate externally managed system Python."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    trace = tmp_path / "trace"
+    interpreter = '#!/bin/sh\nprintf \'%s:%s\\n\' "$0" "$*" >> "$TRACE"\nexit 0\n'
+    baked = binaries / "baked-python"
+    system = binaries / "python3"
+    baked.write_text(interpreter)
+    system.write_text(interpreter)
+    baked.chmod(0o700)
+    system.chmod(0o700)
+
+    setup = default_npa_setup()
+    start = setup.index('npa_setup_python="')
+    end = setup.index("if ! command -v npa")
+    script = "set -e\n" + setup[start:end] + "npa_pip_install example\n"
+    environment = {
+        **os.environ,
+        "NPA_BAKED_PYTHON": str(baked),
+        "PATH": str(binaries),
+        "TRACE": str(trace),
+    }
+    subprocess.run(["/bin/bash", "-c", script], env=environment, check=True)
+
+    calls = trace.read_text().splitlines()
+    assert calls
+    assert all(line.startswith(f"{baked}:") for line in calls)
+    assert not any(line.startswith(f"{system}:") for line in calls)
 
 
 def test_shipped_trigger_spec_reads_its_knobs_from_config() -> None:

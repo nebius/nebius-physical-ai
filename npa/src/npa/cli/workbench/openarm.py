@@ -484,9 +484,7 @@ def deploy_cmd(
     name: str = typer.Option("npa-openarm", "--name"),
     namespace: str = typer.Option("workbench", "--namespace"),
     kubeconfig: str = typer.Option("", "--kubeconfig"),
-    isaac_cache_pvc: str = typer.Option(
-        "npa-openarm-isaac-cache", "--isaac-cache-pvc"
-    ),
+    isaac_cache_pvc: str = typer.Option("npa-openarm-isaac-cache", "--isaac-cache-pvc"),
     gpu_type: GpuTypeOption = "rtxpro6000",
     node_selector_key: NodeSelectorKeyOption = "node.kubernetes.io/instance-type",
     node_selector_value: str = typer.Option("", "--node-selector-value"),

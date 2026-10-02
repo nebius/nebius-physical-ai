@@ -16,33 +16,65 @@ _PROFILES = {
 
 
 def _environment():
-    return {"python": sys.version.split()[0], "pillow": PIL.__version__,
-            "numpy": numpy.__version__,
-            "ffmpeg": subprocess.check_output(["ffmpeg", "-version"], text=True).splitlines()[0]}
+    return {
+        "python": sys.version.split()[0],
+        "pillow": PIL.__version__,
+        "numpy": numpy.__version__,
+        "ffmpeg": subprocess.check_output(
+            ["ffmpeg", "-version"], text=True
+        ).splitlines()[0],
+    }
 
 
 def _scene_inputs(scene, index, total, assets, profile, environment):
     return {
         "scene": {key: value for key, value in scene.items() if key != "narration"},
-        "index": index, "total": total, "profile": profile, "environment": environment,
-        "assets": {role: {key: value for key, value in assets[role].items() if key not in {"path", "provenance"}}
-                   for role in scene["assets"]},
-        "code": {name: _hash(_ROOT / name) for name in
-                 ["render.py", "graphics.py", "film_profiles.py", "fonts/Manrope.ttf",
-                  "brand/nebius-logo.png"]},
+        "index": index,
+        "total": total,
+        "profile": profile,
+        "environment": environment,
+        "assets": {
+            role: {
+                key: value
+                for key, value in assets[role].items()
+                if key not in {"path", "provenance"}
+            }
+            for role in scene["assets"]
+        },
+        "code": {
+            name: _hash(_ROOT / name)
+            for name in [
+                "render.py",
+                "graphics.py",
+                "film_profiles.py",
+                "fonts/Manrope.ttf",
+                "brand/nebius-logo.png",
+            ]
+        },
     }
 
 
 def _audio_inputs(scenes, voice_dir, environment, music_path=None):
-    return {"scenes": [{"duration": scene["duration"],
-                        "audio": _hash(voice_dir / f"{scene['id']}.mp3")}
-                       for scene in scenes],
-            "music_sha256": _hash(music_path) if music_path else None,
-            "code": _hash(_ROOT / "soundtrack.py"), "environment": environment}
+    return {
+        "scenes": [
+            {
+                "duration": scene["duration"],
+                "audio": _hash(voice_dir / f"{scene['id']}.mp3"),
+            }
+            for scene in scenes
+        ],
+        "music_sha256": _hash(music_path) if music_path else None,
+        "code": _hash(_ROOT / "soundtrack.py"),
+        "environment": environment,
+    }
 
 
 def _scaled_rectangle(rectangle, profile):
     scale = profile["width"] / 1920
     x, y, width, height = rectangle
-    return (round(x * scale), round(y * scale),
-            round(width * scale / 2) * 2, round(height * scale / 2) * 2)
+    return (
+        round(x * scale),
+        round(y * scale),
+        round(width * scale / 2) * 2,
+        round(height * scale / 2) * 2,
+    )

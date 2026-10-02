@@ -5,7 +5,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from npa.fleet.storage_resources import (
-    OWNER_LABEL, STORAGE_CLASS, STORAGE_DRIVER, StorageVerificationError,
+    OWNER_LABEL,
+    STORAGE_CLASS,
+    STORAGE_DRIVER,
+    StorageVerificationError,
 )
 
 
@@ -36,8 +39,10 @@ def storage_nodes(resources, cluster) -> list:
 
 
 def _require_ready_node(node) -> None:
-    ready = any(item.type == "Ready" and item.status == "True"
-                for item in node.status.conditions or [])
+    ready = any(
+        item.type == "Ready" and item.status == "True"
+        for item in node.status.conditions or []
+    )
     if not ready or node.spec.unschedulable or not node.metadata.uid:
         raise StorageVerificationError("worker_unhealthy")
     if not node.status.node_info.boot_id:
@@ -48,7 +53,11 @@ def _worker_role(node, cluster) -> str:
     labels = node.metadata.labels or {}
     matches = []
     for role, pool in (("cpu", cluster.cpu_nodes), ("gpu", cluster.gpu_nodes)):
-        if pool and pool.count and labels.get("node.kubernetes.io/instance-type") == pool.platform:
+        if (
+            pool
+            and pool.count
+            and labels.get("node.kubernetes.io/instance-type") == pool.platform
+        ):
             if labels.get("nebius.com/resource-preset") == pool.preset:
                 matches.append(role)
     if len(matches) != 1:
@@ -68,13 +77,20 @@ def verify_storage_driver(resources, nodes: list) -> str:
         StorageVerificationError: Default class or driver health is incomplete.
     """
     classes = resources.storage.list_storage_class().items
-    relevant = [item for item in classes if item.metadata.name == STORAGE_CLASS or _default_class(item)]
+    relevant = [
+        item
+        for item in classes
+        if item.metadata.name == STORAGE_CLASS or _default_class(item)
+    ]
     _retain_storage_evidence(resources, "StorageClassList", relevant)
     defaults = [item for item in classes if _default_class(item)]
     if len(defaults) != 1 or defaults[0].metadata.name != STORAGE_CLASS:
         raise StorageVerificationError("default_storage_class_mismatch")
     storage_class = defaults[0]
-    if storage_class.reclaim_policy != "Delete" or storage_class.provisioner != STORAGE_DRIVER:
+    if (
+        storage_class.reclaim_policy != "Delete"
+        or storage_class.provisioner != STORAGE_DRIVER
+    ):
         raise StorageVerificationError("storage_class_policy_mismatch")
     driver = resources.storage.read_csi_driver(storage_class.provisioner)
     _retain_storage_evidence(resources, "CSIDriver", driver)
@@ -83,8 +99,11 @@ def verify_storage_driver(resources, nodes: list) -> str:
     for node in nodes:
         registered = resources.storage.read_csi_node(node.metadata.name)
         _retain_storage_evidence(resources, "CSINode", registered)
-        matches = [item for item in registered.spec.drivers
-                   if item.name == storage_class.provisioner and item.node_id]
+        matches = [
+            item
+            for item in registered.spec.drivers
+            if item.name == storage_class.provisioner and item.node_id
+        ]
         if len(matches) != 1:
             raise StorageVerificationError("csi_worker_registration_missing")
     _verify_driver_workloads(resources, storage_class.provisioner, nodes)
@@ -92,19 +111,24 @@ def verify_storage_driver(resources, nodes: list) -> str:
 
 
 def _retain_storage_evidence(resources, kind: str, value) -> None:
-    resources.receipts.append({
-        "storage_component": kind,
-        "observed_at": datetime.now(timezone.utc).isoformat(),
-        "object": resources.api.sanitize_for_serialization(value),
-    })
+    resources.receipts.append(
+        {
+            "storage_component": kind,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+            "object": resources.api.sanitize_for_serialization(value),
+        }
+    )
 
 
 def _default_class(storage_class) -> bool:
     annotations = storage_class.metadata.annotations or {}
-    return any(annotations.get(name) == "true" for name in (
-        "storageclass.kubernetes.io/is-default-class",
-        "storageclass.beta.kubernetes.io/is-default-class",
-    ))
+    return any(
+        annotations.get(name) == "true"
+        for name in (
+            "storageclass.kubernetes.io/is-default-class",
+            "storageclass.beta.kubernetes.io/is-default-class",
+        )
+    )
 
 
 def _verify_driver_workloads(resources, driver: str, nodes: list) -> None:
@@ -125,26 +149,36 @@ def _verify_driver_workloads(resources, driver: str, nodes: list) -> None:
 
 
 def _driver_pod(pod, driver: str) -> bool:
-    return any(driver in " ".join((container.args or []) + (container.command or []))
-               or "csi-mounted-fs-path" in container.image
-               for container in pod.spec.containers)
+    return any(
+        driver in " ".join((container.args or []) + (container.command or []))
+        or "csi-mounted-fs-path" in container.image
+        for container in pod.spec.containers
+    )
 
 
 def _verify_driver_owner(resources, pod) -> None:
-    owners = [owner for owner in pod.metadata.owner_references or [] if owner.controller]
+    owners = [
+        owner for owner in pod.metadata.owner_references or [] if owner.controller
+    ]
     if len(owners) != 1 or owners[0].kind != "DaemonSet":
         raise StorageVerificationError("csi_owner_mismatch")
     owner = owners[0]
-    daemon = resources.apps.read_namespaced_daemon_set(owner.name, pod.metadata.namespace)
+    daemon = resources.apps.read_namespaced_daemon_set(
+        owner.name, pod.metadata.namespace
+    )
     _retain_storage_evidence(resources, "DaemonSet", daemon)
     status = daemon.status
-    valid = (daemon.metadata.uid == owner.uid and not daemon.metadata.deletion_timestamp
-             and status.observed_generation == daemon.metadata.generation
-             and status.desired_number_scheduled > 0
-             and status.updated_number_scheduled == status.desired_number_scheduled
-             and status.number_ready == status.desired_number_scheduled
-             and status.number_available == status.desired_number_scheduled
-             and not status.number_unavailable and not status.number_misscheduled)
+    valid = (
+        daemon.metadata.uid == owner.uid
+        and not daemon.metadata.deletion_timestamp
+        and status.observed_generation == daemon.metadata.generation
+        and status.desired_number_scheduled > 0
+        and status.updated_number_scheduled == status.desired_number_scheduled
+        and status.number_ready == status.desired_number_scheduled
+        and status.number_available == status.desired_number_scheduled
+        and not status.number_unavailable
+        and not status.number_misscheduled
+    )
     if not valid:
         raise StorageVerificationError("csi_generation_unhealthy")
 
@@ -162,7 +196,8 @@ def verify_bound_claim(resources, claim, driver: str):
         StorageVerificationError: Claim binding, ownership, or driver differs.
     """
     current = resources.core.read_namespaced_persistent_volume_claim(
-        claim.metadata.name, resources.namespace,
+        claim.metadata.name,
+        resources.namespace,
     )
     if current.metadata is None or current.status is None or current.spec is None:
         raise StorageVerificationError("pvc_binding_mismatch")
@@ -170,7 +205,10 @@ def verify_bound_claim(resources, claim, driver: str):
         raise StorageVerificationError("pvc_binding_mismatch")
     if current.spec.storage_class_name != STORAGE_CLASS:
         raise StorageVerificationError("pvc_default_class_mismatch")
-    if "ReadWriteMany" not in (current.status.access_modes or []) or not current.spec.volume_name:
+    if (
+        "ReadWriteMany" not in (current.status.access_modes or [])
+        or not current.spec.volume_name
+    ):
         raise StorageVerificationError("pvc_rwx_missing")
     volume = resources.core.read_persistent_volume(current.spec.volume_name)
     if volume.metadata is None or volume.spec is None:
@@ -178,7 +216,10 @@ def verify_bound_claim(resources, claim, driver: str):
     reference = volume.spec.claim_ref
     if not reference or reference.uid != claim.metadata.uid:
         raise StorageVerificationError("volume_claim_identity_mismatch")
-    if reference.name != claim.metadata.name or reference.namespace != resources.namespace:
+    if (
+        reference.name != claim.metadata.name
+        or reference.namespace != resources.namespace
+    ):
         raise StorageVerificationError("volume_claim_identity_mismatch")
     if not volume.spec.csi or volume.spec.csi.driver != driver:
         raise StorageVerificationError("volume_driver_mismatch")
@@ -193,9 +234,14 @@ def _verify_claim_metadata(resources, claim, volume) -> None:
         raise StorageVerificationError("ownership_mismatch")
     if claim.metadata.deletion_timestamp or volume.metadata.deletion_timestamp:
         raise StorageVerificationError("pvc_binding_mismatch")
-    if volume.spec.storage_class_name != STORAGE_CLASS or "ReadWriteMany" not in (volume.spec.access_modes or []):
+    if volume.spec.storage_class_name != STORAGE_CLASS or "ReadWriteMany" not in (
+        volume.spec.access_modes or []
+    ):
         raise StorageVerificationError("volume_driver_mismatch")
-    if volume.spec.volume_mode not in {None, "Filesystem"} or not volume.spec.csi.volume_handle:
+    if (
+        volume.spec.volume_mode not in {None, "Filesystem"}
+        or not volume.spec.csi.volume_handle
+    ):
         raise StorageVerificationError("volume_driver_mismatch")
 
 
@@ -208,8 +254,12 @@ def require_unchanged_nodes(before: list, after: list) -> None:
     Raises:
         StorageVerificationError: Immutable worker or boot identity changed.
     """
+
     def identities(nodes):
-        return {(node.metadata.name, node.metadata.uid, node.status.node_info.boot_id)
-                for node in nodes}
+        return {
+            (node.metadata.name, node.metadata.uid, node.status.node_info.boot_id)
+            for node in nodes
+        }
+
     if identities(before) != identities(after):
         raise StorageVerificationError("stale_worker_evidence")

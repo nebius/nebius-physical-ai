@@ -56,8 +56,13 @@ def test_preamble_starts_waits_and_tears_down() -> None:
     assert "/v1/models" in preamble
     assert "expected_model not in model_ids" in preamble
     assert "vLLM server models:" in preamble
-    expected_attempts = DEFAULT_VLM_SERVER_READY_SECONDS // VLM_SERVER_POLL_INTERVAL_SECONDS
-    assert f"attempts, interval = {expected_attempts}, {VLM_SERVER_POLL_INTERVAL_SECONDS}" in preamble
+    expected_attempts = (
+        DEFAULT_VLM_SERVER_READY_SECONDS // VLM_SERVER_POLL_INTERVAL_SECONDS
+    )
+    assert (
+        f"attempts, interval = {expected_attempts}, {VLM_SERVER_POLL_INTERVAL_SECONDS}"
+        in preamble
+    )
 
 
 def test_ready_window_is_configurable_and_validated() -> None:
@@ -115,7 +120,9 @@ def test_flashinfer_sampler_can_be_opted_back_in() -> None:
     assert "export VLLM_USE_FLASHINFER_SAMPLER=1" in preamble
 
 
-def test_setup_installs_ninja_for_the_jit_compiler(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_setup_installs_ninja_for_the_jit_compiler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/prefix/npa")
     spec = load_spec(SPECS / "vlm-eval-single.yaml")
     plan = build_plan(spec, run_id="render-check")
@@ -155,7 +162,7 @@ def test_preamble_round_trips_as_a_top_level_setup_program() -> None:
     document = yaml.safe_load(rendered)
 
     assert document["setup"] == preamble
-    assert '${npa_vlm_model}' not in document["setup"]
+    assert "${npa_vlm_model}" not in document["setup"]
     assert '"$npa_vlm_model"' in document["setup"]
 
 
@@ -197,7 +204,9 @@ def test_preamble_is_scoped_to_self_hosted_vlm_stages(
 def test_run_script_places_the_preamble_after_the_interpreter_shim() -> None:
     """The server must start with the same python3 the command will use."""
 
-    script = render_task_run_script(["npa", "workbench", "vlm-eval", "run"], preamble="PREAMBLE\n")
+    script = render_task_run_script(
+        ["npa", "workbench", "vlm-eval", "run"], preamble="PREAMBLE\n"
+    )
 
     assert "PREAMBLE" in script
     assert script.index("/tmp/npa-python") < script.index("PREAMBLE")
@@ -209,7 +218,9 @@ def test_run_script_without_a_preamble_is_unchanged() -> None:
 
     command = ["npa", "workbench", "mjlab", "eval"]
 
-    assert render_task_run_script(command) == render_task_run_script(command, preamble="")
+    assert render_task_run_script(command) == render_task_run_script(
+        command, preamble=""
+    )
 
 
 def test_shipped_self_hosted_spec_renders_a_server_start(
@@ -233,7 +244,9 @@ def test_shipped_self_hosted_spec_renders_a_server_start(
     run_script = docs[1]["run"]
     assert 'vllm serve "$npa_vlm_model"' in run_script
     assert "npa workbench vlm-eval run" in run_script
-    assert run_script.index("vllm serve") < run_script.index("npa workbench vlm-eval run")
+    assert run_script.index("vllm serve") < run_script.index(
+        "npa workbench vlm-eval run"
+    )
     assert_no_unresolved_placeholders(text)
 
 

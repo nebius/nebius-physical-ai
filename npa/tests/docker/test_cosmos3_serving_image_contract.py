@@ -53,12 +53,22 @@ def _instructions() -> str:
 
 
 @pytest.mark.parametrize("tamper", [False, True])
-def test_real_bootstrap_verifier_matches_current_lock_and_rejects_changed_bytes(tmp_path, monkeypatch, tamper):
+def test_real_bootstrap_verifier_matches_current_lock_and_rejects_changed_bytes(
+    tmp_path, monkeypatch, tamper
+):
     module = _module("serving_bootstrap_verifier", IMAGE_DIR / "verify_env.py")
     lock = tmp_path / "requirements.lock"
     lock.write_bytes(LOCK.read_bytes() + (b"\n# changed bytes\n" if tamper else b""))
-    monkeypatch.setenv("NPA_COSMOS3_CLOSURE_SHA256", hashlib.sha256(LOCK.read_bytes()).hexdigest())
-    monkeypatch.setattr(module, "Path", lambda name: lock if name.endswith("requirements.lock") else tmp_path / "absent")
+    monkeypatch.setenv(
+        "NPA_COSMOS3_CLOSURE_SHA256", hashlib.sha256(LOCK.read_bytes()).hexdigest()
+    )
+    monkeypatch.setattr(
+        module,
+        "Path",
+        lambda name: (
+            lock if name.endswith("requirements.lock") else tmp_path / "absent"
+        ),
+    )
 
     def unavailable(package):
         raise module.metadata.PackageNotFoundError(package)
@@ -81,7 +91,10 @@ def test_source_base_and_dependency_closure_are_immutable() -> None:
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in text
     assert SOURCE_REVISION in text
     assert SOURCE_SHA256 in text
-    assert f"ARG COSMOS3_CLOSURE_SHA256={hashlib.sha256(LOCK.read_bytes()).hexdigest()}" in text
+    assert (
+        f"ARG COSMOS3_CLOSURE_SHA256={hashlib.sha256(LOCK.read_bytes()).hexdigest()}"
+        in text
+    )
     assert "e0262be9d8f7586bc24c069a2aed2b665bdff266" in text
     assert "cf03c0395fac8c4de386c0bdab12cc4fc8d66362" in text
     bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
@@ -344,6 +357,5 @@ def test_built_payload_scanner_rejects_old_vendor_base_and_license(
     baked_closure = tmp_path / "baked-closure.tar"
     _docker_save(baked_closure, layer_paths=["usr/local/bin/vllm"])
     assert (
-        scanner.scan_tarball(baked_closure)["verdict"]
-        == "restricted-payload-detected"
+        scanner.scan_tarball(baked_closure)["verdict"] == "restricted-payload-detected"
     )

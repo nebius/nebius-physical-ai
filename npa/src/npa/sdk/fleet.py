@@ -66,8 +66,15 @@ from npa.fleet.spec import (
 )
 
 
-def verify_storage(spec, *, only_projects=None, only_clusters=None,
-                   project_prefix=None, profile=None, evidence_dir=None) -> dict:
+def verify_storage(
+    spec,
+    *,
+    only_projects=None,
+    only_clusters=None,
+    project_prefix=None,
+    profile=None,
+    evidence_dir=None,
+) -> dict:
     """Verify every selected worker through the shared Fleet storage implementation.
 
     Args:
@@ -84,14 +91,28 @@ def verify_storage(spec, *, only_projects=None, only_clusters=None,
     """
     from npa.fleet.storage_verification import verify_storage as verify
 
-    return verify(spec, only_projects=only_projects, only_clusters=only_clusters,
-                  project_prefix=project_prefix, profile=profile, evidence_dir=evidence_dir)
+    return verify(
+        spec,
+        only_projects=only_projects,
+        only_clusters=only_clusters,
+        project_prefix=project_prefix,
+        profile=profile,
+        evidence_dir=evidence_dir,
+    )
 
 
-def verify_graphics(spec, *, only_projects=None, only_clusters=None,
-                    project_prefix=None, profile=None, evidence_dir=None,
-                    concurrency=1, stabilization_seconds=None,
-                    timeout_minutes=None) -> dict:
+def verify_graphics(
+    spec,
+    *,
+    only_projects=None,
+    only_clusters=None,
+    project_prefix=None,
+    profile=None,
+    evidence_dir=None,
+    concurrency=1,
+    stabilization_seconds=None,
+    timeout_minutes=None,
+) -> dict:
     """Qualify CUDA and graphics readiness on every selected RTX worker.
 
     Args:
@@ -112,11 +133,18 @@ def verify_graphics(spec, *, only_projects=None, only_clusters=None,
     """
     from npa.fleet.graphics_verification import verify_graphics as verify
 
-    return verify(spec, only_projects=only_projects, only_clusters=only_clusters,
-                  project_prefix=project_prefix, profile=profile,
-                  evidence_dir=evidence_dir, concurrency=concurrency,
-                  stabilization_seconds=stabilization_seconds,
-                  timeout_minutes=timeout_minutes)
+    return verify(
+        spec,
+        only_projects=only_projects,
+        only_clusters=only_clusters,
+        project_prefix=project_prefix,
+        profile=profile,
+        evidence_dir=evidence_dir,
+        concurrency=concurrency,
+        stabilization_seconds=stabilization_seconds,
+        timeout_minutes=timeout_minutes,
+    )
+
 
 __all__ = [
     "deploy",

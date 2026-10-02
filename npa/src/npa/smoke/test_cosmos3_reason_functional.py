@@ -41,7 +41,9 @@ def check_reason_cache_wiring() -> _WiringResult:
         return _WiringResult("reason cli wiring", False, str(exc))
     if not hasattr(cosmos3_cli, "app"):
         return _WiringResult("reason cli wiring", False, "missing cosmos3 Typer app")
-    return _WiringResult("reason cli wiring", True, "npa.workbench.cosmos.reason.run_cosmos_reason_vlm")
+    return _WiringResult(
+        "reason cli wiring", True, "npa.workbench.cosmos.reason.run_cosmos_reason_vlm"
+    )
 
 
 def _synthetic_frames(n: int = 2) -> list[Path]:
@@ -89,7 +91,10 @@ def main() -> int:
         print(f"[FAIL] cosmos-reason inference: {exc}")
         return 1
 
-    if not isinstance(payload, dict) or payload.get("component_source") != "cosmos_reason_vlm":
+    if (
+        not isinstance(payload, dict)
+        or payload.get("component_source") != "cosmos_reason_vlm"
+    ):
         print(f"[FAIL] unexpected reason payload: {payload!r}")
         return 1
     # A real judgment carries a score and a success verdict.

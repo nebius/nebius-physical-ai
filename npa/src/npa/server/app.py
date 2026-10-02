@@ -37,10 +37,13 @@ LOG_DIR = os.environ.get("NPA_LOG_DIR", "/var/log/npa-lerobot")
 # S3 credentials (for checkpoint pulls)
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
 AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
-AWS_ENDPOINT_URL = os.environ.get("AWS_ENDPOINT_URL", os.environ.get("NEBIUS_S3_ENDPOINT", ""))
+AWS_ENDPOINT_URL = os.environ.get(
+    "AWS_ENDPOINT_URL", os.environ.get("NEBIUS_S3_ENDPOINT", "")
+)
 
 
 # ── In-process policy state ───────────────────────────────────────────────
+
 
 class PolicyState:
     """Holds the loaded LeRobot policy, preprocessor, and postprocessor in-process."""
@@ -82,6 +85,7 @@ class PolicyState:
             env_cfg = None
             if env_type:
                 from lerobot.envs.configs import EnvConfig
+
                 # EnvConfig is abstract with registered subclasses (e.g. "aloha" → AlohaEnv)
                 env_cls = EnvConfig.get_choice_class(env_type)
                 kwargs = {}
@@ -143,9 +147,7 @@ class PolicyState:
             from lerobot.policies.utils import prepare_observation_for_inference
 
             # Convert numpy observation to tensors on device
-            obs_tensors = prepare_observation_for_inference(
-                observation, self.device
-            )
+            obs_tensors = prepare_observation_for_inference(observation, self.device)
 
             # Run preprocessor pipeline (normalization, etc.)
             obs_tensors = self.preprocessor(obs_tensors)
@@ -171,6 +173,7 @@ policy_state = PolicyState()
 
 
 # ── Checkpoint resolution ─────────────────────────────────────────────────
+
 
 def _resolve_checkpoint(checkpoint: str) -> str:
     """Resolve a checkpoint reference to a local path.
@@ -255,6 +258,7 @@ def _pull_from_s3(uri: str) -> str:
 
 # ── Observation parsing ───────────────────────────────────────────────────
 
+
 def _parse_observation(raw: dict[str, Any]) -> dict[str, np.ndarray]:
     """Convert a JSON observation payload to a dict of numpy arrays.
 
@@ -283,11 +287,14 @@ def _parse_observation(raw: dict[str, Any]) -> dict[str, np.ndarray]:
         elif isinstance(value, (int, float)):
             observation[key] = np.array([value], dtype=np.float32)
         else:
-            raise ValueError(f"Unsupported observation type for key '{key}': {type(value)}")
+            raise ValueError(
+                f"Unsupported observation type for key '{key}': {type(value)}"
+            )
     return observation
 
 
 # ── Job status helpers ────────────────────────────────────────────────────
+
 
 def _read_jobs() -> list[dict[str, Any]]:
     status_dir = Path(JOB_STATUS_DIR)
@@ -303,6 +310,7 @@ def _read_jobs() -> list[dict[str, Any]]:
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────
+
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -335,8 +343,12 @@ async def get_status():
         "policy_server": {
             "running": policy_state.loaded,
             "checkpoint": policy_state.checkpoint,
-            "uptime_seconds": round(time.time() - policy_state.loaded_at, 1) if policy_state.loaded else 0,
-            "policy_class": type(policy_state.policy).__name__ if policy_state.loaded else None,
+            "uptime_seconds": round(time.time() - policy_state.loaded_at, 1)
+            if policy_state.loaded
+            else 0,
+            "policy_class": type(policy_state.policy).__name__
+            if policy_state.loaded
+            else None,
             "device": str(policy_state.device) if policy_state.device else None,
         },
         "jobs": _read_jobs(),
@@ -350,7 +362,9 @@ async def start_serve(req: ServeRequest):
     try:
         local_path = _resolve_checkpoint(req.checkpoint)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Checkpoint resolution failed: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Checkpoint resolution failed: {exc}"
+        )
 
     try:
         policy_state.load(local_path, env_type=req.env_type, env_task=req.env_task)
@@ -384,7 +398,9 @@ async def run_infer(observation: dict[str, Any]):
     try:
         obs_arrays = _parse_observation(observation)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Invalid observation payload: {exc}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid observation payload: {exc}"
+        )
 
     try:
         start = time.time()

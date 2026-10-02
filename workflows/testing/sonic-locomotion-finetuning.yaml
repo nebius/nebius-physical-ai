@@ -1,32 +1,24 @@
 apiVersion: npa.workflow/v0.0.1
 kind: Workflow
-
 metadata:
   name: sonic-locomotion-finetuning
-  description: Retarget motion, train SONIC, then score with MJLab.
-
+  description: Retarget motion, train SONIC, export and evaluate its native ONNX policy.
 config:
   bucket: example-bucket
-  prefix: "runs/{{run.id}}/sonic-locomotion"
+  prefix: runs/{{run.id}}/sonic-locomotion
   embodiment: unitree-g1
   source_format: auto
-  # Train inside this workflow's own GPU stage; see sonic-train.yaml.
   sonic_runtime: local
-  # NVIDIA's Omniverse / Isaac Sim / Software licence terms. `--runtime local` runs the SONIC
-  # image's own trainer when present, and that trainer refuses to download Isaac Sim / Isaac Lab
-  # until this is given — without it the run falls back to the reference trainer.
-  # Empty means NOT accepted; set it to `yes` to accept.
-  train_iterations: "40"
-  suite: locomotion
-  episodes: "8"
-  checkpoint_uri: "{{config.training_uri}}checkpoint.pt"
-  data_uri: "s3://{{config.bucket}}/{{config.prefix}}/data/"
-
-  motion_uri: "s3://{{config.bucket}}/{{config.prefix}}/source/"
-  retargeted_uri: "s3://{{config.bucket}}/{{config.prefix}}/retargeted/"
-  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/training/"
-  mjlab_uri: "s3://{{config.bucket}}/{{config.prefix}}/mjlab/"
-
+  train_iterations: '40'
+  episodes: '8'
+  checkpoint_uri: '{{config.training_uri}}checkpoint.pt'
+  data_uri: s3://{{config.bucket}}/{{config.prefix}}/data/
+  motion_uri: s3://{{config.bucket}}/{{config.prefix}}/source/
+  retargeted_uri: s3://{{config.bucket}}/{{config.prefix}}/retargeted/
+  training_uri: s3://{{config.bucket}}/{{config.prefix}}/training/
+  env: flat
+  onnx_uri: '{{config.training_uri}}policy.onnx'
+  eval_uri: s3://{{config.bucket}}/{{config.prefix}}/eval.json
 resources:
   cpu:
     cloud: kubernetes
@@ -37,35 +29,39 @@ resources:
     accelerators: H100:1
     cpus: 16
     memory: 80Gi
-
 initial: retarget
-
 states:
   retarget:
     description: Retarget source motion into the SONIC embodiment schema.
     toolRef: workbench.retargeting.run
     resources: cpu
     outputs:
-      # `retargeting run` writes retargeting_result.json; declaring manifest.json made the
-      # stage SUCCEED while the declared artifact did not exist (test_spec_declared_outputs).
-      - uri: "{{config.retargeted_uri}}retargeting_result.json"
+    - uri: '{{config.retargeted_uri}}retargeting_result.json'
     next: train
-
   train:
     description: Train or smoke-validate a SONIC locomotion policy.
-    needs: [retarget]
+    needs:
+    - retarget
     toolRef: workbench.sonic.train
     resources: gpu
     outputs:
-      - uri: "{{config.training_uri}}checkpoint.json"
-    next: mjlab
-
-  mjlab:
-    description: Score the trained checkpoint with MJLab metrics.
-    needs: [train]
-    toolRef: workbench.mjlab.eval
+    - uri: '{{config.checkpoint_uri}}'
+    next: export
+  export:
+    description: Export the native SONIC policy to ONNX.
+    needs:
+    - train
+    toolRef: workbench.sonic.export
     resources: gpu
     outputs:
-      # `mjlab eval` writes mjlab_eval.json, not report.json.
-      - uri: "{{config.mjlab_uri}}mjlab_eval.json"
+    - uri: '{{config.onnx_uri}}'
+    next: evaluate
+  evaluate:
+    description: Evaluate the native SONIC ONNX policy.
+    needs:
+    - export
+    toolRef: workbench.sonic.eval
+    resources: gpu
+    outputs:
+    - uri: '{{config.eval_uri}}'
     terminal: true

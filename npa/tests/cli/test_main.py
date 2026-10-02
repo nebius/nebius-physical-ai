@@ -182,7 +182,7 @@ def _stub_nebius_defaults(
 
     def _set_profile_project(project_id, tenant_id=""):
         bound.append((project_id, tenant_id))
-        return True
+        return nebius_module.ProfileMutationResult.UPDATED
 
     monkeypatch.setattr(nebius_module, "set_profile_project", _set_profile_project)
     return bound
@@ -1008,9 +1008,7 @@ def test_configure_explains_why_discovery_was_skipped(monkeypatch, tmp_path) -> 
     )
 
     # manual: tenant, project, region, profile-bind(n), bucket, tokens
-    answers = "\n".join(
-        ["tenant-x", "project-x", "", "n", "b", "", "", ""]
-    ) + "\n"
+    answers = "\n".join(["tenant-x", "project-x", "", "n", "b", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1080,14 +1078,114 @@ def test_configure_binds_nebius_profile_to_selected_project(
         },
     )
 
-    answers = "\n".join(
-        ["tenant-x", "project-x", "", "", "b", "", "", "", ""]
-    ) + "\n"
+    answers = "\n".join(["tenant-x", "project-x", "", "", "b", "", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
     assert bound == [("project-x", "tenant-x")]
     assert "now points at project-x" in result.output
+
+
+@pytest.mark.parametrize(
+    ("mutation_result", "expected"),
+    [
+        (
+            "restored",
+            "The previous profile values were restored and verified.",
+        ),
+        ("partial", "may be partially updated and requires repair"),
+    ],
+)
+def test_interactive_profile_binding_reports_recovery_state(
+    monkeypatch, capsys, mutation_result, expected
+) -> None:
+    import npa.clients.nebius as nebius_module
+
+    client = SimpleNamespace(
+        current_project_id=lambda: "project-old",
+        current_tenant_id=lambda: "tenant-old",
+        set_profile_project=lambda *_args: nebius_module.ProfileMutationResult(
+            mutation_result
+        ),
+        ProfileMutationResult=nebius_module.ProfileMutationResult,
+    )
+
+    updated = cli_main._offer_profile_binding(
+        client,
+        lambda *_args, **_kwargs: "y",
+        project_id="project-new",
+        tenant_id="tenant-new",
+    )
+
+    assert updated is False
+    assert expected in capsys.readouterr().out
+
+
+def _stub_noninteractive_profile_binding(monkeypatch, tmp_path, mutation_result):
+    import npa.clients.nebius as nebius_module
+
+    _fresh_configure_paths(monkeypatch, tmp_path)
+    monkeypatch.setattr(nebius_module, "get_iam_token", lambda: "synthetic-token")
+    monkeypatch.setattr(
+        "npa.clients.project_credential_store.project_credential_record",
+        lambda _project_id: {},
+    )
+    monkeypatch.setattr(
+        cli_main,
+        "_provision_object_storage",
+        lambda *_args, **_kwargs: {
+            "aws_access_key_id": "synthetic-access",
+            "aws_secret_access_key": "synthetic-secret",
+            "bucket": "s3://synthetic-bucket/",
+            "endpoint_url": "https://storage.example.invalid",
+            "_validated": "true",
+        },
+    )
+    monkeypatch.setattr(
+        nebius_module,
+        "set_profile_project",
+        lambda *_args: nebius_module.ProfileMutationResult(mutation_result),
+    )
+    monkeypatch.setattr(cli_main, "_saved_model_access_note", lambda: "access checked")
+
+
+@pytest.mark.parametrize(
+    ("mutation_result", "expected"),
+    [
+        (
+            "restored",
+            "The previous profile values were restored and verified.",
+        ),
+        ("partial", "may be partially updated and requires repair"),
+    ],
+)
+def test_noninteractive_profile_binding_reports_recovery_state(
+    monkeypatch, tmp_path, mutation_result, expected
+) -> None:
+    _stub_noninteractive_profile_binding(monkeypatch, tmp_path, mutation_result)
+
+    result = runner.invoke(
+        app,
+        [
+            "configure",
+            "--no-interactive",
+            "--provision",
+            "--tenant-id",
+            "tenant-synthetic",
+            "--project-id",
+            "project-synthetic",
+            "--region",
+            "eu-north1",
+            "--project-alias",
+            "synthetic",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert expected in result.output
+    assert "synthetic-token" not in result.output
+    assert "synthetic-access" not in result.output
+    assert "synthetic-secret" not in result.output
 
 
 def test_configure_declining_profile_binding_leaves_it_alone(
@@ -1111,9 +1209,7 @@ def test_configure_declining_profile_binding_leaves_it_alone(
         },
     )
 
-    answers = "\n".join(
-        ["tenant-x", "project-x", "", "n", "b", "", "", ""]
-    ) + "\n"
+    answers = "\n".join(["tenant-x", "project-x", "", "n", "b", "", "", ""]) + "\n"
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1353,9 +1449,9 @@ def test_configure_provision_reuses_explicit_bucket_without_size_prompt(
     monkeypatch.setattr(nebius_module, "bootstrap_environment", fake_bootstrap)
 
     # proj, tenant, region, exact existing bucket, HF, token factory, NGC
-    answers = "\n".join(
-        ["tenant-1", "project-1", "", "existing-bucket", "", "", ""]
-    ) + "\n"
+    answers = (
+        "\n".join(["tenant-1", "project-1", "", "existing-bucket", "", "", ""]) + "\n"
+    )
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output
@@ -1451,9 +1547,7 @@ def test_configure_ngc_audit_defers_registry_credential_validity_to_provider(
         observed.append(key)
         return "reachable"
 
-    monkeypatch.setattr(
-        "npa.workbench.nurec.nurec.check_ngc_image_access", validate
-    )
+    monkeypatch.setattr("npa.workbench.nurec.nurec.check_ngc_image_access", validate)
     caplog.set_level("DEBUG", logger="npa.cli.main")
     note = cli_main._model_access_note("hf_good", secret)
 
@@ -1561,9 +1655,7 @@ def test_configure_note_lists_ngc_blocked_when_key_missing(
 def test_configure_note_keeps_optional_hf_and_ngc_credentials_non_blocking(
     monkeypatch, tmp_path
 ) -> None:
-    result = _run_reuse_bucket_configure(
-        monkeypatch, tmp_path, hf_token="", ngc_key=""
-    )
+    result = _run_reuse_bucket_configure(monkeypatch, tmp_path, hf_token="", ngc_key="")
 
     assert result.exit_code == 0, result.output
     note = _note_line(result.output)
@@ -1974,7 +2066,9 @@ def test_configure_skips_storage_and_still_writes_tokens_on_provision_failure(
     assert not creds.get("storage")
 
 
-def test_configure_accepts_region_without_registry_prompt(monkeypatch, tmp_path) -> None:
+def test_configure_accepts_region_without_registry_prompt(
+    monkeypatch, tmp_path
+) -> None:
     from npa.clients import config as config_module
     from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
@@ -2618,9 +2712,9 @@ def test_configure_uses_default_region_without_registry_discovery(
     monkeypatch.setattr(nebius_module, "bucket_exists", lambda *_a, **_k: True)
     monkeypatch.setattr(nebius_module, "bootstrap_environment", _bootstrap_capture([]))
 
-    answers = "\n".join(
-        ["tenant-1", "project-1", "", "existing-bucket", "", "", ""]
-    ) + "\n"
+    answers = (
+        "\n".join(["tenant-1", "project-1", "", "existing-bucket", "", "", ""]) + "\n"
+    )
     result = runner.invoke(app, ["configure", "--interactive"], input=answers)
 
     assert result.exit_code == 0, result.output

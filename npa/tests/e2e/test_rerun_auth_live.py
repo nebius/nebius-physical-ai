@@ -11,8 +11,12 @@ pytestmark = pytest.mark.e2e
 
 
 def test_deployed_viewer_authentication_and_artifact_bytes():
-    names = ("NPA_E2E_RERUN_ARTIFACT_URL", "NPA_E2E_RERUN_AUTH_USER",
-             "NPA_E2E_RERUN_AUTH_PASSWORD", "NPA_E2E_RERUN_ARTIFACT_SHA256")
+    names = (
+        "NPA_E2E_RERUN_ARTIFACT_URL",
+        "NPA_E2E_RERUN_AUTH_USER",
+        "NPA_E2E_RERUN_AUTH_PASSWORD",
+        "NPA_E2E_RERUN_ARTIFACT_SHA256",
+    )
     if os.environ.get("NPA_INTEGRATION_E2E") != "1" or not all(
         os.environ.get(name) for name in names
     ):

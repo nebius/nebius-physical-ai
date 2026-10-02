@@ -117,7 +117,9 @@ def timed_get(
         nbytes = 0
         status = 0
         try:
-            with httpx.stream("GET", url, auth=auth, verify=verify, timeout=timeout) as resp:
+            with httpx.stream(
+                "GET", url, auth=auth, verify=verify, timeout=timeout
+            ) as resp:
                 status = int(resp.status_code)
                 resp.raise_for_status()
                 for chunk in resp.iter_bytes(64 * 1024):
@@ -157,13 +159,17 @@ def check_rerun_bundle_load_budget(
     budgets = bundle_budgets()
     ui_version = ""
 
-    ui_resp = httpx.get(f"{base}/", auth=auth, verify=verify, timeout=min(timeout, 20.0))
+    ui_resp = httpx.get(
+        f"{base}/", auth=auth, verify=verify, timeout=min(timeout, 20.0)
+    )
     if ui_resp.status_code != 200:
         errors.append(f"UI fetch failed status={ui_resp.status_code}")
         return BundleBudgetResult(False, tuple(errors), tuple(fetches), ui_version)
     ui_html = ui_resp.text
     if 'name="npa-ui-version" content="' in ui_html:
-        start = ui_html.index('name="npa-ui-version" content="') + len('name="npa-ui-version" content="')
+        start = ui_html.index('name="npa-ui-version" content="') + len(
+            'name="npa-ui-version" content="'
+        )
         end = ui_html.find('"', start)
         ui_version = ui_html[start:end] if end > start else ""
     errors.extend(assert_rerun_ui_eager_load_contract(ui_html))
@@ -249,10 +255,14 @@ def main(argv: list[str] | None = None) -> int:
     import sys
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base", required=True, help="Agent public URL, e.g. https://IP/")
+    parser.add_argument(
+        "--base", required=True, help="Agent public URL, e.g. https://IP/"
+    )
     parser.add_argument("--user", required=True)
     parser.add_argument("--password", required=True)
-    parser.add_argument("--insecure", action="store_true", help="Skip TLS verify (self-signed).")
+    parser.add_argument(
+        "--insecure", action="store_true", help="Skip TLS verify (self-signed)."
+    )
     args = parser.parse_args(argv)
     result = check_rerun_bundle_load_budget(
         args.base,

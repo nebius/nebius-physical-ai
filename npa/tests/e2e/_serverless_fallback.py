@@ -42,7 +42,9 @@ def _config_project_id(alias: str, cfg: dict[str, Any]) -> str:
 
 
 def _config_region(cfg: dict[str, Any]) -> str:
-    return str(cfg.get("region") or cfg.get("location") or cfg.get("zone") or "").strip()
+    return str(
+        cfg.get("region") or cfg.get("location") or cfg.get("zone") or ""
+    ).strip()
 
 
 def discover_serverless_projects(
@@ -146,7 +148,9 @@ def ensure_serverless_phase0(
                 selection = json.loads(selection_path.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 selection = {}
-        primary = str(selection.get("primary_project_id") or (chain[0] if chain else "")).strip()
+        primary = str(
+            selection.get("primary_project_id") or (chain[0] if chain else "")
+        ).strip()
         if not primary or not chain:
             # Corrupt cache — rediscover.
             pass
@@ -218,7 +222,10 @@ class FallbackChain:
 
     def mark_ner(self, project_id: str) -> str | None:
         self._exhausted.add(project_id)
-        print(f"!!! NER on project {project_id}; rotating to next in fallback chain", flush=True)
+        print(
+            f"!!! NER on project {project_id}; rotating to next in fallback chain",
+            flush=True,
+        )
         return self.current_project()
 
     def all_projects(self) -> list[str]:

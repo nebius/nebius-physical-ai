@@ -36,7 +36,9 @@ def _repo_root() -> Path:
 
 def _load_valid_tags(tags_yaml: Path) -> set[str]:
     if yaml is None:
-        raise RuntimeError("PyYAML is required. Install with: python -m pip install PyYAML")
+        raise RuntimeError(
+            "PyYAML is required. Install with: python -m pip install PyYAML"
+        )
     config = yaml.safe_load(tags_yaml.read_text()) or {}
     tag_families = config.get("tag_families")
     if not isinstance(tag_families, dict):
@@ -44,7 +46,9 @@ def _load_valid_tags(tags_yaml: Path) -> set[str]:
     valid_tags = set(tag_families)
     missing = REQUIRED_TAGS - valid_tags
     if missing:
-        raise RuntimeError(f"{tags_yaml} missing required tag families: {sorted(missing)}")
+        raise RuntimeError(
+            f"{tags_yaml} missing required tag families: {sorted(missing)}"
+        )
     return valid_tags
 
 
@@ -80,9 +84,9 @@ def _line_violations(path: Path, valid_tags: set[str], repo_root: Path) -> list[
         for match in CUDA_TOKEN_RE.finditer(line):
             token = match.group(1)
             normalized = token.lower()
-            if not _uses_valid_tag_family(normalized, valid_tags) and _looks_like_gpu_tag(
-                normalized
-            ):
+            if not _uses_valid_tag_family(
+                normalized, valid_tags
+            ) and _looks_like_gpu_tag(normalized):
                 violations.append(
                     f"{rel}:{line_no}: CUDA tag token '{token}' is not one of {sorted(valid_tags)}"
                 )
@@ -98,7 +102,10 @@ def _uses_valid_tag_family(tag: str, valid_tags: set[str]) -> bool:
     lowered = tag.lower()
     return any(
         lowered == valid_tag
-        or any(lowered.startswith(f"{valid_tag}{separator}") for separator in ("-", ".", "_"))
+        or any(
+            lowered.startswith(f"{valid_tag}{separator}")
+            for separator in ("-", ".", "_")
+        )
         for valid_tag in valid_tags
     )
 
@@ -107,7 +114,9 @@ def main() -> int:
     repo_root = _repo_root()
     tags_yaml = repo_root / "npa" / "docker" / "workbench" / "tags.yaml"
     if not tags_yaml.exists():
-        print(f"ERROR: {tags_yaml} not found. Two-tag strategy needs a canonical source.")
+        print(
+            f"ERROR: {tags_yaml} not found. Two-tag strategy needs a canonical source."
+        )
         return 1
 
     try:
@@ -126,7 +135,9 @@ def main() -> int:
             print(f"  {violation}")
         return 1
 
-    print(f"Two-tag strategy: all scanned references use canonical tags {sorted(valid_tags)}")
+    print(
+        f"Two-tag strategy: all scanned references use canonical tags {sorted(valid_tags)}"
+    )
     return 0
 
 

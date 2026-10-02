@@ -117,10 +117,18 @@ def stage_preset_cmd(
 
 @app.command("run")
 def run_cmd(
-    s3_endpoint: str = typer.Option(..., "--s3-endpoint", help="S3-compatible endpoint URL."),
-    s3_bucket: str = typer.Option(..., "--s3-bucket", help="Bucket containing the LeRobot dataset prefix."),
-    s3_prefix: str = typer.Option(..., "--s3-prefix", help="Prefix to poll for LeRobot-format objects."),
-    watermark_uri: str = typer.Option("", "--watermark-uri", help="S3 URI or local path for the trigger cursor."),
+    s3_endpoint: str = typer.Option(
+        ..., "--s3-endpoint", help="S3-compatible endpoint URL."
+    ),
+    s3_bucket: str = typer.Option(
+        ..., "--s3-bucket", help="Bucket containing the LeRobot dataset prefix."
+    ),
+    s3_prefix: str = typer.Option(
+        ..., "--s3-prefix", help="Prefix to poll for LeRobot-format objects."
+    ),
+    watermark_uri: str = typer.Option(
+        "", "--watermark-uri", help="S3 URI or local path for the trigger cursor."
+    ),
     pipeline_yaml: Path | None = typer.Option(
         None,
         "--pipeline-yaml",
@@ -161,7 +169,9 @@ def run_cmd(
         "--sky-bin",
         help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN when set.",
     ),
-    gpu: str = typer.Option(DEFAULT_GPU_TYPE, "--gpu", help="Primary SkyPilot accelerator."),
+    gpu: str = typer.Option(
+        DEFAULT_GPU_TYPE, "--gpu", help="Primary SkyPilot accelerator."
+    ),
     gpu_failover: str = typer.Option(
         DEFAULT_GPU_FAILOVER,
         "--gpu-failover",
@@ -172,7 +182,9 @@ def run_cmd(
         "--submit-timeout",
         help="Pipeline submission timeout in seconds.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Poll once and launch one pipeline run if new LeRobot data is present."""
 
@@ -204,10 +216,18 @@ def run_cmd(
 
 @app.command("watch")
 def watch_cmd(
-    s3_endpoint: str = typer.Option(..., "--s3-endpoint", help="S3-compatible endpoint URL."),
-    s3_bucket: str = typer.Option(..., "--s3-bucket", help="Bucket containing the LeRobot dataset prefix."),
-    s3_prefix: str = typer.Option(..., "--s3-prefix", help="Prefix to poll for LeRobot-format objects."),
-    watermark_uri: str = typer.Option("", "--watermark-uri", help="S3 URI or local path for the trigger cursor."),
+    s3_endpoint: str = typer.Option(
+        ..., "--s3-endpoint", help="S3-compatible endpoint URL."
+    ),
+    s3_bucket: str = typer.Option(
+        ..., "--s3-bucket", help="Bucket containing the LeRobot dataset prefix."
+    ),
+    s3_prefix: str = typer.Option(
+        ..., "--s3-prefix", help="Prefix to poll for LeRobot-format objects."
+    ),
+    watermark_uri: str = typer.Option(
+        "", "--watermark-uri", help="S3 URI or local path for the trigger cursor."
+    ),
     pipeline_yaml: Path | None = typer.Option(
         None,
         "--pipeline-yaml",
@@ -248,7 +268,9 @@ def watch_cmd(
         "--sky-bin",
         help="SkyPilot executable path. Defaults to NPA_SKYPILOT_BIN when set.",
     ),
-    gpu: str = typer.Option(DEFAULT_GPU_TYPE, "--gpu", help="Primary SkyPilot accelerator."),
+    gpu: str = typer.Option(
+        DEFAULT_GPU_TYPE, "--gpu", help="Primary SkyPilot accelerator."
+    ),
     gpu_failover: str = typer.Option(
         DEFAULT_GPU_FAILOVER,
         "--gpu-failover",
@@ -264,13 +286,17 @@ def watch_cmd(
         "--poll-interval",
         help="Seconds between polls.",
     ),
-    max_polls: int = typer.Option(0, "--max-polls", help="Maximum polls before exiting; 0 means forever."),
+    max_polls: int = typer.Option(
+        0, "--max-polls", help="Maximum polls before exiting; 0 means forever."
+    ),
     max_launches: int = typer.Option(
         0,
         "--max-launches",
         help="Maximum launched pipeline runs before exiting; 0 means forever.",
     ),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Poll continuously and launch one pipeline run per new LeRobot data batch."""
 

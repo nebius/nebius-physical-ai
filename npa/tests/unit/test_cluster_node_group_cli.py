@@ -316,6 +316,44 @@ def test_add_cpu_node_group_saves_state(monkeypatch) -> None:
     assert "Node group ID: mk8snodegroup-cpu" in result.output
 
 
+def test_add_cpu_node_group_uses_live_control_plane_subnet_when_cache_is_empty(
+    monkeypatch,
+) -> None:
+    seen: list[dict] = []
+    live_state = replace(_cluster_state(), subnet_id="")
+    live_cluster = replace(
+        _cluster(), raw={"spec": {"control_plane": {"subnet_id": "vpcsubnet-live"}}}
+    )
+
+    class FakeClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return live_cluster
+
+        def create_node_group(self, **kwargs):
+            seen.append(kwargs)
+            return NodeGroupInfo(
+                id="mk8snodegroup-cpu",
+                name="cluster-a-cpu",
+                cluster_id="mk8scluster-a",
+                status="RUNNING",
+                node_count=1,
+            )
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    monkeypatch.setattr(node_group_mod, "load_cluster_state", lambda name: live_state)
+    monkeypatch.setattr(node_group_mod, "save_node_group_state", lambda state: None)
+
+    result = runner.invoke(
+        app, ["node-group", "add-cpu", "--cluster-name", "cluster-a", "--no-wait"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert seen[0]["subnet_id"] == "vpcsubnet-live"
+
+
 def test_add_cpu_node_group_rejects_bad_preset(monkeypatch) -> None:
     class FakeClient:
         def __init__(self, **kwargs) -> None:

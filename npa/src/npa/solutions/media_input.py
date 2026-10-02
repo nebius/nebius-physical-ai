@@ -25,8 +25,15 @@ def download_input(uri: str, expected_sha256: str, destination: Path) -> Path:
     import boto3
 
     parsed = urlparse(uri)
-    if (parsed.scheme != "s3" or not parsed.netloc or not parsed.path.lstrip("/")
-            or parsed.query or parsed.fragment or parsed.username or parsed.password):
+    if (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or not parsed.path.lstrip("/")
+        or parsed.query
+        or parsed.fragment
+        or parsed.username
+        or parsed.password
+    ):
         raise ValueError("Input must be an explicit s3:// bucket/key URI")
     if re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None:
         raise ValueError("Input requires a complete lowercase SHA256")

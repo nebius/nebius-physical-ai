@@ -3,18 +3,17 @@
 # isaac_bootstrap.sh - fetch NVIDIA Isaac Sim / Isaac Lab at FIRST RUN, never at build.
 #
 # WHY THIS EXISTS
-#   The npa Isaac workbench images (npa-isaac-lab, npa-sonic, npa-sonic-mujoco,
-#   npa-groot) contain no NVIDIA Isaac bytes at all. Isaac Sim's Omniverse Kit SDK and
-#   the isaacsim/isaaclab wheels are NVIDIA-proprietary - both wheels literally declare
-#   `License: NVIDIA Proprietary Software` - so an image that baked them could not be
-#   published to a public registry without making us the third-party redistributor.
+#   Public Isaac-backed images keep the Isaac Sim/Lab wheels and restricted Kit
+#   runtime payloads out of their layers. License findings are version-specific:
+#   the Arena-selected isaaclab 3.0.0b2.post1 wheel declares BSD-3-Clause, while
+#   Isaac Sim 6.0.1.0 and its proprietary runtime dependencies have separate NVIDIA
+#   terms. Arena's baked Apache-2.0 application source is a separate component.
 #
 #   A download token cannot fix a baked image: a token gates a download, and the bytes
-#   are already in the layers. So instead of arguing about the statement, this makes the
-#   statement true. NVIDIA delivers Isaac to the operator's own machine, on first run,
-#   under the operator's OWN EULA acceptance. That is the same pattern the workbench
-#   already uses for runtime model weights, which is why
-#   those images are already public.
+#   are already in the layers. This bootstrap keeps the runtime closure outside the
+#   public image: NVIDIA delivers it to the operator's cache on first run after the
+#   shared EULA preflight. That preflight applies the runtime's acceptance requirement;
+#   it does not change the individual source or wheel licenses.
 #
 # DEFAULT ACCEPTANCE
 #   NPA defaults NVIDIA's documented ACCEPT_EULA to Y for Isaac-backed workloads so
@@ -65,6 +64,7 @@ OSS_DEPS_FILE="${NPA_ISAAC_OSS_DEPS_FILE:-$(dirname "$WHEELS_FILE")/isaac-oss-de
 BASE_PYTHON="${NPA_ISAAC_BASE_PYTHON:-}"
 ISAAC_SIM_VERSION="${ISAAC_SIM_VERSION:-5.1.0.0}"
 ISAAC_LAB_VERSION="${ISAAC_LAB_VERSION:-2.3.2.post1}"
+ISAAC_LAB_METADATA_LICENSE="${NPA_ISAAC_LAB_METADATA_LICENSE:-}"
 # Isaac Lab v2.3.2. The GitHub repo is BSD-3-Clause (unlike the wheel) and is the only
 # source of scripts/reinforcement_learning/, which every SkyPilot Isaac task invokes -
 # the wheel ships the library but no scripts/. Pinned by COMMIT, not tag: git tags are
@@ -207,15 +207,30 @@ install_isaac() {
     || die "$EX_SOFTWARE" "failed to create the cache virtualenv at $tmp/venv"
 
   # Layer the IMAGE's site-packages (torch, numpy, gear_sonic, the OSS isaaclab deps)
-  # into the cache venv with a .pth. `venv --system-site-packages` cannot do this: a
+  # into the cache venv with .pth files. `venv --system-site-packages` cannot do this: a
   # venv created from a venv resolves to the BASE interpreter's site-packages, not the
   # image venv's, so torch would be invisible and pip would try to download 3 GB of it.
   # .pth dirs are appended to sys.path, so the cache venv still shadows the image for
-  # anything it installs itself.
+  # anything it installs itself. Merely naming the image site-packages directory is not
+  # enough: Python does not recursively process .pth files in a directory introduced by
+  # another .pth file. Some image-baked packages (notably cmeel's Pinocchio wheels) use
+  # such a hook to expose their nested package tree. The executable hook deliberately
+  # calls site.addsitedir() so those trusted, image-baked hooks are processed too.
   local base_site cache_site
   base_site="$("$base_python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   cache_site="$("$tmp/venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
   printf '%s\n' "$base_site" > "$cache_site/_npa_image_site.pth"
+  NPA_IMAGE_SITE="$base_site" NPA_CACHE_SITE="$cache_site" "$base_python" - <<'PY'
+import os
+from pathlib import Path
+
+image_site = os.environ["NPA_IMAGE_SITE"]
+cache_site = Path(os.environ["NPA_CACHE_SITE"])
+(cache_site / "_npa_image_hooks.pth").write_text(
+    f"import site; site.addsitedir({image_site!r})\n",
+    encoding="utf-8",
+)
+PY
 
   "$tmp/venv/bin/python" - <<'PY' >&2 || die "$EX_SOFTWARE" "the cache venv cannot see the image's torch; the .pth layering is broken"
 import torch
@@ -283,6 +298,7 @@ EOF
 verify_tree() {
   local root="$1"
   ISAAC_SIM_VERSION="$ISAAC_SIM_VERSION" ISAAC_LAB_VERSION="$ISAAC_LAB_VERSION" \
+  ISAAC_LAB_METADATA_LICENSE="$ISAAC_LAB_METADATA_LICENSE" \
   NPA_ISAAC_TREE="$root" "$root/venv/bin/python" - >&2 <<'PY'
 import importlib.util
 import os
@@ -305,6 +321,14 @@ for package, expected in (
         problems.append(f"{package} is {found}, expected {expected}")
     if importlib.util.find_spec(package) is None:
         problems.append(f"{package} has no importable module")
+
+expected_license = os.environ["ISAAC_LAB_METADATA_LICENSE"]
+isaaclab_license = metadata.metadata("isaaclab").get("License", "")
+if expected_license and isaaclab_license != expected_license:
+    problems.append(
+        f"isaaclab wheel license is {isaaclab_license!r}, expected "
+        f"{expected_license!r}"
+    )
 
 train = root / "isaaclab-src" / "scripts" / "reinforcement_learning" / "rsl_rl" / "train.py"
 if not train.is_file():

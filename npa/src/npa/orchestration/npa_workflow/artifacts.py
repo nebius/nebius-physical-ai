@@ -38,7 +38,9 @@ def s3_object_exists(uri: str, *, checker: Any | None = None) -> bool:
 
 
 def require_input_artifacts(uris: list[str], *, checker: Any | None = None) -> None:
-    missing = [uri for uri in uris if uri and not s3_object_exists(uri, checker=checker)]
+    missing = [
+        uri for uri in uris if uri and not s3_object_exists(uri, checker=checker)
+    ]
     if missing:
         joined = ", ".join(missing)
         raise NpaWorkflowError(f"missing required input artifact(s): {joined}")

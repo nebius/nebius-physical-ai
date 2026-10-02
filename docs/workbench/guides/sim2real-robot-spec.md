@@ -63,7 +63,7 @@ npa workbench workflow submit "$SPEC" --runtime \
   --secret-env HF_TOKEN
 ```
 
-Run `npa workbench health preflight` and `npa workbench health access sim2real`
+Run `npa workbench health preflight` and `npa workbench health sim2real`
 before submit. Image values must be registry-qualified immutable digests.
 
 ## Integrity and observability

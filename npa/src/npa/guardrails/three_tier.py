@@ -77,7 +77,9 @@ class CapabilityContract:
     yaml_path: Path | None = None
 
 
-def callback_parameters(module_name: str, callback_name: str) -> dict[str, inspect.Parameter]:
+def callback_parameters(
+    module_name: str, callback_name: str
+) -> dict[str, inspect.Parameter]:
     module = import_module(module_name)
     callback = getattr(module, callback_name)
     return dict(inspect.signature(callback).parameters)
@@ -125,7 +127,9 @@ def validate_contract(contract: CapabilityContract, *, repo_root: Path) -> list[
     return failures
 
 
-def _validate_workflow_tier(contract: CapabilityContract, *, repo_root: Path) -> list[str]:
+def _validate_workflow_tier(
+    contract: CapabilityContract, *, repo_root: Path
+) -> list[str]:
     if contract.spec_path is not None:
         return _validate_spec_tier(contract, repo_root=repo_root)
     if contract.yaml_path is not None:
@@ -181,7 +185,9 @@ def _validate_spec_tier(contract: CapabilityContract, *, repo_root: Path) -> lis
     return failures
 
 
-def _validate_legacy_yaml_tier(contract: CapabilityContract, *, repo_root: Path) -> list[str]:
+def _validate_legacy_yaml_tier(
+    contract: CapabilityContract, *, repo_root: Path
+) -> list[str]:
     failures: list[str] = []
     assert contract.yaml_path is not None  # narrowed by the caller
     yaml_path = repo_root / contract.yaml_path
@@ -196,7 +202,9 @@ def _validate_legacy_yaml_tier(contract: CapabilityContract, *, repo_root: Path)
         if param.yaml_env not in yaml_envs:
             failures.append(f"{contract.name}: YAML env missing: {param.yaml_env}")
         elif param.yaml_env not in yaml_refs:
-            failures.append(f"{contract.name}: YAML env not referenced: {param.yaml_env}")
+            failures.append(
+                f"{contract.name}: YAML env not referenced: {param.yaml_env}"
+            )
     return failures
 
 

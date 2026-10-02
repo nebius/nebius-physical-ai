@@ -17,7 +17,9 @@ from npa.adapter import sim_to_lerobot
 STREAMS = ("obs_workspace", "obs_wrist", "actions")
 CAMERAS = ("workspace", "wrist")
 FPS = 20
-needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+needs_ffmpeg = pytest.mark.skipif(
+    shutil.which("ffmpeg") is None, reason="ffmpeg not installed"
+)
 
 
 def _write_episode(root: Path, index: int, length: int) -> dict[str, np.ndarray]:
@@ -29,7 +31,8 @@ def _write_episode(root: Path, index: int, length: int) -> dict[str, np.ndarray]
     ).copy()
     arrays = {
         "state": np.arange(length * 3, dtype=np.float32).reshape(length, 3) / 4 + index,
-        "actions": np.arange(length * 2, dtype=np.float32).reshape(length, 2) / 8 - index,
+        "actions": np.arange(length * 2, dtype=np.float32).reshape(length, 2) / 8
+        - index,
         "obs_workspace": frames,
         "obs_wrist": frames + 16,
     }
@@ -53,7 +56,10 @@ def _assert_no_dataset_metadata(output: Path) -> None:
 @pytest.mark.parametrize("stream", STREAMS)
 @pytest.mark.parametrize("length", [0, 3, 5])
 def test_mismatched_stream_rejected_before_encoding(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stream: str, length: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stream: str,
+    length: int,
 ) -> None:
     raw, output = tmp_path / "raw", tmp_path / "dataset"
     _write_episode(raw, 0, 4)
@@ -77,7 +83,9 @@ def test_mismatched_stream_rejected_before_encoding(
 @pytest.mark.parametrize("stream", STREAMS)
 @pytest.mark.parametrize("length", [3, 5])
 def test_later_mismatched_episode_is_not_encoded_or_published(
-    tmp_path: Path, stream: str, length: int,
+    tmp_path: Path,
+    stream: str,
+    length: int,
 ) -> None:
     raw, output = tmp_path / "raw", tmp_path / "dataset"
     _write_episode(raw, 0, 2)
@@ -101,16 +109,21 @@ def test_later_mismatched_episode_is_not_encoded_or_published(
 @needs_ffmpeg
 @pytest.mark.parametrize("lengths", [(4,), (3, 5)])
 def test_aligned_streams_preserve_video_rows_and_statistics(
-    tmp_path: Path, lengths: tuple[int, ...],
+    tmp_path: Path,
+    lengths: tuple[int, ...],
 ) -> None:
     raw, output = tmp_path / "raw", tmp_path / "dataset"
-    episodes = [_write_episode(raw, index, length) for index, length in enumerate(lengths)]
+    episodes = [
+        _write_episode(raw, index, length) for index, length in enumerate(lengths)
+    ]
     assert sim_to_lerobot.convert(raw, output, fps=FPS) == output
 
     info = json.loads((output / "meta" / "info.json").read_text())
     stats = json.loads((output / "meta" / "stats.json").read_text())
     rows = pq.read_table(output / "data/chunk-000/file-000.parquet").to_pydict()
-    metadata = pq.read_table(output / "meta/episodes/chunk-000/file-000.parquet").to_pylist()
+    metadata = pq.read_table(
+        output / "meta/episodes/chunk-000/file-000.parquet"
+    ).to_pylist()
     assert info["total_episodes"] == len(lengths)
     assert info["total_frames"] == sum(lengths)
     assert rows["index"] == list(range(sum(lengths)))
@@ -120,16 +133,22 @@ def test_aligned_streams_preserve_video_rows_and_statistics(
         np.testing.assert_array_equal(rows[column], expected)
         assert stats[column]["count"] == [sum(lengths)]
         for stat in ("min", "max", "mean", "std"):
-            np.testing.assert_allclose(stats[column][stat], getattr(expected.astype(float), stat)(axis=0))
+            np.testing.assert_allclose(
+                stats[column][stat], getattr(expected.astype(float), stat)(axis=0)
+            )
 
     offset = 0
-    for index, (length, episode, meta) in enumerate(zip(lengths, episodes, metadata, strict=True)):
+    for index, (length, episode, meta) in enumerate(
+        zip(lengths, episodes, metadata, strict=True)
+    ):
         stop = offset + length
         assert meta["length"] == length
         assert (meta["dataset_from_index"], meta["dataset_to_index"]) == (offset, stop)
         assert rows["episode_index"][offset:stop] == [index] * length
         assert rows["frame_index"][offset:stop] == list(range(length))
-        np.testing.assert_array_equal(rows["timestamp"][offset:stop], np.arange(length, dtype=np.float32) / FPS)
+        np.testing.assert_array_equal(
+            rows["timestamp"][offset:stop], np.arange(length, dtype=np.float32) / FPS
+        )
         for feature in ("observation.state", "action"):
             assert meta[f"stats/{feature}/count"] == [length]
         for camera in CAMERAS:
@@ -137,10 +156,17 @@ def test_aligned_streams_preserve_video_rows_and_statistics(
             video = output / "videos" / key / "chunk-000" / f"file-{index:03d}.mp4"
             with av.open(str(video)) as container:
                 assert container.streams.video[0].average_rate == FPS
-                decoded = np.stack([frame.to_ndarray(format="rgb24") for frame in container.decode(video=0)])
+                decoded = np.stack(
+                    [
+                        frame.to_ndarray(format="rgb24")
+                        for frame in container.decode(video=0)
+                    ]
+                )
             assert decoded.shape == episode[f"obs_{camera}"].shape
             # H.264 is lossy: verify frame order/content within codec rounding.
-            np.testing.assert_allclose(decoded.astype(float), episode[f"obs_{camera}"], atol=3)
+            np.testing.assert_allclose(
+                decoded.astype(float), episode[f"obs_{camera}"], atol=3
+            )
             assert stats[key]["count"] == [sum(lengths)]
             assert meta[f"stats/{key}/count"] == [length]
             assert meta[f"videos/{key}/from_timestamp"] == 0.0

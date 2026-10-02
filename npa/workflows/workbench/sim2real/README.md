@@ -1,5 +1,8 @@
 # Sim2Real workflow
 
+> **Naming:** `sim2real` is the staged 14-stage VLM-to-RL loop described
+> here. `sim-to-real` (hyphenated) is the older, separate H100 pipeline.
+
 Use the single canonical spec and complete the operator runbook before submit:
 
 - [onboarding, preflight, submit, and remediation](../../../../docs/workbench/guides/sim2real-workflow.md)

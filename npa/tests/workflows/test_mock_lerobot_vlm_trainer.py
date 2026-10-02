@@ -39,8 +39,10 @@ def _write(tmp_path, payload):
 
 
 def test_output_satisfies_vlm_signal_update_contract(tmp_path, monkeypatch):
-    sig = _write(tmp_path, _signal([(0.8, 0.5, [0.12, 0.0, 0.04]),
-                                     (-0.2, -0.5, [-0.1, 0.02, 0.0])]))
+    sig = _write(
+        tmp_path,
+        _signal([(0.8, 0.5, [0.12, 0.0, 0.04]), (-0.2, -0.5, [-0.1, 0.02, 0.0])]),
+    )
     out = tmp_path / "update.json"
     monkeypatch.setenv("NPA_SIM2REAL_SIGNAL_JSON", str(sig))
     monkeypatch.setenv("NPA_SIM2REAL_OUTPUT_JSON", str(out))
@@ -73,7 +75,9 @@ def test_update_responds_to_vlm_signal_strength(tmp_path):
     def delta(summary):
         policy = mock.MlpPolicy(summary["action_dim"])
         return mock.update_policy(
-            policy, summary["weighted_target"], summary["signal_strength"],
+            policy,
+            summary["weighted_target"],
+            summary["signal_strength"],
             learning_rate=0.5,
         )["policy_delta_l2"]
 
@@ -88,7 +92,10 @@ def test_update_moves_policy_toward_corrective_target(tmp_path):
     )
     policy = mock.MlpPolicy(summary["action_dim"])
     res = mock.update_policy(
-        policy, summary["weighted_target"], summary["signal_strength"], learning_rate=0.5
+        policy,
+        summary["weighted_target"],
+        summary["signal_strength"],
+        learning_rate=0.5,
     )
     # a real optimization step occurred: loss toward the VLM target decreased and
     # the policy output actually changed.

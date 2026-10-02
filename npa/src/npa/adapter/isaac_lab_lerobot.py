@@ -26,7 +26,9 @@ DEFAULT_CHUNK_SIZE = 1000
 DEFAULT_DATA_SIZE_MB = 100
 DEFAULT_VIDEO_SIZE_MB = 500
 DATA_PATH_TPL = "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
-EPISODES_PATH_TPL = "meta/episodes/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+EPISODES_PATH_TPL = (
+    "meta/episodes/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+)
 VIDEO_PATH_TPL = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
 EGO_VIEW_KEY = "observation.images.ego_view"
 WORKSPACE_VIEW_KEY = "observation.images.workspace"
@@ -126,7 +128,10 @@ G1_BONE_PAIRS = [
     (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_middle_joint")),
     (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_index_joint")),
     (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_thumb_bend_joint")),
-    (_g1_idx("right_hand_thumb_bend_joint"), _g1_idx("right_hand_thumb_rotation_joint")),
+    (
+        _g1_idx("right_hand_thumb_bend_joint"),
+        _g1_idx("right_hand_thumb_rotation_joint"),
+    ),
     (_g1_idx("right_wrist_yaw_joint"), _g1_idx("right_hand_aux_joint")),
 ]
 
@@ -152,7 +157,9 @@ class LeRobotFeatureSpec:
 
     def __post_init__(self) -> None:
         if not self.state_names or not self.action_names:
-            raise IsaacLabLeRobotError("LeRobotFeatureSpec requires state and action names")
+            raise IsaacLabLeRobotError(
+                "LeRobotFeatureSpec requires state and action names"
+            )
         if self.state_dim <= 0:
             object.__setattr__(self, "state_dim", len(self.state_names))
         if self.action_dim <= 0:
@@ -222,23 +229,35 @@ def convert(
     has_simulator_rgb = all(rgb_presence)
     include_video = has_simulator_rgb or include_placeholder_video
     video_key = WORKSPACE_VIEW_KEY if has_simulator_rgb else EGO_VIEW_KEY
-    video_source = "isaac_sim_rgb_array" if has_simulator_rgb else "synthetic_placeholder"
+    video_source = (
+        "isaac_sim_rgb_array" if has_simulator_rgb else "synthetic_placeholder"
+    )
     resolved_spec = spec or G1_FEATURE_SPEC
     default_task = (
         "Isaac Lab G1 rollout"
         if resolved_spec.robot_type == "unitree_g1"
         else f"Isaac Lab {resolved_spec.robot_type} rollout"
     )
-    task_text = task or str(top_meta.get("task") or top_meta.get("task_id") or default_task)
+    task_text = task or str(
+        top_meta.get("task") or top_meta.get("task_id") or default_task
+    )
     if spec is not None and robot_type == "unitree_g1":
         robot = spec.robot_type
     else:
-        robot = robot_type or str(top_meta.get("robot_type") or resolved_spec.robot_type)
+        robot = robot_type or str(
+            top_meta.get("robot_type") or resolved_spec.robot_type
+        )
     state_names = _names_from_meta(
-        top_meta, "state_names", expected_dim=resolved_spec.state_dim, fallback=resolved_spec.state_names
+        top_meta,
+        "state_names",
+        expected_dim=resolved_spec.state_dim,
+        fallback=resolved_spec.state_names,
     )
     action_names = _names_from_meta(
-        top_meta, "action_names", expected_dim=resolved_spec.action_dim, fallback=resolved_spec.action_names
+        top_meta,
+        "action_names",
+        expected_dim=resolved_spec.action_dim,
+        fallback=resolved_spec.action_names,
     )
 
     _reset_dir(output_dir)
@@ -297,8 +316,12 @@ def convert(
         stats_accum["action"].append(actions)
         stats_accum["timestamp"].append(timestamps)
         stats_accum["frame_index"].append(np.arange(ep_len, dtype=np.int64))
-        stats_accum["episode_index"].append(np.full(ep_len, episode_index, dtype=np.int64))
-        stats_accum["index"].append(np.arange(dataset_from_index, dataset_to_index, dtype=np.int64))
+        stats_accum["episode_index"].append(
+            np.full(ep_len, episode_index, dtype=np.int64)
+        )
+        stats_accum["index"].append(
+            np.arange(dataset_from_index, dataset_to_index, dtype=np.int64)
+        )
         stats_accum["task_index"].append(np.zeros(ep_len, dtype=np.int64))
 
         if include_video:
@@ -346,7 +369,9 @@ def convert(
     _write_stats(
         stats_accum,
         output_dir / "meta" / "stats.json",
-        video_stats={video_key: video_stats.as_dict()} if video_stats is not None else None,
+        video_stats={video_key: video_stats.as_dict()}
+        if video_stats is not None
+        else None,
     )
     _write_info(
         output_dir / "meta" / "info.json",
@@ -394,7 +419,11 @@ def _names_from_meta(
     fallback: list[str] | None = None,
 ) -> list[str]:
     raw = meta.get(key)
-    if isinstance(raw, list) and len(raw) == expected_dim and all(isinstance(v, str) for v in raw):
+    if (
+        isinstance(raw, list)
+        and len(raw) == expected_dim
+        and all(isinstance(v, str) for v in raw)
+    ):
         return [str(v) for v in raw]
     return list(fallback if fallback is not None else G1_STATE_NAMES_43)
 
@@ -412,9 +441,13 @@ def _load_episode_arrays(
     state = np.load(state_path).astype(np.float32, copy=False)
     actions = np.load(action_path).astype(np.float32, copy=False)
     if state.ndim != 2:
-        raise IsaacLabLeRobotError(f"{state_path} must be a 2D array, got shape {state.shape}")
+        raise IsaacLabLeRobotError(
+            f"{state_path} must be a 2D array, got shape {state.shape}"
+        )
     if actions.ndim != 2:
-        raise IsaacLabLeRobotError(f"{action_path} must be a 2D array, got shape {actions.shape}")
+        raise IsaacLabLeRobotError(
+            f"{action_path} must be a 2D array, got shape {actions.shape}"
+        )
     if state.shape[0] != actions.shape[0]:
         raise IsaacLabLeRobotError(
             f"{episode_dir.name}: state/action length mismatch "
@@ -445,11 +478,15 @@ def _load_rgb_frames(episode_dir: Path, *, expected_frames: int) -> np.ndarray:
             f"({frames.shape[0]} != {expected_frames})"
         )
     if frames.dtype != np.uint8:
-        raise IsaacLabLeRobotError(f"{path} must contain uint8 pixels, got {frames.dtype}")
+        raise IsaacLabLeRobotError(
+            f"{path} must contain uint8 pixels, got {frames.dtype}"
+        )
     if frames.shape[-1] == 4:
         frames = frames[..., :3]
     if frames.shape[1] <= 1 or frames.shape[2] <= 1:
-        raise IsaacLabLeRobotError(f"{path} has invalid image dimensions {frames.shape[1:3]}")
+        raise IsaacLabLeRobotError(
+            f"{path} has invalid image dimensions {frames.shape[1:3]}"
+        )
     return frames
 
 
@@ -480,7 +517,10 @@ def _visual_provenance(
 
 
 def _write_data_parquet(
-    rows: list[dict[str, Any]], output_path: Path, *, spec: LeRobotFeatureSpec | None = None
+    rows: list[dict[str, Any]],
+    output_path: Path,
+    *,
+    spec: LeRobotFeatureSpec | None = None,
 ) -> None:
     resolved = spec or G1_FEATURE_SPEC
     schema = pa.schema(
@@ -504,11 +544,19 @@ def _write_data_parquet(
                 [row["action"] for row in rows],
                 type=pa.list_(pa.float32(), resolved.action_dim),
             ),
-            "episode_index": pa.array([row["episode_index"] for row in rows], type=pa.int64()),
-            "frame_index": pa.array([row["frame_index"] for row in rows], type=pa.int64()),
-            "timestamp": pa.array([row["timestamp"] for row in rows], type=pa.float32()),
+            "episode_index": pa.array(
+                [row["episode_index"] for row in rows], type=pa.int64()
+            ),
+            "frame_index": pa.array(
+                [row["frame_index"] for row in rows], type=pa.int64()
+            ),
+            "timestamp": pa.array(
+                [row["timestamp"] for row in rows], type=pa.float32()
+            ),
             "index": pa.array([row["index"] for row in rows], type=pa.int64()),
-            "task_index": pa.array([row["task_index"] for row in rows], type=pa.int64()),
+            "task_index": pa.array(
+                [row["task_index"] for row in rows], type=pa.int64()
+            ),
         },
         schema=schema,
     )
@@ -556,12 +604,16 @@ def _write_tasks_parquet(task: str, output_path: Path) -> None:
 class _RgbStats:
     """Keep exact uint8 pixel counts without retaining episode images."""
 
-    histogram: np.ndarray = field(default_factory=lambda: np.zeros((3, 256), dtype=np.int64))
+    histogram: np.ndarray = field(
+        default_factory=lambda: np.zeros((3, 256), dtype=np.int64)
+    )
     frame_count: int = 0
 
     def update(self, frames: np.ndarray) -> None:
         if frames.dtype != np.uint8 or frames.ndim != 4 or frames.shape[-1] != 3:
-            raise IsaacLabLeRobotError("RGB statistics require uint8 [frames,height,width,3]")
+            raise IsaacLabLeRobotError(
+                "RGB statistics require uint8 [frames,height,width,3]"
+            )
         if any(size == 0 for size in frames.shape):
             raise IsaacLabLeRobotError("RGB statistics require nonempty frames")
         for frame in frames:
@@ -578,7 +630,9 @@ class _RgbStats:
         pixel_count = self.histogram.sum(axis=1)
         mean = self.histogram @ levels / pixel_count
         # Center before squaring to preserve small variances and exact constant channels.
-        variance = (self.histogram * (levels - mean[:, None]) ** 2).sum(axis=1) / pixel_count
+        variance = (self.histogram * (levels - mean[:, None]) ** 2).sum(
+            axis=1
+        ) / pixel_count
         occupied = self.histogram > 0
         values = {
             "min": occupied.argmax(axis=1) / 255.0,
@@ -609,7 +663,9 @@ def _write_stats(
     output_path.write_text(json.dumps(stats, indent=2))
 
 
-def _compute_feature_stats(arrays: list[np.ndarray], *, is_video: bool = False) -> dict[str, Any]:
+def _compute_feature_stats(
+    arrays: list[np.ndarray], *, is_video: bool = False
+) -> dict[str, Any]:
     if is_video:
         video_stats = _RgbStats()
         for frames in arrays:
@@ -712,7 +768,9 @@ def _placeholder_video_frames(state: np.ndarray, *, size: int) -> np.ndarray:
 def _encode_video(frames: np.ndarray, output_path: Path, *, fps: int) -> None:
     t, h, w, c = frames.shape
     if c != 3:
-        raise IsaacLabLeRobotError(f"Expected RGB video frames, got shape {frames.shape}")
+        raise IsaacLabLeRobotError(
+            f"Expected RGB video frames, got shape {frames.shape}"
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "ffmpeg",
@@ -740,7 +798,9 @@ def _encode_video(frames: np.ndarray, output_path: Path, *, fps: int) -> None:
     _run_video_encoder(cmd, frames, timeout=max(30, t))
 
 
-def _write_video_frames(stream: BinaryIO, frames: np.ndarray, errors: list[OSError]) -> None:
+def _write_video_frames(
+    stream: BinaryIO, frames: np.ndarray, errors: list[OSError]
+) -> None:
     try:
         with stream:
             for frame in frames:
@@ -751,11 +811,21 @@ def _write_video_frames(stream: BinaryIO, frames: np.ndarray, errors: list[OSErr
 
 def _run_video_encoder(command: list[str], frames: np.ndarray, *, timeout: int) -> None:
     # A file drains diagnostics without retaining them or blocking the encoder's stderr pipe.
-    with TemporaryFile() as diagnostics, subprocess.Popen(
-        command, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=diagnostics
-    ) as process:
+    with (
+        TemporaryFile() as diagnostics,
+        subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=diagnostics,
+        ) as process,
+    ):
         errors: list[OSError] = []
-        writer = Thread(target=_write_video_frames, args=(process.stdin, frames, errors), daemon=True)
+        writer = Thread(
+            target=_write_video_frames,
+            args=(process.stdin, frames, errors),
+            daemon=True,
+        )
         writer.start()
         try:
             process.wait(timeout=timeout)
@@ -767,6 +837,10 @@ def _run_video_encoder(command: list[str], frames: np.ndarray, *, timeout: int) 
         if process.returncode != 0:
             diagnostics.seek(max(0, diagnostics.tell() - 500))
             message = diagnostics.read().decode(errors="ignore")
-            raise IsaacLabLeRobotError(f"ffmpeg failed (exit {process.returncode}): {message}")
+            raise IsaacLabLeRobotError(
+                f"ffmpeg failed (exit {process.returncode}): {message}"
+            )
         if errors:
-            raise IsaacLabLeRobotError("Failed to write RGB frames to ffmpeg") from errors[0]
+            raise IsaacLabLeRobotError(
+                "Failed to write RGB frames to ffmpeg"
+            ) from errors[0]

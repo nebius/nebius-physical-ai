@@ -17,7 +17,8 @@ def test_fiftyone_golden_selects_the_cpu_brain_and_app_checks() -> None:
     script = Path(command[1]).relative_to("/opt/npa")
     module = ast.parse((ROOT / "npa" / script).read_text())
     main = next(
-        node for node in module.body
+        node
+        for node in module.body
         if isinstance(node, ast.FunctionDef) and node.name == "main"
     )
     checks = next(

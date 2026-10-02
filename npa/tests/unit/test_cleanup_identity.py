@@ -75,7 +75,9 @@ def test_exact_identity_precedence_is_complementary_but_conflicts_fail(
         )
 
 
-def test_provisioning_cleanup_projection_is_typed_and_never_copies_credentials() -> None:
+def test_provisioning_cleanup_projection_is_typed_and_never_copies_credentials() -> (
+    None
+):
     identity = provisioning_operation_cleanup_identity(
         {
             "operation_id": "operation-a",

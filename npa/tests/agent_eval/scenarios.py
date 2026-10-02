@@ -94,8 +94,16 @@ SCENARIOS: list[Scenario] = [
         expected={
             "uri": "docs/genesis.md",
             "corpus": [
-                ("docs/genesis.md", "Genesis", "Genesis is a GPU physics simulator for robotics training."),
-                ("docs/storage.md", "Storage", "Configure S3 object storage buckets and credentials."),
+                (
+                    "docs/genesis.md",
+                    "Genesis",
+                    "Genesis is a GPU physics simulator for robotics training.",
+                ),
+                (
+                    "docs/storage.md",
+                    "Storage",
+                    "Configure S3 object storage buckets and credentials.",
+                ),
             ],
         },
     ),

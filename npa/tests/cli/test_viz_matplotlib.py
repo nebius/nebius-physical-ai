@@ -25,9 +25,15 @@ def _skeleton(frames: int = 4) -> np.ndarray:
 
 
 @pytest.mark.parametrize("layout", ["single", "side-by-side", "overlay"])
-def test_matplotlib_backend_saves_animation_for_layouts(tmp_path: Path, mocker, layout: str) -> None:
+def test_matplotlib_backend_saves_animation_for_layouts(
+    tmp_path: Path, mocker, layout: str
+) -> None:
     skeleton = _skeleton()
-    predictions = skeleton + np.array([0.03, 0.0, 0.0], dtype=np.float32) if layout != "single" else None
+    predictions = (
+        skeleton + np.array([0.03, 0.0, 0.0], dtype=np.float32)
+        if layout != "single"
+        else None
+    )
     save = mocker.patch("matplotlib.animation.Animation.save")
 
     matplotlib_backend.render(
@@ -46,7 +52,9 @@ def test_matplotlib_backend_saves_animation_for_layouts(tmp_path: Path, mocker, 
 
 
 def test_matplotlib_backend_requires_predictions_for_overlay(tmp_path: Path) -> None:
-    with pytest.raises(matplotlib_backend.MatplotlibRenderError, match="predictions_data is required"):
+    with pytest.raises(
+        matplotlib_backend.MatplotlibRenderError, match="predictions_data is required"
+    ):
         matplotlib_backend.render(
             _skeleton(),
             None,
@@ -60,7 +68,9 @@ def test_matplotlib_backend_requires_predictions_for_overlay(tmp_path: Path) -> 
         )
 
 
-def test_matplotlib_backend_accepts_short_prediction_window(tmp_path: Path, mocker) -> None:
+def test_matplotlib_backend_accepts_short_prediction_window(
+    tmp_path: Path, mocker
+) -> None:
     skeleton = _skeleton(frames=4)
     predictions = _skeleton(frames=2) + np.array([0.03, 0.0, 0.0], dtype=np.float32)
     save = mocker.patch("matplotlib.animation.Animation.save")
@@ -80,11 +90,15 @@ def test_matplotlib_backend_accepts_short_prediction_window(tmp_path: Path, mock
     save.assert_called_once()
 
 
-def test_matplotlib_backend_rejects_predictions_longer_than_input(tmp_path: Path) -> None:
+def test_matplotlib_backend_rejects_predictions_longer_than_input(
+    tmp_path: Path,
+) -> None:
     skeleton = _skeleton(frames=2)
     predictions = _skeleton(frames=3)
 
-    with pytest.raises(matplotlib_backend.MatplotlibRenderError, match="frame count cannot exceed"):
+    with pytest.raises(
+        matplotlib_backend.MatplotlibRenderError, match="frame count cannot exceed"
+    ):
         matplotlib_backend.render(
             skeleton,
             predictions,

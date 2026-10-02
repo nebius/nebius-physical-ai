@@ -16,11 +16,16 @@ def _store(root, components):
     repository = root / "source"
     repository.mkdir(exist_ok=True)
     return ImprovementStore(
-        root / "queue", repository=repository, evidence_directory=root / "evidence",
+        root / "queue",
+        repository=repository,
+        evidence_directory=root / "evidence",
         scopes=[
             ImprovementScope(
-                scope_id=component, component=component, files=(component + ".py",),
-                base_revision="a" * 40, required_checks=("reproducer",),
+                scope_id=component,
+                component=component,
+                files=(component + ".py",),
+                base_revision="a" * 40,
+                required_checks=("reproducer",),
             )
             for component in components
         ],
@@ -31,7 +36,8 @@ def _store(root, components):
 def _record(root, result, components):
     store = _store(root, components)
     feedback = ImprovementRuntime(lambda: store).record(
-        result, {"request_id": "synthetic-routing-episode", "lessons": []},
+        result,
+        {"request_id": "synthetic-routing-episode", "lessons": []},
     )
     assert feedback["status"] == "recorded"
     reopened = _store(root, components)
@@ -66,7 +72,9 @@ def test_planner_failure_persists_with_only_action_loop_configured(tmp_path, fai
         model_call=planner,
     )
     assert result["ok"] is False
-    assert result["stopped_reason"] == ("error" if failure == "unavailable" else "no_plan")
+    assert result["stopped_reason"] == (
+        "error" if failure == "unavailable" else "no_plan"
+    )
     assert len(planner_calls) == (1 if failure == "unavailable" else 2)
     assert tool_calls == []
     assert len(result["steps"]) == 1
@@ -87,22 +95,31 @@ def test_planner_failure_persists_with_only_action_loop_configured(tmp_path, fai
 def test_explicit_failed_tool_keeps_its_own_scope(tmp_path):
     result = run_action_loop(
         "inspect available evidence",
-        tools={"retrieval_search": lambda args: {"error": "synthetic retrieval failure"}},
+        tools={
+            "retrieval_search": lambda args: {"error": "synthetic retrieval failure"}
+        },
         model_call=_planner(
             {"tool": "retrieval_search", "args": {"query": "evidence"}},
             {"final": "The retrieval failed."},
         ),
     )
-    store, items = _record(tmp_path, result, ("action-loop", "sim2real-drive", "retrieval_search"))
+    store, items = _record(
+        tmp_path, result, ("action-loop", "sim2real-drive", "retrieval_search")
+    )
     assert [item["component"] for item in items] == ["retrieval_search"]
-    assert store.history(items[0]["id"])["occurrences"][0]["evidence"]["args"] == {"query": "evidence"}
+    assert store.history(items[0]["id"])["occurrences"][0]["evidence"]["args"] == {
+        "query": "evidence"
+    }
 
 
-@pytest.mark.parametrize("stage,kind", [
-    ("gate", "drive_error"),
-    ("adjust", "drive_adjust_error"),
-    ("diagnose", "drive_diagnosis_error"),
-])
+@pytest.mark.parametrize(
+    "stage,kind",
+    [
+        ("gate", "drive_error"),
+        ("adjust", "drive_adjust_error"),
+        ("diagnose", "drive_diagnosis_error"),
+    ],
+)
 def test_real_drive_iterations_keep_sim2real_fallback(tmp_path, stage, kind):
     def failed(*args):
         raise RuntimeError("synthetic drive component failure")
@@ -114,46 +131,73 @@ def test_real_drive_iterations_keep_sim2real_fallback(tmp_path, stage, kind):
     }
     callbacks[stage] = failed
     result = drive_sim2real_loop(
-        "evaluate a synthetic rollout", config={"run_id": "synthetic-run"},
+        "evaluate a synthetic rollout",
+        config={"run_id": "synthetic-run"},
         launch=lambda config: {"run_id": "synthetic-run"},
         status=lambda run: {
-            "ok": True, "run": {"run_id": run},
+            "ok": True,
+            "run": {"run_id": run},
             "sim_viz": {"run_id": run, "stage": "evaluation"},
         },
-        confirm_token="synthetic-consent", session_token="synthetic-consent", **callbacks,
+        confirm_token="synthetic-consent",
+        session_token="synthetic-consent",
+        **callbacks,
     )
     assert "tool" not in result["iterations"][0]
     _, items = _record(tmp_path, result, ("action-loop", "sim2real-drive"))
-    assert [(item["component"], item["kind"]) for item in items] == [("sim2real-drive", kind)]
+    assert [(item["component"], item["kind"]) for item in items] == [
+        ("sim2real-drive", kind)
+    ]
 
 
-@pytest.mark.parametrize("case", ["success", "recovered", "terminal_empty", "confirmation"])
+@pytest.mark.parametrize(
+    "case", ["success", "recovered", "terminal_empty", "confirmation"]
+)
 def test_successful_and_terminal_actions_do_not_create_findings(tmp_path, case):
     if case == "terminal_empty":
         result = run_action_loop(
-            "list available runs", tools={"insights_query": lambda args: {"count": 0, "records": []}},
+            "list available runs",
+            tools={"insights_query": lambda args: {"count": 0, "records": []}},
             model_call=_planner({"tool": "insights_query", "args": {}}),
         )
         assert any(step.get("terminal_observation") for step in result["steps"])
     elif case == "confirmation":
         result = run_action_loop(
-            "launch a workflow", tools={"sim2real_submit": lambda args: pytest.fail("unconfirmed tool ran")},
+            "launch a workflow",
+            tools={"sim2real_submit": lambda args: pytest.fail("unconfirmed tool ran")},
             model_call=_planner({"tool": "sim2real_submit", "args": {}}),
         )
         assert result["needs_confirmation"] is True
     else:
-        outputs = iter([
-            {"error": "synthetic temporary retrieval failure"} if case == "recovered" else {"answer": "evidence"},
-            {"answer": "recovered evidence"},
-        ])
+        outputs = iter(
+            [
+                {"error": "synthetic temporary retrieval failure"}
+                if case == "recovered"
+                else {"answer": "evidence"},
+                {"answer": "recovered evidence"},
+            ]
+        )
         plans = [{"tool": "retrieval_search", "args": {"query": "evidence"}}]
         if case == "recovered":
-            plans.append({"tool": "retrieval_search", "args": {"query": "broader evidence"}})
+            plans.append(
+                {"tool": "retrieval_search", "args": {"query": "broader evidence"}}
+            )
         plans.append({"final": "Evidence retrieved."})
         result = run_action_loop(
-            "inspect available evidence", tools={"retrieval_search": lambda args: next(outputs)},
+            "inspect available evidence",
+            tools={"retrieval_search": lambda args: next(outputs)},
             model_call=_planner(*plans),
         )
         assert result["ok"] is True
-    _, items = _record(tmp_path, result, ("action-loop", "sim2real-drive", "retrieval_search", "insights_query", "sim2real_submit"))
+    _, items = _record(
+        tmp_path,
+        result,
+        (
+            "action-loop",
+            "sim2real-drive",
+            "retrieval_search",
+            "insights_query",
+            "sim2real_submit",
+        ),
+    )
     assert items == []

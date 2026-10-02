@@ -61,7 +61,9 @@ def test_parse_arch_rejects_garbage(checker: ModuleType) -> None:
 
 
 @pytest.mark.parametrize("token", ["9", "8", "sm_9"])
-def test_parse_arch_rejects_a_bare_single_digit(checker: ModuleType, token: str) -> None:
+def test_parse_arch_rejects_a_bare_single_digit(
+    checker: ModuleType, token: str
+) -> None:
     """The bare form drops the sm_ prefix, so one digit would mean sm_9.
 
     It must fail with this function's own actionable message rather than an
@@ -192,7 +194,9 @@ def test_build_report_describes_a_visible_device(checker, with_fake_torch) -> No
     assert "Hopper" in device["known_as"]
 
 
-def test_build_report_flags_a_device_with_no_matching_sass(checker, with_fake_torch) -> None:
+def test_build_report_flags_a_device_with_no_matching_sass(
+    checker, with_fake_torch
+) -> None:
     """A cu126 wheel on B300: the device runs, but every kernel would PTX-JIT."""
 
     with_fake_torch(CU126_ARCHES, [("NVIDIA B300", (10, 3))])

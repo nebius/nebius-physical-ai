@@ -88,7 +88,9 @@ def standard_lerobot_dataset(tmp_path: Path) -> Path:
             "meta/episodes/file_index": pa.array([0, 0], type=pa.int64()),
         }
     )
-    pq.write_table(episodes, root / "meta" / "episodes" / "chunk-000" / "file-000.parquet")
+    pq.write_table(
+        episodes, root / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+    )
     pq.write_table(
         pa.table(
             {
@@ -266,10 +268,18 @@ def real_g1_lerobot_dataset(tmp_path: Path) -> Path:
                 "tasks": pa.array([["pick cube"]]),
                 "meta/episodes/chunk_index": pa.array([0], type=pa.int64()),
                 "meta/episodes/file_index": pa.array([0], type=pa.int64()),
-                "videos/observation.images.color_0/chunk_index": pa.array([0], type=pa.int64()),
-                "videos/observation.images.color_0/file_index": pa.array([0], type=pa.int64()),
-                "videos/observation.images.color_0/from_timestamp": pa.array([0.0], type=pa.float64()),
-                "videos/observation.images.color_0/to_timestamp": pa.array([0.1], type=pa.float64()),
+                "videos/observation.images.color_0/chunk_index": pa.array(
+                    [0], type=pa.int64()
+                ),
+                "videos/observation.images.color_0/file_index": pa.array(
+                    [0], type=pa.int64()
+                ),
+                "videos/observation.images.color_0/from_timestamp": pa.array(
+                    [0.0], type=pa.float64()
+                ),
+                "videos/observation.images.color_0/to_timestamp": pa.array(
+                    [0.1], type=pa.float64()
+                ),
             }
         ),
         root / "meta" / "episodes" / "chunk-000" / "file-000.parquet",
@@ -338,11 +348,7 @@ def real_g1_lerobot_dataset(tmp_path: Path) -> Path:
         },
     )
     source_video = (
-        root
-        / "videos"
-        / "observation.images.color_0"
-        / "chunk-000"
-        / "file-000.mp4"
+        root / "videos" / "observation.images.color_0" / "chunk-000" / "file-000.mp4"
     )
     source_video.parent.mkdir(parents=True)
     source_video.write_bytes(b"episode-video")
@@ -364,7 +370,9 @@ def test_lerobot_to_groot_writes_modality_and_episode_parquets(
     assert modality["state"]["gripper"] == {"start": 2, "end": 3}
     assert modality["action"]["single_arm"] == {"start": 0, "end": 2}
     assert modality["action"]["gripper"] == {"start": 2, "end": 3}
-    assert modality["annotation"]["human.task_description"]["original_key"] == "task_index"
+    assert (
+        modality["annotation"]["human.task_description"]["original_key"] == "task_index"
+    )
     assert (out / "data" / "chunk-000" / "episode_000000.parquet").exists()
     assert (out / "data" / "chunk-000" / "episode_000001.parquet").exists()
     generated_config = out / "meta" / "npa_groot_modality_config.py"
@@ -374,9 +382,10 @@ def test_lerobot_to_groot_writes_modality_and_episode_parquets(
     assert config_text.count("ActionRepresentation.RELATIVE") == 1
     assert config_text.count("ActionRepresentation.ABSOLUTE") == 1
     assert 'embodiment_tag = EmbodimentTag.resolve("NEW_EMBODIMENT")' in config_text
-    assert '"robot_embodiment": "NEW_EMBODIMENT"' in (
-        out / "meta" / "npa_groot_adapter.json"
-    ).read_text()
+    assert (
+        '"robot_embodiment": "NEW_EMBODIMENT"'
+        in (out / "meta" / "npa_groot_adapter.json").read_text()
+    )
 
 
 def test_lerobot_to_groot_splits_shared_v3_video_file(
@@ -386,7 +395,9 @@ def test_lerobot_to_groot_splits_shared_v3_video_file(
 ) -> None:
     info_path = standard_lerobot_dataset / "meta" / "info.json"
     info = json.loads(info_path.read_text())
-    info["video_path"] = "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    info["video_path"] = (
+        "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
+    )
     info["features"]["observation.image"] = {
         "dtype": "video",
         "shape": [8, 8, 3],
@@ -395,7 +406,11 @@ def test_lerobot_to_groot_splits_shared_v3_video_file(
     _write_json(info_path, info)
 
     episodes_path = (
-        standard_lerobot_dataset / "meta" / "episodes" / "chunk-000" / "file-000.parquet"
+        standard_lerobot_dataset
+        / "meta"
+        / "episodes"
+        / "chunk-000"
+        / "file-000.parquet"
     )
     episodes = pq.read_table(episodes_path)
     episodes = episodes.append_column(
@@ -432,7 +447,9 @@ def test_lerobot_to_groot_splits_shared_v3_video_file(
         commands.append(command)
         Path(command[-1]).write_bytes(b"episode-video")
 
-    monkeypatch.setattr("npa.adapter.groot.shutil.which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        "npa.adapter.groot.shutil.which", lambda name: f"/usr/bin/{name}"
+    )
     monkeypatch.setattr("npa.adapter.groot.subprocess.run", fake_run)
 
     out = lerobot_to_groot(
@@ -450,7 +467,9 @@ def test_lerobot_to_groot_splits_shared_v3_video_file(
         "0.100000000",
         "0.100000000",
     ]
-    assert all(command[command.index("-i") + 1] == str(source_video) for command in commands)
+    assert all(
+        command[command.index("-i") + 1] == str(source_video) for command in commands
+    )
     assert (
         out / "videos" / "chunk-000" / "observation.image" / "episode_000000.mp4"
     ).read_bytes() == b"episode-video"
@@ -664,7 +683,10 @@ def test_groot_to_lerobot_restores_standard_metadata(
 
     info = json.loads((restored / "meta" / "info.json").read_text())
     assert info["codebase_version"] == "v3.0"
-    assert info["data_path"] == "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+    assert (
+        info["data_path"]
+        == "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet"
+    )
     assert (restored / "meta" / "tasks.parquet").exists()
     assert (restored / "meta" / "episodes" / "chunk-000" / "file-000.parquet").exists()
     table = pq.read_table(restored / "data" / "chunk-000" / "file-000.parquet")

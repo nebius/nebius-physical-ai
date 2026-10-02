@@ -15,7 +15,7 @@ def test_scratch_root_registers_retained_cpython_shared_library():
     refresh = dockerfile.index("ldconfig -r /public-root")
     probe = dockerfile.index("chroot --userspec=1000:1000")
     assert configure < refresh < probe
-    assert "'/usr/local/lib'" in dockerfile[configure - 80:configure]
+    assert "'/usr/local/lib'" in dockerfile[configure - 80 : configure]
 
 
 def test_oci_export_preserves_attestations_without_pushing(tmp_path):
@@ -31,19 +31,31 @@ def test_oci_export_preserves_attestations_without_pushing(tmp_path):
         "Path(os.environ['DOCKER_ARGV']).write_text(json.dumps(sys.argv[1:]))\n"
     )
     docker.chmod(0o755)
-    sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    sha = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+    ).strip()
     archive = tmp_path / "candidate.oci.tar"
     metadata = tmp_path / "build-metadata.json"
     result = subprocess.run(
         [
-            "bash", str(ROOT / "npa/docker/workbench/ncore/build.sh"),
-            "--source-sha", sha,
-            "--oci-output", str(archive),
-            "--metadata-file", str(metadata),
-            "--builder", "test-builder",
+            "bash",
+            str(ROOT / "npa/docker/workbench/ncore/build.sh"),
+            "--source-sha",
+            sha,
+            "--oci-output",
+            str(archive),
+            "--metadata-file",
+            str(metadata),
+            "--builder",
+            "test-builder",
         ],
-        env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}", "DOCKER_ARGV": str(capture)},
-        capture_output=True, text=True,
+        env={
+            **os.environ,
+            "PATH": f"{tools}:{os.environ['PATH']}",
+            "DOCKER_ARGV": str(capture),
+        },
+        capture_output=True,
+        text=True,
         preexec_fn=lambda: os.umask(0o077),
     )
     assert result.returncode == 0, result.stderr

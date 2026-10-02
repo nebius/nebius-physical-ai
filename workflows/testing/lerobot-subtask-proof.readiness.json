@@ -1,0 +1,57 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "cd66862dd0e95a2530e3979dff55ad0fa0cc1f2d198d601440fea95508d9f9f9",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and static planning completed successfully with argv-safe module execution and S3 input/output URIs.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/lerobot-subtask-proof.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/lerobot-subtask-proof.yaml --run-id subtask-proof-preview --var bucket=example-bucket --var reviewed_dataset_uri=s3://example-bucket/reviewed-dataset/ --var proof_uri=s3://example-bucket/subtask-proof-preview/proof.json --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The workflow completed through run-spec --execute on a synthetic LeRobot v3 fixture. Tests resolve grasp at episode 0/frame 2/timestamp 0.2, prove 8/8 labeled frames, verify source immutability, and independently read back live-harness proof and dataset bytes including tampering rejection. Separately, the accepted standard-runtime execution at git:15afd79f08a4734b2b1ec9f421ed2b504ddaff8c published a durable S3 proof. That proof was downloaded, and its exact row resolution, coverage counts, and bound digests were independently recomputed from the reviewed Parquet rows and label catalog rather than inferred from terminal status. This verifies artifact consistency for that historical run; it does not verify semantic label correctness, policy improvement, or robot readiness.",
+      "evidence": [
+        "npa/tests/workflows/test_lerobot_subtask_proof.py",
+        "npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py::test_lerobot_subtask_proof_seeds_real_parquet_rows",
+        "npa/tests/orchestration/npa_workflow/test_live_e2e_prefix_scope.py::test_subtask_live_readback_resolves_real_source_bytes",
+        "Sanitized conclusion from access-controlled standard-runtime and artifact-review evidence for git:15afd79f08a4734b2b1ec9f421ed2b504ddaff8c"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The committed workflow uses an example bucket; each run must select a writable operator-owned bucket and proof URI.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The local and live-harness fixtures satisfy the LeRobot v3 subtask contract, but each operator's reviewed S3 dataset remains to be staged and checked.",
+      "evidence": [
+        "docs/workbench/guides/lerobot-subtask-labeling.md"
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Historical authentication checks do not qualify a future submission. Every new run must recheck its Nebius and S3 credentials and exact output-prefix access.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The accepted execution used git:15afd79f08a4734b2b1ec9f421ed2b504ddaff8c, not the pinned git:3d64b14eda533c042a964bd7aaa68ecc3cfd8d4e base. Every new submission must stage its exact source revision and independently verify that its selected worker image is pullable.",
+      "evidence": [
+        "workflows/testing/lerobot-subtask-proof.yaml"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "A standard-runtime cloud execution completed successfully at git:15afd79f08a4734b2b1ec9f421ed2b504ddaff8c. This is sanitized historical execution evidence, not live qualification of the pinned base or any future environment. Every new run must recheck storage, credentials, reviewed input, staged source, image pullability, and standard-runtime readiness before submission.",
+      "evidence": [
+        "Sanitized conclusion from access-controlled standard-runtime evidence; private infrastructure and run identifiers omitted"
+      ]
+    }
+  }
+}

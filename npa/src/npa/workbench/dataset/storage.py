@@ -51,6 +51,8 @@ def _s3_client():
 
     return boto3.client(
         "s3",
-        endpoint_url=os.environ.get("AWS_ENDPOINT_URL") or os.environ.get("NEBIUS_S3_ENDPOINT") or None,
+        endpoint_url=os.environ.get("AWS_ENDPOINT_URL")
+        or os.environ.get("NEBIUS_S3_ENDPOINT")
+        or None,
         config=BotoConfig(signature_version="s3v4"),
     )

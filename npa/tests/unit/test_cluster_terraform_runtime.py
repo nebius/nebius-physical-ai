@@ -82,9 +82,7 @@ def test_isolated_data_creation_failure_never_leaves_an_unowned_run_dir(
     )
 
     with pytest.raises(RuntimeError, match="Could not create isolated Terraform data"):
-        with terraform_runtime.isolated_terraform_data_dir(
-            terraform_dir, "cluster-a"
-        ):
+        with terraform_runtime.isolated_terraform_data_dir(terraform_dir, "cluster-a"):
             raise AssertionError("unreachable")
 
     root = terraform_runtime.terraform_scratch_root()
@@ -98,9 +96,7 @@ def test_destroy_evidence_ignores_a_legacy_provider_cache(
     cache = terraform_dir / ".terraform" / "providers"
     cache.mkdir(parents=True)
 
-    assert not terraform_runtime.has_destroy_evidence(
-        terraform_dir, "never-created"
-    )
+    assert not terraform_runtime.has_destroy_evidence(terraform_dir, "never-created")
 
 
 def test_apply_inventory_is_durable_evidence_before_kubeconfig(

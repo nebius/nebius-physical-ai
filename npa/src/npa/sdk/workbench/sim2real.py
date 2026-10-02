@@ -106,7 +106,9 @@ def inner_loop(
     """Run only Stage 7-9 VLM eval, signal conversion, and policy update."""
 
     config = build_config_from_env(run_id=run_id, output_dir=output_dir, **overrides)
-    return run_inner_loop(config, local_dir=Path(output_dir), initial_quality=initial_quality)
+    return run_inner_loop(
+        config, local_dir=Path(output_dir), initial_quality=initial_quality
+    )
 
 
 def preamble(

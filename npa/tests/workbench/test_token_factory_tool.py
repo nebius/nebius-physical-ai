@@ -25,7 +25,9 @@ def _client(reply: str) -> TokenFactoryClient:
         return httpx.Response(200, json={"choices": [{"message": {"content": reply}}]})
 
     config = resolve_config(api_key="test-key", environ={})
-    return TokenFactoryClient(config, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    return TokenFactoryClient(
+        config, http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
 
 
 def _capturing_client(reply: str, captured: dict) -> TokenFactoryClient:
@@ -36,7 +38,9 @@ def _capturing_client(reply: str, captured: dict) -> TokenFactoryClient:
         return httpx.Response(200, json={"choices": [{"message": {"content": reply}}]})
 
     config = resolve_config(api_key="test-key", environ={})
-    return TokenFactoryClient(config, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    return TokenFactoryClient(
+        config, http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
 
 
 def _write_image(path: Path, color: tuple[int, int, int]) -> None:
@@ -82,7 +86,11 @@ def test_caption_images_no_images_raises(tmp_path: Path) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
     with pytest.raises(TokenFactoryToolError):
-        caption_images(input_path=str(empty), output_path=str(tmp_path / "out"), client=_client("x"))
+        caption_images(
+            input_path=str(empty),
+            output_path=str(tmp_path / "out"),
+            client=_client("x"),
+        )
 
 
 def test_generate_text_from_jsonl(tmp_path: Path) -> None:
@@ -122,14 +130,21 @@ def test_generate_text_from_txt_lines(tmp_path: Path) -> None:
     )
 
     assert result.prompt_count == 2
-    assert [item.prompt for item in result.generations] == ["first prompt", "second prompt"]
+    assert [item.prompt for item in result.generations] == [
+        "first prompt",
+        "second prompt",
+    ]
 
 
 def test_generate_text_missing_prompt_field_raises(tmp_path: Path) -> None:
     prompts = tmp_path / "prompts.jsonl"
     prompts.write_text(json.dumps({"id": "p1"}), encoding="utf-8")
     with pytest.raises(TokenFactoryToolError):
-        generate_text(input_path=str(prompts), output_path=str(tmp_path / "gen"), client=_client("x"))
+        generate_text(
+            input_path=str(prompts),
+            output_path=str(tmp_path / "gen"),
+            client=_client("x"),
+        )
 
 
 def test_reason_scene_sends_images_and_returns_plan(tmp_path: Path) -> None:
@@ -167,7 +182,9 @@ def test_reason_scene_strips_think_block_from_analysis(tmp_path: Path) -> None:
     result = reason_scene(
         input_path=str(scene),
         output_path=str(tmp_path / "out"),
-        client=_client("<think>\nthe cup is in front of the cube\n</think>\n1. clear the cup 2. grasp"),
+        client=_client(
+            "<think>\nthe cup is in front of the cube\n</think>\n1. clear the cup 2. grasp"
+        ),
     )
 
     assert "<think>" not in result.analysis
@@ -193,4 +210,8 @@ def test_reason_scene_no_images_raises(tmp_path: Path) -> None:
     empty = tmp_path / "empty"
     empty.mkdir()
     with pytest.raises(TokenFactoryToolError):
-        reason_scene(input_path=str(empty), output_path=str(tmp_path / "out"), client=_client("x"))
+        reason_scene(
+            input_path=str(empty),
+            output_path=str(tmp_path / "out"),
+            client=_client("x"),
+        )

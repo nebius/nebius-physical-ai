@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from npa.workflows.sim2real_envgen import EnvGenConfig, build_scene_spec, generate_raw_envs
+from npa.workflows.sim2real_envgen import (
+    EnvGenConfig,
+    build_scene_spec,
+    generate_raw_envs,
+)
 
 
 @dataclass
@@ -31,7 +37,9 @@ def check_raw_env_generation() -> CheckResult:
     )
     envs = generate_raw_envs(config)
     if len(envs) != 16:
-        return CheckResult("raw env generation", False, f"expected 16 envs, got {len(envs)}")
+        return CheckResult(
+            "raw env generation", False, f"expected 16 envs, got {len(envs)}"
+        )
     with tempfile.TemporaryDirectory(prefix="npa-envgen-smoke-") as tmp:
         path = Path(tmp) / "envs.jsonl"
         with path.open("w", encoding="utf-8") as handle:
@@ -40,6 +48,43 @@ def check_raw_env_generation() -> CheckResult:
         if path.stat().st_size <= 0:
             return CheckResult("raw env generation", False, "empty jsonl")
     return CheckResult("raw env generation", True, f"rows={len(envs)}")
+
+
+def check_non_root_runtime_readability() -> CheckResult:
+    """Prove the flattened image can import its exact source without PYTHONPATH."""
+
+    uid = os.geteuid()
+    if uid == 0:
+        return CheckResult(
+            "non-root runtime readability",
+            False,
+            "golden eval unexpectedly ran as root",
+        )
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    probe = (
+        "import os; from pathlib import Path; import tetgen; "
+        "from npa.workflows import sim2real_envgen; "
+        "paths=(Path(tetgen.__file__), Path(sim2real_envgen.__file__)); "
+        "assert all(path.is_file() and os.access(path, os.R_OK) for path in paths); "
+        "print(*(str(path) for path in paths), sep=' | ')"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "import probe failed").strip()
+        return CheckResult("non-root runtime readability", False, detail[-400:])
+    return CheckResult(
+        "non-root runtime readability",
+        True,
+        f"uid={uid}; {completed.stdout.strip()}",
+    )
 
 
 def check_genesis_cuda_step() -> CheckResult:
@@ -68,7 +113,11 @@ def check_genesis_cuda_step() -> CheckResult:
 
 
 def main() -> int:
-    checks: list[Callable[[], CheckResult]] = [check_raw_env_generation, check_genesis_cuda_step]
+    checks: list[Callable[[], CheckResult]] = [
+        check_non_root_runtime_readability,
+        check_raw_env_generation,
+        check_genesis_cuda_step,
+    ]
     failed = 0
     for check in checks:
         result = check()

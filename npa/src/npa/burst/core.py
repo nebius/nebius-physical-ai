@@ -340,7 +340,9 @@ def _load_burst_yaml_documents(path: Path) -> list[dict[str, Any]]:
     return [dict(doc) for doc in docs]
 
 
-def _single_task_from_documents(docs: list[dict[str, Any]], path: Path) -> dict[str, Any]:
+def _single_task_from_documents(
+    docs: list[dict[str, Any]], path: Path
+) -> dict[str, Any]:
     if len(docs) == 1:
         return dict(docs[0])
     header = docs[0]
@@ -369,7 +371,9 @@ def _replace_placeholders(value: Any, replacements: Mapping[str, str]) -> Any:
     return value
 
 
-def _replace_task_placeholders(task: Mapping[str, Any], replacements: Mapping[str, str]) -> dict[str, Any]:
+def _replace_task_placeholders(
+    task: Mapping[str, Any], replacements: Mapping[str, str]
+) -> dict[str, Any]:
     rendered = dict(task)
     for key, value in list(rendered.items()):
         if key in {"run", "setup"}:
@@ -381,7 +385,9 @@ def _replace_task_placeholders(task: Mapping[str, Any], replacements: Mapping[st
 def _unresolved_placeholders(value: Any) -> set[str]:
     unresolved: set[str] = set()
     if isinstance(value, str):
-        unresolved.update(match.group(1) for match in _ENV_PLACEHOLDER_RE.finditer(value))
+        unresolved.update(
+            match.group(1) for match in _ENV_PLACEHOLDER_RE.finditer(value)
+        )
     elif isinstance(value, list):
         for item in value:
             unresolved.update(_unresolved_placeholders(item))
@@ -404,8 +410,12 @@ def _validate_burst_yaml_runtime(task: Mapping[str, Any], source: Path) -> None:
     resources = task.get("resources") or {}
     if not isinstance(resources, Mapping):
         raise BurstConfigError(f"SkyPilot task resources must be a mapping: {source}")
-    if resources.get("image_id") is not None and not isinstance(resources.get("image_id"), str):
-        raise BurstConfigError(f"SkyPilot task resources.image_id must be a string: {source}")
+    if resources.get("image_id") is not None and not isinstance(
+        resources.get("image_id"), str
+    ):
+        raise BurstConfigError(
+            f"SkyPilot task resources.image_id must be a string: {source}"
+        )
 
 
 def _inject_registry_login(task: dict[str, Any]) -> None:
@@ -420,15 +430,22 @@ def _inject_registry_login(task: dict[str, Any]) -> None:
     if not server:
         return
     configured_server = (
-        os.environ.get("SKYPILOT_DOCKER_SERVER", "").strip()
-        or os.environ.get("NPA_REGISTRY_SERVER", "").strip()
-    ).removeprefix("https://").removeprefix("http://").rstrip("/")
-    username = os.environ.get("SKYPILOT_DOCKER_USERNAME", "").strip() or os.environ.get(
-        "NPA_REGISTRY_USERNAME", ""
-    ).strip()
-    password = os.environ.get("SKYPILOT_DOCKER_PASSWORD", "").strip() or os.environ.get(
-        "NPA_REGISTRY_PASSWORD", ""
-    ).strip()
+        (
+            os.environ.get("SKYPILOT_DOCKER_SERVER", "").strip()
+            or os.environ.get("NPA_REGISTRY_SERVER", "").strip()
+        )
+        .removeprefix("https://")
+        .removeprefix("http://")
+        .rstrip("/")
+    )
+    username = (
+        os.environ.get("SKYPILOT_DOCKER_USERNAME", "").strip()
+        or os.environ.get("NPA_REGISTRY_USERNAME", "").strip()
+    )
+    password = (
+        os.environ.get("SKYPILOT_DOCKER_PASSWORD", "").strip()
+        or os.environ.get("NPA_REGISTRY_PASSWORD", "").strip()
+    )
     image_registry = image.removeprefix("docker:").rsplit("/", 1)[0]
     if configured_server != server:
         if is_public_registry(image_registry):
@@ -443,7 +460,9 @@ def _inject_registry_login(task: dict[str, Any]) -> None:
         return
     secrets = task.setdefault("secrets", {})
     if not isinstance(secrets, dict):
-        raise BurstConfigError("SkyPilot task secrets must be a mapping when using private registry auth")
+        raise BurstConfigError(
+            "SkyPilot task secrets must be a mapping when using private registry auth"
+        )
     if {
         "SKYPILOT_DOCKER_SERVER",
         "SKYPILOT_DOCKER_USERNAME",
@@ -460,7 +479,11 @@ def _inject_registry_login(task: dict[str, Any]) -> None:
 
 
 def _registry_server_from_image_id(image_id: str) -> str:
-    value = image_id.removeprefix("docker:").removeprefix("http://").removeprefix("https://")
+    value = (
+        image_id.removeprefix("docker:")
+        .removeprefix("http://")
+        .removeprefix("https://")
+    )
     if "/" not in value:
         return ""
     return value.split("/", 1)[0].rstrip("/")
@@ -532,7 +555,9 @@ def _prepare_runtime(
     base_config = _load_base_config(runtime_config.global_config_path)
     generated_config_path.write_text(
         yaml.safe_dump(
-            apply_controller_override(base_config, controller_backend=controller_backend),
+            apply_controller_override(
+                base_config, controller_backend=controller_backend
+            ),
             sort_keys=False,
         ),
         encoding="utf-8",
@@ -557,13 +582,17 @@ def _prepare_runtime_from_handle(handle: BurstJobHandle, **kwargs: Any) -> _Runt
         sky_bin=kwargs.pop("sky_bin", None) or handle.sky_bin or None,
         config_path=kwargs.pop("config_path", None) or handle.config_path or None,
         isolated_config_dir=(
-            kwargs.pop("isolated_config_dir", None) or handle.isolated_config_dir or None
+            kwargs.pop("isolated_config_dir", None)
+            or handle.isolated_config_dir
+            or None
         ),
         controller_backend=kwargs.pop("controller_backend", DEFAULT_CONTROLLER_BACKEND),
     )
 
 
-def _run_sky_api(runtime: _Runtime, action: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+def _run_sky_api(
+    runtime: _Runtime, action: str, payload: Mapping[str, Any]
+) -> dict[str, Any]:
     command = [str(runtime.sky_python), str(_sky_api_bridge_path()), action]
     result = subprocess.run(
         command,
@@ -576,7 +605,11 @@ def _run_sky_api(runtime: _Runtime, action: str, payload: Mapping[str, Any]) -> 
         check=False,
     )
     if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+        detail = (
+            result.stderr.strip()
+            or result.stdout.strip()
+            or f"exit {result.returncode}"
+        )
         raise BurstSubmitError(f"SkyPilot Python API {action} failed: {detail}")
     try:
         decoded = json.loads(result.stdout or "{}")
@@ -585,7 +618,9 @@ def _run_sky_api(runtime: _Runtime, action: str, payload: Mapping[str, Any]) -> 
             f"SkyPilot Python API {action} returned non-json output: {result.stdout!r}"
         ) from exc
     if not isinstance(decoded, dict):
-        raise BurstSubmitError(f"SkyPilot Python API {action} returned invalid payload: {decoded!r}")
+        raise BurstSubmitError(
+            f"SkyPilot Python API {action} returned invalid payload: {decoded!r}"
+        )
     return decoded
 
 
@@ -601,14 +636,20 @@ def _sky_python_from_bin(sky_bin: Path) -> Path:
             f"SkyPilot Python executable not found next to sky binary: {python}"
         )
     result = subprocess.run(
-        [str(python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"],
+        [
+            str(python),
+            "-c",
+            "import sky; print(getattr(sky, '__version__', 'unknown'))",
+        ],
         capture_output=True,
         text=True,
         check=False,
     )
     actual = result.stdout.strip()
     if result.returncode != 0:
-        raise SkyPilotVersionError(f"Unable to import SkyPilot via {python}: {result.stderr.strip()}")
+        raise SkyPilotVersionError(
+            f"Unable to import SkyPilot via {python}: {result.stderr.strip()}"
+        )
     if actual != REQUIRED_SKYPILOT_VERSION:
         raise SkyPilotVersionError(
             f"SkyPilot version mismatch: expected {REQUIRED_SKYPILOT_VERSION}, got {actual}"
@@ -622,7 +663,9 @@ def _load_base_config(config_path: Path | None) -> dict[str, Any]:
     with config_path.open("r", encoding="utf-8") as handle:
         data = yaml.safe_load(handle) or {}
     if not isinstance(data, dict):
-        raise SkyPilotConfigError(f"SkyPilot global config must be a mapping: {config_path}")
+        raise SkyPilotConfigError(
+            f"SkyPilot global config must be a mapping: {config_path}"
+        )
     return data
 
 

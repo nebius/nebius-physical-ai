@@ -1,0 +1,792 @@
+{
+  "source": "lerobot/aloha_static_cups_open",
+  "episode": 0,
+  "npa_generation_commit": "cdebb54d25ec096d5d32dc2d6db1e67b016988d5",
+  "cosmos_framework_commit": "5e67049cd94acb667786f1e6dd0dab821cb90c97",
+  "resolved_model_revision": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+  "sampling": {
+    "steps": 35,
+    "guidance": 5.0,
+    "control_guidance": 1.0,
+    "edge_threshold": "low",
+    "rgb_weight": 0.25,
+    "first_chunk_source_frames": 0,
+    "cfg_normalization": false,
+    "source_pixel_blending": false
+  },
+  "camera": "observation.images.cam_high",
+  "source_revision": "d793c969cf716001dcca18a0842c3d7e9de9e41b",
+  "source_sha256": "af37db188ace3e3aec613fc20c1852a076bb90bf1f6e032ffd8396a5ca915de2",
+  "variant_count": 12,
+  "unique_profiles": 12,
+  "gpu_parallelism": 2,
+  "prepared_frames": 192,
+  "duration_seconds": 8,
+  "fps": 24,
+  "model": "Cosmos3-Nano",
+  "quality_status": "rejected",
+  "score": 0.116148,
+  "passed_clips": 0,
+  "grade_threshold": 0.75,
+  "attribute_threshold": 1,
+  "temporal_threshold": 0.8,
+  "variants": [
+    {
+      "clip": "variant-0000",
+      "name": "Cool twilight gray",
+      "profile": {
+        "lighting": "cool blue-hour ambient illumination with a soft neutral overhead fill and readable contact shadows",
+        "background": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries",
+        "color_grade": "cool low-key treatment with visible dark joints and unclipped white grippers",
+        "surface_finish": "matte gray surface with soft low-gloss highlights and no added texture"
+      },
+      "seed": 17,
+      "sha256": "871bd63ff9f6036fa16594825cb15718ea5f80b69807ce9a07fe2174525bfadf",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.11551,
+      "passed": false,
+      "attributes_passed": 4,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": true,
+          "expected": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries",
+          "selected": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": true,
+          "expected": "cool low-key treatment with visible dark joints and unclipped white grippers",
+          "selected": "cool low-key treatment with visible dark joints and unclipped white grippers"
+        },
+        {
+          "variable": "lighting",
+          "passed": true,
+          "expected": "cool blue-hour ambient illumination with a soft neutral overhead fill and readable contact shadows",
+          "selected": "cool blue-hour ambient illumination with a soft neutral overhead fill and readable contact shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": true,
+          "expected": "matte gray surface with soft low-gloss highlights and no added texture",
+          "selected": "matte gray surface with soft low-gloss highlights and no added texture"
+        }
+      ],
+      "temporal_score": 0.11551,
+      "hallucination_score": 0.9835514485514486,
+      "appearance_score": 0.600359,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": []
+    },
+    {
+      "clip": "variant-0001",
+      "name": "Brushed aluminum / lab",
+      "profile": {
+        "lighting": "bright neutral overhead laboratory illumination with coherent contact shadows",
+        "background": "the existing tabletop is silver brushed aluminum, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance with silver-gray confined to the tabletop",
+        "surface_finish": "finely brushed metal with broad soft specular reflections, not a mirror"
+      },
+      "seed": 18,
+      "sha256": "927b8823a8b01564fad5565787b2daaafc2e50ec4b0614605988d63c1c89eeb2",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.109092,
+      "passed": false,
+      "attributes_passed": 1,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": false,
+          "expected": "the existing tabletop is silver brushed aluminum, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop has pale oak wood grain, retaining its exact plane and boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": false,
+          "expected": "neutral balanced white balance with silver-gray confined to the tabletop",
+          "selected": "neutral balanced white balance with tan restricted to the tabletop"
+        },
+        {
+          "variable": "lighting",
+          "passed": false,
+          "expected": "bright neutral overhead laboratory illumination with coherent contact shadows",
+          "selected": "cool diffuse laboratory illumination with coherent contact shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": true,
+          "expected": "finely brushed metal with broad soft specular reflections, not a mirror",
+          "selected": "finely brushed metal with broad soft specular reflections, not a mirror"
+        }
+      ],
+      "temporal_score": 0.109092,
+      "hallucination_score": 0.981892705611561,
+      "appearance_score": 1.0,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": [
+        "background",
+        "color_grade",
+        "lighting"
+      ]
+    },
+    {
+      "clip": "variant-0002",
+      "name": "Black rubber / softbox",
+      "profile": {
+        "lighting": "large neutral softbox illumination preserving visibility of dark robot joints",
+        "background": "the existing tabletop has a charcoal-black rubber surface, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance with readable shadows and no crushed blacks",
+        "surface_finish": "fine-grained matte rubber with low reflectivity, no added mat or raised edges"
+      },
+      "seed": 19,
+      "sha256": "39e4750bed8c7f2d365373717094a893c746da0b9853685fb58949c8803ef073",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.126789,
+      "passed": false,
+      "attributes_passed": 2,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": false,
+          "expected": "the existing tabletop has a charcoal-black rubber surface, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": true,
+          "expected": "neutral balanced white balance with readable shadows and no crushed blacks",
+          "selected": "neutral balanced white balance with readable shadows and no crushed blacks"
+        },
+        {
+          "variable": "lighting",
+          "passed": false,
+          "expected": "large neutral softbox illumination preserving visibility of dark robot joints",
+          "selected": "warm low-angle light from the left with longer coherent soft-edged shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": true,
+          "expected": "fine-grained matte rubber with low reflectivity, no added mat or raised edges",
+          "selected": "fine-grained matte rubber with low reflectivity, no added mat or raised edges"
+        }
+      ],
+      "temporal_score": 0.126789,
+      "hallucination_score": 0.966554313741511,
+      "appearance_score": 1.0,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": [
+        "background",
+        "lighting"
+      ]
+    },
+    {
+      "clip": "variant-0003",
+      "name": "Walnut / warm studio",
+      "profile": {
+        "lighting": "soft warm studio illumination with gentle coherent shadows",
+        "background": "the existing tabletop has dark brown walnut grain, retaining its exact plane and boundaries",
+        "color_grade": "gently warm white balance while preserving the white grippers and clear cup",
+        "surface_finish": "satin walnut with restrained wood sheen, no seams or planks"
+      },
+      "seed": 20,
+      "sha256": "20e6c465572e5975c978c3c7fb96f2f8507729cb37ffada524833c13eede319f",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.110584,
+      "passed": false,
+      "attributes_passed": 3,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": true,
+          "expected": "the existing tabletop has dark brown walnut grain, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop has dark brown walnut grain, retaining its exact plane and boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": true,
+          "expected": "gently warm white balance while preserving the white grippers and clear cup",
+          "selected": "gently warm white balance while preserving the white grippers and clear cup"
+        },
+        {
+          "variable": "lighting",
+          "passed": false,
+          "expected": "soft warm studio illumination with gentle coherent shadows",
+          "selected": "warm low-angle light from the left with longer coherent soft-edged shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": true,
+          "expected": "satin walnut with restrained wood sheen, no seams or planks",
+          "selected": "satin walnut with restrained wood sheen, no seams or planks"
+        }
+      ],
+      "temporal_score": 0.110584,
+      "hallucination_score": 0.984891163449937,
+      "appearance_score": 0.386206,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": [
+        "lighting"
+      ]
+    },
+    {
+      "clip": "variant-0004",
+      "name": "Terracotta / side light",
+      "profile": {
+        "lighting": "warm directional light from the upper left with coherent soft-edged shadows",
+        "background": "the existing tabletop is muted terracotta-colored stone, retaining its exact plane and boundaries",
+        "color_grade": "warm natural white balance with orange-brown restricted to the tabletop",
+        "surface_finish": "dry matte terracotta with very fine pores, no tiles or grout lines"
+      },
+      "seed": 21,
+      "sha256": "b6070bb5efdadbb8ad47b7148241717c3ad22439083a68d0e10b932e24d2f946",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.109223,
+      "passed": false,
+      "attributes_passed": 4,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": true,
+          "expected": "the existing tabletop is muted terracotta-colored stone, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop is muted terracotta-colored stone, retaining its exact plane and boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": true,
+          "expected": "warm natural white balance with orange-brown restricted to the tabletop",
+          "selected": "warm natural white balance with orange-brown restricted to the tabletop"
+        },
+        {
+          "variable": "lighting",
+          "passed": true,
+          "expected": "warm directional light from the upper left with coherent soft-edged shadows",
+          "selected": "warm directional light from the upper left with coherent soft-edged shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": true,
+          "expected": "dry matte terracotta with very fine pores, no tiles or grout lines",
+          "selected": "dry matte terracotta with very fine pores, no tiles or grout lines"
+        }
+      ],
+      "temporal_score": 0.109223,
+      "hallucination_score": 0.9752539820334097,
+      "appearance_score": 0.151329,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": []
+    },
+    {
+      "clip": "variant-0005",
+      "name": "Warm side-lit gray",
+      "profile": {
+        "lighting": "warm low-angle light from the left with longer coherent soft-edged shadows",
+        "background": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries",
+        "color_grade": "warm late-afternoon white balance with preserved foreground identity colors",
+        "surface_finish": "matte gray surface with a subtle directional sheen and no added texture"
+      },
+      "seed": 22,
+      "sha256": "4870271b28f01f84ed4e6df91fcf070c74645c3d556e2a796b3bf01cb6434bd0",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.12848,
+      "passed": false,
+      "attributes_passed": 3,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": true,
+          "expected": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries",
+          "selected": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": false,
+          "expected": "warm late-afternoon white balance with preserved foreground identity colors",
+          "selected": "neutral balanced white balance with readable shadows and no crushed blacks"
+        },
+        {
+          "variable": "lighting",
+          "passed": true,
+          "expected": "warm low-angle light from the left with longer coherent soft-edged shadows",
+          "selected": "warm low-angle light from the left with longer coherent soft-edged shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": true,
+          "expected": "matte gray surface with a subtle directional sheen and no added texture",
+          "selected": "matte gray surface with a subtle directional sheen and no added texture"
+        }
+      ],
+      "temporal_score": 0.12848,
+      "hallucination_score": 0.9858072192018873,
+      "appearance_score": 0.363941,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": [
+        "color_grade"
+      ]
+    },
+    {
+      "clip": "variant-0006",
+      "name": "Cork / diffuse daylight",
+      "profile": {
+        "lighting": "soft diffuse daylight with coherent contact shadows",
+        "background": "the existing tabletop is warm tan cork, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance with tan restricted to the tabletop",
+        "surface_finish": "matte fine-grained cork with subtle natural pores, no seams or added objects"
+      },
+      "seed": 23,
+      "sha256": "020b30661ed2612729f8b9af7e67eba0b2ff7d72eda6536447ce065dca06cb60",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.120458,
+      "passed": false,
+      "attributes_passed": 4,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": true,
+          "expected": "the existing tabletop is warm tan cork, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop is warm tan cork, retaining its exact plane and boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": true,
+          "expected": "neutral balanced white balance with tan restricted to the tabletop",
+          "selected": "neutral balanced white balance with tan restricted to the tabletop"
+        },
+        {
+          "variable": "lighting",
+          "passed": true,
+          "expected": "soft diffuse daylight with coherent contact shadows",
+          "selected": "soft diffuse daylight with coherent contact shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": true,
+          "expected": "matte fine-grained cork with subtle natural pores, no seams or added objects",
+          "selected": "matte fine-grained cork with subtle natural pores, no seams or added objects"
+        }
+      ],
+      "temporal_score": 0.120458,
+      "hallucination_score": 0.9830006901333689,
+      "appearance_score": 0.329046,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": []
+    },
+    {
+      "clip": "variant-0007",
+      "name": "Green laminate / soft daylight",
+      "profile": {
+        "lighting": "soft neutral daylight with coherent contact shadows",
+        "background": "the existing tabletop is muted green laminate, retaining its exact plane and boundaries",
+        "color_grade": "neutral white balance with muted green restricted to the tabletop",
+        "surface_finish": "smooth matte laminate with uniform low gloss and no pattern or seams"
+      },
+      "seed": 24,
+      "sha256": "81bef5eb4cdd847d98402c0611f1a0b41ce2700b674cf75c78dfaf10c2379432",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.109734,
+      "passed": false,
+      "attributes_passed": 1,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": true,
+          "expected": "the existing tabletop is muted green laminate, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop is muted green laminate, retaining its exact plane and boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": false,
+          "expected": "neutral white balance with muted green restricted to the tabletop",
+          "selected": "warm natural white balance with orange-brown restricted to the tabletop"
+        },
+        {
+          "variable": "lighting",
+          "passed": false,
+          "expected": "soft neutral daylight with coherent contact shadows",
+          "selected": "cool blue-hour ambient illumination with a soft neutral overhead fill and readable contact shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": false,
+          "expected": "smooth matte laminate with uniform low gloss and no pattern or seams",
+          "selected": "matte gray surface with soft low-gloss highlights and no added texture"
+        }
+      ],
+      "temporal_score": 0.109734,
+      "hallucination_score": 0.9782953964884222,
+      "appearance_score": 0.535415,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": [
+        "color_grade",
+        "lighting",
+        "surface_finish"
+      ]
+    },
+    {
+      "clip": "variant-0008",
+      "name": "Granite / overcast",
+      "profile": {
+        "lighting": "broad overcast daylight with soft coherent contact shadows",
+        "background": "the existing tabletop is fine-grained medium-gray granite, retaining its exact plane and boundaries",
+        "color_grade": "neutral low-saturation white balance preserving foreground identity colors",
+        "surface_finish": "honed stone with fine natural speckles and low gloss, no cracks or seams"
+      },
+      "seed": 25,
+      "sha256": "6a837b92c2b13d7b68f5d18255b1e5bc8684a53b8f0dedda0c89081c086d3ddf",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.106305,
+      "passed": false,
+      "attributes_passed": 3,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": true,
+          "expected": "the existing tabletop is fine-grained medium-gray granite, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop is fine-grained medium-gray granite, retaining its exact plane and boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": true,
+          "expected": "neutral low-saturation white balance preserving foreground identity colors",
+          "selected": "neutral low-saturation white balance preserving foreground identity colors"
+        },
+        {
+          "variable": "lighting",
+          "passed": false,
+          "expected": "broad overcast daylight with soft coherent contact shadows",
+          "selected": "warm directional light from the upper left with coherent soft-edged shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": true,
+          "expected": "honed stone with fine natural speckles and low gloss, no cracks or seams",
+          "selected": "honed stone with fine natural speckles and low gloss, no cracks or seams"
+        }
+      ],
+      "temporal_score": 0.106305,
+      "hallucination_score": 0.9711561775092103,
+      "appearance_score": 1.0,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": [
+        "lighting"
+      ]
+    },
+    {
+      "clip": "variant-0009",
+      "name": "Pale oak / daylight",
+      "profile": {
+        "lighting": "soft diffuse daylight with neutral exposure and coherent contact shadows",
+        "background": "the existing tabletop has pale oak wood grain, retaining its exact plane and boundaries",
+        "color_grade": "neutral balanced white balance; pale beige restricted to the tabletop",
+        "surface_finish": "dry matte oak with subtle lengthwise grain, no seams or planks"
+      },
+      "seed": 26,
+      "sha256": "faecbf0080fef2db32189467c409a831fc4d406038d85bcce933e5a9926b04d1",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.12294,
+      "passed": false,
+      "attributes_passed": 2,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": false,
+          "expected": "the existing tabletop has pale oak wood grain, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop has dark brown walnut grain, retaining its exact plane and boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": true,
+          "expected": "neutral balanced white balance; pale beige restricted to the tabletop",
+          "selected": "neutral balanced white balance; pale beige restricted to the tabletop"
+        },
+        {
+          "variable": "lighting",
+          "passed": true,
+          "expected": "soft diffuse daylight with neutral exposure and coherent contact shadows",
+          "selected": "soft diffuse daylight with neutral exposure and coherent contact shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": false,
+          "expected": "dry matte oak with subtle lengthwise grain, no seams or planks",
+          "selected": "matte gray surface with a subtle directional sheen and no added texture"
+        }
+      ],
+      "temporal_score": 0.12294,
+      "hallucination_score": 0.9806522787733793,
+      "appearance_score": 0.629548,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": [
+        "background",
+        "surface_finish"
+      ]
+    },
+    {
+      "clip": "variant-0010",
+      "name": "Stainless steel / cool lab",
+      "profile": {
+        "lighting": "cool diffuse laboratory illumination with coherent contact shadows",
+        "background": "the existing tabletop is stainless steel, retaining its exact plane and boundaries",
+        "color_grade": "slightly cool white balance without recoloring robot parts or the clear cup",
+        "surface_finish": "smooth satin stainless steel with subtle broad reflections, not a mirror"
+      },
+      "seed": 27,
+      "sha256": "e66d57d003d3c9c7b7dc3d2ca23998febfb56e0af33b06f77999f9ee977ff9ad",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.110785,
+      "passed": false,
+      "attributes_passed": 3,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": false,
+          "expected": "the existing tabletop is stainless steel, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop is silver brushed aluminum, retaining its exact plane and boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": true,
+          "expected": "slightly cool white balance without recoloring robot parts or the clear cup",
+          "selected": "slightly cool white balance without recoloring robot parts or the clear cup"
+        },
+        {
+          "variable": "lighting",
+          "passed": true,
+          "expected": "cool diffuse laboratory illumination with coherent contact shadows",
+          "selected": "cool diffuse laboratory illumination with coherent contact shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": true,
+          "expected": "smooth satin stainless steel with subtle broad reflections, not a mirror",
+          "selected": "smooth satin stainless steel with subtle broad reflections, not a mirror"
+        }
+      ],
+      "temporal_score": 0.110785,
+      "hallucination_score": 0.9846436196267032,
+      "appearance_score": 0.765086,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": [
+        "background"
+      ]
+    },
+    {
+      "clip": "variant-0011",
+      "name": "White ceramic / bright lab",
+      "profile": {
+        "lighting": "bright broad neutral overhead light with highlight detail retained",
+        "background": "the existing tabletop is ivory-white ceramic, retaining its exact plane and boundaries",
+        "color_grade": "neutral high-key exposure without clipping white grippers or transparent plastic",
+        "surface_finish": "smooth glazed ceramic with soft restrained highlights, no tiles or seams"
+      },
+      "seed": 28,
+      "sha256": "3c342ed678385d183207ebb2fe0780673650c97fdc13495dd3d960e7afc2238e",
+      "frames": 192,
+      "duration_seconds": 8,
+      "score": 0.12387,
+      "passed": false,
+      "attributes_passed": 0,
+      "attribute_checks": 4,
+      "attribute_decisions": [
+        {
+          "variable": "background",
+          "passed": false,
+          "expected": "the existing tabletop is ivory-white ceramic, retaining its exact plane and boundaries",
+          "selected": "the existing tabletop remains a plain medium-gray surface with its exact original boundaries"
+        },
+        {
+          "variable": "color_grade",
+          "passed": false,
+          "expected": "neutral high-key exposure without clipping white grippers or transparent plastic",
+          "selected": "cool low-key treatment with visible dark joints and unclipped white grippers"
+        },
+        {
+          "variable": "lighting",
+          "passed": false,
+          "expected": "bright broad neutral overhead light with highlight detail retained",
+          "selected": "cool blue-hour ambient illumination with a soft neutral overhead fill and readable contact shadows"
+        },
+        {
+          "variable": "surface_finish",
+          "passed": false,
+          "expected": "smooth glazed ceramic with soft restrained highlights, no tiles or seams",
+          "selected": "matte gray surface with soft low-gloss highlights and no added texture"
+        }
+      ],
+      "temporal_score": 0.12387,
+      "hallucination_score": 0.9864133099298869,
+      "appearance_score": 0.654166,
+      "guardrails_passed": true,
+      "alignment_verified": true,
+      "failed_attributes": [
+        "background",
+        "color_grade",
+        "lighting",
+        "surface_finish"
+      ]
+    }
+  ],
+  "visual_review": {
+    "review_method": "Agent inspection of actual decoded source/model frames; sampled visual review, not frame-by-frame certification.",
+    "frame_indices": [
+      0,
+      64,
+      88,
+      128,
+      176,
+      191
+    ],
+    "variants": {
+      "variant-0000": {
+        "name": "Cool twilight gray",
+        "observations": "A cool blue illumination change is visible throughout the sampled frames. Broad arm/action progression and visible cup transparency remain. Small gripper plate details and markings differ; exact contact fidelity is unverified."
+      },
+      "variant-0001": {
+        "name": "Brushed aluminum / lab",
+        "observations": "Tabletop reflectance changes visibly, especially the stronger lower-left highlight. Fine brushing is not clearly resolved at review scale. Robot rods become brighter under the requested relighting; small gripper plate markings also differ. Broad action progression is retained, but exact contacts remain unverified."
+      },
+      "variant-0002": {
+        "name": "Black rubber / softbox",
+        "observations": "The tabletop becomes darker and less reflective, although rubber identity is subtle compared with the already gray source. Faint additional tabletop patterns appear in the upper-right area. Broad arm/action progression is retained; gripper plate details differ and small contacts remain unverified."
+      },
+      "variant-0003": {
+        "name": "Walnut / warm studio",
+        "observations": "Warm brown tabletop and visible wood-like grain appear throughout the sampled frames, going beyond a uniform color change. Broad arm/action progression and clear plastic remain visible. Gripper plate markings change and the straight tabletop strip loses contrast; exact small contacts remain unverified."
+      },
+      "variant-0004": {
+        "name": "Terracotta / side light",
+        "observations": "The tabletop becomes orange-brown with fine texture and broad directional shadows. Warm illumination substantially changes scene contrast. Broad arm/action progression and visible clear plastic remain, while small gripper markings differ; fine pores and exact grasp contacts are not established at this review scale."
+      },
+      "variant-0005": {
+        "name": "Warm side-lit gray",
+        "observations": "The gray tabletop is retained with a warm left-side light gradient and much longer, soft robot shadows. This demonstrates relighting beyond a tabletop color substitution. Broad arm/action progression remains, but small gripper markings and plate details change; exact contact fidelity remains unverified."
+      },
+      "variant-0006": {
+        "name": "Cork / diffuse daylight",
+        "observations": "Tan cork-like texture is concentrated in a lower band, with a pronounced horizontal appearance boundary and a largely gray upper tabletop. This does not consistently realize the requested full-table cork under diffuse light. Broad arm/action progression remains; gripper details differ and exact contacts remain unverified."
+      },
+      "variant-0007": {
+        "name": "Green laminate / soft daylight",
+        "observations": "Muted green is visible across the lower tabletop while a large pale upper region remains. Fine grain is visible despite the requested uniform laminate finish; the straight white strip becomes lower-contrast. Broad arm/action progression and clear plastic remain visible, but small gripper details and contacts are not faithfully established."
+      },
+      "variant-0008": {
+        "name": "Granite / overcast",
+        "observations": "A fine, stone-like speckled gray texture covers the tabletop throughout the sampled frames. This is a visible texture change beyond a color cast. Broad arm/action progression and transparent plastic remain visible, but small robot plate details and markings differ; exact contacts are not verified."
+      },
+      "variant-0009": {
+        "name": "Pale oak / daylight",
+        "observations": "Pale wood with visible lengthwise grain covers the tabletop throughout the sampled frames. Broad arm/action progression remains and the cup is still visibly transparent. Lighting is cooler on the robot than in the source, the straight white strip loses contrast, and small gripper details change; exact contacts remain unverified."
+      },
+      "variant-0010": {
+        "name": "Stainless steel / cool lab",
+        "observations": "The scene becomes cool blue-gray and darker with soft broad highlights. At this scale the tabletop does not unambiguously read as stainless steel; much of the change resembles relighting. Broad arm/action progression remains, but the straight strip loses contrast and small gripper details change; exact contacts remain unverified."
+      },
+      "variant-0011": {
+        "name": "White ceramic / bright lab",
+        "observations": "A bright lower-left highlight appears, but most of the tabletop remains dark gray or blue-gray instead of the requested ivory-white ceramic. The material request is therefore weakly realized in these frames. Broad arm/action progression and clear plastic remain visible, while small gripper details and markings differ; exact contacts remain unverified."
+      }
+    }
+  },
+  "incremental_publication_observations": [
+    {
+      "observed_at": "2026-09-18T18:28:32.375186+00:00",
+      "workflow_status": "running",
+      "batch_status": "running",
+      "published_videos": 2,
+      "failed_variants": 0,
+      "nonempty_video_objects_verified": 2
+    },
+    {
+      "observed_at": "2026-09-18T18:32:56.739184+00:00",
+      "workflow_status": "running",
+      "batch_status": "running",
+      "published_videos": 4,
+      "failed_variants": 0,
+      "nonempty_video_objects_verified": 4
+    },
+    {
+      "observed_at": "2026-09-18T18:37:01.216954+00:00",
+      "workflow_status": "running",
+      "batch_status": "running",
+      "published_videos": 5,
+      "failed_variants": 0,
+      "nonempty_video_objects_verified": 5
+    },
+    {
+      "observed_at": "2026-09-18T18:37:22.358907+00:00",
+      "workflow_status": "running",
+      "batch_status": "running",
+      "published_videos": 6,
+      "failed_variants": 0,
+      "nonempty_video_objects_verified": 6
+    },
+    {
+      "observed_at": "2026-09-18T18:41:27.301660+00:00",
+      "workflow_status": "running",
+      "batch_status": "running",
+      "published_videos": 8,
+      "failed_variants": 0,
+      "nonempty_video_objects_verified": 8
+    },
+    {
+      "observed_at": "2026-09-18T18:45:32.680457+00:00",
+      "workflow_status": "running",
+      "batch_status": "running",
+      "published_videos": 10,
+      "failed_variants": 0,
+      "nonempty_video_objects_verified": 10
+    },
+    {
+      "observed_at": "2026-09-18T18:49:59.005863+00:00",
+      "workflow_status": "running",
+      "batch_status": "completed",
+      "published_videos": 12,
+      "failed_variants": 0,
+      "nonempty_video_objects_verified": 12
+    }
+  ],
+  "overview_video": {
+    "file": "cups-fanout.mp4",
+    "sha256": "c709663db73ab5bfe24743e4757376ccefae66eed7cf557155b8c450547bb1fa",
+    "bytes": 2910703,
+    "frames": 192,
+    "fps": 24,
+    "width": 1664,
+    "height": 1072,
+    "duration_seconds": 8,
+    "processing": "Resized decoded source/output frames, arranged with static labels; no scene retouching."
+  }
+}

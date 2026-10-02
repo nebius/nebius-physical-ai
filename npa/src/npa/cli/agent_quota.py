@@ -10,21 +10,22 @@ resolve the project's real region and check the tenant's per-region
 ``vpc.ipv4-address.public.count`` allowance. A project-scoped administrator may
 not be allowed to inspect the tenant aggregate, so the whole-path check falls
 back to the same quota catalog under the exact deployment project. A real finite
-project allowance remains a hard gate; only the unavailable tenant-wide view is
-reported as advisory. The provider remains authoritative for the tenant
-aggregate during apply.
+project allowance remains a hard gate, and every required project quota must be
+present and readable before a mutation can proceed. Only a fully verified
+project-scoped fallback makes the unavailable tenant-wide view advisory. The
+provider remains authoritative for the tenant aggregate during apply.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from npa.provisioning_preflight import (
+    PROJECT_QUOTA_RBAC_FALLBACK_REASON,
+    read_project_quota_observations,
+)
 
 _QUOTA_SCOPE_CHECK = "quota_evidence_scope"
-_TENANT_QUOTA_RBAC_FALLBACK = (
-    "tenant-wide quota query unavailable due to RBAC; "
-    "project-scoped quota allowances verified"
-)
 
 if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
     from npa.workflows.sim2real_health import CheckResult
@@ -56,55 +57,6 @@ def _exact_owned_cluster_name(project_id: str, fallback: str) -> str:
         if owns_exact_cluster and requested_name not in matches:
             matches.append(requested_name)
     return matches[0] if len(matches) == 1 else fallback
-
-
-def _project_quota_observations(
-    project_id: str, region: str, names: tuple[str, ...]
-):
-    """Read project-local quota constraints after a tenant RBAC denial.
-
-    Project quota allowances only subdivide the tenant allowance. Missing or
-    explicitly unbounded project entries therefore mean "no project-local
-    restriction"; they do not claim that the unreadable tenant aggregate has
-    headroom. The caller surfaces that remaining uncertainty as a warning.
-    """
-
-    from copy import deepcopy
-
-    from npa.clients.nebius import list_quota_allowances
-    from npa.provisioning_preflight import QuotaObservation, parse_quota_allowances
-
-    payload = deepcopy(list_quota_allowances(project_id))
-    items = payload.get("items")
-    if isinstance(items, list):
-        for item in items:
-            if not isinstance(item, dict):
-                raise ValueError("project quota response contains a non-mapping item")
-            metadata = item.get("metadata")
-            if not isinstance(metadata, dict):
-                raise ValueError(
-                    "project quota response contains malformed metadata"
-                )
-            if str(metadata.get("name") or "") not in names:
-                continue
-            spec = item.get("spec")
-            if not isinstance(spec, dict):
-                raise ValueError("project quota response contains a malformed spec")
-            if not str(spec.get("limit") or "").strip():
-                spec["limit"] = "unbounded"
-    parsed = parse_quota_allowances(payload, region=region, names=names)
-    return {
-        name: (
-            QuotaObservation(
-                name=name,
-                state="unbounded",
-                reason="no project-specific quota restriction is configured",
-            )
-            if observation.state == "unsupported"
-            else observation
-        )
-        for name, observation in parsed.items()
-    }
 
 
 def _agent_check_whole_path_capacity(
@@ -180,7 +132,7 @@ def _agent_check_whole_path_capacity(
     except Exception as exc:  # noqa: BLE001 - classify before choosing fallback
         if nebius_client.is_permission_denied(str(exc)):
             try:
-                observations = _project_quota_observations(
+                observations = read_project_quota_observations(
                     project_id, region, quota_names
                 )
             except Exception as project_exc:  # noqa: BLE001 - fail closed, sanitized
@@ -200,7 +152,7 @@ def _agent_check_whole_path_capacity(
                 quota_scope = PreflightCheck(
                     name=_QUOTA_SCOPE_CHECK,
                     status="ready",
-                    reason=_TENANT_QUOTA_RBAC_FALLBACK,
+                    reason=PROJECT_QUOTA_RBAC_FALLBACK_REASON,
                 )
         else:
             observations = {
@@ -233,7 +185,7 @@ def _agent_check_whole_path_capacity(
     try:
         plan.assert_mutation_ready()
     except PreflightBlockedError as exc:
-        if quota_scope.reason == _TENANT_QUOTA_RBAC_FALLBACK:
+        if quota_scope.reason == PROJECT_QUOTA_RBAC_FALLBACK_REASON:
             blocked = any(item.status == "blocked" for item in plan.quotas)
             description = (
                 "Project-scoped quota evidence denies the requested capacity"
@@ -279,7 +231,7 @@ def _agent_whole_path_capacity_result(
     quota_scope = next(
         (item for item in plan.checks if item.name == _QUOTA_SCOPE_CHECK), None
     )
-    if quota_scope and quota_scope.reason == _TENANT_QUOTA_RBAC_FALLBACK:
+    if quota_scope and quota_scope.reason == PROJECT_QUOTA_RBAC_FALLBACK_REASON:
         return CheckResult(
             name="whole_path_capacity",
             status=WARN,

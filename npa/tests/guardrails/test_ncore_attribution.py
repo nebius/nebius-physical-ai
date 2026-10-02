@@ -188,6 +188,7 @@ def test_missing_archives_fail_closed_without_a_receipt(
     with pytest.raises(OSError, match="synthetic network refusal"):
         attribution.verify_public_notice(NOTICE.read_bytes(), tmp_path)
 
+
 def test_archive_output_rejects_bytes_beyond_the_pinned_size() -> None:
     output = io.BytesIO()
     bounded = attribution._PinnedArchiveOutput(output, 3)

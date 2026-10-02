@@ -13,9 +13,15 @@ from pathlib import Path
 
 
 SOURCE_REVISION = "8e734f3ced1df898990bcd92de40abce475907db"
-SOURCE_ARCHIVE_SHA256 = "ea6d8310b1ab109ceaac046b15b4de31ecb7c3b52c2a4c762c58316c81cbbf2f"
-UPSTREAM_METADATA_SHA256 = "4c93ee00a80dbc46e45fb6a1dd9486b57c8547e59bd948c30978a8ac7ed03a44"
-CORRECTED_METADATA_SHA256 = "ca1967835fbf45a89617a70d5cbf596cd4368623b84a8013dfca2b6bedae32b9"
+SOURCE_ARCHIVE_SHA256 = (
+    "ea6d8310b1ab109ceaac046b15b4de31ecb7c3b52c2a4c762c58316c81cbbf2f"
+)
+UPSTREAM_METADATA_SHA256 = (
+    "4c93ee00a80dbc46e45fb6a1dd9486b57c8547e59bd948c30978a8ac7ed03a44"
+)
+CORRECTED_METADATA_SHA256 = (
+    "ca1967835fbf45a89617a70d5cbf596cd4368623b84a8013dfca2b6bedae32b9"
+)
 ORIGINAL_CLASSIFIER = b'"Topic :: Scientific/Engineering :: Robotics"'
 CORRECTED_CLASSIFIER = b'"Topic :: Scientific/Engineering"'
 CHANGE_NOTICE = (
@@ -32,15 +38,23 @@ def correct_package_metadata(source_root: Path) -> dict:
         if path.is_symlink() or not path.is_file() or path.stat().st_nlink != 1:
             raise ValueError("cuRobo metadata inputs must be regular, unlinked files")
     if revision_path.read_bytes() != (SOURCE_REVISION + "\n").encode():
-        raise ValueError("cuRobo metadata correction requires the reviewed source revision")
+        raise ValueError(
+            "cuRobo metadata correction requires the reviewed source revision"
+        )
     original = metadata_path.read_bytes()
     if hashlib.sha256(original).hexdigest() != UPSTREAM_METADATA_SHA256:
-        raise ValueError("cuRobo upstream metadata hash does not match the reviewed release")
+        raise ValueError(
+            "cuRobo upstream metadata hash does not match the reviewed release"
+        )
     if original.count(ORIGINAL_CLASSIFIER) != 1:
         raise ValueError("cuRobo metadata must contain exactly one reviewed classifier")
-    corrected = CHANGE_NOTICE + original.replace(ORIGINAL_CLASSIFIER, CORRECTED_CLASSIFIER)
+    corrected = CHANGE_NOTICE + original.replace(
+        ORIGINAL_CLASSIFIER, CORRECTED_CLASSIFIER
+    )
     if hashlib.sha256(corrected).hexdigest() != CORRECTED_METADATA_SHA256:
-        raise ValueError("cuRobo corrected metadata hash does not match the reviewed change")
+        raise ValueError(
+            "cuRobo corrected metadata hash does not match the reviewed change"
+        )
     # Every input and output byte is checked before changing the sole owned file.
     # The prominent comment preserves upstream's copyright and license notices.
     metadata_path.write_bytes(corrected)

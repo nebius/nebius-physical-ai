@@ -77,12 +77,21 @@ def test_submit_invokes_skypilot_python_api_not_sky_cli(
     sky_python = _executable(sky_bin.parent / "python")
     calls: list[list[str]] = []
     config = tmp_path / "base-config.yaml"
-    config.write_text("jobs:\n  controller:\n    resources:\n      cloud: kubernetes\n", encoding="utf-8")
+    config.write_text(
+        "jobs:\n  controller:\n    resources:\n      cloud: kubernetes\n",
+        encoding="utf-8",
+    )
 
     def fake_run(cmd, **kwargs):
         calls.append([str(part) for part in cmd])
-        if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
-            return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
+        if cmd == [
+            str(sky_python),
+            "-c",
+            "import sky; print(getattr(sky, '__version__', 'unknown'))",
+        ]:
+            return core.subprocess.CompletedProcess(
+                cmd, 0, stdout="0.12.2\n", stderr=""
+            )
         assert cmd[:2] == [str(sky_python), str(core._sky_api_bridge_path())]
         assert cmd[2] == "launch"
         payload = json.loads(kwargs["input"])
@@ -130,15 +139,29 @@ def test_status_and_logs_use_handle_runtime(
     )
 
     def fake_run(cmd, **kwargs):
-        if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
-            return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
+        if cmd == [
+            str(sky_python),
+            "-c",
+            "import sky; print(getattr(sky, '__version__', 'unknown'))",
+        ]:
+            return core.subprocess.CompletedProcess(
+                cmd, 0, stdout="0.12.2\n", stderr=""
+            )
         action = cmd[2]
         if action == "queue":
             return core.subprocess.CompletedProcess(
                 cmd,
                 0,
                 stdout=json.dumps(
-                    {"records": [{"job_id": 42, "status": "RUNNING", "resources": "CUSTOMGPU:1"}]}
+                    {
+                        "records": [
+                            {
+                                "job_id": 42,
+                                "status": "RUNNING",
+                                "resources": "CUSTOMGPU:1",
+                            }
+                        ]
+                    }
                 ),
                 stderr="",
             )
@@ -182,8 +205,14 @@ run: |
     )
 
     def fake_run(cmd, **kwargs):
-        if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
-            return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
+        if cmd == [
+            str(sky_python),
+            "-c",
+            "import sky; print(getattr(sky, '__version__', 'unknown'))",
+        ]:
+            return core.subprocess.CompletedProcess(
+                cmd, 0, stdout="0.12.2\n", stderr=""
+            )
         assert cmd[:2] == [str(sky_python), str(core._sky_api_bridge_path())]
         assert cmd[2] == "launch"
         payload = json.loads(kwargs["input"])
@@ -263,8 +292,14 @@ run: echo should-not-submit
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "token-abc")
 
     def fake_run(cmd, **kwargs):
-        if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
-            return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
+        if cmd == [
+            str(sky_python),
+            "-c",
+            "import sky; print(getattr(sky, '__version__', 'unknown'))",
+        ]:
+            return core.subprocess.CompletedProcess(
+                cmd, 0, stdout="0.12.2\n", stderr=""
+            )
         assert cmd[:2] == [str(sky_python), str(core._sky_api_bridge_path())]
         payload = json.loads(kwargs["input"])
         task = yaml.safe_load(Path(payload["yaml_path"]).read_text(encoding="utf-8"))
@@ -299,9 +334,7 @@ def test_burst_public_image_ignores_unrelated_private_registry_credentials(
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
     task = {
         "resources": {
-            "image_id": (
-                "docker:ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0"
-            )
+            "image_id": ("docker:ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0")
         }
     }
 

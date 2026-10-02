@@ -44,13 +44,17 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #: stays green while making the gap visible; shrink this set by extending or
 #: authoring comprehensive workflows, never grow it to hide a regression.
 #:
-#:   sonic / retargeting : only appear in the 3-step SONIC locomotion chain.
 #:   cosmos3-reason      : single-step reason spec only.
 #:   alpamayo2-super     : dedicated single-step inference spec; covered by its
 #:                         own B200 and RTX PRO 6000 workflow validation.
+#:   flex-pi             : dedicated single-step action-inference specs; covered
+#:                         by exact-image B200 and RTX PRO 6000 validation.
 #:   cosmos3-ray-serve   : one-step CPU submission client for a separately
 #:                         deployed persistent GPU service; its exact image has
 #:                         dedicated model-backed B200/RTX validation.
+#:   habitat-sim        : dedicated one-state renderer whose exact image has a
+#:                        genuine RTX PRO 6000 RGB/depth/Bullet/EGL capability
+#:                        gate; it is not a compositional workflow.
 #:   lerobot / genesis : component/tool images with no comprehensive workflow
 #:                       toolRef chain yet (covered by their own tool + serverless
 #:                       E2Es and by the daily registry-reachability check).
@@ -61,12 +65,12 @@ WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
 #: it was removed rather than left standing as coverage it did not provide.
 EXEMPT_IMAGE_TOOLS: frozenset[str] = frozenset(
     {
-        "sonic",
-        "retargeting",
         "cosmos3-reason",
         "alpamayo2-super",
+        "flex-pi",
         "cosmos3-ray-serve",
         "genesis",
+        "habitat-sim",
     }
 )
 
@@ -110,10 +114,14 @@ def _summarize(path: Path) -> SpecSummary:
 def spec_step_summary() -> list[SpecSummary]:
     """Summarize every discoverable npa.workflow spec, sorted by name."""
 
-    return sorted((_summarize(p) for p in iter_npa_workflow_specs()), key=lambda s: s.name)
+    return sorted(
+        (_summarize(p) for p in iter_npa_workflow_specs()), key=lambda s: s.name
+    )
 
 
-def comprehensive_specs(summaries: list[SpecSummary] | None = None) -> list[SpecSummary]:
+def comprehensive_specs(
+    summaries: list[SpecSummary] | None = None,
+) -> list[SpecSummary]:
     """Specs with at least ``MIN_COMPREHENSIVE_STEPS`` executable steps."""
 
     summaries = summaries if summaries is not None else spec_step_summary()
@@ -205,7 +213,9 @@ def minimal_cover(summaries: list[SpecSummary] | None = None) -> list[SpecSummar
     return sorted(chosen, key=lambda s: s.name)
 
 
-def rotating_spec(day_index: int, summaries: list[SpecSummary] | None = None) -> SpecSummary | None:
+def rotating_spec(
+    day_index: int, summaries: list[SpecSummary] | None = None
+) -> SpecSummary | None:
     """Pick one comprehensive spec for ``day_index`` (round-robins over days)."""
 
     pool = comprehensive_specs(summaries)
@@ -215,7 +225,9 @@ def rotating_spec(day_index: int, summaries: list[SpecSummary] | None = None) ->
     return pool[day_index % len(pool)]
 
 
-def daily_plan_set(day_index: int, summaries: list[SpecSummary] | None = None) -> list[SpecSummary]:
+def daily_plan_set(
+    day_index: int, summaries: list[SpecSummary] | None = None
+) -> list[SpecSummary]:
     """The >= 4-step workflows to plan today: the image-covering set + a rotating extra."""
 
     summaries = summaries if summaries is not None else spec_step_summary()

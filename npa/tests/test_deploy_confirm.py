@@ -15,7 +15,9 @@ def test_confirm_or_exit_aborts_when_declined(monkeypatch: pytest.MonkeyPatch) -
     assert exc.value.exit_code == 1
 
 
-def test_confirm_or_exit_continues_when_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_confirm_or_exit_continues_when_accepted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setattr(typer, "confirm", lambda *args, **kwargs: True)
     confirm_or_exit("Destroy?")
 

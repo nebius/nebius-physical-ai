@@ -51,7 +51,10 @@ def _install_fake_robocasa(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_compute_manifest_sha256_is_deterministic() -> None:
-    payload = {"env_id": "robocasa/PickPlaceCounterToCabinet", "capability": "kitchen_random_rollout"}
+    payload = {
+        "env_id": "robocasa/PickPlaceCounterToCabinet",
+        "capability": "kitchen_random_rollout",
+    }
     a = compute_manifest_sha256("run", payload)
     b = compute_manifest_sha256("run", dict(payload))
     assert a == b
@@ -84,7 +87,9 @@ def test_kitchen_task_registration_missing_env(monkeypatch: pytest.MonkeyPatch) 
         kitchen_task_registration(env_id="robocasa/DoesNotExist")
 
 
-def test_kitchen_asset_availability_missing_root(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_kitchen_asset_availability_missing_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_fake_robocasa(monkeypatch)
     with pytest.raises(RoboCasaError):
         kitchen_asset_availability()
@@ -101,7 +106,9 @@ def test_run_request_validates_capability() -> None:
         RoboCasaRunRequest(capability="bogus", output_uri="s3://bucket/out")
 
 
-@pytest.mark.parametrize("value", ["/tmp/out", "file:///tmp/out", "https://example.invalid/out"])
+@pytest.mark.parametrize(
+    "value", ["/tmp/out", "file:///tmp/out", "https://example.invalid/out"]
+)
 def test_run_request_rejects_non_s3_output(value: str) -> None:
     with pytest.raises(ValueError, match="expects an S3 URI"):
         RoboCasaRunRequest(
@@ -142,7 +149,9 @@ def test_service_system_info_does_not_block_event_loop(
 
     async def exercise() -> None:
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
             probe = asyncio.create_task(client.get("/system-info"))
             assert await asyncio.to_thread(started.wait, 2)
             health = await asyncio.wait_for(client.get("/health"), timeout=1)
@@ -200,11 +209,15 @@ def test_service_auth_token() -> None:
     assert client.get("/health").status_code == 200
     assert client.get("/system-info").status_code == 401
     assert (
-        client.get("/system-info", headers={"Authorization": "Bearer secret"}).status_code
+        client.get(
+            "/system-info", headers={"Authorization": "Bearer secret"}
+        ).status_code
         == 200
     )
     assert (
-        client.get("/system-info", headers={"Authorization": "Bearer wrong"}).status_code
+        client.get(
+            "/system-info", headers={"Authorization": "Bearer wrong"}
+        ).status_code
         == 401
     )
 
@@ -329,6 +342,7 @@ def _install_fake_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
     class FakeGym:
         envs = types.SimpleNamespace(registry={})
+
         @staticmethod
         def make(env_id, **kwargs):
             return _FakeEnv()
@@ -336,7 +350,9 @@ def _install_fake_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "gymnasium", FakeGym())
 
 
-def test_make_env_uses_nonempty_objaverse_registry(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_make_env_uses_nonempty_objaverse_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     _install_fake_robocasa(monkeypatch)
     observed: dict[str, object] = {}
 
@@ -509,9 +525,14 @@ def test_checkpoint_identity_hashes_exact_pretrained_model_separately(tmp_path) 
     assert first_tree_sha != second_tree_sha
 
 
-def test_kitchen_trajectory_export_missing_image_key(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_kitchen_trajectory_export_missing_image_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     _install_fake_robocasa(monkeypatch)
-    from npa.workbench.robocasa.capabilities import RoboCasaError, kitchen_trajectory_export
+    from npa.workbench.robocasa.capabilities import (
+        RoboCasaError,
+        kitchen_trajectory_export,
+    )
 
     with pytest.raises(RoboCasaError):
         kitchen_trajectory_export(

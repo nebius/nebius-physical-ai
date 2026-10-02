@@ -83,7 +83,10 @@ def _logs(payload: dict[str, Any]) -> dict[str, Any]:
         tail = int(tail)
     stream = io.StringIO()
     status_stream = io.StringIO()
-    with contextlib.redirect_stdout(status_stream), contextlib.redirect_stderr(status_stream):
+    with (
+        contextlib.redirect_stdout(status_stream),
+        contextlib.redirect_stderr(status_stream),
+    ):
         exit_code = sky.jobs.tail_logs(
             job_id=job_id,
             follow=follow,

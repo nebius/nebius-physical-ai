@@ -118,7 +118,9 @@ def _load_student_policy(checkpoint_path: Path) -> tuple[Any, Any, Any]:
     with config_path.open() as f:
         config = json.load(f)
 
-    policy_type = config.get("type", config.get("_target_", "act")).rsplit(".", 1)[-1].lower()
+    policy_type = (
+        config.get("type", config.get("_target_", "act")).rsplit(".", 1)[-1].lower()
+    )
 
     # Resolve concrete policy class — do not fall back to the abstract base
     class_path = None
@@ -136,12 +138,11 @@ def _load_student_policy(checkpoint_path: Path) -> tuple[Any, Any, Any]:
     module_path, class_name = class_path.rsplit(".", 1)
     try:
         import importlib
+
         mod = importlib.import_module(module_path)
         policy_cls = getattr(mod, class_name)
     except (ImportError, AttributeError) as exc:
-        raise EvalError(
-            f"Cannot import policy class {class_path}: {exc}"
-        ) from exc
+        raise EvalError(f"Cannot import policy class {class_path}: {exc}") from exc
 
     policy = policy_cls.from_pretrained(str(pretrained_dir))
     policy.eval()
@@ -158,7 +159,8 @@ def _load_student_policy(checkpoint_path: Path) -> tuple[Any, Any, Any]:
         logger.warning(
             "Could not load pre/post processors from %s: %s. "
             "Running without normalization — results may be degraded.",
-            pretrained_dir, exc,
+            pretrained_dir,
+            exc,
         )
         preprocessor = None
         postprocessor = None
@@ -209,7 +211,9 @@ def eval_student(
     # Load student policy with its saved pre/post processors
     logger.info("Loading student policy from %s", checkpoint_path)
     try:
-        student_policy, preprocessor, postprocessor = _load_student_policy(checkpoint_path)
+        student_policy, preprocessor, postprocessor = _load_student_policy(
+            checkpoint_path
+        )
     except Exception as exc:
         raise EvalError(f"Failed to load student policy: {exc}") from exc
 
@@ -264,7 +268,9 @@ def eval_student(
             # numpy arrays (CPU).  Move everything to the same device.
             device = cam_obs["joint_pos"].device
             observation = {
-                "observation.images.workspace": _prepare_image(cam_obs["workspace"]).to(device),
+                "observation.images.workspace": _prepare_image(cam_obs["workspace"]).to(
+                    device
+                ),
                 "observation.images.wrist": _prepare_image(cam_obs["wrist"]).to(device),
                 "observation.state": torch.cat(
                     [cam_obs["joint_pos"], cam_obs["gripper_state"]], dim=-1
@@ -319,12 +325,14 @@ def eval_student(
         for i in range(batch_envs):
             if total_collected >= n_episodes:
                 break
-            episode_results.append({
-                "episode_index": total_collected,
-                "success": env_success[i],
-                "steps": env_steps[i],
-                "failure_mode": env_failure_mode[i],
-            })
+            episode_results.append(
+                {
+                    "episode_index": total_collected,
+                    "success": env_success[i],
+                    "steps": env_steps[i],
+                    "failure_mode": env_failure_mode[i],
+                }
+            )
             total_collected += 1
 
         logger.info(
@@ -374,7 +382,9 @@ def eval_student(
 
     logger.info(
         "Evaluation complete: success_rate=%.2f%% (%d/%d)",
-        success_rate * 100, successes, len(episode_results),
+        success_rate * 100,
+        successes,
+        len(episode_results),
     )
 
     return metrics

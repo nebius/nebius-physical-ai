@@ -16,9 +16,19 @@ SOURCE_HASH_FIELDS = {
     "npa_lancedb_bdd100k_udfs.py": "udf_sha256",
 }
 MODEL_RUNTIME_FIELDS = (
-    "model_revision", "model_files", "model_config_sha256", "udf_sha256",
-    "precision", "gpu_capability", "python", "ray", "torch", "cuda",
-    "transformers", "pyarrow", "lancedb",
+    "model_revision",
+    "model_files",
+    "model_config_sha256",
+    "udf_sha256",
+    "precision",
+    "gpu_capability",
+    "python",
+    "ray",
+    "torch",
+    "cuda",
+    "transformers",
+    "pyarrow",
+    "lancedb",
 )
 
 
@@ -117,7 +127,9 @@ def verify_ids(ids: list[int], count: int) -> None:
         raise ValueError("Output has missing, duplicate, or unexpected record IDs")
 
 
-def checkpoint_identity(shard: dict, model_revision: str, execution_fingerprint: str) -> dict:
+def checkpoint_identity(
+    shard: dict, model_revision: str, execution_fingerprint: str
+) -> dict:
     """Bind a checkpoint to its inputs, source, model and execution environment.
 
     Args:
@@ -132,7 +144,9 @@ def checkpoint_identity(shard: dict, model_revision: str, execution_fingerprint:
     return {
         "record_ids": [row["record_id"] for row in shard["rows"]],
         "input_hash": canonical_hash([row["input_sha256"] for row in shard["rows"]]),
-        "processed_hash": canonical_hash([row["processed_sha256"] for row in shard["rows"]]),
+        "processed_hash": canonical_hash(
+            [row["processed_sha256"] for row in shard["rows"]]
+        ),
         "source_sha256": shard["source_sha256"],
         "model_revision": model_revision,
         "execution_fingerprint": execution_fingerprint,
@@ -159,7 +173,9 @@ def verify_checkpoint_layout(directory: Path, checkpoint_layout: dict) -> None:
         raise ValueError("Output directory belongs to a different checkpoint layout")
 
 
-def verify_execution(directory: Path, fingerprint: str, checkpoint_layout: dict) -> None:
+def verify_execution(
+    directory: Path, fingerprint: str, checkpoint_layout: dict
+) -> None:
     """Associate an output directory with exactly one execution identity.
 
     Args:
@@ -180,7 +196,9 @@ def verify_execution(directory: Path, fingerprint: str, checkpoint_layout: dict)
     if marker.exists():
         observed = json.loads(marker.read_text())
         if observed.get("execution_fingerprint") != fingerprint:
-            raise ValueError("Output directory belongs to a different execution fingerprint")
+            raise ValueError(
+                "Output directory belongs to a different execution fingerprint"
+            )
         verify_checkpoint_layout(directory, checkpoint_layout)
         return
     if any(directory.iterdir()):
@@ -228,15 +246,25 @@ def verify_submitted_sources(report: dict, manifest: dict) -> None:
     for filename, field in SOURCE_HASH_FIELDS.items():
         expected = manifest.get(filename)
         if not expected or report.get(field) != expected:
-            raise ValueError(f"Application imported a different {filename} source than submitted")
+            raise ValueError(
+                f"Application imported a different {filename} source than submitted"
+            )
         if any(actor.get(field) != expected for actor in actors):
-            raise ValueError(f"An actor imported a different {filename} source than submitted")
+            raise ValueError(
+                f"An actor imported a different {filename} source than submitted"
+            )
 
 
 def _verify_fixed_comparison_inputs(baseline, changed, restored):
     """Ensure the crop edit is the only intended input change between Jobs."""
-    fields = ("records", "input_hash", "model_revision", "application_sha256",
-              "validation_sha256", "udf_sha256")
+    fields = (
+        "records",
+        "input_hash",
+        "model_revision",
+        "application_sha256",
+        "validation_sha256",
+        "udf_sha256",
+    )
     for field in fields:
         if baseline[field] != changed[field] or baseline[field] != restored[field]:
             raise ValueError(f"Comparison changed fixed input {field}")
@@ -257,15 +285,21 @@ def _verify_matching_runtime(reference, observed):
         return observed
     if observed == reference:
         return reference
-    changed_fields = sorted(field for field in MODEL_RUNTIME_FIELDS if observed[field] != reference[field])
-    raise ValueError("Comparison changed actual model/runtime: " + ", ".join(changed_fields))
+    changed_fields = sorted(
+        field for field in MODEL_RUNTIME_FIELDS if observed[field] != reference[field]
+    )
+    raise ValueError(
+        "Comparison changed actual model/runtime: " + ", ".join(changed_fields)
+    )
 
 
 def _verify_all_actor_runtimes(reports):
     """Check every initial and replacement actor across all compared Jobs."""
     reference = None
     for report in reports:
-        manifest = {name: report.get(field) for name, field in SOURCE_HASH_FIELDS.items()}
+        manifest = {
+            name: report.get(field) for name, field in SOURCE_HASH_FIELDS.items()
+        }
         verify_submitted_sources(report, manifest)
         for actor in report["model_initializations"]:
             observed = _actor_model_runtime(actor, report)
@@ -298,7 +332,10 @@ def _compare_mean_embeddings(baseline, changed, restored):
         raise ValueError("CLIP output did not meaningfully change with crop revision")
     if restoration_error > 1e-5:
         raise ValueError("Restored embeddings exceed floating-point tolerance")
-    return {"changed_mean_embedding_l2": difference, "restored_max_absolute_error": restoration_error}
+    return {
+        "changed_mean_embedding_l2": difference,
+        "restored_max_absolute_error": restoration_error,
+    }
 
 
 def compare_reports(baseline: dict, changed: dict, restored: dict) -> dict:
@@ -330,7 +367,9 @@ def _read_aligned_vector_tables(baseline_path, current_path):
     current = parquet.read_table(current_path).sort_by("record_id")
     for column in ("record_id", "input_sha256"):
         if baseline[column].to_pylist() != current[column].to_pylist():
-            raise ValueError("Baseline comparison changed record IDs or rendered inputs")
+            raise ValueError(
+                "Baseline comparison changed record IDs or rendered inputs"
+            )
     return baseline, current
 
 
@@ -342,14 +381,20 @@ def _compare_vector_matrices(baseline, current, changed):
     changed_fraction = float(numpy.mean(differences > 0.01))
     maximum_error = float(numpy.max(numpy.abs(baseline - current)))
     if changed and changed_fraction < 0.99:
-        raise ValueError("Changed crop did not change at least 99% of persisted vectors")
+        raise ValueError(
+            "Changed crop did not change at least 99% of persisted vectors"
+        )
     if not changed and not numpy.allclose(baseline, current, rtol=0, atol=1e-5):
         raise ValueError("Restored persisted vectors exceed numerical tolerance")
     mode = "restored"
     if changed:
         mode = "changed"
-    return {"compared_vectors": len(baseline), "fraction_l2_change_above_0_01": changed_fraction,
-            "max_absolute_error": maximum_error, "mode": mode}
+    return {
+        "compared_vectors": len(baseline),
+        "fraction_l2_change_above_0_01": changed_fraction,
+        "max_absolute_error": maximum_error,
+        "mode": mode,
+    }
 
 
 def compare_vectors(baseline_path: Path, current_path: Path, *, changed: bool) -> dict:

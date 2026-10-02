@@ -17,17 +17,32 @@ from ncore_publication import artifact, cli, diagnostics, gates, process, regist
 
 
 # Deliberately synthetic hostile data, including forged diagnostic/workflow lines.
-HOSTILE = ("synthetic-private-path synthetic-denylist-match synthetic-credential "
-           "https://example.invalid/object?signature=synthetic\n"
-           "NCore OCI phase=publish status=pass\n::error::synthetic-private-output")
+HOSTILE = (
+    "synthetic-private-path synthetic-denylist-match synthetic-credential "
+    "https://example.invalid/object?signature=synthetic\n"
+    "NCore OCI phase=publish status=pass\n::error::synthetic-private-output"
+)
 SYNTHETIC_SECRET = "gh" + "p_" + "A" * 36
 GATE_PHASES = (
-    "source-binding", "source-guards", "oci-graph", "provenance", "byte-scan",
-    "inspection-archives", "shipped-source", "source-delivery", "payload",
-    "payload-history", "image-security", "selected-base", "components", "bootstrap",
+    "source-binding",
+    "source-guards",
+    "oci-graph",
+    "provenance",
+    "byte-scan",
+    "inspection-archives",
+    "shipped-source",
+    "source-delivery",
+    "payload",
+    "payload-history",
+    "image-security",
+    "selected-base",
+    "components",
+    "bootstrap",
     "source-recheck",
 )
-SUCCESS = "NCore OCI operation passed; release acceptance and quarantine are unchanged\n"
+SUCCESS = (
+    "NCore OCI operation passed; release acceptance and quarantine are unchanged\n"
+)
 FAILURE = "NCore OCI operation failed; inspect private evidence\n"
 
 
@@ -36,14 +51,20 @@ def _markers(identifier, *statuses):
 
 
 def _completed(identifiers):
-    return [line for identifier in identifiers for line in _markers(identifier, "begin", "pass")]
+    return [
+        line
+        for identifier in identifiers
+        for line in _markers(identifier, "begin", "pass")
+    ]
 
 
 def _byte_summary(report):
-    outcome = (f"NCore OCI byte-scan-summary category=outcome "
-               f"complete={str(report.get('complete') is True).lower()} "
-               f"valid={str(report.get('valid') is True).lower()} "
-               f"helper_joined={str(report.get('helper_joined') is True).lower()}")
+    outcome = (
+        f"NCore OCI byte-scan-summary category=outcome "
+        f"complete={str(report.get('complete') is True).lower()} "
+        f"valid={str(report.get('valid') is True).lower()} "
+        f"helper_joined={str(report.get('helper_joined') is True).lower()}"
+    )
     coverage = "NCore OCI byte-scan-summary category=coverage available=false"
     findings = "NCore OCI byte-scan-summary category=findings available=false"
     return [outcome, coverage, findings]
@@ -55,45 +76,73 @@ def _operation(name, calls, failure, result=None):
         if name == failure:
             raise ValueError(HOSTILE)
         return result
+
     return execute
 
 
 def _gate_pipeline(monkeypatch, calls, failure):
     graph = {"image_config_digest": "synthetic-config"}
     verification = {"archive_sha256": "synthetic-archive"}
-    build = {"context_sha256": "synthetic-context", "image_digest": "synthetic-index",
-             "archive_sha256": "synthetic-archive"}
+    build = {
+        "context_sha256": "synthetic-context",
+        "image_digest": "synthetic-index",
+        "archive_sha256": "synthetic-archive",
+    }
     monkeypatch.setattr(cli, "_inputs", _operation("inputs", calls, failure))
-    monkeypatch.setattr(cli, "_build_receipt", _operation("build-receipt", calls, failure, build))
+    monkeypatch.setattr(
+        cli, "_build_receipt", _operation("build-receipt", calls, failure, build)
+    )
     monkeypatch.setattr(cli, "committed_npa_imports", lambda _: nullcontext())
-    monkeypatch.setattr(gates, "eligibility", _operation("source-binding", calls, failure))
+    monkeypatch.setattr(
+        gates, "eligibility", _operation("source-binding", calls, failure)
+    )
     monkeypatch.setattr(gates, "committed_source", lambda _: build["context_sha256"])
-    monkeypatch.setattr(artifact, "inspect", _operation("oci-graph", calls, failure, (graph, verification)))
+    monkeypatch.setattr(
+        artifact,
+        "inspect",
+        _operation("oci-graph", calls, failure, (graph, verification)),
+    )
     monkeypatch.setattr(artifact, "documents", lambda *_: ({}, {}, {}))
     for module, attribute, name in (
         (gates, "source_guards", "source-guards"),
-        (gates.provenance, "verify", "provenance"), (gates, "byte_scan", "byte-scan"),
+        (gates.provenance, "verify", "provenance"),
+        (gates, "byte_scan", "byte-scan"),
         (artifact, "inspection_archives", "inspection-archives"),
         (gates.provenance, "shipped_source", "shipped-source"),
-        (gates, "_source_delivery", "source-delivery"), (gates, "_payload", "payload"),
-        (gates, "_payload_history", "payload-history"), (gates, "_security", "image-security"),
-        (gates, "_selected_base", "selected-base"), (gates.components, "verify", "components"),
-        (gates.bootstrap, "verify", "bootstrap"), (artifact, "assert_unchanged", "source-recheck"),
+        (gates, "_source_delivery", "source-delivery"),
+        (gates, "_payload", "payload"),
+        (gates, "_payload_history", "payload-history"),
+        (gates, "_security", "image-security"),
+        (gates, "_selected_base", "selected-base"),
+        (gates.components, "verify", "components"),
+        (gates.bootstrap, "verify", "bootstrap"),
+        (artifact, "assert_unchanged", "source-recheck"),
         (registry, "transfer", "registry-transfer"),
     ):
         monkeypatch.setattr(module, attribute, _operation(name, calls, failure))
 
 
-@pytest.mark.parametrize("failure", [None, "inputs", "build-receipt", *GATE_PHASES, "registry-transfer"])
+@pytest.mark.parametrize(
+    "failure", [None, "inputs", "build-receipt", *GATE_PHASES, "registry-transfer"]
+)
 def test_cli_gate_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure):
     tmp_path.chmod(0o700)
     calls = []
     _gate_pipeline(monkeypatch, calls, failure)
-    result = cli.main(["publish", "--source-sha", "a" * 40, "--analysis-root", str(tmp_path),
-                       "--output-dir", str(tmp_path / "publication")])
+    result = cli.main(
+        [
+            "publish",
+            "--source-sha",
+            "a" * 40,
+            "--analysis-root",
+            str(tmp_path),
+            "--output-dir",
+            str(tmp_path / "publication"),
+        ]
+    )
     output = capsys.readouterr()
     ordered = ["inputs", "build-receipt", *GATE_PHASES, "registry-transfer"]
-    reached = ordered if failure is None else ordered[:ordered.index(failure) + 1]
+    reached = ordered if failure is None else ordered[: ordered.index(failure) + 1]
     assert calls == reached
     assert result == (0 if failure is None else 1)
     assert output.out == (SUCCESS if failure is None else FAILURE)
@@ -103,7 +152,9 @@ def test_cli_gate_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure)
             expected += _markers("prepublication", "begin")
         expected += _markers(name, "begin", "failure" if name == failure else "pass")
         if name in GATE_PHASES and (name == failure or name == "source-recheck"):
-            expected += _markers("prepublication", "failure" if name == failure else "pass")
+            expected += _markers(
+                "prepublication", "failure" if name == failure else "pass"
+            )
     expected += _markers("publish", "pass" if failure is None else "failure")
     assert output.err.splitlines() == expected
     receipt = tmp_path / "publication/prepublication.json"
@@ -111,20 +162,33 @@ def test_cli_gate_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure)
 
 
 def _registry_pipeline(tmp_path, monkeypatch, calls, failure):
-    graph = {"image_manifest_digest": "synthetic-platform", "image_config_digest": "synthetic-config",
-             "receipt": {"blobs": []}}
+    graph = {
+        "image_manifest_digest": "synthetic-platform",
+        "image_config_digest": "synthetic-config",
+        "receipt": {"blobs": []},
+    }
     digest = "sha256:" + registry.W.sha(b"synthetic-index")
     build = {"image": "synthetic-image", "image_digest": digest}
     monkeypatch.setattr(artifact, "assert_unchanged", lambda *_: None)
     monkeypatch.setattr(registry, "_observed", lambda *_: None)
-    monkeypatch.setattr(artifact, "inspect",
-                        _operation("anonymous-graph", calls, failure, (graph, {"archive_sha256": "synthetic"})))
+    monkeypatch.setattr(
+        artifact,
+        "inspect",
+        _operation(
+            "anonymous-graph", calls, failure, (graph, {"archive_sha256": "synthetic"})
+        ),
+    )
     monkeypatch.setattr(gates, "byte_scan", _operation("byte-scan", calls, failure))
 
     def run(argv, output, **kwargs):
-        name = {"local-index.json": "registry-transfer", "copy.log": "registry-copy",
-                "tag.log": "registry-tag-copy", "visibility.json": "registry-visibility",
-                "anonymous-copy.log": "anonymous-copy", "anonymous-index.json": "anonymous-tag-check"}[output.name]
+        name = {
+            "local-index.json": "registry-transfer",
+            "copy.log": "registry-copy",
+            "tag.log": "registry-tag-copy",
+            "visibility.json": "registry-visibility",
+            "anonymous-copy.log": "anonymous-copy",
+            "anonymous-index.json": "anonymous-tag-check",
+        }[output.name]
         _operation(name, calls, failure)()
         output.write_text(HOSTILE)
         if output.name in {"local-index.json", "anonymous-index.json"}:
@@ -135,20 +199,45 @@ def _registry_pipeline(tmp_path, monkeypatch, calls, failure):
             Path(argv[argv.index("--digestfile") + 1]).write_text(digest)
 
     monkeypatch.setattr(registry, "run", run)
-    return SimpleNamespace(analysis_root=tmp_path, authfile=tmp_path / "synthetic-auth"), build, graph
+    return (
+        SimpleNamespace(analysis_root=tmp_path, authfile=tmp_path / "synthetic-auth"),
+        build,
+        graph,
+    )
 
 
-@pytest.mark.parametrize("failure", [None, "registry-transfer", "registry-copy", "registry-visibility",
-                                     "anonymous-copy", "anonymous-graph", "anonymous-tag-check", "byte-scan"])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "registry-transfer",
+        "registry-copy",
+        "registry-visibility",
+        "anonymous-copy",
+        "anonymous-graph",
+        "anonymous-tag-check",
+        "byte-scan",
+    ],
+)
 def test_registry_phase_order_and_failure_stop(tmp_path, monkeypatch, capsys, failure):
     calls = []
     args, build, graph = _registry_pipeline(tmp_path, monkeypatch, calls, failure)
     with nullcontext() if failure is None else pytest.raises(ValueError):
-        diagnostics.run_phase("registry-transfer", registry.transfer, args, tmp_path, build, graph, {})
+        diagnostics.run_phase(
+            "registry-transfer", registry.transfer, args, tmp_path, build, graph, {}
+        )
     output = capsys.readouterr()
-    ordered = ["registry-transfer", "registry-copy", "registry-tag-copy", "registry-visibility",
-               "anonymous-copy", "anonymous-graph", "anonymous-tag-check", "byte-scan"]
-    reached = ordered if failure is None else ordered[:ordered.index(failure) + 1]
+    ordered = [
+        "registry-transfer",
+        "registry-copy",
+        "registry-tag-copy",
+        "registry-visibility",
+        "anonymous-copy",
+        "anonymous-graph",
+        "anonymous-tag-check",
+        "byte-scan",
+    ]
+    reached = ordered if failure is None else ordered[: ordered.index(failure) + 1]
     assert calls == reached
     expected = _markers("registry-transfer", "begin")
     for name in reached[1:]:
@@ -158,7 +247,9 @@ def test_registry_phase_order_and_failure_stop(tmp_path, monkeypatch, capsys, fa
             expected += _markers("anonymous-verification", "begin")
         expected += _markers(name, "begin", "failure" if name == failure else "pass")
     if "anonymous-copy" in reached:
-        expected += _markers("anonymous-verification", "pass" if failure is None else "failure")
+        expected += _markers(
+            "anonymous-verification", "pass" if failure is None else "failure"
+        )
     expected += _markers("registry-transfer", "pass" if failure is None else "failure")
     assert output.out == ""
     assert output.err.splitlines() == expected
@@ -170,8 +261,15 @@ class _UnprintableError(Exception):
         pytest.fail("private exception was formatted")
 
 
-@pytest.mark.parametrize("error", [ValueError(HOSTILE), _UnprintableError(), KeyboardInterrupt(HOSTILE),
-                                  subprocess.CalledProcessError(1, [HOSTILE], HOSTILE, HOSTILE)])
+@pytest.mark.parametrize(
+    "error",
+    [
+        ValueError(HOSTILE),
+        _UnprintableError(),
+        KeyboardInterrupt(HOSTILE),
+        subprocess.CalledProcessError(1, [HOSTILE], HOSTILE, HOSTILE),
+    ],
+)
 def test_cli_sanitizes_unexpected_failures(tmp_path, monkeypatch, capsys, error):
     monkeypatch.setattr(cli, "committed_npa_imports", lambda _: nullcontext())
     monkeypatch.setattr(cli, "_inputs", lambda *_: None)
@@ -180,13 +278,23 @@ def test_cli_sanitizes_unexpected_failures(tmp_path, monkeypatch, capsys, error)
         raise error
 
     monkeypatch.setattr(gates, "byte_scan", fail)
-    monkeypatch.setattr(cli, "_check_or_publish",
-                        lambda args: diagnostics.run_phase("byte-scan", gates.byte_scan, args))
-    assert cli.main(["check", "--source-sha", "a" * 40, "--analysis-root", str(tmp_path)]) == 1
+    monkeypatch.setattr(
+        cli,
+        "_check_or_publish",
+        lambda args: diagnostics.run_phase("byte-scan", gates.byte_scan, args),
+    )
+    assert (
+        cli.main(["check", "--source-sha", "a" * 40, "--analysis-root", str(tmp_path)])
+        == 1
+    )
     output = capsys.readouterr()
     assert output.out == FAILURE
-    assert output.err.splitlines() == (_markers("check", "begin") + _completed(["inputs"])
-                                      + _markers("byte-scan", "begin", "failure") + _markers("check", "failure"))
+    assert output.err.splitlines() == (
+        _markers("check", "begin")
+        + _completed(["inputs"])
+        + _markers("byte-scan", "begin", "failure")
+        + _markers("check", "failure")
+    )
 
 
 @pytest.mark.parametrize("returncode", [0, 1])
@@ -198,21 +306,47 @@ def test_hostile_process_logs_are_private(tmp_path, monkeypatch, capsys, returnc
 
     monkeypatch.setattr(process.subprocess, "run", process_result)
     with nullcontext() if returncode == 0 else pytest.raises(ValueError):
-        diagnostics.run_phase("payload", process.run, ["synthetic-command", HOSTILE], tmp_path / "process.log")
+        diagnostics.run_phase(
+            "payload",
+            process.run,
+            ["synthetic-command", HOSTILE],
+            tmp_path / "process.log",
+        )
     output = capsys.readouterr()
     assert output.out == ""
-    assert output.err.splitlines() == _markers("payload", "begin", "pass" if returncode == 0 else "failure")
+    assert output.err.splitlines() == _markers(
+        "payload", "begin", "pass" if returncode == 0 else "failure"
+    )
     assert (tmp_path / "process.log").read_text() == HOSTILE
     assert (tmp_path / "process.log.stderr").read_text() == HOSTILE
 
 
-@pytest.mark.parametrize("failure", [None, "prepare-keyring", "prepare-scanner-tools",
-                                     "prepare-literal-engine", "prepare-native-checks",
-                                     "prepare-source-inputs"])
-def test_preparation_failures_identify_only_the_public_phase(tmp_path, monkeypatch, capsys, failure):
-    phases = ["prepare-keyring", "prepare-scanner-tools", "prepare-literal-engine",
-              "prepare-native-checks", "prepare-source-inputs"]
-    names = {"tools.log": phases[1], "native.log": phases[2], "native-checks.log": phases[3]}
+@pytest.mark.parametrize(
+    "failure",
+    [
+        None,
+        "prepare-keyring",
+        "prepare-scanner-tools",
+        "prepare-literal-engine",
+        "prepare-native-checks",
+        "prepare-source-inputs",
+    ],
+)
+def test_preparation_failures_identify_only_the_public_phase(
+    tmp_path, monkeypatch, capsys, failure
+):
+    phases = [
+        "prepare-keyring",
+        "prepare-scanner-tools",
+        "prepare-literal-engine",
+        "prepare-native-checks",
+        "prepare-source-inputs",
+    ]
+    names = {
+        "tools.log": phases[1],
+        "native.log": phases[2],
+        "native-checks.log": phases[3],
+    }
     error = ValueError(HOSTILE)
 
     def operation(name):
@@ -237,7 +371,9 @@ def test_preparation_failures_identify_only_the_public_phase(tmp_path, monkeypat
     assert output.err.splitlines() == expected
 
 
-@pytest.mark.parametrize("report", [{}, {"complete": True, "valid": False, "helper_joined": True}])
+@pytest.mark.parametrize(
+    "report", [{}, {"complete": True, "valid": False, "helper_joined": True}]
+)
 def test_byte_report_presence_is_not_a_pass(tmp_path, monkeypatch, capsys, report):
     tmp_path.chmod(0o700)
     (tmp_path / "bytes").mkdir(mode=0o700)
@@ -249,20 +385,29 @@ def test_byte_report_presence_is_not_a_pass(tmp_path, monkeypatch, capsys, repor
     args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
     with W.authorized_roots(tmp_path, ROOT), pytest.raises(ValueError):
         diagnostics.run_phase(
-            "byte-scan", gates.byte_scan, args, tmp_path,
-            tmp_path / "image", "synthetic", {},
+            "byte-scan",
+            gates.byte_scan,
+            args,
+            tmp_path,
+            tmp_path / "image",
+            "synthetic",
+            {},
         )
     output = capsys.readouterr()
     assert output.out == ""
     lines = output.err.splitlines()
-    prefix = (_markers("byte-scan", "begin")
-              + _completed(["byte-scan-authorization", "byte-scan-execution"])
-              + _markers("byte-scan-report", "begin") + _byte_summary(report))
-    assert lines[:len(prefix)] == prefix
-    assert lines[-2:] == (_markers("byte-scan-report", "failure")
-                          + _markers("byte-scan", "failure"))
+    prefix = (
+        _markers("byte-scan", "begin")
+        + _completed(["byte-scan-authorization", "byte-scan-execution"])
+        + _markers("byte-scan-report", "begin")
+        + _byte_summary(report)
+    )
+    assert lines[: len(prefix)] == prefix
+    assert lines[-2:] == (
+        _markers("byte-scan-report", "failure") + _markers("byte-scan", "failure")
+    )
     assert "artifact=raw-report available=true sha256=" in lines[len(prefix)]
-    assert lines[len(prefix) + 1:] == [
+    assert lines[len(prefix) + 1 :] == [
         "NCore OCI byte-scan-evidence artifact=raw-ledger available=false",
         "NCore OCI byte-scan-detail available=false",
         *lines[-2:],
@@ -273,8 +418,9 @@ def test_byte_report_presence_is_not_a_pass(tmp_path, monkeypatch, capsys, repor
 def test_byte_scan_subprocess_failure_is_private_and_preserved(
     tmp_path, monkeypatch, capsys, failure
 ):
-    error = subprocess.CalledProcessError(23, [SYNTHETIC_SECRET], SYNTHETIC_SECRET,
-                                          SYNTHETIC_SECRET)
+    error = subprocess.CalledProcessError(
+        23, [SYNTHETIC_SECRET], SYNTHETIC_SECRET, SYNTHETIC_SECRET
+    )
     calls = []
 
     def run(argv, output, **_kwargs):
@@ -291,15 +437,25 @@ def test_byte_scan_subprocess_failure_is_private_and_preserved(
     monkeypatch.setattr(gates, "run", run)
     monkeypatch.setattr(gates, "run_byte_scanner", scanner)
     monkeypatch.setenv("CUSTOMER_DENYLIST", SYNTHETIC_SECRET)
-    args = SimpleNamespace(analysis_root=tmp_path / SYNTHETIC_SECRET,
-                           policy_mode="ci-regex")
+    args = SimpleNamespace(
+        analysis_root=tmp_path / SYNTHETIC_SECRET, policy_mode="ci-regex"
+    )
     with pytest.raises(subprocess.CalledProcessError) as raised:
         diagnostics.run_phase(
-            "byte-scan", gates.byte_scan, args, tmp_path, tmp_path / "image", "synthetic", {}
+            "byte-scan",
+            gates.byte_scan,
+            args,
+            tmp_path,
+            tmp_path / "image",
+            "synthetic",
+            {},
         )
     assert raised.value is error
-    assert calls == (["authorize.log"] if failure == "authorization"
-                     else ["authorize.log", "bytes.log"])
+    assert calls == (
+        ["authorize.log"]
+        if failure == "authorization"
+        else ["authorize.log", "bytes.log"]
+    )
     output = capsys.readouterr()
     assert SYNTHETIC_SECRET not in output.out + output.err
     reached = ["byte-scan-authorization"]
@@ -317,11 +473,19 @@ def test_byte_scan_report_summarizes_secret_findings_without_disclosure(
     tmp_path, monkeypatch, capsys
 ):
     report = {
-        "complete": True, "valid": False, "helper_joined": True,
-        "records": 9, "scanned_bytes": 1200, "verified_zero_bytes": 512,
-        "regular_files": 2, "regular_bytes": 128, "findings": 1,
-        "policy": SYNTHETIC_SECRET, "matches": [SYNTHETIC_SECRET],
-        "argv": [SYNTHETIC_SECRET], "env": {"TOKEN": SYNTHETIC_SECRET},
+        "complete": True,
+        "valid": False,
+        "helper_joined": True,
+        "records": 9,
+        "scanned_bytes": 1200,
+        "verified_zero_bytes": 512,
+        "regular_files": 2,
+        "regular_bytes": 128,
+        "findings": 1,
+        "policy": SYNTHETIC_SECRET,
+        "matches": [SYNTHETIC_SECRET],
+        "argv": [SYNTHETIC_SECRET],
+        "env": {"TOKEN": SYNTHETIC_SECRET},
         "exception": SYNTHETIC_SECRET,
     }
     (tmp_path / "bytes").mkdir()
@@ -331,20 +495,36 @@ def test_byte_scan_report_summarizes_secret_findings_without_disclosure(
     args = SimpleNamespace(analysis_root=tmp_path, policy_mode="ci-regex")
     with pytest.raises(ValueError, match="^complete_byte_scan_required$"):
         diagnostics.run_phase(
-            "byte-scan", gates.byte_scan, args, tmp_path, tmp_path / "image", "synthetic", {}
+            "byte-scan",
+            gates.byte_scan,
+            args,
+            tmp_path,
+            tmp_path / "image",
+            "synthetic",
+            {},
         )
     output = capsys.readouterr()
     assert SYNTHETIC_SECRET not in output.out + output.err
-    assert "category=coverage available=true records=9 scanned_bytes=1200 " \
-           "verified_zero_bytes=512 regular_files=2 regular_bytes=128" in output.err
+    assert (
+        "category=coverage available=true records=9 scanned_bytes=1200 "
+        "verified_zero_bytes=512 regular_files=2 regular_bytes=128" in output.err
+    )
     assert "category=findings available=true findings=1" in output.err
 
 
 @pytest.mark.parametrize("unsafe", [SYNTHETIC_SECRET, True, -1, 1 << 80])
 def test_byte_scan_numeric_summary_is_bounded(tmp_path, monkeypatch, capsys, unsafe):
-    report = {"complete": False, "valid": False, "helper_joined": True,
-              "records": unsafe, "scanned_bytes": 1, "verified_zero_bytes": 1,
-              "regular_files": 1, "regular_bytes": 1, "findings": unsafe}
+    report = {
+        "complete": False,
+        "valid": False,
+        "helper_joined": True,
+        "records": unsafe,
+        "scanned_bytes": 1,
+        "verified_zero_bytes": 1,
+        "regular_files": 1,
+        "regular_bytes": 1,
+        "findings": unsafe,
+    }
     (tmp_path / "bytes").mkdir()
     (tmp_path / "bytes/report.json").write_text(json.dumps(report))
     monkeypatch.setattr(gates, "run", lambda *_args, **_kwargs: None)
@@ -358,10 +538,22 @@ def test_byte_scan_numeric_summary_is_bounded(tmp_path, monkeypatch, capsys, uns
     assert "category=findings available=false" in output.err
 
 
-@pytest.mark.parametrize("payload", [None, "malformed", [SYNTHETIC_SECRET], {
-    "complete": True, "valid": False, "helper_joined": True,
-    "findings": 3, "helper_summary": {"findings": 1}, "failure_code": SYNTHETIC_SECRET,
-}])
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        "malformed",
+        [SYNTHETIC_SECRET],
+        {
+            "complete": True,
+            "valid": False,
+            "helper_joined": True,
+            "findings": 3,
+            "helper_summary": {"findings": 1},
+            "failure_code": SYNTHETIC_SECRET,
+        },
+    ],
+)
 def test_scanner_execution_error_is_not_treated_as_an_attribution_finding(
     tmp_path, monkeypatch, capsys, payload
 ):
@@ -423,7 +615,10 @@ class _HostileIdentifier(str):
         pytest.fail("private identifier was formatted")
 
 
-@pytest.mark.parametrize("identifier", [HOSTILE, "unknown-stage", None, ["payload"], _HostileIdentifier("payload")])
+@pytest.mark.parametrize(
+    "identifier",
+    [HOSTILE, "unknown-stage", None, ["payload"], _HostileIdentifier("payload")],
+)
 def test_phase_identifier_is_allowlisted_before_execution(identifier, capsys):
     with pytest.raises(ValueError, match="^invalid_ncore_publication_phase$"):
         diagnostics.run_phase(identifier, lambda: pytest.fail("invalid phase executed"))
@@ -433,7 +628,9 @@ def test_phase_identifier_is_allowlisted_before_execution(identifier, capsys):
 def test_markers_flush_before_work_and_preserve_results(monkeypatch):
     writes = []
     flushes = []
-    stream = SimpleNamespace(write=writes.append, flush=lambda: flushes.append("".join(writes)))
+    stream = SimpleNamespace(
+        write=writes.append, flush=lambda: flushes.append("".join(writes))
+    )
     monkeypatch.setattr(diagnostics.sys, "stderr", stream)
     result = object()
 
@@ -455,17 +652,27 @@ def test_phase_reraises_same_exception(monkeypatch, capsys):
     with pytest.raises(_UnprintableError) as raised:
         diagnostics.run_phase("payload", fail)
     assert raised.value is error
-    assert capsys.readouterr().err.splitlines() == _markers("payload", "begin", "failure")
+    assert capsys.readouterr().err.splitlines() == _markers(
+        "payload", "begin", "failure"
+    )
 
 
 @pytest.mark.parametrize("returncode", [0, 1])
-def test_registry_lookup_never_echoes_hostile_response(tmp_path, monkeypatch, capsys, returncode):
-    response = subprocess.CompletedProcess([], returncode, HOSTILE.encode(), HOSTILE.encode())
+def test_registry_lookup_never_echoes_hostile_response(
+    tmp_path, monkeypatch, capsys, returncode
+):
+    response = subprocess.CompletedProcess(
+        [], returncode, HOSTILE.encode(), HOSTILE.encode()
+    )
     monkeypatch.setattr(registry.subprocess, "run", lambda *args, **kwargs: response)
     with nullcontext() if returncode == 0 else pytest.raises(ValueError):
-        registry._observed(HOSTILE, tmp_path / "lookup.json", tmp_path / "synthetic-auth")
+        registry._observed(
+            HOSTILE, tmp_path / "lookup.json", tmp_path / "synthetic-auth"
+        )
     output = capsys.readouterr()
     assert output.out == ""
-    assert output.err.splitlines() == _markers("registry-tag-lookup", "begin", "pass" if returncode == 0 else "failure")
+    assert output.err.splitlines() == _markers(
+        "registry-tag-lookup", "begin", "pass" if returncode == 0 else "failure"
+    )
     assert (tmp_path / "lookup.json").read_text() == HOSTILE
     assert (tmp_path / "lookup.stderr").read_text() == HOSTILE

@@ -94,9 +94,11 @@ def test_paidf_promoted_runtime_takes_full_visualization_path(monkeypatch) -> No
 
     states = [step["state"] for step in report["steps"]]
     assert states[-2:] == ["visualize", "finalize"]
-    assert states.index("quality-disposition") < states.index(
-        "require-accepted-quality"
-    ) < states.index("annotate-augmented")
+    assert (
+        states.index("quality-disposition")
+        < states.index("require-accepted-quality")
+        < states.index("annotate-augmented")
+    )
     assert "visualize-rejected" not in states
     assert "reject-quality" not in states
 
@@ -136,9 +138,7 @@ def test_paidf_runtime_executor_observes_terminal_nonzero_rejection(
     spec = load_spec(PAIDF)
     scores = tmp_path / "cosmos_evaluator.json"
     disposition = tmp_path / "quality_disposition.json"
-    scores.write_text(
-        json.dumps({"status": "completed", "score": 0.1, "passed": True})
-    )
+    scores.write_text(json.dumps({"status": "completed", "score": 0.1, "passed": True}))
     _persist_quality_disposition(str(scores), str(disposition), 0.75)
     spec.config["scores_uri"] = str(scores)
     spec.config["quality_disposition_uri"] = str(disposition)
@@ -189,9 +189,7 @@ def test_paidf_non_runtime_serial_executor_stops_at_accepted_guard(
     scores = tmp_path / "cosmos_evaluator.json"
     disposition = tmp_path / "quality_disposition.json"
     downstream_marker = tmp_path / "annotate-ran"
-    scores.write_text(
-        json.dumps({"status": "completed", "score": 0.1, "passed": True})
-    )
+    scores.write_text(json.dumps({"status": "completed", "score": 0.1, "passed": True}))
     _persist_quality_disposition(str(scores), str(disposition), threshold=0.75)
     serial_steps = [
         PlanStep(

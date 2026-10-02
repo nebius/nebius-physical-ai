@@ -26,18 +26,23 @@ def _create_staged_launcher(staging: Path) -> Path:
         OSError: If the probe module cannot be written.
     """
     # Bundled ensurepip exercises distlib without downloading another runtime.
-    subprocess.run([sys.executable, "-m", "venv", str(staging)], check=True, capture_output=True)
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(staging)], check=True, capture_output=True
+    )
     script = staging / "bin" / "sky"
-    launcher_program = "\n".join([
-        "from pip._vendor.distlib.scripts import ScriptMaker",
-        "import sys",
-        "maker = ScriptMaker(None, sys.argv[1])",
-        "maker.variants = {''}",
-        "maker.make('sky=launcher_probe:main')",
-    ])
+    launcher_program = "\n".join(
+        [
+            "from pip._vendor.distlib.scripts import ScriptMaker",
+            "import sys",
+            "maker = ScriptMaker(None, sys.argv[1])",
+            "maker.variants = {''}",
+            "maker.make('sky=launcher_probe:main')",
+        ]
+    )
     subprocess.run(
         [str(staging / "bin" / "python"), "-c", launcher_program, str(script.parent)],
-        check=True, capture_output=True,
+        check=True,
+        capture_output=True,
     )
     (script.parent / "launcher_probe.py").write_text(
         "def main():\n"
@@ -50,7 +55,9 @@ def _create_staged_launcher(staging: Path) -> Path:
 
 
 @pytest.mark.parametrize("runtime_name", ["runtime", "runtime with spaces"])
-def test_pip_long_shebang_launcher_executes_after_staging_rename(tmp_path: Path, runtime_name: str):
+def test_pip_long_shebang_launcher_executes_after_staging_rename(
+    tmp_path: Path, runtime_name: str
+):
     """Run pip's actual trampoline after its environment moves.
 
     Args:
@@ -72,18 +79,23 @@ def test_pip_long_shebang_launcher_executes_after_staging_rename(tmp_path: Path,
     staging.rename(target)
     result = subprocess.run(
         [str(target / "bin" / "sky"), "--version", "literal argument"],
-        capture_output=True, text=True, check=False,
+        capture_output=True,
+        text=True,
+        check=False,
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
-        "prefix": str(target), "args": ["--version", "literal argument"],
+        "prefix": str(target),
+        "args": ["--version", "literal argument"],
     }
     after = (target / "bin" / "sky").read_bytes()
     assert after.split(b"\n", 3)[3] == before.split(b"\n", 3)[3]
     assert (target / "bin" / "sky").stat().st_mode & 0o111
 
 
-def test_relocation_preserves_normal_shebang_and_unrelated_script_content(tmp_path: Path):
+def test_relocation_preserves_normal_shebang_and_unrelated_script_content(
+    tmp_path: Path,
+):
     """Leave payloads and external symlink targets outside relocation.
 
     Args:
@@ -109,7 +121,10 @@ def test_relocation_preserves_normal_shebang_and_unrelated_script_content(tmp_pa
     external.write_bytes(external_body)
     (scripts / "linked").symlink_to(external)
     _relocate_staged_scripts(staging, target)
-    assert regular.read_bytes() == b"#!" + os.fsencode(target / "bin/python") + b"\n" + body
+    assert (
+        regular.read_bytes()
+        == b"#!" + os.fsencode(target / "bin/python") + b"\n" + body
+    )
     assert unrelated.read_bytes() == unrelated_body
     assert external.read_bytes() == external_body
     assert regular.stat().st_mode & 0o777 == 0o755
@@ -117,9 +132,15 @@ def test_relocation_preserves_normal_shebang_and_unrelated_script_content(tmp_pa
 
 @pytest.mark.parametrize(
     "executable,closing_delimiter",
-    [("other/bin/python", b"' '''"), ("bin/not-python", b"' '''"), ("bin/python", b"not-a-trampoline")],
+    [
+        ("other/bin/python", b"' '''"),
+        ("bin/not-python", b"' '''"),
+        ("bin/python", b"not-a-trampoline"),
+    ],
 )
-def test_relocation_does_not_rewrite_similar_shell_programs(tmp_path: Path, executable, closing_delimiter):
+def test_relocation_does_not_rewrite_similar_shell_programs(
+    tmp_path: Path, executable, closing_delimiter
+):
     """Reject lookalike shell headers that are not staged Python launchers.
 
     Args:
@@ -137,8 +158,11 @@ def test_relocation_does_not_rewrite_similar_shell_programs(tmp_path: Path, exec
     scripts.mkdir(parents=True)
     script = scripts / "custom"
     original = (
-        b"#!/bin/sh\n'''exec' " + os.fsencode(staging / executable)
-        + b' "$0" "$@"\n' + closing_delimiter + b"\nprint('body')\n"
+        b"#!/bin/sh\n'''exec' "
+        + os.fsencode(staging / executable)
+        + b' "$0" "$@"\n'
+        + closing_delimiter
+        + b"\nprint('body')\n"
     )
     script.write_bytes(original)
     _relocate_staged_scripts(staging, target)

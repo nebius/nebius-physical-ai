@@ -119,7 +119,8 @@ def _download_archive(path: Path, archive: _Archive) -> None:
             temporary = Path(output.name)
             try:
                 download_public_https(
-                    archive.url, _PinnedArchiveOutput(output, archive.size),
+                    archive.url,
+                    _PinnedArchiveOutput(output, archive.size),
                     allowed_hosts=frozenset({archive.host}),
                 )
             except PublicDownloadError:

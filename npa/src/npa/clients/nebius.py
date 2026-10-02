@@ -85,6 +85,23 @@ class IamBindingState(str, Enum):
     FAILED = "failed"
 
 
+class ProfileMutationResult(str, Enum):
+    """Describe whether a Nebius profile rebind completed or was recovered.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+    UPDATED = "updated"
+    UNCHANGED = "unchanged"
+    RESTORED = "restored"
+    PARTIAL = "partial"
+
+
 @dataclass(frozen=True)
 class StorageIamBindingEvidence:
     state: IamBindingState
@@ -258,7 +275,9 @@ def _run(args: list[str], *, check: bool = True) -> str:
     from npa.clients.nebius_auth import nebius_profile
 
     profile = nebius_profile()
-    explicit_profile = any(arg == "--profile" or arg.startswith("--profile=") for arg in args)
+    explicit_profile = any(
+        arg == "--profile" or arg.startswith("--profile=") for arg in args
+    )
     profile_args = ["--profile", profile] if profile and not explicit_profile else []
     result = subprocess.run(
         [nebius, *profile_args, *args],
@@ -510,30 +529,78 @@ def current_tenant_id() -> str:
     return _config_get("tenant-id")
 
 
-def set_profile_project(project_id: str, tenant_id: str = "") -> bool:
-    """Point the active Nebius CLI profile at *project_id* / *tenant_id*.
+def _write_profile_value(key: str, value: str) -> None:
+    command = ["config", "set", key, value] if value else ["config", "unset", key]
+    _run(command)
 
-    ``npa`` shells out to the Nebius CLI with the operator's active profile, so a
-    profile whose ``parent-id``/``tenant-id`` are empty (or point somewhere else)
-    silently disables project discovery and makes later commands target the wrong
-    place. Writing the selected ids back onto the profile keeps the two in sync.
 
-    Best-effort: returns ``False`` (never raises) when the CLI is missing or a
-    ``nebius config set`` call fails.
+def _read_profile_values(keys: tuple[str, ...]) -> dict[str, str]:
+    return {key: _run(["config", "get", key]) for key in keys}
+
+
+def _profile_values_match(expected: Mapping[str, str]) -> bool:
+    try:
+        return _read_profile_values(tuple(expected)) == expected
+    except Exception:
+        return False
+
+
+def _try_write_profile_value(key: str, value: str) -> bool:
+    try:
+        _write_profile_value(key, value)
+    except Exception:
+        return False
+    return True
+
+
+def _restore_profile_values(previous: Mapping[str, str]) -> bool:
+    for key, value in previous.items():
+        _try_write_profile_value(key, value)
+    return _profile_values_match(previous)
+
+
+def _rollback_profile_values(previous: Mapping[str, str]) -> ProfileMutationResult:
+    return (
+        ProfileMutationResult.RESTORED
+        if _restore_profile_values(previous)
+        else ProfileMutationResult.PARTIAL
+    )
+
+
+def set_profile_project(project_id: str, tenant_id: str = "") -> ProfileMutationResult:
+    """Rebind the active CLI profile with verified best-effort rollback.
+
+    Separate CLI writes are not atomic across processes. Recovery restores the
+    observed prior values when possible, including unset values, and verifies
+    them by readback. Concurrent profile writers can race mutation or rollback.
+
+    Args:
+        project_id: Project to set as the active profile's parent.
+        tenant_id: Optional tenant to set on the active profile.
+    Returns:
+        A typed result; compare explicitly with ProfileMutationResult.UPDATED.
+    Raises:
+        None. CLI and verification failures are represented by the result.
     """
     project = str(project_id or "").strip()
     tenant = str(tenant_id or "").strip()
     if not project:
-        return False
-    updates = [("parent-id", project)]
+        return ProfileMutationResult.UNCHANGED
+    updates = {"parent-id": project}
     if tenant:
-        updates.append(("tenant-id", tenant))
+        updates["tenant-id"] = tenant
     try:
-        for key, value in updates:
-            _run(["config", "set", key, value])
+        previous = _read_profile_values(tuple(updates))
     except Exception:
-        return False
-    return True
+        return ProfileMutationResult.UNCHANGED
+    for key, value in updates.items():
+        if not _try_write_profile_value(key, value):
+            if _profile_values_match(previous):
+                return ProfileMutationResult.UNCHANGED
+            return _rollback_profile_values(previous)
+    if _profile_values_match(updates):
+        return ProfileMutationResult.UPDATED
+    return _rollback_profile_values(previous)
 
 
 # ── Tenant / project discovery ───────────────────────────────────────────
@@ -947,7 +1014,15 @@ def list_quota_allowances(
         raise NebiusError("parent_id is required to list quota allowances")
     profile_args, _resolved = _iam_profile_args(profile)
     payload = _run_json(
-        [*profile_args, "quotas", "quota-allowance", "list", "--parent-id", parent, "--all"]
+        [
+            *profile_args,
+            "quotas",
+            "quota-allowance",
+            "list",
+            "--parent-id",
+            parent,
+            "--all",
+        ]
     )
     if not isinstance(payload.get("items"), list):
         raise NebiusError("quota allowance response is malformed: items is not a list")
@@ -1058,9 +1133,7 @@ def get_compute_instance_quota(
     return region_less if region_less is not None else (None, None)
 
 
-def discover_container_registry(
-    project_id: str, *, preferred_region: str = ""
-) -> str:
+def discover_container_registry(project_id: str, *, preferred_region: str = "") -> str:
     """Compatibility seam for callers that previously discovered a registry.
 
     Official execution defaults to public GHCR and configuration no longer
@@ -2187,7 +2260,9 @@ def apply_bucket_rerun_cors(project_id: str, bucket_name: str) -> BucketCorsPlan
 
     verified = plan_bucket_rerun_cors(project_id, bucket_name)
     if verified.changed:
-        raise NebiusError("bucket CORS update completed but read-back verification failed")
+        raise NebiusError(
+            "bucket CORS update completed but read-back verification failed"
+        )
     return BucketCorsPlan(
         bucket_id=verified.bucket_id,
         resource_version=verified.resource_version,

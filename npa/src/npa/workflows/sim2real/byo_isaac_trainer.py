@@ -144,11 +144,7 @@ def robot_asset_preflight_script(robot_spec: dict[str, Any]) -> str:
     if operation not in {"prepare", "fetch"}:
         raise ValueError("NPA_SIM2REAL_ROBOT_ASSET_OPERATION must be prepare or fetch")
     spec_json = json.dumps(robot_spec, sort_keys=True)
-    command = (
-        "export NPA_BYO_ROBOT_SPEC_JSON="
-        + shlex.quote(spec_json)
-        + "\n"
-    )
+    command = "export NPA_BYO_ROBOT_SPEC_JSON=" + shlex.quote(spec_json) + "\n"
     if operation == "prepare":
         # Stage 7 converts inside the rollout's already-running AppLauncher.
         # A separate converter process is unsafe because Kit shutdown can end
@@ -323,8 +319,12 @@ def read_signal_stats(signal_json_path: str) -> dict[str, Any]:
             if step.get("advantage") is not None:
                 advantages.append(float(step["advantage"]))
             confidence = step.get("confidence")
-            if (supported_visual_event(step) and type(confidence) in (int, float)
-                    and math.isfinite(confidence) and 0 < confidence <= 1):
+            if (
+                supported_visual_event(step)
+                and type(confidence) in (int, float)
+                and math.isfinite(confidence)
+                and 0 < confidence <= 1
+            ):
                 visual_step_count += 1
                 for tag in step.get("error_tags", []) or []:
                     error_tags[str(tag)] = error_tags.get(str(tag), 0) + 1
@@ -982,7 +982,7 @@ def build_isaac_job_manifest(
         preflight_block = resume_block
         train_block = (
             f'echo "VLM_REWARD_OVERRIDES: {override_str}"\n'
-            'VIZ_ARGS=(--visualizer none)\n'
+            "VIZ_ARGS=(--visualizer none)\n"
             'case "${ISAAC_LAB_VERSION:-}" in 2.*) VIZ_ARGS=(--headless) ;; esac\n'
             # tee the FULL training output to a file (the per-iteration Mean reward
             # curve) before tailing to stdout — `| tail -120` alone discards the

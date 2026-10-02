@@ -19,6 +19,12 @@ variable "nebius_region" {
   default     = "eu-north1"
 }
 
+variable "ipv4_public_pool_id" {
+  description = "Optional existing VPC public IPv4 pool used by the agent network; empty uses the provider default"
+  type        = string
+  default     = ""
+}
+
 # ── Service account (created by environment.sh) ───────────────────────────
 
 variable "service_account_id" {
@@ -235,7 +241,7 @@ variable "s3_endpoint" {
 variable "fiftyone_version" {
   description = "FiftyOne PyPI version to install when workbench_type is fiftyone"
   type        = string
-  default     = "1.21.0"
+  default     = "1.22.0"
 }
 
 variable "wait_for_ssh" {

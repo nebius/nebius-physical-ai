@@ -35,16 +35,40 @@ class VideoModel:
 
 MODELS = {
     "mochi-1": VideoModel(
-        "genmo/mochi-1-preview", "14be5fcea23095ed330cb214647916a451e38b6e",
-        "MochiPipeline", "bfloat16", 163, 30, 64, 848, 480, 4.5,
+        "genmo/mochi-1-preview",
+        "14be5fcea23095ed330cb214647916a451e38b6e",
+        "MochiPipeline",
+        "bfloat16",
+        163,
+        30,
+        64,
+        848,
+        480,
+        4.5,
     ),
     "cogvideox-2b": VideoModel(
-        "zai-org/CogVideoX-2b", "1137dacfc2c9c012bed6a0793f4ecf2ca8e7ba01",
-        "CogVideoXPipeline", "float16", 49, 8, 50, 720, 480, 6.0,
+        "zai-org/CogVideoX-2b",
+        "1137dacfc2c9c012bed6a0793f4ecf2ca8e7ba01",
+        "CogVideoXPipeline",
+        "float16",
+        49,
+        8,
+        50,
+        720,
+        480,
+        6.0,
     ),
     "wan2.1-14b": VideoModel(
-        "Wan-AI/Wan2.1-T2V-14B-Diffusers", "38ec498cb3208fb688890f8cc7e94ede2cbd7f68",
-        "WanPipeline", "bfloat16", 81, 16, 50, 1280, 720, 5.0,
+        "Wan-AI/Wan2.1-T2V-14B-Diffusers",
+        "38ec498cb3208fb688890f8cc7e94ede2cbd7f68",
+        "WanPipeline",
+        "bfloat16",
+        81,
+        16,
+        50,
+        1280,
+        720,
+        5.0,
     ),
 }
 
@@ -81,13 +105,18 @@ def _pipeline(model: VideoModel):
         from diffusers import AutoencoderKLWan, UniPCMultistepScheduler
 
         options["vae"] = AutoencoderKLWan.from_pretrained(
-            model.model_id, subfolder="vae", revision=model.revision,
+            model.model_id,
+            subfolder="vae",
+            revision=model.revision,
             torch_dtype=torch.float32,
         )
-    pipeline = getattr(diffusers, model.pipeline).from_pretrained(model.model_id, **options)
+    pipeline = getattr(diffusers, model.pipeline).from_pretrained(
+        model.model_id, **options
+    )
     if model.pipeline == "WanPipeline":
         pipeline.scheduler = UniPCMultistepScheduler.from_config(
-            pipeline.scheduler.config, flow_shift=5.0,
+            pipeline.scheduler.config,
+            flow_shift=5.0,
         )
     pipeline.vae.enable_tiling()
     return pipeline.to("cuda")
@@ -109,11 +138,14 @@ def cuda_inventory() -> dict:
     devices = []
     for index in range(torch.cuda.device_count()):
         properties = torch.cuda.get_device_properties(index)
-        devices.append({
-            "index": index, "name": properties.name,
-            "compute_capability": list(torch.cuda.get_device_capability(index)),
-            "total_memory_bytes": properties.total_memory,
-        })
+        devices.append(
+            {
+                "index": index,
+                "name": properties.name,
+                "compute_capability": list(torch.cuda.get_device_capability(index)),
+                "total_memory_bytes": properties.total_memory,
+            }
+        )
     return {"torch": torch.__version__, "cuda": torch.version.cuda, "devices": devices}
 
 
@@ -158,17 +190,23 @@ def validate_video(video: Path, expected_frames: int) -> dict:
         previous = pixels
         count += 1
     if count != expected_frames or spatial < 1 or delta <= 0.001:
-        raise RuntimeError(f"Invalid generated video: frames={count}, std={spatial}, delta={delta}")
+        raise RuntimeError(
+            f"Invalid generated video: frames={count}, std={spatial}, delta={delta}"
+        )
     return {
-        "frame_count": count, "height": shape[0], "width": shape[1],
-        "max_spatial_std": spatial, "mean_temporal_delta": delta / max(1, count - 1),
+        "frame_count": count,
+        "height": shape[0],
+        "width": shape[1],
+        "max_spatial_std": spatial,
+        "mean_temporal_delta": delta / max(1, count - 1),
         "sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
         "size_bytes": video.stat().st_size,
     }
 
 
-def generate_video(solution: str, prompt: str, seed: int, output_dir: Path,
-                   negative_prompt: str = "") -> dict:
+def generate_video(
+    solution: str, prompt: str, seed: int, output_dir: Path, negative_prompt: str = ""
+) -> dict:
     """Execute native text-to-video inference and validate its resulting MP4.
 
     Args:
@@ -195,8 +233,12 @@ def generate_video(solution: str, prompt: str, seed: int, output_dir: Path,
     output_dir.mkdir(parents=True, exist_ok=True)
     pipeline = _pipeline(model)
     options = dict(
-        prompt=prompt, num_frames=model.frames, num_inference_steps=model.steps,
-        height=model.height, width=model.width, guidance_scale=model.guidance,
+        prompt=prompt,
+        num_frames=model.frames,
+        num_inference_steps=model.steps,
+        height=model.height,
+        width=model.width,
+        guidance_scale=model.guidance,
         generator=torch.Generator(device="cuda").manual_seed(seed),
     )
     if negative_prompt:
@@ -207,22 +249,33 @@ def generate_video(solution: str, prompt: str, seed: int, output_dir: Path,
     video = output_dir / "video.mp4"
     export_to_video(frames, str(video), fps=model.fps)
     observed = validate_video(video, model.frames)
-    evidence = _evidence(solution, model, prompt, seed, runtime, observed, time.monotonic() - started)
+    evidence = _evidence(
+        solution, model, prompt, seed, runtime, observed, time.monotonic() - started
+    )
     evidence["negative_prompt"] = negative_prompt
     return evidence
 
 
 def _evidence(solution, model, prompt, seed, runtime, observed, elapsed):
     if (observed["width"], observed["height"]) != (model.width, model.height):
-        raise RuntimeError("Generated dimensions do not match the requested native capability")
+        raise RuntimeError(
+            "Generated dimensions do not match the requested native capability"
+        )
     capability = f"{solution}_text_to_video"
     return {
         "schema": "npa.workbench.byof.video_generation.v1",
-        "solution": solution, "capability": capability,
-        "upstream_repo": SOURCE_REPO, "upstream_ref": SOURCE_REF,
-        "requested": asdict(model), "prompt": prompt, "seed": seed,
-        "weights_baked": False, "output_filename": "video.mp4",
-        "observed": observed, "runtime": runtime, "elapsed_seconds": elapsed,
+        "solution": solution,
+        "capability": capability,
+        "upstream_repo": SOURCE_REPO,
+        "upstream_ref": SOURCE_REF,
+        "requested": asdict(model),
+        "prompt": prompt,
+        "seed": seed,
+        "weights_baked": False,
+        "output_filename": "video.mp4",
+        "observed": observed,
+        "runtime": runtime,
+        "elapsed_seconds": elapsed,
         "runtime_versions": {
             name: importlib.metadata.version(name)
             for name in ("diffusers", "transformers", "torch", "huggingface-hub")

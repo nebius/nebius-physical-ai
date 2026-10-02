@@ -326,7 +326,10 @@ def test_a_vm_deploy_caches_by_default_without_being_configured() -> None:
     # A host directory needs no provisioning and costs nothing to create, so the
     # deploy should not need to be told: the alternative default is discarding
     # every gated download on the next `docker rm -f`.
-    assert resolve_model_cache_root({}, runtime=RUNTIME_DOCKER) == DEFAULT_MODEL_CACHE_MOUNT
+    assert (
+        resolve_model_cache_root({}, runtime=RUNTIME_DOCKER)
+        == DEFAULT_MODEL_CACHE_MOUNT
+    )
     assert docker_model_cache_volumes(environ={}) == (
         f"{DEFAULT_DOCKER_HOST_CACHE}:{DEFAULT_MODEL_CACHE_MOUNT}",
     )

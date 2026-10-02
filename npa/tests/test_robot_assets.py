@@ -137,8 +137,14 @@ def test_parse_robot_spec_minimal_usd_auto_derives_gains_and_home() -> None:
         "n_arm_joints": 6,
         "n_gripper_joints": 2,
         "joint_names": [
-            "joint1", "joint2", "joint3", "joint4", "joint5", "joint6",
-            "finger_joint1", "finger_joint2",
+            "joint1",
+            "joint2",
+            "joint3",
+            "joint4",
+            "joint5",
+            "joint6",
+            "finger_joint1",
+            "finger_joint2",
         ],
         "gripper_joint_names": ["finger_joint1", "finger_joint2"],
         "finger_links": ["uflite_finger1", "uflite_finger2"],
@@ -293,7 +299,9 @@ class _FakeStorageClient:
         return local_path
 
 
-def test_resolve_robot_asset_byo_urdf_records_sha_and_no_fallback(tmp_path: Path) -> None:
+def test_resolve_robot_asset_byo_urdf_records_sha_and_no_fallback(
+    tmp_path: Path,
+) -> None:
     client = _FakeStorageClient(payload=b"<robot>urdf</robot>")
     spec = ra.RobotSpec(
         robot_source=ra.ROBOT_SOURCE_BYO_URDF,

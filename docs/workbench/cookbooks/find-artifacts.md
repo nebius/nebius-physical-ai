@@ -156,7 +156,8 @@ from npa.clients.project_credentials import s3_client_for_project
 
 report = json.loads(Path("artifact-search.json").read_text())
 source = next(
-    row for row in report["artifacts"]
+    row
+    for row in report["artifacts"]
     if row["key"] == "<selected-object-key>"
     and row["bucket"] == "<selected-bucket>"
     and row["project"] == "<selected-project-alias>"

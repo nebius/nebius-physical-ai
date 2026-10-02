@@ -75,7 +75,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return _run(args, plan)
     except SweepRunError as exc:
-        print(json.dumps({"status": "failed", "error": str(exc)}, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {"status": "failed", "error": str(exc)}, indent=2, sort_keys=True
+            )
+        )
         return 1
 
 
@@ -160,13 +164,19 @@ def _train_command(
 
 def _run(args: argparse.Namespace, plan: dict[str, Any]) -> int:
     _hydrate_credentials()
-    summary: dict[str, Any] = {"status": "running", "plan_mode": plan["mode"], "run_id": plan["run_id"]}
+    summary: dict[str, Any] = {
+        "status": "running",
+        "plan_mode": plan["mode"],
+        "run_id": plan["run_id"],
+    }
 
     if plan["mode"] == "rank-existing":
         completed = _label_existing_runs(plan["variant_uris"])
         default_rank_base = plan["variant_uris"][0]
     else:
-        summary["design"] = _design_sweep(plan, model=plan["design_model"], max_tokens=args.max_tokens)
+        summary["design"] = _design_sweep(
+            plan, model=plan["design_model"], max_tokens=args.max_tokens
+        )
         completed = _launch_variants(plan["variants"])
         summary["variants"] = completed
         default_rank_base = plan["sweep_root"]
@@ -184,13 +194,17 @@ def _run(args: argparse.Namespace, plan: dict[str, Any]) -> int:
     return 0
 
 
-def _design_sweep(plan: dict[str, Any], *, model: str, max_tokens: int) -> dict[str, Any]:
+def _design_sweep(
+    plan: dict[str, Any], *, model: str, max_tokens: int
+) -> dict[str, Any]:
     from npa.workbench.token_factory import generate_text
 
     with tempfile.TemporaryDirectory(prefix="npa-tf-sweep-design-") as tmp:
         prompts_file = Path(tmp) / "prompts.jsonl"
         prompts_file.write_text(
-            render_triage_prompts_jsonl([{"id": "sweep-design", "prompt": plan["design_prompt"]}]),
+            render_triage_prompts_jsonl(
+                [{"id": "sweep-design", "prompt": plan["design_prompt"]}]
+            ),
             encoding="utf-8",
         )
         result = generate_text(
@@ -201,7 +215,11 @@ def _design_sweep(plan: dict[str, Any], *, model: str, max_tokens: int) -> dict[
             max_tokens=max_tokens,
         )
     text = result.generations[0].completion if result.generations else ""
-    return {"status": result.status, "model": result.model, "design_preview": text[:600]}
+    return {
+        "status": result.status,
+        "model": result.model,
+        "design_preview": text[:600],
+    }
 
 
 def _launch_variants(variants: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -236,7 +254,13 @@ def _rank_runs(
         digested: list[dict[str, str]] = []
         for run in runs:
             local = _materialize(run["uri"], tmp_path / run["id"])
-            digested.append({"id": run["id"], "uri": run["uri"], "digest": summarize_run_artifacts(local)})
+            digested.append(
+                {
+                    "id": run["id"],
+                    "uri": run["uri"],
+                    "digest": summarize_run_artifacts(local),
+                }
+            )
         prompt = build_ranking_prompt(objective=objective, runs=digested)
         prompts_file = tmp_path / "prompts.jsonl"
         prompts_file.write_text(
@@ -268,7 +292,10 @@ def _submit_serverless_train(train_command: list[str]) -> dict[str, Any]:
             "serverless lerobot train failed "
             f"(exit {proc.returncode}): {proc.stderr.strip()[-800:] or proc.stdout.strip()[-800:]}"
         )
-    return _parse_last_json(proc.stdout) or {"status": "succeeded", "raw_stdout": proc.stdout[-400:]}
+    return _parse_last_json(proc.stdout) or {
+        "status": "succeeded",
+        "raw_stdout": proc.stdout[-400:],
+    }
 
 
 def _materialize(uri: str, dest: Path) -> Path:
@@ -292,7 +319,10 @@ def _hydrate_credentials() -> None:
     try:
         import os
 
-        from npa.clients.credentials import apply_shared_credential_env, load_credentials
+        from npa.clients.credentials import (
+            apply_shared_credential_env,
+            load_credentials,
+        )
 
         apply_shared_credential_env(os.environ, load_credentials())
     except Exception:  # noqa: BLE001 - best-effort; live calls surface real errors.
@@ -343,28 +373,98 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument("--run-id", default="", help="Run ID; defaults to a timestamped value.")
-    parser.add_argument("--objective", default="Maximize PushT success while keeping training stable.", help="Sweep objective fed to the design + ranking models.")
-    parser.add_argument("--num-variants", type=int, default=2, help="Number of GPU variants to launch (clamped to the seed grid).")
-    parser.add_argument("--policy-type", default="act", help="LeRobot policy type for each GPU train Job.")
-    parser.add_argument("--dataset", default="lerobot/pusht", help="Public HF dataset repo ID for the train Jobs.")
-    parser.add_argument("--gpu-type", default="h200", help="Serverless GPU type (h200, b300, l40s, ...).")
-    parser.add_argument("--smoke", action="store_true", default=True, help="Use smoke training settings (default).")
-    parser.add_argument("--no-smoke", dest="smoke", action="store_false", help="Disable smoke settings (real run).")
-    parser.add_argument("--project-id", default="", help="Nebius project ID override (auto-resolved if omitted).")
-    parser.add_argument("--image", default="", help="Container image override for the serverless Jobs.")
-    parser.add_argument("--bucket", default="", help="S3 prefix for sweep artifacts, e.g. s3://bucket/tf-sim-sweep.")
-    parser.add_argument("--rank-root", default="", help="S3 URI for the ranking report (default: <sweep-root>/ranking/).")
-    parser.add_argument("--model", default="", help=f"Token Factory text model for design + ranking (default {DEFAULT_TEXT_MODEL}).")
-    parser.add_argument("--max-tokens", type=int, default=1024, help="Max tokens for design + ranking generations.")
+    parser.add_argument(
+        "--run-id", default="", help="Run ID; defaults to a timestamped value."
+    )
+    parser.add_argument(
+        "--objective",
+        default="Maximize PushT success while keeping training stable.",
+        help="Sweep objective fed to the design + ranking models.",
+    )
+    parser.add_argument(
+        "--num-variants",
+        type=int,
+        default=2,
+        help="Number of GPU variants to launch (clamped to the seed grid).",
+    )
+    parser.add_argument(
+        "--policy-type",
+        default="act",
+        help="LeRobot policy type for each GPU train Job.",
+    )
+    parser.add_argument(
+        "--dataset",
+        default="lerobot/pusht",
+        help="Public HF dataset repo ID for the train Jobs.",
+    )
+    parser.add_argument(
+        "--gpu-type",
+        default="h200",
+        help="Serverless GPU type (h200, b300, l40s, ...).",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        default=True,
+        help="Use smoke training settings (default).",
+    )
+    parser.add_argument(
+        "--no-smoke",
+        dest="smoke",
+        action="store_false",
+        help="Disable smoke settings (real run).",
+    )
+    parser.add_argument(
+        "--project-id",
+        default="",
+        help="Nebius project ID override (auto-resolved if omitted).",
+    )
+    parser.add_argument(
+        "--image", default="", help="Container image override for the serverless Jobs."
+    )
+    parser.add_argument(
+        "--bucket",
+        default="",
+        help="S3 prefix for sweep artifacts, e.g. s3://bucket/tf-sim-sweep.",
+    )
+    parser.add_argument(
+        "--rank-root",
+        default="",
+        help="S3 URI for the ranking report (default: <sweep-root>/ranking/).",
+    )
+    parser.add_argument(
+        "--model",
+        default="",
+        help=f"Token Factory text model for design + ranking (default {DEFAULT_TEXT_MODEL}).",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=1024,
+        help="Max tokens for design + ranking generations.",
+    )
     parser.add_argument(
         "--rank-existing",
         default="",
         help="Comma-separated existing artifact prefixes to rank (skips design + GPU stages).",
     )
-    parser.add_argument("--wait-timeout", type=int, default=3600, help="Max seconds to wait for each Job.")
-    parser.add_argument("--poll-interval", type=float, default=30.0, help="Seconds between Job status checks.")
-    parser.add_argument("--render-only", action="store_true", help="Print the plan and exit (no infrastructure).")
+    parser.add_argument(
+        "--wait-timeout",
+        type=int,
+        default=3600,
+        help="Max seconds to wait for each Job.",
+    )
+    parser.add_argument(
+        "--poll-interval",
+        type=float,
+        default=30.0,
+        help="Seconds between Job status checks.",
+    )
+    parser.add_argument(
+        "--render-only",
+        action="store_true",
+        help="Print the plan and exit (no infrastructure).",
+    )
     return parser.parse_args(argv)
 
 

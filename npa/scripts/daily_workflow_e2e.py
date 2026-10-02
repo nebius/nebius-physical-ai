@@ -52,7 +52,8 @@ def _cmd_report(as_json: bool) -> int:
                     "missing": sorted(report.missing),
                     "exempt": sorted(dc.EXEMPT_IMAGE_TOOLS),
                     "covering_workflows": {
-                        k: sorted(v) for k, v in sorted(report.covering_workflows.items())
+                        k: sorted(v)
+                        for k, v in sorted(report.covering_workflows.items())
                     },
                     "ok": report.ok,
                 },
@@ -66,8 +67,12 @@ def _cmd_report(as_json: bool) -> int:
         f"npa.workflow specs: {len(summaries)} "
         f"(>= {dc.MIN_COMPREHENSIVE_STEPS}-step: {len(comp)})"
     )
-    print(f"covered by >= {dc.MIN_COMPREHENSIVE_STEPS}-step workflows: {sorted(report.covered)}")
-    print(f"exempt (tracked gap, not yet in a comprehensive workflow): {sorted(dc.EXEMPT_IMAGE_TOOLS)}")
+    print(
+        f"covered by >= {dc.MIN_COMPREHENSIVE_STEPS}-step workflows: {sorted(report.covered)}"
+    )
+    print(
+        f"exempt (tracked gap, not yet in a comprehensive workflow): {sorted(dc.EXEMPT_IMAGE_TOOLS)}"
+    )
     print("image -> covering comprehensive workflows:")
     for image in sorted(report.covering_workflows):
         print(f"  {image}: {', '.join(report.covering_workflows[image])}")
@@ -118,12 +123,16 @@ def _inspect_image(image: str) -> bool | None:
         return None
 
 
-def _cmd_images(registry: str | None, do_inspect: bool, require: bool, as_json: bool) -> int:
+def _cmd_images(
+    registry: str | None, do_inspect: bool, require: bool, as_json: bool
+) -> int:
     resolved = _resolve_all_images(registry)
     presence: dict[str, bool | None] = {}
     if do_inspect:
         for tool, ref in resolved.items():
-            presence[tool] = None if ref.startswith("<unresolved") else _inspect_image(ref)
+            presence[tool] = (
+                None if ref.startswith("<unresolved") else _inspect_image(ref)
+            )
 
     if as_json:
         print(
@@ -146,7 +155,9 @@ def _cmd_images(registry: str | None, do_inspect: bool, require: bool, as_json: 
             mark = ""
             if do_inspect:
                 state = presence.get(tool)
-                mark = {True: " [present]", False: " [ABSENT]", None: " [unknown]"}[state]
+                mark = {True: " [present]", False: " [ABSENT]", None: " [unknown]"}[
+                    state
+                ]
             print(f"  {tool}: {ref}{mark}")
 
     if require and do_inspect:
@@ -192,13 +203,21 @@ def main(argv: list[str] | None = None) -> int:
     p_plan.add_argument("--day-index", type=int, default=_day_index())
     p_plan.add_argument("--print0", action="store_true", help="NUL-separate paths")
 
-    p_gpu = sub.add_parser("gpu-case", help="print today's rotating real-GPU workflow spec")
+    p_gpu = sub.add_parser(
+        "gpu-case", help="print today's rotating real-GPU workflow spec"
+    )
     p_gpu.add_argument("--day-index", type=int, default=_day_index())
 
-    p_images = sub.add_parser("images", help="resolve + optionally inspect every workbench image")
+    p_images = sub.add_parser(
+        "images", help="resolve + optionally inspect every workbench image"
+    )
     p_images.add_argument("--registry", default=None)
-    p_images.add_argument("--inspect", action="store_true", help="check registry presence")
-    p_images.add_argument("--require", action="store_true", help="exit 1 if an image is absent")
+    p_images.add_argument(
+        "--inspect", action="store_true", help="check registry presence"
+    )
+    p_images.add_argument(
+        "--require", action="store_true", help="exit 1 if an image is absent"
+    )
     p_images.add_argument("--json", action="store_true")
 
     args = parser.parse_args(argv)

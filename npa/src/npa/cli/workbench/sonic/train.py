@@ -41,7 +41,7 @@ from npa.workbench.training_config import (
 import typer
 
 
-_B300_STATE_ONLY_URDF_PREP = r'''import hashlib
+_B300_STATE_ONLY_URDF_PREP = r"""import hashlib
 import json
 import os
 import xml.etree.ElementTree as ET
@@ -97,7 +97,7 @@ print(
     f"primitive_collisions_retained={sum(item['primitive_collisions_retained'] for item in prepared)}",
     flush=True,
 )
-'''
+"""
 
 
 def build_sonic_serverless_train_command(
@@ -130,17 +130,17 @@ def build_sonic_serverless_train_command(
     b300_prep = (
         "NPA_B300_PREP_PYTHON=''\n"
         "for candidate in /opt/npa/sim/venv/bin/python /opt/npa/venv/bin/python "
-        "/opt/isaac-lab/venv/bin/python \"$(command -v python3 || true)\"; do\n"
-        "  if [ -n \"$candidate\" ] && [ -x \"$candidate\" ]; then "
-        "NPA_B300_PREP_PYTHON=\"$candidate\"; break; fi\n"
+        '/opt/isaac-lab/venv/bin/python "$(command -v python3 || true)"; do\n'
+        '  if [ -n "$candidate" ] && [ -x "$candidate" ]; then '
+        'NPA_B300_PREP_PYTHON="$candidate"; break; fi\n'
         "done\n"
-        "if [ -z \"$NPA_B300_PREP_PYTHON\" ]; then "
+        'if [ -z "$NPA_B300_PREP_PYTHON" ]; then '
         "echo 'B300 state-only URDF preparation has no baked Python' >&2; exit 127; fi\n"
         "\"$NPA_B300_PREP_PYTHON\" - <<'NPA_B300_STATE_ONLY_URDF'\n"
         f"{_B300_STATE_ONLY_URDF_PREP}"
         "NPA_B300_STATE_ONLY_URDF\n"
         "b300_prep_rc=$?\n"
-        "if [ \"$b300_prep_rc\" -ne 0 ]; then exit \"$b300_prep_rc\"; fi\n"
+        'if [ "$b300_prep_rc" -ne 0 ]; then exit "$b300_prep_rc"; fi\n'
         if b300_state_only
         else ""
     )

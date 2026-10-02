@@ -191,17 +191,33 @@ def build_pin_file(
     for project in ISAAC_SIM_PACKAGES:
         entries = _fetch_index(index_url, project)
         wheels.append(
-            (project, isaac_sim_version, _select_wheel(project, entries, isaac_sim_version, python_tag, platform))
+            (
+                project,
+                isaac_sim_version,
+                _select_wheel(
+                    project, entries, isaac_sim_version, python_tag, platform
+                ),
+            )
         )
     for project in ISAAC_LAB_PACKAGES:
         entries = _fetch_index(index_url, project)
         wheels.append(
-            (project, isaac_lab_version, _select_wheel(project, entries, isaac_lab_version, python_tag, platform))
+            (
+                project,
+                isaac_lab_version,
+                _select_wheel(
+                    project, entries, isaac_lab_version, python_tag, platform
+                ),
+            )
         )
     for project, version in runtime_packages:
         entries = _fetch_index(index_url, project)
         wheels.append(
-            (project, version, _select_wheel(project, entries, version, python_tag, platform))
+            (
+                project,
+                version,
+                _select_wheel(project, entries, version, python_tag, platform),
+            )
         )
 
     lines = [
@@ -255,7 +271,9 @@ def main(argv: list[str] | None = None) -> int:
     for requirement in args.runtime_package:
         name, separator, version = requirement.partition("==")
         if not separator or not name or not version:
-            parser.error(f"invalid --runtime-package {requirement!r}; expected NAME==VERSION")
+            parser.error(
+                f"invalid --runtime-package {requirement!r}; expected NAME==VERSION"
+            )
         runtime_packages.append((name, version))
     rendered = build_pin_file(
         index_url=args.index_url,

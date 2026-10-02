@@ -22,10 +22,19 @@ def _live_config():
 
 def _submit_arguments(config):
     arguments = [
-        "workbench", "workflow", "submit", config["spec_path"],
-        "--runtime", "--run-id", config["run_id"],
-        "--infra", config["infra"], "--output-format", "json",
-        "--isolated-config-dir", config["isolated_config_dir"],
+        "workbench",
+        "workflow",
+        "submit",
+        config["spec_path"],
+        "--runtime",
+        "--run-id",
+        config["run_id"],
+        "--infra",
+        config["infra"],
+        "--output-format",
+        "json",
+        "--isolated-config-dir",
+        config["isolated_config_dir"],
     ]
     for key in ["sky_bin", "config_path"]:
         if config.get(key):
@@ -49,7 +58,8 @@ def test_runtime_uses_saved_project_for_gpu_execution() -> None:
         assert wave["credentials"]["source"] == "project:" + project
     location = urlparse(config["output_uri"])
     response = s3_client_for_project(project).get_object(
-        Bucket=location.netloc, Key=location.path.lstrip("/"),
+        Bucket=location.netloc,
+        Key=location.path.lstrip("/"),
     )
     proof = json.loads(response["Body"].read())
     assert proof["cuda"] and proof["gpu_count"] >= 1

@@ -93,9 +93,13 @@ class RenderInputs:
     frame_indices: np.ndarray
 
 
-def validate_layout_predictions(layout: str, predictions_data: np.ndarray | None) -> None:
+def validate_layout_predictions(
+    layout: str, predictions_data: np.ndarray | None
+) -> None:
     if layout not in SUPPORTED_LAYOUTS:
-        raise VizDataError(f"Unsupported layout '{layout}'. Expected one of: {', '.join(sorted(SUPPORTED_LAYOUTS))}")
+        raise VizDataError(
+            f"Unsupported layout '{layout}'. Expected one of: {', '.join(sorted(SUPPORTED_LAYOUTS))}"
+        )
     if layout in PREDICTION_LAYOUTS and predictions_data is None:
         raise VizDataError(f"--predictions-path is required when --layout={layout}")
 
@@ -109,7 +113,9 @@ def parse_resolution(value: str) -> tuple[int, int]:
         width = int(width_s)
         height = int(height_s)
     except ValueError as exc:
-        raise VizDataError(f"Resolution must use integer WIDTHxHEIGHT format, got: {value}") from exc
+        raise VizDataError(
+            f"Resolution must use integer WIDTHxHEIGHT format, got: {value}"
+        ) from exc
     if width <= 0 or height <= 0:
         raise VizDataError(f"Resolution dimensions must be positive, got: {value}")
     return width, height
@@ -186,7 +192,9 @@ def load_lerobot_state_vectors(root: Path) -> tuple[np.ndarray, float, str]:
     try:
         import pyarrow.parquet as pq
     except ImportError as exc:
-        raise VizDataError("pyarrow is required to read LeRobotDataset parquet files") from exc
+        raise VizDataError(
+            "pyarrow is required to read LeRobotDataset parquet files"
+        ) from exc
 
     rows: list[list[float]] = []
     indices: list[int] = []
@@ -204,22 +212,33 @@ def load_lerobot_state_vectors(root: Path) -> tuple[np.ndarray, float, str]:
     if not rows:
         raise VizDataError(f"No observation.state rows found under {data_dir}")
     if saw_index and len(indices) == len(rows):
-        rows = [row for _idx_value, row in sorted(zip(indices, rows), key=lambda item: item[0])]
+        rows = [
+            row
+            for _idx_value, row in sorted(zip(indices, rows), key=lambda item: item[0])
+        ]
 
     state = np.asarray(rows, dtype=np.float32)
     if state.ndim != 2:
-        raise VizDataError(f"observation.state must be 2D after loading, got shape {state.shape}")
+        raise VizDataError(
+            f"observation.state must be 2D after loading, got shape {state.shape}"
+        )
     if state.shape[1] != G1_STATE_DIM:
-        raise VizDataError(f"Expected {G1_STATE_DIM}D Unitree G1 state vectors, got {state.shape[1]}D")
+        raise VizDataError(
+            f"Expected {G1_STATE_DIM}D Unitree G1 state vectors, got {state.shape[1]}D"
+        )
 
     info = _read_info(root)
     raw_fps = info.get("fps") or DEFAULT_FPS
     # Preserve numeric fractional rates while retaining legacy coercion/errors
     # for strings, unsupported metadata types, and nonfinite numbers.
-    fps = raw_fps if isinstance(raw_fps, float) and np.isfinite(raw_fps) else int(raw_fps)
+    fps = (
+        raw_fps if isinstance(raw_fps, float) and np.isfinite(raw_fps) else int(raw_fps)
+    )
     if fps <= 0:
         fps = DEFAULT_FPS
-    title = _read_task_title(root) or str(info.get("task") or info.get("robot_type") or root.name)
+    title = _read_task_title(root) or str(
+        info.get("task") or info.get("robot_type") or root.name
+    )
     return state, fps, title
 
 
@@ -251,16 +270,22 @@ def select_frames(
     if data.shape[0] <= 0:
         raise VizDataError("Cannot select frames from an empty array")
     if source_fps <= 0 or output_fps <= 0:
-        raise VizDataError(f"fps values must be positive, got source={source_fps} output={output_fps}")
+        raise VizDataError(
+            f"fps values must be positive, got source={source_fps} output={output_fps}"
+        )
     if duration_s <= 0:
         raise VizDataError(f"duration must be positive, got {duration_s}")
 
     target_frames = max(1, int(round(duration_s * output_fps)))
     source_duration = data.shape[0] / float(source_fps)
     if source_duration >= duration_s:
-        indices = np.rint(np.linspace(0, data.shape[0] - 1, target_frames)).astype(np.int64)
+        indices = np.rint(np.linspace(0, data.shape[0] - 1, target_frames)).astype(
+            np.int64
+        )
     else:
-        indices = np.floor(np.arange(target_frames, dtype=np.float64) * source_fps / output_fps).astype(np.int64)
+        indices = np.floor(
+            np.arange(target_frames, dtype=np.float64) * source_fps / output_fps
+        ).astype(np.int64)
         indices = np.clip(indices, 0, data.shape[0] - 1)
     return data[indices], indices
 
@@ -274,7 +299,9 @@ def load_predictions_skeleton(
     target_joint_count: int,
 ) -> np.ndarray:
     if source_fps <= 0 or output_fps <= 0:
-        raise VizDataError(f"fps values must be positive, got source={source_fps} output={output_fps}")
+        raise VizDataError(
+            f"fps values must be positive, got source={source_fps} output={output_fps}"
+        )
     if duration_s <= 0:
         raise VizDataError(f"duration must be positive, got {duration_s}")
 
@@ -282,11 +309,17 @@ def load_predictions_skeleton(
     if predictions.ndim == 3 and predictions.shape[-1] == 3:
         skeleton = predictions.astype(np.float32, copy=False)
     elif predictions.ndim >= 2 and predictions.shape[-1] == G1_STATE_DIM:
-        state_vectors = predictions.reshape(-1, G1_STATE_DIM).astype(np.float32, copy=False)
+        state_vectors = predictions.reshape(-1, G1_STATE_DIM).astype(
+            np.float32, copy=False
+        )
         skeleton = g1_state_vectors_to_skeleton(state_vectors)
     elif predictions.ndim >= 2 and predictions.shape[-1] == REAL_G1_ACTION_DIM:
-        action_vectors = predictions.reshape(-1, REAL_G1_ACTION_DIM).astype(np.float32, copy=False)
-        skeleton = g1_state_vectors_to_skeleton(real_g1_action_vectors_to_g1_state_vectors(action_vectors))
+        action_vectors = predictions.reshape(-1, REAL_G1_ACTION_DIM).astype(
+            np.float32, copy=False
+        )
+        skeleton = g1_state_vectors_to_skeleton(
+            real_g1_action_vectors_to_g1_state_vectors(action_vectors)
+        )
     else:
         raise VizDataError(
             "Predictions must be either G1 state/action vectors with last dimension "
@@ -306,36 +339,46 @@ def load_predictions_skeleton(
 def g1_state_vectors_to_skeleton(state_vectors: np.ndarray) -> np.ndarray:
     state = np.asarray(state_vectors, dtype=np.float32)
     if state.ndim != 2:
-        raise VizDataError(f"G1 state vectors must be 2D [T, {G1_STATE_DIM}], got {state.shape}")
+        raise VizDataError(
+            f"G1 state vectors must be 2D [T, {G1_STATE_DIM}], got {state.shape}"
+        )
     if state.shape[1] != G1_STATE_DIM:
-        raise VizDataError(f"Expected {G1_STATE_DIM}D G1 state vectors, got {state.shape[1]}D")
+        raise VizDataError(
+            f"Expected {G1_STATE_DIM}D G1 state vectors, got {state.shape[1]}D"
+        )
     poses = np.empty((state.shape[0], G1_STATE_DIM, 3), dtype=np.float32)
     for frame, row in enumerate(state):
         poses[frame] = _g1_pose_from_state(row)
     return poses
 
 
-def real_g1_action_vectors_to_g1_state_vectors(action_vectors: np.ndarray) -> np.ndarray:
+def real_g1_action_vectors_to_g1_state_vectors(
+    action_vectors: np.ndarray,
+) -> np.ndarray:
     """Map GR00T REAL_G1 53D action vectors into the 43D G1 joint visualization layout."""
     actions = np.asarray(action_vectors, dtype=np.float32)
     if actions.ndim != 2:
-        raise VizDataError(f"REAL_G1 action vectors must be 2D [T, {REAL_G1_ACTION_DIM}], got {actions.shape}")
+        raise VizDataError(
+            f"REAL_G1 action vectors must be 2D [T, {REAL_G1_ACTION_DIM}], got {actions.shape}"
+        )
     if actions.shape[1] != REAL_G1_ACTION_DIM:
-        raise VizDataError(f"Expected {REAL_G1_ACTION_DIM}D REAL_G1 action vectors, got {actions.shape[1]}D")
+        raise VizDataError(
+            f"Expected {REAL_G1_ACTION_DIM}D REAL_G1 action vectors, got {actions.shape[1]}D"
+        )
 
     state = np.zeros((actions.shape[0], G1_STATE_DIM), dtype=np.float32)
     state[:, _idx("left_hand_pinky_joint") : _idx("left_hand_aux_joint") + 1] = actions[
         :, REAL_G1_ACTION_SLICES["left_hand"]
     ]
-    state[:, _idx("right_hand_pinky_joint") : _idx("right_hand_aux_joint") + 1] = actions[
-        :, REAL_G1_ACTION_SLICES["right_hand"]
-    ]
-    state[:, _idx("left_shoulder_pitch_joint") : _idx("left_wrist_yaw_joint") + 1] = actions[
-        :, REAL_G1_ACTION_SLICES["left_arm"]
-    ]
-    state[:, _idx("right_shoulder_pitch_joint") : _idx("right_wrist_yaw_joint") + 1] = actions[
-        :, REAL_G1_ACTION_SLICES["right_arm"]
-    ]
+    state[:, _idx("right_hand_pinky_joint") : _idx("right_hand_aux_joint") + 1] = (
+        actions[:, REAL_G1_ACTION_SLICES["right_hand"]]
+    )
+    state[:, _idx("left_shoulder_pitch_joint") : _idx("left_wrist_yaw_joint") + 1] = (
+        actions[:, REAL_G1_ACTION_SLICES["left_arm"]]
+    )
+    state[:, _idx("right_shoulder_pitch_joint") : _idx("right_wrist_yaw_joint") + 1] = (
+        actions[:, REAL_G1_ACTION_SLICES["right_arm"]]
+    )
     state[:, _idx("waist_yaw_joint") : _idx("waist_pitch_joint") + 1] = actions[
         :, REAL_G1_ACTION_SLICES["waist"]
     ]
@@ -422,7 +465,13 @@ def _first_numeric_array(value: Any) -> np.ndarray | None:
             if found is not None:
                 return found
     if isinstance(value, dict):
-        for key in ("predictions", "predicted_actions", "actions", "trajectory_0", "data"):
+        for key in (
+            "predictions",
+            "predicted_actions",
+            "actions",
+            "trajectory_0",
+            "data",
+        ):
             if key in value:
                 found = _first_numeric_array(value[key])
                 if found is not None:
@@ -435,13 +484,17 @@ def _first_numeric_array(value: Any) -> np.ndarray | None:
 
 
 def _g1_pose_from_state(state: np.ndarray) -> np.ndarray:
-    angles = np.nan_to_num(np.asarray(state, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    angles = np.nan_to_num(
+        np.asarray(state, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
+    )
     pose = np.zeros((G1_STATE_DIM, 3), dtype=np.float32)
 
     pelvis = np.array([0.0, 0.0, 1.0], dtype=np.float32)
-    waist_rot = _rot_z(_angle(angles[_idx("waist_yaw_joint")]) * 0.35) @ _rot_y(
-        _angle(angles[_idx("waist_pitch_joint")]) * 0.35
-    ) @ _rot_x(_angle(angles[_idx("waist_roll_joint")]) * 0.35)
+    waist_rot = (
+        _rot_z(_angle(angles[_idx("waist_yaw_joint")]) * 0.35)
+        @ _rot_y(_angle(angles[_idx("waist_pitch_joint")]) * 0.35)
+        @ _rot_x(_angle(angles[_idx("waist_roll_joint")]) * 0.35)
+    )
     waist_roll = pelvis + waist_rot @ np.array([0.0, 0.0, 0.20], dtype=np.float32)
     chest = pelvis + waist_rot @ np.array([0.0, 0.0, 0.47], dtype=np.float32)
     pose[_idx("waist_yaw_joint")] = pelvis
@@ -504,13 +557,19 @@ def _fill_leg(
     ankle_pitch = _angle(angles[ankle_pitch_i])
     ankle_roll = _angle(angles[ankle_roll_i]) * sign
 
-    hip_rot = _rot_z(hip_yaw * 0.45) @ _rot_x(hip_roll * 0.55) @ _rot_y(hip_pitch * 0.70)
-    knee = hip + hip_rot @ np.array([0.02 * sign, 0.02, -0.42], dtype=np.float32)
-    lower_rot = _rot_z(hip_yaw * 0.35) @ _rot_x(hip_roll * 0.30) @ _rot_y((hip_pitch + knee_bend) * 0.55)
-    ankle = knee + lower_rot @ np.array([0.0, 0.02, -0.41], dtype=np.float32)
-    foot = ankle + (_rot_z(hip_yaw * 0.25) @ _rot_x(ankle_roll * 0.40) @ _rot_y(ankle_pitch * 0.50)) @ np.array(
-        [0.03 * sign, 0.20, -0.03], dtype=np.float32
+    hip_rot = (
+        _rot_z(hip_yaw * 0.45) @ _rot_x(hip_roll * 0.55) @ _rot_y(hip_pitch * 0.70)
     )
+    knee = hip + hip_rot @ np.array([0.02 * sign, 0.02, -0.42], dtype=np.float32)
+    lower_rot = (
+        _rot_z(hip_yaw * 0.35)
+        @ _rot_x(hip_roll * 0.30)
+        @ _rot_y((hip_pitch + knee_bend) * 0.55)
+    )
+    ankle = knee + lower_rot @ np.array([0.0, 0.02, -0.41], dtype=np.float32)
+    foot = ankle + (
+        _rot_z(hip_yaw * 0.25) @ _rot_x(ankle_roll * 0.40) @ _rot_y(ankle_pitch * 0.50)
+    ) @ np.array([0.03 * sign, 0.20, -0.03], dtype=np.float32)
 
     pose[hip_yaw_i] = hip
     pose[hip_roll_i] = hip + (knee - hip) * 0.20
@@ -537,7 +596,9 @@ def _fill_arm(
     wrist_pitch_i = _idx(f"{side}_wrist_pitch_joint")
     wrist_yaw_i = _idx(f"{side}_wrist_yaw_joint")
 
-    shoulder = chest + trunk_rotation @ np.array([0.23 * sign, 0.0, -0.03], dtype=np.float32)
+    shoulder = chest + trunk_rotation @ np.array(
+        [0.23 * sign, 0.0, -0.03], dtype=np.float32
+    )
     shoulder_pitch = _angle(angles[shoulder_pitch_i])
     shoulder_roll = _angle(angles[shoulder_roll_i]) * sign
     shoulder_yaw = _angle(angles[shoulder_yaw_i])
@@ -546,15 +607,20 @@ def _fill_arm(
     wrist_pitch = _angle(angles[wrist_pitch_i])
     wrist_yaw = _angle(angles[wrist_yaw_i])
 
-    shoulder_rot = trunk_rotation @ _rot_z(shoulder_yaw * 0.45) @ _rot_x(shoulder_roll * 0.50) @ _rot_y(
-        shoulder_pitch * 0.65
+    shoulder_rot = (
+        trunk_rotation
+        @ _rot_z(shoulder_yaw * 0.45)
+        @ _rot_x(shoulder_roll * 0.50)
+        @ _rot_y(shoulder_pitch * 0.65)
     )
-    elbow = shoulder + shoulder_rot @ np.array([0.08 * sign, 0.02, -0.31], dtype=np.float32)
+    elbow = shoulder + shoulder_rot @ np.array(
+        [0.08 * sign, 0.02, -0.31], dtype=np.float32
+    )
     forearm_rot = shoulder_rot @ _rot_x(elbow_roll * 0.40) @ _rot_y(elbow_pitch * 0.60)
     wrist = elbow + forearm_rot @ np.array([0.07 * sign, 0.01, -0.28], dtype=np.float32)
-    palm = wrist + forearm_rot @ _rot_z(wrist_yaw * 0.35) @ _rot_y(wrist_pitch * 0.35) @ np.array(
-        [0.05 * sign, 0.04, -0.03], dtype=np.float32
-    )
+    palm = wrist + forearm_rot @ _rot_z(wrist_yaw * 0.35) @ _rot_y(
+        wrist_pitch * 0.35
+    ) @ np.array([0.05 * sign, 0.04, -0.03], dtype=np.float32)
 
     pose[shoulder_pitch_i] = shoulder
     pose[shoulder_roll_i] = shoulder + (elbow - shoulder) * 0.22

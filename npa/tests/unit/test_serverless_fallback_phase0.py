@@ -83,14 +83,18 @@ def test_ensure_phase0_writes_and_reuses_files(monkeypatch, tmp_path: Path) -> N
     chain_path = tmp_path / "chain.txt"
     selection_path = tmp_path / "selection.json"
 
-    first = ensure_serverless_phase0(chain_path=chain_path, selection_path=selection_path)
+    first = ensure_serverless_phase0(
+        chain_path=chain_path, selection_path=selection_path
+    )
     assert chain_path.exists()
     assert selection_path.exists()
     assert first.chain[0] == "project-primary"
 
     # Corrupt discovery source; existing files should still win.
     monkeypatch.setattr(_mod, "list_projects", lambda: {})
-    second = ensure_serverless_phase0(chain_path=chain_path, selection_path=selection_path)
+    second = ensure_serverless_phase0(
+        chain_path=chain_path, selection_path=selection_path
+    )
     assert second.chain == first.chain
     payload = json.loads(selection_path.read_text(encoding="utf-8"))
     assert payload["primary_project_id"] == "project-primary"

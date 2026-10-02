@@ -14,6 +14,7 @@ SHIPPED_BACKEND_MODULES = (
     "memory",
     "actions",
     "semantic_router",
+    "model_router",
     "sim2real_loop",
     "retrieval",
     "trace",
@@ -35,6 +36,7 @@ SHIPPED_BACKEND_MODULES = (
     "leisaac_transport",
     "leisaac_datachannel",
     "leisaac_routes",
+    "workflow_execution",
 )
 
 _HEREDOC_MARKER = "PY"

@@ -1,4 +1,5 @@
 """Boundary coverage for the narrow private evidence-conservation delta."""
+
 from __future__ import annotations
 
 import errno
@@ -19,7 +20,10 @@ from image_byte_scan import adjudicate as A  # noqa: E402
 W = A.W
 
 
-@pytest.mark.parametrize("field", ["scope", "layer_ordinal", "entry_ordinal", "tar_offset", "compressed_offset"])
+@pytest.mark.parametrize(
+    "field",
+    ["scope", "layer_ordinal", "entry_ordinal", "tar_offset", "compressed_offset"],
+)
 @pytest.mark.parametrize("side", ["record", "finding"])
 def test_context_fields_require_exact_type_and_identity(field, side):
     report, rows = T.sample()
@@ -41,34 +45,76 @@ def test_missing_context_cannot_rebind_occurrence(side):
         A.population(report, rows)
 
 
-@pytest.mark.parametrize("body,start,end,line", [(b"", 0, 0, 1), (b"\n", 1, 1, 2), (b"a", 0, 1, 1)])
-def test_real_confidentiality_empty_and_eof_coordinates_remain_supported(body, start, end, line):
+@pytest.mark.parametrize(
+    "body,start,end,line", [(b"", 0, 0, 1), (b"\n", 1, 1, 2), (b"a", 0, 1, 1)]
+)
+def test_real_confidentiality_empty_and_eof_coordinates_remain_supported(
+    body, start, end, line
+):
     receipt = W.C.compile_policy("$" if start == end else "a").scan_record(body)
-    found = next(row for row in receipt.findings if row.start_byte == start and row.end_byte == end)
+    found = next(
+        row
+        for row in receipt.findings
+        if row.start_byte == start and row.end_byte == end
+    )
     assert found.start_line == found.end_line == line
     regex = json.loads(json.dumps(asdict(found)))
     record = T.record(1, body, [regex])
-    report = {"schema_version": "npa.image-byte-scan.v1", "complete": True,
-              "helper_joined": True, "valid": False, "records": 1,
-              "scanned_bytes": len(body), "verified_zero_bytes": 0,
-              "regular_files": 1, "regular_bytes": len(body), "findings": 1,
-              "helper_summary": {"type": "summary", "files": 1,
-                                 "bytes": len(body), "findings": 0}}
+    report = {
+        "schema_version": "npa.image-byte-scan.v1",
+        "complete": True,
+        "helper_joined": True,
+        "valid": False,
+        "records": 1,
+        "scanned_bytes": len(body),
+        "verified_zero_bytes": 0,
+        "regular_files": 1,
+        "regular_bytes": len(body),
+        "findings": 1,
+        "helper_summary": {
+            "type": "summary",
+            "files": 1,
+            "bytes": len(body),
+            "findings": 0,
+        },
+    }
     assert len(A.population(report, [record])) == 1
 
 
 def bound_population(codec="gzip", repeat=2):
-    descriptor = {"digest": "sha256:" + "b" * 64,
-                  "mediaType": "application/vnd.oci.image.layer.v1.tar" + ("+gzip" if codec == "gzip" else "")}
-    layers = [{"ordinal": i, "name": "blobs/sha256/" + "b" * 64,
-               "size": 10, "diff_id": "sha256:" + "a" * 64,
-               "descriptor": descriptor} for i in range(repeat)]
-    report = {"regular_files": 2, "regular_bytes": 8,
-              "outer": {"headers": 6, "decoded_bytes": 10240, "zero_end_blocks": 2},
-              "layers": [{"ordinal": i, "diff_id": "sha256:" + "a" * 64,
-                          "compressed_bytes": 10, "compressed_sha256": "b" * 64,
-                          "codec": codec, "headers": 1, "decoded_bytes": 10240,
-                          "zero_end_blocks": 2} for i in range(repeat)]}
+    descriptor = {
+        "digest": "sha256:" + "b" * 64,
+        "mediaType": "application/vnd.oci.image.layer.v1.tar"
+        + ("+gzip" if codec == "gzip" else ""),
+    }
+    layers = [
+        {
+            "ordinal": i,
+            "name": "blobs/sha256/" + "b" * 64,
+            "size": 10,
+            "diff_id": "sha256:" + "a" * 64,
+            "descriptor": descriptor,
+        }
+        for i in range(repeat)
+    ]
+    report = {
+        "regular_files": 2,
+        "regular_bytes": 8,
+        "outer": {"headers": 6, "decoded_bytes": 10240, "zero_end_blocks": 2},
+        "layers": [
+            {
+                "ordinal": i,
+                "diff_id": "sha256:" + "a" * 64,
+                "compressed_bytes": 10,
+                "compressed_sha256": "b" * 64,
+                "codec": codec,
+                "headers": 1,
+                "decoded_bytes": 10240,
+                "zero_end_blocks": 2,
+            }
+            for i in range(repeat)
+        ],
+    }
     verifier = {"regular_files_read": 2, "content_bytes_read": 8, "layer_count": repeat}
     return report, verifier, layers, 10240
 
@@ -82,28 +128,43 @@ def test_ordered_duplicate_layer_occurrences_remain_distinct(codec):
         A.verified_population(*args)
 
 
-@pytest.mark.parametrize("target,key,value", [
-    ("verification", "regular_files_read", True),
-    ("verification", "content_bytes_read", 8.0),
-    ("verification", "layer_count", 1),
-    ("report", "regular_files", 0), ("report", "regular_bytes", 0),
-    ("outer", "decoded_bytes", 1), ("outer", "headers", False),
-    ("layer", "ordinal", True), ("layer", "diff_id", "sha256:" + "c" * 64),
-    ("layer", "compressed_bytes", 11), ("layer", "compressed_sha256", "c" * 64),
-    ("layer", "codec", "raw"), ("layer", "decoded_bytes", -1),
-    ("layer", "headers", 1.0), ("layer", "zero_end_blocks", False),
-])
+@pytest.mark.parametrize(
+    "target,key,value",
+    [
+        ("verification", "regular_files_read", True),
+        ("verification", "content_bytes_read", 8.0),
+        ("verification", "layer_count", 1),
+        ("report", "regular_files", 0),
+        ("report", "regular_bytes", 0),
+        ("outer", "decoded_bytes", 1),
+        ("outer", "headers", False),
+        ("layer", "ordinal", True),
+        ("layer", "diff_id", "sha256:" + "c" * 64),
+        ("layer", "compressed_bytes", 11),
+        ("layer", "compressed_sha256", "c" * 64),
+        ("layer", "codec", "raw"),
+        ("layer", "decoded_bytes", -1),
+        ("layer", "headers", 1.0),
+        ("layer", "zero_end_blocks", False),
+    ],
+)
 def test_native_verifier_and_graph_fields_refuse_contradictions(target, key, value):
     args = bound_population()
-    objects = {"report": args[0], "verification": args[1],
-               "outer": args[0]["outer"], "layer": args[0]["layers"][1]}
+    objects = {
+        "report": args[0],
+        "verification": args[1],
+        "outer": args[0]["outer"],
+        "layer": args[0]["layers"][1],
+    }
     objects[target][key] = value
     with pytest.raises(W.ScanError):
         A.verified_population(*args)
 
 
 @pytest.mark.parametrize("when", ["before_link", "after_link"])
-def test_replacement_during_publication_never_receives_success(tmp_path, monkeypatch, when):
+def test_replacement_during_publication_never_receives_success(
+    tmp_path, monkeypatch, when
+):
     tmp_path.chmod(0o700)
     with W.authorized_roots(tmp_path, ROOT):
         directory, fd = W.create_output(tmp_path / "accepted")
@@ -149,7 +210,11 @@ def test_failed_write_cleans_pending_without_success(tmp_path, monkeypatch):
     tmp_path.chmod(0o700)
     with W.authorized_roots(tmp_path, ROOT):
         directory, fd = W.create_output(tmp_path / "accepted")
-        monkeypatch.setattr(A.os, "fsync", lambda _fd: (_ for _ in ()).throw(OSError(errno.ENOSPC, "synthetic")))
+        monkeypatch.setattr(
+            A.os,
+            "fsync",
+            lambda _fd: (_ for _ in ()).throw(OSError(errno.ENOSPC, "synthetic")),
+        )
         try:
             with pytest.raises(OSError):
                 A.write_result(directory, fd, {"accepted": True})

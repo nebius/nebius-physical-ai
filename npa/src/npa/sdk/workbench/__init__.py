@@ -23,6 +23,7 @@ _LIGHT_OPENARM = (
 
 _ALL_TOOLS: tuple[str, ...] = (
     "alpamayo2_super",
+    "antioch",
     "byof",
     "cosmos",
     "cosmos2",
@@ -31,13 +32,20 @@ _ALL_TOOLS: tuple[str, ...] = (
     "data",
     "dataset",
     "detection_training",
+    "encord",
+    "flex_pi",
     "foxglove",
     "insights",
+    "isaac_arena",
     "lancedb",
     "lichtblick",
     "mjlab",
+    "molmoact",
+    "namespace",
+    "newton",
     "nurec",
     "openarm",
+    "openvla",
     "retargeting",
     "robocasa",
     "scenario_gen",
@@ -49,6 +57,7 @@ _ALL_TOOLS: tuple[str, ...] = (
     "trigger",
     "vlm_eval",
     "workflow",
+    "workflow_challenge",
 )
 
 #: Tool clients reachable as attributes. The OpenArm image narrows this to the
@@ -68,6 +77,7 @@ if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
 
     from npa.sdk.workbench import (  # noqa: F401
         alpamayo2_super,
+        antioch,
         byof,
         cosmos,
         cosmos2,
@@ -76,13 +86,20 @@ if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
         data,
         dataset,
         detection_training,
+        encord,
+        flex_pi,
         foxglove,
         insights,
+        isaac_arena,
         lancedb,
         lichtblick,
         mjlab,
+        molmoact,
+        namespace,
+        newton,
         nurec,
         openarm,
+        openvla,
         retargeting,
         robocasa,
         scenario_gen,
@@ -94,6 +111,7 @@ if TYPE_CHECKING:  # pragma: no cover - type-checker visibility only
         trigger,
         vlm_eval,
         workflow,
+        workflow_challenge,
     )
 
 

@@ -18,7 +18,9 @@ def test_resolver_selects_manifest_completed_checkpoint_not_a_yaml_literal(
     monkeypatch: pytest.MonkeyPatch, steps: int
 ) -> None:
     run_id = "run"
-    training_uri = "s3://bucket/run/checkpoints/candidate/npa_groot_finetune_manifest.json"
+    training_uri = (
+        "s3://bucket/run/checkpoints/candidate/npa_groot_finetune_manifest.json"
+    )
     split_uri = "s3://bucket/run/reports/split/manifest.json"
     candidate_uri = "s3://bucket/run/checkpoints/candidate/"
     baseline_uri = "s3://bucket/run/checkpoints/baseline/"

@@ -24,14 +24,20 @@ _HERMITIC_UNIT_BUCKET = "test-bucket-00000000"
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption(
-        "--require-token-factory-live", action="store_true", default=False,
+        "--require-token-factory-live",
+        action="store_true",
+        default=False,
         help="Fail instead of skipping when the designated live provider job lacks its key.",
     )
+
 
 # Live ops VMs commonly export AWS_* / S3_* while tool e2e suites gate on NPA_E2E_S3_*.
 _S3_ENV_FALLBACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("NPA_E2E_S3_ACCESS_KEY_ID", ("AWS_ACCESS_KEY_ID", "NEBIUS_ACCESS_KEY_ID")),
-    ("NPA_E2E_S3_SECRET_ACCESS_KEY", ("AWS_SECRET_ACCESS_KEY", "NEBIUS_SECRET_ACCESS_KEY")),
+    (
+        "NPA_E2E_S3_SECRET_ACCESS_KEY",
+        ("AWS_SECRET_ACCESS_KEY", "NEBIUS_SECRET_ACCESS_KEY"),
+    ),
     (
         "NPA_E2E_S3_ENDPOINT",
         ("AWS_ENDPOINT_URL", "S3_ENDPOINT_URL", "NEBIUS_S3_ENDPOINT"),
@@ -42,9 +48,10 @@ _S3_ENV_FALLBACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def pytest_configure(config: pytest.Config) -> None:
     """Map standard AWS/S3 env vars onto NPA_E2E_S3_* so tool e2e suites run on real infra."""
-    if config.getoption("--require-token-factory-live") and not os.environ.get(
-        "NEBIUS_TOKEN_FACTORY_KEY", ""
-    ).strip():
+    if (
+        config.getoption("--require-token-factory-live")
+        and not os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
+    ):
         raise pytest.UsageError(
             "Required live Token Factory mode needs NEBIUS_TOKEN_FACTORY_KEY; "
             "a skipped or file-credential fallback run is not provider verification."
@@ -80,11 +87,11 @@ def pytest_collection_modifyitems(
 ) -> None:
     """Skip e2e tests unless NPA_INTEGRATION_E2E is set."""
     if not os.getenv("NPA_INTEGRATION_E2E"):
-        skip_marker = pytest.mark.skip(
-            reason="e2e tests require NPA_INTEGRATION_E2E=1"
-        )
+        skip_marker = pytest.mark.skip(reason="e2e tests require NPA_INTEGRATION_E2E=1")
         for item in items:
-            if item.get_closest_marker("e2e") or item.get_closest_marker("e2e_serverless"):
+            if item.get_closest_marker("e2e") or item.get_closest_marker(
+                "e2e_serverless"
+            ):
                 item.add_marker(skip_marker)
         return
 
@@ -98,7 +105,9 @@ def pytest_collection_modifyitems(
         )
     )
     for item in items:
-        if item.get_closest_marker("e2e_serverless") and not item.get_closest_marker("public_inputs"):
+        if item.get_closest_marker("e2e_serverless") and not item.get_closest_marker(
+            "public_inputs"
+        ):
             item.add_marker(serverless_skip)
 
 
@@ -213,7 +222,9 @@ def s3_write_access_required(e2e_project: str | None) -> str:
         and storage.aws_access_key_id
         and storage.aws_secret_access_key
     ):
-        pytest.fail("Serverless Jobs e2e requires writable project S3 checkpoint storage")
+        pytest.fail(
+            "Serverless Jobs e2e requires writable project S3 checkpoint storage"
+        )
     parsed = urlparse(storage.checkpoint_bucket)
     bucket = parsed.netloc if parsed.scheme == "s3" else storage.checkpoint_bucket
     prefix = parsed.path.strip("/") if parsed.scheme == "s3" else ""
@@ -224,7 +235,9 @@ def s3_write_access_required(e2e_project: str | None) -> str:
         body = client.get_object(Bucket=bucket, Key=key)["Body"].read()
         client.delete_object(Bucket=bucket, Key=key)
     except Exception as exc:
-        pytest.fail(f"Serverless Jobs e2e S3 write/read/delete precondition failed: {exc}")
+        pytest.fail(
+            f"Serverless Jobs e2e S3 write/read/delete precondition failed: {exc}"
+        )
     if body != b"npa jobs precondition\n":
         pytest.fail("Serverless Jobs e2e S3 readback mismatch")
     return storage.checkpoint_bucket
@@ -273,7 +286,9 @@ def _list_test_buckets(client: Any) -> list[dict[str, Any]]:
 
 
 def _prune_concurrent_test_buckets(client: Any) -> None:
-    buckets = sorted(_list_test_buckets(client), key=lambda bucket: bucket["CreationDate"])
+    buckets = sorted(
+        _list_test_buckets(client), key=lambda bucket: bucket["CreationDate"]
+    )
     now = time.time()
 
     for bucket in buckets:
@@ -281,7 +296,9 @@ def _prune_concurrent_test_buckets(client: Any) -> None:
         if age_seconds > E2E_BUCKET_MAX_AGE_SECONDS:
             _force_delete_bucket(client, bucket["Name"])
 
-    buckets = sorted(_list_test_buckets(client), key=lambda bucket: bucket["CreationDate"])
+    buckets = sorted(
+        _list_test_buckets(client), key=lambda bucket: bucket["CreationDate"]
+    )
     while len(buckets) >= E2E_BUCKET_MAX_CONCURRENT:
         oldest = buckets.pop(0)
         _force_delete_bucket(client, oldest["Name"])

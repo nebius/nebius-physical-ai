@@ -4,13 +4,19 @@ from __future__ import annotations
 
 from npa._sdk import make_cli_wrapper
 
-list = make_cli_wrapper("npa.cli.workbench.lerobot", "list_cmd", "List LeRobot workbenches.")
+list = make_cli_wrapper(
+    "npa.cli.workbench.lerobot", "list_cmd", "List LeRobot workbenches."
+)
 status = make_cli_wrapper(
     "npa.cli.workbench.lerobot", "status", "Show LeRobot workbench status."
 )
-train = make_cli_wrapper("npa.cli.workbench.lerobot", "train", "Train a LeRobot policy.")
+train = make_cli_wrapper(
+    "npa.cli.workbench.lerobot", "train", "Train a LeRobot policy."
+)
 eval = make_cli_wrapper("npa.cli.workbench.lerobot", "eval_cmd", "Evaluate a policy.")
-serve = make_cli_wrapper("npa.cli.workbench.lerobot", "serve", "Serve a LeRobot policy.")
+serve = make_cli_wrapper(
+    "npa.cli.workbench.lerobot", "serve", "Serve a LeRobot policy."
+)
 infer = make_cli_wrapper("npa.cli.workbench.lerobot", "infer", "Run LeRobot inference.")
 list_checkpoints = make_cli_wrapper(
     "npa.cli.workbench.lerobot", "list_checkpoints", "List LeRobot checkpoints."

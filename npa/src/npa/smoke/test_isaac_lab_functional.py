@@ -52,7 +52,9 @@ def _observation_available(value: Any) -> bool:
     if value is None:
         return False
     if isinstance(value, dict):
-        return bool(value) and any(_observation_available(item) for item in value.values())
+        return bool(value) and any(
+            _observation_available(item) for item in value.values()
+        )
     if isinstance(value, (list, tuple)):
         return bool(value) and any(_observation_available(item) for item in value)
 
@@ -116,7 +118,9 @@ def check_launch_runtime(state: SmokeState) -> CheckResult:
         app_launcher = AppLauncher(headless=True)
         state.simulation_app = app_launcher.app
         if state.simulation_app is None:
-            return CheckResult("launch Isaac Sim runtime", False, "AppLauncher.app is None")
+            return CheckResult(
+                "launch Isaac Sim runtime", False, "AppLauncher.app is None"
+            )
         return CheckResult("launch Isaac Sim runtime", True, "headless app launched")
     except Exception as exc:
         return CheckResult("launch Isaac Sim runtime", False, _format_exception(exc))
@@ -142,9 +146,13 @@ def check_create_manipulation_env(state: SmokeState) -> CheckResult:
 
         state.env = gym.make(TASK_NAME, cfg=cfg)
         reset_result = state.env.reset()
-        state.observation = reset_result[0] if isinstance(reset_result, tuple) else reset_result
+        state.observation = (
+            reset_result[0] if isinstance(reset_result, tuple) else reset_result
+        )
         if not _observation_available(state.observation):
-            return CheckResult(f"create {TASK_NAME}", False, "reset returned no observations")
+            return CheckResult(
+                f"create {TASK_NAME}", False, "reset returned no observations"
+            )
         return CheckResult(f"create {TASK_NAME}", True, "reset returned observations")
     except Exception as exc:
         return CheckResult(f"create {TASK_NAME}", False, _format_exception(exc))
@@ -152,14 +160,18 @@ def check_create_manipulation_env(state: SmokeState) -> CheckResult:
 
 def check_step_env(state: SmokeState) -> CheckResult:
     if state.env is None:
-        return CheckResult("step environment 10 times", False, "skipped because env creation failed")
+        return CheckResult(
+            "step environment 10 times", False, "skipped because env creation failed"
+        )
 
     try:
         for _ in range(10):
             action = _zero_action(state.env)
             step_result = state.env.step(action)
             if not isinstance(step_result, tuple) or not step_result:
-                return CheckResult("step environment 10 times", False, "step returned no tuple")
+                return CheckResult(
+                    "step environment 10 times", False, "step returned no tuple"
+                )
             state.observation = step_result[0]
 
         if not _observation_available(state.observation):
@@ -168,7 +180,9 @@ def check_step_env(state: SmokeState) -> CheckResult:
                 False,
                 "last step returned no observations",
             )
-        return CheckResult("step environment 10 times", True, "observations returned after step 10")
+        return CheckResult(
+            "step environment 10 times", True, "observations returned after step 10"
+        )
     except Exception as exc:
         return CheckResult("step environment 10 times", False, _format_exception(exc))
 

@@ -52,7 +52,9 @@ async def _await_accepted_generation(generation: asyncio.Task) -> Any:
             try:
                 generation.result()
             except Exception:
-                LOG.exception("Accepted generation failed while draining a disconnected request")
+                LOG.exception(
+                    "Accepted generation failed while draining a disconnected request"
+                )
         raise asyncio.CancelledError
     return generation.result()
 
@@ -87,22 +89,26 @@ def validate_weights(model_path: Path) -> dict[str, Any]:
 
 def diffusion_stage_config() -> dict[str, Any]:
     """Use the pinned engine's explicit stage path; fallback drops stage overrides."""
-    return {"stage_args": [{
-        "stage_id": 0,
-        "stage_type": "diffusion",
-        "runtime": {"process": True, "devices": "0"},
-        "engine_args": {
-            "model_stage": "diffusion",
-            "model_class_name": PIPELINE,
-            "dtype": "bfloat16",
-            "parallel_config": {"tensor_parallel_size": 1},
-            "model_config": {"sound_gen": False, "guardrails": False},
-            "enable_diffusion_pipeline_profiler": True,
-        },
-        "default_sampling_params": {"num_inference_steps": 35},
-        "final_output": True,
-        "final_output_type": "image",
-    }]}
+    return {
+        "stage_args": [
+            {
+                "stage_id": 0,
+                "stage_type": "diffusion",
+                "runtime": {"process": True, "devices": "0"},
+                "engine_args": {
+                    "model_stage": "diffusion",
+                    "model_class_name": PIPELINE,
+                    "dtype": "bfloat16",
+                    "parallel_config": {"tensor_parallel_size": 1},
+                    "model_config": {"sound_gen": False, "guardrails": False},
+                    "enable_diffusion_pipeline_profiler": True,
+                },
+                "default_sampling_params": {"num_inference_steps": 35},
+                "final_output": True,
+                "final_output_type": "image",
+            }
+        ]
+    }
 
 
 def server_argv(model_path: Path, port: int, stage_config_path: Path) -> list[str]:
@@ -170,8 +176,12 @@ class NanoVideoRuntime:
         # Upstream inference does not need credentials when loading prestaged
         # weights with guardrails off. Keep the API secret in the parent only.
         for name in (
-            "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "NPA_COSMOS3_VIDEO_TOKEN",
-            "RAY_AUTH_TOKEN", "RAY_AUTH_TOKEN_PATH", "RAY_AUTH_MODE",
+            "HF_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+            "NPA_COSMOS3_VIDEO_TOKEN",
+            "RAY_AUTH_TOKEN",
+            "RAY_AUTH_TOKEN_PATH",
+            "RAY_AUTH_MODE",
         ):
             environment.pop(name, None)
         logs = self.output_root / ".server-logs"
@@ -219,7 +229,9 @@ class NanoVideoRuntime:
                 try:
                     self._log_stream.close()
                 except OSError:
-                    LOG.warning("Could not close the private diffusion log during cleanup")
+                    LOG.warning(
+                        "Could not close the private diffusion log during cleanup"
+                    )
                 finally:
                     self._log_stream = None
 
@@ -232,7 +244,10 @@ class NanoVideoRuntime:
 
     async def run(self, request: Request) -> dict[str, Any]:
         self.authorize(request)
-        if request.headers.get("content-type", "").split(";")[0].strip() == "multipart/form-data":
+        if (
+            request.headers.get("content-type", "").split(";")[0].strip()
+            == "multipart/form-data"
+        ):
             return await self._run_augmentation(request)
         try:
             body = await request.json()
@@ -286,50 +301,77 @@ class NanoVideoRuntime:
         request_id = "unparsed"
         try:
             async with request.form(max_files=1, max_fields=1) as form:
-                if set(form) != {"request", "input_reference"} or any(len(form.getlist(key)) != 1 for key in form):
-                    raise HTTPException(400, "Expected request JSON and one input_reference video")
+                if set(form) != {"request", "input_reference"} or any(
+                    len(form.getlist(key)) != 1 for key in form
+                ):
+                    raise HTTPException(
+                        400, "Expected request JSON and one input_reference video"
+                    )
                 metadata, upload = form["request"], form["input_reference"]
                 if not isinstance(metadata, str) or not isinstance(upload, UploadFile):
                     raise HTTPException(400, "Invalid augmentation multipart fields")
                 try:
                     body = validate_request(json.loads(metadata))
                 except (ValueError, AugmentationInputError) as exc:
-                    raise HTTPException(400, "Invalid augmentation request or unsupported controls") from exc
+                    raise HTTPException(
+                        400, "Invalid augmentation request or unsupported controls"
+                    ) from exc
                 request_id = _request_id(body["request_id"])
                 directory = self.output_root / request_id
                 if directory.exists():
-                    raise HTTPException(409, "request_id already exists; retrieve its result")
+                    raise HTTPException(
+                        409, "request_id already exists; retrieve its result"
+                    )
                 uploads = self.output_root / ".uploads"
                 uploads.mkdir(mode=0o700, exist_ok=True)
                 if uploads.is_symlink():
                     raise RuntimeError("Upload directory cannot be a symlink")
-                with tempfile.NamedTemporaryFile(dir=uploads, suffix=".mp4", delete=False) as stream:
+                with tempfile.NamedTemporaryFile(
+                    dir=uploads, suffix=".mp4", delete=False
+                ) as stream:
                     temporary = Path(stream.name)
                     received = 0
                     while block := await upload.read(1024 * 1024):
                         received += len(block)
                         if received > body["source_bytes"]:
-                            raise AugmentationInputError("Uploaded source exceeds its declared byte count")
+                            raise AugmentationInputError(
+                                "Uploaded source exceeds its declared byte count"
+                            )
                         stream.write(block)
                     if received != body["source_bytes"]:
-                        raise AugmentationInputError("Uploaded source byte count differs from its declaration")
+                        raise AugmentationInputError(
+                            "Uploaded source byte count differs from its declaration"
+                        )
                     stream.flush()
                     os.fsync(stream.fileno())
                 async with self._generation_lock:
-                    generation = asyncio.create_task(asyncio.to_thread(
-                        run_augmentation, endpoint=self.endpoint, output_dir=directory,
-                        input_video=temporary, request=body, replica_id=self.replica_id,
-                    ))
+                    generation = asyncio.create_task(
+                        asyncio.to_thread(
+                            run_augmentation,
+                            endpoint=self.endpoint,
+                            output_dir=directory,
+                            input_video=temporary,
+                            request=body,
+                            replica_id=self.replica_id,
+                        )
+                    )
                     return await _await_accepted_generation(generation)
         except StarletteHTTPException:
             raise
         except AugmentationInputError as exc:
-            raise HTTPException(422, "Source video failed hash, decode, timestamp or 480p/24fps validation") from exc
+            raise HTTPException(
+                422,
+                "Source video failed hash, decode, timestamp or 480p/24fps validation",
+            ) from exc
         except FileExistsError as exc:
-            raise HTTPException(409, "request_id already exists; retrieve its result") from exc
+            raise HTTPException(
+                409, "request_id already exists; retrieve its result"
+            ) from exc
         except Exception as exc:
             LOG.exception("Cosmos3 augmentation failed for request %s", request_id)
-            raise HTTPException(500, "Augmentation failed; inspect the private workload evidence") from exc
+            raise HTTPException(
+                500, "Augmentation failed; inspect the private workload evidence"
+            ) from exc
         finally:
             if temporary is not None:
                 temporary.unlink(missing_ok=True)
@@ -340,22 +382,33 @@ class NanoVideoRuntime:
         request_id = _request_id(request_id)
         directory = self.output_root / request_id
         if not directory.exists():
-            raise HTTPException(404, "Unknown request; absence does not authorize a retry")
+            raise HTTPException(
+                404, "Unknown request; absence does not authorize a retry"
+            )
         if directory.is_symlink() or not directory.is_dir():
             raise HTTPException(503, "Request state unavailable")
         path = directory / "report.json"
         if not path.exists():
-            return JSONResponse({"request_id": request_id, "status": "initializing"}, status_code=202)
+            return JSONResponse(
+                {"request_id": request_id, "status": "initializing"}, status_code=202
+            )
         if path.is_symlink() or not path.is_file():
             raise HTTPException(503, "Request state unavailable")
         try:
             report = json.loads(path.read_text())
-            if not isinstance(report, dict) or report.get("status") not in {"queued", "running", "succeeded", "failed"}:
+            if not isinstance(report, dict) or report.get("status") not in {
+                "queued",
+                "running",
+                "succeeded",
+                "failed",
+            }:
                 raise ValueError("Invalid durable state")
             from .nano_video_augment import SCHEMA, request_sha256, validate_report
 
             if report.get("schema_version") == SCHEMA:
-                if report["request_id"] != request_id or report["request_sha256"] != request_sha256(report["request"]):
+                if report["request_id"] != request_id or report[
+                    "request_sha256"
+                ] != request_sha256(report["request"]):
                     raise ValueError("Request identity mismatch")
                 if report["status"] == "succeeded":
                     validate_report(report, report["request"])
@@ -364,7 +417,10 @@ class NanoVideoRuntime:
             report["request_id"] = request_id
         except (ValueError, KeyError, TypeError, RuntimeError) as exc:
             raise HTTPException(503, "Request state unavailable") from exc
-        return JSONResponse(report, status_code=200 if report["status"] in {"succeeded", "failed"} else 202)
+        return JSONResponse(
+            report,
+            status_code=200 if report["status"] in {"succeeded", "failed"} else 202,
+        )
 
     def status(self, request: Request, request_id: str) -> dict[str, Any]:
         self.authorize(request)
@@ -376,7 +432,14 @@ class NanoVideoRuntime:
             "request_id": request_id,
             **{
                 key: report[key]
-                for key in ("status", "replica_id", "started_at", "finished_at", "request_sha256", "schema_version")
+                for key in (
+                    "status",
+                    "replica_id",
+                    "started_at",
+                    "finished_at",
+                    "request_sha256",
+                    "schema_version",
+                )
                 if key in report
             },
         }
@@ -518,4 +581,6 @@ if __name__ == "__main__":
 
         stage_weights(Path(os.environ["NPA_COSMOS3_MODEL_PATH"]))
     else:
-        raise SystemExit("Use --serve, the authenticated Ray application builder, or --stage-weights")
+        raise SystemExit(
+            "Use --serve, the authenticated Ray application builder, or --stage-weights"
+        )

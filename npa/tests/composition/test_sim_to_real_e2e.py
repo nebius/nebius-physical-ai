@@ -326,7 +326,9 @@ def _submit_lerobot_train(
     job.job_id = str(payload["job_id"])
     visible = _wait_for_visible_job(settings.project_id, job.job_id)
     _write_json(artifacts_dir / "stage3-visible.json", _redact_job_raw(visible.raw))
-    assert _submitted_subnet_id(visible.raw), "LeRobot train Job spec.subnet_id is empty"
+    assert _submitted_subnet_id(visible.raw), (
+        "LeRobot train Job spec.subnet_id is empty"
+    )
     return job
 
 
@@ -730,7 +732,12 @@ def _assert_genesis_demos_schema(
     for episode in episodes[:SMOKE_NUM_DEMOS]:
         arrays = {
             name: np.load(episode / name)
-            for name in ("obs_workspace.npy", "obs_wrist.npy", "state.npy", "actions.npy")
+            for name in (
+                "obs_workspace.npy",
+                "obs_wrist.npy",
+                "state.npy",
+                "actions.npy",
+            )
         }
         frame_count = arrays["state.npy"].shape[0]
         assert frame_count > 0
@@ -795,12 +802,15 @@ def _assert_checkpoint_loadable(
     local_dir = artifacts_dir / "stage3-student-checkpoint"
     _download_s3_prefix(settings, output_path, local_dir)
     pretrained_dirs = [
-        path.parent for path in local_dir.rglob("config.json")
+        path.parent
+        for path in local_dir.rglob("config.json")
         if (path.parent / "model.safetensors").exists()
     ]
     assert pretrained_dirs, f"No LeRobot pretrained_model directory under {output_path}"
     for pretrained_dir in pretrained_dirs[:1]:
-        config = json.loads((pretrained_dir / "config.json").read_text(encoding="utf-8"))
+        config = json.loads(
+            (pretrained_dir / "config.json").read_text(encoding="utf-8")
+        )
         policy_type = str(config.get("type", config.get("_target_", ""))).lower()
         assert "act" in policy_type
 
@@ -817,11 +827,16 @@ def _assert_eval_metrics_schema(
     metrics = json.loads(metrics_files[0].read_text(encoding="utf-8"))
     assert "success_rate" in metrics
     assert 0.0 <= float(metrics["success_rate"]) <= 1.0
-    assert int(metrics.get("episode_count", metrics.get("n_episodes", 0))) == SMOKE_EVAL_EPISODES
+    assert (
+        int(metrics.get("episode_count", metrics.get("n_episodes", 0)))
+        == SMOKE_EVAL_EPISODES
+    )
     assert "mean_reward" in metrics or "mean_steps_to_success" in metrics
 
 
-def _download_s3_prefix(settings: PipelineSettings, output_path: str, local_dir: Path) -> None:
+def _download_s3_prefix(
+    settings: PipelineSettings, output_path: str, local_dir: Path
+) -> None:
     parsed = urlparse(output_path)
     prefix = parsed.path.lstrip("/")
     if prefix and not prefix.endswith("/"):
@@ -879,7 +894,9 @@ def _looks_secret_key(key: str) -> bool:
 
 
 def _write_json(path: Path, payload: object) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _format_result(result: subprocess.CompletedProcess[str]) -> str:

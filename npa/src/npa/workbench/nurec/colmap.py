@@ -668,7 +668,10 @@ def _validate_point_clouds(reader: Any, source: dict[str, Any]) -> int:
 
 
 def validate_ncore_sequence(
-    meta_path: Path, source: dict[str, Any], *, rig_mode: str = "preserve",
+    meta_path: Path,
+    source: dict[str, Any],
+    *,
+    rig_mode: str = "preserve",
     reference_camera: str = "",
 ) -> dict[str, int]:
     """Independently reopen every V4 frame, calibration, pose and point array.
@@ -1013,12 +1016,8 @@ def convert_colmap(
         # Fresh directories avoid stale source bytes and racing invocations. The
         # caller chooses scratch/cache placement; no input files are deleted.
         with (
-            private_staging_directory(
-                request.cache_dir, prefix="colmap-"
-            ) as cache,
-            private_staging_directory(
-                request.scratch_dir, prefix="ncore-"
-            ) as scratch,
+            private_staging_directory(request.cache_dir, prefix="colmap-") as cache,
+            private_staging_directory(request.scratch_dir, prefix="ncore-") as scratch,
         ):
             staged = Path(cache) / "dataset"
             staged.mkdir()
@@ -1087,7 +1086,9 @@ def convert_colmap(
                 _derive_in_place(meta, request.reference_camera)
             phase = "NCore validation"
             counts = validate_ncore_sequence(
-                meta, source, rig_mode=request.rig_mode,
+                meta,
+                source,
+                rig_mode=request.rig_mode,
                 reference_camera=request.reference_camera,
             )
             members = [meta, *sequence_members(meta)]

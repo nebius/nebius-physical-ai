@@ -11,15 +11,14 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW_DIR = REPO_ROOT / ".github" / "workflows"
 MAKEFILE = REPO_ROOT / "Makefile"
-AUTOMATIC_PR_WORKFLOWS = (
-    "security-regression.yml",
-)
+AUTOMATIC_PR_WORKFLOWS = ("security-regression.yml",)
 
 
 def _load_workflow(name: str) -> dict:
@@ -54,21 +53,24 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     jobs = workflow["jobs"]
     assert jobs["test-gate"]["uses"] == "./.github/workflows/test.yml"
     assert jobs["lint-gate"]["uses"] == "./.github/workflows/lint.yml"
-    assert jobs["guardrails-gate"]["uses"] == (
-        "./.github/workflows/harness-guardrails.yml"
-    )
-    assert jobs["gitleaks"]["name"] == "gitleaks"
+    assert "guardrails-gate" not in jobs
+    precheck = "\n".join(step.get("run", "") for step in jobs["pr-precheck"]["steps"])
+    assert "bash npa/scripts/ci_precheck.sh" in precheck
+    assert "npa/scripts/ci_merge_precheck.py" in precheck
+    assert '--base "$BASE_SHA" --head "$HEAD_SHA"' in precheck
+    checkout = jobs["pr-precheck"]["steps"][0]
+    assert checkout["with"]["fetch-depth"] == "0"
+    assert jobs["gitleaks"]["name"].endswith("|| 'gitleaks' }}")
     assert jobs["scan"]["name"] == "scan"
     required = set(jobs["security-regression"]["needs"])
-    assert required == set(jobs) - {"security-regression"}
+    assert required == set(jobs) - {"security-regression", "ci-timing-report"}
+    assert jobs["ci-timing-report"]["needs"] == "security-regression"
 
 
 def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
     for name in (
         "confidentiality-scan.yml",
         "gitleaks.yml",
-        "harness-guardrails.yml",
-        "lint.yml",
     ):
         workflow = _load_workflow(name)
         assert workflow["on"]["push"] == {"branches": ["main"]}, name
@@ -77,6 +79,26 @@ def test_test_and_lint_do_not_duplicate_feature_branch_pushes() -> None:
     test = _load_workflow("test.yml")["on"]
     assert set(test) == {"workflow_call", "schedule", "workflow_dispatch"}
     assert test["schedule"] == [{"cron": "23 5 * * *"}]
+
+
+@pytest.mark.parametrize("name", ["harness-guardrails.yml", "lint.yml"])
+def test_candidate_checks_do_not_repeat_after_merge(name: str) -> None:
+    """Keep checked candidate work from competing with the next queue entry.
+
+    Args:
+        name: Reusable validation workflow whose candidate checks stay required.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A duplicate trigger returns or a candidate gate disappears.
+    """
+    assert set(_load_workflow(name)["on"]) == {"workflow_call", "workflow_dispatch"}
+    jobs = _load_workflow("security-regression.yml")["jobs"]
+    gate = "lint-gate" if name == "lint.yml" else "queue-guardrails"
+    assert jobs[gate]["uses"] == f"./.github/workflows/{name}"
+    assert gate in jobs["security-regression"]["needs"]
+    assert "'full'" in jobs[gate]["if"] or '"full"' in jobs[gate]["if"]
+    assert '"retest"' in jobs[gate]["if"]
 
 
 def test_main_validation_cancels_superseded_commits() -> None:
@@ -97,27 +119,32 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
     workflow = _load_workflow("test.yml")
     job = workflow["jobs"]["test"]
     python_matrix = job["strategy"]["matrix"]["python-version"]
-    assert "github.event_name == 'merge_group'" in python_matrix
+    assert '["pull_request", "merge_group"]' in python_matrix
     assert '["3.12"]' in python_matrix
     assert '["3.10", "3.12", "3.14"]' in python_matrix
     shard_matrix = job["strategy"]["matrix"]["shard"]
-    assert "github.event_name == 'merge_group'" in shard_matrix
+    assert '["pull_request", "merge_group"]' in shard_matrix
     assert "[1, 2, 3, 4]" in shard_matrix
-    assert "[1, 2, 3, 4, 5]" in shard_matrix
-    assert job["strategy"]["fail-fast"] == "${{ github.event_name == 'merge_group' }}"
-    assert job["if"] == "github.event_name != 'pull_request'"
+    assert "[1, 2, 3, 4, 5, 6]" in shard_matrix
+    assert job["strategy"]["fail-fast"] == (
+        "${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}"
+    )
+    assert "needs" not in job
+    assert job["if"] == "${{ !inputs.prose_only }}"
     assert "continue-on-error" not in job
-    assert workflow["on"]["workflow_call"] == ""
-
+    assert workflow["on"]["workflow_call"]["inputs"]["prose_only"] == {
+        "description": "Trusted parent policy proved that only prose changed",
+        "type": "boolean",
+        "default": "false",
+    }
+    assert "scope" not in workflow["jobs"]
     smoke = workflow["jobs"]["pr-smoke"]
-    assert smoke["if"] == "github.event_name == 'pull_request'"
+    assert smoke["if"] == "inputs.prose_only"
     commands = "\n".join(step.get("run", "") for step in smoke["steps"])
     assert "npa/tests/smoke" in commands
     assert "test_ci_workflows.py" in commands
 
-    assert workflow["jobs"]["browser-mocked"]["if"] == (
-        "github.event_name != 'pull_request'"
-    )
+    assert workflow["jobs"]["browser-mocked"]["if"] == ("${{ !inputs.prose_only }}")
     browser_steps = workflow["jobs"]["browser-mocked"]["steps"]
     browser_step_names = {step["name"] for step in browser_steps}
     for version in ("3.10", "3.14"):
@@ -125,6 +152,8 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
         install_step = f"Install Python {version} compatibility environment"
         assert install_step in browser_step_names
         assert f"Run Python {version} compatibility regressions" in browser_step_names
+        regression = _step("test.yml", "browser-mocked", f"Run Python {version}")
+        assert "npa/tests/test_anyio_security_regressions.py" in regression["run"]
 
 
 def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
@@ -140,6 +169,7 @@ def test_compatibility_regressions_run_before_heavy_dependencies() -> None:
     }
     assert "continue-on-error" not in regression
     for path in (
+        "npa/tests/test_anyio_security_regressions.py",
         "npa/tests/guardrails/test_ci_workflows.py",
         "npa/tests/docker/test_base_image_scan.py",
         "npa/tests/orchestration/skypilot/test_workflow_logs.py",
@@ -163,7 +193,7 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
         "NPA_E2E_PROJECT_ID": "project-test-00000000",
         "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
         "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
-        "NPA_CI_TOTAL_SHARDS": "${{ github.event_name == 'merge_group' && 5 || 4 }}",
+        "NPA_CI_TOTAL_SHARDS": '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) && 6 || 4 }}',
         "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
         "NPA_CI_TIMING_OUTPUT": "ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json",
         "NPA_REQUIRE_FFMPEG": "1",
@@ -172,13 +202,326 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
     coverage = workflow["jobs"]["coverage"]
     assert coverage["needs"] == "test"
     assert coverage["if"] == (
-        "${{ always() && github.event_name != 'pull_request' }}"
+        "${{ !cancelled() && !inputs.prose_only && needs.test.result == 'success' }}"
     )
     report = _step("test.yml", "coverage", "merged coverage floor")["run"]
     assert "coverage combine" in report
     assert "--fail-under=60" in report
-    profile = _step("test.yml", "coverage", "Merge scheduled duration")["run"]
+    profile = _step("test.yml", "coverage", "Merge Python 3.12 duration")["run"]
     assert "merge_ci_test_timings.py" in profile
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
+def test_required_gate_rejects_unsuccessful_children(result: str) -> None:
+    """Execute the aggregate check with each unsuccessful child result.
+
+    Args:
+        result: Unsuccessful or missing dependency conclusion.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A required dependency can fail without rejecting the merge.
+    """
+    gate = _load_workflow("security-regression.yml")["jobs"]["security-regression"]
+    # A status function still reports failed dependencies without keeping a
+    # cancelled, obsolete workflow queued ahead of its replacement.
+    assert gate["if"] == "${{ !cancelled() }}"
+    step = gate["steps"][0]
+    for event in ("pull_request", "merge_group"):
+        environment = {name: "success" for name in step["env"]}
+        environment["EVENT_NAME"] = event
+        environment["VALIDATION_MODE"] = "full"
+        excluded = {"EVENT_NAME", "VALIDATION_MODE"}
+        if event == "merge_group":
+            excluded.add("PRECHECK_RESULT")
+        for name in environment.keys() - excluded:
+            rejected = subprocess.run(
+                ["bash", "-c", step["run"]],
+                env={**os.environ, **environment, name: result},
+                capture_output=True,
+            )
+            assert rejected.returncode != 0, (event, name, result)
+        accepted = subprocess.run(
+            ["bash", "-c", step["run"]],
+            env={**os.environ, **environment},
+            capture_output=True,
+        )
+        assert accepted.returncode == 0
+
+
+def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> None:
+    """Preserve reproducibility and real CPU coverage when speeding up setup.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: A test environment loses dependency pins or CPU routing.
+    """
+    jobs = _load_workflow("test.yml")["jobs"]
+    for name in ("test", "pr-smoke", "browser-mocked"):
+        setup = next(
+            step for step in jobs[name]["steps"] if "setup-uv@" in step.get("uses", "")
+        )
+        assert setup["with"]["version"] == "0.12.5"
+        assert setup["with"]["enable-cache"] == "true"
+        assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
+        installs = [
+            step["run"]
+            for step in jobs[name]["steps"]
+            if "uv pip install" in step.get("run", "")
+        ]
+        assert installs and all(
+            "-c npa/ci/requirements.txt" in command for command in installs
+        )
+    command = _step("test.yml", "test", "CPU checkpoint")["run"]
+    assert "--torch-backend cpu" in command
+    assert "assert torch.version.cuda is None" in command
+    for job, step in (
+        ("test", "Install npa"),
+        ("pr-smoke", "fast validation"),
+        ("browser-mocked", "Install the production UI renderer"),
+    ):
+        command = _step("test.yml", job, step)["run"]
+        full_install = next(
+            line
+            for line in command.splitlines()
+            if "uv pip install" in line and " -e " in line
+        )
+        assert command.index("ci_requirements.py --check") < command.index(full_install)
+
+
+def test_timing_report_is_read_only_and_runs_after_the_required_gate() -> None:
+    """Keep timing metadata collection outside the required validation path.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Reporting gains write access or delays a required check.
+    """
+    workflow = _load_workflow("security-regression.yml")
+    job = workflow["jobs"]["ci-timing-report"]
+    assert job["needs"] == "security-regression"
+    assert job["if"] == "${{ !cancelled() && github.event_name != 'merge_group' }}"
+    assert job["permissions"] == {"actions": "read", "contents": "read"}
+    steps = job["steps"]
+    assert steps[0]["with"] == {"persist-credentials": "false"}
+    commands = "\n".join(step.get("run", "") for step in steps)
+    assert "--paginate --slurp" in commands
+    assert "/attempts/${GITHUB_RUN_ATTEMPT}" in commands
+    assert all("download-artifact" not in step.get("uses", "") for step in steps)
+    assert "ci-timing-report" not in workflow["jobs"]["security-regression"]["needs"]
+
+
+def test_every_python_312_candidate_publishes_module_timings() -> None:
+    """Retain failed-shard measurements and merge complete successful profiles.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Timing evidence is confined to scheduled audits.
+    """
+    upload = _step("test.yml", "test", "Upload Python 3.12 timing")
+    assert "always()" in upload["if"]
+    assert "matrix.python-version == '3.12'" in upload["if"]
+    assert "schedule" not in upload["if"]
+    merge = _step("test.yml", "coverage", "Merge Python 3.12 duration")
+    assert "if" not in merge
+
+
+def test_browser_execution_has_one_owner_and_remains_blocking() -> None:
+    """Keep real browser coverage without nesting a second run inside pytest.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Browser coverage is duplicated or made optional.
+    """
+    browser = _load_workflow("test.yml")["jobs"]["browser-mocked"]
+    steps = [step for step in browser["steps"] if "cy:mock" in step.get("run", "")]
+    assert len(steps) == 1
+    assert "if" not in steps[0] and "continue-on-error" not in steps[0]
+    assert "continue-on-error" not in browser
+    assert "needs" not in browser
+    source = (REPO_ROOT / "npa/tests/cli/test_agent_foxglove.py").read_text()
+    assert "def test_ci_executes_mocked_agent_cypress" not in source
+
+
+def test_cli_install_check_runs_once_outside_the_coverage_shards() -> None:
+    """Keep the blocking Python 3.12 install check off the slowest shard.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: The install check disappears, duplicates, or changes Python.
+    """
+    jobs = _load_workflow("test.yml")["jobs"]
+    assert not any(
+        "test_cli_install.sh" in step.get("run", "") for step in jobs["test"]["steps"]
+    )
+    steps = jobs["browser-mocked"]["steps"]
+    install = _step("test.yml", "browser-mocked", "Run CLI install test")
+    renderer = _step("test.yml", "browser-mocked", "Set up Python for")
+    compatibility = _step("test.yml", "browser-mocked", "Set up Python 3.10")
+    assert steps.index(renderer) < steps.index(install) < steps.index(compatibility)
+    assert renderer["with"]["python-version"] == "3.12"
+    assert "if" not in install and "continue-on-error" not in install
+    assert (
+        len([step for step in steps if "test_cli_install.sh" in step.get("run", "")])
+        == 1
+    )
+    assert (
+        "test_cli_install.sh" in _step("test.yml", "pr-smoke", "Run CLI install")["run"]
+    )
+
+
+def test_test_scope_is_forwarded_only_for_a_complete_prose_decision() -> None:
+    """Keep absent or inconsistent scope outputs on the full-test path.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Selection can skip tests without all three trusted outputs.
+    """
+    jobs = _load_workflow("security-regression.yml")["jobs"]
+    assert jobs["test-gate"]["with"] == {
+        "prose_only": "${{ needs.gitleaks.outputs.prose_only == 'true' && "
+        "needs.gitleaks.outputs.full_suite == 'false' && "
+        "needs.gitleaks.outputs.browser == 'false' }}"
+    }
+    for name in ("prose_only", "full_suite", "browser"):
+        assert (
+            jobs["gitleaks"]["outputs"][name]
+            == "${{ steps.scope.outputs." + name + " }}"
+        )
+    scope = _step("security-regression.yml", "gitleaks", "Select tests")
+    assert (
+        scope["if"]
+        == "github.event_name != 'push' && steps.plan.outputs.mode != 'reuse'"
+    )
+    assert "python -I" in scope["run"]
+
+
+def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> None:
+    """Keep test shortcuts independent from always-required security and docs gates.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Selection trusts candidate policy or removes required gates.
+    """
+    scope = _load_workflow("security-regression.yml")["jobs"]["gitleaks"]
+    assert scope["steps"][0]["with"]["fetch-depth"] == "0"
+    command = next(step["run"] for step in scope["steps"] if step.get("id") == "scope")
+    assert 'git show "${BASE_SHA}:${policy}"' in command
+    assert '"${RUNNER_TEMP}/ci_test_scope.py"' in command
+    assert "echo 'full_suite=true'" in command
+    assert "echo 'browser=true'" in command
+    parent = _load_workflow("security-regression.yml")
+    for event in ("pull_request", "merge_group"):
+        assert parent["on"][event] == ""
+    assert parent["jobs"]["scan"]["if"] == "github.event_name != 'push'"
+    leaks = _step("security-regression.yml", "gitleaks", "Reject committed secrets")
+    assert leaks["if"] == "github.event_name != 'push'"
+    dependency_check = _step(
+        "security-regression.yml",
+        "gitleaks",
+        "Reject stale or directly edited CI requirements",
+    )
+    assert dependency_check["if"] == "github.event_name != 'push'"
+    assert "ci_requirements.py --check" in dependency_check["run"]
+    assert "if" not in parent["jobs"]["security-scanners"]
+    for job in (
+        "test-gate",
+        "lint-gate",
+        "security-runtime",
+        "image-security",
+    ):
+        condition = parent["jobs"][job]["if"]
+        assert "needs.gitleaks.result == 'success'" in condition
+        if job == "image-security":
+            assert "needs.gitleaks.outputs.mode == 'full'" in condition
+        else:
+            assert "retest" in condition and "contains(fromJSON" in condition
+        assert "needs.pr-precheck" not in condition
+        assert parent["jobs"][job]["needs"] == "gitleaks"
+
+
+def test_confidentiality_always_scans_public_patterns_before_private_policy() -> None:
+    """Keep fork and Dependabot PRs on a deterministic blocking scan.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Secret-free PRs can bypass every confidentiality pattern.
+    """
+    command = _step("security-regression.yml", "scan", "Reject confidential data")[
+        "run"
+    ]
+    public_scan = command.index("--built-in-nebius-infra")
+    private_scan = command.index("--pattern-env CUSTOMER_DENYLIST")
+    assert public_scan < private_scan
+    public_command = command[:public_scan]
+    assert '--diff-range "${BASE_SHA}..HEAD"' in public_command
+    assert "--tree" not in public_command.split("npa/.venv/bin/python")[-1]
+
+
+def test_dependabot_does_not_edit_generated_ci_constraints() -> None:
+    """Keep dependency automation on source manifests, not generated pins.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Dependabot can bypass the repository pin generator.
+    """
+    configuration = yaml.safe_load((REPO_ROOT / ".github/dependabot.yml").read_text())
+    pip_updates = [
+        update
+        for update in configuration["updates"]
+        if update["package-ecosystem"] == "pip"
+    ]
+    assert len(pip_updates) == 1
+    assert "/npa/ci" not in pip_updates[0]["directories"]
+
+
+def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:
+    """Require the same interpreter checks on PRs and merge candidates.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Compatibility setup or tests bypass PR admission.
+    """
+    jobs = _load_workflow("test.yml")["jobs"]
+    assert "affected-tests" not in jobs
+    steps = jobs["browser-mocked"]["steps"]
+    for version in ("3.10", "3.14"):
+        compatibility = [
+            step for step in steps if f"Python {version} compatibility" in step["name"]
+        ]
+        assert len(compatibility) == 3
+        for step in compatibility:
+            assert "if" not in step
+            assert "continue-on-error" not in step
 
 
 def _make_recipe(target: str) -> list[str]:
@@ -254,6 +597,70 @@ def test_docs_drift_gate_matches_the_make_target() -> None:
     assert "scripts/build_docs.sh --check" in make_docs_check
 
 
+def test_docs_drift_uses_the_same_dependency_pins_as_tests() -> None:
+    """Keep docs setup cached and prevent unrelated floating dependency failures."""
+    steps = _load_workflow("lint.yml")["jobs"]["docs-drift"]["steps"]
+    setup = next(step for step in steps if "setup-uv@" in step.get("uses", ""))
+    assert setup["with"]["version"] == "0.12.5"
+    assert setup["with"]["enable-cache"] == "true"
+    assert "npa/ci/requirements.txt" in setup["with"]["cache-dependency-glob"]
+    install = _step("lint.yml", "docs-drift", "constrained docs environment")["run"]
+    assert (
+        "uv pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt -e npa"
+        in install
+    )
+    assert _step("lint.yml", "docs-drift", "CLI reference drift")["env"][
+        "NPA_BIN"
+    ].endswith("/npa/.venv/bin/npa")
+
+
+def test_precheck_catches_cheap_ci_failures_before_expensive_checks() -> None:
+    """Ensure make check cannot start the full suite ahead of cheap validation."""
+    assert _make_prereqs("check") == ["precheck"]
+    assert _make_prereqs("precheck") == ["check-env"]
+    precheck = "\n".join(_make_recipe("precheck"))
+    assert "ci_requirements.py --check" in precheck
+    assert "$(MAKE) lint format-check" in precheck
+    assert precheck.index("ci_requirements.py --check") < precheck.index("$(PYTEST)")
+    for name in (
+        "test_ci_workflows.py",
+        "test_ci_concurrency.py",
+        "test_ci_merge_precheck.py",
+        "test_merge_queue_report.py",
+    ):
+        assert name in precheck
+    assert "--check" in "\n".join(_make_recipe("format-check"))
+    assert "--fix" not in precheck
+    assert "$(MAKE) docs-check test" in _make_recipe("check")
+
+
+def test_queue_feedback_cannot_execute_candidate_code_with_write_access() -> None:
+    """Keep privileged reporting separate from candidate validation and artifacts."""
+    workflow = _load_workflow("merge-queue-report.yml")
+    assert set(workflow["on"]) == {"schedule", "workflow_dispatch"}
+    assert workflow["on"]["schedule"] == [{"cron": "*/5 * * * *"}]
+    assert workflow["permissions"] == {}
+    job = workflow["jobs"]["report"]
+    assert job["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "write",
+    }
+    checkout = job["steps"][0]
+    assert checkout["with"] == {
+        "ref": "${{ github.event.repository.default_branch }}",
+        "persist-credentials": "false",
+    }
+    commands = "\n".join(step.get("run", "") for step in job["steps"])
+    assert "-I npa/scripts/merge_queue_report.py" in commands
+    assert "--scan-open --publish" in commands
+    assert "pip install" not in commands
+    assert all("download-artifact" not in step.get("uses", "") for step in job["steps"])
+    assert "github.event.pull_request.head" not in commands
+    assert "github.event.workflow_run.head_sha" not in commands
+    assert "GH_TOKEN" in job["steps"][-1]["env"]
+
+
 def test_guardrail_gate_matches_the_make_target() -> None:
     ci_guardrails = _step("harness-guardrails.yml", "guardrails", "guardrail tests")[
         "run"
@@ -262,6 +669,7 @@ def test_guardrail_gate_matches_the_make_target() -> None:
 
     assert "tests/guardrails" in ci_guardrails
     assert "tests/guardrails" in make_guardrails
+    assert "-n auto --dist worksteal" in ci_guardrails
 
 
 def _npa_bin_chosen_by_docs_target(python: str) -> str:
@@ -348,13 +756,14 @@ def test_check_target_does_not_claim_the_coverage_floor() -> None:
         "`make check` now runs coverage; drop the caveat from CONTRIBUTING instead"
     )
 
-    # Anchor on what the caveat names: the floor plus the two steps test.yml runs
-    # that no make target does. Deleting the caveat, or bumping the floor in CI
-    # without updating it, fails here instead of quietly overstating `make check`.
-    unreproduced_steps = ("Run CLI install test", "Warn on source drift")
+    # Keep the local-gate caveat aligned with the extra work required by CI.
+    unreproduced_steps = (
+        ("browser-mocked", "Run CLI install test"),
+        ("test", "Warn on source drift"),
+    )
     contributing = (REPO_ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
-    for name in unreproduced_steps:
-        script = re.search(r"[\w./-]+\.sh", _step("test.yml", "test", name)["run"])
+    for job, name in unreproduced_steps:
+        script = re.search(r"[\w./-]+\.sh", _step("test.yml", job, name)["run"])
         assert script, f"expected step {name!r} to run a script"
         assert Path(script.group()).name in contributing, (
             f"test.yml step {name!r} runs {script.group()}, which `make check` does "
@@ -373,3 +782,164 @@ def test_advisory_mypy_is_manual_only() -> None:
     assert typecheck["on"] == {"workflow_dispatch": ""}
     assert set(typecheck["jobs"]) == {"mypy"}
     assert typecheck["permissions"] == {"contents": "read"}
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
+def test_queue_reuse_requires_proof_and_fresh_security_scans(result):
+    gate = _load_workflow("security-regression.yml")["jobs"]["security-regression"]
+    step = gate["steps"][0]
+    environment = {name: "skipped" for name in step["env"]}
+    environment.update(EVENT_NAME="merge_group", VALIDATION_MODE="reuse")
+    environment["GITHUB_STEP_SUMMARY"] = os.devnull
+    fresh = (
+        "PLAN_RESULT",
+        "SCANNER_RESULT",
+        "GITLEAKS_RESULT",
+        "CONFIDENTIALITY_RESULT",
+    )
+    for name in fresh:
+        environment[name] = "success"
+    for name in fresh:
+        rejected = subprocess.run(
+            ["bash", "-c", step["run"]],
+            env={**os.environ, **environment, name: result},
+            capture_output=True,
+        )
+        assert rejected.returncode != 0, (name, result)
+    accepted = subprocess.run(
+        ["bash", "-c", step["run"]],
+        env={**os.environ, **environment, "GITHUB_STEP_SUMMARY": os.devnull},
+        capture_output=True,
+    )
+    assert accepted.returncode == 0
+    environment["EVENT_NAME"] = "pull_request"
+    assert (
+        subprocess.run(
+            ["bash", "-c", step["run"]],
+            env={**os.environ, **environment},
+            capture_output=True,
+        ).returncode
+        != 0
+    )
+
+
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped", ""])
+def test_changed_queue_tree_requires_every_combined_tree_check(result):
+    gate = _load_workflow("security-regression.yml")["jobs"]["security-regression"]
+    step = gate["steps"][0]
+    environment = {name: "success" for name in step["env"]}
+    environment.update(
+        EVENT_NAME="merge_group",
+        VALIDATION_MODE="retest",
+        PRECHECK_RESULT="skipped",
+        IMAGE_RESULT="skipped",
+    )
+    command = ["bash", "-c", step["run"]]
+    assert subprocess.run(command, env={**os.environ, **environment}).returncode == 0
+    required = set(environment) - {
+        "EVENT_NAME",
+        "VALIDATION_MODE",
+        "PRECHECK_RESULT",
+        "IMAGE_RESULT",
+    }
+    for name in required:
+        failed = {**os.environ, **environment, name: result}
+        assert subprocess.run(command, env=failed).returncode != 0, (name, result)
+
+
+def test_queue_proof_uses_base_code_and_receipt_only_follows_success():
+    jobs = _load_workflow("security-regression.yml")["jobs"]
+    plan = jobs["gitleaks"]
+    command = next(step["run"] for step in plan["steps"] if step.get("id") == "plan")
+    assert 'git show "$BASE_SHA:$policy"' in command
+    assert 'python -I "$RUNNER_TEMP/ci_queue_evidence.py"' in command
+    setup = _step("security-regression.yml", "gitleaks", "Create isolated")
+    assert setup["if"] == "github.event_name != 'push'"
+    assert 'python -I -m venv "$validation_environment"' in setup["run"]
+    assert "test -d npa && test ! -L npa" in setup["run"]
+    assert "test ! -e npa/.venv && test ! -L npa/.venv" in setup["run"]
+    assert plan["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "pull-requests": "read",
+    }
+    receipt = jobs["security-regression"]["steps"][-1]
+    assert receipt["if"] == "github.event_name == 'pull_request'"
+    assert "always()" not in receipt["if"]
+    assert (
+        receipt["with"]["name"]
+        == "validated-candidate-${{ github.run_attempt }}-${{ github.sha }}"
+    )
+    assert receipt["with"]["if-no-files-found"] == "error"
+    assert "timeout-minutes" not in jobs["pr-precheck"]
+
+
+def _write_fingerprint_probe(tmp_path: Path) -> None:
+    interpreter = tmp_path / "npa/.venv/bin/python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_text(
+        "#!/bin/bash\nset -eu\n"
+        '[[ "$*" == "npa/scripts/ci_requirements.py --check" ]]\n'
+        'if [[ "$PYTHON_VERSION" == 3.10 ]]; then test -e tomli-installed; fi\n'
+        'echo fingerprint >> "$BOOTSTRAP_LOG"\nexit "$FINGERPRINT_EXIT"\n'
+    )
+    interpreter.chmod(0o700)
+
+
+def _run_fresh_install_step(tmp_path: Path, version: str, fingerprint_exit: int):
+    step = _step("test.yml", "test", "Install npa")
+    assert step["env"] == {"NPA_CI_PYTHON_VERSION": "${{ matrix.python-version }}"}
+    command = step["run"]
+    assert "${{" not in command
+    environment = dict(os.environ, GITHUB_WORKSPACE=str(tmp_path))
+    environment["GITHUB_PATH"] = str(tmp_path / "github-path")
+    environment["BOOTSTRAP_LOG"] = str(tmp_path / "commands")
+    environment["FINGERPRINT_EXIT"] = str(fingerprint_exit)
+    environment["PYTHON_VERSION"] = version
+    environment["NPA_CI_PYTHON_VERSION"] = version
+    _write_fingerprint_probe(tmp_path)
+    functions = """
+python() { [[ "$*" == "-m venv npa/.venv" ]]; }
+uv() {
+  [[ "$*" == "pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt "* ]]
+  if [[ "${@: -1}" == tomli ]]; then
+    touch tomli-installed
+    echo bootstrap >> "$BOOTSTRAP_LOG"
+  else
+    [[ "${@: -2}" == "-e npa[dev,adapter,encord]" ]]
+    echo full-install >> "$BOOTSTRAP_LOG"
+  fi
+}
+"""
+    result = subprocess.run(
+        ["bash", "-euc", functions + command],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+    return result, (tmp_path / "commands").read_text().splitlines()
+
+
+@pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])
+@pytest.mark.parametrize("fingerprint_exit", [0, 42])
+def test_fresh_ci_environment_checks_fingerprint_before_full_install(
+    tmp_path: Path, version: str, fingerprint_exit: int
+) -> None:
+    """Bootstrap only the missing TOML parser and reject stale dependency pins.
+
+    Args:
+        tmp_path: Isolated shell environment without installed dependencies.
+        version: Supported CI interpreter.
+        fingerprint_exit: Result returned by the dependency fingerprint check.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Setup omits the parser or installs with stale pins.
+    """
+    result, commands = _run_fresh_install_step(tmp_path, version, fingerprint_exit)
+    expected = ["bootstrap", "fingerprint"] if version == "3.10" else ["fingerprint"]
+    if fingerprint_exit == 0:
+        expected.append("full-install")
+    assert result.returncode == fingerprint_exit, result.stderr
+    assert commands == expected

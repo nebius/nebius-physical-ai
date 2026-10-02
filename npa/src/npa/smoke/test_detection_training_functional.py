@@ -78,7 +78,9 @@ def _base_url(state: SmokeState) -> str:
 
 def check_start_server(state: SmokeState) -> CheckResult:
     if importlib.util.find_spec("uvicorn") is None:
-        return CheckResult("start detection-training service", False, "uvicorn module unavailable")
+        return CheckResult(
+            "start detection-training service", False, "uvicorn module unavailable"
+        )
 
     env = {
         **os.environ,
@@ -88,7 +90,16 @@ def check_start_server(state: SmokeState) -> CheckResult:
     }
     log_handle = state.server_log.open("w")
     state.process = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", SERVER_TARGET, "--host", "127.0.0.1", "--port", str(state.port)],
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            SERVER_TARGET,
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(state.port),
+        ],
         env=env,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
@@ -111,7 +122,9 @@ def check_start_server(state: SmokeState) -> CheckResult:
                     "start detection-training service", False, f"not ready: {readiness}"
                 )
             return CheckResult(
-                "start detection-training service", True, json.dumps(readiness, sort_keys=True)
+                "start detection-training service",
+                True,
+                json.dumps(readiness, sort_keys=True),
             )
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             last_error = _format_exception(exc)
@@ -128,23 +141,31 @@ def check_authentication(state: SmokeState) -> CheckResult:
         _request_json(f"{_base_url(state)}/health")
     except HTTPError as exc:
         if exc.code != 401:
-            return CheckResult("authentication", False, f"unexpected HTTP status {exc.code}")
+            return CheckResult(
+                "authentication", False, f"unexpected HTTP status {exc.code}"
+            )
     except Exception as exc:
         return CheckResult("authentication", False, _format_exception(exc))
     else:
-        return CheckResult("authentication", False, "unauthenticated health request succeeded")
+        return CheckResult(
+            "authentication", False, "unauthenticated health request succeeded"
+        )
     try:
         health = _request_json(f"{_base_url(state)}/health", token=state.token)
     except Exception as exc:
         return CheckResult("authentication", False, _format_exception(exc))
     return CheckResult(
-        "authentication", health.get("status") == "ok", "unauthenticated request rejected"
+        "authentication",
+        health.get("status") == "ok",
+        "unauthenticated request rejected",
     )
 
 
 def check_system_info(state: SmokeState) -> CheckResult:
     try:
-        info = _request_json(f"{_base_url(state)}/system-info", timeout=30, token=state.token)
+        info = _request_json(
+            f"{_base_url(state)}/system-info", timeout=30, token=state.token
+        )
     except Exception as exc:
         return CheckResult("system-info", False, _format_exception(exc))
     if not isinstance(info, dict) or not info:

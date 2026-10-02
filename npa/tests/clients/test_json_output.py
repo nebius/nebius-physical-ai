@@ -26,7 +26,7 @@ def test_rejects_second_document_after_payload() -> None:
 
 
 def test_rejects_ambiguous_preamble_value() -> None:
-    assert parse_single_json_document('junk [1, 2] trailing {') is None
+    assert parse_single_json_document("junk [1, 2] trailing {") is None
 
 
 def test_rejects_trailing_json_start_outside_ansi() -> None:

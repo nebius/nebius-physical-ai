@@ -206,9 +206,7 @@ def validate_partner_input(
         raise PaidfContractError(
             "partner_input.provider.role must be curation, observability, or simulation"
         )
-    _artifact_ref(
-        partner_input.get("provider_config"), "partner_input.provider_config"
-    )
+    _artifact_ref(partner_input.get("provider_config"), "partner_input.provider_config")
     credential_refs = _list(
         partner_input.get("credential_refs"), "partner_input.credential_refs"
     )
@@ -231,9 +229,7 @@ def validate_partner_input(
             "partner input contains unknown base stages: "
             + ", ".join(sorted(unknown_reuse))
         )
-    reused_artifacts = _object(
-        reuse.get("artifacts"), "partner_input.reuse.artifacts"
-    )
+    reused_artifacts = _object(reuse.get("artifacts"), "partner_input.reuse.artifacts")
     if set(reused_artifacts) != set(reused_stages):
         raise PaidfContractError(
             "partner input reuse artifacts must exactly match reused stages"
@@ -250,11 +246,11 @@ def validate_partner_input(
             )
 
     execute = _object(partner_input.get("execute"), "partner_input.execute")
-    executed_stages = _stage_list(
-        execute.get("stages"), "partner_input.execute.stages"
-    )
+    executed_stages = _stage_list(execute.get("stages"), "partner_input.execute.stages")
     if not executed_stages:
-        raise PaidfContractError("partner input must execute at least one overlay stage")
+        raise PaidfContractError(
+            "partner input must execute at least one overlay stage"
+        )
     forbidden = set(executed_stages) & set(BASE_STAGES)
     if forbidden:
         raise PaidfContractError(
@@ -444,11 +440,11 @@ def validate_candidate_manifest(payload: Mapping[str, Any]) -> dict[str, Any]:
             candidate.get("source_episode_index"),
             f"candidate {candidate_id}.source_episode_index",
         )
-        _identifier(
-            candidate.get("camera_key"), f"candidate {candidate_id}.camera_key"
-        )
+        _identifier(candidate.get("camera_key"), f"candidate {candidate_id}.camera_key")
         variant = _object(candidate.get("variant"), f"candidate {candidate_id}.variant")
-        _identifier(variant.get("variant_id"), f"candidate {candidate_id}.variant.variant_id")
+        _identifier(
+            variant.get("variant_id"), f"candidate {candidate_id}.variant.variant_id"
+        )
         _sha256(
             variant.get("output_sha256"),
             f"candidate {candidate_id}.variant.output_sha256",
@@ -519,8 +515,7 @@ def validate_decision_manifest(
     _exact_schema(manifest, DECISION_MANIFEST_SCHEMA, "decision manifest")
     _decision_provider(manifest.get("provider"), "decision manifest.provider")
     expected = {
-        entry["candidate_id"]
-        for entry in _list(candidates["candidates"], "candidates")
+        entry["candidate_id"] for entry in _list(candidates["candidates"], "candidates")
     }
     decisions = _list(manifest.get("decisions"), "decision manifest.decisions")
     seen: set[str] = set()
@@ -558,8 +553,7 @@ def validate_decision_manifest(
     missing = expected - seen
     if missing:
         raise PaidfContractError(
-            "decisions are missing for candidates: "
-            + ", ".join(sorted(missing))
+            "decisions are missing for candidates: " + ", ".join(sorted(missing))
         )
     return dict(manifest)
 
@@ -576,10 +570,7 @@ def reconcile_decisions(
     """
 
     validate_decision_manifest(decisions, candidates=candidates)
-    by_id = {
-        decision["candidate_id"]: decision
-        for decision in decisions["decisions"]
-    }
+    by_id = {decision["candidate_id"]: decision for decision in decisions["decisions"]}
     keep: list[dict[str, Any]] = []
     drop: list[dict[str, Any]] = []
     unresolved: list[str] = []
@@ -630,9 +621,7 @@ def reconcile_provider_export(
     """
 
     candidate_manifest = validate_candidate_manifest(candidates)
-    expected = {
-        entry["candidate_id"] for entry in candidate_manifest["candidates"]
-    }
+    expected = {entry["candidate_id"] for entry in candidate_manifest["candidates"]}
     seen: dict[str, int] = {}
     joined: list[dict[str, Any]] = []
     for index, item in enumerate(export_items):
@@ -659,9 +648,7 @@ def reconcile_provider_export(
         joined.append(record)
     missing = sorted(expected - set(seen))
     if missing:
-        raise PaidfContractError(
-            "export is missing candidates: " + ", ".join(missing)
-        )
+        raise PaidfContractError("export is missing candidates: " + ", ".join(missing))
     return {
         "schema": RECONCILIATION_SCHEMA,
         "external_id_field": external_id_field,
@@ -986,7 +973,9 @@ def build_decisions_stage(
                 "candidate_id": candidate_id,
                 "decision": state,
                 "evidence": {
-                    "evaluator_score": (clips_by_id.get(candidate_id) or {}).get("score"),
+                    "evaluator_score": (clips_by_id.get(candidate_id) or {}).get(
+                        "score"
+                    ),
                     "quality_status": disposition.get("quality_status"),
                 },
                 "reason": reason,
@@ -1056,9 +1045,7 @@ def accepted_replacements_stage(
             "candidates appear in both keep and drop: " + ", ".join(overlapping)
         )
     inconsistent_keep = sorted(
-        candidate_id
-        for candidate_id, state in keep_states.items()
-        if state != "accept"
+        candidate_id for candidate_id, state in keep_states.items() if state != "accept"
     )
     if inconsistent_keep:
         raise PaidfContractError(
@@ -1080,7 +1067,9 @@ def accepted_replacements_stage(
         "reconciliation.unresolved_review_candidate_ids",
     )
     unresolved_ids = [
-        _identifier(candidate_id, f"reconciliation.unresolved_review_candidate_ids[{index}]")
+        _identifier(
+            candidate_id, f"reconciliation.unresolved_review_candidate_ids[{index}]"
+        )
         for index, candidate_id in enumerate(unresolved)
     ]
     if len(unresolved_ids) != len(set(unresolved_ids)):
@@ -1126,7 +1115,9 @@ def accepted_replacements_stage(
             raise PaidfContractError(
                 f"reconciliation.totals.{name} must equal {expected_total}"
             )
-    by_id = {candidate["candidate_id"]: candidate for candidate in candidates["candidates"]}
+    by_id = {
+        candidate["candidate_id"]: candidate for candidate in candidates["candidates"]
+    }
     replacements = []
     for candidate_id in sorted(keep_states):
         candidate = by_id[candidate_id]
@@ -1166,9 +1157,7 @@ def accepted_replacements_stage(
     return manifest
 
 
-def _reconciliation_entries(
-    entries: Any, label: str
-) -> dict[str, Any]:
+def _reconciliation_entries(entries: Any, label: str) -> dict[str, Any]:
     """Read reconciliation rows as ``candidate_id -> decision`` mappings.
 
     Fails closed on non-object rows, unsafe candidate IDs, or duplicate

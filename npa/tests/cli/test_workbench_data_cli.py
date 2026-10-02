@@ -16,7 +16,9 @@ class FakeS3:
         self.name = name
         self.objects: dict[tuple[str, str], dict] = {}
 
-    def add(self, bucket: str, key: str, body: bytes, metadata: dict | None = None) -> None:
+    def add(
+        self, bucket: str, key: str, body: bytes, metadata: dict | None = None
+    ) -> None:
         self.objects[(bucket, key)] = {"Body": body, "Metadata": metadata or {}}
 
     def get_object(self, *, Bucket: str, Key: str):

@@ -34,20 +34,35 @@ from npa.workbench.token_factory import reason_scene
 pytestmark = pytest.mark.token_factory_e2e
 
 
-def test_live_provider_contract_recheck(request: pytest.FixtureRequest, tmp_path: Path) -> None:
+def test_live_provider_contract_recheck(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> None:
     """Recheck real outputs, thinking controls and structured-output drift."""
     _require_key()
     from npa.live_verification.token_factory_contract import run_contract
 
-    additional = tuple(filter(None, (
-        value.strip() for value in os.environ.get("NPA_TF_RECHECK_REQUIRED_MODELS", "").split(",")
-    )))
+    additional = tuple(
+        filter(
+            None,
+            (
+                value.strip()
+                for value in os.environ.get("NPA_TF_RECHECK_REQUIRED_MODELS", "").split(
+                    ","
+                )
+            ),
+        )
+    )
     report = run_contract(
-        TokenFactoryClient(), additional_models=additional,
-        expected_json_behavior=os.environ.get("NPA_TF_RECHECK_JSON_BASELINE", "healthy"),
+        TokenFactoryClient(),
+        additional_models=additional,
+        expected_json_behavior=os.environ.get(
+            "NPA_TF_RECHECK_JSON_BASELINE", "healthy"
+        ),
     )
     request.node.user_properties.append(("provider_contract", report))
-    (tmp_path / "provider-contract.json").write_text(json.dumps(report, indent=2) + "\n")
+    (tmp_path / "provider-contract.json").write_text(
+        json.dumps(report, indent=2) + "\n"
+    )
     failures = [check["check"] for check in report["checks"] if not check["passed"]]
     assert report["passed"], f"Provider contract drift: {', '.join(failures)}"
 
@@ -87,7 +102,6 @@ def test_live_text_chat_completion() -> None:
     text = client.chat_completion_text(
         model=model,
         messages=[{"role": "user", "content": "Reply with the single word: ready"}],
-
     )
     assert isinstance(text, str)
     assert text.strip()
@@ -103,7 +117,6 @@ def test_live_default_reasoner_scene_plan(tmp_path: Path) -> None:
         output_path=str(tmp_path / "out"),
         task="What objects are in this scene and what steps should a robot take to pick up the red box?",
         model=DEFAULT_REASONER_MODEL,
-
     )
 
     assert result.status == "completed"
@@ -122,24 +135,48 @@ def test_live_generate_inventory_artifact(tmp_path: Path, access_path: str) -> N
 
     source = tmp_path / "inventory.jsonl"
     counts = [(12, 8), (9, 4), (23, 17), (6, 11), (32, 9), (19, 1)]
-    source.write_text("".join(json.dumps({
-        "id": f"inventory-{index}",
-        "prompt": f"There are {red} red crates and {blue} blue crates. "
-        "Return only JSON with integer keys red, blue, total, without a code fence.",
-    }) + "\n" for index, (red, blue) in enumerate(counts)))
+    source.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "id": f"inventory-{index}",
+                    "prompt": f"There are {red} red crates and {blue} blue crates. "
+                    "Return only JSON with integer keys red, blue, total, without a code fence.",
+                }
+            )
+            + "\n"
+            for index, (red, blue) in enumerate(counts)
+        )
+    )
     output = tmp_path / "generations.jsonl"
     if access_path == "cli":
-        result = CliRunner().invoke(app, [
-            "workbench", "token-factory", "generate", "--input-path", str(source),
-            "--output-path", str(output), "--temperature", "0", "--output", "json",
-        ])
+        result = CliRunner().invoke(
+            app,
+            [
+                "workbench",
+                "token-factory",
+                "generate",
+                "--input-path",
+                str(source),
+                "--output-path",
+                str(output),
+                "--temperature",
+                "0",
+                "--output",
+                "json",
+            ],
+        )
         assert result.exit_code == 0, result.output
         stdout = result.output
     else:
         captured = StringIO()
         with redirect_stdout(captured):
-            token_factory.generate(input_path=str(source), output_path=str(output),
-                                   temperature=0, output="json")
+            token_factory.generate(
+                input_path=str(source),
+                output_path=str(output),
+                temperature=0,
+                output="json",
+            )
         stdout = captured.getvalue()
     payload = json.loads(stdout)
     assert payload["status"] == "completed"
@@ -148,7 +185,11 @@ def test_live_generate_inventory_artifact(tmp_path: Path, access_path: str) -> N
     assert len(rows) == payload["prompt_count"] == len(counts)
     for index, (row, (red, blue)) in enumerate(zip(rows, counts)):
         assert row["id"] == f"inventory-{index}"
-        assert json.loads(row["completion"]) == {"red": red, "blue": blue, "total": red + blue}
+        assert json.loads(row["completion"]) == {
+            "red": red,
+            "blue": blue,
+            "total": red + blue,
+        }
 
 
 def _shape_frame(path: Path, *, red_inside: bool) -> Path:
@@ -168,8 +209,11 @@ def _episode_without_reset() -> dict[str, object]:
     """Describe one continuous simulator episode for the synthetic diagrams."""
     return {
         "schema": "npa.sim2real.episode_boundary.v1",
-        "simulator_episode_id": 0, "action_episode_id": 0, "reset_events": [],
-        "reset_on_current_step": False, "action_outcome_valid": True,
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
         "temporal_credit_valid": True,
     }
 
@@ -180,16 +224,36 @@ def test_live_hosted_rollout_preserves_sparse_frame_bindings(tmp_path: Path) -> 
     from npa.workbench.cosmos.reason import run_token_factory_rollout_vlm
     from npa.workbench.cosmos.visual_grounding import validate_stored_visual_grounding
 
-    frames = [_shape_frame(tmp_path / f"frame-{index:03d}.png", red_inside=index >= 3)
-              for index in range(6)]
-    actions = [{"step": index, "sim_step": index, "action": [0.1],
-                "episode_boundary": _episode_without_reset()} for index in range(5)]
-    metadata = [{"path": frame.name, "sim_step": index, "view_name": "primary",
-                 "episode_id": "synthetic-diagram", "simulator_episode_id": 0}
-                for index, frame in enumerate(frames)]
+    frames = [
+        _shape_frame(tmp_path / f"frame-{index:03d}.png", red_inside=index >= 3)
+        for index in range(6)
+    ]
+    actions = [
+        {
+            "step": index,
+            "sim_step": index,
+            "action": [0.1],
+            "episode_boundary": _episode_without_reset(),
+        }
+        for index in range(5)
+    ]
+    metadata = [
+        {
+            "path": frame.name,
+            "sim_step": index,
+            "view_name": "primary",
+            "episode_id": "synthetic-diagram",
+            "simulator_episode_id": 0,
+        }
+        for index, frame in enumerate(frames)
+    ]
     result = run_token_factory_rollout_vlm(
-        model_id=DEFAULT_REASONER_MODEL, image_paths=frames, actions=actions,
-        frame_metadata=metadata, rollout_id="synthetic-diagram", threshold=0.5,
+        model_id=DEFAULT_REASONER_MODEL,
+        image_paths=frames,
+        actions=actions,
+        frame_metadata=metadata,
+        rollout_id="synthetic-diagram",
+        threshold=0.5,
         task_description="Move the red square inside the green outline in these diagrams.",
         max_frames=3,
     )
@@ -205,9 +269,14 @@ def test_live_hosted_rollout_preserves_sparse_frame_bindings(tmp_path: Path) -> 
         assert event["visual_grounding"]["action_sim_step"] == index
         if expected is None:
             assert event["confidence"] == 0 and event["error_tags"] == ["ok"]
-            assert event["critique_text"] == f"Insufficient visual evidence for step {index}."
+            assert (
+                event["critique_text"]
+                == f"Insufficient visual evidence for step {index}."
+            )
     assert result["request"]["request_id"] and result["request"]["total_tokens"] > 0
-    (tmp_path / "hosted-rollout-evaluation.json").write_text(json.dumps(result, indent=2))
+    (tmp_path / "hosted-rollout-evaluation.json").write_text(
+        json.dumps(result, indent=2)
+    )
 
 
 def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:
@@ -221,25 +290,44 @@ def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:
     runner = CliRunner()
     for command, filename in (("caption", "captions.json"), ("reason", "plan.json")):
         target = tmp_path / filename
-        args = ["workbench", "token-factory", command, "--input-path", str(frames),
-                "--output-path", str(target), "--output", "json"]
+        args = [
+            "workbench",
+            "token-factory",
+            command,
+            "--input-path",
+            str(frames),
+            "--output-path",
+            str(target),
+            "--output",
+            "json",
+        ]
         if command == "reason":
-            args += ["--task", "Describe the red square, blue circle, and green outline "
-                     "in these diagrams and their change across ordered frames."]
+            args += [
+                "--task",
+                "Describe the red square, blue circle, and green outline "
+                "in these diagrams and their change across ordered frames.",
+            ]
         result = runner.invoke(app, args)
         assert result.exit_code == 0, result.output
         payload = json.loads(target.read_text())
         assert payload["status"] == "completed"
         assert payload["model"] == DEFAULT_VISION_MODEL
         assert payload["image_count"] == 3
-        texts = ([row["caption"] for row in payload["captions"]] if command == "caption"
-                 else [payload["analysis"]])
-        assert all(all(color in text.lower() for color in ("red", "blue", "green"))
-                   for text in texts)
+        texts = (
+            [row["caption"] for row in payload["captions"]]
+            if command == "caption"
+            else [payload["analysis"]]
+        )
+        assert all(
+            all(color in text.lower() for color in ("red", "blue", "green"))
+            for text in texts
+        )
 
 
 @pytest.mark.parametrize("inside", [True, False])
-def test_live_visual_judge_distinguishes_completion(tmp_path: Path, inside: bool) -> None:
+def test_live_visual_judge_distinguishes_completion(
+    tmp_path: Path, inside: bool
+) -> None:
     _require_key()
     from npa.workbench.vlm_eval import evaluate_vlm, write_result
     from dataclasses import asdict
@@ -249,7 +337,9 @@ def test_live_visual_judge_distinguishes_completion(tmp_path: Path, inside: bool
         _shape_frame(frames / f"frame-{index:03d}.png", red_inside=state)
     output = tmp_path / "evaluation.json"
     result = evaluate_vlm(
-        input_path=str(frames), output_path=str(output), backend="api",
+        input_path=str(frames),
+        output_path=str(output),
+        backend="api",
         task="Move the red square fully inside the green rectangular outline by the final frame.",
         frame_selection="sequence",
     )
@@ -269,14 +359,20 @@ def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:
 
     frame = _shape_frame(tmp_path / "scene.png", red_inside=True)
     result = verify_attributes(
-        clip_id="synthetic-diagram", frame=frame,
+        clip_id="synthetic-diagram",
+        frame=frame,
         selected_variables={"square_color": "red", "circle_color": "blue"},
-        variable_options={"square_color": ["red", "yellow", "purple"],
-                          "circle_color": ["blue", "orange", "black"]},
+        variable_options={
+            "square_color": ["red", "yellow", "purple"],
+            "circle_color": ["blue", "orange", "black"],
+        },
     )
     (tmp_path / "attributes.json").write_text(json.dumps(asdict(result), indent=2))
     assert result.question_model == DEFAULT_TEXT_MODEL
     assert result.vlm_model == DEFAULT_VISION_MODEL
     assert result.total_checks == result.passed_checks == 2
     assert result.passed
-    assert all(check.question and check.vlm_answer and not check.error for check in result.checks)
+    assert all(
+        check.question and check.vlm_answer and not check.error
+        for check in result.checks
+    )

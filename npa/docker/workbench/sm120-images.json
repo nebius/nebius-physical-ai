@@ -1,6 +1,6 @@
 {
   "format": "npa_sm120_image_manifest_v1",
-  "as_of": "2026-08-03T05:05:26Z",
+  "as_of": "2026-09-12T06:42:41Z",
   "registry": "${NPA_REGISTRY}",
   "target": {
     "gpu": "RTX PRO 6000 Blackwell",
@@ -58,6 +58,15 @@
       "tag": "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
       "digest": "sha256:c9ba0996b28f54b013e36da689638b386a7ef9c0c8c4413fc4b3c72ff1a808bb",
       "purpose": "SONIC host-mounted-driver Kubernetes runtime for RTX PRO 6000."
+    },
+    {
+      "name": "npa-isaac-arena",
+      "tag": "0.3.0-isaaclab3-20260917-r4",
+      "source_tag": "dev-ae5adea6ab895660996f513f14160c89d06f47e5",
+      "digest": "sha256:9c6a417672d6f87499680ba337c90488c2a33d41ac9f7b5452eb5d97d00e097e",
+      "purpose": "Isaac Lab-Arena candidate qualified on B200 state evaluation and RTX PRO 6000 successful GR1 open-microwave evaluation. The visual gate binds exact actions, upstream task success, simulator door progress, and coherent denoised motion; provider assets remain runtime fetched.",
+      "visual_validation": "validated",
+      "candidate_validation": "qualified"
     }
   ]
 }

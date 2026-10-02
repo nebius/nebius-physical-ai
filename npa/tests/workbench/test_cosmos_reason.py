@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -144,7 +145,20 @@ def test_engine_vlm_job_script_prepares_hf_cache(monkeypatch) -> None:
 
     script = _component_job_script("vlm_eval_reason2")
     assert 'export HF_HOME="${HF_HOME:-/tmp/hf_home}"' in script
-    safe = _kubernetes_component_env({}, Sim2RealLoopConfig(run_id="r"))
+    operator_image = "registry.example.invalid/operator/npa-sim2real:test"
+    safe = _kubernetes_component_env(
+        {},
+        Sim2RealLoopConfig(
+            run_id="r",
+            augment_image=operator_image,
+            envgen_image=operator_image,
+            policy_image=operator_image,
+            trainer_image=operator_image,
+            vlm_image=operator_image,
+            eval_image=operator_image,
+            isaac_image=operator_image,
+        ),
+    )
     assert safe["HF_HOME"] == "/tmp/hf_home"
     assert safe["NPA_COSMOS_REASON3_CACHE"] == DEFAULT_REASON3_CACHE
 
@@ -168,7 +182,9 @@ def test_hosted_frame_selection_is_bounded_and_rollout_wide() -> None:
     ("model", "family"),
     [(DEFAULT_COSMOS3_MODEL, "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
 )
-def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path, model, family) -> None:
+def test_token_factory_rollout_evaluator_returns_event_local_contract(
+    tmp_path, model, family
+) -> None:
     frames = []
     for index in range(10):
         frame = tmp_path / f"camera-{index:03d}.png"
@@ -183,37 +199,77 @@ def test_token_factory_rollout_evaluator_returns_event_local_contract(tmp_path, 
             assert kwargs["response_format"]["type"] == "json_schema"
             assert kwargs["response_format"]["json_schema"]["strict"] is True
             prompt = kwargs["messages"][0]["content"][0]["text"]
-            bindings = json.loads(next(line.removeprefix("Visual bindings by action: ")
-                                       for line in prompt.splitlines()
-                                       if line.startswith("Visual bindings by action: ")))
+            bindings = json.loads(
+                next(
+                    line.removeprefix("Visual bindings by action: ")
+                    for line in prompt.splitlines()
+                    if line.startswith("Visual bindings by action: ")
+                )
+            )
             assert ("You are NVIDIA" in prompt) is (family == "cosmos3")
             images = kwargs["messages"][0]["content"][1:]
             assert len(images) == 8
-            assert all(item["image_url"]["url"].startswith("data:image/png;base64,") for item in images)
+            assert all(
+                item["image_url"]["url"].startswith("data:image/png;base64,")
+                for item in images
+            )
             return {
                 "id": "request-public-1",
                 "model": model,
-                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps({
-                    "success": True,
-                    "score": 0.9,
-                    "summary": "stable cube grasp",
-                    "per_step": [
-                        {"step": binding["action_step"],
-                         "critique_text": (f"event {binding['action_step']} stable" if binding["supported"]
-                                           else f"Insufficient visual evidence for step {binding['action_step']}."),
-                         "error_tags": ["ok"], "confidence": 0.8 if binding["supported"] else 0,
-                         "camera_observation": binding["camera_observation"]}
-                        for binding in bindings
-                    ],
-                })}}],
-                "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "success": True,
+                                    "score": 0.9,
+                                    "summary": "stable cube grasp",
+                                    "per_step": [
+                                        {
+                                            "step": binding["action_step"],
+                                            "critique_text": (
+                                                f"event {binding['action_step']} stable"
+                                                if binding["supported"]
+                                                else f"Insufficient visual evidence for step {binding['action_step']}."
+                                            ),
+                                            "error_tags": ["ok"],
+                                            "confidence": 0.8
+                                            if binding["supported"]
+                                            else 0,
+                                            "camera_observation": binding[
+                                                "camera_observation"
+                                            ],
+                                        }
+                                        for binding in bindings
+                                    ],
+                                }
+                            )
+                        },
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 50,
+                    "total_tokens": 150,
+                },
             }
 
     result = run_token_factory_rollout_vlm(
         model_id=model,
         image_paths=frames,
-        actions=[{"step": index, "sim_step": index, "action": [0.0], "episode_boundary": _no_reset_boundary()} for index in range(10)],
-        frame_metadata=_frame_metadata([frame.name for frame in frames], "rollout-0000"),
+        actions=[
+            {
+                "step": index,
+                "sim_step": index,
+                "action": [0.0],
+                "episode_boundary": _no_reset_boundary(),
+            }
+            for index in range(10)
+        ],
+        frame_metadata=_frame_metadata(
+            [frame.name for frame in frames], "rollout-0000"
+        ),
         task_description="strict cube grasp",
         rollout_id="rollout-0000",
         threshold=0.5,
@@ -260,6 +316,46 @@ def test_cosmos3_success_cannot_bypass_the_fixed_threshold() -> None:
     )
     assert payload["schema"] == "npa.sim2real.vlm_eval.v3"
     assert payload["success"] is False
+
+
+@pytest.mark.parametrize(
+    ("verdict", "expected"),
+    [(True, True), (False, False), (pytest.param(None, True, id="omitted"))],
+)
+def test_cosmos_reason_success_accepts_booleans_or_uses_score(
+    verdict, expected
+) -> None:
+    model_payload = {
+        "score": 0.9,
+        "summary": "stable grasp",
+        "per_step": [
+            {"step": 0, "critique_text": "cube is stable", "error_tags": ["ok"]}
+        ],
+    }
+    if verdict is not None:
+        model_payload["success"] = verdict
+
+    payload = reason_module._parse_cosmos_reason_output(
+        json.dumps(model_payload),
+        actions=[{"step": 0, "action": [0.0]}],
+        rollout_id="rollout-verdict",
+        threshold=0.5,
+        family="cosmos3",
+    )
+
+    assert payload["success"] is expected
+
+
+@pytest.mark.parametrize("verdict", ["false", "true", 0, 1, None, [], {}])
+def test_cosmos_reason_rejects_malformed_explicit_success(verdict) -> None:
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        reason_module._parse_cosmos_reason_output(
+            json.dumps({"success": verdict, "score": 0.9}),
+            actions=[],
+            rollout_id="rollout-malformed-verdict",
+            threshold=0.5,
+            family="cosmos3",
+        )
 
 
 def test_task_description_from_manifest_prefers_task_description() -> None:
@@ -328,6 +424,57 @@ def test_merge_dual_reason_evaluations_averages_scores_and_requires_both_success
     archived_alias = merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.75)
     assert archived_alias["score"] == 0.85
     assert archived_alias["success"] is False
+
+
+@pytest.mark.parametrize("lane", ["reason2", "cosmos3"])
+def test_legacy_dual_merge_rejects_malformed_lane_verdict(lane) -> None:
+    reason2 = {"score": 0.9, "success": True}
+    cosmos3 = {"score": 0.9, "success": True}
+    (reason2 if lane == "reason2" else cosmos3)["success"] = "false"
+
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        merge_dual_reason_evaluations(reason2, cosmos3, threshold=0.5)
+
+
+@pytest.mark.parametrize(
+    "merge", [merge_reason_evaluations, merge_dual_reason_evaluations]
+)
+@pytest.mark.parametrize("missing", ["reason2", "cosmos3", "both"])
+def test_archived_merge_does_not_promote_omitted_verdicts(merge, missing) -> None:
+    lanes = [{"score": 0.9, "success": True}, {"score": 0.8, "success": True}]
+    for index, name in enumerate(("reason2", "cosmos3")):
+        if missing in (name, "both"):
+            lanes[index].pop("success")
+    archived = json.loads(json.dumps(lanes))
+
+    merged = merge(*archived, threshold=0.5)
+
+    assert merged["score"] == 0.85
+    assert merged["success"] is False
+    assert json.loads(json.dumps(merged))["success"] is False
+    assert archived == lanes
+
+
+@pytest.mark.parametrize(
+    "merge", [merge_reason_evaluations, merge_dual_reason_evaluations]
+)
+@pytest.mark.parametrize("threshold", [0.5, 0.95])
+def test_archived_merge_preserves_verdicts_under_a_new_threshold(
+    merge, threshold
+) -> None:
+    archived = json.loads(
+        json.dumps(
+            [
+                {"score": 0.49, "success": True},
+                {"score": 0.9, "success": True},
+            ]
+        )
+    )
+
+    merged = merge(*archived, threshold=threshold)
+
+    assert merged["score"] == 0.695
+    assert json.loads(json.dumps(merged))["success"] is True
 
 
 def test_summary_only_output_is_rejected_without_temporal_broadcast() -> None:
@@ -522,20 +669,35 @@ def test_dual_reason_rejects_missing_local_model_label() -> None:
     assert merged["per_step"][0]["confidence"] == 0.0
 
 
-@pytest.mark.parametrize("model", ["nvidia/Cosmos-Reason2-8B", "vendor/not-a-Cosmos3-Super-Reasoner"])
+@pytest.mark.parametrize(
+    "model", ["nvidia/Cosmos-Reason2-8B", "vendor/not-a-Cosmos3-Super-Reasoner"]
+)
 def test_hosted_evaluator_rejects_unsupported_model_before_request(model, tmp_path):
     with pytest.raises(CosmosReasonError, match="unsupported hosted rollout evaluator"):
         run_token_factory_rollout_vlm(
-            model_id=model, image_paths=[], actions=[], task_description="task",
-            rollout_id="rollout-public", threshold=0.5,
+            model_id=model,
+            image_paths=[],
+            actions=[],
+            task_description="task",
+            rollout_id="rollout-public",
+            threshold=0.5,
         )
 
 
-@pytest.mark.parametrize("model_payload", [
-    {}, {"model": None}, {"model": ""}, {"model": 17}, {"model": []},
-    {"model": DEFAULT_COSMOS3_MODEL},
-])
-def test_hosted_evaluator_rejects_missing_or_substituted_provider_model(tmp_path, model_payload):
+@pytest.mark.parametrize(
+    "model_payload",
+    [
+        {},
+        {"model": None},
+        {"model": ""},
+        {"model": 17},
+        {"model": []},
+        {"model": DEFAULT_COSMOS3_MODEL},
+    ],
+)
+def test_hosted_evaluator_rejects_missing_or_substituted_provider_model(
+    tmp_path, model_payload
+):
     frame = tmp_path / "frame.png"
     frame.write_bytes(b"synthetic-frame")
 
@@ -545,33 +707,61 @@ def test_hosted_evaluator_rejects_missing_or_substituted_provider_model(tmp_path
 
     with pytest.raises(CosmosReasonError, match="different model identity"):
         run_token_factory_rollout_vlm(
-            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[{"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}],
+            model_id="MiniMaxAI/MiniMax-M3",
+            image_paths=[frame],
+            actions=[
+                {"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}
+            ],
             frame_metadata=_frame_metadata([frame.name], "rollout-public"),
-            task_description="task", rollout_id="rollout-public", threshold=0.5,
+            task_description="task",
+            rollout_id="rollout-public",
+            threshold=0.5,
             client=Client(),
         )
 
 
 def _frame_metadata(names, rollout_id="synthetic"):
-    return [{"path": name, "sim_step": index, "view_name": "primary", "episode_id": rollout_id, "simulator_episode_id": 0}
-            for index, name in enumerate(names)]
+    return [
+        {
+            "path": name,
+            "sim_step": index,
+            "view_name": "primary",
+            "episode_id": rollout_id,
+            "simulator_episode_id": 0,
+        }
+        for index, name in enumerate(names)
+    ]
 
 
 def _single_frame_binding():
-    return {0: {"schema": "npa.sim2real.visual_grounding.v2", "action_step": 0,
-                "action_sim_step": 0, "frame_sim_step": 0,
-                "camera_observation": "frame.png", "supported": True,
-                "episode_boundary": _no_reset_boundary(), "frame_simulator_episode_id": 0}}
+    return {
+        0: {
+            "schema": "npa.sim2real.visual_grounding.v2",
+            "action_step": 0,
+            "action_sim_step": 0,
+            "frame_sim_step": 0,
+            "camera_observation": "frame.png",
+            "supported": True,
+            "episode_boundary": _no_reset_boundary(),
+            "frame_simulator_episode_id": 0,
+        }
+    }
 
 
 def _complete_hosted_payload() -> dict:
     return {
-        "success": True, "score": 0.9, "summary": "red square is inside green outline",
-        "per_step": [{
-            "step": 0, "critique_text": "red square finishes inside outline",
-            "error_tags": ["ok"], "confidence": 0.8,
-            "camera_observation": "frame.png",
-        }],
+        "success": True,
+        "score": 0.9,
+        "summary": "red square is inside green outline",
+        "per_step": [
+            {
+                "step": 0,
+                "critique_text": "red square finishes inside outline",
+                "error_tags": ["ok"],
+                "confidence": 0.8,
+                "camera_observation": "frame.png",
+            }
+        ],
     }
 
 
@@ -580,7 +770,9 @@ def test_hosted_response_schema_rejects_invalid_error_tags(tags):
     import jsonschema
 
     response_format = reason_module._hosted_rollout_response_format(
-        [{"step": 0}], ["frame.png"], visual_bindings=_single_frame_binding(),
+        [{"step": 0}],
+        ["frame.png"],
+        visual_bindings=_single_frame_binding(),
     )
     schema = response_format["json_schema"]["schema"]
     payload = _complete_hosted_payload()
@@ -595,10 +787,16 @@ def test_hosted_response_schema_uses_selected_frames_and_actual_action_indices()
     import jsonschema
 
     response_format = reason_module._hosted_rollout_response_format(
-        [{"step": 4}, {"step": 19}], ["first.png", "last.png"],
-        visual_bindings={step: {**_single_frame_binding()[0], "action_step": step,
-                               "camera_observation": frame}
-                         for step, frame in [(4, "first.png"), (19, "last.png")]},
+        [{"step": 4}, {"step": 19}],
+        ["first.png", "last.png"],
+        visual_bindings={
+            step: {
+                **_single_frame_binding()[0],
+                "action_step": step,
+                "camera_observation": frame,
+            }
+            for step, frame in [(4, "first.png"), (19, "last.png")]
+        },
     )
     schema = response_format["json_schema"]["schema"]
     payload = _complete_hosted_payload()
@@ -613,39 +811,75 @@ def test_hosted_response_schema_uses_selected_frames_and_actual_action_indices()
         jsonschema.validate(payload, schema)
 
 
-@pytest.mark.parametrize("score", [-0.1, 1.01, 9, float("nan"), float("inf"), True, "0.9", None])
+@pytest.mark.parametrize(
+    "score", [-0.1, 1.01, 9, float("nan"), float("inf"), True, "0.9", None]
+)
 def test_hosted_scores_are_rejected_without_clamping_or_coercion(score):
     payload = _complete_hosted_payload()
     payload["score"] = score
     with pytest.raises(CosmosReasonError, match="score must be a finite number"):
         reason_module._parse_hosted_rollout_output(
-            json.dumps(payload), actions=[{"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary(), "action": [0.0]}],
-            rollout_id="synthetic", threshold=0.5, family="minimax_m3", frame_names=["frame.png"],
+            json.dumps(payload),
+            actions=[
+                {
+                    "step": 0,
+                    "sim_step": 0,
+                    "episode_boundary": _no_reset_boundary(),
+                    "action": [0.0],
+                }
+            ],
+            rollout_id="synthetic",
+            threshold=0.5,
+            family="minimax_m3",
+            frame_names=["frame.png"],
             visual_bindings=_single_frame_binding(),
         )
 
 
-@pytest.mark.parametrize("text", [
-    '{"score":0.9,"success":true,"summary":"test", "per_step":[',
-    'score: 0.9 success: true',
-    'prefix {"score":0.9,"success":true,"per_step":[]}',
-    '```json\n{"score":0.9,"success":true,"per_step":[]}\n```',
-    '[{"score":0.9,"success":true,"per_step":[]}]',
-    '{"score":0.1,"score":0.9,"success":true,"per_step":[]}',
-])
+@pytest.mark.parametrize(
+    "text",
+    [
+        '{"score":0.9,"success":true,"summary":"test", "per_step":[',
+        "score: 0.9 success: true",
+        'prefix {"score":0.9,"success":true,"per_step":[]}',
+        '```json\n{"score":0.9,"success":true,"per_step":[]}\n```',
+        '[{"score":0.9,"success":true,"per_step":[]}]',
+        '{"score":0.1,"score":0.9,"success":true,"per_step":[]}',
+    ],
+)
 def test_hosted_parser_does_not_recover_truncated_or_ambiguous_json(text):
     with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
         reason_module._parse_hosted_rollout_output(
-            text, actions=[{"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}], rollout_id="synthetic", threshold=0.5,
-            family="minimax_m3", frame_names=["frame.png"], visual_bindings=_single_frame_binding(),
+            text,
+            actions=[
+                {"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}
+            ],
+            rollout_id="synthetic",
+            threshold=0.5,
+            family="minimax_m3",
+            frame_names=["frame.png"],
+            visual_bindings=_single_frame_binding(),
         )
 
 
-@pytest.mark.parametrize("corruption", [
-    "missing_event", "duplicate_event", "wrong_index", "boolean_index", "blank_critique",
-    "unknown_camera", "missing_confidence", "invalid_confidence", "unknown_tag",
-    "synthetic_critique", "wrong_rollout", "non_boolean_success", "blank_summary",
-])
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "missing_event",
+        "duplicate_event",
+        "wrong_index",
+        "boolean_index",
+        "blank_critique",
+        "unknown_camera",
+        "missing_confidence",
+        "invalid_confidence",
+        "unknown_tag",
+        "synthetic_critique",
+        "wrong_rollout",
+        "non_boolean_success",
+        "blank_summary",
+    ],
+)
 def test_hosted_requires_complete_model_local_event_contract(corruption):
     payload = _complete_hosted_payload()
     event = payload["per_step"][0]
@@ -677,14 +911,24 @@ def test_hosted_requires_complete_model_local_event_contract(corruption):
         payload["summary"] = ""
     with pytest.raises(CosmosReasonError, match="hosted evaluator contract rejected"):
         reason_module._parse_hosted_rollout_output(
-            json.dumps(payload), actions=[{"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}], rollout_id="synthetic",
-            threshold=0.5, family="minimax_m3", frame_names=["frame.png"],
+            json.dumps(payload),
+            actions=[
+                {"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}
+            ],
+            rollout_id="synthetic",
+            threshold=0.5,
+            family="minimax_m3",
+            frame_names=["frame.png"],
             visual_bindings=_single_frame_binding(),
         )
 
 
-@pytest.mark.parametrize("finish_reason", [None, "length", "content_filter", "tool_calls"])
-def test_hosted_evaluator_rejects_unfinished_completions_even_with_parseable_json(tmp_path, finish_reason):
+@pytest.mark.parametrize(
+    "finish_reason", [None, "length", "content_filter", "tool_calls"]
+)
+def test_hosted_evaluator_rejects_unfinished_completions_even_with_parseable_json(
+    tmp_path, finish_reason
+):
     frame = tmp_path / "frame.png"
     frame.write_bytes(b"synthetic-frame")
 
@@ -692,63 +936,125 @@ def test_hosted_evaluator_rejects_unfinished_completions_even_with_parseable_jso
         def chat_completion(self, **kwargs):
             return {
                 "model": kwargs["model"],
-                "choices": [{"finish_reason": finish_reason,
-                             "message": {"content": json.dumps(_complete_hosted_payload())}}],
+                "choices": [
+                    {
+                        "finish_reason": finish_reason,
+                        "message": {"content": json.dumps(_complete_hosted_payload())},
+                    }
+                ],
             }
 
     with pytest.raises(CosmosReasonError, match="incomplete completion"):
         run_token_factory_rollout_vlm(
-            model_id="MiniMaxAI/MiniMax-M3", image_paths=[frame], actions=[{"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}],
+            model_id="MiniMaxAI/MiniMax-M3",
+            image_paths=[frame],
+            actions=[
+                {"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary()}
+            ],
             frame_metadata=_frame_metadata([frame.name]),
-            task_description="task", rollout_id="synthetic", threshold=0.5, client=Client(),
+            task_description="task",
+            rollout_id="synthetic",
+            threshold=0.5,
+            client=Client(),
         )
 
 
 def test_complete_hosted_output_retains_original_score_and_ground_truth():
     payload = _complete_hosted_payload()
-    actions = [{"step": 0, "sim_step": 0, "episode_boundary": _no_reset_boundary(), "action": [0.0], "simulator_ground_truth": {"placement_stable": True}}]
+    actions = [
+        {
+            "step": 0,
+            "sim_step": 0,
+            "episode_boundary": _no_reset_boundary(),
+            "action": [0.0],
+            "simulator_ground_truth": {"placement_stable": True},
+        }
+    ]
     result = reason_module._parse_hosted_rollout_output(
-        json.dumps(payload), actions=actions, rollout_id="synthetic", threshold=0.5,
-        family="minimax_m3", frame_names=["frame.png"], visual_bindings=_single_frame_binding(),
+        json.dumps(payload),
+        actions=actions,
+        rollout_id="synthetic",
+        threshold=0.5,
+        family="minimax_m3",
+        frame_names=["frame.png"],
+        visual_bindings=_single_frame_binding(),
     )
     assert result["score"] == payload["score"] and result["success"] is True
     assert result["per_step"][0]["critique_source"] == "model_per_step"
-    assert result["per_step"][0]["simulator_ground_truth"] == actions[0]["simulator_ground_truth"]
+    assert (
+        result["per_step"][0]["simulator_ground_truth"]
+        == actions[0]["simulator_ground_truth"]
+    )
 
 
 @pytest.mark.parametrize("model", [DEFAULT_COSMOS3_MODEL, "MiniMaxAI/MiniMax-M3"])
-def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(tmp_path, model):
+def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(
+    tmp_path, model
+):
     frame = tmp_path / "frame.png"
     frame.write_bytes(b"synthetic-frame")
-    actions = [{"step": index, "sim_step": index * 5, "episode_boundary": _no_reset_boundary(), "action": [index / 100]} for index in range(65)]
+    actions = [
+        {
+            "step": index,
+            "sim_step": index * 5,
+            "episode_boundary": _no_reset_boundary(),
+            "action": [index / 100],
+        }
+        for index in range(65)
+    ]
 
     class Client:
         def chat_completion(self, **kwargs):
             prompt = kwargs["messages"][0]["content"][0]["text"]
             lines = prompt.splitlines()
-            sent_actions = json.loads(next(line.removeprefix("Actions by step: ")
-                                           for line in lines if line.startswith("Actions by step: ")))
-            indices = json.loads(next(line.removeprefix("Required per_step indices: ")
-                                     for line in lines if line.startswith("Required per_step indices: ")))
+            sent_actions = json.loads(
+                next(
+                    line.removeprefix("Actions by step: ")
+                    for line in lines
+                    if line.startswith("Actions by step: ")
+                )
+            )
+            indices = json.loads(
+                next(
+                    line.removeprefix("Required per_step indices: ")
+                    for line in lines
+                    if line.startswith("Required per_step indices: ")
+                )
+            )
             assert sent_actions == actions
             assert indices == list(range(65))
             payload = _complete_hosted_payload()
             payload["per_step"] = [
-                {**payload["per_step"][0], "step": index,
-                 "critique_text": f"Insufficient visual evidence for step {index}.",
-                 "camera_observation": None, "confidence": 0}
-                if index else {**payload["per_step"][0], "step": index}
+                {
+                    **payload["per_step"][0],
+                    "step": index,
+                    "critique_text": f"Insufficient visual evidence for step {index}.",
+                    "camera_observation": None,
+                    "confidence": 0,
+                }
+                if index
+                else {**payload["per_step"][0], "step": index}
                 for index in indices
             ]
             return {
                 "model": kwargs["model"],
-                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(payload)}}],
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {"content": json.dumps(payload)},
+                    }
+                ],
             }
 
     result = run_token_factory_rollout_vlm(
-        model_id=model, image_paths=[frame], actions=actions,
+        model_id=model,
+        image_paths=[frame],
+        actions=actions,
         frame_metadata=_frame_metadata([frame.name]),
-        task_description="synthetic event sequence", rollout_id="synthetic", threshold=0.5, client=Client(),
+        task_description="synthetic event sequence",
+        rollout_id="synthetic",
+        threshold=0.5,
+        client=Client(),
     )
     assert result["action_count"] == len(result["per_step"]) == 65
     assert [event["step"] for event in result["per_step"]] == list(range(65))
@@ -757,17 +1063,137 @@ def test_hosted_prompt_and_strict_output_cover_actions_beyond_legacy_preview(tmp
 def test_self_hosted_prompt_retains_legacy_action_preview():
     actions = [{"step": index, "action": [0.0]} for index in range(65)]
     prompt = reason_module._cosmos_reason_prompt(
-        family="cosmos3", actions=actions, task_description="synthetic", frame_names=["frame.png"],
+        family="cosmos3",
+        actions=actions,
+        task_description="synthetic",
+        frame_names=["frame.png"],
     )
-    indices = json.loads(next(line.removeprefix("Required per_step indices: ")
-                             for line in prompt.splitlines() if line.startswith("Required per_step indices: ")))
+    indices = json.loads(
+        next(
+            line.removeprefix("Required per_step indices: ")
+            for line in prompt.splitlines()
+            if line.startswith("Required per_step indices: ")
+        )
+    )
     assert indices == list(range(64))
 
 
 def _no_reset_boundary():
     return {
         "schema": "npa.sim2real.episode_boundary.v1",
-        "simulator_episode_id": 0, "action_episode_id": 0,
-        "reset_events": [], "reset_on_current_step": False,
-        "action_outcome_valid": True, "temporal_credit_valid": True,
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
+        "temporal_credit_valid": True,
     }
+
+
+class _ReasonInputs(dict):
+    input_ids = [[10]]
+
+    def to(self, _device):
+        return self
+
+
+class _ReasonProcessor:
+    def __init__(self, model_payload):
+        self.model_payload = model_payload
+
+    def apply_chat_template(self, messages, **_kwargs):
+        assert messages[0]["content"][1]["type"] == "image"
+        return "synthetic rollout prompt"
+
+    def __call__(self, **_kwargs):
+        return _ReasonInputs(input_ids=self.input_ids)
+
+    @property
+    def input_ids(self):
+        return _ReasonInputs.input_ids
+
+    def batch_decode(self, generated, **_kwargs):
+        assert generated == [[20]]
+        return [json.dumps(self.model_payload)]
+
+
+class _ReasonModel:
+    def parameters(self):
+        return iter([SimpleNamespace(device="cpu")])
+
+    def generate(self, **kwargs):
+        assert kwargs["input_ids"] == [[10]]
+        return [[10, 20]]
+
+
+def _install_reason_model_double(monkeypatch, model_payload):
+    """Replace external model execution while retaining the public inference path."""
+    import torch
+
+    processor = _ReasonProcessor(model_payload)
+    transformer = SimpleNamespace(
+        AutoProcessor=SimpleNamespace(
+            from_pretrained=lambda *_args, **_kwargs: processor
+        ),
+        AutoModelForImageTextToText=SimpleNamespace(
+            from_pretrained=lambda *_args, **_kwargs: _ReasonModel()
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "transformers", transformer)
+    monkeypatch.setitem(
+        sys.modules,
+        "qwen_vl_utils",
+        SimpleNamespace(process_vision_info=lambda _messages: ([], [])),
+    )
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "is_bf16_supported", lambda: False)
+
+
+@pytest.fixture
+def self_hosted_reason(monkeypatch, tmp_path):
+    """A decoded local frame plus external model doubles; no live inference."""
+    from PIL import Image
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (2, 2)).save(frame)
+    monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
+    monkeypatch.setenv("NPA_COSMOS_REASON2_CACHE", str(tmp_path / "cache"))
+
+    def run(model_payload):
+        _install_reason_model_double(monkeypatch, model_payload)
+        return reason_module.run_cosmos_reason_vlm(
+            model_id=DEFAULT_REASON2_MODEL,
+            image_paths=[frame],
+            actions=[{"step": 0, "action": [0.0]}],
+            task_description="Hold the cube.",
+            rollout_id="review-rollout",
+            threshold=0.5,
+        )
+
+    return run
+
+
+@pytest.mark.parametrize("verdict", ["false", 1, None])
+def test_self_hosted_inference_rejects_malformed_verdict_before_completion(
+    self_hosted_reason, capsys, verdict
+):
+    with pytest.raises(CosmosReasonError, match="success must be a JSON boolean"):
+        self_hosted_reason({"score": 0.9, "success": verdict})
+
+    events = [
+        json.loads(line)["event"] for line in capsys.readouterr().out.splitlines()
+    ]
+    assert events == ["cosmos_reason_inference_start"]
+
+
+@pytest.mark.parametrize("verdict,expected", [(True, True), (False, False)])
+def test_self_hosted_inference_preserves_explicit_boolean_verdict(
+    self_hosted_reason, capsys, verdict, expected
+):
+    result = self_hosted_reason({"score": 0.9, "success": verdict})
+
+    assert result["success"] is expected
+    assert result["component_source"] == "cosmos_reason_vlm"
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert events[-1]["event"] == "cosmos_reason_inference_complete"
+    assert events[-1]["success"] is expected

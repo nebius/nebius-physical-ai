@@ -9,7 +9,11 @@ from npa.clients.endpoint import EndpointError
 
 
 def _wait_for_kubernetes_forward(
-    proc: subprocess.Popen, local_port: int, remote_port: int, *, timeout: float = 10.0,
+    proc: subprocess.Popen,
+    local_port: int,
+    remote_port: int,
+    *,
+    timeout: float = 10.0,
 ) -> None:
     """Wait for kubectl itself to confirm the requested local listener."""
     if proc.stdout is None:
@@ -22,7 +26,9 @@ def _wait_for_kubernetes_forward(
         while proc.poll() is None:
             remaining = deadline - time.monotonic()
             if remaining <= 0 or not selector.select(remaining):
-                raise EndpointError("Kubernetes port-forward did not confirm its local listener")
+                raise EndpointError(
+                    "Kubernetes port-forward did not confirm its local listener"
+                )
             chunk = os.read(proc.stdout.fileno(), 65536)
             if not chunk:
                 break
@@ -33,4 +39,6 @@ def _wait_for_kubernetes_forward(
                     break
                 os.set_blocking(proc.stdout.fileno(), False)
                 return
-    raise EndpointError("Kubernetes port-forward exited before confirming its local listener")
+    raise EndpointError(
+        "Kubernetes port-forward exited before confirming its local listener"
+    )

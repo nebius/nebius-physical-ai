@@ -31,8 +31,27 @@ def test_robocasa_keeps_known_good_gymnasium_and_policy_only_lerobot() -> None:
 def test_robocasa_runtime_is_non_root_without_passwordless_sudo() -> None:
     text = DOCKERFILE.read_text(encoding="utf-8")
 
-    user_lines = [line.strip() for line in text.splitlines() if line.startswith("USER ")]
+    user_lines = [
+        line.strip() for line in text.splitlines() if line.startswith("USER ")
+    ]
     assert user_lines[-1] == "USER ubuntu"
     assert "NOPASSWD" not in text
     assert "openssh-server" not in text
     assert "rsync sudo" not in text
+
+
+def test_robocasa_image_includes_local_runtime_dependencies_and_smokes_service() -> (
+    None
+):
+    text = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "COPY src/npa/clients/storage.py /app/npa/clients/storage.py" in text
+    assert "COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py" in text
+    assert (
+        'python -c "from npa.workbench.robocasa.service import app; '
+        'assert app is not None"'
+    ) in text
+
+    final_user = text.rindex("USER ubuntu")
+    runtime_smoke = text.index("RUN python /app/smoke_functional.py")
+    assert final_user < runtime_smoke

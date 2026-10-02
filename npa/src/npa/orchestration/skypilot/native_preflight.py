@@ -50,7 +50,9 @@ _REASONS = {
 }
 
 
-def _check_config(config: Mapping[str, Any], project: str, tenant: str, region: str) -> None:
+def _check_config(
+    config: Mapping[str, Any], project: str, tenant: str, region: str
+) -> None:
     native = config.get("nebius") or {}
     if not isinstance(native, dict):
         raise _NativeFailure("native_scope", "configuration")
@@ -61,7 +63,10 @@ def _check_config(config: Mapping[str, Any], project: str, tenant: str, region: 
     if not isinstance(regional, dict):
         raise _NativeFailure("native_scope", "configuration")
     for part in (native, regional):
-        for key, wanted, reason in (("project_id", project, "project"), ("tenant_id", tenant, "tenant")):
+        for key, wanted, reason in (
+            ("project_id", project, "project"),
+            ("tenant_id", tenant, "tenant"),
+        ):
             if part.get(key) not in (None, "", wanted):
                 raise _NativeFailure("native_scope", reason)
 
@@ -77,7 +82,9 @@ def _pin_resources(resources: Any, region: str) -> dict[str, Any]:
     cloud = str(pinned.get("cloud") or (infra[0] if infra[0] else "nebius")).lower()
     if cloud != "nebius" or (infra[0] and infra[0].lower() != "nebius"):
         raise _NativeFailure("native_scope", "configuration")
-    if pinned.get("region") not in (None, "", region) or (len(infra) > 1 and infra[1] != region):
+    if pinned.get("region") not in (None, "", region) or (
+        len(infra) > 1 and infra[1] != region
+    ):
         raise _NativeFailure("native_scope", "region")
     if len(infra) > 2:
         if pinned.get("zone") not in (None, "", infra[2]):
@@ -96,7 +103,9 @@ def _pin_resources(resources: Any, region: str) -> dict[str, Any]:
 def _native(resources: Any) -> bool:
     if not isinstance(resources, dict):
         return False
-    cloud = str(resources.get("cloud") or str(resources.get("infra") or "").split("/")[0]).lower()
+    cloud = str(
+        resources.get("cloud") or str(resources.get("infra") or "").split("/")[0]
+    ).lower()
     return cloud == "nebius"
 
 
@@ -118,7 +127,10 @@ def _managed_probe(request: dict[str, Any]) -> dict[str, Any]:
     # a mismatching credential tenant with the NPA CLI's credential identity.
     try:
         effective_project = skypilot_config.get_effective_region_config(
-            cloud="nebius", region=region, keys=("project_id",), default_value=None,
+            cloud="nebius",
+            region=region,
+            keys=("project_id",),
+            default_value=None,
         )
         actual_tenant = nebius.get_tenant_id()
     except Exception:
@@ -133,16 +145,27 @@ def _managed_probe(request: dict[str, Any]) -> dict[str, Any]:
         if provider_utils.get_project_by_region(region) != project:
             raise _NativeFailure("native_scope", "project")
         sdk = nebius.sdk()
-        observed = nebius.sync_call(nebius.iam().ProjectServiceClient(sdk).get(
-            nebius.iam().GetProjectRequest(id=project), timeout=nebius.READ_TIMEOUT,
-        ))
+        observed = nebius.sync_call(
+            nebius.iam()
+            .ProjectServiceClient(sdk)
+            .get(
+                nebius.iam().GetProjectRequest(id=project),
+                timeout=nebius.READ_TIMEOUT,
+            )
+        )
     except _NativeFailure:
         raise
     except Exception:
         raise _NativeFailure("native_scope", "provider", "unknown") from None
-    if not all((observed.metadata.id, observed.metadata.parent_id, observed.status.region)):
+    if not all(
+        (observed.metadata.id, observed.metadata.parent_id, observed.status.region)
+    ):
         raise _NativeFailure("native_scope", "identity", "unknown")
-    if (observed.metadata.id, observed.metadata.parent_id, observed.status.region) != (project, tenant, region):
+    if (observed.metadata.id, observed.metadata.parent_id, observed.status.region) != (
+        project,
+        tenant,
+        region,
+    ):
         raise _NativeFailure("native_scope", "scope")
 
     chosen = []
@@ -163,13 +186,23 @@ def _managed_probe(request: dict[str, Any]) -> dict[str, Any]:
             raise _NativeFailure("gpu_product", "catalog", "unknown")
         platform, preset = parts
         try:
-            product = nebius.sync_call(nebius.compute().PlatformServiceClient(sdk).get_by_name(
-                nebius.nebius_common().GetByNameRequest(parent_id=project, name=platform),
-                timeout=nebius.READ_TIMEOUT,
-            ))
+            product = nebius.sync_call(
+                nebius.compute()
+                .PlatformServiceClient(sdk)
+                .get_by_name(
+                    nebius.nebius_common().GetByNameRequest(
+                        parent_id=project, name=platform
+                    ),
+                    timeout=nebius.READ_TIMEOUT,
+                )
+            )
         except Exception:
             raise _NativeFailure("gpu_product", "provider", "unknown") from None
-        if not product.metadata.id or not product.metadata.parent_id or not product.metadata.name:
+        if (
+            not product.metadata.id
+            or not product.metadata.parent_id
+            or not product.metadata.name
+        ):
             raise _NativeFailure("gpu_product", "catalog", "unknown")
         # Catalog products can be owned by a regional provider catalog project;
         # this GetByName request itself proves availability to the exact target.
@@ -191,9 +224,13 @@ def _managed_probe(request: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_native_nebius_submission(
-    *, documents: Sequence[dict[str, Any]], target: ExecutionTarget,
-    global_config: dict[str, Any], sky_bin: str,
-    extra_env: Mapping[str, str], cwd: str | os.PathLike[str] | None = None,
+    *,
+    documents: Sequence[dict[str, Any]],
+    target: ExecutionTarget,
+    global_config: dict[str, Any],
+    sky_bin: str,
+    extra_env: Mapping[str, str],
+    cwd: str | os.PathLike[str] | None = None,
 ) -> None:
     """Verify and pin native tasks/controller in caller-owned runtime copies.
 
@@ -208,7 +245,9 @@ def verify_native_nebius_submission(
         config = deepcopy(global_config)
         _check_config(config, target.project_id, target.tenant_id, target.region)
         native = config.setdefault("nebius", {})
-        native.setdefault("region_configs", {}).setdefault(target.region, {})["project_id"] = target.project_id
+        native.setdefault("region_configs", {}).setdefault(target.region, {})[
+            "project_id"
+        ] = target.project_id
         shapes: list[dict[str, Any]] = []
         native_docs = []
         for document in documents:
@@ -219,7 +258,11 @@ def verify_native_nebius_submission(
                 shape["num_nodes"] = document["num_nodes"]
             # Sky Task.config can override provider identity in resource config.
             # Native identity is exclusively the verified generated config.
-            overrides = document.get("config") or document["resources"].get("_cluster_config_overrides") or {}
+            overrides = (
+                document.get("config")
+                or document["resources"].get("_cluster_config_overrides")
+                or {}
+            )
             if not isinstance(overrides, dict) or "nebius" in overrides:
                 raise _NativeFailure("native_scope", "override")
             if overrides:
@@ -240,30 +283,77 @@ def verify_native_nebius_submission(
         with tempfile.TemporaryDirectory(prefix="npa-native-preflight-") as directory:
             root = Path(directory)
             root.chmod(0o700)
-            request_path, result_path, config_path = (root / name for name in ("request.json", "result.json", "config.yaml"))
-            request = {"project": target.project_id, "tenant": target.tenant_id,
-                       "region": target.region, "shapes": shapes}
-            for path, contents in ((request_path, json.dumps(request)), (config_path, yaml.safe_dump(config))):
-                with open(path, "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as handle:
+            request_path, result_path, config_path = (
+                root / name for name in ("request.json", "result.json", "config.yaml")
+            )
+            request = {
+                "project": target.project_id,
+                "tenant": target.tenant_id,
+                "region": target.region,
+                "shapes": shapes,
+            }
+            for path, contents in (
+                (request_path, json.dumps(request)),
+                (config_path, yaml.safe_dump(config)),
+            ):
+                with open(
+                    path, "x", opener=lambda path, flags: os.open(path, flags, 0o600)
+                ) as handle:
                     handle.write(contents)
-            env = {**os.environ, **extra_env, "SKYPILOT_GLOBAL_CONFIG": str(config_path)}
+            env = {
+                **os.environ,
+                **extra_env,
+                "SKYPILOT_GLOBAL_CONFIG": str(config_path),
+            }
             try:
                 result = subprocess.run(
-                    [str(interpreter), str(Path(__file__).absolute()), str(request_path), str(result_path)],
-                    env=env, cwd=cwd, capture_output=True, text=True, check=False,
+                    [
+                        str(interpreter),
+                        str(Path(__file__).absolute()),
+                        str(request_path),
+                        str(result_path),
+                    ],
+                    env=env,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
                 )
-                payload = json.loads(result_path.read_text()) if result.returncode == 0 else {}
+                payload = (
+                    json.loads(result_path.read_text())
+                    if result.returncode == 0
+                    else {}
+                )
             except (OSError, ValueError, subprocess.SubprocessError):
                 raise _NativeFailure("native_scope", "runtime", "unknown") from None
         if payload.get("status") != "pass":
-            check = payload.get("check") if payload.get("check") in {"native_scope", "gpu_product"} else "native_scope"
-            reason = payload.get("reason") if payload.get("reason") in _REASONS else "runtime"
-            status = payload.get("status") if payload.get("status") in {"fail", "unknown"} else "unknown"
+            check = (
+                payload.get("check")
+                if payload.get("check") in {"native_scope", "gpu_product"}
+                else "native_scope"
+            )
+            reason = (
+                payload.get("reason")
+                if payload.get("reason") in _REASONS
+                else "runtime"
+            )
+            status = (
+                payload.get("status")
+                if payload.get("status") in {"fail", "unknown"}
+                else "unknown"
+            )
             raise _NativeFailure(check, reason, status)
         selections = payload.get("resources")
-        if not isinstance(selections, list) or len(selections) != len(shapes) or any(
-            not isinstance(item, dict) or item.get("cloud") != "nebius"
-            or item.get("region") != target.region or not item.get("instance_type") for item in selections
+        if (
+            not isinstance(selections, list)
+            or len(selections) != len(shapes)
+            or any(
+                not isinstance(item, dict)
+                or item.get("cloud") != "nebius"
+                or item.get("region") != target.region
+                or not item.get("instance_type")
+                for item in selections
+            )
         ):
             raise _NativeFailure("gpu_product", "catalog", "unknown")
         for document, selected in zip(native_docs, selections):
@@ -275,7 +365,9 @@ def verify_native_nebius_submission(
         global_config.clear()
         global_config.update(config)
     except _NativeFailure as exc:
-        raise ExecutionPreflightError(exc.check, _REASONS[exc.reason], status=exc.status) from None
+        raise ExecutionPreflightError(
+            exc.check, _REASONS[exc.reason], status=exc.status
+        ) from None
 
 
 def _main() -> None:
@@ -285,7 +377,9 @@ def _main() -> None:
         payload = {"check": exc.check, "reason": exc.reason, "status": exc.status}
     except Exception:
         payload = {"check": "native_scope", "reason": "runtime", "status": "unknown"}
-    with open(sys.argv[2], "x", opener=lambda path, flags: os.open(path, flags, 0o600)) as handle:
+    with open(
+        sys.argv[2], "x", opener=lambda path, flags: os.open(path, flags, 0o600)
+    ) as handle:
         json.dump(payload, handle)
 
 

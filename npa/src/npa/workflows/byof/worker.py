@@ -200,9 +200,13 @@ def _summary(
 
 
 def _publish_artifacts(storage: StorageClient, root: Path, prefix: str) -> None:
-    paths = sorted(root.rglob("*"), key=lambda path: (
-        path.name == "npa_byof_summary.json", path.relative_to(root).as_posix()
-    ))
+    paths = sorted(
+        root.rglob("*"),
+        key=lambda path: (
+            path.name == "npa_byof_summary.json",
+            path.relative_to(root).as_posix(),
+        ),
+    )
     for path in paths:
         if path.is_symlink():
             raise ValueError("BYOF output artifacts must not contain symbolic links")

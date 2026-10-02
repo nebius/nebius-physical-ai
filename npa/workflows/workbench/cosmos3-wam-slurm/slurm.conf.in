@@ -1,0 +1,27 @@
+ClusterName=@CLUSTER@
+SlurmctldHost=@NODE@(@ADDRESS@)
+SlurmUser=slurm
+SlurmdUser=root
+SlurmctldPort=6817
+SlurmdPort=6818
+SlurmctldPidFile=/run/slurmctld.pid
+SlurmdPidFile=/run/slurmd.pid
+StateSaveLocation=/var/spool/slurmctld
+SlurmdSpoolDir=/var/spool/slurmd
+SlurmctldLogFile=/var/log/slurm/slurmctld.log
+SlurmdLogFile=/var/log/slurm/slurmd.log
+AuthType=auth/munge
+SchedulerType=sched/backfill
+SelectType=select/cons_tres
+SelectTypeParameters=CR_Core_Memory
+ProctrackType=proctrack/cgroup
+TaskPlugin=task/cgroup,task/affinity
+JobAcctGatherType=jobacct_gather/cgroup
+JobAcctGatherFrequency=30
+AccountingStorageType=accounting_storage/slurmdbd
+AccountingStorageHost=localhost
+AccountingStorageTRES=gres/gpu
+GresTypes=gpu
+ReturnToService=2
+NodeName=@NODE@ NodeAddr=@ADDRESS@ @SHAPE@ RealMemory=@MEMORY@ Gres=gpu:b200:8 State=UNKNOWN
+PartitionName=gpu Nodes=@NODE@ Default=YES MaxTime=INFINITE State=UP

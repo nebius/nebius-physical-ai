@@ -56,7 +56,9 @@ def run_once(
     if submit_timeout is not None:
         overrides["submit_timeout"] = submit_timeout
     config = build_config_from_env(**overrides)
-    return _run_once(config, s3_client=s3_client, watermark_store=watermark_store, launcher=launcher)
+    return _run_once(
+        config, s3_client=s3_client, watermark_store=watermark_store, launcher=launcher
+    )
 
 
 def watch(

@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "episodes": {
+    "0": {
+      "subtasks": [
+        {
+          "start": 0.0,
+          "end": 2.666666746,
+          "label": "ready"
+        },
+        {
+          "start": 2.666666746,
+          "end": 5.333333492,
+          "label": "approach"
+        },
+        {
+          "start": 5.333333492,
+          "end": 6.333333492,
+          "label": "grasp"
+        },
+        {
+          "start": 6.333333492,
+          "end": 8.166666985,
+          "label": "transfer"
+        },
+        {
+          "start": 8.166666985,
+          "end": 9.300000191,
+          "label": "place"
+        },
+        {
+          "start": 9.300000191,
+          "end": 10.0,
+          "label": "release"
+        },
+        {
+          "start": 10.0,
+          "end": 12.0,
+          "label": "retract"
+        },
+        {
+          "start": 12.0,
+          "end": 15.133333333,
+          "label": "complete"
+        }
+      ],
+      "high_levels": []
+    }
+  }
+}

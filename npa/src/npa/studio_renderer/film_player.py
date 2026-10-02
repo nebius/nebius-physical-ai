@@ -96,8 +96,13 @@ def _caption_cues(source, duration):
         start, end = map(_seconds, lines[1].split(" --> "))
         if not 0 <= start < end <= duration:
             raise ValueError("Player captions exceed the rendered timeline")
-        cues.append({"start": start, "end": end,
-                     "text": html.escape("\n".join(lines[2:]), quote=False)})
+        cues.append(
+            {
+                "start": start,
+                "end": end,
+                "text": html.escape("\n".join(lines[2:]), quote=False),
+            }
+        )
     return cues
 
 
@@ -107,9 +112,14 @@ def _chapters(storyboard):
         if type(scene["duration"]) is not int or scene["duration"] <= 0:
             raise ValueError("Player chapters require positive whole-second durations")
         title = scene["title"]
-        chapters.append({"start": elapsed, "duration": scene["duration"],
-                         "title": " ".join(title) if isinstance(title, list) else title,
-                         "subtitle": scene.get("subtitle", "")})
+        chapters.append(
+            {
+                "start": elapsed,
+                "duration": scene["duration"],
+                "title": " ".join(title) if isinstance(title, list) else title,
+                "subtitle": scene.get("subtitle", ""),
+            }
+        )
         elapsed += scene["duration"]
     if not chapters:
         raise ValueError("Player requires at least one rendered chapter")
@@ -121,9 +131,11 @@ def _chapter_buttons(chapters):
     for index, chapter in enumerate(chapters):
         title = html.escape(chapter["title"])
         subtitle = html.escape(chapter["subtitle"])
-        buttons.append(f'<button class="chapter" data-chapter="{index}" type="button">'
-                       f'<time>{_clock(chapter["start"])}</time><span><strong>{title}</strong>'
-                       f'<small>{subtitle}</small></span></button>')
+        buttons.append(
+            f'<button class="chapter" data-chapter="{index}" type="button">'
+            f"<time>{_clock(chapter['start'])}</time><span><strong>{title}</strong>"
+            f"<small>{subtitle}</small></span></button>"
+        )
     return "\n".join(buttons)
 
 
@@ -136,10 +148,15 @@ def _inline_json(value):
 
 def _player_html(storyboard, captions):
     chapters, duration = _chapters(storyboard)
-    data = {"chapters": chapters, "duration": duration,
-            "captions": _caption_cues(captions.replace("\r\n", "\n"), duration)}
+    data = {
+        "chapters": chapters,
+        "duration": duration,
+        "captions": _caption_cues(captions.replace("\r\n", "\n"), duration),
+    }
     title = html.escape(storyboard["title"])
-    subtitle = html.escape(storyboard.get("subtitle", "Explore the film, one chapter at a time."))
+    subtitle = html.escape(
+        storyboard.get("subtitle", "Explore the film, one chapter at a time.")
+    )
     return f'''<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title} — Workbench</title><style>{_STYLE}</style></head>
@@ -162,4 +179,6 @@ poster="poster.png" src="film.mp4"></video>
 def _write_player(directory):
     storyboard = json.loads((directory / "render-storyboard.json").read_text())
     captions = (directory / "film.srt").read_text()
-    (directory / "watch.html").write_text(_player_html(storyboard, captions), encoding="utf-8")
+    (directory / "watch.html").write_text(
+        _player_html(storyboard, captions), encoding="utf-8"
+    )

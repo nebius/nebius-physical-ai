@@ -5,8 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 
 
-def environment_config(recipe: dict, *, training: bool, condition: str = "nominal",
-                       capture: bool = False, asset_root: Path | None = None):
+def environment_config(
+    recipe: dict,
+    *,
+    training: bool,
+    condition: str = "nominal",
+    capture: bool = False,
+    asset_root: Path | None = None,
+):
     """Build the pinned Franka lift task with explicit physical perturbations.
 
     Args:
@@ -26,7 +32,9 @@ def environment_config(recipe: dict, *, training: bool, condition: str = "nomina
     config.seed = recipe["seed"] if training else recipe["validation_seed"]
     config.sim.device = "cuda:0"
     if "physics_capacity" in recipe:
-        config.sim.physics.gpu_total_aggregate_pairs_capacity = recipe["physics_capacity"]["gpu_total_aggregate_pairs_capacity"]
+        config.sim.physics.gpu_total_aggregate_pairs_capacity = recipe[
+            "physics_capacity"
+        ]["gpu_total_aggregate_pairs_capacity"]
     config.commands.object_pose.resampling_time_range = (5.0, 5.0)
     _assets(config, recipe, asset_root)
     _physics_events(config, recipe, training, condition)
@@ -74,17 +82,28 @@ def _physics_events(config, recipe: dict, training: bool, condition: str) -> Non
 
     shift = recipe["conditions"][condition]
     mass = tuple(recipe["train_mass_range"]) if training else (shift["mass_scale"],) * 2
-    friction = tuple(recipe["train_friction_range"]) if training else (shift["friction"],) * 2
+    friction = (
+        tuple(recipe["train_friction_range"]) if training else (shift["friction"],) * 2
+    )
     config.events.npa_object_mass = EventTermCfg(
-        func=mdp.randomize_rigid_body_mass, mode="startup",
-        params={"asset_cfg": SceneEntityCfg("object"), "mass_distribution_params": mass,
-                "operation": "scale"},
+        func=mdp.randomize_rigid_body_mass,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "mass_distribution_params": mass,
+            "operation": "scale",
+        },
     )
     config.events.npa_object_material = EventTermCfg(
-        func=mdp.randomize_rigid_body_material, mode="startup",
-        params={"asset_cfg": SceneEntityCfg("object"), "static_friction_range": friction,
-                "dynamic_friction_range": friction, "restitution_range": (0.0, 0.0),
-                "num_buckets": 64 if training else 1},
+        func=mdp.randomize_rigid_body_material,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("object"),
+            "static_friction_range": friction,
+            "dynamic_friction_range": friction,
+            "restitution_range": (0.0, 0.0),
+            "num_buckets": 64 if training else 1,
+        },
     )
 
 
@@ -95,9 +114,13 @@ def _camera_config(config) -> None:
     config.scene.npa_rollout_camera = TiledCameraCfg(
         prim_path="{ENV_REGEX_NS}/NpaRolloutCamera",
         offset=TiledCameraCfg.OffsetCfg(pos=(1.5, -1.5, 1.3), convention="world"),
-        data_types=["rgb"], width=640, height=480, update_period=0.0,
-        spawn=sim.PinholeCameraCfg(focal_length=24.0, horizontal_aperture=20.955,
-                                  clipping_range=(0.05, 10.0)),
+        data_types=["rgb"],
+        width=640,
+        height=480,
+        update_period=0.0,
+        spawn=sim.PinholeCameraCfg(
+            focal_length=24.0, horizontal_aperture=20.955, clipping_range=(0.05, 10.0)
+        ),
     )
 
 
@@ -129,7 +152,9 @@ def build_runner(env, recipe: dict, output=None):
     from npa.workflows.franka_rl_validity import build_validated_wrapper
 
     wrapped = build_validated_wrapper(env, clip_actions=config.clip_actions)
-    runner = OnPolicyRunner(wrapped, settings, log_dir=str(output) if output else None, device="cuda:0")
+    runner = OnPolicyRunner(
+        wrapped, settings, log_dir=str(output) if output else None, device="cuda:0"
+    )
     return wrapped, runner, settings
 
 
@@ -157,17 +182,36 @@ def _tool_frame_check(native, profile: dict) -> dict:
     index = robot.body_names.index(profile["tool_body"])
     positions = robot.data.body_link_pos_w.torch[:, index].detach().cpu().numpy()
     quaternions = robot.data.body_link_quat_w.torch[:, index].detach().cpu().numpy()
-    measured = native.scene["ee_frame"].data.target_pos_w.torch[:, 0].detach().cpu().numpy()
-    offset = np.broadcast_to(np.asarray(profile["tool_offset_m"], dtype=positions.dtype), positions.shape)
+    measured = (
+        native.scene["ee_frame"].data.target_pos_w.torch[:, 0].detach().cpu().numpy()
+    )
+    offset = np.broadcast_to(
+        np.asarray(profile["tool_offset_m"], dtype=positions.dtype), positions.shape
+    )
     cross = 2 * np.cross(quaternions[:, :3], offset)
-    expected = positions + offset + quaternions[:, 3:] * cross + np.cross(quaternions[:, :3], cross)
+    expected = (
+        positions
+        + offset
+        + quaternions[:, 3:] * cross
+        + np.cross(quaternions[:, :3], cross)
+    )
     errors = np.linalg.norm(measured - expected, axis=1)
-    if (not np.isfinite(errors).all() or not np.allclose(np.linalg.norm(quaternions, axis=1), 1, atol=1e-4)
-            or float(errors.max()) > 1e-4):
-        raise ValueError("Frame sensor world TCP differs from the articulation link pose and grasp offset")
-    return {"source_body": profile.get("sensor_source_body", profile["base_body"]), "tool_body": profile["tool_body"],
-            "environments_checked": len(errors), "maximum_error_m": float(errors.max()),
-            "tolerance_m": 1e-4, "world_tcp_verified": True}
+    if (
+        not np.isfinite(errors).all()
+        or not np.allclose(np.linalg.norm(quaternions, axis=1), 1, atol=1e-4)
+        or float(errors.max()) > 1e-4
+    ):
+        raise ValueError(
+            "Frame sensor world TCP differs from the articulation link pose and grasp offset"
+        )
+    return {
+        "source_body": profile.get("sensor_source_body", profile["base_body"]),
+        "tool_body": profile["tool_body"],
+        "environments_checked": len(errors),
+        "maximum_error_m": float(errors.max()),
+        "tolerance_m": 1e-4,
+        "world_tcp_verified": True,
+    }
 
 
 def physics_evidence(env) -> dict:
@@ -189,10 +233,19 @@ def physics_evidence(env) -> dict:
         raise RuntimeError("Franka physics randomization events are missing")
     view = unwrapped.scene["object"].root_view
     material = wp.to_torch(view.get_material_properties())
-    values = {"mass_kg": wp.to_torch(view.get_masses()), "static_friction": material[..., 0],
-              "dynamic_friction": material[..., 1], "restitution": material[..., 2]}
-    evidence = {"startup_terms": list(terms), "embodiment": unwrapped.npa_embodiment_evidence, "physics_capacity": {
-        "gpu_total_aggregate_pairs_capacity": unwrapped.cfg.sim.physics.gpu_total_aggregate_pairs_capacity}}
+    values = {
+        "mass_kg": wp.to_torch(view.get_masses()),
+        "static_friction": material[..., 0],
+        "dynamic_friction": material[..., 1],
+        "restitution": material[..., 2],
+    }
+    evidence = {
+        "startup_terms": list(terms),
+        "embodiment": unwrapped.npa_embodiment_evidence,
+        "physics_capacity": {
+            "gpu_total_aggregate_pairs_capacity": unwrapped.cfg.sim.physics.gpu_total_aggregate_pairs_capacity
+        },
+    }
     evidence.update(_integrity_evidence(unwrapped))
     for name, value in values.items():
         if not torch.isfinite(value).all():
@@ -205,9 +258,12 @@ def _integrity_evidence(native):
     from npa.workflows.franka_rl_validity import validity_evidence
 
     evidence = {"simulation_validity": validity_evidence(native)}
-    for field, attribute in {"stability": "npa_stability_evidence", "tool_frame_check": "npa_tool_frame_check",
-            "frozen_observation_normalization": "npa_normalization_evidence",
-            "frozen_action_distribution": "npa_distribution_evidence"}.items():
+    for field, attribute in {
+        "stability": "npa_stability_evidence",
+        "tool_frame_check": "npa_tool_frame_check",
+        "frozen_observation_normalization": "npa_normalization_evidence",
+        "frozen_action_distribution": "npa_distribution_evidence",
+    }.items():
         if getattr(native, attribute, None):
             evidence[field] = getattr(native, attribute)
     if hasattr(native.cfg, "npa_simulation_validity"):

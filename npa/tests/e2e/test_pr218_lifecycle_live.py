@@ -99,11 +99,14 @@ def test_live_agent_destroy_then_deploy_is_reproducible(tmp_path: Path) -> None:
     stdout_path = tmp_path / "interrupted-agent-deploy.stdout"
     stderr_path = tmp_path / "interrupted-agent-deploy.stderr"
     did_interrupt = False
-    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open(
-        "w", encoding="utf-8"
-    ) as stderr:
+    with (
+        stdout_path.open("w", encoding="utf-8") as stdout,
+        stderr_path.open("w", encoding="utf-8") as stderr,
+    ):
         interrupted = subprocess.Popen(
-            internal_cli_argv(("agent", "deploy", "--project", project, "--name", agent)),
+            internal_cli_argv(
+                ("agent", "deploy", "--project", project, "--name", agent)
+            ),
             stdout=stdout,
             stderr=stderr,
             text=True,

@@ -132,9 +132,16 @@ def test_genesis_serverless_train_teacher(tmp_path: Path) -> None:
     )
 
     try:
-        submitted = _run_npa(command, timeout=int(os.environ.get("NPA_E2E_GENESIS_SUBMIT_TIMEOUT", "600")))
-        (artifacts_dir / "submit-stdout.txt").write_text(submitted.stdout, encoding="utf-8")
-        (artifacts_dir / "submit-stderr.txt").write_text(submitted.stderr, encoding="utf-8")
+        submitted = _run_npa(
+            command,
+            timeout=int(os.environ.get("NPA_E2E_GENESIS_SUBMIT_TIMEOUT", "600")),
+        )
+        (artifacts_dir / "submit-stdout.txt").write_text(
+            submitted.stdout, encoding="utf-8"
+        )
+        (artifacts_dir / "submit-stderr.txt").write_text(
+            submitted.stderr, encoding="utf-8"
+        )
         assert submitted.returncode == 0, _format_result(submitted)
         payload = json.loads(submitted.stdout)
         assert payload["status"] == "submitted"
@@ -147,17 +154,25 @@ def test_genesis_serverless_train_teacher(tmp_path: Path) -> None:
         client = ServerlessClient()
         submitted_info = _wait_for_visible_job(client, project_id, job_id)
         _write_job_capture(project_id, submitted_info, artifacts_dir, label="submitted")
-        assert _submitted_subnet_id(submitted_info.raw), "submitted Job spec.subnet_id is empty"
+        assert _submitted_subnet_id(submitted_info.raw), (
+            "submitted Job spec.subnet_id is empty"
+        )
 
         final = _poll_job(client, project_id, job_id, artifacts_dir)
         assert final.status == "succeeded", final.raw
         _write_job_capture(project_id, final, artifacts_dir, label="final")
 
         local_dir = artifacts_dir / "s3"
-        _download_s3_prefix(output_path, local_dir, access_key, secret_key, endpoint_url)
-        assert {path.name for path in local_dir.iterdir() if path.is_file()} >= _expected_artifact_names()
+        _download_s3_prefix(
+            output_path, local_dir, access_key, secret_key, endpoint_url
+        )
+        assert {
+            path.name for path in local_dir.iterdir() if path.is_file()
+        } >= _expected_artifact_names()
 
-        summary = json.loads((local_dir / "train_teacher_summary.json").read_text(encoding="utf-8"))
+        summary = json.loads(
+            (local_dir / "train_teacher_summary.json").read_text(encoding="utf-8")
+        )
         model = json.loads((local_dir / "model.pt").read_text(encoding="utf-8"))
         _assert_summary(summary, job_name=job_name)
         _assert_model(model, summary=summary)
@@ -232,7 +247,9 @@ def _submit_command(
     ]
 
 
-def _run_npa(args: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+def _run_npa(
+    args: list[str], *, timeout: int = 120
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [_npa_executable(), *args],
         cwd=Path(__file__).resolve().parents[3],
@@ -263,7 +280,9 @@ def _wait_for_visible_job(client: ServerlessClient, project_id: str, job_id: str
     pytest.fail(f"Job {job_id} was not visible after submission: {last}")
 
 
-def _poll_job(client: ServerlessClient, project_id: str, job_id: str, artifacts_dir: Path):
+def _poll_job(
+    client: ServerlessClient, project_id: str, job_id: str, artifacts_dir: Path
+):
     deadline = time.monotonic() + MAX_WAIT
     startup_deadline = time.monotonic() + STARTING_WAIT
     last = None
@@ -278,12 +297,16 @@ def _poll_job(client: ServerlessClient, project_id: str, job_id: str, artifacts_
         if current.status in {"succeeded", "failed", "cancelled"}:
             return current
         if startup_deadline and time.monotonic() > startup_deadline:
-            pytest.fail(f"Job {job_id} did not leave queue/startup within {STARTING_WAIT}s; last={current.raw}")
+            pytest.fail(
+                f"Job {job_id} did not leave queue/startup within {STARTING_WAIT}s; last={current.raw}"
+            )
         time.sleep(POLL_INTERVAL)
     pytest.fail(f"Job {job_id} did not finish within {MAX_WAIT}s; last={last}")
 
 
-def _write_job_capture(project_id: str, info, artifacts_dir: Path, *, label: str) -> None:
+def _write_job_capture(
+    project_id: str, info, artifacts_dir: Path, *, label: str
+) -> None:
     (artifacts_dir / f"job-detail-{label}.json").write_text(
         json.dumps(info.raw, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -334,7 +357,9 @@ def _cleanup_job(project_id: str, ref: str, artifacts_dir: Path) -> None:
         timeout=60,
         check=False,
     )
-    (artifacts_dir / "cleanup-orphan-check.log").write_text(orphan.stdout, encoding="utf-8")
+    (artifacts_dir / "cleanup-orphan-check.log").write_text(
+        orphan.stdout, encoding="utf-8"
+    )
 
 
 def _download_s3_prefix(

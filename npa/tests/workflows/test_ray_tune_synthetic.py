@@ -35,7 +35,9 @@ def test_reference_files_and_runtime_contract_exist() -> None:
         "cluster/start.sh",
     }
     assert expected <= {
-        path.relative_to(EXAMPLE).as_posix() for path in EXAMPLE.rglob("*") if path.is_file()
+        path.relative_to(EXAMPLE).as_posix()
+        for path in EXAMPLE.rglob("*")
+        if path.is_file()
     }
     requirements = (EXAMPLE / "cluster/requirements.txt").read_text().splitlines()
     assert requirements == ["ray[default,tune]==2.58.0"]
@@ -101,15 +103,26 @@ def test_summary_requires_all_trials_and_the_known_optimum() -> None:
         search.summarize(results, experiment_path="experiment")
 
 
-def test_relative_local_storage_is_normalized_for_arrow(tmp_path: Path, monkeypatch) -> None:
+def test_relative_local_storage_is_normalized_for_arrow(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.chdir(tmp_path)
     assert load("search").normalize_storage_path("storage") == str(tmp_path / "storage")
-    assert load("search").normalize_storage_path("s3://bucket/prefix") == "s3://bucket/prefix"
+    assert (
+        load("search").normalize_storage_path("s3://bucket/prefix")
+        == "s3://bucket/prefix"
+    )
 
 
 @pytest.mark.parametrize(
     "path",
-    ["", "https://example.invalid/path", "s3://bucket", "s3://user@bucket/prefix", "s3://bucket/a/../b"],
+    [
+        "",
+        "https://example.invalid/path",
+        "s3://bucket",
+        "s3://user@bucket/prefix",
+        "s3://bucket/a/../b",
+    ],
 )
 def test_unsafe_remote_storage_is_rejected(path: str) -> None:
     with pytest.raises(ValueError, match="storage-path"):
@@ -144,7 +157,9 @@ def test_inspector_rejects_self_consistent_false_trial_evidence(tmp_path: Path) 
     ]
     search._export(output, search._summary_record(trials, trials[1], "experiment"))
     trials[0]["loss"] = 99.0
-    (output / "trials.json").write_text(json.dumps(trials, indent=2, sort_keys=True) + "\n")
+    (output / "trials.json").write_text(
+        json.dumps(trials, indent=2, sort_keys=True) + "\n"
+    )
     manifest = output / "SHA256SUMS"
     lines = []
     for name in search.ARTIFACT_NAMES:
@@ -226,4 +241,8 @@ def test_real_local_ray_258_tune_execution(tmp_path: Path) -> None:
         "trial_count": 3,
     }
     inspected = load("inspect_results").inspect(output)
-    assert inspected == {"artifacts_verified": 3, "resumed_trials": 1, "trials_verified": 3}
+    assert inspected == {
+        "artifacts_verified": 3,
+        "resumed_trials": 1,
+        "trials_verified": 3,
+    }

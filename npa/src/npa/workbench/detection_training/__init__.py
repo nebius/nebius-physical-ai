@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from .schemas import EvalRequest, EvalResponse, StatusResponse, TrainRequest, TrainResponse
+from .schemas import (
+    EvalRequest,
+    EvalResponse,
+    StatusResponse,
+    TrainRequest,
+    TrainResponse,
+)
 
 __all__ = [
     "EvalRequest",
@@ -11,4 +17,3 @@ __all__ = [
     "TrainRequest",
     "TrainResponse",
 ]
-

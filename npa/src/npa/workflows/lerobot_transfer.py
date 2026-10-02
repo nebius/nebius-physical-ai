@@ -93,11 +93,19 @@ def _recipe(args: argparse.Namespace) -> dict:
     if min(args.validation_episodes, args.test_episodes) < 2:
         raise ValueError("Validation and test each require at least two reset seeds")
     if not 0 < args.minimum_success <= 1 or args.seed < 0:
-        raise ValueError("Success threshold must be in (0, 1] and seed must be nonnegative")
+        raise ValueError(
+            "Success threshold must be in (0, 1] and seed must be nonnegative"
+        )
     return {
-        key: getattr(args, key) for key in (
-            "seed", "train_steps", "batch_size", "validation_episodes", "test_episodes",
-            "eval_batch_size", "minimum_success",
+        key: getattr(args, key)
+        for key in (
+            "seed",
+            "train_steps",
+            "batch_size",
+            "validation_episodes",
+            "test_episodes",
+            "eval_batch_size",
+            "minimum_success",
         )
     } | {"validation_seed": 100_000, "test_seed": 100_000 + args.validation_episodes}
 

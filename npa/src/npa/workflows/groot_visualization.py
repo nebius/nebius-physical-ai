@@ -539,12 +539,12 @@ def emit_mcap(
 
 
 def _rerun_executable() -> str:
+    sibling = Path(sys.executable).with_name("rerun")
+    if sibling.is_file() and os.access(sibling, os.X_OK):
+        return str(sibling)
     candidate = shutil.which("rerun")
     if candidate:
         return candidate
-    sibling = Path(sys.executable).with_name("rerun")
-    if sibling.is_file():
-        return str(sibling)
     raise GrootVisualizationError("rerun CLI is unavailable for .rrd verification")
 
 

@@ -11,11 +11,12 @@ description: Use when working on NPA reference workflow specs, runner scripts, c
 > tool-specific examples or resource profiles, not as workflow authoring
 > surfaces. SkyPilot remains the engine that executes rendered specs.
 
-The catalog has exactly two workflow directories: `workflows/main/` contains
-`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`;
-`workflows/testing/` contains all other catalog specs.
-Keep catalog documentation in `workflows/README.md` and
-add new reference workflows under `workflows/testing/`.
+The catalog keeps the three principal pipelines in `workflows/main/`:
+`sim2real.yaml`, `paidf-cosmos3.yaml`, and `nurec-reconstruct.yaml`.
+Partner integrations live in `workflows/partners/<partner>/`; general reference
+workflows, component tests, and fixtures live in `workflows/testing/`.
+Keep catalog documentation in `workflows/README.md` and partner runbooks beside
+their specs.
 
 ## When To Use
 
@@ -38,15 +39,65 @@ artifact contracts, and customer-adaptable pipeline implementations.
 6. Run `validate-spec`, then `plan-spec --run-id preview`, before live submit.
    Register every shipped spec in `SUBMIT_LIVE_MATRIX`.
 
+For `field-failure-policy-improvement.yaml`, the native reference adapters join
+metric RGB-D reconstruction and shared-scene Isaac navigation. Follow the
+[native adapter contract](../../../docs/workbench/cookbooks/field-failure-policy-improvement.md#native-metric-capture-and-isaac-reference).
+Include both components in the reviewed source distribution, pin the navigation
+module inventory separately from the immutable image, and preserve source-overlay
+provenance. TSDF reconstruction is CPU work; native renderer/learner execution on
+RTX supplies the GPU evidence. Retain before/after replays of training-exposed
+failures separately from the untouched paired cohort. Only the latter may drive
+promotion; valid losing baseline episodes must not be discarded by a standalone
+success threshold. Public reference results do not establish compatibility with
+an undisclosed proprietary policy or calibration.
+
+For the public scan-to-policy sample, derive the parked isolation-control pose
+from dense rotated stance support and exact source topology before learning.
+Preserve its measured selection evidence in `support.json`; five corner/center
+rays or a large center clearance alone cannot exclude a small hole or a source
+boundary beneath a foot. Keep the free/obstacle controls, action sequence,
+native contact classification, cohort sizes and success gates unchanged when
+repairing initial parking placement. Initial CPU support evidence does not
+replace native control and full training/evaluation qualification.
+
+For `field-failure-reference-demo.yaml`, freeze training, development and final
+cohorts and the simulation-failure admission rule before learning. Evaluate the
+exact baseline on every frozen office training route before admitting its public
+capture; recompute complete native outcomes, bind admission into the public bundle
+reference, and reverify it before reconstruction and training. A crashed or
+control-failed observation cannot admit a capture; zero failures publish an honest
+terminal report without continuation or final evaluation. Preserve the distinction
+between these observed simulation failures and operator-supplied physical logs.
+Before admitting final evaluation, development selection
+must pair the exact case IDs and seeds and apply every per-case regression bound
+from the frozen `plan.metrics`, using the final comparator's strict boundary.
+Compute success gain as the mean paired success delta so an improvement of exactly
+one percentage point passes without an epsilon or a weakened threshold. Failed
+development selection must publish the measured violations in the HTML report
+and leave final evaluation untouched.
+Interrupted selection/report publication may accept identical retained bytes
+to finish missing report files. Reject different bytes without overwriting
+evidence; report recovery must not change eligibility or consume final cases.
+
 ## Current Reference YAMLs
+
+For a first BEHAVIOR DEV evaluation, use
+[the one-file onboarding guide](../../../docs/workbench/challenge-onboarding.md)
+and `npa workbench workflow challenge init`, `check`, and `prepare`.
+The helper materializes the canonical evaluation workflow and preserves the ten
+prescribed cases. A local `ready-to-prepare` result does not prove GPU readiness.
+The simulator runtime, licensed assets and task-configured policy remain
+operator prerequisites. Keep generated kits private; use the campaign path from
+the outset for durable case recovery. Other challenges are not supported by
+this helper yet.
 
 The retired catalog path is machine-checked by
 `npa/tests/guardrails/test_skypilot_catalog_retirement.py`, so a raw template
 cannot quietly reappear there.
 
 No raw SkyPilot templates remain in the retired catalog. Author workflow examples
-as `npa.workflow/v0.0.1` specs under
-`workflows/testing/`.
+as `npa.workflow/v0.0.1` specs under `workflows/testing/` or, for partner
+integrations, `workflows/partners/<partner>/`.
 
 ## Retired Templates
 
@@ -134,7 +185,7 @@ workflow templates.
 ## Three-Tier Contract
 
 - CLI: use `npa workbench workflow ...` and tool-specific workflow commands
-  such as `npa workbench mjlab workflow` or `npa workbench retargeting workflow`.
+  such as `npa workbench mjlab workflow` or `npa workbench sonic retargeting workflow`.
 - SDK: route through shared workflow submission helpers rather than shelling out
   from business logic.
 - Workflow: the `npa.workflow` spec is the executable source of truth for stage

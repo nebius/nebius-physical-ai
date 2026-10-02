@@ -50,17 +50,21 @@ def test_intent_apis_document_start_sim2real_and_plan() -> None:
 def test_tools_catalog_reply_covers_full_catalog_families() -> None:
     reply = format_tools_catalog(SAMPLE_TOOL_REFS, sample_size=12)
     assert f"{len(SAMPLE_TOOL_REFS)} toolRefs" in reply
-    assert "scheduler plan only" in reply.lower() or "plan-only" in reply.lower()
-    assert "run-spec" in reply
+    assert "single-use confirmation" in reply.lower()
+    assert "workflow submit" in reply.lower()
     assert "Families:" in reply
-    assert "sim2real" in reply.lower() or "token_factory" in reply.lower() or "cosmos" in reply.lower()
+    assert (
+        "sim2real" in reply.lower()
+        or "token_factory" in reply.lower()
+        or "cosmos" in reply.lower()
+    )
 
 
-def test_workflow_execute_guidance_matrix_mentions_plan_only_gap() -> None:
+def test_workflow_execute_guidance_matrix_describes_confirmed_agent_execution() -> None:
     reply = format_workflow_execute_guidance()
     assert "plan-only" in reply.lower()
     assert "run-spec" in reply
-    assert "--execute" in reply
+    assert "submit --runtime" in reply
     assert "Agent chat / UI" in reply
 
 
@@ -96,22 +100,29 @@ def test_workbench_family_capability_replies_ground_on_catalog() -> None:
 
 
 def test_new_workflow_intents_select_expected_templates() -> None:
-    loop = choose_workflow_template(user_text="loop gate", intent="create_loop_gate_workflow")
+    loop = choose_workflow_template(
+        user_text="loop gate", intent="create_loop_gate_workflow"
+    )
     assert loop["template"] == "loop-gate"
-    rl = choose_workflow_template(user_text="rl policy", intent="create_rl_policy_workflow")
+    rl = choose_workflow_template(
+        user_text="rl policy", intent="create_rl_policy_workflow"
+    )
     assert rl["template"] == "rl-policy-success"
 
 
-def test_workflow_chat_reply_states_plan_only_submit() -> None:
+def test_workflow_chat_reply_states_confirmed_submit_contract() -> None:
     reply = format_workflow_chat_reply(
         "apiVersion: npa.workflow/v0.0.1\nkind: Workflow\nmetadata:\n  name: demo\n",
         {"ok": True, "status": "valid", "name": "demo", "states": ["a"]},
         template="two-step",
-        plan={"ok": True, "steps": [{"state": "a", "tool_ref": "workbench.sim2real.status"}]},
+        plan={
+            "ok": True,
+            "steps": [{"state": "a", "tool_ref": "workbench.sim2real.status"}],
+        },
         runnable=True,
     )
-    assert "plan-only" in reply.lower()
-    assert "run-spec" in reply
+    assert "confirmation" in reply.lower()
+    assert "submit <spec.yaml> --runtime" in reply
 
 
 def test_onboard_reply_does_not_claim_chat_executes_end_to_end() -> None:

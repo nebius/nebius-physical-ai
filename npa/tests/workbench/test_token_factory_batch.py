@@ -137,7 +137,9 @@ class FakeBatchApi:
                 "invalid": total if failed else 0,
             },
             "output_file_id": (
-                OUTPUT_FILE_ID if status == "succeeded" and self.serve_output_file else None
+                OUTPUT_FILE_ID
+                if status == "succeeded" and self.serve_output_file
+                else None
             ),
             "error_file_id": ERROR_FILE_ID if failed and self.error_file_text else None,
         }
@@ -163,9 +165,15 @@ class FakeBatchApi:
         for custom_id, completion in self.completions.items():
             body = {
                 "choices": [{"message": {"role": "assistant", "content": completion}}],
-                "usage": {"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15},
+                "usage": {
+                    "prompt_tokens": 11,
+                    "completion_tokens": 4,
+                    "total_tokens": 15,
+                },
             }
-            lines.append(json.dumps({"custom_id": custom_id, self.result_row_key: body}))
+            lines.append(
+                json.dumps({"custom_id": custom_id, self.result_row_key: body})
+            )
         return "\n".join(lines) + "\n"
 
 
@@ -296,7 +304,9 @@ def test_batch_generate_no_wait_returns_operation_handle(tmp_path: Path) -> None
     assert api.poll_count == 0
 
 
-def test_batch_generate_reports_the_error_file_reason_and_a_model_hint(tmp_path: Path) -> None:
+def test_batch_generate_reports_the_error_file_reason_and_a_model_hint(
+    tmp_path: Path,
+) -> None:
     # The live failure shape: the operations endpoint says nothing useful, and the
     # batch record's error file carries the real per-row reason.
     api = FakeBatchApi(
@@ -322,7 +332,9 @@ def test_batch_generate_reports_the_error_file_reason_and_a_model_hint(tmp_path:
     assert ERROR_FILE_ID in api.downloaded_files
 
 
-def test_batch_generate_without_a_batch_view_still_reports_the_failure(tmp_path: Path) -> None:
+def test_batch_generate_without_a_batch_view_still_reports_the_failure(
+    tmp_path: Path,
+) -> None:
     api = FakeBatchApi(statuses=["failed"], errors=[""], serve_batch_view=False)
 
     with pytest.raises(TokenFactoryToolError) as excinfo:
@@ -355,7 +367,9 @@ def test_batch_generate_prefers_the_batch_output_file_over_a_dataset_export(
 
 
 def test_batch_generate_falls_back_to_the_dataset_export(tmp_path: Path) -> None:
-    api = FakeBatchApi(completions={"p1": "from the export", "p2": "b"}, serve_output_file=False)
+    api = FakeBatchApi(
+        completions={"p1": "from the export", "p2": "b"}, serve_output_file=False
+    )
 
     result = batch_generate(
         input_path=str(_prompts(tmp_path)),
@@ -384,7 +398,9 @@ def test_batch_generate_reports_request_counts(tmp_path: Path) -> None:
 
 
 def test_batch_generate_cleans_up_after_a_failed_operation(tmp_path: Path) -> None:
-    api = FakeBatchApi(statuses=["failed"], errors=["quota exceeded"], in_progress=False)
+    api = FakeBatchApi(
+        statuses=["failed"], errors=["quota exceeded"], in_progress=False
+    )
 
     with pytest.raises(TokenFactoryToolError):
         batch_generate(
@@ -397,7 +413,9 @@ def test_batch_generate_cleans_up_after_a_failed_operation(tmp_path: Path) -> No
     assert set(api.deleted) == {DATASET_ID, RESULT_DATASET_ID}
 
 
-def test_batch_generate_timeout_keeps_datasets_for_the_running_operation(tmp_path: Path) -> None:
+def test_batch_generate_timeout_keeps_datasets_for_the_running_operation(
+    tmp_path: Path,
+) -> None:
     api = FakeBatchApi(statuses=["running"])
 
     with pytest.raises(TokenFactoryToolError):
@@ -414,7 +432,9 @@ def test_batch_generate_timeout_keeps_datasets_for_the_running_operation(tmp_pat
 
 
 def test_batch_generate_surfaces_reported_error_detail(tmp_path: Path) -> None:
-    api = FakeBatchApi(statuses=["failed"], errors=["quota exceeded"], in_progress=False)
+    api = FakeBatchApi(
+        statuses=["failed"], errors=["quota exceeded"], in_progress=False
+    )
 
     with pytest.raises(TokenFactoryToolError, match="quota exceeded"):
         batch_generate(
@@ -441,14 +461,19 @@ def test_batch_generate_times_out_without_losing_operation_id(tmp_path: Path) ->
     assert "keeps running" in str(excinfo.value)
 
 
-def test_batch_generate_hints_when_the_model_is_not_text_to_text(tmp_path: Path) -> None:
+def test_batch_generate_hints_when_the_model_is_not_text_to_text(
+    tmp_path: Path,
+) -> None:
     api = FakeBatchApi()
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path.endswith("/operations"):
             # Verbatim from the live API when handed a vision model.
             return httpx.Response(
-                400, json={"detail": "Batch inference is only supported for text2text models"}
+                400,
+                json={
+                    "detail": "Batch inference is only supported for text2text models"
+                },
             )
         return api.handler(request)
 
@@ -548,10 +573,17 @@ def test_parse_batch_export_reads_the_standard_batch_row() -> None:
                     {
                         "index": 0,
                         "finish_reason": "stop",
-                        "message": {"role": "assistant", "content": "a standard answer"},
+                        "message": {
+                            "role": "assistant",
+                            "content": "a standard answer",
+                        },
                     }
                 ],
-                "usage": {"prompt_tokens": 9, "completion_tokens": 3, "total_tokens": 12},
+                "usage": {
+                    "prompt_tokens": 9,
+                    "completion_tokens": 3,
+                    "total_tokens": 12,
+                },
             },
         },
         "error": None,
@@ -573,7 +605,12 @@ def test_parse_batch_export_records_a_per_row_error_with_its_message() -> None:
         "custom_id": "p1",
         "response": {
             "status_code": 400,
-            "body": {"error": {"message": "context length exceeded", "type": "invalid_request"}},
+            "body": {
+                "error": {
+                    "message": "context length exceeded",
+                    "type": "invalid_request",
+                }
+            },
         },
         "error": None,
     }

@@ -21,7 +21,9 @@ def clean_auth(monkeypatch):
     monkeypatch.setenv("NPA_COSMOS3_VIDEO_TOKEN", "synthetic-inference-token")
 
 
-@pytest.mark.parametrize("mode,token", [(None, None), ("disabled", "management"), ("token", "")])
+@pytest.mark.parametrize(
+    "mode,token", [(None, None), ("disabled", "management"), ("token", "")]
+)
 def test_builder_refuses_unprotected_ray_before_import(monkeypatch, mode, token):
     if mode is not None:
         monkeypatch.setenv("RAY_AUTH_MODE", mode)
@@ -107,7 +109,8 @@ def test_direct_launcher_authenticates_before_ray_and_cleans_up(monkeypatch, fai
         auth.require_management_auth()
         token_paths.append(Path(os.environ["RAY_AUTH_TOKEN_PATH"]))
         assert kwargs == {
-            "address": "local", "include_dashboard": False,
+            "address": "local",
+            "include_dashboard": False,
             "_node_ip_address": "127.0.0.1",
         }
         events.append("init")
@@ -123,7 +126,9 @@ def test_direct_launcher_authenticates_before_ray_and_cleans_up(monkeypatch, fai
     ray = ModuleType("ray")
     ray.init = init
     ray.shutdown = lambda: events.append("shutdown")
-    ray.serve = SimpleNamespace(start=lambda **kw: events.append("serve-start"), run=run)
+    ray.serve = SimpleNamespace(
+        start=lambda **kw: events.append("serve-start"), run=run
+    )
     monkeypatch.setitem(sys.modules, "ray", ray)
     monkeypatch.setattr(server, "app", lambda: "synthetic-application")
     if failure:
@@ -137,14 +142,23 @@ def test_direct_launcher_authenticates_before_ray_and_cleans_up(monkeypatch, fai
 
 def test_cluster_uses_operator_auth_and_standalone_image_uses_secure_launcher():
     root = Path(__file__).resolve().parents[2]
-    service = yaml.safe_load((root / "deploy/cosmos3-nano-video/rayservice.yaml").read_text())
+    service = yaml.safe_load(
+        (root / "deploy/cosmos3-nano-video/rayservice.yaml").read_text()
+    )
     cluster = service["spec"]["rayClusterConfig"]
     assert cluster["authOptions"] == {"mode": "token"}
     for group in [cluster["headGroupSpec"], *cluster["workerGroupSpecs"]]:
         environment = group["template"]["spec"]["containers"][0]["env"]
         assert not any(item["name"].startswith("RAY_AUTH_") for item in environment)
-        api_token = next(item for item in environment if item["name"] == "NPA_COSMOS3_VIDEO_TOKEN")
-        assert api_token["valueFrom"]["secretKeyRef"]["name"] == "cosmos3-nano-video-auth"
+        api_token = next(
+            item for item in environment if item["name"] == "NPA_COSMOS3_VIDEO_TOKEN"
+        )
+        assert (
+            api_token["valueFrom"]["secretKeyRef"]["name"] == "cosmos3-nano-video-auth"
+        )
     docker = (root / "docker/workbench/cosmos3-nano-video/Dockerfile").read_text()
-    assert 'CMD ["python", "-m", "npa.workbench.cosmos.nano_video_server", "--serve"]' in docker
+    assert (
+        'CMD ["python", "-m", "npa.workbench.cosmos.nano_video_server", "--serve"]'
+        in docker
+    )
     assert "src/npa/workbench/cosmos/nano_video_auth.py" in docker

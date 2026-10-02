@@ -84,8 +84,12 @@ COMPLETE = {
 }
 
 
-def test_wait_returns_the_terminal_status_payload(monkeypatch: pytest.MonkeyPatch) -> None:
-    fake, calls = _status_sequence({"status": "running", "epochs_completed": 1}, COMPLETE)
+def test_wait_returns_the_terminal_status_payload(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake, calls = _status_sequence(
+        {"status": "running", "epochs_completed": 1}, COMPLETE
+    )
     monkeypatch.setattr(dt, "request_json", fake)
 
     result = dt.wait_for_training_run(
@@ -109,7 +113,11 @@ def test_wait_fails_when_the_run_fails(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(Exit):
         dt.wait_for_training_run(
-            "train-rider", endpoint="http://mock", token_env="T", poll_seconds=0, timeout_seconds=60
+            "train-rider",
+            endpoint="http://mock",
+            token_env="T",
+            poll_seconds=0,
+            timeout_seconds=60,
         )
 
 
@@ -121,7 +129,11 @@ def test_wait_fails_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(Exit):
         dt.wait_for_training_run(
-            "train-rider", endpoint="http://mock", token_env="T", poll_seconds=0, timeout_seconds=0
+            "train-rider",
+            endpoint="http://mock",
+            token_env="T",
+            poll_seconds=0,
+            timeout_seconds=0,
         )
 
     # One poll, then the deadline is already past.
@@ -131,11 +143,17 @@ def test_wait_fails_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_wait_fails_without_a_run_id(monkeypatch: pytest.MonkeyPatch) -> None:
     from typer import Exit
 
-    monkeypatch.setattr(dt, "request_json", lambda *a, **k: pytest.fail("must not poll"))
+    monkeypatch.setattr(
+        dt, "request_json", lambda *a, **k: pytest.fail("must not poll")
+    )
 
     with pytest.raises(Exit):
         dt.wait_for_training_run(
-            "", endpoint="http://mock", token_env="T", poll_seconds=0, timeout_seconds=60
+            "",
+            endpoint="http://mock",
+            token_env="T",
+            poll_seconds=0,
+            timeout_seconds=60,
         )
 
 
@@ -158,7 +176,11 @@ def test_wait_enforces_the_templates_completion_assertion(
 
     with pytest.raises(Exit):
         dt.wait_for_training_run(
-            "train-rider", endpoint="http://mock", token_env="T", poll_seconds=0, timeout_seconds=60
+            "train-rider",
+            endpoint="http://mock",
+            token_env="T",
+            poll_seconds=0,
+            timeout_seconds=60,
         )
 
 
@@ -181,7 +203,9 @@ def _train_argv(*extra: str) -> list[str]:
     ]
 
 
-def test_train_waits_and_reports_the_final_status(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_train_waits_and_reports_the_final_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     fake, calls = _status_sequence({"status": "running"}, COMPLETE)
     monkeypatch.setattr(dt, "request_json", fake)
 

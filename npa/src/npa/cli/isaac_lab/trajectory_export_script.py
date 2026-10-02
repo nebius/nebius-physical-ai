@@ -1,6 +1,6 @@
 """Generated-script fragments for Isaac Lab trajectory export."""
 
-TRAJECTORY_CAMERA_HELPERS = r'''
+TRAJECTORY_CAMERA_HELPERS = r"""
 def _rollout_camera_view(task):
     if task == "Isaac-Cartpole-v0":
         # The manager-based Cartpole asset is rooted at z=2 m.  View it from
@@ -93,4 +93,4 @@ def _rgb_frame(render_env):
     if frame.dtype != np.uint8:
         frame = np.clip(frame, 0, 255).astype(np.uint8)
     return np.ascontiguousarray(frame[..., :3])
-'''.strip()
+""".strip()

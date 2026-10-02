@@ -1,0 +1,40 @@
+{
+  "schema": "npa.cosmos3.wam-completed-full-run-evidence.v1",
+  "native_return_codes": [
+    0,
+    0
+  ],
+  "native_completion_receipts_sha256": {
+    "0": "564cbac4601e5f22237de345cd38166697ff974db7d91c32a4490b46889ff458",
+    "1": "f59a2c047cf480f24b195624f7a31377d5b1830cfedca637e6b26bcced95abd8"
+  },
+  "run_settings_sha256": "d4f1a339116355e502cb63951f0e93eddab36aea9af418fb7f0b14ddf5951f09",
+  "launch_script_sha256": "24c940536e2aae7e80420bc327b85c726ffb354193a637ba7ce74cc0db0cf6b7",
+  "training_toml_sha256": "98a7ff95262326b6b2955a22f626ce41b5d0c44af956d0b99be8beeafc019e7f",
+  "gradient_accumulation": 2,
+  "scheduler": {
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "allocation_seconds": 15906,
+    "allocated_gpus": 16,
+    "allocated_cpus": 320,
+    "allocated_nodes": 2,
+    "started_utc": "2026-09-28T02:18:02Z",
+    "ended_utc": "2026-09-28T06:43:08Z",
+    "allocated_gpu_hours": 70.69333333333333,
+    "private_campaign_accounting_sha256": "ee39db24d500e273a680f7dbe6df639daaf95395fdd8164c854f371d073cbf5e"
+  },
+  "files_sha256": {
+    "measurement.json": "ea9e57576411134d19245622a6feffab96a46779d64ec2fe054f662d2bfb0850",
+    "iteration-series.csv": "f740dc772f42e135ff9f3cd7a6973bf8e67d712f560098308fb9765aa6fca528",
+    "checkpoint-hashes.json": "e8d87ab02cea3c340dba6557df0469e7d199e34f75f941919af62549d1116a9e",
+    "distributed-preflight.json": "fa6eb131a99edd1cdc4259e62c31aa8be9e134cdccc4b47fcb434c9dadbacceb",
+    "checkpoint-times.json": "23f39faed362a649bc1d1f5b23bdcf36d8d99ca0e23f17a15f10a2947ad29271"
+  },
+  "conditions": {
+    "shared_filesystem": "Controller-local network SSD exported to the second host through NFS",
+    "caches": "Runtime and artifacts staged before training; no concurrent evaluation or archival jobs",
+    "primary_scaling_comparison": "Three separate unprofiled 200-update repetitions per topology"
+  },
+  "scope": "Completed two-node training and checkpoint integrity. The quality curve is a separate checkpoint-linked evaluation."
+}

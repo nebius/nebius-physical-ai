@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from npa.orchestration.skypilot.cleanup import CleanupResult, cluster_name_patterns_for_run
+from npa.orchestration.skypilot.cleanup import (
+    CleanupResult,
+    cluster_name_patterns_for_run,
+)
 from npa.orchestration.skypilot import signal_teardown as signal_teardown_module
 from npa.orchestration.skypilot.signal_teardown import (
     SignalTeardown,
@@ -23,11 +26,19 @@ def _fake_sky(tmp_path: Path) -> Path:
     return sky
 
 
-def test_signal_handlers_register_sigterm_and_sigint(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_signal_handlers_register_sigterm_and_sigint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     installed: dict[signal.Signals, signal.Handlers] = {}
 
-    monkeypatch.setattr(signal_teardown_module.signal, "getsignal", lambda signum: signal.SIG_DFL)
-    monkeypatch.setattr(signal_teardown_module.signal, "signal", lambda signum, handler: installed.setdefault(signum, handler))
+    monkeypatch.setattr(
+        signal_teardown_module.signal, "getsignal", lambda signum: signal.SIG_DFL
+    )
+    monkeypatch.setattr(
+        signal_teardown_module.signal,
+        "signal",
+        lambda signum, handler: installed.setdefault(signum, handler),
+    )
 
     install_teardown_signal_handlers(lambda: CleanupResult())
 
@@ -35,7 +46,9 @@ def test_signal_handlers_register_sigterm_and_sigint(monkeypatch: pytest.MonkeyP
     assert all(callable(handler) for handler in installed.values())
 
 
-def test_signal_handler_runs_teardown_and_exits(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_signal_handler_runs_teardown_and_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     installed: dict[signal.Signals, signal.Handlers] = {}
     calls = 0
 
@@ -47,7 +60,9 @@ def test_signal_handler_runs_teardown_and_exits(monkeypatch: pytest.MonkeyPatch)
         calls += 1
         return CleanupResult(resources_removed=["cluster"])
 
-    monkeypatch.setattr(signal_teardown_module.signal, "getsignal", lambda signum: signal.SIG_DFL)
+    monkeypatch.setattr(
+        signal_teardown_module.signal, "getsignal", lambda signum: signal.SIG_DFL
+    )
     monkeypatch.setattr(signal_teardown_module.signal, "signal", fake_signal)
     install_teardown_signal_handlers(teardown)
 
@@ -58,11 +73,17 @@ def test_signal_handler_runs_teardown_and_exits(monkeypatch: pytest.MonkeyPatch)
     assert calls == 1
 
 
-def test_restore_signal_handlers_reinstalls_previous_handlers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_restore_signal_handlers_reinstalls_previous_handlers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     restored: dict[signal.Signals, signal.Handlers] = {}
     previous = {signal.SIGTERM: signal.SIG_IGN, signal.SIGINT: signal.SIG_DFL}
 
-    monkeypatch.setattr(signal_teardown_module.signal, "signal", lambda signum, handler: restored.setdefault(signum, handler))
+    monkeypatch.setattr(
+        signal_teardown_module.signal,
+        "signal",
+        lambda signum, handler: restored.setdefault(signum, handler),
+    )
 
     restore_signal_handlers(previous)
 
@@ -90,7 +111,9 @@ def test_signal_teardown_runs_sky_down_polls_until_absent_and_is_idempotent(
         if cmd[1] == "down":
             return subprocess.CompletedProcess(cmd, 0, stdout="down\n", stderr="")
         if cmd[1] == "status":
-            return subprocess.CompletedProcess(cmd, 0, stdout=status_payloads.pop(0), stderr="")
+            return subprocess.CompletedProcess(
+                cmd, 0, stdout=status_payloads.pop(0), stderr=""
+            )
         raise AssertionError(cmd)
 
     monkeypatch.setattr(signal_teardown_module.subprocess, "run", fake_run)

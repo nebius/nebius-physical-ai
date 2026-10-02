@@ -75,48 +75,75 @@ def test_every_fleet_target_executes_cuda_and_graphics() -> None:
     for index, (project, cluster) in enumerate(targets):
         assert cluster.gpu_workload_profile == "rtx-rendering"
         api = config.new_client_from_config(
-            config_file=configs[project.key()][cluster.name], persist_config=False,
+            config_file=configs[project.key()][cluster.name],
+            persist_config=False,
         )
         with api:
             core = client.CoreV1Api(api)
             batch = client.BatchV1Api(api)
             # A missing RuntimeClass rejects pod creation before any Pod status
             # exists. Check it before creating a Job that could otherwise wait.
-            assert client.NodeV1Api(api).read_runtime_class("nvidia").handler == "nvidia"
+            assert (
+                client.NodeV1Api(api).read_runtime_class("nvidia").handler == "nvidia"
+            )
             selector = {
                 "node.kubernetes.io/instance-type": cluster.gpu_nodes.platform,
                 "nebius.com/resource-preset": cluster.gpu_nodes.preset,
             }
-            nodes = core.list_node(label_selector=",".join(
-                f"{key}={value}" for key, value in selector.items()
-            )).items
+            nodes = core.list_node(
+                label_selector=",".join(
+                    f"{key}={value}" for key, value in selector.items()
+                )
+            ).items
             assert len(nodes) == cluster.gpu_nodes.count
             assert all(
-                any(c.type == "Ready" and c.status == "True" for c in n.status.conditions)
+                any(
+                    c.type == "Ready" and c.status == "True"
+                    for c in n.status.conditions
+                )
                 and not n.spec.unschedulable
                 and int(n.status.allocatable.get("nvidia.com/gpu", 0)) == 8
                 for n in nodes
             ), "every requested eight-GPU worker must be Ready before qualification"
             name = "npa-rtx-qualify-" + uuid.uuid4().hex[:12]
             manifest = {
-                "apiVersion": "batch/v1", "kind": "Job",
+                "apiVersion": "batch/v1",
+                "kind": "Job",
                 "metadata": {"name": name},
                 "spec": {
                     "backoffLimit": 0,
-                    "template": {"spec": {
-                        "restartPolicy": "Never", "runtimeClassName": "nvidia",
-                        "nodeSelector": selector,
-                        "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists",
-                                         "effect": "NoSchedule"}],
-                        "containers": [{
-                            "name": "qualify", "image": DEFAULT_GRAPHICS_SMOKE_IMAGE,
-                            "command": ["/bin/bash", "-c", COMMAND],
-                            "env": [{"name": "NVIDIA_DRIVER_CAPABILITIES", "value": "all"}],
-                            "resources": {"limits": {"nvidia.com/gpu": 1}},
-                            "securityContext": {"allowPrivilegeEscalation": False,
-                                                "capabilities": {"drop": ["ALL"]}},
-                        }],
-                    }},
+                    "template": {
+                        "spec": {
+                            "restartPolicy": "Never",
+                            "runtimeClassName": "nvidia",
+                            "nodeSelector": selector,
+                            "tolerations": [
+                                {
+                                    "key": "nvidia.com/gpu",
+                                    "operator": "Exists",
+                                    "effect": "NoSchedule",
+                                }
+                            ],
+                            "containers": [
+                                {
+                                    "name": "qualify",
+                                    "image": DEFAULT_GRAPHICS_SMOKE_IMAGE,
+                                    "command": ["/bin/bash", "-c", COMMAND],
+                                    "env": [
+                                        {
+                                            "name": "NVIDIA_DRIVER_CAPABILITIES",
+                                            "value": "all",
+                                        }
+                                    ],
+                                    "resources": {"limits": {"nvidia.com/gpu": 1}},
+                                    "securityContext": {
+                                        "allowPrivilegeEscalation": False,
+                                        "capabilities": {"drop": ["ALL"]},
+                                    },
+                                }
+                            ],
+                        }
+                    },
                 },
             }
             job = batch.create_namespaced_job("default", manifest)
@@ -124,63 +151,105 @@ def test_every_fleet_target_executes_cuda_and_graphics() -> None:
             try:
                 while True:
                     current = batch.read_namespaced_job(name, "default")
-                    assert current.metadata.uid == uid, "qualification Job identity changed"
-                    if any(c.status == "True" and c.type in {"Complete", "Failed"}
-                           for c in current.status.conditions or []):
+                    assert current.metadata.uid == uid, (
+                        "qualification Job identity changed"
+                    )
+                    if any(
+                        c.status == "True" and c.type in {"Complete", "Failed"}
+                        for c in current.status.conditions or []
+                    ):
                         break
                     pending = core.list_namespaced_pod(
-                        "default", label_selector=f"batch.kubernetes.io/controller-uid={uid}",
+                        "default",
+                        label_selector=f"batch.kubernetes.io/controller-uid={uid}",
                     ).items
                     fatal = {
-                        "ImagePullBackOff", "ErrImagePull", "InvalidImageName",
-                        "CreateContainerConfigError", "CreateContainerError",
+                        "ImagePullBackOff",
+                        "ErrImagePull",
+                        "InvalidImageName",
+                        "CreateContainerConfigError",
+                        "CreateContainerError",
                     }
                     assert not any(
                         status.state.waiting and status.state.waiting.reason in fatal
-                        for pod in pending for status in pod.status.container_statuses or []
-                    ), "qualification pod cannot start; inspect its image and configuration"
+                        for pod in pending
+                        for status in pod.status.container_statuses or []
+                    ), (
+                        "qualification pod cannot start; inspect its image and configuration"
+                    )
                     time.sleep(2)
                 pods = core.list_namespaced_pod(
-                    "default", label_selector=f"batch.kubernetes.io/controller-uid={uid}",
+                    "default",
+                    label_selector=f"batch.kubernetes.io/controller-uid={uid}",
                 ).items
                 assert len(pods) == 1
                 pod = pods[0]
                 output = core.read_namespaced_pod_log(pod.metadata.name, "default")
                 private = evidence / f"target-{index}-execution.json"
-                private.write_text(json.dumps({
-                    "job": api.sanitize_for_serialization(current),
-                    "pod": api.sanitize_for_serialization(pod), "logs": output,
-                }))
+                private.write_text(
+                    json.dumps(
+                        {
+                            "job": api.sanitize_for_serialization(current),
+                            "pod": api.sanitize_for_serialization(pod),
+                            "logs": output,
+                        }
+                    )
+                )
                 private.chmod(0o600)
-                assert pod.status.phase == "Succeeded", "driver workload failed; inspect private evidence"
+                assert pod.status.phase == "Succeeded", (
+                    "driver workload failed; inspect private evidence"
+                )
                 assert current.status.succeeded == 1
-                assert all(marker in output for marker in (
-                    "NPA_CUDA_EXECUTED", "NPA_GLX_LOADED", "NPA_EGL_LOADED",
-                    "Vulkan Instance Version",
-                ))
+                assert all(
+                    marker in output
+                    for marker in (
+                        "NPA_CUDA_EXECUTED",
+                        "NPA_GLX_LOADED",
+                        "NPA_EGL_LOADED",
+                        "Vulkan Instance Version",
+                    )
+                )
                 assert re.search(r"(?m)^GPU[0-9]+:", output)
                 assert re.search(r"deviceName\s*=.*NVIDIA.*RTX PRO 6000", output)
                 statuses = pod.status.container_statuses
-                assert len(statuses) == 1 and statuses[0].state.terminated.exit_code == 0
+                assert (
+                    len(statuses) == 1 and statuses[0].state.terminated.exit_code == 0
+                )
                 digest = DEFAULT_GRAPHICS_SMOKE_IMAGE.split("@", 1)[1]
-                assert digest in statuses[0].image_id, "runtime digest differs from the pinned image"
-                results.append({
-                    "target_index": index, "gpu_workers": len(nodes),
-                    "cuda": "executed", "glx": "loaded", "egl": "loaded",
-                    "vulkan": "instance-created-and-nvidia-device-enumerated",
-                    "image_digest": digest,
-                    "execution_sha256": hashlib.sha256(private.read_bytes()).hexdigest(),
-                })
+                assert digest in statuses[0].image_id, (
+                    "runtime digest differs from the pinned image"
+                )
+                results.append(
+                    {
+                        "target_index": index,
+                        "gpu_workers": len(nodes),
+                        "cuda": "executed",
+                        "glx": "loaded",
+                        "egl": "loaded",
+                        "vulkan": "instance-created-and-nvidia-device-enumerated",
+                        "image_digest": digest,
+                        "execution_sha256": hashlib.sha256(
+                            private.read_bytes()
+                        ).hexdigest(),
+                    }
+                )
             finally:
-                batch.delete_namespaced_job(name, "default", body=client.V1DeleteOptions(
-                    preconditions=client.V1Preconditions(uid=uid), propagation_policy="Foreground",
-                ))
+                batch.delete_namespaced_job(
+                    name,
+                    "default",
+                    body=client.V1DeleteOptions(
+                        preconditions=client.V1Preconditions(uid=uid),
+                        propagation_policy="Foreground",
+                    ),
+                )
                 while True:
                     jobs = batch.list_namespaced_job(
-                        "default", field_selector=f"metadata.name={name}",
+                        "default",
+                        field_selector=f"metadata.name={name}",
                     ).items
                     pods = core.list_namespaced_pod(
-                        "default", label_selector=f"batch.kubernetes.io/controller-uid={uid}",
+                        "default",
+                        label_selector=f"batch.kubernetes.io/controller-uid={uid}",
                     ).items
                     if not jobs and not pods:
                         break

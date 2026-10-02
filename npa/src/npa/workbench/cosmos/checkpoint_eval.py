@@ -115,7 +115,9 @@ def _s3_join(prefix: str, *parts: object) -> str:
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _checkpoint_slug(checkpoint: str) -> str:
@@ -143,7 +145,9 @@ def _load_config_path(
     try:
         payload = json.loads(local.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
-        raise Cosmos3CheckpointEvalError(f"invalid campaign config {local}: {exc}") from exc
+        raise Cosmos3CheckpointEvalError(
+            f"invalid campaign config {local}: {exc}"
+        ) from exc
     if not isinstance(payload, dict):
         raise Cosmos3CheckpointEvalError("campaign config must be a JSON object")
     return payload, local
@@ -158,7 +162,9 @@ def validate_campaign_config(payload: Mapping[str, Any]) -> dict[str, Any]:
             f"campaign schema must be {CAMPAIGN_CONFIG_SCHEMA!r}"
         )
     if config.get("mode") != "text2image":
-        raise Cosmos3CheckpointEvalError("checkpoint evaluation supports text2image only")
+        raise Cosmos3CheckpointEvalError(
+            "checkpoint evaluation supports text2image only"
+        )
     if config.get("guardrails_enabled") is not True:
         raise Cosmos3CheckpointEvalError(
             "campaign config must keep guardrails enabled; there is no silent opt-out"
@@ -166,7 +172,9 @@ def validate_campaign_config(payload: Mapping[str, Any]) -> dict[str, Any]:
 
     checkpoints = config.get("checkpoints")
     if not isinstance(checkpoints, list) or not checkpoints:
-        raise Cosmos3CheckpointEvalError("campaign checkpoints must be a non-empty list")
+        raise Cosmos3CheckpointEvalError(
+            "campaign checkpoints must be a non-empty list"
+        )
     names: list[str] = []
     model_ids: dict[str, str] = {}
     for entry in checkpoints:
@@ -175,7 +183,9 @@ def validate_campaign_config(payload: Mapping[str, Any]) -> dict[str, Any]:
         name = str(entry.get("name") or "").strip()
         model_id = str(entry.get("model_id") or "").strip()
         if name not in SUPPORTED_CHECKPOINTS:
-            raise Cosmos3CheckpointEvalError(f"unsupported checkpoint in campaign: {name!r}")
+            raise Cosmos3CheckpointEvalError(
+                f"unsupported checkpoint in campaign: {name!r}"
+            )
         if model_id != f"nvidia/{name}":
             raise Cosmos3CheckpointEvalError(
                 f"checkpoint {name} must declare model_id nvidia/{name}"
@@ -217,11 +227,15 @@ def validate_campaign_config(payload: Mapping[str, Any]) -> dict[str, Any]:
             "additional_seeds must contain exactly two non-negative integers"
         )
     if len({primary_seed, *additional}) != 3:
-        raise Cosmos3CheckpointEvalError("primary and additional seeds must be distinct")
+        raise Cosmos3CheckpointEvalError(
+            "primary and additional seeds must be distinct"
+        )
 
     expected_ref = str(config.get("framework_commit") or "").strip()
     if not re.fullmatch(r"[0-9a-f]{40}", expected_ref):
-        raise Cosmos3CheckpointEvalError("framework_commit must be an exact 40-character SHA")
+        raise Cosmos3CheckpointEvalError(
+            "framework_commit must be an exact 40-character SHA"
+        )
     pinned_ref = str(PINNED_GUARDRAIL_POSTURE["framework_commit"])
     if expected_ref != pinned_ref:
         raise Cosmos3CheckpointEvalError(
@@ -324,7 +338,8 @@ def require_b200_gpu(*, runner: Any = None) -> list[dict[str, Any]]:
     wrong = [gpu["name"] for gpu in inventory if "B200" not in str(gpu["name"]).upper()]
     if wrong:
         raise Cosmos3CheckpointEvalError(
-            "checkpoint evaluation is B200-only; non-B200 GPU visible: " + ", ".join(wrong)
+            "checkpoint evaluation is B200-only; non-B200 GPU visible: "
+            + ", ".join(wrong)
         )
     return inventory
 
@@ -515,7 +530,9 @@ def _benchmark_latencies(
 def _checkpoint_cache_dir(hf_home: Path, model_id: str) -> Path:
     hub = (hf_home / "hub").resolve()
     candidate = (hub / ("models--" + model_id.replace("/", "--"))).resolve()
-    if candidate.parent != hub or not candidate.name.startswith("models--nvidia--Cosmos3-"):
+    if candidate.parent != hub or not candidate.name.startswith(
+        "models--nvidia--Cosmos3-"
+    ):
         raise Cosmos3CheckpointEvalError(
             f"refusing to resolve unsafe checkpoint cache target for {model_id!r}"
         )
@@ -553,7 +570,9 @@ def _publish_arm(
         storage_client.upload_file(str(artifact), artifact_uri)
         sample["artifact_uri"] = artifact_uri
     arm["arm_uri"] = _s3_join(base, "arm.json")
-    arm_path = local_root / str(arm["phase"]) / checkpoint_slug / f"seed-{seed}" / "arm.json"
+    arm_path = (
+        local_root / str(arm["phase"]) / checkpoint_slug / f"seed-{seed}" / "arm.json"
+    )
     _publish_json(storage_client, arm_path, str(arm["arm_uri"]), arm)
     return arm
 
@@ -715,7 +734,9 @@ def run_checkpoint_arm(
             "checkpoint_refs": _hf_cache_refs(hf_home),
             "guardrails_enabled": True,
             "guardrail_posture": PINNED_GUARDRAIL_POSTURE,
-            "declared_runtime_assets": list(config.get("required_runtime_assets") or []),
+            "declared_runtime_assets": list(
+                config.get("required_runtime_assets") or []
+            ),
             "hf_auth": access["hf_auth"],
             "ngc_auth": access["ngc_auth"],
             "weights_baked": False,

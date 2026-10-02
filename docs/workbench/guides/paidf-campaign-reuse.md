@@ -120,3 +120,16 @@ For Encord and FiftyOne, the overlay payload contains curation decisions. For Fo
 Do not add a provider registry, plugin loader, cache service, data-versioning platform, or campaign-management daemon for the first two integrations. Implement the second provider against this envelope, compare the two real payloads, and extract another abstraction only when both require the same behavior.
 
 Do not add a workflow specification until its provider path can satisfy the repository's live execution and artifact proof requirements. The contract module and runbook support preparatory and fixture-based work without presenting it as a live provider integration.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

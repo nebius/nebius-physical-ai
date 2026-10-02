@@ -120,3 +120,16 @@ goal distance, and otherwise uses survival.
   `npa workbench workflow submit ... --runtime`); single-job runner
   `npa/scripts/run_isaac_lab_rl.py`
 - Skill: `skills/tools/isaac-lab/SKILL.md`
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

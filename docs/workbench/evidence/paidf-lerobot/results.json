@@ -1,0 +1,330 @@
+{
+  "schema": "npa.paidf.realism-results.v1",
+  "model": "Cosmos3-Nano",
+  "cosmos_framework_revision": "5e67049cd94acb667786f1e6dd0dab821cb90c97",
+  "seed": 17,
+  "guidance": 5.0,
+  "steps": 35,
+  "first_chunk_conditional_frames": 0,
+  "rgb_hint_weight": 0.25,
+  "edge_threshold": "low",
+  "control_guidance": 1.0,
+  "native_chunk_frames": 93,
+  "overlap_conditional_frames": 5,
+  "guardrails": true,
+  "output_pixel_blending": false,
+  "grade_threshold": 0.75,
+  "attribute_threshold": 1.0,
+  "temporal_consistency_threshold": 0.8,
+  "appearance_mode": "advisory",
+  "conclusion": "All six candidates rejected; this matched single-seed comparison does not establish a realism benefit from CFG normalization.",
+  "visual_review_scope": "Sampled source and output frames, including first/last frames and native generation joins; no contact-physics or policy validation.",
+  "cases": [
+    {
+      "dataset": "lerobot/aloha_static_cups_open",
+      "episode": 0,
+      "contact_sheet": "cups.jpg",
+      "contact_sheet_sha256": "3e636639de2806f2e8c417746f91e22e1c831fdcb0a3c470b94873bef63f430f",
+      "contact_sheet_frame_indices": [
+        0,
+        72,
+        94,
+        144,
+        176,
+        191
+      ],
+      "reviewed_frame_indices": [
+        0,
+        24,
+        48,
+        72,
+        91,
+        92,
+        93,
+        94,
+        120,
+        144,
+        176,
+        179,
+        180,
+        181,
+        182,
+        191
+      ],
+      "active_image_bounds_xyxy": [
+        96,
+        0,
+        736,
+        480
+      ],
+      "outputs": [
+        {
+          "cfg_normalization": "disabled",
+          "alignment": {
+            "schema": "npa.paidf.cosmos3.alignment.v1",
+            "status": "verified",
+            "source_sha256": "af37db188ace3e3aec613fc20c1852a076bb90bf1f6e032ffd8396a5ca915de2",
+            "generated_sha256": "b93010a48c1b9b89f5078b7e66c3494529882bcf2e081e1b3a3a9e75072dc4b5",
+            "decoded_frames": 192,
+            "fps": 24,
+            "duration_seconds": 8.0,
+            "max_timestamp_error_seconds": 0.0,
+            "full_decode_passed": true,
+            "visual_quality_evaluated": false
+          },
+          "aggregate_score": 0.122709,
+          "temporal_consistency_score": 0.122709,
+          "appearance_advisory_score": 0.527489,
+          "attribute_checks_passed": 3,
+          "attribute_checks_total": 4,
+          "failed_attributes": [
+            "surface_finish"
+          ],
+          "quality_status": "rejected",
+          "hard_checks_passed": false,
+          "evaluator_report_sha256": "455ffde3e419262b299f0c8b690d827c6e7d872648f5fc1338ba1be45c25d7fb",
+          "transfer_receipt_sha256": "f67191bf70abbfaa2757b1510e5ef0fef3002cea9cc9d45937cad5d5e772810c",
+          "active_image_mean_absolute_difference_255": 25.582921176,
+          "padding_mean_channel_255": 0.059211354,
+          "padding_fraction_pixels_over_16": 0.00098244
+        },
+        {
+          "cfg_normalization": "enabled",
+          "alignment": {
+            "schema": "npa.paidf.cosmos3.alignment.v1",
+            "status": "verified",
+            "source_sha256": "af37db188ace3e3aec613fc20c1852a076bb90bf1f6e032ffd8396a5ca915de2",
+            "generated_sha256": "ad26d35577118b14d086cf4a460037f72bdfa0ca5c52bfece60821074011902d",
+            "decoded_frames": 192,
+            "fps": 24,
+            "duration_seconds": 8.0,
+            "max_timestamp_error_seconds": 0.0,
+            "full_decode_passed": true,
+            "visual_quality_evaluated": false
+          },
+          "aggregate_score": 0.121682,
+          "temporal_consistency_score": 0.121682,
+          "appearance_advisory_score": 0.534834,
+          "attribute_checks_passed": 3,
+          "attribute_checks_total": 4,
+          "failed_attributes": [
+            "surface_finish"
+          ],
+          "quality_status": "rejected",
+          "hard_checks_passed": false,
+          "evaluator_report_sha256": "342edbc911cc6feb4202c402725b2f287de406aad87825d8f172a9b3c2ac66a6",
+          "transfer_receipt_sha256": "902bc8247e3882c53ff3ce4309749d83ce6a6a3547727c3ff5040e4e61fe194d",
+          "active_image_mean_absolute_difference_255": 25.538626686,
+          "padding_mean_channel_255": 0.060654968,
+          "padding_fraction_pixels_over_16": 0.000941976
+        }
+      ]
+    },
+    {
+      "dataset": "lerobot/aloha_static_coffee",
+      "episode": 0,
+      "contact_sheet": "coffee.jpg",
+      "contact_sheet_sha256": "0f5f364f88356ad8d4716b0ed1d025ef9927d1ef9d9dbc964b59c95095a4f7d3",
+      "contact_sheet_frame_indices": [
+        0,
+        72,
+        182,
+        269,
+        445,
+        527
+      ],
+      "reviewed_frame_indices": [
+        0,
+        24,
+        48,
+        72,
+        91,
+        92,
+        93,
+        94,
+        144,
+        179,
+        180,
+        181,
+        182,
+        240,
+        267,
+        268,
+        269,
+        270,
+        336,
+        355,
+        356,
+        357,
+        358,
+        420,
+        443,
+        444,
+        445,
+        446,
+        480,
+        527
+      ],
+      "active_image_bounds_xyxy": [
+        96,
+        0,
+        736,
+        480
+      ],
+      "outputs": [
+        {
+          "cfg_normalization": "disabled",
+          "alignment": {
+            "schema": "npa.paidf.cosmos3.alignment.v1",
+            "status": "verified",
+            "source_sha256": "e09beb116aa814103884bcc40b9ace42c8ef57937fd2110bf77cba132ecbaf96",
+            "generated_sha256": "dffe765c29c7f50c25ce9999c6d47910fd562bfec17f20937d939c53c9eacab2",
+            "decoded_frames": 528,
+            "fps": 24,
+            "duration_seconds": 22.0,
+            "max_timestamp_error_seconds": 0.0,
+            "full_decode_passed": true,
+            "visual_quality_evaluated": false
+          },
+          "aggregate_score": 0.09626,
+          "temporal_consistency_score": 0.09626,
+          "appearance_advisory_score": 0.617381,
+          "attribute_checks_passed": 3,
+          "attribute_checks_total": 4,
+          "failed_attributes": [
+            "surface_finish"
+          ],
+          "quality_status": "rejected",
+          "hard_checks_passed": false,
+          "evaluator_report_sha256": "51b9206f85ccfab949d30c57e9461efef144e2a94639afa98bbee243d9a4cc04",
+          "transfer_receipt_sha256": "155d616a3004b2b8ac03f957e071f688fc842ae8042519290a1b7b348a296f38",
+          "active_image_mean_absolute_difference_255": 50.502302563,
+          "padding_mean_channel_255": 0.079424083,
+          "padding_fraction_pixels_over_16": 0.001464166
+        },
+        {
+          "cfg_normalization": "enabled",
+          "alignment": {
+            "schema": "npa.paidf.cosmos3.alignment.v1",
+            "status": "verified",
+            "source_sha256": "e09beb116aa814103884bcc40b9ace42c8ef57937fd2110bf77cba132ecbaf96",
+            "generated_sha256": "1be09162cb829599b4c1f0c8da70e3a583326da03300d859e8c6ec367c54abf8",
+            "decoded_frames": 528,
+            "fps": 24,
+            "duration_seconds": 22.0,
+            "max_timestamp_error_seconds": 0.0,
+            "full_decode_passed": true,
+            "visual_quality_evaluated": false
+          },
+          "aggregate_score": 0.097463,
+          "temporal_consistency_score": 0.097463,
+          "appearance_advisory_score": 0.622828,
+          "attribute_checks_passed": 3,
+          "attribute_checks_total": 4,
+          "failed_attributes": [
+            "surface_finish"
+          ],
+          "quality_status": "rejected",
+          "hard_checks_passed": false,
+          "evaluator_report_sha256": "77b8b964cc21cd4609da66169ec6cf849a6aa656fa73b2184f9de1f4526915f9",
+          "transfer_receipt_sha256": "e9538784731321d200e7668b3b0c694b273f518a96abc3780277d975e7af98c1",
+          "active_image_mean_absolute_difference_255": 50.249916464,
+          "padding_mean_channel_255": 0.081176909,
+          "padding_fraction_pixels_over_16": 0.001387471
+        }
+      ]
+    },
+    {
+      "dataset": "lerobot/xarm_lift_medium",
+      "episode": 0,
+      "contact_sheet": "lift.jpg",
+      "contact_sheet_sha256": "f0d0befd12db40a4ad336b71f7e2d57a801af4bff755f3802c0a3bf3c5789d80",
+      "contact_sheet_frame_indices": [
+        0,
+        5,
+        15,
+        20,
+        30,
+        39
+      ],
+      "reviewed_frame_indices": [
+        0,
+        5,
+        10,
+        15,
+        20,
+        25,
+        30,
+        39
+      ],
+      "active_image_bounds_xyxy": [
+        176,
+        0,
+        656,
+        480
+      ],
+      "outputs": [
+        {
+          "cfg_normalization": "disabled",
+          "alignment": {
+            "schema": "npa.paidf.cosmos3.alignment.v1",
+            "status": "verified",
+            "source_sha256": "b6766eae783aa650fec8d22e64899fc7c9b1c3e628790ae972d8193a5edc60f1",
+            "generated_sha256": "6c46554017ed20f77e87c6d43a7692831df8e3c70aa8886087692ba11aebc9bb",
+            "decoded_frames": 40,
+            "fps": 24,
+            "duration_seconds": 1.666667,
+            "max_timestamp_error_seconds": 0.0,
+            "full_decode_passed": true,
+            "visual_quality_evaluated": false
+          },
+          "aggregate_score": 0.032292,
+          "temporal_consistency_score": 0.032292,
+          "appearance_advisory_score": 1.0,
+          "attribute_checks_passed": 3,
+          "attribute_checks_total": 4,
+          "failed_attributes": [
+            "surface_finish"
+          ],
+          "quality_status": "rejected",
+          "hard_checks_passed": false,
+          "evaluator_report_sha256": "0859f9e9494da873077900f41d37eb5b021d4e69c03de7d9e46a32e708765499",
+          "transfer_receipt_sha256": "10a0523dfc9481f59ed0f226660afadbde8a30c2aef3e17544c19d1ea504531e",
+          "active_image_mean_absolute_difference_255": 35.921647859,
+          "padding_mean_channel_255": 0.016752535,
+          "padding_fraction_pixels_over_16": 0.000496715
+        },
+        {
+          "cfg_normalization": "enabled",
+          "alignment": {
+            "schema": "npa.paidf.cosmos3.alignment.v1",
+            "status": "verified",
+            "source_sha256": "b6766eae783aa650fec8d22e64899fc7c9b1c3e628790ae972d8193a5edc60f1",
+            "generated_sha256": "19d15aacb4bc885b7b1096bc066ab6e30f78f1c1f508d8a418bd7f45586b90ef",
+            "decoded_frames": 40,
+            "fps": 24,
+            "duration_seconds": 1.666667,
+            "max_timestamp_error_seconds": 0.0,
+            "full_decode_passed": true,
+            "visual_quality_evaluated": false
+          },
+          "aggregate_score": 0.032106,
+          "temporal_consistency_score": 0.032106,
+          "appearance_advisory_score": 1.0,
+          "attribute_checks_passed": 3,
+          "attribute_checks_total": 4,
+          "failed_attributes": [
+            "surface_finish"
+          ],
+          "quality_status": "rejected",
+          "hard_checks_passed": false,
+          "evaluator_report_sha256": "36abc1d6a8913a8519d0eaf3e3143644813380519616dcfaa08115409446b5ed",
+          "transfer_receipt_sha256": "46309196d1c69e443a20665e19053178f3503d0176aba2497552927e85190b4b",
+          "active_image_mean_absolute_difference_255": 35.522510019,
+          "padding_mean_channel_255": 0.019614603,
+          "padding_fraction_pixels_over_16": 0.00050219
+        }
+      ]
+    }
+  ]
+}

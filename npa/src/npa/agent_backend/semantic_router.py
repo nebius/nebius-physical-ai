@@ -41,7 +41,16 @@ SOURCE_NONE = "none"
 _KEYWORD_HINTS: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
     (
         "watch_sim",
-        ("watch", "monitor", "keep an eye", "keep tabs", "follow along", "tail", "observe", "live view"),
+        (
+            "watch",
+            "monitor",
+            "keep an eye",
+            "keep tabs",
+            "follow along",
+            "tail",
+            "observe",
+            "live view",
+        ),
         ("sim", "simulation", "rerun", "timeline", "rollout", "run", "viewer"),
     ),
     (
@@ -52,7 +61,15 @@ _KEYWORD_HINTS: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
     (
         "find_artifacts",
         ("find", "browse", "discover", "what can i view", "look at", "show me", "list"),
-        ("artifact", "artifacts", "output", "outputs", "recording", "report", "results"),
+        (
+            "artifact",
+            "artifacts",
+            "output",
+            "outputs",
+            "recording",
+            "report",
+            "results",
+        ),
     ),
     (
         "list_recordings",
@@ -61,7 +78,14 @@ _KEYWORD_HINTS: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
     ),
     (
         "tools_catalog",
-        ("what can you do", "what tools", "capabilities overview", "list tools", "available tools", "toolref"),
+        (
+            "what can you do",
+            "what tools",
+            "capabilities overview",
+            "list tools",
+            "available tools",
+            "toolref",
+        ),
         (),
     ),
     (
@@ -106,7 +130,14 @@ _KEYWORD_HINTS: list[tuple[str, tuple[str, ...], tuple[str, ...]]] = [
     ),
     (
         "drive_sim2real",
-        ("drive", "autonomous", "autonomously", "orchestrate", "self-driving", "close the loop"),
+        (
+            "drive",
+            "autonomous",
+            "autonomously",
+            "orchestrate",
+            "self-driving",
+            "close the loop",
+        ),
         ("sim", "sim2real", "loop", "pipeline"),
     ),
 ]
@@ -210,14 +241,16 @@ def _sem_tokens_from(data: Any) -> int:
     return int(total)
 
 
-def _model_messages(lowered: str, known_intents: frozenset[str]) -> list[dict[str, str]]:
+def _model_messages(
+    lowered: str, known_intents: frozenset[str]
+) -> list[dict[str, str]]:
     intent_list = ", ".join(sorted(known_intents))
     system = (
         "You are the NPA workbench intent classifier. Map the operator turn to "
         "exactly one known intent, or to 'action' when it needs a multi-step tool "
         "loop, or to 'none' when it is an open question.\n"
         "Respond with a SINGLE JSON object: "
-        '{\"intent\": \"<one_of_known|action|none>\", \"confidence\": <0..1>}.\n'
+        '{"intent": "<one_of_known|action|none>", "confidence": <0..1>}.\n'
         f"Known intents: {intent_list}."
     )
     return [
@@ -227,7 +260,13 @@ def _model_messages(lowered: str, known_intents: frozenset[str]) -> list[dict[st
 
 
 def _none_result(source: str = SOURCE_NONE) -> dict[str, Any]:
-    return {"intent": None, "mode": MODE_NONE, "confidence": 0.0, "tokens": 0, "source": source}
+    return {
+        "intent": None,
+        "mode": MODE_NONE,
+        "confidence": 0.0,
+        "tokens": 0,
+        "source": source,
+    }
 
 
 def classify_intent_semantic(

@@ -19,18 +19,21 @@ def _archive(entries):
     return stream.getvalue()
 
 
-@pytest.mark.parametrize("entries", [
-    [("root/header.h", b"first"), ("root/header.h", b"second")],
-    [("root/../header.h", b"data")],
-    [("/root/header.h", b"data")],
-    [("other/header.h", b"data")],
-    [("root/header.h", b"data"), ("other/header.h", b"data")],
-    [("root//header.h", b"data")],
-    [("root/./header.h", b"data")],
-    [("root/header\\file.h", b"data")],
-    [("root", b"data")],
-    [],
-])
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [("root/header.h", b"first"), ("root/header.h", b"second")],
+        [("root/../header.h", b"data")],
+        [("/root/header.h", b"data")],
+        [("other/header.h", b"data")],
+        [("root/header.h", b"data"), ("other/header.h", b"data")],
+        [("root//header.h", b"data")],
+        [("root/./header.h", b"data")],
+        [("root/header\\file.h", b"data")],
+        [("root", b"data")],
+        [],
+    ],
+)
 def test_archive_refuses_ambiguous_population(entries):
     with pytest.raises(ValueError, match="archive"):
         source._archive_files(_archive(entries), "root")
@@ -49,14 +52,20 @@ def test_download_hash_checked_before_parsing(monkeypatch, tmp_path, name):
         output.write(b"substituted source")
 
     monkeypatch.setattr(source, "download_public_https", download)
-    monkeypatch.setattr(source, "_archive_files", lambda *_: pytest.fail("parsed unauthenticated bytes"))
+    monkeypatch.setattr(
+        source, "_archive_files", lambda *_: pytest.fail("parsed unauthenticated bytes")
+    )
     with pytest.raises(ValueError, match="archive hash"):
         source._source_archive(name, tmp_path)
-    assert (tmp_path / (name + ".karamel-source.tar.gz")).read_bytes() == b"substituted source"
+    assert (
+        tmp_path / (name + ".karamel-source.tar.gz")
+    ).read_bytes() == b"substituted source"
 
 
 def test_supplied_cpython_archive_has_same_hash_requirement(monkeypatch, tmp_path):
-    monkeypatch.setattr(source, "download_public_https", lambda *_: pytest.fail("downloaded"))
+    monkeypatch.setattr(
+        source, "download_public_https", lambda *_: pytest.fail("downloaded")
+    )
     with pytest.raises(ValueError, match="archive hash"):
         source.verify_karamel_source(tmp_path, cpython_archive=b"another interpreter")
 
@@ -68,19 +77,32 @@ def reviewed_headers(monkeypatch):
     karamel, mapping = {}, {}
     for destination, origin in source._HEADERS.items():
         path = source._CPYTHON_PREFIX + destination
-        karamel[origin] = b"/* synthetic upstream */\n#include \"krml/internal/types.h\"\n"
-        cpython[path] = b"/* synthetic upstream */\n#include \"krml/types.h\"\n"
-        patch = "".join(difflib.unified_diff(
-            karamel[origin].decode().splitlines(True), cpython[path].decode().splitlines(True),
-            fromfile=origin, tofile=path,
-        )).encode()
-        mapping[path] = {"upstream_path": origin, "hacl_path": "dist/karamel/" + origin,
-                         "upstream_sha256": source._sha(karamel[origin]),
-                         "vendored_sha256": source._sha(cpython[path]),
-                         "patch_sha256": source._sha(patch)}
+        karamel[origin] = (
+            b'/* synthetic upstream */\n#include "krml/internal/types.h"\n'
+        )
+        cpython[path] = b'/* synthetic upstream */\n#include "krml/types.h"\n'
+        patch = "".join(
+            difflib.unified_diff(
+                karamel[origin].decode().splitlines(True),
+                cpython[path].decode().splitlines(True),
+                fromfile=origin,
+                tofile=path,
+            )
+        ).encode()
+        mapping[path] = {
+            "upstream_path": origin,
+            "hacl_path": "dist/karamel/" + origin,
+            "upstream_sha256": source._sha(karamel[origin]),
+            "vendored_sha256": source._sha(cpython[path]),
+            "patch_sha256": source._sha(patch),
+        }
     tree = {p: source._sha(raw) for p, raw in cpython.items()}
-    monkeypatch.setattr(source, "_CPYTHON_TREE_SHA256", source._sha(source._canonical(tree)))
-    monkeypatch.setattr(source, "_HEADER_MAPPING_SHA256", source._sha(source._canonical(mapping)))
+    monkeypatch.setattr(
+        source, "_CPYTHON_TREE_SHA256", source._sha(source._canonical(tree))
+    )
+    monkeypatch.setattr(
+        source, "_HEADER_MAPPING_SHA256", source._sha(source._canonical(mapping))
+    )
     assert len(source._header_mapping(cpython, karamel)["files"]) == 5
     return cpython, karamel
 
@@ -97,8 +119,12 @@ def test_every_selected_header_is_bound(reviewed_headers, header, side):
         source._header_mapping(cpython, karamel)
 
 
-@pytest.mark.parametrize("mutation", ["missing", "extra", "wrapper", "omitted-selection"])
-def test_complete_header_population_and_wrapper_are_bound(reviewed_headers, monkeypatch, mutation):
+@pytest.mark.parametrize(
+    "mutation", ["missing", "extra", "wrapper", "omitted-selection"]
+)
+def test_complete_header_population_and_wrapper_are_bound(
+    reviewed_headers, monkeypatch, mutation
+):
     cpython, karamel = reviewed_headers
     if mutation == "missing":
         del cpython[source._CPYTHON_PREFIX + "internal/target.h"]
@@ -107,9 +133,15 @@ def test_complete_header_population_and_wrapper_are_bound(reviewed_headers, monk
     elif mutation == "wrapper":
         cpython[source._CPYTHON_PREFIX + "types.h"] += b"changed\n"
     else:
-        monkeypatch.setattr(source, "_HEADERS", {
-            path: origin for path, origin in source._HEADERS.items() if path != "internal/target.h"
-        })
+        monkeypatch.setattr(
+            source,
+            "_HEADERS",
+            {
+                path: origin
+                for path, origin in source._HEADERS.items()
+                if path != "internal/target.h"
+            },
+        )
     with pytest.raises(ValueError, match="population differs"):
         source._header_mapping(cpython, karamel)
 
@@ -126,7 +158,9 @@ def test_entire_hacl_vendor_population_is_bound(monkeypatch, mutation):
     karamel = {f"header-{i}.h": b"synthetic source\n" for i in range(21)}
     hacl = {"dist/karamel/" + p: raw for p, raw in karamel.items()}
     tree = {p: source._sha(raw) for p, raw in karamel.items()}
-    monkeypatch.setattr(source, "_HACL_TREE_SHA256", source._sha(source._canonical(tree)))
+    monkeypatch.setattr(
+        source, "_HACL_TREE_SHA256", source._sha(source._canonical(tree))
+    )
     assert source._vendor_tree(hacl, karamel) == tree
     if mutation == "missing":
         del hacl["dist/karamel/header-0.h"]
@@ -142,10 +176,17 @@ def test_entire_hacl_vendor_population_is_bound(monkeypatch, mutation):
 
 def test_source_record_cannot_be_a_moving_branch(monkeypatch):
     cpython = {"Modules/_hacl/refresh.sh": b"pinned refresh\n"}
-    hacl = {"Makefile": b"copy source\n", "dist/gcc-compatible/INFO.txt": b"Karamel version: origin/master\n"}
-    monkeypatch.setattr(source, "_RECORDS", {
-        "cpython": {p: source._sha(raw) for p, raw in cpython.items()},
-        "hacl": {p: source._sha(raw) for p, raw in hacl.items()},
-    })
+    hacl = {
+        "Makefile": b"copy source\n",
+        "dist/gcc-compatible/INFO.txt": b"Karamel version: origin/master\n",
+    }
+    monkeypatch.setattr(
+        source,
+        "_RECORDS",
+        {
+            "cpython": {p: source._sha(raw) for p, raw in cpython.items()},
+            "hacl": {p: source._sha(raw) for p, raw in hacl.items()},
+        },
+    )
     with pytest.raises(ValueError, match="recorded KaRaMeL revision"):
         source._source_records(cpython, hacl)

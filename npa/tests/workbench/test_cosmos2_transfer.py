@@ -269,7 +269,9 @@ def test_reference_fallback_s3_publishes_index_and_canonical_manifest(
             root = Path(local_dir)
             for path in root.rglob("*"):
                 if path.is_file():
-                    uploads[base + path.relative_to(root).as_posix()] = path.read_bytes()
+                    uploads[base + path.relative_to(root).as_posix()] = (
+                        path.read_bytes()
+                    )
             return uri
 
         def upload_file(self, local: str, uri: str) -> str:

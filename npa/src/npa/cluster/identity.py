@@ -250,7 +250,8 @@ def resolve_verified_cluster_identity(
                     "cluster_id": str(getattr(local_state, "cluster_id", "") or ""),
                     "cluster_name": str(
                         getattr(local_state, "provider_name", "")
-                        or getattr(local_state, "name", "") or ""
+                        or getattr(local_state, "name", "")
+                        or ""
                     ),
                     "kubeconfig_path": str(
                         getattr(local_state, "kubeconfig_path", "") or ""

@@ -1,0 +1,63 @@
+{
+  "codebase_version": "v3.0",
+  "data_path": "data/chunk-{chunk_index:03d}/file-{file_index:03d}.parquet",
+  "features": {
+    "action": {
+      "dtype": "float64",
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "episode_index": {
+      "dtype": "int64",
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "frame_index": {
+      "dtype": "int64",
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "index": {
+      "dtype": "int64",
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "task_index": {
+      "dtype": "int64",
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "timestamp": {
+      "dtype": "float64",
+      "names": null,
+      "shape": [
+        1
+      ]
+    },
+    "subtask_index": {
+      "dtype": "int64",
+      "shape": [
+        1
+      ],
+      "names": null
+    }
+  },
+  "fps": 10,
+  "robot_type": "synthetic-test-fixture",
+  "splits": {
+    "train": "0:2"
+  },
+  "total_episodes": 2,
+  "total_frames": 8,
+  "total_tasks": 1
+}

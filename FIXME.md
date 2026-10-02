@@ -137,6 +137,12 @@ work lives).
   against `lerobot==0.5.1`: 3 passed in 51s. `skills/atomic/testing-conventions/SKILL.md`
   records how to run it.
 
+- 2026-09-23 - The Sim-to-LeRobot adapter has an optional native-reader smoke
+  that exports a compact synthetic dataset, loads the real directory through
+  `LeRobotDataset`, and checks native metadata, task and vector fields, and
+  decoded cameras. Environments without the optional `lerobot` dependency skip
+  this smoke and do not provide native-compatibility evidence.
+
 #### [H] Agent VM S3 credentials were readable from cloud-init user data
 
 - **Resolved**: 2026-08-27. Terraform/cloud-init no longer receives or renders

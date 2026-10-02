@@ -54,6 +54,8 @@ def list_evals(
                 "physical_ai_useful": spec.physical_ai.get("useful"),
                 "kind": spec.golden_eval.kind,
                 "gpu": spec.golden_eval.gpu,
+                "serverless_gpu": spec.golden_eval.serverless_gpu,
+                "serverless_gpu_count": spec.golden_eval.serverless_gpu_count,
                 "status": spec.golden_eval.status,
                 "command": spec.golden_eval.command,
             }
@@ -75,7 +77,9 @@ def list_evals(
 
 
 @app.command("show")
-def show(name: str = typer.Argument(..., help="Container key, e.g. 'lerobot'.")) -> None:
+def show(
+    name: str = typer.Argument(..., help="Container key, e.g. 'lerobot'."),
+) -> None:
     """Show the full safety + Physical AI + golden-eval record for a container."""
 
     try:
@@ -95,6 +99,8 @@ def show(name: str = typer.Argument(..., help="Container key, e.g. 'lerobot'."))
             "kind": spec.golden_eval.kind,
             "command": spec.golden_eval.command,
             "gpu": spec.golden_eval.gpu,
+            "serverless_gpu": spec.golden_eval.serverless_gpu,
+            "serverless_gpu_count": spec.golden_eval.serverless_gpu_count,
             "timeout_seconds": (
                 "unlimited"
                 if spec.golden_eval.execution_timeout is None
@@ -116,7 +122,9 @@ def validate() -> None:
     report = validate_manifest(expected_tools=set(CONTAINER_IMAGE_NAMES))
     if report.ok:
         count = len(load_manifest())
-        console.print(f"[green]OK[/green]: {count} containers have valid golden-eval entries")
+        console.print(
+            f"[green]OK[/green]: {count} containers have valid golden-eval entries"
+        )
         return
     err_console.print("[red]Golden-eval manifest validation failed:[/red]")
     for issue in report.issues:
@@ -141,6 +149,16 @@ def run(
         "", "--gpu", help="Serverless GPU type override (e.g. h200, h100, l40s, b300)."
     ),
     timeout: str = typer.Option("40m", "--timeout", help="Serverless job timeout."),
+    registry: str = typer.Option(
+        "",
+        "--registry",
+        help="Registry override for validating a candidate image before promotion.",
+    ),
+    tag: str = typer.Option(
+        "",
+        "--tag",
+        help="Candidate image tag override; only valid with --serverless.",
+    ),
 ) -> None:
     """Print, execute locally, or run on serverless a container's golden eval.
 
@@ -150,6 +168,13 @@ def run(
       container image on a GPU, and wait for the PASS/FAIL result.
     """
 
+    if (registry or tag) and not serverless:
+        err_console.print(
+            "[red]--registry/--tag require --serverless; local and dry-run "
+            "commands do not resolve candidate images[/red]"
+        )
+        raise typer.Exit(code=2)
+
     try:
         spec = container(name)
     except KeyError as exc:
@@ -157,7 +182,9 @@ def run(
         raise typer.Exit(code=1) from exc
 
     ge = spec.golden_eval
-    console.print(f"[cyan]{spec.name}[/cyan] ({spec.image}) golden eval: {ge.kind}, gpu={ge.gpu}")
+    console.print(
+        f"[cyan]{spec.name}[/cyan] ({spec.image}) golden eval: {ge.kind}, gpu={ge.gpu}"
+    )
     console.print(f"  $ {ge.command}")
 
     if serverless:
@@ -175,13 +202,15 @@ def run(
                 name,
                 gpu_type=gpu or None,
                 timeout=timeout,
+                registry=registry or None,
+                tag=tag or None,
                 on_state_change=_on_change,
             )
         except MissingS3CredentialsError as exc:
             err_console.print(f"[red]{exc}[/red]")
             raise typer.Exit(code=1) from exc
         console.print_json(json.dumps(result))
-        if not result.get("ok"):
+        if result.get("ok") is not True:
             raise typer.Exit(code=1)
         return
 
@@ -198,7 +227,9 @@ def run(
         err_console.print(f"[red]command not runnable here: {exc}[/red]")
         raise typer.Exit(code=2) from exc
     except subprocess.TimeoutExpired as exc:
-        err_console.print(f"[red]golden eval timed out after {ge.timeout_seconds}s[/red]")
+        err_console.print(
+            f"[red]golden eval timed out after {ge.timeout_seconds}s[/red]"
+        )
         raise typer.Exit(code=124) from exc
     if completed.returncode != 0:
         raise typer.Exit(code=completed.returncode)
@@ -229,6 +260,11 @@ def run_all_cmd(
         "--include-blocked",
         help="Include blocked-on-upstream containers.",
     ),
+    include_needs_image_update: bool = typer.Option(
+        False,
+        "--include-needs-image-update",
+        help="Include containers whose image must be rebuilt or promoted.",
+    ),
     tools_only: bool = typer.Option(
         False,
         "--tools-only",
@@ -248,19 +284,23 @@ def run_all_cmd(
 
     from pathlib import Path
 
-    from npa.smoke.batch import iter_containers, run_all
+    from npa.smoke.batch import select_containers, run_all
 
-    names = iter_containers(
+    selection = select_containers(
         include_blocked=include_blocked,
+        include_needs_image_update=include_needs_image_update,
         include_foundation=not tools_only,
         tools_only=tools_only,
     )
+    names = selection.included
     if containers:
         wanted = set(containers)
         names = [name for name in names if name in wanted]
         missing = sorted(wanted - set(names))
         if missing:
-            err_console.print(f"[red]unknown or filtered containers: {', '.join(missing)}[/red]")
+            err_console.print(
+                f"[red]unknown or filtered containers: {', '.join(missing)}[/red]"
+            )
             raise typer.Exit(code=2)
 
     mode = "dry-run"
@@ -288,6 +328,9 @@ def run_all_cmd(
         parallel=parallel,
         on_progress=_on_progress if serverless or execute else None,
     )
+    if not containers:
+        batch.results.extend(selection.excluded)
+        batch.results.sort(key=lambda result: result.name)
     if json_out:
         Path(json_out).write_text(batch.to_json() + "\n", encoding="utf-8")
     console.print_json(batch.to_json())

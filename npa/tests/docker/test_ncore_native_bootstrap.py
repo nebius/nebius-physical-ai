@@ -134,11 +134,8 @@ def test_native_lock_pins_exact_original_selection(native):
     # Provenance retains the original signed input identities. The source lock
     # additionally classifies their delivery outside the published source annex.
     assert [
-        {**item, "delivery": "build-only"}
-        for item in lock["provenance"]["metadata"]
-    ] == [
-        a for a in base["artifacts"] if a["path"].startswith("metadata/")
-    ]
+        {**item, "delivery": "build-only"} for item in lock["provenance"]["metadata"]
+    ] == [a for a in base["artifacts"] if a["path"].startswith("metadata/")]
 
 
 @pytest.mark.parametrize(
@@ -458,9 +455,7 @@ def test_root_flock_serializes_installers(installation):
     assert len(list(libraries.iterdir())) == 4
 
 
-@pytest.mark.parametrize(
-    "command", [[], ["install", "--root"], ["ensure", "extra"]]
-)
+@pytest.mark.parametrize("command", [[], ["install", "--root"], ["ensure", "extra"]])
 def test_no_cli_path_or_code_overrides(native, monkeypatch, tmp_path, command):
     if "--root" in command:
         command = [*command, str(tmp_path)]

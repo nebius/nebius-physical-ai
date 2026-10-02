@@ -21,6 +21,7 @@ def _template_default(value):
         return None
     return value
 
+
 def _endpoint():
     return (
         os.environ.get("NEBIUS_S3_ENDPOINT")
@@ -30,7 +31,11 @@ def _endpoint():
 
 
 def _region():
-    return os.environ.get("NEBIUS_REGION") or _template_default(DEFAULT_REGION) or "eu-north1"
+    return (
+        os.environ.get("NEBIUS_REGION")
+        or _template_default(DEFAULT_REGION)
+        or "eu-north1"
+    )
 
 
 def _s3_client():
@@ -116,7 +121,9 @@ def cmd_download(args):
         dest = Path(args.dest or Path(args.key).name)
         dest.parent.mkdir(parents=True, exist_ok=True)
         client.download_file(bucket, args.key, str(dest))
-        print(f"Downloaded s3://{bucket}/{args.key} -> {dest}  ({dest.stat().st_size:,} bytes)")
+        print(
+            f"Downloaded s3://{bucket}/{args.key} -> {dest}  ({dest.stat().st_size:,} bytes)"
+        )
         return
 
     prefix = args.key.rstrip("/") + "/"
@@ -128,7 +135,7 @@ def cmd_download(args):
     count = 0
     total_bytes = 0
     for obj in objects:
-        relative = obj["Key"][len(prefix):]
+        relative = obj["Key"][len(prefix) :]
         if not relative:
             continue
         local_path = dest_root / relative
@@ -160,7 +167,9 @@ def cmd_ls(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Nebius S3 helper for LeRobot checkpoints and data")
+    parser = argparse.ArgumentParser(
+        description="Nebius S3 helper for LeRobot checkpoints and data"
+    )
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("check", help="Verify S3 connectivity")
@@ -181,7 +190,9 @@ def main():
         parser.print_help()
         return
 
-    {"check": cmd_check, "upload": cmd_upload, "download": cmd_download, "ls": cmd_ls}[args.command](args)
+    {"check": cmd_check, "upload": cmd_upload, "download": cmd_download, "ls": cmd_ls}[
+        args.command
+    ](args)
 
 
 if __name__ == "__main__":

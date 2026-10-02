@@ -42,7 +42,9 @@ def test_classify_tier_vision_when_image_content_present() -> None:
 
 
 def test_has_image_content_detects_inline_data_uri_and_parts() -> None:
-    assert r.has_image_content([{"role": "user", "content": "see data:image/png;base64,AAA"}])
+    assert r.has_image_content(
+        [{"role": "user", "content": "see data:image/png;base64,AAA"}]
+    )
     assert r.has_image_content([{"role": "user", "content": [{"type": "image"}]}])
     assert not r.has_image_content([{"role": "user", "content": "plain text"}])
     assert not r.has_image_content(None)
@@ -111,7 +113,9 @@ def test_build_model_ladder_respects_explicit_allowlist() -> None:
 
 
 def test_build_model_ladder_never_empty() -> None:
-    assert r.build_model_ladder(r.TIER_CHEAP, [], interactive=False, allow_tier_defaults=False)
+    assert r.build_model_ladder(
+        r.TIER_CHEAP, [], interactive=False, allow_tier_defaults=False
+    )
 
 
 def test_build_model_ladder_deduplicates() -> None:

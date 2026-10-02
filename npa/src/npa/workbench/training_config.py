@@ -156,20 +156,30 @@ def training_config_from_mapping(values: Mapping[str, Any] | None) -> TrainingCo
         wandb_project=str(wandb.get("project") or ""),
         wandb_run_name=str(wandb.get("run_name") or ""),
         wandb_mode=str(wandb.get("mode") or "offline"),
-        checkpoint_s3_uri=str(checkpoint.get("uri") or payload.get("checkpoint_s3_uri") or ""),
+        checkpoint_s3_uri=str(
+            checkpoint.get("uri") or payload.get("checkpoint_s3_uri") or ""
+        ),
         checkpoint_s3_endpoint_url=str(
-            checkpoint.get("endpoint_url") or payload.get("checkpoint_s3_endpoint_url") or ""
+            checkpoint.get("endpoint_url")
+            or payload.get("checkpoint_s3_endpoint_url")
+            or ""
         ),
         checkpoint_s3_access_key_id=str(
-            checkpoint.get("aws_access_key_id") or payload.get("checkpoint_s3_access_key_id") or ""
+            checkpoint.get("aws_access_key_id")
+            or payload.get("checkpoint_s3_access_key_id")
+            or ""
         ),
         checkpoint_s3_secret_access_key=str(
-            checkpoint.get("aws_secret_access_key") or payload.get("checkpoint_s3_secret_access_key") or ""
+            checkpoint.get("aws_secret_access_key")
+            or payload.get("checkpoint_s3_secret_access_key")
+            or ""
         ),
     )
 
 
-def parse_overrides(values: Iterable[str], *, overrides_json: str = "") -> tuple[str, ...]:
+def parse_overrides(
+    values: Iterable[str], *, overrides_json: str = ""
+) -> tuple[str, ...]:
     """Validate repeated Hydra-style key=value overrides."""
 
     parsed = list(values)
@@ -177,7 +187,9 @@ def parse_overrides(values: Iterable[str], *, overrides_json: str = "") -> tuple
         try:
             raw_json = json.loads(overrides_json)
         except json.JSONDecodeError as exc:
-            raise TrainingConfigError(f"overrides_json is not valid JSON: {exc}") from exc
+            raise TrainingConfigError(
+                f"overrides_json is not valid JSON: {exc}"
+            ) from exc
         parsed.extend(_overrides_from_value(raw_json))
 
     result: list[str] = []
@@ -212,7 +224,9 @@ def _overrides_from_value(value: Any) -> list[str]:
         return _overrides_from_value(loaded)
     if isinstance(value, Iterable):
         return [str(item) for item in value]
-    raise TrainingConfigError("overrides must be a mapping, list, JSON string, or repeated KEY=VALUE values")
+    raise TrainingConfigError(
+        "overrides must be a mapping, list, JSON string, or repeated KEY=VALUE values"
+    )
 
 
 def render_overrides(overrides: Iterable[str], *, style: OverrideStyle) -> str:
@@ -274,7 +288,9 @@ def format_override(value: str, *, style: OverrideStyle) -> str:
     return f"--{override}"
 
 
-def wandb_overrides(wandb: WandbConfig, *, style: OverrideStyle, prefix: str = "wandb") -> list[str]:
+def wandb_overrides(
+    wandb: WandbConfig, *, style: OverrideStyle, prefix: str = "wandb"
+) -> list[str]:
     """Return common Hydra/CLI W&B overrides for trainers with W&B config keys."""
 
     enabled = "true" if wandb.enabled else "false"
@@ -291,7 +307,9 @@ def shell_env_exports(values: Mapping[str, str]) -> str:
 
     if not values:
         return ""
-    return " ".join(f"export {key}={shlex.quote(value)};" for key, value in values.items())
+    return " ".join(
+        f"export {key}={shlex.quote(value)};" for key, value in values.items()
+    )
 
 
 def checkpoint_s3_uri(config: TrainingConfig, fallback: str = "") -> str:
@@ -315,7 +333,9 @@ def upload_checkpoint_path(local_path: str | Path, config: TrainingConfig) -> st
     return client.upload_path(str(local_path), config.checkpoint_s3.uri)
 
 
-def checkpoint_upload_python(local_dir_expr: str, uri_expr: str = 'os.environ["NPA_CHECKPOINT_S3_URI"]') -> str:
+def checkpoint_upload_python(
+    local_dir_expr: str, uri_expr: str = 'os.environ["NPA_CHECKPOINT_S3_URI"]'
+) -> str:
     """Return Python code that uploads a directory using checkpoint S3 env vars."""
 
     return f"""

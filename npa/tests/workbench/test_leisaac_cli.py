@@ -1812,9 +1812,7 @@ def test_launch_fails_closed_when_explicit_byof_pull_secret_is_missing(
         ),
     )
 
-    result = runner.invoke(
-        app, [*_args(), "--image-pull-secret", "customer-registry"]
-    )
+    result = runner.invoke(app, [*_args(), "--image-pull-secret", "customer-registry"])
 
     assert result.exit_code == 1
     assert "image pull secret 'customer-registry' is missing" in result.output

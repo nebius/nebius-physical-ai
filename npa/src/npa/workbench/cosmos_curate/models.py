@@ -156,7 +156,9 @@ def hf_token(*, environ: dict[str, str] | None = None) -> str:
     return ""
 
 
-def load_registry(*, environ: dict[str, str] | None = None) -> dict[str, dict[str, Any]]:
+def load_registry(
+    *, environ: dict[str, str] | None = None
+) -> dict[str, dict[str, Any]]:
     """Read upstream's model registry from the checkout."""
 
     root = upstream_source_dir(environ=environ)
@@ -219,7 +221,9 @@ def resolve_models(
                 key=key,
                 model_id=model_id,
                 revision=str(entry.get("version") or ""),
-                files=tuple(str(name) for name in files) if isinstance(files, list) else (),
+                files=tuple(str(name) for name in files)
+                if isinstance(files, list)
+                else (),
             )
         )
     return specs
@@ -279,7 +283,10 @@ def _cache_state(spec: ModelSpec, local: Path, names: set[str]) -> tuple[bool, s
         # for it. The revision cannot be verified, so the fetch re-stamps it.
         return True, ""
     if names:
-        return False, "no completion stamp; treating the partial directory as incomplete"
+        return (
+            False,
+            "no completion stamp; treating the partial directory as incomplete",
+        )
     return False, ""
 
 
@@ -351,7 +358,9 @@ def fetch_models(
             download_model_weights_from_huggingface_to_workspace,
         )
     except Exception as exc:  # noqa: BLE001 - surfaced as an actionable error
-        raise CosmosCurateError(f"upstream model downloader is not importable: {exc}") from exc
+        raise CosmosCurateError(
+            f"upstream model downloader is not importable: {exc}"
+        ) from exc
 
     before = {status.key: status for status in model_status(specs, environ=env)}
     fetched: list[str] = []
@@ -373,7 +382,11 @@ def fetch_models(
             except Exception as exc:  # noqa: BLE001 - keep fetching the rest
                 message = f"{type(exc).__name__}: {exc}"[:300]
                 _log.warning(
-                    "could not fetch %s (%s): %s", spec.key, spec.model_id, message, exc_info=True
+                    "could not fetch %s (%s): %s",
+                    spec.key,
+                    spec.model_id,
+                    message,
+                    exc_info=True,
                 )
                 failed[spec.key] = message
                 continue
@@ -429,7 +442,9 @@ def _upstream_hf_config(token: str) -> Iterator[None]:
     try:
         from cosmos_curator.core.utils.config import config as upstream_config  # type: ignore
     except Exception as exc:  # noqa: BLE001
-        raise CosmosCurateError(f"upstream config module is not importable: {exc}") from exc
+        raise CosmosCurateError(
+            f"upstream config module is not importable: {exc}"
+        ) from exc
 
     attribute = "CONTAINER_PATHS_COSMOS_CURATOR_CONFIG_FILE"
     previous = getattr(upstream_config, attribute, None)
@@ -457,7 +472,9 @@ def _point_upstream_cache_at(root: Path) -> None:
     try:
         from cosmos_curator.core.utils import environment as upstream_env  # type: ignore
     except Exception as exc:  # noqa: BLE001
-        raise CosmosCurateError(f"upstream environment module is not importable: {exc}") from exc
+        raise CosmosCurateError(
+            f"upstream environment module is not importable: {exc}"
+        ) from exc
     if Path(upstream_env.CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR) != root:
         upstream_env.CONTAINER_PATHS_MODEL_WEIGHT_CACHE_DIR = root
 

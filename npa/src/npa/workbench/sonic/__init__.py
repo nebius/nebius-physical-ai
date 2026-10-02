@@ -98,7 +98,13 @@ def export_onnx(
         local_checkpoint = _stage_checkpoint(checkpoint, stack, storage_client)
         remote_output = output.startswith("s3://")
         local_output = (
-            str(Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="npa-sonic-onnx-"))))
+            str(
+                Path(
+                    stack.enter_context(
+                        tempfile.TemporaryDirectory(prefix="npa-sonic-onnx-")
+                    )
+                )
+            )
             if remote_output
             else output
         )
@@ -136,7 +142,9 @@ def _stage_checkpoint(
     from npa.clients.storage import StorageClient
 
     client = storage_client or StorageClient.from_environment()
-    tmp = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="npa-sonic-ckpt-")))
+    tmp = Path(
+        stack.enter_context(tempfile.TemporaryDirectory(prefix="npa-sonic-ckpt-"))
+    )
     target = tmp / (Path(checkpoint.rstrip("/")).name or "checkpoint.pt")
     try:
         return str(client.download_path(checkpoint, str(target)))
@@ -159,7 +167,11 @@ def _upload_export(
     from npa.clients.storage import StorageClient
 
     client = storage_client or StorageClient.from_environment()
-    onnx_target = output if output.endswith(".onnx") else output.rstrip("/") + "/sonic_policy.onnx"
+    onnx_target = (
+        output
+        if output.endswith(".onnx")
+        else output.rstrip("/") + "/sonic_policy.onnx"
+    )
     onnx_uri = client.upload_file(result.onnx_path, onnx_target)
     metadata_uri = ""
     if result.metadata_path:

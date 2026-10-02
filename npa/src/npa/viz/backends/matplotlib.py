@@ -42,8 +42,21 @@ def render(
 ) -> None:
     """Render skeleton trajectory data to an MP4 with matplotlib FuncAnimation."""
     skeleton = np.asarray(skeleton_data, dtype=np.float32)
-    predictions = None if predictions_data is None else np.asarray(predictions_data, dtype=np.float32)
-    _validate_inputs(skeleton, predictions, layout, output_path, resolution, fps, duration_s, joint_connections)
+    predictions = (
+        None
+        if predictions_data is None
+        else np.asarray(predictions_data, dtype=np.float32)
+    )
+    _validate_inputs(
+        skeleton,
+        predictions,
+        layout,
+        output_path,
+        resolution,
+        fps,
+        duration_s,
+        joint_connections,
+    )
 
     import matplotlib
 
@@ -55,7 +68,9 @@ def render(
     dpi = 100
     fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi, facecolor=BACKGROUND)
     try:
-        fig.suptitle(title or "LeRobot trajectory", color=TEXT_COLOR, fontsize=18, y=0.98)
+        fig.suptitle(
+            title or "LeRobot trajectory", color=TEXT_COLOR, fontsize=18, y=0.98
+        )
 
         axes_3d, trace_ax = _build_layout(fig, layout)
         bounds_data = [skeleton]
@@ -65,21 +80,43 @@ def render(
 
         artists: list[_SkeletonArtists] = []
         if layout == "side-by-side":
-            input_artists = _add_skeleton(axes_3d[0], skeleton[0], joint_connections, INPUT_COLOR, "Input")
-            pred_artists = _add_skeleton(axes_3d[1], predictions[0], joint_connections, PREDICTION_COLOR, "Predictions")
+            input_artists = _add_skeleton(
+                axes_3d[0], skeleton[0], joint_connections, INPUT_COLOR, "Input"
+            )
+            pred_artists = _add_skeleton(
+                axes_3d[1],
+                predictions[0],
+                joint_connections,
+                PREDICTION_COLOR,
+                "Predictions",
+            )
             artists.extend([input_artists, pred_artists])
             _style_3d_axis(axes_3d[0], "Isaac Lab input", limits)
             _style_3d_axis(axes_3d[1], "GR00T predictions", limits)
         else:
-            input_artists = _add_skeleton(axes_3d[0], skeleton[0], joint_connections, INPUT_COLOR, "Input")
+            input_artists = _add_skeleton(
+                axes_3d[0], skeleton[0], joint_connections, INPUT_COLOR, "Input"
+            )
             artists.append(input_artists)
             if layout == "overlay" and predictions is not None:
-                pred_artists = _add_skeleton(axes_3d[0], predictions[0], joint_connections, PREDICTION_COLOR, "Predictions")
+                pred_artists = _add_skeleton(
+                    axes_3d[0],
+                    predictions[0],
+                    joint_connections,
+                    PREDICTION_COLOR,
+                    "Predictions",
+                )
                 artists.append(pred_artists)
-            _style_3d_axis(axes_3d[0], "Overlay" if layout == "overlay" else "Trajectory", limits)
+            _style_3d_axis(
+                axes_3d[0], "Overlay" if layout == "overlay" else "Trajectory", limits
+            )
 
-        time_marker = _add_motion_trace(trace_ax, skeleton, predictions, fps=fps, duration_s=duration_s)
-        fig.subplots_adjust(left=0.035, right=0.965, top=0.90, bottom=0.08, hspace=0.16, wspace=0.04)
+        time_marker = _add_motion_trace(
+            trace_ax, skeleton, predictions, fps=fps, duration_s=duration_s
+        )
+        fig.subplots_adjust(
+            left=0.035, right=0.965, top=0.90, bottom=0.08, hspace=0.16, wspace=0.04
+        )
 
         def update(frame: int) -> list[object]:
             _update_skeleton(artists[0], skeleton[frame], joint_connections)
@@ -131,12 +168,20 @@ def _validate_inputs(
     if layout not in {"single", "side-by-side", "overlay"}:
         raise MatplotlibRenderError(f"Unsupported layout '{layout}'")
     if layout in {"side-by-side", "overlay"} and predictions is None:
-        raise MatplotlibRenderError(f"predictions_data is required for layout '{layout}'")
+        raise MatplotlibRenderError(
+            f"predictions_data is required for layout '{layout}'"
+        )
     if skeleton.ndim != 3 or skeleton.shape[-1] != 3:
-        raise MatplotlibRenderError(f"skeleton_data must have shape [T, J, 3], got {skeleton.shape}")
+        raise MatplotlibRenderError(
+            f"skeleton_data must have shape [T, J, 3], got {skeleton.shape}"
+        )
     if skeleton.shape[0] == 0 or skeleton.shape[1] == 0:
-        raise MatplotlibRenderError("skeleton_data must contain at least one frame and one joint")
-    if predictions is not None and (predictions.ndim != 3 or predictions.shape[-1] != 3):
+        raise MatplotlibRenderError(
+            "skeleton_data must contain at least one frame and one joint"
+        )
+    if predictions is not None and (
+        predictions.ndim != 3 or predictions.shape[-1] != 3
+    ):
         raise MatplotlibRenderError(
             f"predictions_data must have shape [T, J, 3], got {predictions.shape}"
         )
@@ -155,11 +200,17 @@ def _validate_inputs(
     max_joint = skeleton.shape[1] - 1
     for start, end in joint_connections:
         if start < 0 or end < 0 or start > max_joint or end > max_joint:
-            raise MatplotlibRenderError(f"joint connection {(start, end)} is outside skeleton joint range 0..{max_joint}")
+            raise MatplotlibRenderError(
+                f"joint connection {(start, end)} is outside skeleton joint range 0..{max_joint}"
+            )
     if output_path.suffix.lower() != ".mp4":
-        raise MatplotlibRenderError(f"matplotlib backend writes MP4 only, got: {output_path}")
+        raise MatplotlibRenderError(
+            f"matplotlib backend writes MP4 only, got: {output_path}"
+        )
     if resolution[0] <= 0 or resolution[1] <= 0:
-        raise MatplotlibRenderError(f"resolution dimensions must be positive, got: {resolution}")
+        raise MatplotlibRenderError(
+            f"resolution dimensions must be positive, got: {resolution}"
+        )
     if fps <= 0:
         raise MatplotlibRenderError(f"fps must be positive, got {fps}")
     if duration_s <= 0:
@@ -168,7 +219,9 @@ def _validate_inputs(
 
 def _build_layout(fig, layout: str):
     if layout == "side-by-side":
-        grid = fig.add_gridspec(2, 2, height_ratios=[4.5, 1.2], hspace=0.08, wspace=0.02)
+        grid = fig.add_gridspec(
+            2, 2, height_ratios=[4.5, 1.2], hspace=0.08, wspace=0.02
+        )
         left_ax = fig.add_subplot(grid[0, 0], projection="3d")
         right_ax = fig.add_subplot(grid[0, 1], projection="3d")
         trace_ax = fig.add_subplot(grid[1, :])
@@ -179,7 +232,9 @@ def _build_layout(fig, layout: str):
     return [main_ax], trace_ax
 
 
-def _add_skeleton(ax, frame: np.ndarray, connections: list[tuple[int, int]], color: str, label: str) -> _SkeletonArtists:
+def _add_skeleton(
+    ax, frame: np.ndarray, connections: list[tuple[int, int]], color: str, label: str
+) -> _SkeletonArtists:
     lines = []
     for start, end in connections:
         line = ax.plot(
@@ -211,7 +266,9 @@ def _update_skeleton(
     connections: list[tuple[int, int]],
 ) -> None:
     for line, (start, end) in zip(artists.lines, connections):
-        line.set_data([frame[start, 0], frame[end, 0]], [frame[start, 1], frame[end, 1]])
+        line.set_data(
+            [frame[start, 0], frame[end, 0]], [frame[start, 1], frame[end, 1]]
+        )
         line.set_3d_properties([frame[start, 2], frame[end, 2]])
     artists.joints._offsets3d = (frame[:, 0], frame[:, 1], frame[:, 2])
 
@@ -222,7 +279,11 @@ def _set_skeleton_visible(artists: _SkeletonArtists, visible: bool) -> None:
     artists.joints.set_visible(visible)
 
 
-def _style_3d_axis(ax, title: str, limits: tuple[tuple[float, float], tuple[float, float], tuple[float, float]]) -> None:
+def _style_3d_axis(
+    ax,
+    title: str,
+    limits: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+) -> None:
     ax.set_facecolor(BACKGROUND)
     ax.set_title(title, color=TEXT_COLOR, fontsize=12, pad=0)
     ax.set_xlim(*limits[0])
@@ -254,7 +315,9 @@ def _style_3d_axis(ax, title: str, limits: tuple[tuple[float, float], tuple[floa
         text.set_color(MUTED_TEXT_COLOR)
 
 
-def _axis_limits(arrays: list[np.ndarray]) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+def _axis_limits(
+    arrays: list[np.ndarray],
+) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
     combined = np.concatenate([arr.reshape(-1, 3) for arr in arrays], axis=0)
     mins = combined.min(axis=0)
     maxs = combined.max(axis=0)
@@ -268,10 +331,19 @@ def _axis_limits(arrays: list[np.ndarray]) -> tuple[tuple[float, float], tuple[f
     )
 
 
-def _add_motion_trace(trace_ax, skeleton: np.ndarray, predictions: np.ndarray | None, *, fps: int, duration_s: float):
+def _add_motion_trace(
+    trace_ax,
+    skeleton: np.ndarray,
+    predictions: np.ndarray | None,
+    *,
+    fps: int,
+    duration_s: float,
+):
     trace_ax.set_facecolor(BACKGROUND)
     trace_ax.set_xlim(0.0, duration_s)
-    trace_ax.set_title("Representative joint motion", color=MUTED_TEXT_COLOR, fontsize=10, pad=2)
+    trace_ax.set_title(
+        "Representative joint motion", color=MUTED_TEXT_COLOR, fontsize=10, pad=2
+    )
     time = np.arange(skeleton.shape[0], dtype=np.float32) / fps
     for trace in _representative_traces(skeleton):
         trace_ax.plot(time, trace, color=INPUT_COLOR, linewidth=1.3, alpha=0.62)

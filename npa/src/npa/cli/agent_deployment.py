@@ -439,6 +439,76 @@ def assert_remote_owner_if_present(
     return found
 
 
+def read_remote_owner_if_present(
+    ssh: _SshRunner, *, backend_port: int = 8787
+) -> dict[str, Any]:
+    """Return a parsed remote owner manifest without authorizing an overwrite."""
+    found: dict[str, Any] = {}
+    probes = (
+        (
+            f"curl -fsS http://127.0.0.1:{int(backend_port)}/deployment",
+            "backend",
+        ),
+        (f"sudo cat {DEPLOYMENT_MANIFEST_PATH}", "persisted manifest"),
+    )
+    for command, label in probes:
+        result = ssh.run(command)
+        if not result:
+            continue
+        code, stdout, _ = result
+        if code != 0 or not stdout.strip():
+            continue
+        try:
+            actual = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            raise DeploymentIdentityError(
+                f"existing agent {label} returned invalid ownership JSON"
+            ) from exc
+        if not isinstance(actual, dict):
+            raise DeploymentIdentityError(
+                f"existing agent {label} returned non-object ownership"
+            )
+        if found and any(
+            str(found.get(field, "")) != str(actual.get(field, ""))
+            for field in _IDENTITY_FIELDS
+        ):
+            raise DeploymentIdentityError(
+                "existing agent backend and persisted manifest have different owners"
+            )
+        found = actual
+    return found
+
+
+def adopt_legacy_remote_identity(
+    expected: Mapping[str, str], remote: Mapping[str, Any]
+) -> dict[str, str]:
+    """Anchor a legacy local record to its matching remote branch namespace.
+
+    This is deliberately narrow: callers must opt in, and only a remote with the
+    same repository, project alias, agent name, and runtime namespace can be
+    adopted. The resulting manifest retains the remote's immutable namespace but
+    records the caller's exact current commit/source tree as the deployed bytes.
+    """
+    required = set(_IDENTITY_FIELDS)
+    if any(not str(remote.get(field, "")).strip() for field in required):
+        raise DeploymentIdentityError("remote deployment owner is incomplete")
+    labels = {
+        "deployment_name": "agent name",
+        "project_alias": "project alias",
+        "runtime_namespace": "runtime namespace",
+        "repository": "repository",
+    }
+    for field in labels:
+        if str(remote.get(field, "")) != str(expected.get(field, "")):
+            raise DeploymentIdentityError(
+                f"remote deployment owner does not match this {labels[field]}"
+            )
+    adopted = dict(expected)
+    for field in _IDENTITY_FIELDS:
+        adopted[field] = str(remote[field])
+    return adopted
+
+
 def verify_persisted_remote_owner(
     ssh: _SshRunner, expected: Mapping[str, str]
 ) -> dict[str, Any]:

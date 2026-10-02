@@ -1,4 +1,5 @@
 """SkyPilot's supported server plugin hook for a task-owned request queue."""
+
 from sky.server.plugins import BasePlugin
 from sky.server.requests.queues.base import MultiprocessingQueueFactory
 
@@ -12,4 +13,6 @@ class IsolatedQueuePlugin(BasePlugin):
         self.port = port
 
     def install(self, extension_context):
-        extension_context.register_queue_backend_factory(MultiprocessingQueueFactory(self.port))
+        extension_context.register_queue_backend_factory(
+            MultiprocessingQueueFactory(self.port)
+        )

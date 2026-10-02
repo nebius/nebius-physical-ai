@@ -243,7 +243,7 @@ AUDITED_SECRET_LITERAL_FILE_SHA256: dict[str, str] = {
         "6733636aeb1c5d541aa06c578a95d12c2253c4e99fc85623595341905d3d6221"
     ),
     "usr/lib/x86_64-linux-gnu/libssh2.so.1.0.1": (
-        "66f751ec9d3d5bff254a498e020d37f9bbde8e0193ba11d1b78f29153ffe694a"
+        "e481655791a9b75f4d5957e40101d7d0b5d9c13a18d1ca233731d03365ad0aec"
     ),
     "usr/lib/x86_64-linux-gnu/libmbedcrypto.so.2.28.3": (
         "c04f91fdb172e17ddb21c9e0b75c04cb4f802bdfc40bb65484550746cd0019a8"
@@ -283,7 +283,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args(argv)
-    if sum(bool(value) for value in (args.image, args.rootfs_tar, args.docker_save)) != 1:
+    if (
+        sum(bool(value) for value in (args.image, args.rootfs_tar, args.docker_save))
+        != 1
+    ):
         parser.error("provide exactly one IMAGE, --rootfs-tar, or --docker-save")
     if args.config_json and not args.rootfs_tar:
         parser.error("--config-json is valid only with --rootfs-tar")
@@ -306,7 +309,8 @@ def main(argv: list[str] | None = None) -> int:
 
     result = {
         "format": "npa_ltx_image_byte_scan_v1",
-        "image": args.image or ("docker-save" if args.docker_save else "offline-rootfs"),
+        "image": args.image
+        or ("docker-save" if args.docker_save else "offline-rootfs"),
         "status": "pass" if not findings else "fail",
         "archives_scanned": len(tars),
         "findings": [asdict(item) for item in findings],

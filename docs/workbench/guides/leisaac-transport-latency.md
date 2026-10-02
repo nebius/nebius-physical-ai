@@ -208,3 +208,16 @@ Then perform a real recorder cycle (`start`, control activity, outcome,
 `finalize`), verify the unique S3 version/commit and H.264 MP4, load the dataset
 with LeRobot 0.5.1, capture the live transport/latency/teleoperation/recorder UI,
 and leave a detached health monitor running.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

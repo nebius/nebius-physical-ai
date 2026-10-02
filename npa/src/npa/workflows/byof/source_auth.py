@@ -30,8 +30,10 @@ class RepositorySecretFiles:
     token: Path
     repo_url: Path
     repo_ref: Path
+    source_prune_path: Path
     repository_sha256: str
     ref_sha256: str
+    source_prune_path_sha256: str
     _redaction_values: tuple[str, ...] = field(repr=False)
 
     @property
@@ -69,7 +71,9 @@ def validate_repository_url(repo_url: str, *, private: bool) -> str:
 
 
 def _write_secret(path: Path, value: str) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+    fd = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR
+    )
     try:
         os.write(fd, value.encode("utf-8"))
     finally:
@@ -77,7 +81,9 @@ def _write_secret(path: Path, value: str) -> None:
 
 
 def _token_from_github_cli(path: Path) -> str:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+    fd = os.open(
+        path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR
+    )
     os.close(fd)
     with path.open("wb") as output:
         proc = subprocess.run(
@@ -182,7 +188,7 @@ def _preflight_access(repo_url: str, repo_ref: str, token_path: Path) -> None:
     helper = token_path.parent / "git-askpass"
     helper.write_text(
         "#!/bin/sh\n"
-        "case \"$1\" in\n"
+        'case "$1" in\n'
         "  *Username*) printf '%s\\n' 'x-access-token' ;;\n"
         '  *) cat "$NPA_BYOF_GIT_TOKEN_FILE" ;;\n'
         "esac\n",
@@ -216,10 +222,7 @@ def _preflight_access(repo_url: str, repo_ref: str, token_path: Path) -> None:
     config_path = repository / "config"
     config_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
     with config_path.open("a", encoding="utf-8") as config:
-        config.write(
-            "\n[remote \"origin\"]\n"
-            f"\turl = {_git_config_quote(repo_url)}\n"
-        )
+        config.write(f'\n[remote "origin"]\n\turl = {_git_config_quote(repo_url)}\n')
     proc = subprocess.run(
         ["git", "ls-remote", "origin"],
         cwd=repository,
@@ -246,6 +249,7 @@ def private_repository_secrets(
     repo_url: str,
     repo_ref: str,
     *,
+    source_prune_path: str = "",
     token_env: str = "",
     environ: Mapping[str, str] | None = None,
     preflight: bool = True,
@@ -269,15 +273,25 @@ def private_repository_secrets(
         )
         repo_url_path = directory / "repo-url"
         repo_ref_path = directory / "repo-ref"
+        source_prune_path_file = directory / "source-prune-path"
         _write_secret(repo_url_path, clean_url)
         _write_secret(repo_ref_path, clean_ref)
+        _write_secret(source_prune_path_file, source_prune_path)
         if preflight:
             _preflight_access(clean_url, clean_ref, token_path)
         yield RepositorySecretFiles(
             token=token_path,
             repo_url=repo_url_path,
             repo_ref=repo_ref_path,
+            source_prune_path=source_prune_path_file,
             repository_sha256=hashlib.sha256(clean_url.encode("utf-8")).hexdigest(),
             ref_sha256=hashlib.sha256(clean_ref.encode("utf-8")).hexdigest(),
-            _redaction_values=(token, clean_url, clean_ref),
+            source_prune_path_sha256=hashlib.sha256(
+                source_prune_path.encode("utf-8")
+            ).hexdigest(),
+            _redaction_values=tuple(
+                value
+                for value in (token, clean_url, clean_ref, source_prune_path)
+                if value
+            ),
         )

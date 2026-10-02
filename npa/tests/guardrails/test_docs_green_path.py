@@ -137,9 +137,11 @@ def test_paidf_quickstart_documents_failure_recovery() -> None:
 def test_canonical_deploy_guide_documents_the_ordered_green_path() -> None:
     readme = README.read_text(encoding="utf-8")
     assert "docs/workbench/guides/physical-ai-data-factory-deploy.md" in readme
-    text = PAIDF_DEPLOY.read_text(encoding="utf-8").split(
-        "## Quick start (copy-paste)", 1
-    )[1].split("\n## ", 1)[0]
+    text = (
+        PAIDF_DEPLOY.read_text(encoding="utf-8")
+        .split("## Quick start (copy-paste)", 1)[1]
+        .split("\n## ", 1)[0]
+    )
     ordered = [
         "npa configure",
         "npa workbench health preflight",
@@ -151,7 +153,9 @@ def test_canonical_deploy_guide_documents_the_ordered_green_path() -> None:
     positions = []
     for command in ordered:
         index = text.find(command)
-        assert index != -1, f"PAIDF deployment quickstart no longer mentions `{command}`"
+        assert index != -1, (
+            f"PAIDF deployment quickstart no longer mentions `{command}`"
+        )
         positions.append(index)
     assert positions == sorted(positions), (
         "the PAIDF deployment green-path commands are no longer in runnable order: "

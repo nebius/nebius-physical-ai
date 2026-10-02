@@ -9,7 +9,9 @@ from typing import Any
 # ANSI CSI/OSC control sequences (colors, cursor movement, erase-line) emitted
 # by rich status spinners; their introducer is ESC+"[", which must not be
 # mistaken for the start of a JSON array.
-_ANSI_SEQUENCE_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?")
+_ANSI_SEQUENCE_RE = re.compile(
+    r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?"
+)
 
 
 def parse_single_json_document(output: str) -> Any | None:

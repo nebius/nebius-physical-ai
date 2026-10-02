@@ -36,9 +36,16 @@ _FAILURES = (
 
 @intent_boundary(OperationIntent.MUTATE)
 def verify_graphics(
-    spec, *, only_projects=None, only_clusters=None, project_prefix=None,
-    profile=None, evidence_dir: Path | None = None, concurrency: int = 1,
-    stabilization_seconds: int | None = None, timeout_minutes: int | None = None,
+    spec,
+    *,
+    only_projects=None,
+    only_clusters=None,
+    project_prefix=None,
+    profile=None,
+    evidence_dir: Path | None = None,
+    concurrency: int = 1,
+    stabilization_seconds: int | None = None,
+    timeout_minutes: int | None = None,
 ) -> dict:
     """Qualify CUDA, GLX, EGL, and Vulkan on every selected RTX worker.
 
@@ -60,12 +67,23 @@ def verify_graphics(
     """
     _validate_options(concurrency, stabilization_seconds, timeout_minutes)
     targets = resolve_fleet_targets(
-        spec, only_projects=only_projects, only_clusters=only_clusters,
-        project_prefix=project_prefix, profile=profile,
+        spec,
+        only_projects=only_projects,
+        only_clusters=only_clusters,
+        project_prefix=project_prefix,
+        profile=profile,
     )
     directory = _evidence_directory(evidence_dir)
-    reports = _run_targets(spec, targets, directory, concurrency, profile,
-                           project_prefix, stabilization_seconds, timeout_minutes)
+    reports = _run_targets(
+        spec,
+        targets,
+        directory,
+        concurrency,
+        profile,
+        project_prefix,
+        stabilization_seconds,
+        timeout_minutes,
+    )
     return _aggregate(reports)
 
 
@@ -147,12 +165,17 @@ def _verify_target(
     private = {"target_index": index, "run_id": uuid.uuid4().hex}
     try:
         config = _health_config(cluster, stabilization_seconds, timeout_minutes)
-        identity = resolve_fleet_identity(spec, project, cluster, profile=profile,
-                                          project_prefix=project_prefix)
+        identity = resolve_fleet_identity(
+            spec, project, cluster, profile=profile, project_prefix=project_prefix
+        )
         private["identity_sha256"] = identity.evidence_sha256
         private["identity"] = json.loads(identity.evidence_json)
-        health = validate_gpu_health(run_capture, kubectl_bin=require_bin("kubectl"),
-                                     kubeconfig_path=identity.kubeconfig, config=config)
+        health = validate_gpu_health(
+            run_capture,
+            kubectl_bin=require_bin("kubectl"),
+            kubeconfig_path=identity.kubeconfig,
+            config=config,
+        )
         private["health"] = health
         _record_pass(public, health, config)
     except _FAILURES as error:

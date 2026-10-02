@@ -7,7 +7,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -20,7 +20,10 @@ from npa.config_schema import (
 SkyBin = str | os.PathLike[str] | None
 
 _SETUP_DOC = "docs/orchestration/skypilot-setup.md"
-CONFIG_PATH = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa") / "config.yaml"
+CONFIG_PATH = (
+    Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
+    / "config.yaml"
+)
 REQUIRED_SKYPILOT_VERSION = "0.12.2"
 _VERSION_CHECK_CACHE: set[tuple[str, int, int]] = set()
 
@@ -75,8 +78,14 @@ def resolve_config(
 
     global_value, _ = _first_config_value(
         (global_config_path, "explicit config_path"),
-        (os.environ.get("SKYPILOT_GLOBAL_CONFIG", "").strip(), "SKYPILOT_GLOBAL_CONFIG"),
-        (file_config.get("global_config_path"), f"{config_path}: skypilot.global_config_path"),
+        (
+            os.environ.get("SKYPILOT_GLOBAL_CONFIG", "").strip(),
+            "SKYPILOT_GLOBAL_CONFIG",
+        ),
+        (
+            file_config.get("global_config_path"),
+            f"{config_path}: skypilot.global_config_path",
+        ),
     )
     isolated_value, _ = _first_config_value(
         (isolated_config_dir, "explicit isolated_config_dir"),
@@ -84,7 +93,10 @@ def resolve_config(
             os.environ.get("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", "").strip(),
             "NPA_SKYPILOT_ISOLATED_CONFIG_DIR",
         ),
-        (file_config.get("isolated_config_dir"), f"{config_path}: skypilot.isolated_config_dir"),
+        (
+            file_config.get("isolated_config_dir"),
+            f"{config_path}: skypilot.isolated_config_dir",
+        ),
     )
     return SkyPilotConfig(
         sky_bin=_resolve_candidate(sky_value, sky_source),
@@ -97,6 +109,45 @@ def resolve_sky_bin(sky_bin: SkyBin = None) -> Path:
     """Resolve the SkyPilot CLI executable for subprocess calls."""
 
     return resolve_config(sky_bin=sky_bin).sky_bin
+
+
+def resolve_global_config_path(
+    global_config_path: str | os.PathLike[str] | None = None,
+    *,
+    npa_config_path: str | os.PathLike[str] | None = None,
+) -> Path | None:
+    """Resolve SkyPilot's selected global config without requiring its binary."""
+
+    config_path = Path(npa_config_path) if npa_config_path is not None else CONFIG_PATH
+    file_config = _load_skypilot_file_config(config_path)
+    global_value, _ = _first_config_value(
+        (global_config_path, "explicit config_path"),
+        (
+            os.environ.get("SKYPILOT_GLOBAL_CONFIG", "").strip(),
+            "SKYPILOT_GLOBAL_CONFIG",
+        ),
+        (
+            file_config.get("global_config_path"),
+            f"{config_path}: skypilot.global_config_path",
+        ),
+    )
+    return _optional_path(global_value)
+
+
+def resolve_skypilot_kubeconfig_path(
+    environment: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the one kubeconfig pinned SkyPilot sees in its isolated HOME."""
+
+    env = os.environ if environment is None else environment
+    raw = str(env.get("KUBECONFIG") or "").strip()
+    if raw:
+        first = raw.split(os.pathsep, 1)[0].strip()
+        if first:
+            return Path(first).expanduser().resolve(strict=False)
+    return (
+        Path(env.get("HOME") or Path.home()).expanduser() / ".kube" / "config"
+    ).resolve(strict=False)
 
 
 def resolve_isolated_config_dir(
@@ -144,7 +195,9 @@ def ensure_skypilot_version(sky_bin: SkyBin = None) -> Path:
             check=False,
         )
     except (OSError, subprocess.SubprocessError) as exc:
-        raise SkyPilotVersionError(f"Unable to check SkyPilot version via {sky_path}") from exc
+        raise SkyPilotVersionError(
+            f"Unable to check SkyPilot version via {sky_path}"
+        ) from exc
     output = f"{result.stdout}\n{result.stderr}"
     version = re.search(r"(\d+\.\d+\.\d+)", output)
     actual = version.group(1) if version else "unknown"
@@ -242,12 +295,16 @@ def _load_skypilot_file_config(path: Path) -> dict[str, Any]:
     if section in (None, ""):
         return {}
     if not isinstance(section, dict):
-        raise SkyPilotConfigError(f"NPA config skypilot section must be a mapping: {path}")
+        raise SkyPilotConfigError(
+            f"NPA config skypilot section must be a mapping: {path}"
+        )
     unknown = unknown_config_keys("skypilot", section)
     if unknown:
         valid = ", ".join(sorted(SKYPILOT_CONFIG_KEYS))
         keys = ", ".join(unknown)
-        raise SkyPilotConfigError(f"Unrecognized SkyPilot config key(s): {keys}. Valid keys: {valid}")
+        raise SkyPilotConfigError(
+            f"Unrecognized SkyPilot config key(s): {keys}. Valid keys: {valid}"
+        )
     # NPA-owned controller metadata shares the section for atomic persistence,
     # but never becomes a runtime setting or participates in runtime precedence.
     return {key: section[key] for key in SKYPILOT_RUNTIME_CONFIG_KEYS if key in section}

@@ -99,7 +99,12 @@ def test_pull_from_s3_downloads_objects(
     monkeypatch.setattr(server_module, "CHECKPOINT_DIR", str(tmp_path / "checkpoints"))
     paginator = mock_s3.get_paginator.return_value
     paginator.paginate.return_value = [
-        {"Contents": [{"Key": "models/run/config.json"}, {"Key": "models/run/weights.bin"}]}
+        {
+            "Contents": [
+                {"Key": "models/run/config.json"},
+                {"Key": "models/run/weights.bin"},
+            ]
+        }
     ]
 
     local = Path(server_module._pull_from_s3("s3://bucket/models/run"))
@@ -117,9 +122,14 @@ def test_checkpoint_download_rejects_object_traversal_and_does_not_cache_partial
 
     cache = tmp_path / "checkpoints"
     monkeypatch.setattr(server_module, "CHECKPOINT_DIR", str(cache))
-    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
-        {"Key": "models/run/config.json"}, {"Key": "models/run/" + relative}
-    ]}]
+    mock_s3.get_paginator.return_value.paginate.return_value = [
+        {
+            "Contents": [
+                {"Key": "models/run/config.json"},
+                {"Key": "models/run/" + relative},
+            ]
+        }
+    ]
     mock_s3.download_file.side_effect = lambda _b, _k, p: Path(p).write_bytes(b"config")
 
     with pytest.raises(StorageError):
@@ -132,14 +142,14 @@ def test_checkpoint_download_rejects_object_traversal_and_does_not_cache_partial
 def test_checkpoint_cache_identity_does_not_alias_underscore_paths(
     server_module, mock_s3
 ):
-    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
-        {"Key": "models/run/config.json"}
-    ]}]
+    mock_s3.get_paginator.return_value.paginate.return_value = [
+        {"Contents": [{"Key": "models/run/config.json"}]}
+    ]
     mock_s3.download_file.side_effect = lambda _b, _k, p: Path(p).write_bytes(b"first")
     first = server_module._pull_from_s3("s3://bucket/models/run")
-    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
-        {"Key": "models_run/config.json"}
-    ]}]
+    mock_s3.get_paginator.return_value.paginate.return_value = [
+        {"Contents": [{"Key": "models_run/config.json"}]}
+    ]
     mock_s3.download_file.side_effect = lambda _b, _k, p: Path(p).write_bytes(b"second")
     second = server_module._pull_from_s3("s3://bucket/models_run")
 
@@ -155,9 +165,14 @@ def test_concurrent_checkpoint_downloads_reuse_one_complete_published_tree(
     from threading import Barrier
 
     ready = Barrier(2)
-    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
-        {"Key": "models/run/config.json"}, {"Key": "models/run/weights.bin"}
-    ]}]
+    mock_s3.get_paginator.return_value.paginate.return_value = [
+        {
+            "Contents": [
+                {"Key": "models/run/config.json"},
+                {"Key": "models/run/weights.bin"},
+            ]
+        }
+    ]
 
     def download(_bucket, key, destination):
         path = Path(destination)
@@ -168,13 +183,18 @@ def test_concurrent_checkpoint_downloads_reuse_one_complete_published_tree(
 
     mock_s3.download_file.side_effect = download
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(
-            server_module._pull_from_s3, ["s3://bucket/models/run"] * 2,
-        ))
+        results = list(
+            executor.map(
+                server_module._pull_from_s3,
+                ["s3://bucket/models/run"] * 2,
+            )
+        )
 
     assert results[0] == results[1]
     published = Path(results[0])
-    assert (published / "config.json").read_text() == (published / "weights.bin").read_text()
+    assert (published / "config.json").read_text() == (
+        published / "weights.bin"
+    ).read_text()
     assert list(published.parent.iterdir()) == [published]
     assert mock_s3.download_file.call_count == 4
 
@@ -182,10 +202,12 @@ def test_concurrent_checkpoint_downloads_reuse_one_complete_published_tree(
 def test_checkpoint_publication_does_not_mask_other_filesystem_errors(
     server_module, mock_s3, monkeypatch
 ):
-    mock_s3.get_paginator.return_value.paginate.return_value = [{"Contents": [
-        {"Key": "models/run/config.json"}
-    ]}]
-    mock_s3.download_file.side_effect = lambda _b, _k, path: Path(path).write_text("config")
+    mock_s3.get_paginator.return_value.paginate.return_value = [
+        {"Contents": [{"Key": "models/run/config.json"}]}
+    ]
+    mock_s3.download_file.side_effect = lambda _b, _k, path: Path(path).write_text(
+        "config"
+    )
 
     def fail_rename(_source, destination):
         destination.mkdir()
@@ -246,12 +268,18 @@ def test_serve_and_stop_endpoints_use_policy_state(server_module, monkeypatch) -
 
     state = FakePolicyState()
     monkeypatch.setattr(server_module, "policy_state", state)
-    monkeypatch.setattr(server_module, "_resolve_checkpoint", lambda checkpoint: "/resolved")
+    monkeypatch.setattr(
+        server_module, "_resolve_checkpoint", lambda checkpoint: "/resolved"
+    )
 
     with TestClient(server_module.app) as client:
         serve_response = client.post(
             "/serve",
-            json={"checkpoint": "s3://bucket/model", "env_type": "aloha", "env_task": "task"},
+            json={
+                "checkpoint": "s3://bucket/model",
+                "env_type": "aloha",
+                "env_task": "task",
+            },
         )
         stop_response = client.delete("/serve")
 

@@ -61,14 +61,18 @@ def main() -> None:
                 continue
             installed = importlib.metadata.version(requirement.name)
             if installed not in requirement.specifier:
-                raise RuntimeError(f"{package} dependency does not satisfy {requirement}")
+                raise RuntimeError(
+                    f"{package} dependency does not satisfy {requirement}"
+                )
     # Ray decorators replace the Python classes with Deployment/ActorClass
     # wrappers at import time. Prove the pinned implementation from its source
     # module, then separately prove that importing produced real Ray objects.
     source_path = Path(cosmos_ray_serve.__file__)
     source = source_path.read_text(encoding="utf-8")
     if "@ray.serve.batch" not in source:
-        raise RuntimeError("upstream OmniModelDeployment no longer owns Ray Serve batching")
+        raise RuntimeError(
+            "upstream OmniModelDeployment no longer owns Ray Serve batching"
+        )
     if "class OmniModelDeployment" not in source or "OmniInference" not in source:
         raise RuntimeError("native Cosmos model generation path is incomplete")
     if not hasattr(cosmos_ray_serve.OmniModelDeployment, "bind"):
@@ -78,13 +82,17 @@ def main() -> None:
     if not hasattr(ray.serve, "run"):
         raise RuntimeError("Ray Serve runtime is missing")
     if npa_ray_contract.RAY_BATCH_SCHEMA != "npa.cosmos3.ray-serve.batch.v1":
-        raise RuntimeError("NPA batch contract is missing from the framework environment")
+        raise RuntimeError(
+            "NPA batch contract is missing from the framework environment"
+        )
     if not callable(npa_ray_server.main):
         raise RuntimeError("NPA authenticated Ray ingress is not importable")
     arches = set((torch._C._cuda_getArchFlags() or "").split())
     for required in {"sm_100", "sm_120"}:
         if required not in arches:
-            raise RuntimeError(f"torch wheel lacks required Blackwell target {required}: {sorted(arches)}")
+            raise RuntimeError(
+                f"torch wheel lacks required Blackwell target {required}: {sorted(arches)}"
+            )
     if os.environ.get("NPA_COSMOS3_RAY_GUARDRAILS") != "true":
         raise RuntimeError("guardrails must default on")
     roots = [Path("/opt/cosmos3"), Path("/opt/npa"), Path("/outputs")]

@@ -66,9 +66,7 @@ pytestmark = [
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
-OPEN_DREAMER_SPEC = (
-    REPO_ROOT / "workflows" / "testing" / "byof-open-dreamer.yaml"
-)
+OPEN_DREAMER_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-open-dreamer.yaml"
 
 # Capability contract for the accepted Open Dreamer smoke. Keep in sync with
 # npa/tests/workflows/test_byof_solution_smokes.py and the tool skill.
@@ -138,15 +136,27 @@ def _wait_for_object(s3, bucket: str, key: str, *, deadline: float, poll: float)
     return None
 
 
-def _verify_run_s3(s3, bucket: str, key_prefix: str, smoke_artifact: str, *, deadline: float, poll: float) -> dict:
+def _verify_run_s3(
+    s3,
+    bucket: str,
+    key_prefix: str,
+    smoke_artifact: str,
+    *,
+    deadline: float,
+    poll: float,
+) -> dict:
     """Assert the run's S3 artifacts prove all 7 capabilities + the dream .rrd.
 
     ``key_prefix`` is the full object-key prefix (ending in ``/``) that the run
     uploaded under, e.g. ``oss-solutions/open-dreamer/<run-id>/``.
     """
     key_prefix = key_prefix.rstrip("/") + "/"
-    obj = _wait_for_object(s3, bucket, key_prefix + smoke_artifact, deadline=deadline, poll=poll)
-    assert obj is not None, f"results artifact never appeared: s3://{bucket}/{key_prefix}{smoke_artifact}"
+    obj = _wait_for_object(
+        s3, bucket, key_prefix + smoke_artifact, deadline=deadline, poll=poll
+    )
+    assert obj is not None, (
+        f"results artifact never appeared: s3://{bucket}/{key_prefix}{smoke_artifact}"
+    )
     results = json.loads(obj["Body"].read())
 
     exercised = set(results.get("capabilities_exercised") or [])
@@ -156,7 +166,9 @@ def _verify_run_s3(s3, bucket: str, key_prefix: str, smoke_artifact: str, *, dea
     )
     assert not deferred, f"unexpected deferred capabilities: {deferred}"
     assert results.get("jax_device_count", 0) >= 2, results.get("jax_device_count")
-    assert results.get("data_parallel_mesh", {}).get("data", 0) >= 2, results.get("data_parallel_mesh")
+    assert results.get("data_parallel_mesh", {}).get("data", 0) >= 2, results.get(
+        "data_parallel_mesh"
+    )
 
     rrd = s3.head_object(Bucket=bucket, Key=key_prefix + "open_dreamer_world_model.rrd")
     assert rrd["ContentLength"] > 1_000_000, rrd["ContentLength"]
@@ -182,13 +194,18 @@ def test_open_dreamer_spec_renders_via_workflow_machinery() -> None:
     profile = resolve_byof_profile_path(argv_parts[argv_parts.index("--yaml") + 1])
     assert profile.name == "byof-solution-smoke-rtxpro-2gpu.yaml"
     documents = list(yaml.safe_load_all(profile.read_text()))
-    assert documents[1]["resources"]["accelerators"] == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2"
+    assert (
+        documents[1]["resources"]["accelerators"]
+        == "RTXPRO-6000-BLACKWELL-SERVER-EDITION:2"
+    )
     for capability in EXPECTED_CAPABILITIES:
         assert capability in argv, capability
 
     config = _spec_config()
     assert config.get("workload") == "solution-smoke"
-    assert resolve_byof_profile_path(str(config.get("resource_profile_yaml"))) == profile
+    assert (
+        resolve_byof_profile_path(str(config.get("resource_profile_yaml"))) == profile
+    )
     smoke = str(config.get("smoke_command") or "")
     for capability in EXPECTED_CAPABILITIES:
         assert capability in smoke, capability
@@ -201,7 +218,9 @@ def test_open_dreamer_spec_renders_via_workflow_machinery() -> None:
 def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
     image = os.environ.get("NPA_BYOF_TEST_IMAGE", "").strip()
     if not image:
-        pytest.skip("Set NPA_BYOF_TEST_IMAGE=<prebuilt open-dreamer image> to reuse the image.")
+        pytest.skip(
+            "Set NPA_BYOF_TEST_IMAGE=<prebuilt open-dreamer image> to reuse the image."
+        )
 
     config = _spec_config()
     smoke_command = str(config.get("smoke_command") or "")
@@ -215,7 +234,9 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
     repo_ref = str(config["repo_ref"])
 
     registry = resolve_container_registry(e2e_project)
-    run_id = "byof-open-dreamer-e2e-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    run_id = "byof-open-dreamer-e2e-" + datetime.now(timezone.utc).strftime(
+        "%Y%m%dT%H%M%SZ"
+    )
 
     # Pin the output bucket to a test-resolvable one so verification is
     # deterministic (the pod otherwise resolves a tenant run bucket at runtime
@@ -230,23 +251,38 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
     cmd = [
         sys.executable,
         str(BYOF_RUNNER),
-        "--repo-url", repo_url,
-        "--repo-ref", repo_ref,
-        "--base-profile", "ubuntu",
-        "--project", e2e_project or "",
-        "--workload", "solution-smoke",
-        "--yaml", str(profile),
+        "--repo-url",
+        repo_url,
+        "--repo-ref",
+        repo_ref,
+        "--base-profile",
+        "ubuntu",
+        "--project",
+        e2e_project or "",
+        "--workload",
+        "solution-smoke",
+        "--yaml",
+        str(profile),
         "--skip-build",
         "--skip-push",
-        "--image", image,
-        "--smoke-command", smoke_command,
-        "--solution-name", solution_name,
-        "--capability-name", capability_name,
-        "--smoke-artifact-name", smoke_artifact,
-        "--run-id", run_id,
-        "--output-root", output_root,
-        "--wait-timeout", os.environ.get("NPA_BYOF_OD_WAIT", "21600"),
-        "--poll-interval", "60",
+        "--image",
+        image,
+        "--smoke-command",
+        smoke_command,
+        "--solution-name",
+        solution_name,
+        "--capability-name",
+        capability_name,
+        "--smoke-artifact-name",
+        smoke_artifact,
+        "--run-id",
+        run_id,
+        "--output-root",
+        output_root,
+        "--wait-timeout",
+        os.environ.get("NPA_BYOF_OD_WAIT", "21600"),
+        "--poll-interval",
+        "60",
         "--no-cleanup",
     ]
     config_path = skypilot_config_for_project(e2e_project)
@@ -309,7 +345,9 @@ def test_open_dreamer_live_gpu_smoke(e2e_project: str | None) -> None:
     s3 = _s3_client(e2e_project)
     deadline = time.time() + int(os.environ.get("NPA_BYOF_OD_S3_WAIT", "18000"))
     poll = float(os.environ.get("NPA_BYOF_OD_POLL", "120"))
-    results = _verify_run_s3(s3, out_bucket, key_prefix, smoke_artifact, deadline=deadline, poll=poll)
+    results = _verify_run_s3(
+        s3, out_bucket, key_prefix, smoke_artifact, deadline=deadline, poll=poll
+    )
     assert results.get("dream_psnr_db") is not None, results.get("dream_psnr_db")
 
     # Best-effort teardown of the (auto-stopping) cluster.
@@ -339,5 +377,7 @@ def test_open_dreamer_verify_existing_run(e2e_project: str | None) -> None:
     bucket, key_prefix = raw.split("/", 1)
     smoke_artifact = str(_spec_config()["smoke_artifact_name"])
     s3 = _s3_client(e2e_project)
-    results = _verify_run_s3(s3, bucket, key_prefix, smoke_artifact, deadline=time.time() + 120, poll=5)
+    results = _verify_run_s3(
+        s3, bucket, key_prefix, smoke_artifact, deadline=time.time() + 120, poll=5
+    )
     assert results.get("dream_psnr_db") is not None, results

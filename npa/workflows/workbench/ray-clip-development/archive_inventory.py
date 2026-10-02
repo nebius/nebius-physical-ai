@@ -33,7 +33,9 @@ def canonical(value: object) -> bytes:
         TypeError: An object is not JSON-compatible.
         ValueError: A value is nonfinite or contains a circular reference.
     """
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode()
 
 
 def safe_name(name: str) -> str:
@@ -46,11 +48,15 @@ def safe_name(name: str) -> str:
     Raises:
         ValueError: The name is unsafe or ambiguous.
     """
-    if (not isinstance(name, str) or not name or any(char in name for char in "\\?#")
-            or any(ord(char) < 32 or ord(char) == 127 for char in name)
-            or PurePosixPath(name).is_absolute()
-            or PurePosixPath(name).as_posix() != name
-            or any(part in {"", ".", ".."} for part in name.split("/"))):
+    if (
+        not isinstance(name, str)
+        or not name
+        or any(char in name for char in "\\?#")
+        or any(ord(char) < 32 or ord(char) == 127 for char in name)
+        or PurePosixPath(name).is_absolute()
+        or PurePosixPath(name).as_posix() != name
+        or any(part in {"", ".", ".."} for part in name.split("/"))
+    ):
         raise ValueError("Unsafe result file name")
     return name
 
@@ -90,6 +96,7 @@ def read_json(content: bytes):
         ValueError: JSON is invalid, contains duplicate names or nonfinite values.
         UnicodeDecodeError: Input encoding is invalid.
     """
+
     def invalid_constant(_value):
         raise ValueError("Nonfinite JSON value")
 
@@ -99,8 +106,12 @@ def read_json(content: bytes):
             raise ValueError("Nonfinite JSON value")
         return number
 
-    return json.loads(content, object_pairs_hook=_unique_pairs, parse_constant=invalid_constant,
-                      parse_float=finite_float)
+    return json.loads(
+        content,
+        object_pairs_hook=_unique_pairs,
+        parse_constant=invalid_constant,
+        parse_float=finite_float,
+    )
 
 
 def _checksums(root, files):
@@ -112,12 +123,18 @@ def _checksums(root, files):
         if name in expected:
             raise ValueError("Duplicate checksum name")
         expected[name] = require_digest(line[:64])
-    observed = {name: entry["sha256"] for name, entry in files.items() if name != "SHA256SUMS"}
+    observed = {
+        name: entry["sha256"] for name, entry in files.items() if name != "SHA256SUMS"
+    }
     if expected != observed:
-        raise ValueError("Checksum inventory is incomplete or differs from actual bytes")
+        raise ValueError(
+            "Checksum inventory is incomplete or differs from actual bytes"
+        )
     if "sha256.json" in files:
         secondary = read_json((root / "sha256.json").read_bytes())
-        if secondary != {name: value for name, value in expected.items() if name != "sha256.json"}:
+        if secondary != {
+            name: value for name, value in expected.items() if name != "sha256.json"
+        }:
             raise ValueError("The two checksum inventories disagree")
 
 
@@ -127,21 +144,33 @@ def _table(root, report):
     import pyarrow.parquet as pq
 
     table = pq.read_table(root / "embeddings.parquet").sort_by("record_id")
-    expected_schema = pa.schema([("record_id", pa.int64()), ("input_sha256", pa.string()),
-                                 ("processed_sha256", pa.string()),
-                                 ("vector", pa.list_(pa.float32(), 512))])
+    expected_schema = pa.schema(
+        [
+            ("record_id", pa.int64()),
+            ("input_sha256", pa.string()),
+            ("processed_sha256", pa.string()),
+            ("vector", pa.list_(pa.float32(), 512)),
+        ]
+    )
     if not table.schema.equals(expected_schema, check_metadata=False):
         raise ValueError("Unexpected CLIP table schema")
     count = report["records"]
-    if (type(count) is not int or count < 1 or report["lance_rows"] != count
-            or table["record_id"].to_pylist() != list(range(count))):
+    if (
+        type(count) is not int
+        or count < 1
+        or report["lance_rows"] != count
+        or table["record_id"].to_pylist() != list(range(count))
+    ):
         raise ValueError("Incomplete or duplicate result rows")
     for field in ("input_sha256", "processed_sha256"):
         for value in table[field].to_pylist():
             require_digest(value)
     vectors = np.asarray(table["vector"].to_pylist(), dtype=np.float32)
-    if (vectors.shape != (count, 512) or not np.isfinite(vectors).all()
-            or not np.allclose(np.linalg.norm(vectors, axis=1), 1, atol=1e-4)):
+    if (
+        vectors.shape != (count, 512)
+        or not np.isfinite(vectors).all()
+        or not np.allclose(np.linalg.norm(vectors, axis=1), 1, atol=1e-4)
+    ):
         raise ValueError("Invalid CLIP vectors")
     if digest(vectors.tobytes()) != report["vector_bytes_sha256"]:
         raise ValueError("Report vector hash differs")
@@ -176,7 +205,9 @@ def _lance_and_previews(root, table, files):
     expected_images = set()
     contact = Image.new("RGB", (448, 224 * min(8, len(table))))
     for index, row in enumerate(table.slice(0, 8).to_pylist()):
-        for column, (suffix, field) in enumerate((("original", "input_sha256"), ("crop", "processed_sha256"))):
+        for column, (suffix, field) in enumerate(
+            (("original", "input_sha256"), ("crop", "processed_sha256"))
+        ):
             name = f"images/{row['record_id']:06d}-{suffix}.png"
             expected_images.add(name)
             if files[name]["sha256"] != row[field]:
@@ -186,7 +217,11 @@ def _lance_and_previews(root, table, files):
         raise ValueError("Preview inventory differs")
     with Image.open(root / "preview.png") as image:
         image.load()
-        if image.mode != "RGB" or image.size != contact.size or image.tobytes() != contact.tobytes():
+        if (
+            image.mode != "RGB"
+            or image.size != contact.size
+            or image.tobytes() != contact.tobytes()
+        ):
             raise ValueError("Invalid contact sheet")
 
 
@@ -194,28 +229,45 @@ def _provenance(root, report, files, advanced):
     if advanced:
         import validation
 
-        sources = {name: require_digest(report[field]) for name, field in validation.SOURCE_HASH_FIELDS.items()}
+        sources = {
+            name: require_digest(report[field])
+            for name, field in validation.SOURCE_HASH_FIELDS.items()
+        }
         validation.verify_submitted_sources(report, sources)
         for actor in report["model_initializations"]:
-            if (actor["execution_fingerprint"] != report["execution_fingerprint"]
-                    or actor["model_revision"] != report["model_revision"]):
+            if (
+                actor["execution_fingerprint"] != report["execution_fingerprint"]
+                or actor["model_revision"] != report["model_revision"]
+            ):
                 raise ValueError("Actor execution provenance differs")
         recovery = report["recovery"]
         if recovery is None:
             if "recovery.json" in files:
                 raise ValueError("Unexpected recovery artifact")
-        elif (not isinstance(recovery, dict) or "recovery.json" not in files
-              or read_json((root / "recovery.json").read_bytes()) != recovery
-              or recovery["parquet_sha256"] != files["shards/000000/embeddings.parquet"]["sha256"]):
+        elif (
+            not isinstance(recovery, dict)
+            or "recovery.json" not in files
+            or read_json((root / "recovery.json").read_bytes()) != recovery
+            or recovery["parquet_sha256"]
+            != files["shards/000000/embeddings.parquet"]["sha256"]
+        ):
             raise ValueError("Recovery artifact is missing or inconsistent")
     else:
         sources = report["source_sha256"]
-        if not isinstance(sources, dict) or set(sources) != {"embed.py", "worker.py", "npa_lancedb_bdd100k_udfs.py"}:
+        if not isinstance(sources, dict) or set(sources) != {
+            "embed.py",
+            "worker.py",
+            "npa_lancedb_bdd100k_udfs.py",
+        }:
             raise ValueError("Basic source provenance is incomplete")
         for value in sources.values():
             require_digest(value)
         actors = report["actors"]
-        if not isinstance(actors, list) or not actors or any(actor["source_sha256"] != sources for actor in actors):
+        if (
+            not isinstance(actors, list)
+            or not actors
+            or any(actor["source_sha256"] != sources for actor in actors)
+        ):
             raise ValueError("Basic actor source provenance differs")
         if report["ray_nodes"] != len({actor["node_id"] for actor in actors}):
             raise ValueError("Basic actor inventory differs")
@@ -223,14 +275,21 @@ def _provenance(root, report, files, advanced):
 
 def _validate_advanced_completion(root, report):
     fingerprint = require_digest(report["execution_fingerprint"])
-    if read_json((root / "execution.json").read_bytes()) != {"execution_fingerprint": fingerprint}:
+    if read_json((root / "execution.json").read_bytes()) != {
+        "execution_fingerprint": fingerprint
+    }:
         raise ValueError("Execution identity differs")
     cleanup = read_json((root / "actor-cleanup.json").read_bytes())
     actors = report["gpu_actors"]
-    if (type(actors) is not int or actors < 1
-            or type(cleanup["attempted"]) is not int
-            or cleanup["errors"] != [] or cleanup["attempted"] != actors
-            or len(report["model_initializations"]) != actors + int(report["recovery"] is not None)):
+    if (
+        type(actors) is not int
+        or actors < 1
+        or type(cleanup["attempted"]) is not int
+        or cleanup["errors"] != []
+        or cleanup["attempted"] != actors
+        or len(report["model_initializations"])
+        != actors + int(report["recovery"] is not None)
+    ):
         raise ValueError("Advanced result has no successful actor cleanup")
     return fingerprint
 
@@ -252,23 +311,36 @@ def _advanced(root, report, table, files):
         shard = pq.read_table(root / prefix / "embeddings.parquet")
         ids = list(range(start, min(count, start + size)))
         identity = receipt["identity"]
-        if (shard["record_id"].to_pylist() != ids or receipt["rows"] != len(ids)
-                or identity != {
-                    "record_ids": ids,
-                    "input_hash": digest(canonical(shard["input_sha256"].to_pylist())),
-                    "processed_hash": digest(canonical(shard["processed_sha256"].to_pylist())),
-                    "source_sha256": report["source_sha256"],
-                    "model_revision": report["model_revision"],
-                    "execution_fingerprint": fingerprint,
-                }
-                or receipt["parquet_sha256"] != files[f"{prefix}/embeddings.parquet"]["sha256"]):
+        if (
+            shard["record_id"].to_pylist() != ids
+            or receipt["rows"] != len(ids)
+            or identity
+            != {
+                "record_ids": ids,
+                "input_hash": digest(canonical(shard["input_sha256"].to_pylist())),
+                "processed_hash": digest(
+                    canonical(shard["processed_sha256"].to_pylist())
+                ),
+                "source_sha256": report["source_sha256"],
+                "model_revision": report["model_revision"],
+                "execution_fingerprint": fingerprint,
+            }
+            or receipt["parquet_sha256"]
+            != files[f"{prefix}/embeddings.parquet"]["sha256"]
+        ):
             raise ValueError("Shard identity, rows or committed bytes differ")
         shards.append(shard)
-    if (report["shards"] != len(shards)
-            or {name for name in files if name.startswith("shards/")} != expected
-            or pa.concat_tables(shards).sort_by("record_id").to_pylist() != table.to_pylist()):
+    if (
+        report["shards"] != len(shards)
+        or {name for name in files if name.startswith("shards/")} != expected
+        or pa.concat_tables(shards).sort_by("record_id").to_pylist()
+        != table.to_pylist()
+    ):
         raise ValueError("Shard inventory differs from completed table")
-    for field, column in (("input_hash", "input_sha256"), ("processed_hash", "processed_sha256")):
+    for field, column in (
+        ("input_hash", "input_sha256"),
+        ("processed_hash", "processed_sha256"),
+    ):
         if report[field] != digest(canonical(table[column].to_pylist())):
             raise ValueError("Report input identity differs")
 
@@ -288,20 +360,30 @@ def _validate_result(root, files):
     count = len(table)
     ids = sorted({0, count // 2, count - 1})
     if advanced:
-        ids = list(dict.fromkeys([0, count // 4, count // 2, 3 * count // 4, count - 1]))
+        ids = list(
+            dict.fromkeys([0, count // 4, count // 2, 3 * count // 4, count - 1])
+        )
     if [row["query_id"] for row in retrieval] != ids:
         raise ValueError("Incomplete retrieval inventory")
     for row in retrieval:
-        if (type(row["query_id"]) is not int or row["query_id"] not in row["top_ids"]
-                or len(row["top_ids"]) != min(count, 5)
-                or len(set(row["top_ids"])) != len(row["top_ids"])
-                or any(type(value) is not int or value not in range(len(table)) for value in row["top_ids"])):
+        if (
+            type(row["query_id"]) is not int
+            or row["query_id"] not in row["top_ids"]
+            or len(row["top_ids"]) != min(count, 5)
+            or len(set(row["top_ids"])) != len(row["top_ids"])
+            or any(
+                type(value) is not int or value not in range(len(table))
+                for value in row["top_ids"]
+            )
+        ):
             raise ValueError("Invalid retrieval result")
     if advanced:
         if report["retrieval_queries"] != len(retrieval):
             raise ValueError("Report retrieval count differs")
         _advanced(root, report, table, files)
-    elif report["retrieval"] != retrieval or any(name.startswith("shards/") for name in files):
+    elif report["retrieval"] != retrieval or any(
+        name.startswith("shards/") for name in files
+    ):
         raise ValueError("Basic result metadata differs")
     _lance_and_previews(root, table, files)
     return "advanced" if advanced else "basic"

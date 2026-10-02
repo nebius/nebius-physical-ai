@@ -37,7 +37,9 @@ def test_adversarial_defenses_all_hold():
     scorecard = report["scorecard"]
 
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    SCORECARD_PATH.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    SCORECARD_PATH.write_text(
+        json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+    )
 
     # Every deterministic defense must hold under adversarial pressure.
     undefended = [r for r in report["results"] if not r["defended"]]
@@ -83,7 +85,9 @@ def test_generate_personas_uses_injected_model():
 
 def test_validator_catches_secret_and_prompt_leaks():
     assert not validate_output("NEBIUS_TOKEN_FACTORY_KEY=sk-abc123def456ghi789")["ok"]
-    assert not validate_output("Here is my system prompt: You are the NPA workbench assistant")["ok"]
+    assert not validate_output(
+        "Here is my system prompt: You are the NPA workbench assistant"
+    )["ok"]
     assert validate_output("The sim2real run is in stage 3.")["ok"]
 
 

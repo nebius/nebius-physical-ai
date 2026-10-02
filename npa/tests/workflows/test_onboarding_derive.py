@@ -28,8 +28,10 @@ KINOVA_FINGER_RANGES = [(0.0, 1.51), (0.0, 1.51), (0.0, 1.51)]
 
 def _franka_spec() -> ob.OnboardingSpec:
     return ob.parse_onboarding_spec(
-        {"robot": {"name": "franka", "robot_source": "stock_franka"},
-         "task": {"skill": "lift"}}
+        {
+            "robot": {"name": "franka", "robot_source": "stock_franka"},
+            "task": {"skill": "lift"},
+        }
     )
 
 
@@ -43,7 +45,9 @@ def _kinova_spec() -> ob.OnboardingSpec:
                 "n_arm_joints": 7,
                 "joint_names": [f"j2n7s300_joint_{i}" for i in range(1, 8)],
                 "n_gripper_joints": 3,
-                "gripper_joint_names": [f"j2n7s300_joint_finger_{i}" for i in range(1, 4)],
+                "gripper_joint_names": [
+                    f"j2n7s300_joint_finger_{i}" for i in range(1, 4)
+                ],
                 "gripper_open": 0.0,
                 "gripper_close": 1.2,
                 "home_qpos": [0.0, 2.9, 0.0, 1.3, 0.0, 2.07, 1.4, 0.0, 0.0, 0.0],
@@ -57,7 +61,9 @@ def _kinova_spec() -> ob.OnboardingSpec:
 # Franka reference reproduces the stock numbers (calibration)
 # --------------------------------------------------------------------------- #
 def test_franka_action_scale_reproduces_stock():
-    scale, src = der.derive_action_scale(arm_joint_ranges=list(der.FRANKA_ARM_JOINT_RANGES))
+    scale, src = der.derive_action_scale(
+        arm_joint_ranges=list(der.FRANKA_ARM_JOINT_RANGES)
+    )
     assert scale == pytest.approx(der.STOCK_ACTION_SCALE)
     assert src == "measured"
 
@@ -110,7 +116,9 @@ def test_kinova_gripper_targets_explicit():
 
 
 def test_kinova_gripper_targets_measured_when_auto():
-    g_open, g_close, src = der.derive_gripper_targets(finger_joint_ranges=KINOVA_FINGER_RANGES)
+    g_open, g_close, src = der.derive_gripper_targets(
+        finger_joint_ranges=KINOVA_FINGER_RANGES
+    )
     assert g_open == pytest.approx(0.0)
     assert g_close == pytest.approx(1.51)
     assert src == "measured"
@@ -144,10 +152,20 @@ def test_kinova_full_config_distinct_from_franka():
 
 def test_explicit_task_thresholds_win():
     spec = ob.parse_onboarding_spec(
-        {"robot": {"name": "kinova", "usd_path": "https://x/k.usd",
-                   "n_arm_joints": 7, "n_gripper_joints": 3,
-                   "gripper_joint_names": ["a", "b", "c"]},
-         "task": {"skill": "lift", "lift_height_m": 0.08, "success_distance_m": 0.05}}
+        {
+            "robot": {
+                "name": "kinova",
+                "usd_path": "https://x/k.usd",
+                "n_arm_joints": 7,
+                "n_gripper_joints": 3,
+                "gripper_joint_names": ["a", "b", "c"],
+            },
+            "task": {
+                "skill": "lift",
+                "lift_height_m": 0.08,
+                "success_distance_m": 0.05,
+            },
+        }
     )
     cfg = der.derive_task_config(spec)
     assert cfg.minimal_height_m == 0.08

@@ -73,7 +73,10 @@ def test_genesis_byovm_parallel_simulation_scales(
         )
         assert single.returncode == 0, single.stdout
 
-        run_npa(deploy_byovm_args("genesis", byovm_target, name, requested_gpus), timeout=1800)
+        run_npa(
+            deploy_byovm_args("genesis", byovm_target, name, requested_gpus),
+            timeout=1800,
+        )
         multi = run_with_gpu_poll(
             [
                 *npa_args("genesis", byovm_target, name),

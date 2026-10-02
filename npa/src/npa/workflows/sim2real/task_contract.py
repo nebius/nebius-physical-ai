@@ -286,7 +286,9 @@ def _validate_public_franka_lift_seed(
     source = manifest.get("source_contract")
     boundary = manifest.get("compatibility_boundary")
     if not all(isinstance(value, dict) for value in (provenance, source, boundary)):
-        raise TaskContractError("public Franka seed lacks explicit provenance/contract boundary")
+        raise TaskContractError(
+            "public Franka seed lacks explicit provenance/contract boundary"
+        )
     if (
         manifest.get("dataset_id") != PUBLIC_FRANKA_LIFT_DATASET_ID
         or manifest.get("task_id") != PUBLIC_FRANKA_LIFT_CANONICAL_TASK_ID
@@ -295,7 +297,9 @@ def _validate_public_franka_lift_seed(
         or provenance.get("declared_license") != "apache-2.0"
         or provenance.get("anonymous_public") is not True
     ):
-        raise TaskContractError("public Franka seed provenance does not match its immutable pin")
+        raise TaskContractError(
+            "public Franka seed provenance does not match its immutable pin"
+        )
     required_source_paths = {
         "final_dataset/meta/info.json",
         "final_dataset/meta/tasks.jsonl",
@@ -305,14 +309,18 @@ def _validate_public_franka_lift_seed(
         "final_dataset/videos/chunk-000/wrist_image/episode_000000.mp4",
     }
     if set(provenance.get("source_paths") or []) != required_source_paths:
-        raise TaskContractError("public Franka seed source path provenance is incomplete")
+        raise TaskContractError(
+            "public Franka seed source path provenance is incomplete"
+        )
     if source != {
         "task_id": PUBLIC_FRANKA_LIFT_SOURCE_TASK_ID,
         "robot": "franka",
         "action": {"dimensions": 7, "representation": "IK-relative"},
         "cameras": ["image", "wrist_image"],
     }:
-        raise TaskContractError("public Franka seed source action/camera contract changed")
+        raise TaskContractError(
+            "public Franka seed source action/camera contract changed"
+        )
     if (
         boundary.get("source_actions_reused_as_canonical_ppo_actions") is not False
         or (boundary.get("canonical_action") or {}).get("dimensions") != 8
@@ -320,7 +328,9 @@ def _validate_public_franka_lift_seed(
         or boundary.get("strict_success_distance_m") != STRICT_SUCCESS_DISTANCE_M
         or boundary.get("placement_stability_required") is not True
     ):
-        raise TaskContractError("public Franka seed weakens the canonical policy/evaluation boundary")
+        raise TaskContractError(
+            "public Franka seed weakens the canonical policy/evaluation boundary"
+        )
     records = provenance.get("objects")
     if not isinstance(records, list) or not records:
         raise TaskContractError("public Franka seed lacks staged object hashes")
@@ -335,10 +345,16 @@ def _validate_public_franka_lift_seed(
                 for char in str(record.get("sha256") or "")
             )
         ):
-            raise TaskContractError("public Franka seed has malformed staged object evidence")
+            raise TaskContractError(
+                "public Franka seed has malformed staged object evidence"
+            )
     frame_records = [record for record in records if "/frames/camera-" in record["uri"]]
-    if len(frame_records) < 4 or len(frame_records) != int(manifest["camera_observation_count"]):
-        raise TaskContractError("public Franka seed must contain at least four decoded camera frames")
+    if len(frame_records) < 4 or len(frame_records) != int(
+        manifest["camera_observation_count"]
+    ):
+        raise TaskContractError(
+            "public Franka seed must contain at least four decoded camera frames"
+        )
     record_uris = {record["uri"] for record in records}
     if sample_uri := str(manifest.get("sample_rollout_manifest_uri") or ""):
         if sample_uri not in record_uris:

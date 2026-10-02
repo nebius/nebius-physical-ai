@@ -137,7 +137,9 @@ def test_receipt_writes_are_isolated_between_config_roots(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("operation", ["load", "inspect"])
-def test_receipt_reads_do_not_cross_config_roots(tmp_path: Path, operation: str) -> None:
+def test_receipt_reads_do_not_cross_config_roots(
+    tmp_path: Path, operation: str
+) -> None:
     home = tmp_path / "home"
     first, second = tmp_path / "first", tmp_path / "second"
     _run(home, first, "update", updates={"launch": {"status": "launching"}})
@@ -159,18 +161,28 @@ def test_project_audits_use_only_the_selected_config_root(tmp_path: Path) -> Non
     _run(home, first, "update", project="other", updates={"launch": {}})
 
     assert _run(home, first, "audit") == {
-        "outcome": "not_submitted", "ledger_count": 1, "error": ""
+        "outcome": "not_submitted",
+        "ledger_count": 1,
+        "error": "",
     }
     assert _run(home, second, "audit") == {
-        "outcome": "launch_evidence", "ledger_count": 1, "error": ""
+        "outcome": "launch_evidence",
+        "ledger_count": 1,
+        "error": "",
     }
     assert _run(home, tmp_path / "empty", "audit") == {
-        "outcome": "absent", "ledger_count": 0, "error": ""
+        "outcome": "absent",
+        "ledger_count": 0,
+        "error": "",
     }
 
 
-@pytest.mark.parametrize("same_root", [False, True], ids=["distinct-roots", "same-root"])
-def test_submission_locks_are_scoped_to_config_root(tmp_path: Path, same_root: bool) -> None:
+@pytest.mark.parametrize(
+    "same_root", [False, True], ids=["distinct-roots", "same-root"]
+)
+def test_submission_locks_are_scoped_to_config_root(
+    tmp_path: Path, same_root: bool
+) -> None:
     home = tmp_path / "home"
     first = tmp_path / "first"
     contender = first if same_root else tmp_path / "second"
@@ -181,21 +193,31 @@ def test_submission_locks_are_scoped_to_config_root(tmp_path: Path, same_root: b
     assert _run(home, contender, "probe_lock") == {"acquired": True}
 
 
-@pytest.mark.parametrize("root", [None, "", " \t "], ids=["unset", "empty", "whitespace"])
-def test_default_config_keeps_home_submission_state(tmp_path: Path, root: str | None) -> None:
+@pytest.mark.parametrize(
+    "root", [None, "", " \t "], ids=["unset", "empty", "whitespace"]
+)
+def test_default_config_keeps_home_submission_state(
+    tmp_path: Path, root: str | None
+) -> None:
     home = tmp_path / "home"
     expected = home / ".npa"
     paths = _run(home, root, "path")
     assert Path(paths["config"]) == expected / "config.yaml"
-    assert Path(paths["receipt"]) == expected / "workflow-submissions" / "demo" / "same-run.json"
+    assert (
+        Path(paths["receipt"])
+        == expected / "workflow-submissions" / "demo" / "same-run.json"
+    )
     _run(home, root, "update", updates={"launch_state": "reserved"})
     assert _run(home, root, "inspect")["outcome"] == "found"
     assert _run(home, root, "audit")["outcome"] == "not_submitted"
 
 
-@pytest.mark.parametrize("initial_configured", [False, True], ids=["default-start", "configured-start"])
 @pytest.mark.parametrize(
-    "updated_root", [None, "", " \t ", "replacement"],
+    "initial_configured", [False, True], ids=["default-start", "configured-start"]
+)
+@pytest.mark.parametrize(
+    "updated_root",
+    [None, "", " \t ", "replacement"],
     ids=["unset", "empty", "whitespace", "replacement"],
 )
 def test_unselected_config_tracks_environment_changes_after_import(
@@ -204,7 +226,9 @@ def test_unselected_config_tracks_environment_changes_after_import(
     initial_home = tmp_path / "initial-home"
     updated_home = tmp_path / "updated-home"
     initial_root = tmp_path / "initial-config" if initial_configured else None
-    root = str(tmp_path / updated_root) if updated_root == "replacement" else updated_root
+    root = (
+        str(tmp_path / updated_root) if updated_root == "replacement" else updated_root
+    )
     expected = Path(root) if root and root.strip() else updated_home / ".npa"
 
     _run(
@@ -228,7 +252,9 @@ def test_unselected_config_tracks_environment_changes_after_import(
         assert not initial_root.exists()
 
 
-def test_config_selected_before_submission_import_takes_precedence(tmp_path: Path) -> None:
+def test_config_selected_before_submission_import_takes_precedence(
+    tmp_path: Path,
+) -> None:
     home = tmp_path / "home"
     selected = tmp_path / "selected"
     startup_root = tmp_path / "startup-config"
@@ -238,7 +264,9 @@ def test_config_selected_before_submission_import_takes_precedence(tmp_path: Pat
         "after_import_environment": {"NPA_CONFIG_DIR": str(ambient)},
     }
 
-    _run(home, startup_root, "update", **selection, updates={"launch_state": "reserved"})
+    _run(
+        home, startup_root, "update", **selection, updates={"launch_state": "reserved"}
+    )
 
     receipt = selected / "workflow-submissions" / "demo" / "same-run.json"
     assert receipt.is_file()
@@ -258,7 +286,9 @@ def test_submission_state_reuses_selected_config_path(
     monkeypatch.setattr(config, "CONFIG_PATH", selected / "config.yaml")
     monkeypatch.setenv("NPA_CONFIG_DIR", str(ambient))
 
-    submission_state.update_submission_state("demo", "same-run", {"launch_state": "reserved"})
+    submission_state.update_submission_state(
+        "demo", "same-run", {"launch_state": "reserved"}
+    )
 
     assert submission_state.submission_state_path("demo", "same-run") == (
         selected / "workflow-submissions" / "demo" / "same-run.json"
@@ -268,6 +298,8 @@ def test_submission_state_reuses_selected_config_path(
     assert receipt.with_suffix(".lock").is_file()
     assert receipt.stat().st_mode & 0o777 == 0o600
     assert receipt.with_suffix(".lock").stat().st_mode & 0o777 == 0o600
-    assert submission_state.inspect_submission_state("demo", "same-run").outcome == "found"
+    assert (
+        submission_state.inspect_submission_state("demo", "same-run").outcome == "found"
+    )
     assert submission_state.audit_project_submissions("demo").outcome == "not_submitted"
     assert not ambient.exists()

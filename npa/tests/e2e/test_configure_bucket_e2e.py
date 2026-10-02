@@ -108,7 +108,9 @@ def _s3_client_from_creds(creds: dict[str, Any], region: str):
     )
 
 
-def _purge_bucket_objects(creds: dict[str, Any], *, bucket_name: str, region: str) -> None:
+def _purge_bucket_objects(
+    creds: dict[str, Any], *, bucket_name: str, region: str
+) -> None:
     client = _s3_client_from_creds(creds, region)
     paginator = client.get_paginator("list_object_versions")
     for page in paginator.paginate(Bucket=bucket_name):
@@ -144,7 +146,9 @@ def _cleanup_bucket(
     projects = setup.get("projects", {}) if isinstance(setup, dict) else {}
     record = projects.get(env.project_id, {}) if isinstance(projects, dict) else {}
     resources = record.get("resources", {}) if isinstance(record, dict) else {}
-    access_keys = resources.get("access_keys", {}) if isinstance(resources, dict) else {}
+    access_keys = (
+        resources.get("access_keys", {}) if isinstance(resources, dict) else {}
+    )
     for key_id, metadata in (
         access_keys.items() if isinstance(access_keys, dict) else []
     ):
@@ -240,7 +244,9 @@ def _run_configure(input_text: str):
     return runner.invoke(app, ["configure", "--interactive"], input=input_text)
 
 
-def _load_written_files(creds_path, config_path) -> tuple[dict[str, Any], dict[str, Any]]:
+def _load_written_files(
+    creds_path, config_path
+) -> tuple[dict[str, Any], dict[str, Any]]:
     creds = yaml.safe_load(creds_path.read_text())
     config = yaml.safe_load(config_path.read_text())
     return creds, config
@@ -331,15 +337,17 @@ class TestConfigureInteractiveLive:
             assert "Created object-storage bucket" in result.output
 
             written_creds, _config = _load_written_files(creds_path, config_path)
-            bucket_name = str(written_creds["storage"]["bucket"]).removeprefix(
-                "s3://"
-            ).strip("/")
+            bucket_name = (
+                str(written_creds["storage"]["bucket"]).removeprefix("s3://").strip("/")
+            )
             assert re.fullmatch(
                 r"npa-bucket-\d{8}t\d{6}z-[0-9a-f]{6}-[0-9a-f]{8}",
                 bucket_name,
             )
 
-            creds = _assert_dotfiles(creds_path, config_path, env, bucket_name=bucket_name)
+            creds = _assert_dotfiles(
+                creds_path, config_path, env, bucket_name=bucket_name
+            )
             _assert_bucket_spec(
                 env.project_id,
                 bucket_name,
@@ -388,7 +396,9 @@ class TestConfigureInteractiveLive:
             assert "Using standard storage (default)." in result.output
             assert "100 GB cap" in result.output
 
-            creds = _assert_dotfiles(creds_path, config_path, env, bucket_name=bucket_name)
+            creds = _assert_dotfiles(
+                creds_path, config_path, env, bucket_name=bucket_name
+            )
             _assert_bucket_spec(
                 env.project_id,
                 bucket_name,
@@ -437,7 +447,9 @@ class TestConfigureInteractiveLive:
             assert "enhanced_throughput" in result.output
             assert "Using standard storage (default)." not in result.output
 
-            creds = _assert_dotfiles(creds_path, config_path, env, bucket_name=bucket_name)
+            creds = _assert_dotfiles(
+                creds_path, config_path, env, bucket_name=bucket_name
+            )
             _assert_bucket_spec(
                 env.project_id,
                 bucket_name,
@@ -497,14 +509,18 @@ class TestConfigureInteractiveLive:
             assert "New bucket storage class" not in result.output
             assert "Using standard storage (default)." not in result.output
 
-            creds = _assert_dotfiles(creds_path, config_path, env, bucket_name=bucket_name)
+            creds = _assert_dotfiles(
+                creds_path, config_path, env, bucket_name=bucket_name
+            )
             after = _assert_bucket_spec(
                 env.project_id,
                 bucket_name,
                 storage_class="standard",
                 size_bytes=size_bytes,
             )
-            assert after.get("metadata", {}).get("id") == before.get("metadata", {}).get("id")
+            assert after.get("metadata", {}).get("id") == before.get(
+                "metadata", {}
+            ).get("id")
             _assert_s3_credentials_work(
                 creds,
                 bucket_name=bucket_name,
@@ -552,7 +568,10 @@ class TestConfigureInteractiveLive:
                 bucket_name=bucket_name,
                 expect_hf_token="hf_provided_live_e2e",
             )
-            assert creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"] == "v1.tokenfactory.live.e2e"
+            assert (
+                creds["tokens"]["NEBIUS_TOKEN_FACTORY_KEY"]
+                == "v1.tokenfactory.live.e2e"
+            )
             assert creds["ngc"]["api_key"] == "nvapi_provided_live_e2e"
             _assert_s3_credentials_work(
                 creds,

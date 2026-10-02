@@ -484,7 +484,12 @@ Body: `{"camera": "workspace"}` → generates `.rrd`, restarts Rerun service, re
   effective access before searching and returns the selected provenance. Follow
   `next_cursor` until it is empty; `pagination_complete=false` means a bounded
   source scan or access scope was incomplete. Category/state/source-cache roots
-  are not runs. `q` filters the cached bounded discovery index in process.
+  are not runs. Before applying `q`, the backend synchronously refreshes a cold,
+  empty, or stale bounded index from authorized durable S3 sources; the process
+  cache is an accelerator, never evidence that storage is empty. Configured
+  artifact sources are exact `(project_id, bucket, resolved_prefix)` direct
+  run-parent tuples, with `resolved_prefix` immediately above run ids, and are
+  merged with other authorized effective sources rather than replacing them.
   `total_runs` is present only when that source index is complete; otherwise it
   is null and `observed_run_count`, `observed_match_count`, `query_complete`,
   and `total_runs_scope=unavailable` describe the bounded observation without
@@ -514,7 +519,19 @@ Exact lookup returns `409 ambiguous_run_id` when the same ID has multiple
 `(project_id, bucket, resolved_prefix)` sources, `404 run_not_discovered` only
 after complete effective-scope discovery, and an access/incomplete error when a
 source could not be searched. Select the returned source explicitly rather than
-accepting an arbitrary first match.
+accepting an arbitrary first match. A positive observation in an accessible
+source remains usable when the wider scope is partial; its response continues to
+report that incompleteness rather than asserting a global total.
+
+Run-list pagination uses opaque server-side snapshot cursors bound to the
+original query, prefix, exact source selection, and effective-access generation.
+Continue with identical request parameters. `GET /api/access?refresh=true`, a
+backend restart/cache reset, or a changed source/query context invalidates the
+cursor; restart from page one instead of decoding or replaying it. The same
+access refresh invalidates cached discovery and exact-source authorization
+before publishing the replacement access report. On a fresh process, discovery
+repopulates from S3 before filtering, so durable runs remain discoverable across
+service restarts and branch/deployment updates.
 
 The search field is exclusively for discovered NPA workflow/artifact runs.
 Directories under `/home/ubuntu/codex-runs/...` identify Codex maintenance jobs

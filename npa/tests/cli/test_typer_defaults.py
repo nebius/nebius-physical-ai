@@ -170,7 +170,9 @@ def test_cli_path_is_unaffected() -> None:
 
 
 def test_positional_only_parameters_are_rejected() -> None:
-    def cmd(value, /, name: str = typer.Option("a", "--name")) -> None:  # pragma: no cover
+    def cmd(
+        value, /, name: str = typer.Option("a", "--name")
+    ) -> None:  # pragma: no cover
         pass
 
     with pytest.raises(TypeError, match="positional-only"):

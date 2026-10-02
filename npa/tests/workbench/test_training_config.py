@@ -38,7 +38,9 @@ def test_training_config_rejects_invalid_override() -> None:
 
 
 def test_overrides_to_mapping_parses_typed_values() -> None:
-    parsed = overrides_to_mapping(["learning_rate=0.001", "domain_randomize=true", "+env.max_steps=12"])
+    parsed = overrides_to_mapping(
+        ["learning_rate=0.001", "domain_randomize=true", "+env.max_steps=12"]
+    )
 
     assert parsed == {
         "learning_rate": 0.001,
@@ -54,8 +56,16 @@ def test_detection_request_applies_canonical_fields_and_supported_overrides() ->
         output_uri="s3://bucket/output/",
         data_path="s3://bucket/custom-lancedb/",
         overrides=["train.epochs=1", "optimizer.learning_rate=0.0003"],
-        checkpoint_s3={"uri": "s3://bucket/checkpoints/", "endpoint_url": "https://storage.example"},
-        wandb={"enabled": True, "project": "npa-public", "run_name": "short-run", "mode": "offline"},
+        checkpoint_s3={
+            "uri": "s3://bucket/checkpoints/",
+            "endpoint_url": "https://storage.example",
+        },
+        wandb={
+            "enabled": True,
+            "project": "npa-public",
+            "run_name": "short-run",
+            "mode": "offline",
+        },
     )
 
     assert request.lance_uri == "s3://bucket/custom-lancedb/"

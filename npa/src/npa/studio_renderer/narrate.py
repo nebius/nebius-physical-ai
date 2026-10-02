@@ -7,15 +7,17 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from film_cache import _render_lock
-from film_voice import _voice_manifest, _voice_matches, _voice_record
+from film_voice import _voice_manifest, _voice_matches, _voice_record, _voice_settings
 
 
-async def _scene(scene, output_dir, voice):
+async def _scene(scene, output_dir, voice, *, rate="+0%", pitch="+0Hz"):
     import edge_tts
 
     media = output_dir / f"{scene['id']}.mp3"
     subtitles = edge_tts.SubMaker()
-    communication = edge_tts.Communicate(scene["narration"], voice, rate="+0%")
+    communication = edge_tts.Communicate(
+        scene["narration"], voice, rate=rate, pitch=pitch
+    )
     with media.open("wb") as output:
         async for event in communication.stream():
             if event["type"] == "audio":
@@ -24,25 +26,32 @@ async def _scene(scene, output_dir, voice):
                 subtitles.feed(event)
     media.with_suffix(".srt").write_text(subtitles.get_srt(), encoding="utf-8")
     print(f"Narrated {scene['id']}", flush=True)
-    return _voice_record(scene, output_dir, voice)
+    return _voice_record(scene, output_dir, voice, rate=rate, pitch=pitch)
 
 
 async def _update_scene(scene, args, previous):
+    settings = _voice_settings(args.rate, args.pitch)
     if args.recorded:
         return _voice_record(scene, args.output_dir, "recorded")
     voice = None if previous and previous["voice"] == "recorded" else args.voice
-    if not args.force and _voice_matches(scene, args.output_dir, previous, voice):
+    requested = settings if voice is not None else {}
+    if not args.force and _voice_matches(
+        scene, args.output_dir, previous, voice, **requested
+    ):
         print(f"Reused narration {scene['id']}", flush=True)
-        return _voice_record(scene, args.output_dir, previous["voice"])
+        return previous
     with TemporaryDirectory(prefix=".speech-", dir=args.output_dir) as temporary:
         staging = Path(temporary)
-        record = await _scene(scene, staging, args.voice)
+        record = await _scene(scene, staging, args.voice, **settings)
         for extension in ["mp3", "srt"]:
-            (staging / f"{scene['id']}.{extension}").replace(args.output_dir / f"{scene['id']}.{extension}")
+            (staging / f"{scene['id']}.{extension}").replace(
+                args.output_dir / f"{scene['id']}.{extension}"
+            )
     return record
 
 
 async def _run(args):
+    _voice_settings(args.rate, args.pitch)
     storyboard = json.loads(args.storyboard.read_text())
     from render import _validate_storyboard
 
@@ -51,7 +60,9 @@ async def _run(args):
     with _render_lock(args.output_dir):
         records = _voice_manifest(args.output_dir)
         for scene in storyboard["scenes"]:
-            records[scene["id"]] = await _update_scene(scene, args, records.get(scene["id"]))
+            records[scene["id"]] = await _update_scene(
+                scene, args, records.get(scene["id"])
+            )
             temporary = args.output_dir / ".voice-manifest.pending"
             temporary.write_text(json.dumps(list(records.values()), indent=2) + "\n")
             temporary.replace(args.output_dir / "voice-manifest.json")
@@ -59,11 +70,25 @@ async def _run(args):
 
 def _main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--storyboard", type=Path, default=Path(__file__).with_name("storyboard.json"))
+    parser.add_argument(
+        "--storyboard", type=Path, default=Path(__file__).with_name("storyboard.json")
+    )
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--voice", default="en-US-AndrewMultilingualNeural")
-    parser.add_argument("--force", action="store_true", help="Regenerate every narration clip.")
-    parser.add_argument("--recorded", action="store_true", help="Register supplied MP3/SRT files without contacting a speech service.")
+    parser.add_argument(
+        "--rate", default="+0%", help="Signed speech rate, for example +8%% or -4%%."
+    )
+    parser.add_argument(
+        "--pitch", default="+0Hz", help="Signed voice pitch, for example +2Hz."
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Regenerate every narration clip."
+    )
+    parser.add_argument(
+        "--recorded",
+        action="store_true",
+        help="Register supplied MP3/SRT files without contacting a speech service.",
+    )
     asyncio.run(_run(parser.parse_args()))
 
 

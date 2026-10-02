@@ -119,7 +119,9 @@ def _context_key(tf_dir: str | Path) -> Path:
     return Path(tf_dir).expanduser().resolve()
 
 
-def _set_backend_context(tf_dir: str | Path, context: TerraformBackendContext | None) -> None:
+def _set_backend_context(
+    tf_dir: str | Path, context: TerraformBackendContext | None
+) -> None:
     key = _context_key(tf_dir)
     if context is None:
         _BACKEND_CONTEXTS.pop(key, None)
@@ -139,7 +141,9 @@ def _uses_remote_s3_backend(tf_dir: str | Path) -> bool:
         return False
 
 
-def _redact_backend_secrets(message: str, context: TerraformBackendContext | None) -> str:
+def _redact_backend_secrets(
+    message: str, context: TerraformBackendContext | None
+) -> str:
     cleaned = str(message or "")
     if context is None:
         return cleaned
@@ -150,7 +154,9 @@ def _redact_backend_secrets(message: str, context: TerraformBackendContext | Non
 
 
 _BUNDLED_TF_DIR = Path(__file__).parent / "terraform"
-_NPA_CONFIG_DIR = Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa")
+_NPA_CONFIG_DIR = Path(
+    os.environ.get("NPA_CONFIG_DIR", "").strip() or Path.home() / ".npa"
+)
 _WORKBENCH_BASE = _NPA_CONFIG_DIR / "workbenches"
 # Shared Terraform plugin cache so every fresh per-deploy work dir reuses
 # already-downloaded providers instead of re-fetching them from
@@ -231,7 +237,9 @@ def _tf_env(terraform_dir: str | Path) -> dict[str, str]:
             default_root=_TF_PLUGIN_CACHE_DIR,
         )
     except (OSError, TerraformLockError) as exc:
-        raise ProvisionerError(f"Unsafe Terraform plugin cache configuration: {exc}") from exc
+        raise ProvisionerError(
+            f"Unsafe Terraform plugin cache configuration: {exc}"
+        ) from exc
     return env
 
 
@@ -249,7 +257,12 @@ def _run(
     environment["NPA_SSH_TRUST_PYTHON"] = sys.executable
     environment.update(env_overrides or {})
     backend_context = _backend_context(cwd)
-    if args and args[0] != "init" and _uses_remote_s3_backend(cwd) and backend_context is None:
+    if (
+        args
+        and args[0] != "init"
+        and _uses_remote_s3_backend(cwd)
+        and backend_context is None
+    ):
         raise BackendAuthenticationError(
             "Terraform S3 backend credentials unavailable for this initialized work directory; "
             "run the project-scoped NPA init/reconfigure path before state access."
@@ -296,9 +309,7 @@ def _run(
 
 
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
-_DEPRECATED_GPU_OUTPUT_RE = re.compile(
-    r"^\s*[+~-]\s+gpu_(?:platform|preset)\s+="
-)
+_DEPRECATED_GPU_OUTPUT_RE = re.compile(r"^\s*[+~-]\s+gpu_(?:platform|preset)\s+=")
 
 
 def _filter_destroy_output_line(line: str) -> str:
@@ -359,7 +370,9 @@ def _run_destroy_stream(
     )
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
-    compact_local_exec = bool(cmd and Path(cmd[0]).name == "terraform" and "apply" in cmd)
+    compact_local_exec = bool(
+        cmd and Path(cmd[0]).name == "terraform" and "apply" in cmd
+    )
 
     def _pump_stdout() -> None:
         assert process.stdout is not None
@@ -425,7 +438,9 @@ def _is_sensitive_var(name: str) -> bool:
     return any(hint in lowered for hint in _SENSITIVE_VAR_HINTS)
 
 
-def _split_sensitive_vars(tf_vars: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+def _split_sensitive_vars(
+    tf_vars: dict[str, str],
+) -> tuple[dict[str, str], dict[str, str]]:
     sensitive = {
         key: value
         for key, value in tf_vars.items()
@@ -598,14 +613,19 @@ def _classify_backend_error(message: str, *, action: str) -> TerraformBackendErr
     lowered = str(message or "").lower()
     if "nosuchbucket" in lowered or "no such bucket" in lowered:
         kind: type[TerraformBackendError] = BackendBucketMissingError
-    elif any(item in lowered for item in ("accessdenied", "forbidden", "403", "signature")):
+    elif any(
+        item in lowered for item in ("accessdenied", "forbidden", "403", "signature")
+    ):
         kind = BackendAuthenticationError
     elif any(
         item in lowered
         for item in ("no such host", "name resolution", "dial tcp", "dns", "endpoint")
     ):
         kind = BackendEndpointError
-    elif any(item in lowered for item in ("state lock", "acquiring the state lock", "lock id")):
+    elif any(
+        item in lowered
+        for item in ("state lock", "acquiring the state lock", "lock id")
+    ):
         kind = BackendLockError
     elif action == "state-push":
         kind = StatePushError
@@ -644,7 +664,9 @@ def init(
     try:
         validate_provider_lock(tf_dir)
     except TerraformLockError as exc:
-        raise ProvisionerError(f"Terraform provider-lock preflight failed: {exc}") from exc
+        raise ProvisionerError(
+            f"Terraform provider-lock preflight failed: {exc}"
+        ) from exc
     lock_file = tf_dir / ".terraform.lock.hcl"
     lock_before = lock_file.read_bytes()
     args = ["init", "-input=false", "-lockfile=readonly"]
@@ -715,7 +737,9 @@ def init(
                 )
                 if checksum_failure and not checksum_retry_used:
                     checksum_retry_used = True
-                    isolated_cache = tempfile.TemporaryDirectory(prefix="npa-tf-plugin-cache-")
+                    isolated_cache = tempfile.TemporaryDirectory(
+                        prefix="npa-tf-plugin-cache-"
+                    )
                     Path(isolated_cache.name).chmod(0o700)
                     attempts += 1
                     attempt += 1
@@ -734,7 +758,9 @@ def init(
                         "in a clean reviewed checkout and inspect the exact diff."
                     ) from exc
                 if attempt >= attempts or not _looks_transient_init_failure(str(exc)):
-                    raise _classify_backend_error(str(exc), action="init/reconfigure") from exc
+                    raise _classify_backend_error(
+                        str(exc), action="init/reconfigure"
+                    ) from exc
                 sys.stderr.write(
                     f"  terraform init attempt {attempt}/{attempts} hit a transient "
                     f"registry/network error; retrying in {delay:.0f}s...\n"
@@ -755,7 +781,9 @@ def plan(
     """Run terraform plan, return human-readable summary."""
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
     with _var_args(tf_dir, tf_vars or {}) as var_args:
-        result = _run(["plan", "-input=false", "-no-color", *var_args], cwd=tf_dir, capture=True)
+        result = _run(
+            ["plan", "-input=false", "-no-color", *var_args], cwd=tf_dir, capture=True
+        )
     return result.stdout
 
 
@@ -769,12 +797,16 @@ def apply(
     tf_dir = Path(tf_dir) if tf_dir else _BUNDLED_TF_DIR
     with _var_args(tf_dir, tf_vars or {}) as var_args:
         result = _run(
-            ["apply", "-auto-approve", "-input=false", *var_args], cwd=tf_dir, stream=stream
+            ["apply", "-auto-approve", "-input=false", *var_args],
+            cwd=tf_dir,
+            stream=stream,
         )
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         detail = f":\n{stderr}" if stderr else ""
-        raise ProvisionerError(f"terraform apply failed (exit {result.returncode}){detail}")
+        raise ProvisionerError(
+            f"terraform apply failed (exit {result.returncode}){detail}"
+        )
     return outputs(tf_dir)
 
 
@@ -796,7 +828,9 @@ def destroy(
     if result.returncode != 0:
         stderr = (result.stderr or "").strip()
         detail = f":\n{stderr}" if stderr else ""
-        raise ProvisionerError(f"terraform destroy failed (exit {result.returncode}){detail}")
+        raise ProvisionerError(
+            f"terraform destroy failed (exit {result.returncode}){detail}"
+        )
 
 
 def state_list(tf_dir: str | Path | None = None) -> list[str]:
@@ -809,7 +843,9 @@ def state_list(tf_dir: str | Path | None = None) -> list[str]:
     # state by lifecycle ownership guards.
     result = _run(["state", "list"], cwd=tf_dir)
     if result.returncode != 0:
-        detail = "\n".join(part for part in (result.stdout, result.stderr) if part).strip()
+        detail = "\n".join(
+            part for part in (result.stdout, result.stderr) if part
+        ).strip()
         if "no state file was found" in detail.lower():
             return []
         suffix = f":\n{detail}" if detail else ""

@@ -590,6 +590,49 @@ def test_project_lease_requires_explicit_resume_after_owner_crash(
         resumed.transition("rolled-back")
 
 
+def test_project_lease_releases_empty_provider_collision_for_new_target(
+    journal_root: Path,
+) -> None:
+    rejected = _prepare(resource_type="cluster", requested_name="existing-target")
+    with operation_context(rejected):
+        rejected.transition("mutating")
+        rejected.record_failure("provider create returned AlreadyExists")
+        rejected.transition("recovery-required")
+    replacement = _prepare(resource_type="cluster", requested_name="new-target")
+
+    with operation_context(replacement):
+        replacement.transition("mutating")
+        replacement.transition("rolled-back")
+
+    retired = rejected.read()
+    assert retired["phase"] == "rolled-back"
+    assert retired["rollback"]["completed"] is True
+    assert retired["rollback"]["attempted"] is False
+
+
+def test_project_lease_keeps_provider_collision_with_owned_resources_blocked(
+    journal_root: Path,
+) -> None:
+    rejected = _prepare(resource_type="cluster", requested_name="existing-target")
+    with operation_context(rejected):
+        rejected.transition("mutating")
+        rejected.record_resource(
+            resource_type="managed_kubernetes_cluster",
+            requested_name="existing-target",
+            provider_id="cluster-1",
+            project_id="project-a",
+            ownership="created_by_this_operation",
+            ownership_source="test",
+        )
+        rejected.record_failure("provider create returned AlreadyExists")
+        rejected.transition("recovery-required")
+    replacement = _prepare(resource_type="cluster", requested_name="new-target")
+
+    with pytest.raises(OperationJournalError, match=rejected.operation_id):
+        with operation_context(replacement):
+            pytest.fail("resource-owning receipt must require explicit recovery")
+
+
 @pytest.mark.parametrize("has_recovery_command", [True, False])
 def test_missing_owner_journal_keeps_lease_identity_and_blocks_mutation(
     journal_root: Path, monkeypatch: pytest.MonkeyPatch, has_recovery_command: bool

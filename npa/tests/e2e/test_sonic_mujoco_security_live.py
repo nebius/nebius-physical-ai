@@ -67,9 +67,14 @@ class SonicMuJoCoSecurityLiveTest(unittest.TestCase):
         stats = self.adapter._checkpoint_tensor_stats(checkpoint)
         self.assertGreater(stats["parameter_count"], 0)
         self.assertTrue(torch.cuda.is_available(), "real CUDA device is required")
-        state = checkpoint.get("policy_state_dict") or checkpoint["actor_model_state_dict"]
-        matrix = next(value for value in state.values()
-                      if torch.is_tensor(value) and value.ndim == 2 and min(value.shape) > 1)
+        state = (
+            checkpoint.get("policy_state_dict") or checkpoint["actor_model_state_dict"]
+        )
+        matrix = next(
+            value
+            for value in state.values()
+            if torch.is_tensor(value) and value.ndim == 2 and min(value.shape) > 1
+        )
         weight = matrix.detach().to(device="cuda", dtype=torch.float32).requires_grad_()
         inputs = torch.randn(16, weight.shape[1], device="cuda", requires_grad=True)
         result = torch.nn.functional.linear(inputs, weight)
@@ -81,12 +86,15 @@ class SonicMuJoCoSecurityLiveTest(unittest.TestCase):
         self.assertGreater(float(weight.grad.norm()), 0)
 
         metrics_path = self.output / "mujoco_eval_metrics.json"
-        with patch.dict(os.environ, {
-            "SONIC_EVAL_CHECKPOINT_PATH": str(checkpoint_path),
-            "SONIC_MUJOCO_METRICS_PATH": str(metrics_path),
-            "SONIC_MUJOCO_STEPS": "128",
-            "SONIC_MUJOCO_EPISODES": "1",
-        }):
+        with patch.dict(
+            os.environ,
+            {
+                "SONIC_EVAL_CHECKPOINT_PATH": str(checkpoint_path),
+                "SONIC_MUJOCO_METRICS_PATH": str(metrics_path),
+                "SONIC_MUJOCO_STEPS": "128",
+                "SONIC_MUJOCO_EPISODES": "1",
+            },
+        ):
             self.assertEqual(self.adapter.main(), 0)
         metrics = json.loads(metrics_path.read_text())
         self.assertEqual(metrics["status"], "completed")
@@ -101,7 +109,9 @@ class SonicMuJoCoSecurityLiveTest(unittest.TestCase):
         renderer = mujoco.Renderer(model, height=240, width=320)
         try:
             for step in range(128):
-                data.ctrl[:] = self.adapter._control_from_checkpoint(stats["sample"], model.nu, step, 0)
+                data.ctrl[:] = self.adapter._control_from_checkpoint(
+                    stats["sample"], model.nu, step, 0
+                )
                 mujoco.mj_step(model, data)
                 self.assertTrue(bool(np.isfinite(data.qpos).all()))
                 if step % 8 == 0:
@@ -118,28 +128,40 @@ class SonicMuJoCoSecurityLiveTest(unittest.TestCase):
         self.assertGreater(float(np.linalg.norm(qpos[-1] - qpos[0])), 0)
         self.assertTrue(bool(np.all(np.diff(timestamps) > 0)))
         artifact = self.output / "mujoco_rollout.npz"
-        np.savez_compressed(artifact, frames=frames, qpos=np.asarray(qpos),
-                            body_positions=np.asarray(body_positions), time=np.asarray(timestamps))
+        np.savez_compressed(
+            artifact,
+            frames=frames,
+            qpos=np.asarray(qpos),
+            body_positions=np.asarray(body_positions),
+            time=np.asarray(timestamps),
+        )
         with checkpoint_path.open("rb") as handle:
             checkpoint_sha256 = hashlib.file_digest(handle, "sha256").hexdigest()
         report = {
-            "status": "completed", "adapter_source_sha256": self.source_sha256,
+            "status": "completed",
+            "adapter_source_sha256": self.source_sha256,
             "checkpoint_sha256": checkpoint_sha256,
-            "torch_version": torch.__version__, "mujoco_version": mujoco.__version__,
+            "torch_version": torch.__version__,
+            "mujoco_version": mujoco.__version__,
             "cuda_device": torch.cuda.get_device_name(),
             "checkpoint_parameter_count": stats["parameter_count"],
             "actual_weight_matrix_shape": list(weight.shape),
             "cuda_forward_backward_loss": float(loss.detach()),
             "cuda_weight_gradient_norm": float(weight.grad.norm()),
-            "rendered_frames": len(frames), "physics_steps": 128,
+            "rendered_frames": len(frames),
+            "physics_steps": 128,
             "geometry_mode": self.adapter.GEOMETRY_MODE,
             "artifact_sha256": hashlib.sha256(artifact.read_bytes()).hexdigest(),
             "scope": "safe checkpoint loading, real CUDA linear forward/backward, "
-                     "production checkpoint-statistics MuJoCo adapter and EGL rendering",
-            "limitations": ["No learned policy inference or locomotion benchmark is claimed",
-                            "Geometry may use the production primitive collision proxies"],
+            "production checkpoint-statistics MuJoCo adapter and EGL rendering",
+            "limitations": [
+                "No learned policy inference or locomotion benchmark is claimed",
+                "Geometry may use the production primitive collision proxies",
+            ],
         }
-        (self.output / "security_validation.json").write_text(json.dumps(report, indent=2) + "\n")
+        (self.output / "security_validation.json").write_text(
+            json.dumps(report, indent=2) + "\n"
+        )
 
 
 if __name__ == "__main__":

@@ -121,22 +121,35 @@ def test_register_byovm_writes_alias_with_tool_access_policy(
         assert alias_config["endpoint_strategy"] == "public"
 
 
-@pytest.mark.parametrize("source_args", [
-    ["--source", NARROW_SOURCE],
-    ["--source", "0.0.0.0/0", "--allow-world-open"],
-    ["--allow-world-open"],
-])
+@pytest.mark.parametrize(
+    "source_args",
+    [
+        ["--source", NARROW_SOURCE],
+        ["--source", "0.0.0.0/0", "--allow-world-open"],
+        ["--allow-world-open"],
+    ],
+)
 def test_fiftyone_registration_rejects_ingress_before_resolving_or_writing(
-    mocker, source_args,
+    mocker,
+    source_args,
 ) -> None:
     resolve = mocker.patch("npa.cli.ingress.resolve_instance_network_context")
     write = mocker.patch("npa.cli.ingress.write_config")
     private_write = mocker.patch("npa.cli.fiftyone.write_config")
     ensure = mocker.patch("npa.cli.ingress.ensure_ingress")
-    result = runner.invoke(app, [
-        "workbench", "fiftyone", "register-byovm", "--alias", "demo",
-        "--instance-id", "computeinstance-test", *source_args,
-    ])
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "fiftyone",
+            "register-byovm",
+            "--alias",
+            "demo",
+            "--instance-id",
+            "computeinstance-test",
+            *source_args,
+        ],
+    )
     assert result.exit_code == 1
     assert "FiftyOne app ingress is disabled" in result.output
     resolve.assert_not_called()

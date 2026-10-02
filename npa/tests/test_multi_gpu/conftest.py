@@ -95,9 +95,13 @@ def npa_base_env() -> dict[str, str]:
 
 @pytest.fixture(scope="session")
 def s3_prefix() -> str:
-    prefix = os.environ.get("NPA_TEST_BYOVM_S3_PREFIX") or os.environ.get("NPA_CHECKPOINT_BUCKET")
+    prefix = os.environ.get("NPA_TEST_BYOVM_S3_PREFIX") or os.environ.get(
+        "NPA_CHECKPOINT_BUCKET"
+    )
     if not prefix:
-        pytest.skip("Set NPA_TEST_BYOVM_S3_PREFIX or NPA_CHECKPOINT_BUCKET for S3 assertions")
+        pytest.skip(
+            "Set NPA_TEST_BYOVM_S3_PREFIX or NPA_CHECKPOINT_BUCKET for S3 assertions"
+        )
     if not prefix.startswith("s3://"):
         pytest.skip("S3 prefix must be an s3:// URI")
     return prefix.rstrip("/") + "/multi-gpu/" + uuid.uuid4().hex + "/"
@@ -105,12 +109,18 @@ def s3_prefix() -> str:
 
 @pytest.fixture
 def unique_name(request: pytest.FixtureRequest) -> str:
-    return request.node.name.replace("[", "-").replace("]", "").replace("/", "-") + "-" + uuid.uuid4().hex[:8]
+    return (
+        request.node.name.replace("[", "-").replace("]", "").replace("/", "-")
+        + "-"
+        + uuid.uuid4().hex[:8]
+    )
 
 
 @pytest.fixture
 def run_npa(npa_base_env: dict[str, str]):
-    def _run(args: Iterable[str], *, timeout: int = 600, check: bool = True) -> CLIResult:
+    def _run(
+        args: Iterable[str], *, timeout: int = 600, check: bool = True
+    ) -> CLIResult:
         proc = subprocess.run(
             [sys.executable, "-c", "from npa.cli.main import app; app()", *args],
             env=npa_base_env,
@@ -135,7 +145,9 @@ def npa_args(tool: str, target: BYOVMTarget, name: str) -> list[str]:
     return ["workbench", tool, "-p", target.project, "-n", name]
 
 
-def deploy_byovm_args(tool: str, target: BYOVMTarget, name: str, gpu_count: int) -> list[str]:
+def deploy_byovm_args(
+    tool: str, target: BYOVMTarget, name: str, gpu_count: int
+) -> list[str]:
     return [
         *npa_args(tool, target, name),
         "deploy",
@@ -286,13 +298,17 @@ def query_gpu_names(target: BYOVMTarget) -> list[str]:
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 
-def assert_visible_gpus_used(snapshots: list[list[int]] | None, expected_count: int) -> None:
+def assert_visible_gpus_used(
+    snapshots: list[list[int]] | None, expected_count: int
+) -> None:
     assert snapshots, "no nvidia-smi utilization snapshots were captured"
     maxima = [0] * expected_count
     for snapshot in snapshots:
         for idx, value in enumerate(snapshot[:expected_count]):
             maxima[idx] = max(maxima[idx], value)
-    assert all(value > 0 for value in maxima), f"expected all GPUs to show >0% utilization, got maxima={maxima}"
+    assert all(value > 0 for value in maxima), (
+        f"expected all GPUs to show >0% utilization, got maxima={maxima}"
+    )
 
 
 def assert_s3_has_objects(uri: str) -> None:
@@ -309,25 +325,36 @@ def assert_s3_has_objects(uri: str) -> None:
     resp = client.list_objects_v2(Bucket=parsed.netloc, Prefix=prefix, MaxKeys=10)
     objects = resp.get("Contents", [])
     if not objects and prefix and not prefix.endswith("/"):
-        resp = client.list_objects_v2(Bucket=parsed.netloc, Prefix=prefix + "/", MaxKeys=10)
+        resp = client.list_objects_v2(
+            Bucket=parsed.netloc, Prefix=prefix + "/", MaxKeys=10
+        )
         objects = resp.get("Contents", [])
     assert objects, f"expected S3 objects under {uri}"
-    assert all(obj.get("Size", 0) > 0 for obj in objects), f"expected non-empty S3 objects under {uri}"
+    assert all(obj.get("Size", 0) > 0 for obj in objects), (
+        f"expected non-empty S3 objects under {uri}"
+    )
 
 
 def parse_loss_values(text: str) -> list[float]:
     values: list[float] = []
-    for match in re.finditer(r"(?:train[_/ ]loss|loss)\D{0,20}([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE):
+    for match in re.finditer(
+        r"(?:train[_/ ]loss|loss)\D{0,20}([0-9]+(?:\.[0-9]+)?)", text, re.IGNORECASE
+    ):
         values.append(float(match.group(1)))
     return values
 
 
 def parse_fps_values(text: str) -> list[float]:
-    return [float(value.replace(",", "")) for value in re.findall(r"Running at\s+([0-9,.]+)\s+FPS", text)]
+    return [
+        float(value.replace(",", ""))
+        for value in re.findall(r"Running at\s+([0-9,.]+)\s+FPS", text)
+    ]
 
 
 def _s3_bucket_name() -> str:
-    uri = os.environ.get("NPA_TEST_BYOVM_S3_PREFIX") or os.environ.get("NPA_CHECKPOINT_BUCKET", "")
+    uri = os.environ.get("NPA_TEST_BYOVM_S3_PREFIX") or os.environ.get(
+        "NPA_CHECKPOINT_BUCKET", ""
+    )
     if uri.startswith("s3://"):
         return urlparse(uri).netloc
     return uri

@@ -180,7 +180,10 @@ def test_literal_trigger_fields_ignore_unrelated_config_overrides(tmp_path):
     }
     changed = merge_config_overrides(original, overrides)
     assert {key: changed.config[key] for key in overrides} == overrides
-    assert changed.states["caption-inbox"].trigger == original.states["caption-inbox"].trigger
+    assert (
+        changed.states["caption-inbox"].trigger
+        == original.states["caption-inbox"].trigger
+    )
     listing_sizes = iter([0] * 4 + [1])
     sleeps = []
     result = wait_for_trigger(

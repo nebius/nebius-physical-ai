@@ -6,7 +6,9 @@ import subprocess
 import pytest
 
 
-DOCKERFILE = Path(__file__).resolve().parents[3] / "npa/docker/workbench/curobo/Dockerfile"
+DOCKERFILE = (
+    Path(__file__).resolve().parents[3] / "npa/docker/workbench/curobo/Dockerfile"
+)
 
 
 def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
@@ -15,7 +17,9 @@ def test_baked_identity_uses_checked_build_input_and_absolute_interpreter():
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in text
     assert "NPA_BAKED_PYTHON=/opt/npa-venv/bin/python" in text
     assert "PYTHONPATH=" not in text
-    assert text.index('RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]') < text.index("RUN pip install")
+    assert text.index('RUN [[ "$NPA_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]') < text.index(
+        "RUN pip install"
+    )
 
 
 @pytest.mark.parametrize("sha", ["", "a" * 39, "a" * 41, "g" * 40, "a" * 40])

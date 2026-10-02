@@ -492,7 +492,9 @@ def test_new_access_key_transient_403_converges_without_identity_drift_or_rollba
     )
     probes = iter((transient, OK))
     monkeypatch.setattr(nebius, "bootstrap_environment", bootstrap)
-    monkeypatch.setattr(storage_setup, "probe_storage_write", lambda **_kwargs: next(probes))
+    monkeypatch.setattr(
+        storage_setup, "probe_storage_write", lambda **_kwargs: next(probes)
+    )
     delete_key = mocker.patch.object(nebius, "delete_access_key")
     delete_bucket = mocker.patch.object(nebius, "delete_bucket")
     delete_sa = mocker.patch.object(nebius, "delete_service_account")
@@ -607,9 +609,7 @@ def test_retry_keeps_the_owned_partial_bucket_when_a_new_default_is_proposed(
     interrupted.record_created("bucket", {"name": "owned-partial-bucket"})
     requested: list[tuple[str, bool]] = []
 
-    def bootstrap(
-        *_args, bucket_name, allow_existing_bucket=True, **_kwargs
-    ):
+    def bootstrap(*_args, bucket_name, allow_existing_bucket=True, **_kwargs):
         requested.append((bucket_name, allow_existing_bucket))
         return _result() | {"s3_bucket": bucket_name}
 

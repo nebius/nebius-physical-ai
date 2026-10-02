@@ -55,7 +55,15 @@ def test_isaac_lab_e2e_config_shape() -> None:
     assert ISAAC_LAB_IMAGE.endswith(
         "/npa-isaac-lab:3.0.0b2.post1-sim2real-coherent-20260904"
     )
-    assert command[:7] == ["workbench", "isaac-lab", "-p", PROJECT_ALIAS, "-n", WORKBENCH_NAME, "train"]
+    assert command[:7] == [
+        "workbench",
+        "isaac-lab",
+        "-p",
+        PROJECT_ALIAS,
+        "-n",
+        WORKBENCH_NAME,
+        "train",
+    ]
     assert "--subnet-id" not in command
     for flag in (
         "--task",
@@ -98,9 +106,9 @@ def test_isaac_lab_serverless_smoke(tmp_path: Path) -> None:
     gpu_type = resolve_serverless_gpu_type(
         os.environ.get("NPA_E2E_ISAAC_LAB_GPU_TYPE", GPU_TYPE)
     )
-    gpu_preset = os.environ.get("NPA_E2E_ISAAC_LAB_GPU_PRESET", "").strip() or resolve_serverless_gpu_preset(
-        GPU_PRESET, platform=gpu_type
-    )
+    gpu_preset = os.environ.get(
+        "NPA_E2E_ISAAC_LAB_GPU_PRESET", ""
+    ).strip() or resolve_serverless_gpu_preset(GPU_PRESET, platform=gpu_type)
     image = resolve_image(os.environ.get("NPA_E2E_ISAAC_LAB_IMAGE", ISAAC_LAB_IMAGE))
     output_path = _output_path(test_id, bucket=bucket)
     job_name = f"{JOB_PREFIX}-{uuid.uuid4().hex[:8]}"
@@ -118,12 +126,21 @@ def test_isaac_lab_serverless_smoke(tmp_path: Path) -> None:
 
     (artifacts_dir / "output-path.txt").write_text(output_path + "\n", encoding="utf-8")
     (artifacts_dir / "job-name.txt").write_text(job_name + "\n", encoding="utf-8")
-    (artifacts_dir / "submit-command.json").write_text(json.dumps(command, indent=2) + "\n", encoding="utf-8")
+    (artifacts_dir / "submit-command.json").write_text(
+        json.dumps(command, indent=2) + "\n", encoding="utf-8"
+    )
 
     try:
-        submitted = _run_npa(command, timeout=int(os.environ.get("NPA_E2E_ISAAC_LAB_SUBMIT_TIMEOUT", "600")))
-        (artifacts_dir / "submit-stdout.txt").write_text(submitted.stdout, encoding="utf-8")
-        (artifacts_dir / "submit-stderr.txt").write_text(submitted.stderr, encoding="utf-8")
+        submitted = _run_npa(
+            command,
+            timeout=int(os.environ.get("NPA_E2E_ISAAC_LAB_SUBMIT_TIMEOUT", "600")),
+        )
+        (artifacts_dir / "submit-stdout.txt").write_text(
+            submitted.stdout, encoding="utf-8"
+        )
+        (artifacts_dir / "submit-stderr.txt").write_text(
+            submitted.stderr, encoding="utf-8"
+        )
         assert submitted.returncode == 0, _format_result(submitted)
         payload = json.loads(submitted.stdout)
         assert payload["status"] == "submitted"
@@ -136,18 +153,30 @@ def test_isaac_lab_serverless_smoke(tmp_path: Path) -> None:
         client = ServerlessClient()
         submitted_info = _wait_for_visible_job(client, project_id, job_id)
         _write_job_capture(project_id, submitted_info, artifacts_dir, label="submitted")
-        assert _submitted_subnet_id(submitted_info.raw), "submitted Job spec has no subnet_id"
+        assert _submitted_subnet_id(submitted_info.raw), (
+            "submitted Job spec has no subnet_id"
+        )
 
         final = _poll_job(client, project_id, job_id, artifacts_dir)
         assert final.status == "succeeded", final.raw
         _write_job_capture(project_id, final, artifacts_dir, label="final")
 
         local_dir = artifacts_dir / "s3"
-        _download_s3_prefix(output_path, local_dir, access_key, secret_key, endpoint_url)
-        assert {path.name for path in local_dir.iterdir() if path.is_file()} >= _expected_artifact_names()
+        _download_s3_prefix(
+            output_path, local_dir, access_key, secret_key, endpoint_url
+        )
+        assert {
+            path.name for path in local_dir.iterdir() if path.is_file()
+        } >= _expected_artifact_names()
 
-        summary = json.loads((local_dir / "npa_isaac_lab_train_summary.json").read_text(encoding="utf-8"))
-        manifest = json.loads((local_dir / "npa_isaac_lab_checkpoint_manifest.json").read_text(encoding="utf-8"))
+        summary = json.loads(
+            (local_dir / "npa_isaac_lab_train_summary.json").read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (local_dir / "npa_isaac_lab_checkpoint_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
         _assert_summary(summary, job_name=job_name)
         assert manifest["format"] == "npa_isaac_lab_rsl_rl_checkpoint_v1"
         assert manifest["task"] == summary["task"]
@@ -223,7 +252,9 @@ def _submit_command(
     ]
 
 
-def _run_npa(args: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+def _run_npa(
+    args: list[str], *, timeout: int = 120
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [_npa_executable(), *args],
         cwd=Path(__file__).resolve().parents[3],
@@ -254,7 +285,9 @@ def _wait_for_visible_job(client: ServerlessClient, project_id: str, job_id: str
     pytest.fail(f"Job {job_id} was not visible after submission: {last}")
 
 
-def _poll_job(client: ServerlessClient, project_id: str, job_id: str, artifacts_dir: Path):
+def _poll_job(
+    client: ServerlessClient, project_id: str, job_id: str, artifacts_dir: Path
+):
     deadline = time.monotonic() + MAX_WAIT
     started = time.monotonic()
     last = None
@@ -269,12 +302,16 @@ def _poll_job(client: ServerlessClient, project_id: str, job_id: str, artifacts_
         if current.status in {"succeeded", "failed", "cancelled"}:
             return current
         if started is not None and time.monotonic() - started > STARTING_WAIT:
-            pytest.fail(f"Job {job_id} did not leave queue/startup within {STARTING_WAIT}s; last={current.raw}")
+            pytest.fail(
+                f"Job {job_id} did not leave queue/startup within {STARTING_WAIT}s; last={current.raw}"
+            )
         time.sleep(POLL_INTERVAL)
     pytest.fail(f"Job {job_id} did not finish within {MAX_WAIT}s; last={last}")
 
 
-def _write_job_capture(project_id: str, info, artifacts_dir: Path, *, label: str) -> None:
+def _write_job_capture(
+    project_id: str, info, artifacts_dir: Path, *, label: str
+) -> None:
     (artifacts_dir / f"job-detail-{label}.json").write_text(
         json.dumps(info.raw, indent=2, sort_keys=True),
         encoding="utf-8",
@@ -325,7 +362,9 @@ def _cleanup_job(project_id: str, ref: str, artifacts_dir: Path) -> None:
         timeout=60,
         check=False,
     )
-    (artifacts_dir / "cleanup-orphan-check.log").write_text(orphan.stdout, encoding="utf-8")
+    (artifacts_dir / "cleanup-orphan-check.log").write_text(
+        orphan.stdout, encoding="utf-8"
+    )
 
 
 def _download_s3_prefix(
@@ -365,7 +404,9 @@ def _assert_summary(summary: dict[str, object], *, job_name: str) -> None:
     assert summary["steps"] == STEPS
     assert summary["max_iterations"] == STEPS
     assert summary["run_name"] == job_name
-    assert str(summary["train_script"]).endswith("scripts/reinforcement_learning/rsl_rl/train.py")
+    assert str(summary["train_script"]).endswith(
+        "scripts/reinforcement_learning/rsl_rl/train.py"
+    )
     assert int(summary["checkpoint_count"]) >= 1
 
 

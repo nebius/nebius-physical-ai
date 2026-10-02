@@ -34,7 +34,11 @@ def local_storage(monkeypatch, tmp_path: Path):
         bucket = uri[len("s3://") :].split("/", 1)[0]
         if not base.exists():
             return []
-        return [str(p.relative_to(root / bucket)) for p in sorted(base.rglob("*")) if p.is_file()]
+        return [
+            str(p.relative_to(root / bucket))
+            for p in sorted(base.rglob("*"))
+            if p.is_file()
+        ]
 
     monkeypatch.setattr(fanout_join, "_download_json", fake_download_json)
     monkeypatch.setattr(fanout_join, "_upload_json", fake_upload_json)
@@ -49,7 +53,9 @@ def _write_shard(root: Path, shard: str, count: int) -> None:
         json.dumps(
             {
                 "model": "Qwen/Qwen2.5-VL-72B-Instruct",
-                "captions": [{"image": f"{shard}-{i}.png", "caption": "x"} for i in range(count)],
+                "captions": [
+                    {"image": f"{shard}-{i}.png", "caption": "x"} for i in range(count)
+                ],
             }
         ),
         encoding="utf-8",
@@ -72,8 +78,14 @@ def test_join_shards_merges_every_shard(local_storage) -> None:
     assert report["joined_shards"] == 3
     assert report["total_items"] == 6
     assert report["missing_shards"] == []
-    written = json.loads((local_storage / "bucket/reports/join_report.json").read_text())
-    assert {entry["shard"] for entry in written["shards"]} == {"shard-a", "shard-b", "shard-c"}
+    written = json.loads(
+        (local_storage / "bucket/reports/join_report.json").read_text()
+    )
+    assert {entry["shard"] for entry in written["shards"]} == {
+        "shard-a",
+        "shard-b",
+        "shard-c",
+    }
 
 
 def test_join_shards_fails_when_a_shard_is_missing(local_storage) -> None:
@@ -87,7 +99,9 @@ def test_join_shards_fails_when_a_shard_is_missing(local_storage) -> None:
             shards="shard-a,shard-b,shard-c",
         )
     # The partial report is still published so the failure is debuggable.
-    written = json.loads((local_storage / "bucket/reports/join_report.json").read_text())
+    written = json.loads(
+        (local_storage / "bucket/reports/join_report.json").read_text()
+    )
     assert written["missing_shards"] == ["shard-c"]
 
 
@@ -100,7 +114,10 @@ def test_join_shards_discovers_shards_when_not_listed(local_storage) -> None:
         report_uri="s3://bucket/reports/",
     )
 
-    assert sorted(entry["shard"] for entry in report["shards"]) == ["shard-a", "shard-b"]
+    assert sorted(entry["shard"] for entry in report["shards"]) == [
+        "shard-a",
+        "shard-b",
+    ]
     assert report["report_uri"].endswith(fanout_join.JOIN_REPORT_FILENAME)
 
 

@@ -22,7 +22,10 @@ from pathlib import Path
 import pytest
 import yaml
 
-from npa.deploy.images import DEFAULT_PUBLIC_CONTAINER_REGISTRY, wan_accepted_image_manifest
+from npa.deploy.images import (
+    DEFAULT_PUBLIC_CONTAINER_REGISTRY,
+    wan_accepted_image_manifest,
+)
 
 from npa.clients.config import resolve_container_registry
 from npa.workflows.byof.live import (
@@ -48,10 +51,7 @@ WAN_IMAGE = (
 )
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
-WAN_SPEC = (
-    REPO_ROOT
-    / "workflows" / "testing" / "byof-wan2.2-multigpu.yaml"
-)
+WAN_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-wan2.2-multigpu.yaml"
 PROFILE_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles"
 EXPECTED_CAPABILITIES = {
     "wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses",

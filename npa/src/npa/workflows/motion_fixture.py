@@ -111,7 +111,9 @@ def _body_rows(
     return positions, quats
 
 
-def _write_csv(path: Path, header: Sequence[str], rows: Iterable[Sequence[float]]) -> None:
+def _write_csv(
+    path: Path, header: Sequence[str], rows: Iterable[Sequence[float]]
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
@@ -132,12 +134,16 @@ def build_clip(
     """Write one SOMA-CSV clip directory and return its metadata."""
 
     if frames < 2:
-        raise MotionFixtureError(f"frames must be >= 2 to form a trajectory, got {frames}")
+        raise MotionFixtureError(
+            f"frames must be >= 2 to form a trajectory, got {frames}"
+        )
     if amplitude <= 0:
         raise MotionFixtureError(f"amplitude must be positive, got {amplitude}")
 
     root = Path(clip_dir)
-    joint_rows = [_joint_row(frame, frames, amplitude, phase) for frame in range(frames)]
+    joint_rows = [
+        _joint_row(frame, frames, amplitude, phase) for frame in range(frames)
+    ]
     body_rows = [
         _body_rows(frame, frames, height=height, stride=stride, yaw_sweep=yaw_sweep)
         for frame in range(frames)
@@ -150,12 +156,20 @@ def build_clip(
     )
     _write_csv(
         root / "body_pos.csv",
-        [f"body_{body}_{axis}" for body in range(NUM_BODIES) for axis in ("x", "y", "z")],
+        [
+            f"body_{body}_{axis}"
+            for body in range(NUM_BODIES)
+            for axis in ("x", "y", "z")
+        ],
         [positions for positions, _ in body_rows],
     )
     _write_csv(
         root / "body_quat.csv",
-        [f"body_{body}_{comp}" for body in range(NUM_BODIES) for comp in ("w", "x", "y", "z")],
+        [
+            f"body_{body}_{comp}"
+            for body in range(NUM_BODIES)
+            for comp in ("w", "x", "y", "z")
+        ],
         [quats for _, quats in body_rows],
     )
     return {
@@ -266,7 +280,9 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", default="/tmp/npa-motion-fixture")
-    parser.add_argument("--uri", default="", help="s3:// prefix to upload the clips to.")
+    parser.add_argument(
+        "--uri", default="", help="s3:// prefix to upload the clips to."
+    )
     parser.add_argument(
         "--clips",
         default="walk-forward,stand-sway",

@@ -71,9 +71,7 @@ def test_generated_rollout_disables_kit_telemetry_before_launch(
         )
     )
     kit_args = next(
-        keyword.value
-        for keyword in launcher.keywords
-        if keyword.arg == "kit_args"
+        keyword.value for keyword in launcher.keywords if keyword.arg == "kit_args"
     )
     rendered_args = ast.literal_eval(kit_args)
 
@@ -138,7 +136,9 @@ def test_generated_rollout_records_pre_step_timeline(capture_rgb: bool) -> None:
 @pytest.mark.parametrize("capture_rgb", [False, True])
 def test_generated_rollout_guards_exported_timeline_lengths(capture_rgb: bool) -> None:
     tree = _generated_tree(capture_rgb=capture_rgb)
-    comparisons = [ast.unparse(node) for node in ast.walk(tree) if isinstance(node, ast.Compare)]
+    comparisons = [
+        ast.unparse(node) for node in ast.walk(tree) if isinstance(node, ast.Compare)
+    ]
 
     assert "len(actions_out) != len(states)" in comparisons
     if capture_rgb:
