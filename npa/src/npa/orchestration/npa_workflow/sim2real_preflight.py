@@ -310,10 +310,7 @@ def _managed_driver_isaac_nodes(nodes_json: str, *, placements=None) -> list[str
     Stage 7 renders, where it surfaces as an opaque Warp illegal-memory-access after
     the earlier GPU stages have already been paid for.
     """
-    try:
-        payload = json.loads(nodes_json or "") or {}
-    except json.JSONDecodeError:
-        return []
+    payload = json.loads(nodes_json or "")
     from npa.orchestration.npa_workflow.sim2real_driver_preflight import (
         node_can_host_isaac,
     )
@@ -324,9 +321,13 @@ def _managed_driver_isaac_nodes(nodes_json: str, *, placements=None) -> list[str
     for node in payload["items"]:
         if not isinstance(node, Mapping):
             raise ValueError("Isaac node listing contains an invalid record")
-        metadata = (node or {}).get("metadata") or {}
-        labels = metadata.get("labels") or {}
-        if not isinstance(labels, Mapping) or not _is_rtx_pro_6000(labels):
+        metadata = node.get("metadata")
+        if not isinstance(metadata, Mapping) or not metadata.get("name"):
+            raise ValueError("Isaac node metadata evidence is invalid")
+        labels = metadata.get("labels", {})
+        if not isinstance(labels, Mapping):
+            raise ValueError("Isaac node label evidence is invalid")
+        if not _is_rtx_pro_6000(labels):
             continue
         managed = str(labels.get("nebius.com/driverful") or "").lower() == "true"
         operator = (
@@ -335,6 +336,14 @@ def _managed_driver_isaac_nodes(nodes_json: str, *, placements=None) -> list[str
         if managed and not operator and node_can_host_isaac(node, placements):
             flagged.append(str(metadata.get("name") or ""))
     return sorted(name for name in flagged if name)
+
+
+def _verified_cpu_nodes(nodes_json):
+    """Keep malformed node records inside the aggregated prerequisite boundary."""
+    try:
+        return _ready_schedulable_cpu_nodes(nodes_json)
+    except (AttributeError, TypeError, ValueError):
+        return []
 
 
 def _cpu_placement_issues(nodes) -> list[Issue]:
@@ -347,7 +356,7 @@ def _cpu_placement_issues(nodes) -> list[Issue]:
                 "`kubectl get nodes -o wide`",
             )
         )
-    elif not _ready_schedulable_cpu_nodes(str(getattr(nodes, "stdout", ""))):
+    elif not _verified_cpu_nodes(str(getattr(nodes, "stdout", ""))):
         issues.append(
             (
                 "no Ready, schedulable, appropriately untainted node can fit the "

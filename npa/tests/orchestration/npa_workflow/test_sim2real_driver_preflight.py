@@ -260,3 +260,16 @@ def _write_layered_config(config):
             }
         )
     )
+
+
+@pytest.mark.parametrize("broken", ["metadata", "labels", "name"])
+def test_placement_node_rejects_malformed_identity(broken):
+    node = _node()
+    if broken == "metadata":
+        node["metadata"] = "invalid"
+    elif broken == "labels":
+        node["metadata"]["labels"] = ["invalid"]
+    else:
+        del node["metadata"]["name"]
+    with pytest.raises(ValueError, match="evidence is invalid"):
+        node_can_host_isaac(node)

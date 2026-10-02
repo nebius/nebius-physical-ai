@@ -403,8 +403,13 @@ def test_non_rtx_and_unlabelled_nodes_are_not_flagged(labels):
     assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == []
 
 
-def test_unparseable_node_payload_does_not_fabricate_a_driver_issue():
-    assert _managed_driver_isaac_nodes("not-json") == []
+def test_unparseable_node_payload_cannot_claim_verified_driver_placement():
+    with pytest.raises(ValueError):
+        _managed_driver_isaac_nodes("not-json")
+    issues = kubernetes_prerequisites(
+        {}, runner=lambda _: SimpleNamespace(returncode=0, stdout="not-json")
+    )
+    assert any("placement could not be verified" in issue for issue, _ in issues)
 
 
 def test_kubernetes_preflight_surfaces_managed_driver_isaac_nodes():
@@ -455,3 +460,19 @@ def test_managed_driver_detection_uses_the_scheduler_gpu_label_aliases():
     assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == ["gpu-0"]
     labels["skypilot.co/accelerator"] = "rtxpro6000-unreviewed-variant"
     assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == []
+
+
+@pytest.mark.parametrize("broken", ["metadata", "labels", "name"])
+def test_malformed_node_identity_is_reported_without_traceback(broken):
+    payload = json.loads(_rtx_nodes(**_MANAGED_RTX_LABELS))
+    node = payload["items"][-1]
+    if broken == "metadata":
+        node["metadata"] = "invalid"
+    elif broken == "labels":
+        node["metadata"]["labels"] = ["invalid"]
+    else:
+        del node["metadata"]["name"]
+    issues = kubernetes_prerequisites(
+        {}, runner=lambda _: SimpleNamespace(returncode=0, stdout=json.dumps(payload))
+    )
+    assert any("placement could not be verified" in issue for issue, _ in issues)

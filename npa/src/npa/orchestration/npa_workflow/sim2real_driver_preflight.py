@@ -160,14 +160,8 @@ def _node_available(node, pod_spec):
     return True
 
 
-def _placement_node(node):
-    metadata, status = node.get("metadata") or {}, node.get("status") or {}
-    labels, allocatable = metadata.get("labels") or {}, status.get("allocatable") or {}
-    if not isinstance(allocatable, Mapping) or any(
-        key not in allocatable for key in ("cpu", "memory", "nvidia.com/gpu")
-    ):
-        raise ValueError("Isaac node allocatable resource evidence is missing")
-    products = tuple(
+def _node_products(labels):
+    return tuple(
         str(labels[key])
         for key in (
             "nvidia.com/gpu.product",
@@ -176,6 +170,21 @@ def _placement_node(node):
         )
         if labels.get(key)
     )
+
+
+def _placement_node(node):
+    metadata, status = node.get("metadata"), node.get("status")
+    if not isinstance(metadata, Mapping) or not metadata.get("name"):
+        raise ValueError("Isaac node metadata evidence is invalid")
+    if not isinstance(status, Mapping):
+        raise ValueError("Isaac node status evidence is invalid")
+    labels, allocatable = metadata.get("labels", {}), status.get("allocatable") or {}
+    if not isinstance(labels, Mapping):
+        raise ValueError("Isaac node label evidence is invalid")
+    if not isinstance(allocatable, Mapping) or any(
+        key not in allocatable for key in ("cpu", "memory", "nvidia.com/gpu")
+    ):
+        raise ValueError("Isaac node allocatable resource evidence is missing")
     gpu = integer_resource(allocatable["nvidia.com/gpu"])
     cpu, memory = (
         cpu_millicores(allocatable["cpu"]),
@@ -185,7 +194,7 @@ def _placement_node(node):
         name=str(metadata.get("name") or ""),
         ready=True,
         schedulable=True,
-        products=products,
+        products=_node_products(labels),
         labels=tuple(labels.items()),
         capacity=gpu,
         allocatable=gpu,
