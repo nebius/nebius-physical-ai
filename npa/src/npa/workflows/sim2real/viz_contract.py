@@ -418,9 +418,21 @@ def _candidate_policy_metadata(
     candidate: dict[str, Any],
     *,
     checkpoint: str,
+    heldout_metadata: dict[str, Any] | None = None,
+    heldout_report_present: bool = False,
 ) -> dict[str, Any]:
     deployable = candidate.get("deployable_policy") is True
-    download_command, ui_action = deployable_policy_access(candidate)
+    if heldout_report_present:
+        current = heldout_metadata or {}
+        deployable = bool(
+            deployable
+            and current.get("heldout_policy_loaded_for_inference") is True
+            and current.get("heldout_policy_identity_verified") is True
+            and current.get("heldout_policy_learned_actor_only") is True
+            and current.get("heldout_policy_deployable_eval") is True
+        )
+    access_candidate = {**candidate, "deployable_policy": deployable}
+    download_command, ui_action = deployable_policy_access(access_candidate)
     return {
         "policy_checkpoint": checkpoint,
         "policy_checkpoint_identity": (
@@ -467,6 +479,31 @@ def _viewer_metadata(config: Any) -> dict[str, Any]:
         "orchestrator_job_name": config.run_id,
         "orchestrator_node_product": config.k8s_gpu_product,
         "viewer_command": viewer_command,
+    }
+
+
+def compatibility_policy_access(
+    metadata: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    candidate_manifest_uri: str,
+) -> dict[str, Any]:
+    """Project legacy policy access from already-gated visualization metadata."""
+
+    deployable = metadata.get("policy_deployable") is True
+    return {
+        "deployable_policy": deployable,
+        "policy_bytes_available": bool(
+            deployable and candidate.get("policy_bytes_available") is True
+        ),
+        "identity": metadata.get("policy_checkpoint_identity", ""),
+        "sha256": metadata.get("policy_checkpoint_sha256", ""),
+        "size_bytes": metadata.get("policy_checkpoint_size_bytes", 0),
+        "checkpoint_uri": metadata.get("policy_checkpoint", ""),
+        "candidate_manifest_uri": candidate_manifest_uri,
+        "authenticated_download_command": metadata.get("policy_download_command", ""),
+        "ui_action": metadata.get("policy_ui_action", ""),
+        "viewer_executes_policy": False,
     }
 
 
@@ -521,9 +558,17 @@ def visualization_run_metadata(
         generator_sha256_evidence=candidate_generator_evidence,
         checkpoint_identity_evidence=candidate_identity_evidence,
     )
+    heldout_metadata["heldout_policy_deployable_eval"] = (
+        heldout.get("deployable_policy_eval") is True
+    )
     return {
         **_artifact_metadata(config, artifact_root, progress=progress),
-        **_candidate_policy_metadata(candidate, checkpoint=policy_checkpoint),
+        **_candidate_policy_metadata(
+            candidate,
+            checkpoint=policy_checkpoint,
+            heldout_metadata=heldout_metadata,
+            heldout_report_present=heldout_report is not None,
+        ),
         **heldout_metadata,
         **_viewer_metadata(config),
     }

@@ -46,6 +46,31 @@ class Sim2RealRerunRegenError(ValueError):
 DEFAULT_REGEN_ROOT = Path("/tmp/sim2real-regen")
 
 
+def _safe_run_id(run_id: str) -> str:
+    if not isinstance(run_id, str):
+        raise Sim2RealRerunRegenError("run_id must be a string path segment")
+    value = run_id
+    if (
+        not value
+        or value != value.strip()
+        or not value.isascii()
+        or value in {".", ".."}
+        or "/" in value
+        or "\\" in value
+    ):
+        raise Sim2RealRerunRegenError("run_id must be one non-traversing path segment")
+    return value
+
+
+def _default_regen_dir(run_id: str) -> Path:
+    safe_run_id = _safe_run_id(run_id)
+    if DEFAULT_REGEN_ROOT.is_symlink():
+        raise Sim2RealRerunRegenError(
+            f"default regeneration root must not be a symlink: {DEFAULT_REGEN_ROOT}"
+        )
+    return DEFAULT_REGEN_ROOT / safe_run_id
+
+
 @dataclass(frozen=True)
 class RegenResult:
     run_id: str
@@ -89,14 +114,14 @@ def resolve_local_rrd_path(
         return Path(explicit)
     if local_dir is not None:
         return local_dir / "reports" / "sim2real.rrd"
-    return DEFAULT_REGEN_ROOT / run_id / "reports" / "sim2real.rrd"
+    return DEFAULT_REGEN_ROOT / _safe_run_id(run_id) / "reports" / "sim2real.rrd"
 
 
 def default_regen_local_dir(run_id: str, *, override: str = "") -> Path:
     explicit = (override or os.environ.get("NPA_SIM2REAL_REGEN_LOCAL_DIR", "")).strip()
     if explicit:
         return Path(explicit)
-    return DEFAULT_REGEN_ROOT / run_id
+    return _default_regen_dir(run_id)
 
 
 def run_prefix_uri(config: Sim2RealLoopConfig) -> str:
@@ -438,12 +463,50 @@ def _download_render_tree(
     return True
 
 
+def _download_directory_fresh(
+    storage: StorageClient,
+    uri: str,
+    destination: Path,
+    *,
+    containment_root: Path,
+) -> bool:
+    """Replace a cached directory only with one complete remote download."""
+
+    _assert_no_symlinked_ancestors(
+        destination,
+        containment_root=containment_root,
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{destination.name}.", dir=destination.parent
+    ) as directory:
+        staged = Path(directory) / destination.name
+        try:
+            storage.download_directory(uri, str(staged))
+        except (StorageError, OSError, ClientError) as exc:
+            _remove_tree_after_failure(destination, exc)
+            return False
+        except BaseException as exc:
+            _remove_tree_after_failure(destination, exc)
+            raise
+        if not staged.is_dir() or staged.is_symlink():
+            _remove_tree(destination)
+            return False
+        _assert_no_symlinked_ancestors(
+            destination,
+            containment_root=containment_root,
+        )
+        _remove_tree(destination)
+        os.replace(staged, destination)
+    return True
+
+
 def sync_regen_inputs(
     config: Sim2RealLoopConfig,
     local_dir: Path,
     *,
     client: StorageClient | None = None,
-) -> None:
+) -> tuple[Path, Path]:
     """Download artifacts required for emit_sim2real_rerun from the run prefix."""
 
     storage = client or _storage_client_for_config(config)
@@ -453,6 +516,11 @@ def sync_regen_inputs(
 
     inner_evidence_rel = _latest_completed_inner_evidence_rel(storage, prefix)
     gold_eval_rel = _gold_eval_relative_dir(inner_evidence_rel).as_posix()
+    for stale_scope in (
+        local_dir / "inner_loop",
+        local_dir / "eval" / "gold-heldout",
+    ):
+        _remove_tree(stale_scope)
     singles = {
         inner_evidence_rel: local_dir / inner_evidence_rel,
         f"{gold_eval_rel}/report.json": local_dir / gold_eval_rel / "report.json",
@@ -480,14 +548,20 @@ def sync_regen_inputs(
         "stage_13_retrigger/retrigger.json": local_dir
         / "stage_13_retrigger/retrigger.json",
     }
+    downloaded: dict[str, bool] = {}
     for rel, dest in singles.items():
         dest.parent.mkdir(parents=True, exist_ok=True)
-        _download_if_exists(
+        downloaded[rel] = _download_if_exists(
             storage,
             f"{prefix}{rel}",
             dest,
             containment_root=local_dir,
         )
+    for required in (inner_evidence_rel, f"{gold_eval_rel}/report.json"):
+        if not downloaded[required]:
+            raise Sim2RealRerunRegenError(
+                f"required completed run artifact could not be downloaded: {required}"
+            )
 
     # The viewer plots improvement across every outer/inner pass, not only the
     # latest evidence object selected for backward compatibility above.
@@ -508,25 +582,35 @@ def sync_regen_inputs(
         )
 
     for rel in ("actions", "vlm_eval", "training_signal", "augment", "envs/raw"):
-        try:
-            storage.download_directory(f"{prefix}{rel}/", str(local_dir / rel))
-        except (StorageError, OSError):
-            pass
+        destination = local_dir / rel
+        had_cached_evidence = destination.exists() or destination.is_symlink()
+        if (
+            not _download_directory_fresh(
+                storage,
+                f"{prefix}{rel}/",
+                destination,
+                containment_root=local_dir,
+            )
+            and had_cached_evidence
+        ):
+            raise Sim2RealRerunRegenError(
+                f"failed to replace cached regeneration input directory: {rel}"
+            )
     for evidence_path in sorted(
         (local_dir / "inner_loop").glob("outer-*/evidence.json")
     ):
         _rewrite_inner_evidence_paths(local_dir, evidence_path)
 
-    heldout_report: dict[str, Any] = {}
-    heldout_path = _gold_report_path(config, local_dir)
-    if heldout_path.is_file():
-        heldout_report = _read_retained_json(
-            heldout_path,
-            source="held-out report",
-        )
+    inner_evidence_path = local_dir / inner_evidence_rel
+    heldout_path = local_dir / gold_eval_rel / "report.json"
+    heldout_report = _read_retained_json(
+        heldout_path,
+        source="held-out report",
+    )
     sync_heldout_renders(
         config, local_dir, heldout_report=heldout_report, client=storage
     )
+    return inner_evidence_path, heldout_path
 
 
 def _sealed_render_uri(lineage: dict[str, Any]) -> str:
@@ -789,42 +873,87 @@ def _latest_local_inner_evidence(local_dir: Path) -> Path:
 
 
 def _rewrite_inner_evidence_paths(local_dir: Path, evidence_path: Path) -> None:
+    local_dir = Path(local_dir)
+    evidence_path = Path(evidence_path)
+    _assert_no_symlinked_ancestors(
+        evidence_path,
+        containment_root=local_dir,
+    )
+    if evidence_path.is_symlink():
+        raise Sim2RealRerunRegenError(
+            f"inner-loop evidence must not be a symlink: {evidence_path}"
+        )
     try:
         payload = parse_json_object(
-            Path(evidence_path).read_text(encoding="utf-8"),
+            evidence_path.read_text(encoding="utf-8"),
             source="inner-loop evidence",
         )
-    except (OSError, ValueError):
-        return
+    except (OSError, ValueError) as exc:
+        raise Sim2RealRerunRegenError(
+            f"cannot safely rewrite inner-loop evidence: {evidence_path}"
+        ) from exc
     changed = False
-    markers = {
-        "actions_dir": "actions",
-        "vlm_eval_dir": "vlm_eval",
-        "signal_dir": "training_signal",
-    }
+    paths = (
+        ("actions_dir", "actions_uri", "actions"),
+        ("vlm_eval_dir", "vlm_eval_uri", "vlm_eval"),
+        ("signal_dir", "signal_uri", "vlm_eval"),
+    )
     for record in payload.get("iterations") or []:
         if not isinstance(record, dict):
             continue
-        for key, marker in markers.items():
-            rewritten = _path_under_marker(local_dir, record.get(key), marker)
+        for key, uri_key, marker in paths:
+            source = record.get(uri_key) or record.get(key)
+            rewritten = _path_under_marker(local_dir, source, marker)
+            if uri_key in record and rewritten is None:
+                raise Sim2RealRerunRegenError(
+                    f"{uri_key} cannot be localized below regeneration root"
+                )
             if rewritten is not None and str(record.get(key) or "") != str(rewritten):
                 record[key] = str(rewritten)
                 changed = True
     if changed:
-        Path(evidence_path).write_text(
-            json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        _assert_no_symlinked_ancestors(
+            evidence_path,
+            containment_root=local_dir,
         )
+        if evidence_path.is_symlink():
+            raise Sim2RealRerunRegenError(
+                f"inner-loop evidence became a symlink: {evidence_path}"
+            )
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            prefix=f".{evidence_path.name}.",
+            dir=evidence_path.parent,
+            delete=False,
+        ) as staged:
+            staged.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            staged_path = Path(staged.name)
+        try:
+            os.replace(staged_path, evidence_path)
+        finally:
+            staged_path.unlink(missing_ok=True)
 
 
 def _path_under_marker(local_dir: Path, value: Any, marker: str) -> Path | None:
     if not value:
         return None
-    parts = Path(str(value)).parts
+    if not isinstance(value, str) or value != value.strip() or "\\" in value:
+        raise Sim2RealRerunRegenError(f"{marker} evidence path is malformed")
+    parts = Path(value).parts
+    if any(part in {".", ".."} for part in parts):
+        raise Sim2RealRerunRegenError(f"{marker} evidence path contains traversal")
     try:
         index = parts.index(marker)
     except ValueError:
         return None
-    return Path(local_dir) / Path(*parts[index:])
+    root = Path(os.path.abspath(local_dir))
+    localized = Path(os.path.abspath(root / Path(*parts[index:])))
+    if localized == root or not localized.is_relative_to(root):
+        raise Sim2RealRerunRegenError(
+            f"{marker} evidence path escapes regeneration root"
+        )
+    return localized
 
 
 def _render_manifest_from_png_tree(renders_dir: Path) -> dict[str, Any]:
@@ -844,7 +973,30 @@ def _write_report_render_manifest(
     heldout_report: dict[str, Any] | None,
     manifest: dict[str, Any],
 ) -> None:
-    report_path = _gold_report_path(config, Path(local_dir))
+    report_outer = (heldout_report or {}).get("outer_iteration")
+    if (
+        (heldout_report or {}).get("evaluation_split") == "gold_heldout"
+        and isinstance(report_outer, int)
+        and not isinstance(report_outer, bool)
+        and report_outer > 0
+    ):
+        report_path = (
+            Path(local_dir)
+            / "eval"
+            / "gold-heldout"
+            / f"outer-{report_outer:02d}"
+            / "report.json"
+        )
+    else:
+        report_path = _gold_report_path(config, Path(local_dir))
+    _assert_no_symlinked_ancestors(
+        report_path,
+        containment_root=Path(local_dir),
+    )
+    if report_path.is_symlink():
+        raise Sim2RealRerunRegenError(
+            f"held-out report must not be a symlink: {report_path}"
+        )
     if report_path.is_file():
         report = _read_retained_json(
             report_path,
@@ -877,6 +1029,10 @@ def download_rrd_from_s3(
         if absolute_dest.is_relative_to(default_root)
         else absolute_dest.parent
     )
+    if containment_root == default_root and DEFAULT_REGEN_ROOT.is_symlink():
+        raise Sim2RealRerunRegenError(
+            f"default regeneration root must not be a symlink: {DEFAULT_REGEN_ROOT}"
+        )
     if not _download_if_exists(
         storage,
         uri,
@@ -887,10 +1043,44 @@ def download_rrd_from_s3(
     return dest_path
 
 
+def _assert_regular_publication_file(path: Path) -> None:
+    path = Path(path)
+    if path.is_symlink() or not path.is_file():
+        raise Sim2RealRerunRegenError(
+            f"publication source must be a regular file: {path}"
+        )
+    for parent in path.parents:
+        if parent.is_symlink():
+            raise Sim2RealRerunRegenError(
+                f"publication source has a symlinked ancestor: {parent}"
+            )
+
+
+def _assert_safe_publication_tree(local_dir: Path, tree: Path) -> None:
+    root = Path(os.path.abspath(local_dir))
+    tree = Path(os.path.abspath(tree))
+    try:
+        tree.relative_to(root)
+    except ValueError as exc:
+        raise Sim2RealRerunRegenError(
+            f"publication tree escapes regeneration root: {tree}"
+        ) from exc
+    if root.is_symlink() or tree.is_symlink() or not tree.is_dir():
+        raise Sim2RealRerunRegenError(
+            f"publication tree must be a non-symlink directory: {tree}"
+        )
+    for entry in tree.rglob("*"):
+        if entry.is_symlink():
+            raise Sim2RealRerunRegenError(
+                f"publication tree contains a symlink: {entry}"
+            )
+
+
 def publish_regen_outputs(
     config: Sim2RealLoopConfig,
     local_dir: Path,
     *,
+    rrd_path: Path | None = None,
     client: StorageClient | None = None,
 ) -> str:
     """Upload regenerated held-out report/renders and .rrd back to the run prefix."""
@@ -901,8 +1091,7 @@ def publish_regen_outputs(
 
     report_path = _gold_report_path(config, local_dir)
     if report_path.is_file():
-        rel = report_path.relative_to(local_dir).as_posix()
-        storage.upload_file(str(report_path), f"{prefix}{rel}")
+        _assert_regular_publication_file(report_path)
 
     renders_dir = _renders_dir_for_report(
         config,
@@ -912,29 +1101,92 @@ def publish_regen_outputs(
         else {},
     )
     if renders_dir.is_dir() and _has_camera_pngs(renders_dir):
-        rel = renders_dir.relative_to(local_dir).as_posix()
-        storage.upload_directory(str(renders_dir), f"{prefix}{rel}")
+        _assert_safe_publication_tree(local_dir, renders_dir)
 
-    rrd_path = local_dir / "reports" / "sim2real.rrd"
+    rrd_path = (
+        Path(rrd_path)
+        if rrd_path is not None
+        else (local_dir / "reports" / "sim2real.rrd")
+    )
     if not rrd_path.is_file():
         raise Sim2RealRerunRegenError(f"missing regenerated recording: {rrd_path}")
+    _assert_regular_publication_file(rrd_path)
     visual_index_path = local_dir / "reports" / "sim2real-visual-index.json"
+    if visual_index_path.is_file():
+        _assert_regular_publication_file(visual_index_path)
+    final_report_path = local_dir / "reports" / "sim2real-report.json"
+    if final_report_path.is_file():
+        _assert_regular_publication_file(final_report_path)
+    candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
+    if candidate_path.is_file():
+        _assert_regular_publication_file(candidate_path)
+
+    if report_path.is_file():
+        storage.upload_file(
+            str(report_path), f"{prefix}{report_path.relative_to(local_dir).as_posix()}"
+        )
+    if renders_dir.is_dir() and _has_camera_pngs(renders_dir):
+        storage.upload_directory(
+            str(renders_dir),
+            f"{prefix}{renders_dir.relative_to(local_dir).as_posix()}",
+        )
     if visual_index_path.is_file():
         storage.upload_file(
             str(visual_index_path), f"{prefix}reports/sim2real-visual-index.json"
         )
-    final_report_path = local_dir / "reports" / "sim2real-report.json"
     if final_report_path.is_file():
         storage.upload_file(
             str(final_report_path), f"{prefix}reports/sim2real-report.json"
         )
-    candidate_path = local_dir / "checkpoints" / "candidate" / "candidate.json"
     if candidate_path.is_file():
         storage.upload_file(
             str(candidate_path), f"{prefix}checkpoints/candidate/candidate.json"
         )
     upload_uri = storage.upload_file(str(rrd_path), f"{prefix}reports/sim2real.rrd")
     return upload_uri
+
+
+def _publish_heldout_eval_outputs(
+    config: Sim2RealLoopConfig,
+    local_dir: Path,
+    report: dict[str, Any],
+    *,
+    outer_iteration: int,
+    storage: StorageClient,
+) -> None:
+    """Publish only evidence produced by the current held-out rerun."""
+
+    local_dir = Path(os.path.abspath(local_dir))
+    report_path = (
+        local_dir
+        / "eval"
+        / "gold-heldout"
+        / f"outer-{outer_iteration:02d}"
+        / "report.json"
+    )
+    _assert_no_symlinked_ancestors(report_path, containment_root=local_dir)
+    if report_path.is_symlink():
+        raise Sim2RealRerunRegenError(
+            f"held-out report must not be a symlink: {report_path}"
+        )
+    current_report = {
+        **report,
+        "evaluation_split": "gold_heldout",
+        "outer_iteration": outer_iteration,
+    }
+    _write_json_artifact(report_path, current_report)
+    _assert_regular_publication_file(report_path)
+
+    renders_dir = _renders_dir_for_report(config, local_dir, current_report)
+    if renders_dir.is_dir() and _has_camera_pngs(renders_dir):
+        _assert_safe_publication_tree(local_dir, renders_dir)
+
+    prefix = run_prefix_uri(config)
+    report_rel = report_path.relative_to(local_dir).as_posix()
+    storage.upload_file(str(report_path), f"{prefix}{report_rel}")
+    if renders_dir.is_dir() and _has_camera_pngs(renders_dir):
+        render_rel = renders_dir.relative_to(local_dir).as_posix()
+        storage.upload_directory(str(renders_dir), f"{prefix}{render_rel}")
 
 
 def publish_regen_mcap(
@@ -948,6 +1200,7 @@ def publish_regen_mcap(
     mcap_path = Path(local_dir) / "reports" / "sim2real.mcap"
     if not mcap_path.is_file() or mcap_path.stat().st_size == 0:
         return ""
+    _assert_regular_publication_file(mcap_path)
     storage = client or _storage_client_for_config(config)
     prefix = run_prefix_uri(config)
     return storage.upload_file(str(mcap_path), f"{prefix}reports/sim2real.mcap")
@@ -1005,11 +1258,15 @@ def _load_regen_state(
     sync_inputs: bool,
 ) -> _RegenState:
     try:
+        selected_pair: tuple[Path, Path] | None = None
         if sync_inputs:
-            sync_regen_inputs(config, work_dir, client=storage)
-        inner_path = _latest_local_inner_evidence(work_dir)
+            selected_pair = sync_regen_inputs(config, work_dir, client=storage)
+        if selected_pair is None:
+            inner_path = _latest_local_inner_evidence(work_dir)
+            heldout_path = _gold_report_path(config, work_dir)
+        else:
+            inner_path, heldout_path = selected_pair
         _rewrite_inner_evidence_paths(work_dir, inner_path)
-        heldout_path = _gold_report_path(config, work_dir)
         if not inner_path.is_file():
             raise Sim2RealRerunRegenError(f"missing inner evidence: {inner_path}")
         if not heldout_path.is_file():
@@ -1131,6 +1388,12 @@ def _emit_regen_rrd(
         run_metadata=_regen_run_metadata(config, state, viewer_command),
         output_rrd=output_rrd,
     )
+    if Path(os.path.abspath(result.output_rrd_path)) != Path(
+        os.path.abspath(output_rrd)
+    ):
+        raise Sim2RealRerunRegenError(
+            "Rerun emitter reported a different output path than requested"
+        )
     return result, round(time.monotonic() - rerun_started, 3)
 
 
@@ -1210,11 +1473,17 @@ def _publish_regen_recordings(
     storage: StorageClient,
     *,
     upload: bool,
+    output_rrd: Path | None = None,
 ) -> tuple[str, str]:
     if not upload:
         return "", ""
     return (
-        publish_regen_outputs(config, work_dir, client=storage),
+        publish_regen_outputs(
+            config,
+            work_dir,
+            rrd_path=output_rrd,
+            client=storage,
+        ),
         publish_regen_mcap(config, work_dir, client=storage),
     )
 
@@ -1227,7 +1496,13 @@ def _finalize_regen_result(
     result: Sim2RealVizResult,
     *,
     upload: bool,
+    output_rrd: Path | None = None,
 ) -> RegenResult:
+    if result.heldout_frame_count <= 0:
+        raise Sim2RealRerunRegenError(
+            "regenerated .rrd has heldout_frame_count=0; "
+            "sync gold held-out renders or rerun held-out eval"
+        )
     mcap_result = emit_sim2real_mcap_if_enabled(
         local_dir=work_dir,
         inner_evidence=state.inner_evidence,
@@ -1235,7 +1510,11 @@ def _finalize_regen_result(
         output_mcap=work_dir / "reports" / "sim2real.mcap",
     )
     upload_uri, mcap_upload_uri = _publish_regen_recordings(
-        config, work_dir, storage, upload=upload
+        config,
+        work_dir,
+        storage,
+        upload=upload,
+        output_rrd=output_rrd or Path(result.output_rrd_path),
     )
     return _regen_result_from_viz(
         config.run_id,
@@ -1266,6 +1545,11 @@ def regen_sim2real_rrd(
     result, duration_s = _emit_regen_rrd(
         config, work_dir, output_rrd, state, outer_history, viewer_command
     )
+    if result.heldout_frame_count <= 0:
+        raise Sim2RealRerunRegenError(
+            "regenerated .rrd has heldout_frame_count=0; "
+            "sync gold held-out renders or rerun held-out eval"
+        )
     _persist_regen_report(
         config,
         work_dir,
@@ -1277,7 +1561,13 @@ def regen_sim2real_rrd(
         duration_s,
     )
     return _finalize_regen_result(
-        config, work_dir, storage, state, result, upload=upload
+        config,
+        work_dir,
+        storage,
+        state,
+        result,
+        upload=upload,
+        output_rrd=output_rrd,
     )
 
 
@@ -1766,6 +2056,8 @@ def _retained_deployment_claim(
             deployable
             and metadata["heldout_policy_loaded_for_inference"] is True
             and metadata["heldout_policy_identity_verified"] is True
+            and metadata["heldout_policy_learned_actor_only"] is True
+            and sources.current_heldout_report.get("deployable_policy_eval") is True
             and metadata["heldout_policy_checkpoint"] == checkpoint_uri
             and metadata["heldout_policy_checkpoint_sha256"] == checkpoint_sha256
             and metadata["heldout_policy_checkpoint_size_bytes"] == checkpoint_size
@@ -2010,6 +2302,7 @@ def _persist_failed_candidate(
 
 
 def _prepare_retained_candidate(
+    config: Sim2RealLoopConfig,
     candidate_path: Path,
     candidate: dict[str, Any],
     report: dict[str, Any],
@@ -2019,6 +2312,16 @@ def _prepare_retained_candidate(
     current_decision: dict[str, Any] | None = None,
 ) -> tuple[str, bool, bool]:
     try:
+        for source, payload in (
+            ("candidate checkpoint manifest", candidate),
+            ("final report", report),
+            ("current held-out report", heldout_report or {}),
+            ("inner-loop evidence", inner_evidence or {}),
+            ("current outer-loop decision", current_decision or {}),
+        ):
+            retained_run_id = payload.get("run_id")
+            if retained_run_id is not None and retained_run_id != config.run_id:
+                raise Sim2RealRerunRegenError(f"{source} belongs to a different run_id")
         uri, digest, size, deployment_claim, bytes_claim = _retained_candidate_identity(
             candidate,
             report,
@@ -2026,6 +2329,18 @@ def _prepare_retained_candidate(
             inner_evidence,
             current_decision,
         )
+        if uri:
+            expected_prefix = run_prefix_uri(config)
+            expected_bucket, expected_key = _parse_s3(expected_prefix)
+            checkpoint_bucket, checkpoint_key = _parse_s3(uri)
+            if (
+                checkpoint_bucket != expected_bucket
+                or not checkpoint_key.startswith(expected_key)
+                or any(part in {".", ".."} for part in checkpoint_key.split("/"))
+            ):
+                raise Sim2RealRerunRegenError(
+                    "candidate checkpoint URI is outside the current run prefix"
+                )
         bytes_available, deployable = _prepare_candidate_identity(
             candidate,
             checkpoint_uri=uri,
@@ -2055,6 +2370,7 @@ def _ensure_policy_access_metadata(
 
     candidate_path, candidate = _read_candidate_manifest(local_dir)
     checkpoint_uri, bytes_available, deployable = _prepare_retained_candidate(
+        config,
         candidate_path,
         candidate,
         report,
@@ -2083,27 +2399,37 @@ def _sync_heldout_eval_inputs(
     work_dir: Path,
     storage: StorageClient,
     prefix: str,
+    *,
+    outer_iteration: int,
 ) -> dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        storage.download_directory(
-            f"{prefix}envs/heldout/", str(work_dir / "envs" / "heldout")
-        )
-    except (StorageError, OSError) as exc:
+    if (
+        not isinstance(outer_iteration, int)
+        or isinstance(outer_iteration, bool)
+        or outer_iteration <= 0
+    ):
+        raise Sim2RealRerunRegenError("outer_iteration must be a positive integer")
+    if not _download_directory_fresh(
+        storage,
+        f"{prefix}envs/heldout/",
+        work_dir / "envs" / "heldout",
+        containment_root=work_dir,
+    ):
         raise Sim2RealRerunRegenError(
-            f"failed to sync envs/heldout for {config.run_id}: {exc}"
-        ) from exc
+            f"failed to sync envs/heldout for {config.run_id}"
+        )
 
-    inner_path = work_dir / "inner_loop/outer-01/evidence.json"
+    outer_name = f"outer-{outer_iteration:02d}"
+    inner_path = work_dir / "inner_loop" / outer_name / "evidence.json"
     inner_path.parent.mkdir(parents=True, exist_ok=True)
     if not _download_if_exists(
         storage,
-        f"{prefix}inner_loop/outer-01/evidence.json",
+        f"{prefix}inner_loop/{outer_name}/evidence.json",
         inner_path,
         containment_root=work_dir,
     ):
         raise Sim2RealRerunRegenError(
-            f"missing inner evidence at {prefix}inner_loop/outer-01/evidence.json"
+            f"missing inner evidence at {prefix}inner_loop/{outer_name}/evidence.json"
         )
     return _read_retained_json(inner_path, source="inner-loop evidence")
 
@@ -2156,16 +2482,29 @@ def rerun_heldout_eval_only(
     )
     storage = client or _storage_client_for_config(config)
     prefix = run_prefix_uri(config)
-    inner_evidence = _sync_heldout_eval_inputs(config, work_dir, storage, prefix)
+    inner_evidence = _sync_heldout_eval_inputs(
+        config,
+        work_dir,
+        storage,
+        prefix,
+        outer_iteration=outer_iteration,
+    )
     report = run_heldout_eval(
         config,
         local_dir=work_dir,
         inner_evidence=inner_evidence,
         outer_iteration=outer_iteration,
+        evaluation_split="gold_heldout",
     )
     _sync_heldout_eval_renders(config, work_dir, storage, report)
     if publish:
-        publish_regen_outputs(config, work_dir, client=storage)
+        _publish_heldout_eval_outputs(
+            config,
+            work_dir,
+            report,
+            outer_iteration=outer_iteration,
+            storage=storage,
+        )
     return report
 
 

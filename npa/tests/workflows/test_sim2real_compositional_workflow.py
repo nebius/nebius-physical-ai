@@ -1341,7 +1341,9 @@ def test_stage10_seals_report_split_and_outer_iteration(
     evidence = _selected_checkpoint_evidence(checkpoint_uri, "a" * 64)
     report = _learned_actor_report(checkpoint_uri, "a" * 64)
     report["render_manifest"] = {
-        "renders_s3_uri": f"{root}/raw-renders/",
+        "renders_s3_uri": (
+            f"{root}/component-io/heldout-eval/gold_heldout-outer-01/output/renders/"
+        ),
         "episodes": [{"env_id": "gold-0001", "frames": ["camera-000.png"]}],
     }
     written: dict[str, object] = {}

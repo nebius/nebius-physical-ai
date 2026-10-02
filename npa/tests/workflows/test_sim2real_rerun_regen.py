@@ -33,6 +33,11 @@ def _config(run_id: str = "sim2real-staged-20260616t093101z") -> Sim2RealLoopCon
     )
 
 
+def _same_run_checkpoint_uri(filename: str) -> str:
+    config = _config()
+    return f"s3://{config.s3_bucket}/{config.s3_prefix}/{config.run_id}/{filename}"
+
+
 def _write_candidate_manifest(tmp_path: Path, candidate: dict) -> Path:
     candidate_path = tmp_path / "checkpoints" / "candidate" / "candidate.json"
     candidate_path.parent.mkdir(parents=True, exist_ok=True)
@@ -262,7 +267,7 @@ def test_stage_components_keeps_equal_compatibility_aliases_synchronized() -> No
     [
         pytest.param(
             {
-                "checkpoint_uri": "s3://demo-bucket/run/model.pt",
+                "checkpoint_uri": _same_run_checkpoint_uri("model.pt"),
                 "checkpoint_sha256": "a" * 64,
                 "generator_policy_sha256": "a" * 64,
                 "checkpoint_size_bytes": 128,
@@ -456,7 +461,7 @@ def test_regen_mcap_failure_never_breaks_the_rrd_regen(
 def test_policy_access_metadata_hashes_real_checkpoint_without_secrets(
     tmp_path: Path,
 ) -> None:
-    checkpoint_uri = "s3://demo-bucket/run/model_latest.pt"
+    checkpoint_uri = _same_run_checkpoint_uri("model_latest.pt")
     _write_candidate_manifest(
         tmp_path,
         {
@@ -487,7 +492,7 @@ def test_policy_access_metadata_hashes_real_checkpoint_without_secrets(
 def test_policy_access_metadata_rejects_downloaded_digest_mismatch(
     tmp_path: Path,
 ) -> None:
-    checkpoint_uri = "s3://demo-bucket/run/model_latest.pt"
+    checkpoint_uri = _same_run_checkpoint_uri("model_latest.pt")
     _write_candidate_manifest(
         tmp_path,
         {
@@ -580,7 +585,7 @@ def test_policy_access_metadata_rejects_non_boolean_deployment_claims(
         tmp_path,
         {
             field: claim,
-            "policy_checkpoint_uri": "s3://demo-bucket/run/model_latest.pt",
+            "policy_checkpoint_uri": _same_run_checkpoint_uri("model_latest.pt"),
         },
     )
     downloads: list[str] = []
@@ -605,7 +610,7 @@ def test_policy_access_metadata_rejects_non_boolean_deployment_claims(
 def test_policy_access_metadata_consumes_canonical_stage14_decision(
     tmp_path: Path,
 ) -> None:
-    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    checkpoint_uri = _same_run_checkpoint_uri("model_selected.pt")
     checkpoint_bytes = b"selected-policy"
     checkpoint_sha256 = hashlib.sha256(checkpoint_bytes).hexdigest()
     downloads: list[str] = []
@@ -768,7 +773,7 @@ def test_policy_access_metadata_rejects_conflicting_decision_aliases(
 def test_policy_access_metadata_never_promotes_loop_back_candidate_claims(
     tmp_path: Path,
 ) -> None:
-    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    checkpoint_uri = _same_run_checkpoint_uri("model_selected.pt")
     candidate_path = _write_candidate_manifest(
         tmp_path,
         {
@@ -954,7 +959,7 @@ def _embedded_candidate_report(
 def test_policy_access_metadata_reconciles_embedded_candidate_deployment_claim(
     tmp_path: Path,
 ) -> None:
-    checkpoint_uri = "s3://demo-bucket/run/model_selected.pt"
+    checkpoint_uri = _same_run_checkpoint_uri("model_selected.pt")
     checkpoint_bytes = b"selected-policy"
     digest = hashlib.sha256(checkpoint_bytes).hexdigest()
     downloads: list[str] = []
@@ -1172,7 +1177,7 @@ def test_policy_access_metadata_clears_stale_instructions_when_unavailable(
         {
             "deployable_policy": False,
             "policy_bytes_available": False,
-            "policy_checkpoint_uri": "s3://demo-bucket/run/model.pt",
+            "policy_checkpoint_uri": _same_run_checkpoint_uri("model.pt"),
             "policy_download_command": "stale download command",
             "policy_ui_action": "stale UI action",
         },
@@ -1354,7 +1359,7 @@ def test_process_control_exception_does_not_rewrite_candidate_state(
     candidate = {
         "deployable_policy": True,
         "policy_bytes_available": True,
-        "policy_checkpoint_uri": "s3://demo-bucket/run/model.pt",
+        "policy_checkpoint_uri": _same_run_checkpoint_uri("model.pt"),
         "policy_download_command": "retained command",
         "policy_ui_action": "retained action",
     }

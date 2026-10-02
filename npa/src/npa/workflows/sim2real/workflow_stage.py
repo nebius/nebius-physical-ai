@@ -836,8 +836,18 @@ def _stage10(args: argparse.Namespace) -> None:
     canonical_renders = f"eval/gold-heldout/outer-{args.outer_iteration:02d}/renders"
     if not render_prefix or not render_manifest.get("episodes"):
         raise RuntimeError("Stage 10 gold evaluation lacks explicit render lineage")
+    expected_render_prefix = (
+        f"{root}/component-io/heldout-eval/"
+        f"gold_heldout-outer-{args.outer_iteration:02d}/output/renders/"
+    )
+    if render_prefix.rstrip("/") + "/" != expected_render_prefix:
+        raise RuntimeError(
+            "Stage 10 render source is not the exact current heldout-eval "
+            "producer output"
+        )
+    render_prefix = expected_render_prefix
     render_local = work / canonical_renders
-    storage().download_directory(render_prefix.rstrip("/") + "/", str(render_local))
+    storage().download_directory(render_prefix, str(render_local))
     if not any(render_local.rglob("camera-*.png")):
         raise RuntimeError("Stage 10 gold render prefix contains no camera frames")
     canonical_render_uri = f"{root}/{canonical_renders}/"
