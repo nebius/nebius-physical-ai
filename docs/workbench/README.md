@@ -30,7 +30,7 @@ Python and HTTP access follow each tool's documented contract.
 | Plan a Cosmos 3 model factory | [Architecture, current gaps, and implementation sequence](../architecture/cosmos3-model-factory.md) · [Live generation and quality feedback](cosmos3-model-factory-live-20260915.md) |
 | Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
 | Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
-| Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
+| Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [digital twin infrastructure and HTML](guides/digital-twin.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | USD object preparation | [Content Agents](content-agents.md) |
 | Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
 

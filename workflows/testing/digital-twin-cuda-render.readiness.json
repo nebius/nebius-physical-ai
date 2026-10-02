@@ -1,0 +1,49 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "abb3addbaa8eccd3caf96385a14392a305bce55785afe6e2ee31dfbf5abc4181",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and planning passed; the resolved stage invokes the native CUDA-only renderer and publishes scene, media evidence, and HTML.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/digital-twin-cuda-render.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id digital-twin-reference --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Schema validation and planning passed; the resolved stage invokes the native CUDA-only renderer and publishes scene, media evidence, and HTML.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/digital-twin-cuda-render.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/digital-twin-cuda-render.yaml --run-id digital-twin-reference --json"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Live execution and independent artifact readback have not yet completed.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Live execution and independent artifact readback have not yet completed.",
+      "evidence": []
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Live execution and independent artifact readback have not yet completed.",
+      "evidence": []
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "Live execution and independent artifact readback have not yet completed.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "Live execution and independent artifact readback have not yet completed.",
+      "evidence": []
+    }
+  }
+}
