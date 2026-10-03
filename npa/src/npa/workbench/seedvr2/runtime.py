@@ -16,6 +16,8 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import ConnectionError as StorageConnectionError
+from botocore.exceptions import HTTPClientError
 
 from npa.clients.storage import StorageClient, StorageError
 from npa.workbench.storage_scope import authorize_uri
@@ -59,6 +61,18 @@ _UPSTREAM_TOKEN_PATTERNS = (
 
 class SeedVR2Error(RuntimeError):
     """Raised when a SeedVR2 request, execution, or artifact is invalid."""
+
+
+class SeedVR2StorageUnavailable(SeedVR2Error):
+    """Signal a temporary storage failure without permitting publication.
+
+    Args:
+        args: Public diagnostic text, without provider response details.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
 
 
 def _utc_now() -> str:
@@ -613,12 +627,40 @@ def _ensure_artifacts_absent(storage: Any, uris: list[str]) -> None:
         try:
             existing = storage.read_bytes_with_etag(uri)
         except (BotoCoreError, ClientError, StorageError) as exc:
+            if _storage_failure_is_retryable(exc):
+                raise SeedVR2StorageUnavailable(
+                    "cannot establish output absence; object storage is temporarily unavailable"
+                ) from exc
             raise SeedVR2Error(
                 "cannot establish output absence; verify output read authority "
                 "and object-storage availability"
             ) from exc
         if existing is not None:
             raise SeedVR2Error(f"output artifact already exists: {uri}")
+
+
+def _storage_failure_is_retryable(error: Exception) -> bool:
+    if isinstance(error, (StorageConnectionError, HTTPClientError)):
+        return True
+    if not isinstance(error, ClientError):
+        return False
+    code = error.response.get("Error", {}).get("Code")
+    status = error.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+    return status in {408, 429, 500, 502, 503, 504} or code in {
+        "RequestTimeout",
+        "RequestTimeoutException",
+        "PriorRequestNotComplete",
+        "SlowDown",
+        "Throttling",
+        "ThrottlingException",
+        "ThrottledException",
+        "RequestThrottled",
+        "RequestThrottledException",
+        "TooManyRequestsException",
+        "ServiceUnavailable",
+        "InternalError",
+        "InternalFailure",
+    }
 
 
 def _publish_verified(storage: Any, source: Path, uri: str, readback_root: Path) -> str:

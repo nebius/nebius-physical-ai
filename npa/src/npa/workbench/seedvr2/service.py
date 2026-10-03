@@ -51,6 +51,8 @@ def create_app(
         try:
             with use_storage_scope(scope):
                 yield
+        except runtime.SeedVR2StorageUnavailable as exc:
+            raise HTTPException(503, str(exc)) from exc
         except (runtime.SeedVR2Error, ValueError) as exc:
             raise HTTPException(400, str(exc)) from exc
         finally:

@@ -1136,7 +1136,11 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
             "and allocatable pod slots are checked. SkyPilot allowed_nodes affinity "
             f"is applied ({sorted(shape.allowed) if shape.allowed else 'unrestricted'}); "
             "aggregate capacity on one node cannot satisfy multiple gang ranks. "
-            + _accelerator_product_diagnostic(inventory, shape)
+            + (
+                _accelerator_product_diagnostic(inventory, shape)
+                if not compatible_nodes
+                else ""
+            )
         )
     if inventory.unbound_pending_gpu_pods:
         pending_pods, pending_requests = _pending_gpu_contention(inventory, candidates)
@@ -1151,19 +1155,33 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
 
 
 def _accelerator_product_diagnostic(inventory, shape) -> str:
+    wanted = _normalize(shape.accelerator.name)
+    aliases = next(
+        (group for group in _EXPLICIT_ACCELERATOR_ALIASES if wanted in group), None
+    )
+    nodes = [
+        node
+        for node in inventory.nodes
+        if not shape.allowed or node.name in shape.allowed
+    ]
+    if aliases is None or any(
+        _node_matches_accelerator_aliases(node, aliases, explicit_alias=True)
+        for node in nodes
+    ):
+        return ""
     products = sorted(
         {
             dict(node.labels)["nvidia.com/gpu.product"]
-            for node in inventory.nodes
-            if (not shape.allowed or node.name in shape.allowed)
-            and dict(node.labels).get("nvidia.com/gpu.product")
+            for node in nodes
+            if dict(node.labels).get("nvidia.com/gpu.product")
         }
     )
     return (
         f"Observed authoritative GPU product labels: {products or 'unavailable'}. "
         "Explicit aliases require an exact supported product match, even when "
-        "a provider label is less specific; inspect the workload hardware "
-        "contract before selecting an explicit accelerator name."
+        "a provider label is less specific. An unsupported product needs a "
+        "qualified alias under the workload hardware contract; a generic "
+        "operator override does not qualify the hardware."
     )
 
 

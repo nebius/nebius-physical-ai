@@ -103,6 +103,10 @@ Output authority must support absence checks and readback as well as conditional
 creation. Create-only credentials are insufficient; an ambiguous or denied
 existence check fails closed before publication. Storage failures are reported
 as domain errors without exposing provider error text in the API response.
+The service distinguishes temporary storage transport, throttling and server
+failures (HTTP 503) from invalid requests or insufficient read authority
+(HTTP 400). Both fail closed; neither response permits publishing unchecked
+artifacts or overwriting a partially populated output prefix.
 
 ## Explicit conditioning and hardware
 

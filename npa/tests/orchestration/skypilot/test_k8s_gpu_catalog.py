@@ -966,6 +966,33 @@ def test_unmapped_explicit_variant_reports_authoritative_product(accelerator, pr
     assert product in str(error.value)
     assert "provider label is less specific" in str(error.value)
     assert "workload hardware contract" in str(error.value)
+    assert "operator override does not qualify" in str(error.value)
+
+
+@pytest.mark.parametrize("cpu_request", [0, 1])
+def test_matching_product_capacity_failure_does_not_report_alias_mismatch(cpu_request):
+    product = "NVIDIA-H100-80GB-HBM3"
+    inventory = KubernetesGpuInventory(
+        context="test-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(product,),
+        node_labels={},
+        nodes=(_node("occupied", product=product, free=0),),
+    )
+    error_type = (
+        gpu_catalog.PermanentlyUnsatisfiableAcceleratorError
+        if cpu_request
+        else gpu_catalog.TemporarilyUnavailableAcceleratorError
+    )
+    with pytest.raises(error_type) as error:
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator="H100:1", node_count=1, cpus=cpu_request
+        )
+    assert "provider label is less specific" not in str(error.value)
+    assert "qualified alias" not in str(error.value)
 
 
 @pytest.mark.parametrize(

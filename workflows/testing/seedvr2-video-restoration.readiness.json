@@ -21,7 +21,7 @@
   "prerequisites": {
     "output_storage": {
       "status": "unverified",
-      "reason": "Example bucket is a placeholder; real create-only output authority must be frozen before submission.",
+      "reason": "Example bucket is a placeholder; exact output authority for absence checks, conditional creation and readback must be verified before submission. Conditional create-only publication does not mean write-only credentials.",
       "evidence": []
     },
     "worker_input": {
