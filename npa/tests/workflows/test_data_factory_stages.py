@@ -1932,6 +1932,9 @@ def test_grade_gate_rejects_real_core_stub_and_score_override_reports(
         (("evidence",), {}, "schema_invalid"),
         (("evidence", "schema_version"), "unknown", "schema_invalid"),
         (("frame_count",), 0, "frame_metadata_invalid"),
+        (("frame_count",), True, "frame_metadata_invalid"),
+        (("frame_count",), 1.0, "frame_metadata_invalid"),
+        (("frame_count",), "1", "frame_metadata_invalid"),
         (("evidence", "request", "frames"), [], "request_binding_mismatch"),
         (
             ("evidence", "request", "request_manifest_sha256"),
@@ -1945,6 +1948,22 @@ def test_grade_gate_rejects_real_core_stub_and_score_override_reports(
         ),
         (("evidence", "provider", "raw_response_sha256"), "0" * 64, "digest_mismatch"),
         (("evidence", "provider", "status_code"), 500, "provider_transport_invalid"),
+        (("evidence", "provider", "status_code"), 200.0, "provider_transport_invalid"),
+        (("evidence", "provider", "status_code"), "200", "provider_transport_invalid"),
+        (("evidence", "provider", "status_code"), True, "provider_transport_invalid"),
+        (("evidence", "provider", "latency_s"), True, "provider_metadata_invalid"),
+        (("evidence", "provider", "latency_s"), "0.01", "provider_metadata_invalid"),
+        (("evidence", "provider", "latency_s"), None, "provider_metadata_invalid"),
+        (
+            ("evidence", "provider", "latency_s"),
+            float("inf"),
+            "provider_metadata_invalid",
+        ),
+        (
+            ("evidence", "provider", "latency_s"),
+            float("nan"),
+            "provider_metadata_invalid",
+        ),
         (
             ("evidence", "provider", "parser_version"),
             "unknown",
@@ -1956,6 +1975,11 @@ def test_grade_gate_rejects_real_core_stub_and_score_override_reports(
             "provider_metadata_mismatch",
         ),
         (("score",), 0.95, "result_mismatch"),
+        (("score",), True, "result_invalid"),
+        (("score",), "0.9", "result_invalid"),
+        (("success_threshold",), None, "result_invalid"),
+        (("success_threshold",), True, "result_invalid"),
+        (("success_threshold",), float("inf"), "result_invalid"),
         (("provider_success",), False, "result_mismatch"),
         (("provider_success",), 1, "result_invalid"),
         (("provider_success_matches_score_gate",), 1, "result_invalid"),
@@ -2111,9 +2135,9 @@ def test_grade_gate_rejects_invalid_v2_frame_source(
     )
 
 
-@pytest.mark.parametrize("timestamp", [None, -0.1, 0.0])
+@pytest.mark.parametrize("timestamp", [None, -0.1, 0.0, 10**400])
 def test_grade_gate_accepts_unknown_video_indices_and_finite_timestamps(
-    tmp_path: Path, monkeypatch, timestamp: float | None
+    tmp_path: Path, monkeypatch, timestamp: int | float | None
 ) -> None:
     report = _provider_vlm_report(monkeypatch, tmp_path)
     _as_v2_report(report)
@@ -2141,6 +2165,44 @@ def test_grade_gate_accepts_unknown_video_indices_and_finite_timestamps(
         dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
         == "promote_checkpoint"
     )
+
+
+@pytest.mark.parametrize("field", ["byte_count", "width", "height"])
+@pytest.mark.parametrize("value", [True, "4", 4.0, None, 0, -1])
+def test_grade_gate_rejects_nonliteral_or_nonpositive_frame_dimensions(
+    tmp_path: Path, monkeypatch, field: str, value: object
+) -> None:
+    report = _provider_vlm_report(monkeypatch, tmp_path)
+    request = report["evidence"]["request"]
+    request["frames"][0][field] = value
+    request["request_manifest"]["frames"] = request["frames"]
+    request["request_manifest_sha256"] = vlm_eval._sha256_json(
+        request["request_manifest"]
+    )
+
+    _assert_completion_blocked(tmp_path, report, "frame_metadata_invalid")
+
+
+@pytest.mark.parametrize("score", [float("nan"), float("inf"), 10**400])
+def test_grade_gate_rejects_unrepresentable_score_without_legacy_fallback(
+    tmp_path: Path, monkeypatch, score: int | float
+) -> None:
+    from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
+
+    report = json.loads(json.dumps(_provider_vlm_report(monkeypatch, tmp_path)))
+    (tmp_path / LEGACY_RESULT_FILENAME).write_text(json.dumps(report))
+    report["score"] = score
+    assert vlm_grade_block_details(report) == {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "result_invalid",
+    }
+    (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+    decision = tmp_path / "decision.json"
+
+    # The outer gate's existing finite-score reader classifies these as malformed
+    # artifacts, before the detailed VLM validator; it must not use stale legacy.
+    assert dfs.grade_gate(str(tmp_path), str(decision)) == "loop_back"
+    assert json.loads(decision.read_text())["report_sha256"] == ""
 
 
 @pytest.mark.parametrize("frame_selection", ["", " KEYFRAMES ", "FINAL", " sequence "])

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
-import math
 import re
 from typing import Any
 
+from npa.literal_values import require_boolean, require_integer, require_number
 from npa.workbench import vlm_eval
 
 
@@ -132,9 +132,9 @@ def _validate_prompt(report: dict[str, Any], request: dict) -> None:
 
 def _validate_frames(report: dict[str, Any], frames: Any) -> None:
     count = report["frame_count"]
-    if type(count) is not int or count <= 0 or not isinstance(frames, list):
-        raise _InvalidEvidence("frame_metadata_invalid")
-    if len(frames) != count:
+    reason = "frame_metadata_invalid"
+    _require_literal(require_integer, count, "frame_count", reason, minimum=1)
+    if not isinstance(frames, list) or len(frames) != count:
         raise _InvalidEvidence("frame_metadata_invalid")
     for frame in frames:
         if not isinstance(frame, dict):
@@ -146,8 +146,9 @@ def _validate_frames(report: dict[str, Any], frames: Any) -> None:
         ].startswith("image/"):
             raise _InvalidEvidence("frame_metadata_invalid")
         for field in ("byte_count", "width", "height"):
-            if type(frame.get(field)) is not int or frame[field] <= 0:
-                raise _InvalidEvidence("frame_metadata_invalid")
+            _require_literal(
+                require_integer, frame.get(field), f"frame.{field}", reason, minimum=1
+            )
         # Result artifacts retain metadata, not the submitted image bytes.
         # Only digest format can be checked here; payload verification needs media.
         _require_digest_format(frame["sha256"])
@@ -160,18 +161,17 @@ def _validate_frame_source(frame: dict[str, Any]) -> None:
     timestamp = frame["source_timestamp_s"]
     if kind is not None and not isinstance(kind, str):
         raise _InvalidEvidence("frame_metadata_invalid")
-    if index is not None and (type(index) is not int or index < 0):
-        raise _InvalidEvidence("frame_metadata_invalid")
-    if count is not None and (type(count) is not int or count <= 0):
-        raise _InvalidEvidence("frame_metadata_invalid")
+    reason = "frame_metadata_invalid"
+    if index is not None:
+        _require_literal(require_integer, index, "source_index", reason, minimum=0)
+    if count is not None:
+        _require_literal(require_integer, count, "source_count", reason, minimum=1)
     if index is not None and count is not None and index >= count:
         raise _InvalidEvidence("frame_metadata_invalid")
-    if timestamp is not None and (
-        kind != "video"
-        or type(timestamp) not in (int, float)
-        or not math.isfinite(timestamp)
-    ):
-        raise _InvalidEvidence("frame_metadata_invalid")
+    if timestamp is not None:
+        if kind != "video":
+            raise _InvalidEvidence("frame_metadata_invalid")
+        _require_literal(require_number, timestamp, "source_timestamp_s", reason)
 
 
 def _validate_sampling(report: dict[str, Any], manifest: dict) -> None:
@@ -182,8 +182,13 @@ def _validate_sampling(report: dict[str, Any], manifest: dict) -> None:
     if not isinstance(sampling, dict):
         raise _InvalidEvidence("sampling_invalid")
     max_frames = sampling.get("max_frames")
-    if type(max_frames) is not int or max_frames < len(frames):
-        raise _InvalidEvidence("sampling_invalid")
+    _require_literal(
+        require_integer,
+        max_frames,
+        "max_frames",
+        "sampling_invalid",
+        minimum=len(frames),
+    )
     try:
         strategy = vlm_eval._normalize_frame_selection(report["frame_selection"])
     except vlm_eval.VlmEvalError as exc:
@@ -318,11 +323,30 @@ def _validate_completion_status(choice: dict, message: dict) -> None:
 
 def _validate_transport(provider: dict[str, Any]) -> None:
     status = provider["status_code"]
-    if status is not None and (type(status) is not int or not 200 <= status < 300):
-        raise _InvalidEvidence("provider_transport_invalid")
-    latency = provider["latency_s"]
-    if type(latency) not in {int, float} or not math.isfinite(latency) or latency < 0:
-        raise _InvalidEvidence("provider_metadata_invalid")
+    if status is not None:
+        _require_literal(
+            require_integer,
+            status,
+            "status_code",
+            "provider_transport_invalid",
+            minimum=200,
+            maximum=299,
+        )
+    _require_literal(
+        require_number,
+        provider["latency_s"],
+        "latency_s",
+        "provider_metadata_invalid",
+        minimum=0,
+    )
+
+
+def _require_literal(validator, value: Any, field: str, reason: str, **bounds):
+    # Keep the shared scalar contract while exposing only bounded gate diagnostics.
+    try:
+        return validator(value, field=field, **bounds)
+    except ValueError as exc:
+        raise _InvalidEvidence(reason) from exc
 
 
 def _validate_provider_metadata(
@@ -356,11 +380,10 @@ def _validate_result(
 ) -> None:
     score = report["score"]
     threshold = report["success_threshold"]
-    if any(
-        type(value) not in {float, int} or not 0 <= value <= 1
-        for value in (score, threshold)
-    ):
-        raise _InvalidEvidence("result_invalid")
+    for field, value in (("score", score), ("success_threshold", threshold)):
+        _require_literal(
+            require_number, value, field, "result_invalid", minimum=0, maximum=1
+        )
     expected_score = round(parsed.score, 4)
     passed = expected_score >= threshold
     expected = {
@@ -372,8 +395,7 @@ def _validate_result(
     }
     if any(report.get(key) != value for key, value in expected.items()):
         raise _InvalidEvidence("result_mismatch")
-    if type(report.get("passed")) is not bool:
-        raise _InvalidEvidence("result_invalid")
+    _require_literal(require_boolean, report.get("passed"), "passed", "result_invalid")
     _validate_optional_provider_success(report, parsed.success, passed)
 
 
@@ -388,7 +410,6 @@ def _validate_optional_provider_success(
     ):
         if field not in report:
             continue
-        if type(report[field]) is not bool:
-            raise _InvalidEvidence("result_invalid")
+        _require_literal(require_boolean, report[field], field, "result_invalid")
         if report[field] != expected:
             raise _InvalidEvidence("result_mismatch")
