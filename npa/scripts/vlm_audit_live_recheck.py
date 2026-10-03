@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -89,7 +89,7 @@ def _prepare_config(target: Path, *, generated: bool = False) -> Path:
 def _prepare_control(control: dict, output: Path) -> None:
     request = dict(control["request"])
     request["output_path"] = str(output)
-    options = VlmJudgeComparisonRequest(**request)
+    options = _paired_options(request)
     if not os.environ.get(options.api_key_env, "").strip():
         raise _AuditConfigurationError("missing_audit_credential")
     expectations = control.get("expectations", {})
@@ -295,19 +295,20 @@ def _paired_bindings(config: dict) -> list[dict]:
 
 
 def _paired_control_binding(control: dict) -> dict:
-    options = dict(control["request"])
-    request = VlmJudgeComparisonRequest(**options)
+    request = _paired_options(control["request"])
     models = vlm_eval._comparison_models(request.primary_model, request.secondary_model)
     values = asdict(request)
     for field in ("primary_model", "secondary_model", "rubric_path"):
         values.pop(field)
-    values["rubric"] = vlm_eval._load_rubric(
-        rubric=request.rubric, rubric_path=request.rubric_path
+    values["rubric"] = (
+        _read_control_file(Path(request.rubric_path)).decode("utf-8").strip()
+        if request.rubric_path
+        else vlm_eval._load_rubric(rubric=request.rubric, rubric_path="")
     )
     with vlm_eval._materialized_input(request.input_path) as local:
         if "input_sha256" in control:
             if (
-                hashlib.sha256(local.read_bytes()).hexdigest()
+                hashlib.sha256(_read_control_file(local)).hexdigest()
                 != control["input_sha256"]
             ):
                 raise _AuditConfigurationError("audit_control_input_changed")
@@ -322,6 +323,37 @@ def _paired_control_binding(control: dict) -> dict:
             for model in models
         ],
     }
+
+
+def _paired_options(values: dict) -> VlmJudgeComparisonRequest:
+    request = VlmJudgeComparisonRequest(**values)
+    for field in fields(request):
+        if field.type in (str, "str") and not isinstance(
+            getattr(request, field.name), str
+        ):
+            raise _AuditConfigurationError("invalid_audit_request")
+    try:
+        require_integer(request.max_frames, field="max_frames", minimum=1)
+        require_number(
+            request.success_threshold, field="success_threshold", minimum=0, maximum=1
+        )
+        require_number(request.timeout_s, field="timeout_s", minimum=0)
+    except ValueError:
+        raise _AuditConfigurationError("invalid_audit_request") from None
+    return request
+
+
+def _read_control_file(path: Path) -> bytes:
+    # Control inputs are operator-selected, unlike retained output artifacts.
+    # Do not require private media permissions, but never block on special files.
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise _AuditConfigurationError("invalid_audit_control_file")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            return stream.read()
+    finally:
+        os.close(descriptor)
 
 
 def _paired_report_binding(context, common: dict) -> dict:

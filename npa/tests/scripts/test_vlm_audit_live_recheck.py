@@ -1065,3 +1065,54 @@ def test_complete_report_requires_exact_transport_digest(monkeypatch, tmp_path, 
         tmp_path,
         lambda report: report[judge].update(transport_request_sha256="0" * 64),
     )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["primary_model", "secondary_model", "input_path", "task", "rubric", "rubric_path"],
+)
+@pytest.mark.parametrize("value", [True, None, 42, [], {}])
+def test_malformed_request_strings_fail_before_child_with_receipt(
+    monkeypatch, tmp_path, capsys, field, value
+):
+    runner = _runner()
+    path = _config(monkeypatch, tmp_path)
+    config = json.loads(path.read_text())
+    config["cases"]["paired-judges"]["request"][field] = value
+    path.write_text(json.dumps(config))
+    _assert_prechild_refusal(monkeypatch, tmp_path, capsys, runner)
+
+
+@pytest.mark.parametrize("field", ["input_path", "rubric_path"])
+@pytest.mark.parametrize("kind", ["fifo", "directory", "symlink_loop"])
+def test_control_hash_and_rubric_read_reject_special_files(
+    monkeypatch, tmp_path, capsys, field, kind
+):
+    runner = _runner()
+    path = _config(monkeypatch, tmp_path)
+    config = json.loads(path.read_text())
+    control = config["cases"]["paired-judges"]
+    special = tmp_path / "private-control"
+    if kind == "fifo":
+        os.mkfifo(special, mode=0o600)
+    elif kind == "directory":
+        special.mkdir()
+    else:
+        special.symlink_to(special.name)
+    control["request"][field] = str(special)
+    if field == "input_path":
+        control["input_sha256"] = "0" * 64
+    path.write_text(json.dumps(config))
+    _assert_prechild_refusal(monkeypatch, tmp_path, capsys, runner)
+
+
+def _assert_prechild_refusal(monkeypatch, tmp_path, capsys, runner):
+    monkeypatch.setattr(runner, "_execute", lambda *_: pytest.fail("must not execute"))
+    target = tmp_path / "evidence"
+    assert runner.main(["--audit-kind", "paired", "--evidence-dir", str(target)]) == 1
+    body = (target / "receipt.json").read_text()
+    receipt = json.loads(body)
+    assert receipt["passed"] is False
+    assert not any(receipt["counts"].values())
+    assert str(tmp_path) not in body + capsys.readouterr().out
+    assert "private-control" not in body
