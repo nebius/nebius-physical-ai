@@ -14,13 +14,7 @@ from npa.workflows import data_factory_stages
 from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
 
 
-@pytest.fixture
-def called_report(tmp_path, monkeypatch):
-    source = tmp_path / "source"
-    source.mkdir()
-    Image.new("RGB", (32, 32), "green").save(source / "frame.png")
-    calls = []
-
+def _synthetic_provider_post(calls):
     def post(client, url, *args, **kwargs):
         calls.append(kwargs["json"])
         return httpx.Response(
@@ -45,7 +39,16 @@ def called_report(tmp_path, monkeypatch):
             request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
         )
 
-    monkeypatch.setattr(httpx.Client, "post", post)
+    return post
+
+
+@pytest.fixture
+def called_report(tmp_path, monkeypatch):
+    source = tmp_path / "source"
+    source.mkdir()
+    Image.new("RGB", (32, 32), "green").save(source / "frame.png")
+    calls = []
+    monkeypatch.setattr(httpx.Client, "post", _synthetic_provider_post(calls))
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **_: "synthetic-key")
     monkeypatch.setattr(
         vlm_eval, "_resolve_endpoint_url", lambda **_: "https://example.test/v1"

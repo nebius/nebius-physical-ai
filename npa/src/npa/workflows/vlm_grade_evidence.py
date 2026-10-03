@@ -47,14 +47,13 @@ def vlm_grade_block_details(report: dict[str, Any]) -> dict[str, str]:
     if (
         report.get("backend") not in ("api", "self-hosted")
         or report.get("dry_run", False) is not False
-        # Older writers have no call-status field. Newer disclosures must be a
-        # literal true for promotion, even if copied evidence is self-consistent.
-        or ("provider_call_made" in report and report["provider_call_made"] is not True)
     ):
         return {"reason": "vlm_non_inference_backend"}
     evidence = report.get("evidence")
     if not isinstance(evidence, dict):
         return {"reason": "vlm_provider_evidence_missing"}
+    if not _has_inference_call_disclosure(report):
+        return {"reason": "vlm_non_inference_backend"}
     try:
         _validate_evidence(report, evidence)
     except _InvalidEvidence as exc:
@@ -68,6 +67,12 @@ def vlm_grade_block_details(report: dict[str, Any]) -> dict[str, str]:
             "evidence_reason": "schema_invalid",
         }
     return {}
+
+
+def _has_inference_call_disclosure(report: dict[str, Any]) -> bool:
+    # Missing historical fields remain compatible; a newer explicit no-call or
+    # nonliteral disclosure cannot be overridden by copied consistent evidence.
+    return "provider_call_made" not in report or report["provider_call_made"] is True
 
 
 def _validate_evidence(report: dict[str, Any], evidence: dict[str, Any]) -> None:
