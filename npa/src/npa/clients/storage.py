@@ -16,6 +16,8 @@ from boto3.s3.transfer import TransferConfig
 from botocore.config import Config as BotoConfig
 from botocore.exceptions import ClientError
 
+from npa.clients.s3_response import register_s3_error_body_compat
+
 # Multi-file directory transfers run this many objects concurrently.
 _DIRECTORY_TRANSFER_WORKERS = 8
 # Total per-file multipart thread budget shared across whatever number of
@@ -233,20 +235,22 @@ class StorageClient:
                 "Storage endpoint URL is not configured. "
                 "Set AWS_ENDPOINT_URL or storage.endpoint_url in ~/.npa/config.yaml"
             )
-        self._s3 = boto3.client(
-            "s3",
-            endpoint_url=endpoint_url,
-            aws_access_key_id=aws_access_key_id or None,
-            aws_secret_access_key=aws_secret_access_key or None,
-            config=BotoConfig(
-                signature_version="s3v4",
-                retries={"max_attempts": 3, "mode": "adaptive"},
-                # Comfortably above the worst-case _TOTAL_TRANSFER_THREAD_BUDGET
-                # (16) concurrent connections a directory transfer can open,
-                # so they don't queue waiting for a free pooled connection
-                # (botocore's own default is 10).
-                max_pool_connections=24,
-            ),
+        self._s3 = register_s3_error_body_compat(
+            boto3.client(
+                "s3",
+                endpoint_url=endpoint_url,
+                aws_access_key_id=aws_access_key_id or None,
+                aws_secret_access_key=aws_secret_access_key or None,
+                config=BotoConfig(
+                    signature_version="s3v4",
+                    retries={"max_attempts": 3, "mode": "adaptive"},
+                    # Comfortably above the worst-case _TOTAL_TRANSFER_THREAD_BUDGET
+                    # (16) concurrent connections a directory transfer can open,
+                    # so they don't queue waiting for a free pooled connection
+                    # (botocore's own default is 10).
+                    max_pool_connections=24,
+                ),
+            )
         )
 
     @property

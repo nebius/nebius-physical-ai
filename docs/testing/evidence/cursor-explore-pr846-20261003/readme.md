@@ -90,7 +90,52 @@ performance. This CPU control also uses in-memory storage rather than live S3.
 
 ## Independent successor findings
 
-Five confirmed runtime findings remain changes requested: cleanup containment,
+### Later immutable successor observations
+
+At `28385f1baab8ba47151dfa4ada374315082acedf`, the fresh standard CPU
+coverage gate completed with 40,529 passes, 213 skips, one existing non-strict
+XPASS and three failures; coverage was 77.72%. Two viewer fixtures lacked the
+now-required object identity. One older positive expected a symlinked containment
+root to be allowed, conflicting with the new fail-closed containment policy.
+That execution is retained as failed, not relabeled as a future successor pass.
+
+Fresh actual S3 retained-input controls passed five cases. Actual synthetic CPU
+RRD encode/decode plus viewer-cache S3 controls passed one case and failed one:
+the legacy conditional GET error entered botocore's XML parser as a
+`StreamingChecksumBody`, producing `TypeError` before the expected conflict
+translation. The separate actual production-client reproduction also failed
+that GET negative; its successful checksummed GET and non-mutating stale-writer
+conditional file PUT controls both passed. This does not establish a blanket
+journal PUT failure. Historical actual-MCAP in-memory successes above remain
+bound to their original executions.
+
+First-party operator Mac Claude Code pass 1 reviewed the exact successor as a
+text-only AI code review. The actual substantive model was `claude-opus-5`
+with provider `firstParty`; its verdict was changes required. Independent CPU
+controls confirmed repeated listing/range whole-body reads, healthy large-report
+rejection and untranslated inventory conflicts. The separate real-client GET
+failure remains material; the proposed generic-CAS defect was not established
+by prewrite, stale-writer and exact lost-response recovery controls.
+
+Independent actual RRD decoding additionally found two semantic collisions:
+different auxiliary-timeline winners and recursive-clear order shared a semantic
+identity. These executed counterexamples contradict Claude's unexecuted soundness
+assessment of that part; both review opinions and failed recordings are retained.
+A local CLI RRD refresh also installed rejected bytes before verification and
+deleted a prior verified destination. Agent viewer and local CLI cache paths
+are distinct. No original or later failure is erased by a repair proposal.
+
+Current replay-writer attribution is accepted only within the independently
+reviewed canonical path at this exact head. The hypothesized marker-free,
+ComponentRecord-free shape rejects before upload; no reachable canonical bypass
+was demonstrated. This is not complete pipeline or future-head approval.
+
+Repairs and the one focused Claude follow-up require a separate immutable head,
+affected tests/live controls and independent receipt. No new hosted inference
+or GPU acceptance is inferred. Full 14-stage acceptance still requires the exact
+qualified controller, Transfer, EnvGen, Isaac and viewer images.
+
+At the original `2cac4009d` review, five runtime findings required changes: cleanup containment,
 rejected RRD cache preservation, static/blueprint semantic identity, verified
 report re-reads, and current replay writer attribution. Owner repairs require
 independent immutable successor review and full live replay acceptance. Replay must

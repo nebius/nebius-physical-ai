@@ -1487,7 +1487,17 @@ def test_load_artifact_rejects_raw_uri_and_requires_exact_source_tuple(
             "source_selected",
         ]
 
-        s3 = object()
+        import io
+
+        content = b"\x00\x00\x00\x18ftypisom" + bytes(12)
+
+        class ExactSourceStore:
+            def get_object(self, *, Bucket, Key, IfMatch):
+                assert Bucket == "bucket-b" and Key == key
+                assert IfMatch == "fixture-video-etag"
+                return {"Body": io.BytesIO(content)}
+
+        s3 = ExactSourceStore()
         lease = {"begin": 0, "end": 0}
         monkeypatch.setattr(
             module,
@@ -1504,7 +1514,14 @@ def test_load_artifact_rejects_raw_uri_and_requires_exact_source_tuple(
         )
         monkeypatch.setattr(module, "_authorize_exact_run_ref_source", _authorize)
         artifact = module.Artifact(
-            "run-1", key, uri, 24, "2031-01-01T00:00:00Z", "video", False
+            "run-1",
+            key,
+            uri,
+            24,
+            "2031-01-01T00:00:00Z",
+            "video",
+            False,
+            source_etag="fixture-video-etag",
         )
         monkeypatch.setattr(
             module,
@@ -1527,7 +1544,7 @@ def test_load_artifact_rejects_raw_uri_and_requires_exact_source_tuple(
             "download_s3_uri",
             lambda _uri, path, **_kwargs: (
                 path.parent.mkdir(parents=True, exist_ok=True),
-                path.write_bytes(b"\x00\x00\x00\x18ftypisom"),
+                path.write_bytes(content),
                 path,
             )[-1],
         )
@@ -3738,6 +3755,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
 ) -> None:
     """Each exact run selection loads its own bytes and retains its own snapshot."""
     import hashlib
+    import io
     import shutil
     import sys
 
@@ -3760,7 +3778,7 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         module,
         "_agent_artifact_s3_client",
         lambda: (
-            object(),
+            s3,
             {"bucket": "artifact-bucket", "prefix": "nested/root"},
         ),
     )
@@ -3786,6 +3804,19 @@ def test_source_qualified_rrd_loads_keep_independent_history(
         ),
     }
 
+    class HistoryStore:
+        def get_object(self, *, Bucket, Key, IfMatch):
+            assert Bucket == "artifact-bucket"
+            body = next(
+                body
+                for run_id, prefix, body in selections.values()
+                if Key == f"{prefix}/{run_id}/reports/run.rrd"
+            )
+            assert IfMatch == hashlib.sha256(body).hexdigest()
+            return {"Body": io.BytesIO(body)}
+
+    s3 = HistoryStore()
+
     def _authorize(**kwargs):
         selection = selections[str(kwargs["run_ref"])]
         run_id, source_prefix, _body = selection
@@ -3806,10 +3837,23 @@ def test_source_qualified_rrd_loads_keep_independent_history(
             run_id,
             key,
             f"s3://artifact-bucket/{key}",
-            32,
+            len(
+                next(
+                    body
+                    for run, prefix, body in selections.values()
+                    if run == run_id and prefix == source_prefix
+                )
+            ),
             "2026-08-01T00:00:00+00:00",
             "rerun",
             True,
+            source_etag=hashlib.sha256(
+                next(
+                    body
+                    for run, prefix, body in selections.values()
+                    if run == run_id and prefix == source_prefix
+                )
+            ).hexdigest(),
         )
         return run_id, "artifact-bucket", artifact
 

@@ -414,6 +414,12 @@ def _verified_publication_artifact_body(s3, run_bucket: str, artifact):
     )
     if publication is None:
         return None
+    if publication.journaled:
+        # The first read verifies every byte against the journal. Later ranges
+        # reuse those bytes only while the immutable object's HEAD version and
+        # private cache inode identity are unchanged; metadata alone never wins.
+        body, _head = _verified_publication_object_body(s3, run_bucket, target)
+        return body, int(target.size_bytes)
     body = None
     staged = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
     try:

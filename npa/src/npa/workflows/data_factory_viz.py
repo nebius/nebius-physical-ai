@@ -1290,19 +1290,39 @@ def _rrd_semantic_row(entry: Any, entity: str, batch: Any, index: int) -> dict:
 
 
 def _insert_semantic_digest(connection, payload, *, row_id=b"") -> None:
-    # RowId bytes are incidental, but their precedence is not: Rerun resolves
-    # competing static/same-time component writes using their ordered RowIds.
+    # Absolute RowIds are incidental; order within every selectable timeline
+    # is not. Project each index separately so an auxiliary index cannot hide
+    # writes competing on another timeline. Do not partition by entity or
+    # component: recursive clears also compete with descendant component rows.
     values = payload.get("row")
     cells = values.items() if values is not None else [("store", payload)]
     for name, value in cells:
-        group = {key: item for key, item in payload.items() if key != "row"}
-        group["component"] = name
-        group_key = json.dumps(group, sort_keys=True, separators=(",", ":"))
-        encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-        connection.execute(
-            "INSERT INTO semantic_rows(group_key, precedence, digest) VALUES (?, ?, ?)",
-            (group_key, row_id, hashlib.sha256(encoded).hexdigest()),
-        )
+        identity = {key: item for key, item in payload.items() if key != "row"}
+        identity.update(component=name, value=value)
+        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+        for group in _semantic_precedence_groups(payload):
+            group_key = json.dumps(group, sort_keys=True, separators=(",", ":"))
+            connection.execute(
+                "INSERT INTO semantic_rows(group_key, precedence, digest) VALUES (?, ?, ?)",
+                (group_key, row_id, hashlib.sha256(encoded).hexdigest()),
+            )
+
+
+def _semantic_precedence_groups(payload):
+    if "row" not in payload:
+        return [payload]
+    scope = {
+        "type": "row",
+        "store": payload["store"],
+        "is_static": payload["is_static"],
+    }
+    timelines = payload["timelines"]
+    if not timelines:
+        return [scope]
+    return [
+        {**scope, "selected_timeline": name, "index": value}
+        for name, value in timelines.items()
+    ]
 
 
 class _BlueprintSemantics:

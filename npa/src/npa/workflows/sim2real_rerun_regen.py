@@ -1430,24 +1430,33 @@ def download_rrd_from_s3(
         raise Sim2RealRerunRegenError(str(exc)) from exc
     if uri is None:
         raise Sim2RealRerunRegenError(f"Rerun recording is disabled at {canonical_uri}")
-    if not _download_if_exists(
-        storage,
-        uri,
-        absolute_dest,
-        containment_root=containment_root,
-    ):
-        raise Sim2RealRerunRegenError(f"Rerun recording not found at {uri}")
-    try:
-        verify_committed_publication_file(
-            publication,
-            canonical_uri,
-            absolute_dest,
-            client=storage,
-        )
-    except PublicationConflict as exc:
-        _discard_download_destination(absolute_dest, containment_root)
-        raise Sim2RealRerunRegenError(str(exc)) from exc
+    _download_verified_rrd(
+        storage, uri, publication, canonical_uri, absolute_dest, containment_root
+    )
     return dest_path
+
+
+def _download_verified_rrd(
+    storage, uri, publication, canonical_uri, absolute_dest, containment_root
+):
+    """Keep a serving path untouched until a separate staged file is authenticated."""
+    absolute_dest.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".verified-rrd-", dir=absolute_dest.parent
+    ) as directory:
+        staged = Path(directory) / "recording.rrd"
+        if not _download_if_exists(
+            storage, uri, staged, containment_root=containment_root
+        ):
+            raise Sim2RealRerunRegenError(f"Rerun recording not found at {uri}")
+        try:
+            verify_committed_publication_file(
+                publication, canonical_uri, staged, client=storage
+            )
+        except PublicationConflict as exc:
+            raise Sim2RealRerunRegenError(str(exc)) from exc
+        _assert_no_symlinked_ancestors(absolute_dest, containment_root=containment_root)
+        os.replace(staged, absolute_dest)
 
 
 def _assert_regular_publication_file(path: Path) -> None:

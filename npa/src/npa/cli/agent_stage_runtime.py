@@ -13,6 +13,10 @@ import hashlib
 import json
 import re
 from pathlib import Path
+import shutil as _publication_shutil
+import stat as _publication_stat
+import tempfile as _publication_tempfile
+import threading as _publication_threading
 
 from botocore.exceptions import BotoCoreError, ClientError
 
@@ -78,6 +82,11 @@ if __name__ == "npa.cli.agent_stage_runtime":
 _MAX_STAGE_EVIDENCE_DOCUMENTS = 8
 _MAX_STAGE_EVIDENCE_BYTES = 65_536
 _MAX_PUBLICATION_JOURNAL_BYTES = 1024 * 1024
+_MAX_RUN_REPORT_BYTES = 16 * 1024 * 1024
+_PUBLICATION_CACHE_GUARD = _publication_threading.Lock()
+_PUBLICATION_CACHE_LOCKS: dict[tuple, object] = {}
+_PUBLICATION_CACHE_ENTRIES: dict[tuple, tuple] = {}
+_PUBLICATION_CACHE_DIRECTORY = None
 
 
 def _read_bounded_json_object(
@@ -91,7 +100,9 @@ def _read_bounded_json_object(
 ):
     """Read one JSON object with a hard byte bound and deterministic cleanup."""
     if expected_size is not None and expected_size > max_bytes:
-        raise PublicationConflict("committed report exceeds its bounded read limit")
+        # A local summary budget is not evidence of a corrupt generation.
+        # Leave oversized structured authority unavailable without parsing it.
+        return None
     body = None
     try:
         response = s3.get_object(Bucket=bucket, Key=key)
@@ -135,6 +146,8 @@ def _read_publication_bound_json_object(
         canonical_uri = canonical_publication_uri(uri)
     except ValueError:
         return _read_bounded_json_object(s3, bucket, key, max_bytes=max_bytes)
+    if canonical_uri.endswith(REPORT_SUFFIX) and max_bytes == _MAX_STAGE_EVIDENCE_BYTES:
+        max_bytes = _MAX_RUN_REPORT_BYTES
     publication = publication_snapshot or resolve_committed_publication(
         lambda journal_uri: _read_publication_journal(s3, bucket, journal_uri),
         canonical_uri,
@@ -184,9 +197,7 @@ def _read_publication_journal(s3, bucket: str, uri: str) -> bytes | None:
     return payload
 
 
-def _verify_publication_target(s3, bucket: str, target) -> dict:
-    """Bind one immutable object to the size and digest in its journal target."""
-
+def _publication_target_head(s3, bucket, target):
     uri = str(target.immutable_uri or "")
     prefix = f"s3://{bucket}/"
     if not uri.startswith(prefix):
@@ -198,7 +209,7 @@ def _verify_publication_target(s3, bucket: str, target) -> dict:
     head = {}
     if callable(head_object):
         head = head_object(Bucket=bucket, Key=key)
-        if int(head.get("ContentLength") or -1) != int(target.size_bytes):
+        if int(head.get("ContentLength", -1)) != int(target.size_bytes):
             raise PublicationConflict(
                 "committed publication object size disagrees with its journal"
             )
@@ -207,9 +218,22 @@ def _verify_publication_target(s3, bucket: str, target) -> dict:
             raise PublicationConflict(
                 "committed publication object digest disagrees with its journal"
             )
+    return key, head
+
+
+def _publication_download_verified_body(s3, bucket, key, target, conditions):
+    staged = _publication_tempfile.TemporaryFile(mode="w+b")
     body = None
     try:
-        response = s3.get_object(Bucket=bucket, Key=key)
+        try:
+            response = s3.get_object(Bucket=bucket, Key=key, **conditions)
+        except ClientError as exc:
+            status = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if status in {404, 409, 412}:
+                raise PublicationConflict(
+                    "committed object changed during read"
+                ) from exc
+            raise
         body = response["Body"]
         digest = hashlib.sha256()
         size = 0
@@ -219,15 +243,121 @@ def _verify_publication_target(s3, bucket: str, target) -> dict:
                 break
             material = chunk.encode("utf-8") if isinstance(chunk, str) else bytes(chunk)
             digest.update(material)
+            staged.write(material)
             size += len(material)
+        if size != target.size_bytes or digest.hexdigest() != target.sha256:
+            raise PublicationConflict(
+                "committed publication object bytes disagree with its journal"
+            )
+        staged.seek(0)
+        return staged
+    except Exception:
+        staged.close()
+        raise
     finally:
         close = getattr(body, "close", None)
         if callable(close):
             close()
-    if size != target.size_bytes or digest.hexdigest() != target.sha256:
-        raise PublicationConflict(
-            "committed publication object bytes disagree with its journal"
+
+
+def _publication_cache_identity(path):
+    info = path.lstat()
+    if not _publication_stat.S_ISREG(info.st_mode):
+        raise PublicationConflict("verified publication cache is not a regular file")
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def _publication_cache_scope(cache_key):
+    global _PUBLICATION_CACHE_DIRECTORY
+    with _PUBLICATION_CACHE_GUARD:
+        if _PUBLICATION_CACHE_DIRECTORY is None:
+            # Process-private0700 storage; no shared or remotely supplied path.
+            _PUBLICATION_CACHE_DIRECTORY = _publication_tempfile.TemporaryDirectory(
+                prefix="npa-verified-publication-"
+            )
+        lock = _PUBLICATION_CACHE_LOCKS.setdefault(
+            cache_key, _publication_threading.Lock()
         )
+        root = Path(_PUBLICATION_CACHE_DIRECTORY.name)
+    return lock, root
+
+
+def _publication_cached_body(s3, bucket, key, target, conditions, cache_key):
+    lock, root = _publication_cache_scope(cache_key)
+    with lock:
+        entry = _PUBLICATION_CACHE_ENTRIES.get(cache_key)
+        if entry:
+            path, identity = entry
+            try:
+                if _publication_cache_identity(path) == identity:
+                    return path.open("rb")
+            except (OSError, PublicationConflict):
+                pass
+        verified = _publication_download_verified_body(
+            s3, bucket, key, target, conditions
+        )
+        try:
+            name = hashlib.sha256(repr(cache_key).encode()).hexdigest()
+            path = root / f"{name}-{target.sha256}.blob"
+            with _publication_tempfile.TemporaryDirectory(dir=root) as directory:
+                staged = Path(directory) / "verified"
+                with staged.open("xb") as stream:
+                    _publication_shutil.copyfileobj(verified, stream)
+                staged.chmod(0o400)
+                staged.replace(path)
+            _PUBLICATION_CACHE_ENTRIES[cache_key] = (
+                path,
+                _publication_cache_identity(path),
+            )
+            return path.open("rb")
+        finally:
+            verified.close()
+
+
+def _verified_publication_object_body(s3, bucket, target):
+    """Reuse authenticated bytes only for the exact journal and current object version."""
+    key, head = _publication_target_head(s3, bucket, target)
+    conditions = {}
+    if head.get("ETag") and not str(head["ETag"]).startswith("W/"):
+        conditions["IfMatch"] = str(head["ETag"])
+    if head.get("VersionId") and str(head["VersionId"]) != "null":
+        conditions["VersionId"] = str(head["VersionId"])
+    if not conditions:
+        return _publication_download_verified_body(s3, bucket, key, target, {}), head
+    cache_key = (
+        _publication_client_scope(s3),
+        bucket,
+        str(target.immutable_uri),
+        str(target.sha256),
+        int(target.size_bytes),
+        conditions.get("IfMatch", ""),
+        conditions.get("VersionId", ""),
+    )
+    return _publication_cached_body(
+        s3, bucket, key, target, conditions, cache_key
+    ), head
+
+
+def _publication_client_scope(s3):
+    """Isolate cached bytes by storage endpoint, read principal and access generation."""
+    meta = getattr(s3, "meta", None)
+    signer = getattr(s3, "_request_signer", None)
+    if meta is None or signer is None:
+        return ("test-transport", id(s3))
+    credentials = getattr(signer, "_credentials", None)
+    principal = str(getattr(credentials, "access_key", "") or "")
+    return (
+        str(meta.endpoint_url),
+        str(meta.region_name),
+        hashlib.sha256(principal.encode()).hexdigest(),
+        globals().get("_AGENT_RUN_CURSOR_GENERATION", 0),
+    )
+
+
+def _verify_publication_target(s3, bucket: str, target) -> dict:
+    """Verify the journal's bytes, reusing only an authenticated object-version cache."""
+    body, head = _verified_publication_object_body(s3, bucket, target)
+    body.close()
     return head
 
 
@@ -517,7 +647,12 @@ def _stage_evidence_documents(
         if rank is None:
             continue
         size = int(getattr(artifact, "size", 0) or 0)
-        if size > _MAX_STAGE_EVIDENCE_BYTES:
+        byte_limit = (
+            _MAX_RUN_REPORT_BYTES
+            if key.endswith("/sim2real-report.json")
+            else _MAX_STAGE_EVIDENCE_BYTES
+        )
+        if size > byte_limit:
             continue
         candidates.append((rank, key))
     candidates.sort(key=lambda item: (item[0], item[1]))
@@ -751,7 +886,13 @@ def _artifact_backed_run_details(
         return None
     if not artifacts:
         return None
-    run_root_key = _run_root_key(artifacts, run_id)
+    try:
+        run_root_key = _run_root_key(artifacts, run_id)
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     run_suffix = f"/{run_id}"
     derived_prefix = (
         run_root_key[: -len(run_suffix)] if run_root_key.endswith(run_suffix) else ""
@@ -822,6 +963,7 @@ def _artifact_backed_run_details(
                 s3,
                 run_bucket,
                 report_artifact.key,
+                max_bytes=_MAX_RUN_REPORT_BYTES,
                 **read_identity,
             )
         except PublicationConflict as exc:

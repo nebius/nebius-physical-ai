@@ -224,7 +224,10 @@ def test_regeneration_rejects_committed_report_byte_mismatch(tmp_path: Path) -> 
     assert not destination.exists()
 
 
-def test_regeneration_rejects_committed_rrd_byte_mismatch(tmp_path: Path) -> None:
+@pytest.mark.parametrize("existing", [False, True])
+def test_regeneration_rejects_committed_rrd_byte_mismatch(
+    tmp_path: Path, existing: bool
+) -> None:
     claimed = b"expected-rrd"
     actual = b"tampered-rrd"
     storage = _Reader(
@@ -235,13 +238,18 @@ def test_regeneration_rejects_committed_rrd_byte_mismatch(tmp_path: Path) -> Non
     )
 
     destination = tmp_path / "sim2real.rrd"
+    if existing:
+        destination.write_bytes(b"previously verified recording")
     with pytest.raises(regen.Sim2RealRerunRegenError, match="bytes|journal"):
         regen.download_rrd_from_s3(
             _config(),
             dest_path=destination,
             client=storage,
         )
-    assert not destination.exists()
+    if existing:
+        assert destination.read_bytes() == b"previously verified recording"
+    else:
+        assert not destination.exists()
 
 
 def test_regeneration_rejects_committed_stage14_byte_mismatch(

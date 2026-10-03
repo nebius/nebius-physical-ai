@@ -541,7 +541,7 @@ def test_regeneration_does_not_guess_sealed_outer_iteration(
         )
 
 
-def test_operator_symlink_above_containment_root_is_allowed(
+def test_operator_symlink_above_containment_root_is_rejected_without_mutation(
     tmp_path: Path,
 ) -> None:
     physical = tmp_path / "physical"
@@ -550,18 +550,20 @@ def test_operator_symlink_above_containment_root_is_allowed(
     alias = tmp_path / "alias"
     alias.symlink_to(physical, target_is_directory=True)
     destination = alias / "run/input.json"
+    destination.write_text('{"retained":true}', encoding="utf-8")
 
     class Storage:
         def download_path(self, _uri: str, target: str) -> None:
-            Path(target).write_text('{"ok":true}', encoding="utf-8")
+            raise AssertionError("symlink ancestry rejection must precede download")
 
-    assert _download_if_exists(
-        Storage(),
-        "s3://demo-bucket/run/input.json",
-        destination,
-        containment_root=alias / "run",
-    )
-    assert destination.read_text(encoding="utf-8") == '{"ok":true}'
+    with pytest.raises(Sim2RealRerunRegenError, match="symlinked ancestor"):
+        _download_if_exists(
+            Storage(),
+            "s3://demo-bucket/run/input.json",
+            destination,
+            containment_root=alias / "run",
+        )
+    assert destination.read_text(encoding="utf-8") == '{"retained":true}'
 
 
 def test_current_loaded_report_requires_complete_matching_identity(
