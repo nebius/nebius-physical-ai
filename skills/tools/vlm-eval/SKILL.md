@@ -51,10 +51,22 @@ Default model is `Qwen/Qwen2-VL-7B-Instruct`; `--timeout-s` defaults to 120.
 
 A successful `api` or `self-hosted` call writes an `evidence` object alongside
 the scalar result. It records hashes and dimensions for the exact normalized
-frames sent, prompt and rubric hashes, a secret-free request-manifest hash,
-requested/returned model identity, request time, finish reason, latency, usage
-and provider request ID when returned, plus the exact provider response and its
-hash. Real benchmark reports retain this record per case.
+frames sent; source kind, index, count, and video timestamp when known; prompt
+and rubric hashes; a secret-free request-manifest hash; requested/returned model
+identity; request time; finish reason; latency; usage and provider request ID
+when returned; plus the exact provider response and its hash. The manifest's
+`sampling` block records the requested strategy and frame limit, selected
+indices/timestamps, and whether coverage is complete. Unknown source metadata
+stays null rather than turning extraction ordinals into source indices.
+`coverage_complete` means selected-frame provenance is complete, not that all
+available source frames were sent. Real benchmark reports retain this record per
+case.
+
+Directory and object-prefix outputs use the backend-neutral
+`vlm_eval.json`; inspect the payload's `backend` and provider evidence to
+distinguish real inference from fixtures. An explicitly supplied `.json` output
+path remains unchanged. Readers accept the old `vlm_eval_stub.json` name only
+for historical bundles; new workflows must not declare it.
 
 Recompute these hashes before accepting a result. The request manifest must not
 contain authorization, endpoints, local/S3 paths, prompts, base64 bytes, or data
@@ -75,6 +87,9 @@ and retain a verdict even when completion metadata is absent or not `stop`.
 Its evidence records those facts; it does not certify strict completion or
 promotion eligibility. The operator provenance lane separately requires HTTP
 200, `finish_reason=stop`, expected served identity and verifiable framing.
+The promotion gate separately requires a completed, non-refused, strictly typed
+verdict for either backend. Compatibility-only parsing, surrounding prose,
+trailing output, duplicate keys, invalid types and partial fences cannot promote.
 This evidence proves judge traceability, not physical correctness or safety.
 
 `passed` and `status` come only from `score >= success_threshold`, using the

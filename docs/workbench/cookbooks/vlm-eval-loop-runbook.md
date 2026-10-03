@@ -17,6 +17,8 @@ requested and returned model to:
 
 - SHA-256 hashes, dimensions, media types, byte counts, and source-relative
   labels for the exact normalized image bytes submitted to the model;
+- source kind, zero-based source index, source frame count, and source video
+  timestamp when extraction can establish them;
 - hashes of the prompt, rubric, and secret-free request manifest;
 - request time, endpoint role, HTTP status when available, latency, finish
   reason, provider request ID and usage when returned;
@@ -24,7 +26,26 @@ requested and returned model to:
 
 The request manifest intentionally excludes authorization, endpoint addresses,
 input/output locations, prompts, and base64 image data. It contains enough
-information to recompute what was submitted without copying pixels or secrets.
+metadata to compare against separately retained source media. A syntactically
+valid SHA-256 digest establishes only format. Recomputing the manifest hash
+checks the recorded metadata and claimed digests; it does not independently
+prove that those digests describe the submitted pixels. For payload binding,
+normalize the retained source frames to RGB PNGs (at most 768 pixels per side)
+and recompute their hashes, dimensions, and byte counts. Hashing the original
+JPEG or video file is not equivalent to hashing the normalized submitted PNG.
+Its `sampling` block records the strategy, requested frame limit, selected
+indices and timestamps, source count, and whether index and timestamp coverage
+are complete. Unknown video metadata stays null; a generated extraction ordinal
+is never presented as a source frame index. `coverage_complete` means every
+submitted frame has auditable source-index metadata, not that every available
+source frame was submitted.
+This producer emits `npa_vlm_eval_evidence_v2`; legacy v1 records have no
+source-sampling contract and must not be interpreted as complete sampling.
+The v2 aggregate `source_kind` is null for absent, unrecognized, or mixed kinds,
+and `coverage_complete` is false even if their counts and indices agree.
+`source_count` is retained only when all frames agree on a non-null count.
+`timestamps_complete` is boolean for a known uniform video source and null
+otherwise. These fields do not upgrade or reinterpret existing v1 artifacts.
 The full result still belongs in private run storage because the provider
 response and existing task fields can describe operator data.
 
@@ -40,6 +61,8 @@ it can extract embedded JSON, accept duplicate keys and coerced types, clamp
 scores, and return a verdict with missing or non-`stop` completion metadata.
 Retained evidence does not make such a verdict eligible for promotion. The live
 provenance lane below separately requires complete output and checks its framing.
+The promotion gate rejects compatibility-only results, requiring a completed,
+non-refused, strictly typed retained verdict for either backend.
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
 
@@ -60,57 +83,62 @@ remove the defect.
 
 ## Live provenance verification
 
-The operator lane runs `test_vlm_served_model_live.py` against an existing GPU
-endpoint. It fails if configuration, authentication, expected model readiness,
-or actual inference is missing. A skipped or empty test run cannot pass. This
-is separate from the nightly hosted Token Factory suites, which need no GPU.
+### Served-model sampling live lane
 
-Before provisioning a dedicated endpoint, prove credentials with
-`npa workbench health preflight --checks nebius --json` and verify exact model
-payload access before any download. Use the
-[access preflight](../../../skills/atomic/access-approval/SKILL.md) for gated
-weights and record the checkpoint revision, serving image digest, selected GPU
-family/count and resource ownership privately. Use a compatible serving runtime;
-the model name returned by inference does not identify its checkpoint bytes.
-Provision and clean up only resources owned by this validation run.
+To verify this against your existing authenticated GPU endpoint, set
+`NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
+owner-only JSON file containing `input_path` (absolute local media path),
+`output_path` (a new absolute JSON filename in an existing owner-only directory),
+`endpoint_url`, `model`, `expected_served_model`, and `task`. Supply credentials
+through the environment variable named by `api_key_env` (default
+`VLM_EVAL_API_KEY`). Both gating variables are unset by default. Install the
+`dev` extra, `ffmpeg`, and `ffprobe`, then run from the repository root:
 
-Stage a local rollout fixture with decodable images or video outside the
-checkout. Its actual normalized frames will be reloaded and hashed to verify
-the request evidence. Create an owner-only output directory and a fresh local
-JSON result filename; S3 fixtures/results are not supported by this verification
-lane. Keep the task, fixture, provider response, and result private.
-
-Set `NPA_VLM_PROVENANCE_LIVE_CONFIG` to the absolute path of an owner-only
-(`0600`) JSON file outside the checkout. Required keys are `input_path`
-(absolute local fixture path), `output_path` (absolute fresh `.json` filename
-in an existing `0700` directory), `endpoint_url` (OpenAI-compatible `/v1` base
-or `/v1/chat/completions` URL), `model` (requested ID), `expected_served_model`
-(actual server ID), and `task`. Optional `api_key_env` defaults to
-`VLM_EVAL_API_KEY`; supply the endpoint credential in that environment variable,
-never in the file or URL. The endpoint must expose authenticated `/v1/models`
-and `/v1/chat/completions` routes.
-
-From the repository root, with the configuration and credential in the process
-environment:
+Use a bare HTTP(S) endpoint, `/v1` base, or full `/v1/chat/completions` URL
+without embedded credentials, query, or fragment. The endpoint must expose
+authenticated `/v1/models` and `/v1/chat/completions` routes. The serving model
+identifier is checked, but does not by itself identify checkpoint bytes.
 
 ```bash
-NPA_INTEGRATION_E2E=1 npa/.venv/bin/python \
-  npa/scripts/vlm_provenance_live_recheck.py \
-  --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"
+export NPA_INTEGRATION_E2E=1
+export NPA_VLM_PROVENANCE_LIVE_CONFIG="<private-config.json>"
+npa/.venv/bin/python npa/scripts/vlm_provenance_live_recheck.py \
+  --evidence-dir "<new-private-evidence-directory>"
 ```
 
-Use a fresh absolute evidence directory outside the checkout for each run.
-`receipt.json` contains test counts, source hashes, and sanitized status. The
-verdict stays at the configured `output_path`. Success requires an executed
-provider call, HTTP 200, `finish_reason=stop`, the expected returned model,
-recomputable frame/manifest/response hashes, and saved-result readback. A model
-listing is readiness evidence only. This lane proves traceability of inference;
-it does not prove a policy succeeded or a scene is physically safe.
+The runner requires all ten real inference cases to pass: one operator input
+plus `final`, `keyframes`, and `sequence` sampling over six-frame image, NumPy,
+and lossless-video inputs. Known source pixels and timestamps provide an
+independent oracle for normalized hashes and selected indices. Fixture creation
+alone is not inference evidence. Missing credentials, missing video tools,
+skipped cases, partial collection, or failed teardown hooks fail the lane.
+The shared provenance runner verifies authenticated expected-model readiness
+before inference. Readiness alone cannot pass the lane. Configuration and
+outputs must remain outside the checkout; the custom result must not collide
+with the runner's `receipt.json` or `pytest/` paths. Private output includes the
+configured custom result, a sanitized `receipt.json`, and per-case inputs and
+provider results under `pytest/`. Preserve both the custom result and the
+complete evidence directory. The receipt binds the sampling helper source.
+Every case also checks exact bare/fenced parser tagging, provider-success versus
+score-derived gate agreement, and hashes reconstructed from the effective rubric.
 
-The runner provisions and deletes nothing. After collecting the result and
-receipt, cancel run-owned jobs, stop the endpoint and destroy run-owned compute
-using the [run lifecycle](../../run-lifecycle.md). Preserve evidence and shared
-resources. Cleanup remains required when validation fails.
+The endpoint lifecycle belongs to the operator job. Before creating compute,
+use a dedicated project and task-scoped NPA configuration, prove its selected
+profile with `npa workbench health preflight --checks nebius`, and verify exact
+model payload access before fetching gated weights. Record the model revision,
+serving image digest, GPU product/count, and private deployment identity. Verify
+authenticated endpoint readiness, run the lane, then collect results and tear
+down only job-owned serving compute in the job's cleanup path, including when
+inference fails. Retain the cleanup receipt separately: this runner consumes an
+already provisioned endpoint and cannot certify cloud teardown. Reused shared
+endpoints remain their owner's responsibility and must not be destroyed.
+
+The hosted Token Factory nightly runner has a separate credential and workload
+contract. It does not execute this GPU lane. Scheduling requires an operator
+job with the private configuration, access checks, endpoint lifecycle, and
+cleanup above; adding this suite to hosted `SUITES` without them is insufficient.
+These checks establish request traceability, not color recognition accuracy or
+physical task completion.
 
 ## Prerequisites
 
@@ -181,10 +209,72 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 
 `scores_uri` receives:
 
-- `rollouts/<rollout-id>/vlm_eval_stub.json`: one structured result per rollout.
+- `rollouts/<rollout-id>/vlm_eval.json`: one structured result per rollout.
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
   per-rollout `{success, score, rationale}` records.
+
+`vlm_eval.json` is backend-neutral; inspect the payload's `backend` and
+`evidence.provider` fields to distinguish real inference from a fixture.
+Readers retain `vlm_eval_stub.json` only for historical bundles. Do not declare
+that legacy name in new workflows.
+
+For external scripts, dashboards, and workflow consumers migrating to this version:
+
+1. Write and declare `vlm_eval.json` for new directory or object-prefix outputs,
+   including each rollout subdirectory. No legacy alias or duplicate is emitted.
+2. Read the canonical filename first. Fall back to `vlm_eval_stub.json` only when
+   the canonical object is absent. If it exists but is malformed, empty, unreadable,
+   or fails validation, report that failure; never substitute a stale legacy score.
+3. Preserve explicitly supplied `.json` output paths exactly. Custom paths do not
+   receive a renamed file, and `task_success_report.json` remains unchanged.
+4. Determine fixture versus inference status from the payload and retained evidence,
+   never from either filename. Historical bundles can keep their original names.
+
+The data-factory `grade_gate` requires consistent retained inference evidence
+before a VLM result can promote a checkpoint. Stub results, score overrides, and
+historical reports without provider evidence produce `loop_back` with an explicit
+reason. The gate checks submitted-frame metadata, request and response hashes,
+and agreement between the retained response and serialized result. These checks
+establish internal consistency, not provider authentication or visual correctness.
+Frame digests are checked for valid SHA-256 format and binding to the request
+manifest; this gate does not fetch image bytes to recompute their hashes. Consumers
+that need payload verification must retain and independently hash the submitted
+normalized images. Schema-v2 sampling counts, indices, timestamps, and coverage
+flags must agree with the frame metadata. A known, uniform source kind, a source
+count, and in-range selected indices are required for `coverage_complete: true`;
+unknown or mixed source kinds normalize to null with incomplete coverage.
+The producer emits v2. Historical v1 evidence remains valid without sampling
+fields and is not upgraded to complete sampling. Other schema versions fail closed.
+
+New results retain the effective `rubric` so custom-rubric prompt and rubric
+hashes can be checked. Historical v1 results without this field are accepted only
+when the default rubric reproduces both hashes. The gate requires exact requested
+and returned model identity for hosted results, including unregistered models.
+Invalid evidence retains `reason: vlm_provider_evidence_invalid` for existing
+consumers and adds `evidence_reason` to distinguish schema, request, digest,
+sampling, frame metadata, provider response/transport/metadata, and verdict failures.
+
+Promotion eligibility is stricter than the legacy self-hosted reader. Both VLM
+backends must retain an explicit `finish_reason: stop`, no provider refusal, and
+one complete JSON object, optionally inside a complete Markdown JSON fence.
+The verdict must contain a boolean `success`, a finite numeric `score` in `[0, 1]`,
+and a nonempty string `rationale`. Duplicate keys, surrounding prose, partial
+fences, clamped scores, and coerced field types cannot promote a checkpoint.
+The self-hosted reader still parses its historical compatibility inputs and
+records its original parser version; obtaining a score through that reader does
+not make the result eligible for promotion. An absent completion status also
+blocks promotion. Missing self-hosted request/model identity metadata remains
+compatible when the completion and other evidence satisfy the gate.
+
+These refusals retain the public `vlm_provider_evidence_invalid` reason.
+`evidence_reason` distinguishes `provider_completion_incomplete`,
+`provider_completion_filtered`, `provider_completion_refused`,
+`provider_refusal_invalid`, and `provider_verdict_invalid`. Duplicate keys in the
+retained response envelope produce `provider_response_invalid`.
+Provider `success` remains in the retained response; optional serialized
+`provider_success` fields are checked when present. The numeric score and
+threshold still determine the score gate. The Cosmos Evaluator contract is unchanged.
 
 Read the report:
 
