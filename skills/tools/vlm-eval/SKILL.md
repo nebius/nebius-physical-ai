@@ -201,6 +201,19 @@ correctness, or safety. Limitations name `fixture` and deterministic `stub`
 score sources when they occur so mixed reports do not imply those cases made a
 model call.
 
+Each `npa_vlm_eval_benchmark_report_v2` configuration includes the full 2x2
+confusion matrix, false-positive and false-negative rates, and ordered
+`false_positive_item_ids` / `false_negative_item_ids`. Resolve those IDs in the
+same configuration's complete `results` list before choosing a threshold; an
+aggregate accuracy can hide the exact false pass that matters. Rates are null
+when the labeled dataset has no examples of the required class. Item IDs must
+be unique. Historical reports without `schema_version` are v1; their counts can
+be recomputed from retained per-item labels and predictions, but absent v2
+fields must not be presented as if the producer emitted them.
+Manually constructed reports retain the v1 constructor default even if optional
+calibration fields are supplied. Feature-detect a non-null `confusion_matrix`
+rather than inferring field absence from the version alone.
+
 ## In workflows
 
 toolRefs: `workbench.vlm_eval.run`, `.loop`, `.judge_against_plan`, `.benchmark`.
