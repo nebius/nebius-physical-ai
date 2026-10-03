@@ -3,7 +3,7 @@ kind: Workflow
 
 metadata:
   name: encord-roundtrip-smoke
-  description: Push, pull, and verify an exact Encord media roundtrip.
+  description: Push, curate a strict subset, pull, and verify Encord media.
 
 config:
   bucket: example-bucket
@@ -17,8 +17,11 @@ config:
   encord_poll_timeout_seconds: "1800"
   encord_identity_sidecar_uri: ""
   encord_receipt_uri: "s3://{{config.bucket}}/{{config.prefix}}/push/push_receipt.json"
-  encord_source: "dataset"
-  encord_source_id: "npa-encord-{{run.id}}"
+  encord_curate_filters: "width:16:64"
+  encord_collection: "npa-encord-curated-{{run.id}}"
+  encord_curate_receipt_uri: "s3://{{config.bucket}}/{{config.prefix}}/curate/curate_receipt.json"
+  encord_source: "collection"
+  encord_source_id: "{{config.encord_collection}}"
   encord_label_export: "none"
   encord_pull_uri: "s3://{{config.bucket}}/{{config.prefix}}/pull"
   encord_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/pull/manifest.json"
@@ -40,11 +43,24 @@ states:
     outputs:
       - uri: "{{config.encord_receipt_uri}}"
         schema: npa.encord.push_receipt.v1
+    next: curate
+
+  curate:
+    description: Select a run-scoped Collection using Encord's width metric.
+    needs: [push]
+    toolRef: workbench.encord.curate
+    resources: cpu
+    inputs:
+      - uri: "{{config.encord_receipt_uri}}"
+        schema: npa.encord.push_receipt.v1
+    outputs:
+      - uri: "{{config.encord_curate_receipt_uri}}"
+        schema: npa.encord.curate_receipt.v1
     next: pull
 
   pull:
-    description: Materialize the dataset created by push.
-    needs: [push]
+    description: Materialize the Collection selected by curate.
+    needs: [curate]
     toolRef: workbench.encord.pull
     resources: cpu
     outputs:
@@ -60,6 +76,8 @@ states:
     inputs:
       - uri: "{{config.encord_receipt_uri}}"
         schema: npa.encord.push_receipt.v1
+      - uri: "{{config.encord_curate_receipt_uri}}"
+        schema: npa.encord.curate_receipt.v1
       - uri: "{{config.encord_manifest_uri}}"
         schema: npa.encord.pull_manifest.v2
     outputs:

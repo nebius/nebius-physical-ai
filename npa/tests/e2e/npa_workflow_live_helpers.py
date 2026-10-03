@@ -337,6 +337,14 @@ def seed_live_workflow_inputs(
             ),
             ContentType="image/png",
         )
+        client.put_object(
+            Bucket=bucket,
+            Key=f"{marker}/fixture/source.mp4",
+            Body=(
+                REPO_ROOT / "npa/tests/browser/cypress/fixtures/browser-compatible.mp4"
+            ).read_bytes(),
+            ContentType="video/mp4",
+        )
         return
 
     if spec_name == "lerobot-subtask-proof.yaml":

@@ -90,6 +90,35 @@ work progresses. Checkpoints reduce evidence loss, but no client can guarantee
 a final durable checkpoint if the artifact store fails after Encord accepts a
 mutation. NPA stops further mutation and exits nonzero in that case.
 
+## Curate headlessly
+
+`curate` asks Encord to select items into a Collection. It does not move media
+bytes. Give each run a new Collection title. The command rejects a populated
+Collection because those items could be mistaken for this run's selection.
+
+```bash
+npa workbench encord curate \
+  --folder <encord-folder> \
+  --filter width:128:16384 \
+  --collection <new-collection> \
+  --receipt-uri s3://<bucket>/encord/push/push_receipt.json \
+  --output-path s3://<bucket>/encord/curate/curate_receipt.json
+```
+
+Add more `--filter` options as needed. Use `width`, `height`, `area`, or
+`aspect-ratio` to filter on media metadata.
+`brightness`, `sharpness`, and `file-size` require quality metrics already
+computed for the folder in Encord. In Encord, open the folder in **Explore**,
+choose **Configure folder** in the Embeddings panel, enable **Compute Encord
+Embedding & Quality Metrics**, and wait for folder activity to show **Analysis
+up to date**. The public SDK does not document a call to start that computation.
+If nothing matches, the command writes a failed receipt. Check whether the
+metrics are ready and whether the range is too narrow.
+
+The receipt records the preset JSON and selected item UUIDs. Encord does not
+expose a completion handle for preset insertion, so treat the UUID list as a
+snapshot. The workflow verifier checks that the later pull matches it exactly.
+
 ## Pull media
 
 ```bash
@@ -124,6 +153,11 @@ npa workbench encord verify-roundtrip \
   --manifest-uri s3://<bucket>/encord/pull/manifest.json \
   --output-path s3://<bucket>/encord/verify/roundtrip_report.json
 ```
+
+For a curated subset, also pass
+`--curate-receipt-uri s3://<bucket>/encord/curate/curate_receipt.json`.
+The verifier then expects exactly the selected UUIDs instead of every pushed
+item, and checks that the pull came from the recorded Collection.
 
 A roundtrip is verified only when this command consumes both final artifacts
 and passes exact item identity, destination existence, size, and compatible
@@ -168,7 +202,9 @@ for `encord-roundtrip-smoke.yaml`. Explicitly set `bucket`, `prefix`,
 `encord_media_uri`, and `encord_integration`. The prefix should include
 `{{run.id}}` so each run gets new artifacts. The default folder and dataset are
 also scoped to that run. Additional overrides use the spec's existing config
-keys. Set `encord_transfer` to `upload` explicitly and `encord_integration` to
+keys. Stage media on both sides of the default `width:16:64` filter,
+including at least one retained MP4; the live test requires a strict subset.
+Set `encord_transfer` to `upload` explicitly and `encord_integration` to
 an empty string only when you want an Encord-managed media copy.
 
 After confirming those targets, run the opt-in live test:
@@ -185,10 +221,10 @@ npa/.venv/bin/python -m pytest \
 Encord. `NPA_E2E_ENCORD_EVIDENCE_DIR` is optional and defaults to pytest's temporary
 directory. Its run subdirectory holds private workflow evidence, unchanged
 `demo-*.mp4` returns, and `demo.json` with decoded frame counts and SHA-256 hashes.
-The test executes the shipped push → pull → verify graph, downloads the verified
-MP4 bytes, checks them against the report, and decodes every video frame.
-It preserves remote folders, datasets, and S3 artifacts for review. Keep the
-private workflow evidence out of Git and PRs; publish only sanitized measurements.
+The test runs push → curate → pull → verify, downloads the verified MP4,
+checks its bytes against the report, and decodes every frame. It leaves the
+Encord folders, datasets, and S3 artifacts available for review. Keep the
+private workflow evidence outside the repository.
 
 ## Python SDK
 
@@ -202,9 +238,17 @@ receipt = encord.push(
     output_path="s3://<bucket>/encord/push/push_receipt.json",
 )
 
+curation = encord.curate(
+    folder="<encord-folder>",
+    filters=["width:128:16384"],
+    collection="<new-collection>",
+    source_receipt_uri=receipt.receipt_uri,
+    output_path="s3://<bucket>/encord/curate/curate_receipt.json",
+)
+
 manifest = encord.pull(
     source="collection",
-    source_id="<encord-source-id>",
+    source_id=curation.collection_uuid,
     output_path="s3://<bucket>/encord/pull",
 )
 ```

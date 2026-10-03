@@ -560,12 +560,15 @@ skills:
         path: npa/src/npa/cli/agent_foxglove.py
   - name: encord
     category: tools
-    when_to_use: "Transport S3 media through Encord, import video prelabels into a new project, export and verify labels, or render annotated MP4s."
+    when_to_use: "Transport S3 media through Encord, curate headlessly with metadata or ready quality metrics, import video prelabels, export and verify labels, or render annotated MP4s."
     path: skills/tools/encord/SKILL.md
     smoke:
       - type: cli_help
         args: ["workbench", "encord", "push", "--help"]
         contains: "identity-sidecar"
+      - type: cli_help
+        args: ["workbench", "encord", "curate", "--help"]
+        contains: "--filter"
       - type: cli_help
         args: ["workbench", "encord", "pull", "--help"]
         contains: "label-export"
