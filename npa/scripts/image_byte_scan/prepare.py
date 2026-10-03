@@ -281,6 +281,7 @@ def authorize(args, directory):
             "npa.curobo.image-verification.v1",
             "npa.ncore.oci-verification.v1",
             "npa.robotwin.image-verification.v1",
+            "npa.seedvr2.direct-manifest-verification.v1",
         ),
         "accepted_graph_report_required",
     )
