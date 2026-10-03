@@ -51,10 +51,16 @@ Default model is `Qwen/Qwen2-VL-7B-Instruct`; `--timeout-s` defaults to 120.
 
 A successful `api` or `self-hosted` call writes an `evidence` object alongside
 the scalar result. It records hashes and dimensions for the exact normalized
-frames sent, prompt and rubric hashes, a secret-free request-manifest hash,
-requested/returned model identity, request time, finish reason, latency, usage
-and provider request ID when returned, plus the exact provider response and its
-hash. Real benchmark reports retain this record per case.
+frames sent; source kind, index, count, and video timestamp when known; prompt
+and rubric hashes; a secret-free request-manifest hash; requested/returned model
+identity; request time; finish reason; latency; usage and provider request ID
+when returned; plus the exact provider response and its hash. The manifest's
+`sampling` block records the requested strategy and frame limit, selected
+indices/timestamps, and whether coverage is complete. Unknown source metadata
+stays null rather than turning extraction ordinals into source indices.
+`coverage_complete` means selected-frame provenance is complete, not that all
+available source frames were sent. Real benchmark reports retain this record per
+case.
 
 Recompute these hashes before accepting a result. The request manifest must not
 contain authorization, endpoints, local/S3 paths, prompts, base64 bytes, or data
