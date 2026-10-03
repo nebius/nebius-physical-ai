@@ -13,6 +13,14 @@ import tarfile
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from image_payload_credentials import (  # noqa: E402
+    content_credential,
+    normalise_member_name,
+    path_credential,
+)
+
 FORBIDDEN_PATHS = (
     re.compile(r"(?i)(^|/)NGC-DL-CONTAINER-LICENSE$"),
     re.compile(r"(?i)(^|/)(huggingface|hf-cache)/hub/models--nvidia--"),
@@ -37,6 +45,7 @@ MODEL_SUFFIXES = (".safetensors", ".ckpt", ".pth", ".pt", ".gguf")
 def scan_tarball(path: Path) -> dict[str, object]:
     hits: list[str] = []
     history_hits: list[str] = []
+    credential_hits: list[str] = []
     entries = 0
     with tarfile.open(path) as outer:
         manifest = json.load(outer.extractfile("manifest.json"))  # type: ignore[arg-type]
@@ -63,7 +72,7 @@ def scan_tarball(path: Path) -> dict[str, object]:
             with tarfile.open(fileobj=io.BytesIO(layer_bytes)) as layer:
                 for member in layer:
                     entries += 1
-                    name = member.name.lstrip("./")
+                    name = normalise_member_name(member.name)
                     if any(pattern.search(name) for pattern in FORBIDDEN_PATHS):
                         hits.append(name)
                     if (
@@ -72,14 +81,24 @@ def scan_tarball(path: Path) -> dict[str, object]:
                         and name.lower().endswith(MODEL_SUFFIXES)
                     ):
                         hits.append(name)
+                    if not member.isfile():
+                        continue
+                    kind = path_credential(name)
+                    if kind is None:
+                        payload = layer.extractfile(member)
+                        if payload is not None:
+                            kind = content_credential(payload)
+                    if kind is not None:
+                        credential_hits.append(f"{kind}:{name}")
     return {
         "format": "npa_cosmos3_serving_payload_scan_v1",
         "scan_complete": True,
         "entries_scanned": entries,
         "payload_hits": sorted(set(hits)),
         "history_hits": sorted(set(history_hits)),
+        "credential_hits": sorted(set(credential_hits)),
         "verdict": "clean"
-        if not hits and not history_hits
+        if not hits and not history_hits and not credential_hits
         else "restricted-payload-detected",
     }
 

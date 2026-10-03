@@ -1,0 +1,73 @@
+{
+  "conclusive": false,
+  "fabrication_definition": "Reconstructed area further than one voxel from the watertight reference, area-weighted. Surface Poisson interpolates correctly across a hole is not counted, which is the strict choice against the tool.",
+  "false_negatives": 0,
+  "informative_rows": 0,
+  "occlusion_centre_rule": "Most protruding sample along the axis of greatest extent: deterministic, and on a feature rather than a flat panel, where a bridge departs from truth most.",
+  "rows": [
+    {
+      "fabricated_area_fraction": 0.0025171470241283785,
+      "false_negative": false,
+      "max_vertex_distance_to_truth_in_voxels": 3.379394054412842,
+      "occlusion_radius_as_diagonal_fraction": 0.05,
+      "occlusion_radius_in_voxels": 34.17360373861027,
+      "reads_as_extrapolated_shell": false,
+      "samples_removed": 2448,
+      "share_beyond_3_voxels": 0.0007768061661524563,
+      "unsupported_area_beyond_3_voxels": 0.00016008928977104912,
+      "unsupported_area_fraction": 0.20608653322614065
+    },
+    {
+      "fabricated_area_fraction": 0.0025528644720846446,
+      "false_negative": false,
+      "max_vertex_distance_to_truth_in_voxels": 3.379345417022705,
+      "occlusion_radius_as_diagonal_fraction": 0.1,
+      "occlusion_radius_in_voxels": 68.34720747722054,
+      "reads_as_extrapolated_shell": false,
+      "samples_removed": 6037,
+      "share_beyond_3_voxels": 0.0007887703076234632,
+      "unsupported_area_beyond_3_voxels": 0.00016288203135241634,
+      "unsupported_area_fraction": 0.2065012206698983
+    },
+    {
+      "fabricated_area_fraction": 0.0,
+      "false_negative": false,
+      "max_vertex_distance_to_truth_in_voxels": 0.7134113311767578,
+      "occlusion_radius_as_diagonal_fraction": 0.2,
+      "occlusion_radius_in_voxels": 136.69441495444107,
+      "reads_as_extrapolated_shell": false,
+      "samples_removed": 49365,
+      "share_beyond_3_voxels": 0.0,
+      "unsupported_area_beyond_3_voxels": 0.0,
+      "unsupported_area_fraction": 0.2054321811294757
+    },
+    {
+      "fabricated_area_fraction": 0.0,
+      "false_negative": false,
+      "max_vertex_distance_to_truth_in_voxels": 0.5100774765014648,
+      "occlusion_radius_as_diagonal_fraction": 0.3,
+      "occlusion_radius_in_voxels": 205.04162243166158,
+      "reads_as_extrapolated_shell": false,
+      "samples_removed": 112514,
+      "share_beyond_3_voxels": 0.0,
+      "unsupported_area_beyond_3_voxels": 0.0,
+      "unsupported_area_fraction": 0.20693635346113387
+    },
+    {
+      "fabricated_area_fraction": 0.0003230669235220463,
+      "false_negative": false,
+      "max_vertex_distance_to_truth_in_voxels": 1.5447237491607666,
+      "occlusion_radius_as_diagonal_fraction": 0.45,
+      "occlusion_radius_in_voxels": 307.5624336474924,
+      "reads_as_extrapolated_shell": false,
+      "samples_removed": 205947,
+      "share_beyond_3_voxels": 0.008210333131960517,
+      "unsupported_area_beyond_3_voxels": 0.0019412927879858164,
+      "unsupported_area_fraction": 0.23644506949771743
+    }
+  ],
+  "smallest_occlusion_caught_as_diagonal_fraction": null,
+  "voxel_size": 0.33466757932851443,
+  "why_conclusiveness_matters": "A row that fabricates nothing cannot expose a false negative, so a sweep with no informative row says nothing about the bands. Reported rather than scored as a pass.",
+  "worst_missed_fabrication": 0.0
+}
