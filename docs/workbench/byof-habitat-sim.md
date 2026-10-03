@@ -118,9 +118,10 @@ to the retained 2026-09-25 proof: 19 RGB/depth frame pairs, 19 Bullet steps, and
 2.2466 metres of navigation on one RTX PRO 6000 Blackwell through NVIDIA EGL.
 It records hashes of the raw capability report, artifact manifest, GPU identity,
 byte-pull, attestations and cleanup receipts. Exact infrastructure details stay
-in access-controlled evidence. Listed image inputs are unchanged from that
-producer; this is historical producer evidence, not a new GPU run for each
-later source commit. The 19-step result does not establish policy training or
+in access-controlled evidence. The recorded input hashes are historical;
+`npa/src/npa/__init__.py` now has a different SDK export surface. Rebuilding
+from current source requires fresh image qualification. The retained proof
+continues to describe only the recorded digest. The 19-step result does not establish policy training or
 a long-run benchmark.
 
 For the legacy baked candidate only, `licenses.json` and `runtime-payload.json`

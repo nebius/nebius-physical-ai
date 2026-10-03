@@ -148,8 +148,11 @@ documented BF16 tolerance and five durable read-back objects per final target.
   exact-image scans and one-RTX managed-workflow capability gate: 19 RGB frames,
   19 depth frames, 19 Bullet steps, and 2.2466 metres of traversal. The
   [development build](https://github.com/nebius/nebius-physical-ai/actions/runs/36092335522)
-  is bound to its GPU report, artifact manifest, provenance, SBOM, and unchanged
+  is bound to its GPU report, artifact manifest, provenance, SBOM, and recorded
   image inputs in the [development evidence manifest](validation/habitat-sim-development-image-manifest.json).
+  The current SDK package initializer differs from that producer. A rebuild
+  from current source requires fresh image qualification; these retained
+  results apply only to the recorded digest.
   This 19-step functional workload is not a long benchmark or policy-training
   result and does not promote a supported release. The legacy baked candidate remains
   quarantined and is not the public build target. See
