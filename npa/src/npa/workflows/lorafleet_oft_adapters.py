@@ -30,6 +30,7 @@ OFT_REPO = "https://github.com/moojink/openvla-oft"
 OFT_REVISION = "e4287e94541f459edc4feabc4e181f537cd569a8"
 SCHEMA_VERSION = "npa.lorafleet-oft-adapters/v1"
 SUITE_ORDER = ("spatial", "object", "goal", "10")
+_OPENVLA_CLASSES_REGISTERED = False
 
 
 @dataclass(frozen=True)
@@ -393,9 +394,9 @@ def _base_tensor_lookup(base_root: Path) -> tuple[dict[str, str], Any]:
     return {str(key): str(value) for key, value in weights.items()}, safe_open
 
 
-def _load_base_vla(base_root: Path) -> Any:
-    """Instantiate exactly the pinned unmerged base model on the available CUDA device."""
-    import torch  # type: ignore[import-not-found]
+def _register_openvla_classes() -> tuple[Any, Any]:
+    """Register upstream custom classes once for the process-wide HF auto maps."""
+    global _OPENVLA_CLASSES_REGISTERED
     from transformers import (
         AutoConfig,
         AutoImageProcessor,
@@ -409,12 +410,22 @@ def _load_base_vla(base_root: Path) -> Any:
         PrismaticProcessor,
     )
 
+    if not _OPENVLA_CLASSES_REGISTERED:
+        AutoConfig.register("openvla", OpenVLAConfig)
+        AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
+        AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
+        AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+        _OPENVLA_CLASSES_REGISTERED = True
+    return AutoModelForVision2Seq, OpenVLAConfig
+
+
+def _load_base_vla(base_root: Path) -> Any:
+    """Instantiate exactly the pinned unmerged base model on the available CUDA device."""
+    import torch  # type: ignore[import-not-found]
+
     if not torch.cuda.is_available():
         raise RuntimeError("OpenVLA-OFT qualification requires an assigned CUDA GPU")
-    AutoConfig.register("openvla", OpenVLAConfig)
-    AutoImageProcessor.register(OpenVLAConfig, PrismaticImageProcessor)
-    AutoProcessor.register(OpenVLAConfig, PrismaticProcessor)
-    AutoModelForVision2Seq.register(OpenVLAConfig, OpenVLAForActionPrediction)
+    AutoModelForVision2Seq, _ = _register_openvla_classes()
     model = AutoModelForVision2Seq.from_pretrained(
         str(base_root),
         torch_dtype=torch.bfloat16,
@@ -617,6 +628,29 @@ def _protocol(suites: Iterable[SuiteSpec]) -> list[dict[str, Any]]:
     return protocol
 
 
+def _configure_libero_runtime() -> None:
+    """Create the non-interactive LIBERO path record before importing its benchmark."""
+    source_root = Path("/opt/libero/libero")
+    package_root = source_root / "libero"
+    if not (package_root / "__init__.py").is_file():
+        raise FileNotFoundError(f"pinned LIBERO source is missing from {source_root}")
+    config_root = _cache_root() / "libero-config"
+    config_root.mkdir(parents=True, exist_ok=True)
+    config = {
+        "benchmark_root": str(package_root),
+        "bddl_files": str(package_root / "bddl_files"),
+        "init_states": str(package_root / "init_files"),
+        "datasets": str(_cache_root() / "libero-datasets"),
+        "assets": str(package_root / "assets"),
+    }
+    (config_root / "config.yaml").write_text(
+        json.dumps(config, sort_keys=True), encoding="utf-8"
+    )
+    os.environ["LIBERO_CONFIG_PATH"] = str(config_root)
+    if str(source_root) not in sys.path:
+        sys.path.insert(0, str(source_root))
+
+
 def _run_episode_set(
     policy_kind: str,
     suite: SuiteSpec,
@@ -693,6 +727,7 @@ def _rollout_stage(
     reconstruction = _read_s3_json(reconstruction_uri)
     _require_prior_stage(verification, "verify-inputs")
     _require_prior_stage(reconstruction, "reconstruct-weights")
+    _configure_libero_runtime()
     if baseline_uri is not None:
         baseline = _read_s3_json(baseline_uri)
         _require_prior_stage(baseline, "published-baseline-rollouts")
@@ -759,9 +794,9 @@ def _rrd(output: Path, baseline: dict[str, Any], reconstructed: dict[str, Any]) 
     for index, (left, right) in enumerate(
         zip(baseline["episodes"], reconstructed["episodes"], strict=True)
     ):
-        rr.set_time("episode", sequence=index)
-        rr.log("metrics/baseline_success", rr.Scalars(float(left["success"])))
-        rr.log("metrics/reconstructed_success", rr.Scalars(float(right["success"])))
+        _rr_set_time(rr, index)
+        rr.log("metrics/baseline_success", _rr_scalar(rr, float(left["success"])))
+        rr.log("metrics/reconstructed_success", _rr_scalar(rr, float(right["success"])))
     rr.log(
         "provenance/release",
         rr.TextDocument(
@@ -770,13 +805,34 @@ def _rrd(output: Path, baseline: dict[str, Any], reconstructed: dict[str, Any]) 
     )
     rr.disconnect()
     rerun_cli = Path(sys.executable).with_name("rerun")
-    subprocess.run(
+    verified = subprocess.run(
         [str(rerun_cli), "rrd", "verify", str(path)],
-        check=True,
+        check=False,
         capture_output=True,
         text=True,
     )
+    if verified.returncode:
+        subprocess.run(
+            [str(rerun_cli), "rrd", "print", str(path)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
     return path.name
+
+
+def _rr_set_time(rerun: Any, index: int) -> None:
+    """Support the pinned Rerun API while retaining newer local test support."""
+    if hasattr(rerun, "set_time"):
+        rerun.set_time("episode", sequence=index)
+    else:
+        rerun.set_time_sequence("episode", index)
+
+
+def _rr_scalar(rerun: Any, value: float) -> Any:
+    """Create one scalar component across supported Rerun SDK revisions."""
+    component = getattr(rerun, "Scalars", None) or rerun.Scalar
+    return component(value)
 
 
 def _compare_stage(baseline_uri: str, reconstructed_uri: str, output: Path) -> None:
