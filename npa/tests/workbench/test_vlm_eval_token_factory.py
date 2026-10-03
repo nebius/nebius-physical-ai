@@ -599,7 +599,6 @@ def test_api_result_surfaces_provider_success_score_contradiction(
     assert result.provider_success_matches_score_gate is False
 
 
-
 def test_api_result_marks_unavailable_optional_provider_metadata(monkeypatch) -> None:
     result = _call_completion(monkeypatch, _completion())
 
