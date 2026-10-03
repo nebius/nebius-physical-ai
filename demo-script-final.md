@@ -154,24 +154,53 @@ echo 'Round 1: 0.0% → Round 2: 1.6% → Round 3: ...'
 "Everything I showed you was built and run by AI agents. Claude Code drove the CLI, provisioned VMs, ran the pipeline, and debugged 10 failures. Codex reviewed the code and found 5 issues Claude Code fixed."
 
 ```python
-cat << 'EOF'
+cat << "EOF"
 import subprocess, json
 
+
 def npa(*args):
-    r = subprocess.run(["npa"] + list(args) + ["--output-format", "json"],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        ["npa"] + list(args) + ["--output-format", "json"],
+        capture_output=True,
+        text=True,
+    )
     return json.loads(r.stdout) if r.returncode == 0 else None
 
+
 # One call
-npa("workflow", "distill", "--teacher-max-iterations", "3000",
-    "--student-policy", "act", "--action-space", "cartesian")
+npa(
+    "workflow",
+    "distill",
+    "--teacher-max-iterations",
+    "3000",
+    "--student-policy",
+    "act",
+    "--action-space",
+    "cartesian",
+)
 
 # Or step by step with auto-diagnosis
-diag = npa("workbench", "genesis", "diagnose",
-           "--checkpoint", "model.pt", "--action-space", "cartesian")
+diag = npa(
+    "workbench",
+    "genesis",
+    "diagnose",
+    "--checkpoint",
+    "model.pt",
+    "--action-space",
+    "cartesian",
+)
 if diag and diag["success_rate"] == 0:
-    npa("workbench", "genesis", "tune", "--checkpoint", "model.pt",
-        "--max-rounds", "5", "--min-success-rate", "0.20")
+    npa(
+        "workbench",
+        "genesis",
+        "tune",
+        "--checkpoint",
+        "model.pt",
+        "--max-rounds",
+        "5",
+        "--min-success-rate",
+        "0.20",
+    )
 EOF
 ```
 

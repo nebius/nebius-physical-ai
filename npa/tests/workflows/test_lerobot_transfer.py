@@ -16,15 +16,29 @@ import pytest
 from npa.workflows import lerobot_transfer_data as data
 from npa.workflows import lerobot_transfer_training as training
 from npa.workflows.lerobot_transfer import _recipe, build_parser
-from npa.workflows.lerobot_transfer_eval import make_shifted_env, shift_pixels, summarize_rollout
+from npa.workflows.lerobot_transfer_eval import (
+    make_shifted_env,
+    shift_pixels,
+    summarize_rollout,
+)
 from npa.workflows.lerobot_transfer_report import _record_trials, compare_trials
 
 
 @pytest.fixture
 def recipe():
-    return _recipe(build_parser().parse_args([
-        "prepare", "--output-path", "unused", "--validation-episodes", "4", "--test-episodes", "8",
-    ]))
+    return _recipe(
+        build_parser().parse_args(
+            [
+                "prepare",
+                "--output-path",
+                "unused",
+                "--validation-episodes",
+                "4",
+                "--test-episodes",
+                "8",
+            ]
+        )
+    )
 
 
 @pytest.fixture
@@ -34,38 +48,69 @@ def evaluated(recipe):
     for arm in ("baseline", "robust"):
         for split in ("validation", "test"):
             for condition in recipe["conditions"]:
-                for seed in range(recipe[f"{split}_seed"], recipe[f"{split}_seed"]
-                                  + recipe[f"{split}_episodes"]):
+                for seed in range(
+                    recipe[f"{split}_seed"],
+                    recipe[f"{split}_seed"] + recipe[f"{split}_episodes"],
+                ):
                     success = arm == "robust"
-                    trials.append({"arm": arm, "split": split, "condition": condition,
-                                   "seed": seed, "success": success,
-                                   "sum_reward": 1.0, "max_reward": 1.0 if success else 0.2})
-    return {"recipe": recipe, "trials": trials, "checkpoint_hashes": {"baseline": {}, "robust": {}},
-            "recipe_sha256": "a" * 64}
+                    trials.append(
+                        {
+                            "arm": arm,
+                            "split": split,
+                            "condition": condition,
+                            "seed": seed,
+                            "success": success,
+                            "sum_reward": 1.0,
+                            "max_reward": 1.0 if success else 0.2,
+                        }
+                    )
+    return {
+        "recipe": recipe,
+        "trials": trials,
+        "checkpoint_hashes": {"baseline": {}, "robust": {}},
+        "recipe_sha256": "a" * 64,
+    }
 
 
 def _dataset(root):
     target = root / "snapshot"
-    data.write_json(target / "meta/info.json", {
-        "codebase_version": "v3.0", "fps": 10, "total_frames": 30, "total_episodes": 10,
-        "features": {"action": {"shape": [2]}, "observation.state": {"shape": [2]}},
-    })
-    rows = [{"episode_index": episode, "frame_index": frame, "timestamp": frame / 10,
-             "action": [float(episode * 20), float(episode * 20 + frame)],
-             "observation.state": [float(episode), float(frame)]}
-            for episode in range(10) for frame in range(3)]
+    data.write_json(
+        target / "meta/info.json",
+        {
+            "codebase_version": "v3.0",
+            "fps": 10,
+            "total_frames": 30,
+            "total_episodes": 10,
+            "features": {"action": {"shape": [2]}, "observation.state": {"shape": [2]}},
+        },
+    )
+    rows = [
+        {
+            "episode_index": episode,
+            "frame_index": frame,
+            "timestamp": frame / 10,
+            "action": [float(episode * 20), float(episode * 20 + frame)],
+            "observation.state": [float(episode), float(frame)],
+        }
+        for episode in range(10)
+        for frame in range(3)
+    ]
     (target / "data").mkdir()
     pq.write_table(pa.Table.from_pylist(rows), target / "data/frames.parquet")
     return target
 
 
-def test_preparation_fits_statistics_only_on_training_episodes(tmp_path, monkeypatch, recipe):
+def test_preparation_fits_statistics_only_on_training_episodes(
+    tmp_path, monkeypatch, recipe
+):
     monkeypatch.setattr(data, "download_public_lerobot_dataset", _dataset)
     data.prepare_dataset(tmp_path / "prepared", recipe)
     root = tmp_path / "prepared"
     sealed = json.loads((root / "recipe.json").read_text())
     assert set(sealed["train_episodes"]).isdisjoint(sealed["reserved_episodes"])
-    assert sorted(sealed["train_episodes"] + sealed["reserved_episodes"]) == list(range(10))
+    assert sorted(sealed["train_episodes"] + sealed["reserved_episodes"]) == list(
+        range(10)
+    )
     stats = json.loads((root / "dataset/meta/stats.json").read_text())
     expected = np.mean(sealed["train_episodes"]) * 20
     assert stats["action"]["mean"][0] == expected
@@ -75,7 +120,9 @@ def test_preparation_fits_statistics_only_on_training_episodes(tmp_path, monkeyp
     assert sealed["video_backend"] == "torchcodec"
 
 
-@pytest.mark.parametrize("mutation", ["duplicate", "gap", "timestamp", "nan", "workspace"])
+@pytest.mark.parametrize(
+    "mutation", ["duplicate", "gap", "timestamp", "nan", "workspace"]
+)
 def test_dataset_rejects_invalid_action_and_timing_contract(tmp_path, mutation):
     root = _dataset(tmp_path)
     path = root / "data/frames.parquet"
@@ -108,17 +155,29 @@ def test_stage_exchange_rejects_tampered_and_unlisted_files(tmp_path):
         data.materialize(str(destination), tmp_path / "unused")
 
 
-def test_training_uses_sealed_split_and_geometry_preserving_augmentation(tmp_path, recipe, monkeypatch):
+def test_training_uses_sealed_split_and_geometry_preserving_augmentation(
+    tmp_path, recipe, monkeypatch
+):
     monkeypatch.setenv("NPA_LEROBOT_VERSION", "0.5.1")
-    recipe.update(dataset_revision="b" * 40, dataset_repo="lerobot/pusht", train_episodes=[1, 3, 6],
-                  lerobot_version="0.6.0", video_backend="torchcodec")
+    recipe.update(
+        dataset_revision="b" * 40,
+        dataset_repo="lerobot/pusht",
+        train_episodes=[1, 3, 6],
+        lerobot_version="0.6.0",
+        video_backend="torchcodec",
+    )
     data.write_json(tmp_path / "recipe.json", recipe)
     baseline = training.training_command(tmp_path, tmp_path / "train", "baseline")
     robust = training.training_command(tmp_path, tmp_path / "train", "robust")
     assert "--dataset.episodes=[1, 3, 6]" in baseline
     assert "--dataset.video_backend=torchcodec" in baseline
-    transforms = json.loads(next(arg.split("=", 1)[1] for arg in robust
-                                 if arg.startswith("--dataset.image_transforms.tfs=")))
+    transforms = json.loads(
+        next(
+            arg.split("=", 1)[1]
+            for arg in robust
+            if arg.startswith("--dataset.image_transforms.tfs=")
+        )
+    )
     assert transforms["affine"]["weight"] == 0
     assert transforms["brightness"]["kwargs"]["brightness"] == [0.4, 1.4]
     assert set(robust) - set(baseline) == {"--dataset.image_transforms.enable=true"}
@@ -128,8 +187,13 @@ def test_training_uses_sealed_split_and_geometry_preserving_augmentation(tmp_pat
 
 
 def test_training_failure_cannot_publish_a_checkpoint(tmp_path, monkeypatch, recipe):
-    recipe.update(dataset_revision="b" * 40, dataset_repo="lerobot/pusht", train_episodes=[0],
-                  lerobot_version="0.6.0", video_backend="torchcodec")
+    recipe.update(
+        dataset_revision="b" * 40,
+        dataset_repo="lerobot/pusht",
+        train_episodes=[0],
+        lerobot_version="0.6.0",
+        video_backend="torchcodec",
+    )
     data.write_json(tmp_path / "recipe.json", recipe)
     monkeypatch.setattr(training, "runtime_versions", lambda: {"lerobot": "0.6.0"})
     reached = []
@@ -145,7 +209,11 @@ def test_training_failure_cannot_publish_a_checkpoint(tmp_path, monkeypatch, rec
 
 
 def test_native_training_failure_remains_visible_in_worker_logs(tmp_path, capsys):
-    command = [sys.executable, "-c", "print('native failure detail'); raise SystemExit(3)"]
+    command = [
+        sys.executable,
+        "-c",
+        "print('native failure detail'); raise SystemExit(3)",
+    ]
     with pytest.raises(subprocess.CalledProcessError) as failure:
         training._run_training(command, tmp_path / "train.log")
     assert failure.value.returncode == 3
@@ -170,8 +238,13 @@ def test_test_results_never_select_checkpoint_or_drive_demonstration_queue(evalu
     assert report["selected_arm"] == "baseline"
     assert report["improvement_demonstrated"] is False
     assert len(report["next_demonstrations"]) == 16
-    assert {request["source_split"] for request in report["next_demonstrations"]} == {"validation"}
-    assert max(request["reset_seed"] for request in report["next_demonstrations"]) < evaluated["recipe"]["test_seed"]
+    assert {request["source_split"] for request in report["next_demonstrations"]} == {
+        "validation"
+    }
+    assert (
+        max(request["reset_seed"] for request in report["next_demonstrations"])
+        < evaluated["recipe"]["test_seed"]
+    )
 
 
 def test_clean_regression_blocks_an_average_shift_improvement(evaluated):
@@ -183,7 +256,9 @@ def test_clean_regression_blocks_an_average_shift_improvement(evaluated):
     assert report["improvement_demonstrated"] is False
 
 
-@pytest.mark.parametrize("mutation", ["missing", "duplicate", "unexpected", "nan", "overlap"])
+@pytest.mark.parametrize(
+    "mutation", ["missing", "duplicate", "unexpected", "nan", "overlap"]
+)
 def test_incomplete_or_unpaired_evaluation_fails_closed(evaluated, mutation):
     if mutation == "missing":
         evaluated["trials"].pop()
@@ -210,9 +285,11 @@ def test_photometric_shifts_preserve_shape_and_object_coordinates():
 
 
 def test_post_reset_success_and_reward_never_count_toward_the_original_episode():
-    rollout = {"reward": np.array([[0.1, 0.2, 1.0], [0.1, 0.2, 1.0]]),
-               "success": np.array([[False, False, True], [False, False, True]]),
-               "done": np.array([[False, True, True], [False, False, True]])}
+    rollout = {
+        "reward": np.array([[0.1, 0.2, 1.0], [0.1, 0.2, 1.0]]),
+        "success": np.array([[False, False, True], [False, False, True]]),
+        "done": np.array([[False, True, True], [False, False, True]]),
+    }
     trials = summarize_rollout(rollout, [101, 102])
     assert trials[0]["success"] is False
     assert trials[0]["max_reward"] == 0.2
@@ -246,10 +323,16 @@ def test_rerun_records_actual_trial_entities_and_seed_timeline(tmp_path, evaluat
     output = tmp_path / "transfer.rrd"
     _record_trials(evaluated, output, "fixture-transfer")
     binary = Path(__import__("sys").executable).parent / "rerun"
-    result = subprocess.run([str(binary), "rrd", "verify", str(output)], capture_output=True, text=True)
+    result = subprocess.run(
+        [str(binary), "rrd", "verify", str(output)], capture_output=True, text=True
+    )
     assert result.returncode == 0, result.stderr
-    decoded = subprocess.run([str(binary), "rrd", "print", "-vv", str(output)],
-                             capture_output=True, text=True, check=True).stdout
+    decoded = subprocess.run(
+        [str(binary), "rrd", "print", "-vv", str(output)],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
     assert "reset_seed" in decoded
     assert "test/clean/robust/success" in decoded
     assert "npa_lerobot_transfer" in decoded

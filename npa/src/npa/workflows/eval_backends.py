@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
-from npa.workbench.lerobot.policy_container import PolicyContainerError, run_lerobot_eval
+from npa.workbench.lerobot.policy_container import (
+    PolicyContainerError,
+    run_lerobot_eval,
+)
 
 
 DEFAULT_EVAL_BACKEND = "state-success"
@@ -68,7 +71,9 @@ class EvalBackend(Protocol):
 _EVAL_BACKENDS: dict[str, EvalBackend] = {}
 
 
-def register_eval_backend(backend: EvalBackend, *, aliases: tuple[str, ...] = ()) -> None:
+def register_eval_backend(
+    backend: EvalBackend, *, aliases: tuple[str, ...] = ()
+) -> None:
     """Register an eval backend by primary name and optional aliases."""
 
     names = (backend.name, *aliases)
@@ -87,7 +92,9 @@ def get_eval_backend(name: str) -> EvalBackend:
         return _EVAL_BACKENDS[normalized]
     except KeyError as exc:
         allowed = ", ".join(registered_eval_backends())
-        raise EvalBackendError(f"unsupported eval backend '{name}'. Supported: {allowed}") from exc
+        raise EvalBackendError(
+            f"unsupported eval backend '{name}'. Supported: {allowed}"
+        ) from exc
 
 
 def registered_eval_backends() -> tuple[str, ...]:
@@ -133,9 +140,13 @@ class StateSuccessEvalBackend:
                 options=lerobot_eval,
             )
 
-        score = _score_from_keys(context.state, ("pc_success", "state_success", "success"))
+        score = _score_from_keys(
+            context.state, ("pc_success", "state_success", "success")
+        )
         if score is None:
-            score = _score_from_keys(context.metrics, ("pc_success", "state_success", "success"))
+            score = _score_from_keys(
+                context.metrics, ("pc_success", "state_success", "success")
+            )
         passed = None if score is None else score >= threshold
         if score is None:
             metric = EvalMetric(
@@ -161,7 +172,10 @@ class StateSuccessEvalBackend:
                 name=self.name,
                 score=score,
                 passed=passed,
-                metadata={"checkpoint_uri": checkpoint_uri, "sim_backend": context.sim_backend},
+                metadata={
+                    "checkpoint_uri": checkpoint_uri,
+                    "sim_backend": context.sim_backend,
+                },
             ),
             EvalBackendStatus(
                 name="state_success_eval",
@@ -190,7 +204,9 @@ class VlmFramesEvalBackend:
             evidence = "vlm-frames backend selected; render/VLM dispatch is a typed extension point."
         else:
             tier = "PARTIAL"
-            evidence = "Used a mocked or precomputed VLM frame score from rollout context."
+            evidence = (
+                "Used a mocked or precomputed VLM frame score from rollout context."
+            )
         return (
             EvalMetric(
                 name=self.name,
@@ -236,7 +252,9 @@ class HeldoutMetricsEvalBackend:
                 passed=score >= threshold,
                 metadata={"checkpoint_uri": checkpoint_uri, "action_mse": action_mse},
             ),
-            EvalBackendStatus(name="heldout_metrics_eval", tier=tier, evidence=evidence),
+            EvalBackendStatus(
+                name="heldout_metrics_eval", tier=tier, evidence=evidence
+            ),
         )
 
 
@@ -272,7 +290,9 @@ def _evaluate_lerobot_pc_success(
 
     score = _coerce_score(result.score)
     if score is None:
-        raise EvalBackendError(f"lerobot-eval returned an invalid score: {result.score}")
+        raise EvalBackendError(
+            f"lerobot-eval returned an invalid score: {result.score}"
+        )
     passed = score >= threshold
     metadata = {
         "adapter": "lerobot-eval",
@@ -298,7 +318,11 @@ def _evaluate_lerobot_pc_success(
                 f"Ran lerobot-eval in env={env_type!r} and adapted "
                 f"{result.metric_name}={score:.6f} to state-success."
             ),
-            artifacts={"eval_info": result.eval_info_path, "eval_log": result.log_path, "output_dir": result.output_dir},
+            artifacts={
+                "eval_info": result.eval_info_path,
+                "eval_log": result.log_path,
+                "output_dir": result.output_dir,
+            },
         ),
     )
 
@@ -353,6 +377,9 @@ def _coerce_nonnegative(value: Any) -> float | None:
     return number
 
 
-register_eval_backend(StateSuccessEvalBackend(), aliases=("sim-env", "genesis", "pc-success", "pusht", "lerobot-eval"))
+register_eval_backend(
+    StateSuccessEvalBackend(),
+    aliases=("sim-env", "genesis", "pc-success", "pusht", "lerobot-eval"),
+)
 register_eval_backend(VlmFramesEvalBackend())
 register_eval_backend(HeldoutMetricsEvalBackend())

@@ -189,6 +189,12 @@ Rollout **frames** (not JSON): `camera-NNN.ppm` (or paths listed in manifest).
 When `BYO_*_COMMAND` is set, commands read/write paths from env vars and must emit
 schemas above on stdout files:
 
+Commands are split into argv with POSIX quoting and executed directly with
+no shell: pipes, redirects, `&&` chains, and `$(...)` are passed as literal
+argument text, not interpreted. A leading `VAR=value` prefix (as in
+`VAR=x command args`) is honored by injecting the variables into the
+component's environment.
+
 | Hook | Reads | Writes |
 | --- | --- | --- |
 | `BYO_VLM_COMMAND` | Rollout dir + manifest | `npa.sim2real.vlm_eval.v2` |

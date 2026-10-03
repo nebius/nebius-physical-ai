@@ -13,7 +13,11 @@ from urllib.parse import urlparse
 import pytest
 
 from npa.clients.project_credentials import s3_client_for_project
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, _NER_PATTERNS
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    ServerlessClient,
+    _NER_PATTERNS,
+)
 
 from ._serverless_fallback import FallbackChain
 
@@ -45,7 +49,10 @@ def jobs_to_cleanup() -> Iterator[list[tuple[str, str]]]:
         except EndpointNotFoundError:
             continue
         except Exception as exc:
-            print(f"!!! ORPHANED JOB cancel failed project={project_id} ref={ref}: {exc}", flush=True)
+            print(
+                f"!!! ORPHANED JOB cancel failed project={project_id} ref={ref}: {exc}",
+                flush=True,
+            )
             continue
         result = subprocess.run(
             ["nebius", "ai", "job", "delete", "--id", info.id or ref],
@@ -67,7 +74,9 @@ def _job_name(label: str) -> str:
     return f"{JOB_PREFIX}-{label}-{uuid.uuid4().hex[:8]}"
 
 
-def _run_npa(args: list[str], *, timeout: int = 520) -> subprocess.CompletedProcess[str]:
+def _run_npa(
+    args: list[str], *, timeout: int = 520
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     repo_src = Path(__file__).resolve().parents[2] / "src"
     env["PYTHONPATH"] = str(repo_src) + os.pathsep + env.get("PYTHONPATH", "")
@@ -94,7 +103,16 @@ def _subnet_id(project_id: str) -> str:
     if project_id in _SUBNET_CACHE:
         return _SUBNET_CACHE[project_id]
     result = subprocess.run(
-        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        [
+            "nebius",
+            "vpc",
+            "subnet",
+            "list",
+            "--parent-id",
+            project_id,
+            "--format",
+            "json",
+        ],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -102,7 +120,9 @@ def _subnet_id(project_id: str) -> str:
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"Unable to list subnets for {project_id}: {result.stderr.strip()}")
+        raise RuntimeError(
+            f"Unable to list subnets for {project_id}: {result.stderr.strip()}"
+        )
     data = json.loads(result.stdout or "{}")
     items = data.get("items") if isinstance(data, dict) else data
     ready = []
@@ -110,7 +130,13 @@ def _subnet_id(project_id: str) -> str:
         state = str(((item.get("status") or {}).get("state") or "")).upper()
         if state in {"READY", ""}:
             ready.append(item)
-    ranked = sorted(ready, key=lambda item: ("cosmos" not in str((item.get("metadata") or {}).get("name", "")).lower(), "default" not in str((item.get("metadata") or {}).get("name", "")).lower()))
+    ranked = sorted(
+        ready,
+        key=lambda item: (
+            "cosmos" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+            "default" not in str((item.get("metadata") or {}).get("name", "")).lower(),
+        ),
+    )
     if ranked:
         subnet = str(((ranked[0].get("metadata") or {}).get("id") or ""))
         _SUBNET_CACHE[project_id] = subnet
@@ -225,7 +251,10 @@ def test_e2e_cli_train_happy_path(jobs_to_cleanup: list[tuple[str, str]]) -> Non
     assert result.returncode == 0, result.stderr
     assert payload["status"] == "succeeded"
     _wait_for_artifact(project_id, str(payload["output_path"]))
-    assert ServerlessClient().get_job(str(payload["job_id"]), project_id).status == "succeeded"
+    assert (
+        ServerlessClient().get_job(str(payload["job_id"]), project_id).status
+        == "succeeded"
+    )
 
 
 def test_e2e_cli_train_ner_handling(jobs_to_cleanup: list[tuple[str, str]]) -> None:
@@ -250,7 +279,11 @@ def test_e2e_cli_train_ner_handling(jobs_to_cleanup: list[tuple[str, str]]) -> N
     )
     assert result.returncode != 0
     assert _is_ner(result), result.stderr
-    assert not [job for job in ServerlessClient().list_jobs(project_id, JOB_PREFIX) if job.name == name]
+    assert not [
+        job
+        for job in ServerlessClient().list_jobs(project_id, JOB_PREFIX)
+        if job.name == name
+    ]
 
 
 def test_e2e_cli_train_cancel(jobs_to_cleanup: list[tuple[str, str]]) -> None:
@@ -261,10 +294,21 @@ def test_e2e_cli_train_cancel(jobs_to_cleanup: list[tuple[str, str]]) -> None:
     assert result.returncode == 0, result.stderr
     job_id = str(payload["job_id"])
     _wait_for_state(project_id, job_id, {"running"})
-    cancel = _run_npa([
-        "workbench", "cosmos", "train", "--runtime", "serverless", "--project-id",
-        project_id, "cancel", job_id, "--output-format", "json",
-    ])
+    cancel = _run_npa(
+        [
+            "workbench",
+            "cosmos",
+            "train",
+            "--runtime",
+            "serverless",
+            "--project-id",
+            project_id,
+            "cancel",
+            job_id,
+            "--output-format",
+            "json",
+        ]
+    )
     assert cancel.returncode == 0, cancel.stderr
     assert json.loads(cancel.stdout)["status"] in {"cancelling", "cancelled"}
     assert _wait_for_state(project_id, job_id, {"cancelled"}) == "cancelled"
@@ -281,10 +325,21 @@ def test_e2e_cli_train_status_lifecycle(jobs_to_cleanup: list[tuple[str, str]]) 
     observed: list[str] = []
     deadline = time.monotonic() + MAX_WAIT
     while time.monotonic() <= deadline:
-        status = _run_npa([
-            "workbench", "cosmos", "train", "--runtime", "serverless", "--project-id",
-            project_id, "status", str(payload["job_id"]), "--output-format", "json",
-        ])
+        status = _run_npa(
+            [
+                "workbench",
+                "cosmos",
+                "train",
+                "--runtime",
+                "serverless",
+                "--project-id",
+                project_id,
+                "status",
+                str(payload["job_id"]),
+                "--output-format",
+                "json",
+            ]
+        )
         assert status.returncode == 0, status.stderr
         state = str(json.loads(status.stdout)["status"])
         if not observed or observed[-1] != state:
@@ -305,12 +360,22 @@ def test_e2e_cli_train_hf_propagation(jobs_to_cleanup: list[tuple[str, str]]) ->
     assert "401" not in logs and "403" not in logs
 
 
-def test_e2e_cli_train_idempotent_submit(jobs_to_cleanup: list[tuple[str, str]]) -> None:
+def test_e2e_cli_train_idempotent_submit(
+    jobs_to_cleanup: list[tuple[str, str]],
+) -> None:
     name = _job_name("idempotent")
-    project_id, first, first_result = _submit_train(name, jobs_to_cleanup, "--submit-only")
+    project_id, first, first_result = _submit_train(
+        name, jobs_to_cleanup, "--submit-only"
+    )
     assert first_result.returncode == 0, first_result.stderr
-    project_id, second, second_result = _submit_train(name, jobs_to_cleanup, "--submit-only")
+    project_id, second, second_result = _submit_train(
+        name, jobs_to_cleanup, "--submit-only"
+    )
     assert second_result.returncode == 0, second_result.stderr
     assert second["job_id"] == first["job_id"]
-    jobs = [job for job in ServerlessClient().list_jobs(project_id, JOB_PREFIX) if job.name == name]
+    jobs = [
+        job
+        for job in ServerlessClient().list_jobs(project_id, JOB_PREFIX)
+        if job.name == name
+    ]
     assert len(jobs) == 1

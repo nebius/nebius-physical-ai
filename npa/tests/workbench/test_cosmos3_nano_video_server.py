@@ -207,7 +207,9 @@ def test_checkpoint_mismatch_fails_before_launch(runtime):
 
 
 @pytest.mark.parametrize("operation", ["start", "check_health"])
-def test_loopback_readiness_ignores_ambient_proxy_configuration(runtime, monkeypatch, operation):
+def test_loopback_readiness_ignores_ambient_proxy_configuration(
+    runtime, monkeypatch, operation
+):
     # Exercise the real HTTPX constructor: a proxy must never be instantiated
     # for the replica's own loopback-only model server.
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"):
@@ -216,14 +218,20 @@ def test_loopback_readiness_ignores_ambient_proxy_configuration(runtime, monkeyp
         monkeypatch.setenv(name, "")
     for name in ("http_proxy", "https_proxy", "all_proxy"):
         monkeypatch.delenv(name, raising=False)
-    monkeypatch.setattr(httpx.AsyncClient, "_init_proxy_transport",
-                        lambda *args, **kwargs: pytest.fail("Loopback readiness used an ambient proxy"))
+    monkeypatch.setattr(
+        httpx.AsyncClient,
+        "_init_proxy_transport",
+        lambda *args, **kwargs: pytest.fail("Loopback readiness used an ambient proxy"),
+    )
     requests = []
 
     async def models(client, url, **kwargs):
         requests.append(url)
-        return httpx.Response(200, json={"data": [{"id": "synthetic-model"}]},
-                              request=httpx.Request("GET", url))
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "synthetic-model"}]},
+            request=httpx.Request("GET", url),
+        )
 
     monkeypatch.setattr(httpx.AsyncClient, "get", models)
     process = SimpleNamespace(poll=lambda: None, terminate=lambda: None)
@@ -236,12 +244,18 @@ def test_loopback_readiness_ignores_ambient_proxy_configuration(runtime, monkeyp
         runtime.close()
 
 
-def test_subprocess_spawn_failure_closes_log_and_preserves_original_error(runtime, monkeypatch):
+def test_subprocess_spawn_failure_closes_log_and_preserves_original_error(
+    runtime, monkeypatch
+):
     streams = []
     failure = OSError("synthetic spawn failure")
     secret_names = (
-        "HF_TOKEN", "HUGGING_FACE_HUB_TOKEN", "NPA_COSMOS3_VIDEO_TOKEN",
-        "RAY_AUTH_TOKEN", "RAY_AUTH_TOKEN_PATH", "RAY_AUTH_MODE",
+        "HF_TOKEN",
+        "HUGGING_FACE_HUB_TOKEN",
+        "NPA_COSMOS3_VIDEO_TOKEN",
+        "RAY_AUTH_TOKEN",
+        "RAY_AUTH_TOKEN_PATH",
+        "RAY_AUTH_MODE",
     )
     for name in secret_names:
         monkeypatch.setenv(name, "synthetic-private-value")
@@ -260,9 +274,15 @@ def test_subprocess_spawn_failure_closes_log_and_preserves_original_error(runtim
 
 
 @pytest.mark.parametrize("cancelled", [False, True])
-def test_interrupted_initialization_cleans_up_even_if_process_termination_fails(runtime, monkeypatch, cancelled, caplog):
+def test_interrupted_initialization_cleans_up_even_if_process_termination_fails(
+    runtime, monkeypatch, cancelled, caplog
+):
     streams, terminated = [], []
-    failure = asyncio.CancelledError() if cancelled else RuntimeError("synthetic initialization failure")
+    failure = (
+        asyncio.CancelledError()
+        if cancelled
+        else RuntimeError("synthetic initialization failure")
+    )
 
     def terminate():
         terminated.append(True)
@@ -292,13 +312,17 @@ def test_interrupted_initialization_cleans_up_even_if_process_termination_fails(
     assert "synthetic private cleanup diagnostic" not in caplog.text
 
 
-def test_log_cleanup_failure_does_not_raise_or_prevent_subprocess_cleanup(runtime, caplog):
+def test_log_cleanup_failure_does_not_raise_or_prevent_subprocess_cleanup(
+    runtime, caplog
+):
     terminated = []
 
     def close_log():
         raise OSError("synthetic private log diagnostic")
 
-    runtime.process = SimpleNamespace(poll=lambda: None, terminate=lambda: terminated.append(True))
+    runtime.process = SimpleNamespace(
+        poll=lambda: None, terminate=lambda: terminated.append(True)
+    )
     runtime._log_stream = SimpleNamespace(close=close_log)
     runtime.close()
     assert terminated == [True]
@@ -354,23 +378,46 @@ def test_router_considers_every_replica_in_one_rank(monkeypatch):
 
 
 def augmentation_payload(request_id="augment-1", **changes):
-    return {"mode": "augmentation", "request_id": request_id, "prompt": "Dim warehouse", "seed": 1,
-        "source_sha256": hashlib.sha256(b"synthetic source").hexdigest(), "source_bytes": 16, **changes}
+    return {
+        "mode": "augmentation",
+        "request_id": request_id,
+        "prompt": "Dim warehouse",
+        "seed": 1,
+        "source_sha256": hashlib.sha256(b"synthetic source").hexdigest(),
+        "source_bytes": 16,
+        **changes,
+    }
 
 
 def multipart_request(body, data=b"synthetic source", token="test-only-token"):
-    outgoing = httpx.Request("POST", "http://test.invalid/run", headers={"Authorization": f"Bearer {token}"},
-        files={"request": (None, json.dumps(body)), "input_reference": ("ignored-name.mp4", data, "video/mp4")})
+    outgoing = httpx.Request(
+        "POST",
+        "http://test.invalid/run",
+        headers={"Authorization": f"Bearer {token}"},
+        files={
+            "request": (None, json.dumps(body)),
+            "input_reference": ("ignored-name.mp4", data, "video/mp4"),
+        },
+    )
     content = outgoing.read()
 
     async def receive():
         return {"type": "http.request", "body": content, "more_body": False}
 
-    return Request({"type": "http", "method": "POST", "path": "/run",
-        "headers": [(key.lower(), value) for key, value in outgoing.headers.raw]}, receive=receive)
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/run",
+            "headers": [(key.lower(), value) for key, value in outgoing.headers.raw],
+        },
+        receive=receive,
+    )
 
 
-def test_multipart_forwards_complete_source_and_only_validated_parameters(runtime, monkeypatch):
+def test_multipart_forwards_complete_source_and_only_validated_parameters(
+    runtime, monkeypatch
+):
     calls = []
 
     def generate(**kwargs):
@@ -389,20 +436,40 @@ def test_multipart_forwards_complete_source_and_only_validated_parameters(runtim
     assert caught.value.status_code == 409 and len(calls) == 1
 
 
-@pytest.mark.parametrize("change,token,code", [({"strength": 0.3}, "test-only-token", 400),
-    ({"control_weight": 2}, "test-only-token", 400), ({}, "wrong", 401),
-    ({"source_bytes": 10}, "test-only-token", 422)])
-def test_multipart_invalid_auth_controls_or_bytes_never_reach_generation(runtime, monkeypatch, change, token, code):
-    monkeypatch.setattr(augment, "run_augmentation", lambda **kwargs: pytest.fail("Invalid source admitted"))
+@pytest.mark.parametrize(
+    "change,token,code",
+    [
+        ({"strength": 0.3}, "test-only-token", 400),
+        ({"control_weight": 2}, "test-only-token", 400),
+        ({}, "wrong", 401),
+        ({"source_bytes": 10}, "test-only-token", 422),
+    ],
+)
+def test_multipart_invalid_auth_controls_or_bytes_never_reach_generation(
+    runtime, monkeypatch, change, token, code
+):
+    monkeypatch.setattr(
+        augment,
+        "run_augmentation",
+        lambda **kwargs: pytest.fail("Invalid source admitted"),
+    )
     with pytest.raises(HTTPException) as caught:
-        asyncio.run(runtime.run(multipart_request(augmentation_payload(**change), token=token)))
+        asyncio.run(
+            runtime.run(multipart_request(augmentation_payload(**change), token=token))
+        )
     assert caught.value.status_code == code
     assert not (runtime.output_root / "augment-1").exists()
 
 
 @pytest.mark.parametrize("augmentation", [False, True])
-def test_repeated_cancellation_keeps_gpu_lock_and_source_until_accepted_work_finishes(runtime, monkeypatch, augmentation):
-    entered, release, second_entered = threading.Event(), threading.Event(), threading.Event()
+def test_repeated_cancellation_keeps_gpu_lock_and_source_until_accepted_work_finishes(
+    runtime, monkeypatch, augmentation
+):
+    entered, release, second_entered = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
     inputs = []
 
     def generate(**kwargs):
@@ -418,10 +485,18 @@ def test_repeated_cancellation_keeps_gpu_lock_and_source_until_accepted_work_fin
             second_entered.set()
         return {"status": "succeeded"}
 
-    monkeypatch.setattr(augment if augmentation else nano_video, "run_augmentation" if augmentation else "run_rollout", generate)
+    monkeypatch.setattr(
+        augment if augmentation else nano_video,
+        "run_augmentation" if augmentation else "run_rollout",
+        generate,
+    )
 
     def incoming(name):
-        return multipart_request(augmentation_payload(name)) if augmentation else request({"request_id": name, "prompt": "scene", "seed": 1})
+        return (
+            multipart_request(augmentation_payload(name))
+            if augmentation
+            else request({"request_id": name, "prompt": "scene", "seed": 1})
+        )
 
     async def exercise():
         first = asyncio.create_task(runtime.run(incoming("first")))
@@ -448,14 +523,26 @@ def test_repeated_cancellation_keeps_gpu_lock_and_source_until_accepted_work_fin
     asyncio.run(exercise())
 
 
-def test_result_recovers_terminal_state_on_any_replica_without_generation(runtime, monkeypatch):
-    monkeypatch.setattr(augment, "run_augmentation", lambda **kwargs: pytest.fail("GET admitted generation"))
+def test_result_recovers_terminal_state_on_any_replica_without_generation(
+    runtime, monkeypatch
+):
+    monkeypatch.setattr(
+        augment,
+        "run_augmentation",
+        lambda **kwargs: pytest.fail("GET admitted generation"),
+    )
     directory = runtime.output_root / "augment-1"
     directory.mkdir()
     assert runtime.result(request(), "augment-1").status_code == 202
     payload = augment.validate_request(augmentation_payload())
-    report = {"schema_version": augment.SCHEMA, "request_id": "augment-1", "request": payload,
-        "request_sha256": augment.request_sha256(payload), "status": "failed", "error_type": "SyntheticFailure"}
+    report = {
+        "schema_version": augment.SCHEMA,
+        "request_id": "augment-1",
+        "request": payload,
+        "request_sha256": augment.request_sha256(payload),
+        "status": "failed",
+        "error_type": "SyntheticFailure",
+    }
     (directory / "report.json").write_text(json.dumps(report))
     result = runtime.result(request(), "augment-1")
     assert result.status_code == 200 and json.loads(result.body)["status"] == "failed"

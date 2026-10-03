@@ -90,13 +90,23 @@ def test_persisted_parquet_lance_and_retrieval_are_reopenable(persisted, rows):
     table = pyarrow.parquet.read_table(directory / "embeddings.parquet")
     assert table["record_id"].to_pylist() == list(range(6))
     assert table.schema.field("vector").type == pyarrow.list_(pyarrow.float32(), 512)
-    parquet_hash = hashlib.sha256((directory / "embeddings.parquet").read_bytes()).hexdigest()
+    parquet_hash = hashlib.sha256(
+        (directory / "embeddings.parquet").read_bytes()
+    ).hexdigest()
     assert report["parquet_sha256"] == parquet_hash
     table = lancedb.connect(str(directory / "lance")).open_table("embeddings")
     assert table.count_rows() == 6
-    assert table.search(rows[3]["vector"]).metric("cosine").limit(1).to_list()[0]["record_id"] == 3
+    assert (
+        table.search(rows[3]["vector"])
+        .metric("cosine")
+        .limit(1)
+        .to_list()[0]["record_id"]
+        == 3
+    )
     assert report["retrieval"] == json.loads((directory / "retrieval.json").read_text())
-    assert all(result["query_id"] == result["top_ids"][0] for result in report["retrieval"])
+    assert all(
+        result["query_id"] == result["top_ids"][0] for result in report["retrieval"]
+    )
 
 
 def test_persisted_previews_decode_and_match_embedded_inputs(persisted, rows):
@@ -151,7 +161,9 @@ def test_download_manifests_cover_every_persisted_artifact(example, persisted):
         if path.is_file() and path.name != "SHA256SUMS":
             actual.add(str(path.relative_to(directory)))
     assert set(listed) == actual
-    expected_manifest = {name: digest for name, digest in listed.items() if name != "sha256.json"}
+    expected_manifest = {
+        name: digest for name, digest in listed.items() if name != "sha256.json"
+    }
     assert json.loads((directory / "sha256.json").read_text()) == expected_manifest
 
 
@@ -220,7 +232,10 @@ def test_previews_must_match_images_sent_to_inference(example, rows, tmp_path):
     assert not (tmp_path / "preview.png").exists()
 
 
-@pytest.mark.parametrize("address", [None, "", "auto", "local", "127.0.0.1:6380", "http://127.0.0.1:8265", ":6381"])
+@pytest.mark.parametrize(
+    "address",
+    [None, "", "auto", "local", "127.0.0.1:6380", "http://127.0.0.1:8265", ":6381"],
+)
 def test_driver_refuses_missing_or_management_ray(example, monkeypatch, address):
     """Prevent implicit cluster discovery or connection to management Ray.
 
@@ -256,7 +271,9 @@ def test_driver_accepts_explicit_jobs_application_address(example, monkeypatch):
     assert example.application_gcs_address() == "127.0.0.1:6381"
 
 
-def test_source_receipt_hashes_actual_delivered_files_and_refuses_missing_udf(example, tmp_path, monkeypatch):
+def test_source_receipt_hashes_actual_delivered_files_and_refuses_missing_udf(
+    example, tmp_path, monkeypatch
+):
     """Require real delivered source files and notice edits without changing UDF bytes.
 
     Args:
@@ -276,7 +293,10 @@ def test_source_receipt_hashes_actual_delivered_files_and_refuses_missing_udf(ex
     canonical_source = tmp_path / example.SOURCE_FILES[-1]
     canonical_source.write_text("canonical source bytes")
     before = example.source_hashes()
-    assert before[canonical_source.name] == hashlib.sha256(canonical_source.read_bytes()).hexdigest()
+    assert (
+        before[canonical_source.name]
+        == hashlib.sha256(canonical_source.read_bytes()).hexdigest()
+    )
     (tmp_path / "worker.py").write_text("changed source")
     after = example.source_hashes()
     assert before["worker.py"] != after["worker.py"]
@@ -327,19 +347,29 @@ def test_actor_hashes_the_actually_imported_udf(example, tmp_path, monkeypatch):
     stale_source.parent.mkdir()
     stale_source.write_text("stale source")
     _install_cuda_stub(monkeypatch, available=True)
-    monkeypatch.setitem(sys.modules, "npa_lancedb_bdd100k_udfs", SimpleNamespace(__file__=str(stale_source)))
+    monkeypatch.setitem(
+        sys.modules,
+        "npa_lancedb_bdd100k_udfs",
+        SimpleNamespace(__file__=str(stale_source)),
+    )
     expected = {
         "embed.py": example.sha256(Path(example.__file__)),
         "worker.py": example.worker.source_hash(),
-        "npa_lancedb_bdd100k_udfs.py": hashlib.sha256(b"selected canonical source").hexdigest(),
+        "npa_lancedb_bdd100k_udfs.py": hashlib.sha256(
+            b"selected canonical source"
+        ).hexdigest(),
     }
     monkeypatch.setattr(example, "source_hashes", lambda: expected)
     with pytest.raises(ValueError, match="Imported application/UDF modules differ"):
         example.ClipModel("/unused-model")
 
 
-@pytest.mark.parametrize("content", [b"", b"source-bytes" * 100000], ids=["empty", "multi-chunk"])
-def test_file_hashing_supports_python310_without_file_digest(example, tmp_path, monkeypatch, content):
+@pytest.mark.parametrize(
+    "content", [b"", b"source-bytes" * 100000], ids=["empty", "multi-chunk"]
+)
+def test_file_hashing_supports_python310_without_file_digest(
+    example, tmp_path, monkeypatch, content
+):
     """Hash empty and multi-chunk files without Python 3.11's convenience API.
 
     Args:
@@ -374,8 +404,10 @@ class _InferenceMethod:
     def remote(self, shard):
         self.runtime.pending += 1
         self.runtime.peak_pending = max(self.runtime.peak_pending, self.runtime.pending)
-        rows = [{"record_id": row["record_id"], "image_bytes": b"processed"}
-                for row in shard["rows"]]
+        rows = [
+            {"record_id": row["record_id"], "image_bytes": b"processed"}
+            for row in shard["rows"]
+        ]
         return _PendingBatch(rows)
 
 
@@ -421,7 +453,9 @@ def test_batch_submission_applies_backpressure_before_queue_grows(example, monke
     runtime = _BackpressureRuntime()
     monkeypatch.setitem(sys.modules, "ray", runtime)
     options = SimpleNamespace(records=10, batch_size=1, actors=2)
-    models = [SimpleNamespace(infer=_InferenceMethod(runtime)) for _ in range(options.actors)]
+    models = [
+        SimpleNamespace(infer=_InferenceMethod(runtime)) for _ in range(options.actors)
+    ]
 
     results, submitted_at = example._run_inference_batches(options, models)
 

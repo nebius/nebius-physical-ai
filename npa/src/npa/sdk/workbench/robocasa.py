@@ -7,7 +7,11 @@ from typing import Any
 
 import httpx
 
-from npa.cli.path_contract import PathContractError, validate_read_path, validate_write_path
+from npa.cli.path_contract import (
+    PathContractError,
+    validate_read_path,
+    validate_write_path,
+)
 from npa.workbench.robocasa.schemas import (
     DEFAULT_ENV_ID,
     DEFAULT_ITERATIONS,
@@ -236,11 +240,15 @@ def _request_json(
             f"RoboCasa service request failed ({exc.response.status_code}): {detail}"
         ) from exc
     except httpx.HTTPError as exc:
-        raise RoboCasaServiceError(f"Cannot reach RoboCasa service {resolved}: {exc}") from exc
+        raise RoboCasaServiceError(
+            f"Cannot reach RoboCasa service {resolved}: {exc}"
+        ) from exc
     try:
         data = response.json()
     except ValueError as exc:
-        raise RoboCasaServiceError("RoboCasa service returned non-JSON response") from exc
+        raise RoboCasaServiceError(
+            "RoboCasa service returned non-JSON response"
+        ) from exc
     if not isinstance(data, dict):
         raise RoboCasaServiceError("RoboCasa service returned an unexpected response")
     return data

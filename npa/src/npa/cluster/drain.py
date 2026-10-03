@@ -138,17 +138,20 @@ def classify_drain_preview_failure(message: str) -> DrainPreviewIssue:
             "authorization",
             "Kubernetes RBAC denied listing nodes, pods, or policy/v1 PodDisruptionBudgets",
         )
-    kubeconfig_marker = any(
-        marker in lowered
-        for marker in (
-            "error loading config",
-            "no configuration has been provided",
-            "current-context is not set",
-            "context was not found",
-            "context does not exist",
-            "kubeconfig",
+    kubeconfig_marker = (
+        any(
+            marker in lowered
+            for marker in (
+                "error loading config",
+                "no configuration has been provided",
+                "current-context is not set",
+                "context was not found",
+                "context does not exist",
+                "kubeconfig",
+            )
         )
-    ) or re.search(r"context .* (?:was )?not found", lowered) is not None
+        or re.search(r"context .* (?:was )?not found", lowered) is not None
+    )
     if kubeconfig_marker and any(
         marker in lowered for marker in ("not found", "config", "context")
     ):
@@ -546,9 +549,13 @@ def _noninteractive_kubeconfig_env(
     """Yield an env whose kubeconfig exec plugins cannot authenticate interactively."""
 
     env = os.environ.copy()
-    configured = str(kubeconfig or "").strip() or str(env.get("KUBECONFIG") or "").strip()
+    configured = (
+        str(kubeconfig or "").strip() or str(env.get("KUBECONFIG") or "").strip()
+    )
     if configured:
-        paths = [Path(value).expanduser() for value in configured.split(os.pathsep) if value]
+        paths = [
+            Path(value).expanduser() for value in configured.split(os.pathsep) if value
+        ]
     else:
         default = Path.home() / ".kube" / "config"
         paths = [default] if default.exists() else []
@@ -573,7 +580,8 @@ def _noninteractive_kubeconfig_env(
                 yield (
                     env,
                     DrainPreviewIssue(
-                        "kubeconfig", "the selected kubeconfig is not a Kubernetes config object"
+                        "kubeconfig",
+                        "the selected kubeconfig is not a Kubernetes config object",
                     ),
                 )
                 return

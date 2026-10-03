@@ -24,7 +24,7 @@ pip install genesis-world
 
 # Install RL library (rsl-rl, same as Isaac Lab)
 echo "[4/7] Installing rsl-rl and tensorboard..."
-pip install rsl-rl-lib==2.2.4 tensorboard
+pip install rsl-rl-lib==5.5.1 tensorboard
 
 # Install LeRobot (needed by eval_student to load student policy checkpoints)
 echo "[5/7] Installing LeRobot for student policy loading..."

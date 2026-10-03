@@ -54,7 +54,9 @@ def test_the_directory_documents_the_boundary() -> None:
 def test_example_is_a_single_task(name: str) -> None:
     docs = _documents(EXAMPLES_DIR / name)
 
-    assert len(docs) == 1, f"{name} has {len(docs)} documents; burst submits exactly one task"
+    assert len(docs) == 1, (
+        f"{name} has {len(docs)} documents; burst submits exactly one task"
+    )
     task = docs[0]
     assert "run" in task, f"{name} must be an executable task"
     # A SkyPilot pipeline header (`execution:`) is the marker of a multi-stage document.
@@ -70,7 +72,9 @@ def test_example_keeps_its_substitution_placeholders(name: str) -> None:
     task = _documents(EXAMPLES_DIR / name)[0]
     unresolved = _unresolved_task_placeholders(task)
 
-    assert unresolved, f"{name} has no ${{VAR}} placeholders left; did a real value get baked in?"
+    assert unresolved, (
+        f"{name} has no ${{VAR}} placeholders left; did a real value get baked in?"
+    )
 
 
 @pytest.mark.parametrize("name", sorted(PINNED_EXAMPLES))
@@ -107,4 +111,6 @@ def test_examples_are_not_in_the_retiring_workflow_catalog() -> None:
     catalog = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 
     for name in PINNED_EXAMPLES:
-        assert not (catalog / name).exists(), f"{name} came back to the retiring catalog"
+        assert not (catalog / name).exists(), (
+            f"{name} came back to the retiring catalog"
+        )

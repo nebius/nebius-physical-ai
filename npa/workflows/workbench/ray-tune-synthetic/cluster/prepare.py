@@ -37,11 +37,23 @@ def main() -> None:
     root = Path.home() / ".npa-ray-tune"
     _create_runtime(root)
     environment = root / "env"
-    subprocess.run([sys.executable, "-m", "venv", "--system-site-packages", str(environment)], check=True)
+    subprocess.run(
+        [sys.executable, "-m", "venv", "--system-site-packages", str(environment)],
+        check=True,
+    )
     interpreter = str(environment / "bin/python")
     requirements = str(Path(__file__).with_name("requirements.txt"))
-    subprocess.run([interpreter, "-m", "pip", "install", "-r", requirements], check=True)
-    output = subprocess.check_output([interpreter, "-c", "import json, ray; print(json.dumps({'ray': ray.__version__}))"], text=True)
+    subprocess.run(
+        [interpreter, "-m", "pip", "install", "-r", requirements], check=True
+    )
+    output = subprocess.check_output(
+        [
+            interpreter,
+            "-c",
+            "import json, ray; print(json.dumps({'ray': ray.__version__}))",
+        ],
+        text=True,
+    )
     receipt = json.loads(output)
     if receipt != {"ray": "2.58.0"}:
         raise RuntimeError("prepared environment did not retain Ray 2.58.0")

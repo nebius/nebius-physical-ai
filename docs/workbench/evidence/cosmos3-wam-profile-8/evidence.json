@@ -1,0 +1,34 @@
+{
+  "schema": "npa.cosmos3.wam-profile-timeline.v1",
+  "gpus": 8,
+  "bin_seconds": 0.25,
+  "ranks": [
+    {
+      "rank": 0,
+      "trace_sha256": "c637b386775aea9125c4a8d28e1000428aaa1ba1ad15d0268631fdf0020defa5",
+      "trace_bytes": 71058433,
+      "profile_window_seconds": 29.35153751171875,
+      "steps": [
+        {
+          "name": "ProfilerStep#98",
+          "start_seconds": 0.0,
+          "stop_seconds": 14.677068155273437
+        },
+        {
+          "name": "ProfilerStep#99",
+          "start_seconds": 14.67710770703125,
+          "stop_seconds": 29.35153751171875
+        }
+      ],
+      "timeline": {
+        "file": "rank-0-timeline.csv",
+        "rows": 708,
+        "sha256": "c839d9355b1f36420a4eff51498a4464c80e6100392d7941e4bab21d72fac26c"
+      }
+    }
+  ],
+  "profile_summary_sha256": "c58bb7e4f26e13c6d01aebc20c3c14a34351c08916502fa833434c4ec2a0f368",
+  "profile_report_source_sha256": "85bdc3f52b6de27b25d6f2dc076dbf907858d941f8981b026a66792014043a8e",
+  "exporter_sha256": "12afce29cc17531b6519308ed24af1b7eea6b9fc3ddc813eec209ade06ea02ba",
+  "interpretation": "Per-category interval unions in each bin; categories overlap and must not be stacked. All-kernel activity excludes memcpy, CPU work and unobserved activity. Categories prefer linked CPU operators; NCCL and unlinked kernels use names. Profiles are excluded from throughput comparisons."
+}

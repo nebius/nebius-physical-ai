@@ -26,4 +26,6 @@ def get_backend(name: str) -> ModuleType:
                 "Rerun backend is not implemented yet. Use renderer 'matplotlib'."
             )
         return rerun
-    raise BackendUnavailable(f"Unsupported backend '{name}'. Expected matplotlib or rerun.")
+    raise BackendUnavailable(
+        f"Unsupported backend '{name}'. Expected matplotlib or rerun."
+    )

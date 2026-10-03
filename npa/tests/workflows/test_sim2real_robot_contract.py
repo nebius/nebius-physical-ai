@@ -158,11 +158,7 @@ def test_stage2_materializes_content_addressed_urdf_contract(tmp_path: Path) -> 
 
 
 def test_committed_panda_example_is_a_complete_parseable_robot_spec() -> None:
-    example = (
-        ROOT
-        / "docs" / "workbench" / "examples"
-        / "robot-spec-panda-urdf.json"
-    )
+    example = ROOT / "docs" / "workbench" / "examples" / "robot-spec-panda-urdf.json"
     document = json.loads(example.read_text())
     spec = robot_assets.parse_robot_spec(document)
     assert spec.robot_source == robot_assets.ROBOT_SOURCE_BYO_URDF
@@ -177,9 +173,7 @@ def test_committed_panda_example_is_a_complete_parseable_robot_spec() -> None:
 
 def test_canonical_yaml_exposes_robot_spec_uri_in_stage2_argv() -> None:
     workflow = yaml.safe_load(
-        (
-            ROOT / "workflows" / "main" / "sim2real.yaml"
-        ).read_text()
+        (ROOT / "workflows" / "main" / "sim2real.yaml").read_text()
     )
     assert workflow["config"]["robot_spec_uri"] == ""
     argv = workflow["states"]["stage-02-assets"]["run"]["argv"]
@@ -550,7 +544,9 @@ def test_resolved_usd_fetch_rejects_unsafe_asset_paths(
     monkeypatch.setattr(isaac_robot_asset, "_spec", lambda: spec)
     monkeypatch.setattr(isaac_robot_asset, "_download", fake_download)
     monkeypatch.setenv("NPA_ROBOT_WORK_DIR", str(tmp_path / "runtime"))
-    with pytest.raises(isaac_robot_asset.IsaacRobotAssetError, match="unsafe asset path"):
+    with pytest.raises(
+        isaac_robot_asset.IsaacRobotAssetError, match="unsafe asset path"
+    ):
         isaac_robot_asset.fetch()
     assert not (tmp_path / "runtime" / "escape.usd").exists()
 
@@ -647,9 +643,7 @@ def test_isaac_prepare_converts_urdf_and_publishes_digest_manifest(
         "robot.usd",
     ]
     for entry in manifest["asset_files"]:
-        assert (
-            spec["resolved_usd_uri"] + ".assets/" + entry["path"]
-        ) in uploads
+        assert (spec["resolved_usd_uri"] + ".assets/" + entry["path"]) in uploads
     assert (
         manifest["usd_sha256"]
         == hashlib.sha256(uploads[spec["resolved_usd_uri"]]).hexdigest()

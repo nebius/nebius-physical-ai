@@ -45,9 +45,7 @@ def common_environment(args: Any, *, split_uri: str) -> dict[str, Any]:
             "NPA_SIM2REAL_SOURCE_SHA": source_sha(),
             "NPA_SIM2REAL_ISAAC_TASK": args.task_id,
             "NPA_BYO_ISAAC_TASK": args.task_id,
-            "NPA_SIM2REAL_TASK_CONTRACT_DIGEST": task_contract[
-                "task_contract_digest"
-            ],
+            "NPA_SIM2REAL_TASK_CONTRACT_DIGEST": task_contract["task_contract_digest"],
             "NPA_SIM2REAL_TRAIN_ENVS_URI": split_uri,
             "NPA_SIM2REAL_CAMERA_VIEWS": "primary,side,overhead",
             "NPA_SIM2REAL_CAPTURE_FPS": args.capture_fps,

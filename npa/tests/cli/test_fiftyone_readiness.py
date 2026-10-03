@@ -14,7 +14,9 @@ from npa.clients.ssh import SSHError
 
 @pytest.mark.parametrize("kind", ["service", "native_import", "container_import"])
 @pytest.mark.parametrize("http_status", [200, 503])
-def test_readiness_returns_failure_unless_app_responds(kind, http_status, tmp_path, monkeypatch):
+def test_readiness_returns_failure_unless_app_responds(
+    kind, http_status, tmp_path, monkeypatch
+):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(http_status)
@@ -30,11 +32,15 @@ def test_readiness_returns_failure_unless_app_responds(kind, http_status, tmp_pa
     monkeypatch.setattr(fiftyone, "FIFTYONE_READY_ATTEMPTS", 1)
     if kind == "service":
         script = fiftyone._service_setup_script(port)
-        script = script[script.index("for _ in $(seq 1"):]
+        script = script[script.index("for _ in $(seq 1") :]
     else:
-        builder = fiftyone._build_load_dataset_command if kind == "native_import" else fiftyone._build_container_load_dataset_command
+        builder = (
+            fiftyone._build_load_dataset_command
+            if kind == "native_import"
+            else fiftyone._build_container_load_dataset_command
+        )
         script = shlex.split(builder("review", "s3://example-bucket/images"))[-1]
-        script = script[script.index('app_port="$(grep'):]
+        script = script[script.index('app_port="$(grep') :]
     env_file = tmp_path / "service.env"
     env_file.write_text(f"FIFTYONE_DEFAULT_APP_PORT={port}\n")
     script = script.replace("/etc/npa-fiftyone/env", str(env_file))
@@ -44,7 +50,7 @@ def test_readiness_returns_failure_unless_app_responds(kind, http_status, tmp_pa
         "sudo": '#!/bin/sh\nexec "$@"\n',
         "systemctl": '#!/bin/sh\nprintf "old journal: NPA_FIFTYONE_APP_READY\\n"\nexit 0\n',
         "docker": '#!/bin/sh\nprintf "old container: NPA_FIFTYONE_APP_READY\\n"\nexit 0\n',
-        "sleep": '#!/bin/sh\nexit 0\n',
+        "sleep": "#!/bin/sh\nexit 0\n",
     }.items():
         path = tools / name
         path.write_text(contents)
@@ -53,7 +59,9 @@ def test_readiness_returns_failure_unless_app_responds(kind, http_status, tmp_pa
         result = subprocess.run(
             ["bash", "-c", "set -euo pipefail\n" + script],
             env={**os.environ, "PATH": f"{tools}:{os.environ['PATH']}"},
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
         )
         assert result.returncode == (0 if http_status == 200 else 1)
         final_line = result.stdout.rstrip().splitlines()[-1]
@@ -68,10 +76,13 @@ def test_readiness_returns_failure_unless_app_responds(kind, http_status, tmp_pa
         thread.join()
 
 
-@pytest.mark.parametrize("output", [
-    "old journal: NPA_FIFTYONE_APP_READY\n",
-    "NPA_FIFTYONE_APP_READY\nsubsequent failure\n",
-])
+@pytest.mark.parametrize(
+    "output",
+    [
+        "old journal: NPA_FIFTYONE_APP_READY\n",
+        "NPA_FIFTYONE_APP_READY\nsubsequent failure\n",
+    ],
+)
 def test_historical_or_embedded_marker_cannot_mask_command_failure(output, mocker):
     ssh = mocker.MagicMock()
     ssh.run.return_value = (1, output, "readiness timeout")

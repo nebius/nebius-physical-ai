@@ -27,20 +27,41 @@ def _authorize_private_evidence(tmp_path):
 
 
 def _finding(rule="customer-denylist"):
-    return {"rule_id": rule, "start_byte": 1, "end_byte": 2,
-            "start_line": 1, "end_line": 1, "views": ["record"]}
+    return {
+        "rule_id": rule,
+        "start_byte": 1,
+        "end_byte": 2,
+        "start_line": 1,
+        "end_line": 1,
+        "views": ["record"],
+    }
 
 
 def _record(findings=None, kind="layer_regular_content", size=7):
-    return {"type": "record", "record_ordinal": 1, "kind": kind, "bytes": size,
-            "sha256": DIGEST, "findings": [_finding()] if findings is None else findings,
-            "scope": "layer", "layer_ordinal": 0, "entry_ordinal": 1, "tar_offset": 512}
+    return {
+        "type": "record",
+        "record_ordinal": 1,
+        "kind": kind,
+        "bytes": size,
+        "sha256": DIGEST,
+        "findings": [_finding()] if findings is None else findings,
+        "scope": "layer",
+        "layer_ordinal": 0,
+        "entry_ordinal": 1,
+        "tar_offset": 512,
+    }
 
 
 def _confidentiality():
-    return {"type": "confidentiality_record", "record_ordinal": 1,
-            "policy_sha256": "c" * 64, "sha256": DIGEST, "bytes": 7,
-            "line_count": 1, "composed_findings": 1}
+    return {
+        "type": "confidentiality_record",
+        "record_ordinal": 1,
+        "policy_sha256": "c" * 64,
+        "sha256": DIGEST,
+        "bytes": 7,
+        "line_count": 1,
+        "composed_findings": 1,
+    }
 
 
 def _evidence(tmp_path, *, report_change=None, rows=None):
@@ -49,28 +70,52 @@ def _evidence(tmp_path, *, report_change=None, rows=None):
     rows = [_record()] if rows is None else rows
     ledger = b"".join(json.dumps(row, sort_keys=True).encode() + b"\n" for row in rows)
     records = [row for row in rows if row.get("type") == "record"]
-    findings = sum(len(row.get("findings", [])) + (row.get("type") == "finding") for row in rows)
-    scanned = sum(row.get("bytes", 0) for row in records if type(row.get("bytes")) is int)
+    findings = sum(
+        len(row.get("findings", [])) + (row.get("type") == "finding") for row in rows
+    )
+    scanned = sum(
+        row.get("bytes", 0) for row in records if type(row.get("bytes")) is int
+    )
     regular = [row for row in records if row.get("kind") == "layer_regular_content"]
-    native = sum(set(finding) == {"rule_id", "start_line", "end_line"}
-                 for row in records for finding in row.get("findings", []))
-    report = {"schema_version": "npa.image-byte-scan.v1", "complete": True,
-              "authorization_sha256": DIGEST, "archive_sha256": DIGEST,
-              "image_config_digest": "sha256:" + DIGEST,
-              "image_manifest_digest": "sha256:" + DIGEST,
-              "expected_image_id": "sha256:" + DIGEST,
-              "private_literals_configured": False, "private_literal_count": 0,
-              "literal_matching_policy": "exact-substring-v1", "layers": [],
-              "oci_graph": {}, "outer": {}, "confidentiality_policy": {},
-              "literal_engine": {}, "input_snapshot_receipts": [],
-              "valid": findings == 0, "helper_joined": True, "records": len(records),
-              "scanned_bytes": scanned, "verified_zero_bytes": 0,
-              "regular_files": len(regular),
-              "regular_bytes": sum(row.get("bytes", 0) for row in regular
-                                     if type(row.get("bytes")) is int),
-              "findings": findings,
-              "helper_summary": {"type": "summary", "files": len(records),
-                                  "bytes": scanned, "findings": native}}
+    native = sum(
+        set(finding) == {"rule_id", "start_line", "end_line"}
+        for row in records
+        for finding in row.get("findings", [])
+    )
+    report = {
+        "schema_version": "npa.image-byte-scan.v1",
+        "complete": True,
+        "authorization_sha256": DIGEST,
+        "archive_sha256": DIGEST,
+        "image_config_digest": "sha256:" + DIGEST,
+        "image_manifest_digest": "sha256:" + DIGEST,
+        "expected_image_id": "sha256:" + DIGEST,
+        "private_literals_configured": False,
+        "private_literal_count": 0,
+        "literal_matching_policy": "exact-substring-v1",
+        "layers": [],
+        "oci_graph": {},
+        "outer": {},
+        "confidentiality_policy": {},
+        "literal_engine": {},
+        "input_snapshot_receipts": [],
+        "valid": findings == 0,
+        "helper_joined": True,
+        "records": len(records),
+        "scanned_bytes": scanned,
+        "verified_zero_bytes": 0,
+        "regular_files": len(regular),
+        "regular_bytes": sum(
+            row.get("bytes", 0) for row in regular if type(row.get("bytes")) is int
+        ),
+        "findings": findings,
+        "helper_summary": {
+            "type": "summary",
+            "files": len(records),
+            "bytes": scanned,
+            "findings": native,
+        },
+    }
     if report_change:
         report_change(report)
     report_path = directory / "report.json"
@@ -99,13 +144,30 @@ def test_fixed_counts_and_second_order_content_fingerprint(tmp_path, capsys):
 
 def test_all_fixed_finding_classes_are_counted(tmp_path, capsys):
     native = {"rule_id": "generic-api-key", "start_line": 0, "end_line": 1}
-    literal = {"type": "finding", "rule_id": "private_literal", "record_ordinal": 1,
-               "literal_index": 0, "literal_sha256": "d" * 64,
-               "byte_start": 0, "byte_end": 1, "scope": "layer", "layer_ordinal": 0,
-               "entry_ordinal": 1, "tar_offset": 512}
-    structural = {"type": "finding", "rule_id": "pkcs12-file", "scope": "layer",
-                  "layer_ordinal": 0, "entry_ordinal": 1, "tar_offset": 512}
-    _evidence(tmp_path, rows=[literal, structural, _record(findings=[_finding(), native])])
+    literal = {
+        "type": "finding",
+        "rule_id": "private_literal",
+        "record_ordinal": 1,
+        "literal_index": 0,
+        "literal_sha256": "d" * 64,
+        "byte_start": 0,
+        "byte_end": 1,
+        "scope": "layer",
+        "layer_ordinal": 0,
+        "entry_ordinal": 1,
+        "tar_offset": 512,
+    }
+    structural = {
+        "type": "finding",
+        "rule_id": "pkcs12-file",
+        "scope": "layer",
+        "layer_ordinal": 0,
+        "entry_ordinal": 1,
+        "tar_offset": 512,
+    }
+    _evidence(
+        tmp_path, rows=[literal, structural, _record(findings=[_finding(), native])]
+    )
     byte_findings.emit_raw(tmp_path)
     output = capsys.readouterr().err
     assert "rule=private_literal findings=1" in output
@@ -115,14 +177,18 @@ def test_all_fixed_finding_classes_are_counted(tmp_path, capsys):
     assert "bytes=7 findings=3" in output
 
 
-@pytest.mark.parametrize("change", [
-    lambda report: report.update(records=True),
-    lambda report: report.update(findings=1 << 80),
-    lambda report: report.update(helper_summary={"type": "summary", "files": 1,
-                                                  "bytes": 7, "findings": True}),
-    lambda report: report.update(schema_version=ATTACKER_HEX),
-    lambda report: report.update(unexpected_metadata=ATTACKER_HEX),
-])
+@pytest.mark.parametrize(
+    "change",
+    [
+        lambda report: report.update(records=True),
+        lambda report: report.update(findings=1 << 80),
+        lambda report: report.update(
+            helper_summary={"type": "summary", "files": 1, "bytes": 7, "findings": True}
+        ),
+        lambda report: report.update(schema_version=ATTACKER_HEX),
+        lambda report: report.update(unexpected_metadata=ATTACKER_HEX),
+    ],
+)
 def test_report_types_and_huge_counts_make_detail_unavailable(tmp_path, capsys, change):
     _evidence(tmp_path, report_change=change)
     byte_findings.emit_raw(tmp_path)
@@ -131,10 +197,13 @@ def test_report_types_and_huge_counts_make_detail_unavailable(tmp_path, capsys, 
     assert ATTACKER_HEX not in output
 
 
-@pytest.mark.parametrize("mutation", [
-    lambda row: row.update(kind=ATTACKER_HEX),
-    lambda row: row["findings"][0].update(rule_id=ATTACKER_HEX),
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda row: row.update(kind=ATTACKER_HEX),
+        lambda row: row["findings"][0].update(rule_id=ATTACKER_HEX),
+    ],
+)
 def test_unknown_classes_use_only_unclassified_indicator(tmp_path, capsys, mutation):
     row = _record()
     mutation(row)
@@ -146,16 +215,29 @@ def test_unknown_classes_use_only_unclassified_indicator(tmp_path, capsys, mutat
     assert ATTACKER_HEX not in output
 
 
-@pytest.mark.parametrize("rows", [
-    [{"type": ATTACKER_HEX}],
-    [{**_record(), "metadata": ATTACKER_HEX}],
-    [{**_record(), "bytes": True}],
-    [{**_record(), "bytes": 1 << 80}],
-    [{"type": "confidentiality_record", "record_ordinal": 1,
-      "policy_sha256": DIGEST, "sha256": DIGEST, "bytes": 7,
-      "line_count": 1, "composed_findings": 1}],
-])
-def test_malformed_partial_and_fake_metadata_are_not_interpreted(tmp_path, capsys, rows):
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [{"type": ATTACKER_HEX}],
+        [{**_record(), "metadata": ATTACKER_HEX}],
+        [{**_record(), "bytes": True}],
+        [{**_record(), "bytes": 1 << 80}],
+        [
+            {
+                "type": "confidentiality_record",
+                "record_ordinal": 1,
+                "policy_sha256": DIGEST,
+                "sha256": DIGEST,
+                "bytes": 7,
+                "line_count": 1,
+                "composed_findings": 1,
+            }
+        ],
+    ],
+)
+def test_malformed_partial_and_fake_metadata_are_not_interpreted(
+    tmp_path, capsys, rows
+):
     _evidence(tmp_path, rows=rows)
     byte_findings.emit_raw(tmp_path)
     output = capsys.readouterr().err
@@ -163,11 +245,17 @@ def test_malformed_partial_and_fake_metadata_are_not_interpreted(tmp_path, capsy
     assert ATTACKER_HEX not in output
 
 
-def test_malformed_and_unreadable_artifacts_keep_only_safe_hashes(tmp_path, monkeypatch, capsys):
+def test_malformed_and_unreadable_artifacts_keep_only_safe_hashes(
+    tmp_path, monkeypatch, capsys
+):
     _evidence(tmp_path)
     (tmp_path / "bytes/records.jsonl").write_bytes(b"{partial")
     original = byte_findings._read
-    monkeypatch.setattr(byte_findings, "_read", lambda path: None if path.name == "report.json" else original(path))
+    monkeypatch.setattr(
+        byte_findings,
+        "_read",
+        lambda path: None if path.name == "report.json" else original(path),
+    )
     byte_findings.emit_raw(tmp_path)
     output = capsys.readouterr().err
     assert "artifact=raw-report available=false" in output
@@ -223,7 +311,9 @@ def test_receipt_binding_rejects_equal_values_with_different_json_types(
 
 
 @pytest.mark.parametrize("operation", ["raw", "attribution"])
-def test_diagnostic_allocation_failure_does_not_escape(tmp_path, monkeypatch, capsys, operation):
+def test_diagnostic_allocation_failure_does_not_escape(
+    tmp_path, monkeypatch, capsys, operation
+):
     _evidence(tmp_path)
     path = tmp_path / "attribution.json"
     path.write_text("{}")
@@ -244,10 +334,19 @@ def test_diagnostic_allocation_failure_does_not_escape(tmp_path, monkeypatch, ca
 
 @pytest.mark.parametrize("damage", [None, "ordinal", "context", "range", "orphan"])
 def test_literal_findings_bind_to_the_exact_following_record(tmp_path, capsys, damage):
-    literal = {"type": "finding", "rule_id": "private_literal", "record_ordinal": 1,
-               "literal_index": 0, "literal_sha256": "d" * 64,
-               "byte_start": 0, "byte_end": 1, "scope": "layer", "layer_ordinal": 0,
-               "entry_ordinal": 1, "tar_offset": 512}
+    literal = {
+        "type": "finding",
+        "rule_id": "private_literal",
+        "record_ordinal": 1,
+        "literal_index": 0,
+        "literal_sha256": "d" * 64,
+        "byte_start": 0,
+        "byte_end": 1,
+        "scope": "layer",
+        "layer_ordinal": 0,
+        "entry_ordinal": 1,
+        "tar_offset": 512,
+    }
     if damage == "ordinal":
         literal["record_ordinal"] = 2
     elif damage == "context":
@@ -296,9 +395,7 @@ def test_symlinked_private_evidence_is_unavailable_without_target_disclosure(
     assert "private target material" not in output
 
 
-def test_descriptor_mutation_makes_evidence_unavailable(
-    tmp_path, monkeypatch, capsys
-):
+def test_descriptor_mutation_makes_evidence_unavailable(tmp_path, monkeypatch, capsys):
     _evidence(tmp_path)
     report = tmp_path / "bytes/report.json"
     report_inode = report.stat().st_ino

@@ -115,7 +115,9 @@ def test_deploy_manifest_rolls_when_service_env_changes(
     second = manifest()
 
     first_annotation = first["items"][1]["spec"]["template"]["metadata"]["annotations"]
-    second_annotation = second["items"][1]["spec"]["template"]["metadata"]["annotations"]
+    second_annotation = second["items"][1]["spec"]["template"]["metadata"][
+        "annotations"
+    ]
     assert first_annotation != second_annotation
     assert len(first_annotation["npa.nebius.ai/env-checksum"]) == 64
 
@@ -149,7 +151,9 @@ def test_run_invalid_capability_local() -> None:
     assert result.exit_code != 0
 
 
-@pytest.mark.parametrize("value", ["/tmp/output", "file:///tmp/output", "https://example.invalid/out"])
+@pytest.mark.parametrize(
+    "value", ["/tmp/output", "file:///tmp/output", "https://example.invalid/out"]
+)
 def test_run_rejects_non_s3_output_at_cli_boundary(value: str) -> None:
     result = runner.invoke(
         robocasa_app,

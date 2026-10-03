@@ -1,0 +1,80 @@
+{
+  "accepted_count": 5,
+  "application_response_cache": false,
+  "artifacts": {
+    "dataset.jsonl": {
+      "sha256": "f98b03d15dbf40f1752c6f87df792594ea5dafb29281eb79dd72bbcc9f491844"
+    },
+    "provenance.jsonl": {
+      "sha256": "cc2f77ce05c6b978e7a5a9601cfeb6e40b32b5b22f69af50a6e62c2ddf698d44"
+    },
+    "rejected.jsonl": {
+      "sha256": "fbc8e61443c2a048ebae6d15667284aeb39d008f136906dc1349614bda6ea64d"
+    }
+  },
+  "context_sha256": "4cc5b4160849e85bc3546b4186568425ace208cdd4f4167a5aa57e9a1ab0671e",
+  "error_count": 0,
+  "generated_at": "2026-09-20T15:11:03.479999+00:00",
+  "generation_model_counts": {
+    "MiniMaxAI/MiniMax-M3": 3,
+    "nvidia/Nemotron-3_5-Lightning": 3
+  },
+  "input_sha256": "18608dd9ee7353412c6497e7504a14f7a6b2a4b8cebf281fc327dd611b75e31f",
+  "jev_usage": [],
+  "model_cards": {
+    "MiniMaxAI/MiniMax-M3": "https://huggingface.co/MiniMaxAI/MiniMax-M3",
+    "nvidia/Nemotron-3_5-Lightning": "https://huggingface.co/nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16"
+  },
+  "prompt_revision": "npa-token-factory-sdg-v3",
+  "rejected_count": 1,
+  "router": "token_factory",
+  "router_location": "workbench",
+  "routing_status_counts": {
+    "accepted": 6
+  },
+  "schema": "npa.token_factory.sdg.v1",
+  "seed_count": 6,
+  "status": "completed",
+  "usage_by_stage": [
+    {
+      "cache_counters_reported": 3,
+      "cached_tokens": 3456,
+      "completion_tokens": 579,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "prompt_tokens": 4089,
+      "request_count": 3,
+      "stage": "generate",
+      "total_tokens": 4668
+    },
+    {
+      "cache_counters_reported": 3,
+      "cached_tokens": 0,
+      "completion_tokens": 144,
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "prompt_tokens": 3712,
+      "request_count": 3,
+      "stage": "generate",
+      "total_tokens": 3856
+    },
+    {
+      "cache_counters_reported": 6,
+      "cached_tokens": 7680,
+      "completion_tokens": 1175,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "prompt_tokens": 9022,
+      "request_count": 6,
+      "stage": "review",
+      "total_tokens": 10197
+    },
+    {
+      "cache_counters_reported": 6,
+      "cached_tokens": 0,
+      "completion_tokens": 479,
+      "model": "nvidia/Nemotron-3_5-Lightning",
+      "prompt_tokens": 1069,
+      "request_count": 6,
+      "stage": "route",
+      "total_tokens": 1548
+    }
+  ]
+}

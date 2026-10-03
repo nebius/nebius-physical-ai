@@ -156,7 +156,9 @@ def summarize_run_artifacts(
             continue
         snippet = raw.strip()
         if len(snippet.encode("utf-8")) > max_file_bytes:
-            snippet = snippet.encode("utf-8")[:max_file_bytes].decode("utf-8", errors="ignore")
+            snippet = snippet.encode("utf-8")[:max_file_bytes].decode(
+                "utf-8", errors="ignore"
+            )
             snippet = snippet.rstrip() + "\n... [truncated]"
         if not snippet:
             continue
@@ -301,9 +303,13 @@ def build_sweep_design_prompt(
     ]
     for variant in variants:
         extras = ", ".join(
-            f"{key}={value}" for key, value in variant.items() if key not in {"index", "id"}
+            f"{key}={value}"
+            for key, value in variant.items()
+            if key not in {"index", "id"}
         )
-        lines.append(f"  - {variant['id']}: {extras}" if extras else f"  - {variant['id']}")
+        lines.append(
+            f"  - {variant['id']}: {extras}" if extras else f"  - {variant['id']}"
+        )
     lines.append("")
     lines.append("Write the per-variant hypotheses described in your instructions.")
     return "\n".join(lines) + "\n"

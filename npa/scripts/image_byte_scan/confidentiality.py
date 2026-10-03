@@ -28,7 +28,9 @@ class ConfidentialityError(ValueError):
 
 def _digest(value: object) -> str:
     return hashlib.sha256(
-        json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        json.dumps(
+            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
+        ).encode()
     ).hexdigest()
 
 
@@ -180,7 +182,9 @@ class ConfidentialityPolicy:
             ),
         }
 
-    def scan_record(self, raw: bytes, *, literal_scan: LiteralScan | None = None) -> RecordScan:
+    def scan_record(
+        self, raw: bytes, *, literal_scan: LiteralScan | None = None
+    ) -> RecordScan:
         """Scan a complete regular-file/metadata record with no size or finding cap.
 
         No record bytes, regex text, exception text, or external filenames appear
@@ -237,12 +241,16 @@ class ConfidentialityPolicy:
                 start_byte=start,
                 end_byte=end,
                 start_line=bisect_right(byte_line_starts, start),
-                end_line=bisect_right(byte_line_starts, end - 1 if end > start else end),
+                end_line=bisect_right(
+                    byte_line_starts, end - 1 if end > start else end
+                ),
                 views=tuple(sorted(views)),
             )
             for (rule, start, end), views in sorted(byte_spans.items())
         )
-        return RecordScan(self.policy_sha256, record_sha, len(raw), line_count, findings)
+        return RecordScan(
+            self.policy_sha256, record_sha, len(raw), line_count, findings
+        )
 
     def _literal_matches(
         self, scan: LiteralScan | None, record_sha: str, byte_count: int
@@ -302,7 +310,9 @@ def compile_policy(
         ("infra-denylist", infra_pattern, re.IGNORECASE),
     ):
         if pattern is None or not pattern.strip():
-            configurations.append({"rule_id": rule_id, "pattern": pattern, "configured": False})
+            configurations.append(
+                {"rule_id": rule_id, "pattern": pattern, "configured": False}
+            )
             continue
         try:
             expression = re.compile(pattern, flags=flags)
@@ -311,22 +321,32 @@ def compile_policy(
         if expression is None:
             raise ConfidentialityError(f"{rule_id}_invalid")
         rules.append(_Rule(rule_id, expression))
-        configurations.append({
-            "rule_id": rule_id,
-            "pattern": pattern,
-            "flags": int(flags),
-            "effective_flags": expression.flags,
-            "configured": True,
-        })
-    configuration_sha = _digest({
-        "regex": configurations,
-        "exact_literals": literal_policy.receipt() if literal_policy is not None else None,
-    })
-    policy_sha = _digest({
-        "configuration_sha256": configuration_sha,
-        "semantics": _SEMANTICS,
-        "engine": "python.re",
-        "implementation": sys.implementation.name,
-        "version": list(sys.version_info[:3]),
-    })
-    return ConfidentialityPolicy(policy_sha, configuration_sha, tuple(rules), literal_policy)
+        configurations.append(
+            {
+                "rule_id": rule_id,
+                "pattern": pattern,
+                "flags": int(flags),
+                "effective_flags": expression.flags,
+                "configured": True,
+            }
+        )
+    configuration_sha = _digest(
+        {
+            "regex": configurations,
+            "exact_literals": literal_policy.receipt()
+            if literal_policy is not None
+            else None,
+        }
+    )
+    policy_sha = _digest(
+        {
+            "configuration_sha256": configuration_sha,
+            "semantics": _SEMANTICS,
+            "engine": "python.re",
+            "implementation": sys.implementation.name,
+            "version": list(sys.version_info[:3]),
+        }
+    )
+    return ConfidentialityPolicy(
+        policy_sha, configuration_sha, tuple(rules), literal_policy
+    )

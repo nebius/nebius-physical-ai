@@ -22,13 +22,11 @@ from npa.workbench.cosmos.cosmos3 import (
 ROOT = Path(__file__).resolve().parents[3]
 SKYPILOT_ROOT = ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot"
 SPEC_YAML = (
-    Path(__file__).resolve().parents[3]
-    / "workflows/testing/cosmos3-text-to-image.yaml"
+    Path(__file__).resolve().parents[3] / "workflows/testing/cosmos3-text-to-image.yaml"
 )
 # The raw template is retired; its spec is the surface (EVIDENCE.md §R43).
 SPEC_YAML = (
-    Path(__file__).resolve().parents[3]
-    / "workflows/testing/cosmos3-text-to-image.yaml"
+    Path(__file__).resolve().parents[3] / "workflows/testing/cosmos3-text-to-image.yaml"
 )
 SKILL_ROOT = ROOT / "skills"
 SKILL_INDEX = SKILL_ROOT / "index.yaml"
@@ -85,7 +83,9 @@ def test_cosmos3_blank_cache_dir_means_use_the_configured_cache() -> None:
     assert cfg.resolved_cache_dir == _Path("/cache/cosmos3")
 
 
-def test_cosmos3_cache_dir_defaults_to_writable_tmp_without_configured_storage() -> None:
+def test_cosmos3_cache_dir_defaults_to_writable_tmp_without_configured_storage() -> (
+    None
+):
     from pathlib import Path as _Path
 
     cfg = Cosmos3AccessConfig.from_env(environ={})

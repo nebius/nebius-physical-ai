@@ -116,7 +116,9 @@ def _load_step_markers(namespace: str, workflow_name: str) -> dict[str, dict[str
     for key in _list_s3_keys(s3, prefix):
         if not key.endswith("/output.tgz"):
             continue
-        marker = _read_marker_from_tgz(s3.get_object(Bucket=BUCKET, Key=key)["Body"].read())
+        marker = _read_marker_from_tgz(
+            s3.get_object(Bucket=BUCKET, Key=key)["Body"].read()
+        )
         markers[marker["step_name"]] = marker
 
     return markers

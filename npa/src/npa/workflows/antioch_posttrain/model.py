@@ -55,7 +55,9 @@ def normalize(images, *, augment: bool = False):
     """
     values = images.float() / 255
     if augment:
-        gain = torch.empty((len(values), 1, 1, 1), device=values.device).uniform_(0.85, 1.15)
+        gain = torch.empty((len(values), 1, 1, 1), device=values.device).uniform_(
+            0.85, 1.15
+        )
         values = (values * gain).clamp(0, 1)
     mean = values.new_tensor([0.485, 0.456, 0.406])[None, :, None, None]
     std = values.new_tensor([0.229, 0.224, 0.225])[None, :, None, None]
@@ -88,6 +90,12 @@ def score(model, loader, device) -> dict:
         matrix[actual, prediction] += 1
     denominator = matrix.sum(0) + matrix.sum(1)
     f1 = 2 * matrix.diag().float() / denominator.clamp_min(1)
-    return {"samples": len(truth), "accuracy": float(matrix.diag().sum() / len(truth)),
-            "macro_f1": float(f1.mean()), "per_class_f1": dict(zip(CLASSES, f1.tolist(), strict=True)),
-            "confusion_matrix": matrix.tolist(), "predictions": predicted, "labels": truth}
+    return {
+        "samples": len(truth),
+        "accuracy": float(matrix.diag().sum() / len(truth)),
+        "macro_f1": float(f1.mean()),
+        "per_class_f1": dict(zip(CLASSES, f1.tolist(), strict=True)),
+        "confusion_matrix": matrix.tolist(),
+        "predictions": predicted,
+        "labels": truth,
+    }

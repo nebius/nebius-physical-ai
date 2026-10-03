@@ -50,9 +50,7 @@ def is_verified_empty_queue_result(
     # SkyPilot can echo the same benign marker on both streams. Evidence is the
     # semantic marker, not the number of times its presentation layer printed it.
     markers = {
-        line
-        for line in (*stdout_lines, *stderr_lines)
-        if line in _EMPTY_QUEUE_MESSAGES
+        line for line in (*stdout_lines, *stderr_lines) if line in _EMPTY_QUEUE_MESSAGES
     }
     return bool(markers)
 
@@ -92,17 +90,22 @@ def _semantic_queue_lines(value: str, *, structured: bool) -> list[str] | None:
         if re.fullmatch(r"[-=─━]{3,}", line):
             continue
         words = set(re.findall(r"[a-z]+", line))
-        if "managed" in words and ({"job", "jobs"} & words) and words <= {
-            "managed",
-            "job",
-            "jobs",
-            "queue",
-            "fetching",
-            "checking",
-            "statuses",
-            "status",
-            "done",
-        }:
+        if (
+            "managed" in words
+            and ({"job", "jobs"} & words)
+            and words
+            <= {
+                "managed",
+                "job",
+                "jobs",
+                "queue",
+                "fetching",
+                "checking",
+                "statuses",
+                "status",
+                "done",
+            }
+        ):
             continue
         contradictory = re.search(
             r"(?i)(?:unauth|forbidden|permission denied|access denied|traceback|"
@@ -112,7 +115,11 @@ def _semantic_queue_lines(value: str, *, structured: bool) -> list[str] | None:
         )
         if line.startswith("warning:") and not contradictory:
             continue
-        if structured and line.startswith(("note:", "notice:", "info:")) and not contradictory:
+        if (
+            structured
+            and line.startswith(("note:", "notice:", "info:"))
+            and not contradictory
+        ):
             continue
         return None
     return normalized

@@ -21,21 +21,38 @@ NCORE = Path(__file__).resolve().parents[2] / "docker/workbench/ncore"
 @pytest.fixture
 def grype_report():
     return {
-        "source": {"type": "cpe", "target": "cpe:2.3:a:python:python:3.12.12:*:*:*:*:*:*:*"},
-        "descriptor": {"name": "grype", "version": "0.118.0", "configuration": {
-            "match": {"stock": {"using-cpes": True}},
-            "db": {"validate-by-hash-on-start": True, "validate-age": True},
-        }, "db": {"status": {"valid": True, "built": "2026-09-07T00:00:00Z"},
-                   "providers": {"nvd": {"captured": "2026-09-07T00:00:00Z"}}}},
+        "source": {
+            "type": "cpe",
+            "target": "cpe:2.3:a:python:python:3.12.12:*:*:*:*:*:*:*",
+        },
+        "descriptor": {
+            "name": "grype",
+            "version": "0.118.0",
+            "configuration": {
+                "match": {"stock": {"using-cpes": True}},
+                "db": {"validate-by-hash-on-start": True, "validate-age": True},
+            },
+            "db": {
+                "status": {"valid": True, "built": "2026-09-07T00:00:00Z"},
+                "providers": {"nvd": {"captured": "2026-09-07T00:00:00Z"}},
+            },
+        },
         "matches": [],
     }
 
 
 def _finding(cpe, severity="Critical", versions=None):
-    return {"artifact": {"cpes": [cpe], "version": "3.12.12"},
-            "vulnerability": {"id": "CVE-2026-6100", "severity": severity,
-                              "fix": {"versions": versions or [],
-                                      "state": "fixed" if versions else "not-fixed"}}}
+    return {
+        "artifact": {"cpes": [cpe], "version": "3.12.12"},
+        "vulnerability": {
+            "id": "CVE-2026-6100",
+            "severity": severity,
+            "fix": {
+                "versions": versions or [],
+                "state": "fixed" if versions else "not-fixed",
+            },
+        },
+    }
 
 
 def test_cpe_zero_matches_has_explicit_evaluated_target(grype_report):
@@ -45,19 +62,26 @@ def test_cpe_zero_matches_has_explicit_evaluated_target(grype_report):
         advisory.grype_findings(grype_report, cpe.replace("3.12.12", "3.12.14"))
 
 
-@pytest.mark.parametrize("mutation", [
-    lambda r: r.pop("matches"),
-    lambda r: r.update(matches=None),
-    lambda r: r["descriptor"].update(version="0.117.0"),
-    lambda r: r["descriptor"]["db"]["status"].update(valid=False),
-    lambda r: r["descriptor"]["db"].update(providers={}),
-    lambda r: r["descriptor"]["configuration"].update(exclude=["**"]),
-    lambda r: r["descriptor"]["configuration"].update({"only-fixed": True}),
-    lambda r: r["descriptor"]["configuration"]["match"]["stock"].update({"using-cpes": False}),
-    lambda r: r["descriptor"]["configuration"]["db"].update({"validate-age": False}),
-    lambda r: r.update(ignoredMatches=[{"id": "suppressed"}]),
-    lambda r: r["descriptor"]["configuration"].update(ignore=[{"package": {}}]),
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda r: r.pop("matches"),
+        lambda r: r.update(matches=None),
+        lambda r: r["descriptor"].update(version="0.117.0"),
+        lambda r: r["descriptor"]["db"]["status"].update(valid=False),
+        lambda r: r["descriptor"]["db"].update(providers={}),
+        lambda r: r["descriptor"]["configuration"].update(exclude=["**"]),
+        lambda r: r["descriptor"]["configuration"].update({"only-fixed": True}),
+        lambda r: r["descriptor"]["configuration"]["match"]["stock"].update(
+            {"using-cpes": False}
+        ),
+        lambda r: r["descriptor"]["configuration"]["db"].update(
+            {"validate-age": False}
+        ),
+        lambda r: r.update(ignoredMatches=[{"id": "suppressed"}]),
+        lambda r: r["descriptor"]["configuration"].update(ignore=[{"package": {}}]),
+    ],
+)
 def test_successful_exit_cannot_replace_evaluation_scope(grype_report, mutation):
     cpe = grype_report["source"]["target"]
     mutation(grype_report)
@@ -65,13 +89,18 @@ def test_successful_exit_cannot_replace_evaluation_scope(grype_report, mutation)
         advisory.grype_findings(grype_report, cpe)
 
 
-@pytest.mark.parametrize("severity,versions,blocking", [
-    ("Critical", ["3.12.14"], True),
-    ("Critical", [], False),
-    ("High", ["3.12.14"], False),
-    ("Medium", [], False),
-])
-def test_fixed_critical_and_unfixed_accounting(grype_report, severity, versions, blocking):
+@pytest.mark.parametrize(
+    "severity,versions,blocking",
+    [
+        ("Critical", ["3.12.14"], True),
+        ("Critical", [], False),
+        ("High", ["3.12.14"], False),
+        ("Medium", [], False),
+    ],
+)
+def test_fixed_critical_and_unfixed_accounting(
+    grype_report, severity, versions, blocking
+):
     cpe = grype_report["source"]["target"]
     grype_report["matches"] = [_finding(cpe, severity, versions)]
     result = advisory.grype_findings(grype_report, cpe)
@@ -94,36 +123,78 @@ def test_findings_cannot_belong_to_another_component(grype_report, change):
 
 def _coverage_fixture():
     components, evaluations = [], []
-    for name in ("cpython", "expat", "mpdecimal", "hacl", "karamel-runtime",
-                 "blake2", "ncore", "pycolmap", "npa"):
-        binding = {"version": "synthetic", "files_sha256": inventory._sha(name.encode()),
-                   "query": {"commit": "a" * 40}}
+    for name in (
+        "cpython",
+        "expat",
+        "mpdecimal",
+        "hacl",
+        "karamel-runtime",
+        "blake2",
+        "ncore",
+        "pycolmap",
+        "npa",
+    ):
+        binding = {
+            "version": "synthetic",
+            "files_sha256": inventory._sha(name.encode()),
+            "query": {"commit": "a" * 40},
+        }
         if name == "cpython":
-            binding.update(version=inventory._CPYTHON_VERSION, query={
-                "cpe": "cpe:2.3:a:python:python:" + inventory._CPYTHON_VERSION + ":*:*:*:*:*:*:*"})
+            binding.update(
+                version=inventory._CPYTHON_VERSION,
+                query={
+                    "cpe": "cpe:2.3:a:python:python:"
+                    + inventory._CPYTHON_VERSION
+                    + ":*:*:*:*:*:*:*"
+                },
+            )
         if name in inventory._BUNDLED_SOURCE_PROFILES:
             profile = copy.deepcopy(inventory._BUNDLED_SOURCE_PROFILES[name])
-            binding.update(query=profile["query"], source_mapping=profile,
-                           version="2.5.1" if name == "mpdecimal" else inventory._CPYTHON_COMMIT)
+            binding.update(
+                query=profile["query"],
+                source_mapping=profile,
+                version="2.5.1" if name == "mpdecimal" else inventory._CPYTHON_COMMIT,
+            )
         if name == "hacl":
-            binding.update(version=inventory._HACL_COMMIT, query={"commit": inventory._HACL_COMMIT})
+            binding.update(
+                version=inventory._HACL_COMMIT, query={"commit": inventory._HACL_COMMIT}
+            )
         if name == "karamel-runtime":
             profile = copy.deepcopy(inventory._KARAMEL_SOURCE_PROFILE)
-            binding.update(version=inventory._HACL_COMMIT, query=profile["query"], source_mapping=profile)
+            binding.update(
+                version=inventory._HACL_COMMIT,
+                query=profile["query"],
+                source_mapping=profile,
+            )
         components.append({"name": name, **binding})
         method = "grype-cpe" if "cpe" in binding["query"] else "osv-commit"
-        evaluations.append({"component": name, **binding, "method": method, "findings": []})
+        evaluations.append(
+            {"component": name, **binding, "method": method, "findings": []}
+        )
         if "source_mapping" in binding:
-            evaluations[-1].update(source_proof_sha256="d" * 64, parent_advisory_scope={
-                "component": "cpython", "version": inventory._CPYTHON_VERSION,
-                "query": components[0]["query"]})
+            evaluations[-1].update(
+                source_proof_sha256="d" * 64,
+                parent_advisory_scope={
+                    "component": "cpython",
+                    "version": inventory._CPYTHON_VERSION,
+                    "query": components[0]["query"],
+                },
+            )
         if name == "mpdecimal":
-            evaluations[-1]["upstream_review"] = copy.deepcopy(sources._MPDECIMAL_REVIEW)
+            evaluations[-1]["upstream_review"] = copy.deepcopy(
+                sources._MPDECIMAL_REVIEW
+            )
         if name == "karamel-runtime":
-            evaluations[-1].update(source_query=profile["query"], hacl_advisory_scope=profile["hacl_advisory_scope"],
-                                   source_proof_sha256=profile["source_proof_sha256"])
-    return {"components": components}, copy.deepcopy(evaluations), {
-        "delivery_failures": [], "missing_license_scope": []}
+            evaluations[-1].update(
+                source_query=profile["query"],
+                hacl_advisory_scope=profile["hacl_advisory_scope"],
+                source_proof_sha256=profile["source_proof_sha256"],
+            )
+    return (
+        {"components": components},
+        copy.deepcopy(evaluations),
+        {"delivery_failures": [], "missing_license_scope": []},
+    )
 
 
 def test_full_population_required_even_for_no_findings():
@@ -134,8 +205,14 @@ def test_full_population_required_even_for_no_findings():
         scan.coverage_failures(population, evaluations, licenses)
 
 
-@pytest.mark.parametrize("field,value", [("version", "changed"), ("files_sha256", "b" * 64),
-                                        ("query", {"commit": "c" * 40})])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("version", "changed"),
+        ("files_sha256", "b" * 64),
+        ("query", {"commit": "c" * 40}),
+    ],
+)
 def test_same_name_is_not_population_binding(field, value):
     population, evaluations, licenses = _coverage_fixture()
     evaluations[0][field] = value
@@ -173,23 +250,38 @@ def test_unmapped_component_cannot_be_relabelled_as_scanned():
 
 def test_empty_population_cannot_qualify():
     with pytest.raises(ValueError, match="population differs"):
-        scan.coverage_failures({"components": []}, [], {
-            "delivery_failures": [], "missing_license_scope": []})
+        scan.coverage_failures(
+            {"components": []},
+            [],
+            {"delivery_failures": [], "missing_license_scope": []},
+        )
 
 
 def test_actual_cve_shape_is_a_separate_policy_refusal():
     population, evaluations, licenses = _coverage_fixture()
     evaluations[0]["findings"] = [{"id": "BIT-python-2026-6100", "blocking": True}]
     assert scan.coverage_failures(population, evaluations, licenses) == [
-        "blocking advisory: cpython:BIT-python-2026-6100"]
+        "blocking advisory: cpython:BIT-python-2026-6100"
+    ]
 
 
 def _license_report(target, name="cpython", identifiers=None):
     identifiers = identifiers or scan._LICENSE_IDS[name]
-    return {"SchemaVersion": 2, "Trivy": {"Version": "0.72.0"},
-            "ArtifactType": "filesystem", "ArtifactName": str(target), "Results": [
-                {"Class": "license-file", "Licenses": [
-                    {"Name": value, "FilePath": name + "/LICENSE"} for value in identifiers]}]}
+    return {
+        "SchemaVersion": 2,
+        "Trivy": {"Version": "0.72.0"},
+        "ArtifactType": "filesystem",
+        "ArtifactName": str(target),
+        "Results": [
+            {
+                "Class": "license-file",
+                "Licenses": [
+                    {"Name": value, "FilePath": name + "/LICENSE"}
+                    for value in identifiers
+                ],
+            }
+        ],
+    }
 
 
 def test_actual_license_scope_is_required_for_each_component(tmp_path):
@@ -199,28 +291,38 @@ def test_actual_license_scope_is_required_for_each_component(tmp_path):
     assert "cpython" not in result["missing_license_scope"]
     assert "mpdecimal" in result["missing_license_scope"]
     payload["Results"][0]["Licenses"].pop()
-    assert "cpython" in scan.license_findings(payload, staged, tmp_path)["missing_license_scope"]
+    assert (
+        "cpython"
+        in scan.license_findings(payload, staged, tmp_path)["missing_license_scope"]
+    )
 
 
-@pytest.mark.parametrize("mutation", [
-    lambda r: r.pop("Results"),
-    lambda r: r.update(Results=None),
-    lambda r: r.update(ArtifactName="different-directory"),
-    lambda r: r["Trivy"].update(Version="0.74.0"),
-    lambda r: r["Results"][0].update(Class="os-pkgs"),
-    lambda r: r["Results"][0]["Licenses"][0].update(FilePath="unscanned/LICENSE"),
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda r: r.pop("Results"),
+        lambda r: r.update(Results=None),
+        lambda r: r.update(ArtifactName="different-directory"),
+        lambda r: r["Trivy"].update(Version="0.74.0"),
+        lambda r: r["Results"][0].update(Class="os-pkgs"),
+        lambda r: r["Results"][0]["Licenses"][0].update(FilePath="unscanned/LICENSE"),
+    ],
+)
 def test_license_report_from_wrong_scope_is_rejected(tmp_path, mutation):
     payload = _license_report(tmp_path)
     mutation(payload)
     with pytest.raises(ValueError):
-        scan.license_findings(payload, {"cpython": {"scan_path": "cpython/LICENSE"}}, tmp_path)
+        scan.license_findings(
+            payload, {"cpython": {"scan_path": "cpython/LICENSE"}}, tmp_path
+        )
 
 
 def test_empty_license_analyzers_are_not_complete(tmp_path):
     payload = _license_report(tmp_path)
     payload["Results"] = []
-    assert set(scan.license_findings(payload, {}, tmp_path)["missing_license_scope"]) == set(scan._LICENSE_IDS)
+    assert set(
+        scan.license_findings(payload, {}, tmp_path)["missing_license_scope"]
+    ) == set(scan._LICENSE_IDS)
 
 
 @pytest.mark.parametrize("name", ["hacl", "karamel-runtime"])
@@ -242,15 +344,21 @@ def test_osv_pagination_is_fully_evaluated(monkeypatch, tmp_path, name):
 
 
 def test_repeated_osv_page_token_refuses(monkeypatch, tmp_path):
-    monkeypatch.setattr(advisory, "_osv_page", lambda query: b'{"next_page_token":"cycle"}')
+    monkeypatch.setattr(
+        advisory, "_osv_page", lambda query: b'{"next_page_token":"cycle"}'
+    )
     with pytest.raises(ValueError, match="pagination"):
-        advisory._osv_evaluation({"name": "hacl", "query": {"commit": "a" * 40}}, tmp_path)
+        advisory._osv_evaluation(
+            {"name": "hacl", "query": {"commit": "a" * 40}}, tmp_path
+        )
 
 
 def test_error_json_is_not_zero_advisories(monkeypatch, tmp_path):
     monkeypatch.setattr(advisory, "_osv_page", lambda query: b'{"error":"unavailable"}')
     with pytest.raises(ValueError, match="invalid OSV response"):
-        advisory._osv_evaluation({"name": "ncore", "query": {"commit": "a" * 40}}, tmp_path)
+        advisory._osv_evaluation(
+            {"name": "ncore", "query": {"commit": "a" * 40}}, tmp_path
+        )
 
 
 def test_scanner_identity_is_verified_before_execution(tmp_path):
@@ -288,7 +396,11 @@ def test_runtime_download_lock_is_not_installed_package_evidence(field):
 
 def test_arbitrary_prefix_cannot_hide_a_new_component():
     args = ({}, {}, {}, {}, set())
-    for path in ("opt/ncore/unknown.so", "usr/local/bin/other", "opt/venv/lib/new.dist-info/METADATA"):
+    for path in (
+        "opt/ncore/unknown.so",
+        "usr/local/bin/other",
+        "opt/venv/lib/new.dist-info/METADATA",
+    ):
         assert inventory._file_group(path, *args) is None
 
 
@@ -305,9 +417,11 @@ def test_equal_name_changed_notice_does_not_get_staged(tmp_path):
         member = tarfile.TarInfo("LICENSE")
         member.size = len(body)
         archive.addfile(member, io.BytesIO(body))
-    population = {"components": [], "required_notices": {
-        "cpython": {"path": "LICENSE", "sha256": "a" * 64}},
-        "files": {"LICENSE": {"sha256": inventory._sha(body)}}}
+    population = {
+        "components": [],
+        "required_notices": {"cpython": {"path": "LICENSE", "sha256": "a" * 64}},
+        "files": {"LICENSE": {"sha256": inventory._sha(body)}},
+    }
     _, staged, failures = scan._stage_notices(path, population, tmp_path)
     assert not staged
     assert failures == ["missing or changed delivered notice: cpython"]
@@ -324,7 +438,9 @@ def test_new_distribution_cannot_be_classified_as_an_npa_file(tmp_path):
             inventory._files(archive, members)
 
 
-@pytest.mark.parametrize("field,value", [("version", "3.12.12"), ("name", "pypy"), ("kind", "pypy")])
+@pytest.mark.parametrize(
+    "field,value", [("version", "3.12.12"), ("name", "pypy"), ("kind", "pypy")]
+)
 def test_unsupported_interpreter_identity_is_not_guessed(field, value):
     lock = json.loads((NCORE / "base-source-lock.json").read_bytes())
     lock["components"][0][field] = value
@@ -364,8 +480,13 @@ def test_osv_redirect_or_failure_never_becomes_empty_success(monkeypatch, status
 def test_scanner_nonzero_exit_is_preserved(monkeypatch, tmp_path):
     from types import SimpleNamespace
 
-    monkeypatch.setattr(advisory.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(
-        returncode=2, stdout=b'{"matches":[]}', stderr=b"scanner failed"))
+    monkeypatch.setattr(
+        advisory.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=2, stdout=b'{"matches":[]}', stderr=b"scanner failed"
+        ),
+    )
     with pytest.raises(ValueError, match="scanner command failed"):
         advisory._run(["synthetic-scanner"], tmp_path, "probe")
     receipt = json.loads((tmp_path / "probe.command.json").read_bytes())
@@ -373,15 +494,23 @@ def test_scanner_nonzero_exit_is_preserved(monkeypatch, tmp_path):
     assert (tmp_path / "probe.stderr").read_bytes() == b"scanner failed"
 
 
-@pytest.mark.parametrize("name,field", [
-    ("mpdecimal", "source_mapping"), ("blake2", "source_mapping"),
-    ("mpdecimal", "source_proof_sha256"), ("blake2", "source_proof_sha256"),
-    ("mpdecimal", "parent_advisory_scope"), ("blake2", "parent_advisory_scope"),
-    ("mpdecimal", "upstream_review"),
-    ("karamel-runtime", "source_mapping"), ("karamel-runtime", "source_proof_sha256"),
-    ("karamel-runtime", "parent_advisory_scope"), ("karamel-runtime", "hacl_advisory_scope"),
-    ("karamel-runtime", "source_query"),
-])
+@pytest.mark.parametrize(
+    "name,field",
+    [
+        ("mpdecimal", "source_mapping"),
+        ("blake2", "source_mapping"),
+        ("mpdecimal", "source_proof_sha256"),
+        ("blake2", "source_proof_sha256"),
+        ("mpdecimal", "parent_advisory_scope"),
+        ("blake2", "parent_advisory_scope"),
+        ("mpdecimal", "upstream_review"),
+        ("karamel-runtime", "source_mapping"),
+        ("karamel-runtime", "source_proof_sha256"),
+        ("karamel-runtime", "parent_advisory_scope"),
+        ("karamel-runtime", "hacl_advisory_scope"),
+        ("karamel-runtime", "source_query"),
+    ],
+)
 def test_empty_query_results_do_not_replace_source_or_release_review(name, field):
     population, evaluations, licenses = _coverage_fixture()
     row = next(row for row in evaluations if row["component"] == name)
@@ -410,21 +539,36 @@ def test_parent_version_change_requires_source_review():
 
 
 def _small_source_profile():
-    files = {"Modules/vendor/impl/hash.c": {
-        "upstream_path": "src/hash.c", "upstream_sha256": inventory._sha(b"original\n"),
-        "vendored_sha256": inventory._sha(b"original\n"), "patch_sha256": inventory._sha(b""),
-    }}
-    tree = {"Modules/vendor/impl/hash.c": inventory._sha(b"original\n"),
-            "Modules/vendor/wrapper.c": inventory._sha(b"wrapper\n")}
-    return {"vendor_prefix": "Modules/vendor/impl/", "upstream_prefix": "src/", "renames": {},
-            "files_sha256": inventory._sha(inventory._canonical(files)),
-            "cpython_tree_sha256": inventory._sha(inventory._canonical(tree))}
+    files = {
+        "Modules/vendor/impl/hash.c": {
+            "upstream_path": "src/hash.c",
+            "upstream_sha256": inventory._sha(b"original\n"),
+            "vendored_sha256": inventory._sha(b"original\n"),
+            "patch_sha256": inventory._sha(b""),
+        }
+    }
+    tree = {
+        "Modules/vendor/impl/hash.c": inventory._sha(b"original\n"),
+        "Modules/vendor/wrapper.c": inventory._sha(b"wrapper\n"),
+    }
+    return {
+        "vendor_prefix": "Modules/vendor/impl/",
+        "upstream_prefix": "src/",
+        "renames": {},
+        "files_sha256": inventory._sha(inventory._canonical(files)),
+        "cpython_tree_sha256": inventory._sha(inventory._canonical(tree)),
+    }
 
 
-@pytest.mark.parametrize("changed", ["upstream", "vendored", "wrapper", "extra", "missing"])
+@pytest.mark.parametrize(
+    "changed", ["upstream", "vendored", "wrapper", "extra", "missing"]
+)
 def test_exact_source_proof_refuses_unreviewed_deltas(changed):
     profile = _small_source_profile()
-    cpython = {"Modules/vendor/impl/hash.c": b"original\n", "Modules/vendor/wrapper.c": b"wrapper\n"}
+    cpython = {
+        "Modules/vendor/impl/hash.c": b"original\n",
+        "Modules/vendor/wrapper.c": b"wrapper\n",
+    }
     upstream = {"src/hash.c": b"original\n"}
     assert len(sources._file_mapping(profile, cpython, upstream)["files"]) == 1
     if changed == "upstream":
@@ -443,29 +587,57 @@ def test_exact_source_proof_refuses_unreviewed_deltas(changed):
 
 def _mpdecimal_sbom():
     profile = inventory._BUNDLED_SOURCE_PROFILES["mpdecimal"]
-    return {"packages": [{"SPDXID": "SPDXRef-PACKAGE-mpdecimal", "name": "mpdecimal",
-                          "versionInfo": "2.5.1", "downloadLocation": profile["upstream"]["url"],
-                          "checksums": [{"algorithm": "SHA256",
-                                         "checksumValue": profile["upstream"]["sha256"]}],
-                          "externalRefs": [{"referenceCategory": "SECURITY",
-                                            "referenceType": "cpe23Type",
-                                            "referenceLocator": profile["query"]["cpe"]}]}]}
+    return {
+        "packages": [
+            {
+                "SPDXID": "SPDXRef-PACKAGE-mpdecimal",
+                "name": "mpdecimal",
+                "versionInfo": "2.5.1",
+                "downloadLocation": profile["upstream"]["url"],
+                "checksums": [
+                    {
+                        "algorithm": "SHA256",
+                        "checksumValue": profile["upstream"]["sha256"],
+                    }
+                ],
+                "externalRefs": [
+                    {
+                        "referenceCategory": "SECURITY",
+                        "referenceType": "cpe23Type",
+                        "referenceLocator": profile["query"]["cpe"],
+                    }
+                ],
+            }
+        ]
+    }
 
 
-@pytest.mark.parametrize("field,value", [
-    ("versionInfo", "4.0.0"), ("name", "libmpd"), ("checksums", []),
-    ("externalRefs", []), ("downloadLocation", "https://example.org/wrong-project.tar.gz"),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("versionInfo", "4.0.0"),
+        ("name", "libmpd"),
+        ("checksums", []),
+        ("externalRefs", []),
+        ("downloadLocation", "https://example.org/wrong-project.tar.gz"),
+    ],
+)
 def test_mpdecimal_query_must_belong_to_exact_psf_declared_source(field, value):
     profile = inventory._BUNDLED_SOURCE_PROFILES["mpdecimal"]
     sbom = _mpdecimal_sbom()
-    sources._mpdecimal_identity({"Misc/sbom.spdx.json": json.dumps(sbom).encode()}, profile)
+    sources._mpdecimal_identity(
+        {"Misc/sbom.spdx.json": json.dumps(sbom).encode()}, profile
+    )
     sbom["packages"][0][field] = value
     with pytest.raises(ValueError, match="identity differs"):
-        sources._mpdecimal_identity({"Misc/sbom.spdx.json": json.dumps(sbom).encode()}, profile)
+        sources._mpdecimal_identity(
+            {"Misc/sbom.spdx.json": json.dumps(sbom).encode()}, profile
+        )
 
 
-def test_upstream_release_note_drift_is_not_an_empty_advisory_result(monkeypatch, tmp_path):
+def test_upstream_release_note_drift_is_not_an_empty_advisory_result(
+    monkeypatch, tmp_path
+):
     def download(url, output, **kwargs):
         assert url == sources._MPDECIMAL_REVIEW["url"]
         assert kwargs == {"allowed_hosts": sources._SOURCE_HOSTS}
@@ -474,7 +646,9 @@ def test_upstream_release_note_drift_is_not_an_empty_advisory_result(monkeypatch
     monkeypatch.setattr(sources, "download_public_https", download)
     with pytest.raises(ValueError, match="release review changed"):
         sources._fetch(sources._MPDECIMAL_REVIEW, tmp_path, "upstream-review")
-    assert (tmp_path / "upstream-review.download").read_bytes() == b"new upstream security notice"
+    assert (
+        tmp_path / "upstream-review.download"
+    ).read_bytes() == b"new upstream security notice"
 
 
 def test_wrong_upstream_query_refuses_before_network(monkeypatch, tmp_path):
@@ -482,8 +656,11 @@ def test_wrong_upstream_query_refuses_before_network(monkeypatch, tmp_path):
         pytest.fail("unreviewed mapping reached the network")
 
     monkeypatch.setattr(sources, "_fetch", unexpected)
-    component = {"name": "blake2", "source_mapping": inventory._BUNDLED_SOURCE_PROFILES["blake2"],
-                 "query": {"commit": inventory._CPYTHON_COMMIT}}
+    component = {
+        "name": "blake2",
+        "source_mapping": inventory._BUNDLED_SOURCE_PROFILES["blake2"],
+        "query": {"commit": inventory._CPYTHON_COMMIT},
+    }
     with pytest.raises(ValueError, match="unreviewed bundled source mapping"):
         sources._component_proof(component, {}, tmp_path)
 
@@ -491,7 +668,9 @@ def test_wrong_upstream_query_refuses_before_network(monkeypatch, tmp_path):
 def test_python_file_lock_cannot_disagree_with_pinned_elf_hashes():
     lock = json.loads((NCORE / "base-source-lock.json").read_bytes())
     target = lock["cpython_elf_files"][0]["path"]
-    next(row for row in lock["cpython_files"] if row["path"] == target)["sha256"] = "0" * 64
+    next(row for row in lock["cpython_files"] if row["path"] == target)["sha256"] = (
+        "0" * 64
+    )
     with pytest.raises(ValueError, match="file identity differs"):
         inventory._python_profile(lock)
 
@@ -500,14 +679,21 @@ def test_python_file_lock_cannot_disagree_with_pinned_elf_hashes():
 def test_observed_python_elf_population_must_match_source_profile(mutation):
     lock = json.loads((NCORE / "base-source-lock.json").read_bytes())
     python_files = inventory._python_profile(lock)
-    files = {row["path"]: {"sha256": row["sha256"], "elf": True} for row in lock["cpython_elf_files"]}
+    files = {
+        row["path"]: {"sha256": row["sha256"], "elf": True}
+        for row in lock["cpython_elf_files"]
+    }
     inventory._verify_python_elf(files, python_files)
     if mutation == "missing":
         files.pop(lock["cpython_elf_files"][0]["path"])
     elif mutation == "changed":
         files[lock["cpython_elf_files"][0]["path"]]["sha256"] = "0" * 64
     else:
-        candidate = next(path for path, row in python_files.items() if "sha256" in row and path not in files)
+        candidate = next(
+            path
+            for path, row in python_files.items()
+            if "sha256" in row and path not in files
+        )
         files[candidate] = {"sha256": python_files[candidate]["sha256"], "elf": True}
     with pytest.raises(ValueError, match="actual CPython ELF population"):
         inventory._verify_python_elf(files, python_files)
@@ -521,31 +707,39 @@ def test_reviewed_python_profile_and_all_eight_notice_bytes():
     lock = _reviewed_lock()
     assert inventory._CPYTHON_COMMIT == "2abcf904b8dac8c999d2b3aac76681abb333798a"
     assert inventory._CPYTHON_ELF_INVENTORY == inventory._sha(
-        inventory._canonical(lock["cpython_elf_files"]))
+        inventory._canonical(lock["cpython_elf_files"])
+    )
     assert len(lock["cpython_provenance"]["notices"]) == 8
     required = {path: digest for path, digest in inventory._NOTICES.values()}
     for row in lock["cpython_provenance"]["notices"]:
         assert required[row["path"]] == row["sha256"]
         source = NCORE / "notices/cpython" / Path(row["path"]).name
         assert inventory._sha(source.read_bytes()) == row["sha256"]
-        assert inventory._file_group(row["path"], {row["path"]: row}, {}, {}, {}, required) == "cpython"
+        assert (
+            inventory._file_group(row["path"], {row["path"]: row}, {}, {}, {}, required)
+            == "cpython"
+        )
     assert required["usr/local/lib/python3.12/LICENSE.txt"] == (
-        "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf")
+        "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf"
+    )
     locked = {row["path"]: row["sha256"] for row in lock["notices"] if "sha256" in row}
     for row in scan._LICENSE_TERMS.values():
         assert locked[row["path"]] == row["sha256"]
 
 
-@pytest.mark.parametrize("mutation", [
-    lambda p: p.update(source_commit="a" * 40),
-    lambda p: p.update(version="3.12.12"),
-    lambda p: p["embedded_components"].update(expat="2.7.3"),
-    lambda p: p["embedded_components"].update(hacl="a" * 40),
-    lambda p: p["notices"].pop(),
-    lambda p: p["notices"].append(p["notices"][0]),
-    lambda p: p["notices"][0].update(sha256="a" * 64),
-    lambda p: p["notices"][0].update(path="usr/share/doc/other/LICENSE"),
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda p: p.update(source_commit="a" * 40),
+        lambda p: p.update(version="3.12.12"),
+        lambda p: p["embedded_components"].update(expat="2.7.3"),
+        lambda p: p["embedded_components"].update(hacl="a" * 40),
+        lambda p: p["notices"].pop(),
+        lambda p: p["notices"].append(p["notices"][0]),
+        lambda p: p["notices"][0].update(sha256="a" * 64),
+        lambda p: p["notices"][0].update(path="usr/share/doc/other/LICENSE"),
+    ],
+)
 def test_provenance_changes_require_profile_review(mutation):
     lock = _reviewed_lock()
     mutation(lock["cpython_provenance"])
@@ -556,16 +750,24 @@ def test_provenance_changes_require_profile_review(mutation):
 def _actual_component_population():
     lock = _reviewed_lock()
     files = inventory._python_profile(lock)
-    groups = {"cpython": list(files), "ncore": ["opt/ncore/src/ncore/LICENSE"],
-              "pycolmap": ["opt/ncore/src/pycolmap/LICENSE.txt"],
-              "npa": ["usr/share/doc/npa-ncore/notices/NPA-LICENSE"]}
+    groups = {
+        "cpython": list(files),
+        "ncore": ["opt/ncore/src/ncore/LICENSE"],
+        "pycolmap": ["opt/ncore/src/pycolmap/LICENSE.txt"],
+        "npa": ["usr/share/doc/npa-ncore/notices/NPA-LICENSE"],
+    }
     for name in ("ncore", "pycolmap", "npa"):
         files[groups[name][0]] = {"sha256": "b" * 64}
     sources = {name: {"revision": "a" * 40} for name in ("ncore", "pycolmap")}
-    return {"components": inventory._components(groups, files, sources, "c" * 40),
-            "files": files, "groups": groups,
-            "required_notices": {name: {"path": path, "sha256": digest}
-                                 for name, (path, digest) in inventory._NOTICES.items()}}
+    return {
+        "components": inventory._components(groups, files, sources, "c" * 40),
+        "files": files,
+        "groups": groups,
+        "required_notices": {
+            name: {"path": path, "sha256": digest}
+            for name, (path, digest) in inventory._NOTICES.items()
+        },
+    }
 
 
 def test_components_are_code_identities_and_queries_follow_reviewed_versions():
@@ -573,20 +775,36 @@ def test_components_are_code_identities_and_queries_follow_reviewed_versions():
     by_name = {row["name"]: row for row in components}
     assert set(by_name) == inventory._COMPONENT_NAMES
     assert by_name["cpython"]["version"] == "3.12.14"
-    assert by_name["cpython"]["query"] == {"cpe": "cpe:2.3:a:python:python:3.12.14:*:*:*:*:*:*:*"}
+    assert by_name["cpython"]["query"] == {
+        "cpe": "cpe:2.3:a:python:python:3.12.14:*:*:*:*:*:*:*"
+    }
     assert by_name["expat"]["version"] == "2.8.3"
-    assert by_name["expat"]["query"] == {"cpe": "cpe:2.3:a:libexpat:expat:2.8.3:*:*:*:*:*:*:*"}
+    assert by_name["expat"]["query"] == {
+        "cpe": "cpe:2.3:a:libexpat:expat:2.8.3:*:*:*:*:*:*:*"
+    }
     assert by_name["blake2"]["version"] == inventory._CPYTHON_COMMIT
     assert by_name["hacl"]["query"] == {"commit": inventory._HACL_COMMIT}
     assert by_name["karamel-runtime"]["files"] == by_name["hacl"]["files"]
     assert len(by_name["karamel-runtime"]["files"]) == 4
     for name in ("mpdecimal", "blake2"):
-        assert by_name[name]["query"] == inventory._BUNDLED_SOURCE_PROFILES[name]["query"]
-        assert by_name[name]["source_mapping"] == inventory._BUNDLED_SOURCE_PROFILES[name]
-    assert by_name["karamel-runtime"]["query"] == {"commit": "95968326f0ca1d6f9056347496482d285e6a9f1e"}
+        assert (
+            by_name[name]["query"] == inventory._BUNDLED_SOURCE_PROFILES[name]["query"]
+        )
+        assert (
+            by_name[name]["source_mapping"] == inventory._BUNDLED_SOURCE_PROFILES[name]
+        )
+    assert by_name["karamel-runtime"]["query"] == {
+        "commit": "95968326f0ca1d6f9056347496482d285e6a9f1e"
+    }
     assert by_name["karamel-runtime"]["version"] == inventory._HACL_COMMIT
-    assert by_name["karamel-runtime"]["source_mapping"] == inventory._KARAMEL_SOURCE_PROFILE
-    assert by_name["karamel-runtime"]["source_mapping"] is not inventory._KARAMEL_SOURCE_PROFILE
+    assert (
+        by_name["karamel-runtime"]["source_mapping"]
+        == inventory._KARAMEL_SOURCE_PROFILE
+    )
+    assert (
+        by_name["karamel-runtime"]["source_mapping"]
+        is not inventory._KARAMEL_SOURCE_PROFILE
+    )
 
 
 def test_license_only_rows_cannot_become_installed_components():
@@ -595,19 +813,28 @@ def test_license_only_rows_cannot_become_installed_components():
     row = copy.deepcopy(population["components"][0])
     row["name"] = "hacl-fstar"
     population["components"].append(row)
-    evaluations.append({"component": "hacl-fstar", "method": "osv-commit", "findings": [],
-                        **{key: row[key] for key in ("version", "files_sha256", "query")}})
+    evaluations.append(
+        {
+            "component": "hacl-fstar",
+            "method": "osv-commit",
+            "findings": [],
+            **{key: row[key] for key in ("version", "files_sha256", "query")},
+        }
+    )
     with pytest.raises(ValueError, match="population differs"):
         scan.coverage_failures(population, evaluations, licenses)
 
 
 def test_karamel_runtime_requires_its_own_advisory_evaluation():
     population, evaluations, licenses = _coverage_fixture()
-    next(row for row in population["components"] if row["name"] == "karamel-runtime")["query"] = None
+    next(row for row in population["components"] if row["name"] == "karamel-runtime")[
+        "query"
+    ] = None
     row = next(row for row in evaluations if row["component"] == "karamel-runtime")
     row.update(query=None, method="unmapped")
     assert scan.coverage_failures(population, evaluations, licenses) == [
-        "unmapped vulnerability evaluation: karamel-runtime"]
+        "unmapped vulnerability evaluation: karamel-runtime"
+    ]
 
 
 @pytest.fixture
@@ -634,18 +861,25 @@ def _notice_archive(tmp_path, files, population):
             member = tarfile.TarInfo(name)
             member.size = len(raw)
             archive.addfile(member, io.BytesIO(raw))
-    population["files"] = {name: {"sha256": inventory._sha(raw)} for name, raw in files.items()}
+    population["files"] = {
+        name: {"sha256": inventory._sha(raw)} for name, raw in files.items()
+    }
     return path
 
 
-def test_scanned_bytes_include_short_notices_and_complete_terms(tmp_path, delivered_short_notices):
+def test_scanned_bytes_include_short_notices_and_complete_terms(
+    tmp_path, delivered_short_notices
+):
     files, population = delivered_short_notices
     path = _notice_archive(tmp_path, files, population)
     target, staged, failures = scan._stage_notices(path, population, tmp_path)
     assert failures == []
     assert set(staged) == set(scan._NOTICE_TERMS)
     for name, row in staged.items():
-        origins = [population["required_notices"][name], scan._LICENSE_TERMS[scan._NOTICE_TERMS[name]]]
+        origins = [
+            population["required_notices"][name],
+            scan._LICENSE_TERMS[scan._NOTICE_TERMS[name]],
+        ]
         assert row["origins"] == origins
         raw = (target / row["scan_path"]).read_bytes()
         assert raw == b"\n".join(files[origin["path"]] for origin in origins)
@@ -656,10 +890,14 @@ def test_scanned_bytes_include_short_notices_and_complete_terms(tmp_path, delive
 @pytest.mark.parametrize("part", ["notice", "terms"])
 @pytest.mark.parametrize("mutation", ["missing", "changed"])
 def test_each_header_and_full_terms_must_be_delivered(
-        tmp_path, delivered_short_notices, name, part, mutation):
+    tmp_path, delivered_short_notices, name, part, mutation
+):
     files, population = delivered_short_notices
-    origin = (population["required_notices"][name] if part == "notice"
-              else scan._LICENSE_TERMS[scan._NOTICE_TERMS[name]])
+    origin = (
+        population["required_notices"][name]
+        if part == "notice"
+        else scan._LICENSE_TERMS[scan._NOTICE_TERMS[name]]
+    )
     if mutation == "missing":
         files.pop(origin["path"])
     else:
@@ -673,24 +911,37 @@ def test_each_header_and_full_terms_must_be_delivered(
 def test_all_notice_rows_require_actual_license_analyzer_scope(tmp_path):
     staged = {name: {"scan_path": name + "/LICENSE"} for name in scan._LICENSE_IDS}
     payload = _license_report(tmp_path)
-    payload["Results"] = [_license_report(tmp_path, name)["Results"][0] for name in staged]
-    assert scan.license_findings(payload, staged, tmp_path)["missing_license_scope"] == []
+    payload["Results"] = [
+        _license_report(tmp_path, name)["Results"][0] for name in staged
+    ]
+    assert (
+        scan.license_findings(payload, staged, tmp_path)["missing_license_scope"] == []
+    )
     for name in scan._NOTICE_TERMS:
         partial = copy.deepcopy(payload)
         for row in partial["Results"]:
-            row["Licenses"] = [finding for finding in row["Licenses"]
-                               if finding["FilePath"] != name + "/LICENSE"]
-        assert scan.license_findings(partial, staged, tmp_path)["missing_license_scope"] == [name]
+            row["Licenses"] = [
+                finding
+                for finding in row["Licenses"]
+                if finding["FilePath"] != name + "/LICENSE"
+            ]
+        assert scan.license_findings(partial, staged, tmp_path)[
+            "missing_license_scope"
+        ] == [name]
 
 
 @pytest.mark.parametrize("part", ["notice", "terms"])
 def test_archive_notice_bytes_are_rechecked_after_inventory(
-        tmp_path, delivered_short_notices, part):
+    tmp_path, delivered_short_notices, part
+):
     files, population = delivered_short_notices
     path = _notice_archive(tmp_path, files, population)
     original_inventory = copy.deepcopy(population["files"])
-    origin = (population["required_notices"]["hacl-fstar"] if part == "notice"
-              else scan._LICENSE_TERMS["Apache-2.0"])
+    origin = (
+        population["required_notices"]["hacl-fstar"]
+        if part == "notice"
+        else scan._LICENSE_TERMS["Apache-2.0"]
+    )
     files[origin["path"]] = b"changed after inventory"
     _notice_archive(tmp_path, files, population)
     population["files"] = original_inventory
@@ -707,20 +958,31 @@ def test_karamel_profile_binds_every_source_and_proof_scope():
     assert profile["hacl_tree_sha256"] == karamel._HACL_TREE_SHA256
     assert profile["cpython_tree_sha256"] == karamel._CPYTHON_TREE_SHA256
     assert profile["source_proof_sha256"] == (
-        "362fa6f8dfa800e7145d8b9c3efe0b74cc0ad018f5a1bce842afa54ef8669c98")
+        "362fa6f8dfa800e7145d8b9c3efe0b74cc0ad018f5a1bce842afa54ef8669c98"
+    )
     assert profile["parent_advisory_scope"] == {
-        "component": "cpython", "version": "3.12.14",
-        "query": {"cpe": "cpe:2.3:a:python:python:3.12.14:*:*:*:*:*:*:*"}}
+        "component": "cpython",
+        "version": "3.12.14",
+        "query": {"cpe": "cpe:2.3:a:python:python:3.12.14:*:*:*:*:*:*:*"},
+    }
     assert profile["hacl_advisory_scope"] == {
-        "component": "hacl", "query": {"commit": "bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0"}}
+        "component": "hacl",
+        "query": {"commit": "bb3d0dc8d9d15a5cd51094d5b69e70aa09005ff0"},
+    }
 
 
 @pytest.mark.parametrize("side", ["component", "evaluation"])
 @pytest.mark.parametrize("field", inventory._KARAMEL_SOURCE_PROFILE)
 def test_every_karamel_mapping_field_is_required_and_exact(side, field):
     population, evaluations, licenses = _coverage_fixture()
-    rows, key = (population["components"], "name") if side == "component" else (evaluations, "component")
-    mapping = next(row for row in rows if row[key] == "karamel-runtime")["source_mapping"]
+    rows, key = (
+        (population["components"], "name")
+        if side == "component"
+        else (evaluations, "component")
+    )
+    mapping = next(row for row in rows if row[key] == "karamel-runtime")[
+        "source_mapping"
+    ]
     mapping[field] = "substituted"
     with pytest.raises(ValueError, match="KaRaMeL source proof"):
         scan.coverage_failures(population, evaluations, licenses)
@@ -729,27 +991,44 @@ def test_every_karamel_mapping_field_is_required_and_exact(side, field):
         scan.coverage_failures(population, evaluations, licenses)
 
 
-@pytest.mark.parametrize("field,value", [
-    ("source_proof_sha256", "a" * 64),
-    ("source_query", {"commit": inventory._HACL_COMMIT}),
-    ("parent_advisory_scope", {"component": "cpython", "version": "3.12.12", "query": {}}),
-    ("hacl_advisory_scope", {"component": "hacl", "query": {"commit": "a" * 40}}),
-])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("source_proof_sha256", "a" * 64),
+        ("source_query", {"commit": inventory._HACL_COMMIT}),
+        (
+            "parent_advisory_scope",
+            {"component": "cpython", "version": "3.12.12", "query": {}},
+        ),
+        ("hacl_advisory_scope", {"component": "hacl", "query": {"commit": "a" * 40}}),
+    ],
+)
 def test_substituted_karamel_evidence_cannot_qualify(field, value):
     population, evaluations, licenses = _coverage_fixture()
-    next(row for row in evaluations if row["component"] == "karamel-runtime")[field] = value
+    next(row for row in evaluations if row["component"] == "karamel-runtime")[field] = (
+        value
+    )
     with pytest.raises(ValueError, match="source proof|advisory scope"):
         scan.coverage_failures(population, evaluations, licenses)
 
 
-@pytest.mark.parametrize("query", [
-    {"commit": inventory._HACL_COMMIT}, {"commit": inventory._CPYTHON_COMMIT},
-    {"commit": "a" * 40}, {"cpe": "cpe:2.3:a:python:python:3.12.14:*:*:*:*:*:*:*"},
-])
+@pytest.mark.parametrize(
+    "query",
+    [
+        {"commit": inventory._HACL_COMMIT},
+        {"commit": inventory._CPYTHON_COMMIT},
+        {"commit": "a" * 40},
+        {"cpe": "cpe:2.3:a:python:python:3.12.14:*:*:*:*:*:*:*"},
+    ],
+)
 def test_parent_or_guessed_query_cannot_replace_karamel(query):
     population, evaluations, licenses = _coverage_fixture()
-    component = next(row for row in population["components"] if row["name"] == "karamel-runtime")
-    evaluation = next(row for row in evaluations if row["component"] == "karamel-runtime")
+    component = next(
+        row for row in population["components"] if row["name"] == "karamel-runtime"
+    )
+    evaluation = next(
+        row for row in evaluations if row["component"] == "karamel-runtime"
+    )
     component["query"] = evaluation["query"] = evaluation["source_query"] = query
     evaluation["method"] = "grype-cpe" if "cpe" in query else "osv-commit"
     with pytest.raises(ValueError, match="KaRaMeL source proof"):
@@ -757,7 +1036,9 @@ def test_parent_or_guessed_query_cannot_replace_karamel(query):
 
 
 @pytest.mark.parametrize("name", ["cpython", "hacl"])
-@pytest.mark.parametrize("field", ["version", "query", "missing-evaluation", "missing-component"])
+@pytest.mark.parametrize(
+    "field", ["version", "query", "missing-evaluation", "missing-component"]
+)
 def test_karamel_requires_both_actual_parent_evaluations(name, field):
     population, evaluations, licenses = _coverage_fixture()
     component = next(row for row in population["components"] if row["name"] == name)
@@ -777,14 +1058,18 @@ def test_karamel_requires_both_actual_parent_evaluations(name, field):
 
 @pytest.mark.parametrize("name", ["mpdecimal", "blake2", "karamel-runtime"])
 @pytest.mark.parametrize("mutation", ["missing", "duplicate"])
-def test_all_three_source_components_are_required_before_download(monkeypatch, tmp_path, name, mutation):
+def test_all_three_source_components_are_required_before_download(
+    monkeypatch, tmp_path, name, mutation
+):
     components = _coverage_fixture()[0]["components"]
     component = next(row for row in components if row["name"] == name)
     if mutation == "missing":
         components.remove(component)
     else:
         components.append(copy.deepcopy(component))
-    monkeypatch.setattr(sources, "_fetch", lambda *args: pytest.fail("invalid population downloaded"))
+    monkeypatch.setattr(
+        sources, "_fetch", lambda *args: pytest.fail("invalid population downloaded")
+    )
     with pytest.raises(ValueError, match="bundled source population"):
         sources.verify_bundled_sources(components, tmp_path)
 
@@ -794,29 +1079,54 @@ def synthetic_karamel_proof(monkeypatch):
     # Source-byte verification has separate refusal tests; these deterministic
     # synthetic proofs exercise integration without downloads or image claims.
     profile = copy.deepcopy(inventory._KARAMEL_SOURCE_PROFILE)
-    proof = {"component": "karamel-runtime", "method": "verified-vendored-source",
-             **{key: copy.deepcopy(profile[key]) for key in (
-                 "sources", "source_records", "query", "parent_advisory_scope", "hacl_advisory_scope")},
-             "files": {str(i): {"patch_sha256": "a" * 64} for i in range(5)},
-             "hacl_vendored_tree": {str(i): "b" * 64 for i in range(21)},
-             "cpython_tree": {str(i): "c" * 64 for i in range(6)}}
-    for key, digest in (("files", "files_sha256"), ("hacl_vendored_tree", "hacl_tree_sha256"),
-                        ("cpython_tree", "cpython_tree_sha256")):
+    proof = {
+        "component": "karamel-runtime",
+        "method": "verified-vendored-source",
+        **{
+            key: copy.deepcopy(profile[key])
+            for key in (
+                "sources",
+                "source_records",
+                "query",
+                "parent_advisory_scope",
+                "hacl_advisory_scope",
+            )
+        },
+        "files": {str(i): {"patch_sha256": "a" * 64} for i in range(5)},
+        "hacl_vendored_tree": {str(i): "b" * 64 for i in range(21)},
+        "cpython_tree": {str(i): "c" * 64 for i in range(6)},
+    }
+    for key, digest in (
+        ("files", "files_sha256"),
+        ("hacl_vendored_tree", "hacl_tree_sha256"),
+        ("cpython_tree", "cpython_tree_sha256"),
+    ):
         profile[digest] = inventory._sha(inventory._canonical(proof[key]))
-    profile["source_proof_sha256"] = inventory._sha(json.dumps(proof, indent=2).encode() + b"\n")
+    profile["source_proof_sha256"] = inventory._sha(
+        json.dumps(proof, indent=2).encode() + b"\n"
+    )
     monkeypatch.setattr(inventory, "_KARAMEL_SOURCE_PROFILE", profile)
     return proof
 
 
 def test_bundled_verifier_reuses_authenticated_cpython_archive(
-        monkeypatch, tmp_path, synthetic_karamel_proof):
+    monkeypatch, tmp_path, synthetic_karamel_proof
+):
     components = _coverage_fixture()[0]["components"]
     raw, cpython, calls = b"synthetic authenticated archive", {"file": b"source"}, []
     monkeypatch.setattr(sources, "_fetch", lambda *args: raw)
-    monkeypatch.setattr(sources, "_archive_files", lambda value: cpython if value is raw else pytest.fail())
+    monkeypatch.setattr(
+        sources,
+        "_archive_files",
+        lambda value: cpython if value is raw else pytest.fail(),
+    )
 
     def regular(component, parsed, directory):
-        assert component["name"] in {"mpdecimal", "blake2"} and parsed is cpython and directory == tmp_path
+        assert (
+            component["name"] in {"mpdecimal", "blake2"}
+            and parsed is cpython
+            and directory == tmp_path
+        )
         calls.append(component["name"])
         return {"component": component["name"]}
 
@@ -832,13 +1142,36 @@ def test_bundled_verifier_reuses_authenticated_cpython_archive(
     assert len(calls) == 3 and proofs["karamel-runtime"] == synthetic_karamel_proof
 
 
-@pytest.mark.parametrize("field", ["sources", "source_records", "files", "hacl_vendored_tree",
-                                    "cpython_tree", "query", "parent_advisory_scope", "hacl_advisory_scope"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "sources",
+        "source_records",
+        "files",
+        "hacl_vendored_tree",
+        "cpython_tree",
+        "query",
+        "parent_advisory_scope",
+        "hacl_advisory_scope",
+    ],
+)
 def test_changed_or_missing_source_proof_refuses(
-        monkeypatch, tmp_path, synthetic_karamel_proof, field):
-    component = next(row for row in _coverage_fixture()[0]["components"] if row["name"] == "karamel-runtime")
-    monkeypatch.setattr(sources, "verify_karamel_source", lambda *args, **kwargs: synthetic_karamel_proof)
-    assert sources._karamel_proof(component, b"archive", tmp_path) == synthetic_karamel_proof
+    monkeypatch, tmp_path, synthetic_karamel_proof, field
+):
+    component = next(
+        row
+        for row in _coverage_fixture()[0]["components"]
+        if row["name"] == "karamel-runtime"
+    )
+    monkeypatch.setattr(
+        sources,
+        "verify_karamel_source",
+        lambda *args, **kwargs: synthetic_karamel_proof,
+    )
+    assert (
+        sources._karamel_proof(component, b"archive", tmp_path)
+        == synthetic_karamel_proof
+    )
     synthetic_karamel_proof[field] = {}
     with pytest.raises(ValueError, match="KaRaMeL source proof"):
         sources._karamel_proof(component, b"archive", tmp_path)
@@ -847,12 +1180,26 @@ def test_changed_or_missing_source_proof_refuses(
         sources._karamel_proof(component, b"archive", tmp_path)
 
 
-@pytest.mark.parametrize("field,value", [("query", {"commit": inventory._HACL_COMMIT}),
-                                        ("source_mapping", {}), ("version", "a" * 40)])
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("query", {"commit": inventory._HACL_COMMIT}),
+        ("source_mapping", {}),
+        ("version", "a" * 40),
+    ],
+)
 def test_karamel_mapping_refuses_before_network(monkeypatch, tmp_path, field, value):
-    component = next(row for row in _coverage_fixture()[0]["components"] if row["name"] == "karamel-runtime")
+    component = next(
+        row
+        for row in _coverage_fixture()[0]["components"]
+        if row["name"] == "karamel-runtime"
+    )
     component[field] = value
-    monkeypatch.setattr(sources, "verify_karamel_source", lambda *args, **kwargs: pytest.fail("downloaded"))
+    monkeypatch.setattr(
+        sources,
+        "verify_karamel_source",
+        lambda *args, **kwargs: pytest.fail("downloaded"),
+    )
     with pytest.raises(ValueError, match="unreviewed KaRaMeL source mapping"):
         sources._karamel_proof(component, b"archive", tmp_path)
 
@@ -868,23 +1215,42 @@ def test_real_nine_component_twelve_notice_contract_has_unchanged_file_populatio
     assert len(population["components"]) == 9
     assert len(scan._notice_population(population)) == 12
     assert set(scan._notice_population(population)) == set(scan._LICENSE_IDS)
-    assert set().union(*(set(row["files"]) for row in population["components"])) == set(population["files"])
+    assert set().union(*(set(row["files"]) for row in population["components"])) == set(
+        population["files"]
+    )
     by_name = {row["name"]: row for row in population["components"]}
     assert len(by_name["cpython"]["files"]) == 665
     assert by_name["karamel-runtime"]["files_sha256"] == by_name["hacl"]["files_sha256"]
-    expected = sorted(row["path"] for row in _reviewed_lock()["cpython_elf_files"]
-                      if any(marker in row["path"] for marker in ("/_md5.", "/_sha1.", "/_sha2.", "/_sha3.")))
+    expected = sorted(
+        row["path"]
+        for row in _reviewed_lock()["cpython_elf_files"]
+        if any(
+            marker in row["path"]
+            for marker in ("/_md5.", "/_sha1.", "/_sha2.", "/_sha3.")
+        )
+    )
     assert len(expected) == 4 and by_name["karamel-runtime"]["files"] == expected
-    assert _reviewed_lock()["python_distributions"] == _reviewed_lock()["python_wheels"] == []
+    assert (
+        _reviewed_lock()["python_distributions"]
+        == _reviewed_lock()["python_wheels"]
+        == []
+    )
 
 
 @pytest.mark.parametrize("name", scan._LICENSE_IDS)
 def test_each_of_twelve_notices_remains_required(tmp_path, name):
     population = _actual_component_population()
-    staged = {key: {"scan_path": key + "/LICENSE"} for key in scan._notice_population(population)}
+    staged = {
+        key: {"scan_path": key + "/LICENSE"}
+        for key in scan._notice_population(population)
+    }
     payload = _license_report(tmp_path)
-    payload["Results"] = [_license_report(tmp_path, key)["Results"][0] for key in staged if key != name]
-    assert scan.license_findings(payload, staged, tmp_path)["missing_license_scope"] == [name]
+    payload["Results"] = [
+        _license_report(tmp_path, key)["Results"][0] for key in staged if key != name
+    ]
+    assert scan.license_findings(payload, staged, tmp_path)[
+        "missing_license_scope"
+    ] == [name]
 
 
 def test_publication_source_and_test_closures_include_karamel(monkeypatch):
@@ -892,35 +1258,71 @@ def test_publication_source_and_test_closures_include_karamel(monkeypatch):
     from ncore_publication import process
 
     assert "npa/src/npa/deploy/ncore_karamel_source.py" in process.SOURCE_PATHS
-    required = {"npa/tests/deploy/test_ncore_component_scan.py", "npa/tests/deploy/test_ncore_karamel_source.py"}
-    assert required <= set(process.SOURCE_PATHS) and required <= set(process.SOURCE_GUARDS)
+    required = {
+        "npa/tests/deploy/test_ncore_component_scan.py",
+        "npa/tests/deploy/test_ncore_karamel_source.py",
+    }
+    assert required <= set(process.SOURCE_PATHS) and required <= set(
+        process.SOURCE_GUARDS
+    )
     assert set(process.SOURCE_GUARDS) == required | {
-        "npa/tests/docker/test_packaging_contract.py", "npa/tests/docker/test_ncore_image_contract.py"}
+        "npa/tests/docker/test_packaging_contract.py",
+        "npa/tests/docker/test_ncore_image_contract.py",
+    }
 
 
-@pytest.mark.parametrize("finding_component", [None, "karamel-runtime", "hacl", "cpython"])
+@pytest.mark.parametrize(
+    "finding_component", [None, "karamel-runtime", "hacl", "cpython"]
+)
 def test_evaluator_retains_three_source_proofs_and_all_parent_findings(
-        monkeypatch, tmp_path, synthetic_karamel_proof, finding_component):
+    monkeypatch, tmp_path, synthetic_karamel_proof, finding_component
+):
     population = _actual_component_population()
     licenses = {"delivery_failures": [], "missing_license_scope": []}
     components = population["components"]
-    proofs = {name: {"parent_advisory_scope": inventory._KARAMEL_SOURCE_PROFILE["parent_advisory_scope"]}
-              for name in inventory._BUNDLED_SOURCE_PROFILES}
+    proofs = {
+        name: {
+            "parent_advisory_scope": inventory._KARAMEL_SOURCE_PROFILE[
+                "parent_advisory_scope"
+            ]
+        }
+        for name in inventory._BUNDLED_SOURCE_PROFILES
+    }
     proofs["mpdecimal"]["upstream_review"] = sources._MPDECIMAL_REVIEW
     proofs["karamel-runtime"] = synthetic_karamel_proof
     monkeypatch.setattr(sources, "verify_bundled_sources", lambda *args: proofs)
-    monkeypatch.setattr(advisory, "_prepare_grype", lambda *args: (tmp_path / "grype", tmp_path / "config"))
-    monkeypatch.setattr(advisory, "_file_hash", lambda *args: advisory._GRYPE_BINARY_SHA256)
-    monkeypatch.setattr(advisory, "_grype_evaluation", lambda component, *args: {
-        "method": "grype-cpe", "query": component["query"], "findings": [
-            {"id": "synthetic-parent-advisory", "blocking": True}]
-        if finding_component == component["name"] else []})
+    monkeypatch.setattr(
+        advisory,
+        "_prepare_grype",
+        lambda *args: (tmp_path / "grype", tmp_path / "config"),
+    )
+    monkeypatch.setattr(
+        advisory, "_file_hash", lambda *args: advisory._GRYPE_BINARY_SHA256
+    )
+    monkeypatch.setattr(
+        advisory,
+        "_grype_evaluation",
+        lambda component, *args: {
+            "method": "grype-cpe",
+            "query": component["query"],
+            "findings": [{"id": "synthetic-parent-advisory", "blocking": True}]
+            if finding_component == component["name"]
+            else [],
+        },
+    )
     queries = []
 
     def page(query):
         queries.append(dict(query))
-        target = next((row["query"] for row in components if row["name"] == finding_component), None)
-        return json.dumps({"vulns": [{"id": "synthetic-upstream-advisory"}]} if query == target else {}).encode()
+        target = next(
+            (row["query"] for row in components if row["name"] == finding_component),
+            None,
+        )
+        return json.dumps(
+            {"vulns": [{"id": "synthetic-upstream-advisory"}]}
+            if query == target
+            else {}
+        ).encode()
 
     monkeypatch.setattr(advisory, "_osv_page", page)
     results = advisory.evaluate_components(components, tmp_path)
@@ -928,11 +1330,22 @@ def test_evaluator_retains_three_source_proofs_and_all_parent_findings(
     assert len(results) == 9 and inventory._KARAMEL_SOURCE_PROFILE["query"] in queries
     assert row["source_mapping"] == inventory._KARAMEL_SOURCE_PROFILE
     assert row["source_query"] == row["query"] == synthetic_karamel_proof["query"]
-    proof_hash = inventory._sha((tmp_path / "karamel-runtime.source-proof.json").read_bytes())
-    assert proof_hash == row["source_proof_sha256"] == inventory._KARAMEL_SOURCE_PROFILE["source_proof_sha256"]
-    assert json.loads((tmp_path / "karamel-runtime.evaluation.json").read_bytes()) == row
+    proof_hash = inventory._sha(
+        (tmp_path / "karamel-runtime.source-proof.json").read_bytes()
+    )
+    assert (
+        proof_hash
+        == row["source_proof_sha256"]
+        == inventory._KARAMEL_SOURCE_PROFILE["source_proof_sha256"]
+    )
+    assert (
+        json.loads((tmp_path / "karamel-runtime.evaluation.json").read_bytes()) == row
+    )
     assert all((tmp_path / (name + ".source-proof.json")).exists() for name in proofs)
     failures = scan.coverage_failures(population, results, licenses)
     assert bool(failures) is (finding_component is not None)
     if finding_component:
-        assert any(failure.startswith("blocking advisory: " + finding_component + ":") for failure in failures)
+        assert any(
+            failure.startswith("blocking advisory: " + finding_component + ":")
+            for failure in failures
+        )

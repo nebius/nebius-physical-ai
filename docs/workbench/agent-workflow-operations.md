@@ -28,6 +28,23 @@ using subprocesses must invoke only the fixed `npa ...` operations below. It
 must not invoke an execution backend, a cluster client, a terminal multiplexer,
 or an arbitrary shell command.
 
+### Agent UI execution
+
+The **Prepare run** control in the Agent UI is intentionally two-step. The first
+request validates the exact YAML and produces its scheduler plan without
+launching a workload. The UI then presents a single-use confirmation bound to
+the YAML digest, run ID, project, and Kubernetes target. Confirming it invokes
+`npa workbench workflow submit --runtime` on the agent VM and waits for the
+durable runtime result. If infrastructure is absent, the UI asks separately to
+confirm provisioning first, then asks again before workflow execution. The
+artifact-backed Stages panel is the run's evidence surface; it does not infer a
+successful stage merely from the presence of an artifact.
+
+An agent-authored template must make every input artifact concrete. When chat
+creates an input (such as a prompt JSONL), the YAML includes a real preparation
+stage that writes the declared durable URI before a consuming tool stage starts;
+an assumed or VM-local input path is not a runnable handoff.
+
 <a id="read-only-preparation"></a>
 
 ## Validate, plan, and check images
@@ -87,7 +104,20 @@ Omit `--cached` to read live logs from the recorded managed job. Logs for a
 single-stage serial wave remain available if the driver stopped before its first
 task observation. A provider response that the requested task does not exist is
 reported as `VERIFICATION_UNAVAILABLE` with exit code 2; it is not verified stage
-output.
+output. For JSON output, live-query verification covers transport only:
+`live_log_state: available` means the query returned stdout or stderr bytes, while
+`live_log_state: empty` means the query succeeded without returning log bytes.
+When the exact managed job is still `PENDING` or `STARTING`, a non-following
+live request returns immediately with `live_log_state: not_started`, an empty
+log, and the verified status diagnostics. This means the payload has not
+started; it is not a successful empty execution. Use `--follow` to wait for
+payload logs. A `--cached` request never substitutes a live controller query.
+
+SkyPilot managed-job IDs are local to their controller state. If submission used
+an isolated SkyPilot state root, pass that same absolute path as
+`--isolated-config-dir` to `status`, `logs`, and `cancel`. This binds every queue,
+log, pre-cancel verification, and cancellation call to the controller that owns
+the recorded IDs; an unrelated controller can reuse the same numeric job ID.
 
 Diagnose a failed run from the status result first, then request the named failed
 stage's bounded log tail and artifact inventory. Preserve the run ID for resume;

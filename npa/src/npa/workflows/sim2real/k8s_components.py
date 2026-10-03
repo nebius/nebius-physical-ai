@@ -87,7 +87,9 @@ def _component_job_manifest(
     env_values = _kubernetes_component_env(
         env,
         config,
-        isaac_backed=(component == "heldout_eval" and config.sim_backend == SIM_BACKEND_ISAAC),
+        isaac_backed=(
+            component == "heldout_eval" and config.sim_backend == SIM_BACKEND_ISAAC
+        ),
     )
     # Each sibling attests its own immutable image, not the controller image.
     env_values["NPA_SIM2REAL_RUNTIME_IMAGE"] = image.removeprefix("docker:")

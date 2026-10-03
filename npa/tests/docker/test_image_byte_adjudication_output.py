@@ -1,4 +1,5 @@
 """Final receipt identity and complete readback, using synthetic outputs only."""
+
 import os
 import sys
 from pathlib import Path
@@ -121,6 +122,9 @@ def test_readback_conserves_complete_large_output(output):
     value = {"status": "synthetic", "evidence": "x" * (2 * 1024 * 1024 + 7)}
     A.write_result(directory, held, value)
     path = directory / "adjudication.json"
-    assert path.read_bytes() == (json.dumps(value, sort_keys=True, indent=2) + "\n").encode()
+    assert (
+        path.read_bytes()
+        == (json.dumps(value, sort_keys=True, indent=2) + "\n").encode()
+    )
     assert path.stat().st_mode & 0o777 == 0o600
     assert path.stat().st_nlink == 1

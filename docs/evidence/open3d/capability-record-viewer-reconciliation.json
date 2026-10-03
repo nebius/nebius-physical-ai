@@ -1,0 +1,57 @@
+{
+  "capability": "The view table drives the actual layout, and the viewer shows the colour the reconstruction already carried",
+  "recorded_at": "2026-09-21T03:34Z",
+  "lane": "geometry",
+  "origin": "Two narrow source findings from root's independent review of the 256c26bc9 runner diff. Both were correct and both were defects in my change, not in the pre-existing code.",
+  "provenance_boundary": {
+    "statement": "These two fixes are a successor to 256c26bc915080934814789be6a41bbc253f0d1c. The completed six-state runtime run and its artifacts were produced by 256c26bc9 and are NOT relabelled as produced by this change.",
+    "what_the_256_run_does_still_prove": "Per-view camera fitting, exercised live: audit view at distance 3.7969 against 3.2609-3.2736 for the other three.",
+    "what_needs_a_fresh_run_to_prove_live": "The empty-tab fix and the colour pass-through. Both are verified here against the real PLY bytes that run produced, which is real geometry but not a new end-to-end run."
+  },
+  "finding_1_the_table_did_not_drive_what_i_said_it_drove": {
+    "root_s_observation": "VIEW_GEOMETRY comments claim a single table drives both camera and displayed entities, but _blueprint still hard-codes its contents separately. The comment also says a cloud-only run drops the surface view, yet _blueprint always appends SURFACE_VIEW and falls back to scene_camera if its camera is absent.",
+    "verdict": "Both true. The comment asserted an invariant the code did not enforce, and the second half was a real user-visible defect rather than only a wrong comment.",
+    "the_defect": "A cloud-only run opened a 'Supported surface only' tab with nothing in it, because the tab was appended unconditionally and borrowed the scene camera when its own was missing. An empty tab is worse than a missing one: it tells the reader the surface was computed and came out empty.",
+    "the_fix": "VIEW_GEOMETRY entries now carry both the geometry keys the camera frames and the entity paths the view draws. _blueprint iterates the table and builds a view only when cameras has an entry for it, which happens only when the view's defining geometry was logged. The separate has_removed flag is gone, since it duplicated what the camera dictionary already knew -- the same drift class one level up.",
+    "measured_on_the_real_workflow_output": {
+      "full_run_views": ["Scene: observed scan and supported surface", "Observed scan only", "Supported surface only", "Removed: unsupported surface"],
+      "cloud_only_views": ["Scene: observed scan and supported surface", "Observed scan only"],
+      "empty_surface_tab_in_cloud_only_run": false
+    },
+    "why_my_earlier_test_missed_it": "It asserted the camera dictionary and never built the blueprint, so it could not see a tab the blueprint added on its own. The new tests walk the real Rerun object graph from Blueprint.root_container down through each container's contents, so they assert what the viewer would be handed."
+  },
+  "finding_2_the_viewer_discarded_colour_the_reconstruction_carried": {
+    "root_s_observation": "run_visualize logs the supported rr.Mesh3D with vertices/triangles/normals but no vertex_colors. The PLY-based CPU comparison retains color, so it must not imply the actual viewer does.",
+    "verdict": "Correct, and the gap was real rather than theoretical.",
+    "measured_on_the_completed_run_s_own_mesh_ply": {
+      "vertices": 14736,
+      "has_vertex_colours": true,
+      "distinct_colours_carried": 5432,
+      "dtype_after_conversion": "uint8",
+      "channel_range": "[0,0,0] to [255,255,255]",
+      "reading": "The reconstruction already carried 5432 distinct per-vertex colours inherited from the scans. The viewer was dropping all of them, so the kept surface arrived untinted beside an audit overlay that is deliberately red -- which reads as a colour that means something rather than an absence of one."
+    },
+    "the_fix": "_mesh_colors carries the mesh's own per-vertex colour through, converting Open3D's float 0..1 to Rerun's 8-bit channels, and returns None when there is no usable colour so Rerun shades the surface exactly as before.",
+    "nothing_invented": "No colour is synthesised. Absent colour, or colour whose shape does not match the vertex count, falls back to neutral shading, because a made-up tint on a reconstruction would imply measurement that did not happen. Values outside the documented range are clamped rather than wrapped by the cast, which is tested.",
+    "not_a_quality_claim": "This is readability. It says nothing about accuracy, collision fitness or safe planning, and no such claim is attached to it."
+  },
+  "regression_tests_added": [
+    "test_a_cloud_only_run_offers_no_empty_surface_tab",
+    "test_the_blueprint_draws_the_entities_the_table_says_each_view_draws",
+    "test_a_reconstruction_that_carries_colour_keeps_it_and_one_that_does_not_is_left_alone"
+  ],
+  "the_regression_test_was_verified_against_the_defect": {
+    "method": "The old blueprint behaviour was temporarily restored -- unconditional surface tab plus scene-camera fallback -- and the test re-run.",
+    "result": "FAILED with 'a cloud-only run must not offer an empty tab', naming 'Supported surface only' in the built layout. Restoring the fix returned it to green.",
+    "why_this_is_recorded": "A test that passes against both the defect and the fix proves nothing, and this one was written after the defect was already fixed, so the check was necessary rather than decorative."
+  },
+  "validation": {
+    "focused_tests": "124 passed (npa/tests/workbench/test_open3d.py, npa/tests/cli/test_open3d_cli.py)",
+    "lint": "ruff check and ruff format clean",
+    "golden_eval_in_container_at_this_source": "ICP fitness 1.0000+, 3-node pose graph optimized, 7562 triangles, 0.4936 -> 0.0000 of area cropped with 0.4865 beyond three voxels, decode-verified RRD"
+  },
+  "still_not_proven": {
+    "rerun_ui": "No Rerun web-viewer screenshot was captured. The layout is asserted by walking the blueprint object the viewer is handed, and the colour by inspecting the array passed to rr.Mesh3D, which is stronger than a screenshot for these two properties but is still not a capture of the viewer. Root's point that the UI capture matters for the operator's original complaint stands, and it remains open.",
+    "accuracy": "Unchanged. The crop still leaves holes and thin disconnected fragments, and no accuracy, collision or safe-planning acceptance follows from either fix."
+  }
+}

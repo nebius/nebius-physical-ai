@@ -93,8 +93,7 @@ def is_fabric_capable_topology(*, platform: str, preset: str) -> bool:
 
     normalized = str(platform or "").strip().lower()
     return bool(
-        gpus_per_node(preset) == 8
-        and ("-sxm" in normalized or "-nvl" in normalized)
+        gpus_per_node(preset) == 8 and ("-sxm" in normalized or "-nvl" in normalized)
     )
 
 

@@ -16,7 +16,14 @@ from urllib.parse import urlsplit
 
 from botocore.exceptions import BotoCoreError, ClientError
 
-from archive_inventory import canonical, digest, read_json, require_digest, safe_name, validate_result
+from archive_inventory import (
+    canonical,
+    digest,
+    read_json,
+    require_digest,
+    safe_name,
+    validate_result,
+)
 
 from npa.clients.storage import StorageClient, StorageError, StoragePreconditionFailed
 
@@ -31,7 +38,11 @@ def _directory(path):
     descriptor = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
     try:
         for component in path.parts[1:]:
-            child = os.open(component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=descriptor,
+            )
             os.close(descriptor)
             descriptor = child
         return descriptor
@@ -41,14 +52,21 @@ def _directory(path):
 
 
 def _signature(value):
-    return (value.st_dev, value.st_ino, value.st_mode, value.st_nlink,
-            value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+    return (
+        value.st_dev,
+        value.st_ino,
+        value.st_mode,
+        value.st_nlink,
+        value.st_size,
+        value.st_mtime_ns,
+        value.st_ctime_ns,
+    )
 
 
 def _write_chunk(output, chunk):
     with memoryview(chunk) as view:
         while view:
-            view = view[os.write(output, view):]
+            view = view[os.write(output, view) :]
 
 
 def _scan_file(descriptor, info, destination):
@@ -119,9 +137,17 @@ def _scan(descriptor, destination=None):
 
 def _prefix(uri):
     parsed = urlsplit(uri)
-    if (parsed.scheme != "s3" or not parsed.netloc or parsed.username or parsed.password
-            or parsed.port or parsed.query or parsed.fragment or "%" in uri
-            or not parsed.path.startswith("/")):
+    if (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.port
+        or parsed.query
+        or parsed.fragment
+        or "%" in uri
+        or not parsed.path.startswith("/")
+    ):
         raise ValueError("Use an unsigned S3 URI with an explicit archive prefix")
     key = parsed.path[1:].rstrip("/")
     safe_name(key)
@@ -207,17 +233,30 @@ def _manifest(payload, expected_digest):
     if digest(payload) != require_digest(expected_digest):
         raise ValueError("Completion manifest hash differs")
     manifest = read_json(payload)
-    if (not isinstance(manifest, dict) or set(manifest) != {"schema", "format", "files"}
-            or manifest["schema"] != SCHEMA or manifest["format"] not in {"basic", "advanced"}
-            or not isinstance(manifest["files"], dict) or not manifest["files"]):
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"schema", "format", "files"}
+        or manifest["schema"] != SCHEMA
+        or manifest["format"] not in {"basic", "advanced"}
+        or not isinstance(manifest["files"], dict)
+        or not manifest["files"]
+    ):
         raise ValueError("Invalid archive completion manifest")
     for name, entry in manifest["files"].items():
         safe_name(name)
-        if (not isinstance(entry, dict) or set(entry) != {"sha256", "size"}
-                or type(entry["size"]) is not int or entry["size"] < 0):
+        if (
+            not isinstance(entry, dict)
+            or set(entry) != {"sha256", "size"}
+            or type(entry["size"]) is not int
+            or entry["size"] < 0
+        ):
             raise ValueError("Invalid archive file entry")
         require_digest(entry["sha256"])
-        if any(str(parent) in manifest["files"] for parent in Path(name).parents if str(parent) != "."):
+        if any(
+            str(parent) in manifest["files"]
+            for parent in Path(name).parents
+            if str(parent) != "."
+        ):
             raise ValueError("Archive file conflicts with a directory")
     if payload != canonical(manifest):
         raise ValueError("Noncanonical completion manifest")
@@ -230,7 +269,13 @@ def _expose(parent, staging, destination):
     rename = getattr(libc, "renameat2", None)
     if rename is None:
         raise OSError("Restore requires Linux renameat2 with RENAME_NOREPLACE")
-    rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    rename.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
     rename.restype = ctypes.c_int
     # Complete fallible preparation before the single publication boundary.
     os.fsync(parent)
@@ -274,8 +319,11 @@ def _recheck_restore_parent(destination, info):
     current = _directory(destination.parent)
     try:
         current_info = os.fstat(current)
-        if ((current_info.st_dev, current_info.st_ino) != (info.st_dev, info.st_ino)
-                or current_info.st_uid != os.getuid() or current_info.st_mode & 0o077):
+        if (
+            (current_info.st_dev, current_info.st_ino) != (info.st_dev, info.st_ino)
+            or current_info.st_uid != os.getuid()
+            or current_info.st_mode & 0o077
+        ):
             raise ValueError("Restore parent changed before publication")
     finally:
         os.close(current)
@@ -290,7 +338,9 @@ def _restore_parent(parent, destination):
     return info
 
 
-def restore(input_uri: str, destination: Path, manifest_sha256: str, storage: StorageClient) -> dict:
+def restore(
+    input_uri: str, destination: Path, manifest_sha256: str, storage: StorageClient
+) -> dict:
     """Restore listed, hash-bound objects through private staging into a new directory.
 
     Args:
@@ -316,7 +366,9 @@ def restore(input_uri: str, destination: Path, manifest_sha256: str, storage: St
         manifest = _manifest(payload, manifest_sha256)
         # Anchor staging to the verified open parent, even if its pathname is
         # replaced. Recheck that pathname before publishing through the same fd.
-        staging = Path(tempfile.mkdtemp(prefix=".clip-restore-", dir=f"/proc/self/fd/{parent}"))
+        staging = Path(
+            tempfile.mkdtemp(prefix=".clip-restore-", dir=f"/proc/self/fd/{parent}")
+        )
         _restore_payloads(storage, prefix, staging, manifest["files"])
         _validate_staging(staging, manifest)
         _recheck_restore_parent(destination, info)
@@ -332,9 +384,12 @@ def restore(input_uri: str, destination: Path, manifest_sha256: str, storage: St
 
 
 def _receipt(manifest, payload):
-    return {"manifest_sha256": digest(payload), "format": manifest["format"],
-            "files": len(manifest["files"]),
-            "bytes": sum(entry["size"] for entry in manifest["files"].values())}
+    return {
+        "manifest_sha256": digest(payload),
+        "format": manifest["format"],
+        "files": len(manifest["files"]),
+        "bytes": sum(entry["size"] for entry in manifest["files"].values()),
+    }
 
 
 def main(argv=None) -> int:
@@ -349,10 +404,14 @@ def main(argv=None) -> int:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
-    upload = commands.add_parser("archive", help="Archive a completed quiescent local tree")
+    upload = commands.add_parser(
+        "archive", help="Archive a completed quiescent local tree"
+    )
     upload.add_argument("--input-path", required=True, type=Path)
     upload.add_argument("--output-path", required=True)
-    download = commands.add_parser("restore", help="Verify and restore into a new private directory")
+    download = commands.add_parser(
+        "restore", help="Verify and restore into a new private directory"
+    )
     download.add_argument("--input-path", required=True)
     download.add_argument("--output-path", required=True, type=Path)
     download.add_argument("--manifest-sha256", required=True)
@@ -362,14 +421,25 @@ def main(argv=None) -> int:
         if options.command == "archive":
             result = archive(options.input_path, options.output_path, storage)
         else:
-            result = restore(options.input_path, options.output_path, options.manifest_sha256, storage)
+            result = restore(
+                options.input_path,
+                options.output_path,
+                options.manifest_sha256,
+                storage,
+            )
     except (ValueError, OSError, StorageError, BotoCoreError, ClientError):
-        print("CLIP archive operation failed; verify source, destination, integrity and storage access.", file=sys.stderr)
+        print(
+            "CLIP archive operation failed; verify source, destination, integrity and storage access.",
+            file=sys.stderr,
+        )
         return 1
     except Exception:
         # Native format readers can include private paths in unexpected errors.
         # Keep their details private while distinguishing a bug from bad input.
-        print("CLIP archive encountered an unexpected error; report it with private diagnostic evidence.", file=sys.stderr)
+        print(
+            "CLIP archive encountered an unexpected error; report it with private diagnostic evidence.",
+            file=sys.stderr,
+        )
         return 2
     print(canonical(result).decode())
     return 0

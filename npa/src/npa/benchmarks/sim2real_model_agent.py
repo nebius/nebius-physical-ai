@@ -216,7 +216,9 @@ class IndeterminateToolExecutionError(RuntimeError):
     """A write-ahead tool intent has no durable result after restart."""
 
     def __init__(self, response_id: str, tool_call_ids: list[str]) -> None:
-        super().__init__("tool execution may have completed before its result was journaled")
+        super().__init__(
+            "tool execution may have completed before its result was journaled"
+        )
         self.response_id = response_id
         self.tool_call_ids = tool_call_ids
 
@@ -447,7 +449,8 @@ def _stream_chat(
             return
         if not isinstance(value, str):
             raise StreamRecoveryError(
-                f"non_string_{field}_fragment", progress_record("malformed_stream_shape")
+                f"non_string_{field}_fragment",
+                progress_record("malformed_stream_shape"),
             )
         target.append(value)
         observed_characters_lower_bound += len(value)
@@ -466,8 +469,7 @@ def _stream_chat(
                 progress_record("no_usable_tool_call_progress"),
             )
         if tool_started is not None and (
-            time.monotonic() - tool_started
-            >= float(policy["tool_assembly_seconds"])
+            time.monotonic() - tool_started >= float(policy["tool_assembly_seconds"])
             or observed_characters_lower_bound - tool_started_characters
             >= int(policy["tool_assembly_characters"])
         ):
@@ -610,8 +612,10 @@ def _stream_chat(
                             "tool_arguments",
                         ),
                     ):
-                        key = "id" if field == "tool_call_id" else (
-                            "name" if field == "tool_name" else "arguments"
+                        key = (
+                            "id"
+                            if field == "tool_call_id"
+                            else ("name" if field == "tool_name" else "arguments")
                         )
                         fragments: list[str] = []
                         append_fragment(fragments, value, field)
@@ -786,8 +790,7 @@ def _bounded_tool_result(
         ),
     }
     while (
-        len(json.dumps(bounded, sort_keys=True, separators=(",", ":")))
-        > max_characters
+        len(json.dumps(bounded, sort_keys=True, separators=(",", ":"))) > max_characters
     ):
         if len(bounded["preview_head"]) > 256:
             bounded["preview_head"] = bounded["preview_head"][:-256]
@@ -982,7 +985,9 @@ def _load_transcript(
     ]
     if checkpoint_indexes:
         messages = messages[checkpoint_indexes[-1] :]
-    messages = [message for group in _safe_message_groups(messages) for message in group]
+    messages = [
+        message for group in _safe_message_groups(messages) for message in group
+    ]
     if tool_results_path is None or not tool_results_path.exists():
         return messages
 
@@ -1073,7 +1078,9 @@ def _load_transcript(
         for call in assistant.get("tool_calls") or []:
             call_id = str(call.get("id") or "") if isinstance(call, dict) else ""
             has_result = call_id in group["results"] or call_id in recovered_results
-            tool_message = group["results"].get(call_id) or recovered_results.get(call_id)
+            tool_message = group["results"].get(call_id) or recovered_results.get(
+                call_id
+            )
             if has_result and not isinstance(tool_message, dict):
                 raise IndeterminateToolExecutionError(response_id, [call_id])
             if not has_result:
@@ -1159,7 +1166,9 @@ def _collect_run_identifiers(messages: list[dict[str, Any]]) -> list[str]:
         elif isinstance(value, list):
             for child in value:
                 visit(child, key)
-        elif key in {"run_id", "workflow_run_id", "safe_run_reference"} and isinstance(value, str):
+        elif key in {"run_id", "workflow_run_id", "safe_run_reference"} and isinstance(
+            value, str
+        ):
             if _RUN_ID_RE.fullmatch(value):
                 found.add(value)
 
@@ -1196,9 +1205,7 @@ def _submitted_workflow_state(
 
     for message in messages:
         content = str(message.get("content") or "")
-        if message.get("role") != "user" or not content.startswith(
-            CHECKPOINT_MARKER
-        ):
+        if message.get("role") != "user" or not content.startswith(CHECKPOINT_MARKER):
             continue
         for line in content.splitlines():
             if not line.startswith("Durable workflow submission state: "):
@@ -1221,7 +1228,11 @@ def _submitted_workflow_state(
             for child in value:
                 collect(child, key)
         elif isinstance(value, str):
-            if key in {"run_id", "workflow_run_id", "safe_run_reference"} and _RUN_ID_RE.fullmatch(value):
+            if key in {
+                "run_id",
+                "workflow_run_id",
+                "safe_run_reference",
+            } and _RUN_ID_RE.fullmatch(value):
                 run_ids.add(value)
                 return
             if value[:1] in {"{", "["}:
@@ -1313,8 +1324,7 @@ def _prepared_action_consumed_state(
         except json.JSONDecodeError:
             continue
         if (
-            result.get("schema")
-            == "npa.sim2real.prepared_workflow_action.result.v1"
+            result.get("schema") == "npa.sim2real.prepared_workflow_action.result.v1"
             and result.get("action_consumed") is True
             and (
                 not action_id
@@ -1342,9 +1352,7 @@ def _workflow_submit_command_kind(command: str) -> str:
         for index in range(max(0, len(tokens) - 2))
         if tokens[index : index + 3] == ["workbench", "workflow", "submit"]
     ]
-    raw_submit_like = bool(
-        re.search(r"\bworkbench\s+workflow\s+submit\b", command)
-    )
+    raw_submit_like = bool(re.search(r"\bworkbench\s+workflow\s+submit\b", command))
     if not sequences and not raw_submit_like:
         return "none"
     if len(sequences) != 1:
@@ -1505,7 +1513,11 @@ def _merge_submit_attempts(
     seen: set[str] = set()
     for attempt in (*preserved, *active):
         occurrence_id = str(attempt.get("occurrence_id") or "")
-        key = f"occurrence:{occurrence_id}" if occurrence_id else f"content:{_sha(attempt)}"
+        key = (
+            f"occurrence:{occurrence_id}"
+            if occurrence_id
+            else f"content:{_sha(attempt)}"
+        )
         if key in seen:
             continue
         seen.add(key)
@@ -1634,7 +1646,8 @@ def _context_checkpoint(
                 {
                     "action_id": prepared_action_id,
                     "consumed": prepared_action_consumed,
-                    "available": bool(prepared_action_id) and not prepared_action_consumed,
+                    "available": bool(prepared_action_id)
+                    and not prepared_action_consumed,
                 },
                 sort_keys=True,
                 separators=(",", ":"),
@@ -1660,9 +1673,7 @@ def _context_checkpoint(
             )
             + f"Workspace status SHA256: {hashlib.sha256(workspace_status.encode()).hexdigest()}; "
             f"status lines: {len(workspace_lines)}\n"
-            "Workspace status follows:\n"
-            + "\n".join(workspace_excerpt_lines)
-            + "\n"
+            "Workspace status follows:\n" + "\n".join(workspace_excerpt_lines) + "\n"
             "Verbatim recent transcript JSON follows:\n"
             + json.dumps(recent, sort_keys=True, separators=(",", ":"))
         ),
@@ -1684,9 +1695,7 @@ def _maybe_checkpoint(
     )
     active = messages[2:]
     transcript_messages = _read_transcript_messages(transcript_path)
-    preserved_submit_attempts = _recent_standalone_submit_attempts(
-        transcript_messages
-    )
+    preserved_submit_attempts = _recent_standalone_submit_attempts(transcript_messages)
     active_has_submit_attempt = any(
         message.get("role") == "user"
         and CHECKPOINT_SUBMIT_ATTEMPT_MARKER in str(message.get("content") or "")
@@ -1732,9 +1741,7 @@ def _maybe_checkpoint(
     ):
         return messages
     checkpoint_source = (
-        messages[:2] + transcript_messages
-        if checkpoint_only
-        else messages
+        messages[:2] + transcript_messages if checkpoint_only else messages
     )
     compacted, checkpoint = _context_checkpoint(
         checkpoint_source,
@@ -1780,9 +1787,7 @@ def _write_recovery_checkpoint(
         # Recompacting a checkpoint-only history would erase its safe suffix.
         return messages
     checkpoint_source = (
-        messages[:2] + transcript_messages
-        if checkpoint_only
-        else messages
+        messages[:2] + transcript_messages if checkpoint_only else messages
     )
     compacted, checkpoint = _context_checkpoint(
         checkpoint_source,
@@ -1918,14 +1923,16 @@ def _inject_prepared_action_checkpoint(
     consumed = durable_prepared_state != "unused" or _prepared_action_consumed_state(
         messages[2:], action_id
     )
-    expected_availability = "Typed action available: none" if consumed else "Typed action available: submit_prepared_workflow"
+    expected_availability = (
+        "Typed action available: none"
+        if consumed
+        else "Typed action available: submit_prepared_workflow"
+    )
     latest_marker_index = -1
     latest_attempt_index = -1
     for index, message in enumerate(messages):
         content = str(message.get("content") or "")
-        if message.get("role") == "user" and content.startswith(
-            PREPARED_ACTION_MARKER
-        ):
+        if message.get("role") == "user" and content.startswith(PREPARED_ACTION_MARKER):
             match = re.search(r"Action ID: ([A-Za-z0-9._-]+)", content)
             marker_action_id = match.group(1).rstrip(".") if match else ""
             if marker_action_id == action_id and expected_availability in content:
@@ -1938,8 +1945,7 @@ def _inject_prepared_action_checkpoint(
             continue
         result_action_id = str(result.get("action_id") or "").rstrip(".")
         if (
-            result.get("schema")
-            == "npa.sim2real.prepared_workflow_action.result.v1"
+            result.get("schema") == "npa.sim2real.prepared_workflow_action.result.v1"
             and result_action_id == action_id
         ):
             latest_attempt_index = index
@@ -2072,9 +2078,7 @@ def run(config_path: Path) -> int:
     }
     unknown_safeguards = set(stream_safeguards) - set(DEFAULT_STREAM_SAFEGUARDS)
     if unknown_safeguards:
-        raise ValueError(
-            f"unknown stream safeguards: {sorted(unknown_safeguards)}"
-        )
+        raise ValueError(f"unknown stream safeguards: {sorted(unknown_safeguards)}")
     for key, value in stream_safeguards.items():
         if not isinstance(value, (int, float)) or value <= 0:
             raise ValueError(f"stream safeguard {key} must be positive")
@@ -2131,7 +2135,9 @@ def run(config_path: Path) -> int:
                 interventions_path = evidence / "interventions.jsonl"
                 if interventions_path.exists() and any(
                     json.loads(line).get("new_tool_schema_sha256") == meta.get(key)
-                    for line in interventions_path.read_text(encoding="utf-8").splitlines()
+                    for line in interventions_path.read_text(
+                        encoding="utf-8"
+                    ).splitlines()
                     if line.strip()
                 ):
                     continue
@@ -2178,6 +2184,7 @@ def run(config_path: Path) -> int:
             "trial mount-namespace isolation preflight failed: "
             + isolation_check["stderr"].strip()
         )
+
     def current_prepared_state() -> str:
         if prepared_control_dir is None or prepared_receipt_path is None:
             return "unused"
@@ -2190,9 +2197,9 @@ def run(config_path: Path) -> int:
             receipt = validate_receipt(
                 prepared_receipt_path,
                 requested_action_id=str(
-                    json.loads(
-                        prepared_receipt_path.read_text(encoding="utf-8")
-                    ).get("action_id")
+                    json.loads(prepared_receipt_path.read_text(encoding="utf-8")).get(
+                        "action_id"
+                    )
                     or ""
                 ),
                 context=prepared_context,
@@ -2290,9 +2297,9 @@ def run(config_path: Path) -> int:
                     "request_index": request_index,
                     "http_status": exc.code,
                     "workflow_submitted": _submitted_workflow_state(messages[2:])[0],
-                    "workflow_run_identifiers": _submitted_workflow_state(
-                        messages[2:]
-                    )[1],
+                    "workflow_run_identifiers": _submitted_workflow_state(messages[2:])[
+                        1
+                    ],
                     "completed_at": _utc(),
                 }
                 (evidence / "failure.json").write_text(
@@ -2345,10 +2352,10 @@ def run(config_path: Path) -> int:
                         "reason": str(exc),
                         "response_shape": _response_shape(assistant),
                     }
-            elif (
-                not assistant.get("content")
-                or telemetry.finish_reason in {"length", "content_filter"}
-            ):
+            elif not assistant.get("content") or telemetry.finish_reason in {
+                "length",
+                "content_filter",
+            }:
                 recovery = {
                     **asdict(telemetry),
                     "elapsed_seconds": telemetry.latency_seconds,
@@ -2502,8 +2509,7 @@ def run(config_path: Path) -> int:
                     else:
                         if generic_real_submit:
                             _append_private_jsonl(
-                                prepared_control_dir
-                                / "prepared-action-state.jsonl",
+                                prepared_control_dir / "prepared-action-state.jsonl",
                                 {
                                     "schema": "npa.sim2real.prepared_workflow_action.state.v1",
                                     "phase": "execution_started",
@@ -2528,8 +2534,7 @@ def run(config_path: Path) -> int:
                             result = {"error": type(exc).__name__, "message": str(exc)}
                         if generic_real_submit:
                             _append_private_jsonl(
-                                prepared_control_dir
-                                / "prepared-action-state.jsonl",
+                                prepared_control_dir / "prepared-action-state.jsonl",
                                 {
                                     "schema": "npa.sim2real.prepared_workflow_action.state.v1",
                                     "phase": "execution_finished",

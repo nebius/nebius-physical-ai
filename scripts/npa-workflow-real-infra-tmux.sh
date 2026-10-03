@@ -20,7 +20,7 @@ exec > >(tee -a "$LOG") 2>&1
 
 echo "=== npa.workflow FULL LIVE INFRA matrix log=${LOG} ==="
 echo "branch: $(git branch --show-current) @ $(git rev-parse --short HEAD)"
-echo "golden specs: $(find "${SPECS}/main" "${SPECS}/testing" -maxdepth 1 -name '*.yaml' | wc -l)"
+echo "golden specs: $("${PY}" -c 'from npa.orchestration.npa_workflow.blueprints import iter_npa_workflow_specs; print(len(iter_npa_workflow_specs()))')"
 
 echo "--- S3 preflight (project credentials, not stale AWS_*) ---"
 "${PY}" - <<'PY' || { echo "S3 preflight failed; fix ~/.npa/credentials.yaml or unset stale AWS_* in tmux server"; exit 1; }
@@ -75,7 +75,8 @@ from npa_workflow_live_helpers import live_bucket
 print(live_bucket(None))
 PY
 )"
-  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml; do
+  for spec in "${SPECS}/main"/*.yaml "${SPECS}/testing"/*.yaml "${SPECS}/partners"/*/*.yaml; do
+    [[ -f "$spec" ]] || continue
     base=$(basename "$spec")
     stem="${base%.yaml}"
     echo "live CLI: ${base} bucket=${BUCKET}"

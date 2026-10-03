@@ -20,16 +20,24 @@ IMAGE = ROOT / "npa/docker/workbench/curobo"
 
 @pytest.fixture
 def installed(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("curobo_dependency_correction", IMAGE / "remove_scikit_image_recipe.py")
+    spec = importlib.util.spec_from_file_location(
+        "curobo_dependency_correction", IMAGE / "remove_scikit_image_recipe.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    source = (b"# Copyright and BSD notice preserved.\n" * 508
-              + b'def grass():\n    """Primary public documentation."""\n    """\n'
-              + b"    synthetic noncredential historical recipe\n" * 23
-              + b'    """\n    return _load("data/grass.png")\n')
-    sanitized = b"".join(source.splitlines(keepends=True)[:510] + source.splitlines(keepends=True)[535:])
+    source = (
+        b"# Copyright and BSD notice preserved.\n" * 508
+        + b'def grass():\n    """Primary public documentation."""\n    """\n'
+        + b"    synthetic noncredential historical recipe\n" * 23
+        + b'    """\n    return _load("data/grass.png")\n'
+    )
+    sanitized = b"".join(
+        source.splitlines(keepends=True)[:510] + source.splitlines(keepends=True)[535:]
+    )
     monkeypatch.setattr(module, "SOURCE_SHA256", hashlib.sha256(source).hexdigest())
-    monkeypatch.setattr(module, "SANITIZED_SHA256", hashlib.sha256(sanitized).hexdigest())
+    monkeypatch.setattr(
+        module, "SANITIZED_SHA256", hashlib.sha256(sanitized).hexdigest()
+    )
     path = tmp_path / module.MODULE
     path.parent.mkdir(parents=True)
     path.write_bytes(source)
@@ -41,9 +49,11 @@ def installed(tmp_path, monkeypatch):
     dist.mkdir()
     (dist / "METADATA").write_text("Name: scikit-image\nVersion: 0.26.0\n")
     (dist / "LICENSE").write_bytes(b"complete original dependency license\n")
-    rows = [[module.MODULE, "", str(len(source))],
-            [str((dist / "LICENSE").relative_to(tmp_path)), "", ""],
-            [str((dist / "RECORD").relative_to(tmp_path)), "", ""]]
+    rows = [
+        [module.MODULE, "", str(len(source))],
+        [str((dist / "LICENSE").relative_to(tmp_path)), "", ""],
+        [str((dist / "RECORD").relative_to(tmp_path)), "", ""],
+    ]
     for pyc in path.parent.glob("__pycache__/_fetchers.*.pyc"):
         rows.append([str(pyc.relative_to(tmp_path)), "", ""])
     with (dist / "RECORD").open("w", newline="") as stream:
@@ -61,11 +71,19 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
     assert report["record_sha256_before"] != report["record_sha256_after"]
     rows = list(csv.reader(io.StringIO((dist / "RECORD").read_text())))
     source_row = next(row for row in rows if row[0] == module.MODULE)
-    assert source_row == [module.MODULE, "sha256=" + base64.urlsafe_b64encode(
-        hashlib.sha256(sanitized).digest()).decode().rstrip("="), str(len(sanitized))]
+    assert source_row == [
+        module.MODULE,
+        "sha256="
+        + base64.urlsafe_b64encode(hashlib.sha256(sanitized).digest())
+        .decode()
+        .rstrip("="),
+        str(len(sanitized)),
+    ]
     caches = list(path.parent.glob("__pycache__/_fetchers.*.pyc"))
     assert len(caches) == 1
-    assert hashlib.sha256(caches[0].read_bytes()).hexdigest() == report["bytecode_sha256"]
+    assert (
+        hashlib.sha256(caches[0].read_bytes()).hexdigest() == report["bytecode_sha256"]
+    )
     assert not any("opt-1" in row[0] for row in rows)
     calls = []
     outputs = []
@@ -78,9 +96,22 @@ def test_exact_correction_preserves_loader_and_notices_and_updates_record(instal
     assert calls == ["data/grass.png", "data/grass.png"]
 
 
-@pytest.mark.parametrize("mutation", ["version", "source", "record_duplicate", "record_missing",
-    "record_malformed", "source_symlink", "cache_symlink", "distribution_duplicate"])
-def test_unrecognized_installation_refuses_before_source_mutation(installed, mutation, tmp_path):
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "version",
+        "source",
+        "record_duplicate",
+        "record_missing",
+        "record_malformed",
+        "source_symlink",
+        "cache_symlink",
+        "distribution_duplicate",
+    ],
+)
+def test_unrecognized_installation_refuses_before_source_mutation(
+    installed, mutation, tmp_path
+):
     module, root, path, dist, source, _sanitized, _unrelated = installed
     if mutation == "version":
         (dist / "METADATA").write_text("Name: scikit-image\nVersion: 0.26.1\n")
@@ -122,14 +153,18 @@ def test_already_corrected_source_is_not_silently_reaccepted(installed):
 
 def test_runtime_statements_cannot_be_removed_as_a_recipe(installed, monkeypatch):
     module, _root, _path, _dist, source, _sanitized, _unrelated = installed
-    changed = source.replace(b'    """\n    return', b'    """\n    execute_work()\n    return')
+    changed = source.replace(
+        b'    """\n    return', b'    """\n    execute_work()\n    return'
+    )
     monkeypatch.setattr(module, "SOURCE_SHA256", hashlib.sha256(changed).hexdigest())
     with pytest.raises(ValueError, match="unexpected image loader body"):
         module.sanitize_source(changed, "0.26.0")
 
 
 @pytest.mark.parametrize("failure", ["compiler_error", "missing_cache", "linked_cache"])
-def test_regeneration_failure_cannot_emit_a_success_receipt(installed, monkeypatch, failure):
+def test_regeneration_failure_cannot_emit_a_success_receipt(
+    installed, monkeypatch, failure
+):
     module, _root, path, dist, _source, _sanitized, unrelated = installed
     original_record = (dist / "RECORD").read_bytes()
 
@@ -154,7 +189,9 @@ def test_correction_runs_before_installation_layer_commits():
     end = dockerfile.index("\n\n", start)
     instruction = dockerfile[start:end]
     assert "python /opt/remove_scikit_image_recipe.py" in instruction
-    assert instruction.index("remove_scikit_image_recipe.py") < instruction.index("pip check")
+    assert instruction.index("remove_scikit_image_recipe.py") < instruction.index(
+        "pip check"
+    )
     source = (IMAGE / "remove_scikit_image_recipe.py").read_text()
     assert "50e6234fa2170820eaf8d0f8f42b51905822afc3680a4f09113fa11d435f7fb4" in source
     assert "7f505612106adcc880746de642ceb91c9cbb74a6bd0c8100689c0da539c96abf" in source

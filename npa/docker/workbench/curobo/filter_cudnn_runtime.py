@@ -26,7 +26,9 @@ def filter_cudnn_runtime(site_packages: Path) -> dict:
         raise ValueError("Expected exactly one installed cuDNN distribution")
     dist = distributions[0]
     if dist.version != "9.20.0.48":
-        raise ValueError("Review the cuDNN payload boundary before changing its version")
+        raise ValueError(
+            "Review the cuDNN payload boundary before changing its version"
+        )
     dist_info = f"nvidia_cudnn_cu13-{dist.version}.dist-info"
     runtime_pattern = re.compile(r"nvidia/cudnn/lib/libcudnn\w*\.so(?:\.\d+)*")
     omitted_pattern = re.compile(
@@ -35,8 +37,13 @@ def filter_cudnn_runtime(site_packages: Path) -> dict:
     allowed_metadata = {
         f"{dist_info}/{name}"
         for name in (
-            "METADATA", "WHEEL", "RECORD", "top_level.txt", "INSTALLER",
-            "REQUESTED", "licenses/License.txt",
+            "METADATA",
+            "WHEEL",
+            "RECORD",
+            "top_level.txt",
+            "INSTALLER",
+            "REQUESTED",
+            "licenses/License.txt",
         )
     }
     files = {str(path) for path in (dist.files or [])}
@@ -46,7 +53,11 @@ def filter_cudnn_runtime(site_packages: Path) -> dict:
     omitted = []
     for name in sorted(files):
         path = root / name
-        if path.is_symlink() or path.resolve().parent != path.absolute().parent or not path.is_file():
+        if (
+            path.is_symlink()
+            or path.resolve().parent != path.absolute().parent
+            or not path.is_file()
+        ):
             raise ValueError("cuDNN payload must consist of regular contained files")
         if not path.resolve().is_relative_to(root):
             raise ValueError("cuDNN payload escapes site-packages")
@@ -96,4 +107,8 @@ def filter_cudnn_runtime(site_packages: Path) -> dict:
 
 
 if __name__ == "__main__":
-    print(json.dumps(filter_cudnn_runtime(Path(sysconfig.get_paths()["purelib"])), indent=2))
+    print(
+        json.dumps(
+            filter_cudnn_runtime(Path(sysconfig.get_paths()["purelib"])), indent=2
+        )
+    )

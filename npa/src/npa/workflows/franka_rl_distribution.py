@@ -27,14 +27,25 @@ class BoundedGaussianDistribution(GaussianDistribution):
         ValueError: Dimensions or scale bounds are invalid.
     """
 
-    def __init__(self, output_dim: int, init_std: float = 1.0,
-                 min_std: float = 0.05, max_std: float = 1.5) -> None:
-        if isinstance(output_dim, bool) or not isinstance(output_dim, int) or output_dim <= 0:
+    def __init__(
+        self,
+        output_dim: int,
+        init_std: float = 1.0,
+        min_std: float = 0.05,
+        max_std: float = 1.5,
+    ) -> None:
+        if (
+            isinstance(output_dim, bool)
+            or not isinstance(output_dim, int)
+            or output_dim <= 0
+        ):
             raise ValueError("Gaussian output dimension must be a positive integer")
         if not all(math.isfinite(value) for value in (init_std, min_std, max_std)):
             raise ValueError("Gaussian scale bounds and initial scale must be finite")
         if not 0 < min_std < init_std < max_std:
-            raise ValueError("Gaussian scales must satisfy 0 < min_std < init_std < max_std")
+            raise ValueError(
+                "Gaussian scales must satisfy 0 < min_std < init_std < max_std"
+            )
         # The native heteroscedastic subclass also initializes the base directly
         # to avoid registering an unused Gaussian scale parameter.
         Distribution.__init__(self, output_dim)
@@ -54,7 +65,9 @@ class BoundedGaussianDistribution(GaussianDistribution):
         Raises:
             None.
         """
-        return torch.lerp(self.std_bounds[0], self.std_bounds[1], self.raw_std.sigmoid())
+        return torch.lerp(
+            self.std_bounds[0], self.std_bounds[1], self.raw_std.sigmoid()
+        )
 
     def update(self, mlp_output: torch.Tensor) -> None:
         """Construct the Normal used by every native stochastic policy operation.
@@ -66,4 +79,6 @@ class BoundedGaussianDistribution(GaussianDistribution):
         Raises:
             RuntimeError: Actor output shape is incompatible with the action scales.
         """
-        self._distribution = Normal(mlp_output, self.learned_std.expand_as(mlp_output), validate_args=False)
+        self._distribution = Normal(
+            mlp_output, self.learned_std.expand_as(mlp_output), validate_args=False
+        )

@@ -1,0 +1,5 @@
+{
+  "observer_source_sha256": "f7c4a26949b777a65b7e8889d16d6b955a7f5b0e4d203ab1a9fdf331b01185d6",
+  "summary_sha256": "c0e3a3f117b3aefa66fa23653bae2892f38df32d6605a9271652d203e3b2a318",
+  "scope": "Exact observer source sent through stdin to the visual job worker; private raw device identities, process arguments and selected allocation fields are linked by the summary hash receipt."
+}

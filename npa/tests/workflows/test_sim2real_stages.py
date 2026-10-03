@@ -20,6 +20,8 @@ from npa.workflows.sim2real_stages import (
     Sim2RealStageError,
 )
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 def test_effective_env_counts_default_to_legacy_rollout_plus_heldout() -> None:
     config = Sim2RealLoopConfig(
@@ -80,9 +82,7 @@ def test_preamble_executes_augment_and_envgen_locally(tmp_path: Path) -> None:
 def test_k8s_image_ready_rejects_bare_tags_and_placeholders() -> None:
     assert not k8s_image_ready("npa-cosmos2-transfer:2.5.0")
     assert not k8s_image_ready("<your-registry>/npa:tag")
-    assert k8s_image_ready(
-        "registry.example/operator/npa-cosmos2-transfer:2.5.0"
-    )
+    assert k8s_image_ready("registry.example/operator/npa-cosmos2-transfer:2.5.0")
 
 
 def test_augment_stage_uses_seam_reference_for_placeholder_image(
@@ -238,9 +238,7 @@ def test_augment_stage_rejects_descriptor_stub_from_qualified_image(
         output_dir=tmp_path,
         s3_bucket="bucket",
         trigger_dataset_uri="s3://bucket/triggers/pusht/",
-        augment_image=(
-            "registry.example/operator/npa-cosmos2-transfer:2.5.0"
-        ),
+        augment_image=("registry.example/operator/npa-cosmos2-transfer:2.5.0"),
     )
 
     with pytest.raises(Sim2RealStageError, match="did not emit real GPU provenance"):

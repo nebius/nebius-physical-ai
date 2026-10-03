@@ -118,7 +118,9 @@ def curate_videos(
     """
 
     if motion_filter not in MOTION_MODES:
-        raise CosmosCurateError(f"--motion-filter must be one of {', '.join(MOTION_MODES)}")
+        raise CosmosCurateError(
+            f"--motion-filter must be one of {', '.join(MOTION_MODES)}"
+        )
     source_dir = Path(input_dir)
     target_dir = Path(output_dir)
     videos = discover_videos(source_dir)
@@ -133,7 +135,11 @@ def curate_videos(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     stages = _load_stages()
-    stage_names = ["VideoDownloader", "FixedStrideExtractorStage", "ClipTranscodingStage"]
+    stage_names = [
+        "VideoDownloader",
+        "FixedStrideExtractorStage",
+        "ClipTranscodingStage",
+    ]
     if motion_filter != "disable":
         stage_names.extend(["MotionVectorDecodeStage", "MotionFilterStage"])
     stage_names.append("ClipWriterStage")
@@ -244,7 +250,9 @@ def _run_motion_stages(
     ``check_if_small_motion``, so this runs on the CPU tier.
     """
 
-    decode = _construct(stages, "MotionVectorDecodeStage", num_cpus_per_worker=1.0, verbose=verbose)
+    decode = _construct(
+        stages, "MotionVectorDecodeStage", num_cpus_per_worker=1.0, verbose=verbose
+    )
     scorer = _construct(
         stages,
         "MotionFilterStage",
@@ -288,11 +296,17 @@ def _load_stages() -> dict[str, Any]:
             MotionFilterStage,
             MotionVectorDecodeStage,
         )
-        from cosmos_curator.pipelines.video.read_write.download_stages import VideoDownloader  # type: ignore
-        from cosmos_curator.pipelines.video.read_write.metadata_writer_stage import ClipWriterStage  # type: ignore
+        from cosmos_curator.pipelines.video.read_write.download_stages import (
+            VideoDownloader,
+        )  # type: ignore
+        from cosmos_curator.pipelines.video.read_write.metadata_writer_stage import (
+            ClipWriterStage,
+        )  # type: ignore
         from cosmos_curator.pipelines.video.utils.data_model import SplitPipeTask, Video  # type: ignore
     except Exception as exc:  # noqa: BLE001 - surfaced as "cannot run here"
-        raise CosmosCurateUnavailable(f"Cosmos Curator stages are not importable: {exc}") from exc
+        raise CosmosCurateUnavailable(
+            f"Cosmos Curator stages are not importable: {exc}"
+        ) from exc
     return {
         "ClipTranscodingStage": ClipTranscodingStage,
         "ClipWriterStage": ClipWriterStage,
@@ -329,7 +343,9 @@ def split_pipeline_argv(
     if not input_video_path or not output_clip_path:
         raise CosmosCurateError("split_pipeline_argv requires input and output paths")
     if splitting_algorithm not in {"fixed-stride", "transnetv2"}:
-        raise CosmosCurateError("--splitting-algorithm must be fixed-stride or transnetv2")
+        raise CosmosCurateError(
+            "--splitting-algorithm must be fixed-stride or transnetv2"
+        )
     argv = [
         "video-pipeline",
         "split",
@@ -362,7 +378,9 @@ def split_pipeline_argv(
 
 def write_json(payload: dict[str, Any], path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     return path
 
 

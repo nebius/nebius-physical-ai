@@ -18,10 +18,17 @@ Offline and free -- no cluster, no VM, no Token Factory call, no port bound.
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "npa" / "scripts" / "audit_agent_capabilities.py"
@@ -40,6 +47,15 @@ def _load():
     return module
 
 
+def test_live_audit_declares_its_selected_websocket_runtime() -> None:
+    project = tomllib.loads((REPO_ROOT / "npa/pyproject.toml").read_text())
+    optional_dev = project["project"]["optional-dependencies"]["dev"]
+    grouped_dev = project["dependency-groups"]["dev"]
+
+    for dependencies in (optional_dev, grouped_dev):
+        assert any(item.startswith("websockets>=") for item in dependencies)
+
+
 @pytest.fixture
 def audit(tmp_path):
     """Load the script and undo the import-state it mutates."""
@@ -53,7 +69,38 @@ def audit(tmp_path):
         sys.path[:] = original_path
 
 
-def test_audit_script_renders_and_reports_a_healthy_surface(audit, tmp_path) -> None:
+def _stage_audit_credential_context(
+    monkeypatch, tmp_path, backend_globals
+) -> list[list[str]]:
+    """Stage metadata provenance and stub providers without an operator identity."""
+    from npa.cli import agent_resources
+
+    config = tmp_path / "nebius" / "config.yaml"
+    config.parent.mkdir()
+    config.write_text("profiles: {}\n", encoding="utf-8")
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", "instance_metadata")
+    monkeypatch.setenv("NPA_NEBIUS_CONFIG", str(config))
+    monkeypatch.setenv("NPA_NEBIUS_PROFILE", "audit-fixture")
+    provider_calls: list[list[str]] = []
+
+    def fake_provider_command(command, *_args, **_kwargs):
+        provider_calls.append(list(command))
+        return subprocess.CompletedProcess(command, 0, '{"items":[]}', "")
+
+    monkeypatch.setitem(
+        backend_globals, "run_bounded_agent_command", fake_provider_command
+    )
+    # Resource-discovery helpers are imported functions: their globals belong to
+    # npa.cli.agent_resources, not to the rendered backend module.
+    monkeypatch.setattr(
+        agent_resources, "run_bounded_agent_command", fake_provider_command
+    )
+    return provider_calls
+
+
+def test_audit_script_renders_and_reports_a_healthy_surface(
+    audit, tmp_path, monkeypatch
+) -> None:
     from fastapi.testclient import TestClient
 
     body = audit.render_backend_body()
@@ -63,6 +110,7 @@ def test_audit_script_renders_and_reports_a_healthy_surface(audit, tmp_path) -> 
     )
 
     app, _globals = audit.load_backend_app(body, tmp_path)
+    _stage_audit_credential_context(monkeypatch, tmp_path, _globals)
     routes = audit.iter_routes(app)
     # Guards against a vacuous pass: an empty routing table has no bad routes
     # and no duplicates, so every assertion below would hold for the wrong
@@ -98,6 +146,85 @@ def test_audit_script_renders_and_reports_a_healthy_surface(audit, tmp_path) -> 
     ]
     assert not not_working, "advertised capabilities did not work:\n" + "\n".join(
         not_working
+    )
+
+
+def test_audit_credential_fixture_patches_imported_provider_runner(
+    tmp_path, monkeypatch
+) -> None:
+    from npa.cli import agent_resources
+
+    calls = _stage_audit_credential_context(monkeypatch, tmp_path, {})
+    result = agent_resources.discover_mk8s_clusters("project-fixture", dict(os.environ))
+
+    assert result == {"status": "available", "items": []}
+    assert len(calls) == 1
+    assert calls[0][1:5] == [
+        "--config",
+        "/root/.nebius/config.yaml",
+        "--profile",
+        "cursor-sa",
+    ]
+    assert "audit-fixture" not in calls[0]
+
+
+@pytest.mark.parametrize(
+    "credential_source", ["", "unsupported-fixture", "configured_profile"]
+)
+def test_unconfigured_audit_keeps_credential_refusals_visible(
+    audit, tmp_path, monkeypatch, credential_source: str
+) -> None:
+    from fastapi.testclient import TestClient
+
+    app, backend_globals = audit.load_backend_app(audit.render_backend_body(), tmp_path)
+    provider_calls = _stage_audit_credential_context(
+        monkeypatch, tmp_path, backend_globals
+    )
+    monkeypatch.setenv("NPA_NEBIUS_CREDENTIAL_SOURCE", credential_source)
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        access = client.get("/access")
+        artifact = client.get("/artifacts/content")
+
+    assert access.status_code == 503
+    assert access.json() == {
+        "ok": False,
+        "error": "Agent access discovery is unavailable.",
+    }
+    assert artifact.status_code == 502
+    assert audit.classify_outcome({"status": access.status_code}) == "error"
+    assert audit.classify_outcome({"status": artifact.status_code}) == "error"
+    assert str(tmp_path) not in access.text + artifact.text
+    assert "unsupported-fixture" not in access.text + artifact.text
+    assert not provider_calls, "unsupported provenance must refuse before discovery"
+
+
+def test_rendered_openapi_media_operation_ids_are_unique(audit, tmp_path) -> None:
+    """Keep the generated media API usable by OpenAPI clients."""
+    body = audit.render_backend_body()
+    app, _globals = audit.load_backend_app(body, tmp_path)
+    operations = {
+        operation["operationId"]: f"{method.upper()} {path}"
+        for path, path_item in app.openapi()["paths"].items()
+        for method, operation in path_item.items()
+        if isinstance(operation, dict) and operation.get("operationId")
+    }
+    expected = {
+        "artifacts_content_get": "GET /artifacts/content",
+        "artifacts_content_head": "HEAD /artifacts/content",
+        "artifact_file_get": "GET /artifacts/file/{filename}",
+        "artifact_file_head": "HEAD /artifacts/file/{filename}",
+        "artifacts_download_get": "GET /artifacts/download",
+        "artifacts_download_head": "HEAD /artifacts/download",
+        "sim_viz_rrd_blob_get": "GET /sim-viz/rrd-blob",
+        "sim_viz_rrd_blob_head": "HEAD /sim-viz/rrd-blob",
+    }
+    assert expected.items() <= operations.items()
+    assert len(operations) == sum(
+        1
+        for path_item in app.openapi()["paths"].values()
+        for operation in path_item.values()
+        if isinstance(operation, dict) and operation.get("operationId")
     )
 
 

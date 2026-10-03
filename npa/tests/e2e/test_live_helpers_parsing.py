@@ -17,7 +17,9 @@ HELPERS_PATH = Path(__file__).resolve().parent / "npa_workflow_live_helpers.py"
 
 
 def _helpers():
-    spec = importlib.util.spec_from_file_location("npa_workflow_live_helpers", HELPERS_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "npa_workflow_live_helpers", HELPERS_PATH
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -76,7 +78,9 @@ def test_live_bucket_prefers_explicit_e2e_bucket(
     monkeypatch.setattr(
         helpers,
         "resolve_project_storage",
-        lambda _project: pytest.fail("configured stale bucket must not override live env"),
+        lambda _project: pytest.fail(
+            "configured stale bucket must not override live env"
+        ),
     )
 
     assert helpers.live_bucket("project") == "project-owned-live"

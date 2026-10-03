@@ -63,14 +63,15 @@ def test_output_classifier_never_selects_control_evidence_as_generated(
     videos, controls, masks = tx._classify_output_videos(tmp_path)
 
     assert videos == sorted(
-        str(path)
-        for path in (generated, ordinary_orphan, named_control, named_mask)
+        str(path) for path in (generated, ordinary_orphan, named_control, named_mask)
     )
     assert controls == {"seg": str(control)}
     assert masks == {"seg": str(mask)}
 
 
-def _fake_inference(monkeypatch, repo: Path, *, sidecars: dict[str, bytes] | None = None):
+def _fake_inference(
+    monkeypatch, repo: Path, *, sidecars: dict[str, bytes] | None = None
+):
     """Run the real spec/argv path with a stubbed inference subprocess.
 
     ``sidecars`` are extra files the stub writes into the output directory, named
@@ -125,7 +126,9 @@ def test_seg_spec_asks_for_on_the_fly_segmentation_not_an_asset(tmp_path: Path) 
     assert "control_path" not in spec["seg"]
 
 
-def test_a_region_mask_restricts_the_control_to_segmented_pixels(tmp_path: Path) -> None:
+def test_a_region_mask_restricts_the_control_to_segmented_pixels(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     clip = tmp_path / "clip.mp4"
@@ -156,7 +159,9 @@ def test_a_region_mask_restricts_the_control_to_segmented_pixels(tmp_path: Path)
         name="prompted",
         mask_prompt="robot arm",
     )
-    assert json.loads((repo / prompted).read_text())["seg"]["mask_prompt"] == "robot arm"
+    assert (
+        json.loads((repo / prompted).read_text())["seg"]["mask_prompt"] == "robot arm"
+    )
 
 
 def test_a_precomputed_segmentation_map_can_replace_the_generated_one(
@@ -179,7 +184,9 @@ def test_a_precomputed_segmentation_map_can_replace_the_generated_one(
         name="asset",
         control_asset=str(seg),
     )
-    assert json.loads((repo / rel).read_text())["seg"]["control_path"] == str(seg.resolve())
+    assert json.loads((repo / rel).read_text())["seg"]["control_path"] == str(
+        seg.resolve()
+    )
 
 
 def test_an_unsupported_modality_fails_instead_of_quietly_becoming_edge(
@@ -228,7 +235,9 @@ def test_a_control_weight_outside_upstreams_range_fails_early(tmp_path: Path) ->
     assert tx.resolve_control_modality("") == "edge"
 
 
-def test_two_ways_of_naming_one_region_mask_are_rejected_together(tmp_path: Path) -> None:
+def test_two_ways_of_naming_one_region_mask_are_rejected_together(
+    tmp_path: Path,
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     clip = tmp_path / "clip.mp4"
@@ -397,9 +406,9 @@ def test_control_artifacts_publish_beside_the_clips_not_inside_them(
         "s3://bkt/run1/cosmos_augmented/aug-run1-0/frame-00000.png",
         "s3://bkt/run1/cosmos_augmented/aug-run1-0/metadata.json",
     ]
-    meta = json.loads(storage.uploads[
-        "s3://bkt/run1/cosmos_augmented/aug-run1-0/metadata.json"
-    ])
+    meta = json.loads(
+        storage.uploads["s3://bkt/run1/cosmos_augmented/aug-run1-0/metadata.json"]
+    )
     assert meta["control"] == "seg"
     assert meta["control_prompt"] == "robot arm"
     assert meta["mask_prompt"] == "robot arm"
@@ -508,9 +517,7 @@ def test_absent_control_signal_never_claims_evidence_was_published(
     assert clip["control_uris"] == {}
     assert clip["control_evidence"] == {"status": "missing"}
     metadata = json.loads(
-        storage.uploads[
-            "s3://bkt/run1/cosmos_augmented/aug-run1-0/metadata.json"
-        ]
+        storage.uploads["s3://bkt/run1/cosmos_augmented/aug-run1-0/metadata.json"]
     )
     assert metadata["control_evidence"] == {"status": "missing"}
 
@@ -588,7 +595,9 @@ def test_an_edge_run_publishes_exactly_what_it_always_did(
 
 def test_cli_refuses_an_unknown_modality_before_holding_the_gpu(monkeypatch) -> None:
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
-    monkeypatch.setattr(cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4")
+    monkeypatch.setattr(
+        cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4"
+    )
     monkeypatch.setattr(
         tx,
         "run_cosmos_transfer",
@@ -659,7 +668,9 @@ def test_cli_refuses_an_out_of_range_control_weight_before_holding_the_gpu(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
-    monkeypatch.setattr(cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4")
+    monkeypatch.setattr(
+        cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4"
+    )
     monkeypatch.setattr(
         tx,
         "run_cosmos_transfer",
@@ -692,11 +703,15 @@ def test_cli_refuses_an_out_of_range_control_weight_before_holding_the_gpu(
 
 def test_cli_refuses_both_mask_forms_before_holding_the_gpu(monkeypatch) -> None:
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
-    monkeypatch.setattr(cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4")
+    monkeypatch.setattr(
+        cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4"
+    )
     monkeypatch.setattr(
         tx,
         "run_cosmos_transfer",
-        lambda **_kwargs: pytest.fail("inference must not start with a conflicting mask"),
+        lambda **_kwargs: pytest.fail(
+            "inference must not start with a conflicting mask"
+        ),
     )
 
     result = runner.invoke(
@@ -722,13 +737,19 @@ def test_cli_refuses_both_mask_forms_before_holding_the_gpu(monkeypatch) -> None
     assert "mutually exclusive" in result.output
 
 
-def test_cli_fails_when_a_named_control_asset_is_missing(monkeypatch, tmp_path: Path) -> None:
+def test_cli_fails_when_a_named_control_asset_is_missing(
+    monkeypatch, tmp_path: Path
+) -> None:
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
-    monkeypatch.setattr(cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4")
+    monkeypatch.setattr(
+        cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4"
+    )
     monkeypatch.setattr(
         tx,
         "run_cosmos_transfer",
-        lambda **_kwargs: pytest.fail("a missing asset must not fall back to on-the-fly"),
+        lambda **_kwargs: pytest.fail(
+            "a missing asset must not fall back to on-the-fly"
+        ),
     )
 
     result = runner.invoke(
@@ -787,8 +808,12 @@ def test_cli_threads_seg_conditioning_through_the_multiply_fan_out(monkeypatch) 
     seen: list[dict] = []
     published: list[dict] = []
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
-    monkeypatch.setattr(cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4")
-    monkeypatch.setattr(cosmos2, "_all_augmentations", lambda _uri: [{"prompt": "a chrome arm"}])
+    monkeypatch.setattr(
+        cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4"
+    )
+    monkeypatch.setattr(
+        cosmos2, "_all_augmentations", lambda _uri: [{"prompt": "a chrome arm"}]
+    )
     monkeypatch.setattr(
         cosmos2, "_persist_generated_conditioning_clip", lambda *_a, **_k: ""
     )
@@ -828,7 +853,11 @@ def test_cli_threads_seg_conditioning_through_the_multiply_fan_out(monkeypatch) 
 
     monkeypatch.setattr(tx, "run_cosmos_transfer", fake_run)
     monkeypatch.setattr(tx, "publish_transfer_clip", fake_publish)
-    monkeypatch.setattr(tx, "write_run_manifest", lambda clips, uri, **kw: tx.build_run_manifest(clips, **kw))
+    monkeypatch.setattr(
+        tx,
+        "write_run_manifest",
+        lambda clips, uri, **kw: tx.build_run_manifest(clips, **kw),
+    )
 
     result = runner.invoke(
         app,
@@ -883,7 +912,9 @@ def test_env_overrides_let_a_submit_switch_to_seg_without_new_argv(monkeypatch) 
     monkeypatch.setenv("NPA_COSMOS_CONTROL_PROMPT", "robot arm, bin")
     monkeypatch.setenv("NPA_COSMOS_MASK_PROMPT", "robot arm")
     monkeypatch.setattr(tx, "cosmos_transfer_available", lambda: True)
-    monkeypatch.setattr(cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4")
+    monkeypatch.setattr(
+        cosmos2, "_materialize_input_clip", lambda *_a, **_k: "/tmp/in.mp4"
+    )
 
     def fake_run(**kwargs):
         seen.append(kwargs)

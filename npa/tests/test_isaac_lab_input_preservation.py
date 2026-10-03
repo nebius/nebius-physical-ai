@@ -15,9 +15,12 @@ def _write_rollouts(raw: Path) -> tuple[np.ndarray, np.ndarray]:
     for index, frames in enumerate((2, 3)):
         episode = raw / f"episode_{index:06d}"
         episode.mkdir(parents=True)
-        state = np.arange(frames * G1_STATE_DIM, dtype=np.float32).reshape(
-            frames, G1_STATE_DIM
-        ) + index * 100
+        state = (
+            np.arange(frames * G1_STATE_DIM, dtype=np.float32).reshape(
+                frames, G1_STATE_DIM
+            )
+            + index * 100
+        )
         action = state * -0.5 + 0.25
         np.save(episode / "state.npy", state)
         np.save(episode / "actions.npy", action)
@@ -30,8 +33,10 @@ def _write_rollouts(raw: Path) -> tuple[np.ndarray, np.ndarray]:
 def _snapshot(root: Path) -> dict[str, bytes | str | None]:
     return {
         str(path.relative_to(root)): (
-            str(path.readlink()) if path.is_symlink()
-            else path.read_bytes() if path.is_file()
+            str(path.readlink())
+            if path.is_symlink()
+            else path.read_bytes()
+            if path.is_file()
             else None
         )
         for path in root.rglob("*")

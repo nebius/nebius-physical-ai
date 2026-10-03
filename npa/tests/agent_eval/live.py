@@ -19,7 +19,9 @@ def request_timeout_seconds(env: Mapping[str, str] | None = None) -> float:
     try:
         timeout = float(raw)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{REQUEST_TIMEOUT_ENV} must be a positive finite number") from exc
+        raise ValueError(
+            f"{REQUEST_TIMEOUT_ENV} must be a positive finite number"
+        ) from exc
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError(f"{REQUEST_TIMEOUT_ENV} must be a positive finite number")
     return timeout

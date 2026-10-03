@@ -44,8 +44,13 @@ def golden(monkeypatch, tmp_path):
             "device_peak_used_mib": 100000.0,
             "total_wall_seconds": 50.0,
             "chunks": [
-                {"status": "succeeded", "requested_frames": frames,
-                 "wall_seconds": 15.0, "inference_seconds": 14.0, "peak_memory_mb": 90000.0}
+                {
+                    "status": "succeeded",
+                    "requested_frames": frames,
+                    "wall_seconds": 15.0,
+                    "inference_seconds": 14.0,
+                    "peak_memory_mb": 90000.0,
+                }
                 for frames in (297, 297, 137)
             ],
         },
@@ -89,8 +94,14 @@ def golden(monkeypatch, tmp_path):
         events.append(("decode", path.name, frames))
         if state.failure == "decode" and frames == 720:
             raise nano_video.NanoVideoError("private decode exception detail")
-        return {"valid": True, "full_decode_passed": True, "decoded_frames": frames,
-                "fps": 24.0, "width": 832, "height": 480}
+        return {
+            "valid": True,
+            "full_decode_passed": True,
+            "decoded_frames": frames,
+            "fps": 24.0,
+            "width": 832,
+            "height": 480,
+        }
 
     monkeypatch.setattr(nano_video_golden, "NanoVideoRuntime", Runtime)
     monkeypatch.setattr(nano_video_golden, "run_rollout", rollout)
@@ -104,19 +115,31 @@ def golden(monkeypatch, tmp_path):
         os.umask(mask)
 
 
-def test_golden_command_runs_generation_decodes_every_artifact_and_cleans_up(golden, capsys):
+def test_golden_command_runs_generation_decodes_every_artifact_and_cleans_up(
+    golden, capsys
+):
     golden.run()
     result = json.loads((golden.root / "result.json").read_text())
     assert result["status"] == "succeeded"
     assert len(result["report"]["sha256"]) == len(result["video"]["sha256"]) == 64
     assert result["validation"]["decoded_frames"] == 720
     assert [event[0] for event in golden.events] == [
-        "construct", "start", "health", "rollout",
-        "decode", "decode", "decode", "decode", "close", "wait",
+        "construct",
+        "start",
+        "health",
+        "rollout",
+        "decode",
+        "decode",
+        "decode",
+        "decode",
+        "close",
+        "wait",
     ]
     assert [event[1:] for event in golden.events if event[0] == "decode"] == [
-        ("chunk-1.mp4", 297), ("chunk-2.mp4", 297),
-        ("chunk-3.mp4", 137), ("video-30s.mp4", 720),
+        ("chunk-1.mp4", 297),
+        ("chunk-2.mp4", 297),
+        ("chunk-3.mp4", 137),
+        ("video-30s.mp4", 720),
     ]
     rollout = next(event[1] for event in golden.events if event[0] == "rollout")
     assert rollout["seed"] == 17 and rollout["prompt"] == nano_video.DEFAULT_PROMPT
@@ -135,7 +158,9 @@ def test_rerun_preserves_prior_artifacts_and_uses_a_new_output_directory(golden)
 
 
 @pytest.mark.parametrize("failure", ["cache", "start", "rollout", "decode"])
-def test_failure_replaces_stale_success_and_never_exposes_exception_detail(golden, failure):
+def test_failure_replaces_stale_success_and_never_exposes_exception_detail(
+    golden, failure
+):
     golden.run()
     golden.events.clear()
     golden.failure = failure
@@ -167,7 +192,9 @@ def test_failure_replaces_stale_success_and_never_exposes_exception_detail(golde
         ("chunk", "peak_memory_mb", "unmeasured"),
     ],
 )
-def test_missing_or_wrong_generation_evidence_cannot_pass(golden, section, field, value):
+def test_missing_or_wrong_generation_evidence_cannot_pass(
+    golden, section, field, value
+):
     target = golden.report if section == "report" else golden.report["chunks"][0]
     target[field] = value
     with pytest.raises(nano_video.NanoVideoError):
@@ -181,8 +208,11 @@ def test_all_imported_npa_modules_are_shipped_in_the_image():
     repo = Path(__file__).resolve().parents[3]
     spec = load_manifest()["cosmos3-nano-video"]
     dockerfile = (repo / spec.dockerfile).read_text()
-    imported = [node.module for node in ast.walk(ast.parse(source))
-                if isinstance(node, ast.ImportFrom) and node.module.startswith("npa.")]
+    imported = [
+        node.module
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom) and node.module.startswith("npa.")
+    ]
     assert len(imported) == 2
     assert "stage_weights" not in source
     for module in imported:
@@ -209,6 +239,8 @@ def test_missing_prestaged_weights_refuses_before_gpu_start(golden, monkeypatch)
     assert result["status"] == "failed" and result["error_type"] == "FileNotFoundError"
 
 
-@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf"), True, "1", 0, -1])
+@pytest.mark.parametrize(
+    "value", [float("nan"), float("inf"), -float("inf"), True, "1", 0, -1]
+)
 def test_golden_measurements_reject_nonfinite_and_nonpositive_values(value):
     assert not nano_video_golden._positive(value)

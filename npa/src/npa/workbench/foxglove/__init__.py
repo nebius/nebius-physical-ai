@@ -30,15 +30,11 @@ FOXGLOVE_EMBED_SDK_VERSION = "0.58.0"
 # `dist.integrity` reported by the npm registry for the pinned version. The
 # install script recomputes it from the downloaded tarball and refuses to install
 # on mismatch.
-FOXGLOVE_EMBED_SDK_INTEGRITY = (
-    "sha512-hNxqEQWPk2Wm0KmDlNs3Y0TTEl9Wm+4CuppBZcLzK8j8m2EcwbbCVWg43oCsf5HJgwXt7KYorIdoMO7CICQ7Vg=="
-)
+FOXGLOVE_EMBED_SDK_INTEGRITY = "sha512-hNxqEQWPk2Wm0KmDlNs3Y0TTEl9Wm+4CuppBZcLzK8j8m2EcwbbCVWg43oCsf5HJgwXt7KYorIdoMO7CICQ7Vg=="
 
 # npm registry tarball URL template. Registry host is overridable by operators
 # through the install script's --registry flag (mirrors / air-gapped caches).
-FOXGLOVE_EMBED_SDK_TARBALL_TEMPLATE = (
-    "{registry}/@foxglove/embed/-/embed-{version}.tgz"
-)
+FOXGLOVE_EMBED_SDK_TARBALL_TEMPLATE = "{registry}/@foxglove/embed/-/embed-{version}.tgz"
 FOXGLOVE_EMBED_DEFAULT_REGISTRY = "https://registry.npmjs.org"
 
 # Default embed application source documented by the Foxglove TypeScript SDK.

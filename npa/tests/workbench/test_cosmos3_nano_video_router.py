@@ -83,3 +83,45 @@ def test_unmatched_assignment_delegates_to_public_fifo_fallback(router_class, me
         == "assigned-through-public-fifo"
     )
     assert router.fifo_assignment == (replica, metadata)
+
+
+_ABSENT = object()
+
+
+def _load_router_with_ray(monkeypatch, ray_version=_ABSENT):
+    """Exec nano_video_router.py with a controlled top-level ray stub."""
+    fake_router = ModuleType("ray.serve.request_router")
+    fake_router.FIFOMixin = type("FIFOMixin", (), {})
+    fake_router.RequestRouter = type("RequestRouter", (), {})
+    monkeypatch.setitem(sys.modules, "ray.serve.request_router", fake_router)
+    if ray_version is _ABSENT:
+        monkeypatch.delitem(sys.modules, "ray", raising=False)
+    else:
+        fake_ray = ModuleType("ray")
+        fake_ray.__version__ = ray_version
+        monkeypatch.setitem(sys.modules, "ray", fake_ray)
+    path = Path(nano_video_server.__file__).with_name("nano_video_router.py")
+    spec = importlib.util.spec_from_file_location("nano_router_version_guard", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_version_guard_rejects_mismatched_ray(monkeypatch):
+    # A rebuild against Ray 2.58.0 must fail loudly, not silently change
+    # routing semantics via drifted Serve internals.
+    with pytest.raises(RuntimeError, match="requires ray==2.56.0"):
+        _load_router_with_ray(monkeypatch, ray_version="2.58.0")
+
+
+def test_version_guard_accepts_pinned_ray(monkeypatch):
+    module = _load_router_with_ray(monkeypatch, ray_version="2.56.0")
+    assert module.EXPECTED_RAY_VERSION == "2.56.0"
+    assert hasattr(module, "LeastOutstandingRouter")
+
+
+def test_version_guard_skipped_when_ray_not_installed(monkeypatch):
+    # Unit-test harnesses fake ray.serve.request_router without ray installed;
+    # the guard must not break that.
+    module = _load_router_with_ray(monkeypatch)
+    assert hasattr(module, "LeastOutstandingRouter")

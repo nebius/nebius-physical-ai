@@ -14,7 +14,11 @@ from urllib.parse import urlparse
 import pytest
 
 from npa.clients.project_credentials import s3_client_for_project
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, _NER_PATTERNS
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    ServerlessClient,
+    _NER_PATTERNS,
+)
 
 from ._serverless_fallback import FallbackChain
 
@@ -62,7 +66,10 @@ def jobs_to_cleanup() -> Iterator[list[tuple[str, str]]]:
         except EndpointNotFoundError:
             continue
         except Exception as exc:
-            print(f"!!! ORPHANED JOB in project {project_id} cancel failed ref={ref}: {exc}", flush=True)
+            print(
+                f"!!! ORPHANED JOB in project {project_id} cancel failed ref={ref}: {exc}",
+                flush=True,
+            )
             continue
         result = subprocess.run(
             ["nebius", "ai", "job", "delete", "--id", info.id or ref],
@@ -80,7 +87,8 @@ def jobs_to_cleanup() -> Iterator[list[tuple[str, str]]]:
             )
     for project_id in FallbackChain.instance().all_projects():
         orphans = [
-            job.name for job in client.list_jobs(project_id, JOB_PREFIX)
+            job.name
+            for job in client.list_jobs(project_id, JOB_PREFIX)
             if job.name.startswith(JOB_PREFIX)
         ]
         for name in orphans:
@@ -91,7 +99,9 @@ def _job_name(label: str) -> str:
     return f"{JOB_PREFIX}-{label}-{uuid.uuid4().hex[:8]}"
 
 
-def _run_npa(args: list[str], *, home: Path, timeout: int = 1200) -> subprocess.CompletedProcess[str]:
+def _run_npa(
+    args: list[str], *, home: Path, timeout: int = 1200
+) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     repo_src = Path(__file__).resolve().parents[2] / "src"
     env["HOME"] = str(home)
@@ -119,7 +129,16 @@ def _subnet_id(project_id: str) -> str:
     if project_id in _SUBNET_CACHE:
         return _SUBNET_CACHE[project_id]
     result = subprocess.run(
-        ["nebius", "vpc", "subnet", "list", "--parent-id", project_id, "--format", "json"],
+        [
+            "nebius",
+            "vpc",
+            "subnet",
+            "list",
+            "--parent-id",
+            project_id,
+            "--format",
+            "json",
+        ],
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -127,7 +146,9 @@ def _subnet_id(project_id: str) -> str:
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"Unable to list subnets for {project_id}: {result.stderr.strip()}")
+        raise RuntimeError(
+            f"Unable to list subnets for {project_id}: {result.stderr.strip()}"
+        )
     data = json.loads(result.stdout or "{}")
     items = data.get("items") if isinstance(data, dict) else data
     ready = []
@@ -175,7 +196,9 @@ def _submit_train(
         attempts += 1
         jobs_to_cleanup.append((project_id, name))
         project_key = chain.project_key(project_id)
-        dataset_args = ["--input-path", input_path] if input_path else ["--dataset", dataset]
+        dataset_args = (
+            ["--input-path", input_path] if input_path else ["--dataset", dataset]
+        )
         result = _run_npa(
             [
                 "workbench",
@@ -276,11 +299,16 @@ def test_e2e_cli_lerobot_train_happy_path(
     jobs_to_cleanup: list[tuple[str, str]],
 ) -> None:
     name = _job_name("happy")
-    project_id, payload, result = _submit_train(name, jobs_to_cleanup, home=isolated_npa_home)
+    project_id, payload, result = _submit_train(
+        name, jobs_to_cleanup, home=isolated_npa_home
+    )
     assert result.returncode == 0, result.stderr
     assert payload["status"] == "succeeded"
     _wait_for_artifact(project_id, str(payload["output_path"]))
-    assert ServerlessClient().get_job(str(payload["job_id"]), project_id).status == "succeeded"
+    assert (
+        ServerlessClient().get_job(str(payload["job_id"]), project_id).status
+        == "succeeded"
+    )
 
 
 def test_e2e_cli_lerobot_train_ner_handling(
@@ -304,7 +332,11 @@ def test_e2e_cli_lerobot_train_ner_handling(
     )
     assert result.returncode != 0
     assert _is_ner(result), result.stderr
-    assert not [job for job in ServerlessClient().list_jobs(project_id, JOB_PREFIX) if job.name == name]
+    assert not [
+        job
+        for job in ServerlessClient().list_jobs(project_id, JOB_PREFIX)
+        if job.name == name
+    ]
 
 
 def test_e2e_cli_lerobot_train_cancel(
@@ -356,7 +388,9 @@ def test_e2e_cli_lerobot_train_hf_propagation(
     jobs_to_cleanup: list[tuple[str, str]],
 ) -> None:
     name = _job_name("hf")
-    _project_id, payload, result = _submit_train(name, jobs_to_cleanup, home=isolated_npa_home)
+    _project_id, payload, result = _submit_train(
+        name, jobs_to_cleanup, home=isolated_npa_home
+    )
     assert result.returncode == 0, result.stderr
     logs = _job_logs(str(payload["job_id"]))
     assert "HF auth missing" not in logs
@@ -383,7 +417,11 @@ def test_e2e_cli_lerobot_train_idempotent_submit(
     )
     assert second_result.returncode == 0, second_result.stderr
     assert second["job_id"] == first["job_id"]
-    jobs = [job for job in ServerlessClient().list_jobs(project_id, JOB_PREFIX) if job.name == name]
+    jobs = [
+        job
+        for job in ServerlessClient().list_jobs(project_id, JOB_PREFIX)
+        if job.name == name
+    ]
     assert len(jobs) == 1
 
 
@@ -452,4 +490,7 @@ def test_e2e_cli_lerobot_train_submit_only(
     )
     assert result.returncode == 0, result.stderr
     assert payload["status"] == "submitted"
-    assert _wait_for_state(project_id, str(payload["job_id"]), {"succeeded"}) == "succeeded"
+    assert (
+        _wait_for_state(project_id, str(payload["job_id"]), {"succeeded"})
+        == "succeeded"
+    )

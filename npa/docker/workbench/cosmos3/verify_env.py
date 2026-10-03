@@ -161,7 +161,9 @@ def check_mode_resolution() -> str:
         for mode in MODES:
             sample = _sample_for(mode, root)
             setup_args = OmniSetupOverrides(
-                checkpoint_path=os.environ.get("NPA_COSMOS3_CHECKPOINT", "Cosmos3-Nano"),
+                checkpoint_path=os.environ.get(
+                    "NPA_COSMOS3_CHECKPOINT", "Cosmos3-Nano"
+                ),
                 output_dir=root / "out",
             ).build_setup()
             samples = setup_args.get_sample_overrides_cls().from_files([sample])

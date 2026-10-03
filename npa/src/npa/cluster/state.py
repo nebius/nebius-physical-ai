@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
 from dataclasses import asdict, dataclass
@@ -12,10 +13,14 @@ import tempfile
 from typing import Any
 
 from npa.cluster.exceptions import ClusterStateError
+from npa.literal_values import require_boolean
 
-CLUSTERS_DIR = Path(
-    os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa")
-) / "clusters"
+logger = logging.getLogger(__name__)
+
+CLUSTERS_DIR = (
+    Path(os.environ.get("NPA_CONFIG_DIR", "").strip() or (Path.home() / ".npa"))
+    / "clusters"
+)
 
 
 @dataclass
@@ -83,6 +88,7 @@ class NodeGroupState:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "NodeGroupState":
         try:
+            public_ip = require_boolean(data.get("public_ip", False), field="public_ip")
             return cls(
                 cluster_name=str(data["cluster_name"]),
                 name=str(data["name"]),
@@ -93,7 +99,7 @@ class NodeGroupState:
                 node_count=int(data["node_count"]),
                 created_at=str(data["created_at"]),
                 last_seen_state=str(data.get("last_seen_state", "UNKNOWN")),
-                public_ip=bool(data.get("public_ip", False)),
+                public_ip=public_ip,
                 autoscaling_min=_optional_int(data.get("autoscaling_min")),
                 autoscaling_max=_optional_int(data.get("autoscaling_max")),
             )
@@ -250,12 +256,26 @@ def list_node_group_states(
     *,
     base_dir: Path | None = None,
 ) -> list[NodeGroupState]:
+    """Discover healthy cached groups, warning for each quarantined record.
+
+    Args:
+        cluster_name: Cluster whose cached groups to discover.
+        base_dir: Optional local cluster-state root.
+    Returns:
+        Valid states in filename order; malformed files remain untouched.
+    Raises:
+        OSError: If the state directory or a file cannot be read.
+    """
     directory = node_groups_dir(cluster_name, base_dir=base_dir)
     if not directory.exists():
         return []
     states: list[NodeGroupState] = []
     for path in sorted(directory.glob("*.json")):
-        state = load_node_group_state(cluster_name, path.stem, base_dir=base_dir)
+        try:
+            state = load_node_group_state(cluster_name, path.stem, base_dir=base_dir)
+        except ClusterStateError as exc:
+            logger.warning("Quarantined node-group cache record %s: %s", path, exc)
+            continue
         if state is not None:
             states.append(state)
     return states

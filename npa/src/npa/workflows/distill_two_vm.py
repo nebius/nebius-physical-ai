@@ -72,6 +72,7 @@ _SETUP_DIR = Path(__file__).resolve().parent.parent / "setup"
 _CONDA_PREFIX = "/opt/conda"
 _CONDA_BIN = f"{_CONDA_PREFIX}/bin/conda"
 
+
 @dataclass
 class VMSpec:
     """Terraform variables that differ per VM."""
@@ -79,9 +80,9 @@ class VMSpec:
     name: str
     gpu_platform: str
     gpu_preset: str
-    conda_env: str        # conda env name created by the setup script
-    setup_script: str     # filename inside npa/src/npa/setup/
-    npa_extra: str        # pip extra for ``npa[<extra>]``
+    conda_env: str  # conda env name created by the setup script
+    setup_script: str  # filename inside npa/src/npa/setup/
+    npa_extra: str  # pip extra for ``npa[<extra>]``
 
 
 SIM_VM = VMSpec(
@@ -124,7 +125,7 @@ def _conda_activate(conda_env: str) -> str:
     return (
         f"{load_env_file_script('/opt/lerobot/.env', required=False)} && "
         f'eval "$({_CONDA_BIN} shell.bash hook)" && '
-        f'conda activate {conda_env} && '
+        f"conda activate {conda_env} && "
     )
 
 
@@ -144,13 +145,15 @@ def _provision_vm(
     s3_endpoint = nebius_creds["s3_endpoint"]
 
     logger.info("Preparing Terraform working dir for %s ...", spec.name)
-    tf_dir = str(provisioner.prepare_working_dir(
-        PROJECT_ALIAS,
-        spec.name,
-        bucket=s3_bucket,
-        region=REGION,
-        endpoint=s3_endpoint,
-    ))
+    tf_dir = str(
+        provisioner.prepare_working_dir(
+            PROJECT_ALIAS,
+            spec.name,
+            bucket=s3_bucket,
+            region=REGION,
+            endpoint=s3_endpoint,
+        )
+    )
 
     logger.info("Running terraform init for %s ...", spec.name)
     try:
@@ -162,7 +165,9 @@ def _provision_vm(
             },
         )
     except ProvisionerError as exc:
-        raise TwoVMDistillError(f"terraform init failed for {spec.name}: {exc}") from exc
+        raise TwoVMDistillError(
+            f"terraform init failed for {spec.name}: {exc}"
+        ) from exc
 
     tf_vars: dict[str, str] = {
         "nebius_project_id": nebius_creds["nebius_project_id"],
@@ -184,7 +189,9 @@ def _provision_vm(
     try:
         outputs = provisioner.apply(tf_dir=tf_dir, tf_vars=tf_vars)
     except ProvisionerError as exc:
-        raise TwoVMDistillError(f"terraform apply failed for {spec.name}: {exc}") from exc
+        raise TwoVMDistillError(
+            f"terraform apply failed for {spec.name}: {exc}"
+        ) from exc
 
     vm_ip = outputs.get("vm_ip", "")
     if not vm_ip:
@@ -212,13 +219,15 @@ def _destroy_vm(spec: VMSpec, nebius_creds: dict[str, str]) -> None:
             "Local Terraform dir missing for %s — re-creating from S3 state.",
             spec.name,
         )
-        tf_dir = str(provisioner.prepare_working_dir(
-            PROJECT_ALIAS,
-            spec.name,
-            bucket=s3_bucket,
-            region=REGION,
-            endpoint=nebius_creds["s3_endpoint"],
-        ))
+        tf_dir = str(
+            provisioner.prepare_working_dir(
+                PROJECT_ALIAS,
+                spec.name,
+                bucket=s3_bucket,
+                region=REGION,
+                endpoint=nebius_creds["s3_endpoint"],
+            )
+        )
 
     try:
         provisioner.init(
@@ -229,7 +238,9 @@ def _destroy_vm(spec: VMSpec, nebius_creds: dict[str, str]) -> None:
             },
         )
     except ProvisionerError as exc:
-        raise TwoVMDistillError(f"terraform init (destroy) failed for {spec.name}: {exc}") from exc
+        raise TwoVMDistillError(
+            f"terraform init (destroy) failed for {spec.name}: {exc}"
+        ) from exc
 
     tf_vars: dict[str, str] = {
         "nebius_project_id": nebius_creds["nebius_project_id"],
@@ -250,7 +261,9 @@ def _destroy_vm(spec: VMSpec, nebius_creds: dict[str, str]) -> None:
     try:
         provisioner.destroy(tf_dir=tf_dir, tf_vars=tf_vars)
     except ProvisionerError as exc:
-        raise TwoVMDistillError(f"terraform destroy failed for {spec.name}: {exc}") from exc
+        raise TwoVMDistillError(
+            f"terraform destroy failed for {spec.name}: {exc}"
+        ) from exc
 
     logger.info("%s destroyed.", spec.name)
 
@@ -274,7 +287,9 @@ def _wait_for_ssh(
         except SSHError:
             pass
         if attempt == retries:
-            raise TwoVMDistillError(f"SSH to {label} not ready after {retries} attempts")
+            raise TwoVMDistillError(
+                f"SSH to {label} not ready after {retries} attempts"
+            )
         time.sleep(interval)
 
     logger.info("SSH to %s connected. Waiting for cloud-init ...", label)
@@ -304,7 +319,9 @@ def _setup_vm(ssh: SSHClient, spec: VMSpec, label: str) -> None:
         _setup_vm_in_directory(ssh, spec, label, directory)
 
 
-def _setup_vm_in_directory(ssh: SSHClient, spec: VMSpec, label: str, directory: str) -> None:
+def _setup_vm_in_directory(
+    ssh: SSHClient, spec: VMSpec, label: str, directory: str
+) -> None:
     """Install conda env, framework, and npa CLI on a freshly provisioned VM.
 
     1. Package only tracked source files and upload via private SFTP staging.
@@ -328,7 +345,9 @@ def _setup_vm_in_directory(ssh: SSHClient, spec: VMSpec, label: str, directory: 
                 f"sudo mkdir -p /opt/npa && sudo chown {user}:{user} /opt/npa"
             )
         except SSHError as exc:
-            raise TwoVMDistillError(f"[{label}] Failed to create /opt/npa: {exc}") from exc
+            raise TwoVMDistillError(
+                f"[{label}] Failed to create /opt/npa: {exc}"
+            ) from exc
 
         _sftp_upload(ssh, archive_path, f"{directory}/npa-src.tgz")
     finally:
@@ -346,7 +365,9 @@ def _setup_vm_in_directory(ssh: SSHClient, spec: VMSpec, label: str, directory: 
             f"rm -f -- {shlex.quote(directory + '/npa-src.tgz')}"
         )
     except SSHError as exc:
-        raise TwoVMDistillError(f"[{label}] Failed to extract npa package: {exc}") from exc
+        raise TwoVMDistillError(
+            f"[{label}] Failed to extract npa package: {exc}"
+        ) from exc
 
     # Verify pyproject.toml landed in the right place.
     try:
@@ -377,7 +398,9 @@ def _setup_vm_in_directory(ssh: SSHClient, spec: VMSpec, label: str, directory: 
                 f"sudo chown -R {user}:{user} {_CONDA_PREFIX}"
             )
         except SSHError as exc:
-            raise TwoVMDistillError(f"[{label}] Miniforge install failed: {exc}") from exc
+            raise TwoVMDistillError(
+                f"[{label}] Miniforge install failed: {exc}"
+            ) from exc
 
     # Double-check conda is executable.
     try:
@@ -418,13 +441,15 @@ def _setup_vm_in_directory(ssh: SSHClient, spec: VMSpec, label: str, directory: 
     # Verify npa entrypoint inside the conda env, using absolute conda path.
     logger.info("[%s] Verifying npa CLI in conda env '%s' ...", label, spec.conda_env)
     verify_cmd = (
-        f'{_conda_activate(spec.conda_env)}'
+        f"{_conda_activate(spec.conda_env)}"
         f"npa --help >/dev/null 2>&1 && echo NPA_CLI_OK"
     )
     try:
         code, stdout, _ = ssh.run(verify_cmd)
     except SSHError as exc:
-        raise TwoVMDistillError(f"[{label}] npa CLI verification SSH error: {exc}") from exc
+        raise TwoVMDistillError(
+            f"[{label}] npa CLI verification SSH error: {exc}"
+        ) from exc
 
     if code != 0 or "NPA_CLI_OK" not in stdout:
         raise TwoVMDistillError(
@@ -462,14 +487,22 @@ def _write_s3_env(
         # Read existing env file (may not exist on a fresh VM).
         code, existing_content, _ = ssh.run("cat /opt/lerobot/.env 2>/dev/null")
         # Preserve other literal Docker-format entries, replacing credentials.
-        retained = [
-            line for line in existing_content.splitlines()
-            if line.partition("=")[0].strip() not in s3_vars
-        ] if code == 0 else []
+        retained = (
+            [
+                line
+                for line in existing_content.splitlines()
+                if line.partition("=")[0].strip() not in s3_vars
+            ]
+            if code == 0
+            else []
+        )
         env_content = "\n".join(retained) + "\n" + render_docker_env_file(s3_vars)
         write_remote_text_file(
-            ssh, "/opt/lerobot/.env", env_content,
-            owner=ssh._config.user, mode="0600",
+            ssh,
+            "/opt/lerobot/.env",
+            env_content,
+            owner=ssh._config.user,
+            mode="0600",
         )
     except (SSHError, ValueError) as exc:
         raise TwoVMDistillError(
@@ -495,10 +528,12 @@ def _deploy_http_server(
     conda_python = f"{_CONDA_PREFIX}/envs/{spec.conda_env}/bin/python"
 
     # 1. Install server extras (fastapi, uvicorn, numpy) into the conda env.
-    logger.info("[%s] Installing npa[server] in conda env '%s' ...", label, spec.conda_env)
+    logger.info(
+        "[%s] Installing npa[server] in conda env '%s' ...", label, spec.conda_env
+    )
     try:
         ssh.run_or_raise(
-            f'{_conda_activate(spec.conda_env)}'
+            f"{_conda_activate(spec.conda_env)}"
             f'pip install -e "/opt/npa/repo/npa[server]"'
         )
     except SSHError as exc:
@@ -580,12 +615,12 @@ def _deploy_http_server(
         ) from exc
 
     # 5. Health check — poll until the server responds.
-    logger.info("[%s] Waiting for server health check on port %d ...", label, server_port)
+    logger.info(
+        "[%s] Waiting for server health check on port %d ...", label, server_port
+    )
     for attempt in range(1, 16):
         try:
-            code, stdout, _ = ssh.run(
-                f"curl -sf http://127.0.0.1:{server_port}/health"
-            )
+            code, stdout, _ = ssh.run(f"curl -sf http://127.0.0.1:{server_port}/health")
             if code == 0:
                 logger.info("[%s] Server healthy.", label)
                 return
@@ -635,7 +670,9 @@ def _s3_upload(
         raise TwoVMDistillError(f"S3 upload failed: {exc}") from exc
 
     if code != 0:
-        raise TwoVMDistillError(f"S3 upload failed (exit {code}): {stderr.strip()[-500:]}")
+        raise TwoVMDistillError(
+            f"S3 upload failed (exit {code}): {stderr.strip()[-500:]}"
+        )
     if "s3_upload_done" not in stdout:
         raise TwoVMDistillError("S3 upload: completion marker not found in output")
 
@@ -701,7 +738,9 @@ def _s3_download(
         raise TwoVMDistillError(f"S3 download failed: {exc}") from exc
 
     if code != 0:
-        raise TwoVMDistillError(f"S3 download failed (exit {code}): {stderr.strip()[-500:]}")
+        raise TwoVMDistillError(
+            f"S3 download failed (exit {code}): {stderr.strip()[-500:]}"
+        )
     if "s3_download_done" not in stdout:
         raise TwoVMDistillError("S3 download: completion marker not found in output")
 
@@ -773,7 +812,7 @@ def _run_stage(
                     break
             if depth == 0:
                 try:
-                    output = json.loads(stripped[start:end + 1])
+                    output = json.loads(stripped[start : end + 1])
                 except (json.JSONDecodeError, ValueError):
                     pass
 
@@ -825,18 +864,20 @@ def _save_workbench_config(
     if include_endpoint:
         wb_entry["endpoint"] = f"http://{vm_ip}:8080"
 
-    write_config({
-        "projects": {
-            PROJECT_ALIAS: {
-                "project_id": PROJECT_ID,
-                "tenant_id": TENANT_ID,
-                "region": REGION,
-                "workbenches": {
-                    spec.name: wb_entry,
+    write_config(
+        {
+            "projects": {
+                PROJECT_ALIAS: {
+                    "project_id": PROJECT_ID,
+                    "tenant_id": TENANT_ID,
+                    "region": REGION,
+                    "workbenches": {
+                        spec.name: wb_entry,
+                    },
                 },
             },
-        },
-    })
+        }
+    )
 
     # Deep-merge does not delete keys — scrub any stale endpoint that
     # survived from a previous run's config so resolve_config() won't
@@ -846,7 +887,9 @@ def _save_workbench_config(
 
         def remove_stale_endpoint(cfg: dict[str, Any]) -> dict[str, Any]:
             projects = cfg.get("projects", {})
-            project = projects.get(PROJECT_ALIAS, {}) if isinstance(projects, dict) else {}
+            project = (
+                projects.get(PROJECT_ALIAS, {}) if isinstance(projects, dict) else {}
+            )
             workbenches = (
                 project.get("workbenches", {}) if isinstance(project, dict) else {}
             )
@@ -888,7 +931,7 @@ def _resolve_creds_from_config() -> dict[str, str]:
     bucket = wb_cfg.storage.checkpoint_bucket
     # checkpoint_bucket is stored as "s3://bucket/checkpoints/" — extract just the bucket name.
     if bucket.startswith("s3://"):
-        bucket = bucket[len("s3://"):].split("/")[0]
+        bucket = bucket[len("s3://") :].split("/")[0]
     elif not bucket:
         raise TwoVMDistillError(
             "No S3 bucket found in saved config. Run without --skip-infra first."
@@ -1010,7 +1053,9 @@ def distill(
             logger.info("=== Provisioning sim VM: %s ===", SIM_VM.name)
             sim_outputs = _provision_vm(SIM_VM, nebius_creds)
             teardown_specs.append(SIM_VM)
-            _save_workbench_config(SIM_VM, sim_outputs, nebius_creds, include_endpoint=False)
+            _save_workbench_config(
+                SIM_VM, sim_outputs, nebius_creds, include_endpoint=False
+            )
             result["infrastructure"]["sim"] = {
                 "name": SIM_VM.name,
                 "ip": sim_outputs["vm_ip"],
@@ -1062,7 +1107,9 @@ def distill(
         _save_result(base_dir, result)
 
         sim_ssh = SSHClient(SSHConfig(host=sim_ip, user=sim_user, key_path=sim_key))
-        train_ssh = SSHClient(SSHConfig(host=train_ip, user=train_user, key_path=train_key))
+        train_ssh = SSHClient(
+            SSHConfig(host=train_ip, user=train_user, key_path=train_key)
+        )
 
         # ── Steps 3-7: setup + pipeline ────────────────────────────
         _run_pipeline(
@@ -1100,21 +1147,28 @@ def distill(
         # provisioning — so we never leak non-preemptible GPU instances.
         # Works with both --skip-infra and fresh provisioning.
         if teardown and teardown_specs:
-            logger.info("=== Tearing down infrastructure (%d VMs) ===", len(teardown_specs))
+            logger.info(
+                "=== Tearing down infrastructure (%d VMs) ===", len(teardown_specs)
+            )
             # _destroy_vm needs a valid IAM token + service_account_id
             # for Terraform.  When --skip-infra these are empty, so
             # bootstrap just enough to get them.
-            if not nebius_creds.get("iam_token") or not nebius_creds.get("service_account_id"):
+            if not nebius_creds.get("iam_token") or not nebius_creds.get(
+                "service_account_id"
+            ):
                 try:
                     fresh = bootstrap_environment(
-                        PROJECT_ID, TENANT_ID, REGION,
+                        PROJECT_ID,
+                        TENANT_ID,
+                        REGION,
                         on_status=lambda msg: logger.info("  %s", msg),
                     )
                     nebius_creds.update(fresh)
                 except NebiusError as exc:
                     logger.warning(
                         "Nebius bootstrap for teardown failed: %s. "
-                        "VMs may need manual cleanup.", exc,
+                        "VMs may need manual cleanup.",
+                        exc,
                     )
             for spec in teardown_specs:
                 try:
@@ -1189,7 +1243,9 @@ def _run_pipeline(
     # reachable via ``npa workbench lerobot status/serve/...``.
     logger.info("=== Deploying HTTP server on train VM ===")
     _deploy_http_server(
-        train_ssh, TRAIN_VM, nebius_creds,
+        train_ssh,
+        TRAIN_VM,
+        nebius_creds,
         f"train ({TRAIN_VM.name})",
     )
 
@@ -1219,9 +1275,11 @@ def _run_pipeline(
     # Upload teacher checkpoint to S3.
     logger.info("  Uploading teacher checkpoint to S3 ...")
     _s3_upload(
-        sim_ssh, SIM_VM.conda_env,
+        sim_ssh,
+        SIM_VM.conda_env,
         f"{remote_base}/teacher/",
-        s3_bucket, f"{s3_prefix}teacher/",
+        s3_bucket,
+        f"{s3_prefix}teacher/",
     )
 
     # ── Stage 2: Generate demos (sim VM — Genesis) ─────────────────
@@ -1229,7 +1287,9 @@ def _run_pipeline(
     # envs than teacher training (which is physics-only).  64 envs
     # generates 64 episodes per batch — enough for a training dataset.
     demo_n_envs = min(n_envs, 64)
-    logger.info("=== [2/5] Generating demos on %s (n_envs=%d) ===", SIM_VM.name, demo_n_envs)
+    logger.info(
+        "=== [2/5] Generating demos on %s (n_envs=%d) ===", SIM_VM.name, demo_n_envs
+    )
     stage_result = _run_stage(
         sim_ssh,
         SIM_VM.conda_env,
@@ -1285,7 +1345,9 @@ def _run_pipeline(
         teval_output = teacher_eval_result.get("output", {})
         teacher_success_rate = teval_output.get("teacher_success_rate")
         if teacher_success_rate is not None:
-            logger.info("  Teacher held-out success rate: %.1f%%", teacher_success_rate * 100)
+            logger.info(
+                "  Teacher held-out success rate: %.1f%%", teacher_success_rate * 100
+            )
     else:
         logger.warning("Teacher eval failed — distillation gap will not be computed.")
     result["stages"]["eval_teacher"] = teacher_eval_result
@@ -1315,21 +1377,27 @@ def _run_pipeline(
     # Upload dataset to S3 for cross-VM handoff.
     logger.info("  Uploading dataset to S3 (sim -> S3 -> train) ...")
     _s3_upload(
-        sim_ssh, SIM_VM.conda_env,
+        sim_ssh,
+        SIM_VM.conda_env,
         f"{remote_base}/dataset/",
-        s3_bucket, f"{s3_prefix}dataset/",
+        s3_bucket,
+        f"{s3_prefix}dataset/",
     )
 
     # ── Stage 4: Train student (train VM — LeRobot) ────────────────
     # Download dataset from S3 to the training VM.
     logger.info("  Downloading dataset from S3 to train VM ...")
     _s3_download(
-        train_ssh, TRAIN_VM.conda_env,
-        s3_bucket, f"{s3_prefix}dataset/",
+        train_ssh,
+        TRAIN_VM.conda_env,
+        s3_bucket,
+        f"{s3_prefix}dataset/",
         f"{remote_base}/dataset/",
     )
 
-    logger.info("=== [4/5] Training student (%s) on %s ===", student_policy, TRAIN_VM.name)
+    logger.info(
+        "=== [4/5] Training student (%s) on %s ===", student_policy, TRAIN_VM.name
+    )
     stage_result = _run_stage(
         train_ssh,
         TRAIN_VM.conda_env,
@@ -1353,23 +1421,31 @@ def _run_pipeline(
     # Upload student checkpoint to S3 for cross-VM handoff.
     logger.info("  Uploading student checkpoint to S3 (train -> S3 -> sim) ...")
     _s3_upload(
-        train_ssh, TRAIN_VM.conda_env,
+        train_ssh,
+        TRAIN_VM.conda_env,
         f"{remote_base}/student/",
-        s3_bucket, f"{s3_prefix}student/",
+        s3_bucket,
+        f"{s3_prefix}student/",
     )
 
     # ── Stage 5: Eval student (sim VM — Genesis) ───────────────────
     # Download student checkpoint from S3 to sim VM.
     logger.info("  Downloading student checkpoint from S3 to sim VM ...")
     _s3_download(
-        sim_ssh, SIM_VM.conda_env,
-        s3_bucket, f"{s3_prefix}student/",
+        sim_ssh,
+        SIM_VM.conda_env,
+        s3_bucket,
+        f"{s3_prefix}student/",
         f"{remote_base}/student/",
     )
 
     # Pass the held-out teacher success rate (computed earlier) so
     # eval_student can report the distillation gap.
-    tsr_flag = f"--teacher-success-rate {teacher_success_rate} " if teacher_success_rate is not None else ""
+    tsr_flag = (
+        f"--teacher-success-rate {teacher_success_rate} "
+        if teacher_success_rate is not None
+        else ""
+    )
     logger.info("=== [5/5] Evaluating student on %s ===", SIM_VM.name)
     stage_result = _run_stage(
         sim_ssh,
@@ -1396,15 +1472,18 @@ def _run_pipeline(
     # Upload eval results to S3 (best-effort).
     try:
         _s3_upload(
-            sim_ssh, SIM_VM.conda_env,
+            sim_ssh,
+            SIM_VM.conda_env,
             f"{remote_base}/eval/",
-            s3_bucket, f"{s3_prefix}eval/",
+            s3_bucket,
+            f"{s3_prefix}eval/",
         )
     except TwoVMDistillError:
         logger.warning("Failed to upload eval artifacts — non-fatal.")
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────
+
 
 def main() -> None:
     """Parse args and run the expert distillation workflow."""
@@ -1420,42 +1499,56 @@ def main() -> None:
         description="Expert distillation: L40S (Genesis) + H100 (LeRobot).",
     )
     parser.add_argument(
-        "--teardown", action="store_true",
+        "--teardown",
+        action="store_true",
         help="Destroy both VMs after the workflow completes (even on failure).",
     )
     parser.add_argument(
-        "--skip-infra", action="store_true",
+        "--skip-infra",
+        action="store_true",
         help="Skip provisioning and Nebius bootstrap; resolve VMs and S3 "
-             "credentials from ~/.npa/config.yaml.",
+        "credentials from ~/.npa/config.yaml.",
     )
     parser.add_argument(
-        "--skip-setup", action="store_true",
+        "--skip-setup",
+        action="store_true",
         help="Skip runtime setup (conda env + npa install). Use when VMs "
-             "already have the correct environment.",
+        "already have the correct environment.",
     )
     parser.add_argument(
-        "--n-envs", type=int, default=4096,
+        "--n-envs",
+        type=int,
+        default=4096,
         help="Parallel environments for simulation (default: 4096).",
     )
     parser.add_argument(
-        "--teacher-max-iterations", type=int, default=500,
+        "--teacher-max-iterations",
+        type=int,
+        default=500,
         help="PPO training iterations for teacher (default: 500).",
     )
     parser.add_argument(
-        "--student-policy", default="act",
+        "--student-policy",
+        default="act",
         choices=["act", "diffusion", "smolvla"],
         help="Student policy type (default: act).",
     )
     parser.add_argument(
-        "--student-epochs", type=int, default=100,
+        "--student-epochs",
+        type=int,
+        default=100,
         help="Training epochs for student (default: 100).",
     )
     parser.add_argument(
-        "--student-batch-size", type=int, default=64,
+        "--student-batch-size",
+        type=int,
+        default=64,
         help="Batch size for student training (default: 64).",
     )
     parser.add_argument(
-        "--eval-n-episodes", type=int, default=1024,
+        "--eval-n-episodes",
+        type=int,
+        default=1024,
         help="Number of eval episodes (default: 1024).",
     )
 
@@ -1465,11 +1558,15 @@ def main() -> None:
     if args.n_envs <= 0:
         parser.error(f"--n-envs must be positive, got {args.n_envs}")
     if args.teacher_max_iterations <= 0:
-        parser.error(f"--teacher-max-iterations must be positive, got {args.teacher_max_iterations}")
+        parser.error(
+            f"--teacher-max-iterations must be positive, got {args.teacher_max_iterations}"
+        )
     if args.student_epochs <= 0:
         parser.error(f"--student-epochs must be positive, got {args.student_epochs}")
     if args.student_batch_size <= 0:
-        parser.error(f"--student-batch-size must be positive, got {args.student_batch_size}")
+        parser.error(
+            f"--student-batch-size must be positive, got {args.student_batch_size}"
+        )
     if args.eval_n_episodes <= 0:
         parser.error(f"--eval-n-episodes must be positive, got {args.eval_n_episodes}")
 

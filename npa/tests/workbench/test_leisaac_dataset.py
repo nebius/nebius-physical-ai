@@ -648,9 +648,20 @@ def test_encoder_converts_jpeg_range_without_crushing_black_or_white(
     media = leisaac_dataset._probe_video(video, expected_frames=3, fps=16)
     assert media["pix_fmt"] == "yuv420p"
     decoded = subprocess.run(
-        [executable, "-v", "error", "-i", str(video), "-f", "rawvideo",
-         "-pix_fmt", "rgb24", "-"],
-        capture_output=True, check=True,
+        [
+            executable,
+            "-v",
+            "error",
+            "-i",
+            str(video),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ],
+        capture_output=True,
+        check=True,
     )
     pixels = np.frombuffer(decoded.stdout, dtype=np.uint8).reshape(3, 720, 1280, 3)
     for frame, level in zip(pixels, levels, strict=True):

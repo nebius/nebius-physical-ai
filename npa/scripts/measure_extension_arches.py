@@ -29,10 +29,10 @@ is forward compatible: sm_86 runs on sm_89 (L40S), and sm_100 runs on sm_103
 sm_100 SASS and no PTX reaches B200 natively and B300 by forward compatibility,
 while an extension whose highest entry is sm_90 reaches no Blackwell part at all.
 
-Coverage is a necessary condition, never a sufficient one. A kernel can be
-present and still fail - flash-attn-4 ships sm_120 SASS and its CuTe forward
-pass raises on sm_120 because the epilogue needs TMA. Only a real capability run
-on the part decides a cell.
+Coverage is a necessary condition, never a sufficient one. Torch wheel SASS
+coverage does not qualify a separate JIT kernel: historical FA4 CuTe builds
+failed on sm_120 because of an epilogue dispatch bug despite compatible Torch
+SASS. Only a real capability run on the part decides a cell.
 
 USAGE
   measure_extension_arches.py <wheel|.so|directory> [...] [--require sm_100]
@@ -80,9 +80,9 @@ def scan(blob: bytes) -> tuple[Counter, Counter]:
             return sass, ptx
         if offset + FATBIN_HEADER_SIZE > len(blob):
             return sass, ptx
-        version, = struct.unpack_from("<H", blob, offset + 4)
-        header_size, = struct.unpack_from("<H", blob, offset + 6)
-        fat_size, = struct.unpack_from("<Q", blob, offset + 8)
+        (version,) = struct.unpack_from("<H", blob, offset + 4)
+        (header_size,) = struct.unpack_from("<H", blob, offset + 6)
+        (fat_size,) = struct.unpack_from("<Q", blob, offset + 8)
         if version != 1 or header_size != FATBIN_HEADER_SIZE or fat_size <= 0:
             offset += 4
             continue
@@ -94,10 +94,10 @@ def scan(blob: bytes) -> tuple[Counter, Counter]:
         container_sass: Counter = Counter()
         container_ptx: Counter = Counter()
         while cursor + MIN_ENTRY_HEADER <= end:
-            kind, = struct.unpack_from("<H", blob, cursor)
-            entry_header, = struct.unpack_from("<I", blob, cursor + 4)
-            payload, = struct.unpack_from("<Q", blob, cursor + 8)
-            arch, = struct.unpack_from("<I", blob, cursor + 28)
+            (kind,) = struct.unpack_from("<H", blob, cursor)
+            (entry_header,) = struct.unpack_from("<I", blob, cursor + 4)
+            (payload,) = struct.unpack_from("<Q", blob, cursor + 8)
+            (arch,) = struct.unpack_from("<I", blob, cursor + 28)
             if (
                 kind not in (ENTRY_KIND_PTX, ENTRY_KIND_SASS)
                 or not MIN_ENTRY_HEADER <= entry_header <= MAX_ENTRY_HEADER
@@ -166,7 +166,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     min_size = int(args.min_size_mb * 1_000_000)
-    required = {name if name.startswith("sm_") else f"sm_{name}" for name in args.require}
+    required = {
+        name if name.startswith("sm_") else f"sm_{name}" for name in args.require
+    }
     report: dict[str, dict] = {}
     failures: list[str] = []
 

@@ -53,12 +53,22 @@ def _instructions() -> str:
 
 
 @pytest.mark.parametrize("tamper", [False, True])
-def test_real_bootstrap_verifier_matches_current_lock_and_rejects_changed_bytes(tmp_path, monkeypatch, tamper):
+def test_real_bootstrap_verifier_matches_current_lock_and_rejects_changed_bytes(
+    tmp_path, monkeypatch, tamper
+):
     module = _module("serving_bootstrap_verifier", IMAGE_DIR / "verify_env.py")
     lock = tmp_path / "requirements.lock"
     lock.write_bytes(LOCK.read_bytes() + (b"\n# changed bytes\n" if tamper else b""))
-    monkeypatch.setenv("NPA_COSMOS3_CLOSURE_SHA256", hashlib.sha256(LOCK.read_bytes()).hexdigest())
-    monkeypatch.setattr(module, "Path", lambda name: lock if name.endswith("requirements.lock") else tmp_path / "absent")
+    monkeypatch.setenv(
+        "NPA_COSMOS3_CLOSURE_SHA256", hashlib.sha256(LOCK.read_bytes()).hexdigest()
+    )
+    monkeypatch.setattr(
+        module,
+        "Path",
+        lambda name: (
+            lock if name.endswith("requirements.lock") else tmp_path / "absent"
+        ),
+    )
 
     def unavailable(package):
         raise module.metadata.PackageNotFoundError(package)
@@ -81,7 +91,10 @@ def test_source_base_and_dependency_closure_are_immutable() -> None:
     assert "snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}" in text
     assert SOURCE_REVISION in text
     assert SOURCE_SHA256 in text
-    assert f"ARG COSMOS3_CLOSURE_SHA256={hashlib.sha256(LOCK.read_bytes()).hexdigest()}" in text
+    assert (
+        f"ARG COSMOS3_CLOSURE_SHA256={hashlib.sha256(LOCK.read_bytes()).hexdigest()}"
+        in text
+    )
     assert "e0262be9d8f7586bc24c069a2aed2b665bdff266" in text
     assert "cf03c0395fac8c4de386c0bdab12cc4fc8d66362" in text
     bootstrap = RUNTIME_BOOTSTRAP.read_text(encoding="utf-8")
@@ -344,6 +357,40 @@ def test_built_payload_scanner_rejects_old_vendor_base_and_license(
     baked_closure = tmp_path / "baked-closure.tar"
     _docker_save(baked_closure, layer_paths=["usr/local/bin/vllm"])
     assert (
-        scanner.scan_tarball(baked_closure)["verdict"]
-        == "restricted-payload-detected"
+        scanner.scan_tarball(baked_closure)["verdict"] == "restricted-payload-detected"
     )
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "etc/ssh/ssh_host_ed25519_key",
+        "root/.ssh/id_rsa",
+        "home/ubuntu/.ssh/id_ed25519",
+        "root/.netrc",
+    ],
+)
+def test_payload_scan_rejects_credential_paths(tmp_path: Path, member: str) -> None:
+    # Before the shared rules landed this scanner detected no credential of any
+    # kind, while the image it guards is published with a zero-payload claim.
+    scanner = _module(
+        "cosmos3_payload_scanner_credentials",
+        NPA_ROOT / "scripts/scan_image_cosmos3_serving_payload.py",
+    )
+    archive = tmp_path / "image.tar"
+    _docker_save(archive, layer_paths=[member])
+    report = scanner.scan_tarball(archive)
+    assert report["verdict"] == "restricted-payload-detected"
+    assert report["credential_hits"]
+
+
+def test_payload_scan_credential_check_has_a_negative_control(tmp_path: Path) -> None:
+    scanner = _module(
+        "cosmos3_payload_scanner_clean",
+        NPA_ROOT / "scripts/scan_image_cosmos3_serving_payload.py",
+    )
+    archive = tmp_path / "clean.tar"
+    _docker_save(archive, layer_paths=["usr/local/bin/curl"])
+    report = scanner.scan_tarball(archive)
+    assert report["verdict"] == "clean"
+    assert report["credential_hits"] == []

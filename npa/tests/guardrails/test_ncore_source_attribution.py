@@ -125,7 +125,8 @@ def test_foreign_copy_remains_unresolved(
     )
 
     assert (
-        _run_tree(repo, _proof_directory(tmp_path), monkeypatch, ATTRIBUTION_PATTERN) == 1
+        _run_tree(repo, _proof_directory(tmp_path), monkeypatch, ATTRIBUTION_PATTERN)
+        == 1
     )
     captured = capsys.readouterr()
     assert f"{foreign_path}:633" in captured.err
@@ -146,7 +147,8 @@ def test_tracked_symlink_alias_prevents_disposition(
     )
 
     assert (
-        _run_tree(repo, _proof_directory(tmp_path), monkeypatch, ATTRIBUTION_PATTERN) == 1
+        _run_tree(repo, _proof_directory(tmp_path), monkeypatch, ATTRIBUTION_PATTERN)
+        == 1
     )
     assert "dispositioned=0" in capsys.readouterr().err
 
@@ -224,7 +226,8 @@ def test_non_regular_git_mode_cannot_receive_disposition(
     )
 
     assert (
-        _run_tree(repo, _proof_directory(tmp_path), monkeypatch, ATTRIBUTION_PATTERN) == 1
+        _run_tree(repo, _proof_directory(tmp_path), monkeypatch, ATTRIBUTION_PATTERN)
+        == 1
     )
     assert "raw=2 dispositioned=0 unresolved=2" in capsys.readouterr().err
 
@@ -287,12 +290,19 @@ def test_stdin_diff_cannot_claim_repository_attribution(
 
 
 def test_added_content_cannot_spoof_a_canonical_diff_header() -> None:
-    diff = "\n".join([
-        "diff --git a/foreign.txt b/foreign.txt", "--- a/foreign.txt", "+++ b/foreign.txt",
-        "@@ -0,0 +632,2 @@", f"+++ b/{REPOSITORY_PATH}", "+synthetic-private-marker",
-    ])
+    diff = "\n".join(
+        [
+            "diff --git a/foreign.txt b/foreign.txt",
+            "--- a/foreign.txt",
+            "+++ b/foreign.txt",
+            "@@ -0,0 +632,2 @@",
+            f"+++ b/{REPOSITORY_PATH}",
+            "+synthetic-private-marker",
+        ]
+    )
     hits = confidentiality._scan_git_diff_text(
-        diff, re.compile("synthetic-private-marker"), diff_range="base..HEAD")
+        diff, re.compile("synthetic-private-marker"), diff_range="base..HEAD"
+    )
     assert len(hits) == 1
     assert hits[0].repository_path == "foreign.txt"
     assert hits[0].line_number == 633
@@ -300,12 +310,28 @@ def test_added_content_cannot_spoof_a_canonical_diff_header() -> None:
 
 def _commit(repo: Path, message: str) -> str:
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-                    "commit", "-qm", message], cwd=repo, check=True)
-    return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            message,
+        ],
+        cwd=repo,
+        check=True,
+    )
+    return subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=repo, text=True
+    ).strip()
 
 
-def test_diff_disposition_requires_the_actual_canonical_post_image(tmp_path: Path) -> None:
+def test_diff_disposition_requires_the_actual_canonical_post_image(
+    tmp_path: Path,
+) -> None:
     repo = _source_repo(tmp_path)
     canonical = _commit(repo, "Canonical notice")
     notice = repo / REPOSITORY_PATH
@@ -315,15 +341,18 @@ def test_diff_disposition_requires_the_actual_canonical_post_image(tmp_path: Pat
     changed = _commit(repo, "Changed notice")
     notice.write_bytes(CANONICAL_NOTICE.read_bytes())
     restored = _commit(repo, "Restore canonical notice")
-    hits = confidentiality.scan_git_diff(repo, f"{canonical}..{changed}",
-                                          re.compile("synthetic-private-marker"))
+    hits = confidentiality.scan_git_diff(
+        repo, f"{canonical}..{changed}", re.compile("synthetic-private-marker")
+    )
     assert len(hits) == 1 and hits[0].repository_path is None
     assert not confidentiality._canonical_diff_matches(repo, f"{canonical}..{changed}")
     assert confidentiality._canonical_diff_matches(repo, f"{changed}..{restored}")
 
 
 def test_public_transport_failure_retains_all_unresolved_findings(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     from npa.guardrails import ncore_attribution
     from npa._public_https import PublicDownloadError
@@ -333,7 +362,10 @@ def test_public_transport_failure_retains_all_unresolved_findings(
 
     repo = _source_repo(tmp_path)
     monkeypatch.setattr(ncore_attribution, "download_public_https", refused)
-    assert _run_tree(repo, _proof_directory(tmp_path), monkeypatch, ATTRIBUTION_PATTERN) == 1
+    assert (
+        _run_tree(repo, _proof_directory(tmp_path), monkeypatch, ATTRIBUTION_PATTERN)
+        == 1
+    )
     output = capsys.readouterr()
     assert "raw=2 dispositioned=0 unresolved=2" in output.err
     assert "NCore public-attribution proof could not be verified" in output.err

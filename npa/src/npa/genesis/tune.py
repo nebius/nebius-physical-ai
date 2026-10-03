@@ -94,9 +94,7 @@ def tune_teacher(
                 action_space=action_space,
             )
         except DiagnoseError as exc:
-            raise TuneError(
-                f"Diagnosis failed in round {round_num}: {exc}"
-            ) from exc
+            raise TuneError(f"Diagnosis failed in round {round_num}: {exc}") from exc
 
         # Save diagnosis artifact into a dedicated subdirectory so it
         # is unambiguously tied to the INPUT checkpoint, not the
@@ -118,7 +116,8 @@ def tune_teacher(
         if diagnosis["success_rate"] > min_success_rate:
             logger.info(
                 "Success rate %.1f%% > %.1f%% — stopping tune loop.",
-                diagnosis["success_rate"] * 100, min_success_rate * 100,
+                diagnosis["success_rate"] * 100,
+                min_success_rate * 100,
             )
             round_record["action"] = "stop_success"
             # Write accumulated env overrides so the early-exit round
@@ -178,12 +177,13 @@ def tune_teacher(
         from npa.genesis.diagnose import _THRESHOLD_KEYS
 
         retrain_overrides = {
-            k: v for k, v in env_overrides.items()
-            if k not in _THRESHOLD_KEYS
+            k: v for k, v in env_overrides.items() if k not in _THRESHOLD_KEYS
         }
         logger.info(
             "Retraining: %d iterations, n_envs=%d, env_overrides=%s",
-            retrain_iterations, n_envs, retrain_overrides,
+            retrain_iterations,
+            n_envs,
+            retrain_overrides,
         )
         try:
             train_result = _retrain_with_overrides(
@@ -198,9 +198,7 @@ def tune_teacher(
                 action_space=action_space,
             )
         except TrainingError as exc:
-            raise TuneError(
-                f"Retraining failed in round {round_num}: {exc}"
-            ) from exc
+            raise TuneError(f"Retraining failed in round {round_num}: {exc}") from exc
 
         current_checkpoint = Path(train_result["checkpoint_path"])
         logger.info("Round %d checkpoint: %s", round_num, current_checkpoint)
@@ -231,11 +229,15 @@ def tune_teacher(
     final_success_rate = (
         final_diagnosis["success_rate"]
         if final_diagnosis
-        else rounds[-1]["success_rate"] if rounds else 0.0
+        else rounds[-1]["success_rate"]
+        if rounds
+        else 0.0
     )
 
     result: dict[str, Any] = {
-        "status": "success" if final_success_rate > min_success_rate else "no_improvement",
+        "status": "success"
+        if final_success_rate > min_success_rate
+        else "no_improvement",
         "rounds_completed": len(rounds),
         "final_checkpoint": str(current_checkpoint),
         "final_success_rate": final_success_rate,
@@ -292,7 +294,7 @@ def _retrain_with_overrides(
         from rsl_rl.runners import OnPolicyRunner
     except ImportError as exc:
         raise TrainingError(
-            "rsl-rl not installed. Install with: pip install rsl-rl-lib==2.2.4"
+            "rsl-rl not installed. Install with: pip install rsl-rl-lib==5.5.1"
         ) from exc
 
     # Create environment WITH overrides
@@ -343,7 +345,8 @@ def _retrain_with_overrides(
     import json
 
     arch_config = {
-        "policy": config_for_save["policy"],
+        "actor": config_for_save["actor"],
+        "rsl_rl_version": "5.5.1",
         "num_obs": env.obs_dim,
         "num_actions": env.act_dim,
         "action_space": action_space,

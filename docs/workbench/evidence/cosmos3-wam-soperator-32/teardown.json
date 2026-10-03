@@ -1,0 +1,65 @@
+{
+  "schema": "npa.cosmos3.wam-soperator-cleanup.v1",
+  "status": "destroyed-and-provider-audited",
+  "destroy_finished_utc": "2026-09-30T10:05:28.706215+00:00",
+  "provider_audit_utc": "2026-09-30T10:05:50.907104+00:00",
+  "scope": "Dedicated four-worker NPA Soperator cluster only; all ten workload jobs completed and the complete Slurm queue was empty before NPA destruction.",
+  "before_counts": {
+    "instances": 10,
+    "disks": 19,
+    "filesystems": 3,
+    "clusters": 1,
+    "allocations": 21
+  },
+  "after_counts": {
+    "instances": 0,
+    "disks": 2,
+    "filesystems": 0,
+    "clusters": 0,
+    "allocations": 0
+  },
+  "archive": {
+    "files": 2561,
+    "bytes": 1499302327174,
+    "content_verification_wall_seconds": 6784.425202021997,
+    "all_content_read_back_verified": true,
+    "post_destroy_retention": {
+      "schema": "npa.cosmos3.wam-post-cleanup-archive-retention.v1",
+      "status": "verified",
+      "observed_utc": "2026-09-30T10:05:58.766694+00:00",
+      "objects_present_with_matching_size_and_sha256_metadata": 2561,
+      "bytes": 1499302327174,
+      "receipt_full_get_verified_after_cleanup": true,
+      "private_receipt_sha256": "9380cddd2806f52d21894315bd205d4a50ddc8bbf102e9e29e3c5d0984a70c8e",
+      "scope": "After cluster destruction, the full receipt was downloaded again and every selected object was checked with HEAD. Payload content had already passed full GET verification before destruction; this does not claim a second complete payload download."
+    },
+    "private_receipt_sha256": "9380cddd2806f52d21894315bd205d4a50ddc8bbf102e9e29e3c5d0984a70c8e"
+  },
+  "retained": [
+    "Private object archive",
+    "Dedicated project",
+    "Two original native-VM evidence disks, identified before this cluster was created"
+  ],
+  "historical_native_instances": "Both original instances were already provider-NotFound at the pre-cleanup audit; their disks remain.",
+  "billing_scope": "No compute instances remain in this project inventory. Retained storage and reservation commitments are separate; this is not a billing or reservation-cancellation receipt.",
+  "private_source_sha256": {
+    "teardown-32/finished.json": "2f8494646c611154cebe76c6811f99274487177cc1bd2cf2427818441aa149fb",
+    "teardown-32/preconditions.json": "3d6545de5cff26c22e69b66cf35d97548eaf2188b0ec9c7740199bef9ba87d00",
+    "teardown-32/destroy.log": "485eba206557483ef6907b17e7cd5ca6defff49ac685627cf2e6b565e99fa379",
+    "archive-summary.json": "53aad72edee7eb4d9ce53a3b0b7d9deaeee2455b29e44d0d34e2e4528a81098d",
+    "archive-ledger-download-verified.json": "ad1316f0141f066256bd7719e1e0307b4a10dfe5ee0f984a68cbab72626048b1",
+    "archive-retention-after-cleanup.json": "13cdb14233918c55390ff5c56875b60ac90b8ee6a66f2ee0a1f92429db5c495d",
+    "cloud-before-cleanup/instances.json": "591403dc8ccf18ba5d1437acee85a7e08a3b4838dbb63ca998c8aee60547ec13",
+    "cloud-before-cleanup/disks.json": "e576eaeb37df3c67e01a39b9a5311edcab6bd5b4f03013de92b26fabb054f694",
+    "cloud-before-cleanup/filesystems.json": "5a01618038a1e7a6c1eef792094ab7fa953a652b5f297c8e5780e8ab1590092e",
+    "cloud-before-cleanup/clusters.json": "adba28529b6d5d1d9c5b7c9bfec77760cda28a087ea5079f3604c4bec578dc1c",
+    "cloud-before-cleanup/allocations.json": "cbdd20b3f1ff22fb37e1f9f09ec8dbc5989a09fd5a3c12f3f286a267c553caeb",
+    "cloud-before-cleanup/summary.json": "0e8a11a614517166ded405405789e853138cdd6df3216864fa34617310e8824b",
+    "cloud-after-cleanup/instances.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "cloud-after-cleanup/disks.json": "19d698df9b641362d90bd51b53b59880178a0e3814acda542215b99b995c4048",
+    "cloud-after-cleanup/filesystems.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "cloud-after-cleanup/clusters.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "cloud-after-cleanup/allocations.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    "cloud-after-cleanup/summary.json": "7978dbaa248509b533543484a52f0bfef2582a5d180c0478fe31e1f832576be5"
+  }
+}

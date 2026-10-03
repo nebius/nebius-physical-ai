@@ -35,7 +35,9 @@ def test_every_selector_is_an_instance_type_label_value() -> None:
 
 
 @pytest.mark.parametrize("unknown", ["unsupported", "", "GPU"])
-def test_an_unknown_shorthand_has_no_selector_so_the_cli_can_refuse(unknown: str) -> None:
+def test_an_unknown_shorthand_has_no_selector_so_the_cli_can_refuse(
+    unknown: str,
+) -> None:
     assert GPU_NODE_SELECTORS.get(unknown) is None
 
 
@@ -60,7 +62,9 @@ def test_an_explicit_profile_is_still_honoured(tmp_path, monkeypatch) -> None:
     cached.write_text("apiVersion: v1")
     monkeypatch.setattr(dt.Path, "home", staticmethod(lambda: tmp_path))
 
-    assert dt._resolve_kubeconfig(cluster_name="some-cluster", kubeconfig="") == str(cached)
+    assert dt._resolve_kubeconfig(cluster_name="some-cluster", kubeconfig="") == str(
+        cached
+    )
 
 
 def test_an_explicit_path_wins_over_a_profile() -> None:

@@ -15,7 +15,10 @@ runner = CliRunner()
 
 
 def _mock_fiftyone_serverless_env(mocker):
-    mocker.patch("npa.cli.fiftyone.resolve_environment", return_value=SimpleNamespace(project_id="project-1"))
+    mocker.patch(
+        "npa.cli.fiftyone.resolve_environment",
+        return_value=SimpleNamespace(project_id="project-1"),
+    )
     mocker.patch(
         "npa.cli.fiftyone.resolve_project_storage",
         return_value=StorageConfig(
@@ -25,14 +28,21 @@ def _mock_fiftyone_serverless_env(mocker):
             aws_secret_access_key="SECRET",
         ),
     )
-    mocker.patch("npa.cli.fiftyone.container_image_for_tool", return_value="registry.example/npa-fiftyone:smoke")
-    return mocker.patch("npa.cli.fiftyone.resolve_subnet", return_value="vpcsubnet-auto")
+    mocker.patch(
+        "npa.cli.fiftyone.container_image_for_tool",
+        return_value="registry.example/npa-fiftyone:smoke",
+    )
+    return mocker.patch(
+        "npa.cli.fiftyone.resolve_subnet", return_value="vpcsubnet-auto"
+    )
 
 
 def _mock_serverless_client(mocker, *, poll_status: str | None = None):
     client = mocker.Mock()
     client.get_job.side_effect = EndpointNotFoundError("missing")
-    client.create_job.return_value = SimpleNamespace(id="job-1", name="fiftyone-curate-job", status="running", output_uris=())
+    client.create_job.return_value = SimpleNamespace(
+        id="job-1", name="fiftyone-curate-job", status="running", output_uris=()
+    )
     if poll_status is not None:
         client.poll_job.return_value = SimpleNamespace(
             id="job-1",

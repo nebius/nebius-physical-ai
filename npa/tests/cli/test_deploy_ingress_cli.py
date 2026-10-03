@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.clients.config import StorageConfig
 from npa.clients.credentials import CredentialsConfig
 from npa.clients.network import EnsureIngressResult, NetworkIngressError
 
@@ -117,6 +118,26 @@ def _patch_successful_deploy(
         mocker.patch(f"{module}.write_remote_docker_env_file")
     else:
         mocker.patch(
+            "npa.clients.project_credential_store.project_credential_record",
+            return_value={
+                "storage": {
+                    "bucket": "s3://selected-bucket/checkpoints/",
+                    "endpoint": "https://selected-storage.example",
+                    "access_key": "selected-access",
+                    "secret_key": "selected-secret",
+                }
+            },
+        )
+        mocker.patch(
+            "npa.clients.config.resolve_project_storage",
+            return_value=StorageConfig(
+                checkpoint_bucket="s3://selected-bucket/checkpoints/",
+                endpoint_url="https://selected-storage.example",
+                aws_access_key_id="selected-access",
+                aws_secret_access_key="selected-secret",
+            ),
+        )
+        mocker.patch(
             f"{module}.resolve_credentials", return_value=SimpleNamespace(tokens={})
         )
         mocker.patch(f"{module}._run_fiftyone_command", return_value=(0, "", ""))
@@ -164,7 +185,11 @@ def _assert_private_fiftyone_deploy(result, ensure) -> None:
     assert "Network ingress confirmed" not in result.output
     assert "npa workbench fiftyone -p proj -n demo open" in result.output
     configurations = [
-        call.args[0].get("projects", {}).get("proj", {}).get("workbenches", {}).get("demo", {})
+        call.args[0]
+        .get("projects", {})
+        .get("proj", {})
+        .get("workbenches", {})
+        .get("demo", {})
         for call in fiftyone.write_config.call_args_list
     ]
     saved = next(config for config in configurations if "endpoint_strategy" in config)

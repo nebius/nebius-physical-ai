@@ -156,7 +156,10 @@ def test_provenance_uses_truthful_learning_phases_for_groot_offline_eval() -> No
                     "fps": 10,
                 },
                 "provenance": {"primary_camera": "front"},
-                "training": {"distinct_gpu_count": 7, "coverage_criterion": "one complete pass"},
+                "training": {
+                    "distinct_gpu_count": 7,
+                    "coverage_criterion": "one complete pass",
+                },
                 "evaluation": {"metric_name": "action_mse", "real_model_forward": True},
             }
         return {}
@@ -199,7 +202,10 @@ def test_groot_filename_without_authoritative_metadata_is_not_semantic_proof() -
     )
 
     assert "Offline held-out GR00T" not in prov["summary"]
-    assert all(component["stage"] != "Synchronized learning replay" for component in prov["components"])
+    assert all(
+        component["stage"] != "Synchronized learning replay"
+        for component in prov["components"]
+    )
 
 
 def test_provenance_carries_origin() -> None:
@@ -237,7 +243,9 @@ def _read_no_original(key: str):
 
 
 def test_origin_when_no_original_input_stored() -> None:
-    origin = build_run_origin(_NO_ORIGINAL_KEYS, run_id=RUN, read_json=_read_no_original)
+    origin = build_run_origin(
+        _NO_ORIGINAL_KEYS, run_id=RUN, read_json=_read_no_original
+    )
     assert origin["original_present"] is False
     assert origin["original_inputs"] == []
     # Earliest stored visual is the Cosmos Transfer augmented output, not an original.
@@ -262,6 +270,7 @@ def test_origin_when_source_frames_are_operator_provided() -> None:
         f"{PFX}/cosmos_augmented/manifest.json",
         f"{PFX}/cosmos_augmented/aug-{RUN}/frame-00000.png",
     ]
+
     def read_with_source(key: str):
         if key.endswith("configs/manifest.json"):
             return {

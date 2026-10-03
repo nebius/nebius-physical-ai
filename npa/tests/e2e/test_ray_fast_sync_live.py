@@ -37,7 +37,10 @@ def _configuration() -> tuple[dict[str, str], Path]:
     evidence_root = Path(config["evidence_dir"])
     evidence_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     assert not evidence_root.is_symlink()
-    assert evidence_root.stat().st_uid == os.getuid() and evidence_root.stat().st_mode & 0o077 == 0
+    assert (
+        evidence_root.stat().st_uid == os.getuid()
+        and evidence_root.stat().st_mode & 0o077 == 0
+    )
     return config, evidence_root
 
 
@@ -51,7 +54,9 @@ def _load_harness():
     Raises:
         ImportError: The checked-in harness cannot be loaded.
     """
-    specification = importlib.util.spec_from_file_location("ray_fast_sync_live", EXAMPLE / "fast_sync.py")
+    specification = importlib.util.spec_from_file_location(
+        "ray_fast_sync_live", EXAMPLE / "fast_sync.py"
+    )
     module = importlib.util.module_from_spec(specification)
     specification.loader.exec_module(module)
     return module
@@ -73,5 +78,8 @@ def test_local_edit_changes_real_ray_task_result() -> None:
         config["address"], evidence_root / token, run_token=token[:12]
     )
     assert result["status"] == "passed"
-    assert [revision["value"] for revision in result["revisions"]] == ["before", "after"]
+    assert [revision["value"] for revision in result["revisions"]] == [
+        "before",
+        "after",
+    ]
     assert len({revision["source_sha256"] for revision in result["revisions"]}) == 2

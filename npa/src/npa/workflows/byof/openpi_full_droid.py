@@ -42,9 +42,7 @@ from npa.workflows.byof.openpi_pipeline import (
 SOURCE_REF = "15a9616a00943ada6c20a0f158e3adb39df2ccac"
 CONFIG_NAME = "pi05_full_droid_finetune"
 DATASET_URI = "gs://gresearch/robotics/droid/1.0.1"
-FILTER_DICTIONARY_URI = (
-    "gs://openpi-assets/droid/droid_sample_ranges_v1_0_1.json"
-)
+FILTER_DICTIONARY_URI = "gs://openpi-assets/droid/droid_sample_ranges_v1_0_1.json"
 FILTER_DICTIONARY_SHA256 = (
     "5046049ab62a2df2f802df89cf0888b720f852ce2557849417d40899c9a38bc8"
 )
@@ -63,9 +61,7 @@ TELEMETRY_SCHEMA = "npa.workbench.openpi.pi05-full-droid-telemetry.v1"
 PREPARATION_TELEMETRY_SCHEMA = (
     "npa.workbench.openpi.pi05-full-droid-preparation-telemetry.v1"
 )
-MILESTONE_MANIFEST_SCHEMA = (
-    "npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1"
-)
+MILESTONE_MANIFEST_SCHEMA = "npa.workbench.openpi.pi05-full-droid-rerun-milestone.v1"
 CHECKPOINT_COMPLETION_SCHEMA = (
     "npa.workbench.openpi.pi05-full-droid-checkpoint-completion.v1"
 )
@@ -270,9 +266,7 @@ class _TrainingTelemetryJournal:
         required = {"loss", "grad_norm", "param_norm"}
         if not required <= values.keys():
             return
-        metrics = {
-            name: _scalar(values[name], name=name) for name in sorted(required)
-        }
+        metrics = {name: _scalar(values[name], name=name) for name in sorted(required)}
         lr = _scalar(learning_rate, name="learning_rate")
         now = time.perf_counter()
         interval: dict[str, object] | None = None
@@ -460,12 +454,7 @@ def _validate_filter_dictionary(path: Path) -> dict[str, object]:
 def _stage_filter_dictionary(gsutil: str, cache_root: Path) -> dict[str, object]:
     """Fetch upstream's single JSON object without its broken wildcard helper."""
 
-    target = (
-        cache_root
-        / "openpi-assets"
-        / "droid"
-        / "droid_sample_ranges_v1_0_1.json"
-    )
+    target = cache_root / "openpi-assets" / "droid" / "droid_sample_ranges_v1_0_1.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     lock_path = target.with_suffix(target.suffix + ".lock")
     with lock_path.open("a+b") as lock:
@@ -557,9 +546,7 @@ def _append_jsonl(path: Path, value: Mapping[str, object]) -> None:
         os.fsync(handle.fileno())
 
 
-def _load_preparation_telemetry(
-    path: Path, *, run_id: str
-) -> list[dict[str, object]]:
+def _load_preparation_telemetry(path: Path, *, run_id: str) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         try:
@@ -775,8 +762,7 @@ def _normalization_dataset_memory_override(data_loader_module: object):
         yield
     finally:
         changed = (
-            getattr(data_loader_module, "DroidRldsDataset", None)
-            is not bounded_dataset
+            getattr(data_loader_module, "DroidRldsDataset", None) is not bounded_dataset
         )
         setattr(data_loader_module, "DroidRldsDataset", original)
         if changed:
@@ -855,8 +841,7 @@ def _compute_norm_stats(
                         "record_type": "normalization_progress",
                         "normalization_attempt": normalization_attempt,
                         "normalization_batch": processed_batches,
-                        "frames_processed": processed_batches
-                        * int(config.batch_size),
+                        "frames_processed": processed_batches * int(config.batch_size),
                         "elapsed_seconds": elapsed,
                         "frames_per_second": (
                             processed_batches * int(config.batch_size) / elapsed
@@ -867,9 +852,7 @@ def _compute_norm_stats(
                     },
                 )
 
-        tracker = _FactualNormalizationBatchTracker(
-            expected_batches, record_progress
-        )
+        tracker = _FactualNormalizationBatchTracker(expected_batches, record_progress)
         try:
             openpi_config.get_config = lambda name: (
                 config if name == CONFIG_NAME else original(name)
@@ -897,9 +880,7 @@ def _compute_norm_stats(
 
             def tracking_create_rlds_dataloader(*args, **kwargs):
                 nonlocal target_loader_calls
-                loader, num_batches = original_create_rlds_dataloader(
-                    *args, **kwargs
-                )
+                loader, num_batches = original_create_rlds_dataloader(*args, **kwargs)
                 target_loader_calls += 1
                 if target_loader_calls != 1 or num_batches != expected_batches:
                     raise OpenPIPipelineError(
@@ -960,9 +941,7 @@ def _compute_norm_stats(
                 create_rlds_dataloader is not None
                 and original_create_rlds_dataloader is not None
             ):
-                namespace["create_rlds_dataloader"] = (
-                    original_create_rlds_dataloader
-                )
+                namespace["create_rlds_dataloader"] = original_create_rlds_dataloader
         records = _load_preparation_telemetry(journal_path, run_id=run_id)
     if not stats_path.is_file():
         raise OpenPIPipelineError("normalization statistics were not materialized")
@@ -988,9 +967,7 @@ def _compute_norm_stats(
         "normalization_attempt": final.get("normalization_attempt", 0),
         "elapsed_seconds": final["elapsed_seconds"],
         "frames_per_second": final["frames_per_second"],
-        "normalization_shuffle_buffer_size": final[
-            "normalization_shuffle_buffer_size"
-        ],
+        "normalization_shuffle_buffer_size": final["normalization_shuffle_buffer_size"],
         "peak_rss_bytes": final["peak_rss_bytes"],
         "cgroup_peak_memory_bytes": final["cgroup_peak_memory_bytes"],
         "peak_memory_bytes": final["peak_memory_bytes"],
@@ -1177,8 +1154,7 @@ def _write_checkpoint_completion_marker(
 ) -> None:
     step_path = checkpoint_root / str(step)
     if not step_path.is_dir() or not any(
-        path.name != ".npa-checkpoint-complete.json"
-        for path in step_path.rglob("*")
+        path.name != ".npa-checkpoint-complete.json" for path in step_path.rglob("*")
     ):
         raise OpenPIPipelineError(
             "milestone checkpoint did not materialize before RRD emission"
@@ -1248,8 +1224,12 @@ def _prepare_distributed_checkpoint_root(
 
     import numpy as np
 
-    rank_zero_resuming = rank == 0 and checkpoint_root.is_dir() and any(
-        path.is_dir() and path.name.isdigit() for path in checkpoint_root.iterdir()
+    rank_zero_resuming = (
+        rank == 0
+        and checkpoint_root.is_dir()
+        and any(
+            path.is_dir() and path.name.isdigit() for path in checkpoint_root.iterdir()
+        )
     )
     decision = multihost_utils.broadcast_one_to_all(
         np.asarray([int(rank_zero_resuming)], dtype=np.int32), is_source=rank == 0
@@ -1336,9 +1316,7 @@ def _run_training(
                         checkpoint_root, step=int(path.name), run_id=run_id
                     )
                 ):
-                    journal.record_checkpoint(
-                        step=int(path.name), event="materialized"
-                    )
+                    journal.record_checkpoint(step=int(path.name), event="materialized")
         if milestone_publisher is not None:
             milestone_publisher.reconcile_available()
         learning_rate = configured.lr_schedule.create()
@@ -1363,9 +1341,8 @@ def _run_training(
                     values=data,
                     learning_rate=learning_rate(int(step)),
                 )
-                if (
-                    milestone_publisher is not None
-                    and milestone_publisher.is_log_only(int(step))
+                if milestone_publisher is not None and milestone_publisher.is_log_only(
+                    int(step)
                 ):
                     milestone_publisher.publish_for_optimizer_step(int(step))
             return result
@@ -1401,7 +1378,9 @@ def _run_training(
         # Orbax all_steps(read=True) enumerates finalized checkpoints from
         # storage rather than trusting a partially populated directory. This
         # closes the crash window between async finalization and our marker.
-        finalized_steps = {int(step) for step in checkpoint_manager.all_steps(read=True)}
+        finalized_steps = {
+            int(step) for step in checkpoint_manager.all_steps(read=True)
+        }
         if rank == 0 and journal is not None and milestone_publisher is not None:
             checkpoint_aligned = {
                 actual
@@ -1529,8 +1508,7 @@ def _inspect_training_rrd(
             f"{decoded_loss.stderr[-1000:]}"
         )
     decoded = (
-        f"{printed.stdout}\n{printed.stderr}\n"
-        f"{provenance.stdout}\n{provenance.stderr}"
+        f"{printed.stdout}\n{printed.stderr}\n{provenance.stdout}\n{provenance.stderr}"
     )
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -1561,9 +1539,7 @@ def _inspect_training_rrd(
         )
     decoded_steps = [
         int(value)
-        for value in re.findall(
-            r"┆\s*(\d+)\s*┆\s*\[[^\]]+\]", decoded_loss.stdout
-        )
+        for value in re.findall(r"┆\s*(\d+)\s*┆\s*\[[^\]]+\]", decoded_loss.stdout)
     ]
     if expected_metric_steps is not None and decoded_steps != list(
         expected_metric_steps
@@ -1578,9 +1554,7 @@ def _inspect_training_rrd(
         "application_id": RERUN_APPLICATION_ID,
         "recording_id": run_id,
         "timelines": [RERUN_TIMELINE],
-        "entities": [
-            entity for entity in required_entities if entity in decoded
-        ],
+        "entities": [entity for entity in required_entities if entity in decoded],
         "source_telemetry_sha256": source_telemetry_sha256,
         "decoded_metric_steps": decoded_steps,
     }
@@ -1899,9 +1873,7 @@ def _build_training_rrd_direct(
         if (step, "save_requested") not in checkpoint_events
     )
     if missing_requested:
-        raise OpenPIPipelineError(
-            "telemetry lacks configured checkpoint save requests"
-        )
+        raise OpenPIPipelineError("telemetry lacks configured checkpoint save requests")
     if require_checkpoint:
         for event in ("save_requested", "materialized"):
             if (through_step, event) not in checkpoint_events:
@@ -1920,9 +1892,7 @@ def _build_training_rrd_direct(
     blueprint = rrb.Blueprint(
         rrb.Vertical(
             rrb.TimeSeriesView(origin="metrics", name="Loss and learning rate"),
-            rrb.TimeSeriesView(
-                origin="health", name="Gradient and distributed health"
-            ),
+            rrb.TimeSeriesView(origin="health", name="Gradient and distributed health"),
             rrb.TimeSeriesView(
                 origin="throughput", name="Interval training throughput"
             ),
@@ -2139,8 +2109,7 @@ def _run_rrd_worker(
         result = json.loads(result_path.read_text(encoding="utf-8"))
         if (
             not isinstance(result, dict)
-            or result.get("schema")
-            != "npa.workbench.openpi.rrd-worker-result.v1"
+            or result.get("schema") != "npa.workbench.openpi.rrd-worker-result.v1"
             or not isinstance(result.get("inspection"), dict)
         ):
             raise OpenPIPipelineError("isolated Rerun worker result is malformed")
@@ -2235,8 +2204,7 @@ def _rrd_worker(args: argparse.Namespace) -> int:
     request = json.loads(request_path.read_text(encoding="utf-8"))
     if (
         not isinstance(request, dict)
-        or request.get("schema")
-        != "npa.workbench.openpi.rrd-worker-request.v1"
+        or request.get("schema") != "npa.workbench.openpi.rrd-worker-request.v1"
     ):
         raise OpenPIPipelineError("Rerun worker request is malformed")
     output_path = Path(str(request["output_path"]))
@@ -2389,9 +2357,7 @@ def _publish_preparation_rrd(
                 "normalization_frames": normalization["frames_processed"],
             },
         )
-        _write_once_or_verify(
-            manifest_uri, manifest, content_type="application/json"
-        )
+        _write_once_or_verify(manifest_uri, manifest, content_type="application/json")
     return {
         "uri": rrd_uri,
         "schema": RERUN_SCHEMA,
@@ -2549,7 +2515,9 @@ class _TrainingMilestonePublisher:
             if available:
                 self.publish_for_optimizer_step(actual)
 
-    def publish_for_optimizer_step(self, optimizer_step: int) -> dict[str, object] | None:
+    def publish_for_optimizer_step(
+        self, optimizer_step: int
+    ) -> dict[str, object] | None:
         matches = [
             semantic
             for semantic, actual in self.milestones.items()
@@ -2573,9 +2541,7 @@ class _TrainingMilestonePublisher:
             prefix_path.write_bytes(prefix_payload)
             metric_steps = [
                 int(record["optimizer_step"])
-                for record in _load_telemetry_records(
-                    prefix_path, run_id=self.run_id
-                )
+                for record in _load_telemetry_records(prefix_path, run_id=self.run_id)
                 if record.get("record_type") == "metrics"
             ]
             local = Path(tmp) / f"{slug}.rrd"
@@ -2775,9 +2741,7 @@ def _validate_operator_pause(
         (final_step, "save_requested"),
         (final_step, "materialized"),
     } - events:
-        raise OpenPIPipelineError(
-            "operator pause checkpoint events are incomplete"
-        )
+        raise OpenPIPipelineError("operator pause checkpoint events are incomplete")
     if not _checkpoint_completion_is_valid(
         checkpoint_root, step=final_step, run_id=run_id
     ):
@@ -2837,8 +2801,7 @@ def _upload_or_verify_checkpoint(
         local_records, sort_keys=True, separators=(",", ":")
     ).encode()
     if (
-        manifest.get("schema")
-        != "npa.workbench.openpi.checkpoint-manifest.v1"
+        manifest.get("schema") != "npa.workbench.openpi.checkpoint-manifest.v1"
         or manifest.get("files") != local_records
         or manifest.get("file_count") != len(local_records)
         or manifest.get("total_size_bytes")
@@ -2968,11 +2931,12 @@ def _fine_tune(args: argparse.Namespace) -> int:
         content_type="application/x-ndjson",
     )
     final_milestone = (
-        QUALIFICATION_STEPS
-        if qualification
-        else pause_after_updates or EXPECTED_STEPS
+        QUALIFICATION_STEPS if qualification else pause_after_updates or EXPECTED_STEPS
     )
-    if milestone_publisher is None or final_milestone not in milestone_publisher.published:
+    if (
+        milestone_publisher is None
+        or final_milestone not in milestone_publisher.published
+    ):
         raise OpenPIPipelineError("final mandatory RRD milestone was not published")
     rerun = milestone_publisher.published[final_milestone]
     schema = (
@@ -3062,9 +3026,7 @@ def _fine_tune(args: argparse.Namespace) -> int:
             "remaining_updates": EXPECTED_STEPS - pause_after_updates,
             "resumable": True,
             "resume_next_optimizer_step": pause_after_updates,
-            "checkpoint_content_manifest_sha256": checkpoint[
-                "content_manifest_sha256"
-            ],
+            "checkpoint_content_manifest_sha256": checkpoint["content_manifest_sha256"],
             "checkpoint_total_size_bytes": checkpoint["total_size_bytes"],
             "checkpoint_file_count": checkpoint["file_count"],
             "rrd_sha256": rerun["inspection"]["sha256"],
@@ -3072,14 +3034,10 @@ def _fine_tune(args: argparse.Namespace) -> int:
             "milestone_manifest_uri": rerun["manifest_uri"],
         }
         result["content_sha256"] = ""
-        canonical = json.dumps(
-            result, sort_keys=True, separators=(",", ":")
-        ).encode()
+        canonical = json.dumps(result, sort_keys=True, separators=(",", ":")).encode()
         result["content_sha256"] = hashlib.sha256(canonical).hexdigest()
         payload = (json.dumps(result, sort_keys=True) + "\n").encode()
-        _write_once_or_verify(
-            args.output_uri, payload, content_type="application/json"
-        )
+        _write_once_or_verify(args.output_uri, payload, content_type="application/json")
     else:
         _write_json_uri(args.output_uri, result)
     multihost_utils.sync_global_devices("npa-openpi-artifacts-published")
@@ -3103,7 +3061,8 @@ def build_parser() -> argparse.ArgumentParser:
     prepare.add_argument("--milestone-manifest-uri", required=True)
     prepare.add_argument("--run-id", required=True)
     prepare.add_argument(
-        "--gsutil", default="/usr/local/bin/npa-openpi-gcs",
+        "--gsutil",
+        default="/usr/local/bin/npa-openpi-gcs",
         help="Public GCS reader executable; accepts an explicit legacy gsutil override",
     )
     prepare.set_defaults(func=_prepare)

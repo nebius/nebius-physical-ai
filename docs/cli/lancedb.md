@@ -13,7 +13,7 @@ Commands
 deploy  Deploy or register a LanceDB service.
 status  Check endpoint reachability.
 list  List tables in a LanceDB instance.
-create-table  Create or update a LanceDB table.
+create-table  Create a table from local rows or an Arrow JSON fields schema; S3 import is unsupported.
 query  Run a vector search query.
 import-lerobot  Import a LeRobot dataset into a LanceDB table.
 import-bdd100k  Import BDD100K rows through local mode or a deployed service endpoint.
@@ -36,7 +36,7 @@ query-table  Run a bounded SQL-filtered LanceDB table query.
 | `deploy` | Deploy or register a LanceDB service. |
 | `status` | Check endpoint reachability. |
 | `list` | List tables in a LanceDB instance. |
-| `create-table` | Create or update a LanceDB table. |
+| `create-table` | Create a table from local rows or an Arrow JSON fields schema; S3 import is unsupported. |
 | `query` | Run a vector search query. |
 | `import-lerobot` | Import a LeRobot dataset into a LanceDB table. |
 | `import-bdd100k` | Import BDD100K rows through local mode or a deployed service endpoint. |

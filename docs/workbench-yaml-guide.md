@@ -243,6 +243,19 @@ npa/.venv/bin/npa workbench workflow submit "<spec.yaml>" --run-id "<run-id>"
 For a dynamic branch, add `--assume-decision promote_checkpoint` while planning.
 For real parallel fan-out, triggers, or early exit based on an S3 decision
 artifact, submit with `--runtime`. `--plan-only` never launches infrastructure.
+Submission uses the saved `default_project` alias unless you pass
+`--project <alias>`. The selected alias also scopes runtime credentials,
+execution preflight and submission receipts.
+
+The gated `test_runtime_default_project_live.py` verifies this selection with a
+real GPU workflow and S3 output. Set `NPA_INTEGRATION_E2E=1` and point
+`NPA_RUNTIME_DEFAULT_PROJECT_LIVE_CONFIG` at a private JSON file containing
+`spec_path`, `run_id`, `infra`, `isolated_config_dir`, `output_uri`, and optional
+`sky_bin` and `config_path`. The saved default alias must differ from `default`.
+The supplied workflow must write actual CUDA matrix-check results with `cuda`,
+`gpu_count`, `finite` and `max_abs_error` fields. The test omits `--project` and
+verifies both runtime credential provenance and the stored GPU result. Use
+already provisioned infrastructure and retain the exact run identity for cleanup.
 
 The engine renders each planned state as a SkyPilot task. Setup is selected from
 the toolRef, not copied into every spec: package extras, vendor interpreters,

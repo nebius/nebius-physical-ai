@@ -140,9 +140,7 @@ def test_lfs_media_models_and_build_credentials_are_excluded() -> None:
     assert "python -m npa.cli.entry" in text
     assert "python -m npa.cli.main" not in text
     assert "PYTHONPATH=/opt/npa/src" in text
-    assert (
-        "NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python" in text
-    )
+    assert "NPA_BAKED_PYTHON=/opt/cosmos/cosmos-transfer2.5/.venv/bin/python" in text
     assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in text
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in text
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in text
@@ -365,10 +363,9 @@ def test_exact_pin_golden_eval_and_workflow_use_the_legal_path() -> None:
     assert "--condition-on-input" in argv
     assert "--execute" in argv
     workflow = yaml.safe_load(
-        (
-            ROOT
-            / "workflows" / "testing" / "cosmos2-transfer.yaml"
-        ).read_text(encoding="utf-8")
+        (ROOT / "workflows" / "testing" / "cosmos2-transfer.yaml").read_text(
+            encoding="utf-8"
+        )
     )
     assert (
         workflow["states"]["transfer"]["toolRef"]

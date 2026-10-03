@@ -1,0 +1,257 @@
+{
+  "schema": "npa.public.workflow_full_qualification.v1",
+  "demo": "real-to-sim",
+  "source_sha": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+  "qualified_at": "2026-09-29T01:50:17.364211+00:00",
+  "qualified": true,
+  "preset": "full",
+  "smoke": false,
+  "driver_exit": 0,
+  "native_source_bundle_sha256": "2187872810a88663089d5cbb2f9c176d1f23b63443836373d8d5accde53d2ed5",
+  "training": {
+    "updates": 500,
+    "control_transitions": 16000000,
+    "robots": 4000,
+    "final_native_iteration_index": 499,
+    "optimizer_steps_per_parameter": [
+      10000
+    ],
+    "actor_mean_network_changed": true,
+    "finite_optimizer_moments": true,
+    "actor_parameter_delta_l2_independent_float64": 7.083766672598368,
+    "critic_parameter_delta_l2_independent_float64": 22.873064181915137,
+    "native_learning_wall_seconds": 16763.982184264998,
+    "checkpoint_sha256": "d497048cc5933f78bef398a274a4ec396655a11e872e433fad27bbe0f041cf78"
+  },
+  "evaluation": {
+    "heldout_cases": 4000,
+    "successes": 3415,
+    "success_rate": 0.85375,
+    "required_success_rate": 0.8,
+    "episode_horizon_steps": 300,
+    "independently_recomputed_from_all_native_trajectories": true,
+    "absolute_quality_passed": true,
+    "mean_collision_steps": 0.14175,
+    "mean_physical_failure_steps": 0.0065,
+    "mean_final_goal_distance_m": 0.6288296004195133
+  },
+  "shared_scene": {
+    "scene_instances": 1,
+    "native_physx_scenes": 1,
+    "robots": 4000,
+    "body_contact_sensors": 68000,
+    "collision_triangles": 921561,
+    "triangle_geometry_sha256": "3b6d0041f4cab011cd9b8b08b50450e7e10ac58899c853ba2f1dfe3108e4ee84",
+    "mutual_invisibility_scope": "Physical robot isolation and reference-policy static range sensors; operator camera-input policy and rendered camera robot invisibility are not qualified."
+  },
+  "physical_controls": {
+    "training": {
+      "separate_native_processes": 4,
+      "robots_in_each_control": 4000,
+      "control_actions": 30,
+      "tolerance": 0.001,
+      "all_native_processes_completed_without_physics_errors": true,
+      "maximum_focal_repeat_difference": 0.0,
+      "maximum_focal_peer_difference": 0.0,
+      "free_motion_m": 3.550214703743266,
+      "arm_maxima_all_4000_robots": {
+        "solo": {
+          "obstacle_contact": 0.0,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "repeat": {
+          "obstacle_contact": 0.0,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "overlap": {
+          "obstacle_contact": 52.070125579833984,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "obstacle": {
+          "obstacle_contact": 2475.491455078125,
+          "peer_contact": 0.0,
+          "physical_failure": 1.0
+        }
+      },
+      "unchanged_physical_control_gates_passed": true
+    },
+    "evaluation": {
+      "separate_native_processes": 4,
+      "robots_in_each_control": 4000,
+      "control_actions": 30,
+      "tolerance": 0.001,
+      "all_native_processes_completed_without_physics_errors": true,
+      "maximum_focal_repeat_difference": 0.0,
+      "maximum_focal_peer_difference": 0.0,
+      "free_motion_m": 3.550214703743266,
+      "arm_maxima_all_4000_robots": {
+        "solo": {
+          "obstacle_contact": 0.0,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "repeat": {
+          "obstacle_contact": 0.0,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "overlap": {
+          "obstacle_contact": 52.070125579833984,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "obstacle": {
+          "obstacle_contact": 2475.491455078125,
+          "peer_contact": 0.0,
+          "physical_failure": 1.0
+        }
+      },
+      "unchanged_physical_control_gates_passed": true
+    }
+  },
+  "sample": {
+    "name": "TUM RGB-D fr3 long office household",
+    "license": "CC-BY-4.0",
+    "attribution_verified": true,
+    "capture_manifest_sha256": "90e822bc5021ecda749fdeb861d80b556200e9394e8b04385c2999e78a37104e",
+    "integration_frames": 1984,
+    "withheld_depth_frames": 501,
+    "native_physx_validation_rays": 501
+  },
+  "gpu": {
+    "train": {
+      "native_process_sha256": "96f4b1daaa8d00b21f5aaf9e62928851690c4086b5d109b8c58f082a8ff5f947",
+      "sealed_process_receipt_sha256": "01717171338b6fa3be13e5587bce0fd477b7676a961af26708aa37ca417680c9",
+      "native_final_process_pid_bound_to_owned_observer": true,
+      "pod_identity_and_run_id_bound_to_gpu_samples": true,
+      "native_image_reference": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+      "samples": 541,
+      "samples_with_compute_processes": 541,
+      "models": [
+        "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+      ],
+      "driver_versions": [
+        "580.173.02"
+      ],
+      "total_memory_mib": [
+        97887.0
+      ],
+      "peak_device_memory_used_mib": 24809.0,
+      "peak_device_utilization_percent": 86.0,
+      "first_observed_native_final_process": "2026-09-28T19:33:18.496918+00:00",
+      "last_observed_native_final_process": "2026-09-29T00:12:45.485903+00:00"
+    },
+    "evaluate": {
+      "native_process_sha256": "3f2919d756fdc6b71e8ec97213713fda551b32160c3efcc86f4c4038a1843d9c",
+      "sealed_process_receipt_sha256": "811d5a98e6cac72262f697bf3a113eb6b865fc6b0775fbe04be0a8ea3f93ffc1",
+      "native_final_process_pid_bound_to_owned_observer": true,
+      "pod_identity_and_run_id_bound_to_gpu_samples": true,
+      "native_image_reference": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+      "samples": 68,
+      "samples_with_compute_processes": 68,
+      "models": [
+        "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+      ],
+      "driver_versions": [
+        "580.173.02"
+      ],
+      "total_memory_mib": [
+        97887.0
+      ],
+      "peak_device_memory_used_mib": 28014.0,
+      "peak_device_utilization_percent": 100.0,
+      "first_observed_native_final_process": "2026-09-29T01:04:15.145308+00:00",
+      "last_observed_native_final_process": "2026-09-29T01:40:04.661359+00:00"
+    }
+  },
+  "payload_readback": {
+    "stages": 9,
+    "files": 5809,
+    "bytes": 2731814370,
+    "scope": "Complete materialized immutable publication payloads for all nine stages, each independently hashed. Counts are retained payload files across stage publications, not a claim about every historical storage object or marker."
+  },
+  "presentation": {
+    "canonical_report_sha256": "a648bac853fbc41fe4b4756520d0cbeba71ea2059f86f78e5a7b018efd1604f0",
+    "canonical_native_report_unmodified": true,
+    "actual_common_demo_view_identical_bytes": true,
+    "browser_widths": [
+      1440,
+      390
+    ],
+    "javascript_errors": 0,
+    "external_network_requests": 0,
+    "no_horizontal_overflow": true,
+    "play_pause_verified": true,
+    "scored_focal_steps": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "scored_focal_terminal_step": 8,
+    "post_terminal_observer_frames_excluded_from_html": true,
+    "full_native_video_frames": 301,
+    "full_native_video_duration_seconds": 60.2,
+    "video_and_all_native_pngs_decoded": true,
+    "actual_thumbnail": {
+      "file": "scored-step-004.png",
+      "sha256": "3105b9ccc5fdc6cccbe3ad20f19798e37fc24dc7679d4ebec2d33730e73b2a8a",
+      "step": 4,
+      "simulation_seconds": 0.8,
+      "unmodified_native_png": true
+    },
+    "visual_review_sha256": "b9a475bd9e09b135878ca84f98dccdd59bf8ab7ebbd17c4de002cb63391ba74a"
+  },
+  "privacy": {
+    "text_and_image_metadata_review_passed": true,
+    "receipt_sha256": "197dbcf8fd05f9f337f0ec7298573967247ef8b2c034e1984146efe2f892c4cc",
+    "customer_data_used": false
+  },
+  "external_audit_correction": {
+    "original_auditor_and_crash_preserved": true,
+    "review_receipt_sha256": "aeff0d1a8efdc43ed835fbf0326eaf05e7211fad50afdff76019370a23f6df3b",
+    "scope": "Optional cold-start initial_checkpoint field follows the frozen native producer contract, with exact from_scratch/int0 metadata and strict continuation/evaluation checkpoint binding. No native code, cohort, budget or quality gate changed.",
+    "hostile_synthetic_selfchecks": 26
+  },
+  "limitations": [
+    "Native frame0 shows the reconstructed office without a visible robot. The original frame is retained; the robot is visible from the first action frame at0.2s and through the scored focal episode.",
+    "This proves held-out navigation goals within the reconstructed public office, not unseen-building generalization or transfer to a physical robot.",
+    "Reference policy uses static ranges, not an operator camera-input policy. Preview peers are hidden for visualization only.",
+    "The real metric scan supports collision and navigation. This result does not turn a neural appearance reconstruction into collision geometry.",
+    "Root robot USD and actuator bytes were observed after native load; the complete vendor asset closure is not pinned before load."
+  ],
+  "evidence_receipts": {
+    "complete-readback.safe.json": "b4842696b1807a7976eddd64bdbdc1858495e09f9aa72ffd43bb9298cb22c074",
+    "demo-view.safe.json": "54d5349dd07e4ddd382982924bb0188e6ab3d78e7ea16ca4c6f8dea1886d8a8b",
+    "evaluation-controls-independent-audit.json": "52e5c109e8aea1ffd6ab8afbbfab5b88bb14286b674b0f79ccab6932befb47d1",
+    "evaluation-independent-audit-v3.json": "f056aeab859d7352abd35d1645326bb0495af71f840111545c5a36553396fedf",
+    "evaluation-structure-independent-audit.json": "3a61304aa0f9d38f15373213c2d40ccc2974ce90cb049e028cae4c331a90aecc",
+    "native-gpu-binding.safe.json": "a43322c4a5135df3432a9f8ba02d3d0ef2aad4560e66acae1923f2824107e32b",
+    "physics-independent-audit.json": "69c28d2390ce16a4e55b769c05673b13b3f1773bba4cb20d35fe7d548ed18411",
+    "privacy.safe.json": "197dbcf8fd05f9f337f0ec7298573967247ef8b2c034e1984146efe2f892c4cc",
+    "reconstruction-independent-audit.json": "96455ef3b93078e1ed3fedfd6259a854b28b591d2f159b714bd61a3d250cfb4e",
+    "report-independent-audit.safe.json": "0659c418a365124504b9bb63402f6478afa6115f4c74b8f5ca57b2d17ac295e0",
+    "sample-independent-audit.json": "027ea9ab37704b19a27098921dc8c3b265c377a9d72d9b41a68a31e18a6b3aca",
+    "scan-auditor-correction-review.safe.json": "aeff0d1a8efdc43ed835fbf0326eaf05e7211fad50afdff76019370a23f6df3b",
+    "scan-checkpoint-integrity.safe.json": "82de9fc2d91aebd9854c96132bc17b71b120401f0c1731f68828b97098f3838f",
+    "scan-final-gpu-binding-prepared.safe.json": "6ac0c5c57ebaffed71a4684598de2e3f77abad25cd795ca07e9142f896260638",
+    "scan-train-eval-after-load.safe.json": "c3c4a0c1d301a85f37961ac41c0022aeffe65454ca452e3646d1ac174cb72a72",
+    "scan-training-audit-recovery.safe.json": "8e3612b07eecd1122a92d34099449065a68f17bd03ca141970fdf8193f86c6c4",
+    "scan-video-auditor-prepared.safe.json": "dcaf61c3d30b936bd04a60a3a6ad72f9ca65ce9792a9a3c477550987432edbcd",
+    "scene-cases-independent-audit.json": "6ba28a06d982460cce50dcbf11aa1855a774cb8c853b3d572bbfaf4b70556c09",
+    "summary.json": "f8b15904f55d51c7bdb8a21b8010ee0abb44125e2a5ed4d26585a520a398a411",
+    "training-controls-independent-audit.json": "f673dbcb456d2d1f44754990e59bf5ffe49d107742d1c9ae3731abcdad1fe045",
+    "training-independent-audit-v3.json": "3631c5a39a337cc17061616bc6dea48a1e730c04477761ed96b2a17b6ebf4683",
+    "training-structure-independent-audit.json": "5d5bdde9ff9ba29207b3c6bf792acfe507e79aadc50dd665a160f79e8a345695",
+    "video-integrity.safe.json": "e4d8601ce07d5f45bfcc943bcca3aa844a365cc60a13ea7d8120f402e84895a1",
+    "visual-review.safe.json": "b9a475bd9e09b135878ca84f98dccdd59bf8ab7ebbd17c4de002cb63391ba74a"
+  }
+}

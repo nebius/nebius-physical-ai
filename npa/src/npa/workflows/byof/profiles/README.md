@@ -12,6 +12,27 @@ Its `workbench.byof.repo` toolRef runs `npa workbench byof run`, which passes on
 these files through `--yaml {{config.resource_profile_yaml}}`. Authoring a BYOF pipeline
 means editing the spec; picking a *pod shape* means picking a profile here.
 
+When the standard workflow engine has already allocated a worker, a
+`prebuilt` / `solution-smoke` stage executes its capability command directly in
+that worker. The workflow's `resources` determine the image and GPU allocation;
+the host resource profile does not launch a second job. The worker requires its
+actual digest-pinned image and baked repository/ref metadata to match the
+request. It uploads the real outputs, logs, and a summary with artifact hashes
+before running any mandatory solution postprocessor. Failed commands and
+missing required artifacts upload diagnostics and fail the stage. Wan still
+requires verified RRD publication before completion.
+Publication creates each object conditionally and reuses an existing object
+only when its bytes match. A changed result needs a new run ID, preserving the
+source artifacts beneath previously verified recordings. The summary is
+published after its source files.
+
+Worker detection uses the renderer's `NPA_WORKFLOW_RUN_ID`,
+`NPA_WORKFLOW_STATE`, and `NPA_TASK_IMAGE` environment. Operators do not set these
+manually. The outer run ID and the instrumented worker run ID can differ; both
+are retained in the output summary. Building images or launching other BYOF
+workloads remains an operator-host operation and is rejected inside an
+allocated workflow worker.
+
 | Profile | Workload | Shape |
 | --- | --- | --- |
 | `isaac-lab-rl-train.yaml` | `rl-train` (default) | Kubernetes `L40S:1` |
@@ -22,7 +43,9 @@ means editing the spec; picking a *pod shape* means picking a profile here.
 | `byof-solution-smoke-ltx2-rtxpro-gpu.yaml` | LTX-2.5 candidate shape with CPU offload; not hardware validated | One RTX PRO, 192 GiB host memory |
 | `byof-solution-smoke-rtxpro-2gpu.yaml` | Capability smoke requiring two GPUs in one pod | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:2` |
 | `byof-solution-smoke-rtxpro-gpu.yaml` | `solution-smoke` needing CUDA/EGL/Vulkan | RTX PRO |
+| `byof-solution-smoke-gymnasium-robotics-rtxpro-gpu.yaml` | Neutral Gymnasium-Robotics development candidate populates an operator runtime cache, then runs the genuine Shadow Hand MuJoCo/touch/EGL gate; no supported release image is claimed | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` |
 | `byof-solution-smoke-openpi-b200-gpu.yaml` | OpenPI pi0.5 Polaris immutable-image builder regression: direct + same-pod served inference, runtime-only checkpoint; the digest then feeds `openpi-pi05-four-mode.yaml` | `B200:1` (`sm_100`) |
+| `byof-solution-smoke-robotwin-rtxpro-gpu.yaml` | RoboTwin 2.0 customer-authorized runtime fetch; the hard gate is official `beat_block_hammer` seed search/replay with native HDF5 and MP4 | exactly one `RTXPRO-6000-BLACKWELL-SERVER-EDITION` (`sm_120`), never B200 |
 | `byof-solution-smoke-wan22-rtxpro-gpu.yaml` | Wan TI2V-5B tensor-only `solution-smoke` with SM120-tested PyTorch SDPA | `RTXPRO-6000-BLACKWELL-SERVER-EDITION:1` |
 | `byof-solution-smoke-wan22-b200-4gpu.yaml` | Wan TI2V-5B distributed `solution-smoke` with FSDP + Ulysses | one Kubernetes pod, `B200:4` |
 | `skypilot-kubernetes-rtxpro.yaml` | *not a task* — SkyPilot **global config** (`--config`) Kubernetes options (the committed file is empty) | — |

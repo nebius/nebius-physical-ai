@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import pytest
 
-from npa.orchestration.npa_workflow.artifacts import require_input_artifacts, s3_object_exists
+from npa.orchestration.npa_workflow.artifacts import (
+    require_input_artifacts,
+    s3_object_exists,
+)
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 
 

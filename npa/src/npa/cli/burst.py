@@ -70,7 +70,9 @@ def submit_cmd(
 
 @app.command("submit-yaml")
 def submit_yaml_cmd(
-    yaml_path: Path = typer.Argument(..., help="Rendered single-task SkyPilot/workbench YAML to submit."),
+    yaml_path: Path = typer.Argument(
+        ..., help="Rendered single-task SkyPilot/workbench YAML to submit."
+    ),
     name: Optional[str] = typer.Option(
         None,
         "--name",
@@ -120,8 +122,12 @@ def status_cmd(
 @app.command("logs")
 def logs_cmd(
     job: str = typer.Argument(..., help="Job ID or serialized burst handle JSON."),
-    follow: bool = typer.Option(False, "--follow", "-f", help="Follow logs until completion."),
-    tail: Optional[int] = typer.Option(None, "--tail", min=1, help="Return only the last N lines."),
+    follow: bool = typer.Option(
+        False, "--follow", "-f", help="Follow logs until completion."
+    ),
+    tail: Optional[int] = typer.Option(
+        None, "--tail", min=1, help="Return only the last N lines."
+    ),
     config_path: Optional[Path] = typer.Option(
         None,
         "--config",

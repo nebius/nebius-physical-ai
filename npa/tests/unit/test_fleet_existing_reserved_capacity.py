@@ -1,6 +1,7 @@
 """A repair reuses only exact, authoritative capacity already provisioned."""
 
 from copy import deepcopy
+from dataclasses import replace
 import json
 from subprocess import CompletedProcess
 from unittest.mock import Mock
@@ -129,6 +130,118 @@ def test_v1_preemptible_marker_cannot_satisfy_strict_reserved_pool(existing):
 @pytest.mark.parametrize(
     "failure",
     [
+        "",
+        "missing-state",
+        "wrong-parent",
+        "wrong-id",
+        "wrong-shape",
+        "reserved-cpu",
+        "extra",
+        "gpu-growth",
+    ],
+)
+@pytest.mark.parametrize("retry", [False, True])
+def test_cpu_pool_removal_reuses_only_proven_unchanged_gpu_capacity(
+    existing, failure, retry
+):
+    kwargs, groups, workdir = _cpu_removal(existing)
+    cpu = groups[0]
+    if retry:
+        (workdir / "terraform.tfvars").write_text(render_tfvars(kwargs["cluster"]))
+    if failure == "missing-state":
+        (workdir / "terraform.tfstate").unlink()
+    elif failure == "wrong-parent":
+        cpu["metadata"]["parent_id"] = "cluster-other"
+    elif failure == "wrong-id":
+        cpu["metadata"]["id"] = "nodegroup-other"
+    elif failure == "wrong-shape":
+        cpu["spec"]["template"]["resources"]["preset"] = "32vcpu-128gb"
+    elif failure == "reserved-cpu":
+        cpu["spec"]["template"]["reservation_policy"] = {"policy": "STRICT"}
+    elif failure == "extra":
+        groups.append(deepcopy(groups[-1]))
+    elif failure == "gpu-growth":
+        kwargs["cluster"] = replace(
+            kwargs["cluster"], gpu_nodes=replace(kwargs["cluster"].gpu_nodes, count=4)
+        )
+    assert E._is_verified_unchanged_target(**kwargs) is (not failure)
+
+
+def _cpu_removal(existing):
+    kwargs, _, groups, _, workdir = existing
+    original = kwargs["cluster"]
+    kwargs["cluster"] = replace(
+        original, cpu_nodes=replace(original.cpu_nodes, count=0)
+    )
+    cpu = groups[0]
+    cpu["metadata"] = {
+        "id": "nodegroup-cpu",
+        "parent_id": "cluster-test",
+        "name": "render-ng-cpu",
+    }
+    cpu["status"]["state"] = "PROVISIONING"
+    attributes = {**cpu["metadata"], "template": deepcopy(cpu["spec"]["template"])}
+    state = {
+        "resources": [
+            {
+                "mode": "managed",
+                "type": "nebius_mk8s_v1_node_group",
+                "name": "cpu-only",
+                "instances": [{"attributes": attributes}],
+            }
+        ]
+    }
+    (workdir / "terraform.tfstate").write_text(json.dumps(state))
+    return kwargs, groups, workdir
+
+
+@pytest.mark.parametrize("wrong_parent", [False, True])
+def test_removed_cpu_taint_is_never_adopted_or_replaced(
+    existing, monkeypatch, wrong_parent
+):
+    kwargs, _, workdir = _cpu_removal(existing)
+    state = json.loads((workdir / "terraform.tfstate").read_text())
+    instance = state["resources"][0]["instances"][0]
+    instance["status"] = "tainted"
+    if wrong_parent:
+        instance["attributes"]["parent_id"] = "cluster-other"
+    state["resources"].append(
+        {
+            "mode": "managed",
+            "type": "nebius_mk8s_v1_cluster",
+            "instances": [{"attributes": {"id": "cluster-test"}}],
+        }
+    )
+    commands = []
+
+    def capture(command, **options):
+        commands.append(command)
+        assert command == ["terraform", "state", "pull"]
+        return CompletedProcess(command, 0, json.dumps(state), "")
+
+    monkeypatch.setattr(E, "_run_capture", capture)
+    args = dict(
+        terraform_bin="terraform",
+        workdir=workdir,
+        env={},
+        cluster=kwargs["cluster"],
+        project_id="project-test",
+        subnet_id="vpcsubnet-test",
+        nebius_bin="nebius",
+        profile="selected",
+        on_status=None,
+    )
+    if wrong_parent:
+        with pytest.raises(RuntimeError, match="no exact desired pool"):
+            E._reconcile_tainted_node_groups(**args)
+    else:
+        assert E._reconcile_tainted_node_groups(**args) == {}
+    assert len(commands) == 1
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
         "missing",
         "extra",
         "wrong-reservation",
@@ -192,37 +305,68 @@ def test_partial_apply_requires_exact_local_and_live_cluster_identity(
     assert E._is_verified_unchanged_target(**kwargs) is valid_identity
 
 
-@pytest.mark.parametrize("failure", [
-    "", "node-count", "target-count", "stopped", "missing-binding",
-    "missing-disk", "wrong-template", "wrong-project", "wrong-cluster",
-    "wrong-group", "duplicate", "unreadable",
-])
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "",
+        "node-count",
+        "target-count",
+        "stopped",
+        "missing-binding",
+        "missing-disk",
+        "wrong-template",
+        "wrong-project",
+        "wrong-cluster",
+        "wrong-group",
+        "duplicate",
+        "unreadable",
+    ],
+)
 @pytest.mark.parametrize("gpu_groups_first", [False, True])
 def test_readiness_repair_requires_allocated_instance_evidence(
-    existing, monkeypatch, failure, gpu_groups_first,
+    existing,
+    monkeypatch,
+    failure,
+    gpu_groups_first,
 ):
     kwargs, _, groups, _, _ = existing
     instances = []
     for index, group in enumerate(groups[1:]):
         group_id = f"node-group-test-{index}"
         group["metadata"] = {"id": group_id, "parent_id": "cluster-test"}
-        group["status"] = {"state": "PROVISIONING", "node_count": "1", "target_node_count": "1"}
+        group["status"] = {
+            "state": "PROVISIONING",
+            "node_count": "1",
+            "target_node_count": "1",
+        }
         template = group["spec"]["template"]
         template.update(
             network_interfaces=[{"subnet_id": "subnet-test"}],
             boot_disk={"type": "NETWORK_SSD", "size_gibibytes": 128},
         )
         instance_spec = deepcopy(template)
-        instance_spec["boot_disk"] = {"managed_disk": {"spec": deepcopy(template["boot_disk"])}}
+        instance_spec["boot_disk"] = {
+            "managed_disk": {"spec": deepcopy(template["boot_disk"])}
+        }
         instance_spec["gpu_cluster"] = {}
-        instances.append({
-            "metadata": {
-                "id": f"instance-test-{index}", "parent_id": "project-test",
-                "labels": {"mk8s-cluster-id": "cluster-test", "mk8s-node-group-id": group_id},
-            },
-            "spec": instance_spec,
-            "status": {"state": "RUNNING", "reservation_id": "reservation-test", "disk_attachments": [{}]},
-        })
+        instances.append(
+            {
+                "metadata": {
+                    "id": f"instance-test-{index}",
+                    "parent_id": "project-test",
+                    "labels": {
+                        "mk8s-cluster-id": "cluster-test",
+                        "mk8s-node-group-id": group_id,
+                    },
+                },
+                "spec": instance_spec,
+                "status": {
+                    "state": "RUNNING",
+                    "reservation_id": "reservation-test",
+                    "disk_attachments": [{}],
+                },
+            }
+        )
     if failure == "node-count":
         groups[-1]["status"]["node_count"] = "0"
     if failure == "target-count":
@@ -254,8 +398,12 @@ def test_readiness_repair_requires_allocated_instance_evidence(
         if "compute" in cmd:
             assert cmd[:3] == ["nebius", "--profile", "selected"]
             assert "--all" in cmd
-            return CompletedProcess(cmd, 1 if failure == "unreadable" else 0,
-                                    json.dumps({"items": instances}), "")
+            return CompletedProcess(
+                cmd,
+                1 if failure == "unreadable" else 0,
+                json.dumps({"items": instances}),
+                "",
+            )
         return capture(cmd, **options)
 
     monkeypatch.setattr(E, "_run_capture", run)

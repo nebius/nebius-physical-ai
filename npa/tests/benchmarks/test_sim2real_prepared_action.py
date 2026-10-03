@@ -239,7 +239,7 @@ def test_receipt_binds_one_explicit_resume_retry(
 
 
 def test_value_bearing_request_inside_agent_mount_is_rejected(
-    prepared: dict[str, object]
+    prepared: dict[str, object],
 ) -> None:
     request = json.loads(json.dumps(prepared["request"]))
     request["action_id"] = "visible-request"
@@ -253,7 +253,7 @@ def test_value_bearing_request_inside_agent_mount_is_rejected(
 
 
 def test_generic_command_cannot_read_operator_control_receipt(
-    prepared: dict[str, object]
+    prepared: dict[str, object],
 ) -> None:
     context = prepared["context"]
     assert isinstance(context, PreparedActionContext)
@@ -274,9 +274,7 @@ def test_isolated_command_refuses_when_unshare_is_unavailable(
 
     context = prepared["context"]
     assert isinstance(context, PreparedActionContext)
-    subprocess_run = mocker.patch(
-        "npa.benchmarks.sim2real_model_agent.subprocess.run"
-    )
+    subprocess_run = mocker.patch("npa.benchmarks.sim2real_model_agent.subprocess.run")
     mocker.patch("npa.benchmarks.sim2real_model_agent.shutil.which", return_value=None)
 
     result = _run_tool(
@@ -306,7 +304,7 @@ def test_source_mismatch_fails_closed(prepared: dict[str, object]) -> None:
 
 
 def test_same_dirty_status_entry_with_changed_content_fails_closed(
-    prepared: dict[str, object]
+    prepared: dict[str, object],
 ) -> None:
     workspace = prepared["workspace"]
     assert isinstance(workspace, Path)
@@ -372,7 +370,7 @@ def test_argv_injection_is_rejected_even_with_recomputed_digests(
 
 
 def test_valid_submission_executes_exact_argv_once_and_is_bounded(
-    prepared: dict[str, object]
+    prepared: dict[str, object],
 ) -> None:
     calls: list[list[str]] = []
 
@@ -406,7 +404,9 @@ def test_valid_submission_executes_exact_argv_once_and_is_bounded(
     assert "private-log" not in json.dumps(result)
     assert len(json.dumps(result)) < 2_000
     assert len(result["evidence"]["full_output_sha256"]) == 64
-    assert (prepared["control"] / "prepared-action-output.jsonl").stat().st_mode & 0o777 == 0o600
+    assert (
+        prepared["control"] / "prepared-action-output.jsonl"
+    ).stat().st_mode & 0o777 == 0o600
 
     duplicate = execute_prepared_action(
         prepared["receipt_path"],
@@ -420,10 +420,12 @@ def test_valid_submission_executes_exact_argv_once_and_is_bounded(
 
 
 def test_exit_zero_without_authoritative_run_identity_is_indeterminate(
-    prepared: dict[str, object]
+    prepared: dict[str, object],
 ) -> None:
     def runner(argv, **kwargs):
-        return subprocess.CompletedProcess(argv, 0, json.dumps({"status": "RUNNING"}), "")
+        return subprocess.CompletedProcess(
+            argv, 0, json.dumps({"status": "RUNNING"}), ""
+        )
 
     result = execute_prepared_action(
         prepared["receipt_path"],
@@ -501,7 +503,7 @@ def test_nonzero_nonfailure_status_is_indeterminate(
 
 
 def test_crash_before_and_after_exec_recovery_never_replays(
-    prepared: dict[str, object]
+    prepared: dict[str, object],
 ) -> None:
     state = prepared["control"] / "prepared-action-state.jsonl"
     assert recover_occurrence(
@@ -544,7 +546,7 @@ def test_crash_before_and_after_exec_recovery_never_replays(
 
 
 def test_controller_wal_recovers_only_pre_exec_occurrence(
-    prepared: dict[str, object]
+    prepared: dict[str, object],
 ) -> None:
     transcript = prepared["evidence"] / "transcript.jsonl"
     transcript.write_text("")
@@ -582,7 +584,10 @@ def test_controller_wal_recovers_only_pre_exec_occurrence(
         journal,
         prepared["control"] / "prepared-action-state.jsonl",
     )
-    assert json.loads(loaded[1]["content"])["classification"] == "prepared_action_not_started"
+    assert (
+        json.loads(loaded[1]["content"])["classification"]
+        == "prepared_action_not_started"
+    )
 
 
 def test_compaction_preserves_prepared_action_and_durable_submit() -> None:
@@ -630,7 +635,9 @@ def test_compaction_preserves_prepared_action_and_durable_submit() -> None:
     assert '"consumed":true' in checkpoint["content"]
     assert '"available":false' in checkpoint["content"]
     assert "Typed action available: none" in checkpoint["content"]
-    assert "Typed action available: submit_prepared_workflow" not in checkpoint["content"]
+    assert (
+        "Typed action available: submit_prepared_workflow" not in checkpoint["content"]
+    )
     assert _prepared_action_consumed_state(messages[2:]) is True
     assert _submitted_workflow_state(messages[2:]) == (True, ["prepared-run-1"])
 
@@ -701,7 +708,9 @@ def test_generic_submit_consumption_removes_typed_action_from_checkpoint(
     assert '"consumed":true' in checkpoint["content"]
     assert '"available":false' in checkpoint["content"]
     assert "Typed action available: none" in checkpoint["content"]
-    assert "Typed action available: submit_prepared_workflow" not in checkpoint["content"]
+    assert (
+        "Typed action available: submit_prepared_workflow" not in checkpoint["content"]
+    )
 
 
 @pytest.mark.parametrize("model_index", [0, 1, 2])
@@ -709,14 +718,11 @@ def test_typed_action_schema_has_parity_across_all_benchmark_models(
     model_index: int,
 ) -> None:
     models_path = (
-        Path(__file__).parents[2]
-        / "benchmarks/sim2real-three-model/models.json"
+        Path(__file__).parents[2] / "benchmarks/sim2real-three-model/models.json"
     )
     models = json.loads(models_path.read_text())["models"]
     typed = [
-        tool
-        for tool in TOOLS
-        if tool["function"]["name"] == "submit_prepared_workflow"
+        tool for tool in TOOLS if tool["function"]["name"] == "submit_prepared_workflow"
     ]
     model = models[model_index]
     assert model["repository"]
@@ -729,8 +735,7 @@ def test_typed_action_schema_has_parity_across_all_benchmark_models(
         "additionalProperties": False,
     }
     assert all(
-        tool["function"]["name"] != "submit_prepared_workflow"
-        for tool in BASE_TOOLS
+        tool["function"]["name"] != "submit_prepared_workflow" for tool in BASE_TOOLS
     )
 
 
@@ -768,7 +773,7 @@ def test_preflight_tampering_is_rejected(prepared: dict[str, object]) -> None:
 
 
 def test_contradictory_explicit_preflight_failure_is_rejected(
-    prepared: dict[str, object]
+    prepared: dict[str, object],
 ) -> None:
     preflight = prepared["evidence"] / "preflight" / "workflow_plan.json"
     preflight.write_text(json.dumps({"exit_code": 0, "passed": False}))
@@ -800,9 +805,7 @@ def test_durable_prepared_state_blocks_generic_submit_without_wal(
         _workflow_submission_block_reason(
             [],
             tool_name="run_command",
-            arguments={
-                "command": "npa workbench workflow submit spec.yaml --runtime"
-            },
+            arguments={"command": "npa workbench workflow submit spec.yaml --runtime"},
             durable_prepared_state=(
                 "indeterminate" if phase == "execution_started" else "finished"
             ),
@@ -812,7 +815,7 @@ def test_durable_prepared_state_blocks_generic_submit_without_wal(
 
 
 def test_different_action_id_cannot_bypass_run_wide_consumed_state(
-    prepared: dict[str, object]
+    prepared: dict[str, object],
 ) -> None:
     _append_private_jsonl(
         prepared["control"] / "prepared-action-state.jsonl",

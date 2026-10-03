@@ -14,17 +14,23 @@ WORKBENCH = ROOT / "npa" / "docker" / "workbench"
 
 def test_generic_torch_images_require_patched_versions_and_complete_dependency_checks():
     for relative, floors in (
-        ("base/cuda13-b300/Dockerfile", {
-            "TORCH_VERSION": "2.13.0", "TORCHVISION_VERSION": "0.28.0",
-            "TORCHAUDIO_VERSION": "2.11.0",
-        }),
+        (
+            "base/cuda13-blackwell/Dockerfile",
+            {
+                "TORCH_VERSION": "2.13.0",
+                "TORCHVISION_VERSION": "0.28.0",
+                "TORCHAUDIO_VERSION": "2.11.0",
+            },
+        ),
         ("cosmos-curate/Dockerfile", {"TORCH_VERSION": "2.13.0"}),
     ):
         text = (WORKBENCH / relative).read_text()
         for variable, minimum in floors.items():
             pin = re.search(rf"^ARG {variable}=(\S+)$", text, re.MULTILINE)
             assert pin and Version(pin.group(1)) >= Version(minimum), relative
-        assert text.index("python -m pip check") > text.rindex("python -m pip install"), relative
+        assert text.index("python -m pip check") > text.rindex(
+            "python -m pip install"
+        ), relative
 
 
 def _default_base(relative: str) -> str:
@@ -40,9 +46,7 @@ def test_sim2real_gpu_overlays_use_immutable_public_bases() -> None:
         "cosmos3-reason/Dockerfile",
     ):
         base = _default_base(dockerfile)
-        assert base.startswith(
-            "ghcr.io/nebius/nebius-physical-ai/"
-        ), dockerfile
+        assert base.startswith("ghcr.io/nebius/nebius-physical-ai/"), dockerfile
         assert re.search(r"@sha256:[0-9a-f]{64}$", base), dockerfile
 
 
@@ -67,13 +71,8 @@ def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
     assert "FROM ${BASE_IMAGE} AS sanitized" in text
     assert "FROM scratch AS runtime" in text
     assert "COPY --from=sanitized / /" in text
-    assert text.index("FROM scratch AS runtime") < text.index(
-        'LABEL npa.tool="envgen"'
-    )
-    assert (
-        'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"'
-        in text
-    )
+    assert text.index("FROM scratch AS runtime") < text.index('LABEL npa.tool="envgen"')
+    assert 'org.nebius.npa.skypilot-bootstrap-contract="skypilot-0.12.2-v1"' in text
     for runtime_contract in (
         "NVIDIA_VISIBLE_DEVICES=all",
         "NVIDIA_DRIVER_CAPABILITIES=compute,graphics,utility",
@@ -88,13 +87,16 @@ def test_envgen_removes_unrelated_nonredistributable_parent_binary() -> None:
 
 def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None:
     text = (WORKBENCH / "sim2real-envgen/Dockerfile").read_text(encoding="utf-8")
-    sanitizer = (
-        WORKBENCH / "common/sanitize_sim2real_envgen_parent.py"
-    ).read_text(encoding="utf-8")
+    sanitizer = (WORKBENCH / "common/sanitize_sim2real_envgen_parent.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "pip uninstall -y transformers imageio-ffmpeg wandb tetgen" in text
     assert "sanitize-sim2real-envgen-parent.py" in text
-    assert "COPY docker/workbench/common/envgen_compat /opt/npa/compat" in text
+    assert "COPY --chmod=0644 docker/workbench/common/envgen_compat/tetgen.py " in text
+    assert "/opt/npa/compat/tetgen.py" in text
+    assert "chmod 0755 /opt/npa/compat" in text
+    assert "chmod 0644 /opt/npa/compat/tetgen.py" in text
     assert "PYTHONPATH=/opt/npa/compat:/opt/npa/src" in text
     assert '("genesis-world", "tetgen")' in sanitizer
     assert '("lerobot", "wandb")' in sanitizer
@@ -103,9 +105,7 @@ def test_envgen_removes_optional_forbidden_and_vulnerable_parent_tools() -> None
     assert 'names.isdisjoint({"tetgen", "wandb"})' in text
     assert "test ! -e /opt/nvidia/nsight-compute" in text
 
-    compat = (
-        WORKBENCH / "common/envgen_compat/tetgen.py"
-    ).read_text(encoding="utf-8")
+    compat = (WORKBENCH / "common/envgen_compat/tetgen.py").read_text(encoding="utf-8")
     assert "class TetGen:" in compat
     assert "raise RuntimeError(" in compat
 
@@ -114,13 +114,23 @@ def test_genesis_workflow_runtime_upgrades_fixed_kernel_headers() -> None:
     installer = (WORKBENCH / "common/install_workflow_runtime_prereqs.sh").read_text(
         encoding="utf-8"
     )
-    assert "linux-libc-dev=5.15.0-190.200" in installer
+    snapshot_config = (WORKBENCH / "common/configure_ubuntu_snapshot.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "snapshot.ubuntu.com/ubuntu/${snapshot}" in snapshot_config
+    assert "ubuntu:22.04" in snapshot_config
+    assert "ubuntu:24.04" in snapshot_config
+    assert "configure-ubuntu-snapshot" in installer
+    assert 'linux_libc_dev_version="5.15.0-190.200"' in installer
+    assert 'linux_libc_dev_version="6.8.0-139.139"' in installer
+    assert '"linux-libc-dev=${linux_libc_dev_version}"' in installer
     for relative in (
         "sim2real-envgen/Dockerfile",
         "sim2real-eval/Dockerfile",
     ):
         text = (WORKBENCH / relative).read_text(encoding="utf-8")
         assert "ARG UBUNTU_SNAPSHOT=20260820T000000Z" in text, relative
+        assert "configure_ubuntu_snapshot.sh" in text, relative
 
 
 def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:
@@ -128,7 +138,9 @@ def test_genesis_workflow_images_replace_vulnerable_parent_gitpython() -> None:
     pin = re.search(r"^GitPython==(\S+)$", requirements, re.MULTILINE)
     assert pin and Version(pin.group(1)) >= Version("3.1.62")
     for relative in (
-        "sim2real-envgen/Dockerfile", "sim2real-eval/Dockerfile", "lerobot-vlm-rl/Dockerfile",
+        "sim2real-envgen/Dockerfile",
+        "sim2real-eval/Dockerfile",
+        "lerobot-vlm-rl/Dockerfile",
     ):
         text = (WORKBENCH / relative).read_text()
         install = text.index("-r /opt/npa/sim2real-genesis-requirements.txt")

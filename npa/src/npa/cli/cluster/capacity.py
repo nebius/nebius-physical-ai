@@ -42,7 +42,9 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
-def platform_advice(items: Iterable[dict[str, Any]], *, platform: str, preset: str, region: str) -> dict[str, Any]:
+def platform_advice(
+    items: Iterable[dict[str, Any]], *, platform: str, preset: str, region: str
+) -> dict[str, Any]:
     """Return the ``resource-advice`` entry matching *platform*/*preset*/*region*.
 
     Falls back to any entry for the platform in the region (a different preset
@@ -62,7 +64,9 @@ def platform_advice(items: Iterable[dict[str, Any]], *, platform: str, preset: s
             continue
         if str(instance.get("platform", "")).strip().lower() != platform:
             continue
-        entry_preset = str((instance.get("preset") or {}).get("name", "")).strip().lower()
+        entry_preset = (
+            str((instance.get("preset") or {}).get("name", "")).strip().lower()
+        )
         if entry_preset == preset:
             return item
         fallback = fallback or item
@@ -167,7 +171,11 @@ def capacity_advice_items(
         ],
     )
     items = payload.get("items")
-    return [item for item in items if isinstance(item, dict)] if isinstance(items, list) else []
+    return (
+        [item for item in items if isinstance(item, dict)]
+        if isinstance(items, list)
+        else []
+    )
 
 
 def capacity_block_group_payload(

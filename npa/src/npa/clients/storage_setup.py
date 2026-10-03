@@ -194,9 +194,7 @@ class StorageSetupTransaction:
         )
         required = "name" if kind == "bucket" else "id"
         if not clean.get(required):
-            raise ValueError(
-                f"created storage {kind} record is missing its {required}"
-            )
+            raise ValueError(f"created storage {kind} record is missing its {required}")
         self._created_this_attempt.append((kind, clean))
         if self.operation is not None:
             resource_type = {
@@ -462,6 +460,7 @@ class StorageSetupTransaction:
         # resurrect the exact entries just removed. Replace this field in the
         # persisted project record while retaining every unrelated project.
         path = self.credentials_path
+
         def remove_from(current: dict[str, Any]) -> dict[str, Any]:
             document = deepcopy(current)
             setup = document.get("storage_setup")
@@ -483,6 +482,7 @@ class StorageSetupTransaction:
 
     def _update_record(self, patch: Mapping[str, Any]) -> None:
         path = self.credentials_path
+
         def update(current: dict[str, Any]) -> dict[str, Any]:
             document = deepcopy(current)
             setup = document.get("storage_setup")
@@ -583,20 +583,18 @@ def provision_storage(
                 identity_name_kwargs["service_account_name"] = service_account_name
             if access_key_name != "lerobot-access-key":
                 identity_name_kwargs["access_key_name"] = access_key_name
-            fallback_enabled = (
-                allow_editors_fallback
-                or os.environ.get("NPA_ALLOW_EDITORS_STORAGE_FALLBACK", "")
-                .strip()
-                .lower()
-                in {"1", "true", "yes"}
-            )
+            fallback_enabled = allow_editors_fallback or os.environ.get(
+                "NPA_ALLOW_EDITORS_STORAGE_FALLBACK", ""
+            ).strip().lower() in {"1", "true", "yes"}
             fallback_kwargs: dict[str, bool] = {}
             if fallback_enabled:
                 fallback_kwargs["allow_editors_fallback"] = True
             bucket_reuse_kwargs: dict[str, bool] = {}
             if not allow_existing_bucket and not resuming_owned_bucket:
                 bucket_reuse_kwargs["allow_existing_bucket"] = False
-            bootstrap = cast(Callable[..., dict[str, str]], nebius.bootstrap_environment)
+            bootstrap = cast(
+                Callable[..., dict[str, str]], nebius.bootstrap_environment
+            )
             credentials = bootstrap(
                 project_id,
                 tenant_id,
@@ -610,6 +608,7 @@ def provision_storage(
                 **fallback_kwargs,
                 **identity_name_kwargs,
             )
+
             def run_probe() -> StorageProbeResult:
                 return probe_storage_write(
                     bucket=credentials.get("s3_bucket", ""),

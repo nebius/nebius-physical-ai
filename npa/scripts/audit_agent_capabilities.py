@@ -441,7 +441,11 @@ def probe_capabilities(client: Any) -> list[dict[str, Any]]:
             entry.update({"status": status, "detail": detail, "works": bool(ok)})
         except Exception as exc:  # noqa: BLE001 - the failure is the finding
             entry.update(
-                {"status": "exception", "detail": f"{type(exc).__name__}: {exc}", "works": False}
+                {
+                    "status": "exception",
+                    "detail": f"{type(exc).__name__}: {exc}",
+                    "works": False,
+                }
             )
         probes.append(entry)
 
@@ -636,7 +640,11 @@ def probe_chat_router() -> list[dict[str, Any]]:
         "chat_history": [],
     }
 
-    tool_refs = ["workbench.genesis.train", "workbench.lerobot.train", "workbench.vlm-eval.run"]
+    tool_refs = [
+        "workbench.genesis.train",
+        "workbench.lerobot.train",
+        "workbench.vlm-eval.run",
+    ]
     results: list[dict[str, Any]] = []
     for expected, prompt in CHAT_PROBES:
         entry: dict[str, Any] = {"expected_intent": expected, "prompt": prompt}
@@ -656,7 +664,9 @@ def probe_chat_router() -> list[dict[str, Any]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", dest="json_path", default="", help="Write the report as JSON.")
+    parser.add_argument(
+        "--json", dest="json_path", default="", help="Write the report as JSON."
+    )
     parser.add_argument(
         "--serve-live",
         action="store_true",

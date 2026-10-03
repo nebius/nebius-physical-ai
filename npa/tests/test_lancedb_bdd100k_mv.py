@@ -26,7 +26,9 @@ from npa.workbench.lancedb.views import (
 runner = CliRunner()
 
 
-def test_create_mv_creates_lance_table_with_expected_rows_and_schema(tmp_path: Path) -> None:
+def test_create_mv_creates_lance_table_with_expected_rows_and_schema(
+    tmp_path: Path,
+) -> None:
     lance_uri = _write_source(tmp_path)
 
     result = create_mv(
@@ -50,8 +52,18 @@ def test_create_mv_creates_lance_table_with_expected_rows_and_schema(tmp_path: P
 def test_create_mv_is_idempotent_for_same_source_and_filter(tmp_path: Path) -> None:
     lance_uri = _write_source(tmp_path)
 
-    first = create_mv(name="person_train", source_table="bdd", filter_sql="has_person = true", lance_uri=lance_uri)
-    second = create_mv(name="person_train", source_table="bdd", filter_sql="has_person = true", lance_uri=lance_uri)
+    first = create_mv(
+        name="person_train",
+        source_table="bdd",
+        filter_sql="has_person = true",
+        lance_uri=lance_uri,
+    )
+    second = create_mv(
+        name="person_train",
+        source_table="bdd",
+        filter_sql="has_person = true",
+        lance_uri=lance_uri,
+    )
 
     assert second.row_count == first.row_count
     assert second.view_table_version == first.view_table_version
@@ -60,8 +72,16 @@ def test_create_mv_is_idempotent_for_same_source_and_filter(tmp_path: Path) -> N
 
 def test_create_mv_force_recomputes_existing_view(tmp_path: Path) -> None:
     lance_uri = _write_source(tmp_path)
-    first = create_mv(name="person_train", source_table="bdd", filter_sql="has_person = true", lance_uri=lance_uri)
-    _append_source_row(lance_uri, _row("train-004", split="train", has_person=True, timeofday="daytime"))
+    first = create_mv(
+        name="person_train",
+        source_table="bdd",
+        filter_sql="has_person = true",
+        lance_uri=lance_uri,
+    )
+    _append_source_row(
+        lance_uri,
+        _row("train-004", split="train", has_person=True, timeofday="daytime"),
+    )
 
     forced = create_mv(
         name="person_train",
@@ -76,19 +96,38 @@ def test_create_mv_force_recomputes_existing_view(tmp_path: Path) -> None:
     assert forced.manifest_sha256 != first.manifest_sha256
 
 
-def test_create_mv_name_collision_with_different_definition_errors(tmp_path: Path) -> None:
+def test_create_mv_name_collision_with_different_definition_errors(
+    tmp_path: Path,
+) -> None:
     lance_uri = _write_source(tmp_path)
-    create_mv(name="person_train", source_table="bdd", filter_sql="has_person = true", lance_uri=lance_uri)
+    create_mv(
+        name="person_train",
+        source_table="bdd",
+        filter_sql="has_person = true",
+        lance_uri=lance_uri,
+    )
 
     with pytest.raises(MVConflictError, match="different source_table or filter_sql"):
-        create_mv(name="person_train", source_table="bdd", filter_sql="has_rider = true", lance_uri=lance_uri)
+        create_mv(
+            name="person_train",
+            source_table="bdd",
+            filter_sql="has_rider = true",
+            lance_uri=lance_uri,
+        )
 
 
 def test_refresh_mv_recomputes_and_updates_registry(tmp_path: Path) -> None:
     lance_uri = _write_source(tmp_path)
-    create_mv(name="person_train", source_table="bdd", filter_sql="has_person = true", lance_uri=lance_uri)
+    create_mv(
+        name="person_train",
+        source_table="bdd",
+        filter_sql="has_person = true",
+        lance_uri=lance_uri,
+    )
     before = _registry_row(lance_uri, "person_train")
-    _append_source_row(lance_uri, _row("train-004", split="train", has_person=True, timeofday="night"))
+    _append_source_row(
+        lance_uri, _row("train-004", split="train", has_person=True, timeofday="night")
+    )
 
     refreshed = refresh_mv(name="person_train", lance_uri=lance_uri)
     after = _registry_row(lance_uri, "person_train")
@@ -99,10 +138,14 @@ def test_refresh_mv_recomputes_and_updates_registry(tmp_path: Path) -> None:
     assert after["last_refreshed"] >= before["last_refreshed"]
 
 
-def test_query_table_filters_selects_limits_and_excludes_image_bytes_by_default(tmp_path: Path) -> None:
+def test_query_table_filters_selects_limits_and_excludes_image_bytes_by_default(
+    tmp_path: Path,
+) -> None:
     lance_uri = _write_source(tmp_path)
 
-    default = query_table(table="bdd", lance_uri=lance_uri, filter_sql="split = 'train'", limit=2)
+    default = query_table(
+        table="bdd", lance_uri=lance_uri, filter_sql="split = 'train'", limit=2
+    )
     selected = query_table(
         table="bdd",
         lance_uri=lance_uri,
@@ -110,7 +153,9 @@ def test_query_table_filters_selects_limits_and_excludes_image_bytes_by_default(
         select=["image_id", "image_bytes"],
         limit=1,
     )
-    unfiltered = query_table(table="bdd", lance_uri=lance_uri, select=["image_id"], limit=10)
+    unfiltered = query_table(
+        table="bdd", lance_uri=lance_uri, select=["image_id"], limit=10
+    )
 
     assert default.total_rows_matched == 3
     assert default.row_count == 2
@@ -121,7 +166,9 @@ def test_query_table_filters_selects_limits_and_excludes_image_bytes_by_default(
     assert unfiltered.total_rows_matched == 4
 
 
-def test_create_bdd100k_failure_mode_views_uses_documented_filters(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_bdd100k_failure_mode_views_uses_documented_filters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     import npa.workbench.lancedb.views as views_module
 
     calls: list[dict[str, Any]] = []
@@ -134,7 +181,9 @@ def test_create_bdd100k_failure_mode_views_uses_documented_filters(monkeypatch: 
             filter_sql=kwargs["filter_sql"],
             row_count=0,
             view_table_version=1,
-            manifest_sha256=hashlib.sha256(kwargs["filter_sql"].encode("utf-8")).hexdigest(),
+            manifest_sha256=hashlib.sha256(
+                kwargs["filter_sql"].encode("utf-8")
+            ).hexdigest(),
         )
 
     monkeypatch.setattr(views_module, "create_mv", fake_create_mv)
@@ -157,7 +206,9 @@ def test_create_bdd100k_failure_mode_views_uses_documented_filters(monkeypatch: 
     ]
 
 
-def test_api_cli_sdk_service_mode_parity_for_mv_endpoints(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_api_cli_sdk_service_mode_parity_for_mv_endpoints(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import npa.cli.workbench.lancedb.views as cli_views
     import npa.workbench.lancedb as sdk_module
 
@@ -165,13 +216,17 @@ def test_api_cli_sdk_service_mode_parity_for_mv_endpoints(tmp_path: Path, monkey
     app = create_app(storage_path=str(tmp_path / "service-root"), auth_mode="none")
     client = TestClient(app)
 
-    def client_request(method: str, endpoint: str, path: str, **kwargs: Any) -> dict[str, Any]:
+    def client_request(
+        method: str, endpoint: str, path: str, **kwargs: Any
+    ) -> dict[str, Any]:
         response = client.request(method, path, json=kwargs.get("payload"))
         assert response.status_code == 200, response.text
         return response.json()
 
     def sdk_post_json(**kwargs: Any) -> dict[str, Any]:
-        response = client.post(kwargs.get("path", "/import-bdd100k"), json=kwargs["payload"])
+        response = client.post(
+            kwargs.get("path", "/import-bdd100k"), json=kwargs["payload"]
+        )
         assert response.status_code == 200, response.text
         return response.json()
 
@@ -204,7 +259,9 @@ def test_api_cli_sdk_service_mode_parity_for_mv_endpoints(tmp_path: Path, monkey
         ],
     )
     assert cli_create.exit_code == 0, cli_create.output
-    sdk_create = sdk_module.create_mv(service=True, endpoint="http://lancedb.example", **payload)
+    sdk_create = sdk_module.create_mv(
+        service=True, endpoint="http://lancedb.example", **payload
+    )
 
     create_manifests = {
         api_create.json()["manifest_sha256"],
@@ -213,7 +270,9 @@ def test_api_cli_sdk_service_mode_parity_for_mv_endpoints(tmp_path: Path, monkey
     }
     assert len(create_manifests) == 1
 
-    api_refresh = client.post("/refresh-mv", json={"name": "person_train", "lance_uri": lance_uri})
+    api_refresh = client.post(
+        "/refresh-mv", json={"name": "person_train", "lance_uri": lance_uri}
+    )
     assert api_refresh.status_code == 200
     cli_refresh = runner.invoke(
         lancedb_app,
@@ -293,12 +352,44 @@ def _write_source(tmp_path: Path) -> str:
 
     lance_uri = str(tmp_path / "db")
     rows = [
-        _row("train-001", split="train", has_person=True, has_rider=False, timeofday="night", area=0.005),
-        _row("train-002", split="train", has_person=True, has_rider=True, timeofday="daytime", area=0.02),
-        _row("val-001", split="val", has_person=True, has_rider=False, timeofday="night", area=0.001),
-        _row("train-003", split="train", has_person=False, has_rider=False, timeofday="night", area=0.0),
+        _row(
+            "train-001",
+            split="train",
+            has_person=True,
+            has_rider=False,
+            timeofday="night",
+            area=0.005,
+        ),
+        _row(
+            "train-002",
+            split="train",
+            has_person=True,
+            has_rider=True,
+            timeofday="daytime",
+            area=0.02,
+        ),
+        _row(
+            "val-001",
+            split="val",
+            has_person=True,
+            has_rider=False,
+            timeofday="night",
+            area=0.001,
+        ),
+        _row(
+            "train-003",
+            split="train",
+            has_person=False,
+            has_rider=False,
+            timeofday="night",
+            area=0.0,
+        ),
     ]
-    lancedb.connect(lance_uri).create_table("bdd", data=pa.Table.from_pylist(rows, schema=_source_schema()), mode="overwrite")
+    lancedb.connect(lance_uri).create_table(
+        "bdd",
+        data=pa.Table.from_pylist(rows, schema=_source_schema()),
+        mode="overwrite",
+    )
     return lance_uri
 
 
@@ -346,7 +437,9 @@ def _source_schema() -> pa.Schema:
 def _registry_row(lance_uri: str, name: str) -> dict[str, Any]:
     import lancedb
 
-    rows = lancedb.connect(lance_uri).open_table(MV_REGISTRY_TABLE).to_arrow().to_pylist()
+    rows = (
+        lancedb.connect(lance_uri).open_table(MV_REGISTRY_TABLE).to_arrow().to_pylist()
+    )
     return next(row for row in rows if row["name"] == name)
 
 

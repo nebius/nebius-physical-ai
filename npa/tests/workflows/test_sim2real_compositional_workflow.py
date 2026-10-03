@@ -48,10 +48,7 @@ def test_canonical_is_one_standard_compositional_workflow() -> None:
     assert payload["kind"] == "Workflow"
     assert detect_submit_format(SPEC) == "npa.workflow"
     assert not (ROOT / "npa" / "workflows" / "sim2real.yaml").exists()
-    assert not (
-        ROOT
-        / "workflows" / "testing" / "sim2real-vlm-rl.yaml"
-    ).exists()
+    assert not (ROOT / "workflows" / "testing" / "sim2real-vlm-rl.yaml").exists()
 
     leaf_states = [state for state in payload["states"].values() if state.get("run")]
     assert len(leaf_states) >= 14
@@ -105,7 +102,10 @@ def test_retired_monolithic_toolrefs_are_not_catalog_surfaces() -> None:
 
 @pytest.mark.parametrize(
     ("model", "family"),
-    [("nvidia/Cosmos3-Super-Reasoner", "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
+    [
+        ("nvidia/Cosmos3-Super-Reasoner", "cosmos3"),
+        ("MiniMaxAI/MiniMax-M3", "minimax_m3"),
+    ],
 )
 def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, model: str, family: str
@@ -129,9 +129,25 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
                             "rollout_id": f"rollout-{index:04d}",
                             "task_description": "strict cube grasp",
                             "camera_observations": ["camera-000.png"],
-                            "actions": [{"step": 0, "sim_step": 0, "action": [0.0], "episode_boundary": _no_reset_boundary()}],
-                            "camera_frame_metadata": {"primary": [{"path": "camera-000.png", "sim_step": 0,
-                                                                    "view_name": "primary", "episode_id": f"rollout-{index:04d}", "simulator_episode_id": 0}]},
+                            "actions": [
+                                {
+                                    "step": 0,
+                                    "sim_step": 0,
+                                    "action": [0.0],
+                                    "episode_boundary": _no_reset_boundary(),
+                                }
+                            ],
+                            "camera_frame_metadata": {
+                                "primary": [
+                                    {
+                                        "path": "camera-000.png",
+                                        "sim_step": 0,
+                                        "view_name": "primary",
+                                        "episode_id": f"rollout-{index:04d}",
+                                        "simulator_episode_id": 0,
+                                    }
+                                ]
+                            },
                         }
                     )
                 )
@@ -162,9 +178,7 @@ def test_stage8_scores_every_rollout_once_with_hosted_cosmos3(
 
     writes = []
     records = []
-    monkeypatch.setattr(
-        stage8_cosmos3.tempfile, "mkdtemp", lambda **_kwargs: str(work)
-    )
+    monkeypatch.setattr(stage8_cosmos3.tempfile, "mkdtemp", lambda **_kwargs: str(work))
     monkeypatch.setattr(stage8_cosmos3, "storage", lambda: Store())
     monkeypatch.setattr(reason, "run_token_factory_rollout_vlm", evaluate)
     monkeypatch.setattr(
@@ -505,15 +519,36 @@ def _stage9_replay_fixture() -> tuple[dict, dict, dict, dict]:
         "action_count": 1,
         "frame_count": 1,
         "selected_frames": ["camera-000.png"],
-        "selected_frame_metadata": [{"path": "camera-000.png", "sim_step": 0,
-                                     "view_name": "primary", "episode_id": "rollout-1", "simulator_episode_id": 0}],
-        "per_step": [{"step": 0, "sim_step": 0, "camera_observation": "camera-000.png",
-                      "episode_boundary": _no_reset_boundary(),
-                      "confidence": 0.8, "error_tags": ["ok"], "critique_text": "Cube held stably.",
-                      "visual_grounding": {"schema": "npa.sim2real.visual_grounding.v2", "action_step": 0,
-                                           "action_sim_step": 0, "frame_sim_step": 0,
-                                           "camera_observation": "camera-000.png", "supported": True,
-                                           "episode_boundary": _no_reset_boundary(), "frame_simulator_episode_id": 0}}],
+        "selected_frame_metadata": [
+            {
+                "path": "camera-000.png",
+                "sim_step": 0,
+                "view_name": "primary",
+                "episode_id": "rollout-1",
+                "simulator_episode_id": 0,
+            }
+        ],
+        "per_step": [
+            {
+                "step": 0,
+                "sim_step": 0,
+                "camera_observation": "camera-000.png",
+                "episode_boundary": _no_reset_boundary(),
+                "confidence": 0.8,
+                "error_tags": ["ok"],
+                "critique_text": "Cube held stably.",
+                "visual_grounding": {
+                    "schema": "npa.sim2real.visual_grounding.v2",
+                    "action_step": 0,
+                    "action_sim_step": 0,
+                    "frame_sim_step": 0,
+                    "camera_observation": "camera-000.png",
+                    "supported": True,
+                    "episode_boundary": _no_reset_boundary(),
+                    "frame_simulator_episode_id": 0,
+                },
+            }
+        ],
     }
     sample_signal = {"rollout_id": "rollout-1", "weight": 1.0}
     iteration = {
@@ -576,23 +611,58 @@ def test_stage9_conflicting_same_iteration_replay_fails_closed() -> None:
 
 @pytest.mark.parametrize(
     ("model", "family"),
-    [("nvidia/Cosmos3-Super-Reasoner", "cosmos3"), ("MiniMaxAI/MiniMax-M3", "minimax_m3")],
+    [
+        ("nvidia/Cosmos3-Super-Reasoner", "cosmos3"),
+        ("MiniMaxAI/MiniMax-M3", "minimax_m3"),
+    ],
 )
 @pytest.mark.parametrize(
     "corruption",
-    [None, "envelope_model", "envelope_family", "item_family", "record_model",
-     "record_family", "usage_model", "configured_model", "legacy_family",
-     "legacy_request", "usage_total", "malformed_iteration", "extra_rollout",
-     "null_request_id", "zero_tokens", "negative_retries", "nan_latency",
-     "wrong_latency_list", "wrong_latency_sum", "wrong_usage_request_ids",
-     "wrong_usage_retries", "false_cost", "wrong_cost_sum", "priced_usage",
-     "truthy_provenance", "record_image", "record_job", "wrong_source",
-     "record_digest", "wrong_step_index", "boolean_step_index", "record_usage",
-     "record_rollout_count", "duplicate_request_ids", "inconsistent_token_total",
-     "negative_cost"],
+    [
+        None,
+        "envelope_model",
+        "envelope_family",
+        "item_family",
+        "record_model",
+        "record_family",
+        "usage_model",
+        "configured_model",
+        "legacy_family",
+        "legacy_request",
+        "usage_total",
+        "malformed_iteration",
+        "extra_rollout",
+        "null_request_id",
+        "zero_tokens",
+        "negative_retries",
+        "nan_latency",
+        "wrong_latency_list",
+        "wrong_latency_sum",
+        "wrong_usage_request_ids",
+        "wrong_usage_retries",
+        "false_cost",
+        "wrong_cost_sum",
+        "priced_usage",
+        "truthy_provenance",
+        "record_image",
+        "record_job",
+        "wrong_source",
+        "record_digest",
+        "wrong_step_index",
+        "boolean_step_index",
+        "record_usage",
+        "record_rollout_count",
+        "duplicate_request_ids",
+        "inconsistent_token_total",
+        "negative_cost",
+    ],
 )
 def test_stage9_retry_republishes_exact_evidence_without_training(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, model: str, family: str, corruption: str | None
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    model: str,
+    family: str,
+    corruption: str | None,
 ) -> None:
     from npa.workflows.sim2real import byo_isaac_trainer, temporal_credit
     from npa.workflows.sim2real import workflow_stage
@@ -691,7 +761,11 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
 
     envelope = lanes[lane_base + "cosmos3.json"]
     record = lanes[f"{root}/components/stage_08.json"]["artifacts"]
-    wrong_model = "MiniMaxAI/MiniMax-M3" if family == "cosmos3" else "nvidia/Cosmos3-Super-Reasoner"
+    wrong_model = (
+        "MiniMaxAI/MiniMax-M3"
+        if family == "cosmos3"
+        else "nvidia/Cosmos3-Super-Reasoner"
+    )
     if corruption == "envelope_model":
         envelope["model"] = wrong_model
     elif corruption == "envelope_family":
@@ -757,11 +831,17 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         second["rollout_id"] = "rollout-2"
         envelope["evaluations"].append(second)
         envelope["source_rollout_ids"].append("rollout-2")
-        lanes[f"{root}/actions/train/outer-01/iter-01/rollouts-result.json"]["rollout_dirs"].append("/tmp/actions/rollout-2")
-        envelope["evaluator_usage"] = _aggregate_usage(envelope["evaluations"], model=model)
+        lanes[f"{root}/actions/train/outer-01/iter-01/rollouts-result.json"][
+            "rollout_dirs"
+        ].append("/tmp/actions/rollout-2")
+        envelope["evaluator_usage"] = _aggregate_usage(
+            envelope["evaluations"], model=model
+        )
         record["rollout_count"] = 2
     elif corruption == "inconsistent_token_total":
-        sample_eval["request"]["total_tokens"] = envelope["evaluator_usage"]["total_tokens"] = 99
+        sample_eval["request"]["total_tokens"] = envelope["evaluator_usage"][
+            "total_tokens"
+        ] = 99
     elif corruption == "negative_cost":
         sample_eval["request"]["cost_usd"] = -0.25
         envelope["evaluator_usage"] = _aggregate_usage([sample_eval], model=model)
@@ -787,9 +867,13 @@ def test_stage9_retry_republishes_exact_evidence_without_training(
         unchanged = json.dumps(lanes, sort_keys=True)
         with pytest.raises(RuntimeError, match="Stage 8") as failure:
             _stage9(args)
-        assert "Stage 9 has not started PPO or checkpoint selection" in str(failure.value)
+        assert "Stage 9 has not started PPO or checkpoint selection" in str(
+            failure.value
+        )
         assert "start a new run ID and output root" in str(failure.value)
-        assert "Do not relabel or rewrite old evaluator artifacts in place" in str(failure.value)
+        assert "Do not relabel or rewrite old evaluator artifacts in place" in str(
+            failure.value
+        )
         assert json.dumps(lanes, sort_keys=True) == unchanged
         assert not writes
         assert not records
@@ -949,14 +1033,14 @@ def test_baked_raw_module_setup_probes_the_executed_module() -> None:
         command=["python3", "-m", "npa.workflows.sim2real.workflow_stage"],
     )
 
-    assert (
-        "importlib.import_module('npa.workflows.sim2real.workflow_stage')" in setup
-    )
+    assert "importlib.import_module('npa.workflows.sim2real.workflow_stage')" in setup
     assert "npa.cli.main" not in setup
     assert "baked Sim2Real evaluator verified" in setup
 
 
-@pytest.mark.parametrize("model", ["MiniMaxAI/MiniMax-M3", "nvidia/Cosmos3-Super-Reasoner"])
+@pytest.mark.parametrize(
+    "model", ["MiniMaxAI/MiniMax-M3", "nvidia/Cosmos3-Super-Reasoner"]
+)
 def test_baked_sim2real_setup_keeps_the_selected_evaluator(model):
     setup = render_setup_for_tool(
         "",
@@ -1032,17 +1116,14 @@ def test_exact_source_and_per_state_immutable_images_reach_rendered_tasks() -> N
     assert gpu_tasks
     for task in gpu_tasks:
         pod_config = task["config"]["kubernetes"]["pod_config"]
-        assert "kueue.x-k8s.io/queue-name" not in pod_config.get(
-            "metadata", {}
-        ).get("labels", {})
+        assert "kueue.x-k8s.io/queue-name" not in pod_config.get("metadata", {}).get(
+            "labels", {}
+        )
         assert "priorityClassName" not in pod_config["spec"]
 
-    transfer_pod = spec.resources["transfer-gpu"]["kubernetes"]["pod_config"][
-        "spec"
-    ]
+    transfer_pod = spec.resources["transfer-gpu"]["kubernetes"]["pod_config"]["spec"]
     transfer_env = {
-        item["name"]: item["value"]
-        for item in transfer_pod["containers"][0]["env"]
+        item["name"]: item["value"] for item in transfer_pod["containers"][0]["env"]
     }
     assert transfer_env == {
         "UV_CACHE_DIR": "/tmp/npa-skypilot-uv-cache",
@@ -1089,7 +1170,11 @@ def test_sim2real_hosted_defaults_and_stage9_model_contract_agree():
     from npa.workflows.sim2real.constants import DEFAULT_COSMOS3_MODEL
 
     payload = yaml.safe_load(SPEC.read_text())
-    assert DEFAULT_COSMOS3_MODEL == DEFAULT_REASONER_MODEL == payload["config"]["cosmos3_model"]
+    assert (
+        DEFAULT_COSMOS3_MODEL
+        == DEFAULT_REASONER_MODEL
+        == payload["config"]["cosmos3_model"]
+    )
     for stage in ("stage-08-cosmos3", "stage-09-ppo"):
         argv = payload["states"][stage]["run"]["argv"]
         assert argv[argv.index("--reason-model") + 1] == "{{config.cosmos3_model}}"
@@ -1098,7 +1183,10 @@ def test_sim2real_hosted_defaults_and_stage9_model_contract_agree():
 def _no_reset_boundary():
     return {
         "schema": "npa.sim2real.episode_boundary.v1",
-        "simulator_episode_id": 0, "action_episode_id": 0,
-        "reset_events": [], "reset_on_current_step": False,
-        "action_outcome_valid": True, "temporal_credit_valid": True,
+        "simulator_episode_id": 0,
+        "action_episode_id": 0,
+        "reset_events": [],
+        "reset_on_current_step": False,
+        "action_outcome_valid": True,
+        "temporal_credit_valid": True,
     }

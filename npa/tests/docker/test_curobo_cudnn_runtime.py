@@ -21,7 +21,9 @@ LICENSE = f"{DIST_INFO}/licenses/License.txt"
 
 @pytest.fixture
 def package(tmp_path):
-    spec = importlib.util.spec_from_file_location("curobo_cudnn_filter", IMAGE / "filter_cudnn_runtime.py")
+    spec = importlib.util.spec_from_file_location(
+        "curobo_cudnn_filter", IMAGE / "filter_cudnn_runtime.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     files = {
@@ -38,7 +40,9 @@ def package(tmp_path):
 
     def record(extra=()):
         with (tmp_path / DIST_INFO / "RECORD").open("w", newline="") as stream:
-            csv.writer(stream).writerows((name, "", "") for name in [*files, *extra, f"{DIST_INFO}/RECORD"])
+            csv.writer(stream).writerows(
+                (name, "", "") for name in [*files, *extra, f"{DIST_INFO}/RECORD"]
+            )
 
     record()
     return tmp_path, module.filter_cudnn_runtime, files, record
@@ -54,7 +58,9 @@ def test_only_runtime_and_license_bytes_remain_identical(package):
     assert not (root / "nvidia/cudnn/lib/libcudnn_static.a").exists()
     for name in (LIBRARY, LICENSE):
         assert (root / name).read_bytes() == files[name]
-        assert report["retained_sha256"][name] == hashlib.sha256(files[name]).hexdigest()
+        assert (
+            report["retained_sha256"][name] == hashlib.sha256(files[name]).hexdigest()
+        )
     assert unrelated.read_text() == "unrelated dependency"
     recorded = (root / DIST_INFO / "RECORD").read_text()
     assert HEADER not in recorded and ".a," not in recorded
@@ -72,7 +78,11 @@ def test_retained_library_digest_covers_the_complete_file(package):
 
 @pytest.mark.parametrize(
     "extra",
-    ["nvidia/cudnn/include/unreviewed.hpp", "nvidia/cudnn/hidden/cudnn.h", "nvidia/other/cudnn.h"],
+    [
+        "nvidia/cudnn/include/unreviewed.hpp",
+        "nvidia/cudnn/hidden/cudnn.h",
+        "nvidia/other/cudnn.h",
+    ],
 )
 def test_new_registered_payload_fails_before_any_deletion(package, extra):
     root, apply_filter, _, record = package
@@ -112,7 +122,9 @@ def test_missing_notice_or_invalid_runtime_fails_closed(package, change):
     elif change == "runtime":
         (root / LIBRARY).write_bytes(b"not an ELF object")
     else:
-        (root / DIST_INFO / "METADATA").write_text("Name: nvidia-cudnn-cu13\nVersion: 10.0\n")
+        (root / DIST_INFO / "METADATA").write_text(
+            "Name: nvidia-cudnn-cu13\nVersion: 10.0\n"
+        )
     with pytest.raises(ValueError):
         apply_filter(root)
     assert (root / HEADER).exists()
@@ -120,7 +132,9 @@ def test_missing_notice_or_invalid_runtime_fails_closed(package, change):
 
 def test_docker_never_commits_unfiltered_cudnn_in_any_layer():
     text = (IMAGE / "Dockerfile").read_text()
-    assert "-cudnn-" not in next(line for line in text.splitlines() if line.startswith("FROM "))
+    assert "-cudnn-" not in next(
+        line for line in text.splitlines() if line.startswith("FROM ")
+    )
     instructions = re.sub(r"\\\n\s*", " ", text).splitlines()
     install = next(line for line in instructions if line.startswith("RUN pip install "))
     assert "--require-hashes" in install

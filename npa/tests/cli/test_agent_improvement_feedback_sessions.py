@@ -13,10 +13,18 @@ from npa.agent_backend import improvement_routes
 from npa.agent_backend.improvements import ImprovementScope, ImprovementStore
 
 
-ACTION = {"ok": False, "steps": [{
-    "phase": "call", "tool": "retrieval_search", "status": "error",
-    "args": {"query": "synthetic regression"}, "error": "synthetic tool failure",
-}]}
+ACTION = {
+    "ok": False,
+    "steps": [
+        {
+            "phase": "call",
+            "tool": "retrieval_search",
+            "status": "error",
+            "args": {"query": "synthetic regression"},
+            "error": "synthetic tool failure",
+        }
+    ],
+}
 EPISODE = "synthetic-episode"
 SESSION = "synthetic-session"
 
@@ -27,17 +35,26 @@ def feedback(tmp_path):
     repository.mkdir()
     (repository / "candidate.py").write_text("result = 1\n")
     store = ImprovementStore(
-        tmp_path / "queue", repository=repository,
+        tmp_path / "queue",
+        repository=repository,
         evidence_directory=tmp_path / "evidence",
-        scopes=[ImprovementScope(
-            scope_id="synthetic-feedback", component="retrieval_search",
-            files=("candidate.py",), base_revision="a" * 40,
-            required_checks=("reproducer",), lesson_keys=("inspect_failed_tool_evidence",),
-        )], reviewers=("synthetic-reviewer",),
+        scopes=[
+            ImprovementScope(
+                scope_id="synthetic-feedback",
+                component="retrieval_search",
+                files=("candidate.py",),
+                base_revision="a" * 40,
+                required_checks=("reproducer",),
+                lesson_keys=("inspect_failed_tool_evidence",),
+            )
+        ],
+        reviewers=("synthetic-reviewer",),
     )
     app = FastAPI()
     improvement_routes.register_improvement_routes(
-        app, improvement_routes.ImprovementDeps(store=lambda: store), HTTPException,
+        app,
+        improvement_routes.ImprovementDeps(store=lambda: store),
+        HTTPException,
     )
     with TestClient(app) as client:
         yield store, client
@@ -53,9 +70,14 @@ def _result(response):
 
 
 def _reconcile(client, **context):
-    return client.post("/agent/improvements/reconcile", json={
-        "result": ACTION, "episode_id": EPISODE, **context,
-    })
+    return client.post(
+        "/agent/improvements/reconcile",
+        json={
+            "result": ACTION,
+            "episode_id": EPISODE,
+            **context,
+        },
+    )
 
 
 def _history(client, item_id):
@@ -63,32 +85,64 @@ def _history(client, item_id):
 
 
 def _lessons(client):
-    return _result(client.get("/agent/improvements/lessons", params={"target": "retrieval_search"}))
+    return _result(
+        client.get("/agent/improvements/lessons", params={"target": "retrieval_search"})
+    )
 
 
 def _verify(store, client, item):
-    claim = _result(client.post(f"/agent/improvements/{item['id']}/claim", json={
-        "owner": "synthetic-builder", "version": item["version"],
-    }))
+    claim = _result(
+        client.post(
+            f"/agent/improvements/{item['id']}/claim",
+            json={
+                "owner": "synthetic-builder",
+                "version": item["version"],
+            },
+        )
+    )
     ownership = {key: claim[key] for key in ("owner", "generation", "claim_token")}
-    candidate = store.begin_candidate(item["id"], changed_files=["candidate.py"], **ownership)
+    candidate = store.begin_candidate(
+        item["id"], changed_files=["candidate.py"], **ownership
+    )
     completed = subprocess.run(
-        [sys.executable, "-c", "from candidate import result; assert result == 1; print('synthetic check passed')"],
-        cwd=store.repository, capture_output=True, check=True,
+        [
+            sys.executable,
+            "-c",
+            "from candidate import result; assert result == 1; print('synthetic check passed')",
+        ],
+        cwd=store.repository,
+        capture_output=True,
+        check=True,
     )
     receipt = store.write_validation_receipt(
-        candidate, check="reproducer", completed=completed, report=completed.stdout,
+        candidate,
+        check="reproducer",
+        completed=completed,
+        report=completed.stdout,
     )
-    validated = _result(client.post(f"/agent/improvements/{item['id']}/validation", json={
-        **ownership, "evidence_ref": receipt,
-    }))
+    validated = _result(
+        client.post(
+            f"/agent/improvements/{item['id']}/validation",
+            json={
+                **ownership,
+                "evidence_ref": receipt,
+            },
+        )
+    )
     assert validated["state"] == "ready_for_review"
     # Synthetic adapter evidence tests the receipt contract, not a live review.
     review = store.write_review_receipt(
-        item["id"], reviewer="synthetic-reviewer", accepted=True,
-        lesson_key="inspect_failed_tool_evidence", report=b"Synthetic unit review fixture.\n",
+        item["id"],
+        reviewer="synthetic-reviewer",
+        accepted=True,
+        lesson_key="inspect_failed_tool_evidence",
+        report=b"Synthetic unit review fixture.\n",
     )
-    verified = _result(client.post(f"/agent/improvements/{item['id']}/review", json={"evidence_ref": review}))
+    verified = _result(
+        client.post(
+            f"/agent/improvements/{item['id']}/review", json={"evidence_ref": review}
+        )
+    )
     assert verified["state"] == "verified"
     assert len(_lessons(client)) == 1
     return verified
@@ -114,8 +168,11 @@ def test_runtime_failure_replay_preserves_verified_lesson(feedback, monkeypatch)
 
     # A new store instance reads the same persisted occurrence and review.
     reopened = ImprovementStore(
-        store.directory, repository=store.repository, evidence_directory=store.evidence_directory,
-        scopes=list(store.scopes.values()), reviewers=store.reviewers,
+        store.directory,
+        repository=store.repository,
+        evidence_directory=store.evidence_directory,
+        scopes=list(store.scopes.values()),
+        reviewers=store.reviewers,
     )
     assert reopened.history(item["id"]) == before
     occurrence = before["occurrences"][0]
@@ -136,7 +193,9 @@ def test_same_episode_in_distinct_sessions_revokes_verified_lesson(feedback):
     assert len({row["episode_ref"] for row in history["occurrences"]}) == 1
     assert history["events"][-1]["event"] == "recurrence"
     assert _lessons(client) == []
-    assert _result(_reconcile(client, session_id="another-synthetic-session"))[0] == second
+    assert (
+        _result(_reconcile(client, session_id="another-synthetic-session"))[0] == second
+    )
     assert _history(client, first["id"]) == history
 
 
@@ -168,13 +227,17 @@ def test_same_session_replay_does_not_restore_stale_source_evidence(feedback):
 
 
 @pytest.mark.parametrize("missing", ["result", "episode_id"])
-def test_missing_required_context_returns_sanitized_error_without_recording(feedback, missing):
+def test_missing_required_context_returns_sanitized_error_without_recording(
+    feedback, missing
+):
     store, client = feedback
     payload = {"result": ACTION, "episode_id": EPISODE, "session_id": SESSION}
     del payload[missing]
     response = client.post("/agent/improvements/reconcile", json=payload)
     assert response.status_code == 409
-    assert response.json() == {"detail": "improvement scope, ownership or evidence check failed"}
+    assert response.json() == {
+        "detail": "improvement scope, ownership or evidence check failed"
+    }
     assert store.list_items() == []
 
 
@@ -190,14 +253,25 @@ def test_reconcile_storage_failure_returns_sanitized_error(feedback):
 def test_reconciliation_does_not_accept_asserted_receipts(feedback, operation):
     _, client = feedback
     first = _result(_reconcile(client, session_id=SESSION))[0]
-    claim = _result(client.post(f"/agent/improvements/{first['id']}/claim", json={
-        "owner": "synthetic-builder", "version": first["version"],
-    }))
+    claim = _result(
+        client.post(
+            f"/agent/improvements/{first['id']}/claim",
+            json={
+                "owner": "synthetic-builder",
+                "version": first["version"],
+            },
+        )
+    )
     before = _history(client, first["id"])
     ownership = {key: claim[key] for key in ("owner", "generation", "claim_token")}
-    response = client.post(f"/agent/improvements/{first['id']}/{operation}", json={
-        **ownership, "passed": True, "reviewer": "synthetic-reviewer",
-    })
+    response = client.post(
+        f"/agent/improvements/{first['id']}/{operation}",
+        json={
+            **ownership,
+            "passed": True,
+            "reviewer": "synthetic-reviewer",
+        },
+    )
     assert response.status_code == 409
     assert _result(_reconcile(client, session_id=SESSION))[0]["state"] == "claimed"
     assert _history(client, first["id"]) == before

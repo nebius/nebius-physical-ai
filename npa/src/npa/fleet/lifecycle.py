@@ -533,7 +533,12 @@ def _verify_existing_project(
         mismatches.append("project is suspended")
     if any(
         metadata.get(key)
-        for key in ("deleted_at", "deletedAt", "deletion_timestamp", "deletionTimestamp")
+        for key in (
+            "deleted_at",
+            "deletedAt",
+            "deletion_timestamp",
+            "deletionTimestamp",
+        )
     ):
         mismatches.append("project is being deleted")
     if mismatches:
@@ -1294,9 +1299,7 @@ def plan_fleet(
                 ],
                 "filestore_mount_path": backend_plan["filestore_mount_path"],
                 "filestore_mount_tag": backend_plan["filestore_mount_tag"],
-                "filesystem_csi_enabled": backend_plan[
-                    "filesystem_csi_enabled"
-                ],
+                "filesystem_csi_enabled": backend_plan["filesystem_csi_enabled"],
                 "k8s_version": backend_plan["k8s_version"],
                 "mig": backend_plan["mig"],
                 **({"kuberay": backend_plan["kuberay"]} if cluster.kuberay else {}),
@@ -1455,7 +1458,8 @@ def deploy_fleet(
         if selected_clusters and cluster.name not in selected_clusters:
             continue
         _mk8s_execution.validate_kuberay_installation(
-            cluster, fleet_root / project.key() / cluster.name,
+            cluster,
+            fleet_root / project.key() / cluster.name,
         )
     for project, cluster in spec.cluster_targets():
         if not _project_in_scope(project, selected_projects, selected_prefix):
@@ -1783,7 +1787,8 @@ def _deploy_mk8s_fleet(
                 cluster, recipe_root / _K8S_TRAINING_SUBDIR
             )
             _mk8s_execution.validate_kuberay_installation(
-                cluster, fleet_root / project.key() / cluster.name,
+                cluster,
+                fleet_root / project.key() / cluster.name,
                 recipe_dir=recipe_root / _K8S_TRAINING_SUBDIR,
             )
             validate_recipe_mig_compatibility(
@@ -1839,7 +1844,7 @@ def _deploy_mk8s_fleet(
                     _log(
                         on_status,
                         f"capacity/quota preflight: {project.key()}/{cluster.name} "
-                        "is provider-verified and unchanged; incremental demand is zero",
+                        "reuses provider-verified capacity; incremental demand is zero",
                     )
                     continue
                 scoped.setdefault(region, []).append(cluster)
@@ -1877,8 +1882,12 @@ def _deploy_mk8s_fleet(
                     new_projects_by_region.get(region, 0) + 1
                 )
         pending_storage = _pending_project_object_storage(
-            spec=spec, projects=scoped_projects, project_ids=preflight_project_ids,
-            tenant_id=tenant_id, profile=nebius_profile, fleet_root=fleet_root,
+            spec=spec,
+            projects=scoped_projects,
+            project_ids=preflight_project_ids,
+            tenant_id=tenant_id,
+            profile=nebius_profile,
+            fleet_root=fleet_root,
         )
         if scoped or pending_storage:
             _preflight_quotas(
@@ -2078,8 +2087,11 @@ def _deploy_mk8s_fleet(
     result = {**base_meta, "clusters": results, **_recount(results)}
     # Persist a merged view so a targeted deploy doesn't clobber untouched clusters.
     _upsert_fleet_state(fleet_root, base_meta, results)
-    if not continue_on_error and result["failed"]:
-        raise RuntimeError(f"{result['failed']} cluster(s) failed")
+    if not continue_on_error and (result["failed"] or result["unresolved"]):
+        raise RuntimeError(
+            f"{result['failed']} cluster(s) failed and "
+            f"{result['unresolved']} remain unresolved"
+        )
     return result
 
 
@@ -2142,14 +2154,24 @@ def _load_fleet_state(fleet_root: Path) -> dict[str, Any]:
         ) from exc
 
 
+_DEPLOYED_CLUSTER_STATUSES = {"deployed", "running"}
+_UNRESOLVED_CLUSTER_STATUSES = {"provisioning", "reconciling"}
+_IGNORED_CLUSTER_STATUSES = {"destroyed", "absent"}
+
+
 def _recount(clusters: list[dict[str, Any]]) -> dict[str, int]:
+    statuses = [cluster.get("status") for cluster in clusters]
+    known = (
+        _DEPLOYED_CLUSTER_STATUSES
+        | _UNRESOLVED_CLUSTER_STATUSES
+        | _IGNORED_CLUSTER_STATUSES
+    )
     return {
-        "deployed": sum(1 for c in clusters if c.get("status") == "deployed"),
-        "failed": sum(
-            1
-            for c in clusters
-            if c.get("status") not in {"deployed", "destroyed", "absent"}
+        "deployed": sum(status in _DEPLOYED_CLUSTER_STATUSES for status in statuses),
+        "unresolved": sum(
+            status in _UNRESOLVED_CLUSTER_STATUSES for status in statuses
         ),
+        "failed": sum(status not in known for status in statuses),
     }
 
 

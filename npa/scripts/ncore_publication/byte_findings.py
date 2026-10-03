@@ -16,25 +16,56 @@ __all__ = ["emit_attribution_receipt", "emit_raw"]
 _MAXIMUM = (1 << 63) - 1
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _RECORD_KINDS = (
-    "layer_regular_content", "logical_tar_link", "logical_tar_path",
-    "nonzero_tar_padding", "outer_regular_content", "raw_gzip_header",
-    "raw_tar_extension", "raw_tar_header", "unexplained_tar_trailer",
+    "layer_regular_content",
+    "logical_tar_link",
+    "logical_tar_path",
+    "nonzero_tar_padding",
+    "outer_regular_content",
+    "raw_gzip_header",
+    "raw_tar_extension",
+    "raw_tar_header",
+    "unexplained_tar_trailer",
     "verified_zero_content",
 )
 _ROW_KINDS = ("encoded_layer_blob", "verified_zero_range")
 _RULE_IDENTIFIERS = ("customer-denylist", "infra-denylist", "private_literal")
 _FINDING_CLASSES = ("native-credential", "structural", "unclassified")
 _FINDING_GROUPS = (*_RULE_IDENTIFIERS, *_FINDING_CLASSES)
-_STRUCTURAL_RULES = frozenset({"nonzero_tar_padding", "nonzero_tar_trailer", "pkcs12-file"})
-_CONTEXT = frozenset({"scope", "layer_ordinal", "entry_ordinal", "tar_offset", "compressed_offset"})
-_REPORT_FIELDS = frozenset({
-    "schema_version", "valid", "complete", "authorization_sha256", "archive_sha256",
-    "image_config_digest", "image_manifest_digest", "expected_image_id",
-    "private_literals_configured", "private_literal_count", "literal_matching_policy",
-    "layers", "oci_graph", "outer", "confidentiality_policy", "helper_summary",
-    "literal_engine", "input_snapshot_receipts", "helper_joined", "records",
-    "scanned_bytes", "verified_zero_bytes", "regular_files", "regular_bytes", "findings",
-})
+_STRUCTURAL_RULES = frozenset(
+    {"nonzero_tar_padding", "nonzero_tar_trailer", "pkcs12-file"}
+)
+_CONTEXT = frozenset(
+    {"scope", "layer_ordinal", "entry_ordinal", "tar_offset", "compressed_offset"}
+)
+_REPORT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "valid",
+        "complete",
+        "authorization_sha256",
+        "archive_sha256",
+        "image_config_digest",
+        "image_manifest_digest",
+        "expected_image_id",
+        "private_literals_configured",
+        "private_literal_count",
+        "literal_matching_policy",
+        "layers",
+        "oci_graph",
+        "outer",
+        "confidentiality_policy",
+        "helper_summary",
+        "literal_engine",
+        "input_snapshot_receipts",
+        "helper_joined",
+        "records",
+        "scanned_bytes",
+        "verified_zero_bytes",
+        "regular_files",
+        "regular_bytes",
+        "findings",
+    }
+)
 
 
 class _DiagnosticError(ValueError):
@@ -89,7 +120,10 @@ def _finding_class(finding, size):
     regex = {"rule_id", "start_byte", "end_byte", "start_line", "end_line", "views"}
     if set(finding) == native:
         start, end = _integer(finding["start_line"]), _integer(finding["end_line"])
-        if type(finding["rule_id"]) is not str or re.fullmatch(r"[a-z0-9_-]+", finding["rule_id"]) is None:
+        if (
+            type(finding["rule_id"]) is not str
+            or re.fullmatch(r"[a-z0-9_-]+", finding["rule_id"]) is None
+        ):
             raise _DiagnosticError("invalid_native_rule")
         if size == 0 or start > end or end > size:
             raise _DiagnosticError("invalid_native_range")
@@ -102,11 +136,23 @@ def _finding_class(finding, size):
         raise _DiagnosticError("invalid_finding_range")
     if not (1 <= finding["start_line"] <= finding["end_line"] <= size + 1):
         raise _DiagnosticError("invalid_finding_lines")
-    if finding["views"] not in (["line"], ["record"], ["line", "record"], ["record", "line"]):
+    if finding["views"] not in (
+        ["line"],
+        ["record"],
+        ["line", "record"],
+        ["record", "line"],
+    ):
         raise _DiagnosticError("invalid_finding_views")
-    if type(finding["rule_id"]) is not str or re.fullmatch(r"[a-z0-9_-]+", finding["rule_id"]) is None:
+    if (
+        type(finding["rule_id"]) is not str
+        or re.fullmatch(r"[a-z0-9_-]+", finding["rule_id"]) is None
+    ):
         raise _DiagnosticError("invalid_regex_rule")
-    return finding["rule_id"] if finding["rule_id"] in _RULE_IDENTIFIERS[:2] else "unclassified"
+    return (
+        finding["rule_id"]
+        if finding["rule_id"] in _RULE_IDENTIFIERS[:2]
+        else "unclassified"
+    )
 
 
 def _record(row, expected_ordinal, counts, fingerprints, confidentiality, literals):
@@ -133,9 +179,12 @@ def _record(row, expected_ordinal, counts, fingerprints, confidentiality, litera
         counts["finding", rule] += 1
         counts["kind-findings", kind] += 1
     for literal in literals:
-        if (literal["record_ordinal"] != expected_ordinal
-                or {key: literal[key] for key in _context(literal)} != {key: row[key] for key in context}
-                or not 0 <= literal["byte_start"] < literal["byte_end"] <= size):
+        if (
+            literal["record_ordinal"] != expected_ordinal
+            or {key: literal[key] for key in _context(literal)}
+            != {key: row[key] for key in context}
+            or not 0 <= literal["byte_start"] < literal["byte_end"] <= size
+        ):
             raise _DiagnosticError("literal_record_binding")
         counts["kind-findings", kind] += 1
     finding_count = len(row["findings"]) + len(literals)
@@ -147,8 +196,15 @@ def _record(row, expected_ordinal, counts, fingerprints, confidentiality, litera
 def _standalone_finding(row, counts):
     context = _context(row)
     rule = row.get("rule_id")
-    literal = {"type", "rule_id", "record_ordinal", "literal_index",
-               "literal_sha256", "byte_start", "byte_end"} | context
+    literal = {
+        "type",
+        "rule_id",
+        "record_ordinal",
+        "literal_index",
+        "literal_sha256",
+        "byte_start",
+        "byte_end",
+    } | context
     structural = {"type", "rule_id"} | context
     if rule == "private_literal" and set(row) == literal:
         _integer(row["record_ordinal"], positive=True)
@@ -177,8 +233,15 @@ def _auxiliary(row, counts):
 
 
 def _confidentiality(row):
-    expected = {"type", "record_ordinal", "policy_sha256", "sha256", "bytes",
-                "line_count", "composed_findings"}
+    expected = {
+        "type",
+        "record_ordinal",
+        "policy_sha256",
+        "sha256",
+        "bytes",
+        "line_count",
+        "composed_findings",
+    }
     if set(row) != expected:
         raise _DiagnosticError("invalid_confidentiality_row")
     _integer(row["record_ordinal"], positive=True)
@@ -236,16 +299,29 @@ def _ledger(raw):
 
 def _report(raw, counts, records):
     report = _json(raw)
-    if (type(report) is not dict or set(report) != _REPORT_FIELDS
-            or report.get("schema_version") != "npa.image-byte-scan.v1"):
+    if (
+        type(report) is not dict
+        or set(report) != _REPORT_FIELDS
+        or report.get("schema_version") != "npa.image-byte-scan.v1"
+    ):
         raise _DiagnosticError("invalid_report_schema")
     for name in ("complete", "valid", "helper_joined"):
         if type(report.get(name)) is not bool:
             raise _DiagnosticError("invalid_report_boolean")
-    for name in ("records", "scanned_bytes", "verified_zero_bytes", "regular_files",
-                 "regular_bytes", "findings"):
+    for name in (
+        "records",
+        "scanned_bytes",
+        "verified_zero_bytes",
+        "regular_files",
+        "regular_bytes",
+        "findings",
+    ):
         _integer(report.get(name))
-    if report["complete"] is not True or report["helper_joined"] is not True or "failure_code" in report:
+    if (
+        report["complete"] is not True
+        or report["helper_joined"] is not True
+        or "failure_code" in report
+    ):
         raise _DiagnosticError("partial_report")
     total = sum(counts["finding", group] for group in _FINDING_GROUPS)
     if report["records"] != records or report["findings"] != total:
@@ -262,13 +338,21 @@ def _report(raw, counts, records):
     if report["verified_zero_bytes"] != counts["bytes", "verified_zero_range"]:
         raise _DiagnosticError("report_zero_bytes")
     helper = report.get("helper_summary")
-    if type(helper) is not dict or set(helper) != {"type", "files", "bytes", "findings"}:
+    if type(helper) is not dict or set(helper) != {
+        "type",
+        "files",
+        "bytes",
+        "findings",
+    }:
         raise _DiagnosticError("invalid_helper_summary")
     for name in ("files", "bytes", "findings"):
         _integer(helper[name])
-    if (helper["type"] != "summary" or helper["files"] != records
-            or helper["bytes"] != scanned
-            or helper["findings"] != counts["finding", "native-credential"]):
+    if (
+        helper["type"] != "summary"
+        or helper["files"] != records
+        or helper["bytes"] != scanned
+        or helper["findings"] != counts["finding", "native-credential"]
+    ):
         raise _DiagnosticError("helper_ledger_population")
 
 
@@ -292,32 +376,53 @@ def _read(path):
 
 def _artifact(name, raw):
     if raw is None:
-        print(f"NCore OCI byte-scan-evidence artifact={name} available=false", file=sys.stderr, flush=True)
+        print(
+            f"NCore OCI byte-scan-evidence artifact={name} available=false",
+            file=sys.stderr,
+            flush=True,
+        )
         return
     digest = hashlib.sha256(raw).hexdigest()
-    print(f"NCore OCI byte-scan-evidence artifact={name} available=true sha256={digest}",
-          file=sys.stderr, flush=True)
+    print(
+        f"NCore OCI byte-scan-evidence artifact={name} available=true sha256={digest}",
+        file=sys.stderr,
+        flush=True,
+    )
 
 
 def _counts(counts):
     for rule in _RULE_IDENTIFIERS:
-        print(f"NCore OCI byte-scan-detail category=rule rule={rule} "
-              f"findings={counts['finding', rule]}", file=sys.stderr, flush=True)
+        print(
+            f"NCore OCI byte-scan-detail category=rule rule={rule} "
+            f"findings={counts['finding', rule]}",
+            file=sys.stderr,
+            flush=True,
+        )
     for finding_class in _FINDING_CLASSES:
-        print("NCore OCI byte-scan-detail category=finding-class "
-              f"class={finding_class} findings={counts['finding', finding_class]}",
-              file=sys.stderr, flush=True)
+        print(
+            "NCore OCI byte-scan-detail category=finding-class "
+            f"class={finding_class} findings={counts['finding', finding_class]}",
+            file=sys.stderr,
+            flush=True,
+        )
     for kind in (*_RECORD_KINDS, *_ROW_KINDS, "unclassified"):
         findings = counts["kind-findings", kind]
-        print(f"NCore OCI byte-scan-detail category=record-kind kind={kind} "
-              f"records={counts['kind', kind]} findings={findings}", file=sys.stderr, flush=True)
+        print(
+            f"NCore OCI byte-scan-detail category=record-kind kind={kind} "
+            f"records={counts['kind', kind]} findings={findings}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _fingerprints(fingerprints):
     for digest, size, findings in sorted(fingerprints):
-        print("NCore OCI byte-scan-detail category=affected-regular-content "
-              f"content-fingerprint={digest} bytes={size} findings={findings}",
-              file=sys.stderr, flush=True)
+        print(
+            "NCore OCI byte-scan-detail category=affected-regular-content "
+            f"content-fingerprint={digest} bytes={size} findings={findings}",
+            file=sys.stderr,
+            flush=True,
+        )
 
 
 def _emit_raw(directory):
@@ -335,7 +440,9 @@ def _emit_raw(directory):
     _artifact("raw-report", report)
     _artifact("raw-ledger", ledger)
     try:
-        counts, fingerprints, records = _ledger(ledger) if ledger is not None else ({}, [], 0)
+        counts, fingerprints, records = (
+            _ledger(ledger) if ledger is not None else ({}, [], 0)
+        )
         if report is None or ledger is None:
             raise _DiagnosticError("missing_diagnostic_evidence")
         _report(report, counts, records)

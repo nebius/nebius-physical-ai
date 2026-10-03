@@ -15,7 +15,9 @@ import sys
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Extract a sample observation from a LeRobotDataset.")
+    parser = argparse.ArgumentParser(
+        description="Extract a sample observation from a LeRobotDataset."
+    )
     parser.add_argument("--dataset", required=True, help="HF dataset repo ID.")
     parser.add_argument("--index", type=int, default=0, help="Frame index to extract.")
     parser.add_argument("--output", required=True, help="Output JSON file path.")
@@ -24,7 +26,9 @@ def main() -> int:
     try:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
     except ImportError:
-        print("Error: lerobot is not installed. Run: pip install lerobot", file=sys.stderr)
+        print(
+            "Error: lerobot is not installed. Run: pip install lerobot", file=sys.stderr
+        )
         return 1
 
     print(f"Loading dataset: {args.dataset}")

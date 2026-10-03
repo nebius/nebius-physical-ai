@@ -16,11 +16,12 @@ ensure-ingress  Explain the authenticated local access route for FiftyOne.
 register-byovm  Register an existing VM for authenticated SSH access to FiftyOne.
 list  List configured FiftyOne workbenches.
 cleanup-partial  Clean up orphaned Terraform resources from an interrupted FiftyOne deploy.
-deploy  Deploy or destroy a FiftyOne dataset curation VM.
+deploy  Deploy or destroy a FiftyOne VM with selected-project storage.
 launch  Start the FiftyOne app over SSH and print the browser URL.
 curate  Curate a dataset and export a LeRobotDataset on Nebius Serverless.
 curate-augmented  Run REAL FiftyOne Brain curation over a Physical AI Data Factory run.
 review-augmented  Export all accepted or rejected PAIDF candidates for real FiftyOne review.
+export-lerobot-subtasks  Export ``subtask:`` timeline tags into a derived LeRobot dataset.
 eval  Evaluate checkpoint outputs and write FiftyOne curation metrics.
 load-dataset  Load a dataset into FiftyOne on the VM.
 restart  Restart the FiftyOne app or container without redeploying.
@@ -46,11 +47,12 @@ datasets  Inspect datasets through the FiftyOne GraphQL API.
 | `register-byovm` | Register an existing VM for authenticated SSH access to FiftyOne. |
 | `list` | List configured FiftyOne workbenches. |
 | `cleanup-partial` | Clean up orphaned Terraform resources from an interrupted FiftyOne deploy. |
-| `deploy` | Deploy or destroy a FiftyOne dataset curation VM. |
+| `deploy` | Deploy or destroy a FiftyOne VM with selected-project storage. |
 | `launch` | Start the FiftyOne app over SSH and print the browser URL. |
 | `curate` | Curate a dataset and export a LeRobotDataset on Nebius Serverless. |
 | `curate-augmented` | Run REAL FiftyOne Brain curation over a Physical AI Data Factory run. |
 | `review-augmented` | Export all accepted or rejected PAIDF candidates for real FiftyOne review. |
+| `export-lerobot-subtasks` | Export ``subtask:`` timeline tags into a derived LeRobot dataset. |
 | `eval` | Evaluate checkpoint outputs and write FiftyOne curation metrics. |
 | `load-dataset` | Load a dataset into FiftyOne on the VM. |
 | `restart` | Restart the FiftyOne app or container without redeploying. |

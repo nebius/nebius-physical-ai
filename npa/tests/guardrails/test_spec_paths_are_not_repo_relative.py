@@ -66,7 +66,9 @@ CASES = _argv_values()
 
 
 def test_there_are_argv_values_to_check() -> None:
-    assert len(CASES) >= 50, f"expected many argv values across the catalog, got {len(CASES)}"
+    assert len(CASES) >= 50, (
+        f"expected many argv values across the catalog, got {len(CASES)}"
+    )
 
 
 @pytest.mark.parametrize(
@@ -74,7 +76,9 @@ def test_there_are_argv_values_to_check() -> None:
     CASES,
     ids=[f"{name}:{state}:{index}" for index, (name, state, _) in enumerate(CASES)],
 )
-def test_argv_value_is_not_a_repo_relative_path(spec_name: str, state: str, value: str) -> None:
+def test_argv_value_is_not_a_repo_relative_path(
+    spec_name: str, state: str, value: str
+) -> None:
     candidate = Path(value)
     if candidate.is_absolute() or "://" in value:
         return
@@ -106,7 +110,9 @@ def test_the_guardrail_would_have_caught_the_original_bugs(original: str) -> Non
 def test_inline_programs_are_not_mistaken_for_paths() -> None:
     """Several specs pass `python -c` source, which contains "/" but is not a path."""
 
-    program = "import json;from pathlib import Path;Path('/tmp/x.json').write_text('{}')"
+    program = (
+        "import json;from pathlib import Path;Path('/tmp/x.json').write_text('{}')"
+    )
 
     assert not _looks_like_a_path(program)
     assert not _looks_like_a_path("x" * (MAX_PATH_LENGTH + 1) + "/y")

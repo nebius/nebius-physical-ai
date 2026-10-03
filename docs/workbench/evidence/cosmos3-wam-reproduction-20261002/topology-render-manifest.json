@@ -1,0 +1,12 @@
+{
+  "matplotlib": "3.11.2",
+  "sha256": {
+    "plot-topology.py": "17459bd9dfd0152ec543ba58ddddea50078891933479c01b3f2e3b150c892267",
+    "readiness.json": "5ae1fafb9364a0f3a264e9b255b373ea8710194f138429500e61a817ba66e021",
+    "inputs.json": "011216253b2b043283a13a60f94b46dd1ec82ef7b6332ca6d7f27ccebbb58e73",
+    "reproduction-topology.png": "19452279ed7fbf292dbb35e756b70d23440c415c114540050303adc075fef8c4",
+    "reproduction-topology.svg": "b310060906947e1ae851f094f4f77ee043399fe09918df6d98e46b5eaff08033"
+  },
+  "second_render_identical": true,
+  "visually_inspected": true
+}

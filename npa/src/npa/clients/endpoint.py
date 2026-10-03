@@ -40,7 +40,11 @@ def _port_from_url(url: str) -> int:
 def _replace_host_port(url: str, host: str, port: int) -> str:
     parsed = urlparse(url)
     scheme = parsed.scheme or "http"
-    netloc = f"[{host}]:{port}" if ":" in host and not host.startswith("[") else f"{host}:{port}"
+    netloc = (
+        f"[{host}]:{port}"
+        if ":" in host and not host.startswith("[")
+        else f"{host}:{port}"
+    )
     return urlunparse((scheme, netloc, parsed.path.rstrip("/"), "", "", "")).rstrip("/")
 
 
@@ -119,28 +123,43 @@ def _open_ssh_forward(cfg: Any, local_port: int, remote_port: int) -> subprocess
 
 
 def _wait_for_ssh_forward(
-    proc: subprocess.Popen, local_port: int, remote_port: int, *, timeout: float = 10.0,
+    proc: subprocess.Popen,
+    local_port: int,
+    remote_port: int,
+    *,
+    timeout: float = 10.0,
 ) -> None:
     """Ask the authenticated master to bind, and require its success response."""
     deadline = time.monotonic() + timeout
     while not os.path.exists(proc._npa_ssh_control_path):
         if proc.poll() is not None:
-            raise EndpointError("SSH authentication or host verification failed before forwarding")
+            raise EndpointError(
+                "SSH authentication or host verification failed before forwarding"
+            )
         if time.monotonic() >= deadline:
             raise EndpointError("SSH control connection did not become ready")
         time.sleep(0.05)
     try:
         result = subprocess.run(
             [
-                "ssh", "-S", proc._npa_ssh_control_path, "-O", "forward",
-                "-L", f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}",
+                "ssh",
+                "-S",
+                proc._npa_ssh_control_path,
+                "-O",
+                "forward",
+                "-L",
+                f"127.0.0.1:{local_port}:127.0.0.1:{remote_port}",
                 proc._npa_ssh_target,
             ],
-            capture_output=True, text=True, check=False,
+            capture_output=True,
+            text=True,
+            check=False,
             timeout=max(0.01, deadline - time.monotonic()),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise EndpointError("Unable to confirm forwarding through the authenticated SSH master") from exc
+        raise EndpointError(
+            "Unable to confirm forwarding through the authenticated SSH master"
+        ) from exc
     if result.returncode != 0 or proc.poll() is not None:
         raise EndpointError("SSH could not bind the requested local forwarding port")
 
@@ -243,7 +262,9 @@ def _ssh_service_endpoint(
         or not getattr(cfg.ssh, "user", "")
         or not getattr(cfg.ssh, "key_path", "")
     ):
-        raise EndpointError("SSH endpoint strategy requires ssh host, user, and key path")
+        raise EndpointError(
+            "SSH endpoint strategy requires ssh host, user, and key path"
+        )
 
     local_port = _free_local_port()
     proc = _open_ssh_forward(cfg, local_port, remote_port)
@@ -287,11 +308,19 @@ def service_endpoint(
 
     if require_ssh:
         with _ssh_service_endpoint(
-            cfg, base_url=base_url, default_port=default_port,
-            service_port=service_port, allow_existing_local_port=False,
+            cfg,
+            base_url=base_url,
+            default_port=default_port,
+            service_port=service_port,
+            allow_existing_local_port=False,
             require_new_forward=True,
         ) as active:
-            remote_port = int(service_port or getattr(cfg, "service_port", 0) or _port_from_url(base_url) or default_port)
+            remote_port = int(
+                service_port
+                or getattr(cfg, "service_port", 0)
+                or _port_from_url(base_url)
+                or default_port
+            )
             if not _is_ssh_strategy(strategy) or not service_port_configured:
                 _persist_ssh_strategy(cfg, remote_port)
             yield active

@@ -45,14 +45,21 @@ def test_another_owner_is_refused_even_with_private_mode(tmp_path, monkeypatch):
     root = tmp_path / "results"
     root.mkdir(mode=0o700)
     info = root.lstat()
-    monkeypatch.setattr(Path, "lstat", lambda self: SimpleNamespace(
-        st_mode=info.st_mode, st_uid=os.getuid() + 1,
-    ))
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        lambda self: SimpleNamespace(
+            st_mode=info.st_mode,
+            st_uid=os.getuid() + 1,
+        ),
+    )
     with pytest.raises(NanoVideoError, match="owned directory"):
         _private_root(root)
 
 
-def test_recovery_preserves_private_artifacts_and_refuses_duplicate_generation(tmp_path, monkeypatch):
+def test_recovery_preserves_private_artifacts_and_refuses_duplicate_generation(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("NPA_COSMOS3_VIDEO_RECOVERY_DIR", str(tmp_path))
     root = recovery._private_root("s3://example-bucket/result", fresh=True)
     write_json(root / "result.json", {"status": "prepared"})
@@ -89,8 +96,13 @@ def test_recovery_refuses_another_owner(tmp_path, monkeypatch):
     monkeypatch.setenv("NPA_COSMOS3_VIDEO_RECOVERY_DIR", str(tmp_path))
     root = recovery._private_root("s3://example-bucket/result", fresh=True)
     info = root.lstat()
-    monkeypatch.setattr(Path, "lstat", lambda self: SimpleNamespace(
-        st_mode=info.st_mode, st_uid=os.getuid() + 1,
-    ))
+    monkeypatch.setattr(
+        Path,
+        "lstat",
+        lambda self: SimpleNamespace(
+            st_mode=info.st_mode,
+            st_uid=os.getuid() + 1,
+        ),
+    )
     with pytest.raises(recovery.AugmentationClientError, match="owned and private"):
         recovery._private_root("s3://example-bucket/result", fresh=False)

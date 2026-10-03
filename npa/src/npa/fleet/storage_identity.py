@@ -52,8 +52,11 @@ class StorageIdentity:
 
 
 def resolve_fleet_targets(
-    spec: FleetSpec, *, only_projects: list[str] | None = None,
-    only_clusters: list[str] | None = None, project_prefix: str | None = None,
+    spec: FleetSpec,
+    *,
+    only_projects: list[str] | None = None,
+    only_clusters: list[str] | None = None,
+    project_prefix: str | None = None,
     profile: str | None = None,
 ) -> list[tuple[ProjectSpec, ClusterSpec]]:
     """Select exact declared Fleet targets.
@@ -73,21 +76,31 @@ def resolve_fleet_targets(
     _validate_spec(spec)
     prefix = spec.project_prefix if project_prefix is None else project_prefix
     projects = _selected_projects(spec, only_projects, prefix)
-    targets = [(project, cluster) for project in projects for cluster in project.clusters]
+    targets = [
+        (project, cluster) for project in projects for cluster in project.clusters
+    ]
     if only_clusters:
         names = {cluster.name for _, cluster in targets}
         if set(only_clusters) - names:
-            raise StorageIdentityError("cluster selector has no target in selected projects")
-        targets = [(project, cluster) for project, cluster in targets
-                   if cluster.name in only_clusters]
+            raise StorageIdentityError(
+                "cluster selector has no target in selected projects"
+            )
+        targets = [
+            (project, cluster)
+            for project, cluster in targets
+            if cluster.name in only_clusters
+        ]
     if not targets:
         raise StorageIdentityError("verification selected no Fleet targets")
     return targets
 
 
 def resolve_storage_targets(
-    spec: FleetSpec, *, only_projects: list[str] | None = None,
-    only_clusters: list[str] | None = None, project_prefix: str | None = None,
+    spec: FleetSpec,
+    *,
+    only_projects: list[str] | None = None,
+    only_clusters: list[str] | None = None,
+    project_prefix: str | None = None,
     profile: str | None = None,
 ) -> list[tuple[ProjectSpec, ClusterSpec]]:
     """Select storage-verification targets, including disabled filesystems.
@@ -104,25 +117,39 @@ def resolve_storage_targets(
         StorageIdentityError: A selector does not match the selected scope.
     """
     return resolve_fleet_targets(
-        spec, only_projects=only_projects, only_clusters=only_clusters,
-        project_prefix=project_prefix, profile=profile,
+        spec,
+        only_projects=only_projects,
+        only_clusters=only_clusters,
+        project_prefix=project_prefix,
+        profile=profile,
     )
 
 
 def _selected_projects(spec, only_projects, prefix):
     if not only_projects:
         return spec.projects
-    names = {name for project in spec.projects
-             for name in (project.key(), project.display_name(prefix))}
+    names = {
+        name
+        for project in spec.projects
+        for name in (project.key(), project.display_name(prefix))
+    }
     if set(only_projects) - names:
         raise StorageIdentityError("project selector has no declared Fleet target")
-    return [project for project in spec.projects if project.key() in only_projects
-            or project.display_name(prefix) in only_projects]
+    return [
+        project
+        for project in spec.projects
+        if project.key() in only_projects
+        or project.display_name(prefix) in only_projects
+    ]
 
 
 def resolve_fleet_identity(
-    spec: FleetSpec, project: ProjectSpec, cluster: ClusterSpec, *,
-    profile: str | None = None, project_prefix: str | None = None,
+    spec: FleetSpec,
+    project: ProjectSpec,
+    cluster: ClusterSpec,
+    *,
+    profile: str | None = None,
+    project_prefix: str | None = None,
 ) -> StorageIdentity:
     """Bind a registered kubeconfig to a freshly verified Fleet target.
 
@@ -146,7 +173,9 @@ def resolve_fleet_identity(
     selected_profile, tenant = _profile_scope(spec, profile)
     region = project.region or spec.region or registered.region
     binary = _provider_binary()
-    project_proof = _verify_project(binary, selected_profile, registered, tenant, region)
+    project_proof = _verify_project(
+        binary, selected_profile, registered, tenant, region
+    )
     _verify_project_name(spec, project, project_proof, project_prefix)
     cluster_proof = _verify_cluster(binary, selected_profile, registered, cluster)
     kubeconfig = _registered_kubeconfig(registered)
@@ -154,13 +183,26 @@ def resolve_fleet_identity(
     evidence = _identity_evidence(project_proof, cluster_proof, connection)
     digest = hashlib.sha256(evidence.encode()).hexdigest()
     snapshot = _connection_snapshot(registered.name, connection)
-    return StorageIdentity(kubeconfig, registered.project_id, registered.cluster_id,
-                           tenant, region, selected_profile, digest, snapshot, evidence)
+    return StorageIdentity(
+        kubeconfig,
+        registered.project_id,
+        registered.cluster_id,
+        tenant,
+        region,
+        selected_profile,
+        digest,
+        snapshot,
+        evidence,
+    )
 
 
 def resolve_storage_identity(
-    spec: FleetSpec, project: ProjectSpec, cluster: ClusterSpec, *,
-    profile: str | None = None, project_prefix: str | None = None,
+    spec: FleetSpec,
+    project: ProjectSpec,
+    cluster: ClusterSpec,
+    *,
+    profile: str | None = None,
+    project_prefix: str | None = None,
 ) -> StorageIdentity:
     """Bind a filesystem-enabled Fleet target to verified provider identity.
 
@@ -179,14 +221,21 @@ def resolve_storage_identity(
     if not enabled:
         raise StorageIdentityError("storage identity requires an enabled filesystem")
     return resolve_fleet_identity(
-        spec, project, cluster, profile=profile, project_prefix=project_prefix,
+        spec,
+        project,
+        cluster,
+        profile=profile,
+        project_prefix=project_prefix,
     )
 
 
 def _identity_evidence(project, cluster, connection):
     connection_bytes = json.dumps(connection, sort_keys=True).encode()
-    evidence = {"project": project, "cluster": cluster,
-                "connection_sha256": hashlib.sha256(connection_bytes).hexdigest()}
+    evidence = {
+        "project": project,
+        "cluster": cluster,
+        "connection_sha256": hashlib.sha256(connection_bytes).hexdigest(),
+    }
     return json.dumps(evidence, sort_keys=True)
 
 
@@ -207,23 +256,30 @@ def storage_client(identity: StorageIdentity) -> Iterator[Any]:
     try:
         snapshot = json.loads(identity.configuration_json)
     except ValueError as exc:
-        raise StorageIdentityError("verified connection snapshot is unavailable") from exc
+        raise StorageIdentityError(
+            "verified connection snapshot is unavailable"
+        ) from exc
     if not isinstance(snapshot, dict):
         raise StorageIdentityError("verified connection snapshot is malformed")
     _isolate_exec_environment(snapshot, identity.profile)
     with tempfile.TemporaryDirectory(prefix="npa-storage-client-") as directory:
         _scope_certificate(snapshot, Path(directory))
-        with config.new_client_from_config_dict(snapshot, persist_config=False,
-                                               temp_file_path=directory) as api:
+        with config.new_client_from_config_dict(
+            snapshot, persist_config=False, temp_file_path=directory
+        ) as api:
             yield api
 
 
 def _scope_certificate(snapshot, directory):
     try:
         connection = snapshot["clusters"][0]["cluster"]
-        certificate = base64.b64decode(connection.pop("certificate-authority-data"), validate=True)
+        certificate = base64.b64decode(
+            connection.pop("certificate-authority-data"), validate=True
+        )
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise StorageIdentityError("verified certificate authority is malformed") from exc
+        raise StorageIdentityError(
+            "verified certificate authority is malformed"
+        ) from exc
     path = directory / "certificate-authority"
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "wb") as stream:
@@ -233,26 +289,38 @@ def _scope_certificate(snapshot, directory):
 
 
 def _connection_snapshot(context, connection):
-    configuration = {"apiVersion": "v1", "kind": "Config", "current-context": context,
-                     "contexts": [{"name": context, "context": connection["context"]}],
-                     "clusters": [{"name": connection["context"]["cluster"],
-                                   "cluster": connection["cluster"]}],
-                     "users": [{"name": connection["context"]["user"],
-                                "user": connection["user"]}]}
+    configuration = {
+        "apiVersion": "v1",
+        "kind": "Config",
+        "current-context": context,
+        "contexts": [{"name": context, "context": connection["context"]}],
+        "clusters": [
+            {"name": connection["context"]["cluster"], "cluster": connection["cluster"]}
+        ],
+        "users": [{"name": connection["context"]["user"], "user": connection["user"]}],
+    }
     return json.dumps(configuration, sort_keys=True)
 
 
 def _isolate_exec_environment(snapshot, profile):
     try:
         execution = snapshot["users"][0]["user"]["exec"]
-        environment = {entry["name"]: entry["value"] for entry in execution.get("env") or []}
+        environment = {
+            entry["name"]: entry["value"] for entry in execution.get("env") or []
+        }
     except (KeyError, IndexError, TypeError) as exc:
         raise StorageIdentityError("verified exec identity is malformed") from exc
-    for name in ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE",
-                 "TF_VAR_iam_token"):
+    for name in (
+        "NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN",
+        "NEBIUS_IAM_TOKEN_FILE",
+        "TF_VAR_iam_token",
+    ):
         environment[name] = ""
     environment.update(NEBIUS_PROFILE=profile, NPA_NEBIUS_PROFILE=profile)
-    execution["env"] = [{"name": name, "value": value} for name, value in environment.items()]
+    execution["env"] = [
+        {"name": name, "value": value} for name, value in environment.items()
+    ]
 
 
 def _validate_spec(spec):
@@ -267,7 +335,9 @@ def _read_mapping(path: Path, *, yaml_document: bool = False) -> dict[str, Any]:
         text = path.read_text()
         payload = yaml.safe_load(text) if yaml_document else json.loads(text)
     except (OSError, ValueError, yaml.YAMLError) as exc:
-        raise StorageIdentityError("identity configuration is unavailable or malformed") from exc
+        raise StorageIdentityError(
+            "identity configuration is unavailable or malformed"
+        ) from exc
     if not isinstance(payload, dict):
         raise StorageIdentityError("identity configuration is not an object")
     return payload
@@ -277,30 +347,55 @@ def _registered_target(spec, project, cluster):
     context = f"fleet-{spec.name}-{project.key()}-{cluster.name}"
     payload = _read_mapping(cluster_state.state_file(context))
     metadata = _read_mapping(cluster_state.metadata_file(context))
-    required = {"managed_by": "npa fleet", "fleet": spec.name, "project_key": project.key()}
+    required = {
+        "managed_by": "npa fleet",
+        "fleet": spec.name,
+        "project_key": project.key(),
+    }
     if any(metadata.get(key) != value for key, value in required.items()):
-        raise StorageIdentityError("registered target does not belong to this Fleet selection")
+        raise StorageIdentityError(
+            "registered target does not belong to this Fleet selection"
+        )
     try:
         registered = cluster_state.ClusterState.from_dict(payload)
     except (ValueError, RuntimeError) as exc:
         raise StorageIdentityError("registered cluster identity is malformed") from exc
-    matches = (registered.name == context and registered.provider_name == cluster.name
-               and registered.node_count == cluster.cpu_count() + cluster.gpu_count()
-               and bool(registered.project_id) and bool(registered.cluster_id))
-    if not matches or (project.project_id and registered.project_id != project.project_id):
-        raise StorageIdentityError("registered cluster identity differs from the Fleet declaration")
+    matches = (
+        registered.name == context
+        and registered.provider_name == cluster.name
+        and registered.node_count == cluster.cpu_count() + cluster.gpu_count()
+        and bool(registered.project_id)
+        and bool(registered.cluster_id)
+    )
+    if not matches or (
+        project.project_id and registered.project_id != project.project_id
+    ):
+        raise StorageIdentityError(
+            "registered cluster identity differs from the Fleet declaration"
+        )
     return registered
 
 
 def _profile_scope(spec, explicit):
-    configuration = _read_mapping(Path.home() / ".nebius" / "config.yaml", yaml_document=True)
+    configuration = _read_mapping(
+        Path.home() / ".nebius" / "config.yaml", yaml_document=True
+    )
     selected = explicit or spec.profile or os.environ.get("NPA_NEBIUS_PROFILE")
-    selected = selected or os.environ.get("NEBIUS_PROFILE") or configuration.get("default")
+    selected = (
+        selected or os.environ.get("NEBIUS_PROFILE") or configuration.get("default")
+    )
     profiles = configuration.get("profiles", {})
     entry = profiles.get(selected, {}) if isinstance(profiles, dict) else {}
     tenant = entry.get("tenant-id") if isinstance(entry, dict) else None
-    if not isinstance(selected, str) or not selected or not isinstance(tenant, str) or not tenant:
-        raise StorageIdentityError("authentication profile has no authoritative tenant scope")
+    if (
+        not isinstance(selected, str)
+        or not selected
+        or not isinstance(tenant, str)
+        or not tenant
+    ):
+        raise StorageIdentityError(
+            "authentication profile has no authoritative tenant scope"
+        )
     if spec.tenant_id and spec.tenant_id != tenant:
         raise StorageIdentityError("authentication profile and Fleet tenant differ")
     return selected, tenant
@@ -315,8 +410,12 @@ def _provider_binary():
 
 def _provider_environment(profile):
     environment = os.environ.copy()
-    for name in ("NEBIUS_IAM_TOKEN", "NPA_NEBIUS_IAM_TOKEN", "NEBIUS_IAM_TOKEN_FILE",
-                 "TF_VAR_iam_token"):
+    for name in (
+        "NEBIUS_IAM_TOKEN",
+        "NPA_NEBIUS_IAM_TOKEN",
+        "NEBIUS_IAM_TOKEN_FILE",
+        "TF_VAR_iam_token",
+    ):
         environment.pop(name, None)
     environment.update(NEBIUS_PROFILE=profile, NPA_NEBIUS_PROFILE=profile)
     return environment
@@ -324,10 +423,15 @@ def _provider_environment(profile):
 
 def _provider_command(binary, profile, arguments):
     try:
-        result = run_capture([binary, "--profile", profile, *arguments], check=False,
-                             env=_provider_environment(profile))
+        result = run_capture(
+            [binary, "--profile", profile, *arguments],
+            check=False,
+            env=_provider_environment(profile),
+        )
     except BackendCommandError as exc:
-        raise StorageIdentityError("provider identity operation could not complete") from exc
+        raise StorageIdentityError(
+            "provider identity operation could not complete"
+        ) from exc
     if result.returncode:
         raise StorageIdentityError("provider identity operation failed")
     return result
@@ -352,25 +456,42 @@ def _mapping(payload, key):
 
 
 def _verify_project(binary, profile, registered, tenant, region):
-    payload = _provider_document(binary, profile,
-                                 ["iam", "project", "get", "--id", registered.project_id])
+    payload = _provider_document(
+        binary, profile, ["iam", "project", "get", "--id", registered.project_id]
+    )
     metadata = _mapping(payload, "metadata")
     status = _mapping(payload, "status")
     declared = _mapping(payload, "spec")
-    actual_region = declared.get("region") or status.get("region") or metadata.get("region")
+    actual_region = (
+        declared.get("region") or status.get("region") or metadata.get("region")
+    )
     state = status.get("container_state") or status.get("project_state")
-    matches = (metadata.get("id") == registered.project_id
-               and (metadata.get("parent_id") or metadata.get("parentId")) == tenant
-               and bool(region) and actual_region == region and registered.region == region
-               and state == "ACTIVE" and status.get("suspension_state", "NONE") == "NONE")
+    matches = (
+        metadata.get("id") == registered.project_id
+        and (metadata.get("parent_id") or metadata.get("parentId")) == tenant
+        and bool(region)
+        and actual_region == region
+        and registered.region == region
+        and state == "ACTIVE"
+        and status.get("suspension_state", "NONE") == "NONE"
+    )
     if not matches or _deleting(metadata):
-        raise StorageIdentityError("provider project identity or active state does not match")
+        raise StorageIdentityError(
+            "provider project identity or active state does not match"
+        )
     return payload
 
 
 def _deleting(metadata):
-    return any(metadata.get(key) for key in
-               ("deleted_at", "deletedAt", "deletion_timestamp", "deletionTimestamp"))
+    return any(
+        metadata.get(key)
+        for key in (
+            "deleted_at",
+            "deletedAt",
+            "deletion_timestamp",
+            "deletionTimestamp",
+        )
+    )
 
 
 def _verify_project_name(spec, project, payload, prefix):
@@ -378,19 +499,28 @@ def _verify_project_name(spec, project, payload, prefix):
         return
     selected_prefix = spec.project_prefix if prefix is None else prefix
     if payload["metadata"].get("name") != project.display_name(selected_prefix):
-        raise StorageIdentityError("provider project name differs from the Fleet declaration")
+        raise StorageIdentityError(
+            "provider project name differs from the Fleet declaration"
+        )
 
 
 def _verify_cluster(binary, profile, registered, cluster):
-    payload = _provider_document(binary, profile,
-                                 ["mk8s", "cluster", "get", "--id", registered.cluster_id])
+    payload = _provider_document(
+        binary, profile, ["mk8s", "cluster", "get", "--id", registered.cluster_id]
+    )
     metadata = _mapping(payload, "metadata")
     status = _mapping(payload, "status")
-    matches = (metadata.get("id") == registered.cluster_id
-               and (metadata.get("parent_id") or metadata.get("parentId")) == registered.project_id
-               and metadata.get("name") == cluster.name and status.get("state") == "RUNNING")
+    matches = (
+        metadata.get("id") == registered.cluster_id
+        and (metadata.get("parent_id") or metadata.get("parentId"))
+        == registered.project_id
+        and metadata.get("name") == cluster.name
+        and status.get("state") == "RUNNING"
+    )
     if not matches or _deleting(metadata):
-        raise StorageIdentityError("provider cluster identity or active state does not match")
+        raise StorageIdentityError(
+            "provider cluster identity or active state does not match"
+        )
     return payload
 
 
@@ -398,9 +528,13 @@ def _registered_kubeconfig(registered):
     expected = cluster_state.kubeconfig_file(registered.name)
     selected = Path(registered.kubeconfig_path).expanduser()
     if not registered.kubeconfig_path or selected.resolve() != expected.resolve():
-        raise StorageIdentityError("registered kubeconfig path does not match its owned context")
+        raise StorageIdentityError(
+            "registered kubeconfig path does not match its owned context"
+        )
     if not selected.is_file() or selected.stat().st_mode & 0o077:
-        raise StorageIdentityError("registered kubeconfig is unavailable or not owner-private")
+        raise StorageIdentityError(
+            "registered kubeconfig is unavailable or not owner-private"
+        )
     return selected
 
 
@@ -408,20 +542,34 @@ def _verify_connection(binary, profile, registered, kubeconfig):
     actual = _connection_document(kubeconfig, registered.name)
     with tempfile.TemporaryDirectory(prefix="npa-storage-identity-") as directory:
         fresh = Path(directory) / "kubeconfig"
-        arguments = ["mk8s", "cluster", "get-credentials", "--id", registered.cluster_id,
-                     "--external", "--force", "--kubeconfig", str(fresh),
-                     "--context-name", registered.name]
+        arguments = [
+            "mk8s",
+            "cluster",
+            "get-credentials",
+            "--id",
+            registered.cluster_id,
+            "--external",
+            "--force",
+            "--kubeconfig",
+            str(fresh),
+            "--context-name",
+            registered.name,
+        ]
         _provider_command(binary, profile, arguments)
         expected = _connection_document(fresh, registered.name)
     if actual != expected:
-        raise StorageIdentityError("registered endpoint, certificate, or exec identity is stale")
+        raise StorageIdentityError(
+            "registered endpoint, certificate, or exec identity is stale"
+        )
     return actual
 
 
 def _single_named_entry(payload, key, name):
     entries = payload.get(key)
     if not isinstance(entries, list) or len(entries) != 1:
-        raise StorageIdentityError("registered kubeconfig must contain exactly one target")
+        raise StorageIdentityError(
+            "registered kubeconfig must contain exactly one target"
+        )
     entry = entries[0]
     if not isinstance(entry, dict) or entry.get("name") != name:
         raise StorageIdentityError("kubeconfig context references a different identity")
@@ -431,15 +579,21 @@ def _single_named_entry(payload, key, name):
 def _connection_document(path, context_name):
     payload = _read_mapping(path, yaml_document=True)
     if payload.get("current-context") != context_name:
-        raise StorageIdentityError("kubeconfig current context differs from registration")
+        raise StorageIdentityError(
+            "kubeconfig current context differs from registration"
+        )
     context = _single_named_entry(payload, "contexts", context_name)
     context = _mapping(context, "context")
     cluster = _single_named_entry(payload, "clusters", context.get("cluster"))
     user = _single_named_entry(payload, "users", context.get("user"))
     connection = _mapping(cluster, "cluster")
     authentication = _mapping(user, "user")
-    if not connection.get("certificate-authority-data") or connection.get("insecure-skip-tls-verify"):
-        raise StorageIdentityError("kubeconfig lacks verified certificate authority data")
+    if not connection.get("certificate-authority-data") or connection.get(
+        "insecure-skip-tls-verify"
+    ):
+        raise StorageIdentityError(
+            "kubeconfig lacks verified certificate authority data"
+        )
     if not str(connection.get("server", "")).startswith("https://"):
         raise StorageIdentityError("kubeconfig does not use a TLS endpoint")
     if set(authentication) != {"exec"} or not isinstance(authentication["exec"], dict):

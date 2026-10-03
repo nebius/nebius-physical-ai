@@ -73,6 +73,24 @@ def _component_pods() -> dict[str, Any]:
     }
 
 
+def _component_pod_with_readiness(
+    *ready_values: object, phase: str = "Running"
+) -> dict[str, Any]:
+    return {
+        "items": [
+            {
+                "metadata": {"name": "readiness-probe"},
+                "status": {
+                    "phase": phase,
+                    "containerStatuses": [
+                        {"ready": ready_value} for ready_value in ready_values
+                    ],
+                },
+            }
+        ]
+    }
+
+
 class _Clock:
     def __init__(self) -> None:
         self.value = 0.0
@@ -203,6 +221,124 @@ def test_probe_validates_generalized_topology_and_managed_components(
     assert snapshot["ready_nodes"] == 3
     assert snapshot["total_gpus"] == 16
     assert kubectl.component_namespaces == ["nvidia-device-plugin"]
+
+
+@pytest.mark.parametrize(
+    "ready_value",
+    [False, "false", "true", None, 0, 1, [], {}],
+    ids=[
+        "false",
+        "false-string",
+        "true-string",
+        "null",
+        "zero",
+        "one",
+        "list",
+        "object",
+    ],
+)
+def test_probe_rejects_non_boolean_true_container_readiness(
+    tmp_path: Path, ready_value: object
+) -> None:
+    class ComponentReadiness(_Kubectl):
+        def __call__(self, args, **kwargs):
+            if args[1:3] == ["get", "pods"]:
+                return self._result(_component_pod_with_readiness(ready_value))
+            return super().__call__(args, **kwargs)
+
+    snapshot = probe_gpu_health(
+        ComponentReadiness([_healthy_nodes()]),
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_config(),
+    )
+
+    assert "nvidia-device-plugin/readiness-probe: phase=Running" in snapshot["errors"]
+
+
+def test_probe_accepts_only_literal_true_for_each_running_container(
+    tmp_path: Path,
+) -> None:
+    class ComponentReadiness(_Kubectl):
+        def __call__(self, args, **kwargs):
+            if args[1:3] == ["get", "pods"]:
+                return self._result(_component_pod_with_readiness(True, True))
+            return super().__call__(args, **kwargs)
+
+    snapshot = probe_gpu_health(
+        ComponentReadiness([_healthy_nodes()]),
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_config(),
+    )
+
+    assert snapshot["errors"] == []
+
+
+class _MalformedComponentReadiness(_Kubectl):
+    def __call__(self, args, **kwargs):
+        if args[1:3] == ["get", "pods"]:
+            payload = _component_pod_with_readiness(True, "false")
+            status = payload["items"][0]["status"]["containerStatuses"][1]
+            status["state"] = {"waiting": {"reason": "ImagePullBackOff"}}
+            return self._result(payload)
+        return super().__call__(args, **kwargs)
+
+
+@pytest.mark.parametrize("driver_mode", ["managed-image", "operator"])
+def test_validation_rejects_malformed_readiness_before_gpu_smoke(
+    tmp_path: Path, driver_mode: str
+) -> None:
+    clock = _Clock()
+    kubectl = _MalformedComponentReadiness([_healthy_nodes()])
+    path = tmp_path / "gpu-health.json"
+    with pytest.raises(GpuHealthError, match="ImagePullBackOff"):
+        validate_gpu_health(
+            kubectl,
+            kubectl_bin="kubectl",
+            kubeconfig_path=tmp_path / "kubeconfig",
+            config=_config(
+                driver_mode=driver_mode,
+                cuda_smoke=True,
+                graphics_smoke=driver_mode == "operator",
+                timeout_seconds=1,
+            ),
+            evidence_path=path,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )
+
+    evidence = json.loads(path.read_text())
+    assert evidence["status"] == "failed"
+    assert evidence["cuda_smokes"] == []
+    assert evidence["graphics_smokes"] == []
+    assert kubectl.applied_manifests == []
+    assert kubectl.created_nodes == []
+    namespace = "gpu-operator" if driver_mode == "operator" else "nvidia-device-plugin"
+    assert evidence["final_snapshot"]["errors"] == [
+        f"{namespace}/readiness-probe: phase=Running (ImagePullBackOff)"
+    ]
+
+
+def test_probe_preserves_succeeded_component_completion_behavior(
+    tmp_path: Path,
+) -> None:
+    class CompletedComponent(_Kubectl):
+        def __call__(self, args, **kwargs):
+            if args[1:3] == ["get", "pods"]:
+                return self._result(
+                    _component_pod_with_readiness("false", phase="Succeeded")
+                )
+            return super().__call__(args, **kwargs)
+
+    snapshot = probe_gpu_health(
+        CompletedComponent([_healthy_nodes()]),
+        kubectl_bin="kubectl",
+        kubeconfig_path=tmp_path / "kubeconfig",
+        config=_config(),
+    )
+
+    assert snapshot["errors"] == []
 
 
 def test_probe_accepts_current_managed_plugin_in_kube_system(tmp_path: Path) -> None:
@@ -469,7 +605,9 @@ def test_mixed_sxm_pool_cannot_disable_fabric_checks_with_single_gpu_preset() ->
         _mixed_config(gpu_preset="1gpu-20vcpu-224gb", nvswitch=False).validate()
 
 
-def test_mixed_pool_checks_distribution_even_when_total_is_correct(tmp_path: Path) -> None:
+def test_mixed_pool_checks_distribution_even_when_total_is_correct(
+    tmp_path: Path,
+) -> None:
     nodes = _mixed_gpu_nodes()
     nodes[0]["status"]["allocatable"]["nvidia.com/gpu"] = "7"
     nodes[1]["status"]["allocatable"]["nvidia.com/gpu"] = "2"
@@ -515,7 +653,9 @@ class _EveryDeviceKubectl(_Kubectl):
             tested = count - 1 if self.omit_last_device else count
             return self._result(
                 "Test PASSED\n" * tested
-                + "".join(f"NPA_CUDA_DEVICE_{device}_PASSED\n" for device in range(tested))
+                + "".join(
+                    f"NPA_CUDA_DEVICE_{device}_PASSED\n" for device in range(tested)
+                )
                 + "Fabric\n    State : Completed\n    Status : Success\n"
             )
         return super().__call__(args, **kwargs)
@@ -536,9 +676,16 @@ def test_mixed_pool_runs_cuda_on_all_sixteen_assigned_devices(tmp_path: Path) ->
     assert len(report["cuda_smokes"]) == len(kubectl.deleted_pods) == 9
     assert sum(smoke["tested_gpus"] for smoke in report["cuda_smokes"]) == 16
     assert all(smoke["fabric"] == "success" for smoke in report["cuda_smokes"])
-    containers = [manifest["spec"]["containers"][0] for manifest in kubectl.applied_manifests]
-    assert sorted(container["resources"]["limits"]["nvidia.com/gpu"] for container in containers) == [1] * 8 + [8]
-    assert all('CUDA_VISIBLE_DEVICES="$device"' in container["args"][0] for container in containers)
+    containers = [
+        manifest["spec"]["containers"][0] for manifest in kubectl.applied_manifests
+    ]
+    assert sorted(
+        container["resources"]["limits"]["nvidia.com/gpu"] for container in containers
+    ) == [1] * 8 + [8]
+    assert all(
+        'CUDA_VISIBLE_DEVICES="$device"' in container["args"][0]
+        for container in containers
+    )
 
 
 def test_mixed_pool_rejects_incomplete_device_execution_and_cleans_probe(
@@ -567,7 +714,9 @@ def test_fabric_scope_cannot_omit_required_or_add_unknown_gpu_shapes(counts) -> 
 
 
 class _FractionalFabricKubectl(_EveryDeviceKubectl):
-    def __init__(self, *, broken_eight_gpu_fabric=False, broken_single_gpu_kernel=False):
+    def __init__(
+        self, *, broken_eight_gpu_fabric=False, broken_single_gpu_kernel=False
+    ):
         super().__init__()
         self.broken_eight_gpu_fabric = broken_eight_gpu_fabric
         self.broken_single_gpu_kernel = broken_single_gpu_kernel
@@ -579,7 +728,9 @@ class _FractionalFabricKubectl(_EveryDeviceKubectl):
                 "limits"
             ]["nvidia.com/gpu"]
             if count == 1 or self.broken_eight_gpu_fabric:
-                result.stdout = result.stdout.replace("State : Completed", "State : N/A").replace("Status : Success", "Status : N/A")
+                result.stdout = result.stdout.replace(
+                    "State : Completed", "State : N/A"
+                ).replace("Status : Success", "Status : N/A")
             if count == 1 and self.broken_single_gpu_kernel:
                 result.stdout = result.stdout.replace("Test PASSED", "Test FAILED")
         return result
@@ -625,10 +776,14 @@ def test_scoped_fabric_preserves_full_node_fabric_and_fractional_kernel_failures
     assert len(kubectl.deleted_pods) == len(kubectl.applied_manifests)
 
 
-def test_fractional_fabric_exclusion_preserves_gpu_error_conditions(tmp_path: Path) -> None:
+def test_fractional_fabric_exclusion_preserves_gpu_error_conditions(
+    tmp_path: Path,
+) -> None:
     nodes = _mixed_gpu_nodes()
     nodes[1]["metadata"]["annotations"]["nebius.ai/fabric-state"] = "N/A"
-    nodes[1]["status"]["conditions"].append({"type": "NebiusGPUError", "status": "True"})
+    nodes[1]["status"]["conditions"].append(
+        {"type": "NebiusGPUError", "status": "True"}
+    )
     snapshot = probe_gpu_health(
         _Kubectl([nodes]),
         kubectl_bin="kubectl",
@@ -639,7 +794,9 @@ def test_fractional_fabric_exclusion_preserves_gpu_error_conditions(tmp_path: Pa
     assert not any("fabric-state" in error for error in snapshot["errors"])
 
 
-def test_explicit_fabric_attached_single_gpu_shape_rejects_na_status(tmp_path: Path) -> None:
+def test_explicit_fabric_attached_single_gpu_shape_rejects_na_status(
+    tmp_path: Path,
+) -> None:
     clock = _Clock()
     with pytest.raises(GpuHealthError, match="NVSwitch Fabric State='N/A'"):
         validate_gpu_health(

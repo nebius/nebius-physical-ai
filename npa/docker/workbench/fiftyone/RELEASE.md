@@ -9,10 +9,16 @@ review verified its layers, source annex, configured scans and signed provenance
 and SBOM. The archive payload scan covered 47,181 paths. These checks retain
 the coverage limits described below.
 
-The Dockerfile and VM installer now require FiftyOne 1.21.0, whose App and media
+The current source candidate, not the accepted 1.21 image above, requires
+FiftyOne 1.22.0 in the Dockerfile and VM installer. Its App and media
 routes default to same-origin access. This removes the wildcard CORS behavior
 that allowed a malicious website to read local media responses. Trusted origins
 remain an explicit operator setting through `FIFTYONE_ALLOWED_ORIGINS`.
+
+FiftyOne 1.22 adds native LeRobot v3 episode playback with synchronized camera,
+state, and action streams plus editable temporal tags. NPA uses those tags for
+the human-reviewed `subtask:<label>` workflow and exports a new LeRobot dataset;
+the source dataset is never rewritten.
 
 NPA also binds the App to loopback: the stock interface can read files accessible
 to its service account and is intended for trusted operators. VM commands use

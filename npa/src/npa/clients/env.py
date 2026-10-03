@@ -73,9 +73,7 @@ def redact_value(value: Any) -> str:
 
 def redacted_env(env: Mapping[str, Any]) -> dict[str, str]:
     return {
-        str(key): redact_value(value)
-        for key, value in env.items()
-        if value is not None
+        str(key): redact_value(value) for key, value in env.items() if value is not None
     }
 
 

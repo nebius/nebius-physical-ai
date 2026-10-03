@@ -24,8 +24,12 @@ from npa.workbench.alpamayo2_super.runtime import (
     run_inference,
 )
 from npa.workbench.alpamayo2_super.ray_report import (
-    case_grid, case_key, matched_comparisons, select_hard_samples,
-    summarize_sample, validate_measurements,
+    case_grid,
+    case_key,
+    matched_comparisons,
+    select_hard_samples,
+    summarize_sample,
+    validate_measurements,
 )
 
 
@@ -83,20 +87,32 @@ class _InferenceWorker:
         result = run_inference(
             Alpamayo2SuperRequest(
                 output_path=f"{self.output_path.rstrip('/')}/{label}/",
-                manifest=self.manifest, run_id=self.run_id, **case,
+                manifest=self.manifest,
+                run_id=self.run_id,
+                **case,
             ),
             model_resolver=self._resolve,
         )
         measurement = {
-            **case, **result["metrics"], "sample": result["sample"],
+            **case,
+            **result["metrics"],
+            "sample": result["sample"],
             "elapsed_seconds": time.monotonic() - started,
             "artifacts": result["artifacts"],
             "ray_node_id": ray.get_runtime_context().get_node_id(),
             "ray_actor_id": str(ray.get_runtime_context().get_actor_id()),
         }
-        print(json.dumps({"event": "alpamayo.case_completed", **case,
-                          "elapsed_seconds": measurement["elapsed_seconds"],
-                          "min_ade_m": measurement["min_ade_m"]}), flush=True)
+        print(
+            json.dumps(
+                {
+                    "event": "alpamayo.case_completed",
+                    **case,
+                    "elapsed_seconds": measurement["elapsed_seconds"],
+                    "min_ade_m": measurement["min_ade_m"],
+                }
+            ),
+            flush=True,
+        )
         return measurement
 
 
@@ -160,7 +176,10 @@ def _cases_and_baseline(args) -> tuple[list[dict], dict | None]:
         return case_grid(args.sample_indices, args.seeds, args.diffusion_steps), None
     baseline = _read_report(args.input_path)
     samples = select_hard_samples(baseline, args.minimum_ade)
-    expected = {"model_revision": DEFAULT_MODEL_REVISION, "dataset_revision": DEFAULT_DATASET_REVISION}
+    expected = {
+        "model_revision": DEFAULT_MODEL_REVISION,
+        "dataset_revision": DEFAULT_DATASET_REVISION,
+    }
     if baseline.get("revisions") != expected:
         raise ValueError("baseline uses different model or dataset revisions")
     seeds = sorted({row["seed"] for row in baseline["cases"]})
@@ -168,7 +187,9 @@ def _cases_and_baseline(args) -> tuple[list[dict], dict | None]:
     return cases, baseline
 
 
-def _execute_sweep(args, cases: list[dict], execution: str) -> tuple[list[dict], list[dict]]:
+def _execute_sweep(
+    args, cases: list[dict], execution: str
+) -> tuple[list[dict], list[dict]]:
     import ray
 
     if not cases:
@@ -176,10 +197,16 @@ def _execute_sweep(args, cases: list[dict], execution: str) -> tuple[list[dict],
     if args.workers < 1:
         raise ValueError("workers must be positive")
     resources = ray.cluster_resources()
-    if resources.get("GPU", 0) < args.workers or resources.get("CPU", 0) < 2 * args.workers:
+    if (
+        resources.get("GPU", 0) < args.workers
+        or resources.get("CPU", 0) < 2 * args.workers
+    ):
         raise ValueError("Ray cluster lacks the requested GPU/CPU actor capacity")
     worker = ray.remote(num_gpus=1, num_cpus=2, max_restarts=0)(_InferenceWorker)
-    actors = [worker.remote(execution, args.manifest, args.run_id) for _ in range(args.workers)]
+    actors = [
+        worker.remote(execution, args.manifest, args.run_id)
+        for _ in range(args.workers)
+    ]
     try:
         rows = dispatch_cases(cases, actors)
     finally:
@@ -203,12 +230,17 @@ def _ray_connection(address: str):
     import ray
 
     if ray.is_initialized():
-        raise ValueError("run a sweep in a dedicated driver process with its own Ray connection")
+        raise ValueError(
+            "run a sweep in a dedicated driver process with its own Ray connection"
+        )
     with tempfile.TemporaryDirectory(prefix="npa-alpamayo-ray-") as scratch:
         options = {}
         if address == "local":
-            options = {"_temp_dir": scratch, "object_store_memory": 256 * 1024 * 1024,
-                       "include_dashboard": False}
+            options = {
+                "_temp_dir": scratch,
+                "object_store_memory": 256 * 1024 * 1024,
+                "include_dashboard": False,
+            }
         try:
             ray.init(address=address, log_to_driver=True, **options)
             yield
@@ -217,13 +249,23 @@ def _ray_connection(address: str):
 
 
 def _report(args, cases, rows, summaries, baseline):
-    comparisons = matched_comparisons(baseline["measurements"], rows) if baseline else []
+    comparisons = (
+        matched_comparisons(baseline["measurements"], rows) if baseline else []
+    )
     return {
-        "schema": "npa.alpamayo.ray-sweep.v1", "status": "complete",
-        "run_id": args.run_id, "cases": cases, "measurements": rows,
-        "summaries": summaries, "comparisons": comparisons,
-        "revisions": {"model_revision": DEFAULT_MODEL_REVISION, "dataset_revision": DEFAULT_DATASET_REVISION},
-        "baseline_uri": args.input_path, "selection_minimum_ade_m": args.minimum_ade if baseline else None,
+        "schema": "npa.alpamayo.ray-sweep.v1",
+        "status": "complete",
+        "run_id": args.run_id,
+        "cases": cases,
+        "measurements": rows,
+        "summaries": summaries,
+        "comparisons": comparisons,
+        "revisions": {
+            "model_revision": DEFAULT_MODEL_REVISION,
+            "dataset_revision": DEFAULT_DATASET_REVISION,
+        },
+        "baseline_uri": args.input_path,
+        "selection_minimum_ade_m": args.minimum_ade if baseline else None,
         "model_lifetime": "one upstream subprocess per case; actor reuses downloaded snapshot",
     }
 
@@ -284,4 +326,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 if __name__ == "__main__":
-    print(json.dumps(run_sweep(AlpamayoSweepRequest(**vars(build_parser().parse_args()))), indent=2, allow_nan=False))
+    print(
+        json.dumps(
+            run_sweep(AlpamayoSweepRequest(**vars(build_parser().parse_args()))),
+            indent=2,
+            allow_nan=False,
+        )
+    )

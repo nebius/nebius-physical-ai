@@ -10,6 +10,7 @@ validation scope. Dated measurements apply to the versions and hardware recorded
 
 | Recipe | Purpose |
 | --- | --- |
+| [Public RL improvement](public-rl-improvement-demo.md) | Run scan reconstruction, baseline continuation and paired evaluation; the full coefficient-10.0 experiment retained the baseline after failed quality gates |
 | [GR00T N1.7](groot-1-7-training.md) | Fine-tune, recover the run ID, and inspect checkpoint provenance |
 | [Isaac Lab BYOF](byof-isaac-lab/README.md) | Run a custom Isaac Lab fork in a container |
 | [SONIC training](sonic-train-runbook.md) | Prepare a single training stage and its runtime |
@@ -24,6 +25,7 @@ validation scope. Dated measurements apply to the versions and hardware recorded
 
 | Recipe | Purpose |
 | --- | --- |
+| [Find artifacts](find-artifacts.md) | Search selected buckets, configured projects, or tenant inventory; inspect coverage and provenance |
 | [BDD100K pipeline](bdd100k-pipeline.md) | Ingest, curate, train, and evaluate detectors |
 | [LanceDB deployment](lancedb-deploy-runbook.md) | Deploy the service and load data |
 | [LanceDB vector search](lancedb-vector-search.md) | Build and query embeddings |

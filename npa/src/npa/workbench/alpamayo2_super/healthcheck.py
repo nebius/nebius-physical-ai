@@ -21,7 +21,9 @@ def main() -> int:
         return 1
     connection = HTTPConnection("127.0.0.1", 8080, timeout=3)
     try:
-        connection.request("GET", "/health", headers={"Authorization": "Bearer " + token})
+        connection.request(
+            "GET", "/health", headers={"Authorization": "Bearer " + token}
+        )
         return 0 if connection.getresponse().status == 200 else 1
     except (HTTPException, OSError):
         return 1

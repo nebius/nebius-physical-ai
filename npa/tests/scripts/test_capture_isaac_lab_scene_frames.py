@@ -15,12 +15,15 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CAPTURE_SCRIPT = REPO_ROOT / "npa" / "scripts" / "capture_isaac_lab_scene_frames.py"
-SPEC = (
-    REPO_ROOT
-    / "workflows" / "testing" / "isaac-franka-capture-reason.yaml"
-)
+SPEC = REPO_ROOT / "workflows" / "testing" / "isaac-franka-capture-reason.yaml"
 RETIRED_TEMPLATE = (
-    REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "skypilot" / "isaac-franka-capture-reason.yaml"
+    REPO_ROOT
+    / "npa"
+    / "src"
+    / "npa"
+    / "workflows"
+    / "skypilot"
+    / "isaac-franka-capture-reason.yaml"
 )
 EXAMPLE = REPO_ROOT / "npa" / "examples" / "isaac_franka_token_factory_reason.py"
 SAMPLE_FRAMES = REPO_ROOT / "docs" / "assets" / "hackathon" / "isaac-franka-lift-cube"
@@ -28,7 +31,13 @@ SAMPLE_FRAMES = REPO_ROOT / "docs" / "assets" / "hackathon" / "isaac-franka-lift
 
 def test_the_shim_still_works_for_a_checkout() -> None:
     result = subprocess.run(
-        [sys.executable, str(CAPTURE_SCRIPT), "--render-only", "-o", "s3://bucket/prefix/"],
+        [
+            sys.executable,
+            str(CAPTURE_SCRIPT),
+            "--render-only",
+            "-o",
+            "s3://bucket/prefix/",
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -63,7 +72,10 @@ def test_the_spec_captures_on_a_gpu_then_reasons_on_cpu() -> None:
     reason = steps["reason"].argv
     assert capture[capture.index("--task") + 1] == "Isaac-Lift-Cube-Franka-v0"
     # The reasoner reads exactly where the capture wrote.
-    assert reason[reason.index("--input-path") + 1] == capture[capture.index("--output-path") + 1]
+    assert (
+        reason[reason.index("--input-path") + 1]
+        == capture[capture.index("--output-path") + 1]
+    )
     assert "NEBIUS_API_KEY" not in " ".join(reason)
 
 

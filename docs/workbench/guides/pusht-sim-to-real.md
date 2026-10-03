@@ -72,3 +72,16 @@ The retired `sim-to-real-pipeline.yaml` is not a runnable next step.
 A custom dataset must match the selected trainer's observation, action, and
 robot schemas. See [customer assets](sim2real-customer-assets.md) before
 substituting a different robot or dataset.
+
+## Clean up
+
+Idle GPU clusters keep billing after the run finishes. When you are done,
+tear them down:
+
+```bash
+npa destroy --project "<alias>" --all
+```
+
+The plan previews read-only until you pass `--yes`, and the Nebius project
+itself is retained by default. See [teardown](../../teardown.md) for what
+`npa destroy` removes (cloud spend) versus what it keeps.

@@ -15,11 +15,19 @@ The public `npa-isaac-lab:3.0.0b2.post1` image contains the Ubuntu 24.04,
 Python 3.12, CUDA 12.8, PyTorch 2.11, NPA, and OSS training dependency layers.
 Its accepted release digest is
 `sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46`.
-It contains no Isaac Sim, Isaac Lab, Omniverse Client, or other proprietary
-NVIDIA runtime payload. On first invocation, `/isaac-sim/python.sh` verifies
+It contains no Isaac Sim or Isaac Lab wheels, Omniverse Client, or proprietary
+NVIDIA runtime payload. The pinned Isaac Lab 3.0.0b2.post1 wheel declares
+`License: BSD-3-Clause` in its exact `METADATA` bytes (wheel SHA-256
+`dd32886588479ffd70f7348019aeac1582eb9ad16c40244f41d9f458f96f73c3`,
+`METADATA` SHA-256
+`365d9b867dddc244d5aebe02becfe7a9bb8afea8fcdbfef7a4a9fb0a0266fae0`);
+the wheel has no standalone license member. Isaac Sim and its proprietary
+runtime dependencies retain their separate NVIDIA terms. On first invocation,
+`/isaac-sim/python.sh` verifies
 every runtime wheel against `isaac3-nvidia-wheels.txt`, then installs it into
-the operator's cache under the operator's EULA acceptance. Explicit opt-out
-fails before download with exit 78.
+the operator's cache after the shared EULA preflight, and rejects a changed
+installed Isaac Lab license field. Explicit opt-out fails before download with
+exit 78.
 
 Use an RT-core GPU for this PhysX/renderer workbench: L40S or RTX PRO 6000.
 B200 is a datacenter compute GPU and is not a substitute for this graphics

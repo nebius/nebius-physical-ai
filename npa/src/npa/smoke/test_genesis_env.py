@@ -66,9 +66,13 @@ def check_scene_build_and_step() -> CheckResult:
             scene.add_entity(gs.morphs.Plane())
         scene.build()
         scene.step()
-        return CheckResult("build and step genesis.Scene", True, "CPU backend completed one step")
+        return CheckResult(
+            "build and step genesis.Scene", True, "CPU backend completed one step"
+        )
     except Exception as exc:
-        return CheckResult("build and step genesis.Scene", False, _format_exception(exc))
+        return CheckResult(
+            "build and step genesis.Scene", False, _format_exception(exc)
+        )
 
 
 def _print_result(result: CheckResult) -> None:

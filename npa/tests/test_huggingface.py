@@ -185,7 +185,9 @@ def test_exact_dataset_payload_uses_dataset_revision_and_path(mocker) -> None:
     assert head.call_args.kwargs["follow_redirects"] is False
 
 
-def test_head_not_allowed_falls_back_to_one_byte_range_without_redirects(mocker) -> None:
+def test_head_not_allowed_falls_back_to_one_byte_range_without_redirects(
+    mocker,
+) -> None:
     mocker.patch("httpx.head", return_value=httpx.Response(405))
     get = mocker.patch("httpx.get", return_value=httpx.Response(206))
 
@@ -209,9 +211,7 @@ def test_exact_payload_probe_requires_revision_and_payload_without_http(
 ) -> None:
     head = mocker.patch("httpx.head")
 
-    result = validate_hf_file_access(
-        "hf-synthetic", "vendor/gated", revision, filename
-    )
+    result = validate_hf_file_access("hf-synthetic", "vendor/gated", revision, filename)
 
     assert result.ok is False
     assert "required" in result.error

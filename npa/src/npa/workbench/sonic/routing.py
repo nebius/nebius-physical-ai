@@ -63,7 +63,9 @@ class SonicRoutingError(GpuRoutingError):
     """Raised when a SONIC workload is routed to an incompatible GPU class."""
 
 
-def validate_render_gpu_target(gpu_target: str | None, *, what: str = "Isaac-Lab render") -> str:
+def validate_render_gpu_target(
+    gpu_target: str | None, *, what: str = "Isaac-Lab render"
+) -> str:
     """Validate that a render workload targets an RT-core GPU."""
 
     return require_rt_core_target(

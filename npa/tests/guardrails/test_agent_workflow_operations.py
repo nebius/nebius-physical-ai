@@ -27,7 +27,9 @@ def test_agent_workflow_journey_uses_only_fixed_npa_subprocesses() -> None:
         for command in commands
         for forbidden in (" kubectl ", " sky ", " tmux ", "curl ", "localhost")
     )
-    assert not any("--model" in command or "--provider" in command for command in commands)
+    assert not any(
+        "--model" in command or "--provider" in command for command in commands
+    )
 
 
 def test_agent_workflow_journey_covers_the_bounded_lifecycle() -> None:

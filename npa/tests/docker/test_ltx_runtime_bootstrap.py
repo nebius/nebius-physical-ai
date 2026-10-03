@@ -206,7 +206,9 @@ class TestTheBuildTimeRefusalProof:
             '  touch "$MODEL_CACHE/another-stage-fetched-this.safetensors"\n'
             '  touch "$CACHE_ROOT/another-stage-built-this"\n'
         )
-        script.write_text(text.replace(anchor, concurrent + anchor, 1), encoding="utf-8")
+        script.write_text(
+            text.replace(anchor, concurrent + anchor, 1), encoding="utf-8"
+        )
 
         result = run(image, "assert-refusal")
 
@@ -310,9 +312,7 @@ class TestTheProofItselfIsMutationTested:
         assert result.returncode == EX_SOFTWARE
         assert MARKER not in result.stdout
 
-    def test_that_ordering_check_still_bites_on_a_warm_cache(
-        self, image: Path
-    ) -> None:
+    def test_that_ordering_check_still_bites_on_a_warm_cache(self, image: Path) -> None:
         """Tolerating an already-filled cache must not tolerate a leaking gate.
 
         The proof no longer demands the shared caches be empty, so this is the
@@ -352,7 +352,16 @@ class TestTheProofItselfIsMutationTested:
         assert 'args+=(-u "$name")' in text
         script.write_text(text.replace('args+=(-u "$name")', "args+=()", 1), "utf-8")
 
-        result = run(image, "assert-refusal", env=ENTITLED | {NVIDIA_ACCEPT_ENV: "YES"})
+        # The mutation can reach fetch; keep that failure independent of the network.
+        result = run(
+            image,
+            "assert-refusal",
+            env=ENTITLED
+            | {
+                NVIDIA_ACCEPT_ENV: "YES",
+                "NPA_LTX_SOURCE_REPO": str(image.parent / "no-such-repo"),
+            },
+        )
 
         assert result.returncode == EX_SOFTWARE
         assert MARKER not in result.stdout

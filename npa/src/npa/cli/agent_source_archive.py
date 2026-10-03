@@ -28,7 +28,9 @@ def _open_source(root_fd: int, relative: PurePosixPath):
     try:
         for component in relative.parts[:-1]:
             next_fd = os.open(
-                component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent_fd
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=parent_fd,
             )
             os.close(parent_fd)
             parent_fd = next_fd
@@ -72,7 +74,9 @@ def _source_inventory(repo_root: Path) -> tuple[list[str], dict | None]:
                 raise ValueError("Invalid source inventory records")
             return sorted(files), files
         except (OSError, ValueError, KeyError) as exc:
-            raise ConfigError("Agent deployment requires a Git source inventory or verified source bundle") from exc
+            raise ConfigError(
+                "Agent deployment requires a Git source inventory or verified source bundle"
+            ) from exc
     try:
         result = subprocess.run(
             ["git", "--literal-pathspecs", "ls-files", "-z", "--cached", "--", *_ROOTS],
@@ -83,7 +87,9 @@ def _source_inventory(repo_root: Path) -> tuple[list[str], dict | None]:
     except (OSError, subprocess.CalledProcessError) as exc:
         raise ConfigError("Agent deployment requires a Git source inventory") from exc
 
-    return sorted(set(os.fsdecode(path) for path in result.stdout.split(b"\0") if path)), None
+    return sorted(
+        set(os.fsdecode(path) for path in result.stdout.split(b"\0") if path)
+    ), None
 
 
 class _HashingReader:
@@ -125,7 +131,12 @@ def create_agent_source_archive(repo_root: Path) -> str:
     try:
         root_fd = os.open(repo_root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
-            with destination, tarfile.open(fileobj=destination, mode="w:gz", dereference=True) as archive:
+            with (
+                destination,
+                tarfile.open(
+                    fileobj=destination, mode="w:gz", dereference=True
+                ) as archive,
+            ):
                 inventory = {}
                 for name in paths:
                     with _open_source(root_fd, PurePosixPath(name)) as source:
@@ -135,11 +146,18 @@ def create_agent_source_archive(repo_root: Path) -> str:
                         info.mode = 0o755 if info.mode & 0o111 else 0o644
                         reader = _HashingReader(source)
                         archive.addfile(info, reader)
-                        record = {"sha256": reader.digest.hexdigest(), "bytes": reader.bytes}
+                        record = {
+                            "sha256": reader.digest.hexdigest(),
+                            "bytes": reader.bytes,
+                        }
                         if expected is not None and record != expected[name]:
-                            raise ConfigError("Deployed source differs from its inventory")
+                            raise ConfigError(
+                                "Deployed source differs from its inventory"
+                            )
                         inventory[name] = record
-                payload = json.dumps({"schema": _SCHEMA, "files": inventory}, sort_keys=True).encode()
+                payload = json.dumps(
+                    {"schema": _SCHEMA, "files": inventory}, sort_keys=True
+                ).encode()
                 info = tarfile.TarInfo(_MANIFEST)
                 info.size = len(payload)
                 info.mode = 0o644

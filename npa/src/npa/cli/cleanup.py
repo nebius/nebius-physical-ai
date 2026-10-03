@@ -734,9 +734,9 @@ def _nonterminal_jobs(sky_bin: str = "") -> tuple[list[str], str, str]:
 
     from npa.orchestration.skypilot._bin import SkyPilotNotInstalledError
     from npa.orchestration.skypilot.cleanup import (
-        NONTERMINAL_JOB_STATUSES,
         _all_jobs,
         _job_statuses,
+        is_terminal_managed_job_status,
     )
 
     try:
@@ -746,7 +746,7 @@ def _nonterminal_jobs(sky_bin: str = "") -> tuple[list[str], str, str]:
         nonterminal = sorted(
             job_id
             for job_id, status in _job_statuses(snapshot.jobs).items()
-            if status in NONTERMINAL_JOB_STATUSES
+            if not is_terminal_managed_job_status(status)
         )
         state = (
             "verified_empty"
@@ -1043,8 +1043,7 @@ def cleanup_cmd(
         from npa.teardown_receipts import TERMINAL_STATES
 
         operational_residue = bool(
-            local_state
-            not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
+            local_state not in {"fully_clean", "fully_cleaned", "preserved_shared_sky"}
             or project_credential_residue_items
         )
         unresolved_receipts = any(
@@ -1406,10 +1405,10 @@ def cleanup_cmd(
             emit_json("partial_cleanup", "residue_present", cleanup_failed=True)
         raise typer.Exit(code=1) from exc
     for residue_item in residue:
-        if (
-            project
-            and residue_item.label in {"SkyPilot venv", "Terraform provider cache"}
-        ):
+        if project and residue_item.label in {
+            "SkyPilot venv",
+            "Terraform provider cache",
+        }:
             shared_runtime_preserved = True
             emit(
                 f"Preserved shared {residue_item.label} at {residue_item.path}: "

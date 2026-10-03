@@ -76,9 +76,9 @@ def test_pipeline_image_serverless_capability_e2e(tool: str) -> None:
     """Run the container functional golden eval on Nebius Serverless and read logs."""
 
     project_id = os.environ["NPA_E2E_SERVERLESS_PROJECT"]
-    gpu = os.environ.get(f"NPA_E2E_{tool.upper().replace('-', '_')}_GPU") or os.environ.get(
-        "NPA_E2E_PIPELINE_GPU", "h100"
-    )
+    gpu = os.environ.get(
+        f"NPA_E2E_{tool.upper().replace('-', '_')}_GPU"
+    ) or os.environ.get("NPA_E2E_PIPELINE_GPU", "h100")
     timeout = os.environ.get("NPA_E2E_PIPELINE_TIMEOUT", "45m")
     poll_ceiling = float(os.environ.get("NPA_E2E_PIPELINE_POLL_CEILING_S", "3600"))
 
@@ -86,7 +86,10 @@ def test_pipeline_image_serverless_capability_e2e(tool: str) -> None:
     assert "npa-sim2real" not in image
 
     run_id = f"pipeline-e2e-{tool}-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{uuid.uuid4().hex[:6]}"
-    print(f"submit tool={tool} image={image} project={project_id} run={run_id}", flush=True)
+    print(
+        f"submit tool={tool} image={image} project={project_id} run={run_id}",
+        flush=True,
+    )
 
     detail = submit_golden_eval(
         tool,
@@ -94,10 +97,15 @@ def test_pipeline_image_serverless_capability_e2e(tool: str) -> None:
         project_id=project_id,
         timeout=timeout,
         poll_ceiling_s=poll_ceiling,
-        on_state_change=lambda job: print(f"  {tool} status={getattr(job, 'status', '?')}", flush=True),
+        on_state_change=lambda job: print(
+            f"  {tool} status={getattr(job, 'status', '?')}", flush=True
+        ),
     )
 
-    print(f"result tool={tool} ok={detail.get('ok')} status={detail.get('status')}", flush=True)
+    print(
+        f"result tool={tool} ok={detail.get('ok')} status={detail.get('status')}",
+        flush=True,
+    )
     log_tail = str(detail.get("log_tail") or "")
     if log_tail:
         print(f"log_tail[{tool}]:\n{log_tail[-4000:]}", flush=True)
@@ -109,7 +117,11 @@ def test_pipeline_image_serverless_capability_e2e(tool: str) -> None:
     )
 
     combined = log_tail.lower()
-    missing = [marker for marker in CAPABILITY_LOG_MARKERS[tool] if marker.lower() not in combined]
+    missing = [
+        marker
+        for marker in CAPABILITY_LOG_MARKERS[tool]
+        if marker.lower() not in combined
+    ]
     assert not missing, (
         f"{tool} job succeeded but capability markers missing {missing}; "
         f"log_tail={log_tail[-1000:]!r}"

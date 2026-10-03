@@ -17,13 +17,31 @@ from npa.lifecycle_intent import OperationIntent, intent_boundary, json_stdout_c
 @json_stdout_contract
 @intent_boundary(OperationIntent.MUTATE)
 def verify_storage_cmd(
-    spec_path: Path = typer.Option(..., "--spec", "-f", help="Path to the owner-private Fleet spec."),
-    only_projects: str = typer.Option("", "--only-projects", help="Comma-separated project keys or display names."),
-    only_clusters: str = typer.Option("", "--only-clusters", help="Comma-separated cluster names within selected projects."),
-    project_prefix: str = typer.Option("", "--project-prefix", help="Override the spec's project display-name prefix."),
-    profile: str = typer.Option("", "--profile", help="Override the spec's Nebius authentication profile."),
-    evidence_dir: Path | None = typer.Option(None, "--evidence-dir", help="Owner-private directory outside the repository for exact receipts."),
-    output_format: Literal["text", "json"] = typer.Option("text", "--output", "--output-format", help="Output format: text or json."),
+    spec_path: Path = typer.Option(
+        ..., "--spec", "-f", help="Path to the owner-private Fleet spec."
+    ),
+    only_projects: str = typer.Option(
+        "", "--only-projects", help="Comma-separated project keys or display names."
+    ),
+    only_clusters: str = typer.Option(
+        "",
+        "--only-clusters",
+        help="Comma-separated cluster names within selected projects.",
+    ),
+    project_prefix: str = typer.Option(
+        "", "--project-prefix", help="Override the spec's project display-name prefix."
+    ),
+    profile: str = typer.Option(
+        "", "--profile", help="Override the spec's Nebius authentication profile."
+    ),
+    evidence_dir: Path | None = typer.Option(
+        None,
+        "--evidence-dir",
+        help="Owner-private directory outside the repository for exact receipts.",
+    ),
+    output_format: Literal["text", "json"] = typer.Option(
+        "text", "--output", "--output-format", help="Output format: text or json."
+    ),
 ) -> None:
     """Verify host mounts and shared PVC visibility on every selected worker.
 
@@ -38,11 +56,17 @@ def verify_storage_cmd(
     Raises:
         typer.Exit: Verification, target resolution, or cleanup failed.
     """
-    _verify_and_emit(spec_path, output_format, {
-        "only_projects": _selectors(only_projects), "only_clusters": _selectors(only_clusters),
-        "project_prefix": project_prefix or None, "profile": profile or None,
-        "evidence_dir": evidence_dir,
-    })
+    _verify_and_emit(
+        spec_path,
+        output_format,
+        {
+            "only_projects": _selectors(only_projects),
+            "only_clusters": _selectors(only_clusters),
+            "project_prefix": project_prefix or None,
+            "profile": profile or None,
+            "evidence_dir": evidence_dir,
+        },
+    )
 
 
 def _selectors(value):
@@ -71,11 +95,15 @@ def _emit_report(report, output_format):
         typer.echo(json.dumps(report, indent=2, sort_keys=True))
         return
     outcome = "passed" if report.get("passed") else "failed"
-    typer.echo(f"Fleet storage verification {outcome}: "
-               f"{report.get('verified_clusters', 0)}/{report.get('selected_clusters', 0)} clusters, "
-               f"{report.get('cpu_workers', 0)} CPU and {report.get('gpu_workers', 0)} GPU workers, "
-               f"{report.get('requested_gibibytes', 0)} GiB requested.")
+    typer.echo(
+        f"Fleet storage verification {outcome}: "
+        f"{report.get('verified_clusters', 0)}/{report.get('selected_clusters', 0)} clusters, "
+        f"{report.get('cpu_workers', 0)} CPU and {report.get('gpu_workers', 0)} GPU workers, "
+        f"{report.get('requested_gibibytes', 0)} GiB requested."
+    )
     if report.get("skipped_clusters"):
-        typer.echo(f"Explicitly disabled filesystem targets: {report['skipped_clusters']}.")
+        typer.echo(
+            f"Explicitly disabled filesystem targets: {report['skipped_clusters']}."
+        )
     if report.get("evidence_sha256"):
         typer.echo(f"Evidence SHA-256: {report['evidence_sha256']}")

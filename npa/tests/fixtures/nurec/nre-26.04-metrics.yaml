@@ -1,0 +1,11 @@
+# Native NRE 26.04 metric subset; source/run metadata omitted.
+aggregated_metrics:
+  test/psnr:
+    aggregation_method: mean
+    value: 31.012008666992188
+  test/ssim:
+    aggregation_method: mean
+    value: 0.8322374224662781
+  test/lpips:
+    aggregation_method: mean
+    value: 0.2680250108242035

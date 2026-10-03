@@ -77,13 +77,21 @@ API:
 CLI:
 
 ```bash
-npa workbench isaac-lab deploy
+npa workbench isaac-lab deploy --image <reviewed-image@sha256:digest>
 npa workbench isaac-lab train
 npa workbench isaac-lab eval
 npa workbench isaac-lab status
 npa workbench isaac-lab system-info
 npa workbench isaac-lab list
 ```
+
+The previously accepted public Isaac Lab image is publication-quarantined: its
+layers contain package-generated SSH host private keys. The default container
+resolver therefore refuses it even though the historical tag may still pull.
+For container/BYOVM deployment, pass `--image` with a rebuilt, byte-scanned
+immutable digest; for workflows, use the exact toolRef `--image-override`.
+Never override with the withdrawn public tag. VM-native deployment is a
+different path and does not establish a replacement container release.
 
 ### Standalone checkpoint eval
 
@@ -199,13 +207,92 @@ branch `npa` code into that interpreter at start from an S3 source tarball
 
 Architecture + licensing rationale: `docs/architecture/sim-backend-selection.md`.
 
+## Shared-scene navigation BYOF
+
+Use `workflows/testing/shared-scene-navigation.yaml` and
+`docs/workbench/guides/shared-scene-navigation.md` for an existing registered
+navigation task in an operator-owned Isaac image. The operator supplies a
+source-hashed task adapter, exact image digest, self-contained scene USDZ and
+deterministic train/evaluation/probe cases. Native RSL-RL trains and reloads an
+actual checkpoint; no stock task or CPU fallback proves this integration.
+GPU acceptance is unverified until the opt-in native test runs with those inputs.
+The development extra pins CPU OpenUSD so scene and visibility regressions run
+in CI; those checks do not substitute for native RTX sensor/physics acceptance.
+
+Validate peer-contact exclusion separately from observation isolation. The
+supported RGB-D mode is `all_robot_geometry_hidden`: hide every robot's render
+geometry, including self and attachments, without altering collision physics.
+Require live USD coverage, fresh paired RGB/depth invariance and a changing
+camera positive control. Reject unsupported proxies, effects and sensor modes.
+State/raycast support still requires real isolation and obstacle-contact probes.
+Use RT-core resources. Do not claim thousands-of-camera throughput from the
+focal-camera probe. Stage publications use immutable attempt objects and
+provider-conditional claim/completion records; failed claims require a new run
+prefix. Keep operator artifact locations and runtime logs private.
+
 ## Operational Safety
+
+For a captured static environment, use
+`workflows/testing/scan-to-isaac-navigation.yaml` and the contract in
+`docs/workbench/guides/scan-to-isaac-navigation.md`. Its stateless native probe
+runs with `/isaac-sim/python.sh` and tests PhysX ray intersections against the
+assembled collision geometry. It verifies sealed scene/provenance bytes and
+rejects raw OmniScripting/OmniGraph declarations before Kit opens the stage,
+including hidden variants and nested archives. It records actual Isaac/PhysX
+versions separately from the operator-declared immutable image reference;
+runtime introspection does not attest a registry digest. This path has committed
+opt-in live coverage but no completed GPU acceptance, navigation-policy result,
+or NuRec-rendering proof. Stock robot tasks do not qualify these scene inputs.
 
 Managed VM `deploy` defaults to in-place updates for existing aliases. Terraform
 plans that would destroy or replace critical infrastructure are blocked unless
 the operator passes `--replace` and confirms with `--yes` for automation.
 
 ## Workflows
+
+### Calibrated RGB-D sensor rigs
+
+Use `workflows/testing/multicamera-rgbd-capture.yaml` for a supplied static USD
+scene plus calibrated camera rig and sampled trajectory. It calls
+`npa.workflows.isaac_rgbd.cli capture` in the supported Isaac interpreter and
+validates decoded S3 RGB/depth/masks/optional world points in a separate CPU
+stage. The graph stays in the standard workflow runtime; no robot is needed.
+The default four-camera procedural room is a sensor qualification fixture, not
+evidence of an industrial scan, navigation task, or encoder-training quality.
+GPU acceptance has not been run for this adapter.
+
+Keep `config.source_overlay: true` and submit with `--stage-src` (or a verified
+`NPA_SRC_S3_URI`) so both workers receive the new adapter even when the selected
+Isaac image already contains an older NPA package. Before opening any supplied
+stage in Kit, inspect every hashed USD layer through raw Sdf traversal, including
+inactive and unselected variants. Reject scripting APIs/properties, graph
+content, time samples and value clips, then reject composition errors after
+opening. Portable USDZ roots and nested packages are supported: inspect every
+archive member in private audit directories, including unused layers, and reject
+traversal, symlinks, duplicate/colliding names, compression and renamed packages.
+Explicit package-relative member paths remain unsupported. Author capture cameras
+into the writable session layer. Relative dependencies may use parent components
+only when the resolved path stays in the hashed bundle or package. Preserve ordinary
+textures. Do not describe these checks as a sandbox for arbitrary USD plugins.
+
+`workflows/testing/multicamera-rgbd-warehouse.yaml` runtime-collects the public
+NVIDIA full warehouse with native `omni.kit.usd.collect` (USD and MDL dependencies),
+then captures 265 poses over 66 meters using four 1280x720 cameras. Preparation is
+`npa.workflows.isaac_rgbd.cli prepare-reference --output-path <s3-prefix>` in the
+Isaac interpreter. Missing assets, native collection errors and content-audit
+failures stop preparation. Vendor assets stay in operator storage. This is a
+public authored reference, not a scan reconstruction or robot navigation result;
+GPU acceptance remains pending. Point-cloud output includes a per-frame fused
+world cloud retaining camera and pixel indices; validation recomputes it from
+the original RGB-D bytes rather than trusting cloud hashes alone.
+
+The contract requires Z-up meter scenes, finite rigid transforms, zero-skew
+pinhole calibration, and strictly increasing sampled timestamps. Depth is
+axial optical Z in meters; invalid values become zero with a boolean mask.
+Never publish successful capture evidence without decoding actual artifacts,
+matching all camera render reference times, and verifying calibration and
+backprojection. See `docs/workbench/multicamera-rgbd-capture.md` for S3 schemas,
+limits, pinned API references and opt-in live acceptance.
 
 - Single RL job: `npa/src/npa/workflows/byof/profiles/isaac-lab-rl-train.yaml`.
 - Parameter sweep: `workflows/testing/isaac-lab-rl-sweep.yaml`.

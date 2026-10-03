@@ -16,13 +16,29 @@ from .helpers import (
 
 
 def status_cmd(
-    endpoint: str = typer.Option("", "--endpoint", help="LanceDB wrapper or Cloud endpoint."),
-    token_env: str = typer.Option(DEFAULT_TOKEN_ENV, "--token-env", help="Environment variable containing wrapper token."),
-    api_key_env: str = typer.Option(DEFAULT_API_KEY_ENV, "--api-key-env", help="Environment variable containing LanceDB Cloud API key."),
+    endpoint: str = typer.Option(
+        "", "--endpoint", help="LanceDB wrapper or Cloud endpoint."
+    ),
+    token_env: str = typer.Option(
+        DEFAULT_TOKEN_ENV,
+        "--token-env",
+        help="Environment variable containing wrapper token.",
+    ),
+    api_key_env: str = typer.Option(
+        DEFAULT_API_KEY_ENV,
+        "--api-key-env",
+        help="Environment variable containing LanceDB Cloud API key.",
+    ),
     database: str = typer.Option("", "--database", help="LanceDB Cloud database name."),
-    cloud_region: str = typer.Option("", "--cloud-region", help="LanceDB Cloud region."),
-    cloud: bool = typer.Option(False, "--cloud", help="Use LanceDB Cloud auth headers."),
-    output: OutputFormat = typer.Option(OutputFormat.text, "--output", help="Output format."),
+    cloud_region: str = typer.Option(
+        "", "--cloud-region", help="LanceDB Cloud region."
+    ),
+    cloud: bool = typer.Option(
+        False, "--cloud", help="Use LanceDB Cloud auth headers."
+    ),
+    output: OutputFormat = typer.Option(
+        OutputFormat.text, "--output", help="Output format."
+    ),
 ) -> None:
     """Check endpoint reachability."""
     resolved = resolve_endpoint(endpoint)

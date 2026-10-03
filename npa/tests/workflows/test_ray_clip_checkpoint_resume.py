@@ -56,7 +56,11 @@ class _Rendezvous:
 
     def observation(self):
         """Expose only participants that actually reached the rendezvous."""
-        return {"participants": len(self.arrivals), "overlap": len(self.arrivals) > 1, "events": []}
+        return {
+            "participants": len(self.arrivals),
+            "overlap": len(self.arrivals) > 1,
+            "events": [],
+        }
 
 
 class _SerialActor:
@@ -67,7 +71,9 @@ class _SerialActor:
         self.completed = 0
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.infer = SimpleNamespace(remote=self.submit)
-        self.status = SimpleNamespace(remote=lambda: {"instance_id": name, "inference_calls": self.completed})
+        self.status = SimpleNamespace(
+            remote=lambda: {"instance_id": name, "inference_calls": self.completed}
+        )
 
     def submit(self, shard, barrier=None):
         """Record every scheduled call, including calls that cannot finish."""
@@ -114,15 +120,25 @@ class _SessionFactory:
             records=total,
             batch_size=1,
         )
-        result = self.application._InferenceSession(arguments, [[index] for index in range(total)])
+        result = self.application._InferenceSession(
+            arguments, [[index] for index in range(total)]
+        )
         result.fingerprint = "execution"
-        prepared = [self.application.worker.preprocess_shard([index]) for index in range(total)]
+        prepared = [
+            self.application.worker.preprocess_shard([index]) for index in range(total)
+        ]
         for index in cached:
             self.application.commit_shard(
-                self.path / "shards" / f"{index:06d}", prepared[index], _vectors(prepared[index]),
-                {"instance_id": "previous-job-actor", "inference_seconds": 5.0}, "revision", "execution",
+                self.path / "shards" / f"{index:06d}",
+                prepared[index],
+                _vectors(prepared[index]),
+                {"instance_id": "previous-job-actor", "inference_seconds": 5.0},
+                "revision",
+                "execution",
             )
-        self.actors.extend(_SerialActor(f"current-actor-{index}", self.calls) for index in range(count))
+        self.actors.extend(
+            _SerialActor(f"current-actor-{index}", self.calls) for index in range(count)
+        )
         result.actors = self.actors
         result.prepare_shard = SimpleNamespace(remote=lambda ids: prepared[ids[0]])
         result.inference_barrier = SimpleNamespace(remote=self._barrier)
@@ -152,25 +168,40 @@ def session(application, tmp_path, monkeypatch):
         None.
     """
     factory = _SessionFactory(application, tmp_path)
-    monkeypatch.setitem(sys.modules, "ray", SimpleNamespace(
-        get=_resolve_future, kill=lambda *args, **kwargs: None, is_initialized=lambda: False,
-    ))
-    yield SimpleNamespace(create=factory._create, calls=factory.calls,
-                          barriers=factory.barriers, path=tmp_path)
+    monkeypatch.setitem(
+        sys.modules,
+        "ray",
+        SimpleNamespace(
+            get=_resolve_future,
+            kill=lambda *args, **kwargs: None,
+            is_initialized=lambda: False,
+        ),
+    )
+    yield SimpleNamespace(
+        create=factory._create,
+        calls=factory.calls,
+        barriers=factory.barriers,
+        path=tmp_path,
+    )
     factory._close()
 
 
-@pytest.mark.parametrize("actors,cached,total", [
-    (2, set(range(7)), 7),
-    (2, {0, 2, 4, 5, 6}, 7),  # sparse indices 1,3 used to select the same actor
-    (4, {0, 1, 2, 3, 4, 5}, 7),
-    (4, {0, 2, 4, 5, 6}, 7),
-    (2, set(), 7),
-    (1, {0, 2, 3, 5}, 7),
-    (2, {0}, 1),
-    (2, set(), 1),
-])
-def test_resume_schedules_only_missing_shards_and_completes(application, session, actors, cached, total):
+@pytest.mark.parametrize(
+    "actors,cached,total",
+    [
+        (2, set(range(7)), 7),
+        (2, {0, 2, 4, 5, 6}, 7),  # sparse indices 1,3 used to select the same actor
+        (4, {0, 1, 2, 3, 4, 5}, 7),
+        (4, {0, 2, 4, 5, 6}, 7),
+        (2, set(), 7),
+        (1, {0, 2, 3, 5}, 7),
+        (2, {0}, 1),
+        (2, set(), 1),
+    ],
+)
+def test_resume_schedules_only_missing_shards_and_completes(
+    application, session, actors, cached, total
+):
     """Verify call counts, real Parquet completion, and sparse-wave liveness.
 
     Args:
@@ -193,7 +224,10 @@ def test_resume_schedules_only_missing_shards_and_completes(application, session
     assert sorted(index for index, _ in session.calls) == sorted(expected)
     assert sum(actor["inference_calls"] for actor in run.final_actors) == len(expected)
     assert len(run.receipts) == total
-    assert all(receipt["checkpoint_reused"] == (i in cached) for i, receipt in enumerate(run.receipts))
+    assert all(
+        receipt["checkpoint_reused"] == (i in cached)
+        for i, receipt in enumerate(run.receipts)
+    )
     assert all(path.read_bytes() == content for path, content in original.items())
     wave = min(actors, len(expected - {0}))
     assert [item.participants for item in session.barriers] == ([wave] if wave else [])
@@ -203,13 +237,19 @@ def test_resume_schedules_only_missing_shards_and_completes(application, session
     assert report["records"] == report["lance_rows"] == total
     timing = run._timing_report(observation)
     assert timing["inference_actor_seconds_sum"] == len(expected) * 0.25
-    assert timing["retained_checkpoint_inference_actor_seconds_sum"] == len(cached) * 5.0
+    assert (
+        timing["retained_checkpoint_inference_actor_seconds_sum"] == len(cached) * 5.0
+    )
     assert timing["inferred_shards"] == sorted(expected)
     assert timing["reused_checkpoint_shards"] == sorted(cached)
 
 
-@pytest.mark.parametrize("damage", ["bytes", "identity", "missing_data", "malformed_marker"])
-def test_invalid_later_checkpoint_fails_before_any_later_inference(application, session, damage):
+@pytest.mark.parametrize(
+    "damage", ["bytes", "identity", "missing_data", "malformed_marker"]
+)
+def test_invalid_later_checkpoint_fails_before_any_later_inference(
+    application, session, damage
+):
     """Never spend GPU work or overwrite corrupt committed bytes during resume.
 
     Args:
@@ -278,7 +318,11 @@ def test_missing_overlap_still_fails_for_a_real_multi_actor_wave(session):
     run = session.create(2, {0})
     run._commit_first_shard()
     run._infer_remaining_shards()
-    run.barrier.status.remote = lambda: {"participants": 2, "overlap": False, "events": []}
+    run.barrier.status.remote = lambda: {
+        "participants": 2,
+        "overlap": False,
+        "events": [],
+    }
     with pytest.raises(ValueError, match="never overlapped"):
         run._check_concurrency()
 
@@ -336,7 +380,9 @@ def _partial_archive():
     return archive.getvalue(), content
 
 
-def test_live_startup_failure_preserves_native_evidence_and_partial_output(tmp_path, monkeypatch, live_helpers):
+def test_live_startup_failure_preserves_native_evidence_and_partial_output(
+    tmp_path, monkeypatch, live_helpers
+):
     """An early terminal failure must retain logs, status and its partial files.
 
     Args:
@@ -357,9 +403,21 @@ def test_live_startup_failure_preserves_native_evidence_and_partial_output(tmp_p
         get_job_info=lambda identifier: SimpleNamespace(status=status),
         stop_job=lambda identifier: stopped.append(identifier),
     )
-    monkeypatch.setitem(sys.modules, "ray.job_submission", SimpleNamespace(JobSubmissionClient=lambda address: client))
+    monkeypatch.setitem(
+        sys.modules,
+        "ray.job_submission",
+        SimpleNamespace(JobSubmissionClient=lambda address: client),
+    )
     config = tmp_path / "config.json"
-    config.write_text(json.dumps({"evidence_dir": str(tmp_path / "evidence"), "remote_root": "/synthetic-output", "address": "unused"}))
+    config.write_text(
+        json.dumps(
+            {
+                "evidence_dir": str(tmp_path / "evidence"),
+                "remote_root": "/synthetic-output",
+                "address": "unused",
+            }
+        )
+    )
     config.chmod(0o600)
     monkeypatch.setenv("NPA_RAY_CLIP_CHECKPOINT_LIVE_CONFIG", str(config))
     archive, content = _partial_archive()
@@ -371,19 +429,25 @@ def test_live_startup_failure_preserves_native_evidence_and_partial_output(tmp_p
 
     monkeypatch.setattr(live_helpers, "_remote", remote)
     with pytest.raises(AssertionError):
-        live_helpers.test_native_clip_stop_resume_sparse_and_invalid_checkpoints(tmp_path)
+        live_helpers.test_native_clip_stop_resume_sparse_and_invalid_checkpoints(
+            tmp_path
+        )
     _verify_startup_evidence(tmp_path / "evidence", stopped, remote_calls, content)
 
 
 def _verify_startup_evidence(evidence_root, stopped, remote_calls, content):
     """Check that early native failures retain private status, logs and output."""
     assert len(stopped) == 1 and len(remote_calls) == 2
-    evidence, = evidence_root.iterdir()
-    log, = evidence.glob("*-final.log")
-    receipt, = evidence.glob("*-final.json")
-    partial, = evidence.glob("*-cleanup-snapshot/result/partial.txt")
+    (evidence,) = evidence_root.iterdir()
+    (log,) = evidence.glob("*-final.log")
+    (receipt,) = evidence.glob("*-final.json")
+    (partial,) = evidence.glob("*-cleanup-snapshot/result/partial.txt")
     assert log.read_text() == "model startup failed"
     assert "status" in json.loads(receipt.read_text())
     assert partial.read_bytes() == content
     assert json.loads((evidence / "job-cleanup.json").read_text())["errors"] == []
-    assert all(path.stat().st_mode & 0o777 == 0o600 for path in evidence.rglob("*") if path.is_file())
+    assert all(
+        path.stat().st_mode & 0o777 == 0o600
+        for path in evidence.rglob("*")
+        if path.is_file()
+    )

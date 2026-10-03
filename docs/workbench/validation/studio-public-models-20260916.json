@@ -1,0 +1,260 @@
+{
+  "schema": "npa.public.native_model_capabilities.v1",
+  "verified_on": "2026-09-16",
+  "build_workflow": "https://github.com/nebius/nebius-physical-ai/actions/runs/35037944321",
+  "publication_gates": "Passed mandatory pre-push and exact-digest post-push security, payload, licensing, provenance, SBOM and anonymous-pull gates.",
+  "gpu_scope": "B200 only; B300 has not been validated for these images.",
+  "capabilities": [
+    {
+      "model": "mochi-1",
+      "capability": "mochi-1_text_to_video",
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "frames": 163,
+      "video_sha256": "a6dabe7031bcc6c2cf77378a703ab36c0fa65e0ca95c8752cc09cf84ca6ec227",
+      "capability_json_sha256": "f19325c1483bf465c3e2081af0fa7d978169339076287846497dc32290e4749d",
+      "all_artifact_hashes_verified": true,
+      "full_video_decode_verified": true,
+      "native_smoke_exit_code": 0,
+      "observed_gpu": {
+        "torch": "2.13.0+cu130",
+        "cuda": "13.0",
+        "devices": [
+          {
+            "index": 0,
+            "name": "NVIDIA B200",
+            "compute_capability": [
+              10,
+              0
+            ],
+            "total_memory_bytes": 191503007744
+          }
+        ]
+      },
+      "checkpoint": "genmo/mochi-1-preview",
+      "checkpoint_revision": "14be5fcea23095ed330cb214647916a451e38b6e",
+      "input_sha256": null,
+      "unmodified_region_mean_absolute_error": null,
+      "not_claimed": [
+        "action_conditioning",
+        "training",
+        "real_time_serving"
+      ]
+    },
+    {
+      "model": "cogvideox-2b",
+      "capability": "cogvideox-2b_text_to_video",
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "frames": 49,
+      "video_sha256": "f98e3b722147a4ea020cb7109aaf75747851533bc28fdf130e58e0d14f0bb83b",
+      "capability_json_sha256": "7424dc928cb2b9c1584780878b9d484b01840e34bb94047b524cf16a195b0eee",
+      "all_artifact_hashes_verified": true,
+      "full_video_decode_verified": true,
+      "native_smoke_exit_code": 0,
+      "observed_gpu": {
+        "torch": "2.13.0+cu130",
+        "cuda": "13.0",
+        "devices": [
+          {
+            "index": 0,
+            "name": "NVIDIA B200",
+            "compute_capability": [
+              10,
+              0
+            ],
+            "total_memory_bytes": 191503007744
+          }
+        ]
+      },
+      "checkpoint": "zai-org/CogVideoX-2b",
+      "checkpoint_revision": "1137dacfc2c9c012bed6a0793f4ecf2ca8e7ba01",
+      "input_sha256": null,
+      "unmodified_region_mean_absolute_error": null,
+      "not_claimed": [
+        "action_conditioning",
+        "training",
+        "real_time_serving"
+      ]
+    },
+    {
+      "model": "wan2.1-14b",
+      "capability": "wan2.1-14b_text_to_video",
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "frames": 81,
+      "video_sha256": "a96b3410ad10680234114a8419680292e83bb556cbafb6cb7c50d10d5b062996",
+      "capability_json_sha256": "03c9c9ff3d836768f5ba15632ad7b22b66322e78631c46652dca58eed3ea2da5",
+      "all_artifact_hashes_verified": true,
+      "full_video_decode_verified": true,
+      "native_smoke_exit_code": 0,
+      "observed_gpu": {
+        "torch": "2.13.0+cu130",
+        "cuda": "13.0",
+        "devices": [
+          {
+            "index": 0,
+            "name": "NVIDIA B200",
+            "compute_capability": [
+              10,
+              0
+            ],
+            "total_memory_bytes": 191503007744
+          }
+        ]
+      },
+      "checkpoint": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
+      "checkpoint_revision": "38ec498cb3208fb688890f8cc7e94ede2cbd7f68",
+      "input_sha256": null,
+      "unmodified_region_mean_absolute_error": null,
+      "not_claimed": [
+        "action_conditioning",
+        "training",
+        "real_time_serving"
+      ]
+    },
+    {
+      "model": "depth-anything-v2",
+      "capability": "relative_depth_video",
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-diffusers@sha256:6422a062a00c9816a945623b0c83a78977fa5d5cec1777a0e6d44d1d746fc42e",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "frames": 163,
+      "video_sha256": "02fab3d33293261229bff8fcb19e9a309d53b526edf6af1368fe498731576122",
+      "capability_json_sha256": "719a81a2c5239900eca0dfa6b4816e9335a2291041aea3fed4975ccfca2ffbe3",
+      "all_artifact_hashes_verified": true,
+      "full_video_decode_verified": true,
+      "native_smoke_exit_code": 0,
+      "observed_gpu": {
+        "torch": "2.13.0+cu130",
+        "cuda": "13.0",
+        "devices": [
+          {
+            "index": 0,
+            "name": "NVIDIA B200",
+            "compute_capability": [
+              10,
+              0
+            ],
+            "total_memory_bytes": 191503007744
+          }
+        ]
+      },
+      "checkpoint": "depth-anything/Depth-Anything-V2-Small-hf",
+      "checkpoint_revision": "5426e4f0f36572d16453bbda7a8389317b1bef99",
+      "input_sha256": "c2ece9798a6fdc7782e299e2833ed49aed30c04963d0c16907670ad2cae2e8a5",
+      "unmodified_region_mean_absolute_error": 1.4184069326318847,
+      "not_claimed": [
+        "metric_depth",
+        "ground_truth_segmentation",
+        "robot_task_success"
+      ]
+    },
+    {
+      "model": "lingbot-world",
+      "capability": "lingbot_world_camera_conditioned_video",
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-lingbot-world@sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "frames": 161,
+      "video_sha256": "bcb9fde094d5331bb437e8a3e2fde248152ea3ea308bb6f53d1337b125e58f00",
+      "capability_json_sha256": "9cb7b9d3cc5ba438d3528facf7b95dcf26bbedb57d452381f23b6d0cde1692a1",
+      "all_artifact_hashes_verified": true,
+      "full_video_decode_verified": true,
+      "native_smoke_exit_code": 0,
+      "observed_gpu": [
+        {
+          "rank": 0,
+          "world_size": 4,
+          "calls": {
+            "attention": 11200,
+            "all_to_all": 22400
+          },
+          "device": "NVIDIA B200",
+          "torch": "2.13.0+cu130",
+          "cuda": "13.0",
+          "attention_backend": "upstream PyTorch SDPA fallback"
+        },
+        {
+          "rank": 1,
+          "world_size": 4,
+          "calls": {
+            "attention": 11200,
+            "all_to_all": 22400
+          },
+          "device": "NVIDIA B200",
+          "torch": "2.13.0+cu130",
+          "cuda": "13.0",
+          "attention_backend": "upstream PyTorch SDPA fallback"
+        },
+        {
+          "rank": 2,
+          "world_size": 4,
+          "calls": {
+            "attention": 11200,
+            "all_to_all": 22400
+          },
+          "device": "NVIDIA B200",
+          "torch": "2.13.0+cu130",
+          "cuda": "13.0",
+          "attention_backend": "upstream PyTorch SDPA fallback"
+        },
+        {
+          "rank": 3,
+          "world_size": 4,
+          "calls": {
+            "attention": 11200,
+            "all_to_all": 22400
+          },
+          "device": "NVIDIA B200",
+          "torch": "2.13.0+cu130",
+          "cuda": "13.0",
+          "attention_backend": "upstream PyTorch SDPA fallback"
+        }
+      ],
+      "checkpoint": "robbyant/lingbot-world-base-cam",
+      "checkpoint_revision": "6fc824ffc338d64c97c77e2eb8c0f4cfc24d82bd",
+      "input_sha256": "89f90971b7810e5b22c82ca945872e19adc037f47709fa21e9bfde248338b697",
+      "unmodified_region_mean_absolute_error": null,
+      "not_claimed": [
+        "robot_action_conditioning",
+        "training",
+        "real_time"
+      ]
+    },
+    {
+      "model": "sam2.1",
+      "capability": "prompted_video_mask_propagation",
+      "image": "ghcr.io/nebius/nebius-physical-ai/npa-sam2@sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
+      "development_sha": "d54eec137d3b2d86ff1acef736e36967b1fad7d3",
+      "frames": 49,
+      "video_sha256": "8207aa91675130f5cb9dacc49843ff51b265532a9ad371d95204a4dc8dba19e7",
+      "capability_json_sha256": "8dc6437a535977c9f0f44cd239c67ee89498b4812d74f84ebb6796aa91bbc80d",
+      "all_artifact_hashes_verified": true,
+      "full_video_decode_verified": true,
+      "native_smoke_exit_code": 0,
+      "observed_gpu": {
+        "torch": "2.13.0+cu130",
+        "cuda": "13.0",
+        "devices": [
+          {
+            "index": 0,
+            "name": "NVIDIA B200",
+            "compute_capability": [
+              10,
+              0
+            ],
+            "total_memory_bytes": 191503007744
+          }
+        ]
+      },
+      "checkpoint": "facebook/sam2.1-hiera-small",
+      "checkpoint_revision": "ee5bba1d82bb8749febdf90f45e84b687142ba03",
+      "input_sha256": "f98e3b722147a4ea020cb7109aaf75747851533bc28fdf130e58e0d14f0bb83b",
+      "unmodified_region_mean_absolute_error": 2.3499480412930858,
+      "not_claimed": [
+        "metric_depth",
+        "ground_truth_segmentation",
+        "robot_task_success"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+id: npa-antioch-cartpole-example
+name: NPA Antioch cartpole offline trajectory
+scenario_paths: [cartpole]
+
+services:
+  sim:
+    image: antioch-engine/isaac-lab-3.0
+
+suites:
+  npa_cartpole_offline_smoke:
+    description: One synthetic/public cartpole episode with strict offline-policy data.
+    select:
+      - tags: [npa-policy-data]

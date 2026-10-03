@@ -206,8 +206,7 @@ def _ordered_bands(grid: Grid) -> list[Band]:
 def _canvas_height(ordered: list[Band]) -> int:
     """Calculate chart height from its rendered band membership."""
     rows_height = sum(
-        BAND_H + len(members) * (CELL_H + ROW_GAP)
-        for _, _, members in ordered
+        BAND_H + len(members) * (CELL_H + ROW_GAP) for _, _, members in ordered
     )
     return TOP + LEGEND_H + rows_height + 44
 
@@ -249,7 +248,7 @@ def _cell_elements(
     x = 16 + LABEL_W + index * CELL_W
     column = f"{COLUMNS[index][0]} {COLUMNS[index][1]}"
     return [
-        f'<g><title>{escape(f"{image} on {column}: {detail}")}</title>',
+        f"<g><title>{escape(f'{image} on {column}: {detail}')}</title>",
         f'<rect x="{x}" y="{y}" width="{CELL_W - 4}" height="{CELL_H}" '
         f'rx="3" fill="{FILL[kind]}"/>',
         f'<text x="{x + (CELL_W - 4) / 2:.0f}" y="{y + 17}" font-size="11.5" '
@@ -258,9 +257,7 @@ def _cell_elements(
     ]
 
 
-def _row_elements(
-    image: str, cells: list[tuple[str, str, str]], y: int
-) -> list[str]:
+def _row_elements(image: str, cells: list[tuple[str, str, str]], y: int) -> list[str]:
     """Return the image label and all compatibility cells for one row."""
     out = [
         f'<text x="16" y="{y + 17}" font-size="12" fill="#1f2328" '
@@ -272,9 +269,7 @@ def _row_elements(
     return out
 
 
-def _band_elements(
-    band: Band, grid: Grid, y: int, width: int
-) -> tuple[list[str], int]:
+def _band_elements(band: Band, grid: Grid, y: int, width: int) -> tuple[list[str], int]:
     """Return one band and the next available vertical position."""
     label, _key, members = band
     out = [
@@ -376,7 +371,10 @@ def main(argv: list[str] | None = None) -> int:
         if _without_render_date(args.output.read_text(encoding="utf-8")) != (
             _without_render_date(svg)
         ):
-            print(f"ERROR: {args.output} is stale; re-run without --check", file=sys.stderr)
+            print(
+                f"ERROR: {args.output} is stale; re-run without --check",
+                file=sys.stderr,
+            )
             return 1
         print(f"{args.output} is up to date")
         return 0

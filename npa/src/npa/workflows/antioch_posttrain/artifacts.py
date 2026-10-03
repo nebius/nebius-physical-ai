@@ -21,7 +21,9 @@ def write_json(path: Path, payload: object) -> None:
         OSError: Writing fails.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n")
+    path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
 
 
 def file_hash(path: Path) -> str:
@@ -109,4 +111,6 @@ def publish(root: Path, destination: str) -> None:
         actual = client.read_bytes_with_etag(uri)
         if actual is None or hashlib.sha256(actual[0]).hexdigest() != expected:
             raise ValueError("Published artifact failed readback")
-    client.upload_file(str(root / "checksums.json"), destination.rstrip("/") + "/checksums.json")
+    client.upload_file(
+        str(root / "checksums.json"), destination.rstrip("/") + "/checksums.json"
+    )

@@ -18,17 +18,25 @@ from ncore_publication import cli, gates  # noqa: E402
 HOOK = "opt/venv/lib/python3.12/site-packages/npa-source.pth"
 
 
-@pytest.mark.parametrize("change", [None, "empty", "missing", "public", "symlink", "wrong-mode"])
-def test_explicit_literal_policy_requires_nonempty_private_bound_inventory(tmp_path, change):
+@pytest.mark.parametrize(
+    "change", [None, "empty", "missing", "public", "symlink", "wrong-mode"]
+)
+def test_explicit_literal_policy_requires_nonempty_private_bound_inventory(
+    tmp_path, change
+):
     path = tmp_path / "literals.json"
-    path.write_text(json.dumps({"literals": [] if change == "empty" else ["private-fixture"]}))
+    path.write_text(
+        json.dumps({"literals": [] if change == "empty" else ["private-fixture"]})
+    )
     path.chmod(0o644 if change == "public" else 0o600)
     if change == "symlink":
         alias = tmp_path / "alias.json"
         alias.symlink_to(path)
         path = alias
-    args = SimpleNamespace(policy_mode="ci-regex" if change == "wrong-mode" else "exact-literals",
-                           literal_inventory=None if change == "missing" else path)
+    args = SimpleNamespace(
+        policy_mode="ci-regex" if change == "wrong-mode" else "exact-literals",
+        literal_inventory=None if change == "missing" else path,
+    )
     with W.authorized_roots(tmp_path, ROOT):
         if change is None:
             cli._policy_input(args)
@@ -39,8 +47,11 @@ def test_explicit_literal_policy_requires_nonempty_private_bound_inventory(tmp_p
 
 @pytest.mark.parametrize("mode", ["ci-regex", "exact-literals"])
 def test_byte_authorization_preserves_selected_policy(tmp_path, monkeypatch, mode):
-    args = SimpleNamespace(analysis_root=tmp_path, policy_mode=mode,
-                           literal_inventory=tmp_path / "literals.json")
+    args = SimpleNamespace(
+        analysis_root=tmp_path,
+        policy_mode=mode,
+        literal_inventory=tmp_path / "literals.json",
+    )
     commands = []
 
     def run(argv, output, **_):
@@ -50,7 +61,9 @@ def test_byte_authorization_preserves_selected_policy(tmp_path, monkeypatch, mod
         commands.append(argv)
         target = tmp_path / "bytes"
         target.mkdir()
-        (target / "report.json").write_text(json.dumps(dict(complete=True, valid=True, helper_joined=True)))
+        (target / "report.json").write_text(
+            json.dumps(dict(complete=True, valid=True, helper_joined=True))
+        )
         return 0
 
     monkeypatch.setattr(gates, "run", run)
@@ -59,13 +72,20 @@ def test_byte_authorization_preserves_selected_policy(tmp_path, monkeypatch, mod
     authorization = commands[0]
     assert authorization[authorization.index("--policy-mode") + 1] == mode
     if mode == "exact-literals":
-        assert authorization[authorization.index("--literal-inventory") + 1] == str(args.literal_inventory)
-        assert authorization[authorization.index("--literal-matching-policy") + 1] == "exact-substring-v1"
+        assert authorization[authorization.index("--literal-inventory") + 1] == str(
+            args.literal_inventory
+        )
+        assert (
+            authorization[authorization.index("--literal-matching-policy") + 1]
+            == "exact-substring-v1"
+        )
     else:
         assert "--literal-inventory" not in authorization
 
 
-def test_ci_policy_retains_required_customer_and_optional_infrastructure_validation(monkeypatch):
+def test_ci_policy_retains_required_customer_and_optional_infrastructure_validation(
+    monkeypatch,
+):
     monkeypatch.delenv("CUSTOMER_DENYLIST", raising=False)
     monkeypatch.delenv("INFRA_DENYLIST", raising=False)
     args = SimpleNamespace(policy_mode="ci-regex", literal_inventory=None)
@@ -82,18 +102,42 @@ def test_exact_policy_does_not_replace_or_compile_ambient_regex(tmp_path, monkey
     path = tmp_path / "literals.json"
     path.write_text('{"literals":["private-fixture"]}')
     path.chmod(0o600)
-    monkeypatch.setattr(W.C, "compile_policy", lambda *_: pytest.fail("exact policy used regex mode"))
+    monkeypatch.setattr(
+        W.C, "compile_policy", lambda *_: pytest.fail("exact policy used regex mode")
+    )
     args = SimpleNamespace(policy_mode="exact-literals", literal_inventory=path)
     with W.authorized_roots(tmp_path, ROOT):
         cli._policy_input(args)
 
 
-@pytest.mark.parametrize("change", [None, "weights", "executable", "symlink", "duplicate",
-                                    "missing", "incomplete", "history", "payload", "missing-list"])
-def test_payload_accepts_only_complete_scan_and_exact_text_import_hook(tmp_path, monkeypatch, change):
-    report = dict(format="npa_restricted_payload_scan_v2", scan_complete=True,
-                  history_only=False, verdict="clean", entries_scanned=1938,
-                  payload_hits=[], history_hits=[], weight_shaped_paths=[HOOK])
+@pytest.mark.parametrize(
+    "change",
+    [
+        None,
+        "weights",
+        "executable",
+        "symlink",
+        "duplicate",
+        "missing",
+        "incomplete",
+        "history",
+        "payload",
+        "missing-list",
+    ],
+)
+def test_payload_accepts_only_complete_scan_and_exact_text_import_hook(
+    tmp_path, monkeypatch, change
+):
+    report = dict(
+        format="npa_restricted_payload_scan_v2",
+        scan_complete=True,
+        history_only=False,
+        verdict="clean",
+        entries_scanned=1938,
+        payload_hits=[],
+        history_hits=[],
+        weight_shaped_paths=[HOOK],
+    )
     if change == "weights":
         report["weight_shaped_paths"].append("opt/checkpoint.pth")
     elif change == "incomplete":
@@ -126,17 +170,37 @@ def test_payload_accepts_only_complete_scan_and_exact_text_import_hook(tmp_path,
             gates._payload(tmp_path)
 
 
-@pytest.mark.parametrize("change", [None, "empty-results", "unfixed", "null-results",
-                                    "schema", "type", "config", "layers", "metadata",
-                                    "fixed-critical", "secret"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        None,
+        "empty-results",
+        "unfixed",
+        "null-results",
+        "schema",
+        "type",
+        "config",
+        "layers",
+        "metadata",
+        "fixed-critical",
+        "secret",
+    ],
+)
 def test_trivy_empty_report_requires_exact_image_binding_and_keeps_security_rejections(
     tmp_path, monkeypatch, change
 ):
-    graph = {"image_config_digest": "sha256:" + "a" * 64,
-             "layers": [{"diff_id": "sha256:" + "b" * 64}]}
-    report = {"SchemaVersion": 2, "ArtifactType": "container_image",
-              "Metadata": {"ImageID": graph["image_config_digest"],
-                           "DiffIDs": [graph["layers"][0]["diff_id"]]}}
+    graph = {
+        "image_config_digest": "sha256:" + "a" * 64,
+        "layers": [{"diff_id": "sha256:" + "b" * 64}],
+    }
+    report = {
+        "SchemaVersion": 2,
+        "ArtifactType": "container_image",
+        "Metadata": {
+            "ImageID": graph["image_config_digest"],
+            "DiffIDs": [graph["layers"][0]["diff_id"]],
+        },
+    }
     if change in {"empty-results", "null-results"}:
         report["Results"] = [] if change == "empty-results" else None
     elif change == "schema":
@@ -150,11 +214,21 @@ def test_trivy_empty_report_requires_exact_image_binding_and_keeps_security_reje
     elif change == "metadata":
         del report["Metadata"]
     elif change in {"fixed-critical", "unfixed"}:
-        report["Results"] = [{"Vulnerabilities": [{"Severity": "CRITICAL",
-                              "FixedVersion": "2" if change == "fixed-critical" else ""}]}]
+        report["Results"] = [
+            {
+                "Vulnerabilities": [
+                    {
+                        "Severity": "CRITICAL",
+                        "FixedVersion": "2" if change == "fixed-critical" else "",
+                    }
+                ]
+            }
+        ]
     elif change == "secret":
         report["Results"] = [{"Secrets": [{"Severity": "LOW"}]}]
-    monkeypatch.setattr(gates, "run", lambda argv, output, **_: output.write_text(json.dumps(report)))
+    monkeypatch.setattr(
+        gates, "run", lambda argv, output, **_: output.write_text(json.dumps(report))
+    )
     if change in {None, "empty-results", "unfixed"}:
         gates._security(tmp_path, graph)
     else:

@@ -77,8 +77,12 @@ def parse_args() -> argparse.Namespace:
         description="Profile LeRobot training — wallclock or torch.profiler mode.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--mode", choices=["wallclock", "profiler", "inference"], default="wallclock",
-                   help="Measurement mode: wallclock (training throughput), profiler (torch stage breakdown), inference (forward-only latency).")
+    p.add_argument(
+        "--mode",
+        choices=["wallclock", "profiler", "inference"],
+        default="wallclock",
+        help="Measurement mode: wallclock (training throughput), profiler (torch stage breakdown), inference (forward-only latency).",
+    )
     p.add_argument("--policy_type", required=True)
     p.add_argument("--dataset_repo_id", required=True)
     p.add_argument("--steps", type=int, default=100)
@@ -86,19 +90,39 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--num_workers", type=int, default=0)
     p.add_argument("--output_dir", required=True)
     p.add_argument("--device", default="cuda")
-    p.add_argument("--compile", action="store_true", help="Apply torch.compile to the policy model.")
+    p.add_argument(
+        "--compile",
+        action="store_true",
+        help="Apply torch.compile to the policy model.",
+    )
     p.add_argument("--grad_clip_norm", type=float, default=10.0)
     # Shared: warmup steps to discard (both modes use this)
-    p.add_argument("--warmup_steps", type=int, default=10,
-                   help="Warmup steps to run before timed measurement. "
-                        "Automatically raised to 50 when --compile is set.")
+    p.add_argument(
+        "--warmup_steps",
+        type=int,
+        default=10,
+        help="Warmup steps to run before timed measurement. "
+        "Automatically raised to 50 when --compile is set.",
+    )
     # Profiler-only settings
-    p.add_argument("--skip_first", type=int, default=10,
-                   help="(profiler mode) Profiler schedule skip_first.")
-    p.add_argument("--warmup", type=int, default=5,
-                   help="(profiler mode) Profiler schedule warmup.")
-    p.add_argument("--active", type=int, default=50,
-                   help="(profiler mode) Profiler schedule active.")
+    p.add_argument(
+        "--skip_first",
+        type=int,
+        default=10,
+        help="(profiler mode) Profiler schedule skip_first.",
+    )
+    p.add_argument(
+        "--warmup",
+        type=int,
+        default=5,
+        help="(profiler mode) Profiler schedule warmup.",
+    )
+    p.add_argument(
+        "--active",
+        type=int,
+        default=50,
+        help="(profiler mode) Profiler schedule active.",
+    )
     return p.parse_args()
 
 
@@ -128,10 +152,14 @@ def build_training_components(args):
 
     config_cls = None
     from lerobot.configs.policies import PreTrainedConfig
+
     for attr_name in dir(config_module):
         obj = getattr(config_module, attr_name)
-        if not (isinstance(obj, type) and issubclass(obj, PreTrainedConfig)
-                and obj is not PreTrainedConfig):
+        if not (
+            isinstance(obj, type)
+            and issubclass(obj, PreTrainedConfig)
+            and obj is not PreTrainedConfig
+        ):
             continue
         try:
             if obj().type == policy_type:
@@ -140,7 +168,9 @@ def build_training_components(args):
         except Exception:
             continue
     if config_cls is None:
-        raise RuntimeError(f"Could not find config class for policy type: {policy_type}")
+        raise RuntimeError(
+            f"Could not find config class for policy type: {policy_type}"
+        )
 
     policy_cfg = config_cls()
     policy_cfg.push_to_hub = False
@@ -177,7 +207,8 @@ def build_training_components(args):
 
     print("Creating preprocessor...")
     preprocessor, _ = make_pre_post_processors(
-        policy_cfg=cfg.policy, pretrained_path=None,
+        policy_cfg=cfg.policy,
+        pretrained_path=None,
         dataset_stats=dataset.meta.stats,
     )
 
@@ -187,6 +218,7 @@ def build_training_components(args):
     has_sampler = hasattr(cfg.policy, "drop_n_last_frames")
     if has_sampler:
         from lerobot.datasets.sampler import EpisodeAwareSampler
+
         sampler = EpisodeAwareSampler(
             dataset.meta.episodes["dataset_from_index"],
             dataset.meta.episodes["dataset_to_index"],
@@ -200,9 +232,13 @@ def build_training_components(args):
         shuffle = True
 
     dataloader = torch.utils.data.DataLoader(
-        dataset, num_workers=args.num_workers, batch_size=args.batch_size,
-        shuffle=shuffle, sampler=sampler,
-        pin_memory=device.type == "cuda", drop_last=False,
+        dataset,
+        num_workers=args.num_workers,
+        batch_size=args.batch_size,
+        shuffle=shuffle,
+        sampler=sampler,
+        pin_memory=device.type == "cuda",
+        drop_last=False,
         prefetch_factor=2 if args.num_workers > 0 else None,
     )
 
@@ -278,8 +314,10 @@ def run_wallclock(args, dataloader, policy, optimizer, lr_scheduler, preprocesso
     # GPU stages: cuda.Event pairs (4 boundary events per step: pre-forward,
     # post-forward, post-backward, post-optimizer)
     n_gpu_boundaries = len(GPU_STAGES) + 1
-    gpu_events = [[torch.cuda.Event(enable_timing=True) for _ in range(n_gpu_boundaries)]
-                  for _ in range(measure)]
+    gpu_events = [
+        [torch.cuda.Event(enable_timing=True) for _ in range(n_gpu_boundaries)]
+        for _ in range(measure)
+    ]
     cpu_enqueue_times: list[float] = []
 
     t_total_start = time.perf_counter()
@@ -290,12 +328,16 @@ def run_wallclock(args, dataloader, policy, optimizer, lr_scheduler, preprocesso
         # CPU stage: dataloader_batch_fetch (host-bound)
         t_dl_start = time.perf_counter()
         batch = next(dl_iter)
-        cpu_stage_ms["dataloader_batch_fetch"].append((time.perf_counter() - t_dl_start) * 1000)
+        cpu_stage_ms["dataloader_batch_fetch"].append(
+            (time.perf_counter() - t_dl_start) * 1000
+        )
 
         # CPU stage: data_transfer_to_gpu (host→device copy)
         t_xfer_start = time.perf_counter()
         batch = preprocessor(batch)
-        cpu_stage_ms["data_transfer_to_gpu"].append((time.perf_counter() - t_xfer_start) * 1000)
+        cpu_stage_ms["data_transfer_to_gpu"].append(
+            (time.perf_counter() - t_xfer_start) * 1000
+        )
 
         ev = gpu_events[i]
 
@@ -394,7 +436,9 @@ def run_wallclock(args, dataloader, policy, optimizer, lr_scheduler, preprocesso
             for s in STAGES
         },
         "stages_pct_of_step": {
-            s: round(all_stage_stats[s]["avg"] / total_stage_avg * 100, 1) if total_stage_avg > 0 else 0
+            s: round(all_stage_stats[s]["avg"] / total_stage_avg * 100, 1)
+            if total_stage_avg > 0
+            else 0
             for s in STAGES
         },
     }
@@ -428,7 +472,9 @@ def run_wallclock(args, dataloader, policy, optimizer, lr_scheduler, preprocesso
         st = all_stage_stats[s]
         pct = results["stages_pct_of_step"][s]
         method = st["timing"]
-        lines.append(f"{s:<28} {method:>6} {st['avg']:>10.2f} {st['p50']:>10.2f} {st['p90']:>10.2f} {pct:>9.1f}%")
+        lines.append(
+            f"{s:<28} {method:>6} {st['avg']:>10.2f} {st['p50']:>10.2f} {st['p90']:>10.2f} {pct:>9.1f}%"
+        )
     lines.append("-" * 78)
     lines.append(f"{'TOTAL':<28} {'':>6} {total_stage_avg:>10.2f}")
     lines.append("")
@@ -465,8 +511,11 @@ def run_profiler(args, dataloader, policy, optimizer, lr_scheduler, preprocessor
         args.active = max(1, args.steps - args.skip_first - args.warmup)
 
     prof_schedule = schedule(
-        skip_first=args.skip_first, wait=0,
-        warmup=args.warmup, active=args.active, repeat=1,
+        skip_first=args.skip_first,
+        wait=0,
+        warmup=args.warmup,
+        active=args.active,
+        repeat=1,
     )
     dl_iter = cycle(dataloader)
 
@@ -474,14 +523,19 @@ def run_profiler(args, dataloader, policy, optimizer, lr_scheduler, preprocessor
         prof.export_chrome_trace(str(trace_path))
         print(f"  Chrome trace exported: {trace_path}")
 
-    print(f"\nProfiler: {args.steps} steps "
-          f"(skip={args.skip_first}, warmup={args.warmup}, active={args.active})...\n")
+    print(
+        f"\nProfiler: {args.steps} steps "
+        f"(skip={args.skip_first}, warmup={args.warmup}, active={args.active})...\n"
+    )
     t0 = time.time()
 
     with profile(
         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-        schedule=prof_schedule, on_trace_ready=trace_handler,
-        record_shapes=False, profile_memory=True, with_stack=False,
+        schedule=prof_schedule,
+        on_trace_ready=trace_handler,
+        record_shapes=False,
+        profile_memory=True,
+        with_stack=False,
     ) as prof:
         for step in range(args.steps):
             with record_function("dataloader_batch_fetch"):
@@ -519,7 +573,9 @@ def run_profiler(args, dataloader, policy, optimizer, lr_scheduler, preprocessor
     profiled_start = args.skip_first + args.warmup
 
     events = prof.key_averages()
-    stage_totals = {s: {"cpu_time_ms": 0.0, "cuda_time_ms": 0.0, "count": 0} for s in STAGES}
+    stage_totals = {
+        s: {"cpu_time_ms": 0.0, "cuda_time_ms": 0.0, "count": 0} for s in STAGES
+    }
     for evt in events:
         if evt.key in STAGES:
             stage_totals[evt.key]["cpu_time_ms"] = evt.cpu_time_total / 1000.0
@@ -530,14 +586,18 @@ def run_profiler(args, dataloader, policy, optimizer, lr_scheduler, preprocessor
     stage_invocations = {s: [] for s in STAGES}
     for evt in raw_events:
         if evt.name in STAGES:
-            stage_invocations[evt.name].append({
-                "cpu_time_ms": evt.cpu_time_total / 1000.0,
-                "cuda_time_ms": evt.device_time_total / 1000.0,
-            })
+            stage_invocations[evt.name].append(
+                {
+                    "cpu_time_ms": evt.cpu_time_total / 1000.0,
+                    "cuda_time_ms": evt.device_time_total / 1000.0,
+                }
+            )
 
     num_profiled = min(
         args.active,
-        min(len(v) for v in stage_invocations.values()) if all(stage_invocations.values()) else 0,
+        min(len(v) for v in stage_invocations.values())
+        if all(stage_invocations.values())
+        else 0,
     )
 
     per_step_records = []
@@ -545,14 +605,19 @@ def run_profiler(args, dataloader, policy, optimizer, lr_scheduler, preprocessor
         for stage in STAGES:
             inv = stage_invocations[stage]
             if i < len(inv):
-                per_step_records.append({
-                    "step": profiled_start + i, "stage": stage,
-                    "cpu_time_ms": round(inv[i]["cpu_time_ms"], 3),
-                    "cuda_time_ms": round(inv[i]["cuda_time_ms"], 3),
-                })
+                per_step_records.append(
+                    {
+                        "step": profiled_start + i,
+                        "stage": stage,
+                        "cpu_time_ms": round(inv[i]["cpu_time_ms"], 3),
+                        "cuda_time_ms": round(inv[i]["cuda_time_ms"], 3),
+                    }
+                )
 
     with open(csv_path, "w", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=["step", "stage", "cpu_time_ms", "cuda_time_ms"])
+        w = csv.DictWriter(
+            f, fieldnames=["step", "stage", "cpu_time_ms", "cuda_time_ms"]
+        )
         w.writeheader()
         w.writerows(per_step_records)
     print(f"  Stage breakdown CSV: {csv_path} ({len(per_step_records)} rows)")
@@ -579,7 +644,9 @@ def run_profiler(args, dataloader, policy, optimizer, lr_scheduler, preprocessor
             f"{t['cuda_time_ms']:>10.1f} {cuda_pct:>7.1f}% {int(t['count']):>6}"
         )
     lines.append("-" * 78)
-    lines.append(f"{'TOTAL':<28} {total_cpu:>10.1f} {'100.0':>7}% {total_cuda:>10.1f} {'100.0':>7}%")
+    lines.append(
+        f"{'TOTAL':<28} {total_cpu:>10.1f} {'100.0':>7}% {total_cuda:>10.1f} {'100.0':>7}%"
+    )
 
     if per_step_records:
         lines.append("")
@@ -590,7 +657,9 @@ def run_profiler(args, dataloader, policy, optimizer, lr_scheduler, preprocessor
             if rows:
                 avg_cpu = sum(r["cpu_time_ms"] for r in rows) / len(rows)
                 avg_cuda = sum(r["cuda_time_ms"] for r in rows) / len(rows)
-                lines.append(f"  {stage:<26} CPU: {avg_cpu:>8.2f} ms/step  CUDA: {avg_cuda:>8.2f} ms/step")
+                lines.append(
+                    f"  {stage:<26} CPU: {avg_cpu:>8.2f} ms/step  CUDA: {avg_cuda:>8.2f} ms/step"
+                )
 
     summary_text = "\n".join(lines) + "\n"
     with open(summary_path, "w") as f:
@@ -615,7 +684,9 @@ def run_inference(args, dataloader, policy, preprocessor, cfg):
     # Keep train mode — some policies (ACT with VAE) fail in eval mode on forward()
     policy.train()
 
-    print(f"\nInference: {warmup} warmup + {measure} measured forward passes (batch_size={args.batch_size})\n")
+    print(
+        f"\nInference: {warmup} warmup + {measure} measured forward passes (batch_size={args.batch_size})\n"
+    )
 
     # Warmup
     with torch.no_grad():
@@ -704,31 +775,42 @@ def main():
     # past step 10.  Enforce a minimum of 50 warmup steps when compiling.
     COMPILE_MIN_WARMUP = 50
     if args.compile and args.warmup_steps < COMPILE_MIN_WARMUP:
-        print(f"  Note: --compile requires ≥{COMPILE_MIN_WARMUP} warmup steps"
-              f" (was {args.warmup_steps})")
+        print(
+            f"  Note: --compile requires ≥{COMPILE_MIN_WARMUP} warmup steps"
+            f" (was {args.warmup_steps})"
+        )
         args.warmup_steps = COMPILE_MIN_WARMUP
 
     os.environ.setdefault("MUJOCO_GL", "egl")
     os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
-    print(f"profile_train.py — mode={args.mode}" + (" [compiled]" if args.compile else ""))
+    print(
+        f"profile_train.py — mode={args.mode}" + (" [compiled]" if args.compile else "")
+    )
     print(f"  {args.policy_type} on {args.dataset_repo_id}")
-    print(f"  steps={args.steps} batch_size={args.batch_size} num_workers={args.num_workers}")
+    print(
+        f"  steps={args.steps} batch_size={args.batch_size} num_workers={args.num_workers}"
+    )
     print()
 
-    dataset, dataloader, policy, optimizer, lr_scheduler, preprocessor, cfg = \
+    dataset, dataloader, policy, optimizer, lr_scheduler, preprocessor, cfg = (
         build_training_components(args)
+    )
 
     num_params = sum(p.numel() for p in policy.parameters())
     num_trainable = sum(p.numel() for p in policy.parameters() if p.requires_grad)
     print(f"  params: {num_trainable:,} trainable / {num_params:,} total\n")
 
     if args.mode == "wallclock":
-        run_wallclock(args, dataloader, policy, optimizer, lr_scheduler, preprocessor, cfg)
+        run_wallclock(
+            args, dataloader, policy, optimizer, lr_scheduler, preprocessor, cfg
+        )
     elif args.mode == "inference":
         run_inference(args, dataloader, policy, preprocessor, cfg)
     else:
-        run_profiler(args, dataloader, policy, optimizer, lr_scheduler, preprocessor, cfg)
+        run_profiler(
+            args, dataloader, policy, optimizer, lr_scheduler, preprocessor, cfg
+        )
 
 
 if __name__ == "__main__":

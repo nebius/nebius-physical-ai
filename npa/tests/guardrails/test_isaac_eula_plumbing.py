@@ -25,7 +25,9 @@ def _isaac_tool_refs() -> tuple[str, ...]:
 
 
 @pytest.mark.parametrize("tool_ref", _isaac_tool_refs())
-def test_renderer_defaults_acceptance_and_preserves_explicit_opt_out(tool_ref: str) -> None:
+def test_renderer_defaults_acceptance_and_preserves_explicit_opt_out(
+    tool_ref: str,
+) -> None:
     from npa.orchestration.npa_workflow.skypilot_render import isaac_eula_envs
 
     assert isaac_eula_envs(tool_ref) == {EULA_ENV: "Y"}
@@ -54,10 +56,13 @@ def test_renderer_detects_isaac_identity_in_byof_base_config() -> None:
         "workbench.byof.repo",
         config={"base_profile": "isaac-lab", "base_image": "tool://isaac-lab"},
     ) == {EULA_ENV: "Y"}
-    assert isaac_eula_envs(
-        "workbench.byof.repo",
-        config={"base_profile": "ubuntu", "base_image": "ubuntu:22.04"},
-    ) == {}
+    assert (
+        isaac_eula_envs(
+            "workbench.byof.repo",
+            config={"base_profile": "ubuntu", "base_image": "ubuntu:22.04"},
+        )
+        == {}
+    )
 
 
 def test_renderer_gates_only_groot_isaac_simulation() -> None:
@@ -79,9 +84,12 @@ def test_serverless_forwarder_never_invents_acceptance(monkeypatch) -> None:
     monkeypatch.setenv(EULA_ENV, "Y")
     assert isaac_eula_env() == {EULA_ENV: "Y"}
     assert EULA_ENV not in build_serverless_job_env(output_path="s3://bucket/run/")
-    assert build_serverless_job_env(
-        output_path="s3://bucket/run/", extra_env=isaac_eula_env()
-    )[EULA_ENV] == "Y"
+    assert (
+        build_serverless_job_env(
+            output_path="s3://bucket/run/", extra_env=isaac_eula_env()
+        )[EULA_ENV]
+        == "Y"
+    )
 
 
 @pytest.mark.parametrize("value", ["Y", "YES", "yes", "true", "1"])
@@ -91,9 +99,9 @@ def test_preflight_migrates_legacy_affirmative_values(
     from npa.serverless_common.env import require_isaac_eula_acceptance
 
     monkeypatch.setenv(EULA_ENV, value)
-    assert require_isaac_eula_acceptance(
-        context="test", resume_command="npa test"
-    ) == "Y"
+    assert (
+        require_isaac_eula_acceptance(context="test", resume_command="npa test") == "Y"
+    )
 
 
 @pytest.mark.parametrize("value", ["", "N", "no", "false", "0"])
@@ -127,9 +135,9 @@ def test_preflight_unset_default_is_pure(monkeypatch: pytest.MonkeyPatch) -> Non
     from npa.serverless_common.env import require_isaac_eula_acceptance
 
     monkeypatch.delenv(EULA_ENV, raising=False)
-    assert require_isaac_eula_acceptance(
-        context="test", resume_command="npa test"
-    ) == "Y"
+    assert (
+        require_isaac_eula_acceptance(context="test", resume_command="npa test") == "Y"
+    )
     assert EULA_ENV not in __import__("os").environ
 
 

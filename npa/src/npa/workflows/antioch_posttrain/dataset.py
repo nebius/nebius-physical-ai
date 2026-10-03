@@ -12,9 +12,15 @@ from .artifacts import file_hash, write_json
 
 CLASSES = ("conveying", "pickup", "transfer", "placement", "retract")
 PHASE_LABELS = {
-    "CONVEYING": "conveying", "ACCUMULATION_STOP": "conveying",
-    "APPROACH": "pickup", "LOWER": "pickup", "GRIP_DWELL": "pickup", "LIFT": "pickup",
-    "TRANSFER": "transfer", "LOWER_TO_PALLET": "placement", "SETTLING": "placement",
+    "CONVEYING": "conveying",
+    "ACCUMULATION_STOP": "conveying",
+    "APPROACH": "pickup",
+    "LOWER": "pickup",
+    "GRIP_DWELL": "pickup",
+    "LIFT": "pickup",
+    "TRANSFER": "transfer",
+    "LOWER_TO_PALLET": "placement",
+    "SETTLING": "placement",
     "RETRACT": "retract",
 }
 SPLIT_CYCLES = {"train": (0, 1, 2, 3), "validation": (4,), "test": (5,)}
@@ -37,8 +43,15 @@ def frame_records(frames: list[dict], stride: int) -> list[dict]:
     previous_time = -1.0
     for index, frame in enumerate(frames):
         phase, timestamp = frame["phase"], frame["sim_s"]
-        if frame["frame"] != index or not math.isfinite(timestamp) or timestamp < 0 or timestamp <= previous_time:
-            raise ValueError("Frame telemetry must be sequential with increasing finite time")
+        if (
+            frame["frame"] != index
+            or not math.isfinite(timestamp)
+            or timestamp < 0
+            or timestamp <= previous_time
+        ):
+            raise ValueError(
+                "Frame telemetry must be sequential with increasing finite time"
+            )
         previous_time = timestamp
         if phase == "BATCH_COMPLETE":
             if index != len(frames) - 1 or frame["placed"] != 6:
@@ -50,8 +63,17 @@ def frame_records(frames: list[dict], stride: int) -> list[dict]:
         if type(cycle) is not int or not 0 <= cycle < 6:
             raise ValueError("Invalid carton cycle")
         if index % stride == 0:
-            split = next(name for name, cycles in SPLIT_CYCLES.items() if cycle in cycles)
-            records.append(dict(frame, cycle=cycle, split=split, label=CLASSES.index(PHASE_LABELS[phase])))
+            split = next(
+                name for name, cycles in SPLIT_CYCLES.items() if cycle in cycles
+            )
+            records.append(
+                dict(
+                    frame,
+                    cycle=cycle,
+                    split=split,
+                    label=CLASSES.index(PHASE_LABELS[phase]),
+                )
+            )
     return records
 
 
@@ -63,12 +85,18 @@ def _decode(video: Path, frames: list[dict], records: list[dict]) -> np.ndarray:
     decoded = 0
     with av.open(str(video)) as container:
         stream = container.streams.video[0]
-        if stream.width != 1280 or stream.height != 720 or float(stream.average_rate) != 30:
+        if (
+            stream.width != 1280
+            or stream.height != 720
+            or float(stream.average_rate) != 30
+        ):
             raise ValueError("Expected the native 1280x720, 30 fps recording")
         for index, frame in enumerate(container.decode(stream)):
             decoded += 1
             if index in selected:
-                images.append(frame.reformat(width=224, height=224, format="rgb24").to_ndarray())
+                images.append(
+                    frame.reformat(width=224, height=224, format="rgb24").to_ndarray()
+                )
     if decoded != len(frames) or len(images) != len(records):
         raise ValueError("Video frames and telemetry disagree")
     return np.stack(images)
@@ -83,7 +111,9 @@ def _check_splits(records: list[dict]) -> dict:
             raise ValueError("Every split must contain all operation classes")
         if {row["cycle"] for row in rows} != set(cycles):
             raise ValueError("A split is missing its expected cycles")
-        counts[split] = {CLASSES[key]: value for key, value in sorted(histogram.items())}
+        counts[split] = {
+            CLASSES[key]: value for key, value in sorted(histogram.items())
+        }
     return counts
 
 
@@ -110,13 +140,21 @@ def prepare_dataset(source: Path, output: Path, stride: int) -> None:
     output.mkdir(parents=True, exist_ok=False)
     np.savez_compressed(output / "frames.npz", images=images)
     write_json(output / "records.json", records)
-    write_json(output / "dataset.json", {
-        "schema": "npa.antioch-posttrain.dataset.v1", "classes": CLASSES,
-        "split_cycles": SPLIT_CYCLES, "class_counts": counts, "samples": len(records),
-        "native_frames": len(frames), "sampling_stride": stride, "image_size": [224, 224],
-        "source_checksums_sha256": file_hash(source / "checksums.json"),
-        "video_sha256": file_hash(source / "warehouse-native-raw.mp4"),
-        "telemetry_sha256": file_hash(source / "video-frames.json"),
-        "physics_checks": physics["checks"],
-        "scope": "Held-out carton cycles from one scene and one run; no unseen-scene or robot-control claim.",
-    })
+    write_json(
+        output / "dataset.json",
+        {
+            "schema": "npa.antioch-posttrain.dataset.v1",
+            "classes": CLASSES,
+            "split_cycles": SPLIT_CYCLES,
+            "class_counts": counts,
+            "samples": len(records),
+            "native_frames": len(frames),
+            "sampling_stride": stride,
+            "image_size": [224, 224],
+            "source_checksums_sha256": file_hash(source / "checksums.json"),
+            "video_sha256": file_hash(source / "warehouse-native-raw.mp4"),
+            "telemetry_sha256": file_hash(source / "video-frames.json"),
+            "physics_checks": physics["checks"],
+            "scope": "Held-out carton cycles from one scene and one run; no unseen-scene or robot-control claim.",
+        },
+    )

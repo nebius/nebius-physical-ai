@@ -41,9 +41,7 @@ SOURCE_PATHS = {
     "episodes": "final_dataset/meta/episodes.jsonl",
     "actions": "final_dataset/data/chunk-000/episode_000000.parquet",
     "main_video": "final_dataset/videos/chunk-000/image/episode_000000.mp4",
-    "wrist_video": (
-        "final_dataset/videos/chunk-000/wrist_image/episode_000000.mp4"
-    ),
+    "wrist_video": ("final_dataset/videos/chunk-000/wrist_image/episode_000000.mp4"),
 }
 
 
@@ -96,7 +94,10 @@ def _verify_repository(fetch: Fetch) -> dict[str, Any]:
     license_value = str((metadata.get("cardData") or {}).get("license") or "").lower()
     if metadata.get("sha") != PUBLIC_FRANKA_LIFT_DATASET_REVISION:
         raise PublicSeedError("public seed revision drifted from its immutable pin")
-    if metadata.get("private") is not False or metadata.get("gated") not in {False, None}:
+    if metadata.get("private") is not False or metadata.get("gated") not in {
+        False,
+        None,
+    }:
         raise PublicSeedError("public seed is no longer anonymously accessible")
     if license_value != DECLARED_LICENSE:
         raise PublicSeedError(
@@ -108,7 +109,9 @@ def _verify_repository(fetch: Fetch) -> dict[str, Any]:
     }
     missing = sorted(set(SOURCE_PATHS.values()) - siblings)
     if missing:
-        raise PublicSeedError(f"public seed revision is missing required paths: {missing}")
+        raise PublicSeedError(
+            f"public seed revision is missing required paths: {missing}"
+        )
     return metadata
 
 
@@ -176,7 +179,9 @@ def _upload(
     except Exception as exc:  # noqa: BLE001 - upload is a fail-closed boundary
         raise PublicSeedError(f"upload failed for {uri}: {exc}") from exc
     if uploaded != uri:
-        raise PublicSeedError(f"upload destination mismatch: expected {uri}, got {uploaded}")
+        raise PublicSeedError(
+            f"upload destination mismatch: expected {uri}, got {uploaded}"
+        )
     result: dict[str, Any] = {
         "uri": uploaded,
         "bytes": len(payload),
@@ -200,7 +205,10 @@ def stage_public_franka_lift(
     clean_run = run_id.strip()
     if not clean_bucket or "/" in clean_bucket or clean_bucket == "example-bucket":
         raise PublicSeedError("a real S3 bucket name is required")
-    if not clean_run or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for char in clean_run):
+    if not clean_run or any(
+        char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+        for char in clean_run
+    ):
         raise PublicSeedError("run_id must contain only letters, digits, '-' and '_'")
 
     repository_metadata = _verify_repository(fetch)
@@ -221,21 +229,38 @@ def stage_public_franka_lift(
             info.get("robot_type") != "franka"
             or source_meta.get("task") != PUBLIC_FRANKA_LIFT_SOURCE_TASK_ID
             or (features.get("actions") or {}).get("shape") != [7]
-            or not all((features.get(name) or {}).get("dtype") == "video" for name in ("image", "wrist_image"))
+            or not all(
+                (features.get(name) or {}).get("dtype") == "video"
+                for name in ("image", "wrist_image")
+            )
         ):
-            raise PublicSeedError("public seed metadata no longer matches the pinned Franka/7D/two-camera contract")
-        task_rows = [json.loads(line) for line in source_files["tasks"].read_text().splitlines() if line.strip()]
-        episode_rows = [json.loads(line) for line in source_files["episodes"].read_text().splitlines() if line.strip()]
+            raise PublicSeedError(
+                "public seed metadata no longer matches the pinned Franka/7D/two-camera contract"
+            )
+        task_rows = [
+            json.loads(line)
+            for line in source_files["tasks"].read_text().splitlines()
+            if line.strip()
+        ]
+        episode_rows = [
+            json.loads(line)
+            for line in source_files["episodes"].read_text().splitlines()
+            if line.strip()
+        ]
         if task_rows != [{"task_index": 0, "task": "lift the cube"}]:
             raise PublicSeedError("public seed task metadata is missing or changed")
-        episode = next((row for row in episode_rows if row.get("episode_index") == 0), None)
+        episode = next(
+            (row for row in episode_rows if row.get("episode_index") == 0), None
+        )
         if not episode or int(episode.get("length") or 0) <= 0:
             raise PublicSeedError("public seed episode metadata is missing episode 0")
         selected_episodes = [episode]
 
         actions = _read_actions(source_files["actions"])
         if len(actions) != int(episode["length"]):
-            raise PublicSeedError("source action rows do not match episode metadata length")
+            raise PublicSeedError(
+                "source action rows do not match episode metadata length"
+            )
         actions_path = work / "actions.json"
         actions_payload = {
             "schema": "npa.sim2real.seed_actions.v1",
@@ -245,7 +270,9 @@ def stage_public_franka_lift(
             "count": len(actions),
             "actions": actions,
         }
-        _write(actions_path, (json.dumps(actions_payload, sort_keys=True) + "\n").encode())
+        _write(
+            actions_path, (json.dumps(actions_payload, sort_keys=True) + "\n").encode()
+        )
 
         frames_dir = work / "frames"
         frames_dir.mkdir()
@@ -257,7 +284,9 @@ def stage_public_franka_lift(
         ]
         frames = [frame for _camera, _index, frame in frame_sources]
         if len(frames) < 4:
-            raise PublicSeedError("public seed decode produced fewer than four camera frames")
+            raise PublicSeedError(
+                "public seed decode produced fewer than four camera frames"
+            )
 
         staged: list[dict[str, Any]] = []
         for label, local in source_files.items():
@@ -276,9 +305,7 @@ def stage_public_franka_lift(
         staged.append(actions_evidence)
         frame_evidence = []
         for source_camera, source_frame_index, frame in frame_sources:
-            record = _upload(
-                client, local=frame, uri=prefix + "frames/" + frame.name
-            )
+            record = _upload(client, local=frame, uri=prefix + "frames/" + frame.name)
             record.update(
                 source_camera=source_camera,
                 source_frame_index=source_frame_index,
@@ -302,7 +329,9 @@ def stage_public_franka_lift(
             "camera_observation_count": len(frames),
         }
         sample_path = work / "sample-rollout-manifest.json"
-        _write(sample_path, (json.dumps(sample, indent=2, sort_keys=True) + "\n").encode())
+        _write(
+            sample_path, (json.dumps(sample, indent=2, sort_keys=True) + "\n").encode()
+        )
         sample_record = _upload(client, local=sample_path, uri=sample_uri)
         staged.append(sample_record)
 
@@ -349,7 +378,10 @@ def stage_public_franka_lift(
             },
         }
         manifest_path = work / "dataset-manifest.json"
-        _write(manifest_path, (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode())
+        _write(
+            manifest_path,
+            (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(),
+        )
         manifest_record = _upload(client, local=manifest_path, uri=manifest_uri)
 
     return {

@@ -51,7 +51,9 @@ def _simulation_app_lifecycle(simulation_app: Any):
 def build_parser() -> argparse.ArgumentParser:
     """Return the argument parser, so a guardrail can check toolRef argv against it."""
 
-    parser = argparse.ArgumentParser(description="Capture Isaac Lab scene frames as PNGs.")
+    parser = argparse.ArgumentParser(
+        description="Capture Isaac Lab scene frames as PNGs."
+    )
     parser.add_argument(
         "--task",
         default=os.environ.get("ISAAC_LAB_TASK", DEFAULT_TASK),
@@ -126,7 +128,9 @@ def _upload_tree(local_dir: Path, output_uri: str) -> dict[str, str]:
     # PNGs *and* the summary: uploading only the frames left `isaac_capture_summary.json` in the
     # pod, so a consumer could see the frames but never the record of what produced them — and a
     # spec had nothing durable to declare as this stage's output.
-    paths = sorted(local_dir.rglob("*.png")) + sorted(local_dir.glob("isaac_capture_summary.json"))
+    paths = sorted(local_dir.rglob("*.png")) + sorted(
+        local_dir.glob("isaac_capture_summary.json")
+    )
     for path in paths:
         key = prefix + str(path.relative_to(local_dir)).replace("\\", "/")
         s3.upload_file(str(path), parsed.netloc, key)
@@ -345,7 +349,9 @@ def _capture_frames(
             if episode > 0:
                 continue
             for step in range(max_steps):
-                actions = torch.as_tensor(env.action_space.sample(), device=device, dtype=torch.float32)
+                actions = torch.as_tensor(
+                    env.action_space.sample(), device=device, dtype=torch.float32
+                )
                 env.step(actions)
                 if step in render_steps:
                     frame = _isaac_extract_rgb_frame(env, env_index=0)
@@ -367,9 +373,13 @@ def _capture_frames(
             "output_dir": str(output_dir),
             "duration_seconds": round(time.time() - started, 2),
         }
-        (output_dir / "isaac_capture_summary.json").write_text(json.dumps(summary, indent=2))
+        (output_dir / "isaac_capture_summary.json").write_text(
+            json.dumps(summary, indent=2)
+        )
         if not frames_written:
-            raise SystemExit("No frames captured — check task cameras and GPU rendering.")
+            raise SystemExit(
+                "No frames captured — check task cameras and GPU rendering."
+            )
         if publish is not None:
             publish(summary)
         env.close()
@@ -397,7 +407,9 @@ def main(argv: list[str] | None = None) -> int:
     output_path = args.output_path.strip()
     parsed = urlparse(output_path)
     if parsed.scheme == "s3":
-        local_dir = Path(os.environ.get("TMPDIR", "/tmp")) / f"isaac-capture-{int(time.time())}"
+        local_dir = (
+            Path(os.environ.get("TMPDIR", "/tmp")) / f"isaac-capture-{int(time.time())}"
+        )
     else:
         local_dir = Path(output_path)
         local_dir.mkdir(parents=True, exist_ok=True)

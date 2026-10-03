@@ -24,6 +24,21 @@ sys.modules[_SPEC.name] = scanner
 _SPEC.loader.exec_module(scanner)
 
 
+def test_libssh2_audit_matches_reviewed_debian_package() -> None:
+    lock = json.loads(
+        (
+            _SCRIPT.parents[1] / "docker/workbench/ncore/native-bootstrap-lock.json"
+        ).read_text()
+    )
+    package = next(
+        item for item in lock["debian_binaries"] if item["name"] == "libssh2-1"
+    )
+    library = package["elf_files"][0]
+    assert (
+        scanner.AUDITED_SECRET_LITERAL_FILE_SHA256[library["path"]] == library["sha256"]
+    )
+
+
 def _gzip(payload: bytes) -> bytes:
     """Stable gzip bytes so xdist workers collect identical parametrized IDs."""
 
@@ -51,13 +66,13 @@ def _tar_bytes(members: dict[str, bytes], *, mode: str = "w") -> bytes:
     return _gzip(raw) if mode == "w:gz" else raw
 
 
-def _docker_save(
-    path: Path, *, layers: list[dict[str, bytes]], config: dict
-) -> Path:
+def _docker_save(path: Path, *, layers: list[dict[str, bytes]], config: dict) -> Path:
     layer_archives: list[tuple[str, bytes]] = []
     for index, members in enumerate(layers):
         layer_archives.append((f"layer-{index}/layer.tar", _tar_bytes(members)))
-    manifest = [{"Config": "config.json", "Layers": [name for name, _ in layer_archives]}]
+    manifest = [
+        {"Config": "config.json", "Layers": [name for name, _ in layer_archives]}
+    ]
     return _tar(
         path,
         {

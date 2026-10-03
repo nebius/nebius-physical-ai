@@ -157,7 +157,9 @@ def argv_flag_drift(tool_ref: str, argv: Sequence[str]) -> tuple[str, ...]:
 
     del tool_ref  # kept for a readable call site / future per-tool exemptions
     command = resolve_argv_command(argv)
-    return tuple(flag for flag in argv_template_flags(argv) if flag not in command.flags)
+    return tuple(
+        flag for flag in argv_template_flags(argv) if flag not in command.flags
+    )
 
 
 #: Words that are output *formats*, never file paths.
@@ -215,7 +217,9 @@ def _enum_class(annotation: Any) -> Any | None:
 
 
 def _is_enum_annotation(param: inspect.Parameter, resolved: Any = None) -> bool:
-    return _enum_class(resolved if resolved is not None else param.annotation) is not None
+    return (
+        _enum_class(resolved if resolved is not None else param.annotation) is not None
+    )
 
 
 def argv_literal_value_mismatches(argv: Sequence[str]) -> tuple[str, ...]:
@@ -287,7 +291,11 @@ def embedded_npa_commands(argv: Sequence[str]) -> tuple[tuple[str, ...], ...]:
     commands: list[tuple[str, ...]] = []
     # Statements are separated by `;`, `&&` or newlines; `npa` may also appear after `do`.
     for statement in re.split(r";|&&|\n", script):
-        words = shlex.split(statement, comments=False, posix=True) if statement.strip() else []
+        words = (
+            shlex.split(statement, comments=False, posix=True)
+            if statement.strip()
+            else []
+        )
         if "npa" not in words:
             continue
         command = words[words.index("npa") :]
@@ -342,7 +350,9 @@ def catalog_argv_drift() -> dict[str, tuple[str, ...]]:
                 try:
                     unaccepted = argv_flag_drift(tool_ref, command)
                 except ArgvResolutionError as exc:
-                    drift[tool_ref] = drift.get(tool_ref, ()) + (f"<unresolvable: {exc}>",)
+                    drift[tool_ref] = drift.get(tool_ref, ()) + (
+                        f"<unresolvable: {exc}>",
+                    )
                     continue
                 if unaccepted:
                     drift[tool_ref] = drift.get(tool_ref, ()) + unaccepted

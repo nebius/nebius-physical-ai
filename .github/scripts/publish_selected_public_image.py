@@ -47,7 +47,8 @@ def _validate_release_override(
         )
     development_tag(sha)
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", tag) or any(
-        token in {"dev", "latest", "stable", "main", "master", "nightly", "edge", "head"}
+        token
+        in {"dev", "latest", "stable", "main", "master", "nightly", "edge", "head"}
         for token in re.split(r"[-_.]", tag.lower())
     ):
         raise ValueError("release tag must be a safe, immutable additive tag")
@@ -89,11 +90,13 @@ def main() -> int:
     )
     parser.add_argument("--development-sha", default=None)
     parser.add_argument(
-        "--release-tag", default="",
+        "--release-tag",
+        default="",
         help="New immutable release tag for exactly one tool; never overwrites other bytes.",
     )
     parser.add_argument(
-        "--expected-source-digest", default="",
+        "--expected-source-digest",
+        default="",
         help="Exact public development digest already accepted by real GPU validation.",
     )
     parser.add_argument("--target", required=True)
@@ -106,7 +109,9 @@ def main() -> int:
     try:
         requested_tools = _parse_tools(args.tool)
         _validate_release_override(
-            requested_tools, args.release_tag, args.expected_source_digest,
+            requested_tools,
+            args.release_tag,
+            args.expected_source_digest,
             args.development_sha,
         )
     except ValueError as exc:
@@ -127,13 +132,19 @@ def main() -> int:
         )
     selected = [by_tool[tool] for tool in requested_tools]
     if args.release_tag:
-        selected = [replace(
-            selected[0],
-            source_ref=development_image_for_tool(
-                requested_tools[0], registry=args.target, git_sha=args.development_sha,
-            ),
-            target_ref=selected[0].target_ref.rsplit(":", 1)[0] + ":" + args.release_tag,
-        )]
+        selected = [
+            replace(
+                selected[0],
+                source_ref=development_image_for_tool(
+                    requested_tools[0],
+                    registry=args.target,
+                    git_sha=args.development_sha,
+                ),
+                target_ref=selected[0].target_ref.rsplit(":", 1)[0]
+                + ":"
+                + args.release_tag,
+            )
+        ]
     print(f"Selected {len(selected)} license-guarded image(s):")
     for item in selected:
         print(f"  {item.source_ref} -> {item.target_ref}")
@@ -159,7 +170,9 @@ def main() -> int:
     # those are mutable tag-form plan entries and the copy guard correctly rejects them.
     if args.mode != "verify":
         copied = sum(
-            _crane_copy(item, allow_replace=False) if args.release_tag else _crane_copy(item)
+            _crane_copy(item, allow_replace=False)
+            if args.release_tag
+            else _crane_copy(item)
             for item in publishable
         )
         _mark_copy_phase_complete()
@@ -171,7 +184,9 @@ def main() -> int:
     if args.release_tag:
         ok, observed = anonymous_digest(publishable[0].target_ref)
         if not ok or observed != args.expected_source_digest:
-            raise RuntimeError("additive release is not anonymously verified at the accepted digest")
+            raise RuntimeError(
+                "additive release is not anonymously verified at the accepted digest"
+            )
     return 1 if failures else 0
 
 

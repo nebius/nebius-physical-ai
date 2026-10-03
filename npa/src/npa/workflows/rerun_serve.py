@@ -34,7 +34,7 @@ DEFAULT_NGINX_IMAGE = "nginx:1.30.4-alpine-slim@sha256:77da26c31397bf6694b4bf932
 RERUN_STATIC_CACHE_CONTROL = "public, max-age=604800, immutable"
 # 0.31.x embeds localhost gRPC URLs and lacks --cors-allow-origin; remote LoadBalancer
 # viewers stall around wasm load (~37%) then fail to connect. Pin serve pods to 0.32+.
-DEFAULT_RERUN_SERVE_SDK_VERSION = "0.32.0"
+DEFAULT_RERUN_SERVE_SDK_VERSION = "0.38.1"
 DEFAULT_S3_PREFIX = "sim2real-b"
 DEFAULT_CLUSTER_NAME = "npa-rtxpro-mk8s"
 DEFAULT_SERVICE_TYPE = "ClusterIP"
@@ -83,17 +83,22 @@ class RerunServeConfig:
 
     def __post_init__(self) -> None:
         if bool(self.auth_user) != bool(self.auth_password):
-            raise RerunServeError("Rerun authentication requires both username and password")
+            raise RerunServeError(
+                "Rerun authentication requires both username and password"
+            )
         if self.auth_user and (
             ":" in self.auth_user
             or any(ord(c) < 32 or ord(c) == 127 for c in self.auth_user)
         ):
-            raise RerunServeError("Rerun authentication username contains invalid characters")
+            raise RerunServeError(
+                "Rerun authentication username contains invalid characters"
+            )
         if self.auth_password and (
-            "\x00" in self.auth_password
-            or len(self.auth_password.encode("utf-8")) > 72
+            "\x00" in self.auth_password or len(self.auth_password.encode("utf-8")) > 72
         ):
-            raise RerunServeError("Rerun password must contain no NUL and at most 72 UTF-8 bytes")
+            raise RerunServeError(
+                "Rerun password must contain no NUL and at most 72 UTF-8 bytes"
+            )
 
     @property
     def auth_enabled(self) -> bool:
@@ -709,7 +714,11 @@ test -s /data/sim2real.rrd
                                             "mountPath": "/etc/nginx/nginx.conf",
                                             "subPath": "nginx.conf",
                                         },
-                                        {"name": "rrd-data", "mountPath": "/data", "readOnly": True},
+                                        {
+                                            "name": "rrd-data",
+                                            "mountPath": "/data",
+                                            "readOnly": True,
+                                        },
                                     ]
                                     + (
                                         [
@@ -735,7 +744,8 @@ test -s /data/sim2real.rrd
                                     "readinessProbe": {
                                         "exec": {
                                             "command": [
-                                                "python", "-c",
+                                                "python",
+                                                "-c",
                                                 "import urllib.request; "
                                                 "urllib.request.urlopen('http://127.0.0.1:"
                                                 f"{RERUN_INTERNAL_WEB_PORT}/', timeout=5).close()",

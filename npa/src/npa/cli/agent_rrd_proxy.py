@@ -123,7 +123,9 @@ def resolve_rrd_proxy_target(
     return True, fetch_url, host
 
 
-def file_uri_path_allowed(uri: str, *, allowed_paths: list[str] | tuple[str, ...] | None = None) -> bool:
+def file_uri_path_allowed(
+    uri: str, *, allowed_paths: list[str] | tuple[str, ...] | None = None
+) -> bool:
     """Return True if a ``file://`` URI resolves inside one of ``allowed_paths``.
 
     ``allowed_paths`` should be absolute directories and/or exact files (e.g.

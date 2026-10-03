@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
+from npa.literal_values import require_boolean
 from npa.workbench.lichtblick import compressed_image_message
 
 NS_PER_S = 1_000_000_000
@@ -642,15 +643,68 @@ def _diagnostic_chain(
     return angles, points
 
 
+_GROUND_TRUTH_FLAGS = ("contact", "stable_grasp", "gripper_closed", "placement_stable")
+
+
+def _validated_ground_truth(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise McapWriteError("simulator_ground_truth must be an object")
+    ground_truth = dict(value)
+    for flag in _GROUND_TRUTH_FLAGS:
+        try:
+            ground_truth[flag] = require_boolean(
+                value.get(flag, False), field=f"simulator_ground_truth.{flag}"
+            )
+        except ValueError as exc:
+            raise McapWriteError(str(exc)) from exc
+    return ground_truth
+
+
+def _read_validated_metrics(
+    metrics: list[MetricsInput], summary: McapSummary
+) -> list[tuple[int, MetricsInput, Any]]:
+    documents = []
+    for metric_index, metric in enumerate(metrics):
+        try:
+            raw = json.loads(metric.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            summary.skipped.append(f"{metric.path.name}: {exc}")
+            continue
+        if (
+            isinstance(raw, dict)
+            and raw.get("schema") == "npa.sim2real.action_rollout.v1"
+        ):
+            actions = raw.get("actions")
+            for index, record in enumerate(
+                actions if isinstance(actions, list) else []
+            ):
+                if not isinstance(record, dict):
+                    continue
+                try:
+                    record["simulator_ground_truth"] = _validated_ground_truth(
+                        record.get("simulator_ground_truth", {})
+                    )
+                except McapWriteError as exc:
+                    raise McapWriteError(
+                        f"{metric.path.name}: actions[{index}]: {exc}"
+                    ) from exc
+        documents.append((metric_index, metric, raw))
+    return documents
+
+
 def _run_phase(ground_truth: Mapping[str, Any], progress: float) -> str:
+    ground_truth = _validated_ground_truth(ground_truth)
     reason = str(ground_truth.get("termination_reason") or "").strip().lower()
-    if bool(ground_truth.get("placement_stable")) or reason in {"success", "complete"}:
+    if ground_truth.get("placement_stable") is True or reason in {
+        "success",
+        "complete",
+    }:
         return "complete"
-    if bool(ground_truth.get("stable_grasp")):
+    if ground_truth.get("stable_grasp") is True:
         return "lift"
-    if bool(ground_truth.get("gripper_closed")):
+    if ground_truth.get("gripper_closed") is True:
         return "grasp"
-    if bool(ground_truth.get("contact")):
+    if ground_truth.get("contact") is True:
         return "contact"
     return "tracking" if progress < 1.0 else "finished"
 
@@ -891,6 +945,8 @@ def write_run_mcap(
         fps=rate,
     )
 
+    metric_documents = _read_validated_metrics(metric_list, summary)
+
     target = Path(str(output)).expanduser()
     target.parent.mkdir(parents=True, exist_ok=True)
 
@@ -998,12 +1054,7 @@ def write_run_mcap(
             first_ns = timestamp_ns if not first_ns else min(first_ns, timestamp_ns)
             last_ns = max(last_ns, timestamp_ns)
 
-        for index, metric in enumerate(metric_list):
-            try:
-                raw = json.loads(metric.path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                summary.skipped.append(f"{metric.path.name}: {exc}")
-                continue
+        for index, metric, raw in metric_documents:
             if (
                 isinstance(raw, dict)
                 and raw.get("schema") == "npa.sim2real.action_rollout.v1"
@@ -1109,10 +1160,7 @@ def write_run_mcap(
                     while len(commands) < 8:
                         commands.append(0.0)
                     stamp = base_ns + rich_action_sequence * step_ns
-                    ground_truth = record.get("simulator_ground_truth")
-                    ground_truth = (
-                        ground_truth if isinstance(ground_truth, dict) else {}
-                    )
+                    ground_truth = record["simulator_ground_truth"]
                     progress = offset / max(1, len(actions) - 1)
                     phase = _run_phase(ground_truth, progress)
                     angles, points = _diagnostic_chain(commands)
@@ -1165,13 +1213,11 @@ def write_run_mcap(
                             "sim_step": int(record.get("sim_step") or 0),
                             "progress": progress,
                             "phase": phase,
-                            "contact": bool(ground_truth.get("contact")),
-                            "stable_grasp": bool(ground_truth.get("stable_grasp")),
-                            "gripper_closed": bool(ground_truth.get("gripper_closed")),
-                            "placement_stable": bool(
-                                ground_truth.get("placement_stable")
-                            ),
-                            "success": bool(ground_truth.get("placement_stable")),
+                            "contact": ground_truth["contact"],
+                            "stable_grasp": ground_truth["stable_grasp"],
+                            "gripper_closed": ground_truth["gripper_closed"],
+                            "placement_stable": ground_truth["placement_stable"],
+                            "success": ground_truth["placement_stable"],
                             "termination_reason": str(
                                 ground_truth.get("termination_reason") or "running"
                             ),

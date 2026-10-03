@@ -134,7 +134,15 @@ def _fake_pxr(
         def Open(_path: str) -> object:
             return SimpleNamespace(Traverse=lambda: iter(prims))
 
-    return (None, None, SimpleNamespace(Stage=Stage), None, _FAKE_USD_PHYSICS, None, None)
+    return (
+        None,
+        None,
+        SimpleNamespace(Stage=Stage),
+        None,
+        _FAKE_USD_PHYSICS,
+        None,
+        None,
+    )
 
 
 def _inspection(
@@ -229,9 +237,7 @@ def test_upstream_failure_preserves_private_log(
     monkeypatch.setattr(
         ca.subprocess,
         "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            ["material-agent"], 17
-        ),
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(["material-agent"], 17),
     )
     monkeypatch.setattr(
         ca,
@@ -258,9 +264,7 @@ def test_upstream_failure_remains_primary_when_log_upload_fails(
     monkeypatch.setattr(
         ca.subprocess,
         "run",
-        lambda *_args, **_kwargs: subprocess.CompletedProcess(
-            ["physics-agent"], 23
-        ),
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(["physics-agent"], 23),
     )
 
     def fail_upload(_path: Path, _uri: str) -> str:
@@ -281,10 +285,7 @@ def test_upstream_failure_remains_primary_when_log_upload_fails(
 
 
 ROOT = Path(__file__).resolve().parents[3]
-SPEC = (
-    ROOT
-    / "workflows" / "testing" / "content-agents-rigid-object.yaml"
-)
+SPEC = ROOT / "workflows" / "testing" / "content-agents-rigid-object.yaml"
 
 
 def test_upstream_selection_is_immutable_and_antioch_is_review_only() -> None:

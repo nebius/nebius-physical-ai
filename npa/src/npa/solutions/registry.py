@@ -29,7 +29,9 @@ def register_solution(name: str, description: str, cli_command: str) -> None:
         description=description,
         cli_command=cli_command,
     )
-    _raise_for_duplicate_names([*_load_configured_solutions(), *_registered_solutions, entry])
+    _raise_for_duplicate_names(
+        [*_load_configured_solutions(), *_registered_solutions, entry]
+    )
     _registered_solutions.append(entry)
 
 

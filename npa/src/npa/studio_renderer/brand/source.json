@@ -1,0 +1,18 @@
+{
+  "publisher": "Nebius",
+  "source_page": "https://nebius.com/media-kit",
+  "archive_url": "https://assets.nebius.com/assets/2dd2ad13-45c1-4429-a47c-156bedd4d71d/NEBIUS-logos%2807.25%29%20%281%29.zip?cache-buster=2025-08-27T11%3A29%3A04.907Z",
+  "archive_sha256": "27d8322784f7363636d2441184cd4532ee8841f2b5e87d9c53dabfd9730fa7a2",
+  "members": {
+    "png": {
+      "archive_path": "PNGs/NEBIUS-color.png",
+      "sha256": "36f0e38ba43acb69d1bb99b8225fcd6fb52bc80832624a2dcbc805f152924aa6"
+    },
+    "svg": {
+      "archive_path": "SVGs/NEBIUS-color.svg",
+      "sha256": "1f7b12b82ec2ec056158c76072b31f2c0966224eaa7db9ca4f4b1ded57460dad"
+    }
+  },
+  "usage_guidelines": "https://nebius.com/brand-assets/trademark-usage-guidelines",
+  "transformation": "Original supplied bytes; the renderer scales the PNG proportionally."
+}

@@ -90,7 +90,7 @@ DEFAULT_HALLUCINATION_WEIGHT = 0.5
 
 # Sampled appearance combos carry a `prompt` alongside the attributes; it is an
 # instruction, not a visual attribute, so it is never turned into a question.
-NON_ATTRIBUTE_KEYS = frozenset({"prompt", "inference_seed"})
+NON_ATTRIBUTE_KEYS = frozenset({"prompt", "negative_prompt", "inference_seed"})
 
 
 @dataclass(frozen=True)
@@ -134,6 +134,8 @@ class EvaluateRunResult:
     temporal_mode: str = "advisory"
     appearance_mode: str = "advisory"
     attribute_sample_policy: str = "ranking"
+    attribute_evidence_mode: str = "full-frame"
+    attribute_lighting_vlm_model: str = ""
     engines: list[str] = field(default_factory=list)
     clips: list[ClipEvaluation] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
@@ -181,6 +183,8 @@ def evaluate_run(
     vlm_model: str = "",
     max_clips: int = 0,
     attribute_sample_policy: str = "ranking",
+    attribute_evidence_mode: str = "full-frame",
+    attribute_lighting_vlm_model: str = "",
     alignment_mode: str = "off",
     attribute_threshold: float = 1.0,
     client: Any | None = None,
@@ -195,10 +199,16 @@ def evaluate_run(
     if alignment_mode not in {"off", "required"}:
         raise CosmosEvaluatorError("--alignment-mode must be off or required")
     if not 0.0 < threshold <= 1.0 or not 0.0 < attribute_threshold <= 1.0:
-        raise CosmosEvaluatorError("score and attribute thresholds must be greater than 0 and at most 1")
+        raise CosmosEvaluatorError(
+            "score and attribute thresholds must be greater than 0 and at most 1"
+        )
     if attribute_sample_policy not in {"ranking", "holdout"}:
         raise CosmosEvaluatorError(
             "--attribute-sample-policy must be ranking or holdout"
+        )
+    if attribute_evidence_mode not in {"full-frame", "source-relative-change"}:
+        raise CosmosEvaluatorError(
+            "--attribute-evidence-mode must be full-frame or source-relative-change"
         )
     if not 0.0 <= hallucination_weight <= 1.0:
         raise CosmosEvaluatorError("--hallucination-weight must be between 0.0 and 1.0")
@@ -266,6 +276,8 @@ def evaluate_run(
                 temporal_mode=temporal_mode,
                 appearance_mode=appearance_mode,
                 attribute_sample_policy=attribute_sample_policy,
+                attribute_evidence_mode=attribute_evidence_mode,
+                attribute_lighting_vlm_model=attribute_lighting_vlm_model,
                 warnings=["ranking produced no independently hard-passing candidate"],
             )
         if max_clips and max_clips > 0:
@@ -311,6 +323,8 @@ def evaluate_run(
                         question_model=question_model,
                         vlm_model=vlm_model,
                         attribute_sample_policy=attribute_sample_policy,
+                        attribute_evidence_mode=attribute_evidence_mode,
+                        attribute_lighting_vlm_model=attribute_lighting_vlm_model,
                         alignment_mode=alignment_mode,
                         attribute_threshold=attribute_threshold,
                         warnings=warnings,
@@ -372,6 +386,8 @@ def evaluate_run(
         temporal_mode=temporal_mode,
         appearance_mode=appearance_mode,
         attribute_sample_policy=attribute_sample_policy,
+        attribute_evidence_mode=attribute_evidence_mode,
+        attribute_lighting_vlm_model=attribute_lighting_vlm_model,
         engines=engines,
         clips=evaluations,
         warnings=warnings,
@@ -408,6 +424,8 @@ def _evaluate_clip(
     question_model: str,
     vlm_model: str,
     attribute_sample_policy: str,
+    attribute_evidence_mode: str,
+    attribute_lighting_vlm_model: str,
     warnings: list[str],
     alignment_mode: str = "off",
     attribute_threshold: float = 1.0,
@@ -453,9 +471,15 @@ def _evaluate_clip(
         except (ValueError, OSError, RuntimeError) as exc:
             warnings.append(f"temporal alignment failed for {clip_id}: {exc}")
             return ClipEvaluation(
-                clip_id=clip_id, score=0.0, passed=False, input_conditioned=input_conditioned,
-                status="degraded", variables=variables,
-                skipped=["required temporal alignment failed; no quality score was measured"],
+                clip_id=clip_id,
+                score=0.0,
+                passed=False,
+                input_conditioned=input_conditioned,
+                status="degraded",
+                variables=variables,
+                skipped=[
+                    "required temporal alignment failed; no quality score was measured"
+                ],
                 temporal_alignment={"status": "failed", "reason": str(exc)},
             )
     frame = None
@@ -482,6 +506,13 @@ def _evaluate_clip(
                 client=client,
                 sample_policy=attribute_sample_policy,
                 threshold=attribute_threshold,
+                reference_video=(str(source_clip) if source_clip is not None else None),
+                evidence_mode=attribute_evidence_mode,
+                variable_vlm_models=(
+                    {"lighting": attribute_lighting_vlm_model}
+                    if attribute_lighting_vlm_model
+                    else None
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - keep grading the remaining variants
             message = f"attribute verification failed for {clip_id}: {exc}"[:300]
@@ -550,9 +581,7 @@ def _evaluate_clip(
 
     appearance_result: AppearanceFidelityResult | None = None
     if not input_conditioned:
-        skipped.append(
-            "appearance fidelity only applies to input-conditioned variants"
-        )
+        skipped.append("appearance fidelity only applies to input-conditioned variants")
     elif video is None:
         skipped.append("appearance fidelity needs the augmented video")
     elif source_clip is None:
@@ -611,17 +640,28 @@ def _evaluate_clip(
     )
 
 
-def _verify_alignment(metadata: dict[str, Any], source: Path | None, video: Path | None) -> dict[str, Any]:
+def _verify_alignment(
+    metadata: dict[str, Any], source: Path | None, video: Path | None
+) -> dict[str, Any]:
     from npa.workflows.paidf_cosmos3_media import verify_pair
 
     recorded = metadata.get("temporal_alignment")
     if source is None or video is None or not isinstance(recorded, dict):
-        raise ValueError("complete source, generated video and generation alignment evidence are required")
-    if metadata.get("structural_control") != "edge" or not metadata.get("input_conditioned"):
+        raise ValueError(
+            "complete source, generated video and generation alignment evidence are required"
+        )
+    if metadata.get("structural_control") != "edge" or not metadata.get(
+        "input_conditioned"
+    ):
         raise ValueError("full-source structural conditioning evidence is required")
     measured = verify_pair(source, video, recorded.get("fps"))
-    if recorded != measured or metadata.get("published_video_sha256") != measured["generated_sha256"]:
-        raise ValueError("current source or generated bytes differ from generation alignment evidence")
+    if (
+        recorded != measured
+        or metadata.get("published_video_sha256") != measured["generated_sha256"]
+    ):
+        raise ValueError(
+            "current source or generated bytes differ from generation alignment evidence"
+        )
     return measured
 
 
@@ -753,14 +793,11 @@ def _list_clip_dirs(augment_uri: str, *, store: Any) -> list[str]:
 def _selection_manifest(augment_uri: str, *, store: Any) -> dict[str, Any] | None:
     """Return a truthful empty hard-pass selection, never an absent augment."""
 
-    manifest = _download_json(
-        augment_uri.rstrip("/") + "/manifest.json", store=store
-    )
+    manifest = _download_json(augment_uri.rstrip("/") + "/manifest.json", store=store)
     if not isinstance(manifest, dict):
         return None
     if (
-        manifest.get("selection_policy")
-        != "independent-hard-pass-only"
+        manifest.get("selection_policy") != "independent-hard-pass-only"
         or manifest.get("variant_count") != 0
         or manifest.get("variants") != []
     ):
@@ -792,15 +829,11 @@ def _list_clip_targets(augment_uri: str, *, store: Any) -> list[tuple[str, str]]
         _unused_bucket, prefix = _split(
             augment_uri if augment_uri.endswith("/") else augment_uri + "/"
         )
-        has_attempts = any(
-            key.startswith(prefix + "_attempts/") for key in listed_keys
-        )
+        has_attempts = any(key.startswith(prefix + "_attempts/") for key in listed_keys)
     else:
         manifest_present = Path(_local_path(manifest_uri)).is_file()
         has_attempts = (Path(_local_path(augment_uri)) / "_attempts").exists()
-    manifest = (
-        _download_json(manifest_uri, store=store) if manifest_present else None
-    )
+    manifest = _download_json(manifest_uri, store=store) if manifest_present else None
     if manifest_present and not isinstance(manifest, dict):
         raise CosmosEvaluatorError("canonical augment manifest is not an object")
     if isinstance(manifest, dict):
@@ -810,11 +843,24 @@ def _list_clip_targets(augment_uri: str, *, store: Any) -> list[tuple[str, str]]
             variants = validate_committed_run_manifest(manifest, augment_uri)
         except (TypeError, ValueError) as exc:
             raise CosmosEvaluatorError(str(exc)) from exc
+        if (
+            not variants
+            and manifest.get("selection_policy") == "independent-hard-pass-only"
+            and manifest.get("variant_count") == 0
+            and manifest.get("variants") == []
+        ):
+            # Candidate selection is append-only, so its committed empty batch
+            # legitimately coexists with the fenced attempt that produced it.
+            # Return no targets and let evaluate_run emit the explicit rejected
+            # report; never infer media from those preserved attempt objects.
+            return []
         if variants:
             targets: list[tuple[str, str]] = []
             for item in variants:
                 if not isinstance(item, dict):
-                    raise CosmosEvaluatorError("augment manifest has an invalid variant")
+                    raise CosmosEvaluatorError(
+                        "augment manifest has an invalid variant"
+                    )
                 clip = str(item.get("clip") or "").strip()
                 video_uri = str(item.get("augmented_video_uri") or "").strip()
                 if not clip or not video_uri or "/" not in video_uri:

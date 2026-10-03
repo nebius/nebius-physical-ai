@@ -258,11 +258,15 @@ def _run_server() -> None:
             for raw in request.samples:
                 try:
                     staged = await asyncio.to_thread(
-                        stage_sample_inputs, raw,
-                        request_root / "inputs" / str(raw["name"]), scope=input_scope,
+                        stage_sample_inputs,
+                        raw,
+                        request_root / "inputs" / str(raw["name"]),
+                        scope=input_scope,
                     )
                 except StorageAuthorizationError as exc:
-                    raise fastapi.HTTPException(status_code=400, detail=str(exc)) from exc
+                    raise fastapi.HTTPException(
+                        status_code=400, detail=str(exc)
+                    ) from exc
                 sample = OmniSampleOverrides.model_validate(staged)
                 sample.output_dir = request_root / str(raw["name"])
                 sample.download(sample.output_dir / "inputs")
@@ -320,7 +324,9 @@ def _run_server() -> None:
     try:
         ray.serve.start(http_options={"host": host, "port": port})
         app = cast(ray.serve.Deployment, NpaCosmosRouter).bind(model)
-        ray.serve.run(app, name="npa_cosmos3_ray_serve", route_prefix="/", blocking=True)
+        ray.serve.run(
+            app, name="npa_cosmos3_ray_serve", route_prefix="/", blocking=True
+        )
     finally:
         ray.shutdown()
 

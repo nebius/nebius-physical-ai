@@ -5,6 +5,23 @@ description: Use for zero-GPU hosted inference through Nebius Token Factory — 
 
 # Token Factory (zero-GPU hosted inference)
 
+## Robot demonstration SDG
+
+For robot training data, use `npa workbench token-factory robot-sdg`, not the
+text-only `sdg` command. It routes declarative scene planning through hosted
+Lightning/MiniMax, executes real MuJoCo Fetch pick-and-place, records workspace
+and wrist RGB with aligned joint state/actions, and exports accepted episodes
+through the LeRobot v3 adapter. Physics state and contact checks judge success;
+model text cannot declare an episode successful.
+
+Install `npa[robot-sdg]` and `ffmpeg`. The public CLI uses S3 input/output paths;
+the shared SDK `robot_sdg(RobotSdgRequest(...))` also accepts local files. Outputs
+must be new. Open `index.html` for real videos, and validate the dataset with the
+native LeRobot reader. The simulator uses a scripted teacher with privileged
+state; do not describe the output as physical robot capture, learned-policy
+performance, or photorealistic video. See `docs/workbench/token-factory-robot-sdg.md`
+for the supported scene contract, live test, and workflow prerequisites.
+
 Nebius Token Factory is an OpenAI-compatible hosted-inference API for open text
 and vision models. It is the cheapest tier in the workbench that produces a real
 artifact: **no cluster, no GPU, no provisioning**. Reach for it before standing up
@@ -52,6 +69,23 @@ Lightning `enable_thinking=false`, MiniMax `thinking_mode=disabled`. Explicit
 client `extra` values win. Agent reasoning turns enable thinking deliberately.
 
 ## Commands
+
+### Automatically routed synthetic instruction data
+
+`npa workbench token-factory sdg` runs seed classification, generation, model
+review, exact-pair deduplication, and JSONL export through the shared SDK pipeline.
+Its default router runs on Lightning through Token Factory and maps
+transformation tasks to Lightning and reasoning tasks to MiniMax. `--router jev`
+uses the optional TypeSafe adapter and additionally requires `TYPESAFE_API_KEY`.
+Generation and review use hosted open-weight models in either mode.
+
+This command uses S3 handoff paths; the SDK accepts local files for contributor
+development. Its `--dry-run` reads and validates inputs without inference or
+writes. Every input seed is processed once; no record-count or token cap is
+added. Outputs are `dataset.jsonl`, `rejected.jsonl`, `provenance.jsonl`, and
+`report.json`. Review is a fallible model judgment, so inspect samples before
+training. See `docs/workbench/token-factory-sdg.md` for the runnable SDK example,
+live evidence, and the `workbench.token_factory.sdg` workflow.
 
 ### Current pricing and usage
 
@@ -208,9 +242,10 @@ npa workbench workflow submit <spec.yaml> --secret-env NEBIUS_TOKEN_FACTORY_KEY
 toolRefs: `workbench.token_factory.caption`, `.generate`, `.batch_generate`,
 `.reason`, `.triage` (digest a run's textual artifacts into a triage report).
 
-`npa workbench token-factory workflow` prints exactly four:
+`npa workbench token-factory workflow` prints six:
 `token-factory-caption.yaml`, `token-factory-generate.yaml`,
-`token-factory-cosmos-reason.yaml`, and `vlm-eval-token-factory.yaml`. Several
+`token-factory-cosmos-reason.yaml`, `token-factory-sdg.yaml`,
+`token-factory-robot-sdg.yaml`, and `vlm-eval-token-factory.yaml`. Several
 more are checked in but not listed by that command, so do not treat its output as
 the full inventory:
 

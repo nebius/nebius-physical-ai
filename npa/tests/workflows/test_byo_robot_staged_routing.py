@@ -25,20 +25,34 @@ from npa.workflows.sim2real import engine
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 
 
+def _config(**kwargs) -> Sim2RealLoopConfig:  # noqa: ANN003
+    operator_image = "registry.example.invalid/operator/npa-sim2real:test"
+    return Sim2RealLoopConfig(
+        augment_image=operator_image,
+        envgen_image=operator_image,
+        policy_image=operator_image,
+        trainer_image=operator_image,
+        vlm_image=operator_image,
+        eval_image=operator_image,
+        isaac_image=operator_image,
+        **kwargs,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # engine._byo_robot_env — forward robot vars to the trainer sibling
 # --------------------------------------------------------------------------- #
 def test_trainer_env_empty_for_no_robot():
-    assert engine._byo_robot_env(Sim2RealLoopConfig(run_id="r")) == {}
+    assert engine._byo_robot_env(_config(run_id="r")) == {}
 
 
 def test_trainer_env_empty_for_stock_franka_source():
-    cfg = Sim2RealLoopConfig(run_id="r", robot_source="stock_franka")
+    cfg = _config(run_id="r", robot_source="stock_franka")
     assert engine._byo_robot_env(cfg) == {}
 
 
 def test_trainer_env_set_for_spec_uri():
-    cfg = Sim2RealLoopConfig(run_id="r", robot_spec_uri="s3://b/kinova/robot-spec.json")
+    cfg = _config(run_id="r", robot_spec_uri="s3://b/kinova/robot-spec.json")
     env = engine._byo_robot_env(cfg)
     assert env["NPA_BYO_ROBOT_TASK"] == "1"
     assert env["NPA_SIM2REAL_ROBOT_SPEC_URI"] == "s3://b/kinova/robot-spec.json"
@@ -48,12 +62,18 @@ def test_trainer_env_set_for_spec_uri():
 
 
 def test_trainer_env_set_for_preset_and_byo_source():
-    assert engine._byo_robot_env(
-        Sim2RealLoopConfig(run_id="r", robot_preset="ur10e")
-    )["NPA_BYO_ROBOT_TASK"] == "1"
-    assert engine._byo_robot_env(
-        Sim2RealLoopConfig(run_id="r", robot_source="byo_usd")
-    )["NPA_BYO_ROBOT_TASK"] == "1"
+    assert (
+        engine._byo_robot_env(_config(run_id="r", robot_preset="ur10e"))[
+            "NPA_BYO_ROBOT_TASK"
+        ]
+        == "1"
+    )
+    assert (
+        engine._byo_robot_env(_config(run_id="r", robot_source="byo_usd"))[
+            "NPA_BYO_ROBOT_TASK"
+        ]
+        == "1"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -80,9 +100,7 @@ def _capture_heldout_extra(cfg: Sim2RealLoopConfig, tmp_path, monkeypatch) -> di
 
 
 def test_heldout_eval_opts_into_byo_robot_task(tmp_path, monkeypatch):
-    cfg = Sim2RealLoopConfig(
-        run_id="r", robot_spec_uri="s3://b/lite6/lite6_parallel.json"
-    )
+    cfg = _config(run_id="r", robot_spec_uri="s3://b/lite6/lite6_parallel.json")
     extra = _capture_heldout_extra(cfg, tmp_path, monkeypatch)
     # The gate byo_isaac_eval checks before resolving the spec + registering the
     # retargeted task must be present, alongside the robot uri.
@@ -91,7 +109,7 @@ def test_heldout_eval_opts_into_byo_robot_task(tmp_path, monkeypatch):
 
 
 def test_heldout_eval_stock_franka_unchanged(tmp_path, monkeypatch):
-    cfg = Sim2RealLoopConfig(run_id="r")  # no robot -> stock Franka path
+    cfg = _config(run_id="r")  # no robot -> stock Franka path
     extra = _capture_heldout_extra(cfg, tmp_path, monkeypatch)
     assert "NPA_BYO_ROBOT_TASK" not in extra  # byte-for-byte stock eval
 
@@ -140,8 +158,11 @@ def test_resolve_spec_from_uri_downloads_and_parses(monkeypatch, tmp_path):
 
     from npa.clients import storage
 
-    monkeypatch.setattr(storage.StorageClient, "from_environment",
-                        classmethod(lambda cls, *a, **k: _FakeClient()))
+    monkeypatch.setattr(
+        storage.StorageClient,
+        "from_environment",
+        classmethod(lambda cls, *a, **k: _FakeClient()),
+    )
     monkeypatch.setenv("NPA_SIM2REAL_ROBOT_SPEC_URI", "s3://b/kinova/robot-spec.json")
     monkeypatch.delenv("NPA_SIM2REAL_ROBOT_PRESET", raising=False)
     monkeypatch.delenv("NPA_SIM2REAL_ROBOT_SOURCE", raising=False)
@@ -182,7 +203,10 @@ def test_resolve_spec_uri_absent_falls_back_to_preset(monkeypatch):
 
 
 def test_resolve_no_robot_returns_none(monkeypatch):
-    for k in ("NPA_SIM2REAL_ROBOT_SPEC_URI", "NPA_SIM2REAL_ROBOT_PRESET",
-              "NPA_SIM2REAL_ROBOT_SOURCE"):
+    for k in (
+        "NPA_SIM2REAL_ROBOT_SPEC_URI",
+        "NPA_SIM2REAL_ROBOT_PRESET",
+        "NPA_SIM2REAL_ROBOT_SOURCE",
+    ):
         monkeypatch.delenv(k, raising=False)
     assert trainer._resolve_byo_robot_spec() is None

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.error
+import urllib.parse
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +24,23 @@ from npa.workbench.foxglove.mcap_writer import (
     write_run_mcap,
 )
 from npa.workflows import groot_learning as learning
+
+
+class _AgentResponse:
+    def __init__(self, payload: dict | bytes, *, status: int = 200) -> None:
+        self.status = status
+        self._body = (
+            payload if isinstance(payload, bytes) else json.dumps(payload).encode()
+        )
+
+    def __enter__(self):  # noqa: ANN204
+        return self
+
+    def __exit__(self, *_args):  # noqa: ANN204
+        return False
+
+    def read(self) -> bytes:
+        return self._body
 
 
 def _evaluation(*, real: bool = True) -> dict:
@@ -129,7 +148,9 @@ def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
         lambda *_args: {"uri": "s3://bucket/baseline", "sha256": "a" * 64},
     )
     monkeypatch.setattr(
-        learning, "checkpoint_model_config_contract", lambda *_args: learning.GROOT_MODEL_CONFIG_CONTRACT
+        learning,
+        "checkpoint_model_config_contract",
+        lambda *_args: learning.GROOT_MODEL_CONFIG_CONTRACT,
     )
     monkeypatch.setattr(
         learning,
@@ -193,9 +214,7 @@ def test_configurable_evaluation_repeats_reuse_one_policy_with_seed_isolation(
     assert [seed for seed, _runtime, _embodiment in calls] == [11, 11, 22, 33]
     assert calls[0][1] is None
     assert all(supplied is runtime for _seed, supplied, _embodiment in calls[1:])
-    assert {embodiment for _seed, _runtime, embodiment in calls} == {
-        "NEW_EMBODIMENT"
-    }
+    assert {embodiment for _seed, _runtime, embodiment in calls} == {"NEW_EMBODIMENT"}
     assert initialized["embodiment"] == "NEW_EMBODIMENT"
     assert result["repeat_evaluation"]["configured_repeats"] == 4
     assert result["repeat_evaluation"]["policy_constructions"] == 1
@@ -322,7 +341,9 @@ def test_posttrain_evaluation_consumes_resolved_checkpoint_reference(
     monkeypatch.setattr(
         learning,
         "evaluate",
-        lambda *args, **kwargs: captured.update(args=args, kwargs=kwargs) or {"ok": True},
+        lambda *args, **kwargs: (
+            captured.update(args=args, kwargs=kwargs) or {"ok": True}
+        ),
     )
     result = learning.posttrain_eval(
         "s3://bucket/split.json",
@@ -516,9 +537,7 @@ class _Blueprint:
         return make
 
 
-def test_rrd_blueprint_has_only_panels_that_render_on_the_default_timeline() -> (
-    None
-):
+def test_rrd_blueprint_has_only_panels_that_render_on_the_default_timeline() -> None:
     rrb = _Blueprint()
     learning._learning_blueprint(rrb)
     origins = {str(view.get("origin")) for view in rrb.views}
@@ -764,7 +783,9 @@ def test_comparison_video_canvas_never_crops_large_or_portrait_native_frames(
         baseline_mse=0.0,
         posttrain_mse=0.0,
     )
-    canvas_width, canvas_height = (int(value) for value in meta["resolution"].split("x"))
+    canvas_width, canvas_height = (
+        int(value) for value in meta["resolution"].split("x")
+    )
     region = meta["camera_region"]
     assert canvas_width >= region["x"] + size[0]
     assert canvas_height >= region["y"] + size[1]
@@ -809,16 +830,17 @@ def test_publish_learning_uses_report_primary_camera_everywhere(
     monkeypatch.setattr(
         learning,
         "_validate_learning_mcap",
-        lambda _path, *, run_id, camera_name: calls.update(
-            mcap_camera=camera_name, mcap_run=run_id
-        )
-        or {"size_bytes": 8, "channels": {f"/camera/{camera_name}": 1}},
+        lambda _path, *, run_id, camera_name: (
+            calls.update(mcap_camera=camera_name, mcap_run=run_id)
+            or {"size_bytes": 8, "channels": {f"/camera/{camera_name}": 1}}
+        ),
     )
     monkeypatch.setattr(
         learning,
         "inspect_rrd",
-        lambda _path, **kwargs: calls.update(rrd_entities=kwargs["expected_entities"])
-        or {"bytes": 8},
+        lambda _path, **kwargs: (
+            calls.update(rrd_entities=kwargs["expected_entities"]) or {"bytes": 8}
+        ),
     )
     monkeypatch.setattr(
         learning,
@@ -997,7 +1019,11 @@ def test_learning_ui_is_replay_first_groups_frames_and_never_upscales() -> None:
     assert "native; preview is not enlarged" in source
     assert "width: auto" in source and "object-fit: contain" in source
     path_contract = (
-        Path(__file__).resolve().parents[2] / "src" / "npa" / "workflows" / "artifacts.py"
+        Path(__file__).resolve().parents[2]
+        / "src"
+        / "npa"
+        / "workflows"
+        / "artifacts.py"
     ).read_text(encoding="utf-8")
     assert "Prepare leakage-free split" in path_contract
     assert "Synchronized diagnostics" in path_contract
@@ -1062,12 +1088,8 @@ def test_not_improved_report_remains_valid_artifact_input(
         "s3://bucket/baseline.npz": {"predicted": np.zeros((2, 1))},
         "s3://bucket/trained.npz": {"predicted": np.ones((2, 1))},
     }
-    monkeypatch.setattr(
-        learning, "_read_s3_json", lambda _client, uri: documents[uri]
-    )
-    monkeypatch.setattr(
-        learning, "validate_evaluation", lambda *_args, **_kwargs: None
-    )
+    monkeypatch.setattr(learning, "_read_s3_json", lambda _client, uri: documents[uri])
+    monkeypatch.setattr(learning, "validate_evaluation", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(learning, "_read_npz", lambda _client, uri: arrays[uri])
 
     bundle = learning._evaluation_bundle(object(), "s3://bucket/report.json")
@@ -1255,4 +1277,170 @@ def test_denoising_knob_is_not_exposed_when_upstream_ignores_it() -> None:
                 "--denoising-steps",
                 "4",
             ]
+        )
+
+
+def test_agent_ui_handoff_paginates_exact_source_and_posts_strict_v3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_id = "groot-run"
+    run_ref = "npa1_groot_run"
+    project_id = "project-a"
+    bucket = "bucket"
+    resolved_prefix = "runs"
+    report_uri = f"s3://{bucket}/runs/{run_id}/reports/learning.json"
+    rrd_uri = f"s3://{bucket}/runs/{run_id}/reports/learning.rrd"
+    mcap_uri = f"s3://{bucket}/runs/{run_id}/reports/learning.mcap"
+    requests: list[object] = []
+    load_payloads: list[dict] = []
+    written: list[tuple[str, dict]] = []
+
+    first_page = {
+        "run_id": run_id,
+        "run_ref": run_ref,
+        "project_id": project_id,
+        "bucket": bucket,
+        "resource_bucket": bucket,
+        "resolved_prefix": resolved_prefix,
+        "source_selected": True,
+        "artifacts": [
+            {
+                "key": f"runs/{run_id}/reports/learning.json",
+                "s3_uri": report_uri,
+            }
+        ],
+        "next_cursor": "opaque-page-2",
+        "truncated": True,
+    }
+    final_page = {
+        **first_page,
+        "artifacts": [
+            {
+                "key": f"runs/{run_id}/reports/learning.rrd",
+                "s3_uri": rrd_uri,
+            },
+            {
+                "key": f"runs/{run_id}/reports/learning.mcap",
+                "s3_uri": mcap_uri,
+            },
+        ],
+        "next_cursor": "",
+        "truncated": False,
+    }
+
+    def urlopen(request, **_kwargs):  # noqa: ANN001, ANN202
+        requests.append(request)
+        if request.get_header("Range"):
+            return _AgentResponse(b"recording-bytes", status=206)
+        parsed = urllib.parse.urlsplit(request.full_url)
+        if parsed.path == "/api/health":
+            return _AgentResponse({"ok": True})
+        if parsed.path == f"/api/artifacts/run/{run_id}":
+            return _AgentResponse(first_page)
+        if parsed.path == f"/api/artifacts/run/{run_ref}":
+            query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+            assert query == {
+                "project_id": [project_id],
+                "resource_bucket": [bucket],
+                "resolved_prefix": [resolved_prefix],
+                "source_selected": ["1"],
+                "cursor": ["opaque-page-2"],
+            }
+            return _AgentResponse(final_page)
+        if parsed.path == "/api/sim-viz/load-artifact":
+            body = json.loads(bytes(request.data or b"{}"))
+            load_payloads.append(body)
+            key = str(body["key"])
+            rerun = key.endswith(".rrd")
+            return _AgentResponse(
+                {
+                    "ok": True,
+                    "sim_viz": {
+                        "run_id": run_id,
+                        "artifact_key": key,
+                        "artifact_run_ref": run_ref,
+                        "project_id": project_id,
+                        "bucket": bucket,
+                        "resolved_prefix": resolved_prefix,
+                        "rerun_ready": rerun,
+                        "lichtblick_ready": not rerun,
+                        "artifact_download_url": (
+                            "/api/artifacts/file/learning.rrd"
+                            if rerun
+                            else "/api/artifacts/file/learning.mcap"
+                        ),
+                    },
+                }
+            )
+        raise AssertionError(f"unexpected synthetic path: {parsed.path}")
+
+    monkeypatch.setenv("NPA_AGENT_BASIC_AUTH", "user:password")
+    monkeypatch.setattr(learning.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(
+        learning,
+        "_put_json",
+        lambda _client, uri, payload: written.append((uri, payload)),
+    )
+
+    result = learning.verify_agent_ui_handoff(
+        "https://agent.invalid",
+        report_uri,
+        rrd_uri,
+        mcap_uri,
+        "s3://bucket/output.json",
+        run_id,
+        s3_client=object(),
+    )
+
+    assert result["status"] == "passed"
+    assert result["artifact_count"] == 3
+    assert len(load_payloads) == 2
+    for payload in load_payloads:
+        assert payload == {
+            "run_id": run_id,
+            "run_ref": run_ref,
+            "key": payload["key"],
+            "project_id": project_id,
+            "resource_bucket": bucket,
+            "resolved_prefix": resolved_prefix,
+            "source_selected": True,
+        }
+        assert "s3_uri" not in payload
+    assert written and written[0][0] == "s3://bucket/output.json"
+
+
+def test_agent_ui_handoff_preserves_ambiguous_run_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def urlopen(request, **_kwargs):  # noqa: ANN001, ANN202
+        parsed = urllib.parse.urlsplit(request.full_url)
+        if parsed.path == "/api/health":
+            return _AgentResponse({"ok": True})
+        raise urllib.error.HTTPError(
+            request.full_url,
+            409,
+            "ambiguous",
+            hdrs=None,
+            fp=None,
+        )
+
+    monkeypatch.setenv("NPA_AGENT_BASIC_AUTH", "user:password")
+    monkeypatch.setattr(learning.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr(
+        learning,
+        "_put_json",
+        lambda *_args, **_kwargs: pytest.fail("ambiguous run must not be published"),
+    )
+
+    with pytest.raises(
+        learning.GrootVisualizationError, match="agent API request failed"
+    ):
+        learning.verify_agent_ui_handoff(
+            "https://agent.invalid",
+            "s3://bucket/runs/groot-run/report.json",
+            "s3://bucket/runs/groot-run/report.rrd",
+            "s3://bucket/runs/groot-run/report.mcap",
+            "s3://bucket/output.json",
+            "groot-run",
+            s3_client=object(),
         )

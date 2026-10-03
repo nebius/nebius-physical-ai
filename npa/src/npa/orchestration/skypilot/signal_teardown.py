@@ -31,7 +31,9 @@ class SignalTeardown:
     sky_bin: SkyBin = None
     timeout: float = 900.0
     poll_interval: float = 10.0
-    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _lock: threading.Lock = field(
+        default_factory=threading.Lock, init=False, repr=False
+    )
     _launched: bool = field(default=False, init=False)
     _done: bool = field(default=False, init=False)
 
@@ -69,7 +71,9 @@ class SignalTeardown:
             cleanup.errors.append(error)
         elif missing:
             cleanup.errors.extend(down_errors)
-            cleanup.errors.append(f"SkyPilot clusters still present after teardown timeout: {', '.join(missing)}")
+            cleanup.errors.append(
+                f"SkyPilot clusters still present after teardown timeout: {', '.join(missing)}"
+            )
         return cleanup
 
     def _wait_until_absent(self, patterns: list[str]) -> tuple[list[str], str]:
@@ -98,7 +102,9 @@ class SignalTeardown:
             cmd.insert(2, "--config")
         return cmd
 
-    def _run(self, cmd: list[str], *, timeout: float) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self, cmd: list[str], *, timeout: float
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             cmd,
             env=sky_environment(self.isolated_config_dir),
@@ -110,7 +116,9 @@ class SignalTeardown:
         )
 
 
-def install_teardown_signal_handlers(teardown: Callable[[], CleanupResult]) -> dict[signal.Signals, signal.Handlers]:
+def install_teardown_signal_handlers(
+    teardown: Callable[[], CleanupResult],
+) -> dict[signal.Signals, signal.Handlers]:
     """Install SIGTERM/SIGINT handlers that run teardown and exit."""
 
     previous_handlers: dict[signal.Signals, signal.Handlers] = {}
@@ -126,7 +134,9 @@ def install_teardown_signal_handlers(teardown: Callable[[], CleanupResult]) -> d
     return previous_handlers
 
 
-def restore_signal_handlers(previous_handlers: dict[signal.Signals, signal.Handlers]) -> None:
+def restore_signal_handlers(
+    previous_handlers: dict[signal.Signals, signal.Handlers],
+) -> None:
     """Restore handlers returned by ``install_teardown_signal_handlers``."""
 
     for sig, handler in previous_handlers.items():
@@ -149,6 +159,10 @@ def _matching_clusters(output: str, patterns: list[str]) -> list[str]:
     return matches
 
 
-def _format_command_error(cmd: list[str], result: subprocess.CompletedProcess[str]) -> str:
-    detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+def _format_command_error(
+    cmd: list[str], result: subprocess.CompletedProcess[str]
+) -> str:
+    detail = (
+        result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+    )
     return f"{' '.join(cmd)}: {detail}"

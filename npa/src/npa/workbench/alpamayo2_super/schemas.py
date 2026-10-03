@@ -11,7 +11,9 @@ class InferenceBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     output_path: str = Field(
-        default="run", max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
+        default="run",
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]*$",
     )
     sample_index: int = Field(default=0, ge=0)
     diffusion_steps: int = Field(default=10, ge=1)

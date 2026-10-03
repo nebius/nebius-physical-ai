@@ -60,7 +60,8 @@ class DeviceMemorySampler:
 
     def _sample(self) -> None:
         argv = [
-            "nvidia-smi", "--query-gpu=name,memory.used,memory.total",
+            "nvidia-smi",
+            "--query-gpu=name,memory.used,memory.total",
             "--format=csv,noheader,nounits",
         ]
         visible = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
@@ -77,8 +78,11 @@ class DeviceMemorySampler:
         name, used, total = (part.strip() for part in rows[0].split(","))
         if "B200" not in name:
             raise NanoVideoError("requested B200 device was not observed")
-        sample = {"elapsed_seconds": time.monotonic() - self._started,
-                  "used_mib": float(used), "total_mib": float(total)}
+        sample = {
+            "elapsed_seconds": time.monotonic() - self._started,
+            "used_mib": float(used),
+            "total_mib": float(total),
+        }
         if not 0 < sample["used_mib"] <= sample["total_mib"]:
             raise NanoVideoError("invalid device VRAM measurement")
         self.samples.append(sample)
@@ -101,10 +105,15 @@ class DeviceMemorySampler:
         self._done.set()
         if self._thread:
             self._thread.join()
-        return {"source": "nvidia-smi Ray-assigned B200 device memory.used",
-                "sampling_interval_seconds": 0.5, "samples": self.samples,
-                "peak_used_mib": max((sample["used_mib"] for sample in self.samples), default=None),
-                "error": self.error}
+        return {
+            "source": "nvidia-smi Ray-assigned B200 device memory.used",
+            "sampling_interval_seconds": 0.5,
+            "samples": self.samples,
+            "peak_used_mib": max(
+                (sample["used_mib"] for sample in self.samples), default=None
+            ),
+            "error": self.error,
+        }
 
 
 def utc_now() -> str:
@@ -119,8 +128,12 @@ def write_json(path: Path, value: Any) -> None:
         # NamedTemporaryFile creates mode0600. Keep the temporary file beside
         # the destination so replacement is atomic on the shared filesystem.
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=path.parent,
-            prefix=f".{path.name}.", suffix=".tmp", delete=False,
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
         ) as stream:
             temporary = Path(stream.name)
             stream.write(content)
@@ -141,10 +154,16 @@ def artifact(path: Path) -> dict[str, Any]:
     with path.open("rb") as stream:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
-    return {"path": path.name, "bytes": path.stat().st_size, "sha256": digest.hexdigest()}
+    return {
+        "path": path.name,
+        "bytes": path.stat().st_size,
+        "sha256": digest.hexdigest(),
+    }
 
 
-def request_fields(prompt: str, seed: int, frames: int, *, continuation: bool) -> dict[str, str]:
+def request_fields(
+    prompt: str, seed: int, frames: int, *, continuation: bool
+) -> dict[str, str]:
     if frames < 5 or frames > 300 or (frames - 1) % 4:
         raise ValueError("chunk frames must be 4k+1, at least 5 and at most 300")
     extra: dict[str, Any] = {
@@ -173,35 +192,72 @@ def _command(argv: list[str]) -> bytes:
     result = subprocess.run(argv, capture_output=True, check=False)
     if result.returncode:
         # Do not copy paths, URLs or private runtime diagnostics into API errors.
-        raise NanoVideoError(f"{Path(argv[0]).name} failed with exit code {result.returncode}")
+        raise NanoVideoError(
+            f"{Path(argv[0]).name} failed with exit code {result.returncode}"
+        )
     return result.stdout
 
 
 def validate_video(path: Path, frames: int) -> dict[str, Any]:
     """Count decoded frames, verify shape/rate/duration and decode every frame."""
-    raw = _command([
-        "ffprobe", "-v", "error", "-select_streams", "v:0", "-count_frames",
-        "-show_entries", "stream=width,height,avg_frame_rate,nb_read_frames,duration",
-        "-of", "json", str(path),
-    ])
+    raw = _command(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=width,height,avg_frame_rate,nb_read_frames,duration",
+            "-of",
+            "json",
+            str(path),
+        ]
+    )
     try:
         stream = json.loads(raw)["streams"][0]
         observed = int(stream["nb_read_frames"])
         rate = Fraction(stream["avg_frame_rate"])
         duration = float(stream["duration"])
         valid = (
-            observed == frames and rate == FPS
-            and stream["width"] == WIDTH and stream["height"] == HEIGHT
-            and math.isfinite(duration) and abs(duration - frames / FPS) < 0.002
+            observed == frames
+            and rate == FPS
+            and stream["width"] == WIDTH
+            and stream["height"] == HEIGHT
+            and math.isfinite(duration)
+            and abs(duration - frames / FPS) < 0.002
         )
     except (KeyError, ValueError, IndexError, ZeroDivisionError) as exc:
         raise NanoVideoError("video has incomplete frame/rate/shape evidence") from exc
     if not valid:
-        raise NanoVideoError("decoded video does not match requested frames, rate, duration or 480p shape")
-    _command(["ffmpeg", "-v", "error", "-xerror", "-i", str(path), "-map", "0:v:0", "-f", "null", "-"])
-    return {"valid": True, "decoded_frames": observed, "fps": float(rate),
-            "width": WIDTH, "height": HEIGHT, "duration_seconds": duration,
-            "full_decode_passed": True}
+        raise NanoVideoError(
+            "decoded video does not match requested frames, rate, duration or 480p shape"
+        )
+    _command(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-xerror",
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-f",
+            "null",
+            "-",
+        ]
+    )
+    return {
+        "valid": True,
+        "decoded_frames": observed,
+        "fps": float(rate),
+        "width": WIDTH,
+        "height": HEIGHT,
+        "duration_seconds": duration,
+        "full_decode_passed": True,
+    }
 
 
 def stitch_chunks(chunks: list[Path], target: Path) -> None:
@@ -212,13 +268,32 @@ def stitch_chunks(chunks: list[Path], target: Path) -> None:
     for index, (chunk, frames) in enumerate(zip(chunks, CHUNK_FRAMES, strict=True)):
         argv.extend(["-i", str(chunk)])
         start = PREFIX_FRAMES if index else 0
-        filters.append(f"[{index}:v]trim=start_frame={start}:end_frame={frames},setpts=PTS-STARTPTS[v{index}]")
-    filters.append("[v0][v1][v2]concat=n=3:v=1:a=0,trim=end_frame=720,setpts=PTS-STARTPTS[out]")
-    argv.extend([
-        "-filter_complex", ";".join(filters), "-map", "[out]", "-an",
-        "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
-        "-r", str(FPS), "-movflags", "+faststart", str(target),
-    ])
+        filters.append(
+            f"[{index}:v]trim=start_frame={start}:end_frame={frames},setpts=PTS-STARTPTS[v{index}]"
+        )
+    filters.append(
+        "[v0][v1][v2]concat=n=3:v=1:a=0,trim=end_frame=720,setpts=PTS-STARTPTS[out]"
+    )
+    argv.extend(
+        [
+            "-filter_complex",
+            ";".join(filters),
+            "-map",
+            "[out]",
+            "-an",
+            "-c:v",
+            "libx264",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            str(FPS),
+            "-movflags",
+            "+faststart",
+            str(target),
+        ]
+    )
     _command(argv)
 
 
@@ -227,29 +302,61 @@ def seam_evidence(video: Path, output_dir: Path) -> list[dict[str, Any]]:
     seams = []
     for index, boundary in enumerate((297, 589), 1):
         selection = f"select=between(n\\,{boundary - 4}\\,{boundary + 3})"
-        pixels = _command([
-            "ffmpeg", "-v", "error", "-i", str(video), "-vf", selection + ",scale=128:72,format=gray",
-            "-vsync", "0", "-f", "rawvideo", "-",
-        ])
+        pixels = _command(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(video),
+                "-vf",
+                selection + ",scale=128:72,format=gray",
+                "-vsync",
+                "0",
+                "-f",
+                "rawvideo",
+                "-",
+            ]
+        )
         size = 128 * 72
         if len(pixels) != 8 * size:
             raise NanoVideoError("could not decode all stitch boundary frames")
-        frames = [pixels[i * size:(i + 1) * size] for i in range(8)]
-        diffs = [statistics.mean(abs(a - b) for a, b in zip(left, right, strict=True))
-                 for left, right in zip(frames[:-1], frames[1:], strict=True)]
+        frames = [pixels[i * size : (i + 1) * size] for i in range(8)]
+        diffs = [
+            statistics.mean(abs(a - b) for a, b in zip(left, right, strict=True))
+            for left, right in zip(frames[:-1], frames[1:], strict=True)
+        ]
         contact = output_dir / f"seam-{index}.png"
-        _command([
-            "ffmpeg", "-v", "error", "-y", "-i", str(video), "-vf",
-            selection + ",scale=416:240,tile=4x2", "-frames:v", "1", str(contact),
-        ])
-        seams.append({
-            "first_new_frame": boundary, "time_seconds": boundary / FPS,
-            "contact_sheet": contact.name, "contact_sheet_frames": list(range(boundary - 4, boundary + 4)),
-            "boundary_mean_absolute_gray_difference": diffs[3],
-            "neighbor_median_mean_absolute_gray_difference": statistics.median(diffs[:3] + diffs[4:]),
-            "adjacent_mean_absolute_gray_differences": diffs,
-            "visual_review": "pending", "transition": "direct concatenation; no blending or interpolation",
-        })
+        _command(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(video),
+                "-vf",
+                selection + ",scale=416:240,tile=4x2",
+                "-frames:v",
+                "1",
+                str(contact),
+            ]
+        )
+        seams.append(
+            {
+                "first_new_frame": boundary,
+                "time_seconds": boundary / FPS,
+                "contact_sheet": contact.name,
+                "contact_sheet_frames": list(range(boundary - 4, boundary + 4)),
+                "boundary_mean_absolute_gray_difference": diffs[3],
+                "neighbor_median_mean_absolute_gray_difference": statistics.median(
+                    diffs[:3] + diffs[4:]
+                ),
+                "adjacent_mean_absolute_gray_differences": diffs,
+                "visual_review": "pending",
+                "transition": "direct concatenation; no blending or interpolation",
+            }
+        )
     return seams
 
 
@@ -263,20 +370,33 @@ def _positive_header(headers: httpx.Headers, name: str) -> float:
     return value
 
 
-def run_rollout(*, endpoint: str, output_dir: Path, prompt: str, seed: int, replica_id: str) -> dict[str, Any]:
+def run_rollout(
+    *, endpoint: str, output_dir: Path, prompt: str, seed: int, replica_id: str
+) -> dict[str, Any]:
     """Generate all chunks on one warmed TP=1 service; never retry GPU requests."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=False)
     started = time.monotonic()
     report: dict[str, Any] = {
-        "schema_version": SCHEMA, "status": "running", "started_at": utc_now(),
-        "model": "nvidia/Cosmos3-Nano", "model_revision": MODEL_REVISION,
-        "pipeline": "Cosmos3OmniDiffusersPipeline", "guardrails": False,
-        "dtype": "bfloat16", "tensor_parallel_size": 1, "replica_id": replica_id,
-        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), "seed": seed,
-        "chunks": [], "artifacts": [],
+        "schema_version": SCHEMA,
+        "status": "running",
+        "started_at": utc_now(),
+        "model": "nvidia/Cosmos3-Nano",
+        "model_revision": MODEL_REVISION,
+        "pipeline": "Cosmos3OmniDiffusersPipeline",
+        "guardrails": False,
+        "dtype": "bfloat16",
+        "tensor_parallel_size": 1,
+        "replica_id": replica_id,
+        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "seed": seed,
+        "chunks": [],
+        "artifacts": [],
     }
-    write_json(output_dir / "request.json", {"prompt": prompt, "seed": seed, "chunk_frames": CHUNK_FRAMES})
+    write_json(
+        output_dir / "request.json",
+        {"prompt": prompt, "seed": seed, "chunk_frames": CHUNK_FRAMES},
+    )
     paths: list[Path] = []
     sampler = DeviceMemorySampler()
     try:
@@ -284,22 +404,38 @@ def run_rollout(*, endpoint: str, output_dir: Path, prompt: str, seed: int, repl
         # No request deadline: server initialization has its separate 1800s setting.
         with httpx.Client(timeout=None, trust_env=False) as client:
             for index, frames in enumerate(CHUNK_FRAMES):
-                fields = request_fields(prompt, seed + index, frames, continuation=index > 0)
+                fields = request_fields(
+                    prompt, seed + index, frames, continuation=index > 0
+                )
                 write_json(output_dir / f"chunk-{index + 1}-request.json", fields)
-                chunk: dict[str, Any] = {"index": index + 1, "requested_frames": frames,
-                    "seed": seed + index, "started_at": utc_now(), "status": "running"}
+                chunk: dict[str, Any] = {
+                    "index": index + 1,
+                    "requested_frames": frames,
+                    "seed": seed + index,
+                    "started_at": utc_now(),
+                    "status": "running",
+                }
                 report["chunks"].append(chunk)
                 write_json(output_dir / "report.json", report)
                 chunk_started = time.monotonic()
                 previous = paths[-1].open("rb") if paths else None
                 try:
                     # Always multipart, including the initial T2V request.
-                    files: dict[str, Any] = {key: (None, value) for key, value in fields.items()}
+                    files: dict[str, Any] = {
+                        key: (None, value) for key, value in fields.items()
+                    }
                     if previous is not None:
-                        files["input_reference"] = ("previous.mp4", previous, "video/mp4")
+                        files["input_reference"] = (
+                            "previous.mp4",
+                            previous,
+                            "video/mp4",
+                        )
                         chunk["conditioned_on"] = artifact(paths[-1])
-                    response = client.post(endpoint.rstrip("/") + "/v1/videos/sync",
-                        files=files, headers={"Accept": "video/mp4"})
+                    response = client.post(
+                        endpoint.rstrip("/") + "/v1/videos/sync",
+                        files=files,
+                        headers={"Accept": "video/mp4"},
+                    )
                 finally:
                     if previous is not None:
                         previous.close()
@@ -307,16 +443,29 @@ def run_rollout(*, endpoint: str, output_dir: Path, prompt: str, seed: int, repl
                 chunk["finished_at"] = utc_now()
                 chunk["http_status"] = response.status_code
                 if response.status_code != 200:
-                    raise NanoVideoError(f"diffusion generation returned HTTP {response.status_code}")
-                if response.headers.get("content-type", "").split(";")[0] != "video/mp4":
-                    raise NanoVideoError("diffusion generation did not return video/mp4")
+                    raise NanoVideoError(
+                        f"diffusion generation returned HTTP {response.status_code}"
+                    )
+                if (
+                    response.headers.get("content-type", "").split(";")[0]
+                    != "video/mp4"
+                ):
+                    raise NanoVideoError(
+                        "diffusion generation did not return video/mp4"
+                    )
                 path = output_dir / f"chunk-{index + 1}.mp4"
                 path.write_bytes(response.content)
                 paths.append(path)
                 chunk["artifact"] = artifact(path)
-                chunk["inference_seconds"] = _positive_header(response.headers, "X-Inference-Time-S")
-                chunk["peak_memory_mb"] = _positive_header(response.headers, "X-Peak-Memory-MB")
-                chunk["stage_durations"] = json.loads(response.headers["X-Stage-Durations"])
+                chunk["inference_seconds"] = _positive_header(
+                    response.headers, "X-Inference-Time-S"
+                )
+                chunk["peak_memory_mb"] = _positive_header(
+                    response.headers, "X-Peak-Memory-MB"
+                )
+                chunk["stage_durations"] = json.loads(
+                    response.headers["X-Stage-Durations"]
+                )
                 chunk["validation"] = validate_video(path, frames)
                 chunk["status"] = "succeeded"
                 write_json(output_dir / "report.json", report)
@@ -326,9 +475,16 @@ def run_rollout(*, endpoint: str, output_dir: Path, prompt: str, seed: int, repl
         report["stitch_seconds"] = time.monotonic() - stitch_started
         report["validation"] = validate_video(target, FINAL_FRAMES)
         report["seams"] = seam_evidence(target, output_dir)
-        report["peak_memory_mb"] = max(chunk["peak_memory_mb"] for chunk in report["chunks"])
-        report["memory_measurement"] = "vLLM-Omni X-Peak-Memory-MB; engine-reported CUDA peak, not total device residency"
-        report["stitch"] = {"duplicate_prefix_frames_removed": [0, 5, 5], "final_tail_frames_trimmed": 1}
+        report["peak_memory_mb"] = max(
+            chunk["peak_memory_mb"] for chunk in report["chunks"]
+        )
+        report["memory_measurement"] = (
+            "vLLM-Omni X-Peak-Memory-MB; engine-reported CUDA peak, not total device residency"
+        )
+        report["stitch"] = {
+            "duplicate_prefix_frames_removed": [0, 5, 5],
+            "final_tail_frames_trimmed": 1,
+        }
         report["status"] = "succeeded"
     except Exception as exc:
         report["status"] = "failed"
@@ -345,10 +501,16 @@ def run_rollout(*, endpoint: str, output_dir: Path, prompt: str, seed: int, repl
             report["memory_measurement_error"] = memory["error"]
         report["finished_at"] = utc_now()
         report["total_wall_seconds"] = time.monotonic() - started
-        report["artifacts"] = [artifact(path) for path in sorted(output_dir.iterdir()) if path.is_file() and path.name != "report.json"]
+        report["artifacts"] = [
+            artifact(path)
+            for path in sorted(output_dir.iterdir())
+            if path.is_file() and path.name != "report.json"
+        ]
         write_json(output_dir / "report.json", report)
     if report["status"] != "succeeded":
-        raise NanoVideoError("generation completed but required device measurement failed")
+        raise NanoVideoError(
+            "generation completed but required device measurement failed"
+        )
     return report
 
 
@@ -364,7 +526,11 @@ def _interval(item: dict[str, Any]) -> tuple[datetime, datetime]:
     try:
         started = datetime.fromisoformat(item["started_at"])
         finished = datetime.fromisoformat(item["finished_at"])
-        if started.utcoffset() is None or finished.utcoffset() is None or finished <= started:
+        if (
+            started.utcoffset() is None
+            or finished.utcoffset() is None
+            or finished <= started
+        ):
             raise ValueError("invalid interval")
     except (KeyError, TypeError, ValueError) as exc:
         raise NanoVideoError("missing or invalid generation time interval") from exc
@@ -373,13 +539,24 @@ def _interval(item: dict[str, Any]) -> tuple[datetime, datetime]:
 
 def _video_evidence(value: Any, frames: int) -> None:
     if not isinstance(value, dict) or (
-        value.get("valid") is not True or value.get("full_decode_passed") is not True
-        or value.get("decoded_frames") != frames or value.get("fps") != FPS
-        or value.get("width") != WIDTH or value.get("height") != HEIGHT
+        value.get("valid") is not True
+        or value.get("full_decode_passed") is not True
+        or value.get("decoded_frames") != frames
+        or value.get("fps") != FPS
+        or value.get("width") != WIDTH
+        or value.get("height") != HEIGHT
     ):
         raise NanoVideoError("incomplete decoded video evidence in service report")
-    if abs(_measurement(value.get("duration_seconds"), "duration_seconds") - frames / FPS) >= 0.002:
-        raise NanoVideoError("service video duration differs from the requested frame count")
+    if (
+        abs(
+            _measurement(value.get("duration_seconds"), "duration_seconds")
+            - frames / FPS
+        )
+        >= 0.002
+    ):
+        raise NanoVideoError(
+            "service video duration differs from the requested frame count"
+        )
 
 
 def _artifact_manifest(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -389,7 +566,9 @@ def _artifact_manifest(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
     manifest = {}
     for item in values:
         name = item.get("path") if isinstance(item, dict) else None
-        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name):
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", name
+        ):
             raise NanoVideoError("unsafe artifact path in service response")
         if name in manifest:
             raise NanoVideoError("duplicate artifact path in service response")
@@ -405,20 +584,35 @@ def _artifact_manifest(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return manifest
 
 
-def _validate_rollout_report(report: Any, request_id: str, prompt: str, seed: int) -> None:
+def _validate_rollout_report(
+    report: Any, request_id: str, prompt: str, seed: int
+) -> None:
     if not isinstance(report, dict):
         raise NanoVideoError("service did not return a rollout report")
     expected = {
-        "schema_version": SCHEMA, "status": "succeeded", "request_id": request_id,
-        "model": "nvidia/Cosmos3-Nano", "model_revision": MODEL_REVISION,
-        "pipeline": "Cosmos3OmniDiffusersPipeline", "dtype": "bfloat16",
-        "tensor_parallel_size": 1, "guardrails": False, "seed": seed,
+        "schema_version": SCHEMA,
+        "status": "succeeded",
+        "request_id": request_id,
+        "model": "nvidia/Cosmos3-Nano",
+        "model_revision": MODEL_REVISION,
+        "pipeline": "Cosmos3OmniDiffusersPipeline",
+        "dtype": "bfloat16",
+        "tensor_parallel_size": 1,
+        "guardrails": False,
+        "seed": seed,
         "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
     }
     if any(report.get(key) != value for key, value in expected.items()):
-        raise NanoVideoError("service report does not match the requested diffusion rollout")
-    if report.get("guardrails") is not False or type(report.get("tensor_parallel_size")) is not int:
-        raise NanoVideoError("service report has invalid guardrail or tensor parallel evidence")
+        raise NanoVideoError(
+            "service report does not match the requested diffusion rollout"
+        )
+    if (
+        report.get("guardrails") is not False
+        or type(report.get("tensor_parallel_size")) is not int
+    ):
+        raise NanoVideoError(
+            "service report has invalid guardrail or tensor parallel evidence"
+        )
     replica = report.get("replica_id")
     if not isinstance(replica, str) or not replica:
         raise NanoVideoError("service report has no replica identity")
@@ -432,21 +626,30 @@ def _validate_rollout_report(report: Any, request_id: str, prompt: str, seed: in
     previous_finished = started
     for index, (chunk, frames) in enumerate(zip(chunks, CHUNK_FRAMES, strict=True), 1):
         if not isinstance(chunk, dict) or (
-            chunk.get("status") != "succeeded" or chunk.get("index") != index
-            or chunk.get("requested_frames") != frames or chunk.get("seed") != seed + index - 1
+            chunk.get("status") != "succeeded"
+            or chunk.get("index") != index
+            or chunk.get("requested_frames") != frames
+            or chunk.get("seed") != seed + index - 1
             or chunk.get("http_status") != 200
         ):
-            raise NanoVideoError("service report has incomplete chunk generation evidence")
+            raise NanoVideoError(
+                "service report has incomplete chunk generation evidence"
+            )
         chunk_start, chunk_end = _interval(chunk)
         if chunk_start < previous_finished or chunk_end > finished:
-            raise NanoVideoError("chunk timing does not describe a sequential complete rollout")
+            raise NanoVideoError(
+                "chunk timing does not describe a sequential complete rollout"
+            )
         previous_finished = chunk_end
         for name in ("wall_seconds", "inference_seconds", "peak_memory_mb"):
             _measurement(chunk.get(name), name)
         _video_evidence(chunk.get("validation"), frames)
         item = chunk.get("artifact")
         expected_artifact = manifest[f"chunk-{index}.mp4"]
-        if not isinstance(item, dict) or any(item.get(key) != expected_artifact[key] for key in ("path", "bytes", "sha256")):
+        if not isinstance(item, dict) or any(
+            item.get(key) != expected_artifact[key]
+            for key in ("path", "bytes", "sha256")
+        ):
             raise NanoVideoError("chunk artifact differs from the published manifest")
     peak = _measurement(report.get("peak_memory_mb"), "peak_memory_mb")
     if peak != max(chunk["peak_memory_mb"] for chunk in chunks):
@@ -454,12 +657,21 @@ def _validate_rollout_report(report: Any, request_id: str, prompt: str, seed: in
     _video_evidence(report.get("validation"), FINAL_FRAMES)
 
 
-def _download_result(client: httpx.Client, endpoint: str, request_id: str, root: Path, report: dict[str, Any]) -> None:
+def _download_result(
+    client: httpx.Client,
+    endpoint: str,
+    request_id: str,
+    root: Path,
+    report: dict[str, Any],
+) -> None:
     for name, item in _artifact_manifest(report).items():
         response = client.get(f"{endpoint}/artifacts/{request_id}/{name}")
         response.raise_for_status()
         data = response.content
-        if len(data) != item["bytes"] or hashlib.sha256(data).hexdigest() != item["sha256"]:
+        if (
+            len(data) != item["bytes"]
+            or hashlib.sha256(data).hexdigest() != item["sha256"]
+        ):
             raise NanoVideoError("artifact hash or length mismatch")
         (root / name).write_bytes(data)
     for index, frames in enumerate(CHUNK_FRAMES, 1):
@@ -487,7 +699,14 @@ def _validate_batch_inputs(*, concurrency: int, token: str, prompt: Any) -> None
         raise ValueError("prompt must be nonempty text")
 
 
-def run_batch(*, endpoint: str, output_dir: Path, concurrency: int, token: str, prompt: str = DEFAULT_PROMPT) -> dict[str, Any]:
+def run_batch(
+    *,
+    endpoint: str,
+    output_dir: Path,
+    concurrency: int,
+    token: str,
+    prompt: str = DEFAULT_PROMPT,
+) -> dict[str, Any]:
     """Barrier-start complete requests and verify downloaded generation evidence."""
     _validate_batch_inputs(concurrency=concurrency, token=token, prompt=prompt)
     output_dir = Path(output_dir)
@@ -503,14 +722,23 @@ def run_batch(*, endpoint: str, output_dir: Path, concurrency: int, token: str, 
         admitted = False
         try:
             root.mkdir()
-            with httpx.Client(timeout=None, trust_env=False, headers={"Authorization": f"Bearer {token}"}) as client:
+            with httpx.Client(
+                timeout=None,
+                trust_env=False,
+                headers={"Authorization": f"Bearer {token}"},
+            ) as client:
                 barrier.wait()
                 admitted = True
                 started_at = utc_now()
                 started = time.monotonic()
-                response = client.post(endpoint.rstrip("/") + "/run", json={
-                    "request_id": request_id, "prompt": prompt, "seed": 1000 + index * 100,
-                })
+                response = client.post(
+                    endpoint.rstrip("/") + "/run",
+                    json={
+                        "request_id": request_id,
+                        "prompt": prompt,
+                        "seed": 1000 + index * 100,
+                    },
+                )
                 response.raise_for_status()
                 report = response.json()
                 _validate_rollout_report(report, request_id, prompt, 1000 + index * 100)
@@ -519,17 +747,27 @@ def run_batch(*, endpoint: str, output_dir: Path, concurrency: int, token: str, 
                 _download_result(client, endpoint.rstrip("/"), request_id, root, report)
                 report["client_total_wall_seconds"] = time.monotonic() - started
                 write_json(root / "report.json", report)
-                return {"request_id": request_id, "status": "succeeded", "report": report}
+                return {
+                    "request_id": request_id,
+                    "status": "succeeded",
+                    "report": report,
+                }
         except Exception as exc:
             # Setup failure must release peers before any failure-report I/O.
             # BrokenBarrierError from that abort follows this same sanitized
             # failure path. No admitted generation request is retried.
             if not admitted:
                 barrier.abort()
-            result = {"request_id": request_id, "status": "failed", "error_type": type(exc).__name__,
-                      "started_at": started_at, "finished_at": utc_now()}
+            result = {
+                "request_id": request_id,
+                "status": "failed",
+                "error_type": type(exc).__name__,
+                "started_at": started_at,
+                "finished_at": utc_now(),
+            }
             evidence = (
-                root / "client-failure.json" if root.is_dir()
+                root / "client-failure.json"
+                if root.is_dir()
                 else output_dir / f"{request_id}-client-failure.json"
             )
             try:
@@ -544,20 +782,41 @@ def run_batch(*, endpoint: str, output_dir: Path, concurrency: int, token: str, 
         results = list(executor.map(one, range(concurrency)))
     good = [item["report"] for item in results if item["status"] == "succeeded"]
     peak = _peak_overlap([_interval(report) for report in good])
-    chunk_peak = _peak_overlap([_interval(chunk) for report in good for chunk in report["chunks"]])
+    chunk_peak = _peak_overlap(
+        [_interval(chunk) for report in good for chunk in report["chunks"]]
+    )
     distinct = len({report["replica_id"] for report in good})
-    passed = len(good) == concurrency and peak == concurrency and chunk_peak == concurrency and distinct == concurrency
-    batch = {"schema_version": "npa.cosmos3.nano-video.batch.v1", "status": "succeeded" if passed else "failed",
-             "concurrency": concurrency, "completed": len(good), "distinct_replicas": distinct,
-             "peak_overlapping_rollouts": peak, "peak_overlapping_chunk_requests": chunk_peak,
-             "total_wall_seconds": time.monotonic() - batch_started,
-             "requests": results, "fanout_verified": passed}
+    passed = (
+        len(good) == concurrency
+        and peak == concurrency
+        and chunk_peak == concurrency
+        and distinct == concurrency
+    )
+    batch = {
+        "schema_version": "npa.cosmos3.nano-video.batch.v1",
+        "status": "succeeded" if passed else "failed",
+        "concurrency": concurrency,
+        "completed": len(good),
+        "distinct_replicas": distinct,
+        "peak_overlapping_rollouts": peak,
+        "peak_overlapping_chunk_requests": chunk_peak,
+        "total_wall_seconds": time.monotonic() - batch_started,
+        "requests": results,
+        "fanout_verified": passed,
+    }
     write_json(output_dir / "batch.json", batch)
     return batch
 
 
-def submit_batch(*, output_path: str, concurrency: int, endpoint: str = "", input_path: str = "",
-                 token_env: str = "NPA_COSMOS3_VIDEO_TOKEN", storage_client: Any = None) -> dict[str, Any]:
+def submit_batch(
+    *,
+    output_path: str,
+    concurrency: int,
+    endpoint: str = "",
+    input_path: str = "",
+    token_env: str = "NPA_COSMOS3_VIDEO_TOKEN",
+    storage_client: Any = None,
+) -> dict[str, Any]:
     """Shared CLI/SDK client with verified S3 publication and local recovery."""
     endpoint = endpoint or os.environ.get("NPA_COSMOS3_VIDEO_ENDPOINT", "")
     if not endpoint:
@@ -567,11 +826,22 @@ def submit_batch(*, output_path: str, concurrency: int, endpoint: str = "", inpu
     from urllib.parse import urlsplit
 
     destination = urlsplit(output_path)
-    if not destination.netloc or not destination.path.strip("/") or destination.query or destination.fragment:
+    if (
+        not destination.netloc
+        or not destination.path.strip("/")
+        or destination.query
+        or destination.fragment
+    ):
         raise ValueError("output-path must name a bucket and non-empty S3 prefix")
     if input_path:
         source = urlsplit(input_path)
-        if source.scheme != "s3" or not source.netloc or not source.path.strip("/") or source.query or source.fragment:
+        if (
+            source.scheme != "s3"
+            or not source.netloc
+            or not source.path.strip("/")
+            or source.query
+            or source.fragment
+        ):
             raise ValueError("input-path must name a bucket and exact S3 object")
     token = os.environ.get(token_env, "")
     _validate_batch_inputs(concurrency=concurrency, token=token, prompt=DEFAULT_PROMPT)
@@ -581,10 +851,14 @@ def submit_batch(*, output_path: str, concurrency: int, endpoint: str = "", inpu
     bucket, prefix = destination.netloc, destination.path.strip("/")
     existing = storage.s3.list_objects_v2(Bucket=bucket, Prefix=prefix + "/", MaxKeys=1)
     if existing.get("KeyCount", 0) or existing.get("Contents"):
-        raise NanoVideoError("output prefix already contains artifacts; recover the existing batch instead of regenerating")
+        raise NanoVideoError(
+            "output prefix already contains artifacts; recover the existing batch instead of regenerating"
+        )
     # Persist the local recovery copy outside the repository. Upload failures
     # must never cause an otherwise completed GPU workload to run again.
-    recovery = Path(os.environ.get("NPA_COSMOS3_VIDEO_RECOVERY_DIR", tempfile.gettempdir()))
+    recovery = Path(
+        os.environ.get("NPA_COSMOS3_VIDEO_RECOVERY_DIR", tempfile.gettempdir())
+    )
     recovery.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="npa-nano-video-", dir=recovery))
     prompt = DEFAULT_PROMPT
@@ -595,19 +869,33 @@ def submit_batch(*, output_path: str, concurrency: int, endpoint: str = "", inpu
         _validate_batch_inputs(concurrency=concurrency, token=token, prompt=prompt)
     # A retained conditional reservation verifies write/read access and prevents
     # simultaneous clients from generating into the same immutable batch prefix.
-    reservation = json.dumps({"schema_version": "npa.cosmos3.nano-video.reservation.v1",
-                              "created_at": utc_now(), "id": os.urandom(16).hex()}).encode()
+    reservation = json.dumps(
+        {
+            "schema_version": "npa.cosmos3.nano-video.reservation.v1",
+            "created_at": utc_now(),
+            "id": os.urandom(16).hex(),
+        }
+    ).encode()
     reservation_key = prefix + "/reservation.json"
-    storage.s3.put_object(Bucket=bucket, Key=reservation_key, Body=reservation, IfNoneMatch="*")
+    storage.s3.put_object(
+        Bucket=bucket, Key=reservation_key, Body=reservation, IfNoneMatch="*"
+    )
     proof = storage.s3.get_object(Bucket=bucket, Key=reservation_key)
     try:
         verified = proof["Body"].read() == reservation
     finally:
         proof["Body"].close()
     if not verified:
-        raise NanoVideoError("S3 reservation read-after-write failed before GPU generation")
-    batch = run_batch(endpoint=endpoint, output_dir=root / "batch", concurrency=concurrency,
-                      token=token, prompt=prompt)
+        raise NanoVideoError(
+            "S3 reservation read-after-write failed before GPU generation"
+        )
+    batch = run_batch(
+        endpoint=endpoint,
+        output_dir=root / "batch",
+        concurrency=concurrency,
+        token=token,
+        prompt=prompt,
+    )
     objects = []
     try:
         for path in sorted((root / "batch").rglob("*")):
@@ -623,30 +911,79 @@ def submit_batch(*, output_path: str, concurrency: int, endpoint: str = "", inpu
             finally:
                 response["Body"].close()
             if hashlib.sha256(actual).digest() != hashlib.sha256(data).digest():
-                raise NanoVideoError("S3 read-after-write hash mismatch; retain local recovery evidence")
-            objects.append({"path": relative, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
+                raise NanoVideoError(
+                    "S3 read-after-write hash mismatch; retain local recovery evidence"
+                )
+            objects.append(
+                {
+                    "path": relative,
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "bytes": len(data),
+                }
+            )
     except Exception as exc:
-        write_json(root / "publication.json", {"verified": False, "status": "pending",
-                   "error_type": type(exc).__name__, "verified_objects": objects})
+        write_json(
+            root / "publication.json",
+            {
+                "verified": False,
+                "status": "pending",
+                "error_type": type(exc).__name__,
+                "verified_objects": objects,
+            },
+        )
         raise
     write_json(root / "publication.json", {"verified": True, "objects": objects})
-    return {"status": batch["status"], "concurrency": concurrency, "completed": batch["completed"],
-            "distinct_replicas": batch["distinct_replicas"], "peak_overlapping_rollouts": batch["peak_overlapping_rollouts"],
-            "total_wall_seconds": batch["total_wall_seconds"], "published_objects": len(objects),
-            "publication_verified": True}
+    return {
+        "status": batch["status"],
+        "concurrency": concurrency,
+        "completed": batch["completed"],
+        "distinct_replicas": batch["distinct_replicas"],
+        "peak_overlapping_rollouts": batch["peak_overlapping_rollouts"],
+        "total_wall_seconds": batch["total_wall_seconds"],
+        "published_objects": len(objects),
+        "publication_verified": True,
+    }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--endpoint", default=os.environ.get("NPA_COSMOS3_VIDEO_ENDPOINT", ""))
+    parser.add_argument(
+        "--endpoint", default=os.environ.get("NPA_COSMOS3_VIDEO_ENDPOINT", "")
+    )
     parser.add_argument("--output-path", required=True, type=Path)
     parser.add_argument("--concurrency", required=True, type=int)
-    parser.add_argument("--input-path", type=Path, help="Optional JSON containing a prompt; default uses a synthetic robot scene")
+    parser.add_argument(
+        "--input-path",
+        type=Path,
+        help="Optional JSON containing a prompt; default uses a synthetic robot scene",
+    )
     args = parser.parse_args()
-    prompt = json.loads(args.input_path.read_text())["prompt"] if args.input_path else DEFAULT_PROMPT
-    result = run_batch(endpoint=args.endpoint, output_dir=args.output_path, concurrency=args.concurrency,
-                       token=os.environ.get("NPA_COSMOS3_VIDEO_TOKEN", ""), prompt=prompt)
-    print(json.dumps({key: result[key] for key in ("status", "completed", "distinct_replicas", "peak_overlapping_rollouts", "total_wall_seconds")}))
+    prompt = (
+        json.loads(args.input_path.read_text())["prompt"]
+        if args.input_path
+        else DEFAULT_PROMPT
+    )
+    result = run_batch(
+        endpoint=args.endpoint,
+        output_dir=args.output_path,
+        concurrency=args.concurrency,
+        token=os.environ.get("NPA_COSMOS3_VIDEO_TOKEN", ""),
+        prompt=prompt,
+    )
+    print(
+        json.dumps(
+            {
+                key: result[key]
+                for key in (
+                    "status",
+                    "completed",
+                    "distinct_replicas",
+                    "peak_overlapping_rollouts",
+                    "total_wall_seconds",
+                )
+            }
+        )
+    )
     return 0 if result["status"] == "succeeded" else 1
 
 

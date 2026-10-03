@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 import yaml
 
-from npa.burst import core
+from npa.burst import _sky_api, core
 from npa.burst.core import BurstConfigError, BurstJobHandle, BurstSpec
 from npa.orchestration.skypilot import _bin as bin_module
 
@@ -77,12 +80,21 @@ def test_submit_invokes_skypilot_python_api_not_sky_cli(
     sky_python = _executable(sky_bin.parent / "python")
     calls: list[list[str]] = []
     config = tmp_path / "base-config.yaml"
-    config.write_text("jobs:\n  controller:\n    resources:\n      cloud: kubernetes\n", encoding="utf-8")
+    config.write_text(
+        "jobs:\n  controller:\n    resources:\n      cloud: kubernetes\n",
+        encoding="utf-8",
+    )
 
     def fake_run(cmd, **kwargs):
         calls.append([str(part) for part in cmd])
-        if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
-            return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
+        if cmd == [
+            str(sky_python),
+            "-c",
+            "import sky; print(getattr(sky, '__version__', 'unknown'))",
+        ]:
+            return core.subprocess.CompletedProcess(
+                cmd, 0, stdout="0.12.2\n", stderr=""
+            )
         assert cmd[:2] == [str(sky_python), str(core._sky_api_bridge_path())]
         assert cmd[2] == "launch"
         payload = json.loads(kwargs["input"])
@@ -130,15 +142,29 @@ def test_status_and_logs_use_handle_runtime(
     )
 
     def fake_run(cmd, **kwargs):
-        if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
-            return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
+        if cmd == [
+            str(sky_python),
+            "-c",
+            "import sky; print(getattr(sky, '__version__', 'unknown'))",
+        ]:
+            return core.subprocess.CompletedProcess(
+                cmd, 0, stdout="0.12.2\n", stderr=""
+            )
         action = cmd[2]
         if action == "queue":
             return core.subprocess.CompletedProcess(
                 cmd,
                 0,
                 stdout=json.dumps(
-                    {"records": [{"job_id": 42, "status": "RUNNING", "resources": "CUSTOMGPU:1"}]}
+                    {
+                        "records": [
+                            {
+                                "job_id": 42,
+                                "status": "RUNNING",
+                                "resources": "CUSTOMGPU:1",
+                            }
+                        ]
+                    }
                 ),
                 stderr="",
             )
@@ -155,6 +181,96 @@ def test_status_and_logs_use_handle_runtime(
 
     assert core.status(handle).status == "RUNNING"
     assert "world_size=2" in core.logs(handle, tail=10).text
+
+
+@pytest.mark.parametrize(
+    ("action", "flag"),
+    [
+        ("queue", "refresh"),
+        ("queue", "skip_finished"),
+        ("logs", "follow"),
+        ("logs", "refresh"),
+    ],
+)
+@pytest.mark.parametrize("malformed", ["false", "true", 0, 1, None, [], {}, 0.0])
+def test_sky_api_bridge_rejects_non_boolean_control_flags_before_api_call(
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    flag: str,
+    malformed: object,
+) -> None:
+    jobs = SimpleNamespace(queue=Mock(), tail_logs=Mock())
+    monkeypatch.setitem(sys.modules, "sky", SimpleNamespace(jobs=jobs))
+    payload = {"job_id": 42, flag: malformed}
+
+    with pytest.raises(ValueError, match=rf"^{flag} must be a JSON boolean$"):
+        if action == "queue":
+            _sky_api._queue(payload)
+        else:
+            _sky_api._logs(payload)
+
+    jobs.queue.assert_not_called()
+    jobs.tail_logs.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"job_id": 42}, {"refresh": True, "skip_finished": False}),
+        (
+            {"job_id": 42, "refresh": False, "skip_finished": True},
+            {"refresh": False, "skip_finished": True},
+        ),
+    ],
+)
+def test_sky_api_queue_preserves_boolean_defaults_and_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, object],
+    expected: dict[str, bool],
+) -> None:
+    queue = Mock(return_value="request-id")
+    sky = SimpleNamespace(jobs=SimpleNamespace(queue=queue), get=Mock(return_value=[]))
+    monkeypatch.setitem(sys.modules, "sky", sky)
+
+    _sky_api._queue(payload)
+
+    queue.assert_called_once_with(
+        refresh=expected["refresh"],
+        skip_finished=expected["skip_finished"],
+        all_users=True,
+        job_ids=[42],
+        version=2,
+    )
+
+
+@pytest.mark.parametrize(
+    ("payload", "expected"),
+    [
+        ({"job_id": 42}, {"follow": False, "refresh": True}),
+        (
+            {"job_id": 42, "follow": True, "refresh": False},
+            {"follow": True, "refresh": False},
+        ),
+    ],
+)
+def test_sky_api_logs_preserves_boolean_defaults_and_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, object],
+    expected: dict[str, bool],
+) -> None:
+    tail_logs = Mock(return_value=0)
+    sky = SimpleNamespace(jobs=SimpleNamespace(tail_logs=tail_logs))
+    monkeypatch.setitem(sys.modules, "sky", sky)
+
+    _sky_api._logs(payload)
+
+    tail_logs.assert_called_once_with(
+        job_id=42,
+        follow=expected["follow"],
+        refresh=expected["refresh"],
+        tail=None,
+        output_stream=tail_logs.call_args.kwargs["output_stream"],
+    )
 
 
 def test_submit_yaml_renders_single_workbench_task(
@@ -182,8 +298,14 @@ run: |
     )
 
     def fake_run(cmd, **kwargs):
-        if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
-            return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
+        if cmd == [
+            str(sky_python),
+            "-c",
+            "import sky; print(getattr(sky, '__version__', 'unknown'))",
+        ]:
+            return core.subprocess.CompletedProcess(
+                cmd, 0, stdout="0.12.2\n", stderr=""
+            )
         assert cmd[:2] == [str(sky_python), str(core._sky_api_bridge_path())]
         assert cmd[2] == "launch"
         payload = json.loads(kwargs["input"])
@@ -263,8 +385,14 @@ run: echo should-not-submit
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "token-abc")
 
     def fake_run(cmd, **kwargs):
-        if cmd == [str(sky_python), "-c", "import sky; print(getattr(sky, '__version__', 'unknown'))"]:
-            return core.subprocess.CompletedProcess(cmd, 0, stdout="0.12.2\n", stderr="")
+        if cmd == [
+            str(sky_python),
+            "-c",
+            "import sky; print(getattr(sky, '__version__', 'unknown'))",
+        ]:
+            return core.subprocess.CompletedProcess(
+                cmd, 0, stdout="0.12.2\n", stderr=""
+            )
         assert cmd[:2] == [str(sky_python), str(core._sky_api_bridge_path())]
         payload = json.loads(kwargs["input"])
         task = yaml.safe_load(Path(payload["yaml_path"]).read_text(encoding="utf-8"))
@@ -299,9 +427,7 @@ def test_burst_public_image_ignores_unrelated_private_registry_credentials(
     monkeypatch.setenv("NPA_REGISTRY_PASSWORD", "private-token")
     task = {
         "resources": {
-            "image_id": (
-                "docker:ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0"
-            )
+            "image_id": ("docker:ghcr.io/nebius/nebius-physical-ai/npa-cosmos:1.0.0")
         }
     }
 

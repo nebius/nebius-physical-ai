@@ -51,9 +51,7 @@ from .npa_workflow_live_helpers import live_bucket
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BYOF_RUNNER = REPO_ROOT / "npa" / "scripts" / "run_byof_repo.py"
-LTX_SPEC = (
-    REPO_ROOT / "workflows" / "testing" / "byof-ltx2.yaml"
-)
+LTX_SPEC = REPO_ROOT / "workflows" / "testing" / "byof-ltx2.yaml"
 PROFILE_DIR = REPO_ROOT / "npa" / "src" / "npa" / "workflows" / "byof" / "profiles"
 EXPECTED_CAPABILITIES = {
     "ltx2_5_text_to_video",

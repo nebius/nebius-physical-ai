@@ -61,7 +61,11 @@ def main() -> int:
                 )
                 ctrl_norms.append(float(np.linalg.norm(data.ctrl)))
             mujoco.mj_step(model, data)
-            finite = finite and bool(np.isfinite(data.qpos).all()) and bool(np.isfinite(data.qvel).all())
+            finite = (
+                finite
+                and bool(np.isfinite(data.qpos).all())
+                and bool(np.isfinite(data.qvel).all())
+            )
             if model.nbody:
                 root_body_id = _body_id(model, "pelvis") or 1
                 heights.append(float(data.xpos[root_body_id][2]))
@@ -69,7 +73,9 @@ def main() -> int:
         end_x = float(data.qpos[0]) if data.qpos.size else start_x
         min_height = min(heights) if heights else 0.0
         mean_height = float(np.mean(heights)) if heights else 0.0
-        fallen = (not finite) or min_height < float(os.environ.get("SONIC_MUJOCO_FALL_HEIGHT", "0.35"))
+        fallen = (not finite) or min_height < float(
+            os.environ.get("SONIC_MUJOCO_FALL_HEIGHT", "0.35")
+        )
         rollout_rows.append(
             {
                 "episode_index": episode_idx,
@@ -80,8 +86,12 @@ def main() -> int:
                 "fallen": fallen,
                 "finite": finite,
                 "ctrl_norm_mean": float(np.mean(ctrl_norms)) if ctrl_norms else 0.0,
-                "qpos_norm": float(np.linalg.norm(data.qpos)) if data.qpos.size else 0.0,
-                "qvel_norm": float(np.linalg.norm(data.qvel)) if data.qvel.size else 0.0,
+                "qpos_norm": float(np.linalg.norm(data.qpos))
+                if data.qpos.size
+                else 0.0,
+                "qvel_norm": float(np.linalg.norm(data.qvel))
+                if data.qvel.size
+                else 0.0,
             }
         )
 
@@ -93,7 +103,9 @@ def main() -> int:
         tensor_stats=tensor_stats,
         episodes=rollout_rows,
     )
-    output_path.write_text(json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output_path.write_text(
+        json.dumps(metrics, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     _write_sidecars(output_path.parent, metrics)
     print(f"NPA_SONIC_MUJOCO_EVAL_DONE {output_path}", flush=True)
     return 0
@@ -124,13 +136,23 @@ def _load_checkpoint(path: Path) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise SystemExit("checkpoint payload is not a dictionary")
     if "policy_state_dict" not in payload and "actor_model_state_dict" not in payload:
-        raise SystemExit("checkpoint has neither policy_state_dict nor actor_model_state_dict")
+        raise SystemExit(
+            "checkpoint has neither policy_state_dict nor actor_model_state_dict"
+        )
     return payload
 
 
 def _checkpoint_tensor_stats(checkpoint: dict[str, Any]) -> dict[str, Any]:
-    state = checkpoint.get("policy_state_dict") or checkpoint.get("actor_model_state_dict") or {}
-    tensors = [value.detach().float().cpu().reshape(-1) for value in state.values() if torch.is_tensor(value)]
+    state = (
+        checkpoint.get("policy_state_dict")
+        or checkpoint.get("actor_model_state_dict")
+        or {}
+    )
+    tensors = [
+        value.detach().float().cpu().reshape(-1)
+        for value in state.values()
+        if torch.is_tensor(value)
+    ]
     if not tensors:
         raise SystemExit("checkpoint policy state contains no tensors")
     flat = torch.cat([tensor[: min(tensor.numel(), 4096)] for tensor in tensors])
@@ -138,7 +160,9 @@ def _checkpoint_tensor_stats(checkpoint: dict[str, Any]) -> dict[str, Any]:
     if sample.size == 0:
         sample = np.zeros(1, dtype=np.float64)
     return {
-        "state_key": "policy_state_dict" if "policy_state_dict" in checkpoint else "actor_model_state_dict",
+        "state_key": "policy_state_dict"
+        if "policy_state_dict" in checkpoint
+        else "actor_model_state_dict",
         "tensor_count": len(tensors),
         "parameter_count": int(sum(tensor.numel() for tensor in tensors)),
         "abs_mean": float(flat.abs().mean().item()),
@@ -159,7 +183,10 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 def _load_model(config: dict[str, Any]) -> mujoco.MjModel:
     global GEOMETRY_MODE
     root = Path(os.environ.get("SONIC_HOME", "/opt/sonic"))
-    scene = str(config.get("ROBOT_SCENE") or "gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml")
+    scene = str(
+        config.get("ROBOT_SCENE")
+        or "gear_sonic/data/robot_model/model_data/g1/scene_43dof.xml"
+    )
     xml_path = Path(scene)
     if not xml_path.is_absolute():
         xml_path = root / xml_path
@@ -168,18 +195,25 @@ def _load_model(config: dict[str, Any]) -> mujoco.MjModel:
     scene_text = xml_path.read_text(encoding="utf-8")
     scene_tree = ET.fromstring(scene_text)
     include = scene_tree.find("include")
-    included_path = xml_path.parent / str(include.get("file", "")) if include is not None else None
+    included_path = (
+        xml_path.parent / str(include.get("file", "")) if include is not None else None
+    )
     if included_path is None or not included_path.is_file():
         raise SystemExit(f"MuJoCo included robot XML not found for {xml_path}")
 
     robot_tree = ET.parse(included_path)
     robot_root = robot_tree.getroot()
-    mesh_files = [xml_path.parent / "meshes" / str(node.get("file", "")) for node in robot_root.findall("./asset/mesh")]
+    mesh_files = [
+        xml_path.parent / "meshes" / str(node.get("file", ""))
+        for node in robot_root.findall("./asset/mesh")
+    ]
     lfs_placeholders = [
         path
         for path in mesh_files
         if path.is_file()
-        and path.read_bytes()[:80].startswith(b"version https://git-lfs.github.com/spec")
+        and path.read_bytes()[:80].startswith(
+            b"version https://git-lfs.github.com/spec"
+        )
     ]
     if lfs_placeholders:
         # The public image deliberately skips every Git-LFS object so unclassified
@@ -199,7 +233,9 @@ def _load_model(config: dict[str, Any]) -> mujoco.MjModel:
         with tempfile.TemporaryDirectory(prefix="npa-sonic-mujoco-") as tmp:
             tmp_path = Path(tmp)
             sanitized_name = "g1_sanitized.xml"
-            robot_tree.write(tmp_path / sanitized_name, encoding="utf-8", xml_declaration=True)
+            robot_tree.write(
+                tmp_path / sanitized_name, encoding="utf-8", xml_declaration=True
+            )
             include.set("file", sanitized_name)
             ET.ElementTree(scene_tree).write(
                 tmp_path / xml_path.name, encoding="utf-8", xml_declaration=True
@@ -211,7 +247,9 @@ def _load_model(config: dict[str, Any]) -> mujoco.MjModel:
     return model
 
 
-def _control_from_checkpoint(sample: np.ndarray, nu: int, step_idx: int, episode_idx: int) -> np.ndarray:
+def _control_from_checkpoint(
+    sample: np.ndarray, nu: int, step_idx: int, episode_idx: int
+) -> np.ndarray:
     idx = np.arange(nu)
     base = sample[idx % sample.size]
     phase = 0.15 * step_idx + 0.3 * episode_idx

@@ -39,7 +39,9 @@ def launch(
 
 
 curate = make_cli_wrapper(
-    "npa.cli.fiftyone", "curate_cmd", "Curate and export a LeRobotDataset with FiftyOne."
+    "npa.cli.fiftyone",
+    "curate_cmd",
+    "Curate and export a LeRobotDataset with FiftyOne.",
 )
 curate_augmented = make_cli_wrapper(
     "npa.cli.fiftyone",

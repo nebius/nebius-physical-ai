@@ -38,7 +38,10 @@ def _is_storage_endpoint_unreachable(output: str) -> bool:
     """
 
     text = (output or "").lower()
-    return "endpointconnectionerror" in text or "could not connect to the endpoint url" in text
+    return (
+        "endpointconnectionerror" in text
+        or "could not connect to the endpoint url" in text
+    )
 
 
 def _default_kube_context() -> str:
@@ -95,7 +98,9 @@ def test_workbench_workflow_durable_s3_monitor_live(
     run_prefix = "/".join(part for part in (parent_prefix, run_id) if part).strip("/")
     run_uri = f"s3://{bucket}/{run_prefix}/"
     evidence_dir = Path(
-        os.environ.get("NPA_E2E_WORKFLOW_S3_EVIDENCE_DIR", f"/tmp/npa-workflow-s3-e2e-{run_id}")
+        os.environ.get(
+            "NPA_E2E_WORKFLOW_S3_EVIDENCE_DIR", f"/tmp/npa-workflow-s3-e2e-{run_id}"
+        )
     )
     evidence_dir.mkdir(parents=True, exist_ok=True)
     isolated_sky_dir = tmp_path / "sky-state"
@@ -136,7 +141,9 @@ def test_workbench_workflow_durable_s3_monitor_live(
     attempts: list[dict[str, Any]] = []
     try:
         submit = _run(submit_cmd, env=env, cwd=ROOT, timeout=2400)
-        _write_command_evidence(evidence_dir, "submit", submit, submit_cmd, credentials_env)
+        _write_command_evidence(
+            evidence_dir, "submit", submit, submit_cmd, credentials_env
+        )
         if submit.returncode != 0:
             combined = f"{submit.stdout}\n{submit.stderr}"
             if _is_storage_endpoint_unreachable(combined):
@@ -146,7 +153,9 @@ def test_workbench_workflow_durable_s3_monitor_live(
                     f"controller infra {kube_context}): "
                     + redact_text(combined, credentials_env.values())[-300:]
                 )
-        assert submit.returncode == 0, redact_text(submit.stdout + submit.stderr, credentials_env.values())
+        assert submit.returncode == 0, redact_text(
+            submit.stdout + submit.stderr, credentials_env.values()
+        )
         submit_payload = json.loads(submit.stdout)
         job_id = str(submit_payload.get("job_id") or "")
         assert job_id
@@ -169,15 +178,21 @@ def test_workbench_workflow_durable_s3_monitor_live(
         teardown_done = True
 
         manifest = _get_json(s3_client, bucket, f"{run_prefix}/manifest.json")
-        stage_status = _get_json(s3_client, bucket, f"{run_prefix}/logs/smoke/status.json")
+        stage_status = _get_json(
+            s3_client, bucket, f"{run_prefix}/logs/smoke/status.json"
+        )
         run_log = _get_text(s3_client, bucket, f"{run_prefix}/logs/smoke/run.log")
-        artifact = _get_json(s3_client, bucket, f"{run_prefix}/artifacts/smoke/pod-artifact.json")
+        artifact = _get_json(
+            s3_client, bucket, f"{run_prefix}/artifacts/smoke/pod-artifact.json"
+        )
 
         assert manifest["last_writer"] == "pod"
         assert manifest["run_id"] == run_id
         assert manifest["stages"]["smoke"]["sky_job_id"] == job_id
         assert manifest["stages"]["smoke"]["log_uri"] == f"{run_uri}logs/smoke/run.log"
-        assert manifest["stages"]["smoke"]["artifact_uri"] == f"{run_uri}artifacts/smoke/"
+        assert (
+            manifest["stages"]["smoke"]["artifact_uri"] == f"{run_uri}artifacts/smoke/"
+        )
         assert set(stage_status) >= {
             "state",
             "tier",
@@ -250,16 +265,31 @@ def test_workbench_workflow_durable_s3_monitor_live(
             cwd=ROOT,
             timeout=300,
         )
-        _write_command_evidence(evidence_dir, "post-status-no-sky", post_status, [], credentials_env)
-        _write_command_evidence(evidence_dir, "post-logs", post_logs, [], credentials_env)
-        _write_command_evidence(evidence_dir, "post-artifacts", post_artifacts, [], credentials_env)
-        assert post_status.returncode == 0, redact_text(post_status.stdout + post_status.stderr)
+        _write_command_evidence(
+            evidence_dir, "post-status-no-sky", post_status, [], credentials_env
+        )
+        _write_command_evidence(
+            evidence_dir, "post-logs", post_logs, [], credentials_env
+        )
+        _write_command_evidence(
+            evidence_dir, "post-artifacts", post_artifacts, [], credentials_env
+        )
+        assert post_status.returncode == 0, redact_text(
+            post_status.stdout + post_status.stderr
+        )
         post_status_payload = json.loads(post_status.stdout)
         assert post_status_payload["status"] == "SUCCEEDED"
-        assert post_logs.returncode == 0, redact_text(post_logs.stdout + post_logs.stderr)
+        assert post_logs.returncode == 0, redact_text(
+            post_logs.stdout + post_logs.stderr
+        )
         assert "durable workflow smoke complete" in post_logs.stdout
-        assert post_artifacts.returncode == 0, redact_text(post_artifacts.stdout + post_artifacts.stderr)
-        assert f"{run_uri}artifacts/smoke/pod-artifact.json" in json.loads(post_artifacts.stdout)["artifacts"]
+        assert post_artifacts.returncode == 0, redact_text(
+            post_artifacts.stdout + post_artifacts.stderr
+        )
+        assert (
+            f"{run_uri}artifacts/smoke/pod-artifact.json"
+            in json.loads(post_artifacts.stdout)["artifacts"]
+        )
 
         _write_evidence(
             evidence_dir,
@@ -280,7 +310,9 @@ def test_workbench_workflow_durable_s3_monitor_live(
                 timeout=900,
                 check=False,
             )
-            _write_command_evidence(evidence_dir, "jobs-cancel", cleanup, [], credentials_env)
+            _write_command_evidence(
+                evidence_dir, "jobs-cancel", cleanup, [], credentials_env
+            )
         if not teardown_done:
             _sky_down_and_poll(
                 sky_bin,
@@ -417,7 +449,9 @@ def _poll_status(
     evidence_dir: Path,
     attempts: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    deadline = time.monotonic() + int(os.environ.get("NPA_E2E_WORKFLOW_S3_TIMEOUT_SECONDS", "3600"))
+    deadline = time.monotonic() + int(
+        os.environ.get("NPA_E2E_WORKFLOW_S3_TIMEOUT_SECONDS", "3600")
+    )
     attempt = 0
     while time.monotonic() < deadline:
         attempt += 1
@@ -503,7 +537,9 @@ def _assert_kube_context_ready(context: str, kubeconfig: Path | None) -> None:
 
 
 def _sky_bin() -> str:
-    sky_bin = os.environ.get("NPA_SKYPILOT_BIN", "/home/ubuntu/.npa/skypilot-venv/bin/sky")
+    sky_bin = os.environ.get(
+        "NPA_SKYPILOT_BIN", "/home/ubuntu/.npa/skypilot-venv/bin/sky"
+    )
     if not Path(sky_bin).exists():
         pytest.skip(f"SkyPilot binary not found: {sky_bin}")
     return sky_bin
@@ -568,7 +604,9 @@ def _sky_down_and_poll(
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        timeout=int(os.environ.get("NPA_E2E_WORKFLOW_S3_TEARDOWN_TIMEOUT_SECONDS", "900")),
+        timeout=int(
+            os.environ.get("NPA_E2E_WORKFLOW_S3_TEARDOWN_TIMEOUT_SECONDS", "900")
+        ),
         check=False,
     )
     (evidence_dir / f"{cluster}.down.stdout.txt").write_text(
@@ -599,7 +637,9 @@ def _sky_down_and_poll(
         )
         if cluster not in status.stdout:
             return
-        time.sleep(float(os.environ.get("NPA_E2E_WORKFLOW_S3_TEARDOWN_POLL_SECONDS", "30")))
+        time.sleep(
+            float(os.environ.get("NPA_E2E_WORKFLOW_S3_TEARDOWN_POLL_SECONDS", "30"))
+        )
     pytest.fail(f"SkyPilot cluster still present after teardown timeout: {cluster}")
 
 
@@ -625,8 +665,12 @@ def _write_command_evidence(
     payload = {
         "command": _redact_cmd(cmd),
         "returncode": result.returncode,
-        "stdout": redact_text(result.stdout, list(secrets.values()) if isinstance(secrets, dict) else None),
-        "stderr": redact_text(result.stderr, list(secrets.values()) if isinstance(secrets, dict) else None),
+        "stdout": redact_text(
+            result.stdout, list(secrets.values()) if isinstance(secrets, dict) else None
+        ),
+        "stderr": redact_text(
+            result.stderr, list(secrets.values()) if isinstance(secrets, dict) else None
+        ),
     }
     (evidence_dir / f"{name}.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",

@@ -17,7 +17,6 @@ def _embedded_ui_html(source: str = "") -> str:
     return rendered_agent_ui_html()
 
 
-
 def test_ui_consolidates_active_run_and_artifacts() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
     ui = _embedded_ui_html(source)
@@ -36,7 +35,9 @@ def test_ui_consolidates_active_run_and_artifacts() -> None:
 
 def test_available_run_ids_use_latest_first_helper() -> None:
     source = AGENT_MODULE.read_text(encoding="utf-8")
-    status = source.split('@app.get("/sim-viz/status")')[1].split('@app.get("/sim-viz/runs")')[0]
+    status = source.split('@app.get("/sim-viz/status")')[1].split(
+        '@app.get("/sim-viz/runs")'
+    )[0]
     assert "available_run_ids" in status
     assert "available_runs" in status
     assert "_sim_viz_runs(state)" in status
@@ -76,7 +77,9 @@ def test_client_merge_dates_runs_by_start_not_recency_or_activity() -> None:
     assert "function effectiveRunTs(" in ui
     # Effective timestamp prefers run start, then artifact recency, then activity.
     assert "run.started_at || run.last_modified || run.activity_at" in ui
-    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split("function fillRunSelectOptionsRich")[0]
+    merge_fn = ui.split("function mergeRunsLatestFirst")[1].split(
+        "function fillRunSelectOptionsRich"
+    )[0]
     # Start is kept as the earliest across sources; activity/recency stay separate.
     assert "prev.started_at" in merge_fn
     assert "startTs < prev.started_at" in merge_fn
@@ -85,7 +88,9 @@ def test_client_merge_dates_runs_by_start_not_recency_or_activity() -> None:
     assert "effectiveRunTs(b).localeCompare(effectiveRunTs(a))" in merge_fn
     # Known/available runs carry started_at + activity_at through to the merge.
     assert "started_at: String((item && (item.started_at || item.submitted_at))" in ui
-    assert "activity_at: String((item && (item.activity_at || item.rrd_updated_at))" in ui
+    assert (
+        "activity_at: String((item && (item.activity_at || item.rrd_updated_at))" in ui
+    )
 
 
 def test_client_consumes_incomplete_viewability_without_fabricating_false() -> None:
@@ -113,7 +118,9 @@ def test_client_omits_stale_stock_demo_alias_for_artifact_run() -> None:
     )[0]
 
     assert 'const staleDemoAlias = runId !== "franka-demo"' in merge_fn
-    assert 'String((run && run.stage) || "").trim().toLowerCase() === "demo"' in merge_fn
+    assert (
+        'String((run && run.stage) || "").trim().toLowerCase() === "demo"' in merge_fn
+    )
     assert '!String((run && run.run_ref) || "").trim()' in merge_fn
     assert "if (staleDemoAlias) continue;" in merge_fn
 
@@ -126,28 +133,47 @@ def test_client_reuses_discovered_identity_for_bound_viewer_history() -> None:
     )[0]
 
     assert "const knownRunRef" in merge_fn
-    assert "const matchingRunRef = knownRunRef && matches.some" in merge_fn
-    assert "const matchedSource = matchingRunRef && matches.find" in merge_fn
+    assert "hasExactRunSource(run)" in merge_fn
+    assert "matches.find((match) => sameRunSource(run, match))" in merge_fn
+    assert "if (runRefMatches.length === 1) matchedSource" in merge_fn
     assert "const key = matchedSource" in merge_fn
-    assert "? String(matchedSource.run_ref || runId)" in merge_fn
+    assert '? runEntryIdentity(runId, "artifact_storage", matchedSource)' in merge_fn
 
 
-def test_client_consolidates_aliases_only_within_project_bucket_run_boundary() -> None:
+def test_client_map_identity_preserves_the_complete_artifact_source_tuple() -> None:
     ui = _embedded_ui_html()
     consolidate = ui.split("function consolidateArtifactRunSources", 1)[1].split(
         "function mergeRunsLatestFirst", 1
+    )[0]
+    tuple_identity = ui.split("function runSourceTupleIdentity", 1)[1].split(
+        "function runEntryIdentity", 1
     )[0]
     group_identity = ui.split("function artifactSourceGroupIdentity", 1)[1].split(
         "function artifactSourceStableIdentity", 1
     )[0]
 
-    assert "run.project_id" in group_identity
-    assert "run.bucket" in group_identity
-    assert "run.run_id" in group_identity
-    assert "resolved_prefix" not in group_identity
+    assert "run.project_id" in tuple_identity
+    assert "run.bucket" in tuple_identity
+    assert "run.resolved_prefix" in tuple_identity
+    assert "runId" in tuple_identity
+    assert "runSourceTupleIdentity" in group_identity
+    assert "run.run_ref" not in group_identity
     assert "const key = artifactSourceGroupIdentity(run)" in consolidate
-    assert "primary.alternate_sources" in consolidate
-    assert "source_selected: true" in consolidate
+
+
+def test_client_never_uses_projectless_run_ref_as_a_map_identity() -> None:
+    ui = _embedded_ui_html()
+    merge_fn = ui.split("function mergeRunsLatestFirst", 1)[1].split(
+        "function fillRunSelectOptionsRich", 1
+    )[0]
+    refresh_fn = ui.split("async function _refreshArtifactRuns", 1)[1].split(
+        "function formatArtifactBytes", 1
+    )[0]
+
+    assert "forcedKey || runEntryIdentity(runId, sourceType, run)" in merge_fn
+    assert "forcedKey || runRef || runEntryIdentity" not in merge_fn
+    assert "const identity = (r) => runEntryIdentity(" in refresh_fn
+    assert "const identity = (r) => String((r && r.run_ref)" not in refresh_fn
 
 
 def test_client_primary_source_preference_is_deterministic_and_active_first() -> None:
@@ -170,7 +196,7 @@ def test_client_primary_source_preference_is_deterministic_and_active_first() ->
     assert "activeRunId" in preference
 
 
-def test_pasted_basename_resolves_to_consolidated_exact_primary() -> None:
+def test_pasted_unique_basename_resolves_to_its_full_tuple_entry_key() -> None:
     ui = _embedded_ui_html()
     resolver = ui.split("function resolveStagesRunChoice", 1)[1].split(
         "function resolveRunSelection", 1
@@ -180,6 +206,6 @@ def test_pasted_basename_resolves_to_consolidated_exact_primary() -> None:
     )[0]
 
     assert "exact.length === 1" in resolver
-    assert "exact[0].run_ref || exact[0].run_id" in resolver
-    assert "preferredRunEntry(runRef || runId)" in load_run
+    assert "exact[0].entry_key || exact[0].run_ref" in resolver
+    assert "preferredRunEntry(entryKey || runRef || runId)" in load_run
     assert "loadArtifactsForSelectedRun(runRef || runId, null, exactEntry" in load_run

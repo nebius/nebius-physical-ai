@@ -255,3 +255,9 @@ variable "k8s_version" {
   type        = string
   default     = null
 }
+
+variable "mk8s_cluster_public_endpoint" {
+  description = "Expose the managed Kubernetes API endpoint publicly. Default true matches the FTUE shape (kubectl works without VPN/bastion). Set to false for production clusters to keep the control plane off the public internet."
+  type        = bool
+  default     = true
+}

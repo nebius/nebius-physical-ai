@@ -23,12 +23,16 @@ def _message_client(message: dict) -> TokenFactoryClient:
         return httpx.Response(200, json={"choices": [{"message": message}]})
 
     config = resolve_config(api_key="test-key", environ={})
-    return TokenFactoryClient(config, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    return TokenFactoryClient(
+        config, http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
 
 
 def _client(handler) -> TokenFactoryClient:
     config = resolve_config(api_key="test-key", environ={})
-    return TokenFactoryClient(config, http_client=httpx.Client(transport=httpx.MockTransport(handler)))
+    return TokenFactoryClient(
+        config, http_client=httpx.Client(transport=httpx.MockTransport(handler))
+    )
 
 
 def test_transient_overload_retries_then_succeeds() -> None:
@@ -56,7 +60,12 @@ def test_transient_overload_retries_then_succeeds() -> None:
         sleeper=sleeps.append,
     )
 
-    assert client.chat_completion_text(model="model", messages=[{"role": "user", "content": "hi"}]) == "ok"
+    assert (
+        client.chat_completion_text(
+            model="model", messages=[{"role": "user", "content": "hi"}]
+        )
+        == "ok"
+    )
     assert sleeps == [1.0, 2.0]
     assert client.last_request_metrics["attempts"] == 3
     assert client.last_request_metrics["retries"] == 2
@@ -117,20 +126,25 @@ def test_validate_model_access_requires_listing_and_inference(monkeypatch) -> No
             return {"id": "request-1", "choices": [{"message": {"content": "{}"}}]}
 
     monkeypatch.setattr("npa.clients.token_factory.TokenFactoryClient", Client)
-    result = validate_model_access("secret-not-rendered", "nvidia/Cosmos3-Super-Reasoner")
+    result = validate_model_access(
+        "secret-not-rendered", "nvidia/Cosmos3-Super-Reasoner"
+    )
     assert result.ok is True
     assert result.request_id == "request-1"
     assert calls == ["models", "nvidia/Cosmos3-Super-Reasoner"]
 
 
-@pytest.mark.parametrize("endpoint_env", [
-    {"NEBIUS_TOKEN_FACTORY_BASE_URL": "https://dedicated.example/v1/"},
-    {"NEBIUS_BASE_URL": "https://dedicated.example/v1/"},
-    {
-        "NEBIUS_TOKEN_FACTORY_BASE_URL": "https://dedicated.example/v1/",
-        "NEBIUS_BASE_URL": "https://lower-precedence.example/v1/",
-    },
-])
+@pytest.mark.parametrize(
+    "endpoint_env",
+    [
+        {"NEBIUS_TOKEN_FACTORY_BASE_URL": "https://dedicated.example/v1/"},
+        {"NEBIUS_BASE_URL": "https://dedicated.example/v1/"},
+        {
+            "NEBIUS_TOKEN_FACTORY_BASE_URL": "https://dedicated.example/v1/",
+            "NEBIUS_BASE_URL": "https://lower-precedence.example/v1/",
+        },
+    ],
+)
 def test_access_probe_honors_endpoint_overrides_with_only_the_supplied_key(
     monkeypatch, endpoint_env
 ) -> None:
@@ -146,21 +160,31 @@ def test_access_probe_honors_endpoint_overrides_with_only_the_supplied_key(
         requests.append(request)
         if request.url.path.endswith("/models"):
             return httpx.Response(200, json={"data": [{"id": "dedicated/legacy"}]})
-        return httpx.Response(200, json={
-            "id": "request-dedicated", "choices": [{"message": {"content": "{}"}}],
-        })
+        return httpx.Response(
+            200,
+            json={
+                "id": "request-dedicated",
+                "choices": [{"message": {"content": "{}"}}],
+            },
+        )
 
-    monkeypatch.setattr(module, "TokenFactoryClient", lambda config: original_client(
-        config, http_client=httpx.Client(transport=httpx.MockTransport(handler))
-    ))
+    monkeypatch.setattr(
+        module,
+        "TokenFactoryClient",
+        lambda config: original_client(
+            config, http_client=httpx.Client(transport=httpx.MockTransport(handler))
+        ),
+    )
     result = validate_model_access("selected-account-key", "dedicated/legacy")
     assert result.ok
     assert [str(request.url) for request in requests] == [
         "https://dedicated.example/v1/models",
         "https://dedicated.example/v1/chat/completions",
     ]
-    assert all(request.headers["Authorization"] == "Bearer selected-account-key"
-               for request in requests)
+    assert all(
+        request.headers["Authorization"] == "Bearer selected-account-key"
+        for request in requests
+    )
     assert json.loads(requests[-1].content)["model"] == "dedicated/legacy"
 
 
@@ -171,7 +195,9 @@ def test_access_probe_does_not_substitute_an_ambient_key(monkeypatch) -> None:
     assert "API key not found" in result.error
 
 
-def test_validate_model_access_rejects_key_scoped_unavailable_model(monkeypatch) -> None:
+def test_validate_model_access_rejects_key_scoped_unavailable_model(
+    monkeypatch,
+) -> None:
     class Client:
         def __init__(self, _config):
             pass
@@ -180,7 +206,9 @@ def test_validate_model_access_rejects_key_scoped_unavailable_model(monkeypatch)
             return []
 
     monkeypatch.setattr("npa.clients.token_factory.TokenFactoryClient", Client)
-    result = validate_model_access("secret-not-rendered", "nvidia/Cosmos3-Super-Reasoner")
+    result = validate_model_access(
+        "secret-not-rendered", "nvidia/Cosmos3-Super-Reasoner"
+    )
     assert result.ok is False
     assert result.error == "model unavailable to this key"
 
@@ -189,7 +217,10 @@ def test_resolve_config_defaults_to_token_factory_base_url() -> None:
     config = resolve_config(api_key="abc", environ={})
     assert config.base_url == DEFAULT_BASE_URL
     assert config.timeout_s == DEFAULT_TIMEOUT_S == 600.0
-    assert config.chat_completions_url == "https://api.tokenfactory.nebius.com/v1/chat/completions"
+    assert (
+        config.chat_completions_url
+        == "https://api.tokenfactory.nebius.com/v1/chat/completions"
+    )
     assert config.models_url == "https://api.tokenfactory.nebius.com/v1/models"
 
 
@@ -275,7 +306,9 @@ def test_chat_completion_missing_content_raises() -> None:
 
     client = _client(handler)
     with pytest.raises(TokenFactoryError):
-        client.chat_completion_text(model="m", messages=[{"role": "user", "content": "x"}])
+        client.chat_completion_text(
+            model="m", messages=[{"role": "user", "content": "x"}]
+        )
 
 
 def test_chat_completion_http_error_wrapped() -> None:
@@ -322,12 +355,16 @@ def test_non_transport_request_errors_are_wrapped_without_retry(error_type) -> N
         raise error_type("request failed", request=request)
 
     with pytest.raises(TokenFactoryError) as exc:
-        _client(handler).chat_completion(model="m", messages=[{"role": "user", "content": "x"}])
+        _client(handler).chat_completion(
+            model="m", messages=[{"role": "user", "content": "x"}]
+        )
     assert "Token Factory request failed" in str(exc.value)
     assert attempts == 1
 
 
-def test_chat_completion_retries_consecutive_read_timeouts_with_backoff(monkeypatch) -> None:
+def test_chat_completion_retries_consecutive_read_timeouts_with_backoff(
+    monkeypatch,
+) -> None:
     attempts = 0
     sleeps: list[int] = []
 
@@ -339,9 +376,12 @@ def test_chat_completion_retries_consecutive_read_timeouts_with_backoff(monkeypa
         return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
 
     monkeypatch.setattr("npa.clients.token_factory.time.sleep", sleeps.append)
-    assert _client(handler).chat_completion_text(
-        model="m", messages=[{"role": "user", "content": "x"}]
-    ) == "ok"
+    assert (
+        _client(handler).chat_completion_text(
+            model="m", messages=[{"role": "user", "content": "x"}]
+        )
+        == "ok"
+    )
     assert attempts == 3
     assert sleeps == [1, 2]
 
@@ -357,7 +397,9 @@ def test_retryable_http_status_uses_configured_backoff(monkeypatch) -> None:
 
     monkeypatch.setattr("npa.clients.token_factory.time.sleep", sleeps.append)
     with pytest.raises(TokenFactoryError):
-        _client(handler).chat_completion(model="m", messages=[{"role": "user", "content": "x"}])
+        _client(handler).chat_completion(
+            model="m", messages=[{"role": "user", "content": "x"}]
+        )
     assert attempts == 4
     assert sleeps == [1.0, 2.0, 4.0]
 
@@ -396,14 +438,18 @@ def test_split_reasoning_strips_inline_think_block() -> None:
 
 def test_split_reasoning_uses_reasoning_field_when_content_null() -> None:
     # Kimi/GLM shape: content null, trace in a separate reasoning field.
-    visible, reasoning = split_reasoning({"content": None, "reasoning": "thinking hard"})
+    visible, reasoning = split_reasoning(
+        {"content": None, "reasoning": "thinking hard"}
+    )
     assert visible == ""
     assert reasoning == "thinking hard"
 
 
 def test_split_reasoning_truncated_think_has_no_visible_text() -> None:
     # finish_reason=length mid-think: opening tag, no close, no answer.
-    visible, reasoning = split_reasoning({"content": "<think>still reasoning when it ran"})
+    visible, reasoning = split_reasoning(
+        {"content": "<think>still reasoning when it ran"}
+    )
     assert visible == ""
     assert reasoning == "still reasoning when it ran"
 
@@ -417,7 +463,8 @@ def test_split_reasoning_plain_content_unchanged() -> None:
 def test_chat_completion_message_returns_visible_and_reasoning() -> None:
     client = _message_client({"content": "<think>plan</think>do it", "reasoning": None})
     visible, reasoning = client.chat_completion_message(
-        model="nvidia/Cosmos3-Super-Reasoner", messages=[{"role": "user", "content": "x"}]
+        model="nvidia/Cosmos3-Super-Reasoner",
+        messages=[{"role": "user", "content": "x"}],
     )
     assert visible == "do it"
     assert reasoning == "plan"
@@ -436,26 +483,36 @@ def test_chat_completion_text_raises_on_reasoning_only_response() -> None:
     # Regression: str(None) used to return the literal string "None".
     client = _message_client({"content": None, "reasoning": "all thinking, no answer"})
     with pytest.raises(TokenFactoryError) as exc:
-        client.chat_completion_text(model="m", messages=[{"role": "user", "content": "x"}])
+        client.chat_completion_text(
+            model="m", messages=[{"role": "user", "content": "x"}]
+        )
     assert "reasoning-only" in str(exc.value)
 
 
-@pytest.mark.parametrize(("model", "expected"), [
-    ("nvidia/Nemotron-3_5-Lightning", {"enable_thinking": False}),
-    ("MiniMaxAI/MiniMax-M3", {"thinking_mode": "disabled"}),
-    ("vendor/explicit-model", None),
-    ("meta-llama/Llama-3.3-70B-Instruct", None),
-])
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("nvidia/Nemotron-3_5-Lightning", {"enable_thinking": False}),
+        ("MiniMaxAI/MiniMax-M3", {"thinking_mode": "disabled"}),
+        ("vendor/explicit-model", None),
+        ("meta-llama/Llama-3.3-70B-Instruct", None),
+    ],
+)
 def test_replacement_template_parameters_and_explicit_models(model, expected) -> None:
     requests = []
 
     def handler(request):
         requests.append(json.loads(request.content))
-        return httpx.Response(200, json={"choices": [{"message": {"content": "answer"}}]})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
 
-    assert _client(handler).chat_completion_text(
-        model=model, messages=[{"role": "user", "content": "task"}]
-    ) == "answer"
+    assert (
+        _client(handler).chat_completion_text(
+            model=model, messages=[{"role": "user", "content": "task"}]
+        )
+        == "answer"
+    )
     assert requests[0]["model"] == model
     assert requests[0].get("chat_template_kwargs") == expected
 
@@ -465,21 +522,31 @@ def test_explicit_thinking_and_other_template_parameters_win() -> None:
 
     def handler(request):
         requests.append(json.loads(request.content))
-        return httpx.Response(200, json={"choices": [{"message": {"content": "answer"}}]})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
 
     _client(handler).chat_completion_text(
         model="nvidia/Nemotron-3_5-Lightning",
         messages=[{"role": "user", "content": "task"}],
         extra={"chat_template_kwargs": {"enable_thinking": True, "custom": "value"}},
     )
-    assert requests[0]["chat_template_kwargs"] == {"enable_thinking": True, "custom": "value"}
+    assert requests[0]["chat_template_kwargs"] == {
+        "enable_thinking": True,
+        "custom": "value",
+    }
 
 
-@pytest.mark.parametrize("choice", [
-    {"message": {"content": None, "reasoning": "hidden"}},
-    {"message": {"content": '{"preflight":'}, "finish_reason": "length"},
-])
-def test_access_probe_rejects_reasoning_only_or_truncated_choice(monkeypatch, choice) -> None:
+@pytest.mark.parametrize(
+    "choice",
+    [
+        {"message": {"content": None, "reasoning": "hidden"}},
+        {"message": {"content": '{"preflight":'}, "finish_reason": "length"},
+    ],
+)
+def test_access_probe_rejects_reasoning_only_or_truncated_choice(
+    monkeypatch, choice
+) -> None:
     class Client:
         def __init__(self, config):
             pass

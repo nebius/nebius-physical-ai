@@ -3,6 +3,7 @@
 No serialization/pickle, implicit dependency installation, or fallback matcher.
 Dependency is loaded by the controlled runner from the verified sealed descriptor.
 """
+
 from dataclasses import dataclass, field
 from hashlib import sha256
 
@@ -10,7 +11,9 @@ import ahocorasick
 
 POLICY = "exact-or-short-ascii-token-v1"
 EXACT = "exact-substring-v1"
-ASCII_WORD = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_")
+ASCII_WORD = frozenset(
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,7 +33,9 @@ class CompiledLiterals:
 def compile_literals(values, policy):
     if policy not in {POLICY, EXACT}:
         raise ValueError("literal_matching_policy")
-    if not isinstance(values, (list, tuple)) or any(type(v) is not str or not v for v in values):
+    if not isinstance(values, (list, tuple)) or any(
+        type(v) is not str or not v for v in values
+    ):
         raise ValueError("literal_inventory_schema")
     if ahocorasick.unicode != 1:
         raise ValueError("unexpected_extension_unicode_mode")
@@ -40,8 +45,14 @@ def compile_literals(values, policy):
         raw = value.encode("utf-8")
         carry = max(carry, len(raw) + 1)
         # Preserve duplicate input patterns as distinct indexed policy entries.
-        groups.setdefault(raw, []).append((index, sha256(raw).hexdigest(), len(raw),
-                                          policy == POLICY and len(value) < 6))
+        groups.setdefault(raw, []).append(
+            (
+                index,
+                sha256(raw).hexdigest(),
+                len(raw),
+                policy == POLICY and len(value) < 6,
+            )
+        )
     automaton = ahocorasick.Automaton()
     for raw, entries in groups.items():
         automaton.add_word(raw.decode("latin-1"), tuple(entries))
@@ -52,6 +63,7 @@ def compile_literals(values, policy):
 
 class LiteralMatcher:
     """Per-record mutable cursor, sharing only a compiled read-only policy."""
+
     def __init__(self, compiled):
         if type(compiled) is not CompiledLiterals:
             raise TypeError("compiled_literal_policy_required")
@@ -63,7 +75,11 @@ class LiteralMatcher:
         if type(data) is not bytes or type(final) is not bool:
             raise TypeError("literal_feed_schema")
         self.buffer += data
-        boundary = len(self.buffer) if final else max(0, len(self.buffer) - self.compiled.carry)
+        boundary = (
+            len(self.buffer)
+            if final
+            else max(0, len(self.buffer) - self.compiled.carry)
+        )
         found = []
         for end_index, entries in self.compiled.occurrences(self.buffer):
             local_end = end_index + 1
@@ -75,10 +91,20 @@ class LiteralMatcher:
                 if bounded:
                     if local_start and self.buffer[local_start - 1] in ASCII_WORD:
                         continue
-                    if local_end < len(self.buffer) and self.buffer[local_end] in ASCII_WORD:
+                    if (
+                        local_end < len(self.buffer)
+                        and self.buffer[local_end] in ASCII_WORD
+                    ):
                         continue
-                found.append({"rule_id": "private_literal", "literal_index": index,
-                              "literal_sha256": digest, "byte_start": start, "byte_end": end})
+                found.append(
+                    {
+                        "rule_id": "private_literal",
+                        "literal_index": index,
+                        "literal_sha256": digest,
+                        "byte_start": start,
+                        "byte_end": end,
+                    }
+                )
                 # re.finditer suppresses self-overlaps for each individual pattern;
                 # other patterns and duplicate entries retain independent cursors.
                 self.next_positions[index] = end

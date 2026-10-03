@@ -1,4 +1,4 @@
-"""Reject security regressions between a Git base and a proposed merge snapshot."""
+"""Reject security regressions and known vulnerable application dependencies."""
 
 from __future__ import annotations
 
@@ -9,15 +9,29 @@ import json
 import os
 import shutil
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from security_dependencies import scan_dependencies
 from security_source import scan_source
 
+# Application and CI inputs must stay clean even when an advisory is newly
+# published for a version already on main. Vendor/runtime inventories retain
+# differential checks until their separately validated images can be rebuilt.
+_STRICT_DEPENDENCY_PATHS = {
+    "npa/requirements-lock.txt",
+    "npa/ci/requirements.txt",
+    "npa/pyproject.toml",
+    "npa/pyproject.toml (resolved core + dev)",
+    "npa/tests/browser/package-lock.json",
+    "scripts/security-requirements.txt",
+}
+
 
 def _git(root: Path, *arguments: str) -> bytes:
-    return subprocess.run(["git", "-C", str(root), *arguments], check=True,
-                          stdout=subprocess.PIPE).stdout
+    return subprocess.run(
+        ["git", "-C", str(root), *arguments], check=True, stdout=subprocess.PIPE
+    ).stdout
 
 
 def _tree_entries(root: Path, commit: str) -> list[tuple[str, str]]:
@@ -36,7 +50,9 @@ def _tree_entries(root: Path, commit: str) -> list[tuple[str, str]]:
     return entries
 
 
-def _write_blobs(entries: list[tuple[str, str]], stream: io.BytesIO, destination: Path) -> None:
+def _write_blobs(
+    entries: list[tuple[str, str]], stream: io.BytesIO, destination: Path
+) -> None:
     for relative, expected_digest in entries:
         digest, kind, size = stream.readline().decode().split()
         if digest != expected_digest or kind != "blob":
@@ -52,12 +68,18 @@ def _write_blobs(entries: list[tuple[str, str]], stream: io.BytesIO, destination
 
 
 def _snapshot_revision(root: Path, revision: str, destination: Path) -> str:
-    commit = _git(root, "rev-parse", "--verify", f"{revision}^{{commit}}").decode().strip()
+    commit = (
+        _git(root, "rev-parse", "--verify", f"{revision}^{{commit}}").decode().strip()
+    )
     entries = _tree_entries(root, commit)
     requested = "".join(f"{digest}\n" for _, digest in entries).encode()
     # Reading raw blobs prevents export-ignore/export-subst from hiding candidate code.
-    result = subprocess.run(["git", "-C", str(root), "cat-file", "--batch"],
-                            input=requested, stdout=subprocess.PIPE, check=True)
+    result = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "--batch"],
+        input=requested,
+        stdout=subprocess.PIPE,
+        check=True,
+    )
     _write_blobs(entries, io.BytesIO(result.stdout), destination)
     return commit
 
@@ -88,8 +110,11 @@ def regressions(base: list[dict], candidate: list[dict]) -> list[dict]:
     Raises:
         KeyError: A scanner omitted a required identity field.
     """
+
     def key(finding: dict) -> tuple:
-        return tuple(finding[field] for field in ("scanner", "path", "rule", "identity"))
+        return tuple(
+            finding[field] for field in ("scanner", "path", "rule", "identity")
+        )
 
     remaining = collections.Counter(key(finding) for finding in base)
     added = []
@@ -103,32 +128,96 @@ def regressions(base: list[dict], candidate: list[dict]) -> list[dict]:
 
 
 def _scan(root: Path, output: Path, cache: Path) -> list[dict]:
-    if not (root / "npa/pyproject.toml").is_file():
-        raise ValueError("Required application dependency manifest is missing")
-    findings = scan_source(root, output / "source")
-    findings.extend(scan_dependencies(root, output / "dependencies", cache))
+    for manifest in (
+        "npa/pyproject.toml",
+        "npa/requirements-lock.txt",
+        "npa/ci/requirements.txt",
+    ):
+        if not (root / manifest).is_file():
+            raise ValueError(
+                f"Required application dependency manifest is missing: {manifest}"
+            )
+    # Independent tools read one immutable snapshot and write separate reports.
+    # Revisions remain sequential so resolution and Trivy share one database safely.
+    with ThreadPoolExecutor(max_workers=2) as scans:
+        source = scans.submit(scan_source, root, output / "source")
+        dependencies = scans.submit(
+            scan_dependencies, root, output / "dependencies", cache
+        )
+        findings = source.result() + dependencies.result()
     (output / "findings.json").write_text(json.dumps(findings, indent=2))
     return findings
+
+
+def blocking_findings(base: list[dict], candidate: list[dict]) -> list[dict]:
+    """Reject current application vulnerabilities as well as new occurrences.
+
+    Args:
+        base: Findings from the target revision under the same scanner policy.
+        candidate: Findings from the proposed merge.
+    Returns:
+        All application/CI dependency findings and new findings elsewhere.
+    Raises:
+        KeyError: A scanner omitted a required identity field.
+    """
+    tolerated = [
+        finding
+        for finding in base
+        if not (
+            finding["scanner"] == "trivy"
+            and finding["path"] in _STRICT_DEPENDENCY_PATHS
+        )
+    ]
+    return regressions(tolerated, candidate)
 
 
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True, help="Actual target branch commit")
-    parser.add_argument("--head", help="Candidate merge commit; defaults to working files")
+    parser.add_argument(
+        "--head", help="Candidate merge commit; defaults to working files"
+    )
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--output-dir", type=Path, required=True,
-                        help="New private directory outside the checkout")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        required=True,
+        help="New private directory outside the checkout",
+    )
     return parser.parse_args()
 
 
-def _report_regressions(added: list[dict], summary: dict, output: Path) -> int:
-    summary["regressions"] = added
+def _report_findings(blocking: list[dict], summary: dict, output: Path) -> int:
+    summary["blocking_findings"] = blocking
     (output / "summary.json").write_text(json.dumps(summary, indent=2))
-    for finding in added:
-        print(f"{finding['path']}:{finding['line']}: {finding['scanner']} "
-              f"{finding['rule']}: {finding['message']}")
-    print(f"Security regression gate: {len(added)} new findings")
-    return int(bool(added))
+    for finding in blocking:
+        print(
+            f"{finding['path']}:{finding['line']}: {finding['scanner']} "
+            f"{finding['rule']}: {finding['message']}"
+        )
+    print(f"Security gate: {len(blocking)} blocking findings")
+    return int(bool(blocking))
+
+
+def _compare_snapshots(arguments: argparse.Namespace, root: Path, output: Path) -> int:
+    base_commit = _snapshot_revision(root, arguments.base, output / "base")
+    if arguments.head:
+        head_commit = _snapshot_revision(root, arguments.head, output / "candidate")
+    else:
+        _snapshot_working(root, output / "candidate")
+        head_commit = "working-files"
+    base = _scan(output / "base", output / "base-report", output / "cache")
+    candidate = _scan(
+        output / "candidate", output / "candidate-report", output / "cache"
+    )
+    summary = {
+        "base": base_commit,
+        "head": head_commit,
+        "base_findings": len(base),
+        "candidate_findings": len(candidate),
+        "regressions": regressions(base, candidate),
+    }
+    return _report_findings(blocking_findings(base, candidate), summary, output)
 
 
 def main() -> int:
@@ -137,7 +226,7 @@ def main() -> int:
     Args:
         None; arguments are read from the command line.
     Returns:
-        Zero for no regressions, one for findings, two for operational failure.
+        Zero for no blocking findings, one for findings, two for operational failure.
     Raises:
         OSError: The private output directory cannot be created.
     """
@@ -149,22 +238,20 @@ def main() -> int:
     os.umask(0o077)
     output.mkdir(parents=True, exist_ok=False)
     try:
-        base_commit = _snapshot_revision(root, arguments.base, output / "base")
-        if arguments.head:
-            head_commit = _snapshot_revision(root, arguments.head, output / "candidate")
-        else:
-            _snapshot_working(root, output / "candidate")
-            head_commit = "working-files"
-        base = _scan(output / "base", output / "base-report", output / "cache")
-        candidate = _scan(output / "candidate", output / "candidate-report", output / "cache")
-        added = regressions(base, candidate)
-        summary = {"base": base_commit, "head": head_commit, "base_findings": len(base),
-                   "candidate_findings": len(candidate)}
-        return _report_regressions(added, summary, output)
-    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.CalledProcessError) as error:
+        return _compare_snapshots(arguments, root, output)
+    except (
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        RuntimeError,
+        subprocess.CalledProcessError,
+    ) as error:
         (output / "failure.txt").write_text(str(error))
-        print(f"Security gate could not complete ({type(error).__name__}); "
-              "rerun the documented command locally and inspect private failure.txt and scanner logs")
+        print(
+            f"Security gate could not complete ({type(error).__name__}); "
+            "rerun the documented command locally and inspect private failure.txt and scanner logs"
+        )
         return 2
 
 

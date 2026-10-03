@@ -89,11 +89,15 @@ def _read_object(bucket: str, key: str, *, reader: Any | None = None) -> str:
     return response["Body"].read().decode("utf-8")
 
 
-def _write_object(bucket: str, key: str, body: bytes, *, writer: Any | None = None) -> None:
+def _write_object(
+    bucket: str, key: str, body: bytes, *, writer: Any | None = None
+) -> None:
     if writer is not None:
         writer(bucket, key, body)
         return
     from npa.clients.storage import StorageClient
 
     client = StorageClient.from_environment()
-    client._s3.put_object(Bucket=bucket, Key=key, Body=body, ContentType="application/json")
+    client._s3.put_object(
+        Bucket=bucket, Key=key, Body=body, ContentType="application/json"
+    )

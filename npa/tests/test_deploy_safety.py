@@ -17,7 +17,9 @@ def _fixture(name: str) -> str:
 
 
 def test_fresh_create_plan_is_allowed_for_new_alias() -> None:
-    analysis = analyze_terraform_plan(_fixture("fresh_create.txt"), existing_state=False)
+    analysis = analyze_terraform_plan(
+        _fixture("fresh_create.txt"), existing_state=False
+    )
 
     assert analysis.decision == PlanDecision.FRESH_CREATE
     assert analysis.add_count == 9
@@ -25,7 +27,9 @@ def test_fresh_create_plan_is_allowed_for_new_alias() -> None:
 
 
 def test_env_only_change_plan_is_in_place_update() -> None:
-    analysis = analyze_terraform_plan(_fixture("env_only_change.txt"), existing_state=True)
+    analysis = analyze_terraform_plan(
+        _fixture("env_only_change.txt"), existing_state=True
+    )
 
     assert analysis.decision == PlanDecision.IN_PLACE_UPDATE
     assert analysis.change_count == 1

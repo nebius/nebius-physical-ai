@@ -15,7 +15,9 @@ from npa.workflows.byof.live import (
 )
 
 
-def test_byof_validation_repo_defaults_to_leisaac(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_byof_validation_repo_defaults_to_leisaac(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("NPA_BYOF_REPO_URL", raising=False)
     monkeypatch.delenv("NPA_BYOF_VALIDATION_REPO_URL", raising=False)
     url, ref = byof_validation_repo()
@@ -31,7 +33,9 @@ def test_byof_validation_repo_env_override(monkeypatch: pytest.MonkeyPatch) -> N
     assert ref == "v1.0.0"
 
 
-def test_resolve_byof_kubernetes_target_prefers_env(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_byof_kubernetes_target_prefers_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("NPA_BYOF_K8S_CONTEXT", "customer-context")
     monkeypatch.setenv("NPA_BYOF_KUBECONFIG", "/tmp/customer-kubeconfig")
     target = resolve_byof_kubernetes_target("rtxpro")
@@ -61,8 +65,12 @@ def test_resolve_byof_kubernetes_target_from_cluster_state(
 ) -> None:
     # This unit path exercises cluster state, independent of the operator's live
     # project configuration (which may itself declare a Kubernetes context).
-    monkeypatch.setattr("npa.workflows.byof.live._project_kubernetes_block", lambda _project: {})
-    monkeypatch.setattr("npa.workflows.byof.live._project_storage_block", lambda _project: {})
+    monkeypatch.setattr(
+        "npa.workflows.byof.live._project_kubernetes_block", lambda _project: {}
+    )
+    monkeypatch.setattr(
+        "npa.workflows.byof.live._project_storage_block", lambda _project: {}
+    )
     monkeypatch.delenv("NPA_BYOF_K8S_CONTEXT", raising=False)
     monkeypatch.delenv("NPA_K8S_CONTEXT", raising=False)
     monkeypatch.delenv("KUBECONTEXT", raising=False)
@@ -91,41 +99,55 @@ def test_resolve_byof_kubernetes_target_from_cluster_state(
         encoding="utf-8",
     )
     monkeypatch.setenv("NPA_BYOF_CLUSTER_NAME", "customer-mk8s")
-    monkeypatch.setattr("npa.cluster.state.CLUSTERS_DIR", tmp_path / "clusters", raising=False)
+    monkeypatch.setattr(
+        "npa.cluster.state.CLUSTERS_DIR", tmp_path / "clusters", raising=False
+    )
     target = resolve_byof_kubernetes_target("rtxpro")
     assert target.context == "customer-mk8s"
     assert target.kubeconfig == str(kubeconfig)
 
 
-def test_resolve_byof_resource_yaml_rtxpro_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_byof_resource_yaml_rtxpro_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("NPA_BYOF_RESOURCE_YAML", raising=False)
 
     def _fake_block(_project: str | None) -> dict[str, object]:
         return {"gpu_profile": "rtxpro"}
 
-    monkeypatch.setattr("npa.workflows.byof.live._project_kubernetes_block", _fake_block)
+    monkeypatch.setattr(
+        "npa.workflows.byof.live._project_kubernetes_block", _fake_block
+    )
     path = resolve_byof_resource_yaml("rtxpro", smoke=True)
     assert path.endswith("isaac-lab-rl-train-rtxpro-smoke.yaml")
 
 
-def test_resolve_byof_resource_yaml_datagen_rtxpro_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_byof_resource_yaml_datagen_rtxpro_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("NPA_BYOF_RESOURCE_YAML", raising=False)
 
     def _fake_block(_project: str | None) -> dict[str, object]:
         return {"gpu_profile": "rtxpro"}
 
-    monkeypatch.setattr("npa.workflows.byof.live._project_kubernetes_block", _fake_block)
+    monkeypatch.setattr(
+        "npa.workflows.byof.live._project_kubernetes_block", _fake_block
+    )
     path = resolve_byof_resource_yaml("rtxpro", smoke=True, workload="datagen")
     assert path.endswith("byof-datagen-rtxpro-smoke.yaml")
 
 
-def test_resolve_byof_resource_yaml_container_verify(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_byof_resource_yaml_container_verify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("NPA_BYOF_RESOURCE_YAML", raising=False)
     path = resolve_byof_resource_yaml("rtxpro", smoke=True, workload="container-verify")
     assert path.endswith("byof-container-smoke-rtxpro.yaml")
 
 
-def test_resolve_byof_resource_yaml_solution_smoke(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_resolve_byof_resource_yaml_solution_smoke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.delenv("NPA_BYOF_RESOURCE_YAML", raising=False)
     path = resolve_byof_resource_yaml("rtxpro", smoke=True, workload="solution-smoke")
     assert path.endswith("byof-container-smoke-rtxpro.yaml")
@@ -140,7 +162,10 @@ def test_byof_ubuntu_validation_repo_defaults(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_byof_onboard_skill_path() -> None:
-    from npa.workflows.byof.live import byof_onboard_skill_path, load_byof_onboard_skill_text
+    from npa.workflows.byof.live import (
+        byof_onboard_skill_path,
+        load_byof_onboard_skill_text,
+    )
 
     assert byof_onboard_skill_path() == "skills/workflows/byof-onboard/SKILL.md"
     assert "run_byof_repo.py" in load_byof_onboard_skill_text()

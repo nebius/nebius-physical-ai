@@ -18,7 +18,9 @@ class CheckResult:
 
 def check_cuda_available() -> CheckResult:
     if not torch.cuda.is_available():
-        return CheckResult("cuda available", False, "torch.cuda.is_available() is False")
+        return CheckResult(
+            "cuda available", False, "torch.cuda.is_available() is False"
+        )
     return CheckResult("cuda available", True, torch.cuda.get_device_name(0))
 
 
@@ -41,7 +43,9 @@ def check_franka_pick_place_rollout() -> CheckResult:
         action = torch.zeros((env.n_envs, env.act_dim), device=env.device)
         obs, _reward, _done, _info = env.step(action)
         if obs is None:
-            return CheckResult("franka pick-place rollout", False, "step returned None obs")
+            return CheckResult(
+                "franka pick-place rollout", False, "step returned None obs"
+            )
     return CheckResult(
         "franka pick-place rollout",
         True,

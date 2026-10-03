@@ -48,7 +48,10 @@ def _filter_records(
             continue
         if modality and record.get("modality") != modality:
             continue
-        if min_quality is not None and _record_metric(record, quality_metric) < min_quality:
+        if (
+            min_quality is not None
+            and _record_metric(record, quality_metric) < min_quality
+        ):
             continue
         filtered.append(record)
     return filtered
@@ -62,7 +65,9 @@ def _read_manifest(input_uri: str) -> dict[str, Any]:
     except FileNotFoundError as exc:
         raise DatasetCurateError(f"dataset manifest not found: {input_uri}") from exc
     except Exception as exc:
-        raise DatasetCurateError(f"cannot read dataset manifest {input_uri}: {exc}") from exc
+        raise DatasetCurateError(
+            f"cannot read dataset manifest {input_uri}: {exc}"
+        ) from exc
     records = manifest.get("records")
     if not isinstance(records, list):
         raise DatasetCurateError("dataset manifest has no records")
@@ -93,7 +98,11 @@ def curate_dataset(request: CurateRequest) -> CurateResponse:
 
     manifest_sha = compute_manifest_sha256(
         "curate",
-        {"parent": request.input_uri, "filter": filter_predicate, "count": len(filtered)},
+        {
+            "parent": request.input_uri,
+            "filter": filter_predicate,
+            "count": len(filtered),
+        },
     )
     child_version = f"{parent_version or 'v1'}.curated-{manifest_sha[:8]}"
 
@@ -110,7 +119,9 @@ def curate_dataset(request: CurateRequest) -> CurateResponse:
         if record.get("location"):
             locations.add(str(record["location"]))
         completeness_sum += float(record.get("completeness", 0.0))
-        if float((record.get("quality") or {}).get("corruption", 0.0)) > 0.5 or not record.get("uri"):
+        if float(
+            (record.get("quality") or {}).get("corruption", 0.0)
+        ) > 0.5 or not record.get("uri"):
             corrupt += 1
     quality_stats = QualityStats(
         record_count=len(filtered),
@@ -131,7 +142,9 @@ def curate_dataset(request: CurateRequest) -> CurateResponse:
         filter_predicate=filter_predicate,
         produced_by="workbench.dataset.curate",
     )
-    target_uri = manifest_uri(request.output_uri, parent_dataset_id or "dataset", child_version)
+    target_uri = manifest_uri(
+        request.output_uri, parent_dataset_id or "dataset", child_version
+    )
     payload = {
         "schema": MANIFEST_SCHEMA,
         "dataset_id": parent_dataset_id,

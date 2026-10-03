@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from npa.orchestration.npa_workflow.sim2real_preflight import (
+    _managed_driver_isaac_nodes,
     _ready_schedulable_cpu_nodes,
     kubernetes_prerequisites,
     static_prerequisites,
@@ -33,6 +34,8 @@ def _config(**overrides):
 
 
 def test_static_preflight_checks_hf_models_and_hosted_model_before_submission():
+    from npa.workbench.model_access import gated_hf_repos
+
     checked = []
     hosted = []
 
@@ -45,16 +48,48 @@ def test_static_preflight_checks_hf_models_and_hosted_model_before_submission():
         requested_secret_envs=["HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=validate,
-        token_factory_validator=lambda _key, model: hosted.append(model) or SimpleNamespace(ok=True),
+        token_factory_validator=lambda _key, model: (
+            hosted.append(model) or SimpleNamespace(ok=True)
+        ),
     )
 
-    assert checked == ["nvidia/Cosmos-Transfer2.5-2B"]
+    # The gate mirrors the sim2real capability's single source of truth rather
+    # than a hardcoded repo, so the pinned Predict2.5 tokenizer and Cosmos
+    # Guardrail dependencies of Stage 3 are verified before launch.
+    expected = list(dict.fromkeys(gated_hf_repos(("sim2real",))))
+    assert checked == expected
+    assert "nvidia/Cosmos-Transfer2.5-2B" in checked
+    assert "nvidia/Cosmos-Predict2.5-2B" in checked
+    assert "nvidia/Cosmos-Guardrail1" in checked
     assert "nvidia/Cosmos-Reason2-8B" not in checked
     assert hosted == ["nvidia/Cosmos3-Super-Reasoner"]
     rendered = "\n".join(item for item, _ in issues)
     assert "Cosmos-Transfer2.5-2B" in rendered
     assert "AWS_ACCESS_KEY_ID" in rendered
     assert "AWS_SECRET_ACCESS_KEY" in rendered
+
+
+def test_static_preflight_surfaces_unaccepted_transfer_dependencies():
+    # Regression: an operator with Cosmos-Transfer2.5-2B accepted but the pinned
+    # Predict2.5 tokenizer (or Cosmos Guardrail) unaccepted previously passed
+    # this preflight and only failed inside Stage 3. The gate must report those
+    # repos before any GPU work.
+    denied_repo = "nvidia/Cosmos-Predict2.5-2B"
+
+    def validate(_token, repo):
+        return SimpleNamespace(ok=repo != denied_repo, error="403 gated")
+
+    issues = static_prerequisites(
+        _config(),
+        requested_secret_envs=["HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY"],
+        secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
+        hf_validator=validate,
+        token_factory_validator=lambda _key, _model: SimpleNamespace(ok=True),
+    )
+
+    rendered = "\n".join(item for item, _ in issues)
+    assert denied_repo in rendered
+    assert "Hugging Face access failed" in rendered
 
 
 def test_archived_reason3_config_key_does_not_change_canonical_hosted_probe():
@@ -68,12 +103,16 @@ def test_archived_reason3_config_key_does_not_change_canonical_hosted_probe():
         requested_secret_envs=[
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "HF_TOKEN", "NEBIUS_TOKEN_FACTORY_KEY",
+            "HF_TOKEN",
+            "NEBIUS_TOKEN_FACTORY_KEY",
         ],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
-        hf_validator=lambda _token, repo: checked.append(repo)
-        or SimpleNamespace(ok=True),
-        token_factory_validator=lambda _key, model: checked.append(model) or SimpleNamespace(ok=True),
+        hf_validator=lambda _token, repo: (
+            checked.append(repo) or SimpleNamespace(ok=True)
+        ),
+        token_factory_validator=lambda _key, model: (
+            checked.append(model) or SimpleNamespace(ok=True)
+        ),
     )
 
     assert "MiniMaxAI/MiniMax-M3" in checked
@@ -86,9 +125,13 @@ def test_unsupported_hosted_family_fails_before_model_probe():
         requested_secret_envs=["NEBIUS_TOKEN_FACTORY_KEY"],
         secret_values={"NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda *_args: SimpleNamespace(ok=True),
-        token_factory_validator=lambda *_args: pytest.fail("unsupported model was probed"),
+        token_factory_validator=lambda *_args: pytest.fail(
+            "unsupported model was probed"
+        ),
     )
-    assert any("unsupported hosted rollout evaluator" in message for message, _ in issues)
+    assert any(
+        "unsupported hosted rollout evaluator" in message for message, _ in issues
+    )
 
 
 def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
@@ -102,7 +145,9 @@ def test_static_preflight_rejects_mutable_images_without_manual_eula_inputs():
         ],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
-        token_factory_validator=lambda _key, model: SimpleNamespace(ok=True, model=model),
+        token_factory_validator=lambda _key, model: SimpleNamespace(
+            ok=True, model=model
+        ),
     )
 
     rendered = "\n".join(item for item, _ in issues)
@@ -121,7 +166,9 @@ def test_static_preflight_rejects_unresolved_token_factory_key():
         ],
         secret_values={"HF_TOKEN": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
-        token_factory_validator=lambda *_args: pytest.fail("missing key must not be probed"),
+        token_factory_validator=lambda *_args: pytest.fail(
+            "missing key must not be probed"
+        ),
     )
     assert "could not be resolved" in "\n".join(item for item, _ in issues)
 
@@ -162,7 +209,9 @@ def test_static_preflight_rejects_counts_larger_than_sealed_splits(
         ],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
-        token_factory_validator=lambda _key, model: SimpleNamespace(ok=True, model=model),
+        token_factory_validator=lambda _key, model: SimpleNamespace(
+            ok=True, model=model
+        ),
     )
 
     rendered = "\n".join(item for item, _ in issues)
@@ -200,14 +249,17 @@ def test_static_preflight_accepts_counts_that_fit_all_sealed_splits(
         ],
         secret_values={"HF_TOKEN": "redacted", "NEBIUS_TOKEN_FACTORY_KEY": "redacted"},
         hf_validator=lambda _token, repo: SimpleNamespace(ok=True, repo=repo),
-        token_factory_validator=lambda _key, model: SimpleNamespace(ok=True, model=model),
+        token_factory_validator=lambda _key, model: SimpleNamespace(
+            ok=True, model=model
+        ),
     )
 
     assert not any("train/validation/gold" in item for item, _ in issues)
 
 
 @pytest.mark.parametrize(
-    "key", ["env_count", "train_fraction", "rollout_count", "validation_count", "gold_count"]
+    "key",
+    ["env_count", "train_fraction", "rollout_count", "validation_count", "gold_count"],
 )
 @pytest.mark.parametrize("invalid_value", [None, "invalid"])
 def test_static_preflight_rejects_unparseable_split_inputs(key, invalid_value):
@@ -299,3 +351,128 @@ def test_kubernetes_preflight_reports_every_missing_cluster_object_together():
     rendered = "\n".join(item for item, _ in issues)
     assert "no Ready" in rendered
     assert "Isaac cache PVC" in rendered
+
+
+def _rtx_nodes(**labels):
+    payload = json.loads(_nodes())
+    payload["items"].append(
+        {
+            "metadata": {
+                "name": "gpu-0",
+                "labels": {"kubernetes.io/os": "linux", **labels},
+            },
+            "spec": {"taints": []},
+            "status": {
+                "allocatable": {"cpu": "24", "memory": "218Gi", "nvidia.com/gpu": "1"},
+                "conditions": [{"type": "Ready", "status": "True"}],
+            },
+        }
+    )
+    return json.dumps(payload)
+
+
+_MANAGED_RTX_LABELS = {
+    "nvidia.com/gpu.product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition",
+    "nebius.com/gpu-name": "RTX6000",
+    "nebius.com/driverful": "true",
+    "nebius.com/drivers-preset": "cuda13.0",
+    "nvidia.com/gpu.deploy.operands": "false",
+}
+
+
+def test_managed_driver_rtx_nodes_are_rejected_before_isaac_spends_gpu_time():
+    # Managed drivers satisfy pure-compute CUDA, so Transfer/EnvGen pass and the
+    # mismatch would otherwise only surface as a Warp illegal-memory-access in Stage 7.
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**_MANAGED_RTX_LABELS)) == ["gpu-0"]
+
+
+def test_operator_mounted_rtx_drivers_are_accepted():
+    operator = {**_MANAGED_RTX_LABELS, "nvidia.com/gpu.deploy.operands": "true"}
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**operator)) == []
+
+
+@pytest.mark.parametrize(
+    "labels",
+    [
+        {},
+        {"nvidia.com/gpu.product": "NVIDIA-L40S", "nebius.com/driverful": "true"},
+        {"nvidia.com/gpu.product": "NVIDIA-H100", "nebius.com/driverful": "true"},
+    ],
+)
+def test_non_rtx_and_unlabelled_nodes_are_not_flagged(labels):
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == []
+
+
+def test_unparseable_node_payload_cannot_claim_verified_driver_placement():
+    with pytest.raises(ValueError):
+        _managed_driver_isaac_nodes("not-json")
+    issues = kubernetes_prerequisites(
+        {}, runner=lambda _: SimpleNamespace(returncode=0, stdout="not-json")
+    )
+    assert any("placement could not be verified" in issue for issue, _ in issues)
+
+
+def test_kubernetes_preflight_surfaces_managed_driver_isaac_nodes():
+    def run(args):
+        if args[:2] == ["get", "nodes"]:
+            return SimpleNamespace(
+                returncode=0, stdout=_rtx_nodes(**_MANAGED_RTX_LABELS), stderr=""
+            )
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "spec": {"accessModes": ["ReadWriteMany"]},
+                    "status": {"phase": "Bound"},
+                }
+            ),
+            stderr="",
+        )
+
+    issues = kubernetes_prerequisites(_config(), runner=run)
+    rendered = "\n".join(item for item, _ in issues)
+    remediation = "\n".join(fix for _, fix in issues)
+    assert "gpu-0" in rendered
+    assert "managed-driver" in rendered
+    assert "--gpu-workload-profile rtx-rendering" in remediation
+
+
+@pytest.mark.parametrize("missing", ["conditions", "allocatable"])
+def test_kubernetes_preflight_blocks_unknown_managed_node_placement(missing):
+    payload = json.loads(_rtx_nodes(**_MANAGED_RTX_LABELS))
+    del payload["items"][-1]["status"][missing]
+
+    def run(args):
+        assert args == ["get", "nodes", "-o", "json"]
+        return SimpleNamespace(returncode=0, stdout=json.dumps(payload))
+
+    issues = kubernetes_prerequisites({}, runner=run)
+    assert any("placement could not be verified" in issue for issue, _ in issues)
+
+
+def test_managed_driver_detection_uses_the_scheduler_gpu_label_aliases():
+    labels = {
+        key: value
+        for key, value in _MANAGED_RTX_LABELS.items()
+        if key not in {"nvidia.com/gpu.product", "nebius.com/gpu-name"}
+    }
+    labels["skypilot.co/accelerator"] = "rtxpro6000"
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == ["gpu-0"]
+    labels["skypilot.co/accelerator"] = "rtxpro6000-unreviewed-variant"
+    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == []
+
+
+@pytest.mark.parametrize("broken", ["metadata", "labels", "name"])
+def test_malformed_node_identity_is_reported_without_traceback(broken):
+    payload = json.loads(_rtx_nodes(**_MANAGED_RTX_LABELS))
+    node = payload["items"][-1]
+    if broken == "metadata":
+        node["metadata"] = "invalid"
+    elif broken == "labels":
+        node["metadata"]["labels"] = ["invalid"]
+    else:
+        del node["metadata"]["name"]
+    issues = kubernetes_prerequisites(
+        {}, runner=lambda _: SimpleNamespace(returncode=0, stdout=json.dumps(payload))
+    )
+    assert any("placement could not be verified" in issue for issue, _ in issues)

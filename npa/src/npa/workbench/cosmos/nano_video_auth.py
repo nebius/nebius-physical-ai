@@ -14,7 +14,9 @@ from pathlib import Path
 def require_management_auth() -> None:
     """Refuse an application builder on a Ray cluster without explicit auth."""
     if os.environ.get("RAY_AUTH_MODE") != "token":
-        raise ValueError("Ray management authentication must be enabled before Ray starts")
+        raise ValueError(
+            "Ray management authentication must be enabled before Ray starts"
+        )
     token = os.environ.get("RAY_AUTH_TOKEN", "").strip()
     if not token and (token_path := os.environ.get("RAY_AUTH_TOKEN_PATH")):
         fd = os.open(token_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -25,7 +27,9 @@ def require_management_auth() -> None:
                 or info.st_uid != os.getuid()
                 or stat.S_IMODE(info.st_mode) & 0o077
             ):
-                raise ValueError("Ray management credential must be an owner-only regular file")
+                raise ValueError(
+                    "Ray management credential must be an owner-only regular file"
+                )
             token = stream.read().strip()
     if not token:
         raise ValueError("An explicit Ray management credential is required")

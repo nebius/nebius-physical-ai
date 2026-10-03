@@ -153,7 +153,10 @@ def test_every_advertised_artifact_type_renders_inline(key: str, expected: str) 
 def test_usdz_is_offered_as_a_download_not_a_broken_inline_preview() -> None:
     # No browser renders USDZ and the agent has no USDZ viewer, so "download" is
     # the honest classification. Viewability comes from the .rrd/.png/.mp4/.json.
-    assert render_hint_for_object(key=f"{CATEGORY}/{RUN_ID}/reconstruction/last.usdz") == "download"
+    assert (
+        render_hint_for_object(key=f"{CATEGORY}/{RUN_ID}/reconstruction/last.usdz")
+        == "download"
+    )
 
 
 @pytest.mark.parametrize(
@@ -170,7 +173,10 @@ def test_every_3d_asset_extension_is_explicitly_download_only(name: str) -> None
     from npa.workflows.artifacts import is_model_artifact
 
     assert is_model_artifact(name) is True
-    assert render_hint_for_object(key=f"{CATEGORY}/{RUN_ID}/reconstruction/{name}") == "download"
+    assert (
+        render_hint_for_object(key=f"{CATEGORY}/{RUN_ID}/reconstruction/{name}")
+        == "download"
+    )
 
 
 def test_model_extensions_do_not_swallow_a_viewable_artifact() -> None:
@@ -185,7 +191,10 @@ def test_a_run_of_only_3d_assets_would_not_be_viewable() -> None:
     viewable, so the workflow must keep emitting the .rrd, PNGs and MP4."""
     s3 = _FakeS3(
         [
-            (f"{CATEGORY}/usdz-only-run/reconstruction/last.usdz", "2026-07-31T17:00:00+00:00"),
+            (
+                f"{CATEGORY}/usdz-only-run/reconstruction/last.usdz",
+                "2026-07-31T17:00:00+00:00",
+            ),
         ]
     )
 

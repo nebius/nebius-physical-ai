@@ -71,8 +71,12 @@ ALLOWLISTED_HISTORICAL_COSMOS3_REFS: set[tuple[str, str]] = {
     ("docs/workbench/image-gpu-compatibility-matrix.md", "1.2.2-cu130-r2"),
 }
 
-IMAGE_REF_RE = re.compile(r"(npa-[a-z0-9-]+):([a-z0-9._-]+(?:T[0-9]+Z)?)", re.IGNORECASE)
-HISTORICAL_MARKER_RE = re.compile(r"\b(?:historical|rollback|provenance)\b", re.IGNORECASE)
+IMAGE_REF_RE = re.compile(
+    r"(npa-[a-z0-9-]+):([a-z0-9._-]+(?:T[0-9]+Z)?)", re.IGNORECASE
+)
+HISTORICAL_MARKER_RE = re.compile(
+    r"\b(?:historical|rollback|provenance)\b", re.IGNORECASE
+)
 
 SKIP_TAG_SUFFIXES = (":smoke", ":test", ":local", ":latest", "-k8s-runtime")
 
@@ -96,9 +100,9 @@ def _cosmos3_family_tags(line: str, canonical: str) -> list[str]:
 
 def _scan_file(path: Path) -> list[str]:
     text = path.read_text(encoding="utf-8")
-    if any(token in text for token in ALLOWLIST_SUBSTRINGS) and "cosmos2-transfer" in str(
-        path
-    ):
+    if any(
+        token in text for token in ALLOWLIST_SUBSTRINGS
+    ) and "cosmos2-transfer" in str(path):
         return []
     rel = path.relative_to(REPO_ROOT)
     issues: list[str] = []
@@ -128,8 +132,7 @@ def _scan_file(path: Path) -> list[str]:
             if allowlisted and HISTORICAL_MARKER_RE.search(line):
                 continue
             issues.append(
-                f"{rel}: npa-cosmos3:{tag} "
-                f"(use npa-cosmos3:{cosmos3_canonical})"
+                f"{rel}: npa-cosmos3:{tag} (use npa-cosmos3:{cosmos3_canonical})"
             )
     return issues
 

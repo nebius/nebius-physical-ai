@@ -31,9 +31,9 @@ class DiagnoseError(Exception):
 
 # ── Failure phase thresholds ───────────────────────────────────────────
 
-APPROACH_DIST_THRESHOLD = 0.08   # gripper must get within 8 cm of cube
-LIFT_HEIGHT_THRESHOLD = 0.03     # cube must rise 3 cm above init z
-PLACE_DIST_THRESHOLD = 0.08     # cube must get within 8 cm of target
+APPROACH_DIST_THRESHOLD = 0.08  # gripper must get within 8 cm of cube
+LIFT_HEIGHT_THRESHOLD = 0.03  # cube must rise 3 cm above init z
+PLACE_DIST_THRESHOLD = 0.08  # cube must get within 8 cm of target
 
 # Keys that override diagnosis thresholds rather than EnvConfig fields.
 _THRESHOLD_KEYS = {
@@ -45,14 +45,15 @@ _THRESHOLD_KEYS = {
 
 # ── Per-episode tracking ───────────────────────────────────────────────
 
+
 @dataclass
 class EpisodeTrace:
     """Per-timestep metrics collected during a single rollout."""
 
-    min_approach_dist: float = float("inf")   # closest gripper-to-cube distance
-    max_contact_count: int = 0                 # peak simultaneous finger contacts (0/1/2)
-    max_cube_height: float = 0.0              # highest cube z relative to init
-    min_place_dist: float = float("inf")      # closest cube-to-target distance
+    min_approach_dist: float = float("inf")  # closest gripper-to-cube distance
+    max_contact_count: int = 0  # peak simultaneous finger contacts (0/1/2)
+    max_cube_height: float = 0.0  # highest cube z relative to init
+    min_place_dist: float = float("inf")  # closest cube-to-target distance
     steps: int = 0
     success: bool = False
 
@@ -77,6 +78,7 @@ class EpisodeTrace:
 
 
 # ── Suggestion table ───────────────────────────────────────────────────
+
 
 def _get_approach_suggestion(action_space: str) -> dict[str, Any]:
     """Build the approach bottleneck suggestion, varying by action space.
@@ -192,10 +194,10 @@ def _update_traces(
     directly, so both this function and _update_traces_from_obs use
     the same data source.
     """
-    ee_pos = priv_obs["ee_pos"]              # (n_envs, 3)
+    ee_pos = priv_obs["ee_pos"]  # (n_envs, 3)
     cube_pos = priv_obs["object_pose"][:, :3]  # (n_envs, 3)
-    contacts = priv_obs["contact_flags"]     # (n_envs, 2)
-    target_pos = priv_obs["goal_position"]   # (n_envs, 3)
+    contacts = priv_obs["contact_flags"]  # (n_envs, 2)
+    target_pos = priv_obs["goal_position"]  # (n_envs, 3)
 
     approach_dist = torch.norm(ee_pos - cube_pos, dim=-1).cpu().numpy()
     contact_count = (contacts > 0.5).sum(dim=-1).cpu().numpy()
@@ -252,6 +254,7 @@ def _update_traces_from_obs(
 
 # ── Main entry point ───────────────────────────────────────────────────
 
+
 def diagnose_teacher(
     checkpoint_path: Path,
     n_envs: int = 1024,
@@ -293,7 +296,8 @@ def diagnose_teacher(
         logger.info(
             "Checkpoint was trained with action_space=%s (caller passed %s). "
             "Using the checkpoint's value.",
-            saved_space, action_space,
+            saved_space,
+            action_space,
         )
         action_space = saved_space
 
@@ -375,7 +379,11 @@ def diagnose_teacher(
             # envs, the next iteration's pre-step _update_traces call
             # will record their post-action state correctly.
             _update_traces_from_obs(
-                terminal_obs, batch_traces, env_done, dones, cube_init_z,
+                terminal_obs,
+                batch_traces,
+                env_done,
+                dones,
+                cube_init_z,
             )
 
             for i in range(n_envs):
@@ -401,8 +409,12 @@ def diagnose_teacher(
 
     # Classify each episode
     phase_counts: dict[str, int] = {
-        "success": 0, "approach": 0, "grasp": 0,
-        "lift": 0, "place": 0, "timeout": 0,
+        "success": 0,
+        "approach": 0,
+        "grasp": 0,
+        "lift": 0,
+        "place": 0,
+        "timeout": 0,
     }
     for t in traces:
         phase = t.classify(**threshold_overrides)
@@ -443,7 +455,10 @@ def diagnose_teacher(
 
     logger.info(
         "Diagnosis complete: %d/%d succeeded (%.1f%%), bottleneck=%s",
-        success_count, n_total, success_rate * 100, bottleneck,
+        success_count,
+        n_total,
+        success_rate * 100,
+        bottleneck,
     )
 
     return result

@@ -85,8 +85,7 @@ def test_060_resolves_to_the_validated_d6_image() -> None:
 
     assert entry["image_tag"] == "0.6.0-d6-extras-20260912"
     assert entry["image_digest"] == (
-        "sha256:8d513f8558253fc484808a1e53a63a5"
-        "da5a0c280ff973c4e590dd3e04b228643"
+        "sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643"
     )
     assert resolve_lerobot_image_tag("0.6.0") == entry["image_tag"]
     assert resolve_lerobot_image_tag("0.6.0") != "0.6.0"
@@ -97,9 +96,7 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(
         encoding="utf-8"
     )
-    smoke = (root / "npa/src/npa/smoke/test_lerobot_env.py").read_text(
-        encoding="utf-8"
-    )
+    smoke = (root / "npa/src/npa/smoke/test_lerobot_env.py").read_text(encoding="utf-8")
     cloud_init = (root / "npa/src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text(
         encoding="utf-8"
     )
@@ -109,9 +106,7 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     assert "DiffusionPolicy(config)" in smoke
     assert "NPA_LEROBOT_SMOKE_REQUIRE_CUDA" in smoke
     assert 'policy.to("cuda")' in smoke
-    assert (
-        "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in cloud_init
-    )
+    assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in cloud_init
 
 
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:

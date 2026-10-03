@@ -31,7 +31,9 @@ def _conditioning_uri(storage, tmp_path, root):
     frame = Image.new("RGB", (256, 256), "gray")
     ImageDraw.Draw(frame).rectangle((64, 64, 192, 192), fill="blue")
     frame.save(conditioning)
-    conditioning_uri = storage.upload_file(str(conditioning), root + "/conditioning.jpg")
+    conditioning_uri = storage.upload_file(
+        str(conditioning), root + "/conditioning.jpg"
+    )
     assert conditioning_uri.endswith(".jpg")
     encoded_conditioning_uri = conditioning_uri[:-4] + "%2Ejpg"
     return encoded_conditioning_uri
@@ -71,8 +73,10 @@ def _published_records(storage, tmp_path, root, request, result):
     assert records["request"] == request
     assert records["provenance"] == result
     assert records["response"]["outputs"] == result["structured_outputs"]
-    modes = {item["args"]["name"]: item["args"]["model_mode"]
-             for item in result["structured_outputs"]}
+    modes = {
+        item["args"]["name"]: item["args"]["model_mode"]
+        for item in result["structured_outputs"]
+    }
     assert modes == {"red-cube": "text2image", "blue-cube": "image2image"}
     return records
 
@@ -89,7 +93,6 @@ def _verify_sample_images(storage, tmp_path, root, result):
         with Image.open(path) as image:
             image.load()
             assert image.width > 0 and image.height > 0
-
 
 
 def _reject_incomplete_response(monkeypatch, storage, root, input_uri, records):

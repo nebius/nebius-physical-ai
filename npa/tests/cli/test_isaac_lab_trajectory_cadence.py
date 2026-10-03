@@ -1,4 +1,5 @@
 """Execute the generated rollout with a hermetic Isaac/RSL control environment."""
+
 from __future__ import annotations
 
 import contextlib
@@ -128,7 +129,11 @@ def _run_export(monkeypatch, tmp_path, *, step_dt):
     return env, raw
 
 
-@pytest.mark.parametrize("step_dt", [1 / 60, 1 / 100, 1 / 50], ids=["cartpole-60hz", "custom-100hz", "legacy-50hz"])
+@pytest.mark.parametrize(
+    "step_dt",
+    [1 / 60, 1 / 100, 1 / 50],
+    ids=["cartpole-60hz", "custom-100hz", "legacy-50hz"],
+)
 def test_export_metadata_and_converted_timeline_follow_control_cadence(
     monkeypatch, tmp_path, step_dt
 ):
@@ -170,8 +175,13 @@ def test_export_rejects_invalid_control_cadence(monkeypatch, tmp_path, step_dt):
     script = _build_train_trajectory_export_script(
         "Isaac-Cartpole-v0", 1, 1, str(checkpoint), str(raw), capture_rgb=False
     )
-    with pytest.raises(RuntimeError, match="control timestep must be finite and positive"):
-        exec(compile(script, "<generated-isaac-export>", "exec"), {"__name__": "__main__"})
+    with pytest.raises(
+        RuntimeError, match="control timestep must be finite and positive"
+    ):
+        exec(
+            compile(script, "<generated-isaac-export>", "exec"),
+            {"__name__": "__main__"},
+        )
     assert env.closed and app.closed
     assert env.index == 0
     assert not (raw / "meta.json").exists()

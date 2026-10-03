@@ -33,7 +33,9 @@ def local_ssh(tmp_path, monkeypatch):
     listener.settimeout(0.1)
     ssh_port = listener.getsockname()[1]
     known_hosts = tmp_path / "known_hosts"
-    known_hosts.write_text(f"[127.0.0.1]:{ssh_port} {host_key.get_name()} {host_key.get_base64()}\n")
+    known_hosts.write_text(
+        f"[127.0.0.1]:{ssh_port} {host_key.get_name()} {host_key.get_base64()}\n"
+    )
     known_hosts.chmod(0o600)
     monkeypatch.setenv("NPA_SSH_KNOWN_HOSTS", str(known_hosts))
     stop = threading.Event()
@@ -41,13 +43,21 @@ def local_ssh(tmp_path, monkeypatch):
 
     class Server(paramiko.ServerInterface):
         def check_auth_publickey(self, username, key):
-            return paramiko.AUTH_SUCCESSFUL if username == "operator" and key == client_key else paramiko.AUTH_FAILED
+            return (
+                paramiko.AUTH_SUCCESSFUL
+                if username == "operator" and key == client_key
+                else paramiko.AUTH_FAILED
+            )
 
         def get_allowed_auths(self, username):
             return "publickey"
 
         def check_channel_direct_tcpip_request(self, chanid, origin, destination):
-            return paramiko.OPEN_SUCCEEDED if destination == ("127.0.0.1", 5151) else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+            return (
+                paramiko.OPEN_SUCCEEDED
+                if destination == ("127.0.0.1", 5151)
+                else paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+            )
 
     def serve():
         while not stop.is_set():
@@ -63,11 +73,15 @@ def local_ssh(tmp_path, monkeypatch):
                 channel = transport.accept(0.1)
                 if channel is not None:
                     channel.recv(4096)
-                    channel.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nverified route")
+                    channel.sendall(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 14\r\nConnection: close\r\n\r\nverified route"
+                    )
                     try:
                         channel.close()
                     except EOFError:
-                        logging.getLogger(__name__).debug("SSH client closed after receiving the response")
+                        logging.getLogger(__name__).debug(
+                            "SSH client closed after receiving the response"
+                        )
 
     worker = threading.Thread(target=serve, daemon=True)
     worker.start()
@@ -83,8 +97,12 @@ def local_ssh(tmp_path, monkeypatch):
 
     monkeypatch.setattr(endpoint.subprocess, "Popen", local_popen)
     cfg = SimpleNamespace(
-        ssh=SimpleNamespace(host="127.0.0.1", user="operator", key_path=str(private_key)),
-        endpoint="http://legacy.example:5151", endpoint_strategy="public", service_port=5151,
+        ssh=SimpleNamespace(
+            host="127.0.0.1", user="operator", key_path=str(private_key)
+        ),
+        endpoint="http://legacy.example:5151",
+        endpoint_strategy="public",
+        service_port=5151,
         service_port_configured=True,
     )
     yield cfg, processes
@@ -95,7 +113,9 @@ def local_ssh(tmp_path, monkeypatch):
     listener.close()
 
 
-def test_authenticated_master_confirms_forward_and_removes_private_control_socket(local_ssh):
+def test_authenticated_master_confirms_forward_and_removes_private_control_socket(
+    local_ssh,
+):
     cfg, processes = local_ssh
     with endpoint.service_endpoint(cfg, require_ssh=True) as active:
         master = processes[0]
@@ -118,10 +138,14 @@ def test_occupied_port_cannot_satisfy_ssh_readiness(local_ssh, monkeypatch):
     with socket.socket() as occupied:
         occupied.bind(("127.0.0.1", 0))
         occupied.listen()
-        monkeypatch.setattr(endpoint, "_free_local_port", lambda: occupied.getsockname()[1])
+        monkeypatch.setattr(
+            endpoint, "_free_local_port", lambda: occupied.getsockname()[1]
+        )
         with pytest.raises(endpoint.EndpointError, match="could not bind"):
             with endpoint.service_endpoint(cfg, require_ssh=True):
-                pytest.fail("A busy local port must not be presented as a forwarded endpoint")
+                pytest.fail(
+                    "A busy local port must not be presented as a forwarded endpoint"
+                )
     master = processes[0]
     assert master.poll() is not None
     assert not Path(master._npa_ssh_control_directory.name).exists()

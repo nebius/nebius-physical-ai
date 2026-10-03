@@ -45,9 +45,7 @@ def test_registry_placeholder_resolution_is_local_check_ready() -> None:
 
 
 def test_image_check_classifies_operator_placeholders_as_seam() -> None:
-    assert unresolved_image_placeholders(
-        "<your-registry>/npa:<tag>"
-    )
+    assert unresolved_image_placeholders("<your-registry>/npa:<tag>")
     assert unresolved_image_placeholders("${POLICY_IMAGE}")
 
 

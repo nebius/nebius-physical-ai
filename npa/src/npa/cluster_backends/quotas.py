@@ -87,11 +87,28 @@ class QuotaShortfall:
     unit: str = ""
 
     def describe(self) -> str:
+        """Describe exact demand, remaining allowance, and the capacity deficit.
+
+        Args:
+            None.
+        Returns:
+            Operator-readable quantities, with binary units for byte quotas.
+        Raises:
+            None.
+        """
         available = self.limit if self.available is None else self.available
-        return (
+        description = (
             f"{self.name} [{self.region}]: needs {self.required}{f' {self.unit}' if self.unit else ''}, "
             f"{available} available from tenant limit {self.limit}"
         )
+        deficit = max(0, self.required - available)
+        if self.unit == "byte":
+            return (
+                f"{description} (requires {self.required / _GIB:,.2f} GiB; "
+                f"available {available / _GIB:,.2f} GiB; "
+                f"shortfall {deficit / _GIB:,.2f} GiB)"
+            )
+        return f"{description}; shortfall {deficit}"
 
 
 @dataclass(frozen=True)
@@ -628,14 +645,31 @@ def find_shortfalls(
 
 
 def shortfall_message(shortfalls: list[QuotaShortfall], tenant_id: str) -> str:
+    """Explain a blocked quota preflight and how to resolve its constraints.
+
+    Args:
+        shortfalls: Verified regional quota deficits.
+        tenant_id: Selected tenant identifier for private operator output.
+    Returns:
+        An actionable error retaining the exact quota quantities.
+    Raises:
+        None.
+    """
     lines = [
         f"tenant {tenant_id} quota is too low for this fleet:",
         *(f"  - {s.describe()}" for s in shortfalls),
         "Project-level allowances only subdivide the tenant allowance, so raising "
-        "these is a tenant (root) operation -- ask the Nebius account team. Deploy "
-        "with --no-preflight to attempt it anyway (node groups will stay "
-        "PROVISIONING while the compute API rejects each instance).",
+        "these is a tenant (root) operation -- ask the Nebius account team. "
+        "Increase the affected tenant allowance, release resources you own, or "
+        "reduce the declared resource requirements, then rerun the same deploy "
+        "with preflight enabled. Skipping preflight cannot resolve a provider "
+        "quota deficit.",
     ]
+    if any(s.name == "compute.disk.size.network-ssd" for s in shortfalls):
+        lines.append(
+            "Reserved GPUs still require worker boot-disk quota. Object-storage "
+            "capacity and preemptible GPU placement do not increase that quota."
+        )
     return "\n".join(lines)
 
 

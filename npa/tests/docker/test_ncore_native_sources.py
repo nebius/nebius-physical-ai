@@ -23,10 +23,20 @@ def test_every_retained_debian_binary_has_required_source_or_notice_delivery():
             # Covered libraries cannot silently lose their corresponding source.
             grants = set(source["license"].split(" AND "))
             assert grants <= {
-                "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT",
-                "Zlib", "bzip2-1.0.6", "Beerware", "LicenseRef-Public-Domain",
-                "LicenseRef-MIT-SIPB", "LicenseRef-TCP-Wrappers",
-                "curl", "OLDAP-2.8", "LicenseRef-Debian-Cyrus-SASL2-selected",
+                "Apache-2.0",
+                "BSD-2-Clause",
+                "BSD-3-Clause",
+                "ISC",
+                "MIT",
+                "Zlib",
+                "bzip2-1.0.6",
+                "Beerware",
+                "LicenseRef-Public-Domain",
+                "LicenseRef-MIT-SIPB",
+                "LicenseRef-TCP-Wrappers",
+                "curl",
+                "OLDAP-2.8",
+                "LicenseRef-Debian-Cyrus-SASL2-selected",
             }
             assert grants
             assert not source["artifacts"]

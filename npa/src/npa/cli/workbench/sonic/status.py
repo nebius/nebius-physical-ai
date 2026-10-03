@@ -16,15 +16,39 @@ from npa.cli.workbench.sonic.helpers import (
     output,
 )
 from npa.clients.config import list_projects
-from npa.clients.serverless import EndpointNotFoundError, ServerlessClient, ServerlessClientError
+from npa.clients.serverless import (
+    EndpointNotFoundError,
+    JobInfo,
+    ServerlessClient,
+    ServerlessClientError,
+)
+from npa.serverless_common import job_status_payload
+
+
+def _sonic_status_payload(client: ServerlessClient, info: JobInfo) -> dict[str, Any]:
+    """Diagnostics from the shared helper, but SONIC's raw provider status.
+
+    SONIC's `status` field has always been the raw provider status word
+    (e.g. "queued"); scripts already parse that value. The shared helper
+    reports the classified queue state instead, so restore the raw word for
+    a queued job while keeping the classification, `queued_for_seconds`, and
+    hint fields the helper already added.
+    """
+    payload = job_status_payload(client, info)
+    payload["status"] = info.status
+    return payload
 
 
 def _configured_status(project: str, name: str) -> dict[str, Any]:
     project_cfg = list_projects().get(project, {})
-    workbenches = project_cfg.get("workbenches", {}) if isinstance(project_cfg, dict) else {}
+    workbenches = (
+        project_cfg.get("workbenches", {}) if isinstance(project_cfg, dict) else {}
+    )
     wb_cfg = workbenches.get(name, {}) if isinstance(workbenches, dict) else {}
     if not isinstance(wb_cfg, dict) or not is_sonic_workbench(name, wb_cfg):
-        fail("--name must reference a configured SONIC workbench for vm/container/byovm status.")
+        fail(
+            "--name must reference a configured SONIC workbench for vm/container/byovm status."
+        )
     return {
         "project": project,
         "workbench": name,
@@ -43,9 +67,13 @@ def _configured_status(project: str, name: str) -> dict[str, Any]:
 
 
 def status_cmd(
-    runtime: WorkbenchRuntime = typer.Option(WorkbenchRuntime.vm, "--runtime", help="Runtime to inspect."),
+    runtime: WorkbenchRuntime = typer.Option(
+        WorkbenchRuntime.vm, "--runtime", help="Runtime to inspect."
+    ),
     name: str = typer.Option("", "--name", help="Workbench or serverless job name."),
-    project_id: str = typer.Option("", "--project-id", help="Nebius project ID for serverless job lookup."),
+    project_id: str = typer.Option(
+        "", "--project-id", help="Nebius project ID for serverless job lookup."
+    ),
     job_id: str = typer.Option("", "--job-id", help="Serverless Job ID or name."),
     output_format: OutputFormat = typer.Option(
         OutputFormat.text, "--output-format", "--output", help="Output format."
@@ -66,19 +94,15 @@ def status_cmd(
         try:
             info = client.get_job(lookup, project_id)
         except EndpointNotFoundError:
-            output({"status": "not_found", "job": lookup, "project_id": project_id}, output_format)
+            output(
+                {"status": "not_found", "job": lookup, "project_id": project_id},
+                output_format,
+            )
             return
         except ServerlessClientError as exc:
             fail(f"Serverless Job lookup failed: {exc}")
-        output(
-            {
-                "status": info.status,
-                "job_id": info.id,
-                "job_name": info.name,
-                "project_id": project_id,
-                "runtime": "serverless",
-            },
-            output_format,
-        )
+        payload = _sonic_status_payload(client, info)
+        payload.update({"project_id": project_id, "runtime": "serverless"})
+        output(payload, output_format)
         return
     output(_configured_status(ctx.project, target_name), output_format)

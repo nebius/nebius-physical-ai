@@ -112,7 +112,7 @@ suite invocation.
 Reproduce the focused package and workflow checks with:
 
 ```bash
-npa/.venv/bin/python -m pytest npa/tests/workflows/test_antioch_warehouse.py -q
+npa/.venv/bin/python -m pytest npa/tests/workflows/test_antioch_warehouse_workflow.py -q
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 npa workbench workflow validate-spec workflows/testing/antioch-warehouse.yaml
 npa workbench workflow plan-spec workflows/testing/antioch-warehouse.yaml --run-id preview

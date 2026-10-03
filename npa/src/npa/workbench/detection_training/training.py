@@ -14,7 +14,14 @@ from .dataloader import make_dataloader
 from .models import build_fasterrcnn_resnet50_fpn_v2
 from .labels import category_id_map, detector_label_map
 from .schemas import DEFAULT_NUM_CLASSES, TrainRequest, TrainResponse
-from .storage import ArtifactWriteReceipt, describe_artifact, storage_settings, uri_join, write_bytes_uri, write_json_uri
+from .storage import (
+    ArtifactWriteReceipt,
+    describe_artifact,
+    storage_settings,
+    uri_join,
+    write_bytes_uri,
+    write_json_uri,
+)
 
 StatusCallback = Callable[[str, int, dict[str, Any], str | None], None]
 
@@ -28,10 +35,17 @@ def compute_manifest_sha256(kind: str, payload: dict[str, Any]) -> str:
     digest = hashlib.sha256()
     if kind == "train" and payload.get("num_classes") is None:
         mapped = detector_label_map(payload.get("label_map"))
-        payload = {**payload, "num_classes": max(mapped.values()) + 1 if mapped else DEFAULT_NUM_CLASSES}
+        payload = {
+            **payload,
+            "num_classes": max(mapped.values()) + 1 if mapped else DEFAULT_NUM_CLASSES,
+        }
     digest.update(kind.encode("utf-8"))
     digest.update(b"\n")
-    digest.update(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+    digest.update(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode(
+            "utf-8"
+        )
+    )
     digest.update(b"\n")
     return digest.hexdigest()
 
@@ -73,7 +87,9 @@ def train_detector(
         try:
             import torch
         except ImportError as exc:
-            raise DetectionTrainingError("torch is required for detection training") from exc
+            raise DetectionTrainingError(
+                "torch is required for detection training"
+            ) from exc
 
         wandb_run = _start_wandb(request)
         try:
@@ -90,12 +106,18 @@ def train_detector(
             model = build_fasterrcnn_resnet50_fpn_v2(num_classes=num_classes)
             model.to(device)
             optimizer = torch.optim.SGD(
-                [param for param in model.parameters() if getattr(param, "requires_grad", True)],
+                [
+                    param
+                    for param in model.parameters()
+                    if getattr(param, "requires_grad", True)
+                ],
                 lr=request.learning_rate,
                 momentum=0.9,
                 weight_decay=0.0005,
             )
-            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.1)
+            scheduler = torch.optim.lr_scheduler.StepLR(
+                optimizer, step_size=3, gamma=0.1
+            )
             history: list[dict[str, Any]] = []
 
             for epoch in range(1, request.epochs + 1):
@@ -119,11 +141,16 @@ def train_detector(
                     num_classes=num_classes,
                     request=_checkpoint_request(request),
                 )
-                artifacts.append(describe_artifact(
-                    checkpoint_uri, role="checkpoint", media_type="application/x-pytorch",
-                    schema_version="npa.detection.checkpoint.v1", epoch=epoch,
-                    write_receipt=checkpoint_receipt,
-                ))
+                artifacts.append(
+                    describe_artifact(
+                        checkpoint_uri,
+                        role="checkpoint",
+                        media_type="application/x-pytorch",
+                        schema_version="npa.detection.checkpoint.v1",
+                        epoch=epoch,
+                        write_receipt=checkpoint_receipt,
+                    )
+                )
                 metrics_receipt = write_json_uri(
                     metrics_path,
                     {
@@ -134,14 +161,21 @@ def train_detector(
                     },
                 )
                 metrics_artifact = describe_artifact(
-                    metrics_path, role="training_metrics", media_type="application/json",
+                    metrics_path,
+                    role="training_metrics",
+                    media_type="application/json",
                     schema_version="npa.detection.training-metrics.v1",
                     write_receipt=metrics_receipt,
                 )
                 if artifact_callback:
                     artifact_callback([*artifacts, metrics_artifact])
                 if status_callback:
-                    status_callback("running" if epoch < request.epochs else "completed", epoch, snapshot, None)
+                    status_callback(
+                        "running" if epoch < request.epochs else "completed",
+                        epoch,
+                        snapshot,
+                        None,
+                    )
         finally:
             if wandb_run is not None:
                 wandb_run.finish()
@@ -172,7 +206,9 @@ def _start_wandb(request: TrainRequest) -> Any | None:
     try:
         import wandb
     except ImportError as exc:
-        raise DetectionTrainingError("wandb is required when wandb.enabled=true") from exc
+        raise DetectionTrainingError(
+            "wandb is required when wandb.enabled=true"
+        ) from exc
     return wandb.init(
         project=request.wandb.project or None,
         name=request.wandb.run_name or None,
@@ -189,8 +225,12 @@ def _training_config_public_dict(request: TrainRequest) -> dict[str, Any]:
         "checkpoint_s3": {
             "uri": request.checkpoint_s3.uri,
             "endpoint_url": request.checkpoint_s3.endpoint_url,
-            "aws_access_key_id": "set" if request.checkpoint_s3.aws_access_key_id else "",
-            "aws_secret_access_key": "set" if request.checkpoint_s3.aws_secret_access_key else "",
+            "aws_access_key_id": "set"
+            if request.checkpoint_s3.aws_access_key_id
+            else "",
+            "aws_secret_access_key": "set"
+            if request.checkpoint_s3.aws_secret_access_key
+            else "",
         },
     }
 
@@ -204,7 +244,9 @@ def resolve_num_classes(request: TrainRequest) -> int:
     return DEFAULT_NUM_CLASSES
 
 
-def train_one_epoch(model: Any, dataloader: Any, optimizer: Any | None, *, device: Any) -> float:
+def train_one_epoch(
+    model: Any, dataloader: Any, optimizer: Any | None, *, device: Any
+) -> float:
     """Run one training epoch and return the mean finite loss."""
     if hasattr(model, "train"):
         model.train()
@@ -259,7 +301,9 @@ def save_checkpoint(
         "label_map": request.get("label_map"),
         "detector_label_map": detector_label_map(request.get("label_map")),
         "model_state_dict": model.state_dict() if hasattr(model, "state_dict") else {},
-        "optimizer_state_dict": optimizer.state_dict() if optimizer is not None and hasattr(optimizer, "state_dict") else {},
+        "optimizer_state_dict": optimizer.state_dict()
+        if optimizer is not None and hasattr(optimizer, "state_dict")
+        else {},
     }
     buffer = io.BytesIO()
     torch.save(payload, buffer)

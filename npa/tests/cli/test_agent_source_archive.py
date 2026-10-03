@@ -23,10 +23,19 @@ def inventory(tmp_path, monkeypatch):
         path.write_text("tracked source\n")
 
     def run(command, **kwargs):
-        assert command[:6] == ["git", "--literal-pathspecs", "ls-files", "-z", "--cached", "--"]
+        assert command[:6] == [
+            "git",
+            "--literal-pathspecs",
+            "ls-files",
+            "-z",
+            "--cached",
+            "--",
+        ]
         assert kwargs["cwd"] == tmp_path
         assert kwargs["check"] and kwargs["capture_output"]
-        return SimpleNamespace(stdout=b"\0".join(os.fsencode(name) for name in names) + b"\0")
+        return SimpleNamespace(
+            stdout=b"\0".join(os.fsencode(name) for name in names) + b"\0"
+        )
 
     monkeypatch.setattr(subject.subprocess, "run", run)
     monkeypatch.setattr(subject.tempfile, "tempdir", str(tmp_path))
@@ -51,7 +60,9 @@ def test_only_indexed_working_tree_bytes_are_archived(inventory):
         archive_path.unlink()
 
 
-@pytest.mark.parametrize("kind", ["file_symlink", "directory_symlink", "fifo", "missing"])
+@pytest.mark.parametrize(
+    "kind", ["file_symlink", "directory_symlink", "fifo", "missing"]
+)
 def test_non_regular_or_missing_source_fails_without_archive(inventory, kind):
     root, names = inventory
     path = root / names[0]
@@ -68,7 +79,9 @@ def test_non_regular_or_missing_source_fails_without_archive(inventory, kind):
     assert not list(root.glob("*.tar.gz"))
 
 
-@pytest.mark.parametrize("name", ["/etc/passwd", "npa/../private", "npa//private", "private/file"])
+@pytest.mark.parametrize(
+    "name", ["/etc/passwd", "npa/../private", "npa//private", "private/file"]
+)
 def test_invalid_inventory_fails_before_archive(inventory, name):
     root, names = inventory
     names.append(name)
@@ -110,7 +123,10 @@ def test_legacy_distill_deploy_uses_the_same_inventory(tmp_path, mocker, monkeyp
     upload.assert_any_call(ssh, str(archive), "/tmp/private-fixture/npa-src.tgz")
     assert not archive.exists()
     commands = [call.args[0] for call in ssh.run_or_raise.call_args_list]
-    assert any("tar -xzf /tmp/private-fixture/npa-src.tgz -C /opt/npa/repo &&" in command for command in commands)
+    assert any(
+        "tar -xzf /tmp/private-fixture/npa-src.tgz -C /opt/npa/repo &&" in command
+        for command in commands
+    )
     assert "test -f /opt/npa/repo/npa/pyproject.toml" in commands
 
 
@@ -138,5 +154,7 @@ def test_deployed_inventory_can_be_forwarded_without_git(inventory, tmp_path):
 def test_uninventoried_directory_is_not_packaged(tmp_path):
     (tmp_path / "npa").mkdir()
     (tmp_path / "npa/.env").write_text("private runtime fixture\n")
-    with pytest.raises(ConfigError, match="Git source inventory or verified source bundle"):
+    with pytest.raises(
+        ConfigError, match="Git source inventory or verified source bundle"
+    ):
         subject.create_agent_source_archive(tmp_path)

@@ -106,7 +106,9 @@ def _private_root(root: Path) -> Path:
         or info.st_uid != os.getuid()
         or stat.S_IMODE(info.st_mode) & 0o077
     ):
-        raise NanoVideoError("Golden output root must be an owned directory with mode 0700")
+        raise NanoVideoError(
+            "Golden output root must be an owned directory with mode 0700"
+        )
     return root
 
 

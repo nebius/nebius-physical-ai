@@ -1,4 +1,5 @@
 """Verified execution bytes stay immutable even before a source audit refuses drift."""
+
 from __future__ import annotations
 
 import errno
@@ -13,7 +14,9 @@ CHECKOUT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(CHECKOUT / "npa/scripts"))
 from image_byte_scan import core as W  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not hasattr(os, "memfd_create"), reason="Linux execution boundary")
+pytestmark = pytest.mark.skipif(
+    not hasattr(os, "memfd_create"), reason="Linux execution boundary"
+)
 
 
 def private_file(path, body, *, executable=False):
@@ -29,18 +32,24 @@ def assert_closed(fd):
 
 
 @pytest.mark.parametrize("executable", [False, True])
-def test_sealed_copy_preserves_all_bytes_position_and_immutable_content(tmp_path, executable):
+def test_sealed_copy_preserves_all_bytes_position_and_immutable_content(
+    tmp_path, executable
+):
     body = bytes(range(256)) * 17
     spec = private_file(tmp_path / "source", body)
     with W.authorized_roots(tmp_path, CHECKOUT), W.bound_open(spec) as (_, source, _):
-        with W.sealed_execution_input(source, spec["sha256"], executable=executable) as sealed:
+        with W.sealed_execution_input(
+            source, spec["sha256"], executable=executable
+        ) as sealed:
             assert os.lseek(sealed, 0, os.SEEK_CUR) == 0
             assert os.read(sealed, len(body) + 1) == body
             assert W.fcntl.fcntl(sealed, 1034) == 15
             assert os.fstat(sealed).st_mode & 0o777 == (0o500 if executable else 0o400)
-            for mutation in (lambda: os.pwrite(sealed, b"changed", 0),
-                             lambda: os.ftruncate(sealed, 0),
-                             lambda: os.ftruncate(sealed, len(body) + 1)):
+            for mutation in (
+                lambda: os.pwrite(sealed, b"changed", 0),
+                lambda: os.ftruncate(sealed, 0),
+                lambda: os.ftruncate(sealed, len(body) + 1),
+            ):
                 with pytest.raises(OSError) as caught:
                     mutation()
                 assert caught.value.errno == errno.EPERM
@@ -48,7 +57,9 @@ def test_sealed_copy_preserves_all_bytes_position_and_immutable_content(tmp_path
         assert_closed(sealed)
 
 
-def test_sealed_copy_handles_short_successful_writes_without_truncation(tmp_path, monkeypatch):
+def test_sealed_copy_handles_short_successful_writes_without_truncation(
+    tmp_path, monkeypatch
+):
     spec = private_file(tmp_path / "source", bytes(range(256)) * 3)
     real_write = W.os.write
     calls = []
@@ -65,7 +76,9 @@ def test_sealed_copy_handles_short_successful_writes_without_truncation(tmp_path
     assert_closed(sealed)
 
 
-@pytest.mark.parametrize("failure", ["write", "chmod", "add_seals", "get_seals", "digest"])
+@pytest.mark.parametrize(
+    "failure", ["write", "chmod", "add_seals", "get_seals", "digest"]
+)
 def test_failed_copy_or_sealing_closes_its_descriptor(tmp_path, monkeypatch, failure):
     spec = private_file(tmp_path / "source", b"synthetic configuration")
     real_memfd, real_fcntl = W.os.memfd_create, W.fcntl.fcntl
@@ -119,7 +132,9 @@ def helper_fixture(tmp_path):
 
 
 @pytest.mark.parametrize("changed", ["helper", "config", "both"])
-def test_actual_exec_never_uses_mutated_source_before_audit_refusal(tmp_path, monkeypatch, changed):
+def test_actual_exec_never_uses_mutated_source_before_audit_refusal(
+    tmp_path, monkeypatch, changed
+):
     authorization, original_helper = helper_fixture(tmp_path)
     real_popen = W.subprocess.Popen
     observations, processes, passed = [], [], []
@@ -127,7 +142,9 @@ def test_actual_exec_never_uses_mutated_source_before_audit_refusal(tmp_path, mo
     def mutate_then_spawn(argv, **kwargs):
         passed.extend(kwargs["pass_fds"])
         if changed in ("helper", "both"):
-            Path(authorization["helper"]["path"]).write_bytes(original_helper.replace(b"'original'", b"'tampered'"))
+            Path(authorization["helper"]["path"]).write_bytes(
+                original_helper.replace(b"'original'", b"'tampered'")
+            )
         if changed in ("config", "both"):
             Path(authorization["config"]["path"]).write_bytes(b"tampered configuration")
         try:
@@ -140,21 +157,34 @@ def test_actual_exec_never_uses_mutated_source_before_audit_refusal(tmp_path, mo
             if changed in ("helper", "both"):
                 Path(authorization["helper"]["path"]).write_bytes(original_helper)
             if changed in ("config", "both"):
-                Path(authorization["config"]["path"]).write_bytes(b"original configuration")
+                Path(authorization["config"]["path"]).write_bytes(
+                    b"original configuration"
+                )
 
     monkeypatch.setattr(W.subprocess, "Popen", mutate_then_spawn)
     with W.authorized_roots(tmp_path, CHECKOUT):
         with pytest.raises(W.ScanError, match="input_changed_during_read"):
             W.Detector(authorization, tmp_path / "stderr")
-    assert observations == [{"helper": "original", "config": "original configuration", "write_blocked": True}]
+    assert observations == [
+        {
+            "helper": "original",
+            "config": "original configuration",
+            "write_blocked": True,
+        }
+    ]
     assert len(processes) == 1 and processes[0].returncode == 0
     assert processes[0].stdin.closed and processes[0].stdout.closed
     for fd in passed:
         assert_closed(fd)
-    assert W.sha(Path(authorization["helper"]["path"]).read_bytes()) == authorization["helper"]["sha256"]
+    assert (
+        W.sha(Path(authorization["helper"]["path"]).read_bytes())
+        == authorization["helper"]["sha256"]
+    )
 
 
-def test_successful_actual_child_retains_sealed_inputs_after_parent_copy_closes(tmp_path, monkeypatch):
+def test_successful_actual_child_retains_sealed_inputs_after_parent_copy_closes(
+    tmp_path, monkeypatch
+):
     authorization, _ = helper_fixture(tmp_path)
     passed, observed = [], []
     real_popen = W.subprocess.Popen
@@ -164,11 +194,21 @@ def test_successful_actual_child_retains_sealed_inputs_after_parent_copy_closes(
         return real_popen(argv, **kwargs)
 
     monkeypatch.setattr(W.subprocess, "Popen", spawn)
-    monkeypatch.setattr(W.Detector, "_validate_ready", lambda self, _: observed.append(json.loads(self.process.stdout.readline())))
+    monkeypatch.setattr(
+        W.Detector,
+        "_validate_ready",
+        lambda self, _: observed.append(json.loads(self.process.stdout.readline())),
+    )
     with W.authorized_roots(tmp_path, CHECKOUT):
         detector = W.Detector(authorization, tmp_path / "stderr")
         try:
-            assert observed == [{"helper": "original", "config": "original configuration", "write_blocked": True}]
+            assert observed == [
+                {
+                    "helper": "original",
+                    "config": "original configuration",
+                    "write_blocked": True,
+                }
+            ]
             for fd in passed:
                 assert_closed(fd)
             assert detector.process.wait() == 0

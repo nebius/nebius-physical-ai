@@ -18,10 +18,15 @@ from npa.workflows.sonic_fixture import (
 
 
 def test_split_s3_uri_round_trips() -> None:
-    assert split_s3_uri("s3://bucket/a/b/checkpoint.pt") == ("bucket", "a/b/checkpoint.pt")
+    assert split_s3_uri("s3://bucket/a/b/checkpoint.pt") == (
+        "bucket",
+        "a/b/checkpoint.pt",
+    )
 
 
-@pytest.mark.parametrize("uri", ["", "bucket/key", "https://example.invalid/x", "s3://bucket"])
+@pytest.mark.parametrize(
+    "uri", ["", "bucket/key", "https://example.invalid/x", "s3://bucket"]
+)
 def test_split_s3_uri_rejects_bad_input(uri: str) -> None:
     with pytest.raises(SonicFixtureError):
         split_s3_uri(uri)
@@ -69,7 +74,9 @@ def test_build_and_publish_writes_a_loadable_policy_checkpoint(tmp_path: Path) -
 
     from npa.workbench.sonic import _load_policy_from_checkpoint
 
-    payload = torch.load(result["checkpoint_path"], map_location="cpu", weights_only=True)
+    payload = torch.load(
+        result["checkpoint_path"], map_location="cpu", weights_only=True
+    )
     assert isinstance(payload["actor_model_state_dict"], dict)
     policy = _load_policy_from_checkpoint(result["checkpoint_path"], torch, {})
     assert isinstance(policy, torch.nn.Module)

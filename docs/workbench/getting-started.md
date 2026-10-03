@@ -10,7 +10,13 @@ and credentials in the existing NPA stores; no second credential file is needed.
 Direct [Token Factory](token-factory.md) inference uses the hosted API. Its local
 CLI/SDK calls do not require the Kubernetes setup below.
 
+> **Realistic total for a first workload: 1–3 hours.** The long poles are
+> cluster provisioning, the SkyPilot venv build, and GPU image pulls —
+> all one-time costs. Repeat runs skip most of this page.
+
 ## Choose the workload first
+
+> **Time:** ~5 min — reading; pick before provisioning anything.
 
 | Workload | Compute and setup |
 | --- | --- |
@@ -23,6 +29,8 @@ chosen workflow's resource profiles before provisioning: model memory, CPU,
 driver, and GPU requirements differ between tools.
 
 ## Install Workbench Tools
+
+> **Time:** ~5–15 min first run — longer if kubectl, Terraform, or Docker still need installing.
 
 In addition to the [base install](../install.md), Kubernetes runs need `kubectl`
 and the isolated SkyPilot runtime installed below. Managed infrastructure also
@@ -40,6 +48,8 @@ Gate: the CLI and required host tools work, and the intended project and storage
 appear in the configuration. The client-version check does not test cluster access.
 
 ## Confirm Platform Credentials
+
+> **Time:** ~5 min once the platform quickstart is done.
 
 Use the selected workload's access checks before provisioning GPUs. For the
 default Cosmos 3 generation workflow:
@@ -64,6 +74,8 @@ reconcile the bucket and endpoint in NPA configuration and environment overrides
 
 ## Plan the workflow
 
+> **Time:** ~2 min — runs locally, no cloud wait.
+
 The following example prepares Cosmos 3 text-to-image generation. Replace the
 placeholder values with your existing project alias and bucket. Keep private
 values outside committed YAML.
@@ -83,6 +95,8 @@ and output prefix. Pass the same `--var` values to image preflight and submit.
 These commands do not launch the model or verify live capacity.
 
 ## Verify Kubernetes Access
+
+> **Time:** ~5 min against an existing cluster; **10–20+ min** when provisioning a new managed cluster.
 
 For a new NPA-managed cluster, use the selected workload's sizing instructions
 before running the additive provisioning command. Preview the exact plan:
@@ -123,6 +137,8 @@ for deployed services.
 
 ## Bootstrap SkyPilot
 
+> **Time:** ~5–10 min first run — builds the isolated SkyPilot venv.
+
 ```bash
 npa skypilot bootstrap
 export NPA_SKYPILOT_BIN="$(npa skypilot status --bin-path)"
@@ -142,6 +158,8 @@ for their resource requests.
 
 ## Verify the Image Channel
 
+> **Time:** ~5–15 min — multi-GB GPU image pulls dominate; the probe pod itself is fast.
+
 ```bash
 npa workbench workflow preflight-images "$workflow_spec" \
   --project "$project_alias" --infra "k8s/$cluster_name" \
@@ -156,6 +174,8 @@ workflow `--registry` only for intentional custom images, with exact-host
 credentials if that registry is private.
 
 ## Run and inspect the result
+
+> **Time:** workload-dependent — the first real GPU run, not setup.
 
 Continue with the chosen workload's submission instructions:
 

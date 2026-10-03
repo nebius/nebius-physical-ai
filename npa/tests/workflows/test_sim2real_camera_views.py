@@ -66,15 +66,22 @@ def test_camera_rotation_preserves_world_optical_axis(version: str, name: str) -
     assert serialized == CAMERA_VIEW_SPECS[name].rotation
 
 
-@pytest.mark.parametrize("point", [(0.3, -0.4, -0.2), (0.65, -0.4, -0.2), (0.5, 0, 0.02), (0, 0, 0.7)])
+@pytest.mark.parametrize(
+    "point", [(0.3, -0.4, -0.2), (0.65, -0.4, -0.2), (0.5, 0, 0.02), (0, 0, 0.7)]
+)
 def test_primary_frames_front_edge_manipulation_and_observed_arm_height(point):
     spec = CAMERA_VIEW_SPECS["primary"]
     w, x, y, z = spec.rotation
-    forward = (1 - 2 * (y*y + z*z), 2 * (x*y + w*z), 2 * (x*z - w*y))
-    left = (2 * (x*y - w*z), 1 - 2 * (x*x + z*z), 2 * (y*z + w*x))
-    up = (2 * (x*z + w*y), 2 * (y*z - w*x), 1 - 2 * (x*x + y*y))
-    delta = tuple(value - origin for value, origin in zip(point, spec.position, strict=True))
-    camera = [sum(a*b for a, b in zip(delta, axis, strict=True)) for axis in (forward, left, up)]
+    forward = (1 - 2 * (y * y + z * z), 2 * (x * y + w * z), 2 * (x * z - w * y))
+    left = (2 * (x * y - w * z), 1 - 2 * (x * x + z * z), 2 * (y * z + w * x))
+    up = (2 * (x * z + w * y), 2 * (y * z - w * x), 1 - 2 * (x * x + y * y))
+    delta = tuple(
+        value - origin for value, origin in zip(point, spec.position, strict=True)
+    )
+    camera = [
+        sum(a * b for a, b in zip(delta, axis, strict=True))
+        for axis in (forward, left, up)
+    ]
     intrinsics = camera_metadata("primary", width=640, height=480)[0]["intrinsics_px"]
     horizontal = 320 - intrinsics["fx"] * camera[1] / camera[0]
     vertical = 240 - intrinsics["fy"] * camera[2] / camera[0]
@@ -161,7 +168,9 @@ def test_actual_isaac_sensor_boundary_converts_without_changing_artifact_poses(
     }
     module = ast.Module(body=[*imports, camera_key, sensor_loop], type_ignores=[])
     sensor_script = tmp_path / "actual_camera_boundary.py"
-    sensor_script.write_text(ast.unparse(ast.fix_missing_locations(module)), encoding="utf-8")
+    sensor_script.write_text(
+        ast.unparse(ast.fix_missing_locations(module)), encoding="utf-8"
+    )
     runpy.run_path(str(sensor_script), init_globals=namespace)
     assert len(vars(scene)) == 3
     for pose, sensor in zip(poses, vars(scene).values(), strict=True):

@@ -19,7 +19,9 @@ from npa.workflows import living_lab
 
 SPEC_PATH = (
     Path(__file__).resolve().parents[3]
-    / "workflows" / "testing" / "living-lab-nurec-fanout.yaml"
+    / "workflows"
+    / "testing"
+    / "living-lab-nurec-fanout.yaml"
 )
 
 

@@ -141,7 +141,9 @@ def create_app(
 ) -> FastAPI:
     """Create the RoboCasa FastAPI application."""
     resolved_auth_mode = auth_mode or os.environ.get("ROBOCASA_AUTH_MODE", "none")
-    resolved_token = token if token is not None else os.environ.get("ROBOCASA_TOKEN", "")
+    resolved_token = (
+        token if token is not None else os.environ.get("ROBOCASA_TOKEN", "")
+    )
     registry = runs if runs is not None else RUNS
     app = FastAPI(title="NPA RoboCasa")
     if resolved_auth_mode == "none":
@@ -150,11 +152,15 @@ def create_app(
             "without a token. Set ROBOCASA_AUTH_MODE=token and ROBOCASA_TOKEN."
         )
 
-    async def require_auth(request: Request, authorization: str = Header(default="")) -> None:
+    async def require_auth(
+        request: Request, authorization: str = Header(default="")
+    ) -> None:
         if resolved_auth_mode == "none":
             return
         if not resolved_token:
-            raise HTTPException(status_code=500, detail="ROBOCASA_TOKEN is not configured")
+            raise HTTPException(
+                status_code=500, detail="ROBOCASA_TOKEN is not configured"
+            )
         if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
 
@@ -172,7 +178,9 @@ def create_app(
         return await run_in_threadpool(system_info)
 
     @app.get("/runs", response_model=RoboCasaRunListResponse)
-    async def runs(request: Request, authorization: str = Header(default="")) -> RoboCasaRunListResponse:
+    async def runs(
+        request: Request, authorization: str = Header(default="")
+    ) -> RoboCasaRunListResponse:
         await require_auth(request, authorization)
         return RoboCasaRunListResponse(runs=registry.values())
 

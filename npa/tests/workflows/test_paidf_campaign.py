@@ -66,9 +66,7 @@ def _campaign() -> dict:
 def _antioch_input(campaign: dict | None = None) -> dict:
     return build_antioch_input(
         campaign or _campaign(),
-        campaign_manifest_uri=(
-            "s3://paidf-proof/campaigns/franka-001/campaign.json"
-        ),
+        campaign_manifest_uri=("s3://paidf-proof/campaigns/franka-001/campaign.json"),
         run_id="antioch-001",
         provider_config={
             "uri": "s3://paidf-proof/config/antioch-001.json",
@@ -126,7 +124,9 @@ def test_campaign_rejects_artifact_fingerprint_digest_divergence() -> None:
     campaign = _campaign()
     campaign["artifacts"]["generation"]["sha256"] = "e" * 64
 
-    with pytest.raises(PaidfContractError, match="does not match its stage fingerprint"):
+    with pytest.raises(
+        PaidfContractError, match="does not match its stage fingerprint"
+    ):
         validate_campaign(campaign)
 
 
@@ -205,9 +205,7 @@ def test_partner_builder_reports_unknown_reuse_as_a_contract_error() -> None:
 
 def test_receipt_and_result_account_for_stages_and_isolate_outputs() -> None:
     partner_input = _antioch_input()
-    stage_results = {
-        stage: "completed" for stage in partner_input["execute"]["stages"]
-    }
+    stage_results = {stage: "completed" for stage in partner_input["execute"]["stages"]}
     receipt = build_execution_receipt(
         partner_input,
         status="completed",
@@ -230,11 +228,14 @@ def test_receipt_and_result_account_for_stages_and_isolate_outputs() -> None:
 
     assert result["status"] == "completed"
     assert result["source_mutated"] is False
-    assert validate_partner_result(
-        result,
-        partner_input=partner_input,
-        execution_receipt=receipt,
-    ) == result
+    assert (
+        validate_partner_result(
+            result,
+            partner_input=partner_input,
+            execution_receipt=receipt,
+        )
+        == result
+    )
 
     escaped = copy.deepcopy(result)
     escaped["artifacts"]["result-manifest"]["uri"] = (
@@ -250,9 +251,7 @@ def test_receipt_and_result_account_for_stages_and_isolate_outputs() -> None:
 
 def test_completed_receipt_requires_every_stage_to_complete() -> None:
     partner_input = _antioch_input()
-    stage_results = {
-        stage: "completed" for stage in partner_input["execute"]["stages"]
-    }
+    stage_results = {stage: "completed" for stage in partner_input["execute"]["stages"]}
     stage_results["comparison"] = "skipped"
 
     with pytest.raises(PaidfContractError, match="every stage"):
@@ -267,7 +266,9 @@ def test_completed_receipt_requires_every_stage_to_complete() -> None:
 #    replacements) ──────────────────────────────────────────────────────────
 
 
-def _augment_manifest(tmp_path: Path, video_names: list[str]) -> tuple[Path, list[Path]]:
+def _augment_manifest(
+    tmp_path: Path, video_names: list[str]
+) -> tuple[Path, list[Path]]:
     """A canonical Cosmos 3 augment manifest over real local video files."""
 
     videos = []
@@ -394,13 +395,18 @@ class TestBuildCandidatesStage:
             str(fixtures["disposition"]),
             str(out),
         )
-        assert [c["candidate_id"] for c in manifest["candidates"]] == ["clip-a", "clip-b"]
+        assert [c["candidate_id"] for c in manifest["candidates"]] == [
+            "clip-a",
+            "clip-b",
+        ]
         first = manifest["candidates"][0]
         assert first["source_episode_id"] == "episode_000003"
         assert first["source_episode_index"] == 3
         assert first["camera_key"] == "observation.images.workspace"
         video_bytes = Path(str(first["variant"]["video_uri"])).read_bytes()
-        assert first["variant"]["output_sha256"] == hashlib.sha256(video_bytes).hexdigest()
+        assert (
+            first["variant"]["output_sha256"] == hashlib.sha256(video_bytes).hexdigest()
+        )
         assert first["evaluation"]["passed"] is True
         stored = json.loads(out.read_text())
         assert stored["schema"] == "npa.paidf.candidates.v1"
@@ -484,7 +490,9 @@ class TestBuildCandidatesStage:
             "passed": True,
         }
         fixtures["evaluator"].write_text(json.dumps(evaluator))
-        with pytest.raises(PaidfContractError, match="outside the committed augment set"):
+        with pytest.raises(
+            PaidfContractError, match="outside the committed augment set"
+        ):
             build_candidates_stage(
                 str(fixtures["augment"]),
                 str(fixtures["provenance"]),
@@ -513,7 +521,10 @@ class TestBuildDecisionsStage:
             str(tmp_path / "decisions.json"),
             decided_at=DECIDED_AT,
         )
-        assert decisions["provider"] == {"name": "cosmos-evaluator", "role": "evaluation"}
+        assert decisions["provider"] == {
+            "name": "cosmos-evaluator",
+            "role": "evaluation",
+        }
         assert all(d["decided_at"] == DECIDED_AT for d in decisions["decisions"])
 
     def test_requires_a_caller_supplied_decided_at(self, tmp_path: Path) -> None:
@@ -536,7 +547,9 @@ class TestBuildDecisionsStage:
     def test_uncertain_evidence_routes_to_review(self, tmp_path: Path) -> None:
         """A candidate whose evaluator evidence disappeared routes to review."""
 
-        fixtures = _builder_fixtures(tmp_path, video_names=["clip-a", "clip-b", "clip-c"])
+        fixtures = _builder_fixtures(
+            tmp_path, video_names=["clip-a", "clip-b", "clip-c"]
+        )
         build_candidates_stage(
             str(fixtures["augment"]),
             str(fixtures["provenance"]),
@@ -794,7 +807,9 @@ class TestAcceptedReplacementsStage:
         recon_ref = tmp_path / "keep-drop.json"
         recon_ref.write_text(json.dumps(reconciliation))
         candidates_ref = tmp_path / "candidates.json"
-        candidates_ref.write_text(json.dumps({"schema": "npa.paidf.candidates.v1", "candidates": []}))
+        candidates_ref.write_text(
+            json.dumps({"schema": "npa.paidf.candidates.v1", "candidates": []})
+        )
         with pytest.raises(PaidfContractError, match="unknown candidates"):
             accepted_replacements_stage(
                 candidates_manifest_ref=str(candidates_ref),
@@ -1270,7 +1285,9 @@ class TestBaseCampaignFreeze:
             },
         ],
     )
-    def test_rejects_missing_or_extra_stage_refs(self, stage_refs: dict[str, str]) -> None:
+    def test_rejects_missing_or_extra_stage_refs(
+        self, stage_refs: dict[str, str]
+    ) -> None:
         with pytest.raises(PaidfContractError, match="exactly the stages"):
             build_base_campaign(
                 "paidf-phase0",
@@ -1323,4 +1340,7 @@ class TestBaseCampaignFreeze:
         )
         assert campaign["artifacts"]["source"]["sha256"] == digest
         # The frozen artifact is consumed read-only: its bytes are unchanged.
-        assert hashlib.sha256((tmp_path / "source.json").read_bytes()).hexdigest() == digest
+        assert (
+            hashlib.sha256((tmp_path / "source.json").read_bytes()).hexdigest()
+            == digest
+        )

@@ -34,7 +34,11 @@ class LanceDetectionDataset:
         self.filter_sql = filter_sql
         self.label_map = label_map
         self.category_id_map = category_id_map
-        self.rows = list(rows) if rows is not None else _read_lance_rows(lance_uri, view, filter_sql, limit)
+        self.rows = (
+            list(rows)
+            if rows is not None
+            else _read_lance_rows(lance_uri, view, filter_sql, limit)
+        )
         if not self.rows:
             raise DetectionDatasetError("detection dataset is empty")
         _validate_rows(self.rows)
@@ -43,7 +47,11 @@ class LanceDetectionDataset:
         return len(self.rows)
 
     def __getitem__(self, index: int):
-        return _row_to_sample(self.rows[index], label_map=self.label_map, category_id_map=self.category_id_map)
+        return _row_to_sample(
+            self.rows[index],
+            label_map=self.label_map,
+            category_id_map=self.category_id_map,
+        )
 
 
 def collate_detection_batch(batch: list[tuple[Any, dict[str, Any]]]):
@@ -67,7 +75,9 @@ def make_dataloader(
     try:
         from torch.utils.data import DataLoader
     except ImportError as exc:  # pragma: no cover - container/runtime path.
-        raise DetectionDatasetError("torch is required for DataLoader construction") from exc
+        raise DetectionDatasetError(
+            "torch is required for DataLoader construction"
+        ) from exc
     dataset = LanceDetectionDataset(
         lance_uri=lance_uri,
         view=view,
@@ -76,7 +86,12 @@ def make_dataloader(
         label_map=label_map,
         category_id_map=category_id_map,
     )
-    return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=collate_detection_batch)
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        collate_fn=collate_detection_batch,
+    )
 
 
 def _read_lance_rows(
@@ -90,7 +105,9 @@ def _read_lance_rows(
     try:
         import lancedb
     except ImportError as exc:
-        raise DetectionDatasetError("lancedb is required to read detection views") from exc
+        raise DetectionDatasetError(
+            "lancedb is required to read detection views"
+        ) from exc
     try:
         db = lancedb.connect(lance_uri)
         table = db.open_table(view)
@@ -111,33 +128,59 @@ def _read_lance_rows(
 def _validate_rows(rows: list[dict[str, Any]]) -> None:
     missing = [name for name in REQUIRED_COLUMNS if name not in rows[0]]
     if missing:
-        raise DetectionDatasetError(f"detection view is missing required column(s): {', '.join(missing)}")
+        raise DetectionDatasetError(
+            f"detection view is missing required column(s): {', '.join(missing)}"
+        )
 
 
-def _row_to_sample(row: dict[str, Any], *, label_map: dict[str, int] | None = None, category_id_map: dict[int, int] | None = None):
+def _row_to_sample(
+    row: dict[str, Any],
+    *,
+    label_map: dict[str, int] | None = None,
+    category_id_map: dict[int, int] | None = None,
+):
     try:
         import numpy as np
         import torch
         from PIL import Image
     except ImportError as exc:
-        raise DetectionDatasetError("torch, numpy, and pillow are required to decode detection rows") from exc
+        raise DetectionDatasetError(
+            "torch, numpy, and pillow are required to decode detection rows"
+        ) from exc
 
     image = Image.open(BytesIO(_coerce_image_bytes(row["image_bytes"]))).convert("RGB")
     image_array = np.asarray(image, dtype="float32")
-    image_tensor = torch.as_tensor(image_array, dtype=torch.float32).permute(2, 0, 1) / 255.0
+    image_tensor = (
+        torch.as_tensor(image_array, dtype=torch.float32).permute(2, 0, 1) / 255.0
+    )
     if label_map is None:
         raw_boxes = row["ann_bboxes"]
         raw_categories = row["ann_categories"]
         if len(raw_boxes) != len(raw_categories):
             raise DetectionDatasetError("ann_bboxes and ann_categories length mismatch")
-        pairs = [(box, category) for raw_box, category in zip(raw_boxes, _coerce_categories(raw_categories), strict=True) if (box := _coerce_box_or_none(raw_box)) is not None]
+        pairs = [
+            (box, category)
+            for raw_box, category in zip(
+                raw_boxes, _coerce_categories(raw_categories), strict=True
+            )
+            if (box := _coerce_box_or_none(raw_box)) is not None
+        ]
         boxes = [box for box, _ in pairs]
         categories = [category for _, category in pairs]
     else:
-        boxes, categories = _coerce_mapped_targets(row["ann_bboxes"], row["ann_categories"], label_map=label_map, category_id_map=category_id_map)
+        boxes, categories = _coerce_mapped_targets(
+            row["ann_bboxes"],
+            row["ann_categories"],
+            label_map=label_map,
+            category_id_map=category_id_map,
+        )
     target = {
-        "boxes": torch.as_tensor(boxes, dtype=torch.float32) if boxes else torch.empty((0, 4), dtype=torch.float32),
-        "labels": torch.as_tensor(categories, dtype=torch.int64) if categories else torch.empty((0,), dtype=torch.int64),
+        "boxes": torch.as_tensor(boxes, dtype=torch.float32)
+        if boxes
+        else torch.empty((0, 4), dtype=torch.float32),
+        "labels": torch.as_tensor(categories, dtype=torch.int64)
+        if categories
+        else torch.empty((0,), dtype=torch.int64),
     }
     return image_tensor, target
 
@@ -185,17 +228,29 @@ def _coerce_mapped_targets(
     category_id_map: dict[int, int] | None = None,
 ) -> tuple[list[list[float]], list[int]]:
     raw_boxes = boxes_value.as_py() if hasattr(boxes_value, "as_py") else boxes_value
-    raw_categories = categories_value.as_py() if hasattr(categories_value, "as_py") else categories_value
+    raw_categories = (
+        categories_value.as_py()
+        if hasattr(categories_value, "as_py")
+        else categories_value
+    )
     boxes: list[list[float]] = []
     categories: list[int] = []
     unknown_labels: set[str] = set()
     unknown_count = 0
     if len(raw_categories or []) != len(raw_boxes or []):
         raise DetectionDatasetError("ann_bboxes and ann_categories length mismatch")
-    for raw_category, raw_box in zip(raw_categories or [], raw_boxes or [], strict=True):
+    for raw_category, raw_box in zip(
+        raw_categories or [], raw_boxes or [], strict=True
+    ):
         label_id = _mapped_label_id(raw_category, label_map, category_id_map)
         if label_id < 0:
-            unknown_labels.add(str(raw_category.as_py() if hasattr(raw_category, "as_py") else raw_category))
+            unknown_labels.add(
+                str(
+                    raw_category.as_py()
+                    if hasattr(raw_category, "as_py")
+                    else raw_category
+                )
+            )
             unknown_count += 1
             continue
         box = _coerce_box_or_none(raw_box)
@@ -212,11 +267,15 @@ def _coerce_mapped_targets(
     return boxes, categories
 
 
-def _mapped_label_id(value: Any, label_map: dict[str, int], category_id_map: dict[int, int] | None = None) -> int:
+def _mapped_label_id(
+    value: Any, label_map: dict[str, int], category_id_map: dict[int, int] | None = None
+) -> int:
     raw = value.as_py() if hasattr(value, "as_py") else value
     if isinstance(raw, str):
         return int(label_map.get(raw, -1))
-    return category_id_map.get(int(raw), -1) if category_id_map is not None else int(raw)
+    return (
+        category_id_map.get(int(raw), -1) if category_id_map is not None else int(raw)
+    )
 
 
 def _coerce_box_or_none(value: Any) -> list[float] | None:

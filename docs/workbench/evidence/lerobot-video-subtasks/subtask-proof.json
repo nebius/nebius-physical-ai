@@ -1,0 +1,61 @@
+{
+  "artifact_uri": "subtask-proof.json",
+  "catalog": [
+    {
+      "subtask": "approach",
+      "subtask_index": 0
+    },
+    {
+      "subtask": "complete",
+      "subtask_index": 1
+    },
+    {
+      "subtask": "grasp",
+      "subtask_index": 2
+    },
+    {
+      "subtask": "place",
+      "subtask_index": 3
+    },
+    {
+      "subtask": "ready",
+      "subtask_index": 4
+    },
+    {
+      "subtask": "release",
+      "subtask_index": 5
+    },
+    {
+      "subtask": "retract",
+      "subtask_index": 6
+    },
+    {
+      "subtask": "transfer",
+      "subtask_index": 7
+    }
+  ],
+  "expected_subtask": "grasp",
+  "proof": {
+    "episode_index": 0,
+    "frame_index": 160,
+    "row_sha256": "39f8630e78c837ae3df2e1a95d0a977c1df3dbfc2068c737977c48dc61aedce6",
+    "source_data_file": "data/chunk-000/file-000.parquet",
+    "source_parquet_sha256": "3eae523288e6a59f72bff1d0707dea38de88c88fc451af916600597393796aa1",
+    "subtask": "grasp",
+    "subtask_index": 2,
+    "timestamp": 5.333333492279053
+  },
+  "schema": "npa.lerobot.subtask_proof.v1",
+  "source_catalog_sha256": "536d68807e4ce740a0e7f340b5bf45010036f3920da85726249e28833d321c27",
+  "source_dataset_uri": "reviewed",
+  "source_format": "lerobot-v3.0",
+  "status": "verified",
+  "summary": {
+    "episode_count": 1,
+    "frame_count": 454,
+    "labeled_frame_count": 454,
+    "segment_count": 8,
+    "subtask_count": 8,
+    "unlabeled_frame_count": 0
+  }
+}
