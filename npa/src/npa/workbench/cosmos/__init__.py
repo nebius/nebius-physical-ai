@@ -49,10 +49,6 @@ autoscale = make_cli_wrapper(
     "npa.cli.cosmos", "autoscale_cmd", "Configure Cosmos serverless autoscaling."
 )
 serve = make_cli_wrapper("npa.cli.cosmos", "serve_cmd", "Serve a Cosmos model.")
-finetune = make_cli_wrapper("npa.cli.cosmos", "finetune_cmd", "Run Cosmos finetuning.")
-optimize = make_cli_wrapper(
-    "npa.cli.cosmos", "optimize_cmd", "Run Cosmos optimization."
-)
 infer = make_cli_wrapper("npa.cli.cosmos", "infer_cmd", "Run Cosmos inference.")
 status = make_cli_wrapper("npa.cli.cosmos", "status_cmd", "Show Cosmos status.")
 system_info = make_cli_wrapper(
@@ -79,8 +75,6 @@ __all__ = (
     "deploy",
     "autoscale",
     "serve",
-    "finetune",
-    "optimize",
     "infer",
     "status",
     "system_info",
