@@ -1,0 +1,309 @@
+{
+  "schema": "npa.sanitized-agency-sampling-observations/v1",
+  "execution_head": "c5e092d819061d4734d034362449c748e1c1d660",
+  "execution_tree": "c62422c89868108d3c8c81da722aba5e49016052",
+  "original_quality_execution": "bc775cbf1ac789384e8be912d6f6598175d6d89c",
+  "purpose": "Affected #612 sampling/evidence v2 integration, not favorable model-quality rerun",
+  "sources": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "77505e63295a3b40d8e0b4a6e836032365406e5cb5dcb38d7b383a1c4a212d2f"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/agency.py",
+      "sha256": "b2079647287db67ace094351d141677fea7562739735cc36e430ea4708deaa6a"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    {
+      "path": "npa/tests/e2e/test_vlm_agency_calibration_live.py",
+      "sha256": "be43d8e2a452769a2501b985b31ecea90b128fc865ca8def1f04aaaaf89c8bfb"
+    }
+  ],
+  "fixture_sha256": "5a6c421be6ef28ca74d4eda4a836a9f940d5ee67ce0731f452775f157791ab68",
+  "protocol": {
+    "dataset": "isaac-agency",
+    "threshold": 0.5,
+    "frame_selection": "sequence",
+    "max_frames": 6,
+    "rubric": "Score whether the rollout completes the requested physical task. Use 1.0 only for clear task completion, 0.0 for clear failure, and intermediate values for partial progress. Penalize unsafe, incomplete, or ambiguous outcomes.",
+    "expected_labels": {
+      "cube-elevated-positive": true,
+      "robot-grasp-lift-negative": false
+    },
+    "scope": "Stylized paired controls; no physical or safety qualification."
+  },
+  "protocol_sha256": "78db15190109037e967966777db97d37291707849bbb83ef4a736d00ba51d0af",
+  "model": "MiniMaxAI/MiniMax-M3",
+  "selection_basis": "unchanged public default, not observed answer quality",
+  "raw_report_sha256": "c5bf0a2f73c5bd34142b08e5937db93128850ffcb03f5a43f3c625026e46c7a3",
+  "actual_provider_responses": 2,
+  "live_tests_passed": 1,
+  "live_skips": 0,
+  "metrics": {
+    "total": 2,
+    "correct": 1,
+    "agreement": 0.5,
+    "accuracy": 0.5,
+    "precision": null,
+    "recall": 0.0,
+    "f1": null,
+    "true_positives": 0,
+    "true_negatives": 1,
+    "false_positives": 0,
+    "false_negatives": 1,
+    "specificity": 1.0,
+    "balanced_accuracy": 0.5
+  },
+  "cases": [
+    {
+      "item_id": "cube-elevated-positive",
+      "task": "The red cube becomes elevated above the ground surface.",
+      "expected_label": true,
+      "predicted_label": false,
+      "score": 0.0,
+      "status": "needs_iteration",
+      "provider_success": false,
+      "provider_success_matches_score_gate": true,
+      "frame_count": 6,
+      "evidence": {
+        "schema_version": "npa_vlm_eval_evidence_v2",
+        "returned_model": "MiniMaxAI/MiniMax-M3",
+        "finish_reason": "stop",
+        "status_code": 200,
+        "raw_response_sha256": "04fb2c786bd5b82bb107979814be4a23d8c0259fd68a3a57f27955a76702b331",
+        "request_manifest_sha256": "03690bc6e4b51a22dd621b337b3a0b42742f6d5dd9ef42fe8f6f7637fd9951ba",
+        "prompt_sha256": "15c9745b1add39f8924fb6463400afe1251bf3aca869ec4792e7d14585755dcc",
+        "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+        "sampling": {
+          "strategy": "sequence",
+          "max_frames": 6,
+          "selected_count": 6,
+          "source_kind": "image-sequence",
+          "source_count": 6,
+          "selected_indices": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "selected_timestamps_s": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "coverage_complete": true,
+          "timestamps_complete": null
+        },
+        "frames": [
+          {
+            "label": "frame_00.png",
+            "media_type": "image/png",
+            "sha256": "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+            "byte_count": 2607,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 0,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_01.png",
+            "media_type": "image/png",
+            "sha256": "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+            "byte_count": 2733,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 1,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_02.png",
+            "media_type": "image/png",
+            "sha256": "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+            "byte_count": 2753,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 2,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_03.png",
+            "media_type": "image/png",
+            "sha256": "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+            "byte_count": 2851,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 3,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_04.png",
+            "media_type": "image/png",
+            "sha256": "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+            "byte_count": 2823,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 4,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_05.png",
+            "media_type": "image/png",
+            "sha256": "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3",
+            "byte_count": 2769,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 5,
+            "source_count": 6,
+            "source_timestamp_s": null
+          }
+        ]
+      }
+    },
+    {
+      "item_id": "robot-grasp-lift-negative",
+      "task": "The robot arm grasps the red cube and lifts it off the ground.",
+      "expected_label": false,
+      "predicted_label": false,
+      "score": 0.0,
+      "status": "needs_iteration",
+      "provider_success": false,
+      "provider_success_matches_score_gate": true,
+      "frame_count": 6,
+      "evidence": {
+        "schema_version": "npa_vlm_eval_evidence_v2",
+        "returned_model": "MiniMaxAI/MiniMax-M3",
+        "finish_reason": "stop",
+        "status_code": 200,
+        "raw_response_sha256": "fb1226560eabfa241b64440ed94a5d965741e083f99d741aab46c01b2d7ea6d6",
+        "request_manifest_sha256": "63a6c1a679c0a0722fc97a4c938f3a4cf8934e5b8a3150bf38f3d8b3f6d42de9",
+        "prompt_sha256": "b3520e728b27aa4ca3dd05584695ad6ebe9da727b98aee053e68ece71d422016",
+        "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+        "sampling": {
+          "strategy": "sequence",
+          "max_frames": 6,
+          "selected_count": 6,
+          "source_kind": "image-sequence",
+          "source_count": 6,
+          "selected_indices": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "selected_timestamps_s": [
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ],
+          "coverage_complete": true,
+          "timestamps_complete": null
+        },
+        "frames": [
+          {
+            "label": "frame_00.png",
+            "media_type": "image/png",
+            "sha256": "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+            "byte_count": 2607,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 0,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_01.png",
+            "media_type": "image/png",
+            "sha256": "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+            "byte_count": 2733,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 1,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_02.png",
+            "media_type": "image/png",
+            "sha256": "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+            "byte_count": 2753,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 2,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_03.png",
+            "media_type": "image/png",
+            "sha256": "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+            "byte_count": 2851,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 3,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_04.png",
+            "media_type": "image/png",
+            "sha256": "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+            "byte_count": 2823,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 4,
+            "source_count": 6,
+            "source_timestamp_s": null
+          },
+          {
+            "label": "frame_05.png",
+            "media_type": "image/png",
+            "sha256": "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3",
+            "byte_count": 2769,
+            "width": 320,
+            "height": 240,
+            "source_kind": "image-sequence",
+            "source_index": 5,
+            "source_count": 6,
+            "source_timestamp_s": null
+          }
+        ]
+      }
+    }
+  ],
+  "limitations": [
+    "Affected sampling interface execution, not a favorable-quality rerun",
+    "False elevation rejection and stationary-cube rationale errors retained",
+    "Original three-model panel remains unchanged with its original execution SHA",
+    "No physical correctness, model quality, policy or safety qualification",
+    "Sanitized derived record; raw provider identities and operational data are not published"
+  ]
+}

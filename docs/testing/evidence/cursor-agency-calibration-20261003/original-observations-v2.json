@@ -1,0 +1,575 @@
+{
+  "schema": "npa.sanitized-agency-observations/v1",
+  "execution_head": "bc775cbf1ac789384e8be912d6f6598175d6d89c",
+  "execution_tree": "764e2a62cb26fc0d8d89dde203dad473f65f87e2",
+  "source_hashes": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "566f084b5dce5d827571fde9401176783bdca07260046f75e53d2d242b2c6442"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/agency.py",
+      "sha256": "417467b84c39190765833205c33fdb3d01191024c988313709c2c31362cf8d5b"
+    },
+    {
+      "path": "npa/tests/e2e/test_vlm_agency_calibration_live.py",
+      "sha256": "2d223c152e0c9df58c0e64c906cf9e192ac8f287d095b62bdf3d86b04e94aa47"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    }
+  ],
+  "fixture_sha256": "5a6c421be6ef28ca74d4eda4a836a9f940d5ee67ce0731f452775f157791ab68",
+  "protocol": {
+    "models": [
+      "MiniMaxAI/MiniMax-M3",
+      "google/gemma-3-27b-it",
+      "moonshotai/Kimi-K3"
+    ],
+    "thresholds": [
+      0.5
+    ],
+    "frame_selection": "sequence",
+    "max_frames": 6,
+    "rubric": "Score whether the rollout completes the requested physical task. Use 1.0 only for clear task completion, 0.0 for clear failure, and intermediate values for partial progress. Penalize unsafe, incomplete, or ambiguous outcomes.",
+    "dataset": "isaac-agency"
+  },
+  "original_provider_responses": 6,
+  "live_tests_passed": 3,
+  "live_skips": 0,
+  "structural_measurements": {
+    "signed_endpoint_rise_px": 60,
+    "minimum_horizontal_gap_px": 50,
+    "horizontal_gaps_px": [
+      50,
+      66,
+      82,
+      86,
+      90,
+      94
+    ],
+    "object_bottoms_px": [
+      195,
+      195,
+      190,
+      175,
+      155,
+      135
+    ]
+  },
+  "observations": [
+    {
+      "model": "MiniMaxAI/MiniMax-M3",
+      "protocol_sha256": "78db15190109037e967966777db97d37291707849bbb83ef4a736d00ba51d0af",
+      "raw_report_sha256": "06406e7aa22585769816e9e9e4292585604ccaab415896fe0856a129b264920d",
+      "metrics": {
+        "total": 2,
+        "correct": 2,
+        "agreement": 1.0,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "specificity": 1.0,
+        "balanced_accuracy": 1.0,
+        "f1": 1.0,
+        "true_positives": 1,
+        "true_negatives": 1,
+        "false_positives": 0,
+        "false_negatives": 0
+      },
+      "cases": [
+        {
+          "item_id": "cube-elevated-positive",
+          "task": "The red cube becomes elevated above the ground surface.",
+          "expected_label": true,
+          "predicted_label": true,
+          "score": 1.0,
+          "status": "passed",
+          "provider_success": true,
+          "provider_success_matches_score_gate": true,
+          "frame_count": 6,
+          "evidence": {
+            "schema_version": "npa_vlm_eval_evidence_v1",
+            "requested_model": "MiniMaxAI/MiniMax-M3",
+            "returned_model": "MiniMaxAI/MiniMax-M3",
+            "status_code": 200,
+            "finish_reason": "stop",
+            "raw_response_sha256": "797f21ed4ad341a7a39f69668ab4b6ad8f0b0e4f28bfb3450a6b4abdb1f9b5c9",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "request_manifest_sha256": "904f5e9d06c03b1717cc1906276b14e3e5f470b3ed1f316d12812f094306fe03",
+            "prompt_sha256": "15c9745b1add39f8924fb6463400afe1251bf3aca869ec4792e7d14585755dcc",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "frames": [
+              {
+                "label": "frame_00.png",
+                "media_type": "image/png",
+                "sha256": "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+                "byte_count": 2607,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_01.png",
+                "media_type": "image/png",
+                "sha256": "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+                "byte_count": 2733,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_02.png",
+                "media_type": "image/png",
+                "sha256": "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+                "byte_count": 2753,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_03.png",
+                "media_type": "image/png",
+                "sha256": "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+                "byte_count": 2851,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_04.png",
+                "media_type": "image/png",
+                "sha256": "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+                "byte_count": 2823,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_05.png",
+                "media_type": "image/png",
+                "sha256": "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3",
+                "byte_count": 2769,
+                "width": 320,
+                "height": 240
+              }
+            ]
+          }
+        },
+        {
+          "item_id": "robot-grasp-lift-negative",
+          "task": "The robot arm grasps the red cube and lifts it off the ground.",
+          "expected_label": false,
+          "predicted_label": false,
+          "score": 0.0,
+          "status": "needs_iteration",
+          "provider_success": false,
+          "provider_success_matches_score_gate": true,
+          "frame_count": 6,
+          "evidence": {
+            "schema_version": "npa_vlm_eval_evidence_v1",
+            "requested_model": "MiniMaxAI/MiniMax-M3",
+            "returned_model": "MiniMaxAI/MiniMax-M3",
+            "status_code": 200,
+            "finish_reason": "stop",
+            "raw_response_sha256": "437c1a811aba9056a3769d1361bbee5245b2d6b1e21dd1289bf6a6f437cb3206",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "request_manifest_sha256": "2b092228075a515ce491d56ac57bdadcc2fa20a7e2cada96e1909a6f0f02f598",
+            "prompt_sha256": "b3520e728b27aa4ca3dd05584695ad6ebe9da727b98aee053e68ece71d422016",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "frames": [
+              {
+                "label": "frame_00.png",
+                "media_type": "image/png",
+                "sha256": "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+                "byte_count": 2607,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_01.png",
+                "media_type": "image/png",
+                "sha256": "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+                "byte_count": 2733,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_02.png",
+                "media_type": "image/png",
+                "sha256": "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+                "byte_count": 2753,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_03.png",
+                "media_type": "image/png",
+                "sha256": "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+                "byte_count": 2851,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_04.png",
+                "media_type": "image/png",
+                "sha256": "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+                "byte_count": 2823,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_05.png",
+                "media_type": "image/png",
+                "sha256": "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3",
+                "byte_count": 2769,
+                "width": 320,
+                "height": 240
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "model": "moonshotai/Kimi-K3",
+      "protocol_sha256": "78db15190109037e967966777db97d37291707849bbb83ef4a736d00ba51d0af",
+      "raw_report_sha256": "2c48e5a501dbf5721ce61dbe7bceeb64ba1db707461927db6e691b712aea2e9f",
+      "metrics": {
+        "total": 2,
+        "correct": 1,
+        "agreement": 0.5,
+        "accuracy": 0.5,
+        "precision": 0.5,
+        "recall": 1.0,
+        "specificity": 0.0,
+        "balanced_accuracy": 0.5,
+        "f1": 0.6667,
+        "true_positives": 1,
+        "true_negatives": 0,
+        "false_positives": 1,
+        "false_negatives": 0
+      },
+      "cases": [
+        {
+          "item_id": "cube-elevated-positive",
+          "task": "The red cube becomes elevated above the ground surface.",
+          "expected_label": true,
+          "predicted_label": true,
+          "score": 0.9,
+          "status": "passed",
+          "provider_success": true,
+          "provider_success_matches_score_gate": true,
+          "frame_count": 6,
+          "evidence": {
+            "schema_version": "npa_vlm_eval_evidence_v1",
+            "requested_model": "moonshotai/Kimi-K3",
+            "returned_model": "moonshotai/Kimi-K3",
+            "status_code": 200,
+            "finish_reason": "stop",
+            "raw_response_sha256": "5d254d781dbccbee8f2e7949dc114609769a7b4835931a320f54cfd044291a8b",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "request_manifest_sha256": "532d567e2dbfb146f51e34429dfcfb153656cde2bf9e40cad200a1eaa1cc08e3",
+            "prompt_sha256": "15c9745b1add39f8924fb6463400afe1251bf3aca869ec4792e7d14585755dcc",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "frames": [
+              {
+                "label": "frame_00.png",
+                "media_type": "image/png",
+                "sha256": "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+                "byte_count": 2607,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_01.png",
+                "media_type": "image/png",
+                "sha256": "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+                "byte_count": 2733,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_02.png",
+                "media_type": "image/png",
+                "sha256": "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+                "byte_count": 2753,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_03.png",
+                "media_type": "image/png",
+                "sha256": "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+                "byte_count": 2851,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_04.png",
+                "media_type": "image/png",
+                "sha256": "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+                "byte_count": 2823,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_05.png",
+                "media_type": "image/png",
+                "sha256": "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3",
+                "byte_count": 2769,
+                "width": 320,
+                "height": 240
+              }
+            ]
+          }
+        },
+        {
+          "item_id": "robot-grasp-lift-negative",
+          "task": "The robot arm grasps the red cube and lifts it off the ground.",
+          "expected_label": false,
+          "predicted_label": true,
+          "score": 0.7,
+          "status": "passed",
+          "provider_success": true,
+          "provider_success_matches_score_gate": true,
+          "frame_count": 6,
+          "evidence": {
+            "schema_version": "npa_vlm_eval_evidence_v1",
+            "requested_model": "moonshotai/Kimi-K3",
+            "returned_model": "moonshotai/Kimi-K3",
+            "status_code": 200,
+            "finish_reason": "stop",
+            "raw_response_sha256": "3df9f86dd8b0c7d4d88172b345a032b230f313e12076a31ca6b11f9bfc7e6831",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "request_manifest_sha256": "26dbc292785356741d577126df907851cc1c10faf57b1aadb9b60e47032da58a",
+            "prompt_sha256": "b3520e728b27aa4ca3dd05584695ad6ebe9da727b98aee053e68ece71d422016",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "frames": [
+              {
+                "label": "frame_00.png",
+                "media_type": "image/png",
+                "sha256": "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+                "byte_count": 2607,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_01.png",
+                "media_type": "image/png",
+                "sha256": "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+                "byte_count": 2733,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_02.png",
+                "media_type": "image/png",
+                "sha256": "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+                "byte_count": 2753,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_03.png",
+                "media_type": "image/png",
+                "sha256": "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+                "byte_count": 2851,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_04.png",
+                "media_type": "image/png",
+                "sha256": "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+                "byte_count": 2823,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_05.png",
+                "media_type": "image/png",
+                "sha256": "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3",
+                "byte_count": 2769,
+                "width": 320,
+                "height": 240
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "model": "google/gemma-3-27b-it",
+      "protocol_sha256": "78db15190109037e967966777db97d37291707849bbb83ef4a736d00ba51d0af",
+      "raw_report_sha256": "f6c962b5bc15dd899d4a53c5232e05d8e651fb57d38e23f1534338bc82b30e10",
+      "metrics": {
+        "total": 2,
+        "correct": 2,
+        "agreement": 1.0,
+        "accuracy": 1.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "specificity": 1.0,
+        "balanced_accuracy": 1.0,
+        "f1": 1.0,
+        "true_positives": 1,
+        "true_negatives": 1,
+        "false_positives": 0,
+        "false_negatives": 0
+      },
+      "cases": [
+        {
+          "item_id": "cube-elevated-positive",
+          "task": "The red cube becomes elevated above the ground surface.",
+          "expected_label": true,
+          "predicted_label": true,
+          "score": 1.0,
+          "status": "passed",
+          "provider_success": true,
+          "provider_success_matches_score_gate": true,
+          "frame_count": 6,
+          "evidence": {
+            "schema_version": "npa_vlm_eval_evidence_v1",
+            "requested_model": "google/gemma-3-27b-it",
+            "returned_model": "google/gemma-3-27b-it",
+            "status_code": 200,
+            "finish_reason": "stop",
+            "raw_response_sha256": "3bbe73d3134120a2a056840cae9e0f7a29b5586b955430f283ac58413f7e102f",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "request_manifest_sha256": "04352735d66772410a9582f515a012b2df24a7a895b7a87d30752501ffe7ae8a",
+            "prompt_sha256": "15c9745b1add39f8924fb6463400afe1251bf3aca869ec4792e7d14585755dcc",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "frames": [
+              {
+                "label": "frame_00.png",
+                "media_type": "image/png",
+                "sha256": "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+                "byte_count": 2607,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_01.png",
+                "media_type": "image/png",
+                "sha256": "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+                "byte_count": 2733,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_02.png",
+                "media_type": "image/png",
+                "sha256": "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+                "byte_count": 2753,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_03.png",
+                "media_type": "image/png",
+                "sha256": "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+                "byte_count": 2851,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_04.png",
+                "media_type": "image/png",
+                "sha256": "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+                "byte_count": 2823,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_05.png",
+                "media_type": "image/png",
+                "sha256": "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3",
+                "byte_count": 2769,
+                "width": 320,
+                "height": 240
+              }
+            ]
+          }
+        },
+        {
+          "item_id": "robot-grasp-lift-negative",
+          "task": "The robot arm grasps the red cube and lifts it off the ground.",
+          "expected_label": false,
+          "predicted_label": false,
+          "score": 0.0,
+          "status": "needs_iteration",
+          "provider_success": false,
+          "provider_success_matches_score_gate": true,
+          "frame_count": 6,
+          "evidence": {
+            "schema_version": "npa_vlm_eval_evidence_v1",
+            "requested_model": "google/gemma-3-27b-it",
+            "returned_model": "google/gemma-3-27b-it",
+            "status_code": 200,
+            "finish_reason": "stop",
+            "raw_response_sha256": "f76ece46b06cd16012e4b458715a81e07f0028eea5981e1ddd558562ea4b8d31",
+            "parser_version": "npa_vlm_eval_hosted_json_v1",
+            "request_manifest_sha256": "1c838f962d9437586467fa66bce1768267768c8dda0ee5bfdf0c75b00bb4ba7e",
+            "prompt_sha256": "b3520e728b27aa4ca3dd05584695ad6ebe9da727b98aee053e68ece71d422016",
+            "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+            "frames": [
+              {
+                "label": "frame_00.png",
+                "media_type": "image/png",
+                "sha256": "a11e411b701ecace52c4d324a5603435bf6577633be91fcc2f776e16e45a58af",
+                "byte_count": 2607,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_01.png",
+                "media_type": "image/png",
+                "sha256": "b687156a9d606c5410028c9f777387dd69cba0a25497bb03172c872f166fd6d8",
+                "byte_count": 2733,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_02.png",
+                "media_type": "image/png",
+                "sha256": "48b41db30e7b272617db230aa1594e4d9c2c16ef826651acfcfb132c25e97df9",
+                "byte_count": 2753,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_03.png",
+                "media_type": "image/png",
+                "sha256": "195af3fa11382ae0ce9f519d783cc3f36d7fdbfcf5ff49f4c0235a14793e0d20",
+                "byte_count": 2851,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_04.png",
+                "media_type": "image/png",
+                "sha256": "02fa3ac1b6dcf65f160e67d64073c0f913cf3b30ab55bd10cf0f696185d5bfcc",
+                "byte_count": 2823,
+                "width": 320,
+                "height": 240
+              },
+              {
+                "label": "frame_05.png",
+                "media_type": "image/png",
+                "sha256": "bb1fa58e881d0083ffd35bf9461cc16dfdd9b119758f076db18597344de859a3",
+                "byte_count": 2769,
+                "width": 320,
+                "height": 240
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "limitations": [
+    "Sanitized derived record, not exact raw provider bytes or provider attestation",
+    "Two stylized claims on one six-frame sequence, not calibrated model quality or safety",
+    "Kimi false agency acceptance preserved; correct numeric labels do not validate rationales",
+    "MiniMax falsely calls the retracting arm stationary; Gemma invents grasp/white-cube interaction",
+    "No rendered Isaac workload, GPU workload, robot policy or physical-correctness acceptance",
+    "Original execution SHA is never relabeled as a later candidate execution"
+  ]
+}
