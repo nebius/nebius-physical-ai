@@ -48,6 +48,13 @@ _S3_ENV_FALLBACKS: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 def pytest_configure(config: pytest.Config) -> None:
     """Map standard AWS/S3 env vars onto NPA_E2E_S3_* so tool e2e suites run on real infra."""
+    if config.getoption("--require-token-factory-live") and not os.environ.get(
+        "NPA_INTEGRATION_E2E"
+    ):
+        raise pytest.UsageError(
+            "Required live Token Factory mode needs NPA_INTEGRATION_E2E=1; "
+            "a skipped run is not provider verification."
+        )
     if (
         config.getoption("--require-token-factory-live")
         and not os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
