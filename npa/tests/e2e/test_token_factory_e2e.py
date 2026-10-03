@@ -520,7 +520,7 @@ def _assert_live_benchmark_provider(provider: dict, case: dict) -> None:
     raw = provider["raw_response"]
     assert provider["raw_response_sha256"] == hashlib.sha256(raw.encode()).hexdigest()
     response = json.loads(raw)
-    assert provider["returned_model"] == response["model"] == DEFAULT_VISION_MODEL
+    assert provider["returned_model"] == response["model"] == "MiniMaxAI/MiniMax-M3"
     assert provider["status_code"] == 200 and provider["finish_reason"] == "stop"
     assert response["choices"][0]["finish_reason"] == "stop"
     message = response["choices"][0]["message"]
@@ -582,7 +582,7 @@ def test_live_benchmark_confusion_preserves_provider_evidence(tmp_path: Path) ->
     report = benchmark(
         dataset=str(_benchmark_diagram_dataset(tmp_path)),
         backend="api",
-        models=(DEFAULT_VISION_MODEL,),
+        models=("MiniMaxAI/MiniMax-M3",),
         thresholds=(0.5, 0.8),
         task=(
             "Describe the red square and green rectangular outline in this synthetic "
