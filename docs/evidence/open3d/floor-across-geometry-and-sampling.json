@@ -1,0 +1,340 @@
+{
+  "cases": {
+    "armadillo__poisson_disk": {
+      "floor_invented_area_fraction": 0.011236447075839477,
+      "monotone_in_invented_fraction": true,
+      "rows": [
+        {
+          "cap_degrees": 0.0,
+          "invented_area_fraction": 0.0,
+          "reads_as_extrapolated_shell": false,
+          "share_beyond_3_voxels": 0.0,
+          "unsupported_area_beyond_3_voxels": 0.0,
+          "unsupported_area_fraction": 0.0
+        },
+        {
+          "cap_degrees": 20.0,
+          "invented_area_fraction": 0.011236447075839477,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.5571677518862023,
+          "unsupported_area_beyond_3_voxels": 0.005537607046561802,
+          "unsupported_area_fraction": 0.009938850602561113
+        },
+        {
+          "cap_degrees": 30.0,
+          "invented_area_fraction": 0.037464681207847274,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.6557226624286764,
+          "unsupported_area_beyond_3_voxels": 0.02258082922720519,
+          "unsupported_area_fraction": 0.03443655453903323
+        },
+        {
+          "cap_degrees": 35.0,
+          "invented_area_fraction": 0.0567176350405651,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.7736549414085457,
+          "unsupported_area_beyond_3_voxels": 0.04161989182691927,
+          "unsupported_area_fraction": 0.053796453172191346
+        },
+        {
+          "cap_degrees": 40.0,
+          "invented_area_fraction": 0.0745958410634724,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.849819401561757,
+          "unsupported_area_beyond_3_voxels": 0.060972428732267235,
+          "unsupported_area_fraction": 0.07174751320129319
+        },
+        {
+          "cap_degrees": 50.0,
+          "invented_area_fraction": 0.11535441898095407,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.8591936276934897,
+          "unsupported_area_beyond_3_voxels": 0.09574060718384547,
+          "unsupported_area_fraction": 0.11143076961692755
+        },
+        {
+          "cap_degrees": 60.0,
+          "invented_area_fraction": 0.16957719816438507,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.8776210571545837,
+          "unsupported_area_beyond_3_voxels": 0.14440708883550385,
+          "unsupported_area_fraction": 0.16454378305791728
+        },
+        {
+          "cap_degrees": 90.0,
+          "invented_area_fraction": 0.5731260111087698,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.930512513055321,
+          "unsupported_area_beyond_3_voxels": 0.5245384734499634,
+          "unsupported_area_fraction": 0.5637092098070243
+        }
+      ],
+      "spacing": 0.0083625939828387,
+      "spacing_over_voxel": 0.5,
+      "voxel": 0.0167251879656774,
+      "zero_error_reads_as_shell": false,
+      "zero_error_unsupported_fraction": 0.0
+    },
+    "armadillo__uniform_random": {
+      "floor_invented_area_fraction": 0.037464681207847274,
+      "monotone_in_invented_fraction": true,
+      "rows": [
+        {
+          "cap_degrees": 0.0,
+          "invented_area_fraction": 0.0,
+          "reads_as_extrapolated_shell": false,
+          "share_beyond_3_voxels": 0.0,
+          "unsupported_area_beyond_3_voxels": 0.0,
+          "unsupported_area_fraction": 0.13932194230486517
+        },
+        {
+          "cap_degrees": 20.0,
+          "invented_area_fraction": 0.011236447075839477,
+          "reads_as_extrapolated_shell": false,
+          "share_beyond_3_voxels": 0.05463197913794438,
+          "unsupported_area_beyond_3_voxels": 0.008157793704262705,
+          "unsupported_area_fraction": 0.14932268303266993
+        },
+        {
+          "cap_degrees": 30.0,
+          "invented_area_fraction": 0.037464681207847274,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.1755318811247998,
+          "unsupported_area_beyond_3_voxels": 0.03023706186542056,
+          "unsupported_area_fraction": 0.17225965831199969
+        },
+        {
+          "cap_degrees": 35.0,
+          "invented_area_fraction": 0.0567176350405651,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.2580887217436775,
+          "unsupported_area_beyond_3_voxels": 0.04880961035432262,
+          "unsupported_area_fraction": 0.18911950132713748
+        },
+        {
+          "cap_degrees": 40.0,
+          "invented_area_fraction": 0.0745958410634724,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.3302940383957114,
+          "unsupported_area_beyond_3_voxels": 0.06753334420671524,
+          "unsupported_area_fraction": 0.20446431468982912
+        },
+        {
+          "cap_degrees": 50.0,
+          "invented_area_fraction": 0.11535441898095407,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.43989575350116134,
+          "unsupported_area_beyond_3_voxels": 0.10562022477488381,
+          "unsupported_area_fraction": 0.24010285149207508
+        },
+        {
+          "cap_degrees": 60.0,
+          "invented_area_fraction": 0.16957719816438507,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.548319539716358,
+          "unsupported_area_beyond_3_voxels": 0.1567668253899808,
+          "unsupported_area_fraction": 0.28590413807079573
+        },
+        {
+          "cap_degrees": 90.0,
+          "invented_area_fraction": 0.5731260111087698,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.8686658431650139,
+          "unsupported_area_beyond_3_voxels": 0.5497891916088472,
+          "unsupported_area_fraction": 0.6329121789866531
+        }
+      ],
+      "spacing": 0.004946518770162542,
+      "spacing_over_voxel": 0.5,
+      "voxel": 0.009893037540325084,
+      "zero_error_reads_as_shell": false,
+      "zero_error_unsupported_fraction": 0.13932194230486517
+    },
+    "icosphere__poisson_disk": {
+      "floor_invented_area_fraction": 0.028916223705428665,
+      "monotone_in_invented_fraction": true,
+      "rows": [
+        {
+          "cap_degrees": 0.0,
+          "invented_area_fraction": 0.0,
+          "reads_as_extrapolated_shell": false,
+          "share_beyond_3_voxels": 0.0,
+          "unsupported_area_beyond_3_voxels": 0.0,
+          "unsupported_area_fraction": 0.0
+        },
+        {
+          "cap_degrees": 20.0,
+          "invented_area_fraction": 0.028916223705428665,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.806426340671884,
+          "unsupported_area_beyond_3_voxels": 0.02651205319651041,
+          "unsupported_area_fraction": 0.032875976216775814
+        },
+        {
+          "cap_degrees": 30.0,
+          "invented_area_fraction": 0.06689175918466633,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.810136481816016,
+          "unsupported_area_beyond_3_voxels": 0.05755083002413901,
+          "unsupported_area_fraction": 0.07103843773969055
+        },
+        {
+          "cap_degrees": 35.0,
+          "invented_area_fraction": 0.09048403483422095,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.8447860614314099,
+          "unsupported_area_beyond_3_voxels": 0.08194051625284028,
+          "unsupported_area_fraction": 0.09699558266148454
+        },
+        {
+          "cap_degrees": 40.0,
+          "invented_area_fraction": 0.11685367283879247,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.873406657435773,
+          "unsupported_area_beyond_3_voxels": 0.10723069307273822,
+          "unsupported_area_fraction": 0.12277292846330698
+        },
+        {
+          "cap_degrees": 50.0,
+          "invented_area_fraction": 0.17952774397400154,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.9031879699465295,
+          "unsupported_area_beyond_3_voxels": 0.1679822299284417,
+          "unsupported_area_fraction": 0.18598811711186386
+        },
+        {
+          "cap_degrees": 60.0,
+          "invented_area_fraction": 0.2491053023498772,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.9130248913904029,
+          "unsupported_area_beyond_3_voxels": 0.2377196335178399,
+          "unsupported_area_fraction": 0.2603648988756788
+        },
+        {
+          "cap_degrees": 90.0,
+          "invented_area_fraction": 0.49390778271729985,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.9649388548179695,
+          "unsupported_area_beyond_3_voxels": 0.48834804457705566,
+          "unsupported_area_fraction": 0.5060922172827002
+        }
+      ],
+      "spacing": 0.015542021781642348,
+      "spacing_over_voxel": 0.5,
+      "voxel": 0.031084043563284695,
+      "zero_error_reads_as_shell": false,
+      "zero_error_unsupported_fraction": 0.0
+    },
+    "icosphere__uniform_random": {
+      "floor_invented_area_fraction": 0.028916223705428665,
+      "monotone_in_invented_fraction": true,
+      "rows": [
+        {
+          "cap_degrees": 0.0,
+          "invented_area_fraction": 0.0,
+          "reads_as_extrapolated_shell": false,
+          "share_beyond_3_voxels": 0.0,
+          "unsupported_area_beyond_3_voxels": 0.0,
+          "unsupported_area_fraction": 0.16362554224511913
+        },
+        {
+          "cap_degrees": 20.0,
+          "invented_area_fraction": 0.028916223705428665,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.15388499370146966,
+          "unsupported_area_beyond_3_voxels": 0.029749660586714684,
+          "unsupported_area_fraction": 0.193323987421592
+        },
+        {
+          "cap_degrees": 30.0,
+          "invented_area_fraction": 0.06689175918466633,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.30508087728291555,
+          "unsupported_area_beyond_3_voxels": 0.06938084173931323,
+          "unsupported_area_fraction": 0.22741786491905616
+        },
+        {
+          "cap_degrees": 35.0,
+          "invented_area_fraction": 0.09048403483422095,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.35879307980222275,
+          "unsupported_area_beyond_3_voxels": 0.0902738304950091,
+          "unsupported_area_fraction": 0.25160415731755664
+        },
+        {
+          "cap_degrees": 40.0,
+          "invented_area_fraction": 0.11685367283879247,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.43119605656799154,
+          "unsupported_area_beyond_3_voxels": 0.11767151736189758,
+          "unsupported_area_fraction": 0.27289562501679093
+        },
+        {
+          "cap_degrees": 50.0,
+          "invented_area_fraction": 0.17952774397400154,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.5501416268200571,
+          "unsupported_area_beyond_3_voxels": 0.17990421825201924,
+          "unsupported_area_fraction": 0.3270143713572563
+        },
+        {
+          "cap_degrees": 60.0,
+          "invented_area_fraction": 0.2491053023498772,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.6301832926985794,
+          "unsupported_area_beyond_3_voxels": 0.24934555567119848,
+          "unsupported_area_fraction": 0.39567147933016056
+        },
+        {
+          "cap_degrees": 90.0,
+          "invented_area_fraction": 0.49390778271729985,
+          "reads_as_extrapolated_shell": true,
+          "share_beyond_3_voxels": 0.8492315395120907,
+          "unsupported_area_beyond_3_voxels": 0.5019411768278047,
+          "unsupported_area_fraction": 0.5910533858836485
+        }
+      ],
+      "spacing": 0.00918042919641832,
+      "spacing_over_voxel": 0.5,
+      "voxel": 0.01836085839283664,
+      "zero_error_reads_as_shell": false,
+      "zero_error_unsupported_fraction": 0.16362554224511913
+    }
+  },
+  "construction": "The review lane's: score a mesh against samples drawn from itself, then delete the observations inside a polar cap while leaving the mesh covering it. Reproduced rather than reinvented so the curves are comparable.",
+  "reading_boundary": 0.1,
+  "samples": 60000,
+  "summary": {
+    "floor_spread": 0.026228234132007797,
+    "floors": {
+      "armadillo__poisson_disk": 0.011236447075839477,
+      "armadillo__uniform_random": 0.037464681207847274,
+      "icosphere__poisson_disk": 0.028916223705428665,
+      "icosphere__uniform_random": 0.028916223705428665
+    },
+    "monotone_everywhere": true,
+    "no_false_positive_on_the_perfect_case": true,
+    "zero_error_unsupported_fraction_spread": {
+      "armadillo__poisson_disk": 0.0,
+      "armadillo__uniform_random": 0.13932194230486517,
+      "icosphere__poisson_disk": 0.0,
+      "icosphere__uniform_random": 0.16362554224511913
+    }
+  },
+  "poisson_disk_procedure_as_asked": {
+    "asked_by": "review lane, 2026-09-20T04:40Z, as the condition for closing the 0.0 claim",
+    "generator": "open3d.geometry.TriangleMesh.sample_points_poisson_disk (Open3D's own elimination sampler, not hand-rolled blue noise)",
+    "radius": "not passed; the sampler derives the elimination radius from number_of_points and mesh surface area",
+    "number_of_points": 60000,
+    "oversampling": "init_factor=3, so 3x the target is drawn uniformly then eliminated down",
+    "measured_evenness_max_over_median_nn": {
+      "icosphere/poisson_disk": 1.7,
+      "icosphere/uniform_random": 4.19,
+      "armadillo/poisson_disk": 1.66,
+      "armadillo/uniform_random": 3.99
+    },
+    "why_their_reproduction_failed": "Their weighted-elimination set measured max/median 4.50 against 3.76 for uniform random, so it was less even than the baseline and could not test the claim. Open3D's sampler measures 1.70 against 4.19 on the same geometry, a 2.5-fold improvement in evenness, which is the input the claim depends on. They were right to withhold their result rather than report it as a contradiction.",
+    "claim_reconfirmed_independently_of_the_first_run": "evidence/open3d/poisson-procedure-and-overcall-audit.json: at a voxel of twice the median spacing a zero-error reconstruction reports exactly 0.00000 unsupported area under Poisson-disk sampling against 0.16061 (icosphere) and 0.14497 (armadillo) under uniform random. At one times the spacing it is 0.02695 against 0.85509.",
+    "consistent_with_their_own_sweep": "Their corrected table shows both schemes falling together as the support radius grows, with the radius dominating in their setup. That is not in tension with this: their weak blue noise was not more even than uniform random, so their two columns were effectively the same sampling scheme measured twice, and only the radius varied."
+  }
+}

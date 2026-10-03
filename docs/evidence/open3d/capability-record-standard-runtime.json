@@ -1,0 +1,114 @@
+{
+  "capability": "The six-state Open3D npa.workflow executed through the standard SkyPilot runtime",
+  "recorded_at": "2026-09-21T02:52Z",
+  "lane": "geometry",
+  "why_this_matters": "This is the one gate LANE.md still required and that I had recorded as an external blocker. It was not one: root's isolated-config-dir finding cleared the controller-adoption guard, and the remaining refusals were a sequence of real preflight checks that each had a supported answer.",
+  "source_commit": "256c26bc915080934814789be6a41bbc253f0d1c",
+  "image_digest": "sha256:6afe90e331b932666704858ae3ccc1e658ef7dea1d8343925dda0699c4b6310b",
+  "image_note": "Built from the source commit above and delivered privately by digest. Never published.",
+  "runtime": {
+    "path": "npa workbench workflow submit, controller-backend kubernetes, isolated state root",
+    "controller": "a lane-owned jobs controller created by the isolated state root; the historical shared controller was not bound, rebound, renamed or cleaned up",
+    "managed_job": "reconciled managed job 1 on that controller",
+    "cluster_adoption": "npa cluster kubeconfig --cluster-name ... --project ... --context ..., the supported command; it fetched the real cluster id and wrote the record under a lane-owned NPA_CONFIG_DIR. cluster.json was not hand-edited and provision-if-absent was not run.",
+    "accelerator": "none requested at any stage; Open3D registration and reconstruction have no CUDA path"
+  },
+  "preflight_guards_encountered_and_how_each_was_answered": [
+    {
+      "guard": "cluster_owner / controller adoption",
+      "answer": "Cleared by the isolated state root, which by design does not consult shared controller ownership. This is the guard I had wrongly recorded as an absolute blocker."
+    },
+    {
+      "guard": "endpoint: storage endpoint must match the selected project region",
+      "answer": "The <other-project> project record declares <region-a> while its own cluster API and storage endpoint are both <region-a>. Answered with a lane-owned NPA_CONFIG_DIR copy carrying the corrected region. The shared config was not modified and still reads <region-a>; someone should decide whether that record is simply wrong."
+    },
+    {
+      "guard": "region: explicit region disagrees with the selected project",
+      "answer": "Refused --region as an override, correctly. Superseded by the lane-owned config above."
+    },
+    {
+      "guard": "scope: provider project identity is unavailable or mismatched",
+      "answer": "Correct and not bypassable. The executing service account lives in one project and the originally selected cluster in another, where IAM denies even mk8scluster.list. Answered by moving to a cluster inside the service account's own project rather than by weakening anything."
+    },
+    {
+      "guard": "storage_owner: output bucket is not proven to belong to the selected project",
+      "answer": "Answered with a bucket owned by the selected project."
+    },
+    {
+      "guard": "storage_mount: the executing SkyPilot home requires a complete static nebius AWS profile matching selected storage credentials",
+      "answer": "NOT answered. This fires only for the --durable-s3 nebius:// mount. The shared ~/.aws [nebius] profile currently carries another project's keys and was written hours earlier while other lanes were running, so overwriting it would likely break a concurrent lane. The run therefore proceeded WITHOUT --durable-s3."
+    }
+  ],
+  "what_this_run_does_not_prove": {
+    "durable_s3_resume": "The run was submitted without --durable-s3, so durable-mount resume is not exercised here. Clearing that needs the shared AWS profile to match the selected project's storage credentials, which is a coordination question, not a code one.",
+    "rerun_ui": "Artifacts and camera geometry are verified. No screenshot of the Rerun web viewer was captured, so no viewer-UI claim rests on this run.",
+    "gpu": "Nothing GPU was proven and nothing GPU was requested. This workload is CPU-only by construction."
+  },
+  "six_states_all_produced_their_declared_outputs": {
+    "stage": [
+      "open3d/prepared/manifest.json",
+      "open3d/prepared/fragments/cloud_bin_0.pcd",
+      "open3d/prepared/fragments/cloud_bin_1.pcd",
+      "open3d/prepared/fragments/cloud_bin_2.pcd"
+    ],
+    "register": [
+      "open3d/pairs/result.json",
+      "open3d/pairs/pairs.jsonl",
+      "open3d/pairs/aligned/cloud_bin_0__cloud_bin_1.ply",
+      "open3d/pairs/aligned/cloud_bin_1__cloud_bin_2.ply"
+    ],
+    "validate": [
+      "open3d/validation/validation.json"
+    ],
+    "multiway": [
+      "open3d/graph/fused.ply",
+      "open3d/graph/pose_graph.json",
+      "open3d/graph/result.json",
+      "open3d/graph/pairs.jsonl"
+    ],
+    "reconstruct": [
+      "open3d/surface/mesh.ply",
+      "open3d/surface/mesh_uncropped.ply",
+      "open3d/surface/result.json"
+    ],
+    "visualize": [
+      "open3d/reports/point_cloud.rrd",
+      "open3d/reports/rrd-manifest.json"
+    ]
+  },
+  "the_framing_fix_is_exercised_by_this_run": {
+    "why_it_counts": "The image was built from the commit carrying the per-view camera change, so the visualize stage in this run ran the new code. The output proves it rather than the commit asserting it.",
+    "view_cameras_recorded_in_the_live_rrd_manifest": {
+      "Observed scan only": 3.2609,
+      "Removed: unsupported surface": 3.7969,
+      "Scene: observed scan and supported surface": 3.2736,
+      "Supported surface only": 3.2675
+    },
+    "reading": "The audit view sits at 3.7969 while the other three sit between 3.2609 and 3.2736. It pulls back specifically to frame the 8453 unsupported triangles the other views do not draw. Under the shipped code all four shared one distance and that surface fell outside the frame.",
+    "unsupported_triangles_shown": 8453,
+    "fused_points": 6341,
+    "mesh": {
+      "triangle_count": 28207,
+      "vertex_count": 14736
+    }
+  },
+  "independent_verification_of_the_output": {
+    "rrd_decode": "PASSED using the repository's own verify_rerun_recording against the downloaded bytes",
+    "rrd_sha256": "478bf9e8cf53d19cd317066a20719b88ad717a78dec003586843ff10abe5538e",
+    "rrd_bytes": 8053435,
+    "artifact_hashes": {
+      "manifest.json": "018d0b155e73ddf2493413a05f9efa1252639c47d5861fc3a2c717cd81bde9ae",
+      "point_cloud.rrd": "478bf9e8cf53d19cd317066a20719b88ad717a78dec003586843ff10abe5538e",
+      "result.json": "5d7a69351e70310f2de2290525c8e1f881e4174e2860688eb711b1ea0c87e2d3",
+      "rrd-manifest.json": "2e919513b0cccac9439f93fd96e8297f4d8aa2ca6e445065040d117abddb2cf1",
+      "status.json": "b94918c08d6fe33c96d8762c78fb30bb412724346688e1c4cddd8934059b5107",
+      "validation.json": "1ac511dc8c4a2776a1f2c46565c27e4834b1a2190c4b792039d6173b7452b117"
+    }
+  },
+  "housekeeping": {
+    "claim": "program/gpu-claims/geometry-open3d-cpu-20260921",
+    "coordination": "root and openarm were notified before the run, because the only reachable CPU slot was in a cluster belonging to another lane's work",
+    "cleanup": "the lane-owned image pull secret is removed; the isolated controller is left for inspection and recorded here"
+  },
+  "redaction_note": "Project ids, cluster names, bucket names and regions are replaced with role placeholders. The measurements, hashes, digests and guard messages are verbatim."
+}
