@@ -2287,7 +2287,7 @@ def test_grade_gate_rejects_self_hosted_missing_completion_status(
     tmp_path: Path, monkeypatch
 ) -> None:
     report = _retained_report_with_completion(
-        monkeypatch, tmp_path, _provider_completion(metadata=False)
+        monkeypatch, tmp_path, _provider_completion(success=True, metadata=False)
     )
     (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
 
