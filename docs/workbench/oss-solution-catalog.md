@@ -20,6 +20,7 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- | --- | --- |
 | Habitat-Sim (**neutral runtime-fetch; development proof only**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
 | LIBERO | `Lifelong-Robot-Learning/LIBERO` `8f1084e3…` | `libero_spatial_bc_rnn_train_reload_heldout` | Canonical `libero-smoke.json` + checkpoint digest/reload evidence (checkpoint remains local and is never uploaded) | `byof-libero.yaml` |
+| GR00T N1.7 LIBERO-X derivative (**runtime-fetch workflow; live qualification pending**) | NVIDIA `Isaac-GR00T` `51d4c89f…`, `rohansiva/gr00t-libero-x` `b9dfbdcc…`, and Meituan `LIBERO-X` `73053111…` | `libero_x_disjoint_closed_loop_comparison` | hash-bound protocol, matched baseline/derivative native MP4s, success/MAE/MSE comparison, inspected RRD | `groot-libero-x-closed-loop.yaml` |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | Gymnasium-Robotics | `Farama-Foundation/Gymnasium-Robotics` `4d1ebecb…` | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | `gymnasium-robotics-smoke.json` | `byof-gymnasium-robotics.yaml` |
@@ -42,6 +43,7 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- | --- |
 | Habitat-Sim | `skokloster_castle_rgb_depth_bullet_traversal` / `headless_nvidia_egl_rgb_depth_render` / `bullet_physics_world_step` / `greedy_geodesic_agent_traversal` | **development evidence; supported release quarantined** | [Exact-digest development manifest](validation/habitat-sim-development-image-manifest.json): 19 RGB/depth frame pairs, 19 Bullet steps and 2.2466 metres of navigation on one RTX PRO 6000 Blackwell. Historical producer evidence; no policy-training or long-benchmark claim. |
 | LIBERO | `libero_spatial_bc_rnn_train_reload_heldout` | **qualification pending; payload-free public-development staging permitted; not released** | Requires complete-byte and anonymous-pull proof followed by one STRICT-bound B200 run of the exact candidate digest: eight upstream BC-RNN/Adam steps on the official LIBERO-Spatial demonstration, checkpoint reload, and full trajectory-disjoint held-out evaluation |
+| GR00T N1.7 LIBERO-X derivative | `libero_x_disjoint_closed_loop_comparison` | **implementation/static contract verified; live qualification pending** | Five connected stages validate and plan; tests prove task-disjoint protocol binding, native evaluator handoff, comparison, actual MP4 upload contract, and RRD inspection. No Kubernetes rollout has run because the operator has not supplied the exact 60-task manifest, disjoint native task manifest, and materialized input receipt. |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
 | ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | **accepted** | `defcap11-maniskill-20260709-043408` (sapien 3.0.3 on CUDA Ubuntu22.04/py3.10; Blackwell render OK) |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
@@ -156,6 +158,37 @@ requires the Pod-observed immutable image digest in `libero-smoke.json`; imports
 BDDL parsing, dataset inventory, or zero-step training do not pass. Rendered
 closed-loop sweeps, all 130 tasks, lifelong-algorithm comparison, and physical
 robots remain deferred. See [`byof-libero.md`](byof-libero.md).
+
+### GR00T N1.7 LIBERO-X derivative
+
+This is a separate closed-loop evaluation path, not an update to the existing
+LIBERO BC-RNN candidate and not a claim that the derivative's reported
+open-loop metric is simulator success. It pins Rohan Siva's Apache-2.0
+derivative `b9dfbdcce8da61950db4f34199fff30b286b8f13`, NVIDIA's
+`GR00T-N1.7-LIBERO` `2ea293aa20ba7cf5bbf3ba17a5fbcb1a01cbfe21` base
+`libero_10` checkpoint (NVIDIA Open Model License Agreement), Meituan's
+CC-BY-4.0 LIBERO-X `73053111f932d4dbaee995e3f06c2f42b3ad4adc`, and current
+Apache-2.0 Isaac-GR00T `51d4c89f72fda44cbf77285c6a8114b52676b8a1`.
+
+The unchanged public `npa-groot:0.1.0` bootstrap contains an older GR00T
+source revision and is not represented as current. Instead, the policy stages
+runtime-fetch the exact current Apache source into a lock-protected cache,
+validate its Git SHA, run upstream `setup_libero.sh`, and invoke the upstream
+server/client `run_gr00t_sim_policy` path. The dynamically materialized LIBERO
+submodule is `8f1084e3132a39270c3a13ebe37270a43ece2a01` (MIT). No model,
+dataset, source tree, cache, or rollout result is added to public image layers,
+and no new NPA terms flag or EULA is introduced.
+
+The input contract refuses unless an operator provides the documented 60
+derivative training task IDs plus disjoint `libero_sim/...` evaluation tasks,
+trajectory IDs, and a GR00T-format materialized LIBERO-X object inventory. The
+dataset card's 600-task description and `meta/info.json`'s 428-task count are
+recorded as a source-card discrepancy rather than resolved by invention. The
+successful path has five genuine stages: preparation, NVIDIA policy action
+forwards/native rollouts, derivative action forwards/native rollouts, numeric
+comparison, and MP4/RRD evidence. Live execution, closed-loop success rates,
+and any claim beyond simulation remain unverified. See
+[`groot-libero-x.md`](groot-libero-x.md).
 
 ### ManiSkill
 
