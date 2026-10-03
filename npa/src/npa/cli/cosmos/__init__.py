@@ -330,6 +330,14 @@ class Backend(str, Enum):
     basic = "basic"
 
 
+def _ensure_basic_backend(backend: Backend | str) -> None:
+    """Reject SDK backend values that bypass Typer's enum parsing."""
+    if backend == Backend.basic:
+        return
+    typer.echo("Only the basic Cosmos backend is supported.")
+    raise typer.Exit(1)
+
+
 class WorkbenchRuntime(str, Enum):
     vm = "vm"
     container = "container"
@@ -2152,6 +2160,7 @@ def deploy_cmd(
     ),
 ) -> None:
     """Deploy or destroy a Cosmos model serving backend."""
+    _ensure_basic_backend(backend)
     byovm = is_byovm_runtime(runtime)
     serverless = is_serverless_runtime(runtime)
     if not destroy and not byovm and not serverless:
@@ -3059,6 +3068,7 @@ def serve_cmd(
     with --no-auto-serve. Run it whenever `cosmos status` reports `degraded` /
     model not loaded.
     """
+    _ensure_basic_backend(backend)
     cfg = _get_config()
 
     if is_serverless_runtime(getattr(cfg, "runtime", "")):

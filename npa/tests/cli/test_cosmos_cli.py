@@ -12,8 +12,10 @@ from urllib.parse import urlparse
 
 from botocore.exceptions import ClientError
 import pytest
+import typer
 from typer.testing import CliRunner
 
+from npa import workbench
 from npa.cli.main import app
 from npa.cli.cosmos import (
     COSMOS_FLASH_ATTN_VERSION,
@@ -765,6 +767,53 @@ def test_cosmos_serve_rejects_unimplemented_backends(backend: str, mocker) -> No
     assert result.exit_code == 2
     assert "Invalid value for '--backend'" in result.output
     resolve_config.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("command", "downstream"),
+    [
+        ("deploy", "npa.cli.cosmos.is_byovm_runtime"),
+        ("serve", "npa.cli.cosmos._get_config"),
+    ],
+)
+@pytest.mark.parametrize("backend", ["nim", "triton"])
+def test_cosmos_sdk_rejects_unsupported_backends_before_dispatch(
+    command: str,
+    downstream: str,
+    backend: str,
+    capsys,
+    mocker,
+) -> None:
+    boundary = mocker.patch(downstream)
+
+    with pytest.raises(typer.Exit) as exc_info:
+        getattr(workbench.cosmos, command)(backend=backend)
+
+    assert exc_info.value.exit_code == 1
+    assert (
+        capsys.readouterr().out.strip() == "Only the basic Cosmos backend is supported."
+    )
+    boundary.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("command", "downstream"),
+    [
+        ("deploy", "npa.cli.cosmos.is_byovm_runtime"),
+        ("serve", "npa.cli.cosmos._get_config"),
+    ],
+)
+def test_cosmos_sdk_accepts_basic_backend_and_reaches_dispatch_boundary(
+    command: str,
+    downstream: str,
+    mocker,
+) -> None:
+    boundary = mocker.patch(downstream, side_effect=RuntimeError("dispatch boundary"))
+
+    with pytest.raises(RuntimeError, match="dispatch boundary"):
+        getattr(workbench.cosmos, command)(backend="basic")
+
+    boundary.assert_called_once()
 
 
 def test_cosmos_deploy_requires_gpu_selection(tmp_path: Path) -> None:
