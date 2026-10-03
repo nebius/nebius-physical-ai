@@ -2053,6 +2053,7 @@ def _run_attempt(
         timeout_s=context.request.timeout_s,
         response_sink=sink,
         request_body=_core._canonical_json(attempt.request).encode("utf-8"),
+        response_bytes_sink=_response_bytes_sink(journal, ordinal),
     )
     outcome = _attempt_outcome(context, attempt, evidence, response, error)
     _write_journal(journal, f"outcome-{ordinal:02d}.json", asdict(outcome))
@@ -2107,6 +2108,16 @@ def _response_sink(
                 "raw_body_sha256": _core._sha256_text(response.raw_body),
             },
         )
+
+    return retain
+
+
+def _response_bytes_sink(
+    journal: _ReviewJournal,
+    ordinal: int,
+) -> Callable[[dict[str, Any]], None]:
+    def retain(wire: dict[str, Any]) -> None:
+        _write_journal(journal, f"response-bytes-{ordinal:02d}.json", wire)
 
     return retain
 

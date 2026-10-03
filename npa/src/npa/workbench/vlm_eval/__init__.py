@@ -253,6 +253,9 @@ class _VlmBackendResponse:
     status_code: int | None
     request_id_header: str | None
     latency_s: float
+    raw_body_base64: str | None = None
+    raw_body_bytes_sha256: str | None = None
+    raw_body_byte_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1942,6 +1945,7 @@ def _post_with_readiness_retry(
     response_sink: Callable[[_VlmBackendResponse], None] | None = None,
     error_response_sink: Callable[[_VlmBackendResponse], None] | None = None,
     request_body: bytes | None = None,
+    response_bytes_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> _VlmBackendResponse:
     """POST while tolerating bounded self-hosted model warmup."""
     is_self_hosted = backend == "self-hosted"
@@ -1960,6 +1964,7 @@ def _post_with_readiness_retry(
                 response_sink=response_sink,
                 error_response_sink=error_response_sink,
                 request_body=request_body,
+                response_bytes_sink=response_bytes_sink,
             )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             if is_self_hosted and time.monotonic() < deadline:
@@ -2539,13 +2544,17 @@ def _post_backend_once(
     response_sink: Callable[[_VlmBackendResponse], None] | None,
     error_response_sink: Callable[[_VlmBackendResponse], None] | None,
     request_body: bytes | None,
+    response_bytes_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> _VlmBackendResponse:
     with httpx.Client(timeout=timeout_s) as client:
         kwargs = (
             {"content": request_body} if request_body is not None else {"json": request}
         )
         response = client.post(url, headers=headers, **kwargs)
-        observed = _backend_response_from_http(response, data={}, started_at=started_at)
+        wire = _retain_response_bytes(response, started_at, response_bytes_sink)
+        observed = _backend_response_from_http(
+            response, data={}, started_at=started_at, wire=wire
+        )
         _retain_response(observed, response_sink)
         consistent_error_sink = _response_sink_with_latency(
             observed.latency_s, error_response_sink
@@ -2633,6 +2642,7 @@ def _backend_response_from_http(
     *,
     data: dict[str, Any],
     started_at: float,
+    wire: dict[str, Any] | None = None,
 ) -> _VlmBackendResponse:
     raw_body = getattr(response, "text", None)
     if raw_body is None:
@@ -2643,8 +2653,39 @@ def _backend_response_from_http(
         raw_body=raw_body,
         status_code=getattr(response, "status_code", None),
         request_id_header=_request_id_from_headers(response_headers),
-        latency_s=time.monotonic() - started_at,
+        latency_s=wire["latency_s"] if wire else time.monotonic() - started_at,
+        raw_body_base64=wire["body_base64"] if wire else None,
+        raw_body_bytes_sha256=wire["body_sha256"] if wire else None,
+        raw_body_byte_count=wire["byte_count"] if wire else None,
     )
+
+
+def _retain_response_bytes(
+    response: Any,
+    started_at: float,
+    sink: Callable[[dict[str, Any]], None] | None,
+) -> dict[str, Any] | None:
+    content = getattr(response, "content", None)
+    if not isinstance(content, bytes):
+        return None
+    wire = {
+        "schema_version": "npa_vlm_http_response_bytes_v1",
+        "encoding": "base64",
+        "body_base64": base64.b64encode(content).decode("ascii"),
+        "body_sha256": hashlib.sha256(content).hexdigest(),
+        "byte_count": len(content),
+        "status_code": getattr(response, "status_code", None),
+        "request_id_header": _request_id_from_headers(getattr(response, "headers", {})),
+        "latency_s": time.monotonic() - started_at,
+    }
+    if sink is not None:
+        try:
+            sink(wire)
+        except VlmEvalError as exc:
+            raise _VlmEvidenceRetentionError(
+                "provider response bytes could not be retained"
+            ) from exc
+    return wire
 
 
 def _retain_response(
@@ -2679,6 +2720,7 @@ def _post_comparison_request(
     timeout_s: float,
     response_sink: Callable[[_VlmBackendResponse], None] | None = None,
     request_body: bytes | None = None,
+    response_bytes_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[_VlmBackendResponse | None, VlmEvalError | None]:
     started_at = time.monotonic()
     captured: list[_VlmBackendResponse] = []
@@ -2695,6 +2737,7 @@ def _post_comparison_request(
             response_sink=retain,
             error_response_sink=captured.append,
             request_body=request_body,
+            response_bytes_sink=response_bytes_sink,
         )
         response = _coerce_backend_response(
             raw_response,

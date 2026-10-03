@@ -50,3 +50,16 @@ remains applicable to its original source and protocol. Its six attempts did
 not yield a contract-valid review. Rich judgments do not qualify a model,
 establish task completion, prove physical correctness or usefulness, or certify
 robot safety. Instructions embedded in images remain an input-integrity risk.
+# Exact failure-byte retention
+
+The private journal writes `response-bytes-<ordinal>.json` before reading the
+HTTP response's decoded text or parsing JSON. It records reversible base64,
+the SHA256 and size of exact `response.content`, HTTP status, request identity
+when returned, and observed latency. Invalid UTF-8 and declared non-UTF8 error
+bodies therefore remain distinguishable even when decoded text is lossy.
+Byte-journal write failure stops the attempt without replaying it. The existing
+decoded-text response journal and parser interface remain compatible.
+
+Earlier observations that retained decoded text only are not retroactively
+wire-byte evidence. Keep their original artifacts and label their hashes as
+decoded-response-text hashes.
