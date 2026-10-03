@@ -654,7 +654,7 @@ def _validate_retained_judge(outcome: dict) -> None:
     if (
         result.get("backend") != "api"
         or result.get("model") != outcome["model"]
-        or vlm_grade_evidence.vlm_grade_block_details(result)
+        or vlm_grade_evidence.vlm_paired_audit_block_details(result)
     ):
         raise _AuditConfigurationError("invalid_retained_judge_evidence")
     provider = result["evidence"]["provider"]
