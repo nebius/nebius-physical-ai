@@ -140,6 +140,15 @@ item, then run the sweep below.
 
 ## Tune
 
+Use neutral identify-then-judge task text. Add a source-matched missing-terminal
+control that retains plausible progress but omits the requested outcome, an
+ambiguous terminal control, and blank evidence. The default rubric instructs the
+judge to assign `0.0` for missing or ambiguous terminal evidence with no
+partial-progress credit. This is a prompt instruction, not an independent visual
+validator. The gate still uses `score >= success_threshold`, so select a positive,
+calibrated threshold. Custom rubrics replace the default instruction. Selected
+stills cannot prove hidden state, continuous execution, or safety.
+
 Sweep thresholds, rubrics, and models against labeled rollouts:
 
 ```bash
@@ -158,6 +167,69 @@ Use the best threshold and rubric from the benchmark report to update
 `vlm_success_threshold` in the loop spec (or pass `--var` at submit time).
 `workflows/testing/vlm-eval-benchmark.yaml` runs the same sweep as
 a workflow stage.
+
+The packaged benchmark includes `progress-without-terminal-fail`; its tiny
+synthetic frames and prerecorded score test wiring only. Validate the exact
+task, rubric, threshold, sampling and model on reviewed real inputs.
+
+## Terminal-evidence live check
+
+This hosted lane tests the default rubric on operator-reviewed real rollout
+frames. It needs no local GPU or cloud resource creation. Stage four private
+image directories before calling the model: a complete real sequence, a strict
+prefix of that sequence ending during plausible progress, a real ambiguous
+terminal sequence (for example, an occluded final placement), and repeated
+blank frames. Use neutral filenames and identical task text. Review the actual
+pixels and freeze labels before inference; the harness verifies byte bindings,
+not the truth of the operator's visual labels.
+
+Set `NPA_VLM_TERMINAL_LIVE_CONFIG` to an owner-only (`0600`) JSON file outside
+Git with these fields:
+
+| Field | Required value |
+| --- | --- |
+| `model` | Exact hosted vision model ID |
+| `task` | One neutral identify-then-judge task for all controls |
+| `max_frames` | Integer at least as large as the largest staged frame set |
+| `success_threshold` | Frozen positive threshold no greater than 1 |
+| `output_dir` | New private local directory; existing paths are refused |
+| `cases` | Objects named `complete`, `missing-terminal`, `ambiguous-terminal`, and `no-evidence` |
+
+Each case contains only `input_path` (its local image directory) and
+`frame_sha256` (ordered SHA-256 digests of normalized submitted PNG bytes).
+Compute the digests using `select_rollout_frames` with `frame_selection="sequence"`
+and the frozen `max_frames`, then review and preserve that config. Every staged
+frame must be selected. The truncated control must be a shorter byte-identical
+prefix of the complete one. Frame counts and sampling differ between those
+controls; this is a semantic regression check, not a one-factor experiment.
+Credentials resolve through the existing environment or private NPA credential
+store, never through the test JSON.
+
+From the repository root, after selecting task-scoped private NPA configuration:
+
+```bash
+: "${NPA_VLM_TERMINAL_LIVE_CONFIG:?Set the private frozen control configuration}"
+npa/.venv/bin/python -m npa workbench health preflight --checks token_factory --json
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_vlm_terminal_evidence_live.py -q
+```
+
+Keep logs private. When all four calls parse successfully, their real responses
+are retained before checking visual expectations. Model substitution, changed
+frame bytes, a false pass, or any nonzero negative-control score fails the lane.
+Transport or parser failures
+also fail and stop the lane. They have no result artifact; earlier successful
+results remain on disk. These failures are not completed visual judgments. Do
+not retry until a failure passes or edit the frozen threshold to fit results. Independent review
+must still compare each rationale with the retained pixels: a correct label
+with an invented visual explanation is not accepted evidence. This test is
+separate from the nightly hosted smoke suite because it needs reviewed private
+rollout inputs. A skipped or unconfigured run does not validate the rubric.
+Retain the config, responses, and reviewed inputs; this lane creates no compute
+resources to tear down. Four controls cannot qualify a model or estimate error
+rates. Historical measurements in the [earlier control
+review](../evidence/vlm-missing-terminal-control-review.md) do not validate a
+changed rubric or current commit.
 
 ## Troubleshooting
 

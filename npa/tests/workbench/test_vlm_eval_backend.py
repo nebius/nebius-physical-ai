@@ -579,13 +579,13 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
         models=[DEFAULT_MODEL],
     )
 
-    assert report.item_count == 4
+    assert report.item_count == 5
     assert report.best_config.config.success_threshold == 0.8
     assert report.best_config.metrics.accuracy == 1.0
     assert report.best_config.metrics.precision == 1.0
     assert report.best_config.metrics.recall == 1.0
     assert report.best_config.metrics.true_positives == 2
-    assert report.best_config.metrics.true_negatives == 2
+    assert report.best_config.metrics.true_negatives == 3
     assert all(0.0 <= case.score <= 1.0 for case in report.best_config.results)
     assert {case.score_source for case in report.best_config.results} == {"fixture"}
 
@@ -594,7 +594,7 @@ def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:
     dataset = load_benchmark_dataset(str(DEFAULT_SAMPLE_BENCHMARK_PATH))
 
     assert dataset.format == "npa_vlm_eval_benchmark_v1"
-    assert len(dataset.items) == 4
+    assert len(dataset.items) == 5
     assert all(Path(item.rollout).exists() for item in dataset.items)
     assert {"default", "strict"} <= set(dataset.rubrics)
 

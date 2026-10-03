@@ -14,6 +14,16 @@ a versioned heading when a release is cut.
   deletion no longer leaves private keys recoverable from an ancestor layer;
   clean containers continue to generate independent host keys when SSH starts.
 
+### Default VLM rubric requires visible terminal evidence
+
+- Instruct judges to assign zero when the requested terminal state is missing
+  or ambiguous, with no partial-progress credit. Verdicts remain score-derived;
+  the rubric is not an independent visual validator.
+- Add a wiring-only missing-terminal benchmark case and a separate live lane
+  for frozen real complete, truncated, ambiguous, and blank controls. The live
+  lane rejects changed pixels, false passes, and any nonzero negative-control
+  score while retaining successful responses privately for rationale review.
+
 ### LeRobot feedback control mode requires a JSON boolean
 
 - `POST /feedback/train-step` accepts `control: true` or `control: false`;
