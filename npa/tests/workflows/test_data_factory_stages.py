@@ -2608,7 +2608,9 @@ def test_grade_gate_validates_optional_model_enforcement_claim(
 ) -> None:
     from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
 
-    report = _provider_vlm_report(monkeypatch, tmp_path, backend=backend)
+    report = json.loads(
+        json.dumps(_provider_vlm_report(monkeypatch, tmp_path, backend=backend))
+    )
     report["served_model_match_enforced"] = claim
     (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
     if isinstance(claim, bool) and claim is (backend == "api"):
@@ -2631,7 +2633,9 @@ def test_grade_gate_preserves_legacy_absent_enforcement_claim(
 ) -> None:
     from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
 
-    report = _provider_vlm_report(monkeypatch, tmp_path, backend=backend)
+    report = json.loads(
+        json.dumps(_provider_vlm_report(monkeypatch, tmp_path, backend=backend))
+    )
     report.pop("served_model_match_enforced")
     assert vlm_grade_block_details(report) == {}
 
