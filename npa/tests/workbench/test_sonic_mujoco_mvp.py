@@ -25,7 +25,17 @@ def test_only_runtime_fetch_variant_is_default_and_active() -> None:
     active = sonic_image_entry()
     assert active["id"] == "sonic-k8s-host-mounted"
     assert active["status"] == "active"
+    assert active["public_release_status"] == "quarantined"
     assert active["redistribution"] == "public-runtime-fetch"
+
+
+def test_independent_mujoco_release_remains_publicly_active() -> None:
+    entries = {item["id"]: item for item in sonic_image_manifest()["images"]}
+
+    assert entries["sonic-mujoco-runtime-fetch"]["public_release_status"] == "active"
+    assert container_image_for_tool("sonic-mujoco").endswith(
+        "/npa-sonic-mujoco:0.2.0-runtime"
+    )
 
 
 def test_quarantine_records_why_a_runtime_flag_cannot_fix_baked_bytes() -> None:

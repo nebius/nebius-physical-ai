@@ -1,0 +1,69 @@
+{
+  "status": "passed",
+  "scope": "real systemd activation; injected restore failures; dummy daemons",
+  "production_script_sha256": "4d56f9c39609dd189c4a6b619cf2aa5c7613f7340882f78e1f7291b13284bac7",
+  "systemd": "systemd 252 (252.39-1~deb12u2)",
+  "cases": [
+    {
+      "restore_failure": "iptables",
+      "start_exits": {
+        "rpcbind.socket": 1,
+        "slurmctld.service": 1,
+        "slurmd.service": 1,
+        "slurmdbd.service": 1,
+        "nfs-server.service": 1,
+        "rpcbind.service": 1
+      },
+      "dependent_states": {
+        "rpcbind.socket": "inactive",
+        "slurmctld.service": "inactive",
+        "slurmd.service": "inactive",
+        "slurmdbd.service": "inactive",
+        "nfs-server.service": "inactive",
+        "rpcbind.service": "inactive"
+      },
+      "daemon_markers": 0
+    },
+    {
+      "restore_failure": "ip6tables",
+      "start_exits": {
+        "rpcbind.socket": 1,
+        "slurmctld.service": 1,
+        "slurmd.service": 1,
+        "slurmdbd.service": 1,
+        "nfs-server.service": 1,
+        "rpcbind.service": 1
+      },
+      "dependent_states": {
+        "rpcbind.socket": "inactive",
+        "slurmctld.service": "inactive",
+        "slurmd.service": "inactive",
+        "slurmdbd.service": "inactive",
+        "nfs-server.service": "inactive",
+        "rpcbind.service": "inactive"
+      },
+      "daemon_markers": 0
+    },
+    {
+      "restore_failure": null,
+      "start_exits": {
+        "rpcbind.socket": 0,
+        "slurmctld.service": 0,
+        "slurmd.service": 0,
+        "slurmdbd.service": 0,
+        "nfs-server.service": 0,
+        "rpcbind.service": 0
+      },
+      "dependent_states": {
+        "rpcbind.socket": "active",
+        "slurmctld.service": "active",
+        "slurmd.service": "active",
+        "slurmdbd.service": "active",
+        "nfs-server.service": "active",
+        "rpcbind.service": "active"
+      },
+      "daemon_markers": 5
+    }
+  ],
+  "gpu_cluster_tested": false
+}

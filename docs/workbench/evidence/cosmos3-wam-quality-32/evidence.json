@@ -1,0 +1,71 @@
+{
+  "schema": "npa.cosmos3.wam-quality-evidence.v1",
+  "training_gpus": 32,
+  "evaluation_contract": {
+    "workers": 8,
+    "envs": 8,
+    "trials": 50,
+    "seed": 42
+  },
+  "total_trials_across_distinct_checkpoints": 2000,
+  "evaluation_process_seconds_total": 13893.890384872,
+  "evaluation_process_gpu_hours_total": 30.87531196638222,
+  "scheduler": {
+    "500": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 3763,
+      "allocated_gpus": 8,
+      "allocated_nodes": 1,
+      "allocated_cpus": 160,
+      "started_utc": "2026-09-30T06:13:01Z",
+      "ended_utc": "2026-09-30T07:15:44Z",
+      "allocated_gpu_hours": 8.362222222222222
+    },
+    "1000": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 3572,
+      "allocated_gpus": 8,
+      "allocated_nodes": 1,
+      "allocated_cpus": 160,
+      "started_utc": "2026-09-30T06:15:10Z",
+      "ended_utc": "2026-09-30T07:14:42Z",
+      "allocated_gpu_hours": 7.937777777777778
+    },
+    "1500": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 3310,
+      "allocated_gpus": 8,
+      "allocated_nodes": 1,
+      "allocated_cpus": 160,
+      "started_utc": "2026-09-30T06:15:11Z",
+      "ended_utc": "2026-09-30T07:10:21Z",
+      "allocated_gpu_hours": 7.355555555555555
+    },
+    "2000": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 3289,
+      "allocated_gpus": 8,
+      "allocated_nodes": 1,
+      "allocated_cpus": 160,
+      "started_utc": "2026-09-30T06:15:11Z",
+      "ended_utc": "2026-09-30T07:10:00Z",
+      "allocated_gpu_hours": 7.308888888888889
+    }
+  },
+  "files_sha256": {
+    "quality-curve.json": "d4164b29a4b92f33f4f9070c58c54d55e742f0e2b7be4ee36c7f7eb962dda52e",
+    "quality-step-500.json": "0784454cbca6d50a05c32dddc74f94321310fd657faea97cec5bbfc436a3249a",
+    "model-hashes-step-500.json": "56f0d1261006075eb9493eb34737fec6ae38004bb1640552d272079207397a0b",
+    "quality-step-1000.json": "29f2ea7879e4b002d1f92f91c0e28e8fc4cda3f06b8abfe6c5b3e2b43801786b",
+    "model-hashes-step-1000.json": "7a5775444ab685f23acb1712ca6bac43f85f12fbef4f315a5fcf84c85b233cf2",
+    "quality-step-1500.json": "9b49910ca628376db4594bf9b2850eb8941648549055dcd0454c0bad2b152167",
+    "model-hashes-step-1500.json": "e15a5fb48eeecf531a6134fd4cb2d3801e38755df6e74a07ebbaaaad87643f0c",
+    "quality-step-2000.json": "b08199dbf45984c2252a60e60780a3c8a2cf502011bbba215bd123f85016f265",
+    "model-hashes-step-2000.json": "fbf9c4d305457250a240e1484a372eea162e48a25e010dfb446926fe063c7f9d"
+  },
+  "private_archive_receipt_sha256": "9380cddd2806f52d21894315bd205d4a50ddc8bbf102e9e29e3c5d0984a70c8e"
+}

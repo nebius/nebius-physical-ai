@@ -1,0 +1,70 @@
+{
+  ".metadata": {
+    "bytes": 2751961,
+    "sha256": "84ac9c4299c588a9c003e48d7729f9ee52040f01be38810b0ed971bee95b313a"
+  },
+  "__0_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "e82d74e4e1359a315f69382908cc9f5300bf10353fb09b76ac1023bc609532d0"
+  },
+  "__10_0.distcp": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "__11_0.distcp": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "__12_0.distcp": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "__13_0.distcp": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "__14_0.distcp": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "__15_0.distcp": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "__1_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "328fcad88c04d004cc8a267f5b07a02167a171676c738788f1744252180965fd"
+  },
+  "__2_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "abc624a706f57989df1fa6210a6b3a90b749afc6aaac080e14352440f6358601"
+  },
+  "__3_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "2f074af361ce91180dd1ab07898b92e3910eb8986dc83d2c78b1e0d505e2e0d1"
+  },
+  "__4_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "9138c5c8cea2c1e8c661e21e9f64c04c55c4c06ce7783886336f0b07d5d4c476"
+  },
+  "__5_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "448c957336cf5104c20bbbd6d914eae0557df10b2b07d1f6a550369f01af334a"
+  },
+  "__6_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "d765145ea6d525bcb9116002df39fb507f942b1b0fff1e9dc7981339dba95f00"
+  },
+  "__7_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "c8eff13eb8a18a10cc1689588e40fc26a065ef0764919da7396ec2e54e0be2f5"
+  },
+  "__8_0.distcp": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "__9_0.distcp": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

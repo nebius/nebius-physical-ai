@@ -1,0 +1,122 @@
+{
+  "demo": "synthetic-data",
+  "native_source_revision": "2eb77537d3b09374b8c31457c634d8c1ab036c12",
+  "native_artifacts_qualified": true,
+  "artifact_readback": {
+    "measurements": {
+      "schema": "npa.isaac.rgbd.validation.v1",
+      "validated": true,
+      "frames": 265,
+      "cameras": 4,
+      "views": 1060,
+      "valid_depth_pixels": 976895672,
+      "fused_points": 976895672
+    },
+    "verified_artifact_count": 4505,
+    "manifest_sha256": "8fc13b0e66d4ab1db3a07ed5f677ad324cde7f1464f55908c50391d80ab10eee",
+    "preview": {
+      "sha256": "e51fc7007621efee565558c6f9d928276efd72d328ca618759b5c3f488ad16d7",
+      "bytes": 5096469,
+      "timelines": [
+        {
+          "title": "Synchronized camera rig",
+          "frames": 32
+        }
+      ]
+    },
+    "demo_view_identical_bytes": true
+  },
+  "gpu_witness": {
+    "source_revision": "2eb77537d3b09374b8c31457c634d8c1ab036c12",
+    "matched_record_sha256": "0967925134bdfad9108b436161968232c02c4ae567572cd17cc491f9ed7a909b",
+    "stages": {
+      "prepare": {
+        "qualification": "matching process workflow run ID and recorded stage time interval",
+        "qualified_samples": 24,
+        "active_samples": 1,
+        "gpu_models": [
+          "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+        ],
+        "peak_memory_used_mib": 2824,
+        "peak_utilization_percent": 7,
+        "first_observed_utc": "2026-09-28T04:07:43.843146+00:00",
+        "last_observed_utc": "2026-09-28T04:19:41.009607+00:00",
+        "image_digests": [
+          "sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6"
+        ],
+        "staged_source_sha256": "8c868eea66061d37c761cc4dc10fa89a69bd670b9a9d9569d65d7538484b53e5",
+        "workflow_sha256": "d375172f30b92ec91cd9f7ac04d9b4021e2cced21efad7a948fdae47b1aef40e"
+      },
+      "capture": {
+        "qualification": "matching process workflow run ID and recorded stage time interval",
+        "qualified_samples": 84,
+        "active_samples": 5,
+        "gpu_models": [
+          "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+        ],
+        "peak_memory_used_mib": 4996,
+        "peak_utilization_percent": 78,
+        "first_observed_utc": "2026-09-28T04:22:14.289283+00:00",
+        "last_observed_utc": "2026-09-28T05:05:17.213823+00:00",
+        "image_digests": [
+          "sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6"
+        ],
+        "staged_source_sha256": "8c868eea66061d37c761cc4dc10fa89a69bd670b9a9d9569d65d7538484b53e5",
+        "workflow_sha256": "d375172f30b92ec91cd9f7ac04d9b4021e2cced21efad7a948fdae47b1aef40e"
+      }
+    }
+  },
+  "native_browser": {
+    "report_sha256": "e51fc7007621efee565558c6f9d928276efd72d328ca618759b5c3f488ad16d7",
+    "browser_results": [
+      {
+        "width": 1440,
+        "timelines": [
+          {
+            "title": "Synchronized camera rig",
+            "frames": 32,
+            "images": 256
+          }
+        ],
+        "javascript_errors": 0,
+        "network_requests": 0
+      },
+      {
+        "width": 390,
+        "timelines": [
+          {
+            "title": "Synchronized camera rig",
+            "frames": 32,
+            "images": 256
+          }
+        ],
+        "javascript_errors": 0,
+        "network_requests": 0
+      }
+    ]
+  },
+  "scope": "Real Isaac Sim Replicator RGB, metric axial depth and colored world-frame point clouds from a public warehouse; route playback is not autonomous robot navigation.",
+  "native_stages": [
+    {
+      "stage": "prepare",
+      "status": "SUCCEEDED"
+    },
+    {
+      "stage": "capture",
+      "status": "SUCCEEDED"
+    },
+    {
+      "stage": "validate",
+      "status": "SUCCEEDED"
+    }
+  ],
+  "actual_demo_view_cli": {
+    "command": "npa workbench workflow demo view",
+    "source_revision": "2eb77537d3b09374b8c31457c634d8c1ab036c12",
+    "exit_code": 0,
+    "selected_project_credentials": true,
+    "report_sha256": "e51fc7007621efee565558c6f9d928276efd72d328ca618759b5c3f488ad16d7",
+    "canonical_report_identical_bytes": true,
+    "browser_open": false
+  }
+}

@@ -136,6 +136,69 @@ def build_plan(
     return plan
 
 
+def build_reachability_plan(
+    spec: NpaWorkflowSpec,
+    *,
+    run_id: str = "preflight-run",
+    assume_decision: str = "",
+) -> ExecutionPlan:
+    """Conservatively materialize every control-flow-reachable executable state."""
+
+    decisions = [str(assume_decision or "").strip()]
+    decisions.extend(
+        str(transition.when).strip()
+        for state in spec.states.values()
+        for transition in state.transitions
+        if transition.when
+    )
+    selected_decisions = list(dict.fromkeys(item for item in decisions if item)) or [""]
+    combined = ExecutionPlan(
+        workflow=spec.name,
+        api_version=spec.api_version,
+        initial=spec.initial,
+        assume_decision=str(assume_decision or "").strip(),
+    )
+    covered_states: set[str] = set()
+    for decision in selected_decisions:
+        candidate = build_plan(spec, run_id=run_id, assume_decision=decision)
+        combined.steps.extend(candidate.steps)
+        covered_states.update(step.state for step in candidate.steps)
+
+    reachable: list[str] = []
+    pending = [spec.initial]
+    while pending:
+        state_name = pending.pop()
+        if state_name in reachable:
+            continue
+        state = spec.states[state_name]
+        reachable.append(state_name)
+        if state.terminal:
+            continue
+        pending.extend(reversed(state.parallel))
+        pending.extend(reversed(state.sequence))
+        if state.next:
+            pending.append(state.next)
+        pending.extend(
+            transition.goto
+            for transition in reversed(state.transitions)
+            if not transition.if_config
+            or config_truthy(transition.if_config, spec.config)
+        )
+
+    context = _make_context(spec, run_id=run_id)
+    for state_name in reachable:
+        state = spec.states[state_name]
+        if state_name in covered_states or state.parallel or state.sequence:
+            continue
+        iteration = 1 if state.loop else None
+        if state.loop:
+            context.inner_iteration = 1
+            context.loop_iterations[state.name] = 1
+        combined.steps.append(build_step(spec, state, context, iteration=iteration))
+        covered_states.add(state_name)
+    return combined
+
+
 def run_workflow(
     spec: NpaWorkflowSpec,
     *,

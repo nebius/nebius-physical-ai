@@ -19,6 +19,7 @@ from npa.workflows.feedback import (
     FeedbackType,
     adapt_feedback_to_training_signal,
     collect_feedback,
+    parse_source_payload,
 )
 
 
@@ -293,3 +294,107 @@ def test_byo_container_feedback_source_rejects_mismatched_declared_type(
                 byo_endpoint_url="https://feedback.invalid/score",
             )
         )
+
+
+@pytest.mark.parametrize(
+    ("source_payload", "expected_success"),
+    [
+        ({"value": 0.8}, True),
+        ({"value": 0.2}, False),
+        ({"value": 0.2, "success": True}, True),
+        ({"value": 0.8, "success": False}, False),
+    ],
+)
+def test_parse_source_payload_preserves_boolean_or_score_based_success(
+    source_payload: dict, expected_success: bool
+) -> None:
+    payload = parse_source_payload(
+        source_payload,
+        source="byo-container",
+        feedback_type=FeedbackType.SCALAR,
+    )
+
+    assert payload.success is expected_success
+
+
+@pytest.mark.parametrize(
+    "success", ["false", "true", 0, 1, None, [], [False], {}, {"value": False}]
+)
+def test_parse_source_payload_rejects_non_boolean_success(success: object) -> None:
+    with pytest.raises(
+        FeedbackSourceError,
+        match="feedback source 'success' must be a JSON boolean",
+    ):
+        parse_source_payload(
+            {"value": 0.9, "success": success},
+            source="byo-container",
+            feedback_type=FeedbackType.SCALAR,
+        )
+
+
+@pytest.mark.parametrize("route", ["http", "cli"])
+@pytest.mark.parametrize(
+    "response,parsed_success,training_success",
+    [
+        ({"value": True, "success": False}, False, False),
+        ({"value": False, "success": True}, True, True),
+        ({"value": "false", "success": False}, False, False),
+        ({"value": 1, "success": False}, False, False),
+        ({"value": True}, True, True),
+        ({"value": False}, False, False),
+        ({"value": False, "score": 0.8}, True, False),
+        ({"value": True, "score": 0.2}, False, True),
+        ({"success": False}, False, False),
+    ],
+)
+def test_byo_pass_fail_training_signal_preserves_explicit_and_omitted_success(
+    tmp_path: Path,
+    route: str,
+    response: dict,
+    parsed_success: bool,
+    training_success: bool,
+) -> None:
+    source = ByoContainerFeedbackSource(
+        http_post=lambda *_args: response, command_runner=lambda *_args: response
+    )
+    payload, _status = source.collect(
+        FeedbackRequest(
+            rollout_path=tmp_path / "rollout",
+            output_path=tmp_path / "feedback",
+            task="pick",
+            checkpoint_uri="s3://bucket/checkpoint/",
+            threshold=0.75,
+            feedback_type=FeedbackType.PASS_FAIL,
+            byo_endpoint_url="https://feedback.invalid/score"
+            if route == "http"
+            else "",
+            byo_command="feedback-cli --json" if route == "cli" else "",
+        )
+    )
+    signal = adapt_feedback_to_training_signal(payload)
+    assert payload.success is parsed_success
+    assert signal["success"] is training_success
+    assert signal["scalar_reward"] == float(training_success)
+
+
+@pytest.mark.parametrize("route", ["http", "cli"])
+@pytest.mark.parametrize("success", ["false", 1, None])
+def test_byo_source_rejects_malformed_success_before_training_signal(
+    tmp_path: Path, route: str, success: object
+) -> None:
+    source = ByoContainerFeedbackSource(
+        http_post=lambda *_args: {"value": True, "success": success},
+        command_runner=lambda *_args: {"value": True, "success": success},
+    )
+    request = FeedbackRequest(
+        rollout_path=tmp_path / "rollout",
+        output_path=tmp_path / "feedback",
+        task="pick",
+        checkpoint_uri="s3://bucket/checkpoint/",
+        threshold=0.75,
+        feedback_type=FeedbackType.PASS_FAIL,
+        byo_endpoint_url="https://feedback.invalid/score" if route == "http" else "",
+        byo_command="feedback-cli --json" if route == "cli" else "",
+    )
+    with pytest.raises(FeedbackSourceError, match="'success' must be a JSON boolean"):
+        source.collect(request)

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import math
 import os
+from pathlib import Path
+import tempfile
 from typing import Any, Literal
 
 import lancedb
@@ -74,7 +77,7 @@ except ImportError:  # pragma: no cover - used by the copied Docker module.
 
 
 class CreateTableRequest(BaseModel):
-    schema: dict[str, Any] | None = None
+    table_schema: dict[str, Any] | None = Field(default=None, alias="schema")
     input_path: str = ""
     rows: list[dict[str, Any]] = Field(default_factory=list)
     mode: Literal["create", "overwrite", "append"] = "create"
@@ -181,13 +184,12 @@ def _equality_predicate(filter_spec: dict[str, Any]) -> str:
 
 def _list_tables(db: Any) -> list[str]:
     list_tables = getattr(db, "list_tables", None)
-    if callable(list_tables):
-        values = list_tables()
-        return _normalize_table_names(getattr(values, "tables", values))
-    table_names = getattr(db, "table_names", None)
-    if callable(table_names):
-        return _normalize_table_names(table_names())
-    return []
+    if not callable(list_tables):
+        raise RuntimeError(
+            "LanceDB connection does not expose the required list_tables API"
+        )
+    values = list_tables()
+    return _normalize_table_names(getattr(values, "tables", values))
 
 
 def _normalize_table_names(values: Any) -> list[str]:
@@ -202,6 +204,21 @@ def _normalize_table_names(values: Any) -> list[str]:
         else:
             names.append(str(value))
     return names
+
+
+def _verify_local_storage_writable(storage_path: str) -> None:
+    """Prove a local LanceDB path supports the mutation its API advertises."""
+
+    if storage_path.startswith("s3://"):
+        return
+    directory = Path(storage_path)
+    directory.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=directory, prefix=".npa-ready-", delete=True
+    ) as sentinel:
+        sentinel.write(b"ready")
+        sentinel.flush()
+        os.fsync(sentinel.fileno())
 
 
 def _parse_arrow_type(type_spec: Any) -> pa.DataType:
@@ -302,6 +319,58 @@ def _rows_as_arrow_table(
         ) from exc
 
 
+def _normalize_inferred_vector(table: pa.Table, *, vector_column: str) -> pa.Table:
+    """Make LanceDB's implicit vector conversion explicit and verifiable.
+
+    LanceDB stores an inferred ``list<double>`` vector as a fixed-size
+    ``float32`` vector. Comparing the stored schema with the pre-conversion
+    Arrow schema therefore reported HTTP 500 after a successful write. Cast
+    the designated vector before mutation so the schema we verify is the
+    schema we asked LanceDB to store.
+    """
+
+    if not vector_column or vector_column not in table.schema.names:
+        return table
+    field = table.schema.field(vector_column)
+    if not (pa.types.is_list(field.type) or pa.types.is_large_list(field.type)):
+        return table
+    if not (
+        pa.types.is_integer(field.type.value_type)
+        or pa.types.is_floating(field.type.value_type)
+    ):
+        raise HTTPException(
+            status_code=400, detail=f"{vector_column} must contain numeric vectors"
+        )
+    vectors = [
+        value for value in table.column(vector_column).to_pylist() if value is not None
+    ]
+    sizes = {len(value) for value in vectors}
+    if not sizes or len(sizes) != 1 or 0 in sizes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{vector_column} vectors must have one consistent positive size",
+        )
+    vector_size = sizes.pop()
+    fields = [
+        pa.field(
+            candidate.name,
+            pa.list_(pa.float32(), vector_size)
+            if candidate.name == vector_column
+            else candidate.type,
+            nullable=candidate.nullable,
+            metadata=candidate.metadata,
+        )
+        for candidate in table.schema
+    ]
+    try:
+        return table.cast(pa.schema(fields, metadata=table.schema.metadata))
+    except (pa.ArrowInvalid, pa.ArrowNotImplementedError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{vector_column} is incompatible with a float32 vector: {exc}",
+        ) from exc
+
+
 def _schemas_equal(actual: pa.Schema, expected: pa.Schema) -> bool:
     return actual.equals(expected, check_metadata=False)
 
@@ -320,6 +389,86 @@ def _verify_stored_table(
         )
 
 
+def _canonical_record(record: dict[str, Any]) -> str:
+    try:
+        return json.dumps(
+            record, allow_nan=False, separators=(",", ":"), sort_keys=True
+        )
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=400, detail=f"record is not canonical JSON: {exc}"
+        ) from exc
+
+
+def _unique_index_records(
+    records: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    unique_records: list[dict[str, Any]] = []
+    request_records: dict[str, str] = {}
+    reused = 0
+    for record in records:
+        record_id = record.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            raise HTTPException(
+                status_code=400, detail="each record requires a non-empty record_id"
+            )
+        canonical = _canonical_record(record)
+        previous = request_records.get(record_id)
+        if previous is None:
+            request_records[record_id] = canonical
+            unique_records.append(record)
+        elif previous == canonical:
+            reused += 1
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"record_id has conflicting content: {record_id}",
+            )
+    return unique_records, reused
+
+
+def _existing_index_records(table: Any) -> dict[str, str]:
+    existing: dict[str, str] = {}
+    for record in table.to_arrow().to_pylist():
+        record_id = record.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            raise HTTPException(
+                status_code=409, detail="existing table has an invalid record_id"
+            )
+        canonical = _canonical_record(record)
+        previous = existing.get(record_id)
+        if previous is not None and previous != canonical:
+            raise HTTPException(
+                status_code=409,
+                detail=f"existing record_id has conflicting content: {record_id}",
+            )
+        existing[record_id] = canonical
+    return existing
+
+
+def _plan_index_append(
+    table: Any, records: list[dict[str, Any]], request_reused: int
+) -> tuple[pa.Table, int]:
+    incoming = _rows_as_arrow_table(records, table.schema)
+    existing = _existing_index_records(table)
+    novel_records: list[dict[str, Any]] = []
+    reused = request_reused
+    for record in incoming.to_pylist():
+        record_id = record["record_id"]
+        canonical = _canonical_record(record)
+        stored = existing.get(record_id)
+        if stored is None:
+            novel_records.append(record)
+        elif stored == canonical:
+            reused += 1
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"record_id has conflicting content: {record_id}",
+            )
+    return pa.Table.from_pylist(novel_records, schema=table.schema), reused
+
+
 def _mutate_table(
     db: Any, table_name: str, body: CreateTableRequest
 ) -> tuple[str, int]:
@@ -328,7 +477,7 @@ def _mutate_table(
             status_code=400,
             detail="server-side S3 import is not implemented in the OSS wrapper",
         )
-    requested_schema = _parse_arrow_schema(body.schema)
+    requested_schema = _parse_arrow_schema(body.table_schema)
     if not body.rows and requested_schema is None:
         raise HTTPException(
             status_code=400, detail="rows or a usable schema are required"
@@ -346,6 +495,10 @@ def _mutate_table(
         status = "appended"
     else:
         incoming = _rows_as_arrow_table(body.rows, requested_schema)
+        if requested_schema is None:
+            incoming = _normalize_inferred_vector(
+                incoming, vector_column=body.vector_column
+            )
         mode = "overwrite" if body.mode == "overwrite" else "create"
         db.create_table(table_name, data=incoming, mode=mode)
         expected_rows = len(body.rows)
@@ -388,6 +541,18 @@ def create_app(
             )
         if not hmac.compare_digest(authorization, f"Bearer {resolved_token}"):
             raise HTTPException(status_code=401, detail="invalid token")
+
+    @app.get("/readyz")
+    async def readyz() -> dict[str, str]:
+        """Unauthenticated storage readiness for container and Kubernetes probes."""
+
+        try:
+            known_tables.update(_list_tables(db))
+            _verify_local_storage_writable(resolved_storage)
+        except Exception as exc:
+            LOGGER.exception("LanceDB storage readiness check failed")
+            raise HTTPException(status_code=503, detail="storage is not ready") from exc
+        return {"status": "ok"}
 
     @app.get("/health")
     async def health(
@@ -454,27 +619,36 @@ def create_app(
         request: Request,
         authorization: str = Header(default=""),
     ) -> dict[str, Any]:
-        """Append dataset records, creating the table on first write."""
+        """Insert novel dataset identities and reuse exact existing records."""
 
         await require_auth(request, authorization)
         if not body.records:
             raise HTTPException(status_code=400, detail="records must not be empty")
         rows = [dict(record) for record in body.records]
+        unique_rows, reused = _unique_index_records(rows)
         if body.table in set(_list_tables(db)):
             table = db.open_table(body.table)
-            table.add(rows)
-            status = "appended"
+            novel_rows, reused = _plan_index_append(table, unique_rows, reused)
+            inserted = novel_rows.num_rows
+            if inserted:
+                table.add(novel_rows)
+                status = "appended"
+            else:
+                status = "replayed"
         else:
             # First write defines the schema, which is what makes `register` idempotent for a
             # fresh dataset id without a separate create step.
-            db.create_table(body.table, data=rows, mode="create")
+            db.create_table(body.table, data=unique_rows, mode="create")
+            inserted = len(unique_rows)
             status = "created"
         known_tables.add(body.table)
         return {
             "status": status,
             "table": body.table,
             "lance_uri": body.lance_uri,
-            "rows": len(rows),
+            "rows": inserted,
+            "inserted": inserted,
+            "reused": reused,
         }
 
     @app.post("/query")

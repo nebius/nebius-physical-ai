@@ -1,0 +1,207 @@
+# CUDA 13.0.1 uses the patched PyTorch 2.13.0 cu130 wheel family.
+# The Docker Hub tag uses "cudnn" rather than the non-existent "cudnn9" suffix.
+ARG CUDA_BASE_TAG=13.0.1-cudnn-devel-ubuntu22.04
+FROM nvidia/cuda:${CUDA_BASE_TAG}@sha256:6ff9753ccda37b8f8d711831310d661afd310254148c35ea29f0cca141c499d7
+
+ARG CUDA_BASE_TAG=13.0.1-cudnn-devel-ubuntu22.04
+ARG BUILD_TS=unknown
+ARG TORCH_VERSION=2.13.0
+ARG TORCHVISION_VERSION=0.28.0
+# TorchAudio 2.11 is forward-compatible with later Torch releases.
+ARG TORCHAUDIO_VERSION=2.11.0
+# Includes SM120 dispatch/backward fixes (#2671) and varlen tile guards (#2763).
+# Quack 0.6.4 requires exactly CUTLASS DSL 4.6.2; update this trio together and
+# execute the forward/gradient smoke on each claimed GPU architecture.
+ARG FLASH_ATTN_COMMIT=eed1971f5132630dc296fe37601e834d4b57a248
+ARG CUTLASS_DSL_VERSION=4.6.2
+ARG QUACK_KERNELS_VERSION=0.6.4
+# SASS is per-arch with no cross-major compatibility, so every architecture a
+# source-compiled extension must run on has to be listed here explicitly:
+#   8.0  = A100 (sm_80)          9.0  = H100/H200 (sm_90)
+#   10.0 = B200 (sm_100)         10.3 = B300 / Blackwell Ultra (sm_103)
+#   12.0 = RTX PRO 6000 (sm_120)
+# Minor-version forward compatibility holds inside a major, so sm_100 SASS also
+# runs on sm_103 - but sm_120 (major 12) and sm_100/sm_103 (major 10) are
+# mutually incompatible, which is why both majors are listed.
+ARG TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0 10.3 12.0"
+# Space-separated torch arch tokens (sm_XX) that torch.cuda.get_arch_list() must
+# report for the build to succeed. Empty disables the assertion.
+ARG REQUIRE_TORCH_ARCHS="sm_80 sm_90 sm_100 sm_120"
+
+LABEL npa.image="cuda13-blackwell" \
+      npa.cuda.base="${CUDA_BASE_TAG}" \
+      npa.torch.version="${TORCH_VERSION}+cu130" \
+      npa.flash_attention.commit="${FLASH_ATTN_COMMIT}" \
+      npa.cutlass_dsl.version="${CUTLASS_DSL_VERSION}" \
+      npa.quack_kernels.version="${QUACK_KERNELS_VERSION}" \
+      npa.cuda_arch_list="${TORCH_CUDA_ARCH_LIST}" \
+      npa.build_ts="${BUILD_TS}" \
+      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION};flash_attention_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TORCH_CUDA_ARCH_LIST=${TORCH_CUDA_ARCH_LIST} \
+    CUDA_HOME=/usr/local/cuda \
+    HF_HOME=/opt/npa/hf_cache \
+    HF_HUB_CACHE=/opt/npa/hf_cache/hub \
+    TRANSFORMERS_CACHE=/opt/npa/hf_cache/transformers \
+    NPA_INPUT_PATH=/input \
+    NPA_OUTPUT_PATH=/output \
+    INPUT_PATH=/input \
+    OUTPUT_PATH=/output \
+    IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg \
+    PATH=/opt/npa/venv/bin:/usr/local/cuda/bin:$PATH
+
+SHELL ["/bin/bash", "-lc"]
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      curl \
+      git \
+      gnupg \
+      software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      cmake \
+      ffmpeg \
+      git-lfs \
+      libegl1 \
+      libffi-dev \
+      libgl1 \
+      libglib2.0-0 \
+      libsm6 \
+      libssl-dev \
+      libxext6 \
+      libxrender1 \
+      ninja-build \
+      pkg-config \
+      python3.11 \
+      python3.11-dev \
+      python3.11-venv \
+      wget \
+    && git lfs install --system \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash -u 1000 ubuntu \
+    && install -d -m 0755 -o ubuntu -g ubuntu \
+      /input \
+      /output \
+      /opt/npa \
+      /opt/npa/hf_cache \
+      /opt/npa/src
+
+RUN python3.11 -m venv /opt/npa/venv \
+    && python -m pip install --upgrade pip setuptools wheel packaging
+
+RUN python -m pip install \
+      torch==${TORCH_VERSION} \
+      torchvision==${TORCHVISION_VERSION} \
+      torchaudio==${TORCHAUDIO_VERSION} \
+      --index-url https://download.pytorch.org/whl/cu130
+
+RUN python -m pip install \
+      accelerate \
+      av \
+      boto3 \
+      datasets \
+      einops \
+      huggingface_hub \
+      numpy \
+      opencv-python-headless \
+      pandas \
+      pillow \
+      pyarrow \
+      safetensors \
+      scipy \
+      tensorboard \
+      transformers \
+      wandb \
+    && find /opt/npa/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -delete \
+    && test -z "$(find /opt/npa/venv -type f \
+      -path '*/imageio_ffmpeg/binaries/ffmpeg*' -print -quit)" \
+    && python -c 'import importlib.util; assert importlib.util.find_spec("imageio_ffmpeg") is None or __import__("imageio_ffmpeg").get_ffmpeg_exe() == "/usr/bin/ffmpeg"'
+
+ARG CUTLASS_DSL_VERSION
+ARG QUACK_KERNELS_VERSION
+RUN python -m pip install \
+      "nvidia-cutlass-dsl[cu13]==${CUTLASS_DSL_VERSION}" \
+      "quack-kernels==${QUACK_KERNELS_VERSION}"
+
+ARG ATTENTION_BACKEND=fa4
+# The FA2 extension is compiled specifically for the RTX comparison target.
+ARG FA2_CUDA_ARCHS=120
+# Compiler parallelism affects build memory, not attention execution.
+ARG FA2_NVCC_THREADS=4
+ENV NPA_ATTENTION_BACKEND=${ATTENTION_BACKEND} \
+    NPA_FLASH_ATTN_COMMIT=${FLASH_ATTN_COMMIT}
+LABEL npa.attention.backend="${ATTENTION_BACKEND}" \
+      npa.fa2.cuda_archs="${FA2_CUDA_ARCHS}"
+RUN git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attention \
+    && cd /tmp/flash-attention \
+    && git checkout "${FLASH_ATTN_COMMIT}" \
+    && test "$(git rev-parse HEAD)" = "${FLASH_ATTN_COMMIT}" \
+    && if [ "${ATTENTION_BACKEND}" = fa4 ]; then \
+         python -m pip install "flash_attn/cute[cu13]"; \
+       elif [ "${ATTENTION_BACKEND}" = fa2 ]; then \
+         FLASH_ATTENTION_FORCE_BUILD=TRUE FLASH_ATTN_CUDA_ARCHS="${FA2_CUDA_ARCHS}" \
+           NVCC_THREADS="${FA2_NVCC_THREADS}" \
+           python -m pip install --no-build-isolation --no-deps .; \
+       else echo "Unsupported ATTENTION_BACKEND" >&2; exit 2; fi \
+    && rm -rf /tmp/flash-attention
+
+# The root import is a restricted, keyword-only-options FA4 adapter. Never
+# forward ambiguous FA2 positional arguments into the incompatible FA4 API.
+COPY scripts/flash_attn_root.py /npa/flash_attn_root.py
+COPY scripts/flash_attn_rtx.py /npa/flash_attn_rtx.py
+RUN python - <<'PY'
+from importlib import metadata
+from pathlib import Path
+import os
+import site
+
+if os.environ["NPA_ATTENTION_BACKEND"] == "fa4":
+    pkg = Path(site.getsitepackages()[0]) / "flash_attn"
+    pkg.mkdir(exist_ok=True)
+    (pkg / "__init__.py").write_bytes(Path("/npa/flash_attn_root.py").read_bytes())
+    (pkg / "rtx.py").write_bytes(Path("/npa/flash_attn_rtx.py").read_bytes())
+    print("flash-attn-4", metadata.version("flash-attn-4"))
+else:
+    assert metadata.version("flash-attn").startswith("2.")
+    import torch  # Load libtorch/libc10 before the standalone CUDA extension.
+    import flash_attn_2_cuda
+    print("flash-attn", metadata.version("flash-attn"))
+PY
+
+# Baked in so every derived image can validate itself on whatever GPU it lands
+# on, without the caller having to inject a script.
+COPY scripts/check_torch_gpu_arch.py /npa/check_torch_gpu_arch.py
+COPY scripts/gpu_capability_smoke.py /npa/gpu_capability_smoke.py
+
+ARG REQUIRE_TORCH_ARCHS
+RUN python -m pip check \
+    && python /npa/check_torch_gpu_arch.py $(printf -- '--require-arch %s ' ${REQUIRE_TORCH_ARCHS}) \
+    && python - <<'PY'
+import importlib.metadata as metadata
+
+import flash_attn
+from flash_attn import flash_attn_func
+
+# Imports do not prove kernel execution or backward correctness. The baked
+# gpu_capability_smoke.py checks both on the actual target GPU.
+print("nvidia-nccl-cu13", metadata.version("nvidia-nccl-cu13"))
+print("flash_attn", flash_attn.__version__)
+print("flash_attn_func", flash_attn_func)
+PY
+
+WORKDIR /workspace
+
+USER root
+
+RUN dpkg --purge --force-depends linux-libc-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+USER ubuntu

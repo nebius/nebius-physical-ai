@@ -41,12 +41,17 @@ The source of truth is `skills/index.yaml`. The tree is organized as:
 - `skills/tools/ray-workbench/SKILL.md`: route Ray requests to the supported native Jobs/Core, Train V2, Cosmos3 native Serve, or fixed CPU KubeRay paths and state unsupported library boundaries.
 - `skills/tools/burst/SKILL.md`: one gang-scheduled multi-node GPU job with torchrun rendezvous, deliberately not a workflow surface.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator driver strategy (operator mode is unsafe on NVSwitch), the post-apply health gates (fabric, CUDA vectorAdd, stability window), accelerator-name discovery, and triage for nodes whose GPUs do not work.
+- `skills/tools/open3d/SKILL.md`: register overlapping point-cloud scans into
+  one frame with real RANSAC/FPFH + ICP, optimize the multiway pose graph,
+  reconstruct a Poisson surface, and read the validators that reject a
+  plausible-looking but non-rigid result. CPU-only by construction.
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset → `.rrd`/MP4, and time-boxed presigned Rerun share links.
 - `skills/workflows/emit-reviewable-rrd/SKILL.md`: derive factual Rerun recordings from actual workflow outputs, declare run-scoped `.rrd` artifacts, and validate their decoded timelines, entities, and provenance before handoff.
 - `skills/tools/fleet/SKILL.md`: deploy a fleet of Nebius Managed Kubernetes (k8s-training) clusters across one or many projects in a tenant from an `npa.fleet/v0.0.1` spec — identical and/or custom clusters, create-on-demand projects, and a k8s-training source that can consume the latest upstream recipe.
 - `skills/tools/scenario-gen/SKILL.md`: adversarial scenario generation — an RL adversary that maximizes failures of a policy-under-test, scenario ranking, and the adversarial-scenario-hardening workflow.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate, and query production sensor data as a versioned, lineage-tracked dataset (FiftyOne curation + LanceDB query index).
+- `skills/tools/encord/SKILL.md`: stateless Encord SaaS register, pull, and exact roundtrip verification with S3-backed lineage artifacts.
 - `skills/tools/foxglove/SKILL.md`: Foxglove embedded viewer — the `@foxglove/embed` TypeScript SDK in the agent UI, MCAP recordings (convert/inspect/publish), and the `npa-foxglove-embed` container.
 - `skills/tools/insights/SKILL.md`: lineage graph + common metrics store over workflow-run artifacts — non-invasive ingest-run, query, compare, lineage traversal, and dashboard (CPU-only, append-only S3 JSONL, LanceDB-optional).
 - `skills/workflows/sim2real-operate/SKILL.md`: operate the compositional Sim2Real `npa.workflow` through the standard SkyPilot runtime — validate/plan/submit, durable S3 resume, preflight health checks, storage secret sync, and job monitoring.

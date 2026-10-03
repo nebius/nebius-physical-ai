@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 import hashlib
 import json
@@ -20,6 +21,27 @@ from npa.orchestration.npa_workflow.run_state import RunStateStore, utc_now
 from npa.verification import sanitize_reason
 
 SUPERVISOR_SCHEMA_VERSION = "npa.workflow.supervisor.v1"
+
+
+class SupervisorEventPhase(str, Enum):
+    """Persisted phases shared by supervisor producers and recovery readers.
+
+    Args:
+        None.
+    Returns:
+        A stable wire value for a supervisor event.
+    Raises:
+        ValueError: An unknown phase is converted to this enum.
+    """
+
+    DECISION = "decision"
+    CANCELLATION = "cancellation"
+    RECOVERY_RESERVED = "recovery_reserved"
+    LAUNCH = "launch"
+    ATTEMPT_TERMINAL = "attempt_terminal"
+
+
+SUPERVISOR_EVENT_PHASES = frozenset(phase.value for phase in SupervisorEventPhase)
 
 
 class FailureClass(str, Enum):
@@ -68,9 +90,17 @@ CONFIGURATION_REASON_CODES = frozenset(
         "AUTHENTICATION",
         "AUTHORIZATION",
         "CHECKPOINT_INCOMPATIBLE",
+        "STORAGE_QUOTA_EXCEEDED",
+        "STORAGE_PROVISIONING_FAILED",
     }
 )
-CAPACITY_REASON_CODES = frozenset({"CAPACITY_OR_QUOTA", "GANG_CAPACITY_UNAVAILABLE"})
+CAPACITY_REASON_CODES = frozenset(
+    {
+        "CAPACITY_OR_QUOTA",
+        "GANG_CAPACITY_UNAVAILABLE",
+        "STORAGE_CAPACITY_UNAVAILABLE",
+    }
+)
 TRANSIENT_REASON_CODES = CAPACITY_REASON_CODES | frozenset(
     {
         "NODE_NOT_READY",
@@ -82,6 +112,13 @@ TRANSIENT_REASON_CODES = CAPACITY_REASON_CODES | frozenset(
         "SERVERLESS_TRANSPORT",
         "SERVERLESS_CAPACITY",
         "CONTROLLER_UNAVAILABLE",
+    }
+)
+_STORAGE_ADMISSION_REASON_CODES = frozenset(
+    {
+        "STORAGE_QUOTA_EXCEEDED",
+        "STORAGE_CAPACITY_UNAVAILABLE",
+        "STORAGE_PROVISIONING_FAILED",
     }
 )
 PAYLOAD_REASON_CODES = frozenset(
@@ -209,10 +246,16 @@ class PreflightEvidence:
 
     @property
     def relaunch_ready(self) -> bool:
-        return all(
-            str(self.checks.get(name) or "").lower() in {"pass", "not_required"}
-            for name in self.REQUIRED_RELAUNCH_CHECKS
-        )
+        for name in self.REQUIRED_RELAUNCH_CHECKS:
+            value = str(self.checks.get(name) or "").lower()
+            # Credential evidence is deliberately persisted only as the
+            # redacted marker.  It still proves the access check passed without
+            # putting a token or credential value into the durable receipt.
+            if name == "credentials_access" and value == "<redacted>":
+                continue
+            if value not in {"pass", "not_required"}:
+                return False
+        return True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -319,6 +362,17 @@ def decide_recovery(
             code,
             "Inspect the exact attempt logs and fix the payload; infrastructure retry is disabled.",
         )
+    if (
+        observation.state is BackendState.SUCCEEDED
+        and context.outputs.all_valid
+        and not _immutable_identity_matches(identity, context)
+    ):
+        return RecoveryDecision(
+            RecoveryAction.BLOCK_RELAUNCH,
+            FailureClass.UNKNOWN,
+            "IMMUTABLE_IDENTITY_MISMATCH",
+            "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
+        )
     if observation.state is BackendState.SUCCEEDED:
         if context.outputs.all_valid:
             return RecoveryDecision(
@@ -365,6 +419,17 @@ def decide_recovery(
             "Restore the recorded workflow, source, and image identities or start a new NPA run ID.",
         )
     if (
+        context.outputs.all_valid
+        and observation.state in {BackendState.QUEUED, BackendState.RUNNING}
+        and not identity.provider_job_id
+    ):
+        return RecoveryDecision(
+            RecoveryAction.BLOCK_RELAUNCH,
+            FailureClass.UNKNOWN,
+            "AMBIGUOUS_ATTEMPT_IDENTITY",
+            "Restore the exact provider job ID before cancelling a live output-complete attempt.",
+        )
+    if (
         observation.state in {BackendState.QUEUED, BackendState.RUNNING}
         and code in CAPACITY_REASON_CODES
     ):
@@ -373,6 +438,13 @@ def decide_recovery(
             failure_class,
             code,
             "Keep the exact provider attempt while its scheduler waits for capacity.",
+        )
+    if context.outputs.all_valid:
+        return RecoveryDecision(
+            RecoveryAction.REUSE_COMPLETED_WAVE,
+            failure_class,
+            "DECLARED_OUTPUTS_VALID",
+            "Every declared S3 output is valid; no provider relaunch is needed.",
         )
     if context.infrastructure_recoveries >= context.max_infrastructure_recoveries:
         action = (
@@ -386,13 +458,6 @@ def decide_recovery(
             failure_class,
             "INFRASTRUCTURE_RECOVERY_EXHAUSTED",
             "The finite infrastructure recovery policy is exhausted; cancel the exact live attempt when present, then inspect the durable attempt history before explicitly starting or resuming a run.",
-        )
-    if context.outputs.all_valid:
-        return RecoveryDecision(
-            RecoveryAction.REUSE_COMPLETED_WAVE,
-            failure_class,
-            "DECLARED_OUTPUTS_VALID",
-            "Every declared S3 output is valid; no provider relaunch is needed.",
         )
     if not context.outputs.all_absent:
         return RecoveryDecision(
@@ -435,6 +500,20 @@ def decide_recovery(
     )
 
 
+def _supervisor_event_order(event: Mapping[str, Any]) -> tuple[str, int, int]:
+    phase_order = {
+        "decision": 0,
+        "cancellation": 1,
+        "recovery_reserved": 2,
+        "launch": 2,
+    }
+    return (
+        str(event.get("recorded_at") or ""),
+        int((event.get("attempt_identity") or {}).get("attempt") or 0),
+        phase_order.get(str(event.get("phase") or ""), 99),
+    )
+
+
 class SupervisorLedger:
     """Content-addressed supervisor events stored under the run prefix."""
 
@@ -460,35 +539,78 @@ class SupervisorLedger:
             key, body, content_type="application/json"
         )
 
-    def events(self) -> list[dict[str, Any]]:
+    def events(self, logical_attempt_id: str = "") -> list[dict[str, Any]]:
+        """Read supervisor history, requiring intact evidence for scoped recovery.
+
+        Args:
+            logical_attempt_id: Exact attempt to validate; empty lists all history.
+        Returns:
+            Events ordered by observation time, attempt number, and phase.
+        Raises:
+            RuntimeError: Scoped history is missing, corrupt, or bound elsewhere.
+            Exception: The backing store cannot list or read the history.
+        """
         result: list[dict[str, Any]] = []
-        for key in self.store.list_artifacts("npa-workflow/supervisor/attempts"):
+        prefix = "npa-workflow/supervisor/attempts"
+        if logical_attempt_id:
+            prefix = f"{prefix}/{_safe_component(logical_attempt_id)}"
+        for key in self.store.list_artifacts(prefix):
+            if logical_attempt_id:
+                result.append(self._read_attempt_event(key, logical_attempt_id))
+                continue
             try:
                 payload = json.loads(self.store.read_artifact(key))
             except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
                 continue
-            if (
-                isinstance(payload, dict)
-                and payload.get("schema_version") == SUPERVISOR_SCHEMA_VERSION
+            if isinstance(payload, dict) and (
+                payload.get("schema_version") == SUPERVISOR_SCHEMA_VERSION
             ):
                 result.append(payload)
-        phase_order = {
-            "decision": 0,
-            "cancellation": 1,
-            "recovery_reserved": 2,
-            "launch": 2,
-        }
-        return sorted(
-            result,
-            key=lambda item: (
-                str(item.get("recorded_at") or ""),
-                int((item.get("attempt_identity") or {}).get("attempt") or 0),
-                phase_order.get(str(item.get("phase") or ""), 99),
-            ),
-        )
+        return sorted(result, key=_supervisor_event_order)
 
-    def latest(self) -> dict[str, Any] | None:
+    def _read_attempt_event(self, key: str, logical_attempt_id: str) -> dict[str, Any]:
+        try:
+            body = self.store.read_artifact(key)
+            payload = json.loads(body)
+        except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise RuntimeError("immutable supervisor event is unreadable") from exc
+        if not isinstance(payload, dict) or (
+            payload.get("schema_version") != SUPERVISOR_SCHEMA_VERSION
+        ):
+            raise RuntimeError("immutable supervisor event schema is invalid")
+        identity = payload.get("attempt_identity")
+        if not isinstance(identity, Mapping) or (
+            identity.get("logical_attempt_id") != logical_attempt_id
+        ):
+            raise RuntimeError("immutable supervisor event attempt identity differs")
+        phase = _safe_component(str(payload.get("phase") or "observation"))
+        digest = hashlib.sha256(body).hexdigest()
+        expected = (
+            "npa-workflow/supervisor/attempts/"
+            f"{_safe_component(logical_attempt_id)}/{phase}-{digest}.json"
+        )
+        if key != expected:
+            raise RuntimeError("immutable supervisor event content address differs")
+        return payload
+
+    def latest(self, *, run_id: str = "") -> dict[str, Any] | None:
+        """Return the newest event, optionally restricted to one exact run.
+
+        Args:
+            run_id: Exact workflow run identity, or empty for all events.
+        Returns:
+            The newest matching event, or ``None`` when no event matches.
+        Raises:
+            None.
+        """
         events = self.events()
+        if run_id:
+            events = [
+                event
+                for event in events
+                if isinstance(event.get("attempt_identity"), dict)
+                and event["attempt_identity"].get("run_id") == run_id
+            ]
         return events[-1] if events else None
 
 
@@ -510,7 +632,7 @@ class WorkflowRunSupervisor:
         decision = decide_recovery(identity, observation, context)
         base: dict[str, Any] = {
             "recorded_at": utc_now(),
-            "phase": "decision",
+            "phase": SupervisorEventPhase.DECISION.value,
             "attempt_identity": identity.to_dict(),
             "observation": observation.to_dict(),
             "classification": decision.failure_class.value,
@@ -528,12 +650,40 @@ class WorkflowRunSupervisor:
             },
         }
         base["event_uri"] = self.ledger.record(base)
+        if (
+            decision.action is RecoveryAction.REUSE_COMPLETED_WAVE
+            and observation.state in {BackendState.QUEUED, BackendState.RUNNING}
+        ):
+            cancellation = _sanitized_mapping(self.adapter.cancel_exact(identity))
+            result = {
+                **base,
+                "recorded_at": utc_now(),
+                "phase": SupervisorEventPhase.CANCELLATION.value,
+                "cancellation": cancellation,
+            }
+            cancel_status = str(cancellation.get("status") or "").lower()
+            if not bool(cancellation.get("exact")) or cancel_status not in {
+                "cancelled",
+                "canceled",
+                "failed",
+                "succeeded",
+            }:
+                blocked = RecoveryDecision(
+                    RecoveryAction.BLOCK_RELAUNCH,
+                    FailureClass.UNKNOWN,
+                    "CANCELLATION_UNVERIFIED",
+                    "Verify terminal state for the exact provider attempt before reusing completed outputs.",
+                )
+                result["classification"] = blocked.failure_class.value
+                result["recovery"] = blocked.to_dict()
+            result["event_uri"] = self.ledger.record(result)
+            return result
         if decision.action is RecoveryAction.CANCEL_AND_TERMINALIZE:
             cancellation = _sanitized_mapping(self.adapter.cancel_exact(identity))
             result = {
                 **base,
                 "recorded_at": utc_now(),
-                "phase": "cancellation",
+                "phase": SupervisorEventPhase.CANCELLATION.value,
                 "cancellation": cancellation,
             }
             cancel_status = str(cancellation.get("status") or "").lower()
@@ -561,7 +711,7 @@ class WorkflowRunSupervisor:
                 cancellation_event = {
                     **base,
                     "recorded_at": utc_now(),
-                    "phase": "cancellation",
+                    "phase": SupervisorEventPhase.CANCELLATION.value,
                     "cancellation": cancellation,
                 }
                 cancellation_event["event_uri"] = self.ledger.record(cancellation_event)
@@ -587,7 +737,11 @@ class WorkflowRunSupervisor:
             result = {
                 **base,
                 "recorded_at": utc_now(),
-                "phase": "recovery_reserved" if deferred else "launch",
+                "phase": (
+                    SupervisorEventPhase.RECOVERY_RESERVED.value
+                    if deferred
+                    else SupervisorEventPhase.LAUNCH.value
+                ),
                 "new_attempt_identity": launched.to_dict(),
             }
             result["event_uri"] = self.ledger.record(result)
@@ -608,6 +762,86 @@ def _primary_blocker(blockers: list[dict[str, Any]]) -> dict[str, Any]:
     return blockers[0]
 
 
+def _blocker_inspection_arguments(
+    *, job_id: str, context: str, claim_names: Sequence[str], started_at: str
+) -> dict[str, Any]:
+    arguments: dict[str, Any] = {"job_id": job_id, "context": context}
+    if claim_names and started_at:
+        arguments.update(claim_names=claim_names, event_not_before=started_at)
+    return arguments
+
+
+def _admitted_blocker_payload(
+    blocker: object, *, claim_names: Sequence[str], started_at: str
+) -> dict[str, Any] | None:
+    code = str(getattr(blocker, "reason_code", "") or "")
+    source = str(getattr(blocker, "source", "") or "")
+    event_timestamp = str(getattr(blocker, "event_timestamp", "") or "")
+    namespace = str(getattr(blocker, "namespace", "") or "")
+    resource_uid = str(getattr(blocker, "resource_uid", "") or "")
+    temporally_bound = bool(getattr(blocker, "temporally_bound", False))
+    if code in _STORAGE_ADMISSION_REASON_CODES and not _storage_blocker_is_bound(
+        blocker,
+        claim_names=claim_names,
+        started_at=started_at,
+        source=source,
+        namespace=namespace,
+        resource_uid=resource_uid,
+        event_timestamp=event_timestamp,
+        temporally_bound=temporally_bound,
+    ):
+        return None
+    return {
+        "reason_code": code,
+        "reason": str(getattr(blocker, "reason", "") or ""),
+        "message": sanitize_reason(getattr(blocker, "message", "")),
+        "source": source,
+        "namespace": namespace,
+        "resource_uid": resource_uid,
+        "event_timestamp": event_timestamp,
+        "temporally_bound": temporally_bound,
+    }
+
+
+def _storage_blocker_is_bound(
+    blocker: object,
+    *,
+    claim_names: Sequence[str],
+    started_at: str,
+    source: str,
+    namespace: str,
+    resource_uid: str,
+    event_timestamp: str,
+    temporally_bound: bool,
+) -> bool:
+    expected_pods = {f"pvc/{name}" for name in claim_names}
+    return bool(
+        source == "kubernetes_pvc_event"
+        and temporally_bound
+        and namespace
+        and resource_uid
+        and claim_names
+        and started_at
+        and _timestamp_at_or_after(event_timestamp, started_at)
+        and str(getattr(blocker, "pod", "") or "") in expected_pods
+    )
+
+
+def _admitted_blockers(
+    report: object, *, claim_names: Sequence[str], started_at: str
+) -> list[dict[str, Any]]:
+    return [
+        payload
+        for blocker in getattr(report, "blockers", []) or []
+        if (
+            payload := _admitted_blocker_payload(
+                blocker, claim_names=claim_names, started_at=started_at
+            )
+        )
+        is not None
+    ]
+
+
 class SkyPilotSupervisorAdapter:
     runtime = "skypilot"
     # SkyPilot provider creation remains inside the runtime's existing
@@ -624,12 +858,28 @@ class SkyPilotSupervisorAdapter:
         launcher: Callable[[AttemptIdentity, CheckpointValidation], AttemptIdentity]
         | None = None,
         context: str = "",
+        claim_names: Sequence[str] = (),
+        attempt_started_at: str = "",
     ) -> None:
+        from npa.orchestration.skypilot.job_blockers import (
+            is_valid_persistent_volume_claim_name,
+        )
+
         self._lookup = lookup
         self._blockers = blocker_inspector
         self._canceller = canceller
         self._launcher = launcher
         self._context = context
+        self._claim_names = tuple(
+            sorted(
+                {
+                    item
+                    for item in claim_names
+                    if is_valid_persistent_volume_claim_name(item)
+                }
+            )
+        )
+        self._attempt_started_at = str(attempt_started_at).strip()
 
     def observe(self, identity: AttemptIdentity) -> BackendObservation:
         from npa.orchestration.skypilot.workflow import lookup_managed_job
@@ -675,15 +925,18 @@ class SkyPilotSupervisorAdapter:
             from npa.orchestration.skypilot.job_blockers import inspect_job_blockers
 
             inspect = self._blockers or inspect_job_blockers
-            report = inspect(job_id=observed_id, context=self._context)
-            for blocker in getattr(report, "blockers", []) or []:
-                blocker_payload.append(
-                    {
-                        "reason_code": str(getattr(blocker, "reason_code", "") or ""),
-                        "reason": str(getattr(blocker, "reason", "") or ""),
-                        "message": sanitize_reason(getattr(blocker, "message", "")),
-                    }
-                )
+            inspect_arguments = _blocker_inspection_arguments(
+                job_id=observed_id,
+                context=self._context,
+                claim_names=self._claim_names,
+                started_at=self._attempt_started_at,
+            )
+            report = inspect(**inspect_arguments)
+            blocker_payload = _admitted_blockers(
+                report,
+                claim_names=self._claim_names,
+                started_at=self._attempt_started_at,
+            )
             if blocker_payload:
                 selected = _primary_blocker(blocker_payload)
                 reason = selected["reason_code"]
@@ -955,6 +1208,25 @@ def _immutable_identity_matches(
     )
 
 
+def _timestamp_at_or_after(observed: str, boundary: str) -> bool:
+    def parse(value: str) -> datetime | None:
+        try:
+            result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if result.tzinfo is None:
+            return None
+        return result.astimezone(timezone.utc)
+
+    observed_at = parse(str(observed or "").strip())
+    boundary_at = parse(str(boundary or "").strip())
+    return bool(
+        observed_at is not None
+        and boundary_at is not None
+        and observed_at >= boundary_at
+    )
+
+
 def _configuration_remediation(code: str) -> str:
     if code.startswith("IMAGE_"):
         return "Fix the exact image reference or exact-registry pull credentials, then start a new run or explicitly resume after preflight."
@@ -962,6 +1234,10 @@ def _configuration_remediation(code: str) -> str:
         return "Create the referenced Secret or ConfigMap and verify the rendered pod config before resuming."
     if code in {"ACCELERATOR_MISMATCH", "IMPOSSIBLE_GPU_SHAPE"}:
         return "Resolve the advertised accelerator and request a per-node GPU shape the target can satisfy."
+    if code == "STORAGE_QUOTA_EXCEEDED":
+        return "Increase the applicable storage quota or reduce the exact rendered claim request, then explicitly start or resume; automatic retry is disabled."
+    if code == "STORAGE_PROVISIONING_FAILED":
+        return "Correct the exact rendered claim or storage-class configuration, then explicitly start or resume; automatic retry is disabled."
     return "Correct the recorded configuration and re-run preflight; automatic retry is disabled."
 
 
@@ -1034,6 +1310,8 @@ __all__ = [
     "ServerlessRecoverySpec",
     "ServerlessSupervisorAdapter",
     "SkyPilotSupervisorAdapter",
+    "SUPERVISOR_EVENT_PHASES",
+    "SupervisorEventPhase",
     "SupervisorLedger",
     "WorkflowRunSupervisor",
     "classify_observation",

@@ -61,6 +61,11 @@ def _p(
 #               the ones worth closing, tool by tool, with a live run each.
 #
 SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
+    "flex-pi/train": {"dry_run": "boolean"},
+    "flex-pi/infer": {
+        "runtime_image": "infra",
+        "dry_run": "boolean",
+    },
     "cosmos3/super-benchmark": {
         "dry_run": "boolean",
     },
@@ -182,6 +187,54 @@ VALID_GAP_CATEGORIES = frozenset({"boolean", "infra", "knob"})
 
 CONTRACTS: tuple[CapabilityContract, ...] = (
     CapabilityContract(
+        name="flex-pi/train",
+        cli_module="npa.cli.workbench.flex_pi",
+        cli_callback="train_cmd",
+        sdk_module="npa.sdk.workbench.flex_pi",
+        sdk_attr="train",
+        spec_path=SPECS / "flex-pi-b200-public-training.yaml",
+        tool_ref="workbench.flex_pi.train",
+        spec_gap=("dry_run",),
+        params=tuple(
+            _p(name, name, "--" + name.replace("_", "-"))
+            for name in (
+                "output_path",
+                "mode",
+                "num_workers",
+                "prefetch_factor",
+                "optimizer",
+                "activation_checkpointing",
+                "cuda_graphs",
+                "run_id",
+                "runtime_image",
+                "dry_run",
+            )
+        ),
+    ),
+    CapabilityContract(
+        name="flex-pi/infer",
+        cli_module="npa.cli.workbench.flex_pi",
+        cli_callback="infer_cmd",
+        sdk_module="npa.sdk.workbench.flex_pi",
+        sdk_attr="infer",
+        spec_path=SPECS / "flex-pi-rtxpro-inference.yaml",
+        tool_ref="workbench.flex_pi.infer",
+        spec_gap=("runtime_image", "dry_run"),
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("checkpoint_id", "checkpoint_id", "--checkpoint-id"),
+            _p("checkpoint_revision", "checkpoint_revision", "--checkpoint-revision"),
+            _p("num_inference_steps", "num_inference_steps", "--num-inference-steps"),
+            _p("seed", "seed", "--seed"),
+            _p("torch_compile", "torch_compile", "--torch-compile"),
+            _p("expected_gpu", "expected_gpu", "--expected-gpu"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("runtime_image", "runtime_image", "--runtime-image"),
+            _p("dry_run", "dry_run", "--dry-run"),
+        ),
+    ),
+    CapabilityContract(
         name="newton/train_teacher",
         cli_module="npa.cli.workbench.newton",
         cli_callback="train_teacher_cmd",
@@ -270,6 +323,50 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
             _p("input_path", "input_path", "--input-path"),
             _p("output_path", "output_path", "--output-path"),
             _p("run_id", "run_id", "--run-id"),
+        ),
+    ),
+    CapabilityContract(
+        name="open3d/stage-demo",
+        cli_module="npa.cli.workbench.open3d",
+        cli_callback="stage_demo_cmd",
+        sdk_module="npa.sdk.workbench.open3d",
+        sdk_attr="stage_demo",
+        spec_path=SPECS / "open3d-registration.yaml",
+        tool_ref="workbench.open3d.stage_demo",
+        params=(
+            _p("output_path", "output_path", "--output-path"),
+            _p("voxel_size", "voxel_size", "--voxel-size"),
+            _p("icp_estimation", "icp_estimation", "--icp-estimation"),
+        ),
+    ),
+    CapabilityContract(
+        name="open3d/register",
+        cli_module="npa.cli.workbench.open3d",
+        cli_callback="register_cmd",
+        sdk_module="npa.sdk.workbench.open3d",
+        sdk_attr="register",
+        spec_path=SPECS / "open3d-registration.yaml",
+        tool_ref="workbench.open3d.register",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("run_id", "run_id", "--run-id"),
+        ),
+    ),
+    CapabilityContract(
+        name="open3d/reconstruct",
+        cli_module="npa.cli.workbench.open3d",
+        cli_callback="reconstruct_cmd",
+        sdk_module="npa.sdk.workbench.open3d",
+        sdk_attr="reconstruct",
+        spec_path=SPECS / "open3d-registration.yaml",
+        tool_ref="workbench.open3d.reconstruct",
+        params=(
+            _p("input_path", "input_path", "--input-path"),
+            _p("output_path", "output_path", "--output-path"),
+            _p("run_id", "run_id", "--run-id"),
+            _p("poisson_depth", "poisson_depth", "--poisson-depth"),
+            _p("density_quantile", "density_quantile", "--density-quantile"),
         ),
     ),
     CapabilityContract(
@@ -849,6 +946,8 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         "cosmos-evaluator",
         "data",
         "dataset",
+        # CLI, SDK, and workflow call one shared implementation; Encord remains remote SaaS.
+        "encord",
         "fiftyone",
         # Foxglove embed assets + MCAP convert/inspect: CLI + SDK tool, no
         # SkyPilot task surface (the viewer runs in the browser / static image).
@@ -877,7 +976,12 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # Generation runs through the BYOF tier (`base_image: tool://ltx2`), so
         # this verb has no service or YAML env tier to stay coherent with.
         "ltx2",
+        # Typed shared requests are exercised through HTTP, CLI, SDK and toolRefs
+        # in test_mjlab.py and test_mjlab_workflow.py.
         "mjlab",
+        # Namespace selection is host-side platform configuration.
+        # CLI and SDK share namespaces.py; no payload service or toolRef applies.
+        "namespace",
         # NuRec verbs take repeatable options (--camera-id, --override) and Hydra
         # passthrough, so the inspect-based CapabilityContract cannot express them.
         # CLI <-> SDK <-> YAML coherence is enforced instead by

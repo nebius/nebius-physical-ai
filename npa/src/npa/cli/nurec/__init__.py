@@ -144,6 +144,12 @@ def check_cmd(
         envvar="NPA_NUREC_DATASET",
         help=f"Hugging Face dataset id. Defaults to NPA_NUREC_DATASET or {DEFAULT_DATASET_ID}.",
     ),
+    revision: str = typer.Option(
+        "",
+        "--revision",
+        envvar="NPA_NUREC_DATASET_REVISION",
+        help="Hugging Face revision; the public PPISP sample defaults to a pinned commit.",
+    ),
     scene: str = typer.Option(
         "",
         "--scene",
@@ -200,6 +206,7 @@ def check_cmd(
     config = _config(
         image=image,
         dataset_id=dataset,
+        dataset_revision=revision,
         scene=scene,
         variant=variant,
         entrypoint=entrypoint,
@@ -311,6 +318,12 @@ def fetch_cmd(
     dataset: str = typer.Option(
         "", "--dataset", envvar="NPA_NUREC_DATASET", help="Hugging Face dataset id."
     ),
+    revision: str = typer.Option(
+        "",
+        "--revision",
+        envvar="NPA_NUREC_DATASET_REVISION",
+        help="Hugging Face revision; the public PPISP sample defaults to a pinned commit.",
+    ),
     scene: str = typer.Option(
         "", "--scene", envvar="NPA_NUREC_SCENE", help="Scene name."
     ),
@@ -375,6 +388,7 @@ def fetch_cmd(
     """Download and unpack the real NCore V4 shards for a scene."""
     config = _config(
         dataset_id=dataset,
+        dataset_revision=revision,
         scene=scene,
         variant=variant,
         cache_dir=cache_dir,
@@ -823,7 +837,7 @@ def visualize_cmd(
 
     target = output_uri or _join_uri(input_uri, f"reports/{RRD_BASENAME}")
     try:
-        result = build_run_rrd(input_uri, target, app_id=app_id)
+        result = build_run_rrd(input_uri, target, app_id=app_id, html_preview=True)
     except DataFactoryVizError as exc:
         _finish_nurec_result({"status": "failed", "errors": [str(exc)]}, output)
         return

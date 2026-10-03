@@ -6,6 +6,7 @@ import importlib.util
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -40,6 +41,28 @@ def _load_live_argv():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def test_live_credential_markers_include_saved_encord_values(monkeypatch) -> None:
+    import npa.clients.credentials as credential_module
+
+    helpers = _load_live_helpers()
+    monkeypatch.setattr(
+        credential_module,
+        "load_credentials",
+        lambda: SimpleNamespace(
+            s3_access_key_id="",
+            s3_secret_access_key="",
+            tokens={
+                "ENCORD_SSH_KEY": "saved-encord-private-key",
+                "ENCORD_SSH_KEY_B64": "saved-encord-base64-key",
+            },
+        ),
+    )
+
+    markers = helpers.live_credential_markers()
+    assert "saved-encord-private-key" in markers
+    assert "saved-encord-base64-key" in markers
 
 
 @pytest.mark.parametrize(
@@ -176,6 +199,88 @@ def test_plan_submit_argv_forwards_preset_and_config_vars() -> None:
     )
 
 
+def test_live_argv_forwards_runtime_storage_prefix_to_plan_and_run(
+    tmp_path: Path,
+) -> None:
+    argv = _load_live_argv()
+    common = {
+        "path": tmp_path / "insights-smoke.yaml",
+        "run_id": "storage-location-live",
+        "registry": "registry.example/workbench",
+        "project": "operator-project",
+        "workflow_s3_prefix": "owner/runtime-control",
+        "skypilot_config_args": (
+            "--sky-bin",
+            "/owner/sky/bin/sky",
+            "--isolated-config-dir",
+            "/owner/state/run/controller",
+            "--infra",
+            "k8s/operator-context",
+        ),
+    }
+    planned = argv.plan_submit_args(**common)
+    runtime = argv.runtime_submit_args(
+        **common,
+        poll_seconds=2,
+        max_wait_seconds=0,
+        cancel_on_timeout=False,
+    )
+
+    for command in (planned, runtime):
+        index = command.index("--workflow-s3-prefix")
+        assert command[index + 1] == "owner/runtime-control"
+        assert command[command.index("--sky-bin") + 1] == "/owner/sky/bin/sky"
+        assert command[command.index("--isolated-config-dir") + 1] == (
+            "/owner/state/run/controller"
+        )
+        assert command[command.index("--infra") + 1] == "k8s/operator-context"
+    assert "--plan-only" in planned
+    assert "--runtime" in runtime
+
+
+@pytest.mark.parametrize(
+    "value", ["", "s3://bucket/root", "/absolute", "parent//child", "parent/../child"]
+)
+def test_runtime_storage_live_rejects_unsafe_control_parent(
+    value: str,
+) -> None:
+    argv = _load_live_argv()
+
+    with pytest.raises(ValueError, match="safe relative key"):
+        argv._safe_relative_workflow_prefix(value)
+
+
+@pytest.mark.parametrize(
+    ("science", "control"),
+    [("same", "same"), ("science", "science/control"), ("control/science", "control")],
+)
+def test_runtime_storage_live_requires_disjoint_prefixes(
+    science: str, control: str
+) -> None:
+    argv = _load_live_argv()
+    assert not argv._workflow_prefixes_disjoint(science, control)
+
+
+def test_runtime_storage_live_requires_fresh_owned_isolation_root(
+    tmp_path: Path,
+) -> None:
+    argv = _load_live_argv()
+    owned = tmp_path / "owned"
+    owned.mkdir(mode=0o700)
+    assert argv._owned_empty_isolation_root(str(owned)) == owned
+
+    permissive = tmp_path / "permissive"
+    permissive.mkdir(mode=0o755)
+    # Exercise unsafe permissions even when the runner uses an owner-only umask.
+    permissive.chmod(0o755)
+    with pytest.raises(ValueError, match="owner-only"):
+        argv._owned_empty_isolation_root(str(permissive))
+
+    (owned / "prior-run").mkdir()
+    with pytest.raises(ValueError, match="fresh and empty"):
+        argv._owned_empty_isolation_root(str(owned))
+
+
 def test_live_workflow_argv_builders_omit_project_only_when_unselected() -> None:
     argv = _load_live_argv()
     path = Path("/tmp/catalog-spec.yaml")
@@ -259,8 +364,9 @@ def test_plan_only_cases_have_machine_checked_justifications() -> None:
 def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
     plan_only = {
         "adversarial-scenario-hardening.yaml",
-        "av-night-scene-hardening.yaml",
+        "byof-apriltag.yaml",
         "byof-droid-policy-learning.yaml",
+        "byof-evo.yaml",
         "byof-maniskill.yaml",
         "byof-mujoco-playground.yaml",
         "byof-open-dreamer.yaml",
@@ -275,6 +381,64 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         assert case.plan_only, (
             f"{name} must retain its reviewed plan-only classification"
         )
+
+
+def test_evo_byof_case_discloses_the_nested_runner_boundary() -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "byof-evo.yaml")
+
+    assert case.tier == "cpu"
+    assert case.plan_only
+    assert "inner SkyPilot launch" in case.plan_only_justification
+    assert not case.secret_envs
+
+
+def test_apriltag_byof_case_discloses_the_nested_runner_boundary() -> None:
+    case = next(
+        case for case in SUBMIT_LIVE_MATRIX if case.spec == "byof-apriltag.yaml"
+    )
+
+    assert case.tier == "cpu"
+    assert case.plan_only
+    assert "inner SkyPilot launch" in case.plan_only_justification
+    assert not case.secret_envs
+
+
+def test_cosmos_synth_fanout_records_runtime_topology_without_live_submission(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    name = "cosmos-synth-fanout-curation.yaml"
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == name)
+
+    assert case.runtime
+    assert case.expected_parallel_tasks == 2
+    assert case.plan_only
+    assert "merge-index" in case.plan_only_justification
+    assert "workbench.fiftyone.launch_app" in case.plan_only_justification
+    assert set(case.secret_envs) == {
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "HF_TOKEN",
+    }
+
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_SPECS", name)
+    monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_TIERS", "multi")
+    assert runtime_submit_cases() == []
+    assert one_shot_submit_cases() == []
+
+
+def test_av_night_scene_rotation_skip_names_real_prerequisites() -> None:
+    case = next(
+        case
+        for case in SUBMIT_LIVE_MATRIX
+        if case.spec == "av-night-scene-hardening.yaml"
+    )
+
+    assert not case.plan_only
+    assert case.rotation_skip
+    assert "LanceDB" in case.skip_reason
+    assert "detection-training" in case.skip_reason
+    assert "BDD100K night subset" in case.skip_reason
+    assert "FiftyOne inspection" in case.notes
 
 
 def test_reviewed_matrix_cases_have_honest_gpu_eligibility() -> None:
@@ -345,6 +509,27 @@ def test_groot_case_truthfully_describes_offline_configurable_training() -> None
     assert "one-to-many-GPU" in case.notes
     assert "learning outcome separately from pipeline status" in case.notes
     assert "not closed-loop or physical-robot task evidence" in case.notes
+
+
+def test_robotwin_case_is_plan_only_until_worker_authorization_exists() -> None:
+    case = next(
+        item for item in SUBMIT_LIVE_MATRIX if item.spec == "byof-robotwin.yaml"
+    )
+
+    assert case.tier == "multi"
+    assert case.plan_only
+    assert not case.runtime
+    assert set(case.secret_envs) == {
+        "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    }
+    assert "public worker bridge is disabled" in case.plan_only_justification
+    assert (
+        "independently attested customer authorization" in case.plan_only_justification
+    )
+    assert "normal submit refuses before provider calls" in case.notes
+    assert "Operator-only evidence" in case.notes
 
 
 @pytest.mark.parametrize(
@@ -810,11 +995,15 @@ def test_runtime_specs_are_registered_with_the_right_tiers() -> None:
         assert not case.plan_only, f"{spec} is the live proof; it must not be plan-only"
 
 
-def test_runtime_cases_declare_their_secrets_and_are_not_plan_only() -> None:
+def test_runtime_cases_declare_secrets_and_explain_plan_only_status() -> None:
     for case in (c for c in SUBMIT_LIVE_MATRIX if c.runtime):
         assert case.secret_envs, f"{case.spec} must declare the secrets its tasks need"
         assert "AWS_ACCESS_KEY_ID" in case.secret_envs
-        assert not case.plan_only
+        if case.plan_only:
+            assert case.plan_only_justification.strip(), (
+                f"{case.spec} records runtime topology but does not explain why "
+                "live submission remains disabled"
+            )
 
 
 def test_every_live_case_declares_the_object_store_credentials_setup_needs() -> None:
@@ -980,3 +1169,42 @@ def test_gpu_sweep_live_case_caps_concurrency_for_cost() -> None:
     # 4 members with maxConcurrency 2 means the runtime submits two JobGroups, which
     # is also the only live coverage of the multi-batch path.
     assert sweep.expected_parallel_tasks == 4
+
+
+def test_navigation_live_spec_uses_explicit_operator_inputs(tmp_path, monkeypatch):
+    helpers = _load_live_helpers()
+    image = "registry.example.invalid/navigation@sha256:" + "a" * 64
+    monkeypatch.setenv(
+        "NPA_NAVIGATION_INPUT_URI", "s3://fixture-bucket/navigation-input/"
+    )
+    monkeypatch.setenv("NPA_NAVIGATION_IMAGE", image)
+    path = helpers.materialize_live_spec(
+        tmp_path,
+        "shared-scene-navigation.yaml",
+        bucket="fixture-bucket",
+        run_id="fixture",
+    )
+    spec = yaml.safe_load(path.read_text())
+    config = spec["config"]
+    assert config["byof_image"] == image
+    assert config["input_uri"] == "s3://fixture-bucket/navigation-input/"
+    for stage, input_prefix in (
+        ("train", "prepared_uri"),
+        ("evaluate", "training_uri"),
+    ):
+        prefix = "{{config." + input_prefix + "}}"
+        assert spec["states"][stage]["inputs"] == [
+            {
+                "uri": prefix + "completion.json",
+                "schema": "npa.navigation.publication.v1",
+            }
+        ]
+        assert spec["states"][stage]["run"]["argv"][-2] == prefix
+    monkeypatch.delenv("NPA_NAVIGATION_IMAGE")
+    with pytest.raises(ValueError, match="exact NPA_NAVIGATION_IMAGE"):
+        helpers.materialize_live_spec(
+            tmp_path,
+            "shared-scene-navigation.yaml",
+            bucket="fixture-bucket",
+            run_id="fixture",
+        )

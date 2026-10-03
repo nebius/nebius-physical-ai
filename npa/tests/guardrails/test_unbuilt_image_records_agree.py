@@ -4,8 +4,9 @@
 different guard reads:
 
 * ``images.UNVALIDATED_PUBLICATION_TOOLS`` — what ``publish_public`` refuses;
-* ``SUPPORTED_TOOL_VERSIONS`` — a tag ending ``-unbuilt``, so a tag that has
-  never been produced cannot be mistaken for one that has;
+* the supported or quarantined-candidate version inventory — normally a tag
+  ending ``-unbuilt``; neutral bootstrap display sentinels stay outside the
+  accepted ``SUPPORTED_TOOL_VERSIONS`` inventory;
 * ``blackwell-dc-images.json`` — ``validation: pending-build``;
 * ``golden_evals.yaml`` — a golden eval that is not ``ready``.
 
@@ -19,14 +20,25 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
+import subprocess
+import sys
 
 import yaml
 
 from npa.deploy.images import (
+    CONTAINER_IMAGE_NAMES,
+    LAYER_STALE_PUBLICATION_TOOLS,
+    METADATA_STALE_PUBLICATION_TOOLS,
+    NEUTRAL_UNBUILT_CANDIDATE_TOOLS,
+    NEUTRAL_UNBUILT_DISPLAY_TAGS,
     PUBLICATION_QUARANTINE_TOOLS,
+    STALE_PUBLICATION_TOOLS,
     SUPPORTED_TOOL_VERSIONS,
+    UNBUILT_CANDIDATE_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
+    supported_tool_version,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -39,6 +51,11 @@ PENDING_BUILD = "pending-build"
 #: publication - the byte evidence is only half of what publication claims.
 PENDING_GPU = "pending-gpu"
 UNPROVEN_STATES = frozenset({PENDING_BUILD, PENDING_GPU})
+
+
+def _declared_versions() -> dict[str, str]:
+    assert set(SUPPORTED_TOOL_VERSIONS).isdisjoint(UNBUILT_CANDIDATE_TOOL_VERSIONS)
+    return SUPPORTED_TOOL_VERSIONS | UNBUILT_CANDIDATE_TOOL_VERSIONS
 
 
 def _blackwell_images() -> dict[str, dict[str, object]]:
@@ -60,9 +77,10 @@ def _image_name(tool: str) -> str:
 def test_every_unbuilt_tool_says_so_in_all_four_records() -> None:
     blackwell = _blackwell_images()
     containers = _golden_eval_containers()
+    versions = _declared_versions()
 
     for tool in sorted(UNVALIDATED_PUBLICATION_TOOLS):
-        version = str(SUPPORTED_TOOL_VERSIONS.get(tool, ""))
+        version = str(versions.get(tool, ""))
         assert version.endswith(UNBUILT_TAG_SUFFIX), (
             f"{tool} is unvalidated for publication but its tag {version!r} does "
             f"not end in {UNBUILT_TAG_SUFFIX}; a tag that reads as a release is "
@@ -97,7 +115,7 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
 
     stale = sorted(
         tool
-        for tool, version in SUPPORTED_TOOL_VERSIONS.items()
+        for tool, version in _declared_versions().items()
         if str(version).endswith(UNBUILT_TAG_SUFFIX)
         and tool not in UNVALIDATED_PUBLICATION_TOOLS
     )
@@ -108,9 +126,39 @@ def test_no_built_tool_is_left_carrying_an_unbuilt_tag() -> None:
     )
 
 
+def test_neutral_unbuilt_candidate_has_no_ordinary_supported_tag() -> None:
+    assert "robomimic" in UNVALIDATED_PUBLICATION_TOOLS
+    assert "robomimic" not in NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    assert set(NEUTRAL_UNBUILT_DISPLAY_TAGS) == set(NEUTRAL_UNBUILT_CANDIDATE_TOOLS)
+    containers = _golden_eval_containers()
+    for tool in NEUTRAL_UNBUILT_CANDIDATE_TOOLS:
+        assert tool not in SUPPORTED_TOOL_VERSIONS
+        assert supported_tool_version(tool).endswith("-unbuilt")
+        assert containers[tool]["golden_eval"]["status"] != "ready"
+
+
+def test_capability_listing_accepts_neutral_unbuilt_display_sentinel() -> None:
+    script = REPO_ROOT / "npa" / "scripts" / "run_golden_evals.py"
+    completed = subprocess.run(
+        [sys.executable, str(script), "list", "--capabilities"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    robomimic = next(
+        line for line in completed.stdout.splitlines() if line.startswith("robomimic ")
+    )
+    assert "0.1.0-neutral-unbuilt" in robomimic
+
+
 def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
     assert PUBLICATION_QUARANTINE_TOOLS == (
-        UNVALIDATED_PUBLICATION_TOOLS | VALIDATION_CANDIDATE_TOOLS
+        UNVALIDATED_PUBLICATION_TOOLS
+        | VALIDATION_CANDIDATE_TOOLS
+        | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+        | STALE_PUBLICATION_TOOLS
     )
     for tool in VALIDATION_CANDIDATE_TOOLS:
         version = str(SUPPORTED_TOOL_VERSIONS[tool])
@@ -118,6 +166,73 @@ def test_fixed_tag_candidates_remain_in_the_publication_quarantine() -> None:
         build = REPO_ROOT / "npa" / "docker" / "workbench" / tool / "build.sh"
         assert build.is_file(), tool
         assert version in build.read_text(encoding="utf-8"), tool
+
+
+def test_stale_publications_are_built_releases_awaiting_requalification() -> None:
+    """Stale bytes are not confused with images that have never been built."""
+
+    assert STALE_PUBLICATION_TOOLS == frozenset(
+        {
+            "cosmos-curate",
+            "cosmos-evaluator",
+            "cosmos3",
+            "cosmos3-ray-serve",
+            "genesis",
+            "isaac-lab",
+            "isaac-arena",
+            "lerobot",
+            "lerobot-vlm-rl",
+            "loop-eval",
+            "reference-policy",
+            "sonic",
+        }
+    )
+    assert STALE_PUBLICATION_TOOLS == (
+        LAYER_STALE_PUBLICATION_TOOLS | METADATA_STALE_PUBLICATION_TOOLS
+    )
+    assert STALE_PUBLICATION_TOOLS.isdisjoint(UNVALIDATED_PUBLICATION_TOOLS)
+    assert STALE_PUBLICATION_TOOLS.isdisjoint(VALIDATION_CANDIDATE_TOOLS)
+    for tool in STALE_PUBLICATION_TOOLS:
+        assert not SUPPORTED_TOOL_VERSIONS[tool].endswith(UNBUILT_TAG_SUFFIX), tool
+
+
+def test_stale_publication_quarantine_propagates_to_derived_images() -> None:
+    """A child cannot be accepted while retaining every layer of a stale parent."""
+
+    image_to_tool = {image: tool for tool, image in CONTAINER_IMAGE_NAMES.items()}
+    parent_pattern = re.compile(r"\bnpa-[a-z0-9-]+(?=[:@])")
+    directory_aliases = {
+        "sim2real-envgen": {"envgen"},
+        "sim2real-eval": {"loop-eval"},
+        "sim2real-reference-policy": {"reference-policy"},
+    }
+    inspected_variants: set[str] = set()
+    for dockerfile in sorted((REPO_ROOT / "npa/docker/workbench").rglob("Dockerfile*")):
+        if not dockerfile.is_file():
+            continue
+        inspected_variants.add(dockerfile.name)
+        directory = dockerfile.parent.name
+        children = ({directory} if directory in CONTAINER_IMAGE_NAMES else set()) | (
+            directory_aliases.get(directory, set())
+        )
+        if not children:
+            continue
+        parents = {
+            image_to_tool[image]
+            for image in parent_pattern.findall(dockerfile.read_text(encoding="utf-8"))
+            if image in image_to_tool
+        }
+        stale_parents = parents & LAYER_STALE_PUBLICATION_TOOLS
+        if stale_parents:
+            for child in children:
+                assert child in STALE_PUBLICATION_TOOLS, (
+                    f"{child} inherits stale image layer(s) from "
+                    f"{sorted(stale_parents)} in {dockerfile.name} but remains "
+                    "publication-eligible"
+                )
+    assert {"Dockerfile.k8s-prereqs", "Dockerfile.b300", "Dockerfile.sm120"} <= (
+        inspected_variants
+    )
 
 
 def test_pending_build_never_carries_a_confident_verdict() -> None:

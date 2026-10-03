@@ -150,3 +150,36 @@ def test_venv_npa_is_used_when_nothing_is_on_path(checkout: Path) -> None:
 
     assert result.returncode == 1, result.stdout + result.stderr
     assert str(venv_npa) in result.stderr
+
+
+def test_same_named_nested_groups_keep_top_level_links_in_any_walk_order(checkout):
+    executable = _fake_npa(
+        checkout / "npa",
+        """
+case "$*" in
+  "--help")
+    echo "Usage: npa [OPTIONS] COMMAND [ARGS]..."
+    printf '| aaa  Earlier group\n| demo  Top-level demo\n| zzz  Later group\n' ;;
+  "aaa --help"|"zzz --help")
+    echo "Usage: npa group [OPTIONS] COMMAND [ARGS]..."
+    printf '| demo  Nested demo\n' ;;
+  "demo --help")
+    echo "Usage: npa demo [OPTIONS] COMMAND [ARGS]..."
+    echo "Original top-level demo documentation"
+    printf '| stage  Stage artifacts\n' ;;
+  "aaa demo --help"|"zzz demo --help")
+    echo "Usage: npa group demo [OPTIONS] COMMAND [ARGS]..."
+    echo "Distinct nested demo documentation"
+    printf '| run  Run demo\n' ;;
+  *) echo "Usage: leaf [OPTIONS]" ;;
+esac
+""",
+    )
+    result = _run(checkout, [], str(executable))
+    assert result.returncode == 0, result.stdout + result.stderr
+    docs = checkout / "docs/cli"
+    assert "Original top-level" in (docs / "demo.md").read_text()
+    assert "Distinct nested" in (docs / "aaa-demo.md").read_text()
+    assert "Distinct nested" in (docs / "zzz-demo.md").read_text()
+    check = _run(checkout, ["--check"], str(executable))
+    assert check.returncode == 0, check.stdout + check.stderr
