@@ -86,6 +86,13 @@ that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
 no new image publication is required for the experiment.
 
+The separate `npa-lerobot-vla-jepa` Dockerfile is an unvalidated,
+operator-private v0.6.1 candidate. It inherits only the pinned generic 0.6.0
+base, installs LeRobot source revision `7e241bd630a3719a56157a497ce5d08f244784f1`
+with the VLA-JEPA extras, and runtime-fetches all models and data. It creates no
+generic LeRobot release tag or public image claim. See the
+[VLA-JEPA guide](guides/lerobot-vla-jepa.md) for its separate byte and GPU gates.
+
 SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
 Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;
 [publication evidence](validation/sam31-public-development-20260919.json) records

@@ -1,0 +1,180 @@
+"""Contract tests for the distinct pinned LeRobot VLA-JEPA workflow."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+
+from npa.orchestration.npa_workflow import load_spec
+from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
+from npa.workflows import lerobot_vla_jepa as vla
+
+
+WORKFLOW = Path("workflows/testing/lerobot-vla-jepa.yaml")
+READINESS = WORKFLOW.with_suffix(".readiness.json")
+
+
+def test_workflow_has_five_connected_native_stages() -> None:
+    """Keep all four required real stages plus factual provenance connected."""
+    spec = load_spec(WORKFLOW)
+    expected = ["prepare", "train", "rollout", "evaluate", "report"]
+    assert list(spec.states) == expected
+    assert [spec.states[name].tool_ref for name in expected] == [
+        f"workbench.lerobot.vla_jepa.{name}" for name in expected
+    ]
+    assert [spec.states[name].next for name in expected[:-1]] == expected[1:]
+    assert spec.states["report"].terminal
+    assert spec.resources["gpu"]["image"] == "{{config.vla_jepa_image}}"
+    assert "registry.invalid" in spec.config["vla_jepa_image"]
+    assert spec.config["train_steps"] == "30000"
+    assert spec.config["heldout_task_ids"] == "[0, 1]"
+
+
+def test_stage_templates_pass_exact_predecessor_artifacts() -> None:
+    """Ensure downstream toolRefs receive checksum-sealed upstream roots."""
+    templates = {
+        name: TOOL_CATALOG[f"workbench.lerobot.vla_jepa.{name}"].argv_template
+        for name in ("prepare", "train", "rollout", "evaluate", "report")
+    }
+    assert "{{config.prepared_uri}}" in templates["train"]
+    assert "{{config.training_uri}}" in templates["rollout"]
+    assert "{{config.rollout_uri}}" in templates["evaluate"]
+    assert "{{config.prepared_uri}}" in templates["evaluate"]
+    assert "{{config.evaluation_uri}}" in templates["report"]
+    assert "{{config.training_uri}}" in templates["report"]
+
+
+def test_task_disjoint_split_and_numeric_training_statistics() -> None:
+    """Held-out tasks cannot leak into the train episode set or its statistics."""
+    by_task = {0: [0, 1], 1: [2, 3], 2: [4, 5]}
+    train, reserved = vla._selected_episodes(by_task, [0], 0.5, seed=7)
+    assert not (set(train) & set(reserved))
+    assert {0, 1}.issubset(reserved)
+    rows = [
+        {
+            "episode_index": episode,
+            "action": [float(episode)] * 7,
+            "observation.state": [float(episode)] * 8,
+        }
+        for episode in range(6)
+    ]
+    stats = vla._training_stats(rows, set(train), {"observation.image": {"keep": True}})
+    assert stats["observation.image"] == {"keep": True}
+    assert stats["action"]["count"] == [len(train)]
+    assert stats["action"]["mean"][0] == np.mean(train)
+
+
+def test_native_commands_use_local_immutable_model_snapshots(tmp_path: Path) -> None:
+    """Prevent an unpinned Qwen or V-JEPA Hub-main fetch from the stage adapter."""
+    prepared = tmp_path / "prepared"
+    vla.write_json(
+        prepared / "prepare.json",
+        {
+            "dataset": {"repo": vla.LIBERO_REPO, "revision": vla.LIBERO_REVISION},
+            "train_episodes": [3, 4],
+        },
+    )
+    models = {name: tmp_path / name for name in ("pretrain", "qwen", "vjepa")}
+    command = vla._train_command(
+        prepared,
+        tmp_path / "training",
+        SimpleNamespace(train_steps=2, train_batch_size=1, num_workers=0),
+        models,
+    )
+    assert f"--policy.path={models['pretrain']}" in command
+    assert f"--policy.qwen_model_name={models['qwen']}" in command
+    assert f"--policy.jepa_encoder_name={models['vjepa']}" in command
+    assert f"--dataset.revision={vla.LIBERO_REVISION}" in command
+    assert "--wandb.enable=false" in command
+    assert "--wandb.mode=disabled" in command
+
+
+def test_evaluation_rejects_missing_or_out_of_range_native_success(
+    tmp_path: Path,
+) -> None:
+    """Do not publish a held-out metric unless it is native and bounded."""
+    prepared = tmp_path / "prepared"
+    training = tmp_path / "training"
+    rollouts = tmp_path / "rollouts"
+    vla.write_json(prepared / "prepare.json", {"seed": 42})
+    vla.write_json(
+        training / "training.json",
+        {"prepare_sha256": vla.file_sha256(prepared / "prepare.json")},
+    )
+    vla.write_json(
+        rollouts / "rollout.json",
+        {"training_sha256": vla.file_sha256(training / "training.json")},
+    )
+    (training / "checkpoint").mkdir()
+    original = vla._verify_training
+    try:
+        vla._verify_training = lambda *_: {
+            "checkpoint_hashes": {"model.safetensors": "x"}
+        }
+        try:
+            vla.evaluate(rollouts, training, prepared, tmp_path / "out")
+        except ValueError as error:
+            assert "pc_success" in str(error)
+        else:
+            raise AssertionError("missing native success unexpectedly accepted")
+    finally:
+        vla._verify_training = original
+
+
+def test_report_writes_and_decodes_a_rerun_recording(tmp_path: Path) -> None:
+    """Exercise the RRD writer and its independent CLI inspection on test data."""
+    training = tmp_path / "training"
+    evaluation = tmp_path / "evaluation"
+    vla.write_json(training / "training.json", {"training": "test"})
+    vla.write_json(
+        evaluation / "heldout-evaluation.json",
+        {
+            "training_sha256": vla.file_sha256(training / "training.json"),
+            "checkpoint_hashes": {"model.safetensors": "test-only"},
+            "pc_success": 0.25,
+        },
+    )
+    output = tmp_path / "report"
+    vla.report(evaluation, training, output, "vla-jepa-test-report")
+    assert (output / "vla-jepa.rrd").is_file()
+    assert "metrics/heldout_pc_success" in (
+        output / "vla-jepa.inspection.txt"
+    ).read_text(encoding="utf-8")
+    assert (
+        json.loads((output / "report.json").read_text(encoding="utf-8"))[
+            "ready_for_robot_deployment"
+        ]
+        is False
+    )
+
+
+def test_readiness_is_hash_bound_and_does_not_claim_live_acceptance() -> None:
+    """Keep planned structural evidence separate from the missing live gate."""
+    readiness = json.loads(READINESS.read_text(encoding="utf-8"))
+    assert readiness["schema_version"] == "workflow-readiness/v1"
+    assert (
+        readiness["workflow_sha256"]
+        == hashlib.sha256(WORKFLOW.read_bytes()).hexdigest()
+    )
+    expected = (
+        WORKFLOW,
+        Path("npa/docker/workbench/lerobot-vla-jepa/Dockerfile"),
+        Path("npa/src/npa/workflows/lerobot_vla_jepa.py"),
+        Path("npa/tests/workflows/test_lerobot_vla_jepa.py"),
+    )
+    hashes = {
+        item.split(" ", 1)[1]: item.split(" ", 1)[0].removeprefix("sha256:")
+        for item in readiness["planning"]["task_fidelity"]["evidence"]
+        if item.startswith("sha256:")
+    }
+    assert set(hashes) == {str(path) for path in expected}
+    for path in expected:
+        assert hashes[str(path)] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert readiness["planning"]["validation"]["status"] == "verified"
+    assert readiness["planning"]["task_fidelity"]["status"] == "verified"
+    assert readiness["prerequisites"]["source_image"]["status"] == "blocked"
+    assert readiness["prerequisites"]["target_runtime"]["status"] == "blocked"

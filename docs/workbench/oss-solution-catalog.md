@@ -561,6 +561,23 @@ Manifest:
 `npa/src/npa/deploy/lerobot_version_manifest.json`. Upstream:
 https://huggingface.co/blog/lerobot-release-v060
 
+### VLA-JEPA (separately tested candidate)
+
+VLA-JEPA is **not** part of the accepted generic 0.5.1 or 0.6.0 LeRobot
+surface. The candidate pins LeRobot v0.6.1 source
+`7e241bd630a3719a56157a497ce5d08f244784f1` plus its required `vla_jepa` extra,
+and does not promote `main` or an unvalidated 0.6.1 image. Its operator-private
+candidate image is publication-quarantined while exact built-byte and live GPU
+evidence are collected. See the [VLA-JEPA guide](guides/lerobot-vla-jepa.md)
+and [five-stage workflow](../../workflows/testing/lerobot-vla-jepa.yaml).
+
+| Capability | Status | Upstream basis |
+| --- | --- | --- |
+| `vla_jepa_native_finetune` | qualification pending | Native LeRobot v0.6.1 `lerobot-train` against `lerobot/VLA-JEPA-Pretrain@e946c3e5b538d760f4b4ff239d1b1c12090c041d` |
+| `vla_jepa_task_disjoint_libero_rollout` | qualification pending | Native `lerobot-eval` on task ids excluded by preparation from `HuggingFaceVLA/libero@86958911c0f959db2bbbdb107eb3e17c5f9c798e` |
+| `vla_jepa_checkpoint_rrd_provenance` | locally implemented; live qualification pending | Checksum-sealed checkpoint lineage, decoded native MP4 and factual Rerun RRD inspection |
+| `vla_jepa_physical_robot_success` | not claimed | LIBERO simulation is not physical robot evidence |
+
 ## Capability Testing In The Onboarding Skill
 
 When creating or onboarding solutions, agents must follow

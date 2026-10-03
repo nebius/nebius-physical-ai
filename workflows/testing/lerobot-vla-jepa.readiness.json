@@ -1,0 +1,66 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "66c76cea25e6738a6ed5b1f6200cbd6a1d38a0de07dad331a7d294f22b510f52",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The final five-stage spec passed NPA schema validation and a five-wave render with an explicit non-routable image override. Neither check launches a workload.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/lerobot-vla-jepa.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/lerobot-vla-jepa.yaml --run-id vla-jepa-plan-20261002 --waves --json --var vla_jepa_image=registry.invalid/npa-lerobot-vla-jepa@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused contract tests bind five ordered native stages, exact upstream revisions, task-disjoint train/held-out artifacts, local immutable support-model snapshots, checkpoint-to-rollout lineage, bounded native held-out success, and factual RRD verification. This is structural evidence, not training or simulator-rollout evidence.",
+      "evidence": [
+        "npa/tests/workflows/test_lerobot_vla_jepa.py",
+        "sha256:66c76cea25e6738a6ed5b1f6200cbd6a1d38a0de07dad331a7d294f22b510f52 workflows/testing/lerobot-vla-jepa.yaml",
+        "sha256:2ef4c91707a0b30d1756f4d7d806ba61386c05056069aa9b39915f8f978877b4 npa/docker/workbench/lerobot-vla-jepa/Dockerfile",
+        "sha256:cfbda831c59974e98d626b6416de29c82a3e599b2a104379d87ed93c3b2aedd6 npa/src/npa/workflows/lerobot_vla_jepa.py",
+        "sha256:03c22b83609e2aa8c942477ccb7c55124911e46736fc81c6ec82248b722369f8 npa/tests/workflows/test_lerobot_vla_jepa.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The checked-in bucket is intentionally a placeholder. The selected-project S3 credential preflight passed, but the exact submission bucket, prefix write/read, and artifact retrieval have not been exercised.",
+      "evidence": [
+        "private evidence: /home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/vla-jepa/preflight.json"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "One-byte range probes reached the exact public VLA-JEPA checkpoint, Qwen support model, V-JEPA support model, and LIBERO metadata revisions. Full immutable snapshot download, artifact hashing, and dataset processing occur only in the real worker stages.",
+      "evidence": [
+        "private evidence: /home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/vla-jepa/public-payload-access.json"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The required selected-project Nebius and S3 preflight checks passed; all declared model and dataset payloads are currently public and their exact revision payload probes succeeded. No additional upstream acceptance mechanism was found or invoked.",
+      "evidence": [
+        "private evidence: /home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/vla-jepa/preflight.json",
+        "private evidence: /home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/vla-jepa/public-payload-access.json"
+      ]
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "The checked-in workflow deliberately defaults to a non-routable sentinel so it cannot select a generic LeRobot 0.5.1 or 0.6.0 image. The separately pinned LeRobot 0.6.1 candidate is not yet an authorized private-registry immutable digest with image-pull and exact-byte validation.",
+      "evidence": [
+        "npa/docker/workbench/packaging-contract.yaml",
+        "npa/docker/workbench/lerobot-vla-jepa/Dockerfile",
+        "docs/workbench/guides/lerobot-vla-jepa.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No exact candidate digest has completed the required Kubernetes pull, native fine-tune, held-out LIBERO rollout, artifact upload, independent MP4/RRD inspection, and owned cleanup. This workflow therefore has no live-ready or accepted capability claim.",
+      "evidence": [
+        "workflows/testing/lerobot-vla-jepa.yaml",
+        "docs/workbench/guides/lerobot-vla-jepa.md"
+      ]
+    }
+  }
+}
