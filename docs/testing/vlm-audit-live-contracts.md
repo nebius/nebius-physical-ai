@@ -8,7 +8,10 @@ rate. Core behavior lives in `npa.workbench.vlm_eval`, shared by CLI and SDK.
 
 The protected `token-factory-live` nightly workflow keeps its existing hosted
 suites and separately invokes `npa/scripts/vlm_audit_live_recheck.py` with
-`--generated-controls`. The same protected Token Factory key is required. No
+`--generated-controls --audit-kind preference`. The explicit selector is required
+for generated controls; this standalone runner rejects paired, unknown, or
+omitted generated kinds before inference. A directory label never selects a lane.
+The same protected Token Factory key is required. No
 GPU, project, served-model endpoint, vendor weights, or new secret is needed.
 The runner verifies credential presence and key-scoped model availability before
 inference. Hosted use remains subject to the operator's provider/model terms;
@@ -44,7 +47,7 @@ Verify service credentials with `npa workbench health preflight` first.
 ```bash
 umask 077
 npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py \
-  --generated-controls --evidence-dir "<new-private-directory-outside-checkout>"
+  --generated-controls --audit-kind preference --evidence-dir "<new-private-directory-outside-checkout>"
 ```
 
 Alternatively set `NPA_VLM_AUDIT_LIVE_CONFIG` to an owner-only JSON file. Its

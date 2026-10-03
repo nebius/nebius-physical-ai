@@ -73,7 +73,7 @@ jobs:
         env:
           NEBIUS_TOKEN_FACTORY_KEY: ""
         run: |
-          if npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --generated-controls --evidence-dir "$RUNNER_TEMP/vlm-preference-missing-key"; then
+          if npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --generated-controls --audit-kind preference --evidence-dir "$RUNNER_TEMP/vlm-preference-missing-key"; then
             echo "::error::Credentialless preference audit unexpectedly succeeded."
             exit 1
           fi
@@ -91,7 +91,7 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           NEBIUS_TOKEN_FACTORY_KEY: ${{ secrets.NEBIUS_TOKEN_FACTORY_KEY }}
-        run: npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --generated-controls --evidence-dir "$RUNNER_TEMP/vlm-preference-audit"
+        run: npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --generated-controls --audit-kind preference --evidence-dir "$RUNNER_TEMP/vlm-preference-audit"
       - name: Publish sanitized result and failure visibility
         if: always()
         run: |
