@@ -156,6 +156,7 @@ _AMBIENT_INFRA_TARGET_ENV_VARS = (
     # set these via monkeypatch after this scrub.
     "NPA_ISAAC_ARENA_VIDEO_PROFILE",
     "NPA_NEBIUS_PROFILE",
+    "NPA_NEBIUS_CREDENTIAL_SOURCE",
     "NEBIUS_PROFILE",
 )
 

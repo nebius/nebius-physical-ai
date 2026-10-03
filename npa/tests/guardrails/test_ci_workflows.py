@@ -56,6 +56,10 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     assert "guardrails-gate" not in jobs
     precheck = "\n".join(step.get("run", "") for step in jobs["pr-precheck"]["steps"])
     assert "bash npa/scripts/ci_precheck.sh" in precheck
+    assert "npa/scripts/ci_merge_precheck.py" in precheck
+    assert '--base "$BASE_SHA" --head "$HEAD_SHA"' in precheck
+    checkout = jobs["pr-precheck"]["steps"][0]
+    assert checkout["with"]["fetch-depth"] == "0"
     assert jobs["gitleaks"]["name"].endswith("|| 'gitleaks' }}")
     assert jobs["scan"]["name"] == "scan"
     required = set(jobs["security-regression"]["needs"])
@@ -867,7 +871,7 @@ def test_queue_proof_uses_base_code_and_receipt_only_follows_success():
         == "validated-candidate-${{ github.run_attempt }}-${{ github.sha }}"
     )
     assert receipt["with"]["if-no-files-found"] == "error"
-    assert jobs["pr-precheck"]["timeout-minutes"] == "5"
+    assert "timeout-minutes" not in jobs["pr-precheck"]
 
 
 def _write_fingerprint_probe(tmp_path: Path) -> None:

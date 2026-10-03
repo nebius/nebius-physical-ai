@@ -383,12 +383,28 @@ def build_run_rrd(
     *,
     storage_client: "StorageClient | None" = None,
     app_id: str = APPLICATION_ID,
+    html_preview: bool = False,
 ) -> dict[str, Any]:
     """Log a data-factory run's frames + captions to ``output_uri`` as an ``.rrd``.
 
     ``input_uri`` is the run root (``s3://.../<run_id>/`` or a local dir) that
     holds ``input/`` and ``cosmos_augmented/`` (and optionally ``labeled_*/``).
     ``output_uri`` is the destination ``.rrd`` (S3 or local).
+
+    Args:
+        input_uri: Canonical run prefix or local directory.
+        output_uri: Destination recording inside the same remote run prefix.
+        storage_client: Optional storage client used for download and publication.
+        app_id: Recording application identity.
+        html_preview: Also publish a compact index.html for NuRec runs. PAIDF
+            retains its existing Rerun presentation and does not emit this page.
+
+    Returns:
+        Publication metadata, counts and optional NuRec HTML URI and SHA256.
+
+    Raises:
+        DataFactoryVizError: Media, lineage or recording validation fails.
+        OSError: Local artifact reading or writing fails.
     """
 
     if not input_uri:
@@ -410,6 +426,7 @@ def build_run_rrd(
     require_colmap_lineage = False
     output_object_key = ""
     output_exists = False
+    preview_bytes = None
     if input_uri.startswith("s3://"):
         if active_storage is None:
             from npa.clients.storage import StorageClient
@@ -717,6 +734,21 @@ def build_run_rrd(
             written_uri = _publish(
                 str(out_path), output_uri, storage_client=active_storage
             )
+        if (
+            html_preview
+            and effective_app_id == "neural-reconstruction"
+            and _has_nurec_outputs(local)
+        ):
+            from npa.workbench.nurec.preview import write_nurec_preview
+
+            preview_path = Path(tmp) / "index.html"
+            try:
+                write_nurec_preview(local, preview_path)
+            except (ValueError, OSError) as exc:
+                raise DataFactoryVizError(
+                    "NuRec HTML preview could not be built"
+                ) from exc
+            preview_bytes = preview_path.read_bytes()
 
     inventory_proof: dict[str, Any] = {}
     if source_inventory:
@@ -730,6 +762,7 @@ def build_run_rrd(
             "source_inventory_unchanged_after_publication": True,
         }
 
+    preview_result = _publish_nurec_preview(preview_bytes, output_uri, active_storage)
     return {
         "status": "completed",
         "run_id": run_id,
@@ -761,6 +794,42 @@ def build_run_rrd(
         if effective_app_id == APPLICATION_ID
         else {},
         **inventory_proof,
+        **preview_result,
+    }
+
+
+def _has_nurec_outputs(local):
+    return (
+        (local / "ncore" / "manifest.json").is_file()
+        or (local / "reconstruction" / "metrics.yaml").is_file()
+        or bool(_image_files(local / "novel_views"))
+    )
+
+
+def _publish_nurec_preview(payload, rrd_uri, storage):
+    if payload is None:
+        return {}
+    target = (
+        rrd_uri.rsplit("/", 1)[0] + "/index.html"
+        if rrd_uri.startswith("s3://")
+        else str(Path(rrd_uri).with_name("index.html"))
+    )
+    if target.startswith("s3://"):
+        previous = storage.read_bytes_with_etag(target)
+        if previous is not None and previous[0] != payload:
+            raise DataFactoryVizError(
+                "existing NuRec HTML preview differs; use a fresh run"
+            )
+        if previous is None:
+            storage.put_bytes_conditional(
+                payload, target, if_none_match=True, content_type="text/html"
+            )
+    else:
+        Path(target).parent.mkdir(parents=True, exist_ok=True)
+        Path(target).write_bytes(payload)
+    return {
+        "html_preview_uri": target,
+        "html_preview_sha256": hashlib.sha256(payload).hexdigest(),
     }
 
 

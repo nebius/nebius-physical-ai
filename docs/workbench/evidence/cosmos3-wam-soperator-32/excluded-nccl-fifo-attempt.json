@@ -1,0 +1,23 @@
+{
+  "schema": "npa.cosmos3.wam-excluded-attempt.v1",
+  "recorded_utc": "2026-09-30T02:28:33.556560+00:00",
+  "nodes": 4,
+  "gpus": 32,
+  "collective": {
+    "world_size": 32,
+    "hosts": 4,
+    "backend": "nccl",
+    "all_reduce_sum": 528,
+    "status": "passed"
+  },
+  "completed_optimizer_updates": 0,
+  "checkpoint_written": false,
+  "failure": "Soperator NCCL FIFO reader exited after the preflight; trainer blocked in FIFO open (wait_for_partner) before world-communicator initialization completed",
+  "resolution": "Cancel attempt and nine dependent jobs; retain artifacts; route inherited FIFO logging to separate process files; restart the unchanged 2000-update protocol in a fresh directory",
+  "slurm_allocation_seconds": 577,
+  "slurm_allocated_gpu_hours": 5.128888888888889,
+  "included_in_training_timing": false,
+  "included_in_quality": false,
+  "archive_sha256": "6be69ae28490cf31f389716ed27b0e43f089a17f2fd692bd500ac9570caf0314",
+  "diagnostic_sha256": "48512b37ca32987903ef27d9cc5435dc6e463ccf79c0a3aa448b880db97c9569"
+}

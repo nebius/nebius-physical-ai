@@ -55,6 +55,71 @@ tests explicitly support it.
 
 ## Upstream Post-Training Map
 
+For reserved B200 Slurm scaling, use the standalone application recipe at
+`npa/workflows/workbench/cosmos3-wam-slurm/` and
+`docs/workbench/cookbooks/cosmos3-wam-slurm.md`. It plans native LIBERO WAM runs
+with eight ranks per node, a fixed nominal batch and explicit HSDP topology.
+Its `validation.json` records completed 8/16-GPU 2,000-update schedules,
+three timing repeats per topology, separate CUDA profiles and four 500-trial
+checkpoint evaluations per topology. Full training took 7 h 50 m 33 s and
+4 h 23 m 33 s; repeated steady-step speedup was 1.9334×, efficiency 96.7%.
+Preserve the documented storage/cache conditions and small actual token-work
+difference (0.0108%) when quoting these results. Full-run and steady-step
+speedups differ; training GPU-hours exclude preparation, idle time and evaluation.
+
+Final benchmark success was 95.0% and 95.8%. The first saved checkpoint above
+90% was update 1,500, available after about 5 h 53 m and 3 h 19 m, respectively.
+Quality was verified afterward; do not infer exact threshold crossing, online
+early stopping, unseen-task generalization, or improved quality from GPU count
+with only one training seed. All original numeric/visual evidence is linked
+from the recipe. Historical raw reports retain their original
+measurement-time scope; the later checkpoint-linked quality records supersede
+pending campaign status without rewriting those bytes.
+
+The reserved two-node run has sixteen-rank NCCL/InfiniBand proof, attributed
+training processes and full-run telemetry. Native Slurm was tested. The four-node extension now has
+successful `npa soperator` deployment and CUDA qualification on all 32 GPUs; see
+`docs/workbench/evidence/cosmos3-wam-soperator-32/README.md`. Initial 32-rank WAM training also passed with process attribution and
+InfiniBand evidence in `docs/workbench/evidence/cosmos3-wam-live-training-32/README.md`.
+The full 32-GPU schedule completed in 2 h 10 m 47 s. Three timing repeats
+measured 3.6046 ± 0.0026 seconds/update (sample SD across run means). Four
+500-trial evaluations scored 47.4%, 81.8%, 94.0% and 95.6%, with zero
+infrastructure errors. The first saved checkpoint above 90% was update 1,500,
+ready after 1 h 39 m 02 s (one-second log resolution). See `cosmos3-wam-full-32`, `cosmos3-wam-timing-32`,
+`cosmos3-wam-quality-32`, `cosmos3-wam-profile-32` and
+`cosmos3-wam-final-visual-32` under `docs/workbench/evidence/`. Report these as
+a separate Soperator cohort: driver, scheduler and storage changed from the
+8/16-GPU campaign. Do not claim GPU-only scaling efficiency across cohorts.
+Slurm managed every measured allocation; torchrun launched ranks. Slurm is
+not required by the model, but a torchrun-only deployment remains untested.
+One FP32-plus-EMA B200 failed
+before its first update. Four active B200s subsequently passed NCCL and initial
+optimizer updates on an exclusive eight-GPU VM; see
+`docs/workbench/evidence/cosmos3-wam-live-training-4/README.md`. That attempt was
+cancelled at observed update 535 after the requested topology was clarified as
+four nodes with eight GPUs each: 32 B200s total. Its checkpoint is retained and
+its partial results are excluded from scaling. Two GPUs are untested. The
+32-GPU protocol and original capacity rejection are retained in
+`docs/workbench/evidence/cosmos3-wam-plan-32/README.md`. Capacity subsequently
+became available and the deployment completed. Use the
+existing `npa soperator` lifecycle for this extension; record runtime differences
+from native Slurm and do not treat plan/source checks as deployment proof.
+Current upstream LIBERO already describes two-node training; avoid claiming
+that all public Cosmos3 recipes stop at one node.
+
+Both bootstraps install FFmpeg and every node decodes both camera streams
+before model loading. Keep the excluded failure and corrected receipts.
+CUDA profiles observe rank zero on eight GPUs and ranks zero/eight on sixteen;
+the four-node profile samples ranks 0/8/16/24. Kernel groups use linked CPU
+operators where available. Overlapping kernel
+durations are not exposed communication stalls or a wall-time breakdown.
+Use a fresh `profile_report.py --output-path` when reanalyzing archived traces,
+preserving the original report and trace hashes.
+
+The Slurm recipe pins a newer framework than the experimental Workbench policy
+workflow. Keep each run's source/model/data/evaluation revisions coherent;
+do not use one path's successful execution as proof for the other.
+
 In a clone of `https://github.com/NVIDIA/cosmos-framework.git`, inspect:
 
 | Need | Upstream path |

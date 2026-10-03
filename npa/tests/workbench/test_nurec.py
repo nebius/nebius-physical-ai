@@ -89,6 +89,7 @@ def test_config_defaults_are_the_ga_container_and_ungated_dataset() -> None:
     # The GA channel is the one a standard NGC key can pull.
     assert config.image.endswith("-ga:26.04")
     assert config.dataset_id == DEFAULT_DATASET_ID
+    assert config.resolved_dataset_revision == mod.DEFAULT_DATASET_REVISION
     assert config.config_name == DEFAULT_CONFIG_NAME
     assert config.entrypoint == DEFAULT_NRE_ENTRYPOINT
     assert config.resolved_cache_dir.as_posix().startswith("/tmp/")
@@ -929,6 +930,7 @@ def test_fetch_downloads_extracts_and_locates_the_sequence(tmp_path: Path) -> No
     member = cache / "hf" / config.ncore_member
 
     def fake_runner(command, **_kwargs):
+        assert command[command.index("--revision") + 1] == mod.DEFAULT_DATASET_REVISION
         # Stand in for the `hf download` CLI by materializing the archive.
         member.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(member, "w") as bundle:
@@ -959,6 +961,19 @@ def test_fetch_downloads_extracts_and_locates_the_sequence(tmp_path: Path) -> No
     assert result.lidar_ids == ("virtual_lidar",)
     assert result.shard_count == 1
     assert result.bytes_downloaded > 0
+    assert result.dataset_revision == mod.DEFAULT_DATASET_REVISION
+    assert result.archive_sha256 == mod._file_sha256(member)
+
+
+def test_revision_pin_does_not_apply_to_an_unrelated_dataset():
+    config = NurecConfig.from_env(environ={}, dataset_id="example/reference")
+    assert config.resolved_dataset_revision == "main"
+    selected = NurecConfig.from_env(environ={"NPA_NUREC_DATASET_REVISION": "reference"})
+    assert selected.resolved_dataset_revision == "reference"
+    explicit = NurecConfig.from_env(
+        environ={"NPA_NUREC_DATASET_REVISION": "reference"}, dataset_revision="a" * 40
+    )
+    assert explicit.resolved_dataset_revision == "a" * 40
 
 
 def test_fetch_surfaces_a_download_failure_with_redaction(tmp_path: Path) -> None:

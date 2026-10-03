@@ -156,7 +156,10 @@ def test_rendered_backend_reads_selected_configuration_and_cluster_root(
         "NPA_PROJECT_ALIAS": "fallback",
         "NPA_CLUSTER_TERRAFORM_DIR": tmp_path / "terraform",
         "_agent_npa_ready": lambda: (True, ""),
-        "_agent_cloud_mk8s_clusters": lambda _alias: [],
+        "_agent_cloud_mk8s_clusters": lambda _alias: {
+            "status": "available",
+            "items": [],
+        },
         "assemble_k8s_backend_inventory": assemble,
         "_configured_healthy_agent_exists": lambda *_args: False,
     }

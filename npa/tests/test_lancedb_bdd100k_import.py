@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
 import io
 import json
 from contextlib import contextmanager, nullcontext
@@ -16,12 +17,16 @@ from PIL import Image
 from npa.workbench.lancedb.bdd100k_import import (
     BDD100KSourceError,
     BDD100KValidationError,
+    BDD100KWriteError,
     bdd100k_schema,
     import_bdd100k,
     manifest_checksum,
     schema_summary,
 )
 from npa.workbench.lancedb.server import create_app
+
+
+bdd100k_import_module = importlib.import_module("npa.workbench.lancedb.bdd100k_import")
 
 
 def test_bdd100k_synthetic_mode_produces_declared_row_count(tmp_path: Path) -> None:
@@ -35,6 +40,11 @@ def test_bdd100k_synthetic_mode_produces_declared_row_count(tmp_path: Path) -> N
     assert result.total_rows == 13
     assert result.rows_per_split == {"train": 10, "val": 3}
     assert result.table_version == 1
+
+
+def test_bdd100k_import_rejects_an_unknown_database_handle() -> None:
+    with pytest.raises(BDD100KWriteError, match="required list_tables API"):
+        bdd100k_import_module._list_tables(object())
 
 
 def test_bdd100k_schema_fields_have_expected_types() -> None:

@@ -1016,6 +1016,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "authorization, and that the GPU has RT cores, before any GPU work."
         ),
         access_capabilities=("nurec",),
+        config_defaults={"dataset_revision": ""},
+        omit_flags_when_empty=("--revision",),
         argv_template=[
             "npa",
             "workbench",
@@ -1025,6 +1027,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.nurec_image}}",
             "--dataset",
             "{{config.dataset_id}}",
+            "--revision",
+            "{{config.dataset_revision}}",
             "--scene",
             "{{config.scene}}",
             "--variant",
@@ -1083,6 +1087,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "Download and unpack real NCore V4 shards and derive the rig->world "
             "pose edge NRE requires for object-centric captures."
         ),
+        config_defaults={"dataset_revision": ""},
+        omit_flags_when_empty=("--revision",),
         argv_template=[
             "npa",
             "workbench",
@@ -1090,6 +1096,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "fetch",
             "--dataset",
             "{{config.dataset_id}}",
+            "--revision",
+            "{{config.dataset_revision}}",
             "--scene",
             "{{config.scene}}",
             "--variant",
@@ -1759,6 +1767,46 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.envgen_seed}}",
             "--augmented-frames-uri",
             "{{config.augmented_frames_uri}}",
+        ],
+    ),
+    "workbench.isaac_lab.prepare_rgbd_reference": ToolEntry(
+        name="workbench.isaac_lab.prepare_rgbd_reference",
+        description="Collect the public warehouse with MDL dependencies and prepare a 265-pose RGB-D rig input.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "prepare-reference",
+            "--output-path",
+            "{{config.capture_input_prefix}}",
+        ],
+    ),
+    "workbench.isaac_lab.capture_rgbd": ToolEntry(
+        name="workbench.isaac_lab.capture_rgbd",
+        description="Render a calibrated RGB-D rig with Isaac Sim and publish verified synchronized data.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "capture",
+            "--input-path",
+            "{{config.capture_input_uri}}",
+            "--output-path",
+            "{{config.capture_uri}}",
+        ],
+    ),
+    "workflow.rgbd.validate": ToolEntry(
+        name="workflow.rgbd.validate",
+        description="Decode RGB-D capture bytes and verify alignment, poses, depth masks, and point clouds.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "validate",
+            "--input-path",
+            "{{config.capture_uri}}/manifest.json",
+            "--output-path",
+            "{{config.validation_uri}}",
         ],
     ),
     "workbench.isaac_lab.capture_frames": ToolEntry(

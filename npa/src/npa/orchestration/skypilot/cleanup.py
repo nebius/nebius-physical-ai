@@ -24,6 +24,7 @@ from npa.orchestration.skypilot._bin import (
     ensure_skypilot_version,
     resolve_config,
     resolve_isolated_config_dir,
+    resolve_skypilot_kubeconfig_path,
 )
 from npa.orchestration.skypilot.controller import (
     DEFAULT_CONTROLLER_BACKEND,
@@ -1973,7 +1974,11 @@ def sky_environment(
 ) -> dict[str, str]:
     """Return an environment that keeps SkyPilot state inside a run directory."""
 
+    from npa.orchestration.skypilot.storage_context import _apply_storage_context
+
     env = dict(os.environ if environment is None else environment)
+    if environment is None:
+        env = _apply_storage_context(env)
     if isolated_config_dir is None:
         return env
     transaction = _TRANSACTION_ENVIRONMENTS.get().get(
@@ -2009,18 +2014,9 @@ def sky_environment(
     # even though every other probe sees the exact selected NPA kubeconfig.
     # Link the first (highest-precedence) KUBECONFIG into the isolated default
     # location.  This keeps auth live and operator-owned without copying a
-    # credential-bearing file into run state.  When KUBECONFIG is unset the
-    # operator relies on the default ``~/.kube/config``; fall back to the source
-    # HOME's copy (mirroring the ``.nebius`` link above) so isolated submits do
-    # not collapse to ``contexts: []`` and reject every ``--infra k8s/<context>``.
-    raw_kubeconfig = str(env.get("KUBECONFIG") or "").strip()
-    if raw_kubeconfig:
-        selected_kubeconfig = Path(raw_kubeconfig.split(os.pathsep, 1)[0]).expanduser()
-    elif provider_home and provider_home != home:
-        selected_kubeconfig = provider_home / ".kube" / "config"
-    else:
-        selected_kubeconfig = None
-    if selected_kubeconfig is not None and selected_kubeconfig.is_file():
+    # credential-bearing file into run state.
+    selected_kubeconfig = resolve_skypilot_kubeconfig_path(env)
+    if selected_kubeconfig.is_file():
         isolated_kubeconfig = home / ".kube" / "config"
         isolated_kubeconfig.parent.mkdir(parents=True, exist_ok=True)
         selected_target = selected_kubeconfig.resolve()
