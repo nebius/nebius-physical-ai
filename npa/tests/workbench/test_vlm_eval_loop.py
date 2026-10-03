@@ -17,7 +17,9 @@ import pytest
 from PIL import Image
 
 from npa.workbench.vlm_eval import (
+    LEGACY_RESULT_FILENAME,
     LOOP_REPORT_FILENAME,
+    RESULT_FILENAME,
     VlmEvalError,
     VlmLoopRollout,
     aggregate_loop_report,
@@ -77,7 +79,7 @@ def _rollout(rollout_id: str, score: float, success: bool) -> VlmLoopRollout:
         rationale="because",
         status="passed" if success else "needs_iteration",
         frame_count=2,
-        result_uri=f"s3://b/{rollout_id}/vlm_eval_stub.json",
+        result_uri=f"s3://b/{rollout_id}/{RESULT_FILENAME}",
     )
 
 
@@ -173,9 +175,9 @@ def test_loop_scores_every_rollout_and_writes_both_artifact_levels(
     }
     # One result per rollout ...
     for name in ("episode_000", "episode_001", "episode_002"):
-        assert (scores / "rollouts" / name).is_dir()
-        written = list((scores / "rollouts" / name).glob("*.json"))
-        assert written, f"no per-rollout result for {name}"
+        rollout_scores = scores / "rollouts" / name
+        assert (rollout_scores / RESULT_FILENAME).is_file()
+        assert not (rollout_scores / LEGACY_RESULT_FILENAME).exists()
     # ... plus the aggregate report the sim-to-real loop gates on.
     report_path = scores / LOOP_REPORT_FILENAME
     assert report_path.is_file()
