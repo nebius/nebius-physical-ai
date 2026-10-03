@@ -35,6 +35,18 @@ building. Its `--keyring` option defaults to
 path explicitly. Packaging guards execute the complete committed snapshot and
 require successful test execution, including setup and teardown.
 
+Receipt-derived acceptance records `byte_scan.resolution` as `raw-clean` or
+`public-attribution`, preserving `raw_valid`, `raw_findings` and
+`dispositioned_findings`. A clean scan has no attribution receipt; the separate
+CPython-notice adjudication keeps raw `valid=false`, re-verifies the exact two
+occurrences and pinned public provenance, and requires its receipt and replay
+hashes. Both paths freshly replay the complete authorized scanner and compare
+the retained report and ledger byte-for-byte. Original reports are never edited.
+`policy_kind` distinguishes `regex-v1` from `exact-literals-v1`; the latter proves
+only the operator-provided exact inventory, not equivalent coverage to a private
+CI denylist. This distinction does not authorize image publication or waive any
+runtime, quality, independent-review or release gate.
+
 ## Independent COLMAP camera poses
 
 For COLMAP conversion, NPA preserves each frame's actual camera-to-world poses

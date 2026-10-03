@@ -14,6 +14,7 @@ from image_byte_scan import core as W, prepare as P
 from npa.deploy import images
 from npa.workbench.nurec.evidence import validate_runtime_attestation
 
+from . import byte_acceptance
 from .process import ROOT, committed_source, file_sha, write_json
 from .vlm_evidence import verify_complete_evidence
 
@@ -157,9 +158,6 @@ def _prepublication(
         "graph_receipt_sha256": "graph.json",
         "raw_byte_report_sha256": "bytes/report.json",
         "raw_byte_ledger_sha256": "bytes/records.jsonl",
-        "attribution_receipt_sha256": "attribution.json",
-        "attribution_replay_report_sha256": "attribution-replay/report.json",
-        "attribution_replay_ledger_sha256": "attribution-replay/records.jsonl",
         "provenance_sbom_sha256": "buildx.spdx.json",
         "source_delivery_receipt_sha256": "source-delivery.log",
         "component_receipt_sha256": "components/receipt.json",
@@ -171,24 +169,7 @@ def _prepublication(
     }
     for field, relative in paths.items():
         _hash_field(pre, field, gate_dir / relative)
-    byte_report = _json(gate_dir / "bytes/report.json")
-    attribution = _json(gate_dir / "attribution.json")
-    byte_scan = manifest["byte_scan"]
-    W.require(
-        byte_report.get("complete") is True
-        and byte_report.get("valid") is True
-        and byte_scan.get("status") == "pass"
-        and byte_scan.get("report_sha256") == file_sha(gate_dir / "bytes/report.json")
-        and byte_scan.get("image_digest") == manifest["oci_digest"]
-        and byte_scan.get("archive_sha256") == prepublication["archive_sha256"]
-        and byte_scan.get("config_digest") == manifest["config_digest"]
-        and byte_scan.get("policy_sha256") == attribution.get("policy_sha256")
-        and byte_scan.get("complete") is byte_report["complete"]
-        and byte_scan.get("bytes_scanned") == byte_report.get("scanned_bytes")
-        and byte_scan.get("files_scanned") == byte_report.get("regular_files")
-        and byte_scan.get("unresolved_findings") == byte_report.get("findings"),
-        "acceptance_byte_scan_results",
-    )
+    byte_acceptance.verify(manifest, analysis_root, gate_dir)
     payload = _json(gate_dir / "payload.json")
     payload_scan = manifest["payload_scan"]
     W.require(

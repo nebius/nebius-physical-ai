@@ -60,6 +60,11 @@ def accepted():
         },
         "byte_scan": {
             **scan,
+            "resolution": "public-attribution",
+            "raw_valid": False,
+            "raw_findings": 2,
+            "dispositioned_findings": 2,
+            "policy_kind": "regex-v1",
             "archive_sha256": HASH,
             "policy_sha256": HASH,
             "config_digest": CONFIG,
@@ -288,6 +293,51 @@ def test_checked_in_ncore_remains_unaccepted():
 
 def test_acceptance_validates_complete_evidence(accepted):
     assert images.validate_ncore_accepted_image_manifest(accepted) == accepted
+
+
+@pytest.mark.parametrize("policy_kind", ["regex-v1", "exact-literals-v1"])
+def test_clean_byte_manifest_needs_no_attribution(accepted, policy_kind):
+    accepted["byte_scan"].update(
+        resolution="raw-clean",
+        raw_valid=True,
+        raw_findings=0,
+        dispositioned_findings=0,
+        policy_kind=policy_kind,
+    )
+    for field in (
+        "attribution_receipt_sha256",
+        "attribution_replay_report_sha256",
+        "attribution_replay_ledger_sha256",
+    ):
+        accepted["prepublication"].pop(field)
+    assert images.validate_ncore_accepted_image_manifest(accepted) == accepted
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("resolution", None),
+        ("raw_valid", True),
+        ("raw_valid", 0),
+        ("raw_findings", 0),
+        ("raw_findings", True),
+        ("dispositioned_findings", 0),
+        ("dispositioned_findings", 3),
+        ("policy_kind", "exact-literals-v1"),
+    ],
+)
+def test_adjudicated_manifest_cannot_relabel_raw_failure(accepted, field, value):
+    accepted["byte_scan"][field] = value
+    with pytest.raises(RuntimeError, match="NCore acceptance"):
+        images.validate_ncore_accepted_image_manifest(accepted)
+
+
+def test_clean_manifest_rejects_unexplained_attribution(accepted):
+    accepted["byte_scan"].update(
+        resolution="raw-clean", raw_valid=True, raw_findings=0, dispositioned_findings=0
+    )
+    with pytest.raises(RuntimeError, match="attribution_receipt"):
+        images.validate_ncore_accepted_image_manifest(accepted)
 
 
 @pytest.mark.parametrize(

@@ -110,3 +110,43 @@ def test_complete_readback_requires_new_destination(tmp_path: Path) -> None:
             tmp_path / "readback.json",
             storage_client=_Storage(),
         )
+
+
+def test_complete_readback_orders_full_object_keys(tmp_path: Path) -> None:
+    storage = _Storage()
+    storage.files = {
+        "camera/frame.png": b"native render frame",
+        "camera.mp4": b"native render video",
+        "camera-other/frame.png": b"another native frame",
+    }
+    receipt = readback_qualification(
+        "s3://private/run/",
+        tmp_path / "readback",
+        tmp_path / "readback.json",
+        storage_client=storage,
+    )
+    assert [item["path"] for item in receipt["local_inventory"]] == sorted(
+        storage.files
+    )
+    assert [item["bytes"] for item in receipt["local_inventory"]] == [
+        len(storage.files[key]) for key in sorted(storage.files)
+    ]
+
+
+def test_complete_readback_still_rejects_wrong_object_size(tmp_path: Path) -> None:
+    storage = _Storage()
+    original = storage.download_directory
+
+    def corrupt_download(uri, destination):
+        original(uri, destination)
+        (Path(destination) / "reports/final.json").write_bytes(b"truncated")
+
+    storage.download_directory = corrupt_download
+    with pytest.raises(NcoreQualificationReadbackError, match="differs"):
+        readback_qualification(
+            "s3://private/run/",
+            tmp_path / "readback",
+            tmp_path / "readback.json",
+            storage_client=storage,
+        )
+    assert not (tmp_path / "readback.json").exists()

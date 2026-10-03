@@ -36,6 +36,11 @@
   },
   "byte_scan": {
     "status": null,
+    "resolution": null,
+    "raw_valid": null,
+    "raw_findings": null,
+    "dispositioned_findings": null,
+    "policy_kind": null,
     "report_sha256": null,
     "image_digest": null,
     "archive_sha256": null,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import time
 from typing import Any, Callable
@@ -95,6 +96,25 @@ def _stage(payload: dict[str, Any], name: str) -> dict[str, Any] | None:
     return matches[0] if matches else None
 
 
+def _assigned_job(stage: dict[str, Any]) -> tuple[str, str] | None:
+    """Distinguish an unassigned launch from malformed authoritative identity."""
+    job_id = stage.get("managed_job_id")
+    if job_id is None or job_id == "":
+        return None
+    if (
+        type(job_id) not in (int, str)
+        or re.fullmatch(r"[1-9][0-9]*", str(job_id)) is None
+    ):
+        raise ValueError("live workflow managed job ID is invalid")
+    job_name = stage.get("job_name")
+    if (
+        type(job_name) is not str
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,252}", job_name) is None
+    ):
+        raise ValueError("live workflow managed job name is invalid")
+    return job_name, str(job_id)
+
+
 def observe_workflow(
     *,
     source_sha: str,
@@ -141,7 +161,7 @@ def observe_workflow(
             runner=status_runner,
         )
         overall = str(payload.get("status") or "").upper()
-        if overall in _TERMINAL_FAILURES:
+        if overall in _TERMINAL_FAILURES or overall == "SUCCEEDED":
             raise ValueError("workflow failed before runtime observation completed")
         for name in _STAGES:
             if name in observed:
@@ -149,8 +169,10 @@ def observe_workflow(
             selected = _stage(payload, name)
             if not selected or selected.get("state") != "RUNNING":
                 continue
-            job_name = str(selected.get("job_name") or "")
-            job_id = str(selected.get("managed_job_id") or "")
+            assignment = _assigned_job(selected)
+            if assignment is None:
+                continue
+            job_name, job_id = assignment
             snapshot = evidence_dir / f"workflow-status-{name}.json"
             _write_private(snapshot, raw)
             receipt = evidence_dir / f"runtime-{name}.json"

@@ -10,6 +10,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 from pathlib import Path
 import subprocess
 from urllib.parse import urlsplit
@@ -29,19 +30,60 @@ from token_factory_live_recheck import (
     write_receipt,
 )
 
+REQUIRED_TESTS = {
+    PROVENANCE_SUITE + "::test_self_hosted_result_retains_served_model",
+    *(
+        PROVENANCE_SUITE
+        + f"::test_self_hosted_sampling_binds_source_payloads[{strategy}-{kind}]"
+        for strategy in ("final", "keyframes", "sequence")
+        for kind in ("image-sequence", "numpy-episode", "video")
+    ),
+}
+
+
+def _sampling_tests_collected(nodeids: list[str]) -> bool:
+    expected = {node.removeprefix("npa/") for node in REQUIRED_TESTS}
+    observed = {node.removeprefix("npa/") for node in nodeids}
+    return observed == expected
+
+
+def _check_sampling_inputs(config: dict[str, str], target: Path) -> None:
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        raise ValueError("ffmpeg and ffprobe are required for video sampling")
+    output = _resolve_private_path(Path(config["output_path"]))
+    if output == target / "receipt.json" or output.is_relative_to(target / "pytest"):
+        raise ValueError(
+            "The custom result must not use runner-reserved evidence paths"
+        )
+
+
+def _evidence_target(value: str, root: Path) -> Path:
+    try:
+        target = _private_path(value, root)
+        target.mkdir(parents=True, mode=0o700, exist_ok=False)
+    except (OSError, ValueError):
+        raise ValueError(
+            "Use a new private evidence directory outside the checkout"
+        ) from None
+    return target
+
 
 def _private_path(value: str, root: Path) -> Path:
     path = Path(value)
     if not path.is_absolute():
         raise ValueError("Live paths must be absolute")
-    try:
-        path = path.resolve()
-    except RuntimeError:
-        # Python 3.12 reports symlink loops as RuntimeError, including the path.
-        raise ValueError("Live path cannot be resolved") from None
+    path = _resolve_private_path(path)
     if path.is_relative_to(root):
         raise ValueError("Live configuration and evidence must be outside the checkout")
     return path
+
+
+def _resolve_private_path(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except RuntimeError:
+        # Python 3.12 reports symlink loops with RuntimeError, not OSError.
+        raise ValueError("Live paths must resolve without symlink loops") from None
 
 
 def _load_config(root: Path) -> dict[str, str]:
@@ -149,6 +191,7 @@ def _verify(root: Path, target: Path, receipt: dict, results: Results) -> int:
     config = _load_config(root)
     receipt["phase"] = "fixtures"
     _check_local_artifacts(config, root)
+    _check_sampling_inputs(config, target)
     receipt["phase"] = "endpoint"
     _check_endpoint(config)
     receipt["endpoint_preflight_passed"] = True
@@ -159,13 +202,15 @@ def _verify(root: Path, target: Path, receipt: dict, results: Results) -> int:
 
 def _receipt(root: Path) -> dict:
     hashes = source_hashes(root)
-    for name in (PROVENANCE_SUITE, "npa/scripts/vlm_provenance_live_recheck.py"):
+    for name in (
+        PROVENANCE_SUITE,
+        "npa/scripts/vlm_provenance_live_recheck.py",
+        "npa/tests/e2e/vlm_sampling_live_helpers.py",
+    ):
         hashes[name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
     return {
         "schema": "npa.vlm_provenance.live_recheck.v1",
-        "commit_sha": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.PIPE
-        ).strip(),
+        "commit_sha": _source_commit(),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "source_file_sha256": hashes,
         "suites": [PROVENANCE_SUITE],
@@ -176,13 +221,24 @@ def _receipt(root: Path) -> dict:
     }
 
 
+def _source_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.PIPE
+        ).strip()
+    except subprocess.CalledProcessError:
+        raise ValueError("Unable to identify source revision") from None
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the configured provenance suite with sanitized failure reporting.
 
     Args:
         argv: Optional command-line arguments.
     Returns:
-        Zero only when every required live test passed and evidence was saved.
+        Zero only when every required live test executed and passed.
+    Raises:
+        None.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
@@ -191,12 +247,15 @@ def main(argv: list[str] | None = None) -> int:
     if Path.cwd().resolve() != root:
         parser.error("Run from the repository root using npa/.venv/bin/python")
     try:
-        target = _private_path(str(args.evidence_dir), root)
-        target.mkdir(parents=True, mode=0o700, exist_ok=False)
+        target = _evidence_target(str(args.evidence_dir), root)
         receipt = _receipt(root)
     except (OSError, ValueError, subprocess.SubprocessError):
         print(json.dumps({"passed": False, "failure": "Private evidence setup failed"}))
         return 1
+    return _verify_and_record(root, target, receipt)
+
+
+def _verify_and_record(root: Path, target: Path, receipt: dict) -> int:
     results = Results((PROVENANCE_SUITE,), provider_contract=False)
     exit_code = 2
     try:
@@ -217,7 +276,8 @@ def main(argv: list[str] | None = None) -> int:
         pytest_exit_code=exit_code,
         counts=results.summary(),
         tests=list(results.reports.values()),
-        passed=results.complete(exit_code),
+        passed=results.complete(exit_code)
+        and _sampling_tests_collected(results.collected),
     )
     try:
         write_receipt(target / "receipt.json", receipt)

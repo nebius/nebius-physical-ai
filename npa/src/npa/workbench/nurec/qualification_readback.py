@@ -55,7 +55,9 @@ def local_inventory(root: Path) -> list[dict[str, Any]]:
                 "sha256": _file_sha(path),
             }
         )
-    return records
+    # S3 orders complete keys, whereas Path orders their separate components.
+    # Keep sibling camera.mp4 and camera/frame.png in the same canonical order.
+    return sorted(records, key=lambda item: item["path"])
 
 
 def _snapshot_complete(client: Any, bucket: str, prefix: str) -> list[dict[str, Any]]:

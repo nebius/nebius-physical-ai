@@ -35,6 +35,7 @@ def test_observer_captures_each_running_stage_and_terminal_status(
     monkeypatch.setattr(workflow_observer, "committed_source", lambda _: "closure")
     results = iter(
         [
+            _payload("RUNNING", {"reconstruct": _stage("reconstruct", "RUNNING", "")}),
             _payload("RUNNING", {"reconstruct": _stage("reconstruct", "RUNNING", "1")}),
             _payload(
                 "RUNNING",
@@ -108,8 +109,9 @@ def test_observer_captures_each_running_stage_and_terminal_status(
     )
 
 
+@pytest.mark.parametrize("terminal", ["FAILED", "SUCCEEDED"])
 def test_observer_fails_closed_before_missing_stage_can_be_attested(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, terminal
 ):
     tmp_path.chmod(0o700)
     monkeypatch.setattr(workflow_observer, "committed_source", lambda _: "closure")
@@ -118,7 +120,7 @@ def test_observer_fails_closed_before_missing_stage_can_be_attested(
         return subprocess.CompletedProcess(
             command,
             0,
-            _payload("FAILED", {"reconstruct": _stage("reconstruct", "FAILED", "1")}),
+            _payload(terminal, {"reconstruct": _stage("reconstruct", terminal, "1")}),
             b"",
         )
 
@@ -139,3 +141,29 @@ def test_observer_fails_closed_before_missing_stage_can_be_attested(
             bundler=lambda **_: pytest.fail("bundler should not run"),
             sleeper=lambda _: None,
         )
+
+
+@pytest.mark.parametrize("job_id", [None, ""])
+def test_unassigned_launch_is_not_attested(job_id):
+    assert workflow_observer._assigned_job({"managed_job_id": job_id}) is None
+
+
+@pytest.mark.parametrize("job_id", [True, False, 0, -1, 1.0, "0", "01", " 1", "1x"])
+def test_malformed_assignment_fails_closed(job_id):
+    with pytest.raises(ValueError, match="job ID"):
+        workflow_observer._assigned_job(
+            {"managed_job_id": job_id, "job_name": "run-1-render"}
+        )
+
+
+@pytest.mark.parametrize("job_id", [1, "1"])
+def test_authoritative_integer_or_string_assignment(job_id):
+    assert workflow_observer._assigned_job(
+        {"managed_job_id": job_id, "job_name": "run-1-render"}
+    ) == ("run-1-render", "1")
+
+
+@pytest.mark.parametrize("name", [None, 1, "", "unsafe name", "../unsafe"])
+def test_assigned_job_requires_exact_safe_name(name):
+    with pytest.raises(ValueError, match="job name"):
+        workflow_observer._assigned_job({"managed_job_id": 1, "job_name": name})

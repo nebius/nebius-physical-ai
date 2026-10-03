@@ -1988,9 +1988,6 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         "graph_receipt_sha256",
         "raw_byte_report_sha256",
         "raw_byte_ledger_sha256",
-        "attribution_receipt_sha256",
-        "attribution_replay_report_sha256",
-        "attribution_replay_ledger_sha256",
         "provenance_sbom_sha256",
         "source_delivery_receipt_sha256",
         "component_receipt_sha256",
@@ -2007,6 +2004,9 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         match(scan, "report_sha256", r"[0-9a-f]{64}")
         equal(scan, "image_digest", payload["oci_digest"])
     byte_scan = payload["byte_scan"]
+    from .ncore_byte_acceptance import validate_disposition
+
+    validate_disposition(byte_scan, prepublication)
     equal(byte_scan, "complete", True)
     equal(byte_scan, "config_digest", payload["config_digest"])
     equal(byte_scan, "archive_sha256", prepublication["archive_sha256"])
