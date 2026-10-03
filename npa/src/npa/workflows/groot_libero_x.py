@@ -31,6 +31,7 @@ from npa.workflows.groot_learning import (
 )
 from npa.workflows.groot_visualization import (
     GrootVisualizationError,
+    _download,
     _head_artifact,
     _list_objects,
     _put_bytes,
@@ -837,6 +838,65 @@ def compare_closed_loop(
     return result
 
 
+def _decode_rollout_video(video_module: Any, path: Path, uri: str) -> dict[str, Any]:
+    """Return factual decode metadata for one native rollout MP4."""
+
+    try:
+        with video_module.open(str(path)) as container:
+            if not container.streams.video:
+                raise GrootVisualizationError(
+                    f"native rollout has no video stream: {uri}"
+                )
+            stream = container.streams.video[0]
+            frame_count = sum(1 for _ in container.decode(stream))
+            width, height = int(stream.width), int(stream.height)
+            codec = str(stream.codec_context.name or "")
+    except video_module.FFmpegError as exc:
+        raise GrootVisualizationError(
+            f"native rollout MP4 is unreadable: {uri}"
+        ) from exc
+    if frame_count < 1 or width < 1 or height < 1:
+        raise GrootVisualizationError(
+            f"native rollout MP4 has no decodable frames: {uri}"
+        )
+    return {
+        "uri": uri,
+        "bytes": path.stat().st_size,
+        "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        "codec": codec,
+        "width": width,
+        "height": height,
+        "frame_count": frame_count,
+    }
+
+
+def _inspect_rollout_videos(
+    client: Any, videos: Sequence[Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Download, hash, and decode each native rollout MP4 before evidence publication."""
+
+    try:
+        import av
+    except ModuleNotFoundError as exc:  # pragma: no cover - renderer installs it
+        raise GrootVisualizationError(
+            "PyAV is required to inspect native LIBERO rollout MP4 evidence"
+        ) from exc
+    inspections: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="npa-groot-libero-x-mp4-") as temporary:
+        for index, item in enumerate(videos):
+            uri = _require_string(item, "uri")
+            expected_hash = _require_sha256(item.get("sha256"), field="video sha256")
+            path = Path(temporary) / f"rollout-{index}.mp4"
+            _download(client, uri, path)
+            inspection = _decode_rollout_video(av, path, uri)
+            if inspection["sha256"] != expected_hash:
+                raise GrootVisualizationError(
+                    f"native rollout MP4 changed after upload: {uri}"
+                )
+            inspections.append(inspection)
+    return inspections
+
+
 def emit_evidence(
     comparison_uri: str,
     baseline_uri: str,
@@ -929,6 +989,7 @@ def emit_evidence(
     ]
     for item in videos:
         _head_artifact(client, item["uri"])
+    video_inspections = _inspect_rollout_videos(client, videos)
     result = {
         "schema": EVIDENCE_SCHEMA,
         "status": "completed",
@@ -936,6 +997,7 @@ def emit_evidence(
         "comparison_uri": comparison_uri,
         "rrd": {**rrd_artifact, "inspect": inspection},
         "native_rollout_mp4s": videos,
+        "native_rollout_mp4_inspection": video_inspections,
         "mp4_count": len(videos),
     }
     _put_json(client, output_uri, result)

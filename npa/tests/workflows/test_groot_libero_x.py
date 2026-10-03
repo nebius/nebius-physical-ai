@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from npa.workflows import groot_libero_x as workflow
@@ -71,6 +73,27 @@ def _put_json(client: FakeS3, uri: str, payload: dict[str, Any]) -> None:
     client.seed(uri, json.dumps(payload, sort_keys=True).encode())
 
 
+def _native_rollout_mp4(tmp_path: Path) -> bytes:
+    """Encode a minimal, independently decodable native-rollout fixture."""
+
+    av = pytest.importorskip("av")
+    path = tmp_path / "rollout.mp4"
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("h264", rate=5)
+        stream.width = 16
+        stream.height = 16
+        stream.pix_fmt = "yuv420p"
+        for level in (0, 96):
+            frame = av.VideoFrame.from_ndarray(
+                np.full((16, 16, 3), level, dtype=np.uint8), format="rgb24"
+            )
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():
+            container.mux(packet)
+    return path.read_bytes()
+
+
 def _task(task_id: str) -> dict[str, Any]:
     return {
         "task_id": task_id,
@@ -121,7 +144,11 @@ def _prepare(client: FakeS3, run_id: str = "groot-libero-x-fixture") -> dict[str
 
 
 def _rollout(
-    run_id: str, protocol: dict[str, Any], policy: str, video_uri: str
+    run_id: str,
+    protocol: dict[str, Any],
+    policy: str,
+    video_uri: str,
+    video_sha256: str = "a" * 64,
 ) -> dict[str, Any]:
     return {
         "schema": workflow.ROLLOUT_SCHEMA,
@@ -144,7 +171,7 @@ def _rollout(
                 {
                     "task_id": "heldout-0",
                     "success_rate": 0.5 if policy == "baseline" else 1.0,
-                    "videos": [{"uri": video_uri, "bytes": 9, "sha256": "a" * 64}],
+                    "videos": [{"uri": video_uri, "bytes": 9, "sha256": video_sha256}],
                 }
             ],
         },
@@ -222,24 +249,30 @@ def test_prepare_rejects_task_identifiers_that_could_escape_artifact_paths() -> 
         )
 
 
-def test_compare_and_rrd_evidence_use_matched_real_rollout_artifacts() -> None:
+def test_compare_and_rrd_evidence_decode_matched_native_rollout_artifacts(
+    tmp_path: Path,
+) -> None:
     pytest.importorskip("rerun")
     client = FakeS3()
     run_id = "groot-libero-x-fixture"
     protocol = _prepare(client, run_id)
     baseline_video = "s3://bucket/run/rollouts/baseline/mp4/episode.mp4"
     derivative_video = "s3://bucket/run/rollouts/derivative/mp4/episode.mp4"
-    client.seed(baseline_video, b"baseline-mp4", "video/mp4")
-    client.seed(derivative_video, b"derivative-mp4", "video/mp4")
+    video_bytes = _native_rollout_mp4(tmp_path)
+    client.seed(baseline_video, video_bytes, "video/mp4")
+    client.seed(derivative_video, video_bytes, "video/mp4")
     baseline_uri = "s3://bucket/run/rollouts/baseline/report.json"
     derivative_uri = "s3://bucket/run/rollouts/derivative/report.json"
+    video_sha256 = hashlib.sha256(video_bytes).hexdigest()
     _put_json(
-        client, baseline_uri, _rollout(run_id, protocol, "baseline", baseline_video)
+        client,
+        baseline_uri,
+        _rollout(run_id, protocol, "baseline", baseline_video, video_sha256),
     )
     _put_json(
         client,
         derivative_uri,
-        _rollout(run_id, protocol, "derivative", derivative_video),
+        _rollout(run_id, protocol, "derivative", derivative_video, video_sha256),
     )
     comparison_uri = "s3://bucket/run/reports/comparison.json"
 
@@ -268,6 +301,9 @@ def test_compare_and_rrd_evidence_use_matched_real_rollout_artifacts() -> None:
     )
     assert evidence["rrd"]["bytes"] > 0
     assert evidence["mp4_count"] == 2
+    assert all(
+        item["frame_count"] == 2 for item in evidence["native_rollout_mp4_inspection"]
+    )
 
 
 def test_comparison_rejects_a_rollout_without_closed_loop_evidence() -> None:
@@ -293,6 +329,51 @@ def test_comparison_rejects_a_rollout_without_closed_loop_evidence() -> None:
             derivative_uri,
             "s3://bucket/run/reports/comparison.json",
             "groot-libero-x-fixture",
+            s3_client=client,
+        )
+
+
+def test_evidence_rejects_an_undecodable_rollout_mp4() -> None:
+    pytest.importorskip("rerun")
+    client = FakeS3()
+    run_id = "groot-libero-x-fixture"
+    protocol = _prepare(client, run_id)
+    baseline_uri = "s3://bucket/run/rollouts/baseline/report.json"
+    derivative_uri = "s3://bucket/run/rollouts/derivative/report.json"
+    baseline_video = "s3://bucket/run/rollouts/baseline/mp4/episode.mp4"
+    derivative_video = "s3://bucket/run/rollouts/derivative/mp4/episode.mp4"
+    bad_video = b"not-a-decodable-mp4"
+    video_sha256 = hashlib.sha256(bad_video).hexdigest()
+    client.seed(baseline_video, bad_video, "video/mp4")
+    client.seed(derivative_video, bad_video, "video/mp4")
+    _put_json(
+        client,
+        baseline_uri,
+        _rollout(run_id, protocol, "baseline", baseline_video, video_sha256),
+    )
+    _put_json(
+        client,
+        derivative_uri,
+        _rollout(run_id, protocol, "derivative", derivative_video, video_sha256),
+    )
+    comparison_uri = "s3://bucket/run/reports/comparison.json"
+    workflow.compare_closed_loop(
+        "s3://bucket/run/prepared/protocol.json",
+        baseline_uri,
+        derivative_uri,
+        comparison_uri,
+        run_id,
+        s3_client=client,
+    )
+
+    with pytest.raises(workflow.GrootVisualizationError, match="MP4 is unreadable"):
+        workflow.emit_evidence(
+            comparison_uri,
+            baseline_uri,
+            derivative_uri,
+            "s3://bucket/run/reports/evidence.rrd",
+            "s3://bucket/run/reports/evidence.json",
+            run_id,
             s3_client=client,
         )
 

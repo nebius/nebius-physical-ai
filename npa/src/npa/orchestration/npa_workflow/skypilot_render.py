@@ -222,6 +222,7 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
     ),
     "workflow.groot.emit_learning_rrd": (("python:av", "av>=12,<17"),),
     "workflow.groot.publish_learning": (("python:av", "av>=12,<17"),),
+    "workflow.groot_libero_x.emit_evidence": (("python:av", "av>=12,<17"),),
     "workbench.cosmos.fetch": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
     "workbench.cosmos.check": (("huggingface-cli", "huggingface_hub[cli]>=0.23,<1.0"),),
     "workbench.lerobot.policy_train": (

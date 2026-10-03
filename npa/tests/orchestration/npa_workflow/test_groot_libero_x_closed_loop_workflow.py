@@ -101,5 +101,6 @@ def test_closed_loop_workflow_renders_current_toolrefs_and_vendor_image(
         for state in STATES[1:3]:
             assert "/opt/groot/Isaac-GR00T/.venv/bin/python" in by_name[state]["setup"]
             assert "npa-groot" in by_name[state]["resources"]["image_id"]
+        assert "av>=12,<17" in by_name[STATES[-1]]["setup"]
     finally:
         prepared.temp_dir.cleanup()
