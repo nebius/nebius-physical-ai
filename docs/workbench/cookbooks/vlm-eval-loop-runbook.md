@@ -33,20 +33,84 @@ wiring checks, never visual proof. Real `benchmark` reports retain the evidence
 for every case so calibration failures and model disagreement remain inspectable.
 If a model wraps one complete JSON object in a single Markdown JSON fence, the
 parser removes only that transport wrapper and appends `+markdown-fence-v1` to
-the retained parser version. Prefixes, suffixes, duplicate keys, non-finite
-numbers, invalid types, and partial output still fail rather than being repaired.
+the retained parser version. Hosted `api` evaluation rejects surrounding prose,
+duplicate keys, non-finite numbers, invalid types, incomplete output and model
+substitution. The `self-hosted` backend retains its legacy compatibility parser:
+it can extract embedded JSON, accept duplicate keys and coerced types, clamp
+scores, and return a verdict with missing or non-`stop` completion metadata.
+Retained evidence does not make such a verdict eligible for promotion. The live
+provenance lane below separately requires complete output and checks its framing.
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
 
-To verify this against your existing GPU endpoint, set
-`NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
-JSON file containing `input_path`, `output_path` (a local JSON filename),
-`endpoint_url`, `model`, `expected_served_model`, and `task`. Supply credentials
-through the environment variable named by `api_key_env` (default
-`VLM_EVAL_API_KEY`). Run
-`npa/.venv/bin/python -m pytest npa/tests/e2e/test_vlm_served_model_live.py -q`.
-The test calls the real endpoint and retains its verdict; it provisions and
-destroys no resources.
+The serialized result retains the effective `rubric`, so the exact prompt can
+be reconstructed from `task`, `rubric`, `frame_selection`, and `frame_count`.
+`passed` is always `score >= success_threshold`, using the serialized score
+rounded to four decimal places for real, stub, and override evaluations. When
+a real backend actually returns a `success` boolean, the result records it as
+`provider_success` and reports whether it agrees in
+`provider_success_matches_score_gate`.
+Self-hosted responses that omit the boolean leave both fields null rather than
+presenting a score-derived fallback as provider output. Legacy non-boolean
+values such as `"true"` are likewise not promoted to provider booleans. A real
+disagreement is calibration evidence, not permission to replace the
+score-derived label. Before reviewing thin geometry or skeletons, compare
+retained submitted-frame dimensions with the source because normalization can
+remove the defect.
+
+## Live provenance verification
+
+The operator lane runs `test_vlm_served_model_live.py` against an existing GPU
+endpoint. It fails if configuration, authentication, expected model readiness,
+or actual inference is missing. A skipped or empty test run cannot pass. This
+is separate from the nightly hosted Token Factory suites, which need no GPU.
+
+Before provisioning a dedicated endpoint, prove credentials with
+`npa workbench health preflight --checks nebius --json` and verify exact model
+payload access before any download. Use the
+[access preflight](../../../skills/atomic/access-approval/SKILL.md) for gated
+weights and record the checkpoint revision, serving image digest, selected GPU
+family/count and resource ownership privately. Use a compatible serving runtime;
+the model name returned by inference does not identify its checkpoint bytes.
+Provision and clean up only resources owned by this validation run.
+
+Stage a local rollout fixture with decodable images or video outside the
+checkout. Its actual normalized frames will be reloaded and hashed to verify
+the request evidence. Create an owner-only output directory and a fresh local
+JSON result filename; S3 fixtures/results are not supported by this verification
+lane. Keep the task, fixture, provider response, and result private.
+
+Set `NPA_VLM_PROVENANCE_LIVE_CONFIG` to the absolute path of an owner-only
+(`0600`) JSON file outside the checkout. Required keys are `input_path`
+(absolute local fixture path), `output_path` (absolute fresh `.json` filename
+in an existing `0700` directory), `endpoint_url` (OpenAI-compatible `/v1` base
+or `/v1/chat/completions` URL), `model` (requested ID), `expected_served_model`
+(actual server ID), and `task`. Optional `api_key_env` defaults to
+`VLM_EVAL_API_KEY`; supply the endpoint credential in that environment variable,
+never in the file or URL. The endpoint must expose authenticated `/v1/models`
+and `/v1/chat/completions` routes.
+
+From the repository root, with the configuration and credential in the process
+environment:
+
+```bash
+NPA_INTEGRATION_E2E=1 npa/.venv/bin/python \
+  npa/scripts/vlm_provenance_live_recheck.py \
+  --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"
+```
+
+Use a fresh absolute evidence directory outside the checkout for each run.
+`receipt.json` contains test counts, source hashes, and sanitized status. The
+verdict stays at the configured `output_path`. Success requires an executed
+provider call, HTTP 200, `finish_reason=stop`, the expected returned model,
+recomputable frame/manifest/response hashes, and saved-result readback. A model
+listing is readiness evidence only. This lane proves traceability of inference;
+it does not prove a policy succeeded or a scene is physically safe.
+
+The runner provisions and deletes nothing. After collecting the result and
+receipt, cancel run-owned jobs, stop the endpoint and destroy run-owned compute
+using the [run lifecycle](../../run-lifecycle.md). Preserve evidence and shared
+resources. Cleanup remains required when validation fails.
 
 ## Prerequisites
 
@@ -139,6 +203,11 @@ points at the same rollout directories and includes `expected_label` for each
 item, then run the sweep below.
 
 ## Tune
+
+Use neutral identify-then-judge task text. Ask what the frames show before
+asking whether they satisfy the target; do not ask the model to confirm the
+desired answer. A blank and an unrelated rollout must score low under the exact
+same task-plus-rubric prompt before the positive score is usable evidence.
 
 Sweep thresholds, rubrics, and models against labeled rollouts:
 
