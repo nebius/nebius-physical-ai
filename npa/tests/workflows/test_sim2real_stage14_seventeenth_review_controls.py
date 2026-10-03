@@ -28,10 +28,10 @@ from npa.workflows.sim2real.publication import (
 )
 from npa.workflows.sim2real.models import Sim2RealLoopConfig
 import npa.workflows.sim2real_rerun_regen as regen
-from tests.workflows.test_sim2real_stage14_fifteenth_review_controls import (
+from test_sim2real_stage14_fifteenth_review_controls import (
     _ObjectStore,
 )
-from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
+from test_sim2real_stage14_thirteenth_review_controls import (
     ROOT,
     SOURCE_SHA,
     _component,

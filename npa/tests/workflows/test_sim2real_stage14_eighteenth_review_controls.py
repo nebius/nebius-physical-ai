@@ -34,11 +34,11 @@ from npa.workflows.sim2real.publication import (
 )
 from npa.workflows.sim2real.workflow_io import component_record_history_uri
 import npa.workflows.sim2real_rerun_regen as regen
-from tests.workflows.test_sim2real_stage14_fifteenth_review_controls import (
+from test_sim2real_stage14_fifteenth_review_controls import (
     _StreamingObjectStore,
     _canonical_report_with_forged_stage4,
 )
-from tests.workflows.test_sim2real_stage14_seventeenth_review_controls import (
+from test_sim2real_stage14_seventeenth_review_controls import (
     _CANONICAL_RRD,
     _IMMUTABLE_REPORT,
     _IMMUTABLE_RRD,
@@ -47,7 +47,7 @@ from tests.workflows.test_sim2real_stage14_seventeenth_review_controls import (
     _Reader,
     _complete_journal,
 )
-from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
+from test_sim2real_stage14_thirteenth_review_controls import (
     ROOT,
     SOURCE_SHA,
     _config,

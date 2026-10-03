@@ -889,6 +889,7 @@ def _log_summary_documents(
             heldout_report,
         ),
         "summary/embodiment": _embodiment_markdown(run_metadata),
+        "summary/regeneration": _regeneration_summary(run_metadata),
         "summary/augmentation": _augmentation_markdown(index),
         "summary/artifacts": _artifacts_markdown(index),
     }
@@ -902,6 +903,30 @@ def _log_summary_documents(
             recording=recording,
         )
         _bump(counts, entity)
+
+
+def _regeneration_summary(run_metadata: dict[str, Any]) -> str:
+    authority = run_metadata.get("regeneration")
+    if not isinstance(authority, dict):
+        return ""
+    retained = authority.get("input") or {}
+    writer = authority.get("writer") or {}
+    original = retained.get("stage14_record") or {}
+    facts = {
+        "historical_input_source_sha": retained.get("source_sha"),
+        "immutable_input_report_sha256": retained.get("report_sha256"),
+        "preceding_stage14_content_sha256": original.get("content_sha256"),
+        "current_writer_source_sha": writer.get("source_sha"),
+        "current_writer_image_digest": writer.get("image_digest"),
+        "current_writer_job_sha256": hashlib.sha256(
+            str(writer.get("workflow_job") or "").encode()
+        ).hexdigest(),
+        "execution_mode": writer.get("execution_mode"),
+    }
+    return (
+        "Regenerated recording: retained input authority is not its current writer.\n\n"
+        + json.dumps(facts, indent=2, sort_keys=True)
+    )
 
 
 _CANONICAL_STAGE_COMPONENTS = {

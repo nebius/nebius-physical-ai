@@ -9,10 +9,14 @@ from typing import Any, Callable
 from npa.workflows.sim2real.checkpoint_selection import resolve_selected_checkpoint
 from npa.workflows.sim2real.constants import SCHEMA_E2E_REPORT
 from npa.workflows.sim2real.decision_authority import gold_report_sha256
+from npa.workflows.sim2real.regeneration_authority import (
+    validate_regeneration_authority,
+)
 from npa.workflows.sim2real.workflow_io import (
     aggregate_parallel_provenance,
     validate_component_lane_record,
     validate_component_record,
+    parse_json_object,
 )
 
 
@@ -392,6 +396,11 @@ def validate_stage14_component_record(
     """Validate one regenerated Stage 14 record against its sealed report."""
 
     expected_source_sha = _require_source_sha(expected_source_sha)
+    writer_source_sha = expected_source_sha
+    if "regeneration" in report:
+        writer_source_sha = validate_regeneration_authority(
+            report, record, expected_input_source=expected_source_sha
+        )
     required = ("rrd", "report")
     if report.get("mcap_uri"):
         required += ("mcap",)
@@ -403,7 +412,7 @@ def validate_stage14_component_record(
         expected_name="stage_14_rerun_viz",
         expected_tier="WORKS",
         required_artifacts=required,
-        expected_source_sha=expected_source_sha,
+        expected_source_sha=writer_source_sha,
     )
     artifacts = record["artifacts"]
     if (
@@ -416,3 +425,62 @@ def validate_stage14_component_record(
         "report_authority_sha256"
     ) != stage14_report_authority_sha256(report):
         raise ValueError("Stage 14 ComponentRecord report authority is stale")
+
+
+def _read_regeneration_parent(report: dict, load_bytes: Callable[[str], bytes]) -> dict:
+    retained = report["regeneration"]["input"]
+    raw = load_bytes(retained["report_uri"])
+    if (
+        len(raw) != retained["report_size_bytes"]
+        or hashlib.sha256(raw).hexdigest() != retained["report_sha256"]
+    ):
+        raise ValueError("immutable regeneration input report bytes changed")
+    parent = parse_json_object(raw, source="immutable regeneration input report")
+    records = parent.get("component_records")
+    current_records = report.get("component_records")
+    if (
+        not isinstance(records, list)
+        or not records
+        or records[:-1] != current_records[:-1]
+    ):
+        raise ValueError("immutable regeneration input components changed")
+    if parent.get("source_sha") != retained["source_sha"]:
+        raise ValueError("immutable regeneration input source changed")
+    if parent.get("report_uri") != retained["report_uri"]:
+        raise ValueError("immutable regeneration input location changed")
+    if records[-1] != retained["stage14_record"]:
+        raise ValueError("immutable regeneration input Stage14 record changed")
+    if stage14_report_authority_sha256(parent) != retained["report_authority_sha256"]:
+        raise ValueError("immutable regeneration input report authority changed")
+    history = parse_json_object(
+        load_bytes(retained["stage14_history_uri"]),
+        source="immutable regeneration input history",
+    )
+    if history != records[-1]:
+        raise ValueError("immutable regeneration input history changed")
+    validate_stage14_component_record(
+        records[-1], parent, expected_source_sha=retained["source_sha"]
+    )
+    return parent
+
+
+def validate_remote_regeneration_authority(
+    report: dict, load_bytes: Callable[[str], bytes]
+) -> None:
+    """Verify every referenced immutable replay input without changing old authority.
+
+    Args:
+        report: Already validated current report with separate writer authority.
+        load_bytes: Run-scoped reader of immutable input reports and history.
+    Returns:
+        None.
+    Raises:
+        ValueError: If input bytes, history, source or the replay chain disagree.
+    """
+    seen = set()
+    while "regeneration" in report:
+        uri = report["regeneration"]["input"]["report_uri"]
+        if uri in seen:
+            raise ValueError("regeneration input authority contains a cycle")
+        seen.add(uri)
+        report = _read_regeneration_parent(report, load_bytes)

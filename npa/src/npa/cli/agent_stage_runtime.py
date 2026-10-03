@@ -21,6 +21,7 @@ try:
         PublicationConflict,
         REPORT_SUFFIX,
         RESERVED_SUFFIXES,
+        canonical_publication_uri,
         resolve_committed_publication,
     )
 except ModuleNotFoundError:
@@ -28,6 +29,7 @@ except ModuleNotFoundError:
         PublicationConflict,
         REPORT_SUFFIX,
         RESERVED_SUFFIXES,
+        canonical_publication_uri,
         resolve_committed_publication,
     )
 
@@ -117,6 +119,38 @@ def _read_bounded_json_object(
                 # Cleanup must not turn an otherwise safely bounded read into a
                 # request failure. StreamingBody.close() is best-effort here.
                 pass
+
+
+def _read_publication_bound_json_object(
+    s3,
+    bucket: str,
+    key: str,
+    *,
+    publication_snapshot=None,
+    max_bytes: int = _MAX_STAGE_EVIDENCE_BYTES,
+):
+    """Authenticate the actual bytes parsed from a reserved publication object."""
+    uri = f"s3://{bucket}/{key}"
+    try:
+        canonical_uri = canonical_publication_uri(uri)
+    except ValueError:
+        return _read_bounded_json_object(s3, bucket, key, max_bytes=max_bytes)
+    publication = publication_snapshot or resolve_committed_publication(
+        lambda journal_uri: _read_publication_journal(s3, bucket, journal_uri),
+        canonical_uri,
+    )
+    identity = {}
+    if publication.journaled:
+        target = publication.target(canonical_uri)
+        if target.immutable_uri != uri:
+            raise PublicationConflict("report is not the selected committed object")
+        identity = {
+            "expected_sha256": target.sha256,
+            "expected_size": target.size_bytes,
+        }
+    result = _read_bounded_json_object(s3, bucket, key, max_bytes=max_bytes, **identity)
+    _assert_legacy_publication_snapshot_still_unjournaled(s3, bucket, publication)
+    return result
 
 
 def _read_publication_journal(s3, bucket: str, uri: str) -> bytes | None:
@@ -470,7 +504,9 @@ def _workflow_stage_defs_from_state(state: dict) -> list[tuple[str, str, list[st
     return stages
 
 
-def _stage_evidence_documents(s3, bucket: str, artifacts: list) -> list:
+def _stage_evidence_documents(
+    s3, bucket: str, artifacts: list, *, publication_snapshot=None
+) -> list:
     # Select the most authoritative typed candidates before any S3 GET. Reads are
     # bounded by both object count and bytes; parser order remains low-to-high
     # authority so status documents deterministically override snapshots.
@@ -489,7 +525,9 @@ def _stage_evidence_documents(s3, bucket: str, artifacts: list) -> list:
     loaded = []
     for rank, key in candidates[:_MAX_STAGE_EVIDENCE_DOCUMENTS]:
         try:
-            payload = _read_bounded_json_object(s3, bucket, key)
+            payload = _read_publication_bound_json_object(
+                s3, bucket, key, publication_snapshot=publication_snapshot
+            )
         except (
             ClientError,
             BotoCoreError,
@@ -742,7 +780,15 @@ def _artifact_backed_run_details(
             status_code=409,
             detail="the selected publication generation is not committed",
         ) from exc
-    evidence_documents = _stage_evidence_documents(s3, run_bucket, visible_artifacts)
+    try:
+        evidence_documents = _stage_evidence_documents(
+            s3, run_bucket, visible_artifacts, publication_snapshot=publication_snapshot
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     parsed_evidence = parse_stage_evidence_documents(evidence_documents)
     workflow_steps = _workflow_run_steps(evidence_documents)
     stages = build_artifact_backed_stages(

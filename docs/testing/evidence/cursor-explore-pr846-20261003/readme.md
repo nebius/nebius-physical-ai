@@ -7,7 +7,7 @@ full-pipeline GPU execution, policy quality, or supported-image release.
 
 Original PR head: `5687434aea366cfa08eb576a5aea1df83903f90f`.
 Original committed S3 execution: `4457c5b1ede9561fd61901452524d1d39f791011`.
-Current runtime successor: `2cac4009d97c326bd6f5298c3bc718031bdbf62b`.
+Frozen full-suite runtime source: `2cac4009d97c326bd6f5298c3bc718031bdbf62b`.
 Successor tree: `09ad0aff7ca982c038e866f4c2bb2f620a84a26c`.
 Integrated main: `f1ecd4255131374c417cdbb1f6c3e0d84b2a3514`.
 
@@ -87,6 +87,23 @@ canonical bytes on the second read, checks both summary paths, and confirms
 temporary staging cleanup. Its timestamps remain explicitly `synthetic-fps`,
 not sensor time. The numeric values are fixture controls, not measured policy
 performance. This CPU control also uses in-memory storage rather than live S3.
+
+## Independent successor findings
+
+Five confirmed runtime findings remain changes requested: cleanup containment,
+rejected RRD cache preservation, static/blueprint semantic identity, verified
+report re-reads, and current replay writer attribution. Owner repairs require
+independent immutable successor review and full live replay acceptance. Replay must
+preserve immutable original input authority separately from the actual current
+writer/output generation; changing the retained report source or requiring all
+historical inputs to match the new writer would erase provenance.
+
+Published892050d67 CI also exposed two root-collection test-helper import
+errors. Import-only7acc repairs that exact CI invocation with unchanged production
+source and assertions. Owner root/package collection each found41,048 tests and
+each focused population passed22; independent two-file collection/execution
+each found/passed3 in both cwd modes and closed S2 only. Current7acc CI passes;
+the failed892 attempt remains retained, not relabeled green.
 
 ## Original real S3 execution
 

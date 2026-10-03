@@ -30,6 +30,7 @@ from npa.workflows.sim2real.component_authority import (
     stage14_report_authority_sha256,
     validate_component_records,
     validate_remote_stage4_authority,
+    validate_remote_regeneration_authority,
     validate_stage14_component_record,
 )
 from npa.workflows.sim2real.constants import SCHEMA_E2E_REPORT
@@ -61,13 +62,21 @@ from npa.workflows.sim2real.publication import (
     verify_committed_publication_file,
 )
 from npa.workflows.sim2real.reporting import build_progress_metrics
+from npa.workflows.sim2real.regeneration_authority import (
+    REGENERATION_SCHEMA,
+    authority_sha256,
+    regeneration_generation,
+    validate_writer,
+)
 from npa.workflows.sim2real.utils import _artifact_root_uri, _write_json_artifact
 from npa.workflows.sim2real.viz_contract import (
     _checkpoint_uri,
     selected_checkpoint_policy_metadata,
 )
 from npa.workflows.sim2real.workflow_io import (
+    build_component_record,
     component_record_history_uri,
+    image_provenance,
     parse_json_object,
 )
 from npa.workflows.sim2real_viz import (
@@ -414,6 +423,8 @@ def _assert_safe_render_destination(local_dir: Path, renders_dir: Path) -> None:
             "render destination must be contained in regeneration root"
         ) from exc
     current = root
+    if any(ancestor.is_symlink() for ancestor in (root, *root.parents)):
+        raise Sim2RealRerunRegenError("containment root has a symlinked ancestor")
     # The staged os.replace below replaces a symlink leaf entry, never its target.
     for part in relative.parts[:-1]:
         current /= part
@@ -482,6 +493,8 @@ def _assert_no_symlinked_ancestors(
         )
     current = root
     # Download callers stage then os.replace, which replaces a symlink leaf entry.
+    if any(ancestor.is_symlink() for ancestor in (root, *root.parents)):
+        raise Sim2RealRerunRegenError("containment root has a symlinked ancestor")
     for part in relative.parts[:-1]:
         current /= part
         if current.is_symlink():
@@ -530,16 +543,19 @@ def _download_if_exists(
     return True
 
 
-def _remove_tree(path: Path) -> None:
+def _remove_tree(path: Path, *, containment_root: Path) -> None:
+    _assert_no_symlinked_ancestors(path, containment_root=containment_root)
     if path.is_symlink() or not path.is_dir():
         path.unlink(missing_ok=True)
     else:
         shutil.rmtree(path)
 
 
-def _remove_tree_after_failure(path: Path, failure: BaseException) -> None:
+def _remove_tree_after_failure(
+    path: Path, failure: BaseException, *, containment_root: Path
+) -> None:
     try:
-        _remove_tree(path)
+        _remove_tree(path, containment_root=containment_root)
     except OSError as cleanup_error:
         raise failure from cleanup_error
 
@@ -562,18 +578,22 @@ def _download_render_tree(
             storage.download_directory(uri, str(staged))
         except (StorageError, OSError, ClientError) as exc:
             _assert_safe_render_destination(containment_root, renders_dir)
-            _remove_tree_after_failure(renders_dir, exc)
+            _remove_tree_after_failure(
+                renders_dir, exc, containment_root=containment_root
+            )
             return False
         except BaseException as exc:
             _assert_safe_render_destination(containment_root, renders_dir)
-            _remove_tree_after_failure(renders_dir, exc)
+            _remove_tree_after_failure(
+                renders_dir, exc, containment_root=containment_root
+            )
             raise
         if not _has_camera_pngs(staged):
             _assert_safe_render_destination(containment_root, renders_dir)
-            _remove_tree(renders_dir)
+            _remove_tree(renders_dir, containment_root=containment_root)
             return False
         _assert_safe_render_destination(containment_root, renders_dir)
-        _remove_tree(renders_dir)
+        _remove_tree(renders_dir, containment_root=containment_root)
         os.replace(staged, renders_dir)
     return True
 
@@ -603,19 +623,23 @@ def _download_directory_fresh(
         try:
             storage.download_directory(uri, str(staged))
         except (StorageError, OSError, ClientError) as exc:
-            _remove_tree_after_failure(destination, exc)
+            _remove_tree_after_failure(
+                destination, exc, containment_root=containment_root
+            )
             return False
         except BaseException as exc:
-            _remove_tree_after_failure(destination, exc)
+            _remove_tree_after_failure(
+                destination, exc, containment_root=containment_root
+            )
             raise
         if not staged.is_dir() or staged.is_symlink():
-            _remove_tree(destination)
+            _remove_tree(destination, containment_root=containment_root)
             return False
         _assert_no_symlinked_ancestors(
             destination,
             containment_root=containment_root,
         )
-        _remove_tree(destination)
+        _remove_tree(destination, containment_root=containment_root)
         os.replace(staged, destination)
     return True
 
@@ -625,7 +649,7 @@ def _clear_regen_pair_scopes(local_dir: Path) -> None:
         local_dir / "inner_loop",
         local_dir / "eval" / "gold-heldout",
     ):
-        _remove_tree(stale_scope)
+        _remove_tree(stale_scope, containment_root=local_dir)
 
 
 def _regen_single_files(
@@ -1460,31 +1484,47 @@ def _assert_safe_publication_tree(local_dir: Path, tree: Path) -> None:
             )
 
 
-def _recording_publication_id(rrd_path: Path, mcap_path: Path | None = None) -> str:
+def _recording_publication_id(
+    rrd_path: Path, mcap_path: Path | None = None, *, regeneration=None
+) -> str:
+    if regeneration is not None:
+        return regeneration_generation(
+            regeneration,
+            sha256_file(rrd_path),
+            sha256_file(mcap_path) if mcap_path else "",
+        )
     material = f"rrd:{sha256_file(rrd_path)}"
     if mcap_path is not None:
         material += f":mcap:{sha256_file(mcap_path)}"
     return hashlib.sha256(material.encode()).hexdigest()
 
 
-def _seal_regen_publication_report(
-    report_path: Path,
-    *,
-    publication_id: str,
-    rrd_uri: str,
-    mcap_uri: str,
-    report_uri: str,
-    journal_uri: str,
-) -> None:
-    report = _read_retained_json(report_path, source="Sim2Real final report")
-    report["publication_id"] = publication_id
-    report["publication"] = {
+def _recording_output_identity(path, uri):
+    return {"sha256": sha256_file(path), "size_bytes": path.stat().st_size, "uri": uri}
+
+
+def _bind_regeneration_output_identity(
+    report, publication_id, rrd_uri, mcap_uri, rrd_path, mcap_path
+):
+    regeneration = report.get("regeneration")
+    if regeneration is None:
+        return
+    _assert_regen_output_bytes(report, rrd_path, mcap_path)
+    if rrd_path is None or bool(mcap_uri) != bool(mcap_path):
+        raise Sim2RealRerunRegenError("regeneration lacks actual output bytes")
+    if (
+        _recording_publication_id(rrd_path, mcap_path, regeneration=regeneration)
+        != publication_id
+    ):
+        raise Sim2RealRerunRegenError("regeneration publication generation is stale")
+    regeneration["output"] = {
         "generation": publication_id,
-        "rrd_uri": rrd_uri,
-        "mcap_uri": mcap_uri,
-        "report_uri": report_uri,
-        "journal_uri": journal_uri,
+        "rrd": _recording_output_identity(rrd_path, rrd_uri),
+        "mcap": _recording_output_identity(mcap_path, mcap_uri) if mcap_path else None,
     }
+
+
+def _seal_regen_viewer_links(report, rrd_uri, mcap_uri, report_uri, journal_uri):
     report["publication_journal_uri"] = journal_uri
     report["rrd_uri"] = rrd_uri
     report["report_uri"] = report_uri
@@ -1504,24 +1544,57 @@ def _seal_regen_publication_report(
             visualization["mcap_s3_uri"] = mcap_uri
         else:
             visualization.pop("mcap_s3_uri", None)
+
+
+def _seal_regen_stage14_record(component, report, rrd_uri, mcap_uri, report_uri):
+    artifacts = component.setdefault("artifacts", {})
+    artifacts.update(rrd=rrd_uri, report=report_uri)
+    if mcap_uri:
+        artifacts["mcap"] = mcap_uri
+    else:
+        artifacts.pop("mcap", None)
+    regeneration = report.get("regeneration")
+    if regeneration is not None:
+        for name in ("rrd", "mcap"):
+            identity = regeneration["output"][name]
+            for suffix in ("sha256", "size_bytes"):
+                key = f"{name}_{suffix}"
+                if identity is None:
+                    artifacts.pop(key, None)
+                else:
+                    artifacts[key] = identity[suffix]
+    artifacts["report_authority_sha256"] = stage14_report_authority_sha256(report)
+    component.pop("content_sha256", None)
+    component["content_sha256"] = authority_sha256(component)
+
+
+def _seal_regen_publication_report(
+    report_path: Path,
+    *,
+    publication_id: str,
+    rrd_uri: str,
+    mcap_uri: str,
+    report_uri: str,
+    journal_uri: str,
+    rrd_path: Path | None = None,
+    mcap_path: Path | None = None,
+) -> None:
+    report = _read_retained_json(report_path, source="Sim2Real final report")
+    _bind_regeneration_output_identity(
+        report, publication_id, rrd_uri, mcap_uri, rrd_path, mcap_path
+    )
+    report["publication_id"] = publication_id
+    report["publication"] = {
+        "generation": publication_id,
+        "rrd_uri": rrd_uri,
+        "mcap_uri": mcap_uri,
+        "report_uri": report_uri,
+        "journal_uri": journal_uri,
+    }
+    _seal_regen_viewer_links(report, rrd_uri, mcap_uri, report_uri, journal_uri)
     for component in _stage_components(report):
-        if component.get("name") != "stage_14_rerun_viz":
-            continue
-        component.setdefault("artifacts", {})["rrd"] = rrd_uri
-        component["artifacts"]["report"] = report_uri
-        if mcap_uri:
-            component["artifacts"]["mcap"] = mcap_uri
-        else:
-            component["artifacts"].pop("mcap", None)
-        component["artifacts"]["report_authority_sha256"] = (
-            stage14_report_authority_sha256(report)
-        )
-        material = {
-            key: value for key, value in component.items() if key != "content_sha256"
-        }
-        component["content_sha256"] = hashlib.sha256(
-            json.dumps(material, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+        if component.get("name") == "stage_14_rerun_viz":
+            _seal_regen_stage14_record(component, report, rrd_uri, mcap_uri, report_uri)
     _write_json_artifact(report_path, report)
 
 
@@ -1576,6 +1649,11 @@ def _prepare_regen_publication(
 ) -> _RegenPublication:
     prefix = run_prefix_uri(config)
     local_dir = Path(os.path.abspath(local_dir))
+    final_report = local_dir / "reports" / "sim2real-report.json"
+    if final_report.is_file():
+        _assert_current_regen_writer(
+            _read_retained_json(final_report, source="regeneration report")
+        )
     report_path, renders_dir, publish_renders = _regen_report_render_paths(
         config, local_dir
     )
@@ -1640,53 +1718,159 @@ def _publish_regen_supporting_artifacts(
         )
 
 
-def _publish_regen_final_report(
-    storage: StorageClient,
-    publication: _RegenPublication,
-    mcap_uri: str,
-) -> Path | None:
-    if publication.final_report_path.is_file():
-        _seal_regen_publication_report(
-            publication.final_report_path,
-            publication_id=publication.publication_id,
-            rrd_uri=publication.immutable_rrd_uri,
-            mcap_uri=mcap_uri,
-            report_uri=f"{publication.generation_prefix}sim2real-report.json",
-            journal_uri=(f"{publication.prefix}reports/.sim2real-publication.json"),
-        )
-        upload_immutable_file(
-            storage,
-            publication.final_report_path,
-            f"{publication.generation_prefix}sim2real-report.json",
-        )
-        report = _read_retained_json(
-            publication.final_report_path,
-            source="sealed Sim2Real final report",
-        )
-        components = _stage_components(report)
-        if not components:
-            return
-        stage14_record = components[-1]
-        try:
-            validate_stage14_component_record(
-                stage14_record,
-                report,
-                expected_source_sha=report.get("source_sha"),
-            )
-        except (KeyError, TypeError, ValueError) as exc:
+def _assert_current_regen_writer(report: dict[str, Any]) -> None:
+    if (
+        report.get("architecture")
+        != "npa.workflow/v0.0.1_compositional_standard_runtime"
+    ):
+        return
+    try:
+        writer = validate_writer((report.get("regeneration") or {}).get("writer"))
+        if writer != validate_writer(image_provenance(require_gpu=False)):
+            raise ValueError("writer differs from the actual current task")
+    except (RuntimeError, ValueError) as exc:
+        raise Sim2RealRerunRegenError(
+            f"canonical replay producer is invalid: {exc}"
+        ) from exc
+
+
+def _assert_regen_output_bytes(report, rrd_path, mcap_path):
+    components = _stage_components(report)
+    if not components:
+        raise Sim2RealRerunRegenError("regeneration lacks output ComponentRecord")
+    artifacts = components[-1]["artifacts"]
+    for name, path in (("rrd", rrd_path), ("mcap", mcap_path)):
+        if name == "mcap" and path is None:
+            continue
+        if path is None or not path.is_file():
             raise Sim2RealRerunRegenError(
-                f"regenerated Stage 14 ComponentRecord is invalid: {exc}"
-            ) from exc
-        record_path = publication.local_dir / "reports" / "stage_14.component.json"
-        _write_json_artifact(record_path, stage14_record)
-        history_uri = component_record_history_uri(
-            publication.prefix.rstrip("/"),
-            14,
-            stage14_record["content_sha256"],
+                f"regeneration lacks actual {name} output bytes"
+            )
+        if (
+            artifacts.get(f"{name}_sha256") != sha256_file(path)
+            or artifacts.get(f"{name}_size_bytes") != path.stat().st_size
+        ):
+            raise Sim2RealRerunRegenError(
+                f"regeneration {name} bytes changed after encoding"
+            )
+
+
+def _capture_regen_mcap_identity(report_path: Path, mcap_path: Path | None) -> None:
+    if not report_path.is_file():
+        return
+    report = _read_retained_json(report_path, source="regeneration output identity")
+    if "regeneration" not in report:
+        return
+    component = _stage_components(report)[-1]
+    artifacts = component["artifacts"]
+    for suffix in ("sha256", "size_bytes"):
+        artifacts.pop(f"mcap_{suffix}", None)
+    if mcap_path is not None:
+        artifacts["mcap_sha256"] = sha256_file(mcap_path)
+        artifacts["mcap_size_bytes"] = mcap_path.stat().st_size
+    component.pop("content_sha256", None)
+    component["content_sha256"] = authority_sha256(component)
+    _write_json_artifact(report_path, report)
+
+
+def _verify_regeneration_inputs(work_dir, storage, report, *, root: str) -> None:
+    if "regeneration" not in report:
+        return
+
+    def load_input(uri: str) -> bytes:
+        if not isinstance(uri, str) or not uri.startswith(root.rstrip("/") + "/"):
+            raise ValueError("regeneration input is outside the selected run")
+        target = (
+            work_dir
+            / "component-authority"
+            / "regeneration"
+            / f"{hashlib.sha256(uri.encode()).hexdigest()}.json"
         )
-        upload_immutable_file(storage, record_path, history_uri)
-        return record_path
-    return None
+        if not _download_if_exists(storage, uri, target, containment_root=work_dir):
+            raise ValueError("missing immutable regeneration input authority")
+        if target.stat().st_size > 16 * 1024 * 1024:
+            raise ValueError("regeneration input exceeds the authority byte limit")
+        return target.read_bytes()
+
+    try:
+        validate_remote_regeneration_authority(report, load_input)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Sim2RealRerunRegenError(
+            f"remote regeneration input authority is invalid: {exc}"
+        ) from exc
+
+
+def _validate_sealed_regen_report(storage, publication, report):
+    components = _stage_components(report)
+    if not components:
+        if (
+            report.get("architecture")
+            == "npa.workflow/v0.0.1_compositional_standard_runtime"
+        ):
+            raise Sim2RealRerunRegenError("canonical replay lacks ComponentRecords")
+        return
+    try:
+        validate_stage14_component_record(
+            components[-1], report, expected_source_sha=report.get("source_sha")
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise Sim2RealRerunRegenError(
+            f"regenerated Stage 14 ComponentRecord is invalid: {exc}"
+        ) from exc
+    _verify_regeneration_inputs(
+        publication.local_dir, storage, report, root=publication.prefix
+    )
+
+
+def _preflight_regen_final_report(storage, publication, mcap_uri):
+    """Authenticate both authorities and actual outputs before any new upload."""
+    if not publication.final_report_path.is_file():
+        return None
+    retained = _read_retained_json(
+        publication.final_report_path, source="regeneration report"
+    )
+    _assert_current_regen_writer(retained)
+    _seal_regen_publication_report(
+        publication.final_report_path,
+        publication_id=publication.publication_id,
+        rrd_uri=publication.immutable_rrd_uri,
+        mcap_uri=mcap_uri,
+        report_uri=f"{publication.generation_prefix}sim2real-report.json",
+        journal_uri=f"{publication.prefix}reports/.sim2real-publication.json",
+        rrd_path=publication.rrd_path,
+        mcap_path=(publication.local_dir / "reports" / "sim2real.mcap")
+        if mcap_uri
+        else None,
+    )
+    report = _read_retained_json(
+        publication.final_report_path, source="sealed Sim2Real final report"
+    )
+    _validate_sealed_regen_report(storage, publication, report)
+    return report
+
+
+def _publish_regen_final_report(
+    storage: StorageClient, publication: _RegenPublication, mcap_uri: str
+) -> Path | None:
+    report = _preflight_regen_final_report(storage, publication, mcap_uri)
+    if report is None:
+        return None
+    upload_immutable_file(
+        storage,
+        publication.final_report_path,
+        f"{publication.generation_prefix}sim2real-report.json",
+    )
+    components = _stage_components(report)
+    if not components:
+        return None
+    record = components[-1]
+    record_path = publication.local_dir / "reports" / "stage_14.component.json"
+    _write_json_artifact(record_path, record)
+    history_uri = component_record_history_uri(
+        publication.prefix.rstrip("/"), 14, record["content_sha256"]
+    )
+    upload_immutable_file(storage, record_path, history_uri)
+    return record_path
 
 
 def _capture_regen_publication_snapshots(
@@ -1811,6 +1995,7 @@ def publish_regen_outputs(
         raise Sim2RealRerunRegenError(
             "regeneration publication snapshot set is incomplete"
         )
+    _preflight_regen_final_report(storage, publication, mcap_uri)
     _publish_regen_supporting_artifacts(storage, publication)
     upload_immutable_file(
         storage,
@@ -2079,6 +2264,7 @@ class _RegenState:
     policy_access: dict[str, Any]
     publication_snapshots: dict[str, RemoteObjectSnapshot | None] | None = None
     verified_renders_dir: Path | None = None
+    regeneration_authority: dict[str, Any] | None = None
 
 
 def _stage_components(report: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2381,6 +2567,7 @@ def _validate_regen_component_authority(
         raise Sim2RealRerunRegenError(
             "report ComponentRecords disagree with current immutable history"
         )
+    _verify_regeneration_inputs(work_dir, storage, inputs.report, root=root)
     try:
 
         def load_stage4_authority(uri: str) -> dict[str, Any]:
@@ -2589,6 +2776,7 @@ def _regen_run_metadata(
         "orchestrator_job_name": config.run_id,
         "orchestrator_node_product": config.k8s_gpu_product,
         "viewer_command": viewer_command,
+        "regeneration": state.regeneration_authority,
     }
 
 
@@ -2628,7 +2816,27 @@ def _update_stage14_component(
     output_rrd: Path,
     prefix: str,
     duration_s: float,
+    *,
+    producer_provenance: dict[str, Any] | None = None,
 ) -> None:
+    if producer_provenance is not None:
+        original_digest = component["content_sha256"]
+        artifacts = component.setdefault("artifacts", {})
+        for key in (
+            "image",
+            "image_digest",
+            "source_sha",
+            "workflow_job",
+            "execution_mode",
+            "gpu_rows",
+            "gpu_products",
+            "mcap",
+            "mcap_sha256",
+            "mcap_size_bytes",
+        ):
+            artifacts.pop(key, None)
+        artifacts.update(producer_provenance)
+        component["artifacts"]["regenerated_from_component_sha256"] = original_digest
     component["tier"] = "WORKS"
     component["evidence"] = (
         "Wrote the complete Rerun recording from every persisted pass: "
@@ -2641,6 +2849,7 @@ def _update_stage14_component(
             "rrd": f"{prefix}reports/sim2real.rrd",
             "rrd_local": str(output_rrd),
             "rrd_size_bytes": output_rrd.stat().st_size,
+            "rrd_sha256": sha256_file(output_rrd),
             "duration_s": duration_s,
         }
     )
@@ -2665,12 +2874,30 @@ def _persist_regen_report(
     outer_history: list[dict[str, Any]],
     viewer_command: str,
     duration_s: float,
+    *,
+    producer_provenance: dict[str, Any] | None = None,
 ) -> None:
     if not state.report:
+        return
+    if (
+        state.report.get("architecture")
+        == "npa.workflow/v0.0.1_compositional_standard_runtime"
+        and producer_provenance is None
+    ):
+        # An unattested local preview must not rewrite canonical authority.
         return
     from npa.workflows.sim2real.engine import gpu_fallback_report_contract
 
     prefix = run_prefix_uri(config)
+    if producer_provenance is not None:
+        if producer_provenance != validate_writer(image_provenance(require_gpu=False)):
+            raise Sim2RealRerunRegenError(
+                "replay producer differs from the actual current task"
+            )
+        authority = state.regeneration_authority or _regen_input_authority(
+            state, producer_provenance
+        )
+        state.report["regeneration"] = json.loads(json.dumps(authority))
     state.report["policy_access"] = state.policy_access
     state.report["progress_metrics"] = build_progress_metrics(work_dir, outer_history)
     components = _stage_components(state.report)
@@ -2685,7 +2912,23 @@ def _persist_regen_report(
     }
     for component in components:
         if component.get("name") == "stage_14_rerun_viz":
-            _update_stage14_component(component, result, output_rrd, prefix, duration_s)
+            _update_stage14_component(
+                component,
+                result,
+                output_rrd,
+                prefix,
+                duration_s,
+                producer_provenance=producer_provenance,
+            )
+            if producer_provenance is not None:
+                component["artifacts"]["regeneration_input_sha256"] = authority_sha256(
+                    authority["input"]
+                )
+                component["artifacts"]["regeneration_writer_sha256"] = authority_sha256(
+                    authority["writer"]
+                )
+                component.pop("content_sha256", None)
+                component["content_sha256"] = authority_sha256(component)
     state.report_path.write_text(
         json.dumps(state.report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -2725,12 +2968,28 @@ def _publish_regen_recordings(
     rrd_path = output_rrd or (work_dir / "reports" / "sim2real.rrd")
     _assert_regular_publication_file(rrd_path)
     written_mcap = _current_mcap_path(work_dir, mcap_result)
-    publication_id = _recording_publication_id(rrd_path, written_mcap)
+    report_path = work_dir / "reports" / "sim2real-report.json"
+    report = (
+        _read_retained_json(report_path, source="regeneration report")
+        if report_path.is_file()
+        else {}
+    )
+    publication_id = _recording_publication_id(
+        rrd_path, written_mcap, regeneration=report.get("regeneration")
+    )
     immutable_mcap_uri = (
         f"{run_prefix_uri(config)}reports/generations/{publication_id}/sim2real.mcap"
         if written_mcap is not None
         else ""
     )
+    if (
+        report.get("architecture")
+        == "npa.workflow/v0.0.1_compositional_standard_runtime"
+    ):
+        publication = _prepare_regen_publication(
+            config, work_dir, rrd_path, publication_id
+        )
+        _preflight_regen_final_report(storage, publication, immutable_mcap_uri)
     published_mcap_uri = publish_regen_mcap(
         config,
         work_dir,
@@ -2794,6 +3053,11 @@ def _finalize_regen_result(
 ) -> RegenResult:
     _assert_regen_heldout_frames(result)
     mcap_result = _emit_regen_mcap(work_dir, state)
+    if upload:
+        _capture_regen_mcap_identity(
+            work_dir / "reports" / "sim2real-report.json",
+            _current_mcap_path(work_dir, mcap_result),
+        )
     upload_uri, mcap_upload_uri = _publish_regen_recordings(
         config,
         work_dir,
@@ -2811,6 +3075,66 @@ def _finalize_regen_result(
         mcap_result=mcap_result,
         mcap_upload_uri=mcap_upload_uri,
     )
+
+
+def _regen_producer_provenance(
+    state: _RegenState, *, upload: bool
+) -> dict[str, Any] | None:
+    """Capture the actual current writer, independently of historical input source."""
+    if (
+        not upload
+        or state.report.get("architecture")
+        != "npa.workflow/v0.0.1_compositional_standard_runtime"
+    ):
+        return None
+    try:
+        proof = image_provenance(require_gpu=False)
+        record = build_component_record(
+            stage=14,
+            name="stage_14_rerun_viz",
+            tier="WORKS",
+            evidence="Canonical archive replay producer identity",
+            artifacts={},
+            execution_provenance=proof,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise Sim2RealRerunRegenError(
+            f"canonical replay producer lacks valid current task provenance: {exc}"
+        ) from exc
+    return record["artifacts"]
+
+
+def _regen_input_authority(
+    state: _RegenState, writer: dict[str, Any]
+) -> dict[str, Any]:
+    """Snapshot already-validated immutable inputs before any encoding or rewrite."""
+    original = json.loads(json.dumps(state.report))
+    components = _stage_components(original)
+    if not components or not state.report_path.is_file():
+        raise Sim2RealRerunRegenError("replay lacks original report authority")
+    validate_stage14_component_record(
+        components[-1], original, expected_source_sha=original.get("source_sha")
+    )
+    root = str(original.get("report_uri") or "").partition("/reports/")[0]
+    return {
+        "schema": REGENERATION_SCHEMA,
+        "input": {
+            "source_sha": original["source_sha"],
+            "report_uri": original["report_uri"],
+            "report_sha256": sha256_file(state.report_path),
+            "report_size_bytes": state.report_path.stat().st_size,
+            "report_authority_sha256": stage14_report_authority_sha256(original),
+            "stage14_history_uri": component_record_history_uri(
+                root, 14, components[-1]["content_sha256"]
+            ),
+            "stage14_record": components[-1],
+            "upstream_component_sha256": [
+                component["content_sha256"] for component in components[:-1]
+            ],
+        },
+        "writer": validate_writer(writer),
+        "output": {},
+    }
 
 
 def _regenerate_sim2real_rrd(
@@ -2844,6 +3168,21 @@ def _regenerate_sim2real_rrd(
         )
         if publication_snapshots is not None and state.publication_snapshots is None:
             state = replace(state, publication_snapshots=publication_snapshots)
+        producer_provenance = _regen_producer_provenance(state, upload=upload)
+        if producer_provenance is not None:
+            state = replace(
+                state,
+                regeneration_authority=_regen_input_authority(
+                    state, producer_provenance
+                ),
+            )
+            input_report = {
+                **state.report,
+                "regeneration": state.regeneration_authority,
+            }
+            _verify_regeneration_inputs(
+                work_dir, storage, input_report, root=run_prefix_uri(config)
+            )
         outer_history = list(
             (state.report.get("outer_loop") or {}).get("history") or []
         )
@@ -2866,6 +3205,7 @@ def _regenerate_sim2real_rrd(
             outer_history,
             viewer_command,
             duration_s,
+            producer_provenance=producer_provenance,
         )
         return _finalize_regen_result(
             config,

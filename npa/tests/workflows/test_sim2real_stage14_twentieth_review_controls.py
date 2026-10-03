@@ -31,13 +31,13 @@ from npa.workflows.sim2real.viz_contract import heldout_policy_metadata
 import npa.workflows.sim2real_rerun_regen as sim2real_rerun_regen
 import npa.workflows.sim2real_viz as sim2real_viz
 from npa.cli.agent_stage_runtime import _public_workflow_command
-from tests.workflows.test_sim2real_stage14_nineteenth_review_controls import (
+from test_sim2real_stage14_nineteenth_review_controls import (
     _CANONICAL_RRD,
     _IMMUTABLE_RRD,
     _LOCK_URI,
     _complete_journal,
 )
-from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
+from test_sim2real_stage14_thirteenth_review_controls import (
     ROOT,
     SOURCE_SHA,
     _component,
@@ -47,7 +47,7 @@ from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
     _gold,
     _rehash,
 )
-from tests.workflows.test_sim2real_stage14_seventeenth_review_controls import (
+from test_sim2real_stage14_seventeenth_review_controls import (
     _complete_journal as _journal_with_state,
 )
 

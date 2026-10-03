@@ -18,7 +18,7 @@ from npa.workflows.sim2real.stage10_execution import (
 )
 import npa.workflows.sim2real.stage14_finalize as stage14
 import npa.workflows.sim2real_rerun_regen as regen
-from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
+from test_sim2real_stage14_thirteenth_review_controls import (
     ATTEMPT,
     CHECKPOINT,
     ROOT,

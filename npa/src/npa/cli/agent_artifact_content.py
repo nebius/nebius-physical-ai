@@ -512,6 +512,67 @@ def _verify_downloaded_publication_artifact(
             )
 
 
+def _verified_legacy_viewer_body(s3, run_bucket, artifact, publication):
+    if publication is not None:
+        body, _size = _verified_publication_artifact_body(s3, run_bucket, artifact)
+        return body
+    response = _get_authorized_artifact_object(
+        s3,
+        Bucket=run_bucket,
+        Key=str(artifact.key),
+        **_artifact_read_conditions(artifact, required=True),
+    )
+    return response["Body"]
+
+
+def _assert_viewer_download_matches_body(body, expected_digest, expected_size):
+    try:
+        digest = hashlib.sha256()
+        size = 0
+        while chunk := body.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+        if size != expected_size or digest.digest() != expected_digest:
+            raise PublicationConflict(
+                "legacy viewer download changed after authorization"
+            )
+    finally:
+        body.close()
+
+
+def _download_verified_viewer_artifact(
+    s3, run_bucket: str, artifact, *, recordings_dir
+):
+    """Expose immutable cache bytes only after the staged download is verified."""
+    root = Path(recordings_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".viewer-download-", dir=root) as directory:
+        staged = Path(directory) / "artifact"
+        download_s3_uri(artifact.s3_uri, staged, s3=s3)
+        _verify_downloaded_publication_artifact(s3, run_bucket, artifact, staged)
+        digest = hashlib.sha256()
+        size = 0
+        with staged.open("rb") as stream:
+            while chunk := stream.read(1024 * 1024):
+                digest.update(chunk)
+                size += len(chunk)
+        publication, _target = _publication_snapshot_for_artifact(
+            s3, run_bucket, artifact
+        )
+        if publication is None or not publication.journaled:
+            # Legacy aliases have no journal digest: bind to the authorized
+            # conditional read rather than trusting download_file plus size.
+            verified = _verified_legacy_viewer_body(
+                s3, run_bucket, artifact, publication
+            )
+            _assert_viewer_download_matches_body(verified, digest.digest(), size)
+        source = hashlib.sha256(f"{run_bucket}/{artifact.key}".encode()).hexdigest()
+        suffix = Path(str(artifact.key)).suffix[:16]
+        verified_path = root / f"{source}-{digest.hexdigest()}{suffix}"
+        staged.replace(verified_path)
+        return verified_path
+
+
 def _artifact_file_stream(body, *, start: int = 0, length: int | None = None):
     try:
         body.seek(start)

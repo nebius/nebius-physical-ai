@@ -1935,7 +1935,8 @@ def test_gold_render_sync_preserves_provider_error_when_cleanup_fails(
                 "ListObjectsV2",
             )
 
-    def fail_cleanup(_path: Path) -> None:
+    def fail_cleanup(_path: Path, *, containment_root: Path) -> None:
+        assert _path.is_relative_to(containment_root)
         raise OSError("read-only render tree")
 
     monkeypatch.setattr(

@@ -22,6 +22,7 @@ import os
 import re
 import sqlite3
 import tempfile
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -1214,24 +1215,28 @@ def _stable_rrd_value(value: Any) -> Any:
     return str(value)
 
 
-def _stable_blueprint_value(value: Any) -> Any:
+def _stable_blueprint_value(value: Any, identities=None) -> Any:
+    def identity(raw):
+        key = str(uuid.UUID(str(raw)))
+        return identities(key) if identities is not None else key
+
     if isinstance(value, bytes) and len(value) == 16:
-        return {"blueprint_uuid": "<normalized>"}
+        return {"blueprint_uuid": identity(uuid.UUID(bytes=value))}
     if isinstance(value, memoryview):
-        return _stable_blueprint_value(value.tobytes())
+        return _stable_blueprint_value(value.tobytes(), identities)
     if isinstance(value, str):
-        return _BLUEPRINT_UUID.sub("<blueprint-uuid>", value)
+        return _BLUEPRINT_UUID.sub(lambda match: identity(match.group()), value)
     if isinstance(value, dict):
         return {
-            str(key): _stable_blueprint_value(item)
+            str(key): _stable_blueprint_value(item, identities)
             for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
         }
     if isinstance(value, (list, tuple)):
         if len(value) == 16 and all(
             type(item) is int and 0 <= item <= 255 for item in value
         ):
-            return {"blueprint_uuid": "<normalized>"}
-        return [_stable_blueprint_value(item) for item in value]
+            return {"blueprint_uuid": identity(uuid.UUID(bytes=bytes(value)))}
+        return [_stable_blueprint_value(item, identities) for item in value]
     return _stable_rrd_value(value)
 
 
@@ -1255,28 +1260,105 @@ def _rrd_semantic_row(entry: Any, entity: str, batch: Any, index: int) -> dict:
     names = [name for name in batch.schema.names if name not in ephemeral]
     normalized_entity = stable(entity)
     row = {}
+    timelines, is_static = {}, True
     for name in names:
         scalar = batch.column(name)[index]
+        metadata = batch.schema.field(name).metadata or {}
+        if scalar.as_py() is None:
+            continue
+        if metadata.get(b"rerun:kind") == b"index":
+            timelines[name] = stable(scalar.as_py())
+            continue
         blobs = None if str(entry.kind) == "blueprint" else _rrd_blob_identities(scalar)
         row[name] = (
             [{"size_bytes": size, "sha256": digest} for size, digest in blobs]
             if blobs is not None
             else stable(scalar.as_py())
         )
+    for field in batch.schema:
+        if (field.metadata or {}).get(b"rerun:kind") == b"index":
+            if batch.column(field.name)[index].as_py() is not None:
+                is_static = False
     return {
         "type": "row",
         "store": _rrd_store_identity(entry),
         "entity": normalized_entity,
+        "timelines": timelines,
+        "is_static": is_static,
         "row": row,
     }
 
 
-def _insert_semantic_digest(connection: sqlite3.Connection, payload: dict) -> None:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    connection.execute(
-        "INSERT INTO semantic_rows(digest) VALUES (?)",
-        (hashlib.sha256(encoded).hexdigest(),),
-    )
+def _insert_semantic_digest(connection, payload, *, row_id=b"") -> None:
+    # RowId bytes are incidental, but their precedence is not: Rerun resolves
+    # competing static/same-time component writes using their ordered RowIds.
+    values = payload.get("row")
+    cells = values.items() if values is not None else [("store", payload)]
+    for name, value in cells:
+        group = {key: item for key, item in payload.items() if key != "row"}
+        group["component"] = name
+        group_key = json.dumps(group, sort_keys=True, separators=(",", ":"))
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+        connection.execute(
+            "INSERT INTO semantic_rows(group_key, precedence, digest) VALUES (?, ?, ?)",
+            (group_key, row_id, hashlib.sha256(encoded).hexdigest()),
+        )
+
+
+class _BlueprintSemantics:
+    """Canonicalize reachable UUID nodes by ordered graph traversal, not collapse."""
+
+    def __init__(self, connection, store_index: int):
+        self.connection = connection
+        self.store_index = store_index
+        self.nodes: dict[str, list[str]] = {}
+        self.roots = []
+        self.mapping: dict[str, str] = {}
+        self.queue: list[str] = []
+        entities = connection.execute(
+            "SELECT DISTINCT entity FROM raw_blueprint WHERE store_index=? ORDER BY entity",
+            (store_index,),
+        )
+        for (entity,) in entities:
+            matches = _BLUEPRINT_UUID.findall(entity)
+            if matches:
+                self.nodes.setdefault(str(uuid.UUID(matches[0])), []).append(entity)
+            else:
+                self.roots.append(entity)
+
+    def identify(self, key):
+        if key not in self.nodes:
+            return key  # Unknown/non-node UUIDs remain exact, fail-closed values.
+        if key not in self.mapping:
+            self.mapping[key] = f"<blueprint-node-{len(self.mapping)}>"
+            self.queue.append(key)
+        return self.mapping[key]
+
+    def insert_entity(self, entity, identities):
+        for row_id, encoded in self.connection.execute(
+            "SELECT row_id, payload FROM raw_blueprint "
+            "WHERE store_index=? AND entity=? ORDER BY row_id, payload",
+            (self.store_index, entity),
+        ):
+            payload = _stable_blueprint_value(json.loads(encoded), identities)
+            _insert_semantic_digest(self.connection, payload, row_id=row_id)
+
+    def insert(self):
+        for entity in self.roots:
+            self.insert_entity(entity, self.identify)
+        index = 0
+        while index < len(self.queue):
+            key = self.queue[index]
+            index += 1
+            for entity in sorted(
+                self.nodes[key], key=lambda value: value.replace(key, "")
+            ):
+                self.insert_entity(entity, self.identify)
+        # Unreachable nodes have no traversal identity. Preserve their UUIDs
+        # rather than treating unknown topologies as equivalent.
+        for key in sorted(set(self.nodes) - set(self.mapping)):
+            for entity in self.nodes[key]:
+                self.insert_entity(entity, lambda value: self.mapping.get(value, value))
 
 
 def _semantic_rrd_stores(path: Path):
@@ -1297,39 +1379,64 @@ def _semantic_rrd_stores(path: Path):
     return reader, stores
 
 
-def _rrd_semantic_sha256(path: Path) -> str:
-    """Hash all RRD stores with bounded memory and normalized blueprint UUIDs."""
+def _insert_rrd_semantic_batch(connection, store_indices, entry, entity, batch):
+    for index in range(batch.num_rows):
+        payload = _rrd_semantic_row(entry, entity, batch, index)
+        if not payload["row"]:
+            continue
+        row_id = batch.column("rerun.controls.RowId")[index].as_py()
+        if not isinstance(row_id, bytes) or len(row_id) != 16:
+            raise DataFactoryVizError("RRD lacks valid component precedence")
+        if str(entry.kind) == "blueprint":
+            connection.execute(
+                "INSERT INTO raw_blueprint VALUES (?, ?, ?, ?)",
+                (
+                    store_indices[id(entry)],
+                    entity,
+                    row_id,
+                    json.dumps(payload, sort_keys=True),
+                ),
+            )
+        else:
+            _insert_semantic_digest(connection, payload, row_id=row_id)
 
+
+def _populate_rrd_semantics(connection, reader, stores):
+    connection.execute(
+        "CREATE TABLE semantic_rows (group_key TEXT, precedence BLOB, digest TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE raw_blueprint (store_index INTEGER, entity TEXT, row_id BLOB, payload TEXT)"
+    )
+    store_indices = {id(entry): index for index, entry in enumerate(stores)}
+    chunks = (
+        (entry, chunk) for entry in stores for chunk in reader.stream(store=entry)
+    )
+    for entry in stores:
+        _insert_semantic_digest(
+            connection, {"type": "store", "identity": _rrd_store_identity(entry)}
+        )
+    for entry, entity, batch in _bounded_context_rrd_batches(chunks):
+        _insert_rrd_semantic_batch(connection, store_indices, entry, entity, batch)
+    for index, entry in enumerate(stores):
+        if str(entry.kind) == "blueprint":
+            _BlueprintSemantics(connection, index).insert()
+    connection.commit()
+
+
+def _rrd_semantic_sha256(path: Path) -> str:
+    """Hash stores, ordered component precedence and distinct blueprint references."""
     reader, stores = _semantic_rrd_stores(path)
-    with tempfile.TemporaryDirectory(prefix="npa-rrd-semantic-") as tmp:
-        connection = sqlite3.connect(str(Path(tmp) / "rows.sqlite3"))
+    with tempfile.TemporaryDirectory(prefix="npa-rrd-semantic-") as directory:
+        connection = sqlite3.connect(str(Path(directory) / "rows.sqlite3"))
         try:
-            connection.execute("CREATE TABLE semantic_rows (digest TEXT NOT NULL)")
-            chunks = (
-                (entry, chunk)
-                for entry in stores
-                for chunk in reader.stream(store=entry)
-            )
-            for entry in stores:
-                _insert_semantic_digest(
-                    connection,
-                    {"type": "store", "identity": _rrd_store_identity(entry)},
-                )
-            for entry, entity, batch in _bounded_context_rrd_batches(chunks):
-                for index in range(batch.num_rows):
-                    payload = _rrd_semantic_row(entry, entity, batch, index)
-                    if payload["row"]:
-                        _insert_semantic_digest(connection, payload)
-            connection.commit()
+            _populate_rrd_semantics(connection, reader, stores)
             digest = hashlib.sha256()
-            query = (
-                "SELECT digest, COUNT(*) FROM semantic_rows "
-                "GROUP BY digest ORDER BY digest"
-            )
-            for row_digest, count in connection.execute(query):
-                digest.update(str(row_digest).encode())
+            query = "SELECT group_key, digest FROM semantic_rows ORDER BY group_key, precedence, digest"
+            for group_key, row_digest in connection.execute(query):
+                digest.update(str(group_key).encode())
                 digest.update(b":")
-                digest.update(str(count).encode())
+                digest.update(str(row_digest).encode())
                 digest.update(b"\n")
             return digest.hexdigest()
         finally:

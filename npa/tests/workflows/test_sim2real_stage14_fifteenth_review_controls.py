@@ -34,7 +34,7 @@ from npa.workflows.rerun_serve import (
     RerunServeError,
     _resolve_committed_rrd_uri,
 )
-from tests.workflows.test_sim2real_stage14_thirteenth_review_controls import (
+from test_sim2real_stage14_thirteenth_review_controls import (
     CHECKPOINT,
     DIGEST,
     ROOT,

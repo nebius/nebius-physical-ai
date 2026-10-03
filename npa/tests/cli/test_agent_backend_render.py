@@ -5411,6 +5411,7 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         last_modified="2026-08-07T00:00:00Z",
         render="rerun",
         inline=True,
+        source_etag="fixture-recording-etag",
     )
     duplicate_source = module.RunSummary(
         "foreign-run-1",
@@ -5422,6 +5423,24 @@ def test_artifact_range_response_uses_get_object_metadata_consistently(
         resolved_prefix="other",
     )
     with monkeypatch.context() as load_patch:
+
+        class RecordingStore(_NoPublicationJournalS3):
+            def get_object(self, *, Bucket, Key, **conditions):
+                if Key != recording.key:
+                    return super().get_object(Bucket=Bucket, Key=Key, **conditions)
+                assert Bucket == "bucket-test"
+                assert conditions.get("IfMatch") == recording.source_etag
+                return {
+                    "Body": io.BytesIO(b"selected-recording"),
+                    "ContentLength": recording.size,
+                    "ETag": recording.source_etag,
+                }
+
+        load_patch.setattr(
+            module,
+            "_agent_artifact_s3_client",
+            lambda: (RecordingStore(), {"bucket": "bucket-test", "prefix": ""}),
+        )
         state: dict[str, object] = {}
         published = tmp_path / "selected-sim2real.rrd"
         load_patch.setattr(module, "RECORDINGS_DIR", tmp_path / "recordings")

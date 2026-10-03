@@ -7866,14 +7866,11 @@ def sim_viz_load_run(payload: dict | None = None):
         )
         # Prefer a run-scoped Rerun recording over stale history entries.
         if preferred and (preferred.render == "rerun" or (requested_bucket and source_selected)):
-            local_name = _artifact_filename(preferred.key)
-            local_path = RECORDINGS_DIR / local_name
-            download_s3_uri(preferred.s3_uri, local_path, s3=s3)
-            _verify_downloaded_publication_artifact(
+            local_path = _download_verified_viewer_artifact(
                 s3,
                 selected_bucket,
                 preferred,
-                local_path,
+                recordings_dir=RECORDINGS_DIR,
             )
             _assert_legacy_publication_snapshot_still_unjournaled(
                 s3,
@@ -8825,9 +8822,13 @@ def artifacts_stage(
                 continue
             rel = k.split("/" + normalized_run + "/", 1)[-1]
             try:
-                payload = _read_bounded_json_object(s3, run_bucket, k)
+                payload = _read_publication_bound_json_object(
+                    s3, run_bucket, k, publication_snapshot=publication_snapshot
+                )
                 if isinstance(payload, dict):
                     info[rel] = _public_artifact_info(payload)
+            except PublicationConflict:
+                raise
             except Exception:
                 continue
         _assert_legacy_publication_snapshot_still_unjournaled(
@@ -8923,8 +8924,11 @@ def fiftyone_dataset(
             if not key:
                 return None
             try:
-                body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
-                return json.loads(body)
+                return _read_publication_bound_json_object(
+                    s3, bucket, key, publication_snapshot=publication_snapshot
+                )
+            except PublicationConflict:
+                raise
             except Exception:
                 return None
 
@@ -9018,8 +9022,11 @@ def artifacts_run_provenance(
             if not key:
                 return None
             try:
-                body = s3.get_object(Bucket=run_bucket, Key=key)["Body"].read()
-                return json.loads(body)
+                return _read_publication_bound_json_object(
+                    s3, run_bucket, key, publication_snapshot=publication_snapshot
+                )
+            except PublicationConflict:
+                raise
             except Exception:
                 return None
 
@@ -9109,14 +9116,11 @@ def sim_viz_load_artifact(payload: dict | None = None):
         key = str(artifact.key)
         s3_uri = str(artifact.s3_uri)
         resolved_ref = requested_run_ref
-        local_name = _artifact_filename(key)
-        local_path = RECORDINGS_DIR / local_name
-        download_s3_uri(s3_uri, local_path, s3=s3)
-        _verify_downloaded_publication_artifact(
+        local_path = _download_verified_viewer_artifact(
             s3,
             bucket,
             artifact,
-            local_path,
+            recordings_dir=RECORDINGS_DIR,
         )
         render = render_hint_for_object(key=key)
         state = _load_state()

@@ -45,6 +45,15 @@ can recover the complete planned generation from its immutable sources. Legacy
 alias readers remain available only when no journal exists and recheck that
 condition after reading.
 
+Canonical archive regeneration separates immutable input authority from its
+current writer. The retained report source and upstream ComponentRecords remain
+unchanged; the input report byte hash and preceding Stage14 history are preserved.
+A digest-attested replay task binds its actual source, image and job to the new
+recording generation and byte hashes, even when its source differs from those
+historical inputs. It does not inherit their execution or device claims. An
+unattested host CLI may emit a local preview but cannot rewrite or publish
+canonical report/ComponentRecord authority.
+
 Publication also verifies upstream authority: every ComponentRecord must match
 the workflow source revision, the selected learned checkpoint must match its
 validation and gold inference evidence, and downloaded gold PNGs must match the

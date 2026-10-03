@@ -114,6 +114,15 @@ workflow/resume path when Stage 10 authority must advance.
 
 ## Audit
 
+Canonical archive regeneration with upload must bind two distinct authorities:
+the immutable input report/history and the current writer. Preserve the retained
+report source, upstream records and input byte hashes. Bind the replay task's
+actual digest-attested source, image and job to its new output generation/hashes;
+these may differ from the input producer. Never inherit the original job/device
+claim or assign an old source SHA to a newer image. Without qualified current
+task provenance, use local preview only: it may emit recordings but must leave
+canonical report and ComponentRecord authority untouched.
+
 Require exactly 14 canonical ComponentRecords. Stages 1–11, 13, and 14 are
 `WORKS`; Stage 12 alone is `SEAM`. For GPU stages verify workflow Job identity,
 immutable digest, source SHA, GPU product, and explicit S3 inputs/outputs.
