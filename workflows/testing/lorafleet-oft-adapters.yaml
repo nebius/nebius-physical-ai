@@ -1,0 +1,185 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: lorafleet-oft-adapters
+  description: >
+    Five connected, GPU-backed qualification stages for LoRAFleet's approximate
+    reconstructed rank-64 OpenVLA-OFT LIBERO adapters. The stages verify the
+    public immutable payloads and suite heads/statistics, reconstruct each
+    backbone strictly as verified-base plus FP32(B @ A), run the published
+    merged OFT baselines, run the reconstructed policies on exactly the same
+    full-suite initial states, then produce paired metrics, MP4s, and a Rerun
+    recording. This is not shared-base serving, an adapter-equivalence claim,
+    or a physical-robot result.
+
+config:
+  bucket: example-bucket
+  repo_url: "https://github.com/moojink/openvla-oft.git"
+  repo_ref: "e4287e94541f459edc4feabc4e181f537cd569a8"
+  repo_auth: none
+  repo_token_env: ""
+  # The committed value is intentionally non-routable. The operator supplies
+  # the private, locally-built immutable digest at submission; no image is
+  # published or represented as an NPA catalog image by this workflow.
+  base_image: "registry.invalid/npa-lorafleet-oft-adapters@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  base_profile: prebuilt
+  build_command: ""
+  source_prune_path: ""
+  workload: solution-smoke
+  resource_profile_yaml: byof-solution-smoke-rtxpro-gpu
+  task: libero-reconstructed-adapter-qualification
+  iterations: 1
+  num_envs: 1
+  num_demos: 1
+  wait_timeout: -1
+  poll_interval: 60
+  source_overlay: true
+  runtime_context_env: ""
+  libero_qualified_candidate_image: ""
+
+  verify_root: "s3://{{config.bucket}}/oss-solutions/lorafleet-oft-adapters/verify-inputs"
+  reconstruct_root: "s3://{{config.bucket}}/oss-solutions/lorafleet-oft-adapters/reconstruct-weights"
+  baseline_root: "s3://{{config.bucket}}/oss-solutions/lorafleet-oft-adapters/published-baseline"
+  reconstructed_root: "s3://{{config.bucket}}/oss-solutions/lorafleet-oft-adapters/reconstructed-rollouts"
+  compare_root: "s3://{{config.bucket}}/oss-solutions/lorafleet-oft-adapters/compare"
+  output_root: "{{config.verify_root}}"
+
+  verification_uri: "{{config.verify_root}}/{{run.id}}/verified-inputs.json"
+  reconstruction_uri: "{{config.reconstruct_root}}/{{run.id}}/reconstruction.json"
+  baseline_uri: "{{config.baseline_root}}/{{run.id}}/baseline-rollouts.json"
+  reconstructed_uri: "{{config.reconstructed_root}}/{{run.id}}/reconstructed-rollouts.json"
+  comparison_uri: "{{config.compare_root}}/{{run.id}}/comparison.json"
+
+  solution_name: lorafleet-oft-adapters
+  capability_name: lorafleet_oft_immutable_payload_verification
+  smoke_artifact_name: verified-inputs.json
+  smoke_command: |
+    set -euo pipefail
+    export PYTHONPATH="${NPA_SRC_OVERLAY:-/tmp/npa-src-overlay}/src:${PYTHONPATH:-}"
+    /opt/byof/.venv/bin/python -m npa.workflows.lorafleet_oft_adapters verify \
+      --output "${NPA_SMOKE_OUTPUT_DIR}/verified-inputs.json"
+
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.base_image}}"
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 96Gi
+    disk_size: 512
+
+initial: verify-inputs
+
+states:
+  verify-inputs:
+    description: >
+      Fetches each revision-pinned public release payload through the shared
+      cache, verifies publisher checksums and Hub commits, and validates all
+      four suite factors, action heads, proprio heads, and statistics.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    outputs:
+      - uri: "{{config.verification_uri}}"
+        schema: npa.lorafleet-oft-adapters.verify-inputs.v1
+    next: reconstruct-weights
+
+  reconstruct-weights:
+    description: >
+      Consumes the verification artifact, byte-verifies the three base model
+      shards, and reconstructs all four suites by assigning base + FP32(B @ A)
+      to each of 439 targets without ever using a merged target as an operand.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    params:
+      output_root: "{{config.reconstruct_root}}"
+      capability_name: lorafleet_oft_fp32_factor_reconstruction
+      smoke_artifact_name: reconstruction.json
+      smoke_command: |
+        set -euo pipefail
+        export PYTHONPATH="${NPA_SRC_OVERLAY:-/tmp/npa-src-overlay}/src:${PYTHONPATH:-}"
+        /opt/byof/.venv/bin/python -m npa.workflows.lorafleet_oft_adapters reconstruct \
+          --verification-uri "{{config.verification_uri}}" \
+          --output "${NPA_SMOKE_OUTPUT_DIR}/reconstruction.json"
+    outputs:
+      - uri: "{{config.reconstruction_uri}}"
+        schema: npa.lorafleet-oft-adapters.reconstruction.v1
+    next: published-baseline-rollouts
+
+  published-baseline-rollouts:
+    description: >
+      Consumes verification and reconstruction evidence, then invokes the
+      pinned upstream LIBERO/OpenVLA-OFT components for all four original
+      merged suite checkpoints using every task and the upstream default 50
+      initial states per task. One actual rollout MP4 per suite is retained.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    params:
+      output_root: "{{config.baseline_root}}"
+      capability_name: lorafleet_oft_published_merged_baseline_rollouts
+      smoke_artifact_name: baseline-rollouts.json
+      smoke_command: |
+        set -euo pipefail
+        export PYTHONPATH="${NPA_SRC_OVERLAY:-/tmp/npa-src-overlay}/src:${PYTHONPATH:-}"
+        /opt/byof/.venv/bin/python -m npa.workflows.lorafleet_oft_adapters baseline \
+          --verification-uri "{{config.verification_uri}}" \
+          --reconstruction-uri "{{config.reconstruction_uri}}" \
+          --output "${NPA_SMOKE_OUTPUT_DIR}/baseline-rollouts.json"
+    outputs:
+      - uri: "{{config.baseline_uri}}"
+        schema: npa.lorafleet-oft-adapters.baseline-rollouts.v1
+      - uri: "{{config.baseline_root}}/{{run.id}}/baseline-spatial-rollout.mp4"
+        schema: video/mp4
+    next: reconstructed-adapter-rollouts
+
+  reconstructed-adapter-rollouts:
+    description: >
+      Consumes the exact baseline protocol and reconstruction artifact, builds
+      each policy from the verified base and its suite-specific factors/heads,
+      and runs those same full-suite task and initial-state identities. One
+      actual rollout MP4 per suite is retained.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    params:
+      output_root: "{{config.reconstructed_root}}"
+      capability_name: lorafleet_oft_reconstructed_adapter_rollouts
+      smoke_artifact_name: reconstructed-rollouts.json
+      smoke_command: |
+        set -euo pipefail
+        export PYTHONPATH="${NPA_SRC_OVERLAY:-/tmp/npa-src-overlay}/src:${PYTHONPATH:-}"
+        /opt/byof/.venv/bin/python -m npa.workflows.lorafleet_oft_adapters reconstructed \
+          --verification-uri "{{config.verification_uri}}" \
+          --reconstruction-uri "{{config.reconstruction_uri}}" \
+          --baseline-uri "{{config.baseline_uri}}" \
+          --output "${NPA_SMOKE_OUTPUT_DIR}/reconstructed-rollouts.json"
+    outputs:
+      - uri: "{{config.reconstructed_uri}}"
+        schema: npa.lorafleet-oft-adapters.reconstructed-rollouts.v1
+      - uri: "{{config.reconstructed_root}}/{{run.id}}/reconstructed-spatial-rollout.mp4"
+        schema: video/mp4
+    next: compare-and-visualize
+
+  compare-and-visualize:
+    description: >
+      Consumes paired original and reconstructed rollout records, rejects any
+      changed task/initial-state identity, computes observed outcome counts,
+      and emits a validated RRD plus provenance-linked MP4 inventory.
+    toolRef: workbench.byof.repo
+    resources: gpu
+    params:
+      output_root: "{{config.compare_root}}"
+      capability_name: lorafleet_oft_paired_rollout_comparison_rrd
+      smoke_artifact_name: comparison.json
+      smoke_command: |
+        set -euo pipefail
+        export PYTHONPATH="${NPA_SRC_OVERLAY:-/tmp/npa-src-overlay}/src:${PYTHONPATH:-}"
+        /opt/byof/.venv/bin/python -m npa.workflows.lorafleet_oft_adapters compare \
+          --baseline-uri "{{config.baseline_uri}}" \
+          --reconstructed-uri "{{config.reconstructed_uri}}" \
+          --output "${NPA_SMOKE_OUTPUT_DIR}/comparison.json"
+    outputs:
+      - uri: "{{config.comparison_uri}}"
+        schema: npa.lorafleet-oft-adapters.comparison.v1
+      - uri: "{{config.compare_root}}/{{run.id}}/comparison.rrd"
+        schema: application/x-rerun-recording
+    terminal: true

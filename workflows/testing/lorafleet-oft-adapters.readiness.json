@@ -1,0 +1,52 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "8bb0de242eb9aea093e0bce8c83ab9d362aa261ccf3c413930e1db82a1c8bca7",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-state specification passed validate-spec and plan-spec with the committed source and digest sentinel.",
+      "evidence": [
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/lorafleet-oft-adapters/workflow-validate.json",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/lorafleet-oft-adapters/workflow-plan.json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Targeted contracts prove five connected executable BYOF stages, exact prior-stage URI use, factor arithmetic guardrails, and paired output requirements.",
+      "evidence": [
+        "npa/tests/workflows/test_lorafleet_oft_adapters.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The configured run-scoped S3 prefixes have not yet received and been independently read back from a live workflow.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "The public model/reconstruction records and exact source revisions were retrieved for implementation review; the runtime verifier will repeat immutable Hub and publisher checksum checks.",
+      "evidence": [
+        "docs/workbench/lorafleet-oft-adapters.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "NPA health preflight including the Nebius check passed; these public model artifacts require no new acceptance flag or EULA gate.",
+      "evidence": [
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/lorafleet-oft-adapters/health-preflight.json"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The operator-built private image build is in progress. The committed image is intentionally a non-routable digest sentinel until its built bytes are inspected.",
+      "evidence": []
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No real Kubernetes workflow stage has completed on the private immutable image yet.",
+      "evidence": []
+    }
+  }
+}

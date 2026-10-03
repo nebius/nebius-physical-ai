@@ -35,6 +35,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
 | Lightricks LTX-2.5 (**accepted public image; entitled runtime fetch**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
 | Alibaba Wan 2.2 TI2V-5B (**4-GPU distributed**) | same pinned source/checkpoint | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | multi-GPU capability JSON + rank topology + runtime inventory + MP4 | `byof-wan2.2-multigpu.yaml` |
+| LoRAFleet reconstructed OpenVLA-OFT adapters (**private BYOF qualification; unverified**) | `moojink/openvla-oft` `e4287e9…`; LoRAFleet release `0b75d5b…` | immutable payload verification → base-plus-FP32-factor reconstruction → original/reconstructed LIBERO rollouts → paired RRD | stage evidence JSONs + representative MP4s + `comparison.rrd` | `lorafleet-oft-adapters.yaml` |
 
 ## Live capability results
 

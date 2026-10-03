@@ -261,6 +261,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`byof-evo.yaml`](testing/byof-evo.yaml) | Plan-only catalog definition; run pinned evo APE/RPE controls and matched KITTI plots through the direct BYOF runner |
 | [`habitat-sim-smoke.yaml`](testing/habitat-sim-smoke.yaml) | Quarantined dedicated Habitat image: exact runtime-fetched Skokloster RGB/depth traversal, Bullet, and NVIDIA EGL on one STRICT-bound RTX PRO 6000 (never B200); image and live proof remain pending |
 | [`byof-ltx2.yaml`](testing/byof-ltx2.yaml) | LTX-2.5 video generation and FiftyOne curation; source and gated weights fetched at runtime |
+| [`lorafleet-oft-adapters.yaml`](testing/lorafleet-oft-adapters.yaml) | Five connected substantive stages: immutable factors/heads verification → verified-base FP32 reconstruction → published and reconstructed full-suite LIBERO rollouts → paired RRD/MP4 comparison. Private BYOF image and live qualification remain required ([guide](../docs/workbench/lorafleet-oft-adapters.md)). |
 | [`byof-maniskill.yaml`](testing/byof-maniskill.yaml) | OSS registry: ManiSkill pinned image + PickCube smoke |
 | [`byof-mujoco-playground.yaml`](testing/byof-mujoco-playground.yaml) | OSS registry: MuJoCo Playground pinned image + Cartpole smoke |
 | [`byof-open-dreamer.yaml`](testing/byof-open-dreamer.yaml) | Open Dreamer multi-GPU tokenizer and dynamics training on Minecraft/VPT data → action-conditioned dream rollout and Rerun evidence |
