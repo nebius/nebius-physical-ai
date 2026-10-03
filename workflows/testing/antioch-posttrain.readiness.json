@@ -1,0 +1,65 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "662543a56c9e92ed24fbc7f5d12c426ba3da89a3b6baebf2325acddc7d3e67c6",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Schema validation and argv contracts pass.",
+      "evidence": [
+        "docs/testing/antioch-posttrain.md",
+        "docs/workbench/antioch-posttrain.md",
+        "npa/tests/workflows/test_antioch_posttrain.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Actual native frame preparation, pretrained backbone fine-tuning, and held-out evaluation are executable stages.",
+      "evidence": [
+        "docs/testing/antioch-posttrain.md",
+        "docs/workbench/antioch-posttrain.md"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "verified",
+      "reason": "Exact-project S3 ownership and output-prefix PUT/GET passed in the operator run.",
+      "evidence": [
+        "docs/testing/antioch-posttrain.md",
+        "docs/workbench/antioch-posttrain.md"
+      ]
+    },
+    "worker_input": {
+      "status": "verified",
+      "reason": "Recorded video, telemetry and physics artifacts uploaded and every object verified by SHA-256 readback.",
+      "evidence": [
+        "docs/testing/antioch-posttrain.md",
+        "docs/workbench/antioch-posttrain.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "Selected-project S3 and Nebius authentication pass; official pretrained checkpoint downloaded and hashed.",
+      "evidence": [
+        "docs/testing/antioch-posttrain.md",
+        "docs/workbench/antioch-posttrain.md"
+      ]
+    },
+    "source_image": {
+      "status": "verified",
+      "reason": "Accepted optional LeRobot 0.6.0 digest is anonymously pullable and includes Kubernetes prerequisites; source is staged separately.",
+      "evidence": [
+        "docs/testing/antioch-posttrain.md",
+        "docs/workbench/antioch-posttrain.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "verified",
+      "reason": "All three Workbench stages succeeded on Nebius; S3 checkpoint readback and independent CPU evaluation reproduce all 243 held-out predictions. Accuracy 89.7119%, macro F1 0.811093.",
+      "evidence": [
+        "docs/testing/antioch-posttrain.md",
+        "docs/testing/assets/antioch-posttrain-evidence.json"
+      ]
+    }
+  }
+}

@@ -29,6 +29,8 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 | Reconstruct metric RGB-D into a collision scene | [RGB-D scan to Isaac](../docs/workbench/guides/rgbd-scan-to-isaac.md) — measured TSDF surface, held-out depth qualification, colored USDZ, native PhysX; [explicit native-training handoff](../docs/workbench/guides/rgbd-scan-to-isaac.md#continue-into-native-navigation-training) requires the companion navigation implementation |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
+| Run the Antioch-authored warehouse | [Warehouse batch](../docs/workbench/antioch-warehouse.md) — contact conveyor, six-carton stacking, measured evidence and readback |
+| Post-train on Antioch warehouse data | [Warehouse vision post-training](../docs/workbench/antioch-posttrain.md) — real recorded frames, pretrained ResNet-18, held-out carton-cycle evaluation |
 | Evaluate a BEHAVIOR 2026 policy | [Start here](../docs/workbench/challenge-onboarding.md) · [Workflow](testing/behavior-challenge-eval.yaml) · [measured scope and limits](../docs/workbench/behavior-campaign.md#scope-and-validation-status) — operator runtime required |
 | Run a live π0.5 robot pickup in Antioch | [OpenPI live pickup](partners/antioch/openpi-live-pickup.md) — pretrained-policy inference, physical success checks, and native recording |
 | Collect Antioch trajectories and train ACT | [Antioch ACT workflow](partners/antioch/antioch-offline-policy-train.yaml) — completed dataset → LeRobot training; [runbook](partners/antioch/README.md#dataset-based-act-training) |

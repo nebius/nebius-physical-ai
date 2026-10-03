@@ -1,0 +1,204 @@
+{
+  "schema": "npa.antioch-warehouse.public-evidence.v1",
+  "validation_date_utc": "2026-09-17",
+  "runtime": "Native Isaac Sim 6.0.1 inside the existing Antioch dev service",
+  "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "workbench_e2e": "incomplete: corrected submission refused by existing isolated SkyPilot API credential consistency check before launch",
+  "measurements": {
+    "schema": "npa.antioch-warehouse.measurements.v1",
+    "engine": "isaac-sim-physx",
+    "authoring_origin": "local-antioch-warehouse",
+    "sim_s": 143.73334082961082,
+    "phase": "BATCH_COMPLETE",
+    "stage_prims": 4745,
+    "rigid_bodies": 8,
+    "physics_backend": "physx",
+    "physics_dt": 0.008333333333333333,
+    "completed_batches": 1,
+    "total_placements": 6,
+    "max_attachment_error_m": 0.0075007984538714625,
+    "accumulation_speed_m_s": 0.0008093854412436485,
+    "max_conveyor_displacement_m": 4.853046894073486,
+    "settled": [
+      {
+        "carton": 0,
+        "episode": 0,
+        "sim_s": 16.108334173448384,
+        "target": [
+          2.42,
+          0.65,
+          0.212
+        ],
+        "actual": [
+          2.419999599456787,
+          0.6499999761581421,
+          0.21100005507469177
+        ],
+        "error_m": 0.0009999450058143019,
+        "speed_m_s": 0.0001387471129419282
+      },
+      {
+        "carton": 1,
+        "episode": 0,
+        "sim_s": 42.0166688580066,
+        "target": [
+          2.9800000000000004,
+          0.65,
+          0.212
+        ],
+        "actual": [
+          2.9800007343292236,
+          0.6499999761581421,
+          0.21100002527236938
+        ],
+        "error_m": 0.0009999749975413152,
+        "speed_m_s": 9.206734102917835e-05
+      },
+      {
+        "carton": 2,
+        "episode": 0,
+        "sim_s": 67.50833685416728,
+        "target": [
+          2.42,
+          0.65,
+          0.46199999999999997
+        ],
+        "actual": [
+          2.4200055599212646,
+          0.6500007510185242,
+          0.46100014448165894
+        ],
+        "error_m": 0.0009998712588680128,
+        "speed_m_s": 0.008623052388429642
+      },
+      {
+        "carton": 3,
+        "episode": 0,
+        "sim_s": 92.59167149569839,
+        "target": [
+          2.9800000000000004,
+          0.65,
+          0.46199999999999997
+        ],
+        "actual": [
+          2.9800033569335938,
+          0.6500008702278137,
+          0.46099990606307983
+        ],
+        "error_m": 0.0010000999494870536,
+        "speed_m_s": 0.005866173654794693
+      },
+      {
+        "carton": 4,
+        "episode": 0,
+        "sim_s": 117.25833944883198,
+        "target": [
+          2.42,
+          0.65,
+          0.712
+        ],
+        "actual": [
+          2.4198837280273438,
+          0.6499975919723511,
+          0.7109947800636292
+        ],
+        "error_m": 0.0010119249432145965,
+        "speed_m_s": 0.004397955257445574
+      },
+      {
+        "carton": 5,
+        "episode": 0,
+        "sim_s": 141.50000737980008,
+        "target": [
+          2.9800000000000004,
+          0.65,
+          0.712
+        ],
+        "actual": [
+          2.979788303375244,
+          0.6500250101089478,
+          0.7109917998313904
+        ],
+        "error_m": 0.0010304894693625828,
+        "speed_m_s": 0.006938085425645113
+      }
+    ],
+    "fidelity": {
+      "cartons": "dynamic 2.5 kg PhysX bodies",
+      "conveyor": "contact surface velocity, 0.45 m/s in world space",
+      "gantry": "scripted kinematic Cartesian axes; no policy or robot IK",
+      "grasp": "ideal fixed joint; no suction or seal model",
+      "trigger": "carton position threshold; no optical sensor",
+      "guards": "layout geometry; no safety certification",
+      "scope": "one six-carton batch; no automatic episode reset"
+    },
+    "python_version": "3.12.3",
+    "source_sha256": {
+      "__init__.py": "f22be5c4e67637fa480525f8ba42e95ded72808caf19f753513ce91783d9af0e",
+      "__main__.py": "d9fb7c5b5ebc78558e0a7c464b7f464227d270f1afed28267d4b83aee094fe90",
+      "_layout.py": "28a834cd8789a09a169bb0c31794184418414d4d58d4800d8b44e78a30203ce4",
+      "_scene.py": "aa8fc4d538194e79bc15289ccdeee64e38ed5bf75dc5904f238eba5856042f73",
+      "evidence.py": "28c84c78306c261ba46552d95c9c94b6b0054ae37a15f41bdf7500d34db50bfd",
+      "runner.py": "5025f401b7ad369268f0a273d3fa234449d76578d44a44f16c2bd618de9ddf3f",
+      "runtime.py": "6be8bcdd5704f4dba823e0810f4cef718ef9061c63b2c5d83efa25ef046296c1"
+    }
+  },
+  "independent_verification": {
+    "schema": "npa.antioch-warehouse.verification.v1",
+    "all_passed": true,
+    "checks": {
+      "physx_120hz": true,
+      "warehouse_geometry": true,
+      "eight_rigid_bodies": true,
+      "six_distinct_cartons": true,
+      "complete_batch": true,
+      "placement_error_under_2cm": true,
+      "settled_speed_under_4cm_s": true,
+      "stopped_before_pickup": true,
+      "attachment_error_under_4cm": true,
+      "contact_transport_over_3_5m": true,
+      "ordered_workflow_each_carton": true,
+      "measured_trajectory": true,
+      "aisle_dimensions": true,
+      "aisle_exposure": true,
+      "aisle_nonflat": true,
+      "overview_dimensions": true,
+      "overview_exposure": true,
+      "overview_nonflat": true,
+      "packing_dimensions": true,
+      "packing_exposure": true,
+      "packing_nonflat": true
+    },
+    "frames": {
+      "aisle": {
+        "width": 1280,
+        "height": 720,
+        "mean_rgb": 91.61986183449073,
+        "std_rgb": 49.79156579962478,
+        "clipped_fraction": 0.0
+      },
+      "overview": {
+        "width": 1280,
+        "height": 720,
+        "mean_rgb": 148.351787109375,
+        "std_rgb": 49.73050190317871,
+        "clipped_fraction": 0.0
+      },
+      "packing": {
+        "width": 1280,
+        "height": 720,
+        "mean_rgb": 127.6675730613426,
+        "std_rgb": 41.567106567307626,
+        "clipped_fraction": 0.0
+      }
+    },
+    "artifacts_sha256": {
+      "validation.json": "57b8def177a6e060bdcf7685ad39456c3bc8b2981a51d67ee9a70369147bd64e",
+      "events.json": "494ba6d393aa3cdf3914a564aa2500c4a3a9e9925402940d06cf674ea8456398",
+      "trajectory.json": "1b148ee96d2345acfabb785d8ba2a31b0b10ee99adf70e826e7335f49cb2dd2c",
+      "aisle.png": "cd2c539153e968003c0263687ed0392d50c39095d265799658e564ce44e1b485",
+      "overview.png": "0413ff3d8ae635a418e8a5fd1e5cb39b713a447bdea36ebfed1b5dda7d548a10",
+      "packing.png": "465966cd9467d96ab00cb042792029b66c56488dfbb13f63ae52d0cc7e59dceb"
+    }
+  }
+}

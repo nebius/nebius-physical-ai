@@ -105,6 +105,8 @@ The four-wave [LeRobot transfer experiment](guides/lerobot-transfer.md) selects
 that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
 no new image publication is required for the experiment.
+The [Antioch post-training workflow](antioch-posttrain.md) also selects this
+existing digest for native TorchVision training and evaluation.
 
 SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
 Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;
