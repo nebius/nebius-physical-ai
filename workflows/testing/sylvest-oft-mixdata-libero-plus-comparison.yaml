@@ -27,7 +27,9 @@ config:
   # LIBERO-Plus's published classification covers the four expanded suites:
   # libero_spatial, libero_object, libero_goal, and libero_10.
   task_suite: libero_spatial
-  seeds: "0,1,2"
+  # The upstream evaluator's trial number selects a task initial state. These
+  # zero-based contiguous indices are paired between both checkpoint stages.
+  initial_state_indices: "0,1,2"
   # This is a supplied run-scoped training inventory, not a guessed split.
   # Its task names are excluded by the prepare stage before any rollout starts.
   training_task_ids_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/mix-sft-training-task-ids.json"
@@ -65,7 +67,7 @@ states:
         --libero-plus-revision "{{config.libero_plus_revision}}"
         --training-task-ids-uri "{{config.training_task_ids_uri}}"
         --task-suite "{{config.task_suite}}"
-        --seeds "{{config.seeds}}"
+        --initial-state-indices "{{config.initial_state_indices}}"
         --output-path "{{config.prepared_uri}}"
     resources: cpu
     outputs:
@@ -104,7 +106,7 @@ states:
     next: candidate_rollouts
 
   candidate_rollouts:
-    description: Execute the Sylvest mixed-data checkpoint on the identical prepared cases and seeds.
+    description: Execute the Sylvest mixed-data checkpoint on the identical prepared cases and initial states.
     run:
       shell: >-
         case "{{config.runtime_image}}" in *@sha256:*) ;; *) echo "runtime_image must be an immutable digest" >&2; exit 64;; esac;

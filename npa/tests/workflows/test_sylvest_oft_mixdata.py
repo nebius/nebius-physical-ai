@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -17,11 +18,11 @@ def _rollouts(checkpoint: str, successes: list[int]) -> dict[str, object]:
     categories = ["Camera Viewpoints", "Robot Initial States", "Camera Viewpoints"]
     episodes = [
         {
-            "case_id": f"task-{index}::seed=0",
+            "case_id": f"task-{index}::initial-state=0",
             "task_name": f"task-{index}",
             "category": categories[index],
             "difficulty_level": 1,
-            "seed": 0,
+            "initial_state_index": 0,
             "success": success,
         }
         for index, success in enumerate(successes)
@@ -78,17 +79,20 @@ def test_compare_and_report_emit_measured_artifacts(tmp_path: Path) -> None:
     candidate_path.write_text(json.dumps(_rollouts("candidate", [1, 0, 1])))
     comparison_dir = tmp_path / "comparison"
 
-    assert workflow.main(
-        [
-            "compare",
-            "--baseline-uri",
-            str(baseline_path),
-            "--candidate-uri",
-            str(candidate_path),
-            "--output-path",
-            str(comparison_dir),
-        ]
-    ) == 0
+    assert (
+        workflow.main(
+            [
+                "compare",
+                "--baseline-uri",
+                str(baseline_path),
+                "--candidate-uri",
+                str(candidate_path),
+                "--output-path",
+                str(comparison_dir),
+            ]
+        )
+        == 0
+    )
 
     comparison_path = comparison_dir / "comparison.json"
     comparison = json.loads(comparison_path.read_text())
@@ -97,17 +101,20 @@ def test_compare_and_report_emit_measured_artifacts(tmp_path: Path) -> None:
     assert comparison["overall"]["baseline_only_successes"] == 1
 
     report_dir = tmp_path / "report"
-    assert workflow.main(
-        [
-            "report",
-            "--comparison-uri",
-            str(comparison_path),
-            "--run-id",
-            "test-sylvest-comparison",
-            "--output-path",
-            str(report_dir),
-        ]
-    ) == 0
+    assert (
+        workflow.main(
+            [
+                "report",
+                "--comparison-uri",
+                str(comparison_path),
+                "--run-id",
+                "test-sylvest-comparison",
+                "--output-path",
+                str(report_dir),
+            ]
+        )
+        == 0
+    )
     assert (report_dir / "report.json").is_file()
     assert (report_dir / "comparison.rrd").stat().st_size > 0
     checksums = json.loads((report_dir / "checksums.json").read_text())
@@ -137,6 +144,148 @@ def test_unlicensed_libero_plus_source_is_refused(tmp_path: Path) -> None:
         workflow._require_libero_plus_license(tmp_path)
 
 
+def test_initial_state_indices_are_upstream_trial_indices() -> None:
+    """Reject index sets that cannot map to upstream run_task trials.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    assert workflow._parse_initial_state_indices("0,1,2") == [0, 1, 2]
+    with pytest.raises(workflow.SylvestComparisonError, match="contiguous zero-based"):
+        workflow._parse_initial_state_indices("1,2")
+
+
+def test_checkpoint_cache_records_and_protects_exact_payload(tmp_path: Path) -> None:
+    """Keep the immutable snapshot separate from evaluator-local compatibility edits.
+
+    Args:
+        tmp_path: Pytest-managed temporary directory.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    snapshot = tmp_path / "snapshot"
+    adapter = snapshot / "lora_adapter"
+    adapter.mkdir(parents=True)
+    for name in (
+        "config.json",
+        "dataset_statistics.json",
+        "action_head--1_checkpoint.pt",
+        "proprio_projector--1_checkpoint.pt",
+    ):
+        (snapshot / name).write_text(name)
+    (adapter / "adapter_config.json").write_text("adapter")
+    metadata = workflow._checkpoint_metadata(snapshot, "owner/model", "pinned")
+    workflow._write_json(snapshot / ".npa-checkpoint-ready.json", metadata)
+    assert workflow._checkpoint_is_ready(
+        snapshot, snapshot / ".npa-checkpoint-ready.json", "owner/model", "pinned"
+    )
+
+    workspace = workflow._copy_checkpoint_workspace(snapshot, tmp_path / "workspace")
+    (workspace / "config.json").write_text("evaluator rewrite")
+    assert (snapshot / "config.json").read_text() == "config.json"
+    assert not workflow._checkpoint_is_ready(
+        workspace, snapshot / ".npa-checkpoint-ready.json", "owner/model", "pinned"
+    )
+
+
+def test_rollout_stage_refuses_missing_upstream_mp4s(tmp_path: Path) -> None:
+    """Do not publish a scored rollout artifact without upstream visual evidence.
+
+    Args:
+        tmp_path: Pytest-managed temporary directory.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    with pytest.raises(
+        workflow.SylvestComparisonError, match="rollout-video directory"
+    ):
+        workflow._collect_rollout_clips(tmp_path, tmp_path / "output", expected_count=1)
+
+
+def test_upstream_task_capture_pairs_each_initial_state() -> None:
+    """Keep one native run_task result for every selected initial state.
+
+    Args:
+        None.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    class FakeEvaluator:
+        class benchmark:
+            @staticmethod
+            def get_benchmark_dict() -> dict[str, object]:
+                return {"libero_spatial": object}
+
+        def __init__(self) -> None:
+            self.seeds: list[int] = []
+            self.episode_results = iter([False, True])
+
+        def get_image_resize_size(self, cfg: object) -> int:
+            return 224
+
+        def set_seed_everywhere(self, seed: int) -> None:
+            self.seeds.append(seed)
+
+        def run_episode(
+            self, *args: object, **kwargs: object
+        ) -> tuple[bool, list[object]]:
+            return next(self.episode_results), []
+
+        def run_task(self, *args: object) -> tuple[int, int]:
+            cfg = args[0]
+            total_episodes = int(args[9])
+            total_successes = int(args[10])
+            successes = [self.run_episode()[0] for _ in range(cfg.num_trials_per_task)]
+            return total_episodes + len(successes), total_successes + sum(successes)
+
+    evaluator = FakeEvaluator()
+    cfg = SimpleNamespace(
+        seed=7, task_suite_name="libero_spatial", num_trials_per_task=0
+    )
+    cases = [
+        {"task_name": "task", "initial_state_index": 0},
+        {"task_name": "task", "initial_state_index": 1},
+    ]
+    results = workflow._run_cases(
+        evaluator,
+        cfg,
+        cases,
+        {"task": 0},
+        object(),  # type: ignore[arg-type]
+        object(),
+        object(),
+        object(),
+        object(),
+        None,
+    )
+
+    assert evaluator.seeds == [7]
+    assert [row["success"] for row in results] == [0, 1]
+    assert [row["initial_state_index"] for row in results] == [0, 1]
+
+
 def test_workflow_has_five_connected_substantive_stages() -> None:
     """Keep all five actual data, rollout, metric, and visualization stages wired.
 
@@ -152,16 +301,31 @@ def test_workflow_has_five_connected_substantive_stages() -> None:
 
     root = Path(__file__).resolve().parents[3]
     spec = yaml.safe_load(
-        (root / "workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml").read_text()
+        (
+            root / "workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml"
+        ).read_text()
     )
     states = spec["states"]
-    assert list(states) == ["prepare", "baseline_rollouts", "candidate_rollouts", "compare", "report"]
+    assert list(states) == [
+        "prepare",
+        "baseline_rollouts",
+        "candidate_rollouts",
+        "compare",
+        "report",
+    ]
     assert states["prepare"]["next"] == "baseline_rollouts"
     assert states["baseline_rollouts"]["next"] == "candidate_rollouts"
     assert states["candidate_rollouts"]["next"] == "compare"
     assert states["compare"]["next"] == "report"
     assert states["report"]["terminal"] is True
     assert spec["config"]["task_suite"] == "libero_spatial"
-    assert all("npa.workflows.sylvest_oft_mixdata" in states[name]["run"]["shell"] for name in states)
+    assert spec["config"]["initial_state_indices"] == "0,1,2"
+    assert all(
+        "npa.workflows.sylvest_oft_mixdata" in states[name]["run"]["shell"]
+        for name in states
+    )
     assert len(states["compare"]["inputs"]) == 2
-    assert any(output["uri"].endswith("comparison.rrd") for output in states["report"]["outputs"])
+    assert any(
+        output["uri"].endswith("comparison.rrd")
+        for output in states["report"]["outputs"]
+    )

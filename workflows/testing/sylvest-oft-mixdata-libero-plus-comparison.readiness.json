@@ -1,22 +1,22 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "c458dc48445f801454b79d612b74076e0044baeb0c7239caab00aae2941f6545",
+  "workflow_sha256": "ba8a8e2c94cc73628a5fc72eba9085774d5ddf3df1bcc13e46ce1952fa3e65bb",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "Local workflow schema validation and planning succeeded for the five connected stages. The plan retains the example bucket and an empty runtime image as execution prerequisites rather than silently selecting either.",
+      "reason": "Local workflow schema validation and production-render checking succeeded for five connected stages. The renderer used only a synthetic immutable digest; no registry, storage, or provider action occurred.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml --json: status valid",
-        "npa workbench workflow plan-spec workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml --run-id sylvest-oft-mixdata-plan --json: five ordered steps with run-scoped S3-style handoffs"
+        "npa workbench workflow plan-spec workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml --run-id sylvest-oft-mixdata-local-audit --check-render --json with synthetic digest: render_check status valid, tasks 5, provider_actions false, registry_secrets_materialized false"
       ]
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Local tests prove five substantive stages are connected, comparison refuses unpaired cases, report artifacts arise from supplied paired data, and the wrapper refuses unlicensed LIBERO-Plus source instead of introducing a generic acceptance flag.",
+      "reason": "Local tests prove five substantive stages are connected, pair upstream initial-state trial indices rather than mislabeling them as random seeds, reject unpaired data, preserve immutable checkpoint-cache provenance, require one decoded upstream MP4 per scored case, and refuse unlicensed LIBERO-Plus source instead of introducing a generic acceptance flag.",
       "evidence": [
-        "npa/tests/workflows/test_sylvest_oft_mixdata.py: 4 passed",
+        "npa/tests/workflows/test_sylvest_oft_mixdata.py: 8 passed",
         "npa/.venv/bin/rerun rrd verify and rerun rrd print independently decoded the local measured-fixture comparison.rrd and exposed metrics/delta_success",
-        "npa/src/npa/workflows/sylvest_oft_mixdata.py invokes the upstream OpenVLA-OFT LIBERO run_task path for each exact prepared case"
+        "npa/src/npa/workflows/sylvest_oft_mixdata.py invokes upstream OpenVLA-OFT run_task with its native trial-to-initial-state mapping for each exact prepared case"
       ]
     }
   },

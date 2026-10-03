@@ -10,8 +10,8 @@ The executable spec is
 [`sylvest-oft-mixdata-libero-plus-comparison.yaml`](../../workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml).
 Its successful path has five connected, substantive stages:
 
-1. prepare a hash-bound LIBERO-Plus task/seed protocol excluding an externally
-   supplied mix-SFT training inventory;
+1. prepare a hash-bound LIBERO-Plus task/initial-state protocol excluding an
+   externally supplied mix-SFT training inventory;
 2. run upstream OpenVLA-OFT evaluator baseline simulator rollouts;
 3. run the identical cases with the candidate checkpoint;
 4. calculate per-case paired differences, category summaries, intervals, and
@@ -23,8 +23,11 @@ The default `libero_spatial` is one of the four expanded suites for which the
 pinned LIBERO-Plus source publishes classifications. `libero_object`,
 `libero_goal`, and `libero_10` are also valid. `libero_90` has no matching
 published LIBERO-Plus classification and is deliberately not a workflow target.
-One rollout per selected task/seed follows the upstream LIBERO-Plus evaluation
-configuration; it is not a substitute for a full benchmark.
+One rollout per selected task/initial-state index follows the upstream
+LIBERO-Plus evaluation configuration. The upstream evaluator maps its trial
+index directly to a stored initial state, so `initial_state_indices` must be a
+contiguous zero-based list; it is not presented as independently sampled random
+seeds. This is not a substitute for a full benchmark.
 
 ## Evidence boundary
 
@@ -47,9 +50,14 @@ visualization.
 | Candidate checkpoint | [`Sylvest/openvla-7b-oft-finetuned-libero-plus-mixdata@a85655ec941bae6644c9fbdf62db02b9726d7cf5`](https://huggingface.co/Sylvest/openvla-7b-oft-finetuned-libero-plus-mixdata/tree/a85655ec941bae6644c9fbdf62db02b9726d7cf5) | Sylvest; mixed-data OpenVLA-OFT candidate. |
 | Baseline checkpoint | [`moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10@638918f3d1c2e43a39a8a20772bdb8b91835e4b7`](https://huggingface.co/moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10/tree/638918f3d1c2e43a39a8a20772bdb8b91835e4b7) | OpenVLA-OFT authors; paired baseline. |
 
-NPA adds task/seed pairing, a training-inventory exclusion rule, source and
-revision checks, cache ready markers, and report artifacts. It does not modify
-the checkpoints or relabel upstream research as NPA work.
+NPA adds task/initial-state pairing, a training-inventory exclusion rule, source
+and revision checks, complete checkpoint-inventory provenance, cache ready
+markers, and report artifacts. The immutable checkpoint cache is read-only to
+the evaluator: its small mutable configuration files are copied into a
+stage-local workspace while the model payload is linked or copied privately.
+This avoids the upstream local-checkpoint compatibility path modifying a cached
+snapshot. It does not modify the checkpoints or relabel upstream research as
+NPA work.
 
 Preserve the upstream citations with reports:
 
@@ -80,7 +88,7 @@ Preserve the upstream citations with reports:
 | LIBERO-Plus source | Pinned source has no `LICENSE`, `NOTICE`, or `COPYING`; GitHub supplies no license metadata. | Do not bake, distribute, or execute it until the authors publish or identify a license. This blocks the live run. |
 | Candidate and baseline weights | The pinned public Hugging Face model cards declare `mit` and were readable without a gated-access prompt. | Operator runtime fetch only; no weights, adapters, or cache in a public image. |
 | LIBERO-Plus assets/training data | The public cards for `Sylvest/LIBERO-plus`, `Sylvest/libero_plus_rlds`, `Sylvest/libero_plus_data_4suite`, and `Sylvest/libero_plus_lerobot` declare `mit`. | Runtime fetch only after source execution is lawful; no data/assets baked or redistributed. |
-| Runtime cache | Revision-keyed cache uses a lock and atomic ready marker after checkpoint validation. | Operator-owned, non-public; publish only checksum-bearing provenance. |
+| Runtime cache | Revision-keyed cache uses a lock, validates an inventory including OFT adapter/action-head/proprioception-projector files, and atomically records content hashes. | Operator-owned, non-public; publish only checksum-bearing provenance. |
 | Run outputs | MP4s, paired data, RRD, and report are from a future run. | Keep run-scoped and label simulator-only; access does not imply output redistribution rights. |
 
 No new NPA EULA, `ACCEPT_*` variable, generic legal checkbox, telemetry opt-in,
@@ -114,7 +122,7 @@ npa/.venv/bin/npa workbench workflow submit \
   --var training_task_ids_uri=s3://<run-scoped-bucket>/<inventory>.json
 ```
 
-Independently inspect both `rollouts.json` files, MP4s/manifests,
-`comparison.json`, report, checksums, and decoded RRD before marking any live
-readiness verified. Retain the run prefix for diagnosis/resume; cancel owned
-work before tearing down only owned resources.
+Independently inspect both `rollouts.json` files, decode every MP4 referenced in
+the manifests, inspect `comparison.json`, report, checksums, and decoded RRD
+before marking any live readiness verified. Retain the run prefix for
+diagnosis/resume; cancel owned work before tearing down only owned resources.
