@@ -894,8 +894,9 @@ RTX PRO 6000 GPUs) rather than by reading it.
 - Closes the 7/8 -> 8/8 Workbench tool verification matrix gap for the
   artifact-bearing Cosmos CLI workflow.
 - Known constraints remain documented in `docs/testing/e2e-serverless.md`:
-  NIM/Triton are not implemented, `finetune` is a placeholder, and deferred
-  visual-generation/rendering paths still depend on the container EGL/DRI gap.
+  NIM/Triton backends and fine-tuning/optimization placeholders were public at
+  the time and were removed later; deferred visual-generation/rendering paths
+  still depend on the container EGL/DRI gap.
 
 - Validated Isaac Lab bring-your-own-fork path: image override (Run ID:
   `w10-byof-image-only-20260520T232650Z`) and image+command override (Run ID:
