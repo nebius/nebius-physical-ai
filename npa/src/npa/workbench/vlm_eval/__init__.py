@@ -51,7 +51,10 @@ DEFAULT_RUBRIC = (
     "intermediate values for partial progress. Penalize unsafe, incomplete, "
     "or ambiguous outcomes."
 )
-RESULT_FILENAME = "vlm_eval_stub.json"
+#: Backend-neutral result name. The payload distinguishes fixtures from inference.
+RESULT_FILENAME = "vlm_eval.json"
+#: Read-only compatibility for bundles created before RESULT_FILENAME was neutral.
+LEGACY_RESULT_FILENAME = "vlm_eval_stub.json"
 #: The aggregate report a rollout-SET evaluation writes. Named for compatibility with
 #: the retired sim-to-real-loop.yaml, whose readers key off this filename.
 LOOP_REPORT_FILENAME = "task_success_report.json"
@@ -211,6 +214,7 @@ class VlmEvalResult:
     rationale: str = ""
     served_model: str | None = None
     evidence: VlmEvaluationEvidence | None = None
+    rubric: str = DEFAULT_RUBRIC
 
 
 @dataclass(frozen=True)
@@ -616,6 +620,7 @@ def evaluate_vlm(
         frame_selection=frame_selection,
         frame_count=frame_count,
         structured=structured,
+        rubric=effective_rubric,
     )
 
 
@@ -1034,6 +1039,7 @@ def _result_from_structured(
     frame_selection: str,
     frame_count: int,
     structured: VlmStructuredResponse,
+    rubric: str = DEFAULT_RUBRIC,
 ) -> VlmEvalResult:
     score = round(_clamp_score(structured.score), 4)
     passed = score >= success_threshold
@@ -1054,6 +1060,7 @@ def _result_from_structured(
         rationale=structured.rationale,
         served_model=structured.served_model,
         evidence=structured.evidence,
+        rubric=rubric,
     )
 
 

@@ -56,18 +56,26 @@ requested/returned model identity, request time, finish reason, latency, usage
 and provider request ID when returned, plus the exact provider response and its
 hash. Real benchmark reports retain this record per case.
 
+Directory and object-prefix outputs use the backend-neutral
+`vlm_eval.json`; inspect the payload's `backend` and provider evidence to
+distinguish real inference from fixtures. An explicitly supplied `.json` output
+path remains unchanged. Readers accept the old `vlm_eval_stub.json` name only
+for historical bundles; new workflows must not declare it.
+
 Recompute these hashes before accepting a result. The request manifest must not
 contain authorization, endpoints, local/S3 paths, prompts, base64 bytes, or data
 URIs. Keep the whole result private because the existing task and provider
 rationale can still describe operator data.
 
 `evidence: null` means no provider call occurred, as with `stub` or `--score`.
-It cannot support a visual claim. Provider refusal, truncation, filtering,
-malformed JSON, or canonical model mismatch is an error rather than a score.
+It cannot support a visual claim. For hosted parsing, provider refusal,
+truncation, filtering, malformed JSON, or canonical model mismatch is an error
+rather than a score. Legacy self-hosted parsing remains permissive; the promotion
+gate separately requires a completed, non-refused, strictly typed verdict.
 One complete JSON object wrapped only in a Markdown JSON fence is transport
 de-framed; its retained parser version ends in `+markdown-fence-v1`. Do not
 accept surrounding prose, trailing output, duplicate keys, invalid types, or a
-partial fence.
+partial fence as promotion evidence, even if the legacy parser returns a score.
 This evidence proves judge traceability, not physical correctness or safety.
 
 ## Scoring controls that actually change the verdict

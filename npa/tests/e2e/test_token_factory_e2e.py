@@ -331,27 +331,44 @@ def test_live_visual_judge_distinguishes_completion(
     tmp_path: Path, inside: bool
 ) -> None:
     _require_key()
-    from npa.workbench.vlm_eval import evaluate_vlm, select_rollout_frames, write_result
+    from npa.workbench import vlm_eval
+    from npa.workflows.data_factory_stages import grade_gate
+    from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
     from dataclasses import asdict
 
     frames = tmp_path / "rollout"
     for index, state in enumerate((False, False, inside)):
         _shape_frame(frames / f"frame-{index:03d}.png", red_inside=state)
-    output = tmp_path / "evaluation.json"
-    result = evaluate_vlm(
+    output_dir = tmp_path / "scores"
+    output = output_dir / vlm_eval.RESULT_FILENAME
+    result = vlm_eval.evaluate_vlm(
         input_path=str(frames),
-        output_path=str(output),
+        output_path=str(output_dir),
         backend="api",
         task="Move the red square fully inside the green rectangular outline by the final frame.",
         frame_selection="sequence",
     )
-    write_result(asdict(result), result_uri=result.result_uri)
+    written = vlm_eval.write_result(asdict(result), result_uri=result.result_uri)
+    assert written == str(output)
+    assert not (output_dir / vlm_eval.LEGACY_RESULT_FILENAME).exists()
     saved = json.loads(output.read_text())
+    assert saved["result_uri"] == str(output)
     assert saved["model"] == DEFAULT_VISION_MODEL
     assert saved["served_model"] == DEFAULT_VISION_MODEL
     assert saved["frame_count"] == 3
     assert saved["passed"] is inside
     assert saved["rationale"].strip()
+    _assert_live_visual_judge_evidence(saved, frames)
+    assert vlm_grade_block_details(saved) == {}
+    decision = grade_gate(
+        str(output_dir), str(tmp_path / "decision.json"), saved["success_threshold"]
+    )
+    assert decision == ("promote_checkpoint" if inside else "loop_back")
+
+
+def _assert_live_visual_judge_evidence(saved: dict, frames: Path) -> None:
+    from npa.workbench.vlm_eval import select_rollout_frames
+
     evidence = saved["evidence"]
     assert evidence["request"]["endpoint_role"] == "hosted-api"
     submitted = select_rollout_frames(frames, frame_selection="sequence", max_frames=4)

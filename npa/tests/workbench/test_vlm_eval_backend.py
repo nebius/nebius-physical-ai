@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from dataclasses import dataclass
+import json
 import os
 from pathlib import Path
 import re
@@ -156,6 +157,46 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
         assert isinstance(result.score, float)
         assert 0.0 <= result.score <= 1.0
         assert isinstance(result.passed, bool)
+
+
+def test_result_uri_uses_neutral_default_and_preserves_explicit_json() -> None:
+    assert vlm_eval.result_uri_for("s3://bucket/scores/") == (
+        "s3://bucket/scores/vlm_eval.json"
+    )
+    assert vlm_eval.result_uri_for("custom-result.json") == "custom-result.json"
+    assert vlm_eval.RESULT_FILENAME == "vlm_eval.json"
+    assert vlm_eval.LEGACY_RESULT_FILENAME == "vlm_eval_stub.json"
+
+
+def test_write_result_preserves_explicit_path_and_uses_canonical_s3_name(
+    tmp_path: Path,
+) -> None:
+    payload = {"backend": "api", "score": 0.5}
+    output_dir = tmp_path / "scores"
+    written = vlm_eval.write_result(payload, result_uri=str(output_dir))
+    assert written == str(output_dir / vlm_eval.RESULT_FILENAME)
+
+    explicit = tmp_path / "chosen.json"
+    assert vlm_eval.write_result(payload, result_uri=str(explicit)) == str(explicit)
+
+    class RecordingStorage:
+        def __init__(self) -> None:
+            self.uploaded_name = ""
+            self.uploaded_payload: dict[str, object] = {}
+
+        def upload_file(self, source: str, target: str) -> str:
+            self.uploaded_name = Path(source).name
+            self.uploaded_payload = json.loads(Path(source).read_text())
+            return target
+
+    storage = RecordingStorage()
+    result_uri = vlm_eval.result_uri_for("s3://bucket/scores/")
+    assert (
+        vlm_eval.write_result(payload, result_uri=result_uri, storage_client=storage)
+        == result_uri
+    )
+    assert storage.uploaded_name == vlm_eval.RESULT_FILENAME
+    assert storage.uploaded_payload == payload
 
 
 def test_parse_structured_response_clamps_score() -> None:
