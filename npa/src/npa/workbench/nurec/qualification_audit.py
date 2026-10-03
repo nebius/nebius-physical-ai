@@ -40,7 +40,7 @@ NATIVE_RECIPE = "configs/experimental/3dgut/3dgut_colmap.yaml"
 MIN_PSNR = 15.0
 MIN_SSIM = 0.5
 MAX_LPIPS = 0.5
-USD_RUNTIME_VERSION = (0, 25, 11)
+USD_RUNTIME_VERSION = (0, 26, 8)
 
 
 class NcoreQualificationAuditError(NpaError):

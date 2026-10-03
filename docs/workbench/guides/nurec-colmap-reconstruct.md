@@ -358,7 +358,7 @@ npa workbench nurec readback-qualification \
 
 # Install the pinned Apache-2.0 Pixar USD audit extra in this worktree's
 # private venv; audit-qualification reopens the post-readback USDZ with it.
-uv pip install --python npa/.venv/bin/python 'usd-core==25.11'
+uv pip install --python npa/.venv/bin/python 'usd-core==26.8'
 npa workbench nurec audit-qualification \
   --root '<private-analysis>/qualification/readback' --recording-id '<run-id>' \
   --expected-image 'nvcr.io/nvidia/nre/nre-ga@sha256:97f43e7130c5636ce3e80ea3184d97f56a87fdd989b05cce42230881dbdea284' \

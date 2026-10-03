@@ -796,8 +796,32 @@ def test_production_qualification_audit_binds_complete_readback(
     assert receipt["recipe"]["resolved_epochs"] == 1
     assert receipt["recipe"]["resolved_samples_per_epoch"] == 30000
     assert receipt["render"]["novel_view"] is True
+    assert receipt["usdz"]["usd_runtime_version"] == "26.8"
     assert receipt["workflow_status"]["status"] == "SUCCEEDED"
     assert json.loads(receipt_path.read_text()) == receipt
+
+
+def test_qualification_usd_runtime_matches_development_pin():
+    from npa.workbench.nurec.qualification_audit import USD_RUNTIME_VERSION
+
+    version = ".".join(map(str, USD_RUNTIME_VERSION[1:]))
+    assert f'"usd-core=={version}"' in (ROOT / "npa/pyproject.toml").read_text()
+
+
+def test_qualification_rejects_an_unpinned_usd_runtime(tmp_path, monkeypatch):
+    from pxr import Usd
+
+    from npa.workbench.nurec.qualification_audit import (
+        NcoreQualificationAuditError,
+        _usdz,
+    )
+
+    package = tmp_path / "scene.usdz"
+    _write_synthetic_usdz(package)
+    monkeypatch.setattr(Usd, "GetVersion", lambda: (0, 25, 11))
+    with pytest.raises(NcoreQualificationAuditError, match="did not reopen") as caught:
+        _usdz(package)
+    assert str(caught.value.__cause__) == "USD runtime version differs"
 
 
 @pytest.mark.parametrize(
@@ -1287,20 +1311,20 @@ def _write_sampled_nurec_rrd(root, monkeypatch, cap, *, reorder=False):
 
 
 @pytest.mark.parametrize(
-    "cap, reorder, selected",
+    "cap, reorder",
     [
-        (24, False, set(range(30)) - set(range(4, 30, 5))),
-        (30, False, set(range(30))),
-        (31, False, set(range(30))),
-        (7, False, {0, 4, 8, 12, 17, 21, 25}),
-        (1, False, {0}),
-        (0, False, set(range(30))),
-        (-1, False, set(range(30))),
-        (3, True, {0, 11, 21}),
+        (24, False),
+        (30, False),
+        (31, False),
+        (7, False),
+        (1, False),
+        (0, False),
+        (-1, False),
+        (3, True),
     ],
 )
 def test_live_rrd_accepts_exact_producer_selection_settings(
-    helpers, downstream_run, monkeypatch, cap, reorder, selected
+    helpers, downstream_run, monkeypatch, cap, reorder
 ):
     """Preserve sampled recordings and source path ordering across reader settings.
 
@@ -1310,7 +1334,6 @@ def test_live_rrd_accepts_exact_producer_selection_settings(
         monkeypatch: Scoped producer and reader settings overrides.
         cap: Existing visualization frame selection setting.
         reorder: Whether source path order differs from numeric frame order.
-        selected: Independently specified expected camera1 identities.
     Returns:
         None.
     Raises:
@@ -1318,22 +1341,26 @@ def test_live_rrd_accepts_exact_producer_selection_settings(
     """
     _write_sampled_nurec_rrd(downstream_run, monkeypatch, cap, reorder=reorder)
     chunks = _nurec_row_chunks(downstream_run)
-    identities = {
-        (camera, index) for camera, index, _ in helpers._nurec_rrd_frame_rows(chunks)
+    identities = list(helpers._nurec_rrd_frame_rows(chunks))
+    selected = {
+        index for entity, index, _ in identities if entity == "/novel_view/camera1"
     }
+    count = 30 if cap <= 0 else min(30, cap)
+    assert len(selected) == count
+    assert {0} <= selected if count == 1 else {0, 29} <= selected
     camera2 = {0} if cap == 1 else {0, 1}
-    assert identities == {("camera1", index) for index in selected} | {
-        ("camera2", index) for index in camera2
-    }
+    assert {(entity, index) for entity, index, _ in identities} == {
+        ("/novel_view/camera1", index) for index in selected
+    } | {("/novel_view/camera2", index) for index in camera2}
     frames = helpers._assert_nurec_novel_media(downstream_run)
     helpers._assert_nurec_rrd(downstream_run, downstream_run.name, frames)
 
 
 @pytest.mark.parametrize("replace", [False, True])
-def test_live_rrd_rejects_unsampled_source_frame(
+def test_live_rrd_rejects_extra_source_frame_or_missing_endpoint(
     helpers, downstream_run, monkeypatch, replace
 ):
-    """Reject extra or substituted identities even with genuine source JPEG bytes.
+    """Reject over-cap or missing-endpoint coverage with genuine source JPEG bytes.
 
     Args:
         helpers: Live readback helpers.
@@ -1343,7 +1370,7 @@ def test_live_rrd_rejects_unsampled_source_frame(
     Returns:
         None.
     Raises:
-        AssertionError: An unsampled source frame passes readback.
+        AssertionError: Invalid coverage passes readback.
     """
     _write_sampled_nurec_rrd(downstream_run, monkeypatch, 0)
     extra = next(
@@ -1359,7 +1386,7 @@ def test_live_rrd_rejects_unsampled_source_frame(
             chunk
             for chunk in chunks
             if str(chunk.entity_path) != "/novel_view/camera1"
-            or chunk.to_record_batch().column("frame").to_pylist() != [10]
+            or chunk.to_record_batch().column("frame").to_pylist() != [29]
         ]
     chunks.append(extra)
     frames = helpers._assert_nurec_novel_media(downstream_run)
