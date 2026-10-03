@@ -30,9 +30,22 @@ from npa.solutions.media_input import download_input
 SCHEMA = "npa.workbench.lingbot_world.controlled_continuation.v1"
 MODEL_CARD_URL = "https://huggingface.co/robbyant/lingbot-world-base-cam"
 PAPER_URL = "https://arxiv.org/abs/2601.20540"
+SOURCE_LICENSE_URL = (
+    "https://github.com/Robbyant/lingbot-world/blob/"
+    "a43bec7f8091c83e9b30b16b912f6fc906236fa6/LICENSE.txt"
+)
+UPSTREAM_CITATION_URL = (
+    "https://github.com/Robbyant/lingbot-world/blob/"
+    "a43bec7f8091c83e9b30b16b912f6fc906236fa6/README.md#-citation"
+)
 UPSTREAM_CITATION = (
     "Robbyant Team, Advancing Open-source World Models, arXiv:2601.20540, 2026"
 )
+# The exact Base (Cam) model card's prescribed command uses eight local ranks for
+# both FSDP and Ulysses. This durable SwitchWorld contract intentionally does
+# not turn the separately-qualified two/four-rank legacy smoke into a claim of
+# equivalence with that upstream configuration.
+UPSTREAM_DISTRIBUTED_WORLD_SIZE = 8
 
 
 class LingBotWorldStageError(RuntimeError):
@@ -159,6 +172,7 @@ def _upstream_provenance() -> dict[str, Any]:
             "repository": SOURCE_REPO,
             "revision": SOURCE_REF,
             "license": "Apache-2.0",
+            "license_url": SOURCE_LICENSE_URL,
             "authors": "Robbyant Team",
         },
         "checkpoint": {
@@ -166,15 +180,25 @@ def _upstream_provenance() -> dict[str, Any]:
             "revision": MODEL_REF,
             "model_card": MODEL_CARD_URL,
             "license": "Apache-2.0",
+            "payloads": "Base (Cam) diffusion, VAE, and uMT5 encoder weights",
             "baked_into_image": False,
         },
         "tokenizer": {
             "model_id": "google/umt5-xxl",
             "revision": TEXT_ENCODER_REF,
             "license": "Apache-2.0",
+            "payloads": "Tokenizer configuration and SentencePiece assets only",
             "baked_into_image": False,
         },
+        "native_topology": {
+            "entrypoint": "generate.py",
+            "task": "i2v-A14B",
+            "fsdp": True,
+            "ulysses_size": UPSTREAM_DISTRIBUTED_WORLD_SIZE,
+            "torchrun_nproc_per_node": UPSTREAM_DISTRIBUTED_WORLD_SIZE,
+        },
         "citation": UPSTREAM_CITATION,
+        "citation_url": UPSTREAM_CITATION_URL,
         "paper": PAPER_URL,
         "upstream_notice": "LingBot source acknowledges the Wan2.2 team.",
         "npa_modification": "Durable camera-control artifact wiring and evaluation; upstream inference remains generate.py.",
@@ -345,11 +369,12 @@ def _generation_document(
     controls: str,
     result: Mapping[str, Any],
     run_id: str,
+    previous: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one generation manifest that identifies its exact inputs and video."""
 
     root = _uri_parent(output_manifest_uri)
-    return {
+    document = {
         "schema": SCHEMA,
         "stage": "generate",
         "role": role,
@@ -363,6 +388,9 @@ def _generation_document(
         "native_generation": dict(result),
         "not_claimed": ["robot_action_conditioning", "training", "real_time"],
     }
+    if previous is not None:
+        document["consumed_prescribed"] = dict(previous)
+    return document
 
 
 def _validate_generation(document: Mapping[str, Any], role: str) -> None:
@@ -376,7 +404,7 @@ def _validate_generation(document: Mapping[str, Any], role: str) -> None:
 
 def _verify_previous_video(
     document: Mapping[str, Any], root: Path, storage: Any
-) -> None:
+) -> dict[str, Any]:
     """Consume and fully decode the earlier continuation before comparison."""
 
     video = _download_file(document["video_uri"], root / "previous.mp4", storage)
@@ -385,6 +413,7 @@ def _verify_previous_video(
         raise LingBotWorldStageError(
             "Earlier continuation has an unexpected frame count"
         )
+    return metrics
 
 
 def generate_continuation(
@@ -405,7 +434,7 @@ def generate_continuation(
         output_manifest_uri: Run-scoped S3 generation-manifest destination.
         prompt: Text prompt passed directly to upstream ``generate.py``.
         seed: Nonnegative native generation seed.
-        degree: Required FSDP/Ulysses GPU count (two or four).
+        degree: Required upstream Base (Cam) FSDP/Ulysses GPU count (eight).
         controls: ``prescribed`` or ``alternative`` trajectory selector.
         role: Artifact role used to bind later matched-control evaluation.
         run_id: Workflow run identity included in provenance.
@@ -421,6 +450,11 @@ def generate_continuation(
 
     if controls not in {"prescribed", "alternative"} or role != controls:
         raise LingBotWorldStageError("Generation role must match a named control")
+    if degree != UPSTREAM_DISTRIBUTED_WORLD_SIZE:
+        raise LingBotWorldStageError(
+            "The controlled-continuation contract requires the documented "
+            f"{UPSTREAM_DISTRIBUTED_WORLD_SIZE}-rank FSDP/Ulysses topology"
+        )
     _require_s3_uri(prepared_manifest_uri, "prepared_manifest_uri")
     _require_s3_uri(output_manifest_uri, "output_manifest_uri")
     if controls == "alternative" and not previous_manifest_uri:
@@ -435,6 +469,7 @@ def generate_continuation(
         prepared_path = root / "prepared.json"
         prepared = _read_json(prepared_manifest_uri, prepared_path, storage)
         _require_prepared(prepared)
+        consumed_prescribed = None
         if previous_manifest_uri:
             previous = _read_json(
                 previous_manifest_uri, root / "previous.json", storage
@@ -444,7 +479,14 @@ def generate_continuation(
                 raise LingBotWorldStageError(
                     "Alternative generation context differs from prescribed run"
                 )
-            _verify_previous_video(previous, root, storage)
+            previous_metrics = _verify_previous_video(previous, root, storage)
+            consumed_prescribed = {
+                "manifest_uri": previous_manifest_uri,
+                "manifest_sha256": file_sha256(root / "previous.json"),
+                "video_uri": previous["video_uri"],
+                "video_sha256": previous_metrics["sha256"],
+                "decoded_video": previous_metrics,
+            }
         context = _download_file(
             prepared["input"]["context_uri"], root / "context.png", storage
         )
@@ -463,6 +505,7 @@ def generate_continuation(
             controls=controls,
             result=result,
             run_id=run_id,
+            previous=consumed_prescribed,
         )
         _write_json(output / _uri_filename(output_manifest_uri), document)
         _publish_directory(output, output_manifest_uri, storage)

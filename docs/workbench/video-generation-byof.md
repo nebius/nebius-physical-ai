@@ -148,15 +148,15 @@ the context and paired trajectories, make a prescribed native continuation, make
 matched alternative-control continuation while consuming the first result, decode
 and measure the two videos, then publish an all-frame synchronized comparison MP4,
 RRD and provenance. The two generation stages call the pinned upstream
-`generate.py` path through the established four-rank B200 FSDP/Ulysses adapter;
+`generate.py` path through its documented eight-rank B200 FSDP/Ulysses topology;
 they are not a metadata wrapper or a training job.
 
-The upstream Base (Cam) README illustrates an eight-rank FSDP/Ulysses command.
-The pre-existing NPA LingBot adapter intentionally supports its independently
-qualified two- or four-rank path and this workflow selects four. It preserves a
-genuine native distributed execution topology, but it does **not** claim
-configuration, quality, throughput, or scaling equivalence to the upstream
-eight-rank example.
+The upstream Base (Cam) README prescribes eight local FSDP/Ulysses ranks, and
+this contract rejects any other degree before it fetches stage artifacts or
+starts inference. The pre-existing `byof-lingbot-world.yaml` four-rank image
+smoke remains a separate historical qualification of that legacy capability. It
+does **not** qualify this controlled-continuation graph, its topology, quality,
+throughput, or scaling.
 
 The input, both controls, model result, decode facts, and final media artifacts are
 bound by SHA-256 in run-scoped S3 manifests. The evaluation reports decoded frame
@@ -175,21 +175,28 @@ credited to the Robbyant Team and distributed under its
 [Apache-2.0 license](https://github.com/Robbyant/lingbot-world/blob/a43bec7f8091c83e9b30b16b912f6fc906236fa6/LICENSE.txt).
 The runtime checkpoint is [LingBot World Base (Cam) at
 `6fc824ffc338d64c97c77e2eb8c0f4cfc24d82bd`](https://huggingface.co/robbyant/lingbot-world-base-cam/tree/6fc824ffc338d64c97c77e2eb8c0f4cfc24d82bd),
-which labels the release Apache-2.0; its pinned text encoder is
+which labels the release Apache-2.0 and supplies the diffusion, VAE, and uMT5
+encoder weights. The runtime fetch also pins tokenizer configuration and
+SentencePiece assets from
 [`google/umt5-xxl` at `66cb9e7e85526fe440a945569e42c72fb6cbc0ad`](https://huggingface.co/google/umt5-xxl/tree/66cb9e7e85526fe440a945569e42c72fb6cbc0ad).
-Credit the upstream citation as *Robbyant Team, Advancing Open-source World
-Models, arXiv:2601.20540 (2026)*, and retain the upstream acknowledgement of the
-Wan2.2 team. NPA's modification is limited to durable artifact wiring, matched
-control evaluation, and visualization; inference remains upstream `generate.py`.
+Credit the upstream citation, including its full author list, exactly as
+[published in the pinned source BibTeX](https://github.com/Robbyant/lingbot-world/blob/a43bec7f8091c83e9b30b16b912f6fc906236fa6/README.md#-citation):
+*Robbyant Team et al., Advancing Open-source World Models, arXiv:2601.20540
+(2026)*. Retain the upstream acknowledgement of the Wan2.2 team. NPA's
+modification is limited to durable artifact wiring, matched-control evaluation,
+and visualization; inference remains upstream `generate.py`.
 
 The 2026-10-03 exact-revision review found the source license and Base (Cam)
 model-card license above, with a public model page and no separate documented
 click-through or output-use term on those exact pages. Therefore this integration
 adds no NPA EULA, acceptance flag, telemetry, or duplicate attestation. The public
-OCI image remains a redistributable source-only bootstrap: the LingBot checkpoint,
-uMT5 checkpoint, CUDA runtime, and operator cache are fetched at runtime and are
-not image layers. User-provided context media, their S3 retention, and any
-downstream use of generated output remain the operator's separate data-governance
+OCI image is a redistributable source-and-OSS bootstrap: it retains the Apache
+license and upstream notices, but not model weights, context media, credentials,
+or populated caches. CUDA/PyTorch/NCCL runtime payloads are fetched under their
+respective provider terms; Base (Cam) weights and tokenizer assets are fetched
+under their recorded Apache-2.0 releases; no training or evaluation dataset is
+used by this inference contract. User-provided context media, their S3 retention,
+and downstream generated outputs remain the operator's separate data-governance
 responsibility. Recheck these upstream pages before publishing a different source
 or checkpoint revision; access to a payload alone is not a redistribution grant.
 

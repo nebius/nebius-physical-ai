@@ -25,6 +25,7 @@ MODEL_REF = "6fc824ffc338d64c97c77e2eb8c0f4cfc24d82bd"
 TEXT_ENCODER_REF = "66cb9e7e85526fe440a945569e42c72fb6cbc0ad"
 FRAME_COUNT = 161
 CONTROL_FILENAMES = ("poses.npy", "intrinsics.npy")
+SUPPORTED_DISTRIBUTED_DEGREES = (2, 4, 8)
 
 
 def _checkpoint(cache: Path) -> Path:
@@ -196,7 +197,9 @@ def generate_camera_video(
         prompt: Native generation prompt.
         seed: Nonnegative generation seed.
         output: New writable output directory.
-        degree: Two or four GPUs for FSDP and Ulysses.
+        degree: Supported FSDP/Ulysses GPU count. The upstream Base (Cam)
+            example prescribes eight ranks; two and four remain available only
+            for the separately qualified legacy BYOF capability.
         controls_dir: Optional upstream-compatible authored camera controls.
 
     Returns:
@@ -209,9 +212,9 @@ def generate_camera_video(
     import torch
     from PIL import Image
 
-    if degree not in (2, 4) or torch.cuda.device_count() != degree:
+    if degree not in SUPPORTED_DISTRIBUTED_DEGREES or torch.cuda.device_count() != degree:
         raise ValueError(
-            "LingBot camera capability requires exactly two or four CUDA GPUs"
+            "LingBot camera capability requires exactly 2, 4, or 8 CUDA GPUs"
         )
     if not prompt.strip() or type(seed) is not int or seed < 0:
         raise ValueError("A nonempty prompt and nonnegative integer seed are required")

@@ -14,6 +14,7 @@ import pytest
 
 from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.spec import load_spec
+from npa.orchestration.npa_workflow.submit_matrix import SUBMIT_LIVE_MATRIX
 from npa.solutions.lingbot_camera import FRAME_COUNT, create_camera_controls
 from npa.workflows import lingbot_world
 
@@ -94,6 +95,7 @@ def _fake_generation(
         "controls": {
             "poses.npy": lingbot_world.file_sha256(output / "controls" / "poses.npy")
         },
+        "observed": {"sha256": lingbot_world.file_sha256(output / "video.mp4")},
     }
 
 
@@ -151,8 +153,10 @@ def test_workflow_has_five_real_stages_with_exact_artifact_handoffs() -> None:
     assert "generate" in alternative.shell and "--controls alternative" in alternative.shell
     assert "evaluate" in evaluate.shell
     assert "visualize" in visualize.shell
-    assert prescribed.resources_profile["accelerators"] == "B200:4"
-    assert alternative.resources_profile["accelerators"] == "B200:4"
+    assert prescribed.resources_profile["accelerators"] == "B200:8"
+    assert alternative.resources_profile["accelerators"] == "B200:8"
+    assert "--degree 8" in prescribed.shell
+    assert "--degree 8" in alternative.shell
     prepared_uri = prepare.outputs[0]["uri"]
     prescribed_uri = prescribed.outputs[0]["uri"]
     alternative_uri = alternative.outputs[0]["uri"]
@@ -179,6 +183,11 @@ def test_workflow_has_five_real_stages_with_exact_artifact_handoffs() -> None:
     readiness = json.loads(SPEC.with_suffix(".readiness.json").read_text())
     assert readiness["workflow_sha256"] == hashlib.sha256(SPEC.read_bytes()).hexdigest()
     assert readiness["prerequisites"]["target_runtime"]["status"] == "unverified"
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == SPEC.name)
+    assert case.tier == "gpu"
+    assert not case.plan_only
+    assert case.rotation_skip
+    assert "eight" in case.skip_reason
 
 
 def test_connected_stages_publish_and_reconsume_real_media(
@@ -208,7 +217,7 @@ def test_connected_stages_publish_and_reconsume_real_media(
         prescribed_uri,
         "A controlled camera movement through a hangar.",
         7,
-        4,
+        8,
         "prescribed",
         "prescribed",
         "demo",
@@ -218,7 +227,7 @@ def test_connected_stages_publish_and_reconsume_real_media(
         alternative_uri,
         "A controlled camera movement through a hangar.",
         7,
-        4,
+        8,
         "alternative",
         "alternative",
         "demo",
@@ -231,11 +240,17 @@ def test_connected_stages_publish_and_reconsume_real_media(
         prescribed_uri, alternative_uri, report_uri, visualization_uri, "demo"
     )
     assert prepared["input"]["context_sha256"]
+    assert prepared["upstream"]["source"]["license_url"].endswith("LICENSE.txt")
+    assert prepared["upstream"]["citation_url"].endswith("README.md#-citation")
     assert (
         prescribed["native_generation"]["capability"]
         == "lingbot_world_camera_conditioned_video"
     )
     assert alternative["control"] == "alternative"
+    assert alternative["consumed_prescribed"]["manifest_uri"] == prescribed_uri
+    assert alternative["consumed_prescribed"]["video_sha256"] == prescribed[
+        "native_generation"
+    ]["observed"]["sha256"]
     assert report["visual_response"]["mean_absolute_rgb_delta"] > 0.001
     assert visualization["comparison_mp4"]["frame_count"] == FRAME_COUNT
     assert visualization["comparison_rrd"]["frames"] == FRAME_COUNT
@@ -245,6 +260,22 @@ def test_connected_stages_publish_and_reconsume_real_media(
     assert storage._path(
         "s3://unit/runs/demo/reports/visualization/comparison.rrd"
     ).is_file()
+
+
+def test_controlled_contract_rejects_legacy_four_rank_topology() -> None:
+    """The SwitchWorld contract cannot silently use the legacy smoke shape."""
+
+    with pytest.raises(lingbot_world.LingBotWorldStageError, match="8-rank"):
+        lingbot_world.generate_continuation(
+            "s3://unit/prepared/manifest.json",
+            "s3://unit/prescribed/manifest.json",
+            "prompt",
+            1,
+            4,
+            "prescribed",
+            "prescribed",
+            "demo",
+        )
 
 
 def test_alternative_generation_rejects_unmatched_context(
@@ -279,7 +310,7 @@ def test_alternative_generation_rejects_unmatched_context(
             "s3://unit/alternative/manifest.json",
             "prompt",
             1,
-            4,
+            8,
             "alternative",
             "alternative",
             "demo",

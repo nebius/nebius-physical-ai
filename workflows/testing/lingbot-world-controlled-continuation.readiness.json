@@ -1,14 +1,15 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "dbe013a8b292265e4e03c0d5c579c713477bf5954ed6e376adaab6ad3103c5f5",
+  "workflow_sha256": "418edc6b4c7138fdc3746ce5ddf4c3e9e79d0e6c463180dafa19cb80b3462fcc",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The local NPA CLI validated the exact five-state spec and planned its CPU and B200:4 stages with run-scoped S3 handoffs.",
+      "reason": "The local NPA CLI validated the exact five-state spec and planned its CPU and documented B200:8 stages with run-scoped S3 handoffs, including a configured run with a real checksum-bound upstream context image.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/lingbot-world-controlled-continuation.yaml --json: status valid",
         "npa workbench workflow plan-spec workflows/testing/lingbot-world-controlled-continuation.yaml --run-id lingbot-world-readiness --json: 5 ordered steps",
-        "npa workbench workflow plan-spec with the owned JPEG input override: 5 ordered steps and no placeholder bucket"
+        "npa workbench workflow plan-spec with the owned JPEG input override: 5 ordered steps and no placeholder bucket",
+        "configured plan: B200:8 prescribed and alternative stages; each downstream URI consumes its predecessor artifact"
       ]
     },
     "task_fidelity": {
@@ -46,16 +47,16 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The exact immutable public npa-lingbot-world image digest passed the selected Kubernetes target pull preflight. The image remains source-only; LingBot and uMT5 payloads are runtime fetches.",
+      "reason": "The exact immutable public npa-lingbot-world image digest passed the selected Kubernetes target pull preflight. The image is a source-and-OSS bootstrap; LingBot weights and tokenizer assets are runtime fetches.",
       "evidence": [
-        "npa workbench workflow preflight-images workflows/testing/lingbot-world-controlled-continuation.yaml --infra k8s/<configured-context> --json: verified_target_pull"
+        "npa workbench workflow preflight-images workflows/testing/lingbot-world-controlled-continuation.yaml --infra k8s/<configured-context> --json: verified_target_pull (2026-10-03)"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "Live submission was attempted with an owned run ID and private SkyPilot state, but NPA GPU readiness observed only one allocatable GPU while this exact upstream-native workflow requires B200:4. The wait was interrupted before workload admission; no workflow manifest, model output, MP4, RRD, or GPU acceptance result exists. Historical single-workflow image qualification is not evidence for this new graph.",
+      "reason": "Fresh owned GPU discovery found one allocatable RTX PRO 6000 and no B200 product on the configured target. This exact upstream-native workflow requires the documented B200:8 topology, so NPA rejects it before workload admission. It remains unverified until an eight-GPU compatible target admits it and its final MP4/RRD artifacts are independently inspected. No workflow manifest, model output, MP4, RRD, or GPU acceptance result exists for this graph. Historical single-workflow image qualification is not evidence for it.",
       "evidence": [
-        "owned submit GPU readiness: Kubernetes allocatable=1; required topology=B200:4",
+        "owned GPU discovery: allocatable=1; advertised product=RTX PRO 6000; requested topology=B200:8",
         "/tmp/npa-onboarding-20261002-lingbot-world/novel-issues.md"
       ]
     }
