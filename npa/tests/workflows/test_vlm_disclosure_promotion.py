@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+from pathlib import Path
+import runpy
 
 import httpx
 from PIL import Image
@@ -12,6 +14,42 @@ import pytest
 from npa.workbench import vlm_eval
 from npa.workflows import data_factory_stages
 from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
+
+
+@pytest.mark.parametrize("body", [b'{"control":"utf8"}', b"\xff\xfecontrol"])
+def test_live_recorder_retains_original_bytes_before_decoding(
+    monkeypatch, tmp_path, body
+):
+    import hashlib
+
+    response = httpx.Response(200, content=body)
+    monkeypatch.setattr(httpx.Client, "post", lambda *_, **__: response)
+    lane = runpy.run_path(
+        str(Path(__file__).parents[1] / "e2e/test_vlm_disclosures_live_e2e.py")
+    )
+    records = lane["_record_transport"](monkeypatch, tmp_path)
+    with httpx.Client() as client:
+        client.post("https://example.test/v1", json={"model": "synthetic"})
+    assert len(records) == 1
+    record = records[0]
+    assert (tmp_path / record["raw_response_bytes_file"]).read_bytes() == body
+    assert record["response_sha256"] == hashlib.sha256(body).hexdigest()
+
+
+def test_live_recorder_refuses_existing_raw_artifact(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        httpx.Client, "post", lambda *_, **__: httpx.Response(200, content=b"new")
+    )
+    prior = tmp_path / "transport-01.response.bin"
+    prior.write_bytes(b"retained failure")
+    lane = runpy.run_path(
+        str(Path(__file__).parents[1] / "e2e/test_vlm_disclosures_live_e2e.py")
+    )
+    records = lane["_record_transport"](monkeypatch, tmp_path)
+    with httpx.Client() as client, pytest.raises(FileExistsError):
+        client.post("https://example.test/v1", json={"model": "synthetic"})
+    assert prior.read_bytes() == b"retained failure"
+    assert records == []
 
 
 @pytest.mark.parametrize("positional_count", [11, 20, 23])
