@@ -56,12 +56,18 @@ def _operator_config() -> dict:
     return json.loads(path.read_text())
 
 
-def _prepare_config(target: Path, *, generated: bool = False) -> Path:
+def _prepare_config(
+    target: Path, *, generated: bool = False, audit_kind: str | None = None
+) -> Path:
+    if audit_kind not in (None, "preference") or (generated and audit_kind is None):
+        raise _AuditConfigurationError("unavailable_or_missing_audit_kind")
     config = (
         generated_preference_config(target / "controls")
         if generated
         else _operator_config()
     )
+    if set(config["cases"]) != {"blinded-preference"}:
+        raise _AuditConfigurationError("unavailable_audit_case")
     case = config["cases"]["blinded-preference"]
     controls = audit_controls(case)
     for index, control in enumerate(controls.values()):
@@ -213,9 +219,15 @@ def _run_tests(target: Path) -> int:
 
 
 def _verify(
-    root: Path, target: Path, receipt: dict, *, generated: bool = False
+    root: Path,
+    target: Path,
+    receipt: dict,
+    *,
+    generated: bool = False,
+    audit_kind: str | None = None,
 ) -> None:
-    config_path = _prepare_config(target, generated=generated)
+    config_path = _prepare_config(target, generated=generated, audit_kind=audit_kind)
+    receipt["audit_kind"] = "preference"
     receipt["configuration_sha256"] = hashlib.sha256(
         config_path.read_bytes()
     ).hexdigest()
@@ -335,6 +347,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument(
+        "--audit-kind",
+        help="Generated audit kind; this standalone runner supports preference.",
+    )
+    parser.add_argument(
         "--generated-controls",
         action="store_true",
         help="Run frozen local visual controls with the protected Token Factory key.",
@@ -353,17 +369,28 @@ def main(argv: list[str] | None = None) -> int:
     receipt["control_source"] = (
         "generated-visual-contract-v1" if args.generated_controls else "operator"
     )
-    _complete_receipt(root, target, receipt, generated=args.generated_controls)
+    _complete_receipt(
+        root,
+        target,
+        receipt,
+        generated=args.generated_controls,
+        audit_kind=args.audit_kind,
+    )
     _write_receipt(target / "receipt.json", receipt)
     print(json.dumps({key: receipt[key] for key in ("passed", "counts", "failure")}))
     return 0 if receipt["passed"] else 1
 
 
 def _complete_receipt(
-    root: Path, target: Path, receipt: dict, *, generated: bool
+    root: Path,
+    target: Path,
+    receipt: dict,
+    *,
+    generated: bool,
+    audit_kind: str | None = None,
 ) -> None:
     try:
-        _verify(root, target, receipt, generated=generated)
+        _verify(root, target, receipt, generated=generated, audit_kind=audit_kind)
     except _AuditConfigurationError as exc:
         receipt["failure"] = str(exc)
     except (ValueError, KeyError, TypeError, OSError):

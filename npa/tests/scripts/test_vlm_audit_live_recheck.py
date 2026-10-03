@@ -233,6 +233,7 @@ def test_private_configuration_symlink_loops_fail_closed(
         target,
         receipt,
         generated=boundary == "generated-controls",
+        audit_kind="preference",
     )
     assert receipt["passed"] is False
     assert receipt["failure"] == "audit_configuration_or_execution_failed"
@@ -346,6 +347,39 @@ def test_malformed_execution_counts_fail_closed(monkeypatch, tmp_path, bad_count
     receipt = json.loads((target / "receipt.json").read_text())
     assert receipt["failure"] == "invalid_execution_counts"
     assert receipt["passed"] is False
+
+
+@pytest.mark.parametrize("kind", [None, "paired", "unknown-private-value"])
+def test_generated_selector_cannot_substitute_another_lane(monkeypatch, tmp_path, kind):
+    runner = _runner()
+    monkeypatch.setattr(
+        runner, "generated_preference_config", lambda *_: pytest.fail("wrong lane")
+    )
+    monkeypatch.setattr(runner, "_execute", lambda *_: pytest.fail("must not execute"))
+    arguments = ["--generated-controls", "--evidence-dir", str(tmp_path / "run")]
+    if kind is not None:
+        arguments += ["--audit-kind", kind]
+    assert runner.main(arguments) == 1
+    receipt = json.loads((tmp_path / "run/receipt.json").read_text())
+    assert receipt["failure"] == "unavailable_or_missing_audit_kind"
+    assert receipt["passed"] is False and not any(receipt["counts"].values())
+    assert "unknown-private-value" not in json.dumps(receipt)
+
+
+def test_operator_config_cannot_smuggle_an_unavailable_case(monkeypatch, tmp_path):
+    runner = _runner()
+    path = _config(monkeypatch, tmp_path)
+    config = json.loads(path.read_text())
+    config["cases"]["paired-judges"] = config["cases"]["blinded-preference"]
+    path.write_text(json.dumps(config))
+    monkeypatch.setattr(runner, "_execute", lambda *_: pytest.fail("must not execute"))
+    target = tmp_path / "run"
+    assert (
+        runner.main(["--audit-kind", "preference", "--evidence-dir", str(target)]) == 1
+    )
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["failure"] == "unavailable_audit_case"
+    assert receipt["passed"] is False and not any(receipt["counts"].values())
 
 
 def test_missing_execution_report_fails_closed(monkeypatch, tmp_path):

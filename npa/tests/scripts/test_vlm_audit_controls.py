@@ -62,7 +62,9 @@ def test_generated_config_selects_all_controls_and_private_outputs(
 ):
     runner = _module("npa/scripts/vlm_audit_live_recheck.py")
     monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "synthetic-key")
-    config_path = runner._prepare_config(tmp_path, generated=True)
+    config_path = runner._prepare_config(
+        tmp_path, generated=True, audit_kind="preference"
+    )
     config = json.loads(config_path.read_text())
     controls = audit_controls(config["cases"]["blinded-preference"])
     outputs = [case["request"]["output_path"] for case in controls.values()]
@@ -85,7 +87,15 @@ def test_generated_lane_does_not_fall_back_to_saved_key(monkeypatch, tmp_path):
         runner, "_scheduled_preflight", lambda: pytest.fail("network probe")
     )
     assert (
-        runner.main(["--generated-controls", "--evidence-dir", str(tmp_path / "run")])
+        runner.main(
+            [
+                "--generated-controls",
+                "--audit-kind",
+                "preference",
+                "--evidence-dir",
+                str(tmp_path / "run"),
+            ]
+        )
         == 1
     )
     receipt = json.loads((tmp_path / "run/receipt.json").read_text())
@@ -131,6 +141,7 @@ def test_scheduled_lane_preserves_branch_policy_and_uploads_only_receipts():
     }
     assert step["if"] == "${{ !cancelled() }}"
     assert "vlm_audit_live_recheck.py --generated-controls" in step["run"]
+    assert "--audit-kind preference" in step["run"]
     upload = next(
         row for row in job["steps"] if "upload-artifact" in row.get("uses", "")
     )
@@ -225,7 +236,18 @@ def test_generated_lane_rejects_silently_removed_controls(monkeypatch, tmp_path)
 
     monkeypatch.setattr(runner, "_execute", execute)
     target = tmp_path / "run"
-    assert runner.main(["--generated-controls", "--evidence-dir", str(target)]) == 1
+    assert (
+        runner.main(
+            [
+                "--generated-controls",
+                "--audit-kind",
+                "preference",
+                "--evidence-dir",
+                str(target),
+            ]
+        )
+        == 1
+    )
     receipt = json.loads((target / "receipt.json").read_text())
     assert receipt["counts"]["passed"] == 1
     assert receipt["passed"] is False
