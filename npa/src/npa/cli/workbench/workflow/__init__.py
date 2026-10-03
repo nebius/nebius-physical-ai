@@ -2275,16 +2275,44 @@ def submit_cmd(
                         timeout=30,
                     )
 
-                missing.extend(
-                    kubernetes_prerequisites(
-                        spec_config,
-                        runner=_run_sim2real_kubectl,
-                        namespace=(
-                            os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
-                            or "default"
+                from npa.orchestration.npa_workflow.sim2real_driver_preflight import (
+                    isaac_render_placements,
+                )
+                from npa.orchestration.skypilot._bin import resolve_global_config_path
+                from yaml import YAMLError
+
+                try:
+                    isaac_placements = isaac_render_placements(
+                        merged_npa_spec,
+                        context=infra_context,
+                        global_config_path=resolve_global_config_path(config_path),
+                        allowed_nodes=_skypilot_allowed_nodes(
+                            sky_bin=sky_bin,
+                            config_path=config_path,
+                            isolated_config_dir=isolated_config_dir,
                         ),
                     )
-                )
+                except (OSError, ValueError, RuntimeError, YAMLError):
+                    missing.append(
+                        (
+                            "Isaac render placement configuration could not be verified",
+                            "verify the selected SkyPilot configuration is readable YAML "
+                            "with mapping-valued Kubernetes settings and valid Isaac "
+                            "resource profiles, selectors, affinity, and tolerations",
+                        )
+                    )
+                else:
+                    missing.extend(
+                        kubernetes_prerequisites(
+                            spec_config,
+                            runner=_run_sim2real_kubectl,
+                            isaac_placements=isaac_placements,
+                            namespace=(
+                                os.environ.get("NPA_SIM2REAL_K8S_NAMESPACE", "").strip()
+                                or "default"
+                            ),
+                        )
+                    )
             if missing:
                 _fail_missing_prerequisites(yaml_path, missing)
                 return
@@ -5315,20 +5343,13 @@ def _skypilot_allowed_nodes(
 
     import yaml
 
-    from npa.orchestration.skypilot._bin import resolve_config
+    from npa.orchestration.skypilot._bin import resolve_global_config_path
 
-    resolved = resolve_config(
-        sky_bin=sky_bin or None,
-        global_config_path=config_path,
-        isolated_config_dir=isolated_config_dir,
-    )
-    if resolved.global_config_path is None:
+    resolved_path = resolve_global_config_path(config_path)
+    if resolved_path is None:
         return ()
     try:
-        document = (
-            yaml.safe_load(resolved.global_config_path.read_text(encoding="utf-8"))
-            or {}
-        )
+        document = yaml.safe_load(resolved_path.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError) as exc:
         raise RuntimeError(
             "could not read the selected SkyPilot config for allowed_nodes preflight"

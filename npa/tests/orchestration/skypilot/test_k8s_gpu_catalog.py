@@ -434,6 +434,22 @@ def test_known_b200_label_is_exact_context_scoped() -> None:
     ]
 
 
+def test_known_b200_label_value_is_lowercase_for_skypilot() -> None:
+    # SkyPilot's SkyPilotLabelFormatter derives the label value as
+    # accelerator.lower() and rejects any non-lowercase value, so an uppercase
+    # "B200" label is written to the node but never matches the optimizer and
+    # trips FAILED_PRECHECKS. Guard the lowercase invariant for every product
+    # alias NPA bridges.
+    from npa.orchestration.skypilot.k8s_gpu_catalog import (
+        _KNOWN_SKYPILOT_LABELS,
+        _normalize,
+    )
+
+    for source, value in _KNOWN_SKYPILOT_LABELS.items():
+        assert source == _normalize(source), source
+        assert value == value.lower(), (source, value)
+
+
 def test_known_gpu_label_rbac_failure_is_immediate_and_actionable() -> None:
     inventory = KubernetesGpuInventory(
         context="ctx",
@@ -668,6 +684,7 @@ def _node(
         committed=1 - free,
         free=free,
         exclusion="" if ready and schedulable else "excluded",
+        labels=(("nvidia.com/gpu.product", product),),
         allocatable_pods=110,
         free_pod_slots=110,
     )
@@ -1022,10 +1039,84 @@ def test_gang_capacity_waits_for_unbound_pending_gpu_demand() -> None:
         unbound_pending_gpu_requests=1,
     )
 
-    with pytest.raises(PendingGpuPlacementError, match="active unbound GPU pod"):
+    with pytest.raises(PendingGpuPlacementError, match="active unbound GPU pod") as exc:
         preflight_kubernetes_gpu_gang(
             inventory, accelerator="RTXPRO6000:1", node_count=2
         )
+    assert "available placement evidence cannot rule out contention" in str(exc.value)
+
+
+def test_gang_capacity_ignores_pending_pods_for_other_accelerators() -> None:
+    # Stale pending pods pinned to a different accelerator (an L40S zombie and a
+    # RTX PRO 6000 pod) can never bind to the B200 node, so they must not block a
+    # B200 gang that has a free compatible node.
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={},
+        nodes=(_node("a", product="B200"),),
+        unbound_pending_gpu_pods=2,
+        unbound_pending_gpu_requests=2,
+        unbound_pending_gpu_selectors=(
+            ({"nvidia.com/gpu.product": "L40S"}, 1),
+            (
+                {
+                    "nvidia.com/gpu.product": "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"
+                },
+                1,
+            ),
+        ),
+    )
+    evidence = preflight_kubernetes_gpu_gang(
+        inventory, accelerator="B200:1", node_count=1
+    )
+    assert evidence["compatible_free_nodes"] == 1
+
+
+def test_gang_capacity_blocks_unconstrained_pending_pod() -> None:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import PendingGpuPlacementError
+
+    # A pending pod that pins no accelerator could land on the B200 node, so it
+    # still makes free capacity indeterminate (fail closed).
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={},
+        nodes=(_node("a", product="B200"),),
+        unbound_pending_gpu_pods=1,
+        unbound_pending_gpu_requests=1,
+        unbound_pending_gpu_selectors=(({}, 1),),
+    )
+    with pytest.raises(PendingGpuPlacementError, match="active unbound GPU pod"):
+        preflight_kubernetes_gpu_gang(inventory, accelerator="B200:1", node_count=1)
+
+
+def test_gang_capacity_blocks_pending_pod_for_same_accelerator() -> None:
+    from npa.orchestration.skypilot.k8s_gpu_catalog import PendingGpuPlacementError
+
+    inventory = KubernetesGpuInventory(
+        context="exact-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=("B200",),
+        node_labels={},
+        nodes=(_node("a", product="B200"),),
+        unbound_pending_gpu_pods=1,
+        unbound_pending_gpu_requests=1,
+        unbound_pending_gpu_selectors=(({"nvidia.com/gpu.product": "B200"}, 1),),
+    )
+    with pytest.raises(PendingGpuPlacementError, match="active unbound GPU pod"):
+        preflight_kubernetes_gpu_gang(inventory, accelerator="B200:1", node_count=1)
 
 
 def test_gang_capacity_applies_profile_node_selector_and_required_affinity() -> None:
@@ -1369,3 +1460,142 @@ def test_validation_environment_migrates_changed_config_only_after_safe_recovery
     assert yaml.safe_load(stale_config.read_text(encoding="utf-8"))[
         "allowed_clouds"
     ] == ["kubernetes"]
+
+
+@pytest.mark.parametrize(
+    ("accelerator", "product"),
+    [
+        ("H100", "NVIDIA-H100-80GB-HBM3"),
+        ("H200", "NVIDIA-H200-141GB-HBM3e"),
+        ("B200", "NVIDIA-B200-180GB"),
+        ("L40S", "NVIDIA-L40S"),
+        ("RTXPRO6000", "NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition"),
+    ],
+)
+@pytest.mark.parametrize(
+    "selector_key", ["nvidia.com/gpu.product", "skypilot.co/accelerator"]
+)
+def test_discovered_pending_selector_blocks_matching_candidate(
+    accelerator, product, selector_key
+):
+    from npa.orchestration.skypilot.k8s_gpu_catalog import PendingGpuPlacementError
+
+    labels = {
+        "nvidia.com/gpu.product": product,
+        "skypilot.co/accelerator": accelerator.lower(),
+    }
+    selector = {selector_key: labels[selector_key]}
+    inventory = _discover_pending_selector(labels, selector)
+    assert inventory.unbound_pending_gpu_selectors == ((selector, 1),)
+    assert inventory.to_dict()["unbound_pending_gpu_selectors"] == [[selector, 1]]
+    with pytest.raises(PendingGpuPlacementError):
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator=f"{accelerator}:1", node_count=1
+        )
+
+
+@pytest.mark.parametrize(
+    ("selector", "labels", "expected"),
+    [
+        ({}, {"pool": "render"}, (1, 1)),
+        ({"pool": "other"}, {}, (1, 1)),
+        ({"pool": "render"}, {"pool": "render"}, (1, 1)),
+        ({"pool": "other"}, {"pool": "render"}, (0, 0)),
+        (
+            {"nvidia.com/gpu.product": "B200", "pool": "other"},
+            {"nvidia.com/gpu.product": "B200", "pool": "render"},
+            (0, 0),
+        ),
+        (
+            {"skypilot.co/accelerator": "B200"},
+            {"skypilot.co/accelerator": "b200"},
+            (0, 0),
+        ),
+    ],
+)
+def test_pending_contention_preserves_exact_selector_constraints(
+    selector, labels, expected
+):
+    from dataclasses import replace
+    from npa.orchestration.skypilot.k8s_gpu_catalog import _pending_gpu_contention
+
+    node = replace(_node("candidate"), labels=tuple(labels.items()))
+    inventory = KubernetesGpuInventory(
+        context="synthetic",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(),
+        node_labels={},
+        nodes=(node,),
+        unbound_pending_gpu_pods=1,
+        unbound_pending_gpu_requests=1,
+        unbound_pending_gpu_selectors=((selector, 1),),
+    )
+    assert _pending_gpu_contention(inventory, [node]) == expected
+
+
+def test_incomplete_pending_selector_evidence_preserves_global_demand():
+    from npa.orchestration.skypilot.k8s_gpu_catalog import _pending_gpu_contention
+
+    inventory = KubernetesGpuInventory(
+        context="synthetic",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(),
+        node_labels={},
+        unbound_pending_gpu_pods=2,
+        unbound_pending_gpu_requests=3,
+        unbound_pending_gpu_selectors=(({"nvidia.com/gpu.product": "L40S"}, 1),),
+    )
+    assert _pending_gpu_contention(inventory, [_node("candidate", product="B200")]) == (
+        2,
+        3,
+    )
+
+
+def _labelled_gpu_nodes(labels):
+    return {
+        "items": [
+            {
+                "metadata": {"name": "candidate", "labels": labels},
+                "spec": {},
+                "status": {
+                    "conditions": [{"type": "Ready", "status": "True"}],
+                    "allocatable": {"nvidia.com/gpu": "1", "pods": "110"},
+                    "capacity": {"nvidia.com/gpu": "1"},
+                },
+            }
+        ]
+    }
+
+
+def _discover_pending_selector(labels, selector):
+    nodes = _labelled_gpu_nodes(labels)
+    pods = {
+        "items": [
+            {
+                "spec": {
+                    "nodeSelector": selector,
+                    "containers": [
+                        {
+                            "resources": {
+                                "requests": {"nvidia.com/gpu": "1"},
+                            }
+                        }
+                    ],
+                },
+                "status": {"phase": "Pending"},
+            }
+        ]
+    }
+
+    def runner(command, **kwargs):
+        return subprocess.CompletedProcess(
+            command, 0, json.dumps(pods if "pods" in command else nodes), ""
+        )
+
+    return discover_kubernetes_gpu_inventory(context="synthetic", runner=runner)

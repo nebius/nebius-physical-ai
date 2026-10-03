@@ -709,3 +709,17 @@ image publication status.
 `eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
 page alongside the measured evaluation manifest. The SDK and service expose the
 same behavior with `video=True`.
+
+### Live MK8s attachment matching
+
+After provisioning an owned GPU-cluster-attached pool through `npa cluster up`,
+run `tests/e2e/test_mk8s_tainted_matching_live.py` with
+`NPA_INTEGRATION_E2E=1` and `NPA_MK8S_MATCH_LIVE_CONFIG` pointing to a private JSON
+file. Without that file the test skips. The file supplies `terraform_state`,
+`node_group_id`, `cluster_id`, `subnet_id`, `profile`, and a private `evidence_dir`,
+plus `pool` (`MK8sNodePool` fields) and `cluster` (`MK8sDesired` fields excluding
+`gpu_nodes`) from the provisioning request. The read-only test fetches the exact
+live CLI response, proves it matches Terraform state and desired attachment,
+and rejects a changed GPU-cluster ID. It does not replace provisioning's GPU
+health and CUDA validation. Keep configuration, state, and provider responses
+outside Git.
