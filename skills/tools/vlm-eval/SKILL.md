@@ -111,6 +111,13 @@ npa workbench vlm-eval run \
   whether they meet the target. A leading confirmation question such as "does
   this show X rather than a blank?" can make an unrelated negative control pass.
   Run blank and unrelated controls through the exact same task-plus-rubric prompt.
+- The default rubric instructs the judge to assign `0.0` and `success: false`
+  when the requested terminal state is missing or ambiguous in the supplied
+  frames. That instruction overrides partial-progress credit: approach, contact,
+  grasp, lift, transfer, or disappearance alone cannot prove placement, release,
+  stability, or completion. This is a prompt instruction, not an independent
+  visual validator; the gate still uses only the returned score and threshold.
+  Custom rubrics replace it.
 - `--success-threshold` (default 0.8) is the gate. In `loop` it applies to the
   **mean** score across rollouts, which is a coarser claim than per-rollout
   success — do not report it as a per-rollout success rate.

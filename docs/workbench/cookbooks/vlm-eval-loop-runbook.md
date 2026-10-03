@@ -208,6 +208,14 @@ Use neutral identify-then-judge task text. Ask what the frames show before
 asking whether they satisfy the target; do not ask the model to confirm the
 desired answer. A blank and an unrelated rollout must score low under the exact
 same task-plus-rubric prompt before the positive score is usable evidence.
+Add a source-matched missing-terminal control that retains plausible progress
+but omits the requested outcome, an ambiguous terminal control, and blank
+evidence. The default rubric instructs the judge to assign `0.0` for missing or
+ambiguous terminal evidence with no partial-progress credit. This is a prompt
+instruction, not an independent visual validator. The gate still uses
+`score >= success_threshold`, so select a positive, calibrated threshold.
+Custom rubrics replace the default instruction. Selected stills cannot prove
+hidden state, continuous execution, or safety.
 
 Sweep thresholds, rubrics, and models against labeled rollouts:
 
