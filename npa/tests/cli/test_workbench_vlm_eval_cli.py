@@ -12,7 +12,6 @@ from npa.cli.main import app
 from npa.workbench import vlm_eval
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
-    DEFAULT_SAMPLE_BENCHMARK_PATH,
     JUDGE_COMPARISON_RESULT_FILENAME,
     LEGACY_RESULT_FILENAME,
     PREFERENCE_COMPARISON_RESULT_FILENAME,
