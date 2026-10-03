@@ -25,6 +25,10 @@ def metadata_live_contract() -> dict[str, object]:
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_ROS2_PREFLIGHT_LIVE": (
+        "requires an explicitly selected, sourced ROS 2 Jazzy runtime; "
+        "run with skills/tools/ros2/SKILL.md; no robot or cloud mutation"
+    ),
     "NPA_AGENT_PROVISION_BOOLEAN_LIVE_CONFIG": (
         "requires private connection credentials for an operator-selected isolated CPU agent; "
         "run with npa/tests/e2e/README.md"

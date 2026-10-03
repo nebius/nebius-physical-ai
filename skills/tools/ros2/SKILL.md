@@ -39,3 +39,21 @@ host or certifies that host from a pod-local result.
   through `make_cli_wrapper`.
 - Targets ROS 2 Jazzy (`SUPPORTED_ROS_DISTRO = "jazzy"`); Jetson Thor nodes
   run Jazzy + Isaac ROS inside the runtime-fetched container.
+
+## Native validation
+
+In an operator-selected Jazzy runtime, source `/opt/ros/jazzy/setup.bash` and
+install NPA into a Python environment that can import the native `rclpy` package:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_ROS2_PREFLIGHT_LIVE=1 \
+  PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
+  npa/.venv/bin/python -m pytest npa/tests/e2e/test_ros2_preflight_live.py -q
+```
+
+The three tests exercise the real SDK, the ToolRef module entry point, and
+wrong-distribution refusal without mocked ROS modules. Explicitly enabled tests
+fail if Jazzy is unavailable. They do not validate a remote robot, bridge,
+bag conversion, or fleet adapter, and they make no cloud or robot mutations.
+The command disables unrelated ROS pytest plugins; this suite does not use
+launch-testing hooks and needs no external pytest plugins.
