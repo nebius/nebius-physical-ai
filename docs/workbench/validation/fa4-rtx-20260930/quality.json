@@ -1,0 +1,80 @@
+{
+  "status": "passed",
+  "cases": [
+    {
+      "name": "robot-workcell",
+      "deterministic_across_blocks_and_repeats": {
+        "fa2": true,
+        "default": true,
+        "tuned": true
+      },
+      "comparisons": {
+        "fa2_vs_default": {
+          "image_ssim": 0.9891629283441041,
+          "image_psnr_db": 43.811517220572384,
+          "latent_relative_l2": 0.01324812974780798
+        },
+        "fa2_vs_tuned": {
+          "image_ssim": 0.9893532192260679,
+          "image_psnr_db": 44.27739947712617,
+          "latent_relative_l2": 0.014960967004299164
+        },
+        "default_vs_tuned": {
+          "image_ssim": 0.9899663224255774,
+          "image_psnr_db": 44.349211483485036,
+          "latent_relative_l2": 0.012450642883777618
+        }
+      }
+    },
+    {
+      "name": "warehouse",
+      "deterministic_across_blocks_and_repeats": {
+        "fa2": true,
+        "default": true,
+        "tuned": true
+      },
+      "comparisons": {
+        "fa2_vs_default": {
+          "image_ssim": 0.9926262765856203,
+          "image_psnr_db": 44.74397230133809,
+          "latent_relative_l2": 0.010837453417479992
+        },
+        "fa2_vs_tuned": {
+          "image_ssim": 0.9928261585161001,
+          "image_psnr_db": 45.174312118116625,
+          "latent_relative_l2": 0.008327716030180454
+        },
+        "default_vs_tuned": {
+          "image_ssim": 0.9934718460763686,
+          "image_psnr_db": 45.59816674352085,
+          "latent_relative_l2": 0.009391495026648045
+        }
+      }
+    },
+    {
+      "name": "sensor-rig",
+      "deterministic_across_blocks_and_repeats": {
+        "fa2": true,
+        "default": true,
+        "tuned": true
+      },
+      "comparisons": {
+        "fa2_vs_default": {
+          "image_ssim": 0.9942616008911999,
+          "image_psnr_db": 47.13075636336619,
+          "latent_relative_l2": 0.007122035603970289
+        },
+        "fa2_vs_tuned": {
+          "image_ssim": 0.9936531294767336,
+          "image_psnr_db": 46.385197045650855,
+          "latent_relative_l2": 0.008752035908401012
+        },
+        "default_vs_tuned": {
+          "image_ssim": 0.9943898474858018,
+          "image_psnr_db": 47.51956932693156,
+          "latent_relative_l2": 0.007344566751271486
+        }
+      }
+    }
+  ]
+}

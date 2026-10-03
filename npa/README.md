@@ -426,6 +426,17 @@ make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
 
+For GPU VLM provenance, use the
+[operator verification lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#live-provenance-verification).
+It requires `NPA_INTEGRATION_E2E=1`, an owner-only JSON file selected by
+`NPA_VLM_PROVENANCE_LIVE_CONFIG`, local rollout fixtures, and the endpoint key in
+`VLM_EVAL_API_KEY` (or the file's `api_key_env`). Run
+`npa/.venv/bin/python npa/scripts/vlm_provenance_live_recheck.py --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"`
+with a fresh private directory outside the checkout. The lane fails on missing
+configuration or skipped inference and leaves endpoint provisioning and cleanup
+to the operator. Hosted Kimi-K3 visual inference runs in the separate
+`token_factory_live_recheck.py` lane with `NEBIUS_TOKEN_FACTORY_KEY`.
+
 After committing, run `git fetch origin main` and `make merge-precheck` before
 pushing. This checks committed HEAD's merge with current main for conflicts and
 inconsistent dependency fingerprints without modifying your index. It does not
@@ -675,3 +686,17 @@ image publication status.
 `eval --video` also publishes `rollout.mp4` and a self-contained `rollout.html`
 page alongside the measured evaluation manifest. The SDK and service expose the
 same behavior with `video=True`.
+
+### Live MK8s attachment matching
+
+After provisioning an owned GPU-cluster-attached pool through `npa cluster up`,
+run `tests/e2e/test_mk8s_tainted_matching_live.py` with
+`NPA_INTEGRATION_E2E=1` and `NPA_MK8S_MATCH_LIVE_CONFIG` pointing to a private JSON
+file. Without that file the test skips. The file supplies `terraform_state`,
+`node_group_id`, `cluster_id`, `subnet_id`, `profile`, and a private `evidence_dir`,
+plus `pool` (`MK8sNodePool` fields) and `cluster` (`MK8sDesired` fields excluding
+`gpu_nodes`) from the provisioning request. The read-only test fetches the exact
+live CLI response, proves it matches Terraform state and desired attachment,
+and rejects a changed GPU-cluster ID. It does not replace provisioning's GPU
+health and CUDA validation. Keep configuration, state, and provider responses
+outside Git.

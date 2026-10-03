@@ -1,0 +1,12 @@
+{
+  "base": "eed1971f5132630dc296fe37601e834d4b57a248",
+  "candidate_upstream_head": "41f27f3f8cbb201c060f651d0dd94200911f8e1f",
+  "files": {
+    "flash_attn/cute/flash_bwd.py": "11f4b44c2268c28d17a9086d45d27a68e07f117d68f27be0afda2df0295ed8be",
+    "flash_attn/cute/flash_bwd_postprocess.py": "6785265cb13a8da1159185853aa30d27917aec09b6b902cb2927ee39685d78a6",
+    "flash_attn/cute/flash_bwd_sm120.py": "c75190f7e8bc4a6299e0c86a3bfbc71c309ca8e01b38c019144f23b968497169",
+    "flash_attn/cute/interface.py": "56dc7a1dd2deb50eb9afcaf88b62bf939486f6cdf0fc341f89e6db861a0df193",
+    "flash_attn/cute/mask.py": "4e3508afa3fca3c0f19e97ea4fe730bcab3b0d8d4aadb8f6d1e90817adc3861d",
+    "tests/cute/test_flash_attn_fast.py": "691e348fba92fb9e8e642a54d7815e36298a17987e045f2e205a416a8e2259b4"
+  }
+}

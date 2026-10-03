@@ -1,0 +1,148 @@
+{
+  "clipped_frames": [
+    "01-before-unsupported-surface.png",
+    "03-before-topdown.png",
+    "04-after-topdown.png"
+  ],
+  "content_tolerance": 6,
+  "frames": [
+    {
+      "background_rgb": [
+        250,
+        250,
+        250
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [
+        "right",
+        "top"
+      ],
+      "content_fraction": 0.3676142939814815,
+      "content_pixels": 254095,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 242,
+        "top": 64
+      },
+      "content_span_fraction": {
+        "horizontal": 0.971875,
+        "vertical": 0.9611111111111111
+      },
+      "frame": "01-before-unsupported-surface.png",
+      "is_clipped": true,
+      "legibility": {
+        "low_contrast_content_fraction": 0.005966272457151853,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 74.71119999999999
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        250,
+        250,
+        250
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.18683159722222223,
+      "content_pixels": 129138,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.7,
+        "vertical": 0.8430555555555556
+      },
+      "frame": "02-after-support-crop.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.015278229490932181,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 83.71120000000002
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        250,
+        250,
+        250
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [
+        "bottom",
+        "top"
+      ],
+      "content_fraction": 0.4258897569444444,
+      "content_pixels": 294375,
+      "content_pixels_touching_edge": {
+        "bottom": 748,
+        "left": 0,
+        "right": 0,
+        "top": 415
+      },
+      "content_span_fraction": {
+        "horizontal": 0.7770833333333333,
+        "vertical": 1.0
+      },
+      "frame": "03-before-topdown.png",
+      "is_clipped": true,
+      "legibility": {
+        "low_contrast_content_fraction": 0.011397027600849256,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 72.71120000000002
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        250,
+        250,
+        250
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [
+        "bottom",
+        "top"
+      ],
+      "content_fraction": 0.26829137731481484,
+      "content_pixels": 185443,
+      "content_pixels_touching_edge": {
+        "bottom": 288,
+        "left": 0,
+        "right": 0,
+        "top": 22
+      },
+      "content_span_fraction": {
+        "horizontal": 0.6802083333333333,
+        "vertical": 1.0
+      },
+      "frame": "04-after-topdown.png",
+      "is_clipped": true,
+      "legibility": {
+        "low_contrast_content_fraction": 0.024401028887582707,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 63.71120000000002
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    }
+  ],
+  "what": "Per-frame clipping and legibility measured from PNG bytes. A frame is clipped when content occupies a border row or column; content is low-contrast when its luminance sits within 24/255 of the background."
+}

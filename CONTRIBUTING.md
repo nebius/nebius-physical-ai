@@ -254,7 +254,7 @@ Build scripts should follow the `--registry` and `--push` shape used by:
 
 - `npa/docker/workbench/lerobot/build.sh`
 - `npa/docker/workbench/groot/build.sh`
-- `npa/docker/workbench/base/cuda13-b300/build.sh`
+- `npa/docker/workbench/base/cuda13-blackwell/build.sh`
 
 Keep image entrypoints explicit. LeRobot runs `python -m npa.server.app`;
 FiftyOne intentionally uses `/bin/bash` because the CLI launches the app command
@@ -1249,3 +1249,10 @@ reference. It is not in the 8-tool architecture list in
 
 Use it to understand implementation mechanics. Use LeRobot or FiftyOne for
 validated Workbench tool shape.
+
+## Literal evidence validation
+
+Validate scalar evidence without coercion using the shared
+[literal-value contract and failure policy](docs/architecture/literal-value-validation.md).
+That policy distinguishes ingress rejection, discovery quarantine, transient probe
+retries, and validation before mutating reconciliation.
