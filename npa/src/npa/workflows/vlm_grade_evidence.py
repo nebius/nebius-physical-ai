@@ -1,4 +1,4 @@
-"""Check retained VLM inference evidence before a data-factory promotion."""
+"""Check retained VLM evidence for scalar promotion or separate paired audits."""
 
 from __future__ import annotations
 
@@ -44,6 +44,29 @@ def vlm_grade_block_details(report: dict[str, Any]) -> dict[str, str]:
         None.
     """
 
+    return _evidence_block_details(report, paired_audit=False)
+
+
+def vlm_paired_audit_block_details(report: dict[str, Any]) -> dict[str, str]:
+    """Validate a paired audit child against its distinct hashed prompt contract.
+
+    Args:
+        report: A serialized result retained inside a paired-judge audit.
+    Returns:
+        An empty mapping for internally consistent evidence, otherwise bounded
+        reasons. This validates audit integrity, not eligibility for promotion.
+        Bare JSON is required here; callers also enforce paired transport and
+        cross-judge request bindings.
+    Raises:
+        None.
+    """
+
+    return _evidence_block_details(report, paired_audit=True)
+
+
+def _evidence_block_details(
+    report: dict[str, Any], *, paired_audit: bool
+) -> dict[str, str]:
     if (
         report.get("backend") not in ("api", "self-hosted")
         or report.get("dry_run", False) is not False
@@ -55,7 +78,7 @@ def vlm_grade_block_details(report: dict[str, Any]) -> dict[str, str]:
     if not _has_inference_call_disclosure(report):
         return {"reason": "vlm_non_inference_backend"}
     try:
-        _validate_evidence(report, evidence)
+        _validate_evidence(report, evidence, paired_audit=paired_audit)
     except _InvalidEvidence as exc:
         return {
             "reason": "vlm_provider_evidence_invalid",
@@ -75,7 +98,9 @@ def _has_inference_call_disclosure(report: dict[str, Any]) -> bool:
     return "provider_call_made" not in report or report["provider_call_made"] is True
 
 
-def _validate_evidence(report: dict[str, Any], evidence: dict[str, Any]) -> None:
+def _validate_evidence(
+    report: dict[str, Any], evidence: dict[str, Any], *, paired_audit: bool
+) -> None:
     if evidence["schema_version"] not in {
         "npa_vlm_eval_evidence_v1",
         "npa_vlm_eval_evidence_v2",
@@ -85,12 +110,21 @@ def _validate_evidence(report: dict[str, Any], evidence: dict[str, Any]) -> None
     provider = evidence["provider"]
     if not isinstance(request, dict) or not isinstance(provider, dict):
         raise _InvalidEvidence("schema_invalid")
-    _validate_request(report, request, evidence["schema_version"])
+    _validate_request(
+        report, request, evidence["schema_version"], paired_audit=paired_audit
+    )
     parsed = _retained_verdict(report, provider)
+    if (
+        paired_audit
+        and parsed.parser_version != vlm_eval.HOSTED_RESPONSE_PARSER_VERSION
+    ):
+        raise _InvalidEvidence("provider_parser_invalid")
     _validate_result(report, parsed)
 
 
-def _validate_request(report: dict[str, Any], request: dict, schema: str) -> None:
+def _validate_request(
+    report: dict[str, Any], request: dict, schema: str, *, paired_audit: bool
+) -> None:
     manifest = request["request_manifest"]
     if not isinstance(manifest, dict):
         raise _InvalidEvidence("request_invalid")
@@ -121,14 +155,19 @@ def _validate_request(report: dict[str, Any], request: dict, schema: str) -> Non
     _validate_frames(report, request["frames"])
     if schema != "npa_vlm_eval_evidence_v1":
         _validate_sampling(report, manifest)
-    _validate_prompt(report, request)
+    _validate_prompt(report, request, paired_audit=paired_audit)
 
 
-def _validate_prompt(report: dict[str, Any], request: dict) -> None:
+def _validate_prompt(
+    report: dict[str, Any], request: dict, *, paired_audit: bool
+) -> None:
     # Historical v1 writers omitted the rubric. Only the actual default can
     # reconstruct those hashes; custom-rubric results must retain their text.
     rubric = report.get("rubric", vlm_eval.DEFAULT_RUBRIC)
-    prompt = vlm_eval._build_prompt(
+    build_prompt = (
+        vlm_eval._comparison_prompt if paired_audit else vlm_eval._build_prompt
+    )
+    prompt = build_prompt(
         task=report["task"],
         rubric=rubric,
         frame_selection=report["frame_selection"],

@@ -61,7 +61,14 @@ DEFAULT_RUBRIC = (
     "Score whether the rollout completes the requested physical task. "
     "Use 1.0 only for clear task completion, 0.0 for clear failure, and "
     "intermediate values for partial progress. Penalize unsafe, incomplete, "
-    "or ambiguous outcomes."
+    "or ambiguous outcomes. Assign score 0.0 and success false when the requested "
+    "terminal state is missing or ambiguous in the supplied frames. "
+    "Do not award partial-progress credit in that case. "
+    "Evidence that stops at intermediate progress "
+    "without showing the requested terminal state is incomplete, even if the "
+    "action appears likely to succeed. Do not infer placement, release, "
+    "stability, or completion from approach, contact, grasp, lift, transfer, "
+    "or disappearance alone."
 )
 #: Backend-neutral result name. The payload distinguishes fixtures from inference.
 RESULT_FILENAME = "vlm_eval.json"
@@ -1051,11 +1058,20 @@ def _comparison_prompt(
     frame_selection: str,
     frame_count: int,
 ) -> str:
-    return _build_prompt(
+    prompt = _build_prompt(
         task=task,
         rubric=rubric,
         frame_selection=frame_selection,
         frame_count=frame_count,
+    )
+    # Paired audits reject fences even where the scalar reader can de-frame them.
+    # Keep this contract in the hashed prompt, identical for both judges.
+    return (
+        prompt
+        + "\nOutput contract for this paired audit: return exactly one bare JSON "
+        "object matching the schema above. Do not include Markdown fences, a "
+        "language tag, preamble, commentary outside the object, or trailing text. "
+        "Put all explanation inside the rationale string."
     )
 
 
@@ -1095,18 +1111,11 @@ def _common_hosted_request(
 ) -> dict[str, Any]:
     # Compare models under one controlled body, not their individually tuned
     # scalar profiles. Model-specific extras/JSON mode would change the experiment.
-    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    for frame in frames:
-        encoded = base64.b64encode(frame.data).decode("ascii")
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{frame.media_type};base64,{encoded}"},
-            }
-        )
     return {
         "temperature": 0,
-        "messages": [{"role": "user", "content": content}],
+        "messages": [
+            {"role": "user", "content": _openai_content(prompt, list(frames))}
+        ],
     }
 
 
@@ -2518,6 +2527,10 @@ def _task_from_parquet_metadata(
     return None
 
 
+def _frame_anchor(ordinal: int) -> str:
+    return f"Frame {ordinal}"
+
+
 def _build_prompt(
     *,
     task: str,
@@ -2525,15 +2538,29 @@ def _build_prompt(
     frame_selection: str,
     frame_count: int,
 ) -> str:
+    anchors = ", ".join(_frame_anchor(n) for n in range(1, frame_count + 1))
     return "\n".join(
         [
             "You are scoring a robot rollout from visual evidence.",
             f"Task/instruction: {task}",
             f"Rubric: {rubric}",
             f"Frame selection: {frame_selection}; frames supplied: {frame_count}.",
+            "Each image is preceded by one of these exact labels in supplied "
+            f"order: {anchors}. These ordinals are not timestamps or source indices.",
+            "First identify the visible objects and changes across the supplied "
+            "frames, then judge the task using the rubric.",
+            "Ground every factual rationale claim in the images and cite the "
+            "supplied Frame labels. Describe only visible objects, colors, "
+            "positions, and motion; do not infer objects from the task text.",
+            "Do not invent timestamps, elapsed time, unseen actions, or hidden "
+            "states such as release or support. Distinguish 'not shown' or "
+            "'cannot verify' from 'did not happen'. For blank, unrelated, or "
+            "occluded evidence, state what cannot be verified instead of "
+            "asserting an unseen outcome.",
             "Return only a JSON object with this schema:",
             '{"success": boolean, "score": number between 0 and 1, "rationale": string}',
-            "The score is the only downstream contract; make it repeatable and calibrated.",
+            "The downstream gate uses the score and threshold; the rationale "
+            "must still be factual and evidence-grounded.",
         ]
     )
 
@@ -2551,7 +2578,8 @@ def _ready_timeout_s() -> float:
 
 def _openai_content(prompt: str, frames: list[SelectedFrame]) -> list[dict[str, Any]]:
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    for frame in frames:
+    for ordinal, frame in enumerate(frames, start=1):
+        content.append({"type": "text", "text": _frame_anchor(ordinal)})
         encoded = base64.b64encode(frame.data).decode("ascii")
         content.append(
             {

@@ -95,8 +95,14 @@ shared-temperature experiment. This command does not change single-judge model s
 The report is always
 `audit_only`; agreement does not qualify either model, estimate an operational
 disagreement rate, establish physical correctness, or certify robot safety.
-Markdown-fenced JSON is a typed judge error on this strict path, not repaired
-into a verdict. The command also does not defend against instructions embedded
+The paired prompt explicitly requires one bare JSON object with no Markdown
+fences or surrounding text. This output contract is identical for both judges
+and included in their prompt and request hashes; it does not change the rubric
+or scalar prompt. Markdown-fenced JSON remains a typed judge error on this
+strict path, not repaired into a verdict. Extracted paired child results are
+not scalar promotion evidence: their paired prompt does not match the scalar
+grade validator's prompt. Run a scalar evaluation for that separate gate.
+The command also does not defend against instructions embedded
 in the submitted pixels or prove that a critical visible defect is absent. Full
 rationales and raw provider responses are written only to the private artifact;
 console output is a bounded summary.
@@ -300,13 +306,20 @@ normalized images. Schema-v2 sampling counts, indices, timestamps, and coverage
 flags must agree with the frame metadata. A known, uniform source kind, a source
 count, and in-range selected indices are required for `coverage_complete: true`;
 unknown or mixed source kinds normalize to null with incomplete coverage.
-The producer emits v2. Historical v1 evidence remains valid without sampling
-fields and is not upgraded to complete sampling. Other schema versions fail closed.
+The producer emits v2. The reader supports v1 without sampling fields when its
+prompt can still be reconstructed; it does not upgrade v1 to complete sampling.
+Other schema versions fail closed.
 
 New results retain the effective `rubric` so custom-rubric prompt and rubric
 hashes can be checked. Historical v1 results without this field are accepted only
 when the default rubric reproduces both hashes. The gate requires exact requested
 and returned model identity for hosted results, including unregistered models.
+The ordinal-grounding prompt changes that reconstruction for pre-ordinal v1 and
+v2 reports, including reports with a retained custom rubric. Those reports fail
+closed with `evidence_reason: digest_mismatch` and need fresh evaluation before
+promotion. Preserve the old evidence unchanged; never rewrite its hashes or
+claim its model saw the new instructions. Reading a legacy result filename does
+not make an incompatible historical prompt eligible for promotion.
 Invalid evidence retains `reason: vlm_provider_evidence_invalid` for existing
 consumers and adds `evidence_reason` to distinguish schema, request, digest,
 sampling, frame metadata, provider response/transport/metadata, and verdict failures.
@@ -356,6 +369,31 @@ asking whether they satisfy the target; do not ask the model to confirm the
 desired answer. A blank and an unrelated rollout must score low under the exact
 same task-plus-rubric prompt before the positive score is usable evidence.
 
+Add a source-matched missing-terminal
+control that retains plausible progress but omits the requested outcome, an
+ambiguous terminal control, and blank evidence. The default rubric instructs the
+judge to assign `0.0` for missing or ambiguous terminal evidence with no
+partial-progress credit. This is a prompt instruction, not an independent visual
+validator. The gate still uses `score >= success_threshold`, so select a positive,
+calibrated threshold. Custom rubrics replace the default instruction. Selected
+stills cannot prove hidden state, continuous execution, or safety.
+
+The production request labels each image `Frame 1`, `Frame 2`, and so on in
+supplied order. These are ordinal anchors, not source indices or timestamps;
+the original selected-frame labels and hashes remain in provider evidence.
+The prompt asks for visible observations and rationale references to those
+anchors, forbids invented times and hidden states, and distinguishes an outcome
+not shown from an outcome that did not happen. Blank or unrelated images do not
+establish the objects named in the task. These instructions request grounded
+explanations but do not independently validate a model's explanation. Review
+actual retained rationales and pixels alongside the score, including after
+prompt changes.
+
+The [narrow terminal-evidence qualification](../evidence/vlm-terminal-ordinal-qualification.md)
+records four correct frozen decisions for the default hosted model while
+retaining real rationale inaccuracies. It is not broad explanation-grounding
+acceptance or qualification of other models.
+
 Sweep thresholds, rubrics, and models against labeled rollouts:
 
 ```bash
@@ -404,6 +442,148 @@ field absence.
 F1 is computed as `2 * TP / (2 * TP + FP + FN)` before rounding to four decimal
 places. A defined all-error result is zero; when that denominator is zero, F1
 is null. Precision and recall remain separate class-dependent metrics.
+
+The packaged benchmark includes `progress-without-terminal-fail`; its tiny
+synthetic frames and prerecorded score test wiring only. Validate the exact
+task, rubric, threshold, sampling and model on reviewed real inputs.
+
+## Terminal-evidence live check
+
+This hosted lane tests the default rubric on operator-reviewed real rollout
+frames. It needs no local GPU or cloud resource creation. Stage four private
+image directories before calling the model: a complete real sequence, a strict
+prefix of that sequence ending during plausible progress, a real ambiguous
+terminal sequence (for example, an occluded final placement), and repeated
+blank frames. Use neutral filenames and identical task text. Review the actual
+pixels and freeze labels before inference; the harness verifies byte bindings,
+not the truth of the operator's visual labels.
+
+The lane opts in through its private configuration; without it, collection skips
+this lane even when global integration is enabled. Once configured, it is
+fail-closed: an invalid configuration, missing credential, mismatched model or
+frames, incomplete response, or incorrect control verdict fails. A passing result does not prove
+physical completion or safety. Before spending inference tokens, verify the
+hosted credential and list models available to that same key:
+
+```bash
+npa/.venv/bin/python -m npa workbench token-factory verify
+npa/.venv/bin/python -m npa workbench token-factory models
+```
+
+Select the exact returned vision-capable model ID; do not substitute an alias
+after this check. Credential verification and model listing are not inference
+or semantic acceptance evidence.
+These commands use Token Factory configuration. Ensure any VLM credential or
+endpoint overrides select that same verified identity and service; checking one
+credential does not validate another override used by the live lane.
+
+Set `NPA_VLM_TERMINAL_LIVE_CONFIG` to an absolute path for an owner-only (`0600`)
+JSON file outside the checkout, containing exactly these fields:
+
+| Field | Required value |
+| --- | --- |
+| `model` | Exact hosted vision model ID |
+| `task` | One explicit neutral identify-then-judge task for all controls, not the auto-discovery sentinel `sim-to-real` |
+| `max_frames` | Integer at least as large as the largest staged frame set |
+| `success_threshold` | Frozen positive threshold no greater than 1 |
+| `output_dir` | New private local directory; existing paths are refused |
+| `cases` | Objects named `complete`, `missing-terminal`, `ambiguous-terminal`, and `no-evidence` |
+
+The following is a shape example, not an executable frozen control set. Replace
+each hash list with all actual selected-frame digests and set `max_frames` to
+retain every staged frame:
+
+```json
+{
+  "model": "<exact-hosted-model-id>",
+  "task": "<identify-then-judge task>",
+  "max_frames": 4,
+  "success_threshold": 0.8,
+  "output_dir": "/absolute/private/new-output-directory",
+  "cases": {
+    "complete": {
+      "input_path": "/absolute/private/complete-rollout",
+      "frame_sha256": ["<selected-frame-sha256>"]
+    },
+    "missing-terminal": {
+      "input_path": "/absolute/private/truncated-rollout",
+      "frame_sha256": ["<selected-frame-sha256>"]
+    },
+    "ambiguous-terminal": {
+      "input_path": "/absolute/private/ambiguous-rollout",
+      "frame_sha256": ["<selected-frame-sha256>"]
+    },
+    "no-evidence": {
+      "input_path": "/absolute/private/blank-rollout",
+      "frame_sha256": ["<selected-frame-sha256>"]
+    }
+  }
+}
+```
+
+Each case contains only `input_path` (its local image directory) and
+`frame_sha256` (ordered SHA-256 digests of normalized submitted PNG bytes).
+Compute the digests using `select_rollout_frames` with `frame_selection="sequence"`
+and the frozen `max_frames`, then review and preserve that config. Every staged
+frame must be selected. `max_frames` is an integer of at least 2, each case must
+contain at least two frames, and `success_threshold` must be in `(0, 1]`.
+The truncated control must be a shorter byte-identical prefix of the complete
+one; the ambiguous control must differ from both the complete sequence and the
+truncated prefix. The blank
+control must repeat one frame hash absent from the complete sequence. Frame
+counts and sampling differ between those controls; this is a semantic regression
+check, not a one-factor experiment. Credentials resolve from `VLM_EVAL_API_KEY`,
+`NEBIUS_TOKEN_FACTORY_KEY`, `OPENAI_API_KEY`, or the private NPA credential store,
+never through the test JSON.
+
+From the repository root, after selecting task-scoped private NPA configuration:
+
+```bash
+: "${NPA_VLM_TERMINAL_LIVE_CONFIG:?Set the private frozen control configuration}"
+npa/.venv/bin/python -m npa workbench health preflight --checks token_factory --json
+NPA_INTEGRATION_E2E=1 \
+NPA_VLM_TERMINAL_LIVE_CONFIG="$NPA_VLM_TERMINAL_LIVE_CONFIG" \
+npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_vlm_terminal_evidence_live.py -q -n 0
+```
+
+Run serially (`-n 0`), not with pytest-xdist workers: the private panel output is
+shared by all four cases. Without `NPA_VLM_TERMINAL_LIVE_CONFIG`, this lane skips,
+including under the broad `make test-e2e` target. A supplied missing, malformed
+or invalid file fails closed; no default panel is substituted.
+
+Configured acceptance requires all four cases to pass with zero skips or
+deselections. Neither disabled integration nor absent lane configuration is live
+evidence. The cases execute separately
+so a failed verdict does not prevent the remaining frozen controls from running.
+Keep every outcome and raw provider response privately; never rerun only failed
+cases to assemble a passing panel.
+
+Review all four private result files after a pass. Each must retain `backend`
+as `api`, the configured `served_model`, non-null request and provider evidence,
+HTTP 200, `finish_reason` `stop`, and hashes matching the frozen frames and
+default rubric. Only `complete` may pass; every other case must return score
+`0.0` and `success: false`. A failure means this model and these frozen controls
+did not meet the gate; do not lower the threshold, relax the rubric, or replace
+the evidence claim to make it pass.
+
+Keep logs private. Each successfully parsed response is retained before that
+case's visual expectations are checked. Model substitution, changed frame bytes,
+a false pass, or any nonzero negative-control score fails the lane. Transport or
+parser failures fail their case without a result artifact; other retained results
+remain on disk. Ordinary pytest continues the remaining cases after a failure.
+An interrupted or fail-fast run that omits a control cannot qualify the panel.
+Transport and parser failures are not completed visual judgments. Do
+not retry until a failure passes or edit the frozen threshold to fit results. Independent review
+must still compare each rationale with the retained pixels: a correct label
+with an invented visual explanation is not accepted evidence. This test is
+separate from the nightly hosted smoke suite because it needs reviewed private
+rollout inputs. A skipped or unconfigured run does not validate the rubric.
+Retain the config, responses, and reviewed inputs; this lane creates no compute
+resources to tear down. Four controls cannot qualify a model or estimate error
+rates. Historical measurements in the [earlier control
+review](../evidence/vlm-missing-terminal-control-review.md) do not validate a
+changed rubric or current commit.
 
 ## Troubleshooting
 
