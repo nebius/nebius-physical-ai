@@ -1,0 +1,99 @@
+{
+  "schema": "cursor-explore.strict-feedback-proof/v1",
+  "pr": 842,
+  "disposition": {
+    "state": "externally_merged",
+    "merged_at": "2026-10-03T14:42:15Z",
+    "merge_sha": "443d346fb7ec56ba44a4065873c530ae41f62f49",
+    "original_pr_head": "879da7884c93465bb9f9a73dc2fe0c493203e4db",
+    "closed_branch_modified": false
+  },
+  "execution": {
+    "head": "443d346fb7ec56ba44a4065873c530ae41f62f49",
+    "tree": "279ace9ebc6dc9566e4d7061c05257de6c47c0df",
+    "module": {
+      "path": "npa/src/npa/workbench/lerobot/policy_container.py",
+      "sha256": "0b8b1c3dbbad15d1b1fb952161993ed77eade98939d6d2448cd5276a71f2831d"
+    },
+    "torch_version": "2.14.0+cpu",
+    "cuda_available": false,
+    "raw_execution_sha256": "2f75803e04a17fc3f48b6524a0d4b00b38bf10ca7130e04c6fefa9666a0abd29",
+    "frozen_protocol_sha256": "4e4d7904ab7fe5d15d06a2eca81516775d28103d4a81f645066c4624f8d8ebe6"
+  },
+  "current_source_bridge": {
+    "main": "f1ecd4255131374c417cdbb1f6c3e0d84b2a3514",
+    "method": "git diff --exit-code on policy_container.py confirms unchanged source bytes; execution remains original443d346f, not current-main execution"
+  },
+  "negative_controls": {
+    "http_requests": 20,
+    "malformed_values": [
+      "string:false",
+      "string:False",
+      "string:no",
+      "integer:0",
+      "integer:1",
+      "float:0.0",
+      "null",
+      "array:[false]",
+      "array:[]",
+      "object:{}"
+    ],
+    "valid_prefixes": [
+      false,
+      true
+    ],
+    "http_status": 400,
+    "error": "success must be a boolean",
+    "whole_batch_rejected_before_output": true,
+    "output_root_absent_before_positive_controls": true
+  },
+  "positive_controls": [
+    {
+      "success": false,
+      "http_status": 200,
+      "backend": "torch",
+      "steps": 1,
+      "loss_before": 0,
+      "loss_after": 0,
+      "weight_before": 0,
+      "weight_after": 0,
+      "checkpoint_target": 0.5,
+      "decoded_weight": [
+        0
+      ],
+      "checkpoint_sha256": "743f0524c000181401b67469d978ccf7646326fb9c5edc42605bd4296163a4ef"
+    },
+    {
+      "success": true,
+      "http_status": 200,
+      "backend": "torch",
+      "steps": 1,
+      "loss_before": 0.15999998,
+      "loss_after": 0.15602508,
+      "weight_before": 0,
+      "weight_after": 0.02,
+      "checkpoint_target": 0.9,
+      "decoded_weight": [
+        0.019999999552965164
+      ],
+      "checkpoint_sha256": "c370054671e9c0fc0ea579309014412484e1215183bddca12993d695cfa2c14d"
+    }
+  ],
+  "service_terminated": true,
+  "focused_tests": {
+    "passed": 34
+  },
+  "retained_failures": [
+    "Two original harness attempts expected nonexistent HTTP reward response fields; actual rejection results retained; final verification decodes actual checkpoints."
+  ],
+  "limitations": [
+    "Actual loopback HTTP plus CPU scalar feedback adapter, not a real robot policy/GPU inference or calibrated policy-quality acceptance.",
+    "No VLM inference was used in this postmerge LeRobot proof.",
+    "Private exact operational paths and raw artifacts remain access controlled."
+  ],
+  "independent_review": {
+    "lane": "distinct Codex, not human approval or Claude",
+    "state": "requested for exact original execution; receipt pending",
+    "claude": "Native executable unavailable; proxy default measured Kimi, not Claude"
+  }
+}
