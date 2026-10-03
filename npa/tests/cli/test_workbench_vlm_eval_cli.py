@@ -313,7 +313,13 @@ def test_workbench_vlm_eval_benchmark_text_preserves_duplicate_limitations(
                         "rollout": "unused",
                         "expected_label": True,
                         "fixture_score": 0.9,
-                    }
+                    },
+                    {
+                        "id": "case-negative",
+                        "rollout": "unused-negative",
+                        "expected_label": False,
+                        "fixture_score": 0.1,
+                    },
                 ],
             }
         ),

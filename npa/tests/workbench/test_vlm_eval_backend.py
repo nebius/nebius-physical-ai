@@ -1204,8 +1204,19 @@ def _write_metadata_benchmark(tmp_path: Path, payload) -> Path:
         "task": "Confirm green.",
         "fixture_score": 0.9,
     }
+    negative = tmp_path / "negative"
+    negative.mkdir(exist_ok=True)
+    Image.new("RGB", (8, 8), "red").save(negative / "frame.png")
+    negative_item = {
+        "id": "case-negative",
+        "rollout": str(negative),
+        "expected_label": False,
+        "task": "Confirm green.",
+        "fixture_score": 0.1,
+    }
     manifest = tmp_path / "benchmark.json"
-    document = [item] if isinstance(payload, list) else {"items": [item], **payload}
+    items = [item, negative_item]
+    document = items if isinstance(payload, list) else {"items": items, **payload}
     manifest.write_text(json.dumps(document), encoding="utf-8")
     return manifest
 
@@ -1228,6 +1239,8 @@ def test_legacy_benchmark_metadata_defaults_are_compatible(
 
     assert dataset.evidence_scope == "unspecified"
     assert dataset.limitations == ()
+    assert {item.expected_label for item in dataset.items} == {False, True}
+    assert len({item.id for item in dataset.items}) == 2
     assert report.dataset_evidence_scope == "unspecified"
     assert report.dataset_limitations == ()
 
@@ -1252,6 +1265,7 @@ def test_benchmark_metadata_round_trips_in_order(tmp_path: Path) -> None:
 
     assert dataset.evidence_scope == "illustrative_only"
     assert dataset.limitations == tuple(limitations)
+    assert {item.expected_label for item in dataset.items} == {False, True}
     assert report.dataset_evidence_scope == dataset.evidence_scope
     assert report.dataset_limitations == dataset.limitations
     assert json.loads(json.dumps(asdict(report)))["dataset_limitations"] == limitations
