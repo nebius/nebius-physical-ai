@@ -1,0 +1,28 @@
+{
+  "schema": "npa.vlm-default.catalog-membership-bridge/v1",
+  "original_execution_head": "50111ebcb9a8604c63ad6cd9d702c3c703044e7d",
+  "original_catalog_test": "tests/e2e/test_token_factory_e2e.py::test_live_list_models_authenticates",
+  "original_catalog_test_passed": true,
+  "requested_public_model": "MiniMaxAI/MiniMax-M3",
+  "minimax_in_original_catalog": true,
+  "response": {
+    "sha256": "84f21eeabcd54c3a5df1d71961b1391ab8e98d28066efd0bad1b90e07e903ab5",
+    "bytes": 2345,
+    "http_status": 200
+  },
+  "catalog_test_AST_equal": true,
+  "source_bindings": [
+    {
+      "phase": "original-execution",
+      "path": "npa/tests/e2e/test_token_factory_e2e.py",
+      "sha256": "83a927ea80bb586049edaf72f206e762908e476fe00f0237a4ebb10f50fe3c81"
+    },
+    {
+      "phase": "published-cc8-source",
+      "path": "npa/tests/e2e/test_token_factory_e2e.py",
+      "sha256": "8ba3c5f2083fccde4651a65faad6fd11d40157080643ea227c844aef774cdc53"
+    }
+  ],
+  "new_catalog_or_provider_calls": 0,
+  "scope": "Retained original response membership and unchanged assertion source bridge, not new inference, current account/global availability, image capability, quality, safety or GPU evidence. Raw catalog and original artifacts remain private and unchanged."
+}

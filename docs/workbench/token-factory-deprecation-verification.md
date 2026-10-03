@@ -91,6 +91,11 @@ therefore requires both current catalog membership and successful real-image
 artifacts from the caption, reason, visual-judge, and attribute paths. A
 successful `/models` response alone cannot satisfy that gate.
 
+The separate `run_contract` recheck pins MiniMax catalog membership and exercises
+text inference and structured-output controls; it does not send images. Image
+capability is asserted only by the protected image-bearing live suite above.
+Neither a passing catalog/text recheck nor a skipped image test is image proof.
+
 Sim2Real's stable `cosmos3` lane, artifact names, and configuration keys remain
 for compatibility. They now carry the actual selected model and family;
 MiniMax responses are never represented as NVIDIA Cosmos responses. Stage 9

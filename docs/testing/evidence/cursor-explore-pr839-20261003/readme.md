@@ -1,12 +1,18 @@
 # Current hosted default vision path validation
 
 Five fixed live tests passed on execution commit
-`50111ebcb9a8604c63ad6cd9d702c3c703044e7d`: current key-scoped MiniMax catalog
+`50111ebcb9a8604c63ad6cd9d702c3c703044e7d`: original key-scoped MiniMax catalog
 membership, three saved image captions plus scene reasoning, positive and
 negative visual judgments, and two attribute checks. The visual judges scored
 1.0 and 0.0 at the frozen threshold 0.8; their provider booleans agreed with the
 score gate. Attribute checks passed 2/2. Successful completions retained exact
 requested/served identity and `finish_reason=stop`.
+
+[catalog-membership-bridge.json](catalog-membership-bridge.json) adds the measured
+MiniMax membership fact from the original 2,345-byte catalog response and binds
+the unchanged catalog-test assertion across source revisions. This is a recheck
+of retained bytes, not a new catalog/provider call or present-day availability
+claim. The original response hash and execution identity remain unchanged.
 
 Four additional fixed controls used the exact
 [two-colour PNG](../../../workbench/evidence/vlm-default-vision-model-capability-regression-v1/probe.png).
