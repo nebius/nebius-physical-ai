@@ -1,0 +1,106 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: dm05-lerobot-libero-comparison
+  description: >-
+    Run the published 200-episode LIBERO protocol on the DM05-Lerobot baseline
+    and DM05-Lerobot-LIBERO checkpoint, then derive factual metrics and verified
+    comparison artifacts. This is not a 2,000-episode or physical-robot claim.
+config:
+  bucket: example-bucket
+  prefix: "dm05-lerobot-libero/{{run.id}}"
+  seed: "7"
+  episodes_per_task: "5"
+  policy_device: cuda
+  protocol_uri: "s3://{{config.bucket}}/{{config.prefix}}/protocol/"
+  baseline_uri: "s3://{{config.bucket}}/{{config.prefix}}/baseline/"
+  candidate_uri: "s3://{{config.bucket}}/{{config.prefix}}/candidate/"
+  metrics_uri: "s3://{{config.bucket}}/{{config.prefix}}/metrics/"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/report/"
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 16
+    memory: 96Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643
+initial: prepare
+states:
+  prepare:
+    description: Seal the 40-task camera, state, absolute-action, and relative-controller protocol.
+    toolRef: workbench.lerobot.dm05_libero_prepare
+    resources: cpu
+    outputs:
+      - uri: "{{config.protocol_uri}}protocol.json"
+        schema: npa.dm05_lerobot_libero.protocol.v1
+      - uri: "{{config.protocol_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: baseline-rollout
+  baseline-rollout:
+    description: Run the upstream-native closed-loop LIBERO evaluator on the pinned DM05-Lerobot predecessor.
+    toolRef: workbench.lerobot.dm05_libero_rollout
+    resources: gpu
+    params:
+      checkpoint_role: baseline
+      rollout_uri: "{{config.baseline_uri}}"
+    inputs:
+      - uri: "{{config.protocol_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.baseline_uri}}rollout.json"
+        schema: npa.dm05_lerobot_libero.rollout.v1
+      - uri: "{{config.baseline_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: candidate-rollout
+  candidate-rollout:
+    description: Run the same closed-loop LIBERO evaluator on the pinned DM05-Lerobot-LIBERO checkpoint.
+    toolRef: workbench.lerobot.dm05_libero_rollout
+    resources: gpu
+    params:
+      checkpoint_role: candidate
+      rollout_uri: "{{config.candidate_uri}}"
+    inputs:
+      - uri: "{{config.protocol_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.candidate_uri}}rollout.json"
+        schema: npa.dm05_lerobot_libero.rollout.v1
+      - uri: "{{config.candidate_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: metrics
+  metrics:
+    description: Calculate matched suite success counts and the candidate-minus-baseline delta from real rollouts.
+    toolRef: workbench.lerobot.dm05_libero_metrics
+    resources: cpu
+    inputs:
+      - uri: "{{config.protocol_uri}}checksums.json"
+      - uri: "{{config.baseline_uri}}checksums.json"
+      - uri: "{{config.candidate_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.metrics_uri}}metrics.json"
+        schema: npa.dm05_lerobot_libero.metrics.v1
+      - uri: "{{config.metrics_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    next: report
+  report:
+    description: Decode native rollout video, encode a factual comparison MP4, and emit an RRD bound to measured metrics.
+    toolRef: workbench.lerobot.dm05_libero_report
+    resources: cpu
+    inputs:
+      - uri: "{{config.protocol_uri}}checksums.json"
+      - uri: "{{config.baseline_uri}}checksums.json"
+      - uri: "{{config.candidate_uri}}checksums.json"
+      - uri: "{{config.metrics_uri}}checksums.json"
+    outputs:
+      - uri: "{{config.report_uri}}report.json"
+        schema: npa.dm05_lerobot_libero.report.v1
+      - uri: "{{config.report_uri}}comparison.mp4"
+        schema: video/mp4
+      - uri: "{{config.report_uri}}comparison.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.report_uri}}checksums.json"
+        schema: npa.checksums.sha256.v1
+    terminal: true

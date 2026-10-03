@@ -86,6 +86,14 @@ that optional 0.6.0 image by digest and stages its adapters from the checkout.
 It uses the image's non-root runtime user and baked SkyPilot prerequisites;
 no new image publication is required for the experiment.
 
+The experimental [DM05-Lerobot-LIBERO checkpoint comparison](dm05-lerobot-libero.md)
+also references this existing image by immutable digest and publishes no new
+image row. It is not an image capability claim: the checkpoint's custom `dm05`
+policy type is not present in the pinned registry, so a live run remains
+quarantined pending a separately reviewed immutable runtime that supplies the
+exact upstream implementation. Checkpoint weights remain runtime-only and are
+not present in any NPA image layer.
+
 SAM 3.1 has a [public GHCR development image](https://github.com/orgs/nebius/packages/container/package/nebius-physical-ai%2Fnpa-sam3).
 Its immutable tag is `dev-f287041cffa5a703270413e1746348dccb8e7591`;
 [publication evidence](validation/sam31-public-development-20260919.json) records
