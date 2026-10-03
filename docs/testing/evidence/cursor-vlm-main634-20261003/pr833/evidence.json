@@ -1,0 +1,175 @@
+{
+  "schema": "cursor-explore.vlm-main634-addendum/v1",
+  "pr": 833,
+  "execution": {
+    "head": "760c77b6665d7422d43b64a93241d954921edafc",
+    "tree": "002490df735d7de8a06c8ae90107da9e565c498f",
+    "base": "88fd1b1356c942745244e49d2316800634c530ae",
+    "source_files": [
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "fd4b6d67d4a161d32f02499ef1f44ba128bcfbcdda8596cf9498057ad44aae26"
+      },
+      {
+        "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+        "sha256": "0bcb218a48299e475d1ff538fea17f8767bffe8db8e975c7110498d65bccd581"
+      },
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+      }
+    ],
+    "harness_sha256": "d2985ebb1caf24f1c8a8ed2a73c93c3b7eea26ec990ef6d38cd0fc7b962e6e1c",
+    "http_responses": 4,
+    "status_code": 200,
+    "finish_reason": "stop",
+    "result": "PASS four frozen actual responses, no favorable-answer retries",
+    "source_before_after": "equal"
+  },
+  "frozen_protocol": {
+    "task": "Identify the visible shapes and colors. Judge whether the image contains a red circle. Task completion requires a clearly visible red circle; a uniform blank image does not complete the task.",
+    "rubric_sha256": "4bc517d520b2ce454d88e6385928fd4c4e9f005aa1d42e17c96169caea4d1d06",
+    "threshold": 0.8,
+    "sampling": {
+      "frame_selection": "keyframes",
+      "max_frames": 8
+    },
+    "labels": {
+      "negative": false,
+      "positive": true
+    },
+    "acceptance": {
+      "negative_gate": false,
+      "negative_score": 0,
+      "positive_gate": true,
+      "strict_grade_evidence": true
+    },
+    "cases": [
+      {
+        "content_sha256": "59a3cab1f5b3cfb05b26ecddbd708eb47b2600e171e4c076e49380de4e295dd1",
+        "image_sha256": "b5c8938bfdcdaf7a2fc9653cbc29ec301c69d64be6e9a0de732bf7357604099e",
+        "name": "positive",
+        "normalized_frame_sha256": [
+          "69ec5a81250b2a7a6f2fb0d8c877d84cebce0b43dbf9ad48ac6ea7dd3505fde7"
+        ],
+        "prompt_sha256": "4eaa1127f9b93510ddf81956f864b7b8abb783141aaed3e22d86428896277193"
+      },
+      {
+        "content_sha256": "a61aaadde7ba656762fd11f3c6f7e98eecfd8439240f01837b27271250ba0c8c",
+        "image_sha256": "79a8c7190d6ecdedeb11ef42add22344dff7749eaa96bdb9667b429e7657e9e5",
+        "name": "negative",
+        "normalized_frame_sha256": [
+          "56f5ca147f569d666bde0a4707aba5c290cddeb585d85c1390fe3e57fafe6148"
+        ],
+        "prompt_sha256": "4eaa1127f9b93510ddf81956f864b7b8abb783141aaed3e22d86428896277193"
+      }
+    ]
+  },
+  "rows": [
+    {
+      "gate": true,
+      "name": "api-MiniMax-M3-positive",
+      "passed": true,
+      "request_manifest_sha256": "7f4f5bfa1dfc88efb263221efc06eaf62632301a198db1ff70d0e72136ec37ad",
+      "response_sha256": "fe9655e6be089cd53f3552741f34339d542af740c2cabe0c195171149aa8f658",
+      "score": 1,
+      "result_sha256": "ed4519e8af8bdc683ef265fed70968a0239c06d1c42cce8830a0e413e50b0053",
+      "request_sha256": "bfe8bd814110f507abe10c66af894fab9cda7cbf1f1654660d708597a9ba3401",
+      "rationale_sha256": "e545a7cf7c3e7bb27bbe93231cc2ae906b04559ad26d23a0a9a5a284d25fea9e",
+      "served_model_match_enforced": true,
+      "provider_call_made_if_present": null,
+      "rationale_limitation": "Privately retained qualitative single-frame rationale is not calibrated quality."
+    },
+    {
+      "gate": false,
+      "name": "api-MiniMax-M3-negative",
+      "passed": true,
+      "request_manifest_sha256": "91a126a7f5b82092ecf9607018156be8eb3f60efacc241862195597fb305a4af",
+      "response_sha256": "8d62c100dc1043490e20ac6b96393c332316809f64e51c01407ce6e9c7a2ace7",
+      "score": 0,
+      "result_sha256": "4d4f088ceabfc53a0600f651e378158b6a00a33b4ef7187eef9cb97e95ba7bc7",
+      "request_sha256": "564a839383659cddd307dfcd747f332d402923cc0e0904dc9e4549ee51fa1dc3",
+      "rationale_sha256": "9c1d3d96bbb7500ce0a447fe5dbb44625c7447a2e4bf6112399ca9ed09e881ff",
+      "served_model_match_enforced": true,
+      "provider_call_made_if_present": null,
+      "rationale_limitation": "Privately retained qualitative single-frame rationale is not calibrated quality."
+    },
+    {
+      "gate": true,
+      "name": "self-hosted-gemma-3-27b-it-positive",
+      "passed": true,
+      "request_manifest_sha256": "dc16e818ed1af3c2624a08b4e9f8833ffbd184c71c81d8cb58a0d3a33e6039ef",
+      "response_sha256": "e59d12ee42931a861e452b72468f454b62519aa7457095c84e787a1d0e695a0e",
+      "score": 1,
+      "result_sha256": "c1221da9fcda91a80e530ccc831c93c5811c6eb0c961821afe84a1843a3c1f47",
+      "request_sha256": "39f2a4ea09a804f215bbc9a65b56e5721f239576e256e16afa96b96d51a41fd4",
+      "rationale_sha256": "89135591cd6ad4d11fa842b59cda73ea0447843ea8884eb0c091b3df3a97d90f",
+      "served_model_match_enforced": false,
+      "provider_call_made_if_present": null,
+      "rationale_limitation": "Privately retained qualitative single-frame rationale is not calibrated quality."
+    },
+    {
+      "gate": false,
+      "name": "self-hosted-gemma-3-27b-it-negative",
+      "passed": true,
+      "request_manifest_sha256": "14f65f6a80860e94bb1dc7bc31de24f6b015f33022fa2ab677a11a322933713e",
+      "response_sha256": "a0e72234c1ae3fa9c363cf921b96f933090227d15ba2791cd4924c5c6cf6ccfb",
+      "score": 0,
+      "result_sha256": "294f764003cf92f75ff62f10fe0ccf35da233893649dc08d6bedfdc80ca1c77d",
+      "request_sha256": "4a8e0e80cd23768e50a6dd2d2ed06d231043ff2fbe0166704a11982d065da25c",
+      "rationale_sha256": "14aeac1330c46a102b0063452a0d32f475af9191f7c436c5354892f92cac7f14",
+      "served_model_match_enforced": false,
+      "provider_call_made_if_present": null,
+      "rationale_limitation": "Privately retained qualitative single-frame rationale is not calibrated quality."
+    }
+  ],
+  "local_selected_gates": {
+    "execution_head": "760c77b6665d7422d43b64a93241d954921edafc",
+    "affected_passed": 1597,
+    "inherited_gpu_skips": 2,
+    "smoke_passed": 118,
+    "guardrails_passed": 5895,
+    "guardrails_skipped": 1,
+    "required_live_caller_passed": 39,
+    "required_live_caller_skipped": 0,
+    "required_live_caller_provider_calls": 0,
+    "precheck_passed": 270,
+    "docs": "PASS",
+    "aggregate_confidentiality": "PASS",
+    "aggregate_gitleaks": "PASS",
+    "merge_precheck": "PASS",
+    "source_module_distributions_before_after": "equal",
+    "fresh_security": {
+      "passed": 898,
+      "skipped": 0,
+      "cpu_torch": "2.14.0 official CPU wheel",
+      "scope": "Separate fresh owned loopback namespace execution; installation and fingerprints distinct from earlier environments."
+    }
+  },
+  "historical_full": {
+    "head": "c39119edff07f252d3778ec74878b7efc84ee1a5",
+    "passed": 39812,
+    "skipped": 213,
+    "non_strict_xpass": 1,
+    "package_coverage_percent": 77.47,
+    "coverage_floor_percent": 60,
+    "scope": "Original full run, not a full execution at this later head."
+  },
+  "claude": {
+    "model": "claude-opus-5",
+    "provider": "first-party operator Claude Code",
+    "head": "2ddd2add321a8ea6973151f4538c2c377850566b",
+    "verdict": "clear(code)",
+    "packet_sha256": "45e3f18fc37e65c44c021c526426764bc30b3c569cddd3808441ebeda63a00e3",
+    "worker_output_sha256": "2d9bf91d8ba9c11dd759f3883ec989bc4d181fa7f5b0bd26dd276c99b21836ef",
+    "scope": "Exact earlier AI source/model/hash review; incoming changes have distinct independent scopes, not future-head/human approval."
+  },
+  "limits": [
+    "Synthetic single-frame geometry, not calibrated model quality/robot terminal-sequence performance/safety/operator GPU serving.",
+    "Changed main634 request has actual new responses. Older response artifacts remain historical.",
+    "No label/threshold/model-answer tuning or favorable-answer retries.",
+    "Optional standalone fields absent are represented as null, not invented disclosure.",
+    "Current-head CI, actual-main integration, independent source/live review, draft and coordinator queue are separate.",
+    "Incoming external827 caption classifier advances main after these frozen executions; VLM runtime/client/grade byte comparison and separate affected integration are required, not new inference merely for ancestry."
+  ]
+}
