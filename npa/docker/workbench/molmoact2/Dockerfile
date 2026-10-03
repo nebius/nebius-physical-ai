@@ -1,0 +1,66 @@
+# Private BYOF validation image for the official MolmoAct2 LIBERO workflow.
+# It intentionally contains no checkpoints, datasets, Hugging Face token, or
+# model cache.  The workflow retrieves immutable public inputs at run time.
+FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
+
+ARG MOLMOACT2_REVISION=6070080a20321b4f498ab30f28e1d09ac465edb7
+ARG LEROBOT_REVISION=80633827176a0203064cb141383664fba024e050
+
+LABEL org.opencontainers.image.source="https://github.com/allenai/molmoact2" \
+      org.opencontainers.image.revision="${MOLMOACT2_REVISION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      npa.solution="molmoact2-official-libero-byof" \
+      npa.redistribution="unvalidated-private-byof"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONPATH=/opt/npa/src \
+    MOLMOACT2_UPSTREAM_ROOT=/opt/molmoact2/experiments \
+    MUJOCO_GL=egl \
+    PYOPENGL_PLATFORM=egl \
+    WANDB_MODE=disabled
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential ca-certificates ffmpeg git git-lfs libegl1 libgl1 \
+      libglib2.0-0 libsm6 libxext6 libxrender1 netcat-openbsd openssh-client \
+      openssh-server procps python3 python3-pip python3-venv rsync sudo \
+      software-properties-common \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
+      python3.12 python3.12-dev python3.12-venv \
+    && rm -f /etc/ssh/ssh_host_*_key /etc/ssh/ssh_host_*_key.pub \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3.12 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --upgrade pip setuptools wheel \
+    && /opt/venv/bin/pip install boto3 huggingface_hub rerun-sdk
+ENV PATH=/opt/venv/bin:$PATH
+
+# Fetch source only.  LFS smudging is disabled so no checkpoint/data payload can
+# enter a layer.  The vendored LeRobot submodule is pinned independently.
+RUN git lfs install --skip-smudge \
+    && GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/allenai/molmoact2.git /opt/molmoact2 \
+    && cd /opt/molmoact2 \
+    && git checkout --detach "${MOLMOACT2_REVISION}" \
+    && GIT_LFS_SKIP_SMUDGE=1 git submodule update --init --depth 1 experiments/lerobot \
+    && test "$(git -C experiments/lerobot rev-parse HEAD)" = "${LEROBOT_REVISION}" \
+    && git lfs uninstall
+
+RUN cd /opt/molmoact2/experiments \
+    && pip install -e ".[all]" \
+    && pip install -e "./lerobot[async,libero]"
+
+COPY docker/workbench/molmoact2/THIRD_PARTY_NOTICES.md /usr/share/doc/molmoact2/THIRD_PARTY_NOTICES.md
+COPY docker/workbench/molmoact2/REDISTRIBUTION.md /usr/share/doc/molmoact2/REDISTRIBUTION.md
+COPY src/npa /opt/npa/src/npa
+
+RUN useradd --create-home --shell /bin/bash --uid 1000 ubuntu \
+    && printf '%s\n' 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/npa-runtime \
+    && chmod 0440 /etc/sudoers.d/npa-runtime \
+    && install -d -o ubuntu -g ubuntu /work /opt/cache \
+    && chown -R ubuntu:ubuntu /opt/npa /opt/molmoact2 /usr/share/doc/molmoact2
+
+USER ubuntu
+WORKDIR /work
+CMD ["python3", "-m", "npa.workflows.byof.molmoact2_pipeline", "--help"]

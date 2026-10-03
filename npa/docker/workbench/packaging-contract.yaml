@@ -163,6 +163,20 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  molmoact2:
+    dockerfile: molmoact2/Dockerfile
+    tier: job
+    final_user: ubuntu
+    redistribution: unvalidated
+    notes: >-
+      Private operator BYOF recipe for the pinned Apache-2.0 AllenAI MolmoAct2
+      source and its upstream-pinned Apache-2.0 LeRobot integration. The CUDA
+      base and complete installed dependency closure have not yet received a
+      built-byte redistribution review. Checkpoints/adapters, LIBERO/DROID/
+      SO100/101 data, caches, credentials, and outputs are runtime-only. No
+      public tag or release claim is permitted until source/notice, SBOM,
+      license, vulnerability, secret, payload, anonymous-pull, and exact-digest
+      real-GPU workflow gates complete.
   libero:
     dockerfile: libero/Dockerfile
     tier: job

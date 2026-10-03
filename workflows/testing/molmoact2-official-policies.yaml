@@ -1,0 +1,210 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: molmoact2-official-libero-policies
+  description: >-
+    Five connected, executable stages for AllenAI's pinned MolmoAct2 LIBERO
+    path: fetch and validate the real LeRobot dataset, fine-tune the upstream
+    policy, run closed-loop LIBERO, score held-out actions, and emit a factual
+    RRD plus evaluator-produced MP4.  Checkpoints and data are fetched only at
+    runtime and never form part of the image.
+
+config:
+  bucket: example-bucket
+  prefix: "molmoact2/official-libero/{{run.id}}"
+  source_overlay: true
+  # The operator must replace this neutral BYOF placeholder with the private,
+  # immutable digest produced from npa/docker/workbench/molmoact2/Dockerfile.
+  runtime_image: "registry.example.invalid/operator/molmoact2@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  work_root: /tmp/npa-molmoact2
+  heldout_fraction: "0.1"
+  libero_eval_episodes: "10"
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  prepared_dataset_uri: "{{config.run_root_uri}}prepared/libero-dataset/"
+  prepare_report_uri: "{{config.run_root_uri}}reports/prepare.json"
+  checkpoint_uri: "{{config.run_root_uri}}checkpoints/finetuned/"
+  rollout_uri: "{{config.run_root_uri}}rollouts/libero/"
+  evaluation_uri: "{{config.run_root_uri}}reports/heldout-action/"
+  visualization_uri: "{{config.run_root_uri}}artifacts/"
+
+resources:
+  prepare:
+    cloud: kubernetes
+    cpus: 16
+    memory: 64Gi
+    disk_size: 300
+    image: "{{config.runtime_image}}"
+  gpu:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 16
+    memory: 128Gi
+    disk_size: 500
+    image: "{{config.runtime_image}}"
+
+initial: prepare_libero_dataset
+
+states:
+  prepare_libero_dataset:
+    description: >-
+      Snapshot the exact public MolmoAct2 LIBERO LeRobot revision, check the
+      state/action/two-camera contract, deterministically split real episodes,
+      and publish the data plus split manifest for the dependent stages.
+    resources: prepare
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.byof.molmoact2_pipeline
+        - --work-root
+        - "{{config.work_root}}"
+        - prepare
+        - --prepared-dataset-uri
+        - "{{config.prepared_dataset_uri}}"
+        - --output-uri
+        - "{{config.prepare_report_uri}}"
+        - --heldout-fraction
+        - "{{config.heldout_fraction}}"
+    outputs:
+      - uri: "{{config.prepared_dataset_uri}}"
+        kind: directory
+        schema: lerobot.dataset.v3.molmoact2-libero
+      - uri: "{{config.prepare_report_uri}}"
+        schema: npa.molmoact2.libero-prepare.v1
+    next: finetune_official_policy
+
+  finetune_official_policy:
+    description: >-
+      Consume the prepared LIBERO artifact and invoke the official pinned
+      MolmoAct2 train_lerobot.py entrypoint, preserving its actual checkpoint
+      and runtime-normalization lineage.  It does not turn the foundation
+      checkpoint into a deployment claim.
+    resources: gpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.byof.molmoact2_pipeline
+        - --work-root
+        - "{{config.work_root}}"
+        - finetune
+        - --prepared-dataset-uri
+        - "{{config.prepared_dataset_uri}}"
+        - --checkpoint-uri
+        - "{{config.checkpoint_uri}}"
+    inputs:
+      - uri: "{{config.prepared_dataset_uri}}"
+        kind: directory
+        schema: lerobot.dataset.v3.molmoact2-libero
+      - uri: "{{config.prepare_report_uri}}"
+        schema: npa.molmoact2.libero-prepare.v1
+    outputs:
+      - uri: "{{config.checkpoint_uri}}"
+        kind: directory
+        schema: npa.molmoact2.libero-checkpoint.v1
+    next: rollout_closed_loop_libero
+
+  rollout_closed_loop_libero:
+    description: >-
+      Use the resulting upstream checkpoint in the official LeRobot MolmoAct2
+      evaluator for closed-loop LIBERO episodes, retaining the evaluator's
+      JSON metrics and MP4 evidence rather than a synthetic success report.
+    resources: gpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.byof.molmoact2_pipeline
+        - --work-root
+        - "{{config.work_root}}"
+        - rollout
+        - --checkpoint-uri
+        - "{{config.checkpoint_uri}}"
+        - --rollout-uri
+        - "{{config.rollout_uri}}"
+        - --n-episodes
+        - "{{config.libero_eval_episodes}}"
+    inputs:
+      - uri: "{{config.checkpoint_uri}}"
+        kind: directory
+        schema: npa.molmoact2.libero-checkpoint.v1
+    outputs:
+      - uri: "{{config.rollout_uri}}"
+        kind: directory
+        schema: npa.molmoact2.libero-rollout.v1
+    next: evaluate_heldout_actions
+
+  evaluate_heldout_actions:
+    description: >-
+      Consume the exact prepared split, fine-tuned checkpoint, and closed-loop
+      artifact.  Invoke upstream open-loop MolmoAct2 inference on a held-out
+      episode and publish raw action MSE with its normalization metadata.
+    resources: gpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.byof.molmoact2_pipeline
+        - --work-root
+        - "{{config.work_root}}"
+        - evaluate
+        - --prepared-dataset-uri
+        - "{{config.prepared_dataset_uri}}"
+        - --checkpoint-uri
+        - "{{config.checkpoint_uri}}"
+        - --rollout-uri
+        - "{{config.rollout_uri}}"
+        - --evaluation-uri
+        - "{{config.evaluation_uri}}"
+    inputs:
+      - uri: "{{config.prepared_dataset_uri}}"
+        kind: directory
+        schema: lerobot.dataset.v3.molmoact2-libero
+      - uri: "{{config.checkpoint_uri}}"
+        kind: directory
+        schema: npa.molmoact2.libero-checkpoint.v1
+      - uri: "{{config.rollout_uri}}"
+        kind: directory
+        schema: npa.molmoact2.libero-rollout.v1
+    outputs:
+      - uri: "{{config.evaluation_uri}}"
+        kind: directory
+        schema: npa.molmoact2.libero-evaluation.v1
+    next: emit_factual_visualization
+
+  emit_factual_visualization:
+    description: >-
+      Build a Rerun recording from the completed numerical evaluation and copy
+      an evaluator-produced MP4.  The stage refuses to emit either artifact if
+      the prior rollout has no actual video evidence.
+    resources: gpu
+    run:
+      argv:
+        - python3
+        - -m
+        - npa.workflows.byof.molmoact2_pipeline
+        - --work-root
+        - "{{config.work_root}}"
+        - visualize
+        - --rollout-uri
+        - "{{config.rollout_uri}}"
+        - --evaluation-uri
+        - "{{config.evaluation_uri}}"
+        - --artifact-uri
+        - "{{config.visualization_uri}}"
+    inputs:
+      - uri: "{{config.rollout_uri}}"
+        kind: directory
+        schema: npa.molmoact2.libero-rollout.v1
+      - uri: "{{config.evaluation_uri}}"
+        kind: directory
+        schema: npa.molmoact2.libero-evaluation.v1
+    outputs:
+      - uri: "{{config.visualization_uri}}libero-evaluation.rrd"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.visualization_uri}}visualization.json"
+        schema: npa.molmoact2.libero-visualization.v1
+      - uri: "{{config.visualization_uri}}"
+        kind: directory
+    terminal: true
