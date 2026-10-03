@@ -172,7 +172,9 @@ authenticated endpoint readiness, run the lane, then collect results and tear
 down only job-owned serving compute in the job's cleanup path, including when
 inference fails. Retain the cleanup receipt separately: this runner consumes an
 already provisioned endpoint and cannot certify cloud teardown. Reused shared
-endpoints remain their owner's responsibility and must not be destroyed.
+endpoints remain their owner's responsibility and must not be destroyed. Follow
+the [run lifecycle](../../run-lifecycle.md) when canceling jobs and stopping
+job-owned endpoints; this runner provisions and deletes nothing.
 
 The hosted Token Factory nightly runner has a separate credential and workload
 contract. It does not execute this GPU lane. Scheduling requires an operator

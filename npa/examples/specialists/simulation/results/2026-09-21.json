@@ -1,0 +1,646 @@
+{
+  "schema": "npa.specialists.simulation_score.v1",
+  "prices": {
+    "retrieved_at": "2026-09-21T20:16:24.415831+00:00",
+    "token_factory_source": "https://tokenfactory.nebius.com/api/public/models_info",
+    "models": {
+      "zai-org/GLM-5.3": {
+        "input_price_per_million_tokens": 1.4,
+        "output_price_per_million_tokens": 4.4
+      },
+      "deepseek-ai/DeepSeek-V4-Pro-0813": {
+        "input_price_per_million_tokens": 1.32,
+        "output_price_per_million_tokens": 3.96
+      },
+      "gpt-6-astra": {
+        "input_price_per_million_tokens": 10.0,
+        "cached_input_price_per_million_tokens": 1.0,
+        "cache_write_price_per_million_tokens": 12.5,
+        "output_price_per_million_tokens": 50.0,
+        "source": "https://developers.openai.com/api/docs/models/gpt-6-astra"
+      }
+    }
+  },
+  "runs": [
+    {
+      "round": "round-1",
+      "arm": "astra-medium",
+      "seed": 11,
+      "agent_tool_seconds": 55.229093208909035,
+      "accepted": 36,
+      "total": 36,
+      "tasks": [
+        {
+          "task": "translate",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "mirror",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "diagonal",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "reverse",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "cross",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "offset",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        }
+      ],
+      "usage_complete": true,
+      "usage": {
+        "gpt-6-astra": {
+          "input_tokens": 137940,
+          "cached_input_tokens": 112384,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 897,
+          "reasoning_output_tokens": 0
+        }
+      },
+      "recorded_cost_usd": 0.412794,
+      "estimated_cost_usd": 0.412794,
+      "estimated_cost_per_accepted_episode_usd": 0.0114665,
+      "verification_seconds": 5.4101485420251265,
+      "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+    },
+    {
+      "round": "round-1",
+      "arm": "specialists",
+      "seed": 11,
+      "agent_tool_seconds": 46.32289425004274,
+      "accepted": 30,
+      "total": 36,
+      "tasks": [
+        {
+          "task": "translate",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "mirror",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "diagonal",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "reverse",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "cross",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "offset",
+          "accepted": 0,
+          "total": 6,
+          "replay_verified": false,
+          "validation_error": "ValueError"
+        }
+      ],
+      "usage_complete": false,
+      "usage": {
+        "zai-org/GLM-5.3": {
+          "prompt_tokens": 33920,
+          "completion_tokens": 1430,
+          "total_tokens": 35350,
+          "prompt_cache_hit_tokens": 26752,
+          "prompt_cache_miss_tokens": 7168,
+          "cached_tokens": 26752
+        },
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "prompt_tokens": 43168,
+          "completion_tokens": 2194,
+          "total_tokens": 45362,
+          "prompt_cache_hit_tokens": 19712,
+          "prompt_cache_miss_tokens": 23456,
+          "cached_tokens": 19712
+        }
+      },
+      "recorded_cost_usd": 0.11945,
+      "estimated_cost_usd": null,
+      "estimated_cost_per_accepted_episode_usd": null,
+      "verification_seconds": 4.300015582935885,
+      "artifact_set_sha256": "9d7b3f54310db85d049dabf8f13f9fce9e2f145db1147b7a85ac466b714e9ee4"
+    },
+    {
+      "round": "round-2",
+      "arm": "astra-medium",
+      "seed": 23,
+      "agent_tool_seconds": 62.18119445897173,
+      "accepted": 36,
+      "total": 36,
+      "tasks": [
+        {
+          "task": "translate",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "mirror",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "diagonal",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "reverse",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "cross",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "offset",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        }
+      ],
+      "usage_complete": true,
+      "usage": {
+        "gpt-6-astra": {
+          "input_tokens": 174213,
+          "cached_input_tokens": 148096,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 927,
+          "reasoning_output_tokens": 24
+        }
+      },
+      "recorded_cost_usd": 0.455616,
+      "estimated_cost_usd": 0.455616,
+      "estimated_cost_per_accepted_episode_usd": 0.012656,
+      "verification_seconds": 5.194203541032039,
+      "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+    },
+    {
+      "round": "round-2",
+      "arm": "astra-xhigh",
+      "seed": 23,
+      "agent_tool_seconds": 68.32744558400009,
+      "accepted": 36,
+      "total": 36,
+      "tasks": [
+        {
+          "task": "translate",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "mirror",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "diagonal",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "reverse",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "cross",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "offset",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        }
+      ],
+      "usage_complete": true,
+      "usage": {
+        "gpt-6-astra": {
+          "input_tokens": 141426,
+          "cached_input_tokens": 100352,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1317,
+          "reasoning_output_tokens": 264
+        }
+      },
+      "recorded_cost_usd": 0.576942,
+      "estimated_cost_usd": 0.576942,
+      "estimated_cost_per_accepted_episode_usd": 0.016026166666666664,
+      "verification_seconds": 5.0737629579380155,
+      "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+    },
+    {
+      "round": "round-2",
+      "arm": "specialists",
+      "seed": 23,
+      "agent_tool_seconds": 22.098672084044665,
+      "accepted": 36,
+      "total": 36,
+      "tasks": [
+        {
+          "task": "translate",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "mirror",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "diagonal",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "reverse",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "cross",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "offset",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        }
+      ],
+      "usage_complete": true,
+      "usage": {
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "prompt_tokens": 56850,
+          "completion_tokens": 2948,
+          "total_tokens": 59798,
+          "prompt_cache_hit_tokens": 23040,
+          "prompt_cache_miss_tokens": 33810,
+          "cached_tokens": 23040
+        },
+        "zai-org/GLM-5.3": {
+          "prompt_tokens": 35223,
+          "completion_tokens": 1442,
+          "total_tokens": 36665,
+          "prompt_cache_hit_tokens": 29376,
+          "prompt_cache_miss_tokens": 5847,
+          "cached_tokens": 29376
+        }
+      },
+      "recorded_cost_usd": 0.14237307999999999,
+      "estimated_cost_usd": 0.14237307999999999,
+      "estimated_cost_per_accepted_episode_usd": 0.003954807777777777,
+      "verification_seconds": 5.126237624906935,
+      "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+    },
+    {
+      "round": "round-3",
+      "arm": "astra-medium",
+      "seed": 37,
+      "agent_tool_seconds": 83.27351795800496,
+      "accepted": 36,
+      "total": 36,
+      "tasks": [
+        {
+          "task": "translate",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "mirror",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "diagonal",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "reverse",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "cross",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "offset",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        }
+      ],
+      "usage_complete": true,
+      "usage": {
+        "gpt-6-astra": {
+          "input_tokens": 193296,
+          "cached_input_tokens": 166528,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1394,
+          "reasoning_output_tokens": 36
+        }
+      },
+      "recorded_cost_usd": 0.503908,
+      "estimated_cost_usd": 0.503908,
+      "estimated_cost_per_accepted_episode_usd": 0.013997444444444444,
+      "verification_seconds": 5.138107292004861,
+      "artifact_set_sha256": "b10a7e57b7fc0e4ce54217ca6dc50e0bbc0398d2338b729ce0a155545ca4b71b"
+    },
+    {
+      "round": "round-3",
+      "arm": "specialists",
+      "seed": 37,
+      "agent_tool_seconds": 45.104911082889885,
+      "accepted": 30,
+      "total": 36,
+      "tasks": [
+        {
+          "task": "translate",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "mirror",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "diagonal",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "reverse",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "cross",
+          "accepted": 6,
+          "total": 6,
+          "replay_verified": true
+        },
+        {
+          "task": "offset",
+          "accepted": 0,
+          "total": 6,
+          "replay_verified": false,
+          "validation_error": "ValueError"
+        }
+      ],
+      "usage_complete": false,
+      "usage": {
+        "zai-org/GLM-5.3": {
+          "prompt_tokens": 36795,
+          "completion_tokens": 1450,
+          "total_tokens": 38245,
+          "prompt_cache_hit_tokens": 33024,
+          "prompt_cache_miss_tokens": 3771,
+          "cached_tokens": 33024
+        },
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "prompt_tokens": 43352,
+          "completion_tokens": 2204,
+          "total_tokens": 45556,
+          "prompt_cache_hit_tokens": 27392,
+          "prompt_cache_miss_tokens": 15960,
+          "cached_tokens": 27392
+        }
+      },
+      "recorded_cost_usd": 0.12384548,
+      "estimated_cost_usd": null,
+      "estimated_cost_per_accepted_episode_usd": null,
+      "verification_seconds": 4.272226832923479,
+      "artifact_set_sha256": "9d7b3f54310db85d049dabf8f13f9fce9e2f145db1147b7a85ac466b714e9ee4"
+    }
+  ],
+  "cost_basis": "Standard API-equivalent token estimates; not invoices. Token Factory cache discount assumed zero.",
+  "excluded_costs": [
+    "setup and coding",
+    "host compute",
+    "human intervention"
+  ],
+  "verification_outside_agent_timer": true,
+  "protocol": {
+    "schema": "npa.specialists.simulation_comparison.v1",
+    "primary_arms": [
+      "specialists",
+      "astra-medium"
+    ],
+    "secondary_arm": "astra-xhigh",
+    "repeats": [
+      {
+        "seed": 11,
+        "order": [
+          "specialists",
+          "astra-medium"
+        ]
+      },
+      {
+        "seed": 23,
+        "order": [
+          "astra-medium",
+          "specialists"
+        ]
+      },
+      {
+        "seed": 37,
+        "order": [
+          "specialists",
+          "astra-medium"
+        ]
+      }
+    ],
+    "secondary_seed": 23,
+    "specialist_models": [
+      "zai-org/GLM-5.3",
+      "deepseek-ai/DeepSeek-V4-Pro-0813"
+    ],
+    "specialist_processes": 6,
+    "model_assignment": "alternate roles by task and round",
+    "tasks": [
+      "translate",
+      "mirror",
+      "diagonal",
+      "reverse",
+      "cross",
+      "offset"
+    ],
+    "mass_scales": [
+      0.8,
+      1.0,
+      1.2
+    ],
+    "friction_scales": [
+      0.8,
+      1.2
+    ],
+    "episodes_per_arm_run": 36,
+    "simultaneous_simulator_processes": 6,
+    "success": "exact task requirements, all requested parameter cases, physical acceptance, recorded-action replay, unmodified video/trace hashes",
+    "primary_metrics": [
+      "physics_successes",
+      "agent_plus_tool_wall_seconds",
+      "API_equivalent_token_cost_per_success"
+    ],
+    "baseline": "One Codex GPT-6 Astra with identical scoped Workbench tools and an additional concurrent batch operation. No shell or model delegation. Medium reasoning primary; xhigh sensitivity.",
+    "billing": "Token Factory public input/output rates with no assumed cache discount. Astra Standard API-equivalent estimate from all CLI usage counters, not the ChatGPT subscription invoice.",
+    "stop_rule": "Execute the stated matrix once, retain failures and all model/tool receipts. No token/runtime/iteration caps. Do not rerun a losing arm to replace its result.",
+    "feasibility_control": "All 36 reference physics cases passed before agent evaluation; control is not scored as agent work.",
+    "scope": "CPU Fetch pick-and-place configuration repair and simulation fanout. No policy learning, GPU jobs, physical robot transfer, or claim of general coding superiority."
+  },
+  "frozen_execution_source_sha256": {
+    "operation.py": "f9512ba16ade5056ac7e10ec8970ff3f8cb40150da431dfd6b2a40a6bd8dd6e2",
+    "workload.py": "19aff03b2ffc4e5623997029d68e40bd2db4f4afa0f20eb03ede18cc2fb90fdd",
+    "mcp_bridge.py": "cefdabf705f0f9677154b707bd707bafe04f9cfb266a6458c1337efe977d1314",
+    "experiment.py": "cbaedb656ade62a0eb2e0c19f2410381aa35d49c97065f128d368aa04c9a49c1",
+    "physics.py": "d2696279523e0b27778692f7237d6995b7fb5c291845bdee3b715a4819142267"
+  },
+  "runtime_commit_before_telemetry_fix": "0a9d839e81856618dd3942ae16a5598e0e3bfec0",
+  "simulator": {
+    "mujoco": "3.3.7",
+    "gymnasium-robotics": "1.4.1",
+    "controller": "scripted_privileged_state_pick_place_v1"
+  },
+  "baseline_client": {
+    "name": "codex-cli",
+    "version": "0.154.0"
+  },
+  "host": {
+    "cpu": "Apple M4 Pro",
+    "cores": 12,
+    "memory_gib": 48,
+    "os": "macOS"
+  },
+  "video_validation": {
+    "decoded_episodes": 240,
+    "frames": 44400,
+    "frames_per_episode": 185,
+    "fps": 25,
+    "width": 384,
+    "height": 144
+  },
+  "supplemental_retries": [
+    {
+      "round": 1,
+      "task": "offset",
+      "status": "needs_attention",
+      "additional_agent_tool_seconds": 33.773352499934845,
+      "responses": [
+        {
+          "model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+          "accepted": false,
+          "finish_reason": "length",
+          "usage": {
+            "prompt_tokens": 2185,
+            "completion_tokens": 8192,
+            "total_tokens": 10377,
+            "prompt_cache_hit_tokens": 0,
+            "prompt_cache_miss_tokens": 2185,
+            "cached_tokens": 0
+          }
+        }
+      ],
+      "included_in_primary_trials": false
+    },
+    {
+      "round": 3,
+      "task": "offset",
+      "status": "needs_attention",
+      "additional_agent_tool_seconds": 36.86282454105094,
+      "responses": [
+        {
+          "model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+          "accepted": false,
+          "finish_reason": "length",
+          "usage": {
+            "prompt_tokens": 2185,
+            "completion_tokens": 8192,
+            "total_tokens": 10377,
+            "prompt_cache_hit_tokens": 2048,
+            "prompt_cache_miss_tokens": 137,
+            "cached_tokens": 2048
+          }
+        }
+      ],
+      "included_in_primary_trials": false
+    }
+  ],
+  "negative_controls": {
+    "open_gripper_rejected": true,
+    "modified_trace_replay_rejected": true
+  },
+  "limitations": [
+    "Three paired repeats on one host; not a statistical performance guarantee.",
+    "Specialists completed 96/108 primary cases versus Astra 108/108.",
+    "Two original rejected responses have unknown usage; aggregate specialist cost is unknown.",
+    "Astra cost is a Standard API-equivalent estimate, not its ChatGPT subscription invoice.",
+    "Fixed scripted controller; no learned policy or physical robot transfer.",
+    "Scoped Workbench tools, not unrestricted Codex or adversarial isolation."
+  ]
+}

@@ -17,8 +17,83 @@ def _write_json(path, value):
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 
+def _finalize_dataset_metadata(staging: Path) -> None:
+    """Bind joint and action names once the converted metadata is complete.
+
+    Args:
+        staging: Staging directory holding the converted dataset.
+    Returns:
+        None; rewrites meta/info.json with feature names.
+    Raises:
+        KeyError: The converted metadata lacks required feature entries.
+        OSError: The metadata file cannot be read or written.
+    """
+    info_path = staging / "meta" / "info.json"
+    info = json.loads(info_path.read_text())
+    info["features"]["observation.state"]["names"] = JOINT_NAMES
+    info["features"]["action"]["names"] = ACTION_NAMES
+    _write_json(info_path, info)
+
+
+def _accepted_episode_sources(root, accepted):
+    """Resolve accepted episode directories inside the run root without aliases.
+
+    Args:
+        root: Run directory that must contain every accepted episode.
+        accepted: Records whose status is ``accepted``.
+    Returns:
+        Resolved episode directories in accepted order.
+    Raises:
+        ValueError: A source escapes the run root, is missing, or duplicates
+            another accepted episode through a duplicate or symlink alias.
+    """
+    run_root = root.resolve()
+    sources, seen = [], set()
+    for record in accepted:
+        source = (root / record["episode_path"]).resolve()
+        if not source.is_dir() or run_root not in source.parents:
+            raise ValueError(
+                f"accepted episode is not a directory inside the run root: "
+                f"{record['episode_path']}"
+            )
+        if source in seen:
+            raise ValueError(f"duplicate accepted episode: {record['episode_path']}")
+        seen.add(source)
+        sources.append(source)
+    return sources
+
+
+def _convert_staged_episodes(demos, accepted, sources):
+    """Link accepted episodes into a staging tree and convert them in place.
+
+    Args:
+        demos: Temporary directory that will hold the episode symlinks.
+        accepted: Records whose status is ``accepted``.
+        sources: Resolved episode directories in accepted order.
+    Returns:
+        The converted dataset directory inside ``demos``.
+    Raises:
+        AdapterError: Dataset conversion or metadata enrichment fails.
+    """
+    tasks = []
+    for index, source in enumerate(sources):
+        (demos / f"episode_{index:04d}").symlink_to(source, target_is_directory=True)
+        tasks.append(
+            {"episode_index": index, "task": accepted[index]["simulation"]["task"]}
+        )
+    _write_json(demos / "metadata.json", {"episodes": tasks})
+    staging = demos / "staging"
+    convert(demos, staging, fps=FPS, robot_type="fetch", task_from_metadata=True)
+    _finalize_dataset_metadata(staging)
+    return staging
+
+
 def export_robot_dataset(root, records):
     """Convert accepted physical episodes through the existing LeRobot v3 adapter.
+
+    Conversion and metadata enrichment finish in staging before publication.
+    Failed conversions leave no dataset or new provenance indices, so the
+    same raw episodes can be retried.
 
     Args:
         root: Run directory with recorded per-episode arrays.
@@ -26,34 +101,23 @@ def export_robot_dataset(root, records):
     Returns:
         Number of accepted training episodes; zero leaves no dataset.
     Raises:
+        FileExistsError: The destination already exists, including dangling symlinks.
+        ValueError: Accepted source directories escape the run or repeat an episode.
         AdapterError: Video encoding or dataset conversion fails.
         OSError: Artifact writing fails.
     """
     accepted = [record for record in records if record["status"] == "accepted"]
     if not accepted:
         return 0
-    with TemporaryDirectory(prefix="npa-robot-demos-") as temporary:
-        demos = Path(temporary)
-        tasks = []
-        for index, record in enumerate(accepted):
-            (demos / f"episode_{index:04d}").symlink_to(
-                (root / record["episode_path"]).resolve(), target_is_directory=True
-            )
-            record["dataset_episode_index"] = index
-            tasks.append({"episode_index": index, "task": record["simulation"]["task"]})
-        _write_json(demos / "metadata.json", {"episodes": tasks})
-        convert(
-            demos,
-            root / "dataset",
-            fps=FPS,
-            robot_type="fetch",
-            task_from_metadata=True,
-        )
-    info_path = root / "dataset/meta/info.json"
-    info = json.loads(info_path.read_text())
-    info["features"]["observation.state"]["names"] = JOINT_NAMES
-    info["features"]["action"]["names"] = ACTION_NAMES
-    _write_json(info_path, info)
+    sources = _accepted_episode_sources(root, accepted)
+    destination = root / "dataset"
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"dataset destination already exists: {destination}")
+    with TemporaryDirectory(prefix="npa-robot-demos-", dir=root) as temporary:
+        staging = _convert_staged_episodes(Path(temporary), accepted, sources)
+        staging.rename(destination)
+    for index, record in enumerate(accepted):
+        record["dataset_episode_index"] = index
     return len(accepted)
 
 
