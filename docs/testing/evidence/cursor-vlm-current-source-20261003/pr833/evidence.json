@@ -1,0 +1,446 @@
+{
+  "schema": "cursor-explore.current-vlm-source-proof/v1",
+  "pr": 833,
+  "source": {
+    "head": "00a32dc2b5d0aa7fd8665e37bd4749d7563b9109",
+    "tree": "69d4759713a8d37e5b147b3ec4167e3c61f6e061"
+  },
+  "base": "7c09e0df32e68eaefde16c401c289e893bdf50fb",
+  "original_execution_source": {
+    "client_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+    "head": "f2a7f6750eaac40ffe8443a2fd9227bdc9d19712",
+    "runtime_sha256": "0a0e4ef5df2b04b507028e0021dbd32deb7997ac3fdeccac1fcfa2c889122ea0",
+    "tree": "adb37c48cd52bc1850a7e6d5eb2af777c759a282"
+  },
+  "source_bridges": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "original_sha256": "0a0e4ef5df2b04b507028e0021dbd32deb7997ac3fdeccac1fcfa2c889122ea0",
+      "candidate_sha256": "4b5ceed24c5011555e3943e58c082e9b2e674381d4dc96db25693e75d10ed4de",
+      "baseline_head": "a4356f90215c1ecda45e2f94f2ef0ca018650829",
+      "baseline_sha256": "a62942325473ac3e1de8a190b96e79940bf00ea990af3186ca2658357d871d56",
+      "incoming_main": "7c09e0df32e68eaefde16c401c289e893bdf50fb",
+      "incoming_changed_existing_AST_nodes": [
+        "_post_comparison_request",
+        "_resolve_task_text"
+      ],
+      "incoming_added_AST_nodes": [
+        "VlmPreferenceComparisonReport",
+        "VlmPreferenceComparisonRequest",
+        "VlmPreferenceCriticalDefects",
+        "VlmPreferenceError",
+        "VlmPreferenceOutcome",
+        "VlmPreferenceVerdict",
+        "_VlmEvidenceRetentionError",
+        "_VlmPreferenceContext",
+        "_VlmPreferenceJournal",
+        "_assert_counterbalanced_requests",
+        "_assert_neutral_transport_text",
+        "_assert_preference_object_available",
+        "_assert_preference_output_available",
+        "_assert_private_directory",
+        "_atomic_private_report",
+        "_build_preference_report",
+        "_build_preference_request",
+        "_call_preference_order",
+        "_comparison_response_retainer",
+        "_contains_source_role",
+        "_create_preference_journal",
+        "_ensure_private_report_directory",
+        "_execute_preference_orders",
+        "_journal_preference_request",
+        "_journal_preference_transport",
+        "_load_preference_json",
+        "_load_preference_pair",
+        "_load_single_preference_image",
+        "_mapped_preference",
+        "_nebius_preference_key",
+        "_nonempty_preference_text",
+        "_parse_preference_outcome",
+        "_preference_api_key",
+        "_preference_context",
+        "_preference_defects",
+        "_preference_endpoint_url",
+        "_preference_enum",
+        "_preference_evidence_guidance",
+        "_preference_image_candidates",
+        "_preference_image_content",
+        "_preference_image_urls",
+        "_preference_journal_artifact_uris",
+        "_preference_journal_root",
+        "_preference_journal_state",
+        "_preference_limitations",
+        "_preference_outcome",
+        "_preference_prompt",
+        "_preference_request_evidence",
+        "_preference_request_skeleton",
+        "_preference_requests",
+        "_preference_response_error",
+        "_preference_status",
+        "_preference_text_list",
+        "_preference_transport_error",
+        "_preference_transport_sink",
+        "_preference_verdict_from_payload",
+        "_run_preference_comparison",
+        "_strict_preference_verdict",
+        "_task_from_parquet_metadata",
+        "_validate_blinded_text",
+        "_validate_preference_completion",
+        "_validate_preference_outcomes",
+        "_validate_preference_request",
+        "_write_preference_journal",
+        "_write_preference_object",
+        "compare_vlm_preference",
+        "preference_comparison_result_uri_for",
+        "write_preference_report"
+      ],
+      "all_other_existing_ASTs_equal_baseline": true,
+      "parent_main624_receipt_sha256": "3af8d56dbb0a1a7d0ac00bbbeea9ef0accba90346255830e011f757d9e1fdc40"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "original_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "byte_equal_original": true,
+      "byte_equal_expected": true
+    },
+    {
+      "path": "npa/src/npa/cli/workbench/vlm_eval.py",
+      "original_sha256": "2b3f02b361920466e5804e03b9546fa77b20535c75fa08c8f7e34a01dd2f83b7",
+      "sha256": "65e7fff58b20cb70e0023d4d8c8cc4c3d6479867221decca2b7db8d709e19c4d",
+      "byte_equal_original": false,
+      "byte_equal_expected": true
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "sha256": "1acfe0e34a728c5fcdf2c9487eba188e124eda3d2a21be87a4700976a421ef60",
+      "baseline_sha256": "1acfe0e34a728c5fcdf2c9487eba188e124eda3d2a21be87a4700976a421ef60",
+      "byte_equal_baseline": true
+    }
+  ],
+  "rows": [
+    {
+      "canonical_request_sha256": "f72ac3bcabeb749ed68c7f9efc0a9243fad17fe75c2a77ce9bee8c87137097e6",
+      "case": "api-MiniMax-M3-positive",
+      "decision": "promote_checkpoint",
+      "derivative_artifact_sha256": "00130767c57288391640924fda0d55a1dfc876fdb71468ee3f76384a5a21f23d",
+      "original_provider_execution_head": "f2a7f6750eaac40ffe8443a2fd9227bdc9d19712",
+      "original_request_sha256": "f72ac3bcabeb749ed68c7f9efc0a9243fad17fe75c2a77ce9bee8c87137097e6",
+      "original_result_sha256": "79e454b80f8a5fa29868efbe1805aefadf81bdace2092a0caa9701fe3cc24d47",
+      "original_transport_sha256": "e3ac47fcffc93975034fb3f9c80ca8cd93a90d538369d6649d25d587abceb7e9",
+      "passed": true,
+      "provider_calls": 0,
+      "provider_success": true,
+      "rationale": "The image clearly shows a red circle on a white background. The shape is a circle and the color is red, fully satisfying the task requirement of identifying a visible red circle.",
+      "response_sha256": "0547c272cc03afbaf09df74962f999f18f52994b8b38c2c907a9fdf246e669fe",
+      "score": 1,
+      "served_model_match_enforced": true,
+      "unchanged_request": true
+    },
+    {
+      "canonical_request_sha256": "5fafaf5a7088798c310b42f6dad40c192460969df4facc3416a2208a208c9833",
+      "case": "api-MiniMax-M3-negative",
+      "decision": "loop_back",
+      "derivative_artifact_sha256": "e232307130151decf833ca385888476fefcbbcdae38e7dacda500c4ab39dd585",
+      "original_provider_execution_head": "f2a7f6750eaac40ffe8443a2fd9227bdc9d19712",
+      "original_request_sha256": "5fafaf5a7088798c310b42f6dad40c192460969df4facc3416a2208a208c9833",
+      "original_result_sha256": "25cb91eee1dd5659b076f94c20bb92eedb9773b56d3f0dd1ab23d0e8ebc332bf",
+      "original_transport_sha256": "0ab01c83466203234072e74e97b205a17add54ef6f865260fabc65762a522804",
+      "passed": false,
+      "provider_calls": 0,
+      "provider_success": false,
+      "rationale": "The image is a uniform blank/gray frame with no visible shapes or colors. There is no red circle present, so the task of identifying a red circle is not completed.",
+      "response_sha256": "c99006bf6231aa3acf6bf5c0de8604a51ebb1dada2356929ab48a88de7004871",
+      "score": 0,
+      "served_model_match_enforced": true,
+      "unchanged_request": true
+    },
+    {
+      "canonical_request_sha256": "624b2d403e9fc83d8f42725472ebe1497f2cbd8f8d630768bd2197167d169f53",
+      "case": "api-gemma-3-27b-it-positive",
+      "decision": "promote_checkpoint",
+      "derivative_artifact_sha256": "dbd058edbaf9529c32e523158e5d86fbac95377e23ee7eda1390e91448df61e7",
+      "original_provider_execution_head": "f2a7f6750eaac40ffe8443a2fd9227bdc9d19712",
+      "original_request_sha256": "624b2d403e9fc83d8f42725472ebe1497f2cbd8f8d630768bd2197167d169f53",
+      "original_result_sha256": "68fcc9cba8c3d1c42a9aae6b8e5b7dc1355ef5870e166e7d53aab524c54e32f2",
+      "original_transport_sha256": "18eb77c912a1687bdd53bb4feb5c9acdb67568bd0fd4f2767925f3cbedbc1a52",
+      "passed": true,
+      "provider_calls": 0,
+      "provider_success": true,
+      "rationale": "The image clearly contains a red circle. The task is fully completed.",
+      "response_sha256": "1103f071e679c4c661b59cf7f001e71a1bf2b0d74e71a75590d883612da3007b",
+      "score": 1,
+      "served_model_match_enforced": true,
+      "unchanged_request": true
+    },
+    {
+      "canonical_request_sha256": "29aa0f25c679ff63a79ec1116c9e84b8d988e8a76d2ac30eff669e59dad7346b",
+      "case": "api-gemma-3-27b-it-negative",
+      "decision": "loop_back",
+      "derivative_artifact_sha256": "8de0914c903731ac909b505d88d64a6d90f96558baa66bf3214f4c6109ab2328",
+      "original_provider_execution_head": "f2a7f6750eaac40ffe8443a2fd9227bdc9d19712",
+      "original_request_sha256": "29aa0f25c679ff63a79ec1116c9e84b8d988e8a76d2ac30eff669e59dad7346b",
+      "original_result_sha256": "dd2af53e4b2d1c0366c28c151bf2331c5077c9d4edf27ba70a2e442ccab92f95",
+      "original_transport_sha256": "61580893030068968ceeb30d6d5131b4c8a35bb8b22ad827b6a1a1a7d4ccad2b",
+      "passed": false,
+      "provider_calls": 0,
+      "provider_success": false,
+      "rationale": "The image is a uniform gray color. There are no visible shapes, and specifically, no red circle is present. Therefore, the task is not completed.",
+      "response_sha256": "8df9e6b951b49bc8a4c741db2942f10fc5265fe1746fcd5403ae96deac964e73",
+      "score": 0,
+      "served_model_match_enforced": true,
+      "unchanged_request": true
+    }
+  ],
+  "precedence": [
+    {
+      "decision": "promote_checkpoint",
+      "mode": "canonical",
+      "provider_calls": 0
+    },
+    {
+      "decision": "promote_checkpoint",
+      "mode": "legacy-only",
+      "provider_calls": 0
+    },
+    {
+      "decision": "loop_back",
+      "mode": "malformed-canonical",
+      "provider_calls": 0
+    },
+    {
+      "decision": "loop_back",
+      "mode": "broken-both",
+      "provider_calls": 0
+    },
+    {
+      "decision": "loop_back",
+      "mode": "missing-both",
+      "provider_calls": 0
+    }
+  ],
+  "retained_mutations": [
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_completion_incomplete",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "completion",
+      "provider_calls": 0,
+      "value": "length"
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_completion_filtered",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "completion",
+      "provider_calls": 0,
+      "value": "content_filter"
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_completion_incomplete",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "completion",
+      "provider_calls": 0,
+      "value": "tool_calls"
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_completion_incomplete",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "completion",
+      "provider_calls": 0,
+      "value": null
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_verdict_invalid",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "score",
+      "provider_calls": 0,
+      "value": true
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_verdict_invalid",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "score",
+      "provider_calls": 0,
+      "value": "0.9"
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_verdict_invalid",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "score",
+      "provider_calls": 0,
+      "value": null
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_verdict_invalid",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "score",
+      "provider_calls": 0,
+      "value": []
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_verdict_invalid",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "score",
+      "provider_calls": 0,
+      "value": {}
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_verdict_invalid",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "score",
+      "provider_calls": 0,
+      "value": -0.1
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_verdict_invalid",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "score",
+      "provider_calls": 0,
+      "value": 1.1
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_verdict_invalid",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "score",
+      "provider_calls": 0,
+      "value": "NaN"
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_verdict_invalid",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "score",
+      "provider_calls": 0,
+      "value": "Infinity"
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "provider_model_mismatch",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "model",
+      "provider_calls": 0,
+      "value": "vendor/substituted-model"
+    },
+    {
+      "decision": "loop_back",
+      "details": {
+        "evidence_reason": "digest_mismatch",
+        "reason": "vlm_provider_evidence_invalid"
+      },
+      "kind": "sampling",
+      "provider_calls": 0,
+      "value": "tampered"
+    }
+  ],
+  "provider_calls": 0,
+  "original_artifacts_rewritten": false,
+  "local_gates": {
+    "main622": {
+      "head": "1e10214e579db029e994728e3442c59df7c6a533",
+      "passed": 1423,
+      "skipped": 2
+    },
+    "main624": {
+      "head": "a4356f90215c1ecda45e2f94f2ef0ca018650829",
+      "passed": 563,
+      "skipped": 2
+    },
+    "main627": {
+      "head": "00a32dc2b5d0aa7fd8665e37bd4749d7563b9109",
+      "passed": 1535,
+      "skipped": 2,
+      "warnings": 8,
+      "seconds": 123.03
+    },
+    "precheck": 270,
+    "docs": "passed",
+    "aggregate_confidentiality": "passed",
+    "aggregate_gitleaks": "passed",
+    "security_at_a435": 898,
+    "smoke_at_a435": 118,
+    "guardrails_at_a435": {
+      "passed": 5877,
+      "skipped": 1
+    },
+    "original_full": {
+      "head": "c39119edff07f252d3778ec74878b7efc84ee1a5",
+      "passed": 39812,
+      "skipped": 213,
+      "non_strict_xpass": 1,
+      "coverage_percent": 77.47,
+      "required_floor": 60
+    }
+  },
+  "material_claim_controls": {
+    "domain": "JSON-serialized real producer objects, synthetic responses/no network",
+    "baseline_promotions": 16,
+    "repaired_promotions": 4,
+    "repaired_refusals": 12,
+    "legacy_absence_retained": true
+  },
+  "separate_composition": {
+    "head": "e3f47d90efde7be1cf75e9192e5e3e5a70bcd636",
+    "tree": "345223db594893bb90c5022059db95fd28dacbe0",
+    "passed": 933,
+    "skipped": 2,
+    "actual_original_response_replays": 4,
+    "original_execution_head": "04ed3bccbfce7d39fb8cb3d81537950c4041e3ae",
+    "provider_calls": 0,
+    "independent_acceptance": "requested exact private interface; not wider union acceptance"
+  },
+  "Claude": {
+    "job": "pr-833-pass-2-2ddd2add321a",
+    "head": "2ddd2add321a8ea6973151f4538c2c377850566b",
+    "verdict": "clear(code)",
+    "packet_sha256": "45e3f18fc37e65c44c021c526426764bc30b3c569cddd3808441ebeda63a00e3",
+    "worker_output_sha256": "2d9bf91d8ba9c11dd759f3883ec989bc4d181fa7f5b0bd26dd276c99b21836ef",
+    "disposition": "Material optional literal claim/backend consistency and effective headers closed. Low duplicate effective-model work confirmedactual33f2calls, fixed1e1021call; no thirdClaude, independent exact delta requested. No permissive current profile restored."
+  },
+  "limitations": [
+    "Offline retained-response replay is not fresh hosted inference or provider authentication.",
+    "Hash integrity and synthetic controls do not calibrate model quality or safety.",
+    "No Claude pixel inspection or human approval; later heads have scoped source/test bridges, not future-head Claude approval.",
+    "Hosted-compatible self-hosted client controls are not operator-owned GPU serving qualification.",
+    "Original full/real-response executions retain original SHAs; current CPU replay is not new inference.",
+    "Current published-head CI and authorized standard-queue integration remain separate."
+  ]
+}

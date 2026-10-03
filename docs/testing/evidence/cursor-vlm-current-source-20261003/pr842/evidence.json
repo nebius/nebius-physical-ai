@@ -1,0 +1,52 @@
+{
+  "schema": "cursor-explore.postmerge-feedback-clarification/v1",
+  "pr": 842,
+  "original_merge": "443d346fb7ec56ba44a4065873c530ae41f62f49",
+  "closed_branch_changed": false,
+  "original_proof": "64b904cc1cc58edd3b9277cdaff8fa3b940553dd",
+  "original_controls": {
+    "actual_HTTP_malformed_batches": 20,
+    "HTTP_status": 400,
+    "CPU_bool_controls": 2,
+    "focused_passed": 34,
+    "false_control_parameter_change_demonstrated": false,
+    "true_control_parameter_change_demonstrated": true
+  },
+  "later_diagnostic": {
+    "head": "64b904cc1cc58edd3b9277cdaff8fa3b940553dd",
+    "tree": "f7c3dbeae2bd752fa1a1db7ebd4fea4a3960673e",
+    "source_before_after_clean": true,
+    "source_hashes": [
+      {
+        "path": "npa/src/npa/workbench/lerobot/policy_container.py",
+        "sha256": "0b8b1c3dbbad15d1b1fb952161993ed77eade98939d6d2448cd5276a71f2831d"
+      },
+      {
+        "path": "npa/src/npa/literal_values.py",
+        "sha256": "2064c2107ec92e3b4fb8d196e2668b59ecac4870b9729471eef9c5ca1f38ac06"
+      }
+    ],
+    "literal_bool_controls": 8,
+    "adjacent_preexisting_invalid_score_controls": 4,
+    "invalid_score_HTTP_status": 500,
+    "output_created": false,
+    "training_calls": 0,
+    "actual_network_services": 0,
+    "schema_before_jail_HTTP_status": 400
+  },
+  "Claude": {
+    "job": "pr-842-pass-1-443d346fb7ec",
+    "model": "claude-opus-5",
+    "provider": "firstParty",
+    "packet_sha256": "578e9d58ac0775b1bfe87c2f3f2fe4c11d92f48a7d8a3fe7db1b00c3a5bf26e8",
+    "worker_reported_output_sha256": "6800810058314726e7573ff6d761cf40979a9b04be0991a1338e68026369e43a",
+    "verdict": "changes required follow-up/context; core correct, not approval",
+    "execution_by_Claude": false
+  },
+  "limitations": [
+    "No authenticated-application claim; task-owned loopback/ASGI validation only.",
+    "Malformed-score500 and checkpoint multiworker concurrency are preexisting findings requiring scoped follow-up routing.",
+    "No merged source repair/replay, retroactive approval, GPU/robot policy quality or calibrated safety claim.",
+    "Original proof bytes/numbers/execution hashes retained."
+  ]
+}

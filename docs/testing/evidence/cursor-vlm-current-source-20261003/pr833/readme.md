@@ -1,0 +1,17 @@
+# PR 833 current-source identity bridge
+
+Signed source `00a32dc2b5d0aa7fd8665e37bd4749d7563b9109` (tree `69d4759713a8d37e5b147b3ec4167e3c61f6e061`) integrates landed main `7c09e0df32e68eaefde16c401c289e893bdf50fb`. This addendum preserves the [original source/numeric/media proof](https://github.com/nebius/nebius-physical-ai/blob/585d7703c4c392022f0680d760433b839c909da5/docs/testing/evidence/cursor-vlm-strict-feedback-20261003/pr833/README.md) and every original execution identity.
+
+Current hosted profiles enforce exact requested/served identity for every model ID, including unknown/custom IDs. No historical permissive matching policy is restored. Optional retained `served_model_match_enforced` claims must be literal booleans and consistent with backend/identity contracts; historical absence remains supported. JSON-serialized synthetic producer controls changed 16 baseline promotions to four valid promotions and 12 refusals, without a network call. Wrong-model, malformed-completion and invalid-score refusals remain.
+
+Aggregate model headers now follow the same effective-model selection as actual requests. Configured model values describe caller intent; per-result requested/served identities describe the actual request/response. Order-preserving effective-model deduplication removes duplicate equivalent benchmark requests without changing frozen scores or thresholds. Stub/score overrides do not claim an actual provider call or hosted identity enforcement.
+
+Selected main622/main624/main627 integrations passed **1,423 / 563 / 1,535 tests**, respectively, with two inherited opt-in GPU skips each. The last retained eight warnings. Precheck 270, docs and aggregate confidentiality/gitleaks passed. Exact `a4356f90` security **898**, smoke **118**, and guardrails **5,877 passed / one skipped** remain separate executions. Original full **39,812 passed / 213 skipped / one non-strict XPASS / 77.47% coverage** belongs to `c39119ed`, not this head.
+
+Four actual responses executed at `f2a7f675` replayed offline through the current CLI, canonical writer and grade consumer with identical requests/hashes, scores, labels and rationales. Five canonical/legacy precedence and 15 retained-evidence tamper negatives passed. No new provider calls occurred. The measured source/AST chain accounts explicitly for incoming sampling, canonical consumer, capture/task-reader/writer, benchmark and preference interfaces; it does not assert whole-evaluator equality. See [evidence.json](evidence.json).
+
+A separate immutable corrected call-disclosure/identity/strict composition passed 933 tests, two inherited GPU skips, and replayed four original `04ed3bcc` responses without calls. Actual inference says a call occurred; stub/override paths say no call. Calibration remains false and limitations remain explicit. That private interface is not approval of a future wider union.
+
+First-party Claude Opus focused review returned **clear(code)** at exact earlier `2ddd2add`. The duplicate-model follow-up finding was subsequently repaired and independently reviewed; later integration heads require measured bridges, not future-head, human or pixel approval. Historical native-Claude-unavailable observations remain historical.
+
+These geometry controls establish traceability, not calibrated VLM quality, safety, physical task success or operator-owned GPU serving. Historical failed attempts and proof bytes remain intact. Current published-head CI, actual-main reconciliation and authorized coordinator queue admission remain separate.
