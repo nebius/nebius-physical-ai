@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import importlib
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,17 +17,16 @@ import pytest
 from npa.workbench import vlm_eval
 
 
-def test_live_sampler_writer_serializes_public_result(tmp_path) -> None:
-    from tests.e2e.test_vlm_frame_selection_live import _write_live_result
+def test_live_sampler_writer_serializes_public_result(monkeypatch, tmp_path) -> None:
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    suite = importlib.import_module("e2e.test_vlm_frame_selection_live")
 
     result = vlm_eval.evaluate_stub(
         input_path="synthetic-control",
         output_path=str(tmp_path / "result.json"),
         score=0.0,
     )
-    _write_live_result(result)
-    import json
-
+    suite._write_live_result(result)
     assert json.loads(Path(result.result_uri).read_text()) == asdict(result)
 
 
