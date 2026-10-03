@@ -30,3 +30,16 @@ prompt-sensitive. A legitimate complete caption exactly equal to the sentinel
 false-fails, and other unavailable-image wording may escape this narrow rule.
 The offline replay is a classifier test, not an observed real delivery incident.
 The original historical proof remains separately bound to its original SHA.
+
+The SDK `caption` wrapper directly calls the CLI callback: cooperative sentinel
+failure prints the failed status and raises `typer.Exit(1)` after saving the
+partial result, rather than returning success. A dry run prints the failure and
+raises without saving. Provider/configuration or storage-write exceptions are
+outside this sentinel-specific persistence guarantee.
+
+The earlier `token-factory-image-availability-sentinel` pack records a different
+source tree and its own historical request/replay accounting. It is not current
+head-bound evidence; its offline counter has not been independently reconciled
+by this continuation. The two real controls and one offline replay described
+above are the separately retained continuation protocol, not a correction or
+relabelling of those older recordings.

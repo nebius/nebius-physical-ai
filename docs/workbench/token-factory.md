@@ -106,10 +106,12 @@ Captioning sends one request per image. Its request preserves your caption
 instruction and appends this image-availability directive:
 `If you cannot see the image pixels, respond exactly: NO IMAGE RECEIVED.` An
 exact, case-insensitive whole-answer match marks that image
-`image_unavailable`; quoting the phrase inside a longer caption does not. The
-command continues through every selected image once, writes the complete failed
-result, and exits 1 if any image was unavailable. It does not silently retry the
-sentinel.
+`image_unavailable`; quoting the phrase inside a longer caption does not.
+For a cooperative sentinel response, the command continues through every
+selected image once, writes the complete failed result, and exits 1 if any image
+was unavailable. It does not silently retry the sentinel. This partial-result
+guarantee does not extend to provider/configuration exceptions or storage-write
+failures; those can abort the operation before a result is saved.
 
 Reasoning sends the selected images together with the task. Neither command
 reads video files directly; extract frames first. Check saved results against
@@ -247,6 +249,15 @@ token_factory.generate(
     output="json",
 )
 ```
+
+The `caption` SDK wrapper preserves the CLI failure signal: a cooperative
+sentinel writes the failed artifact and prints its status (JSON with
+`output="json"`) before raising
+`typer.Exit` with `exit_code == 1`. Catch that exception to inspect the saved
+partial result; it is not a returned success value. With `dry_run=True`, the
+failed status is printed and the same exception propagates, but no artifact is
+written. Configuration/provider failures also use exit code 1 and are
+distinguished by their error output, not by a successful result payload.
 
 For in-memory results, use `generate_text`, `caption_images`, or `reason_scene`
 from `npa.workbench.token_factory`. These return dataclasses; persistence
