@@ -11,6 +11,7 @@ Python and HTTP access follow each tool's documented contract.
 | Task | Guide |
 | --- | --- |
 | Choose a workload | [Robot and workflow guides](guides/README.md) · [workflow catalog](../../workflows/README.md) |
+| Run public samples | [Four workflow demos](guides/public-workflow-demos.md): qualified scan-to-policy, industrial sensors and NuRec; RL comparison with a measured rejection report |
 | Use your coding agent | [First-run prompts](agent-first-run.md) · [workflow operations](agent-workflow-operations.md) |
 | Prepare the runtime | [Workbench setup](getting-started.md) · [Kubernetes](kubernetes.md) · [direct runtime modes](runtime-modes.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
@@ -28,6 +29,7 @@ Python and HTTP access follow each tool's documented contract.
 | Video augmentation and dataset production | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) · [Cosmos Transfer data factory](guides/physical-ai-data-factory-deploy.md) · [concepts](guides/physical-ai-data-factory.md) · [campaign reuse](guides/paidf-campaign-reuse.md) |
 | Plan a Cosmos 3 model factory | [Architecture, current gaps, and implementation sequence](../architecture/cosmos3-model-factory.md) · [Live generation and quality feedback](cosmos3-model-factory-live-20260915.md) |
 | Train and evaluate a Cosmos 3 robot policy | [Experimental native LIBERO model-factory workflow](cosmos3-policy-model-factory.md) |
+| Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
 | Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | USD object preparation | [Content Agents](content-agents.md) |
 | Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
@@ -71,7 +73,7 @@ Python and HTTP access follow each tool's documented contract.
 | Select images | [Public catalog](container-image-catalog.md) · [GPU compatibility](image-gpu-compatibility-matrix.md) · [SONIC variants](sonic-image-catalog.md) |
 | Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) |
 | Configure nodes and caches | [GPU driver strategy](mk8s-gpu-driver-strategy.md) · [model-weight cache](model-weight-cache.md) · [preemptible VMs](preemptible-vms.md) |
-| Reproduce benchmarks and demos | [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) · [performance/reliability validation](workbench-improvements-validation.md) |
+| Reproduce benchmarks and demos | [Benchmarks](../../benchmark/README.md) · [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) · [performance/reliability validation](workbench-improvements-validation.md) |
 | Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) · [FiftyOne image validation](../../npa/docker/workbench/fiftyone/RELEASE.md#validate-a-local-candidate) |
 
 Inspect the selected guide's actual output artifacts after the run reaches a

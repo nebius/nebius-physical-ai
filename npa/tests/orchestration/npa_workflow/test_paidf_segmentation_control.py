@@ -164,6 +164,13 @@ def test_semantic_contract_rejects_invalid_overrides_before_plan(
         merge_config_overrides(load_spec(BLUEPRINT), overrides)
 
 
+def test_fractional_variant_count_is_not_truncated() -> None:
+    spec = load_spec(BLUEPRINT)
+    spec.config["n_augmentations"] = 1.9
+    with pytest.raises(NpaWorkflowError, match="positive integer"):
+        validate_spec(spec)
+
+
 def test_plan_and_submit_share_the_early_semantic_preflight() -> None:
     bad = [
         "--var",

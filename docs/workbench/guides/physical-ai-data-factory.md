@@ -609,6 +609,13 @@ upstream's documented `--disable-guardrails` setup option and records
 weaken the downstream attribute, hallucination, temporal, protected-appearance,
 or quality-disposition checks; it should not be made a shared default.
 
+The run manifest reports `input_conditioned` or `content_guardrails_enabled` as
+true only when every variant has that property. Each `variants` entry retains
+its own flags, so mixed runs remain inspectable regardless of clip order.
+An empty run asserts neither property. Omitted clip flags keep their defaults:
+unconditioned input and enabled content guardrails; malformed flags reject
+publication even when another variant already makes the run-level flag false.
+
 ## Runtime placement
 
 - **Token Factory (zero-GPU, hosted):** captioning, and the Cosmos Evaluator

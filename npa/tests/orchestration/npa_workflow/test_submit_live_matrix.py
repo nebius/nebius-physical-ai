@@ -365,6 +365,7 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
     plan_only = {
         "adversarial-scenario-hardening.yaml",
         "byof-droid-policy-learning.yaml",
+        "byof-evo.yaml",
         "byof-maniskill.yaml",
         "byof-mujoco-playground.yaml",
         "byof-open-dreamer.yaml",
@@ -379,6 +380,15 @@ def test_coverage_backfill_cases_are_honestly_plan_only() -> None:
         assert case.plan_only, (
             f"{name} must retain its reviewed plan-only classification"
         )
+
+
+def test_evo_byof_case_discloses_the_nested_runner_boundary() -> None:
+    case = next(case for case in SUBMIT_LIVE_MATRIX if case.spec == "byof-evo.yaml")
+
+    assert case.tier == "cpu"
+    assert case.plan_only
+    assert "inner SkyPilot launch" in case.plan_only_justification
+    assert not case.secret_envs
 
 
 def test_cosmos_synth_fanout_records_runtime_topology_without_live_submission(
@@ -1147,3 +1157,42 @@ def test_gpu_sweep_live_case_caps_concurrency_for_cost() -> None:
     # 4 members with maxConcurrency 2 means the runtime submits two JobGroups, which
     # is also the only live coverage of the multi-batch path.
     assert sweep.expected_parallel_tasks == 4
+
+
+def test_navigation_live_spec_uses_explicit_operator_inputs(tmp_path, monkeypatch):
+    helpers = _load_live_helpers()
+    image = "registry.example.invalid/navigation@sha256:" + "a" * 64
+    monkeypatch.setenv(
+        "NPA_NAVIGATION_INPUT_URI", "s3://fixture-bucket/navigation-input/"
+    )
+    monkeypatch.setenv("NPA_NAVIGATION_IMAGE", image)
+    path = helpers.materialize_live_spec(
+        tmp_path,
+        "shared-scene-navigation.yaml",
+        bucket="fixture-bucket",
+        run_id="fixture",
+    )
+    spec = yaml.safe_load(path.read_text())
+    config = spec["config"]
+    assert config["byof_image"] == image
+    assert config["input_uri"] == "s3://fixture-bucket/navigation-input/"
+    for stage, input_prefix in (
+        ("train", "prepared_uri"),
+        ("evaluate", "training_uri"),
+    ):
+        prefix = "{{config." + input_prefix + "}}"
+        assert spec["states"][stage]["inputs"] == [
+            {
+                "uri": prefix + "completion.json",
+                "schema": "npa.navigation.publication.v1",
+            }
+        ]
+        assert spec["states"][stage]["run"]["argv"][-2] == prefix
+    monkeypatch.delenv("NPA_NAVIGATION_IMAGE")
+    with pytest.raises(ValueError, match="exact NPA_NAVIGATION_IMAGE"):
+        helpers.materialize_live_spec(
+            tmp_path,
+            "shared-scene-navigation.yaml",
+            bucket="fixture-bucket",
+            run_id="fixture",
+        )

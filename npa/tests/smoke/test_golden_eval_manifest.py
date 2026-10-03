@@ -501,6 +501,80 @@ def test_serverless_gpu_values_are_known() -> None:
             assert gpu in known, f"{name}: unknown serverless_gpu {gpu!r}"
 
 
+def test_serverless_gpu_counts_are_positive_integers() -> None:
+    for name, spec in load_manifest().items():
+        count = spec.golden_eval.serverless_gpu_count
+        assert type(count) is int and count > 0, (
+            f"{name}: invalid serverless_gpu_count {count!r}"
+        )
+
+
+def test_cosmos3_serving_requests_its_documented_eight_gpu_node() -> None:
+    spec = load_manifest()["cosmos3-serving"]
+    assert spec.golden_eval.serverless_gpu == "b200"
+    assert spec.golden_eval.serverless_gpu_count == 8
+
+
+def test_non_candidate_quarantined_images_are_not_reported_as_runnable() -> None:
+    from npa.deploy.images import (
+        PUBLICATION_QUARANTINE_TOOLS,
+        VALIDATION_CANDIDATE_TOOLS,
+    )
+
+    specs = load_manifest()
+    # Explicit dev-SHA candidates can remain GPU-gated so maintainers can run
+    # the acceptance workload that promotes them. Every other quarantined
+    # release must stay out of the runnable default batch.
+    for name in PUBLICATION_QUARANTINE_TOOLS - VALIDATION_CANDIDATE_TOOLS:
+        assert specs[name].golden_eval.status in {
+            "blocked-on-upstream",
+            "needs-image-update",
+        }, name
+
+
+def test_runnable_defaults_exist_in_shared_serverless_project() -> None:
+    """Keep the nightly sweep on platforms the configured project offers."""
+
+    from npa.smoke.serverless_runner import DEFAULT_SERVERLESS_GPU
+
+    available = {"h200", "b200", "rtx6000"}
+    for name, spec in load_manifest().items():
+        if spec.golden_eval.status == "blocked-on-upstream":
+            continue
+        gpu = spec.golden_eval.serverless_gpu or DEFAULT_SERVERLESS_GPU
+        assert gpu in available, (
+            f"{name}: serverless GPU {gpu!r} is not offered in the shared "
+            f"golden-eval project; choose one of {sorted(available)}"
+        )
+
+
+def test_shared_serverless_fallback_is_the_smallest_available_preset() -> None:
+    from npa.smoke.serverless_runner import DEFAULT_SERVERLESS_GPU
+
+    # L40S remains a valid operator-selected target, but it is not offered in
+    # the shared project used by the golden-eval sweep.
+    assert DEFAULT_SERVERLESS_GPU == "h200"
+
+
+def test_cpu_only_smokes_pin_their_shared_project_platform_explicitly() -> None:
+    """CPU-only payloads must not inherit a silently changing GPU cost default."""
+
+    for name, spec in load_manifest().items():
+        if spec.golden_eval.gpu != "none":
+            continue
+        assert spec.golden_eval.serverless_gpu == "h200", (
+            f"{name}: CPU-only serverless smoke must explicitly pin the smallest "
+            "offered shared-project platform"
+        )
+
+
+def test_openpi_serverless_gpu_matches_its_runtime_assertion() -> None:
+    spec = load_manifest()["openpi"]
+    assert spec.golden_eval.serverless_gpu == "rtx6000"
+    assert '--expected-gpu-type "RTX PRO 6000"' in spec.golden_eval.command
+    assert "--expected-compute-capability 12.0" in spec.golden_eval.command
+
+
 def test_serverless_runner_imports() -> None:
     # Import-safe: pulls in no GPU/framework deps.
     from npa.smoke import serverless_runner

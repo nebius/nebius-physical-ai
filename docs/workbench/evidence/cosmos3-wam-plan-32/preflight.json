@@ -1,0 +1,30 @@
+{
+  "status": "source-preflight-passed",
+  "provider_mutation": false,
+  "workers": [
+    {
+      "name": "b200",
+      "platform": "gpu-b200-sxm",
+      "preset": "8gpu-160vcpu-1792gb",
+      "size": 4,
+      "capacity_mode": "reserved",
+      "reservation_selector": "id",
+      "reservation_verified": false
+    }
+  ],
+  "solutions_library_ref": "7046fb3c68314a940cdb47ff5c4fd23c01a6711e",
+  "nodes": 4,
+  "gpus_per_node": 8,
+  "total_gpus": 32,
+  "execution_validated": false,
+  "capacity_status": "insufficient reserved capacity at preflight; no fallback requested",
+  "protocol_sha256": "87784f806fb366d3d739f8acf0486c5795d88521cae36a8b67b725f087fa56bc",
+  "deployment_attempt": {
+    "status": "rejected-before-provider-mutation",
+    "reason": "reserved capacity insufficient",
+    "required_gpus": 32,
+    "available_reserved_gpus": 21,
+    "additional_reserved_gpus_needed": 11,
+    "strict_no_fallback": true
+  }
+}

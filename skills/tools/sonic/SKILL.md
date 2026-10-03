@@ -51,11 +51,15 @@ its own native RSL-RL checkpoints; no automatic SONIC checkpoint adapter is impl
   a digest-pinned Python base and hash-locked CUDA Toolkit/MuJoCo closure. It is
   not derived from either quarantined image; release promotion is bound to its
   exact clean, GPU-accepted public development digest.
-- Use the active host-mounted runtime-fetch image selected by
-  `npa/src/npa/deploy/sonic_image_manifest.json` for RTX PRO 6000 Blackwell
-  Kubernetes targets with NVIDIA GPU Operator mounted drivers. A B300
-  validation image uses the same Dockerfile but must be supplied explicitly by
-  immutable digest until its own accepted release updates the manifest. B300
+- The host-mounted runtime-fetch recipe selected by
+  `npa/src/npa/deploy/sonic_image_manifest.json` is the intended RTX PRO 6000
+  Kubernetes route, but its recorded public tag is publication-quarantined: it
+  defaults to root and exposes operator-specific build provenance in OCI
+  labels. Default resolution must fail until a repaired non-root release is
+  scanned and accepted. Use only an explicit reviewed immutable replacement;
+  do not reconstruct or force the withdrawn tag in callers. A B300 validation
+  image uses the same Dockerfile but must be supplied explicitly by immutable
+  digest until its own accepted release updates the manifest. B300
   is compute capability 10.3: that development image must use the
   digest-pinned CUDA 13 base, PyTorch `cu130`, CUDA 13 NVRTC, and the truthful
   `sm80-sm90-sm100-sm103-sm120` target contract. The official cu130 PyTorch
@@ -63,6 +67,10 @@ its own native RSL-RL checkpoints; no automatic SONIC checkpoint adapter is impl
   requirement applies to CUDA 13 NVRTC JIT compilation on the B300 device.
   CUDA 12.8 NVRTC rejects `sm_103`; do not treat environment startup before
   that JIT boundary as B300 training evidence.
+- `npa-sonic-mujoco:0.2.0-runtime` is independently accepted and remains
+  consumable for the MuJoCo-only workload. Variant-level resolution must not
+  let that separate package exempt `npa-sonic` from quarantine, or let the
+  `npa-sonic` quarantine hide the MuJoCo release.
 - SONIC render validation requires RT-capable GPUs. Use RTX PRO 6000 Blackwell;
   do not silently fall back to the quarantined H100/L40S images.
 - `sonic eval --backend container` consumes ONNX plus its metadata sidecar and

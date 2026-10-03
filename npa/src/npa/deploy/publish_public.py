@@ -173,6 +173,7 @@ def _development_git_sha(explicit: str | None = None) -> str:
 # --------------------------------------------------------------------------------------
 
 _PREFLIGHT_TIMEOUT_SECONDS = 60
+_FORBIDDEN_OPERATOR_PROVENANCE_LABEL = "npa.base_image"
 _TRIVY_CONTAINER_IMAGE = (
     "docker.io/aquasec/trivy@"
     "sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f"
@@ -487,6 +488,38 @@ def verify_validated_publication(item: PublishItem) -> tuple[bool, str]:
         "for validation, but release publication remains blocked until that "
         "evidence exists and the tool leaves its development-build quarantine."
     )
+
+
+def verify_publication_provenance_labels(item: PublishItem) -> tuple[bool, str]:
+    """Reject operator-specific base-image provenance in the final OCI config.
+
+    The Dockerfile guard prevents new direct declarations, while this publication
+    gate also catches a forbidden label inherited from an ancestor image. Public
+    provenance must use registry-neutral annotations such as ``npa.base.image``;
+    ``npa.base_image`` historically exposed private operator registry paths.
+    """
+
+    if re.search(r"@sha256:[0-9a-f]{64}$", item.source_ref) is None:
+        return False, "publication source is not pinned by immutable digest"
+    try:
+        config = _crane_json(["config", item.source_ref])
+        nested = config.get("config")
+        nested = nested if isinstance(nested, dict) else {}
+        labels = nested.get("Labels")
+        labels = labels if isinstance(labels, dict) else {}
+        forbidden = sorted(
+            str(key)
+            for key in labels
+            if str(key).strip().lower() == _FORBIDDEN_OPERATOR_PROVENANCE_LABEL
+        )
+        if forbidden:
+            raise RuntimeError(
+                f"forbidden OCI label {_FORBIDDEN_OPERATOR_PROVENANCE_LABEL!r} "
+                "can expose an operator registry path"
+            )
+        return True, "no operator-specific base-image provenance label"
+    except (KeyError, TypeError, ValueError, RuntimeError) as exc:
+        return False, str(exc)
 
 
 def verify_gymnasium_corresponding_source(item: PublishItem) -> tuple[bool, str]:
@@ -1562,6 +1595,9 @@ def preflight_sources(plan: list[PublishItem]) -> list[tuple[PublishItem, str]]:
             detail = f"UNVALIDATED — {detail}"
         if ok:
             ok, detail = _crane_manifest_readable(item.source_ref)
+        if ok:
+            ok, detail = verify_publication_provenance_labels(item)
+            detail = f"PROVENANCE LABEL GATE — {detail}"
         if ok and item.tool in images.GPU_ACCEPTED_PUBLIC_IMAGE_DIGESTS:
             ok, detail = verify_gpu_accepted_publication_source(item)
             detail = f"GPU ACCEPTANCE GATE — {detail}"

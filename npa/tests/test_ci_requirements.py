@@ -5,6 +5,7 @@ import shutil
 import sys
 
 from packaging.requirements import Requirement
+from packaging.version import Version
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -29,6 +30,32 @@ def test_committed_ci_pins_match_dependency_inputs() -> None:
         ValueError: The dependency fingerprint is stale.
     """
     ci_requirements._check(ci_requirements._ROOT)
+
+
+def test_oauthlib_security_floor_is_locked() -> None:
+    """Keep the CI environment above the two oauthlib 3.3.1 vulnerabilities."""
+
+    constraints = [
+        Requirement(line)
+        for line in (ci_requirements._ROOT / "npa/ci/constraints.in")
+        .read_text()
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    oauthlib_constraint = next(item for item in constraints if item.name == "oauthlib")
+    assert Version("3.3.1") not in oauthlib_constraint.specifier
+    assert Version("4.0.0") in oauthlib_constraint.specifier
+
+    pins = [
+        Requirement(line)
+        for line in (ci_requirements._ROOT / "npa/ci/requirements.txt")
+        .read_text()
+        .splitlines()
+        if line and not line.startswith("#")
+    ]
+    oauthlib_pin = next(item for item in pins if item.name == "oauthlib")
+    assert str(oauthlib_pin.specifier).startswith("==")
+    assert Version(str(oauthlib_pin.specifier).removeprefix("==")) >= Version("4.0.0")
 
 
 @pytest.mark.parametrize("name", ["pyproject.toml", "ci/constraints.in"])

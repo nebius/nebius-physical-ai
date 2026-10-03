@@ -1475,3 +1475,43 @@ def test_real_completion_still_requires_actual_final_artifact(
     assert "no .rrd artifact exists" in payload["detail"]
     head.assert_called_once_with(Bucket="bucket", Key="run-test/reports/sim2real.rrd")
     agents.assert_not_called()
+
+
+def test_live_status_uses_resolved_storage_without_changing_caller(
+    observed_status, monkeypatch
+):
+    import os
+    from npa.orchestration.skypilot.cleanup import sky_environment
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
+
+    resolution, jobs = observed_status
+    resolution.runtime_state["waves"] = [_wave("prepare", "11", "succeeded")]
+    for name in (
+        *STORAGE_ENDPOINT_ENV_NAMES,
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+    ):
+        monkeypatch.setenv(name, "unrelated-ambient")
+    before = dict(os.environ)
+    observed = []
+
+    def query(job_id, **kwargs):
+        env = sky_environment()
+        observed.append(job_id)
+        assert env["AWS_ACCESS_KEY_ID"] == resolution.state.aws_access_key_id
+        assert env["AWS_SECRET_ACCESS_KEY"] == resolution.state.aws_secret_access_key
+        assert env["AWS_SESSION_TOKEN"] == ""
+        assert env["NPA_SKYPILOT_PROJECT"] == (resolution.state.project or "")
+        assert all(
+            env[name] == resolution.state.endpoint_url
+            for name in STORAGE_ENDPOINT_ENV_NAMES
+        )
+        return SimpleNamespace(status="SUCCEEDED", error="")
+
+    jobs.side_effect = query
+    payload = _durable_workflow_status("run-test", project="test")
+    assert payload["verification_status"] == "VERIFIED" and observed == ["11"]
+    assert dict(os.environ) == before and sky_environment() == before

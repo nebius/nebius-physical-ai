@@ -174,6 +174,7 @@ if [ "$INSTALL_SKYPILOT_PREREQS" = "1" ]; then
   for package in curl fuse netcat-openbsd rsync wget; do
     test "$(dpkg-query -W -f='${db:Status-Abbrev}' "$package")" = 'ii ' || exit 1
   done
+  rm -f /etc/ssh/ssh_host_*
   printf 'ubuntu ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/99-npa-runtime-user
   chmod 0440 /etc/sudoers.d/99-npa-runtime-user
   install -d -m 0755 /run/sshd

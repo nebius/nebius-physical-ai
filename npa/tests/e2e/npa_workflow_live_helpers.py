@@ -304,6 +304,21 @@ def seed_live_workflow_inputs(
 
     from npa.clients.project_credentials import s3_client_for_project
 
+    if spec_name in {
+        "rgbd-scan-to-policy-demo.yaml",
+        "field-failure-reference-demo.yaml",
+        "multicamera-rgbd-warehouse.yaml",
+        "nurec-reconstruct.yaml",
+    }:
+        # The production sample stages own fetching and immutable publication.
+        return
+
+    if spec_name == "field-failure-policy-improvement.yaml":
+        pytest.skip(
+            "Navigation requires operator failure data and sealed adapters. Use "
+            "test_field_failure_policy_live_e2e.py with NPA_FIELD_FAILURE_LIVE_CONFIG."
+        )
+
     if spec_name == "xr1-antioch-finetune.yaml":
         pytest.skip(
             "XR1 requires an operator-collected, sealed Antioch dataset, pinned model assets, "
@@ -1961,6 +1976,8 @@ def materialize_live_spec(
             cpus=os.environ.get("NPA_E2E_RELAX_CPUS", "4+"),
             memory=os.environ.get("NPA_E2E_RELAX_MEMORY", "16+"),
         )
+    if name == "shared-scene-navigation.yaml":
+        text = _navigation_operator_inputs(text)
     path = tmp_path / name
     path.write_text(text, encoding="utf-8")
     return path
@@ -2195,3 +2212,21 @@ def parse_runtime_json(result: Result, forbidden: Iterable[str]) -> dict[str, An
 def _s3_prefix_has_objects(client, bucket: str, prefix: str) -> bool:
     response = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
     return bool(response.get("Contents"))
+
+
+def _navigation_operator_inputs(text: str) -> str:
+    import yaml
+
+    input_uri = os.environ.get("NPA_NAVIGATION_INPUT_URI", "").strip()
+    image = os.environ.get("NPA_NAVIGATION_IMAGE", "").strip()
+    if not input_uri and not image:
+        return text
+    if not input_uri.startswith("s3://") or not re.fullmatch(
+        r"[^\s]+@sha256:[0-9a-f]{64}", image
+    ):
+        raise ValueError(
+            "navigation live submit requires NPA_NAVIGATION_INPUT_URI and exact NPA_NAVIGATION_IMAGE"
+        )
+    payload = yaml.safe_load(text)
+    payload["config"].update(input_uri=input_uri, byof_image=image)
+    return yaml.safe_dump(payload, sort_keys=False)

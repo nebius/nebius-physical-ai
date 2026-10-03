@@ -623,12 +623,15 @@ def render_pip_extra_setup(extra: str) -> str:
 
 
 #: Task-level SkyPilot config fields an npa.workflow resource profile may carry.
-#: SkyPilot 0.12 accepts these inside a task's ``config:`` block, and it APPENDS
-#: (rather than replaces) lists inside ``kubernetes.pod_config`` -- so a spec can
-#: add an imagePullSecret or a volume without discarding the cluster-wide ones.
+#: SkyPilot 0.12 accepts these inside a task's ``config:`` block and recursively
+#: merges ``kubernetes.pod_config``. Most lists append. imagePullSecrets keeps an
+#: initial list intact, then replaces the first base entry from a one-item
+#: override while preserving the base tail.
 #: Kept to the fields a workload legitimately needs, so a spec cannot smuggle in
 #: arbitrary cluster configuration.
 TASK_CONFIG_KUBERNETES_FIELDS = ("pod_config", "provision_timeout")
+_KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
+
 # Linux limits each individual execve argument to 32 4 KiB pages, including
 # its terminating NUL byte. Kubernetes workers use this bound even when the
 # process-wide ARG_MAX is larger.
@@ -849,6 +852,18 @@ def resolve_task_image(
     """Resolve a fully-qualified image ref for one planned step."""
 
     _validate_image_override_syntax(options)
+
+    def resolve_tool(tool: str, **kwargs: Any) -> str:
+        from npa.deploy.images import container_image_for_tool
+
+        try:
+            return container_image_for_tool(tool, **kwargs)
+        except ValueError as exc:
+            # Image quarantine is a workflow-planning failure at this boundary,
+            # not an internal exception. Keeping the domain error lets every CLI
+            # entrypoint render the same concise, actionable failure.
+            raise NpaWorkflowError(str(exc)) from exc
+
     if tool_ref in options.image_overrides:
         resolved = str(options.image_overrides[tool_ref] or "").strip()
     else:
@@ -872,8 +887,6 @@ def resolve_task_image(
                 tool = tool_image_key(tool_ref)
                 if not tool:
                     return ""
-                from npa.deploy.images import container_image_for_tool
-
                 kwargs: dict[str, Any] = {}
                 if options.registry:
                     kwargs["registry"] = options.registry
@@ -882,14 +895,12 @@ def resolve_task_image(
                         kwargs["gpu_target"] = options.gpu_target
                     if options.image_variant:
                         kwargs["image_variant"] = options.image_variant
-                resolved = container_image_for_tool(tool, **kwargs)
+                resolved = resolve_tool(tool, **kwargs)
     if resolved.startswith("tool://"):
         image_tool = resolved.removeprefix("tool://").strip()
         if not image_tool:
             raise NpaWorkflowError("tool:// image reference must name a workbench tool")
-        from npa.deploy.images import container_image_for_tool
-
-        resolved = container_image_for_tool(
+        resolved = resolve_tool(
             image_tool,
             registry=options.registry or None,
         )
@@ -1248,15 +1259,16 @@ def render_task_run_script(command: Sequence[str], *, preamble: str = "") -> str
         # ships `PYTHONPATH=/opt/npa/src`, whose npa predates the `cosmos2` subcommand, so the
         # stage kept running the old CLI no matter what had just been installed. Third image to
         # do this (lerobot was job 250), so the engine handles it rather than each image.
-        # Prepending the recorded source is a no-op wherever the install already wins.
+        # The recorded source must be FIRST, not merely present: restoring a baked
+        # image path above can otherwise put stale code ahead of the branch overlay.
         # (no ${...} expansions here: the renderer's placeholder guard rejects them)
         'if [ -s /tmp/npa-src-root ] && [ -d "$(cat /tmp/npa-src-root)/src" ]; then\n'
         '  npa_src_path="$(cat /tmp/npa-src-root)/src"\n'
         '  if [ -z "$PYTHONPATH" ]; then\n'
         '    export PYTHONPATH="$npa_src_path"\n'
         "  else\n"
-        '    case ":$PYTHONPATH:" in\n'
-        '      *":$npa_src_path:"*) : ;;\n'
+        '    case "$PYTHONPATH" in\n'
+        '      "$npa_src_path"|"$npa_src_path":*) : ;;\n'
         '      *) export PYTHONPATH="$npa_src_path:$PYTHONPATH" ;;\n'
         "    esac\n"
         "  fi\n"
@@ -2120,6 +2132,189 @@ def plan_images(
     return images
 
 
+@dataclass(frozen=True)
+class ImagePullRequirements:
+    """Credential-delivery paths that must independently pull one image."""
+
+    requires_operator: bool = False
+    requires_kubernetes: bool = False
+    target_unresolved: bool = False
+    pull_secret_name_sets: tuple[tuple[str, ...] | None, ...] = ()
+    service_account_names: tuple[str | None, ...] = ()
+    pod_placement_specs: tuple[str, ...] = ()
+
+    @property
+    def pull_secret_names(self) -> tuple[str, ...]:
+        """Return the compatibility union without erasing per-path authority."""
+
+        return tuple(
+            dict.fromkeys(
+                name for names in self.pull_secret_name_sets for name in (names or ())
+            )
+        )
+
+
+def _task_pull_secret_names(
+    pod_spec: Mapping[str, Any],
+) -> tuple[str, ...] | None:
+    """Read a SkyPilot imagePullSecrets task override, preserving absence."""
+
+    if "imagePullSecrets" not in pod_spec:
+        return None
+    raw_names = pod_spec["imagePullSecrets"]
+    if not isinstance(raw_names, list):
+        raise NpaWorkflowRenderError(
+            "SkyPilot task imagePullSecrets must be a list of name mappings"
+        )
+    names: list[str] = []
+    for item in raw_names:
+        if not isinstance(item, Mapping):
+            raise NpaWorkflowRenderError(
+                "SkyPilot task imagePullSecrets must contain name mappings"
+            )
+        name = str(item.get("name") or "").strip()
+        if not name:
+            raise NpaWorkflowRenderError(
+                "SkyPilot task imagePullSecrets entries require a name"
+            )
+        names.append(name)
+    return tuple(names)
+
+
+def _task_service_account_name(pod_spec: Mapping[str, Any]) -> str | None:
+    """Read a task ServiceAccount override, preserving an absent key."""
+
+    if "serviceAccountName" not in pod_spec:
+        return None
+    raw_name = pod_spec["serviceAccountName"]
+    if not isinstance(raw_name, str):
+        raise NpaWorkflowRenderError(
+            "SkyPilot task serviceAccountName must be a string"
+        )
+    name = raw_name.strip()
+    if not name:
+        # Kubernetes admission defaults an explicitly empty field to `default`.
+        return "default"
+    if not _KUBERNETES_NAME_RE.fullmatch(name):
+        raise NpaWorkflowRenderError(
+            "SkyPilot task serviceAccountName is not a valid Kubernetes name"
+        )
+    return name
+
+
+_PULL_PLACEMENT_FIELDS = frozenset(
+    {
+        "affinity",
+        "dnsConfig",
+        "dnsPolicy",
+        "hostNetwork",
+        "nodeName",
+        "nodeSelector",
+        "priorityClassName",
+        "runtimeClassName",
+        "schedulerName",
+        "tolerations",
+        "topologySpreadConstraints",
+    }
+)
+
+
+def _task_pull_placement_json(pod_spec: Mapping[str, Any]) -> str:
+    placement = {
+        key: value for key, value in pod_spec.items() if key in _PULL_PLACEMENT_FIELDS
+    }
+    try:
+        return json.dumps(placement, sort_keys=True, separators=(",", ":"))
+    except (TypeError, ValueError):
+        raise NpaWorkflowRenderError(
+            "SkyPilot task pod placement must contain JSON-compatible values"
+        ) from None
+
+
+def plan_image_pull_requirements(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    *,
+    run_id: str,
+    options: SkypilotRenderOptions,
+) -> dict[str, ImagePullRequirements]:
+    """Preserve VM and Kubernetes pull requirements for each exact image."""
+
+    validate_image_override_selectors(spec, options)
+    paths: dict[
+        str,
+        list[tuple[str, tuple[str, ...] | None, str | None, str]],
+    ] = {}
+    for step in steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        resources = task.get("resources") or {}
+        image = str(
+            resolve_task_image(
+                str(task.get("tool_ref") or ""), resources, options=options
+            )
+            or ""
+        ).strip()
+        if not image:
+            continue
+        kubernetes = resources.get("kubernetes")
+        kubernetes = kubernetes if isinstance(kubernetes, dict) else {}
+        pod_config = kubernetes.get("pod_config")
+        pod_config = pod_config if isinstance(pod_config, dict) else {}
+        pod_spec = pod_config.get("spec")
+        pod_spec = pod_spec if isinstance(pod_spec, dict) else {}
+        names = _task_pull_secret_names(pod_spec)
+        service_account_name = _task_service_account_name(pod_spec)
+        pod_placement_json = _task_pull_placement_json(pod_spec)
+        cloud = str(resources.get("cloud") or "").strip().casefold()
+        if not cloud:
+            paths.setdefault(image, []).append(
+                ("unresolved", names, service_account_name, pod_placement_json)
+            )
+            continue
+        if cloud not in {"kubernetes", "k8s"}:
+            paths.setdefault(image, []).append(("operator", None, None, "{}"))
+            continue
+        paths.setdefault(image, []).append(
+            ("kubernetes", names, service_account_name, pod_placement_json)
+        )
+    return {
+        image: ImagePullRequirements(
+            requires_operator=any(kind == "operator" for kind, _, _, _ in authorities),
+            requires_kubernetes=any(
+                kind == "kubernetes" for kind, _, _, _ in authorities
+            ),
+            target_unresolved=any(
+                kind == "unresolved" for kind, _, _, _ in authorities
+            ),
+            pull_secret_name_sets=tuple(
+                names
+                for names, _, _ in dict.fromkeys(
+                    (names, service_account_name, pod_placement_json)
+                    for kind, names, service_account_name, pod_placement_json in authorities
+                    if kind in {"kubernetes", "unresolved"}
+                )
+            ),
+            service_account_names=tuple(
+                service_account_name
+                for _, service_account_name, _ in dict.fromkeys(
+                    (names, service_account_name, pod_placement_json)
+                    for kind, names, service_account_name, pod_placement_json in authorities
+                    if kind in {"kubernetes", "unresolved"}
+                )
+            ),
+            pod_placement_specs=tuple(
+                pod_placement_json
+                for _, _, pod_placement_json in dict.fromkeys(
+                    (names, service_account_name, pod_placement_json)
+                    for kind, names, service_account_name, pod_placement_json in authorities
+                    if kind in {"kubernetes", "unresolved"}
+                )
+            ),
+        )
+        for image, authorities in paths.items()
+    }
+
+
 def plan_image_pull_secrets(
     spec: NpaWorkflowSpec,
     steps: Sequence[PlanStep],
@@ -2133,42 +2328,12 @@ def plan_image_pull_secrets(
     Kubernetes secret cannot prove that VM execution path can pull the image.
     """
 
-    validate_image_override_selectors(spec, options)
-    paths: dict[str, list[tuple[str, ...] | None]] = {}
-    for step in steps:
-        task = build_scheduler_task(spec, step, run_id=run_id)
-        resources = task.get("resources") or {}
-        image = str(
-            resolve_task_image(
-                str(task.get("tool_ref") or ""), resources, options=options
-            )
-            or ""
-        ).strip()
-        if not image:
-            continue
-        cloud = str(resources.get("cloud") or "").strip().casefold()
-        if cloud not in {"kubernetes", "k8s"}:
-            paths.setdefault(image, []).append(None)
-            continue
-        kubernetes = resources.get("kubernetes")
-        kubernetes = kubernetes if isinstance(kubernetes, dict) else {}
-        pod_config = kubernetes.get("pod_config")
-        pod_config = pod_config if isinstance(pod_config, dict) else {}
-        pod_spec = pod_config.get("spec")
-        pod_spec = pod_spec if isinstance(pod_spec, dict) else {}
-        raw_names = pod_spec.get("imagePullSecrets")
-        raw_names = raw_names if isinstance(raw_names, list) else []
-        names = tuple(
-            str(item.get("name") or "").strip()
-            for item in raw_names
-            if isinstance(item, dict) and str(item.get("name") or "").strip()
-        )
-        paths.setdefault(image, []).append(names)
+    requirements = plan_image_pull_requirements(
+        spec, steps, run_id=run_id, options=options
+    )
     return {
-        image: ()
-        if any(item is None for item in authorities)
-        else tuple(dict.fromkeys(name for item in authorities for name in (item or ())))
-        for image, authorities in paths.items()
+        image: (() if requirement.requires_operator else requirement.pull_secret_names)
+        for image, requirement in requirements.items()
     }
 
 
@@ -2576,7 +2741,13 @@ def _inject_operator_registry_docker_secrets(
     creds_server = str(os.environ.get("SKYPILOT_DOCKER_SERVER") or "").strip()
     if not creds_server:
         return
-    if creds_server != server:
+    from npa.orchestration.skypilot.registry_preflight import (
+        canonical_registry_host,
+    )
+
+    canonical_server = canonical_registry_host(server)
+    canonical_creds_server = canonical_registry_host(creds_server)
+    if canonical_creds_server != canonical_server:
         from npa.deploy.images import is_public_registry
 
         image_registry = image_id.removeprefix("docker:").rsplit("/", 1)[0]
@@ -2595,7 +2766,7 @@ def _inject_operator_registry_docker_secrets(
         resolve_registry_credentials,
     )
 
-    username, password = resolve_registry_credentials(server, image=image_id)
+    username, password = resolve_registry_credentials(canonical_server, image=image_id)
     if not username:
         return
     if materialize:
@@ -2607,7 +2778,7 @@ def _inject_operator_registry_docker_secrets(
     secrets = doc.setdefault("secrets", {})
     if not isinstance(secrets, dict):
         raise NpaWorkflowRenderError("SkyPilot task secrets must be a mapping")
-    secrets.setdefault("SKYPILOT_DOCKER_SERVER", server)
+    secrets.setdefault("SKYPILOT_DOCKER_SERVER", canonical_server)
     secrets.setdefault("SKYPILOT_DOCKER_USERNAME", username)
     secrets.setdefault("SKYPILOT_DOCKER_PASSWORD", password)
 
