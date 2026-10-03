@@ -45,7 +45,7 @@ class FakeClient:
         )
 
 
-def _hosted_workflow_spec(operation: str) -> dict:
+def _hosted_workflow_spec(operation: str, tmp_path: Path) -> dict:
     return {
         "apiVersion": "npa.workflow/v0.0.1",
         "kind": "Workflow",
@@ -54,9 +54,9 @@ def _hosted_workflow_spec(operation: str) -> dict:
             "api_base_url": "https://provider.example.invalid",
             "model_id": "operator-selected-model",
             "task": "inspect the scene",
-            "output_dir": "/tmp/gemini-report",
-            "plan_path": "/tmp/plan.json",
-            "rubric_path": "/tmp/rubric.txt",
+            "output_dir": str(tmp_path / "gemini-report"),
+            "plan_path": str(tmp_path / "plan.json"),
+            "rubric_path": str(tmp_path / "rubric.txt"),
         },
         "resources": {"cpu": {"cloud": "kubernetes", "cpus": 2}},
         "initial": "audit",
@@ -78,7 +78,7 @@ def test_hosted_workflow_renders_cpu_and_declares_google_secret(
 
     monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source/npa")
     path = tmp_path / "gemini.yaml"
-    path.write_text(yaml.safe_dump(_hosted_workflow_spec(operation)))
+    path.write_text(yaml.safe_dump(_hosted_workflow_spec(operation, tmp_path)))
     prepared = prepare_npa_workflow_for_submit(path, run_id="gemini-contract")
     try:
         assert "GOOGLE_API_KEY" in prepared.secret_env_hints
