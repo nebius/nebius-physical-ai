@@ -221,6 +221,24 @@ def test_campus_cannot_downgrade_to_legacy_evidence(tmp_path):
     assert not (tmp_path / "index.html").exists()
 
 
+@pytest.mark.parametrize("value", [True, 2.0, "2", None])
+def test_gpu_sample_count_requires_literal_integer_evidence(tmp_path, value):
+    record = _bundle(tmp_path)
+    record["telemetry"]["sample_count"] = value
+    (tmp_path / "render-evidence.json").write_text(json.dumps(record))
+    with pytest.raises(ValueError, match="telemetry.sample_count"):
+        render.verify_render(tmp_path)
+
+
+def test_campus_resolution_rejects_numeric_coercion(tmp_path):
+    _campus_bundle(tmp_path)
+    native = json.loads((tmp_path / "native-render.json").read_text())
+    native["resolution"] = [2560.0, 1440.0]
+    (tmp_path / "native-render.json").write_text(json.dumps(native))
+    with pytest.raises(ValueError, match="resolution must be a literal integer"):
+        render._native_receipt(tmp_path, 4)
+
+
 def test_failed_native_renderer_publishes_nothing(tmp_path, monkeypatch):
     import subprocess
 

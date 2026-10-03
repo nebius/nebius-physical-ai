@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import math
 from pathlib import Path
 import re
 import subprocess
@@ -15,6 +14,7 @@ import tempfile
 from PIL import Image
 import requests
 
+from npa.literal_values import require_integer, require_number
 from npa.workbench.nurec.render_evidence import RenderTelemetry
 from npa.workflows.navigation.artifacts import publish
 from npa.workflows.preview_html import image_preview, write_preview
@@ -78,11 +78,12 @@ def _native_receipt(root, views):
     frames = sorted(root.glob("frame-*.png"))
     if len(frames) != views or len(native.get("cameras", [])) != views:
         raise ValueError("Native renderer did not produce all requested viewpoints")
-    if type(native.get("samples")) is not int or native["samples"] < 1:
-        raise ValueError("Path-tracing samples must be a positive integer")
+    require_integer(native.get("samples"), field="samples", minimum=1)
     scene_id = native.get("scene_id", "factory-cell")
     if scene_id not in SCENES or native.get("resolution") != SCENES[scene_id]:
         raise ValueError("Native resolution differs from the reference contract")
+    for value in native["resolution"]:
+        require_integer(value, field="resolution", minimum=1)
     if scene_id == "industrial-campus":
         _campus_measurements(native)
     return native
@@ -91,19 +92,26 @@ def _native_receipt(root, views):
 def _campus_measurements(native):
     statistics = native.get("scene_statistics", {})
     for field in ("mesh_objects", "unique_meshes", "instanced_triangles"):
-        if type(statistics.get(field)) is not int or statistics[field] <= 0:
-            raise ValueError("Campus geometry measurements must be positive integers")
+        require_integer(statistics.get(field), field=field, minimum=1)
     if (
         statistics.get("site_extent_m") != [500, 360]
         or statistics.get("site_area_hectares") != 18
     ):
         raise ValueError("Campus dimensions disagree with its authored site")
+    for value in statistics["site_extent_m"]:
+        require_integer(value, field="site_extent_m", minimum=1)
+    require_number(
+        statistics["site_area_hectares"], field="site_area_hectares", minimum=0
+    )
     assets = statistics.get("assets", {})
-    if not assets or any(
-        type(value) is not int or value <= 0 for value in assets.values()
-    ):
+    if not assets:
         raise ValueError("Campus asset counts must be measured positive integers")
-    cameras = native["cameras"]
+    for key, value in assets.items():
+        require_integer(value, field=f"assets.{key}", minimum=1)
+    _campus_cameras(native["cameras"])
+
+
+def _campus_cameras(cameras):
     if {pose.get("route") for pose in cameras} != set(ROUTES):
         raise ValueError("Every campus inspection route must contain rendered media")
     for index, pose in enumerate(cameras):
@@ -114,12 +122,9 @@ def _campus_measurements(native):
         matrix = pose.get("camera_to_world", [])
         if len(matrix) != 4 or any(len(row) != 4 for row in matrix):
             raise ValueError("Campus cameras require complete native poses")
-        if any(
-            type(v) not in (int, float) or not math.isfinite(v)
-            for row in matrix
-            for v in row
-        ):
-            raise ValueError("Campus camera poses must be finite")
+        for row in matrix:
+            for value in row:
+                require_number(value, field=f"cameras.{index}.camera_to_world")
 
 
 def _scene_sources(scene_id):
@@ -224,14 +229,18 @@ def _verify_measurements(root, record):
     ):
         raise ValueError("Rendering measurements disagree with the native receipt")
     telemetry = record.get("telemetry", {})
-    for key in ("sample_count", "peak_utilization_percent", "elapsed_seconds"):
-        value = telemetry.get(key)
-        if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
-            raise ValueError(
-                "Rendering telemetry must contain finite numeric measurements"
-            )
-    if telemetry["peak_utilization_percent"] > 100:
-        raise ValueError("GPU utilization cannot exceed 100 percent")
+    require_integer(
+        telemetry.get("sample_count"), field="telemetry.sample_count", minimum=0
+    )
+    require_number(
+        telemetry.get("peak_utilization_percent"),
+        field="telemetry.peak_utilization_percent",
+        minimum=0,
+        maximum=100,
+    )
+    require_number(
+        telemetry.get("elapsed_seconds"), field="telemetry.elapsed_seconds", minimum=0
+    )
     if record.get("schema") == SCHEMA:
         _verify_sources(record)
 
