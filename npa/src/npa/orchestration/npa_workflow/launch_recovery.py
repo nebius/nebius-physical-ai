@@ -93,7 +93,7 @@ def _blocked(attempt: Any, reason: str, *, cause: BaseException | None = None) -
 
 def _expected_identity(executor: Any, steps: Any, attempt: Any) -> AttemptIdentity:
     from npa.orchestration.npa_workflow.runtime import (
-        _image_identity,
+        _expected_image_identity,
         _source_identity,
         _workflow_identity,
     )
@@ -115,7 +115,13 @@ def _expected_identity(executor: Any, steps: Any, attempt: Any) -> AttemptIdenti
         ),
         workflow_sha256=_workflow_identity(executor.spec),
         source_sha256=_source_identity(),
-        image_digest=_image_identity(executor.render_options),
+        image_digest=_expected_image_identity(
+            executor.spec,
+            steps,
+            executor.render_options,
+            attempt.image_identity_version,
+            executor.run_id,
+        ),
     )
 
 
@@ -561,7 +567,10 @@ def _adopt_reserved(executor: Any, steps: Any, attempt: Any, evidence: Any) -> A
         workflow_status = attempt.sky_status
         if not is_terminal(attempt.sky_status):
             poll_result = executor._poll(
-                attempt.job_id, attempt, observe_tasks=len(steps) > 1
+                attempt.job_id,
+                attempt,
+                steps=steps,
+                observe_tasks=len(steps) > 1,
             )
             attempt.sky_status = poll_result.provider_status
             workflow_status = poll_result.workflow_status

@@ -1,0 +1,22 @@
+{
+  "anchor_weight": 1.0,
+  "batch_size": 16,
+  "candidate_checkpoint_steps": [400, 800, 1200, 1600, 2000, 2399],
+  "decay_learning_rate": 2e-7,
+  "flow_samples": 4,
+  "gpu_results": "pending",
+  "late_stage_oversampling": false,
+  "parent": "released stock checkpoint 2",
+  "peak_learning_rate": 2e-6,
+  "sampler": "uniform task balanced",
+  "schema": "npa.behavior.stock-anchored-training-recipe.v1",
+  "seed": 0,
+  "steps": 2400,
+  "trainable_partition": {
+    "leaves": 23,
+    "source": "../behavior-matched-training/action_partition.py",
+    "source_sha256": "563b75367a69b791a954f074435e11c81db0a52915de062b7b0d820e8b83619c"
+  },
+  "training_inputs": "released demonstrations for tasks 0, 1, and 22 only",
+  "warmup_steps": 400
+}

@@ -198,12 +198,12 @@ describe("Mobile Codex conversations", () => {
       if (identifiers.length === 1) req.reply({statusCode: 503, body: {error: "Response lost"}});
       else req.reply({accepted: true});
     }).as("sendRetry");
+    cy.intercept("GET", "/chat/api/delivery?*", {state: "missing"});
     cy.get("#prompt").type("Submit this once");
     cy.get("#send").click();
     cy.wait("@sendRetry");
-    cy.get("#notice").should("contain", "Response lost");
+    cy.get("#delivery-status").should("contain", "Checking delivery");
     cy.reload();
-    cy.get("#send").should("be.enabled").click();
     cy.wait("@sendRetry");
     cy.then(() => {
       expect(identifiers).to.have.length(2);
@@ -211,4 +211,26 @@ describe("Mobile Codex conversations", () => {
     });
     cy.get("#clear-send").should("not.be.visible");
   });
+});
+
+it("quarantines malformed archival metadata during refresh and disables the open chat", () => {
+  const chat = mockChat();
+  cy.viewport(390, 844);
+  cy.visit("/chat/#same-thread");
+  cy.get("#prompt").should("be.enabled");
+  cy.intercept("GET", "/chat/api/threads*", {
+    data: [{...chat.thread, id: "healthy-thread", name: "Healthy chat"}],
+    nextCursor: null,
+    errors: [{id: "same-thread", error: "thread.archived must be a literal boolean"}],
+  }).as("quarantined");
+  cy.intercept({method: "GET", pathname: "/chat/api/thread"}, {
+    statusCode: 400, body: {error: "thread.archived must be a literal boolean"},
+  });
+  cy.get("#refresh").click();
+  cy.wait("@quarantined");
+  cy.get("#prompt").should("be.disabled");
+  cy.get("#send").should("be.disabled");
+  cy.get("#notice").should("be.visible").and("contain.text", "archiv");
+  cy.get("#menu").click();
+  cy.get(".session-title").should("have.length", 1).and("have.text", "Healthy chat");
 });

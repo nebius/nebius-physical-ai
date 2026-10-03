@@ -24,7 +24,7 @@ to the existing preconverted-NCore input only.
 
 | | |
 | --- | --- |
-| **Input** | `nvidia/PhysicalAI-NuRec-PPISP` — ungated, CC-BY-4.0, real photos of a sculpture, already in NCore V4 |
+| **Input** | `nvidia/PhysicalAI-NuRec-PPISP` at revision `2521064a3af6ab1c1caa2ba1b01ddde7eecded69` — automatically downloaded, ungated, CC-BY-4.0, real photos of a sculpture, already in NCore V4 |
 | **Engine** | `nvcr.io/nvidia/nre/nre-ga:26.04` from NGC (pulled, never rebuilt) |
 | **GPU** | One RTX PRO 6000 Blackwell (or L40S). **Must have RT cores** |
 | **Time** | ~45 minutes end to end |
@@ -51,10 +51,24 @@ check ──▶ fetch ──▶ reconstruct ──▶ render ──▶ visualize
 | `fetch` | Downloads the NCore V4 shards and derives the `rig -> world` pose edge NRE demands |
 | `reconstruct` | Trains 3DGUT Gaussians, exports the USDZ and real PSNR/SSIM/LPIPS |
 | `render` | Renders **novel** views at an offset rig pose |
-| `visualize` | Builds `reports/sim2real.rrd` for the agent's Rerun panel |
+| `visualize` | Builds `reports/sim2real.rrd` for the agent and a compact offline `reports/index.html` |
 | `finalize` | Aggregates the run tree into `reports/final.json` |
 
 ## Fast path
+
+With a configured project and RT-core target, the public demo command supplies
+the sample, output paths and source staging:
+
+```bash
+npa workbench workflow demo run nurec \
+  --project '<project>' --infra 'k8s/<rtx-context>'
+npa workbench workflow demo view nurec '<run-id>' --project '<project>'
+```
+
+Use the run ID printed by `run` after the workflow finishes. `view` downloads
+the compact HTML report and opens it locally. See
+[public workflow demos](public-workflow-demos.md) for project setup and the four
+presets. The commands below expose the same underlying workflow for customization.
 
 Inspect the workflow locally before preparing its GPU runtime:
 
@@ -76,8 +90,11 @@ is not "I can fetch it".
 ## Go bigger: the real GPU run
 
 Complete [Workbench setup](../getting-started.md) for your RT-core cluster.
-Source staging is automatic when the task needs NPA; an explicit
-`NPA_SRC_S3_URI` is an override. Use the same project and target throughout.
+Use `--stage-src` to submit the current reviewed checkout. The workflow enables
+`source_overlay` so its CPU viewer stage also uses the submitted source, even
+when the viewer image contains an older NPA. An explicit verified
+`NPA_SRC_S3_URI` with `--no-stage-src` is an override. Use the same project and
+target throughout.
 
 Submit:
 
@@ -86,7 +103,7 @@ RUN_ID="nurec-$(date -u +%Y%m%dt%H%M%S)z"
 
 npa workbench workflow submit \
   workflows/main/nurec-reconstruct.yaml \
-  --run-id "$RUN_ID" --project "<project-alias>" --runtime \
+  --run-id "$RUN_ID" --project "<project-alias>" --runtime --stage-src \
   --infra "k8s/<your-rt-core-context>" \
   --var bucket="<your-bucket>" \
   --var prefix="checkpoints/neural-reconstruction/$RUN_ID" \
@@ -108,6 +125,15 @@ check 4m26s → fetch 3m31s → reconstruct 25m33s → render → visualize → 
 
 ## Look at it
 
+Download `reports/index.html` from the run prefix and open it in any browser.
+It embeds actual capture, novel-view and reconstruction-validation thumbnails,
+separate timeline controls, and the recorded NRE test PSNR/SSIM/LPIPS. It works
+offline without credentials or an agent server. Each timeline includes at most
+32 evenly spaced images; this display sampling does not reduce training or
+rendering. Playback is a slideshow, and the independent timelines do not claim
+paired camera viewpoints. Original images, videos, the USDZ and RRD remain in
+the complete run output.
+
 Open the NPA agent, pick the run, and it loads `reports/sim2real.rrd`
 automatically. Entities you get:
 
@@ -122,6 +148,13 @@ automatically. Entities you get:
 The `.usdz` is offered as a **download**, not an inline preview — it is ~240 MB
 and belongs in Omniverse, Isaac Sim, or CARLA.
 
+The default public sample's access check and download use the same pinned HF
+revision. The fetch manifest records `dataset_revision` and the actual archive's
+`archive_sha256`. To use a different revision, set `config.dataset_revision` in
+the workflow or pass `--revision` to `npa workbench nurec check` and `fetch`.
+`NPA_NUREC_DATASET_REVISION` supplies the direct CLI/SDK default. Unrelated
+dataset overrides default to their `main` revision unless explicitly pinned.
+
 From the shell instead — a stage-by-stage accounting of what the run prefix
 actually holds:
 
@@ -134,6 +167,13 @@ npa workbench nurec status \
 Expect `PSNR ≈ 31`, `SSIM ≈ 0.83`, `LPIPS ≈ 0.27` on the default scene.
 
 ## Promotion evidence
+
+The [September 28 public demo qualification](../evidence/public-demos/README.md)
+completed the current pinned-input workflow through `workflow demo run`: 30,000
+verified training steps, 38 novel views, decoded Rerun output, and a working
+offline report. Its receipt distinguishes the original native report from the
+subsequent CPU correction of its metric display. The earlier evidence below is
+preserved for its own source revision.
 
 The main workflow preserves the parsed YAML from the completed September 8,
 2026 multi-pod run; the move changes only the quickstart path comment. The saved
@@ -202,6 +242,15 @@ For everything else — 402s from NGC, placeholder sensor ids in the stock recip
 the missing `sudo`, the 64 MB `/dev/shm` — see the troubleshooting table in
 `skills/workflows/neural-reconstruction/SKILL.md`. Most are already handled
 automatically; the table tells you which.
+
+Native object-centric captures can store their SfM points in a LiDAR component,
+such as `virtual_lidar`, instead of a `PointCloudsComponent`. The stock native
+initializer supports one camera for those captures. When no camera selection is
+provided, Workbench uses the derived rig's reference camera and emits a warning
+listing the excluded cameras. Select a camera explicitly with `--camera-id` to
+make that scope part of the command. An explicit multi-camera selection is never
+silently narrowed. Converted captures with a verified point-cloud inventory keep
+their existing multi-camera initialization path.
 
 ## Dig deeper
 

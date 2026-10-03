@@ -338,6 +338,28 @@ def test_stage_states_infers_trigger_from_later_stage_artifacts(
     assert stages["stage_01_trigger"]["source"] == "inferred_from_later_stage"
 
 
+def test_stage_states_uses_the_configured_outer_iteration_in_artifact_uri(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _mock_s3_client(set())
+    monkeypatch.setattr(
+        "npa.workflows.sim2real.monitor.StorageClient.from_environment",
+        lambda **kwargs: client,
+    )
+
+    stages = _stage_states(
+        bucket="demo-bucket",
+        run_id="run-1",
+        s3_prefix="sim2real-b",
+        endpoint="https://storage.example",
+        outer_iterations=7,
+    )
+
+    assert stages["stage_10_eval_heldout"]["artifact_uri"].endswith(
+        "/eval/gold-heldout/outer-07/report.json"
+    )
+
+
 def test_orchestrator_job_name() -> None:
     assert orchestrator_job_name("demo-run") == "sim2real-demo-run"
     assert (
@@ -354,6 +376,7 @@ def test_normalize_staged_run_id_strips_polluted_submit_line() -> None:
 def test_sim2real_workflow_status_includes_eval_metrics_from_workflow_state(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    monkeypatch.setenv("OUTER_ITERATIONS", "7")
     config = OperatorConfig(
         bucket="demo-bucket",
         endpoint_url="https://storage.example",
@@ -415,6 +438,9 @@ def test_sim2real_workflow_status_includes_eval_metrics_from_workflow_state(
     assert result["eval_metrics"]["success_rate"] == 0.72
     assert result["eval_metrics"]["threshold"] == 0.55
     assert result["eval_metrics"]["decision"] == "promote_checkpoint"
+    assert result["stages"]["stage_10_eval_heldout"]["artifact_uri"].endswith(
+        "/eval/gold-heldout/outer-07/report.json"
+    )
 
 
 def test_sim2real_workflow_status_eval_metrics_fallback_to_heldout_report(

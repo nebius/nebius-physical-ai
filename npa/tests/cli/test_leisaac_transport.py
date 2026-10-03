@@ -11,7 +11,9 @@ import tempfile
 from pathlib import Path
 import socket
 import struct
+import subprocess
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -76,6 +78,79 @@ def _runtime_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.fixture
+def nvenc_runtime(tmp_path, monkeypatch):
+    """Isolate device discovery and encoding from the host's GPU capabilities."""
+    runtime = _runtime_module()
+    monkeypatch.setattr(runtime, "Path", lambda path: tmp_path)
+    probe = Mock(side_effect=AssertionError("unexpected encoder invocation"))
+    monkeypatch.setattr(runtime.subprocess, "run", probe)
+    return runtime, probe
+
+
+@pytest.mark.parametrize("devices", [[], ["nvidiactl", "nvidia-uvm", "nvidia-modeset"]])
+def test_nvenc_requires_a_numbered_gpu_device(tmp_path, nvenc_runtime, devices):
+    runtime, probe = nvenc_runtime
+    for device in devices:
+        (tmp_path / device).touch()
+    assert runtime.verify_runtime_nvenc() == (
+        False,
+        "NVIDIA device nodes are unavailable",
+    )
+    probe.assert_not_called()
+
+
+def test_nvenc_success_requires_an_actual_encoding_probe(tmp_path, nvenc_runtime):
+    runtime, probe = nvenc_runtime
+    (tmp_path / "nvidia12").touch()
+    probe.side_effect = None
+    probe.return_value = subprocess.CompletedProcess([], 0, stderr=b"")
+    assert runtime.verify_runtime_nvenc() == (True, "")
+    args, kwargs = probe.call_args
+    command = args[0]
+    assert command[0] == "ffmpeg"
+    assert command[command.index("-i") + 1] == "color=size=256x256:rate=1"
+    assert command[command.index("-c:v") + 1] == "h264_nvenc"
+    assert command[command.index("-frames:v") + 1] == "1"
+    assert kwargs == dict(
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        timeout=20,
+        check=False,
+    )
+
+
+@pytest.mark.parametrize(
+    ("stderr", "reason"),
+    [
+        (b"", "NVENC probe was rejected"),
+        (b"context\nencoder unavailable\n", "encoder unavailable"),
+        (b"bad byte: \xff", "bad byte: \ufffd"),
+        (b"x" * 200, "x" * 160),
+    ],
+)
+def test_nvenc_rejection_has_a_bounded_reason(tmp_path, nvenc_runtime, stderr, reason):
+    runtime, probe = nvenc_runtime
+    (tmp_path / "nvidia0").touch()
+    probe.side_effect = None
+    probe.return_value = subprocess.CompletedProcess([], 1, stderr=stderr)
+    assert runtime.verify_runtime_nvenc() == (False, reason)
+
+
+@pytest.mark.parametrize(
+    "error", [FileNotFoundError("ffmpeg"), subprocess.TimeoutExpired("ffmpeg", 20)]
+)
+def test_nvenc_probe_failure_selects_fallback(tmp_path, nvenc_runtime, error):
+    runtime, probe = nvenc_runtime
+    (tmp_path / "nvidia0").touch()
+    probe.side_effect = error
+    assert runtime.verify_runtime_nvenc() == (
+        False,
+        f"NVENC probe failed ({type(error).__name__})",
+    )
 
 
 def test_control_messages_are_bounded_and_exactly_scoped() -> None:
@@ -1039,6 +1114,7 @@ def test_runtime_retries_an_unexpected_clean_simulator_exit(
     monkeypatch.setattr(runtime.subprocess, "Popen", popen)
     monkeypatch.setattr(runtime, "_simulation_launch", lambda: (["leisaac"], {}))
     monkeypatch.setattr(runtime, "detect_gpu", lambda: "RTX test GPU")
+    monkeypatch.setattr(runtime, "verify_runtime_nvenc", lambda: (True, ""))
 
     runtime.run_simulation()
 

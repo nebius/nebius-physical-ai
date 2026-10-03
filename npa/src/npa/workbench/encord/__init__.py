@@ -1,5 +1,7 @@
 """Stateless Encord SaaS transport contracts and execution functions."""
 
+from npa.workbench.encord.label_import import import_labels
+from npa.workbench.encord.label_render import render_labels
 from npa.workbench.encord.pull import pull_manifest_uri_for, run_pull
 from npa.workbench.encord.push import push_receipt_uri_for, run_push
 from npa.workbench.encord.schemas import (
@@ -49,4 +51,6 @@ __all__ = [
     "run_pull",
     "run_push",
     "verify_roundtrip",
+    "import_labels",
+    "render_labels",
 ]

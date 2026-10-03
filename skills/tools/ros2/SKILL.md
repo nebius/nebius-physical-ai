@@ -16,6 +16,13 @@ bag conversion, and the Open-RMF fleet adapter are not implemented and are
 not exposed. Deployment planning (stage specs, Jetson Thor target) lives in
 the pipeline module, which emits specs without executing ROS 2 code.
 
+Preflight measures the environment of its own process. Direct CLI use measures
+the machine where it runs; a workflow measures its task container. Select an
+image with ROS 2 Jazzy installed and sourced through the workflow resource image
+or image override. There is no built-in ROS 2 image route, and the default CPU
+image will report missing prerequisites. This tool never probes a remote robot
+host or certifies that host from a pod-local result.
+
 ## Interfaces
 
 - CLI: `npa workbench ros2 preflight --help`

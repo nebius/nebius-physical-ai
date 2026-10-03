@@ -308,6 +308,8 @@ class ObjectStorageGateway(Protocol):
 
     def head(self, uri: str) -> ObjectMetadata: ...
 
+    def hash_object(self, metadata: ObjectMetadata) -> TransferDigest: ...
+
     def copy(self, source_uri: str, destination_uri: str) -> ObjectMetadata: ...
 
     def download_to_file(self, uri: str, destination: Path) -> TransferDigest: ...
@@ -343,6 +345,41 @@ class S3ObjectStorageGateway:
 
     def head(self, uri: str) -> ObjectMetadata:
         return head_object(self._storage, uri)
+
+    def hash_object(self, metadata: ObjectMetadata) -> TransferDigest:
+        """Compute SHA-256 from complete bytes pinned to the observed object.
+
+        Args:
+            metadata: Existing object's identity, size, ETag, and version.
+
+        Returns:
+            Byte count and SHA-256 of the unchanged object.
+
+        Raises:
+            ArtifactInvalid: Identity or returned stream is incomplete.
+            ArtifactConflict: The object changed before or during readback.
+            Exception: The object store or stream rejects the read.
+        """
+        if not metadata.exists or not metadata.etag:
+            raise ArtifactInvalid(
+                "content readback requires an existing object with an ETag"
+            )
+        target = authorize_uri(metadata.uri, operation="verify object content")
+        if target.kind != "s3" or not target.bucket or not target.key:
+            raise ArtifactInvalid("content readback requires an exact S3 object URI")
+        response = self._storage.s3.get_object(
+            Bucket=target.bucket,
+            Key=target.key,
+            IfMatch=metadata.etag,
+        )
+        body = response["Body"]
+        try:
+            _validate_content_response(response, metadata)
+            digest = _hash_content_body(body, metadata.size)
+            _require_unchanged_object(metadata, self.head(metadata.uri))
+            return digest
+        finally:
+            body.close()
 
     def copy(self, source_uri: str, destination_uri: str) -> ObjectMetadata:
         source = self.head(source_uri)
@@ -434,3 +471,34 @@ class S3ObjectStorageGateway:
                     "uploaded object destination checksum did not verify"
                 )
         return metadata
+
+
+def _validate_content_response(
+    response: Mapping[str, Any], metadata: ObjectMetadata
+) -> None:
+    if str(response.get("ETag", "")).strip('"') != metadata.etag:
+        raise ArtifactConflict("content readback returned a different object ETag")
+    if response.get("ContentLength") != metadata.size:
+        raise ArtifactConflict("content readback returned a different object size")
+    if metadata.version_id and response.get("VersionId") != metadata.version_id:
+        raise ArtifactConflict("content readback returned a different object version")
+
+
+def _require_unchanged_object(before: ObjectMetadata, after: ObjectMetadata) -> None:
+    if not after.exists or (before.etag, before.size, before.version_id) != (
+        after.etag,
+        after.size,
+        after.version_id,
+    ):
+        raise ArtifactConflict("object changed during content readback")
+
+
+def _hash_content_body(body: Any, expected_size: int) -> TransferDigest:
+    digest = hashlib.sha256()
+    size = 0
+    for chunk in body.iter_chunks(chunk_size=8 * 1024 * 1024):
+        digest.update(chunk)
+        size += len(chunk)
+    if size != expected_size:
+        raise ArtifactInvalid("content readback did not return the complete object")
+    return TransferDigest(size=size, sha256=digest.hexdigest())

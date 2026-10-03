@@ -175,6 +175,195 @@ def test_runtime_run_state_roundtrip_is_separate_from_the_manifest() -> None:
     assert ("bucket", "runs/demo/npa-workflow/manifest.json") not in store
 
 
+def test_block_relaunch_wave_remains_in_flight_for_exact_reconciliation() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "attempt": 2,
+        "status": "failed",
+        "sky_status": "PENDING",
+        "job_id": "job-2",
+        "job_name": "run-1-01-train-a2",
+        "recovery_decision": "block_relaunch",
+    }
+    state.record_wave(record)
+
+    assert state.in_flight_wave(record["key"]) == record
+
+
+def test_verified_terminal_block_relaunch_wave_is_not_in_flight() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "attempt": 2,
+        "status": "failed",
+        "sky_status": "CANCELLED",
+        "job_id": "job-2",
+        "job_name": "run-1-01-train-a2",
+        "recovery_decision": "block_relaunch",
+        "cancellation": {"state": "verified", "error": ""},
+    }
+    state.record_wave(record)
+
+    assert state.in_flight_wave(record["key"]) is None
+
+
+@pytest.mark.parametrize("cancellation", [None, {}, {"state": "requested"}])
+def test_terminal_block_relaunch_requires_verified_cancellation(cancellation):
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "sky_status": "CANCELLED",
+        "job_id": "job-2",
+        "recovery_decision": "block_relaunch",
+        "cancellation": cancellation,
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
+@pytest.mark.parametrize("sky_status", ["PENDING", "RUNNING", "", None])
+def test_verified_cancellation_without_terminality_remains_in_flight(
+    sky_status: str | None,
+) -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "sky_status": sky_status,
+        "job_id": "job-2",
+        "recovery_decision": "block_relaunch",
+        "cancellation": {"state": "verified"},
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
+@pytest.mark.parametrize("launch_sequence", [False, 0.0, "0", None, [], {}])
+def test_malformed_launch_sequence_does_not_prove_prelaunch_absence(
+    launch_sequence: object,
+) -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "job_id": "",
+        "launch_sequence": launch_sequence,
+        "recovery_decision": "future_preflight_decision",
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
+def test_missing_launch_sequence_does_not_prove_prelaunch_absence() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "status": "failed",
+        "job_id": "",
+        "recovery_decision": "future_preflight_decision",
+    }
+    state.record_wave(record)
+    assert state.in_flight_wave(record["key"]) == record
+
+
+def test_unknown_recovery_decision_remains_in_flight() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    record = {
+        "key": "001|serial|:train:-",
+        "attempt": 2,
+        "status": "failed",
+        "sky_status": "PENDING",
+        "job_id": "job-2",
+        "job_name": "run-1-01-train-a2",
+        "recovery_decision": "block_awaiting_quota_v2",
+    }
+    state.record_wave(record)
+
+    assert state.in_flight_wave(record["key"]) == record
+
+
+@pytest.mark.parametrize("sky_status", ["SUCCEEDED", "FAILED_CONTROLLER", "STOPPED"])
+def test_unknown_recovery_decision_respects_terminal_provider_evidence(
+    sky_status: str,
+) -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    state.record_wave(
+        {
+            "key": "001|serial|:train:-",
+            "attempt": 2,
+            "status": "failed",
+            "sky_status": sky_status,
+            "job_id": "job-2",
+            "job_name": "run-1-01-train-a2",
+            "recovery_decision": "future_terminal_decision",
+        }
+    )
+
+    assert state.in_flight_wave("001|serial|:train:-") is None
+
+
+def test_unknown_prelaunch_decision_without_launch_identity_is_resolved() -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    state.record_wave(
+        {
+            "key": "001|serial|:train:-",
+            "attempt": 1,
+            "status": "failed",
+            "sky_status": "",
+            "job_id": "",
+            "launch_sequence": 0,
+            "recovery_decision": "future_preflight_decision",
+        }
+    )
+
+    assert state.in_flight_wave("001|serial|:train:-") is None
+
+
+@pytest.mark.parametrize(
+    "recovery", ["reuse_completed_wave", "block_output_reuse_evidence"]
+)
+@pytest.mark.parametrize("sky_status", ["PENDING", "CANCELLED"])
+def test_output_reuse_recovery_remains_in_flight(recovery, sky_status) -> None:
+    from npa.orchestration.npa_workflow.run_state import RuntimeRunState
+
+    state = RuntimeRunState(workflow="demo", run_id="run-1")
+    state.record_wave(
+        {
+            "key": "001|serial|:train:-",
+            "attempt": 2,
+            "status": "failed",
+            "sky_status": sky_status,
+            "job_id": "job-2",
+            "job_name": "run-1-01-train-a2",
+            "recovery_decision": recovery,
+        }
+    )
+
+    record = state.in_flight_wave("001|serial|:train:-")
+    assert record is not None
+    assert record["recovery_decision"] == recovery
+
+
 def test_run_state_store_persists_exact_nonempty_workflow_artifact() -> None:
     written: dict[tuple[str, str], bytes] = {}
     state_store = RunStateStore(
@@ -1164,6 +1353,159 @@ def test_manifest_completion_alias_is_not_a_runtime_ledger_state(runtime_status)
     )
     with pytest.raises(ValueError, match="lifecycle status is missing or unsupported"):
         runtime_workflow_lifecycle(manifest, {"status": runtime_status})
+
+
+def test_absolute_config_prefix_resolves_to_one_canonical_location() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_run_storage_location,
+        store_for_config,
+    )
+
+    config = {"bucket": "unit-bucket", "prefix": "s3://unit-bucket/runs/demo"}
+    location = resolve_run_storage_location(config, run_id="unused")
+    store = store_for_config(config, run_id="unused")
+
+    assert location is not None
+    assert location.bucket == "unit-bucket"
+    assert location.prefix == "runs/demo"
+    assert location.uri == "s3://unit-bucket/runs/demo"
+    assert store is not None
+    assert store.run_prefix_uri == location.uri
+
+
+def test_relative_config_prefix_keeps_existing_location() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_run_storage_location,
+    )
+
+    location = resolve_run_storage_location(
+        {"bucket": "unit-bucket", "prefix": "runs/demo"}, run_id="unused"
+    )
+
+    assert location is not None
+    assert location.uri == "s3://unit-bucket/runs/demo"
+
+
+def test_workflow_storage_prefix_appends_run_id_with_shared_parser() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_workflow_storage_location,
+    )
+
+    location = resolve_workflow_storage_location(
+        {"bucket": "unit-bucket", "prefix": "science/output"},
+        run_id="runtime-1",
+        workflow_s3_prefix="campaign/runtime",
+    )
+
+    assert location is not None
+    assert location.uri == "s3://unit-bucket/campaign/runtime/runtime-1"
+
+
+def test_workflow_storage_exact_uri_uses_shared_canonical_checks() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_workflow_storage_location,
+    )
+
+    location = resolve_workflow_storage_location(
+        {"bucket": "science-bucket", "prefix": "science/output"},
+        run_id="runtime-1",
+        workflow_s3_uri="s3://control-bucket/campaign/runtime/runtime-1/",
+    )
+
+    assert location is not None
+    assert location.uri == "s3://control-bucket/campaign/runtime/runtime-1"
+
+
+def test_workflow_storage_rejects_conflicting_selectors() -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_workflow_storage_location,
+    )
+
+    with pytest.raises(ValueError, match="conflicts"):
+        resolve_workflow_storage_location(
+            {"bucket": "unit-bucket"},
+            run_id="runtime-1",
+            workflow_s3_uri="s3://unit-bucket/exact/runtime-1",
+            workflow_s3_prefix="campaign/runtime",
+        )
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "s3://other-bucket/runs/demo",
+        "s3://unit-bucket",
+        "s3://unit-bucket/",
+        "s3://unit-bucket/runs/../demo",
+        "s3://unit-bucket/runs/demo?part=1",
+        "s3://unit-bucket/runs/demo#fragment",
+        "s3://user@unit-bucket/runs/demo",
+        "s3://unit-bucket:443/runs/demo",
+        "s3://unit-bucket/runs\\demo",
+        "https://unit-bucket/runs/demo",
+        "s3:/unit-bucket/runs/demo",
+    ],
+)
+def test_invalid_absolute_config_prefix_is_rejected(prefix: str) -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_run_storage_location,
+    )
+
+    with pytest.raises(ValueError):
+        resolve_run_storage_location(
+            {"bucket": "unit-bucket", "prefix": prefix}, run_id="unused"
+        )
+
+
+@pytest.mark.parametrize("leading_slash", ["", "/"])
+def test_recorded_legacy_doubled_prefix_remains_exactly_readable(leading_slash) -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+
+    observed: list[tuple[str, str]] = []
+
+    def reader(bucket: str, key: str) -> str:
+        observed.append((bucket, key))
+        return json.dumps(
+            {
+                "workflow": "legacy",
+                "run_id": "legacy-run",
+                "api_version": "npa.workflow/v0.0.1",
+            }
+        )
+
+    prefix = leading_slash + "s3://unit-bucket/runs/legacy"
+    recorded = "s3://unit-bucket/" + prefix
+    store = store_for_recorded_run_prefix(recorded)
+    store._reader = reader
+
+    assert store.read_manifest() is not None
+    assert store.run_prefix_uri == recorded
+    assert observed == [
+        (
+            "unit-bucket",
+            prefix + "/npa-workflow/manifest.json",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "s3://unit-bucket/runs/../legacy",
+        "s3://unit-bucket/runs\\legacy",
+        "s3://user@unit-bucket/runs/legacy",
+        "s3://unit-bucket:443/runs/legacy",
+    ],
+)
+def test_malformed_recorded_run_prefix_is_rejected(uri: str) -> None:
+    from npa.orchestration.npa_workflow.run_state import (
+        store_for_recorded_run_prefix,
+    )
+
+    with pytest.raises(ValueError):
+        store_for_recorded_run_prefix(uri)
 
 
 @pytest.mark.parametrize("contents", [None, {}, "", False, 0])

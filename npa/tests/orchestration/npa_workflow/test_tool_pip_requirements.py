@@ -370,11 +370,12 @@ def test_the_source_overlay_installs_dependencies_when_the_cli_will_not_load() -
 
     setup = default_npa_setup()
 
+    probe = setup.index("\"$npa_setup_python\" -c 'import npa.cli.main'")
     first = setup.index("npa_pip_install -e /tmp/npa-src-overlay --no-deps")
-    guard = setup.index("import npa.cli.main")
+    guard = setup.index("\"$npa_setup_python\" -c 'import npa.cli.main'", first)
     second = setup.index("npa_pip_install -e /tmp/npa-src-overlay\n")
-    assert first < guard < second, (
-        "the with-deps attempt must be guarded and come second"
+    assert probe < first < guard < second, (
+        "the baked probe must precede the no-deps and guarded with-deps attempts"
     )
     # `import npa` is not the right probe: it succeeded in job 309. The command tree is.
-    assert "python3 -c 'import npa.cli.main'" in setup
+    assert "\"$npa_setup_python\" -c 'import npa.cli.main'" in setup

@@ -47,6 +47,7 @@ REQUIRED_SUFFIXES = (
     "/reconstruction/last.usdz",
     "/reconstruction/metrics.yaml",
     "/reports/sim2real.rrd",
+    "/reports/index.html",
     "/reports/final.json",
 )
 
@@ -56,6 +57,24 @@ def _require(name: str) -> str:
     if not value:
         pytest.skip(f"{name} is required for the live NuRec e2e")
     return value
+
+
+def _assert_portable_preview(s3, bucket, keys, tmp_path):
+    key = next(key for key in keys if key.endswith("/reports/index.html"))
+    path = tmp_path / "index.html"
+    s3.download_file(bucket, key, str(path))
+    html = path.read_text(encoding="utf-8")
+    assert "data:image/jpeg;base64," in html
+    assert "test/psnr" in html and "test/ssim" in html
+    assert "novel views" in html and "connect-src 'none'" in html
+    data = html.split('<script id="preview-data" type="application/json">')[1].split(
+        "</script>"
+    )[0]
+    groups = json.loads(data)
+    assert {group["title"] for group in groups} >= {"Input capture", "Novel views"}
+    for group in groups:
+        assert 0 < len(group["frames"]) <= 32
+        assert all(frame["images"] for frame in group["frames"])
 
 
 def _npa_bin() -> str:
@@ -235,6 +254,7 @@ def test_nurec_reconstruct_publishes_a_viewable_run(tmp_path: Path) -> None:
     assert report["has_rrd"] is True
     assert report["has_usdz"] is True
     assert report["has_novel_views"] is True
+    _assert_portable_preview(s3, bucket, keys, tmp_path)
 
 
 def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> None:
@@ -326,6 +346,7 @@ def test_nurec_declarative_spec_runs_multi_step_on_real_gpus(tmp_path: Path) -> 
     )
     # ...and the later stages actually consumed it.
     assert any("/novel_views/" in k and k.endswith(".png") for k in keys)
+    _assert_portable_preview(s3, bucket, keys, tmp_path)
 
     from npa.workflows.artifacts import (
         list_artifacts,

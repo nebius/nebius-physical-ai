@@ -7,7 +7,7 @@ from typing import Literal, Sequence
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 PUSH_RECEIPT_SCHEMA = "npa.encord.push_receipt.v1"
-PULL_MANIFEST_SCHEMA = "npa.encord.pull_manifest.v1"
+PULL_MANIFEST_SCHEMA = "npa.encord.pull_manifest.v2"
 ROUNDTRIP_REPORT_SCHEMA = "npa.encord.roundtrip_report.v1"
 IDENTITY_SIDECAR_SCHEMA = "npa.encord.identity_sidecar.v1"
 
@@ -297,6 +297,7 @@ class PullItem(StrictModel):
     item_type: str = ""
     mime_type: str = ""
     source_size: int = Field(default=0, ge=0)
+    provider_reported_size: int | None = Field(default=None, ge=0)
     destination_uri: str = ""
     transfer: Literal["copy", "download", "unattempted"] = "unattempted"
     copy_attempted: bool = False
@@ -356,8 +357,8 @@ class LabelArtifact(StrictModel):
 
 
 class PullManifest(StrictModel):
-    schema_: Literal["npa.encord.pull_manifest.v1"] = Field(
-        default=PULL_MANIFEST_SCHEMA, alias="schema"
+    schema_: Literal["npa.encord.pull_manifest.v1", "npa.encord.pull_manifest.v2"] = (
+        Field(default=PULL_MANIFEST_SCHEMA, alias="schema")
     )
     tool: str = "encord"
     stage: str = "pull"
@@ -398,6 +399,7 @@ class PullManifest(StrictModel):
     @model_validator(mode="after")
     def validate_manifest(self) -> "PullManifest":
         _validate_run_phase(self.phase, self.status)
+        _validate_pull_sizes(self.schema_, self.items)
         _validate_counts(self.counts, [item.outcome for item in self.items])
         _validate_counts(
             self.label_counts, [item.outcome for item in self.label_artifacts]
@@ -440,6 +442,18 @@ class PullManifest(StrictModel):
             if self.status == "completed" and not self.items:
                 raise ValueError("completed pull manifest cannot have zero media rows")
         return self
+
+
+def _validate_pull_sizes(schema, items):
+    if schema == "npa.encord.pull_manifest.v2":
+        for item in items:
+            if (
+                item.outcome == "successful"
+                and item.source_size != item.destination_size
+            ):
+                raise ValueError(
+                    "v2 successful pull rows require the exact source byte count"
+                )
 
 
 class RoundtripItem(StrictModel):

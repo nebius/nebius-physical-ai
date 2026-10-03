@@ -238,6 +238,7 @@ jobs:
       DEVELOPMENT_SHA: ${{ needs.resolve.outputs.development_sha }}
       LEROBOT_VERSION: ${{ matrix.lerobot_version }}
       NPA_PUBLIC_REGISTRY: ${{ needs.resolve.outputs.target }}
+      ROBOTWIN_PUBLIC_NATIVE_POLICY_SHA256: df720d408e03ad08dea051b31af6755159cfffc6276cbb7fa60bd1ec0a37236a
       # Updated only after independent review of the exact public content proofs.
       CUROBO_PUBLIC_NATIVE_POLICY_SHA256: 1b4d078637ae99cbc3191244c8338d006ac7df0ca9d0436693f4bca6485030ab
     steps:
@@ -247,8 +248,19 @@ jobs:
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          # Both complete-byte paths require the verified CPython 3.12 wheel.
-          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'libero') && '3.12' || '3.11' }}
+          # The complete-byte paths require the verified CPython 3.12 wheel.
+          python-version: ${{ (matrix.tool == 'curobo' || matrix.tool == 'ncore' || matrix.tool == 'robotwin' || matrix.tool == 'libero') && '3.12' || '3.11' }}
+
+      - name: Preserve the RoboTwin attested OCI graph in Docker
+        if: matrix.tool == 'robotwin'
+        id: robotwin-docker
+        uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70 # v5.5.0
+        with:
+          version: v29.1.3
+          set-host: true
+          context: robotwin-publication
+          daemon-config: '{"features":{"containerd-snapshotter":true}}'
+
 
       - name: Install NPA validation environment
         run: |
@@ -318,6 +330,23 @@ jobs:
             --native-receipt "$scan_root/native/dependencies.json" \
             --output-dir "$scan_root/integration-checks"
 
+      - name: Prepare RoboTwin byte tools and require its public source annex
+        if: matrix.tool == 'robotwin'
+        run: |
+          set -euo pipefail
+          umask 077
+          scan_root="$(mktemp -d "$RUNNER_TEMP/robotwin-byte-gate.XXXXXXXX")"
+          echo "ROBOTWIN_BYTE_GATE_ROOT=$scan_root" >> "$GITHUB_ENV"
+          npa/.venv/bin/python npa/docker/workbench/robotwin/source_annex.py --verify-public "$DEVELOPMENT_SHA"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/go_helper/build.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" --output-dir "$scan_root/tools"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/prepare.py dependencies \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" --output-dir "$scan_root/native"
+          npa/.venv/bin/python npa/scripts/image_byte_scan/real_helper_checks.py \
+            --analysis-root "$scan_root" --trusted-root "$GITHUB_WORKSPACE" \
+            --tools-receipt "$scan_root/tools/dependency-receipt.json" \
+            --native-receipt "$scan_root/native/dependencies.json" --output-dir "$scan_root/integration-checks"
+
       - name: Prepare NCore native scanners and separate source inputs
         if: matrix.tool == 'ncore'
         env:
@@ -384,7 +413,7 @@ jobs:
       - name: Set up Gymnasium OCI image store
         if: matrix.tool == 'gymnasium-robotics'
         id: gymnasium-docker
-        uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70 # v5.5.0
         with:
           version: v29.1.3
           context: gymnasium-public-build
@@ -395,7 +424,7 @@ jobs:
       - name: Use the verified LIBERO containerd image store
         if: matrix.tool == 'libero'
         id: libero-docker
-        uses: docker/setup-docker-action@e43656e248c0bd0647d3f5c195d116aacf6fcaf4 # v4
+        uses: docker/setup-docker-action@2bf61fb9464cc67f0cbdeabed6aa0380accd1c70 # v5.5.0
         with:
           version: v29.1.3
           set-host: true
@@ -444,6 +473,18 @@ jobs:
         if: matrix.tool != 'ncore'
         run: npa/.venv/bin/python npa/src/npa/workflow_build.py --stage-catalog --package-root npa
 
+      - name: Prepare robomimic pinned build inputs and corresponding source
+        if: matrix.tool == 'robomimic'
+        run: |
+          set -euo pipefail
+          image_root=npa/docker/workbench/robomimic
+          npa/.venv/bin/python "$image_root/verify_image.py" prepare-build-inputs \
+            --output-root "$image_root/build-inputs" \
+            --debian-lock "$image_root/debian-packages.lock" \
+            --source-manifest "$image_root/source-manifest.json"
+          npa/.venv/bin/python "$image_root/source_delivery.py" fetch \
+            --output-root "$image_root/corresponding-source"
+
       - name: Build NCore committed attested OCI archive
         if: matrix.tool == 'ncore'
         env:
@@ -467,6 +508,10 @@ jobs:
         if: matrix.tool != 'ncore'
         run: |
           set -euo pipefail
+          build_context=npa
+          if [[ "$TOOL" == robomimic ]]; then
+            build_context=npa/docker/workbench/robomimic
+          fi
           build_args=(--build-arg "NPA_SOURCE_SHA=$DEVELOPMENT_SHA")
           if [[ -n "${LEROBOT_VERSION:-}" ]]; then
             [[ "$TOOL" == lerobot && "$LEROBOT_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
@@ -475,7 +520,7 @@ jobs:
             }
             build_args+=(--build-arg "LEROBOT_VERSION=$LEROBOT_VERSION")
           fi
-          if [[ "$TOOL" == curobo || "$TOOL" == libero ]]; then
+          if [[ "$TOOL" == curobo || "$TOOL" == libero || "$TOOL" == mjlab ]]; then
             source_epoch="$(git show -s --format=%ct "$DEVELOPMENT_SHA")"
             [[ "$source_epoch" =~ ^[1-9][0-9]*$ ]] || { echo "Positive source commit epoch is required" >&2; exit 1; }
             build_args+=(--build-arg "SOURCE_DATE_EPOCH=$source_epoch")
@@ -501,6 +546,9 @@ jobs:
             # enters an image layer or the public workflow artifacts.
             secret_args=(--secret id=npa_host_ca_bundle,src=/etc/ssl/certs/ca-certificates.crt)
           fi
+          if [[ "$TOOL" == robotwin ]]; then
+            build_args+=(--provenance=mode=max)
+          fi
           docker buildx build \
             "${secret_args[@]}" \
             --file "$DOCKERFILE" \
@@ -510,7 +558,7 @@ jobs:
             --label "org.opencontainers.image.revision=$DEVELOPMENT_SHA" \
             --label "org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY}" \
             --tag "$IMAGE" \
-            npa
+            "$build_context"
           if [[ "$TOOL" == libero ]]; then
             test -s "$RUNNER_TEMP/libero-build-metadata.json"
             test -s "$RUNNER_TEMP/libero-build.oci.tar"
@@ -534,8 +582,11 @@ jobs:
       - name: Enforce runtime, revision, bootstrap, config, and history contracts
         if: matrix.tool != 'ncore'
         env:
-          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
-          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
+          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
+          ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL || '' }}
+          ROBOTWIN_PRIVATE_REVIEW_REQUEST_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_PRE_REQUEST_URL || '' }}
+          ROBOTWIN_PRIVATE_REVIEW_RESPONSE_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_PRE_RESPONSE_URL || '' }}
         run: |
           set -euo pipefail
           if [ "$TOOL" = gymnasium-robotics ]; then
@@ -592,10 +643,27 @@ jobs:
           # otherwise leaves insufficient space to serialize large GPU images for
           # the mandatory layer-by-layer payload scan.
           docker buildx prune --all --force
-          docker save --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
+          save_platform=()
+          if [[ "$TOOL" == robomimic ]]; then
+            save_platform=(--platform linux/amd64)
+          fi
+          docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE"
+          if [[ "$TOOL" == robomimic ]]; then
+            npa/.venv/bin/python npa/docker/workbench/robomimic/source_delivery.py verify \
+              --image-archive "$RUNNER_TEMP/${TOOL}.tar" \
+              > "$RUNNER_TEMP/robomimic-source-delivery.json"
+            npa/.venv/bin/python npa/scripts/scan_image_robomimic_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --output "$RUNNER_TEMP/robomimic-payload.json"
+          fi
           npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
             --tarball "$RUNNER_TEMP/${TOOL}.tar" \
             --json "$RUNNER_TEMP/${TOOL}-payload.json"
+          if [ "$TOOL" = habitat-sim ]; then
+            npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-bootstrap-source.json"
+          fi
           if [ "$TOOL" = flex-pi ]; then
             npa/.venv/bin/python npa/scripts/scan_image_flex_pi_payload.py \
               --tarball "$RUNNER_TEMP/${TOOL}.tar" \
@@ -679,6 +747,10 @@ jobs:
               --public-native-policy-sha256 "$CUROBO_PUBLIC_NATIVE_POLICY_SHA256"
             rm -f "$phase/image.tar"
           fi
+          if [ "$TOOL" = robotwin ]; then
+            # robotwin-publication-gate: payload and complete-byte results are both mandatory.
+            bash npa/docker/workbench/robotwin/byte_gate.sh "$RUNNER_TEMP/${TOOL}.tar" "$IMAGE" pre
+          fi
           if [ "$TOOL" = sam3 ]; then
             npa/.venv/bin/python npa/scripts/scan_image_sam3_payload.py \
               --docker-save "$RUNNER_TEMP/${TOOL}.tar" \
@@ -728,7 +800,7 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
-          DOCKER_SOCKET: ${{ steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}
+          DOCKER_SOCKET: ${{ steps.robotwin-docker.outputs.sock || steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -766,7 +838,7 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
-          DOCKER_SOCKET: ${{ steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}
+          DOCKER_SOCKET: ${{ steps.robotwin-docker.outputs.sock || steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -789,7 +861,7 @@ jobs:
         if: matrix.tool != 'ncore'
         env:
           TRIVY_TEMP_DIR: /mnt/npa-trivy
-          DOCKER_SOCKET: ${{ steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}
+          DOCKER_SOCKET: ${{ steps.robotwin-docker.outputs.sock || steps.gymnasium-docker.outputs.sock || steps.libero-docker.outputs.sock || '/var/run/docker.sock' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -967,10 +1039,17 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CUSTOMER_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.CUSTOMER_DENYLIST || '' }}
-          INFRA_DENYLIST: ${{ matrix.tool == 'curobo' && secrets.INFRA_DENYLIST || '' }}
+          CUSTOMER_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.CUSTOMER_DENYLIST || '' }}
+          INFRA_DENYLIST: ${{ (matrix.tool == 'curobo' || matrix.tool == 'robotwin') && secrets.INFRA_DENYLIST || '' }}
+          ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_FAILURE_UPLOAD_URL || '' }}
+          ROBOTWIN_PRIVATE_REVIEW_REQUEST_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_POST_REQUEST_URL || '' }}
+          ROBOTWIN_PRIVATE_REVIEW_RESPONSE_URL: ${{ matrix.tool == 'robotwin' && secrets.ROBOTWIN_PRIVATE_REVIEW_POST_RESPONSE_URL || '' }}
         run: |
           set -euo pipefail
+          save_platform=()
+          if [[ "$TOOL" == robomimic ]]; then
+            save_platform=(--platform linux/amd64)
+          fi
           libero_export_container=""
           cleanup_libero_export() {
             primary_status=$?
@@ -1008,7 +1087,7 @@ jobs:
               layer_diff_ids="$(docker image inspect --format '{{json .RootFS.Layers}}' "$exact")" &&
               test "$(docker image inspect --format '{{.Id}}' "$exact")" = \
                 "$(docker image inspect --format '{{.Id}}' "$IMAGE")" &&
-              docker save --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" &&
+              docker save "${save_platform[@]}" --output "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" &&
               npa/.venv/bin/python npa/scripts/scan_image_omniverse_payload.py \
                 --tarball "$RUNNER_TEMP/${TOOL}-pushed.tar" \
                 --json "$RUNNER_TEMP/${TOOL}-pushed-payload.json"
@@ -1024,6 +1103,9 @@ jobs:
             payload_attempt=$((payload_attempt + 1))
             sleep 5
           done
+          if [ "$TOOL" = robotwin ]; then
+            bash npa/docker/workbench/robotwin/byte_gate.sh "$RUNNER_TEMP/${TOOL}-pushed.tar" "$exact" post
+          fi
           if [ "$TOOL" = gymnasium-robotics ]; then
             # The pulled immutable image ID above equals the pre-scanned image.
             # Its config digest was authenticated through that image's manifest.
@@ -1071,6 +1153,14 @@ jobs:
               .release_authorized == false
             ' "$payload" >/dev/null
           fi
+          if [[ "$TOOL" == robomimic ]]; then
+            npa/.venv/bin/python npa/docker/workbench/robomimic/source_delivery.py verify \
+              --image-archive "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              > "$RUNNER_TEMP/robomimic-pushed-source-delivery.json"
+            npa/.venv/bin/python npa/scripts/scan_image_robomimic_payload.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --output "$RUNNER_TEMP/robomimic-pushed-payload.json"
+          fi
           if [ "$TOOL" = libero ]; then
             libero_export_container="$(docker create "$exact")"
             docker export --output "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar" \
@@ -1089,6 +1179,11 @@ jobs:
               --image-inventory-output "$RUNNER_TEMP/${TOOL}-pushed-image-inventory.json" \
               --output "$RUNNER_TEMP/${TOOL}-pushed-libero-payload.json"
             rm -f "$RUNNER_TEMP/${TOOL}-pushed-rootfs.tar"
+          fi
+          if [ "$TOOL" = habitat-sim ]; then
+            npa/.venv/bin/python npa/docker/workbench/habitat-sim/verify_bootstrap.py \
+              --docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar" \
+              --json "$RUNNER_TEMP/${TOOL}-pushed-bootstrap-source.json"
           fi
           if [ "$TOOL" = antioch ]; then
             docker pull "$exact"
@@ -1203,6 +1298,51 @@ jobs:
           echo "Validated public development digest: $DIGEST" >> "$GITHUB_STEP_SUMMARY"
           echo "The dev tag is public; later deletion cannot revoke prior downloads." >> "$GITHUB_STEP_SUMMARY"
 
+      # Failure is local to this matrix entry; successful siblings retain their tags.
+      - name: Remove an exact run-owned dev tag after this image fails
+        if: ${{ failure() && matrix.tool != 'ncore' && (steps.push.outcome == 'success' || steps.push.outcome == 'failure') }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          path="${IMAGE#ghcr.io/}"
+          owner="${path%%/*}"
+          package_and_tag="${path#*/}"
+          package="${package_and_tag%:*}"
+          tag="${package_and_tag##*:}"
+          encoded="${package//\//%2F}"
+          package_api="/orgs/${owner}/packages/container/${encoded}"
+          versions="$(mktemp)"
+          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
+            echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
+          count="$(jq length <<<"$matches")"
+          if [ "$count" = 0 ]; then
+            echo "No pushed run-owned dev tag exists for cleanup." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          test "$count" = 1
+          tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
+          test "$tags" = "[\"$tag\"]" || {
+            echo "::error::Refusing cleanup: digest also carries tags $tags"
+            exit 1
+          }
+          version_id="$(jq -r '.[0].id' <<<"$matches")"
+          digest="$(jq -r '.[0].name' <<<"$matches")"
+          test "$digest" = "$(crane digest "$IMAGE")"
+          if [ "$(jq length "$versions")" = 1 ]; then
+            # Exact newly created package: GHCR refuses deletion of its last
+            # tagged version, so delete the proven one-version package.
+            gh api --method DELETE "$package_api"
+          else
+            gh api --method DELETE "${package_api}/versions/${version_id}"
+          fi
+          echo "Deleted exact failed public dev tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
+          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
+
   cleanup-requested:
     needs: resolve
     if: ${{ always() && needs.resolve.result == 'success' && needs.resolve.outputs.cleanup_count != '0' }}
@@ -1262,67 +1402,6 @@ jobs:
             gh api --method DELETE "${package_api}/versions/${version_id}"
           fi
           echo "Deleted exact development tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
-          echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
-
-  cleanup-failed-build:
-    needs: [resolve, build-development]
-    if: ${{ always() && needs.resolve.outputs.build_count != '0' && needs.build-development.result == 'failure' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON(needs.resolve.outputs.build_matrix) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: imjasonh/setup-crane@feee3b6bb0d4c68370f256a4502498c9227e5c6b # v0.7
-
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Remove an exact run-owned dev tag after a failed build batch
-        if: matrix.tool != 'ncore'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE: ${{ matrix.image }}
-        run: |
-          set -euo pipefail
-          path="${IMAGE#ghcr.io/}"
-          owner="${path%%/*}"
-          package_and_tag="${path#*/}"
-          package="${package_and_tag%:*}"
-          tag="${package_and_tag##*:}"
-          encoded="${package//\//%2F}"
-          package_api="/orgs/${owner}/packages/container/${encoded}"
-          versions="$(mktemp)"
-          if ! gh api --paginate --slurp "${package_api}/versions?per_page=100" | jq 'add' > "$versions"; then
-            echo "No package exists for failed-build cleanup." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          matches="$(jq --arg tag "$tag" '[.[] | select((.metadata.container.tags // []) | index($tag))]' "$versions")"
-          count="$(jq length <<<"$matches")"
-          if [ "$count" = 0 ]; then
-            echo "No pushed run-owned dev tag exists for cleanup." >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          test "$count" = 1
-          tags="$(jq -c '.[0].metadata.container.tags // []' <<<"$matches")"
-          test "$tags" = "[\"$tag\"]" || {
-            echo "::error::Refusing cleanup: digest also carries tags $tags"
-            exit 1
-          }
-          version_id="$(jq -r '.[0].id' <<<"$matches")"
-          digest="$(jq -r '.[0].name' <<<"$matches")"
-          test "$digest" = "$(crane digest "$IMAGE")"
-          if [ "$(jq length "$versions")" = 1 ]; then
-            # Exact newly created package: GHCR refuses deletion of its last
-            # tagged version, so delete the proven one-version package.
-            gh api --method DELETE "$package_api"
-          else
-            gh api --method DELETE "${package_api}/versions/${version_id}"
-          fi
-          echo "Deleted exact failed public dev tag $tag at $digest." >> "$GITHUB_STEP_SUMMARY"
           echo "Deletion does not revoke downloads made while the public tag existed." >> "$GITHUB_STEP_SUMMARY"
 
   promote:

@@ -34,10 +34,12 @@ PLACEHOLDER = re.compile(r"\{\{[^}]+\}\}")
 PARSER_FACTORIES = {
     "npa.workflows.xr1_antioch.training": "build_parser",
     "npa.workflows.lerobot_transfer": "build_parser",
+    "npa.workflows.habitat_sim_smoke": "build_parser",
     "npa.workflows.sim2real_envgen": "build_parser",
     "npa.workflows.token_factory_triage": "build_parser",
     "npa.workbench.lerobot.policy_container": "build_parser",
     "npa.workflows.isaac_capture": "build_parser",
+    "npa.workflows.isaac_rgbd.cli": "build_parser",
     "npa.workflows.groot_visualization": "build_parser",
     "npa.workflows.groot_learning": "build_parser",
     "npa.workflows.groot_task_performance": "build_parser",

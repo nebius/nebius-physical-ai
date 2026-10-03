@@ -15,7 +15,7 @@ tag_families:
     pytorch_version_min: "2.0"
     status: production
 
-  cuda13-b300:
+  cuda13-blackwell:
     description: >
       CUDA 13.x runtime for Blackwell images. Covers both Blackwell CUDA
       majors: datacenter (B200 sm_100, B300 sm_103) and workstation
@@ -39,5 +39,10 @@ tag_families:
       blackwell-dc-images.json.
     blockers:
       - Taichi missing stable sm_103 support
-      - flash-attn stable Blackwell wheels not yet available
+      - FA4 feature and shape restrictions require per-image GPU qualification
       - "CUDA 13 host driver requirement: >= 580"
+
+# Accepted for existing immutable releases and same-image base build aliases.
+# These are compatibility names, not additional hardware/validation families.
+legacy_tag_families:
+  cuda13-b300: cuda13-blackwell
