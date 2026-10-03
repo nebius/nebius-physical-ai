@@ -543,6 +543,10 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
     assert "--build-arg BASE_IMAGE" not in build_script
     assert "ARG NPA_SOURCE_SHA" in dockerfile
     assert 'org.opencontainers.image.revision="${NPA_SOURCE_SHA}"' in dockerfile
+    assert (
+        'org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai"'
+        in dockerfile
+    )
     assert f'org.opencontainers.image.base.name="{PINNED_CUDA_BASE_NAME}"' in dockerfile
     assert (
         f'org.opencontainers.image.base.digest="{PINNED_CUDA_BASE_DIGEST}"'
@@ -613,6 +617,23 @@ def test_robocasa_publication_uses_committed_tree_builder() -> None:
     assert (
         'test "$IMAGE" = "$NPA_PUBLIC_REGISTRY/npa-robocasa:dev-$DEVELOPMENT_SHA"'
         in workflow
+    )
+
+
+def test_robocasa_asset_boundary_is_in_actual_python310_ci_selection():
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/test.yml").read_text())
+    compatibility_steps = [
+        step
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+        if step.get("name") == "Run Python 3.10 compatibility regressions"
+    ]
+    assert len(compatibility_steps) == 1
+    assert (
+        "npa/tests/workbench/test_robocasa_asset_boundaries.py"
+        in compatibility_steps[0]["run"]
     )
 
 

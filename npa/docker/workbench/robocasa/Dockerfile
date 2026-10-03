@@ -37,6 +37,7 @@ LABEL npa.tool="robocasa" \
       npa.lerobot.patch.sha256="38d310f1b74b67a4584861c3fca5894b7693399ed6a1a82dc86cd754ef23de41" \
       npa.runtime_user="ubuntu" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
+      org.opencontainers.image.source="https://github.com/nebius/nebius-physical-ai" \
       org.opencontainers.image.base.name="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04" \
       org.opencontainers.image.base.digest="sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42"
 
