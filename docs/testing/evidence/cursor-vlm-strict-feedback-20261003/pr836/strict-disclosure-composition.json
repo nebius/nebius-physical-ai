@@ -1,0 +1,207 @@
+{
+  "schema": "cursor-explore.strict-disclosure-composition/v1",
+  "execution_head": "04ed3bccbfce7d39fb8cb3d81537950c4041e3ae",
+  "execution_tree": "68214c3199cae87ec48d393ab3b553fb75581678",
+  "runtime": {
+    "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+    "sha256": "010aa18f60ceaee63bd4f680d6b64cd301464aaae2c7505e526ed1b8225ce72a"
+  },
+  "client": {
+    "path": "npa/src/npa/clients/token_factory.py",
+    "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+  },
+  "source_bridge": {
+    "candidate": "vlm-strict-composed",
+    "candidate_head": "a32d2e64e11e5a3e781fbda476b4d7ac7c1db03c",
+    "candidate_tree": "5727b63463dce4d4a85c558e759191a75974b3ea",
+    "execution_head": "04ed3bccbfce7d39fb8cb3d81537950c4041e3ae",
+    "execution_tree": "68214c3199cae87ec48d393ab3b553fb75581678",
+    "runtime": {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "010aa18f60ceaee63bd4f680d6b64cd301464aaae2c7505e526ed1b8225ce72a"
+    },
+    "client": {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    "bridge": "git diff --exit-code confirms exact runtime/client bytes unchanged since fresh schema-v2 execution; subsequent changes are tests/documentation only",
+    "command_receipt": "commands/source-bridge-vlm-strict-composed.command"
+  },
+  "inputs": {
+    "strict836": "07c939fc406cecf79fcc8344c7207b6bc7669a77",
+    "completion828": "fc8826a434738793c50ff3f3e08e43dc996bcb32",
+    "model833": "ec2c6ec053ad194d52cc71a6683e22f19bc82abd",
+    "disclosure834": "ff54571dadae0158ad9a7d38e335df995a584ab2",
+    "main": "f1ecd4255131374c417cdbb1f6c3e0d84b2a3514"
+  },
+  "focused_union": {
+    "execution_head": "a32d2e64e11e5a3e781fbda476b4d7ac7c1db03c",
+    "passed": 318,
+    "skipped": 1,
+    "skip": "Inherited opt-in operator GPU endpoint lane, not counted as operator GPU proof"
+  },
+  "provider_http_responses": 4,
+  "rows": [
+    {
+      "case": "api-MiniMax-M3-positive",
+      "score": 1,
+      "passed": true,
+      "response_sha256": "5ecfd60999b616996c49575942e0664b79d260b09a11cf88ccbae0c925079206",
+      "request_manifest_sha256": "034777f266091995c5ff2620a30dd2df5f002a44cba9cd28fbda0d56ff30fcf6",
+      "frame_sha256": [
+        "69ec5a81250b2a7a6f2fb0d8c877d84cebce0b43dbf9ad48ac6ea7dd3505fde7"
+      ],
+      "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+      "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "model_match_enforced": true,
+      "provider_call_made": true,
+      "calibrated": false,
+      "limitations": [
+        "Selected frames cannot verify unobserved intervals or continuous task stability.",
+        "A score from one model, rubric, threshold, and frame sample does not establish physical correctness or safety."
+      ],
+      "evidence_schema": "npa_vlm_eval_evidence_v2",
+      "sampling": {
+        "coverage_complete": true,
+        "max_frames": 8,
+        "selected_count": 1,
+        "selected_indices": [
+          0
+        ],
+        "selected_timestamps_s": [
+          null
+        ],
+        "source_count": 1,
+        "source_kind": "image-sequence",
+        "strategy": "keyframes",
+        "timestamps_complete": null
+      }
+    },
+    {
+      "case": "api-MiniMax-M3-negative",
+      "score": 0,
+      "passed": false,
+      "response_sha256": "6cd41c1b1d35ade41eb7215bf55e7c9c3e055a61a1736ef9af5d2d5a9b03b944",
+      "request_manifest_sha256": "014ede4463b8e1c230027c1bc65bee8c45a46d9b1f531663caba627c47c1d07f",
+      "frame_sha256": [
+        "56f5ca147f569d666bde0a4707aba5c290cddeb585d85c1390fe3e57fafe6148"
+      ],
+      "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+      "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "model_match_enforced": true,
+      "provider_call_made": true,
+      "calibrated": false,
+      "limitations": [
+        "Selected frames cannot verify unobserved intervals or continuous task stability.",
+        "A score from one model, rubric, threshold, and frame sample does not establish physical correctness or safety."
+      ],
+      "evidence_schema": "npa_vlm_eval_evidence_v2",
+      "sampling": {
+        "coverage_complete": true,
+        "max_frames": 8,
+        "selected_count": 1,
+        "selected_indices": [
+          0
+        ],
+        "selected_timestamps_s": [
+          null
+        ],
+        "source_count": 1,
+        "source_kind": "image-sequence",
+        "strategy": "keyframes",
+        "timestamps_complete": null
+      }
+    },
+    {
+      "case": "api-gemma-3-27b-it-positive",
+      "score": 1,
+      "passed": true,
+      "response_sha256": "18b9db8afb7534285a373d2b732e663119a0e07604a5865cc56c0ba26fbf767a",
+      "request_manifest_sha256": "e2595025bee0bf5570e10200dcc9a573c8c94260c2a2e04cf316637da813317b",
+      "frame_sha256": [
+        "69ec5a81250b2a7a6f2fb0d8c877d84cebce0b43dbf9ad48ac6ea7dd3505fde7"
+      ],
+      "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+      "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+      "served_model": "google/gemma-3-27b-it",
+      "model_match_enforced": true,
+      "provider_call_made": true,
+      "calibrated": false,
+      "limitations": [
+        "Selected frames cannot verify unobserved intervals or continuous task stability.",
+        "A score from one model, rubric, threshold, and frame sample does not establish physical correctness or safety."
+      ],
+      "evidence_schema": "npa_vlm_eval_evidence_v2",
+      "sampling": {
+        "coverage_complete": true,
+        "max_frames": 8,
+        "selected_count": 1,
+        "selected_indices": [
+          0
+        ],
+        "selected_timestamps_s": [
+          null
+        ],
+        "source_count": 1,
+        "source_kind": "image-sequence",
+        "strategy": "keyframes",
+        "timestamps_complete": null
+      }
+    },
+    {
+      "case": "api-gemma-3-27b-it-negative",
+      "score": 0,
+      "passed": false,
+      "response_sha256": "229eafab7e7ef609a667b2dbd04fc061530a43d3ba99fcb3fb27e3c6d5bdc49b",
+      "request_manifest_sha256": "d234a2ac60a62987b93e95e4c2e1cff8da69671147f8049da0c6afdaf8d05e11",
+      "frame_sha256": [
+        "56f5ca147f569d666bde0a4707aba5c290cddeb585d85c1390fe3e57fafe6148"
+      ],
+      "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+      "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+      "served_model": "google/gemma-3-27b-it",
+      "model_match_enforced": true,
+      "provider_call_made": true,
+      "calibrated": false,
+      "limitations": [
+        "Selected frames cannot verify unobserved intervals or continuous task stability.",
+        "A score from one model, rubric, threshold, and frame sample does not establish physical correctness or safety."
+      ],
+      "evidence_schema": "npa_vlm_eval_evidence_v2",
+      "sampling": {
+        "coverage_complete": true,
+        "max_frames": 8,
+        "selected_count": 1,
+        "selected_indices": [
+          0
+        ],
+        "selected_timestamps_s": [
+          null
+        ],
+        "source_count": 1,
+        "source_kind": "image-sequence",
+        "strategy": "keyframes",
+        "timestamps_complete": null
+      }
+    }
+  ],
+  "synthetic_caller": {
+    "path": "npa/tests/workbench/test_vlm_strict_scores.py",
+    "test": "test_validated_result_does_not_reach_legacy_clamp",
+    "provider_call_made_argument": false,
+    "score_before_rounding": 0.74268,
+    "score_after_rounding": 0.7427,
+    "threshold": 0.8,
+    "passed": false,
+    "clamp_spy": "raises if invoked; strict assertion retained"
+  },
+  "no_call_controls": "Stub and score overrides retain provider_call_made=false, calibration=false and explicit caveats; actual responses above retain true call and false calibration.",
+  "limits": [
+    "Separate immutable integration worktree; not a mutation of another owner's source/branch.",
+    "Actual four hosted geometry responses, not broad model-quality calibration or operator GPU deployment.",
+    "Original composed pre-v2 execution and concrete test failures remain private and separately identified.",
+    "Independent current integration evidence review requested; not human approval or fabricated Claude review."
+  ]
+}

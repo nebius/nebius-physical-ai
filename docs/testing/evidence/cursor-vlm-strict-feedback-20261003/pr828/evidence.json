@@ -1,0 +1,344 @@
+{
+  "schema": "cursor-explore.vlm-strict-proof/v1",
+  "pr": 828,
+  "executions": [
+    {
+      "phase": "original_pre_sampling_v2",
+      "head": "fc8826a434738793c50ff3f3e08e43dc996bcb32",
+      "tree": "9416ab8d64bf3ed636e60961f6e6fccfce5057cb",
+      "runtime": {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "50c5fa3f25460f22a998c761cfc1781d6bdb0d9761ec7ef9e4d19b4714c6eef0"
+      },
+      "client": {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+      },
+      "provider_http_responses": 4,
+      "raw_execution_sha256": "31901deed223b461e4f03ad9f4fc6e0c02db51bdef83a0fd9bb6ed5ea468fa87",
+      "frozen_protocol_sha256": "278cfebb67ba05ca50db29a012bae7f45a2b48920c43e4e508e7ceef4e25ec3e",
+      "input_hashes": [
+        {
+          "path": "negative.png",
+          "sha256": "79a8c7190d6ecdedeb11ef42add22344dff7749eaa96bdb9667b429e7657e9e5"
+        },
+        {
+          "path": "positive.png",
+          "sha256": "b5c8938bfdcdaf7a2fc9653cbc29ec301c69d64be6e9a0de732bf7357604099e"
+        }
+      ],
+      "task": "Identify the visible shapes and colors. Judge whether the image contains a red circle. Task completion requires a clearly visible red circle; a uniform blank image does not complete the task.",
+      "rubric": "Score whether the rollout completes the requested physical task. Use 1.0 only for clear task completion, 0.0 for clear failure, and intermediate values for partial progress. Penalize unsafe, incomplete, or ambiguous outcomes.",
+      "threshold": 0.8,
+      "rows": [
+        {
+          "case": "api-MiniMax-M3-positive",
+          "score": 1,
+          "passed": true,
+          "expected_label": true,
+          "provider_success": true,
+          "response_sha256": "3c27c7bff528073cdec5a7ab6859744d9c409c268970767a306bc433f91bcd8b",
+          "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+          "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+          "request_manifest_sha256": "f5518331654ff49d58a297a25ef54b600f8932275d799ddde6b7e771b9c75293",
+          "frame_sha256": [
+            "69ec5a81250b2a7a6f2fb0d8c877d84cebce0b43dbf9ad48ac6ea7dd3505fde7"
+          ],
+          "result_sha256": "7e67b57747279702243505ec57103688aed6f47807868455234ba3ee86a82e50",
+          "finish_reason": "stop",
+          "served_model": "MiniMaxAI/MiniMax-M3",
+          "parser_version": "npa_vlm_eval_hosted_json_v1",
+          "decoded_rationale": "The image clearly shows a red circle on a white background. The task was to identify visible shapes and colors and judge whether the image contains a red circle. A clearly visible red circle is present, fully completing the task."
+        },
+        {
+          "case": "api-MiniMax-M3-negative",
+          "score": 0,
+          "passed": false,
+          "expected_label": false,
+          "provider_success": false,
+          "response_sha256": "31ba04218c37d984132dbf05182a1fb0c51c3798be822393eb69931f98604c0b",
+          "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+          "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+          "request_manifest_sha256": "c68d2045baf37ad1a9e4709fd6a7f157e7d2631300e42df468b405cec8282a18",
+          "frame_sha256": [
+            "56f5ca147f569d666bde0a4707aba5c290cddeb585d85c1390fe3e57fafe6148"
+          ],
+          "result_sha256": "39ca0219cfefa00cf7580e22c3cda2b7c4536463d98962eefb3135115355ac5f",
+          "finish_reason": "stop",
+          "served_model": "MiniMaxAI/MiniMax-M3",
+          "parser_version": "npa_vlm_eval_hosted_json_v1",
+          "decoded_rationale": "The image is a uniform blank/gray frame with no visible shapes or colors. There is no red circle present, so the task of identifying a red circle is not completed."
+        },
+        {
+          "case": "self-hosted-gemma-3-27b-it-positive",
+          "score": 1,
+          "passed": true,
+          "expected_label": true,
+          "provider_success": true,
+          "response_sha256": "0e0601cb7ecdc3dead1314f0f4e19bc469fa367ee12bb9c38c3abc4fc6ecc5aa",
+          "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+          "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+          "request_manifest_sha256": "a2ab296f1775474423881aba269600e3856aa0dff6df730c655d8e426643af78",
+          "frame_sha256": [
+            "69ec5a81250b2a7a6f2fb0d8c877d84cebce0b43dbf9ad48ac6ea7dd3505fde7"
+          ],
+          "result_sha256": "ea32a868316a5f7e41b133ac6a8b6f4ae8f74f89c549fe7e795a4f43e4c8993f",
+          "finish_reason": "stop",
+          "served_model": "google/gemma-3-27b-it",
+          "parser_version": "npa_vlm_eval_compatible_json_v1",
+          "decoded_rationale": "The image clearly contains a red circle, fulfilling the task requirement. The circle is well-defined and easily visible."
+        },
+        {
+          "case": "self-hosted-gemma-3-27b-it-negative",
+          "score": 0,
+          "passed": false,
+          "expected_label": false,
+          "provider_success": false,
+          "response_sha256": "10ec1f570194f3d7a0a1d0c7de457cacb21c343c15fb2deabc616b8782004bca",
+          "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+          "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+          "request_manifest_sha256": "97ef2c5b9b4714a229d5bc2b67fef485af92d03c06c3b78ec377256e53171442",
+          "frame_sha256": [
+            "56f5ca147f569d666bde0a4707aba5c290cddeb585d85c1390fe3e57fafe6148"
+          ],
+          "result_sha256": "3117348dc644c218f800032eff85561976f5d270df2dee9ca49a77b3f517ccc9",
+          "finish_reason": "stop",
+          "served_model": "google/gemma-3-27b-it",
+          "parser_version": "npa_vlm_eval_compatible_json_v1",
+          "decoded_rationale": "The image is a uniform gray color. There are no visible shapes, and specifically no red circle. The task requires a clearly visible red circle to be present for successful completion."
+        }
+      ],
+      "source_observation": "Before frozen protocol and after execution head/tree/runtime/client hashes match; dirty-tree state was not separately captured by the inference wrapper."
+    },
+    {
+      "phase": "fresh_affected_sampling_v2",
+      "head": "2bcc2badfb102a17341df354f95782316874e7e3",
+      "tree": "21ae45b452b89224ea3f5302f1266bf7baa23bdb",
+      "runtime": {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "011df1d16046c5d745c0e368f5dc0ab2dae45bef0cc42e66f09ba8db64d1c6d8"
+      },
+      "client": {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+      },
+      "provider_http_responses": 4,
+      "raw_execution_sha256": "e8af33c381a8c476c0034013964dc36005b1472c5eb3673ba694ab808b84b1fa",
+      "frozen_protocol_sha256": "fde8d00dea533be5e8b8ec7df2d346400b3503a189bfea12e62868aa067b33dd",
+      "input_hashes": [
+        {
+          "path": "negative.png",
+          "sha256": "79a8c7190d6ecdedeb11ef42add22344dff7749eaa96bdb9667b429e7657e9e5"
+        },
+        {
+          "path": "positive.png",
+          "sha256": "b5c8938bfdcdaf7a2fc9653cbc29ec301c69d64be6e9a0de732bf7357604099e"
+        }
+      ],
+      "task": "Identify the visible shapes and colors. Judge whether the image contains a red circle. Task completion requires a clearly visible red circle; a uniform blank image does not complete the task.",
+      "rubric": "Score whether the rollout completes the requested physical task. Use 1.0 only for clear task completion, 0.0 for clear failure, and intermediate values for partial progress. Penalize unsafe, incomplete, or ambiguous outcomes.",
+      "threshold": 0.8,
+      "rows": [
+        {
+          "case": "api-MiniMax-M3-positive",
+          "score": 1,
+          "passed": true,
+          "expected_label": true,
+          "provider_success": true,
+          "response_sha256": "ffb1b43acd0c59e00580c0de52510d0dfb0a0a859e1e84d0320a761f73025ef5",
+          "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+          "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+          "request_manifest_sha256": "034777f266091995c5ff2620a30dd2df5f002a44cba9cd28fbda0d56ff30fcf6",
+          "frame_sha256": [
+            "69ec5a81250b2a7a6f2fb0d8c877d84cebce0b43dbf9ad48ac6ea7dd3505fde7"
+          ],
+          "result_sha256": "6bd86f3960f93b35ed6a41b5a875d56a778492ffe6ccd65eb1c369355ada5cbf",
+          "finish_reason": "stop",
+          "served_model": "MiniMaxAI/MiniMax-M3",
+          "parser_version": "npa_vlm_eval_hosted_json_v1",
+          "evidence_schema": "npa_vlm_eval_evidence_v2",
+          "sampling": {
+            "coverage_complete": true,
+            "max_frames": 8,
+            "selected_count": 1,
+            "selected_indices": [
+              0
+            ],
+            "selected_timestamps_s": [
+              null
+            ],
+            "source_count": 1,
+            "source_kind": "image-sequence",
+            "strategy": "keyframes",
+            "timestamps_complete": null
+          },
+          "decoded_rationale": "The image clearly shows a red circle on a white background. The shape is a circle and the color is red, fully satisfying the task requirement of identifying a visible red circle."
+        },
+        {
+          "case": "api-MiniMax-M3-negative",
+          "score": 0,
+          "passed": false,
+          "expected_label": false,
+          "provider_success": false,
+          "response_sha256": "87eb944629cb36c6c47cd97a589c66757e32f8fee5f638509e9cb256d8df34ec",
+          "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+          "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+          "request_manifest_sha256": "014ede4463b8e1c230027c1bc65bee8c45a46d9b1f531663caba627c47c1d07f",
+          "frame_sha256": [
+            "56f5ca147f569d666bde0a4707aba5c290cddeb585d85c1390fe3e57fafe6148"
+          ],
+          "result_sha256": "1499ffd160c8f67aedb6137e4f38a7b15400b590817ce239c4e6f4ff19f57224",
+          "finish_reason": "stop",
+          "served_model": "MiniMaxAI/MiniMax-M3",
+          "parser_version": "npa_vlm_eval_hosted_json_v1",
+          "evidence_schema": "npa_vlm_eval_evidence_v2",
+          "sampling": {
+            "coverage_complete": true,
+            "max_frames": 8,
+            "selected_count": 1,
+            "selected_indices": [
+              0
+            ],
+            "selected_timestamps_s": [
+              null
+            ],
+            "source_count": 1,
+            "source_kind": "image-sequence",
+            "strategy": "keyframes",
+            "timestamps_complete": null
+          },
+          "decoded_rationale": "The image is a uniform blank/gray frame with no visible shapes or colors. There is no red circle present, so the task of identifying a red circle is not completed."
+        },
+        {
+          "case": "self-hosted-gemma-3-27b-it-positive",
+          "score": 1,
+          "passed": true,
+          "expected_label": true,
+          "provider_success": true,
+          "response_sha256": "e16585691886a2f6f441b001d7d8179f61ef55a4fddf4dea18034a1d950f54c2",
+          "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+          "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+          "request_manifest_sha256": "f3928246c4cec5fb146ed32cbe9e178cc3cca965e972cc3c041a906ac1a012d8",
+          "frame_sha256": [
+            "69ec5a81250b2a7a6f2fb0d8c877d84cebce0b43dbf9ad48ac6ea7dd3505fde7"
+          ],
+          "result_sha256": "d89154516f91b37ddfe3ebfd1877c165df895ea87f5cb24b314fc6b41993eae6",
+          "finish_reason": "stop",
+          "served_model": "google/gemma-3-27b-it",
+          "parser_version": "npa_vlm_eval_compatible_json_v1",
+          "evidence_schema": "npa_vlm_eval_evidence_v2",
+          "sampling": {
+            "coverage_complete": true,
+            "max_frames": 8,
+            "selected_count": 1,
+            "selected_indices": [
+              0
+            ],
+            "selected_timestamps_s": [
+              null
+            ],
+            "source_count": 1,
+            "source_kind": "image-sequence",
+            "strategy": "keyframes",
+            "timestamps_complete": null
+          },
+          "decoded_rationale": "The image clearly contains a red circle. The task is fully completed."
+        },
+        {
+          "case": "self-hosted-gemma-3-27b-it-negative",
+          "score": 0,
+          "passed": false,
+          "expected_label": false,
+          "provider_success": false,
+          "response_sha256": "476515130377e9d1d6750fe9b96b36038998fa4cb4ee85cae9c0b00c0f19613f",
+          "prompt_sha256": "7b9384373b4de198da4fdf78f700e5b6a07613d9712129d5ddf624bceccb5e06",
+          "rubric_sha256": "d76d5c6f6ffad511c7a43f3443ae6de0b7c0eaec7fd58ae37dc6b4ad19392c6a",
+          "request_manifest_sha256": "419a3f756023b620b786aa6e4a320b3b94b31979b9553d9ae31c493e82055a3a",
+          "frame_sha256": [
+            "56f5ca147f569d666bde0a4707aba5c290cddeb585d85c1390fe3e57fafe6148"
+          ],
+          "result_sha256": "b4ade9ec9becc5e447fa39c013fccdf842c38584d52b991e3af493e89393e33d",
+          "finish_reason": "stop",
+          "served_model": "google/gemma-3-27b-it",
+          "parser_version": "npa_vlm_eval_compatible_json_v1",
+          "evidence_schema": "npa_vlm_eval_evidence_v2",
+          "sampling": {
+            "coverage_complete": true,
+            "max_frames": 8,
+            "selected_count": 1,
+            "selected_indices": [
+              0
+            ],
+            "selected_timestamps_s": [
+              null
+            ],
+            "source_count": 1,
+            "source_kind": "image-sequence",
+            "strategy": "keyframes",
+            "timestamps_complete": null
+          },
+          "decoded_rationale": "The image is a uniform gray color. There are no visible shapes, and specifically no red circle. The task requires a clearly visible red circle to be present for successful completion."
+        }
+      ],
+      "source_observation": "Before frozen protocol and after execution head/tree/runtime/client hashes match; dirty-tree state was not separately captured by the inference wrapper."
+    }
+  ],
+  "source_bridge": {
+    "candidate": "pr828",
+    "candidate_head": "2bcc2badfb102a17341df354f95782316874e7e3",
+    "candidate_tree": "21ae45b452b89224ea3f5302f1266bf7baa23bdb",
+    "execution_head": "2bcc2badfb102a17341df354f95782316874e7e3",
+    "execution_tree": "21ae45b452b89224ea3f5302f1266bf7baa23bdb",
+    "runtime": {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "011df1d16046c5d745c0e368f5dc0ab2dae45bef0cc42e66f09ba8db64d1c6d8"
+    },
+    "client": {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    "bridge": "git diff --exit-code confirms exact runtime/client bytes unchanged since fresh schema-v2 execution; subsequent changes are tests/documentation only",
+    "command_receipt": "commands/source-bridge-pr828.command"
+  },
+  "control_policy": "One inference per frozen positive/negative/model case; no model-answer/label/threshold tuning. Original executions retained separately from fresh affected sampling-v2 execution.",
+  "limits": [
+    "Two synthetic geometry labels are control checks, not calibrated model-quality or safety acceptance.",
+    "Self-hosted client path, where present, used authenticated actual hosted Gemma; no operator-owned GPU deployment is claimed.",
+    "Raw provider responses are collector-associated, not provider-attested; exact raw paths/operational data remain private."
+  ],
+  "negative_control_method": "Whole CLI synthetic replay mutations of a retained real completion; zero provider calls; not claimed as naturally malformed provider answers.",
+  "independent_review": {
+    "lane": "distinct Codex, not human approval or Claude",
+    "original_exact_candidates": "Accepted source and observed-path evidence with stated limits",
+    "current_integration": "Requested exact new source/main/provenance bridge review; not final readiness",
+    "claude": "Native unavailable; configured proxy default was Kimi, not Claude"
+  },
+  "negative_controls": {
+    "source": {
+      "head": "2bcc2badfb102a17341df354f95782316874e7e3",
+      "runtime_sha256": "011df1d16046c5d745c0e368f5dc0ab2dae45bef0cc42e66f09ba8db64d1c6d8"
+    },
+    "rejects": 22,
+    "provider_calls": 0,
+    "artifact_count": 0,
+    "errors": [
+      "finish_reason=stop"
+    ]
+  },
+  "media": [
+    {
+      "path": "positive.png",
+      "sha256": "b5c8938bfdcdaf7a2fc9653cbc29ec301c69d64be6e9a0de732bf7357604099e",
+      "decoded_rgb_sha256": "0417fea6b0c273d6687fbb11a518249d98e907518b949f3580818680e4c8c53d",
+      "width": 256,
+      "height": 256
+    },
+    {
+      "path": "negative.png",
+      "sha256": "79a8c7190d6ecdedeb11ef42add22344dff7749eaa96bdb9667b429e7657e9e5",
+      "decoded_rgb_sha256": "83ab53863cf746efe2611c6b521cfbdefba4f5325cf123ab451c385035b394ef",
+      "width": 256,
+      "height": 256
+    }
+  ]
+}
