@@ -249,10 +249,19 @@ def verify_execution_scope(
     target: ExecutionTarget, *, verify_cluster: bool = True
 ) -> dict[str, str]:
     """Read-only ownership checks. A denied/unknown owner never permits S3 writes."""
-    from npa.clients.nebius import get_bucket_by_name, get_project_identity
+    from npa.clients.nebius import (
+        NebiusCliCompatibilityError,
+        get_bucket_by_name,
+        get_project_identity,
+    )
 
     try:
         remote = get_project_identity(target.project_id, tenant_id=target.tenant_id)
+    except NebiusCliCompatibilityError as exc:
+        # A local CLI version mismatch is not an identity fact; its diagnostic is
+        # generated without provider output, so surface it verbatim instead of
+        # masking a fixable tooling problem as an identity/ownership failure.
+        raise ExecutionPreflightError("nebius_cli", str(exc), status="unknown") from exc
     except Exception as exc:
         raise ExecutionPreflightError(
             "scope",
@@ -288,6 +297,10 @@ def verify_execution_scope(
     for bucket in dict.fromkeys(_destination(uri)[0] for uri in target.output_uris):
         try:
             bucket_record = get_bucket_by_name(target.project_id, bucket)
+        except NebiusCliCompatibilityError as exc:
+            raise ExecutionPreflightError(
+                "nebius_cli", str(exc), status="unknown"
+            ) from exc
         except Exception as exc:
             raise ExecutionPreflightError(
                 "storage_owner",
@@ -578,6 +591,9 @@ def workflow_output_destinations(
     """Read destinations from the same resolved plan and ledger config as submit."""
     from npa.orchestration.npa_workflow.runtime import plan_preview
     from npa.orchestration.npa_workflow.interpreter import _make_context
+    from npa.orchestration.npa_workflow.run_state import (
+        resolve_run_storage_location,
+    )
 
     plan = plan_preview(spec, run_id=run_id, assume_decision=assume_decision)
     destinations = {
@@ -587,10 +603,9 @@ def workflow_output_destinations(
         if str(output.get("uri") or "").startswith("s3://")
     }
     config = _make_context(spec, run_id=run_id).config
-    bucket = str(config.get("bucket") or "")
-    if bucket:
-        prefix = str(config.get("prefix") or run_id).strip("/")
-        destinations[f"s3://{bucket}/{prefix}/"] = "directory"
+    location = resolve_run_storage_location(config, run_id=run_id)
+    if location is not None:
+        destinations[f"{location.uri}/"] = "directory"
     return destinations
 
 
@@ -1937,7 +1952,20 @@ def preflight_skypilot_submission(
                 extra_env=process_env,
                 cwd=cwd,
             )
-        global_kube = (global_config or {}).get("kubernetes") or {}
+        global_kube, global_pod, task_pod_specs = _kubernetes_pod_configuration(
+            kubernetes_documents, global_config
+        )
+        if kubernetes_documents:
+            from npa.orchestration.skypilot.k8s_runtime_class import (
+                verify_kubernetes_runtime_classes,
+            )
+
+            verify_kubernetes_runtime_classes(
+                task_pod_specs,
+                context=context,
+                global_pod_spec=global_pod,
+                environment=process_env,
+            )
         allowed = global_kube.get("allowed_nodes") or ()
         if isinstance(allowed, Mapping):
             unsupported = {key for key in ("label_selector", "ips") if allowed.get(key)}
@@ -1976,7 +2004,6 @@ def preflight_skypilot_submission(
                     )
                 gpu = ":".join(str(value) for value in next(iter(gpu.items())))
             pod_spec = _task_kubernetes_pod_spec(document)
-            global_pod = (global_kube.get("pod_config") or {}).get("spec") or {}
             if any(
                 global_pod.get(key)
                 for key in (
@@ -2037,6 +2064,31 @@ def _task_kubernetes_pod_spec(document: Mapping[str, Any]) -> Mapping[str, Any]:
             "gpu", "task and resource pod configurations disagree", status="unknown"
         )
     return pod_specs[0] if pod_specs else {}
+
+
+def _kubernetes_pod_configuration(
+    documents: Sequence[Mapping[str, Any]],
+    global_config: Mapping[str, Any] | None,
+) -> tuple[Mapping[str, Any], Mapping[str, Any], tuple[Mapping[str, Any], ...]]:
+    global_kube = (global_config or {}).get("kubernetes") or {}
+    if not isinstance(global_kube, Mapping):
+        raise ExecutionPreflightError(
+            "runtime_class", "Kubernetes runtime configuration must be a mapping"
+        )
+    global_pod_config = global_kube.get("pod_config") or {}
+    if not isinstance(global_pod_config, Mapping):
+        raise ExecutionPreflightError(
+            "runtime_class", "global Kubernetes pod configuration must be a mapping"
+        )
+    global_pod = global_pod_config.get("spec") or {}
+    if not isinstance(global_pod, Mapping):
+        raise ExecutionPreflightError(
+            "runtime_class", "global Kubernetes pod specification must be a mapping"
+        )
+    task_pod_specs = tuple(
+        _task_kubernetes_pod_spec(document) for document in documents
+    )
+    return global_kube, global_pod, task_pod_specs
 
 
 def replace_execution_outputs(

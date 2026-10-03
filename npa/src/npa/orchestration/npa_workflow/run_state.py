@@ -6,12 +6,39 @@ import json
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import re
+import shlex
 from typing import Any, Callable, Iterable, Mapping, Sequence
+from urllib.parse import urlparse
 
 from npa.orchestration.npa_workflow.errors import NpaWorkflowError
 
 RUN_SCHEMA_VERSION = "npa.workflow.run.v1"
 RUNTIME_SCHEMA_VERSION = "npa.workflow.runtime.v1"
+_UNRESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
+    {
+        "block_indeterminate",
+        "block_after_uncertain_success",
+        "recovery_deadline_exhausted_verified_absent",
+        "interrupted_verified_absent",
+        "resume_block_terminal_or_legacy_absence",
+        "resume_block_output_present",
+        "resume_block_output_indeterminate",
+        "verified_absent_no_retry",
+        "reuse_completed_wave",
+        "block_output_reuse_evidence",
+    }
+)
+_RESOLVED_WAVE_RECOVERY_DECISIONS = frozenset(
+    {
+        "readiness_blocked",
+        "cancel_and_terminalize",
+        "terminalize",
+        "operator_authorized_absent_output_adoption",
+        "adopted_terminal_success_after_driver_failure",
+        "operator_authorized_verified_absent_relaunch",
+        "phantom_record_cancelled_verified_relaunch",
+    }
+)
 PAIDF_WORKFLOW_NAME = "physical-ai-data-factory"
 PAIDF_COSMOS3_WORKFLOW_NAME = "paidf-cosmos3"
 NVIDIA_PAIDF_VDA_WORKFLOW_NAME = "nvidia-paidf-vda-cosmos-transfer25"
@@ -24,10 +51,219 @@ PAIDF_INPUT_WORKFLOW_NAMES = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class RunStorageLocation:
+    """Canonical object-storage location for a newly configured workflow run.
+
+    Args:
+        bucket: Object-storage bucket name.
+        prefix: Canonical key prefix without a leading or trailing slash.
+
+    Returns:
+        None.
+
+    Raises:
+        None.
+    """
+
+    bucket: str
+    prefix: str
+
+    @property
+    def uri(self) -> str:
+        """Return the canonical S3 URI without a trailing slash.
+
+        Args:
+            None.
+
+        Returns:
+            The canonical ``s3://bucket/key`` URI.
+
+        Raises:
+            None.
+        """
+
+        return f"s3://{self.bucket}/{self.prefix}"
+
+
+def _absolute_prefix_key(value: str, bucket: str) -> str:
+    parsed = urlparse(value)
+    invalid = (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or parsed.netloc != parsed.hostname
+        or parsed.query
+        or parsed.fragment
+        or "\\" in value
+    )
+    if invalid:
+        raise ValueError("config.prefix must be a canonical s3://bucket/key URI")
+    if parsed.netloc != bucket:
+        raise ValueError("config.prefix S3 bucket must equal config.bucket")
+    key = parsed.path.strip("/")
+    if not key or any(part in {".", ".."} for part in key.split("/")):
+        raise ValueError("absolute config.prefix must contain a safe non-empty key")
+    return key
+
+
+def resolve_run_storage_location(
+    config: Mapping[str, Any], *, run_id: str
+) -> RunStorageLocation | None:
+    """Resolve one new run's bucket and key without changing the input config.
+
+    Args:
+        config: Resolved workflow configuration.
+        run_id: Fallback prefix when the configuration has no prefix.
+
+    Returns:
+        A canonical storage location, or ``None`` when no bucket is configured.
+
+    Raises:
+        ValueError: The prefix is an invalid URI or names another bucket.
+    """
+
+    bucket = str(config.get("bucket") or "").strip()
+    if not bucket:
+        return None
+    raw = str(config.get("prefix") or run_id).strip()
+    if raw.startswith("s3://"):
+        prefix = _absolute_prefix_key(raw, bucket)
+    elif "://" in raw or raw.startswith("s3:"):
+        raise ValueError("config.prefix must be a relative key or an s3:// URI")
+    else:
+        prefix = raw.strip("/")
+    return RunStorageLocation(bucket=bucket, prefix=prefix)
+
+
+def _exact_workflow_storage(exact_uri: str, run_id: str) -> RunStorageLocation:
+    parsed = urlparse(exact_uri)
+    if not parsed.hostname:
+        raise ValueError("--workflow-s3-uri must be a canonical s3://bucket/key URI")
+    location = resolve_run_storage_location(
+        {"bucket": parsed.hostname, "prefix": exact_uri}, run_id=run_id
+    )
+    if location is None:
+        raise ValueError("--workflow-s3-uri must name an S3 bucket")
+    return location
+
+
+def _prefixed_workflow_storage(
+    config: Mapping[str, Any], parent_prefix: str, run_id: str
+) -> RunStorageLocation:
+    if parent_prefix.startswith("s3:") or "://" in parent_prefix:
+        raise ValueError("--workflow-s3-prefix must be a relative S3 key prefix")
+    configured = resolve_run_storage_location(config, run_id=run_id)
+    if configured is None:
+        raise ValueError("--workflow-s3-prefix requires config.bucket or --s3-bucket")
+    parent = parent_prefix.strip("/")
+    if (
+        not parent
+        or "\\" in parent
+        or "//" in parent
+        or any(part in {".", ".."} for part in parent.split("/"))
+    ):
+        raise ValueError("--workflow-s3-prefix must be a safe non-empty key prefix")
+    location = resolve_run_storage_location(
+        {"bucket": configured.bucket, "prefix": f"{parent}/{run_id}"},
+        run_id=run_id,
+    )
+    if location is None:
+        raise ValueError("--workflow-s3-prefix requires an S3 bucket")
+    return location
+
+
+def resolve_workflow_storage_location(
+    config: Mapping[str, Any],
+    *,
+    run_id: str,
+    workflow_s3_uri: str = "",
+    workflow_s3_prefix: str = "",
+) -> RunStorageLocation | None:
+    """Resolve CLI-selected runtime storage with the normal run-state parser.
+
+    Args:
+        config: Resolved workflow configuration.
+        run_id: Exact run identifier appended to a relative parent prefix.
+        workflow_s3_uri: Optional exact canonical S3 run root.
+        workflow_s3_prefix: Optional relative parent key for the run root.
+
+    Returns:
+        The selected canonical location, or ``None`` without a configured bucket.
+
+    Raises:
+        ValueError: Selectors conflict or contain an invalid storage location.
+    """
+
+    exact_uri = str(workflow_s3_uri or "").strip()
+    parent_prefix = str(workflow_s3_prefix or "").strip()
+    if exact_uri and parent_prefix:
+        raise ValueError(
+            "--workflow-s3-uri conflicts with --workflow-s3-prefix; select one"
+        )
+    if exact_uri:
+        return _exact_workflow_storage(exact_uri, run_id)
+    if parent_prefix:
+        return _prefixed_workflow_storage(config, parent_prefix, run_id)
+    return resolve_run_storage_location(config, run_id=run_id)
+
+
 def is_paidf_input_workflow_name(name: object) -> bool:
     """Whether submit owns real-video/LeRobot preparation for this workflow."""
 
     return str(name or "").strip() in PAIDF_INPUT_WORKFLOW_NAMES
+
+
+def _provider_job_status_is_terminal(value: object) -> bool:
+    state = str(value or "").strip().upper().replace("-", "_")
+    return state in {
+        "SUCCEEDED",
+        "SUCCESS",
+        "COMPLETED",
+        "DONE",
+        "FAILED",
+        "FAIL",
+        "CANCELLED",
+        "CANCELED",
+        "STOPPED",
+    } or state.startswith("FAILED")
+
+
+def _wave_cancellation_is_verified(record: Mapping[str, Any]) -> bool:
+    cancellation = record.get("cancellation")
+    return (
+        isinstance(cancellation, Mapping)
+        and str(cancellation.get("state") or "").lower() == "verified"
+        and _provider_job_status_is_terminal(record.get("sky_status"))
+    )
+
+
+def _wave_was_never_launched(record: Mapping[str, Any]) -> bool:
+    launch_sequence = record.get("launch_sequence")
+    return (
+        not str(record.get("job_id") or "")
+        and type(launch_sequence) is int
+        and launch_sequence == 0
+        and not record.get("partial_launch")
+        and not record.get("recovery_reservation")
+    )
+
+
+def _wave_recovery_is_unresolved(record: Mapping[str, Any]) -> bool:
+    recovery = str(record.get("recovery_decision") or "")
+    cancellation_verified = _wave_cancellation_is_verified(record)
+    if recovery == "block_relaunch":
+        return not cancellation_verified
+    if recovery in _UNRESOLVED_WAVE_RECOVERY_DECISIONS:
+        return True
+    if recovery in _RESOLVED_WAVE_RECOVERY_DECISIONS:
+        return False
+    # An unknown persisted decision cannot prove that a provider job ended.
+    # Preserve exact reconciliation unless independent evidence resolves it.
+    return not (
+        cancellation_verified
+        or _wave_was_never_launched(record)
+        or _provider_job_status_is_terminal(record.get("sky_status"))
+    )
 
 
 def paidf_artifact_prefix(run_id: str) -> str:
@@ -228,6 +464,15 @@ class RuntimeRunState:
         watching it (crash, kill, lost connection). The managed job may still be
         alive, so a resumed run must reconcile it instead of submitting a second
         copy of the same work.
+
+        Args:
+            key: Exact durable wave key to reconcile.
+
+        Returns:
+            The unresolved wave record, or None when no reconciliation is needed.
+
+        Raises:
+            None.
         """
 
         for record in reversed(self.waves):
@@ -236,18 +481,7 @@ class RuntimeRunState:
             status = str(record.get("status") or "")
             if status == "succeeded":
                 return None
-            recovery = str(record.get("recovery_decision") or "")
-            unresolved = recovery in {
-                "block_relaunch",
-                "block_indeterminate",
-                "block_after_uncertain_success",
-                "recovery_deadline_exhausted_verified_absent",
-                "interrupted_verified_absent",
-                "resume_block_terminal_or_legacy_absence",
-                "resume_block_output_present",
-                "resume_block_output_indeterminate",
-                "verified_absent_no_retry",
-            }
+            unresolved = _wave_recovery_is_unresolved(record)
             return dict(record) if status == "running" or unresolved else None
         return None
 
@@ -1125,6 +1359,125 @@ def _job_task_outcomes_conflict(
     )
 
 
+def _confirmed_runtime_cancellation(
+    step_state: str,
+    attempt_state: str,
+    attempt_provenance: str,
+    scheduler_state: str,
+    scheduler_job_state: str,
+    task_rows: Sequence[Mapping[str, Any]],
+) -> bool:
+    """Recognize cancellation only when every exact outcome source agrees."""
+    if step_state != "FAILED" or attempt_provenance != "runtime_wave":
+        return False
+    expected = {attempt_state, scheduler_state, scheduler_job_state}
+    if expected != {"CANCELLED"}:
+        return False
+    task_states = [
+        _normalized_stage_state(row.get("status"))
+        for row in task_rows
+        if isinstance(row, Mapping)
+    ]
+    return bool(task_states) and all(state == "CANCELLED" for state in task_states)
+
+
+def _task_row_matches(row, stage, member_count, legacy):
+    if not isinstance(row, Mapping):
+        return False
+    name = str(row.get("task_name") or "")
+    if legacy:
+        return str(row.get("task_id")) == str(stage["index"] - 1) and (
+            not name or name == stage["workflow_state"]
+        )
+    if name == stage["workflow_state"]:
+        return True
+    if not name:
+        return member_count == 1
+    attempts = stage.get("managed_job_attempts") or []
+    managed_job_id = str(stage.get("managed_job_id") or "")
+    recorded_names = {
+        str(attempt.get("job_name") or "")
+        for attempt in attempts
+        if isinstance(attempt, Mapping)
+        and str(attempt.get("job_id") or "") == managed_job_id
+        and str(attempt.get("job_name") or "")
+    }
+    return member_count == 1 and recorded_names == {name}
+
+
+def _task_observation_matches(members, rows, *, legacy=False):
+    matches = {key: [] for key in members}
+    unresolved = set()
+    task_ids = [
+        str(row["task_id"])
+        for row in rows
+        if isinstance(row, Mapping) and row.get("task_id") is not None
+    ]
+    if len(task_ids) != len(set(task_ids)):
+        unresolved.update(members)
+    for row in rows:
+        keys = [
+            key
+            for key, stage in members.items()
+            if _task_row_matches(row, stage, len(members), legacy)
+        ]
+        if len(keys) != 1:
+            unresolved.update(keys or members)
+        for key in keys:
+            matches[key].append(row)
+    unresolved.update(key for key, matched in matches.items() if len(matched) != 1)
+    return matches, unresolved
+
+
+def _scheduler_task_observations(stages, task_rows, observations):
+    if not observations:
+        return _task_observation_matches(stages, task_rows, legacy=True)
+    matches, unresolved = {}, set()
+    job_ids = {stage["managed_job_id"] for stage in stages.values()}
+    for job_id in job_ids:
+        members = {
+            key: stage
+            for key, stage in stages.items()
+            if stage["managed_job_id"] == job_id
+        }
+        rows = observations.get(job_id, {}).get("task_rows") or []
+        job_matches, job_unresolved = _task_observation_matches(members, rows)
+        matches.update(job_matches)
+        unresolved.update(job_unresolved)
+    if set(observations) - job_ids:
+        unresolved.update(stages)
+    return matches, unresolved
+
+
+def _scheduler_task_activity(stages, task_rows, observations):
+    active_states = {
+        "SUBMITTED",
+        "PENDING",
+        "STARTING",
+        "RUNNING",
+        "RECOVERING",
+        "CANCELLING",
+    }
+    matches, ambiguous = _scheduler_task_observations(stages, task_rows, observations)
+    active, unresolved = [], []
+    terminal_count = 0
+    for key in stages:
+        states = [_normalized_stage_state(row.get("status")) for row in matches[key]]
+        if any(state in active_states for state in states):
+            active.append(key)
+        if key in ambiguous or any(
+            state not in active_states | TERMINAL_STEP_STATES for state in states
+        ):
+            unresolved.append(key)
+        elif states and all(state in TERMINAL_STEP_STATES for state in states):
+            terminal_count += 1
+    return {
+        "active_stage_keys": active,
+        "unresolved_stage_keys": unresolved,
+        "all_stage_tasks_terminal": bool(stages) and terminal_count == len(stages),
+    }
+
+
 def build_actionable_run_status(
     manifest: RunManifest,
     *,
@@ -1134,6 +1487,7 @@ def build_actionable_run_status(
     job_observations: Mapping[str, Mapping[str, Any]] | None = None,
     controller_output: str = "",
     project: str = "",
+    isolated_config_dir: str = "",
     failure_threshold: int = 3,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -1217,12 +1571,24 @@ def build_actionable_run_status(
             "SUCCEEDED",
             "FAILED",
         }
-        outcome_conflict = scheduler_terminal and (
-            (step_terminal and step_state != scheduler_state)
-            or (
-                not step_terminal
-                and attempt_terminal
-                and attempt_state != scheduler_state
+        confirmed_cancellation = _confirmed_runtime_cancellation(
+            step_state,
+            attempt_state,
+            str(final_attempt.get("provenance") or ""),
+            scheduler_state,
+            scheduler_job_state,
+            observed_rows,
+        )
+        outcome_conflict = (
+            not confirmed_cancellation
+            and scheduler_terminal
+            and (
+                (step_terminal and step_state != scheduler_state)
+                or (
+                    not step_terminal
+                    and attempt_terminal
+                    and attempt_state != scheduler_state
+                )
             )
         )
         job_task_conflict = _job_task_outcomes_conflict(
@@ -1232,6 +1598,9 @@ def build_actionable_run_status(
             outcome_conflict = True
             state = "UNKNOWN"
             outcome_provenance = "conflicting_scheduler_job_and_tasks"
+        elif confirmed_cancellation:
+            state = "CANCELLED"
+            outcome_provenance = "confirmed_runtime_scheduler_cancellation"
         elif outcome_conflict:
             state = "UNKNOWN"
             outcome_provenance = "conflicting_durable_and_scheduler_evidence"
@@ -1312,6 +1681,11 @@ def build_actionable_run_status(
         log_command = (
             f"npa workbench workflow logs {manifest.run_id} --stage {name}"
             + (f" --project {project}" if project else "")
+            + (
+                f" --isolated-config-dir {shlex.quote(isolated_config_dir)}"
+                if isolated_config_dir
+                else ""
+            )
         )
         profile = step.get("resources_profile") or {}
         stage_payload: dict[str, Any] = {
@@ -1433,6 +1807,9 @@ def build_actionable_run_status(
             or max(0, int((current - newest_progress).total_seconds())) > 300
         ),
         "stages": stages,
+        "scheduler_task_activity": _scheduler_task_activity(
+            stages, task_rows, observations
+        ),
     }
 
 
@@ -1637,10 +2014,59 @@ def store_for_config(
     aws_access_key_id: str = "",
     aws_secret_access_key: str = "",
 ) -> RunStateStore | None:
-    bucket = str(config.get("bucket") or "").strip()
-    prefix = str(config.get("prefix") or run_id).strip()
-    if not bucket:
+    location = resolve_run_storage_location(config, run_id=run_id)
+    if location is None:
         return None
+    return RunStateStore(
+        bucket=location.bucket,
+        prefix=location.prefix,
+        endpoint_url=endpoint_url,
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+    )
+
+
+def _recorded_run_location(run_prefix_uri: str) -> tuple[str, str]:
+    raw = str(run_prefix_uri or "").strip()
+    parsed = urlparse(raw)
+    prefix = parsed.path.removeprefix("/").rstrip("/")
+    invalid = (
+        parsed.scheme != "s3"
+        or not parsed.netloc
+        or parsed.netloc != parsed.hostname
+        or parsed.query
+        or parsed.fragment
+        or "\\" in raw
+        or not prefix
+        or any(part in {".", ".."} for part in prefix.split("/"))
+    )
+    if invalid:
+        raise ValueError("recorded run prefix must be a non-empty s3:// URI")
+    return parsed.netloc, prefix
+
+
+def store_for_recorded_run_prefix(
+    run_prefix_uri: str,
+    *,
+    endpoint_url: str = "",
+    aws_access_key_id: str = "",
+    aws_secret_access_key: str = "",
+) -> RunStateStore:
+    """Restore an exact previously recorded run location, including legacy keys.
+
+    Args:
+        run_prefix_uri: Exact URI persisted in the durable submission receipt.
+        endpoint_url: Optional object-storage endpoint override.
+        aws_access_key_id: Optional object-storage access key.
+        aws_secret_access_key: Optional object-storage secret key.
+
+    Returns:
+        A store targeting the recorded bucket and key byte-for-byte.
+
+    Raises:
+        ValueError: The receipt does not contain an exact non-empty S3 location.
+    """
+    bucket, prefix = _recorded_run_location(run_prefix_uri)
     return RunStateStore(
         bucket=bucket,
         prefix=prefix,

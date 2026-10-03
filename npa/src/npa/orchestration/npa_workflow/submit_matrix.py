@@ -72,6 +72,87 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "rgbd-scan-to-policy-demo.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Full public RGB-D sample download, measured scene, 4,000-case native training/evaluation, and HTML evidence.",
+    ),
+    SubmitLiveCase(
+        "field-failure-reference-demo.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Public baseline training and office/warehouse replay; disjoint development/final evaluation and measured HTML evidence.",
+    ),
+    SubmitLiveCase(
+        "shared-scene-navigation.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires an operator-owned Isaac task adapter, scene/reset bundle and exact BYOF image digest.",
+        notes="Native Isaac training and checkpoint evaluation; dedicated opt-in runtime test. GPU acceptance unverified.",
+    ),
+    SubmitLiveCase(
+        "field-failure-policy-improvement.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason="Requires sealed field captures, navigation policy code, and immutable operator adapter images.",
+        notes=(
+            "Real navigation adapter path; no GPU acceptance yet. Execute with "
+            "test_field_failure_policy_live_e2e.py and the explicit operator configuration."
+        ),
+    ),
+    SubmitLiveCase(
+        "multicamera-rgbd-warehouse.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        notes="Public runtime-fetched warehouse with full USD/MDL dependencies; four 1280x720 RGB-D streams and independently verified fused clouds.",
+    ),
+    SubmitLiveCase(
+        "multicamera-rgbd-capture.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason=(
+            "The pinned Isaac Sim 6.0.1 renderer has not completed this rig's live "
+            "acceptance; requires an operator-qualified runtime and staged source."
+        ),
+        notes=(
+            "Executable calibrated four-camera procedural room capture and separate "
+            "S3 decode/geometry validation. Industrial USD and calibration are "
+            "operator inputs. Dedicated opt-in live coverage verifies retained data."
+        ),
+    ),
+    SubmitLiveCase(
+        "behavior-comet-native-full-training.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "The reference requires operator-bound source, dataset, parent, "
+            "runtime and admission identities, an immutable runtime image, "
+            "and a durable volume; shipped values are explicit placeholders."
+        ),
+        notes="Native OpenPI input preflight, full-state training and durable resume.",
+    ),
+    SubmitLiveCase(
+        "behavior-challenge-eval.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "Licensed BEHAVIOR asset use is unresolved; the shipped runtime image "
+            "is an explicit placeholder. Dedicated live coverage requires an "
+            "operator-prepared runtime, asset volume, and fixed policy service."
+        ),
+        notes="Official v3.9.2 RGBD evaluator; no challenge score has been measured.",
+    ),
+    SubmitLiveCase(
         "xr1-antioch-finetune.yaml",
         "multi",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
@@ -201,6 +282,24 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Complete MotionBenchMaker and MPiNets cases, kinematic and 3 kg dynamics modes, verified journal and RRD.",
     ),
     SubmitLiveCase(
+        "open3d-registration.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="open3d",
+        rotation_skip=True,
+        skip_reason=(
+            "npa-open3d is a validation candidate that has not been pushed to the "
+            "shared registry, so a rotation submit has no image to pull. The same "
+            "six stages have been run end to end in the built image against real "
+            "S3; re-include this case in the same change that publishes the tag."
+        ),
+        notes=(
+            "Real Open3D RANSAC/FPFH + ICP registration, multiway pose-graph "
+            "optimization, Poisson reconstruction and a decode-verified RRD. "
+            "CPU-only: Open3D's registration and geometry APIs have no CUDA path."
+        ),
+    ),
+    SubmitLiveCase(
         "newton-train-teacher.yaml",
         "gpu",
         plan_only=True,
@@ -308,6 +407,20 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Ray baseline followed by error-threshold selection and matched-seed refinement; requires current staged NPA source.",
     ),
     # --- CPU / zero-GPU (Token Factory hosted) ---
+    SubmitLiveCase(
+        "encord-labeling-demo.yaml",
+        "cpu",
+        secret_envs=(
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "ENCORD_SSH_KEY_B64",
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires operator-selected media and content-bound prelabels; creates "
+            "an Encord dataset, ontology, project, and unreviewed annotations."
+        ),
+    ),
     SubmitLiveCase(
         "encord-push.yaml",
         "cpu",
@@ -916,15 +1029,11 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         secret_envs=(
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
-            "HF_TOKEN",
             "NGC_API_KEY",
         ),
         # No image_tool: the runtime is NVIDIA's vendor NRE container supplied via
         # resources.image / image_id, not an NPA-built workbench image.
-        # A ~14 GB NGC image pull on a cold node, then 30k 3DGUT steps and a
-        # novel-view render pass. Far slower than the rest of the gpu tier, so it
-        # carries its own deadline instead of forcing it on every case.
-        max_wait_seconds=5400,
+        runtime=True,
         notes=(
             "NuRec/NRE reconstruction on an RT-core GPU: real NCore V4 capture -> "
             "3DGUT Gaussians -> renderable USDZ -> rig-offset novel views -> "
@@ -955,6 +1064,38 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
             "then a CPU barrier join that requires 16/16 real zone manifests + "
             "USDZ + GPU identity and publishes digital_twin.json + panorama.png. "
             "Needs NGC_API_KEY and the dedicated 16-GPU RTX capacity."
+        ),
+    ),
+    SubmitLiveCase(
+        "rgbd-scan-to-isaac.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a complete hash-bound calibrated metric RGB-D capture with "
+            "measured poses and held-out depth frames; use the scan reference runbook."
+        ),
+        notes=(
+            "Real Open3D TSDF reconstruction and held-out geometry qualification on "
+            "CPU, portable derived USD colliders, then native Isaac PhysX on RTX. "
+            "No navigation-policy or industrial-scene qualification is implied."
+        ),
+    ),
+    SubmitLiveCase(
+        "scan-to-isaac-navigation.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        runtime=True,
+        rotation_skip=True,
+        skip_reason=(
+            "Requires operator-supplied reconstructed visual USD, static collision "
+            "mesh, measured coordinate transforms, capture lineage, and ray probes. "
+            "Use the dedicated opt-in scene handoff live test with these inputs."
+        ),
+        notes=(
+            "Real USD scene assembly and portable packaging on CPU, then native "
+            "Isaac Sim PhysX ray probes on RTX. No navigation-policy success claim."
         ),
     ),
     SubmitLiveCase(
@@ -1293,6 +1434,19 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Delegates to run_byof_repo.py; covered by byof live e2e.",
     ),
     SubmitLiveCase(
+        "habitat-sim-smoke.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "Habitat-Sim supported image selection remains quarantined; the separately "
+            "recorded development digest is not this workflow default"
+        ),
+        notes=(
+            "One-state pinned Skokloster Castle RGB/depth traversal with Bullet "
+            "and headless NVIDIA EGL; never schedule this renderer on B200."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-libero.yaml",
         "multi",
         plan_only=True,
@@ -1337,6 +1491,27 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-robotwin.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "RoboTwin's public worker bridge is disabled pending independently "
+            "attested customer authorization; the separate operator runner owns "
+            "exact-digest RTX qualification"
+        ),
+        secret_envs=(
+            "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+        ),
+        notes=(
+            "The workflow validates and plans, but normal submit refuses before "
+            "provider calls. Operator-only evidence covers SAPIEN/Vulkan, task "
+            "success, HDF5 actions, decoded MP4 frames, immutable runtime assets, "
+            "and the exact pod image digest. It does not enable this worker path."
+        ),
     ),
     SubmitLiveCase(
         "robocasa-smoke.yaml",
@@ -1406,11 +1581,53 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "byof-apriltag.yaml",
+        "cpu",
+        plan_only=True,
+        plan_only_justification=(
+            "standard workflow submit would nest the BYOF builder and its inner "
+            "SkyPilot launch inside an outer Kubernetes stage"
+        ),
+        notes=(
+            "The direct BYOF runner owns real build/push/pull execution. This "
+            "operator-built candidate passed retained digest-pinned CPU "
+            "qualification; visual acceptance remains explicitly unclaimed."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-droid-policy-learning.yaml",
         "multi",
         plan_only=True,
         plan_only_justification="delegated BYOF execution is covered by its dedicated live onboarding tier",
         notes="BYOF onboarding flow; covered by test_byof_onboarding_live_e2e.py.",
+    ),
+    SubmitLiveCase(
+        "byof-evo.yaml",
+        "cpu",
+        plan_only=True,
+        plan_only_justification=(
+            "standard workflow submit would nest the BYOF builder and its inner "
+            "SkyPilot launch inside an outer Kubernetes stage"
+        ),
+        notes=(
+            "The direct BYOF runner owns real build/push/pull execution. The "
+            "operator-built GPL candidate passed a retained digest-pinned CPU "
+            "Kubernetes qualification; it is not a published matrix image."
+        ),
+    ),
+    SubmitLiveCase(
+        "byof-robomimic.yaml",
+        "multi",
+        plan_only=True,
+        plan_only_justification=(
+            "the neutral image is quarantined and the dependent CUDA runtime-use "
+            "decision plus exact one-B200 training gate remain deferred"
+        ),
+        notes=(
+            "Plans pinned robomimic Lift PH low-dimensional BC training, disjoint "
+            "held-out validation, checkpoint reload, and held-out action inference; "
+            "no live acceptance is claimed."
+        ),
     ),
     SubmitLiveCase(
         "byof-open-dreamer.yaml",

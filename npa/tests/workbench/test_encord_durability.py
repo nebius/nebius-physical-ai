@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import mimetypes
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -8,6 +10,8 @@ from types import SimpleNamespace
 import pytest
 
 from npa.workbench.encord.push import run_push
+from npa.workbench.encord.pull import run_pull
+from npa.workbench.encord.verify import verify_roundtrip
 from npa.workbench.encord.schemas import EncordToolError
 from npa.workbench.encord.storage import ObjectMetadata
 
@@ -92,6 +96,121 @@ def test_output_preflight_failure_prevents_all_remote_mutation() -> None:
     assert folder.registered == []
     assert folder.uploaded == []
     assert client.created_folders == client.created_datasets == 0
+
+
+def _registered_video():
+    storage = FakeStorageClient()
+    storage.s3.objects[("source-bucket", "incoming/clip.mp4")] = b"video"
+    exact = FakeStorageItem(
+        uuid="00000000-0000-0000-0000-000000000061",
+        name="clip.mp4",
+        url="https://storage.test.example/source-bucket/incoming/clip.mp4",
+        client_metadata={"npa": {"source_uri": "s3://source-bucket/incoming/clip.mp4"}},
+    )
+    client = FakeUserClient(RefreshingFolder(exact), FakeDataset())
+    artifacts = MemoryArtifactStore()
+    shared = dict(
+        user_client=client,
+        storage_client=storage,
+        artifact_store=artifacts,
+        environ=ENV,
+    )
+    receipt = run_push(
+        input_path="s3://source-bucket/incoming/",
+        integration="s3",
+        folder="folder",
+        dataset="dataset",
+        output_path="s3://result-bucket/run/push",
+        **shared,
+    )
+    return receipt, shared
+
+
+@pytest.mark.parametrize("returned_bytes", [b"video", b"wrong"])
+def test_register_roundtrip_verifies_bytes_with_opaque_storage_etags(
+    returned_bytes,
+) -> None:
+    receipt, shared = _registered_video()
+    storage = shared["storage_client"]
+    assert receipt.items[0].source_checksum == hashlib.sha256(b"video").hexdigest()
+    assert receipt.items[0].source_checksum_kind == "sha256"
+    storage.s3.objects[("source-bucket", "incoming/clip.mp4")] = returned_bytes
+    manifest = run_pull(
+        source="dataset",
+        source_id="dataset",
+        output_path="s3://result-bucket/run/pull",
+        **shared,
+    )
+    verify = dict(
+        receipt_uri=receipt.receipt_uri,
+        manifest_uri=manifest.manifest_uri,
+        output_path="s3://result-bucket/run/verify",
+        storage_client=storage,
+        artifact_store=shared["artifact_store"],
+    )
+    if returned_bytes == b"video":
+        assert verify_roundtrip(**verify).matched == 1
+    else:
+        with pytest.raises(EncordToolError, match="verification failed"):
+            verify_roundtrip(**verify)
+
+
+def test_source_readback_failure_prevents_registration(monkeypatch) -> None:
+    storage = storage_with("incoming/clip.mp4")
+    folder = FakeFolder()
+    client = FakeUserClient(folder)
+    artifacts = MemoryArtifactStore()
+
+    def denied(**kwargs):
+        raise PermissionError("read denied")
+
+    monkeypatch.setattr(storage.s3, "get_object", denied)
+    with pytest.raises(PermissionError, match="read denied"):
+        run_push(
+            input_path="s3://source-bucket/incoming/",
+            integration="s3",
+            folder="folder",
+            output_path="s3://result-bucket/run",
+            user_client=client,
+            storage_client=storage,
+            artifact_store=artifacts,
+            environ=ENV,
+        )
+    assert not folder.registered
+    assert not folder.uploaded
+    assert client.created_folders == client.created_datasets == 0
+    assert artifacts.events == []
+
+
+@pytest.mark.parametrize(
+    "suffix,content_type",
+    [(".png", "image/png"), (".JPG", "image/jpeg"), (".jpeg", "image/jpeg")],
+)
+def test_image_upload_preserves_format_for_sdk_mime_detection(
+    suffix, content_type, monkeypatch
+) -> None:
+    storage = storage_with(f"incoming/frame{suffix}")
+    folder = FakeFolder()
+    upload = folder.upload_image
+
+    def check_image(path, **kwargs):
+        assert mimetypes.guess_type(path)[0] == content_type
+        assert Path(path).read_bytes() == f"bytes:incoming/frame{suffix}".encode()
+        return upload(path, **kwargs)
+
+    monkeypatch.setattr(folder, "upload_image", check_image)
+    receipt = run_push(
+        input_path="s3://source-bucket/incoming/",
+        integration="",
+        folder="folder",
+        output_path="s3://result-bucket/run",
+        transfer="upload",
+        user_client=FakeUserClient(folder),
+        storage_client=storage,
+        artifact_store=MemoryArtifactStore(),
+        environ={},
+    )
+    assert receipt.status == "completed"
 
 
 def test_register_checkpoint_failure_stops_linking() -> None:

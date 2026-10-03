@@ -1,0 +1,95 @@
+{
+  "schema": "npa.cosmos3.wam-policy-telemetry.v1",
+  "window_start_utc": "2026-09-28T11:52:59+00:00",
+  "window_end_utc": "2026-09-28T11:57:00+00:00",
+  "samples": 1928,
+  "devices": {
+    "0": {
+      "samples": 241,
+      "maximum_utilization_pct": 40.0,
+      "maximum_memory_mib": 34196.0,
+      "maximum_sample_gap_seconds": 1.1610000133514404
+    },
+    "1": {
+      "samples": 241,
+      "maximum_utilization_pct": 47.0,
+      "maximum_memory_mib": 34236.0,
+      "maximum_sample_gap_seconds": 1.1499998569488525
+    },
+    "2": {
+      "samples": 241,
+      "maximum_utilization_pct": 40.0,
+      "maximum_memory_mib": 34258.0,
+      "maximum_sample_gap_seconds": 1.1519999504089355
+    },
+    "3": {
+      "samples": 241,
+      "maximum_utilization_pct": 42.0,
+      "maximum_memory_mib": 34258.0,
+      "maximum_sample_gap_seconds": 1.1610000133514404
+    },
+    "4": {
+      "samples": 241,
+      "maximum_utilization_pct": 44.0,
+      "maximum_memory_mib": 34236.0,
+      "maximum_sample_gap_seconds": 1.1610000133514404
+    },
+    "5": {
+      "samples": 241,
+      "maximum_utilization_pct": 39.0,
+      "maximum_memory_mib": 34258.0,
+      "maximum_sample_gap_seconds": 1.1610000133514404
+    },
+    "6": {
+      "samples": 241,
+      "maximum_utilization_pct": 40.0,
+      "maximum_memory_mib": 34252.0,
+      "maximum_sample_gap_seconds": 1.1610000133514404
+    },
+    "7": {
+      "samples": 241,
+      "maximum_utilization_pct": 48.0,
+      "maximum_memory_mib": 34258.0,
+      "maximum_sample_gap_seconds": 1.1610000133514404
+    }
+  },
+  "policy_requests_completed": 176,
+  "requests_by_worker": [
+    {
+      "worker": 0,
+      "completed_policy_requests": 40
+    },
+    {
+      "worker": 1,
+      "completed_policy_requests": 31
+    },
+    {
+      "worker": 2,
+      "completed_policy_requests": 15
+    },
+    {
+      "worker": 3,
+      "completed_policy_requests": 14
+    },
+    {
+      "worker": 4,
+      "completed_policy_requests": 14
+    },
+    {
+      "worker": 5,
+      "completed_policy_requests": 32
+    },
+    {
+      "worker": 6,
+      "completed_policy_requests": 13
+    },
+    {
+      "worker": 7,
+      "completed_policy_requests": 17
+    }
+  ],
+  "raw_csv_sha256": "b5e305292b9e82435461e3774c66f0167156c5dd5cea3eaecf39a3550a7e8005",
+  "selected_original_rows_sha256": "2cc5ad8b191f2b459d76c311ac3164f367dc39685c96ecc4d861b33f3f64ee95",
+  "public_csv_sha256": "76c1f276b7c5d4b9aad5e568b0d68f621461d0a3fdcada37715f879e8ec0cd34",
+  "scope": "Eight GPUs on the evaluation host, earliest policy request through one second after latest response; includes simulation, media writing and idle intervals. Sampled device maxima, not allocator or subsecond peaks. No live process snapshot captured for this visual pass."
+}

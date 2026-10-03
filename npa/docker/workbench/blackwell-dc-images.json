@@ -1,6 +1,6 @@
 {
   "format": "npa_blackwell_dc_image_manifest_v1",
-  "as_of": "2026-09-15T00:00:00Z",
+  "as_of": "2026-09-18T00:00:00Z",
   "registry_ref": "${NPA_REGISTRY}",
   "registry_note": "Resolve official public development and release tags through npa.deploy.images. Development tags are immutable full-SHA tags and release provenance is digest-bound.",
   "target": {
@@ -86,6 +86,25 @@
       "verdict": "not-applicable",
       "validation": "not-required",
       "notes": "CPU-only COLMAP ingestion and NCore V4 reader; no Torch, CUDA or GPU architecture assertion. Public release remains quarantined pending exact-image scans and complete capture conversion evidence. NRE reconstruction is a separate RTX-only downstream image."
+    },
+    {
+      "name": "npa-open3d",
+      "dockerfile": "open3d/Dockerfile",
+      "build_script": "open3d/build.sh",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "notes": "CPU-only Open3D registration and Poisson reconstruction; stages request no accelerator and make no GPU architecture assertion. Fresh native proof for the operator image checks known-pose recovery, real reconstruction, support filtering and decoded RRD. Historical six-stage S3 evidence predates mandatory registration_result_sha256 binding and cannot qualify replacement bytes; regenerate legacy reconstruction reports. Exact-image managed-workflow and complete-byte acceptance are separate gates. No accepted public release."
+    },
+    {
+      "name": "npa-habitat-sim",
+      "dockerfile": "habitat-sim/Dockerfile.bootstrap",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "smoke": "Run the genuine official Skokloster RGB/depth, Bullet, EGL, and agent-traversal gate on exactly one RTX PRO 6000 Blackwell; verify the exact image digest, artifact hashes, and exit zero.",
+      "blocked_reason": "Habitat-Sim requires a supported NVIDIA OpenGL/EGL headless rendering path; no such path is verified for the datacenter B200/B300 target, so its hard gate remains STRICT-bound to one RTX PRO 6000 Blackwell.",
+      "upstream_tracking": "https://github.com/facebookresearch/habitat-sim/tree/57ee4941dc4765240f0f91f70b2c97a919bf9038",
+      "notes": "Neutral bootstrap runtime-fetches the pinned MIT simulator and native/scientific dependencies. Accompanying exact source covers the Ubuntu bootstrap; payload and one-RTX functional proof remain required. No B200/B300 capability is claimed."
     },
     {
       "name": "npa-libero",
@@ -998,6 +1017,18 @@
       }
     },
     {
+      "name": "npa-robomimic",
+      "dockerfile": "robomimic/Dockerfile",
+      "build_script": "robomimic/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "torch": "not baked; the CUDA-capable PyTorch closure is a separately authorized, exact-inventory, read-only operator runtime mount",
+      "source_compiled_extensions": [],
+      "smoke": "after authoritative CUDA/cuDNN runtime-use authorization, run the real upstream Lift PH low-dimensional behavior-cloning train, held-out validation, checkpoint reload, and finite held-out action inference gate on exactly one B200",
+      "notes": "The neutral bootstrap supports public full-SHA development publication with verified corresponding sources and no governed runtime payload. Release promotion remains quarantined pending real GPU proof; this declaration supplies no B200/B300 execution evidence. The bootstrap may fetch and install only a customer-authorized exact runtime inventory after origin-bound credential checks and installed-RECORD verification, never accept terms, or turn a credential or private registry into permission."
+    },
+    {
       "name": "npa-curobo",
       "dockerfile": "curobo/Dockerfile",
       "build_script": "curobo/build.sh",
@@ -1137,6 +1168,19 @@
       "validated_tag": "2.1-rtfetch-20260916",
       "validated_digest": "sha256:fbe20454e97452e447e00f79260a267b552deef5538e3bbbc8c3567a3c576f16",
       "validated_registry_scope": "public"
+    },
+    {
+      "name": "npa-robotwin",
+      "dockerfile": "robotwin/Dockerfile",
+      "build_script": "robotwin/build.sh",
+      "verdict": "unknown",
+      "validation": "pending-build",
+      "redistribution": "public",
+      "source_compiled_extensions": [
+        "CuRobo v0.7.8 Warp kernels (future runtime JIT; not fetched or resolved)"
+      ],
+      "smoke": "A future exact-digest gate must run the official beat_block_hammer bimanual task through SAPIEN/Vulkan on exactly one STRICT RTX PRO 6000 and validate real HDF5 plus rendered video/frame artifacts.",
+      "notes": "Phase A is a zero-vendor-payload, incomplete-lock bootstrap candidate. No image, digest, wheel architecture set, built-byte scan, public availability, or hardware result exists. It remains publication-quarantined, and its renderer workload is not routed to B200/B300. Replace unknown/pending-build only with the future build and exact-image evidence; this inventory entry is not permission to build, fetch, run, or publish."
     }
   ],
   "validation_evidence": {

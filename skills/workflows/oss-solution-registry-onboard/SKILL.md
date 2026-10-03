@@ -195,6 +195,65 @@ Keep each solution's capability list and smoke command unique. When promoting a
 deferred capability, change that solution's smoke (or add a second workflow
 spec) rather than mapping it onto a generic family label.
 
+### Habitat-Sim (`habitat-sim-smoke.yaml`)
+
+Pinned: `facebookresearch/habitat-sim`
+`57ee4941dc4765240f0f91f70b2c97a919bf9038` (MIT). Upstream explicitly warns
+that beyond v0.3.4, Meta internal teams do not officially maintain releases or
+provide active development.
+
+The public `npa/docker/workbench/habitat-sim/Dockerfile.bootstrap` ships a neutral
+runtime-fetch launcher. Its retained development proof is recorded in
+[`habitat-sim-development-image-manifest.json`](../../../docs/workbench/validation/habitat-sim-development-image-manifest.json):
+19 RGB/depth frame pairs, 19 Bullet steps and 2.2466 metres of traversal on
+one RTX PRO 6000 Blackwell. Supported release selection remains quarantined.
+The result is scoped to that historical producer/digest and does not qualify
+the separate baked recipe or prove a long benchmark or policy-training result.
+
+The separate legacy `npa/docker/workbench/habitat-sim/Dockerfile` recipe pins linux/amd64 Ubuntu
+22.04 by digest and a signed immutable package snapshot. It materializes only
+the source projection required by the headless RGB-D, pathfinding, Bullet, and
+EGL build. The unused `rlr-audio-propagation` gitlink is CC BY-NC 4.0 and is
+excluded with audio; GUI and docs gitlinks are excluded too. Install the exact
+hash-locked build and runtime wheel closures with dependency resolution and
+build isolation disabled. Keep the candidate unbuilt and publication-
+quarantined until actual OCI bytes pass the complete byte, layer, license,
+SBOM, provenance, vulnerability, payload-absence, and non-root checks.
+
+Hard-gate capabilities (all must pass in one live pod for the selected digest):
+
+- `skokloster_castle_rgb_depth_bullet_traversal`: actual upstream greedy-follower
+  agent actions, saved RGB/depth observations, and nonzero displacement
+- `headless_nvidia_egl_rgb_depth_render`: live NVIDIA GL strings and NVIDIA EGL
+  libraries loaded by the renderer process
+- `bullet_physics_world_step`: Bullet-enabled backend with advancing world time
+- `greedy_geodesic_agent_traversal`: a real pathfinder/navmesh traversal rather
+  than direct state teleportation
+
+Fetch only the official Meta `habitat-test-scenes.zip` archive referenced by the
+pinned Habitat-Sim `examples/settings.py`. Treat its URL as mutable: require the
+94,590,970-byte archive SHA-256
+`1231420c6482e79e25beea7ab25121e0421a5fd67b68dd9502145442c288db06`,
+then extract only `skokloster-castle.glb` and `skokloster-castle.navmesh` after
+their exact member names, sizes, CRC32 values, and SHA-256 hashes pass. Delete
+the archive before simulator creation and never bake or extract another member.
+The pinned source README and original asset record identify The King's Hall
+under CC BY 4.0. Preserve creator/scan attribution, license and original-asset
+links, and the Habitat-ready modification provenance in the proof.
+
+Use `workflows/testing/habitat-sim-smoke.yaml` on exactly one RTX PRO 6000
+Blackwell (`sm_120`). The owner-only runtime evidence must prove
+that cluster's Capacity Block is bound `STRICT`; the resource profile alone is
+not that proof. The live gate requires an owner-only, run-bound manager receipt,
+verifies a hashed provider reservation readback, rejects the public registry
+default, and compares Kubernetes `containerStatuses[].imageID` with the pushed
+digest before exact-run teardown. It also downloads and re-hashes every declared
+RGB/depth and inventory object. This renderer must never use B200. A future
+trusted public workflow must rebuild the exact reviewed full Git SHA; that new
+digest requires complete repeated byte scans and genuine RTX qualification, and
+must not transport privately built OCI bytes.
+Defer proprietary/gated datasets, semantic annotations, and distributed
+Habitat-Lab training.
 ### LIBERO (`byof-libero.yaml`)
 
 Pinned: `Lifelong-Robot-Learning/LIBERO`
@@ -326,6 +385,52 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 - `kitchen_egl_env_reset` (post-download subprocess so `OBJ_CATEGORIES` sees mjcf paths)
 - `kitchen_random_rollout` (`run_random_rollouts` with mp4; pin `gymnasium==0.29.1` and bind `env.sim`)
 
+### RoboTwin 2.0 (`byof-robotwin.yaml`)
+
+Pinned source: `RoboTwin-Platform/RoboTwin`
+`96c1feab536306b50c26af200044fcdf126e8904`. Pinned runtime assets:
+`TianxingChen/RoboTwin2.0`
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`.
+
+Hard-gate capability:
+`beat_block_hammer_successful_seed_replay_collection`. It is accepted only when
+the official `demo_clean` path searches for one successful seed, replays that
+seed through SAPIEN/Vulkan on exactly one RTX PRO 6000 Blackwell (`sm_120`), and
+emits native RoboTwin HDF5 plus decoded MP4 evidence with hashes, sizes, action
+and frame counts, observed GPU/image identity, task success, and exit status.
+Renderer startup or task registration alone is not evidence.
+
+The image is a zero-vendor-payload public-bootstrap candidate. A full-SHA
+development image completed one operator-run RTX collection/replay workload;
+see [the operator evidence scope](../../../docs/workbench/byof-robotwin.md#retained-operator-evidence-and-readiness).
+The public BYOF CLI and normal-submit worker bridge remain blocked, so registry
+admission and supported-release publication remain quarantined. CuRobo v0.7.8
+stays runtime-only and its
+noncommercial research/evaluation field-of-use restriction remains binding on
+use and service claims. Official assets remain a
+runtime fetch. The standalone operator path requires an explicit customer-terminal
+decision; the existing hosted authorization boundary remains a separate interface.
+Both bind the customer, run, manifest, terms, activity, issuance, expiry, nonce,
+and assertion. Manager context alone is not customer authentication, and an
+operator result does not attest the blocked worker bridge. The repository MIT
+card classifies the two exact
+locked runtime members, `embodiments.zip` and `objects.zip`, at revision
+`785feb15aa4a4f532395ad2b1d2be5f28cb561ad`. No additional restriction was
+found in the inspected authoritative terms for the five declared output
+classes: native HDF5 action/state data, decoded MP4, rendered frames, smoke
+JSON, and summary JSON. CuRobo's noncommercial research/evaluation limit still
+binds their generating workload and all use/service claims; hosted service is
+not approved. Exact provider/artifact/revision payload probes remain required
+before provisioning, with the customer's runtime-only credential when an
+artifact is gated and no generic NPA terms boolean. The harness must scan the
+pushed exact digest's rootfs and every layer for asset/cache/output bytes and
+launch only that scanned digest. Runtime fetch, a credential, a private
+registry, or a passing byte scan does not grant permission. Trusted full-SHA
+development publication is separate from admission to the supported public
+image catalog; keep the latter excluded. Other embodiments, unselected
+future task assets, the full 50-task sweep, policy training/evaluation, physical
+deployment, and their outputs remain independently deferred.
+
 ### OpenPI (`byof-openpi.yaml` + `openpi-pi05-four-mode.yaml`)
 
 Pinned: `Physical-Intelligence/openpi` `15a9616a00943ada6c20a0f158e3adb39df2ccac`
@@ -383,6 +488,129 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 - `droid_100_config_gen`
 
 Follow-up: full / debug `train.py` once data is staged.
+
+### evo trajectory evaluation (`byof-evo.yaml`)
+
+Pinned: `MichaelGrupp/evo`
+`8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422` (`v1.35.1`).
+This is a GPL-3.0-or-later operator-built BYOF candidate; do not describe it as
+an NPA-published image without a separate conveyance/compliance decision.
+
+Hard-gate capability:
+
+- `evo_ape_rpe_trajectory_evaluation`: native `evo_ape`, `evo_rpe`, and
+  `evo_traj` commands must save decodable result archives and matched plots.
+  Exact and bounded-error controls must pass the predeclared APE/RPE thresholds;
+  nonlinear drift and malformed-input controls must fail, with zero false
+  positives and zero false negatives.
+
+Also exercised in the same live-qualified smoke:
+
+- `decoded_plot_validation`: decode the selected native metric/trajectory plots
+  and their derived review copies, require at least 800x600 pixels and
+  non-uniform RGB content, and retain their hashes across the result and capture
+  records. This is an auxiliary reviewability check, not a trajectory-quality
+  metric. It covers the six review-facing plots plus eight additional
+  `evo_ape` raw/control plots; only the six review-facing plots enter the
+  capture/review set. It does not cover the five auxiliary `evo_traj`
+  RPY/XYZ/speed plots. `synthetic_controls_speeds.png` is 651x491 and is the
+  only residual plot below the stated 800x600 floor.
+
+The same smoke evaluates the pinned upstream KITTI 00 ground truth, ORB, and
+S-PTAM examples. Treat those as representative compatibility and reviewability
+evidence, not as threshold calibration or proof of navigation success. Retain
+each error distribution, trajectory-input hash, native plot hash, derived
+review-plot hash, and decode result. The live-qualified candidate passed the
+digest-pinned CPU Kubernetes pull and execution path, all four frozen gate
+controls, and ten independent archive decodes. Its first unlabeled APE visual
+review was invalidated when exact-prompt ORB/S-PTAM cross-swaps false-passed;
+retain that failure. The corrected smoke preserves each native map and emits a
+hash-linked review copy with visible estimate/reference identity. Require
+identify-first cross-swap calibration with zero false positives before scoring
+those final plots. In `npa.evo.capture-manifest.v1`, unsuffixed
+`kitti_*_ape` keys identify the labeled review copies and `*_native` keys
+identify untouched evo maps; follow each review entry's `source_path` and
+`source_sha256` instead of guessing from the suffix. The operator-built image
+remains unpublished. Before
+registry admission, require independent review of the candidate commit and
+retained evidence; a later conveyance still needs an explicit GPL compliance
+decision.
+
+### AprilTag 3 (`byof-apriltag.yaml`)
+
+Pinned: `AprilRobotics/apriltag`
+`94be783968e5091bcc9972c72c84fd63efce2935` (`v3.4.5`).
+
+The detector source is BSD-2-Clause. Its three representative upstream
+Swarmathon photographs and expected-corner labels are separately identified by
+upstream as CC-BY-SA-2.0. Keep this an operator-built BYOF candidate unless a
+later publication review accounts for both source and data terms.
+
+Hard-gate capability: `apriltag_real_image_fiducial_detection`.
+
+- Build and rerun `native_apriltag_ctest`; an import is not acceptance.
+- Evaluate all three pinned real photographs and their upstream tag-ID/corner
+  records. Every case must reproduce the recorded ID set (precision and recall
+  1.0), with aggregate corner RMSE at most 0.1 pixel and no coordinate residual
+  above 0.1 pixel. This is upstream regression parity. The records store four
+  decimal places, so a roughly `2.74e-5 px` residual is their quantization
+  floor, not detector localization accuracy.
+- Run blank and fixed-seed random-noise controls. Both must produce zero
+  detections.
+- Emit `fiducial_observations.json` with source image hash, family, tag ID,
+  center, ordered corners, decision margin, and hamming distance for a later
+  camera-localization or calibration stage.
+- Preserve each source image and native measurement. Annotated review PNGs must
+  link back to the source hash and distinguish expected from detected corners.
+
+Calibrate visual review with a correct overlay, a deliberately shifted overlay,
+a blank image, and a mismatched annotation before scoring final exact-run
+captures. Visual alignment is review evidence; objective corner metrics are
+the upstream-parity gate. Do not call image-space corners camera-pose accuracy.
+Pose claims require calibrated intrinsics, known tag geometry, and separate
+translation / rotation error against ground truth.
+
+### robomimic (`byof-robomimic.yaml`)
+
+Pinned: `ARISE-Initiative/robomimic`
+`d309eaecc18acf4152a830a895a6984b8ac71b05` · official Lift PH low-dimensional
+dataset revision `robomimic/robomimic_datasets`
+`74fa018461f479cd9fd15b924a16103012096203`.
+
+The Phase A image is a quarantined neutral candidate only: bake the pinned MIT
+source and exact non-CUDA lock, with no torch, NVIDIA/CUDA runtime, weights,
+dataset, populated cache, credential, or output. Consume CUDA/PyTorch only from
+an independently prepared exact-inventory read-only operator mount after the
+customer creates an unexpired noncommercial-use record bound to its identity,
+run, exact runtime lock and inventory, and official terms. The bootstrap verifies
+or refuses; it must not fetch, install, warm, populate, or accept terms. An
+environment flag, credential, manager signature, private registry, or runtime
+fetch never supplies permission.
+
+The hard gate must pass all three solution-specific capabilities on exactly one
+STRICT-reserved B200 (`sm_100`):
+
+- `lift_ph_lowdim_bc_train` — the upstream `scripts/train.py` BC entrypoint must
+  perform nonzero optimizer work and serialize the Adam step state;
+- `lift_ph_lowdim_heldout_validate` — upstream HDF5 train/valid masks must be
+  nonempty and disjoint, and validation must produce a finite loss;
+- `lift_ph_lowdim_checkpoint_reload_action` — reload the exact saved checkpoint
+  with `policy_from_checkpoint` and infer a finite, in-range action from a
+  held-out trajectory.
+
+Require `robomimic-smoke.json`, the immutable source and dataset identities, the
+dataset file hash and trajectory/sample counts, split hashes/counts, losses,
+checkpoint hash, action proof, observed B200 identity, pod-observed image digest,
+and exit status. Dataset inspection, imports, CPU fallback, a mutable image, or a
+zero-step training config fails the gate. CUDA and cuDNN remain governed by the
+NVIDIA CUDA Toolkit EULA, NVIDIA Software License Agreement, and cuDNN Software
+License Agreement. They have no vendor token probe, so present the exact notice
+and offer customer-controlled accept, decline, and resume actions. Acceptance
+must be time-limited and bind customer, run, runtime lock, and inventory; reject
+missing, declined, stale, or mismatched records before external action. It is
+not a redistribution/publication grant. Keep the dependent capability private;
+download the official dataset at runtime only after every separate gate passes.
+Defer image-policy sweeps, simulator rollouts, and the full algorithm matrix.
 
 ### Open Dreamer (`byof-open-dreamer.yaml`)
 
