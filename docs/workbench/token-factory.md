@@ -105,8 +105,17 @@ npa workbench token-factory reason \
 Captioning sends one request per image. Its request preserves your caption
 instruction and appends this image-availability directive:
 `If you cannot see the image pixels, respond exactly: NO IMAGE RECEIVED.` An
-exact, case-insensitive whole-answer match marks that image
-`image_unavailable`; quoting the phrase inside a longer caption does not.
+exact case-insensitive whole-answer match marks that image `image_unavailable`.
+For presentation tolerance, the final period may be absent and the complete
+answer may have one or more nested matching pairs of Markdown asterisk or
+underscore emphasis, ASCII quotes, or smart quotes. The stored caption remains
+the model's exact stripped answer. Longer answers, mismatched wrappers, code
+wrappers, punctuation outside the wrappers, other punctuation, and paraphrases
+do not match. Any legitimate complete caption that normalizes to the sentinel
+can therefore false-fail, including an image whose only salient text is that
+phrase. The retained hosted evidence observed only the exact punctuated
+sentinel; periodless, wrapped, nested, and emphasis variants are deterministic
+local controls, not observed hosted outputs.
 For a cooperative sentinel response, the command continues through every
 selected image once, writes the complete failed result, and exits 1 if any image
 was unavailable. It does not silently retry the sentinel. This partial-result
