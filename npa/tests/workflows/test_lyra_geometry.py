@@ -114,3 +114,27 @@ def test_html_refuses_actions_from_a_different_scene(tmp_path):
     )
     with pytest.raises(ValueError, match="not bound"):
         _trials(tmp_path, {"surface_sha256": "b" * 64})
+
+
+@pytest.mark.parametrize("mutation", ["missing_pose", "reflection", "millimeters"])
+def test_video_calibration_rejects_mismatched_frames_and_units(tmp_path, mutation):
+    from npa.workflows.lyra_capture import _attach_calibration
+
+    (tmp_path / "capture.json").write_text(json.dumps({"frames_count": 4}))
+    calibration = {
+        "schema": "npa.lyra-camera-calibration.v1",
+        "camera_convention": "optical_x_right_y_down_z_forward",
+        "world": {"meters_per_unit": 1, "up_axis": "Z"},
+        "frames": [{"camera_to_world": np.eye(4).tolist()} for _ in range(4)],
+    }
+    if mutation == "missing_pose":
+        calibration["frames"].pop()
+    elif mutation == "reflection":
+        calibration["frames"][0]["camera_to_world"][0][0] = -1
+    else:
+        calibration["world"]["meters_per_unit"] = 0.001
+    path = tmp_path / "calibration.json"
+    path.write_text(json.dumps(calibration))
+    with pytest.raises(ValueError):
+        _attach_calibration(path, tmp_path)
+    assert json.loads((tmp_path / "capture.json").read_text()) == {"frames_count": 4}

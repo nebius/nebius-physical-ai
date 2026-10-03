@@ -107,6 +107,7 @@ def _payload(args):
         "mesh": _mesh(args.geometry_path),
         "trials": _trials(args.actions_path, geometry),
         "stats": _statistics(reconstruction, geometry, actions),
+        "collision_quality": _collision_quality(geometry),
         "stages": _stages(reconstruction, geometry, actions),
         "evidence": {
             "reconstruction": reconstruction,
@@ -117,6 +118,22 @@ def _payload(args):
         },
         "commands": _commands(),
     }
+
+
+def _collision_quality(geometry):
+    if not geometry:
+        return "No reconstructed collision surface has been evaluated yet."
+    quality = geometry.get("measured_depth_validation")
+    if quality is None:
+        return "Collision candidate only: independent measured depth was not supplied."
+    error = quality["mean_absolute_error_m"]
+    measured = f"{error * 100:.1f} cm" if error is not None else "unavailable"
+    status = "Passed" if quality["passed"] else "Rejected"
+    return (
+        f"{status} by measured-depth checks: {quality['coverage']:.1%} coverage, "
+        f"{quality['inlier_fraction']:.1%} inliers, {measured} mean absolute error. "
+        "These RGB views were not held out. Native collision validation is separate."
+    )
 
 
 def _stages(reconstruction, geometry, actions):
@@ -182,11 +199,13 @@ npa/.venv/bin/python -m npa.workflows.lyra_scene_assembly \\
   --input-path <geometry-directory> --binding-path <mounting.json> \\
   --output-path <prepared-scene> --run-id <run-id>
 
-# Run the prepared recipe in the native Isaac runtime; export validated actions.
-python3 -m npa.workflows.physical_augmentation collect \\
-  --input-path <prepared-scene-bundle> --output-path <collection-bundle>
-python3 -m npa.workflows.physical_augmentation report \\
-  --input-path <collection-bundle> --output-path <reports-bundle>"""
+# Publish the sealed scene and geometry bundles, then execute and build HTML.
+npa workbench workflow submit workflows/testing/lyra-scene-actions.yaml \\
+  --project <project-alias> --infra k8s/<rtx-context> --stage-src \\
+  --var bucket=<bucket> --var prepared_uri=<private-prepared-prefix> \\
+  --var reconstruction_uri=<private-reconstruction-prefix> \\
+  --var geometry_uri=<private-geometry-prefix> \\
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY"""
 
 
 def main():

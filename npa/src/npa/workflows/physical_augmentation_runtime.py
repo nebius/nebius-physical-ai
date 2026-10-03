@@ -259,20 +259,22 @@ def _settle(env, seed: int) -> dict:
     return _snapshot(env)
 
 
+def _camera_frames(env):
+    from npa.workflows.physical_augmentation_scene import camera_frame
+
+    frames = {"rgb": camera_frame(env)}
+    if "npa_wrist_camera" in env.scene.sensors:
+        frames["wrist_rgb"] = camera_frame(env, "npa_wrist_camera")
+    return frames
+
+
 def _transition(
     env, controller, observed: dict, history: dict, step: int
 ) -> tuple[dict, bool]:
-    from npa.workflows.physical_augmentation_scene import camera_frame
-
     action = controller.action(
         observed["tcp"], observed["object"], observed["quaternion"]
     )
-    frame = camera_frame(env)
-    wrist = (
-        camera_frame(env, "npa_wrist_camera")
-        if "npa_wrist_camera" in env.scene.sensors
-        else None
-    )
+    frames = _camera_frames(env)
     try:
         if _step(env, action):
             return observed, True
@@ -288,7 +290,7 @@ def _transition(
         "state": observed["state"],
         "object": observed["object"],
         "tcp": observed["tcp"],
-        "rgb": frame,
+        **frames,
         "actions": action,
         "next_state": after["state"],
         "next_object": after["object"],
@@ -296,8 +298,6 @@ def _transition(
         "next_velocity": after["velocity"],
         "timestamp": step * float(env.step_dt),
     }
-    if wrist is not None:
-        row["wrist_rgb"] = wrist
     for key, value in row.items():
         history.setdefault(key, []).append(value)
     return after, False

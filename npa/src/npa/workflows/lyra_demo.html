@@ -400,6 +400,7 @@
           </p>
         </div>
         <div class="stats" id="stats"></div>
+        <p class="small" id="collision-quality"></p>
         <div class="card">
           <div class="cardhead">
             <h3>Reconstructed geometry</h3>
@@ -460,11 +461,12 @@
         <div class="notes">
           <div class="note">
             <div class="number">01 / SCENE</div>
-            <h3>Captured RGB or a Lyra export</h3>
+            <h3>Captured RGB with calibration</h3>
             <p>
               Keep camera poses, intrinsics and scale references alongside the
               scene. Calibrate the reconstruction before metric robot
-              interaction.
+              interaction. This adapter reruns the capture through Lyra to
+              retain depth; an existing Gaussian PLY alone lacks colliders.
             </p>
           </div>
           <div class="note">
@@ -548,6 +550,7 @@
       text("attribution", d.attribution);
       text("commands", d.commands);
       text("provenance", JSON.stringify(d.evidence, null, 2));
+      text("collision-quality", d.collision_quality);
       for (const [name, status] of d.stages) {
         const box = document.createElement("div"),
           b = document.createElement("b"),

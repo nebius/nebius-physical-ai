@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from copy import deepcopy
+import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -41,7 +42,11 @@ def _video(root, frames, destination):
 def _prepare(args, output):
     if args.input_path.is_file():
         _prepare_video(args.input_path, output)
+        if args.calibration_path:
+            _attach_calibration(args.calibration_path, output)
         return
+    if args.calibration_path:
+        raise ValueError("A capture directory already carries its calibration")
     capture = read_capture(args.input_path)
     frames = capture["frames"][args.start_frame : args.start_frame + args.frame_count]
     if len(frames) != args.frame_count or args.frame_count < 2:
@@ -85,6 +90,33 @@ def _prepare_video(source, output):
     )
 
 
+def _attach_calibration(path, output):
+    video = json.loads((output / "capture.json").read_text())
+    calibration = json.loads(path.read_text())
+    if calibration.get("schema") != "npa.lyra-camera-calibration.v1":
+        raise ValueError("Video calibration requires npa.lyra-camera-calibration.v1")
+    if calibration.get("camera_convention") != "optical_x_right_y_down_z_forward":
+        raise ValueError("Video calibration requires optical camera axes")
+    if calibration.get("world") != {"meters_per_unit": 1, "up_axis": "Z"}:
+        raise ValueError("Video calibration requires a metric Z-up world")
+    frames = calibration.get("frames", [])
+    if len(frames) != video["frames_count"]:
+        raise ValueError("Calibration must contain one pose per decoded video frame")
+    for frame in frames:
+        pose = np.asarray(frame["camera_to_world"], dtype=float)
+        if pose.shape != (4, 4) or not np.isfinite(pose).all():
+            raise ValueError("Camera poses must be finite 4x4 matrices")
+        rotation = pose[:3, :3]
+        if (
+            not np.array_equal(pose[3], [0, 0, 0, 1])
+            or not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-6)
+            or not np.isclose(np.linalg.det(rotation), 1)
+        ):
+            raise ValueError("Camera poses must be proper rigid transformations")
+    calibration["video"] = video
+    write_json(output / "capture.json", calibration)
+
+
 def main():
     """Publish an explicit excerpt without using measured depth in Lyra inference.
 
@@ -99,6 +131,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-path", type=Path, required=True)
     parser.add_argument("--output-path", required=True)
+    parser.add_argument("--calibration-path", type=Path)
     parser.add_argument("--start-frame", type=int, default=0)
     parser.add_argument("--frame-count", type=int, default=320)
     args = parser.parse_args()

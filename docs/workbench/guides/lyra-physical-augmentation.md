@@ -27,12 +27,25 @@ npa/.venv/bin/python -m npa.workflows.lyra_capture \
 ```
 
 The command verifies that the video decodes and writes a checksummed bundle.
-It does not infer metric calibration. Alternatively, pass a directory following
+Add `--calibration-path ./calibration.json` when measured camera poses accompany
+the video. The file uses schema `npa.lyra-camera-calibration.v1`,
+`camera_convention: optical_x_right_y_down_z_forward`,
+`world: {meters_per_unit: 1, up_axis: Z}`, and a `frames` list containing one
+`camera_to_world` proper 4×4 transform per decoded frame, in playback order.
+Pose translations are meters. The adapter checks matching frame counts and
+rigid rotations; it does not infer or verify the external calibration itself.
+Depth remains optional for this video-plus-poses path.
+
+Alternatively, pass a directory following
 the [calibrated capture contract](rgbd-scan-to-isaac.md). That path selects an
 explicit excerpt (`--start-frame`, default 0; `--frame-count`, default 320),
 preserves camera poses and reserves measured depth for validation. RGB remains
 the only image input to Lyra. The public reference capture uses 30 Hz playback;
 original capture timestamps remain in its manifest.
+
+For an existing Lyra Gaussian export, rerun the original capture through this
+wrapper to retain the predicted depth needed by the collision adapter. A Gaussian
+PLY alone does not contain a validated collision mesh or movable object bodies.
 
 Publish the bundle to a private S3 prefix through your configured project's
 storage client, then submit:

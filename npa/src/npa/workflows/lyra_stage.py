@@ -60,16 +60,36 @@ def _source(destination):
     )
 
 
-def _environment(workspace, source):
+def _torch_environment(workspace):
     interpreter = "/opt/npa/sim/venv/bin/python"
     environment = workspace / "environment"
     subprocess.run(
-        [interpreter, "-m", "venv", "--system-site-packages", str(environment)],
+        [interpreter, "-m", "venv", str(environment)],
         check=True,
     )
     python = str(environment / "bin/python")
+    subprocess.run(
+        [
+            python,
+            "-m",
+            "pip",
+            "install",
+            "--index-url",
+            "https://download.pytorch.org/whl/cu128",
+            "torch==2.11.0",
+            "torchvision==0.26.0",
+        ],
+        check=True,
+    )
+    return python
+
+
+def _environment(workspace, source):
+    python = _torch_environment(workspace)
     constraints = workspace / "constraints.txt"
-    constraints.write_text("numpy==1.26.4\nopencv-python==4.11.0.86\n")
+    constraints.write_text(
+        "numpy==1.26.4\nopencv-python==4.11.0.86\ntorch==2.11.0\ntorchvision==0.26.0\n"
+    )
     subprocess.run(
         [
             python,
@@ -83,6 +103,8 @@ def _environment(workspace, source):
             "ninja==1.13.0",
             "jaxtyping==0.3.2",
             "beartype==0.21.0",
+            "setuptools==84.0.0",
+            "wheel==0.47.0",
         ],
         check=True,
     )
