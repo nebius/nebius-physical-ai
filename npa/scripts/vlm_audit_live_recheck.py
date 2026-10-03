@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 
@@ -258,8 +259,8 @@ def _verify(
         receipt["credential_and_catalog_preflight_passed"] = True
     exit_code = _execute(root, target, config_path)
     receipt["pytest_exit_code"] = exit_code
-    receipt["outcomes"] = _public_comparisons(reports)
-    execution = json.loads((target / "execution.json").read_text())
+    receipt["outcomes"] = _public_comparisons(target, reports)
+    execution = json.loads(_read_artifact(target, target / "execution.json"))
     try:
         counts = {
             field: require_integer(
@@ -271,7 +272,7 @@ def _verify(
     except (KeyError, ValueError):
         raise _AuditConfigurationError("invalid_execution_counts") from None
     receipt["counts"] = counts
-    if config_path.read_bytes() != configured_bytes:
+    if _read_artifact(target, config_path) != configured_bytes:
         raise _AuditConfigurationError("audit_configuration_changed_during_execution")
     if any("failure" in outcome for outcome in receipt["outcomes"]):
         raise _AuditConfigurationError("audit_artifact_contract_failed")
@@ -285,14 +286,39 @@ def _verify(
     )
 
 
-def _public_comparisons(reports: tuple[tuple[int, Path, dict], ...]) -> list[dict]:
+def _read_artifact(target: Path, path: Path) -> bytes:
+    relative = path.relative_to(target)
+    directory = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for component in relative.parts[:-1]:
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=directory,
+            )
+            os.close(directory)
+            directory = child
+        descriptor = os.open(
+            relative.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=directory,
+        )
+    finally:
+        os.close(directory)
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("Audit artifact must be a regular file")
+        return stream.read()
+
+
+def _public_comparisons(
+    target: Path, reports: tuple[tuple[int, Path, dict], ...]
+) -> list[dict]:
     summaries = []
     for index, path, expectations in reports:
         summary = {"control_index": index}
         try:
-            if path.is_symlink():
-                raise ValueError("Audit artifact must be a regular file")
-            content = path.read_bytes()
+            content = _read_artifact(target, path)
             summary["artifact_sha256"] = hashlib.sha256(content).hexdigest()
             report = json.loads(content)
             summary.update(_public_comparison(report))

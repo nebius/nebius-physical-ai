@@ -477,6 +477,11 @@ def test_execution_and_report_booleans_fail_closed(
         "not_audit_only",
         "config_changed",
         "symlink_loop",
+        "parent_symlink",
+        "fifo",
+        "directory",
+        "execution_fifo",
+        "config_fifo",
         "missing_execution",
         "malformed_execution",
         "none",
@@ -550,6 +555,20 @@ def test_receipt_acceptance_requires_each_frozen_artifact(monkeypatch, tmp_path,
                     report_path = output / runner.PREFERENCE_COMPARISON_RESULT_FILENAME
                     report_path.symlink_to(report_path.name)
                     continue
+                elif fault == "parent_symlink":
+                    outside = tmp_path / "outside"
+                    _write_report(runner, outside, report)
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.symlink_to(outside, target_is_directory=True)
+                    continue
+                elif fault in {"fifo", "directory"}:
+                    output.mkdir(parents=True)
+                    report_path = output / runner.PREFERENCE_COMPARISON_RESULT_FILENAME
+                    if fault == "fifo":
+                        os.mkfifo(report_path)
+                    else:
+                        report_path.mkdir()
+                    continue
             _write_report(runner, output, report)
         if fault == "config_changed":
             configured["cases"]["blinded-preference"]["controls"].pop("control-2")
@@ -568,6 +587,12 @@ def test_receipt_acceptance_requires_each_frozen_artifact(monkeypatch, tmp_path,
                     }
                 )
             )
+        if fault in {"execution_fifo", "config_fifo"}:
+            fifo = (
+                target / "execution.json" if fault == "execution_fifo" else config_path
+            )
+            fifo.unlink()
+            os.mkfifo(fifo)
         return 0
 
     monkeypatch.setattr(runner, "_execute", execute)
