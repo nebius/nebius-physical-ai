@@ -97,7 +97,7 @@ def test_robolab_uses_only_the_shared_isaac_acceptance_surface() -> None:
     runtime_env = _isaac_runtime_env({"ACCEPT_EULA": "Y"})
 
     assert runtime_env["ACCEPT_EULA"] == "Y"
-    assert runtime_env["OMNI_KIT_ACCEPT_EULA"] == "YES"
+    assert runtime_env["OMNI_KIT_ACCEPT_EULA"] == "Y"
     assert isaac_eula_envs("workbench.cosmos3.fastwam_k2_full_wam") == {"ACCEPT_EULA": "Y"}
     assert isaac_eula_envs("workbench.cosmos3.fastwam_k2_eval", accepted=False) == {"ACCEPT_EULA": ""}
     try:
@@ -130,7 +130,7 @@ def test_robolab_client_keeps_the_shared_isaac_acceptance_surface(
 
     assert result == output
     assert captured["ACCEPT_EULA"] == "Y"
-    assert captured["OMNI_KIT_ACCEPT_EULA"] == "YES"
+    assert captured["OMNI_KIT_ACCEPT_EULA"] == "Y"
     assert captured["CUDA_VISIBLE_DEVICES"] == "1"
 
 

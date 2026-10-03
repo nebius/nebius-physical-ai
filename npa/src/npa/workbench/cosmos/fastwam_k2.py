@@ -310,7 +310,7 @@ def _isaac_runtime_env(env: dict[str, str]) -> dict[str, str]:
     if raw not in {"Y", "YES", "1", "TRUE"}:
         raise FastWamK2Error("ACCEPT_EULA has an invalid value for the Isaac runtime")
     runtime_env = dict(env, ACCEPT_EULA="Y")
-    runtime_env["OMNI_KIT_ACCEPT_EULA"] = "YES"
+    runtime_env["OMNI_KIT_ACCEPT_EULA"] = "Y"
     return runtime_env
 
 
