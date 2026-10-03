@@ -101,6 +101,7 @@ COPY pyproject.toml README.md /opt/npa-src/
 # The build entrypoint stages the supported catalog into the archived package.
 COPY src/npa /opt/npa-src/src/npa
 RUN pip install --no-deps --no-build-isolation --no-cache-dir /opt/npa-src \
+    && pip check \
     && python -c 'import torch; assert {"sm_100", "sm_120"} <= set(torch._C._cuda_getArchFlags().split())' \
     && PYTHONDONTWRITEBYTECODE=1 \
        MPLCONFIGDIR=/tmp/npa-curobo-import-cache/matplotlib \

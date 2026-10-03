@@ -17,5 +17,7 @@ pin
 seaborn
 tabulate
 uvicorn
+# Retain fixed streamed-response and HTTPS-proxy handling in requests/botocore.
+urllib3>=2.8.0,<3
 # Offline source installs use these locked build backends.
 hatchling

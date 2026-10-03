@@ -7,6 +7,13 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### cuRobo image dependency closure
+
+- The image pins urllib3's streamed-response and HTTPS-proxy fixes and refreshes
+  the lock against current NPA dependencies. The final build checks dependency
+  compatibility after installing NPA; planner and numerical-library pins remain
+  unchanged. These source repairs do not qualify a rebuilt image for release.
+
 ### cuRobo single-mode benchmark validation
 
 - The independent audit accepts complete kinematic-only or dynamics-only

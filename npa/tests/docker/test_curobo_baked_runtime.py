@@ -4,11 +4,20 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 from types import ModuleType
 
+from packaging.markers import default_environment
+from packaging.requirements import Requirement
+from packaging.utils import canonicalize_name
 import pytest
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib
 
 
 DOCKERFILE = (
@@ -130,6 +139,61 @@ def test_pip_bootstrap_distribution_is_content_pinned():
     assert "COPY docker/workbench/curobo/pip-bootstrap.lock" in text
     assert "--require-hashes -r /opt/pip-bootstrap.lock" in text
     assert "pip install --no-cache-dir --upgrade 'pip==" not in text
+
+
+def test_runtime_http_dependency_retains_fixed_streaming_and_proxy_boundary():
+    requirements = DOCKERFILE.with_name("requirements.in").read_text()
+    lock = DOCKERFILE.with_name("requirements.lock").read_text()
+    # GHSA-vxq7-64xx-v4gw, GHSA-gh4c-6fx4-qh6g and GHSA-8988-9cw3-xx77:
+    # preserve upstream streaming/proxy fixes without changing planner pins.
+    assert "urllib3>=2.8.0,<3" in requirements.splitlines()
+    assert "urllib3==2.8.0 \\\n" in lock
+    assert (
+        "--hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3"
+        in lock
+    )
+    assert (
+        "--hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63"
+        in lock
+    )
+
+
+def test_runtime_lock_satisfies_current_npa_base_dependencies():
+    project = DOCKERFILE.parents[3] / "pyproject.toml"
+    dependencies = tomllib.loads(project.read_text())["project"]["dependencies"]
+    lock = DOCKERFILE.with_name("requirements.lock").read_text()
+    pins = {
+        canonicalize_name(name): version
+        for name, version in re.findall(
+            r"^([A-Za-z0-9_.-]+)==([^\s;\\]+)", lock, re.MULTILINE
+        )
+    }
+    environment = default_environment() | {
+        "python_version": "3.12",
+        "python_full_version": "3.12.0",
+        "sys_platform": "linux",
+        "platform_system": "Linux",
+        "platform_machine": "x86_64",
+        "extra": "",
+    }
+    for value in dependencies:
+        requirement = Requirement(value)
+        if requirement.marker and not requirement.marker.evaluate(environment):
+            continue
+        name = canonicalize_name(requirement.name)
+        assert name in pins, f"image lock omits NPA dependency {requirement}"
+        assert pins[name] in requirement.specifier, (
+            f"image lock {name}=={pins[name]} conflicts with {requirement}"
+        )
+
+
+def test_final_image_checks_all_dependencies_after_installing_npa():
+    text = DOCKERFILE.read_text()
+    installed = text.index(
+        "RUN pip install --no-deps --no-build-isolation --no-cache-dir /opt/npa-src"
+    )
+    checked = text.index("&& pip check", installed)
+    assert installed < checked < text.index("python /opt/verify_runtime_imports.py")
 
 
 def test_image_build_imports_pinocchio_upstream_boundary_after_pinned_sources():
