@@ -13,8 +13,8 @@ Catalog reachability is fail-closed: every entry is consumed by a shipped spec
 except the explicitly public composition primitives `infra.fleet.deploy`,
 `infra.soperator.deploy`, `workbench.cosmos2.transfer`,
 `workbench.curobo.plan`, `workbench.foxglove.convert`, `workbench.insights.record`,
-`workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`, and
-`workbench.vlm_eval.compare_judges`. The
+`workbench.isaac_lab.byof_repo`, `workbench.lerobot.eval`,
+`workbench.vlm_eval.compare_preference`, and `workbench.vlm_eval.compare_judges`. The
 reusable-only list is machine-checked against `PUBLIC_REUSABLE_TOOLREFS`;
 accidental dead entries fail the guardrail. The retired monolithic
 `workbench.sim2real.run` surface is intentionally absent.
@@ -76,6 +76,7 @@ accidental dead entries fail the guardrail. The retired monolithic
 | `workbench.content_agents.validate` | `python -m npa.workflows.content_agents validate` | rigid-ready USDA | upstream `render_valid` + `physics_sane` result and fresh OVRTX evidence | yes (real upstream `validation-agent validate`) |
 | `workbench.content_agents.package` | `python -m npa.workflows.content_agents package` | validated physics USDA | self-contained USD/USDZ, provenance, reports, narrow Isaac Stage 2 adapter | no |
 | `workbench.vlm_eval.run` | `npa workbench vlm-eval run` | `config.rollouts_uri` | `config.scores_uri` | no |
+| `workbench.vlm_eval.compare_preference` | `npa workbench vlm-eval compare-preference` | `config.baseline_uri`, `config.candidate_uri` | `<scores_uri>/vlm_preference_comparison.json` | no |
 | `workbench.vlm_eval.compare_judges` | `npa workbench vlm-eval compare-judges` | `config.rollouts_uri` | `<scores_uri>/vlm_judge_disagreement.json` | no |
 | `workbench.vlm_eval.benchmark` | `npa workbench vlm-eval benchmark` | `config.benchmark_dataset` | `config.benchmark_output` | no |
 | `workbench.vlm_eval.judge_against_plan` | `npa workbench vlm-eval run --task-from` | `config.rollouts_uri`, `config.plan_uri` | `<scores_uri>/vlm_eval.json` | no |

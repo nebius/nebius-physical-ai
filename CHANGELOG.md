@@ -24,6 +24,17 @@ a versioned heading when a release is cut.
   deletion no longer leaves private keys recoverable from an ancestor layer;
   clean containers continue to generate independent host keys when SSH starts.
 
+### VLM image preferences are blinded and order-balanced
+
+- New `vlm-eval compare-preference` API-only audit mode normalizes one matched
+  image pair, hides source roles behind neutral A/B labels, and submits both
+  orders without retries. Its private `vlm_preference_comparison.json` retains
+  exact requests, provider provenance, strict structured verdicts, and typed
+  errors. Errors, unresolved or low-confidence output, and order disagreement
+  require escalation; even consistent preference does not establish geometry
+  accuracy, physical validity, or robot safety. Requests leave the provider
+  response length uncapped rather than imposing a hidden token budget.
+
 ### VLM benchmarks expose calibration failures
 
 - `vlm-eval benchmark` reports an explicit 2x2 confusion matrix, false-positive
@@ -84,6 +95,14 @@ a versioned heading when a release is cut.
   numbers, and null now return HTTP 400 before any policy update or output
   directory creation. External clients must send a JSON boolean. Update-result
   decoding enforces the same contract instead of coercing truthy values.
+
+### Token Factory captions expose unavailable images
+
+- Caption requests now ask the hosted vision model for the exact
+  `NO IMAGE RECEIVED.` sentinel when pixels are unavailable. An exact
+  whole-answer match is retained as `image_unavailable`, makes the aggregate
+  artifact fail, and exits nonzero after writing it. Later images are still
+  attempted once; dry runs emit the failed result without writing.
 
 ### Studio videos accept S3 output paths
 
