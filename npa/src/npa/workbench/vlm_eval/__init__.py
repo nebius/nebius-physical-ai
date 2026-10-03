@@ -581,10 +581,12 @@ def benchmark_vlm_eval(
         dataset_path=benchmark_dataset.path,
     )
     effective_backend = _normalize_backend(backend)
-    model_values = [
-        _effective_model(backend=effective_backend, model=model)
-        for model in model_values
-    ]
+    model_values = list(
+        dict.fromkeys(
+            _effective_model(backend=effective_backend, model=model)
+            for model in model_values
+        )
+    )
     effective_frame_selection = _normalize_frame_selection(frame_selection)
     if max_frames <= 0:
         raise VlmEvalError("--max-frames must be positive")

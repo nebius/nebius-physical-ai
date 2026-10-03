@@ -216,3 +216,66 @@ def test_aggregate_models_match_effective_requests(
     assert {case.served_model for case in benchmark.best_config.results} == {effective}
     assert len(calls) == 4
     assert {request["model"] for request in calls} == {effective}
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+def test_benchmark_deduplicates_resolved_models_in_caller_order(
+    monkeypatch, tmp_path, backend
+):
+    monkeypatch.setenv(vlm_eval.SELF_HOSTED_MODEL_ENV, "vendor/environment-model")
+    effective = (
+        token_factory.DEFAULT_VISION_MODEL
+        if backend == "api"
+        else "vendor/environment-model"
+    )
+    Image.new("RGB", (8, 8), "green").save(tmp_path / "frame.png")
+    manifest = tmp_path / "benchmark.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "id": "positive",
+                        "rollout": str(tmp_path / "frame.png"),
+                        "expected_label": True,
+                    }
+                ]
+            }
+        )
+    )
+    calls = []
+
+    def post(**kwargs):
+        calls.append(kwargs["request"])
+        return {
+            "model": kwargs["request"]["model"],
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": '{"success":true,"score":0.9,"rationale":"synthetic deduplication control"}'
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **_: "")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    report = vlm_eval.benchmark_vlm_eval(
+        dataset=str(manifest),
+        backend=backend,
+        models=[vlm_eval.DEFAULT_MODEL, effective, "vendor/second-model", effective],
+        thresholds=[0.8],
+        endpoint_url="https://example.test/v1",
+    )
+    assert report.sweep["models"] == [effective, "vendor/second-model"]
+    assert len(report.ranked_configs) == len(calls) == 2
+    assert [request["model"] for request in calls] == [effective, "vendor/second-model"]
+
+
+def test_current_hosted_profiles_pin_exact_identity_for_promotion():
+    assert token_factory._DEFAULT_CHAT_PROFILE.require_exact_model is True
+    assert all(
+        profile.require_exact_model is True
+        for profile in token_factory._CHAT_PROFILES.values()
+    )
