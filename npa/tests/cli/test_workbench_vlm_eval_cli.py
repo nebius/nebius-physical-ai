@@ -13,6 +13,8 @@ from npa.cli.main import app
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_BENCHMARK_PATH,
+    LEGACY_RESULT_FILENAME,
+    RESULT_FILENAME,
     VlmEvalResult,
     VlmVisualReviewRequest,
     VISUAL_REVIEW_RESULT_FILENAME,
@@ -57,9 +59,10 @@ def test_workbench_vlm_eval_run_writes_local_json(tmp_path) -> None:
     payload = json.loads(result.output)
     assert payload["backend"] == "stub"
     assert payload["passed"] is True
-    written = output_dir / "vlm_eval_stub.json"
+    written = output_dir / RESULT_FILENAME
     assert written.exists()
     assert json.loads(written.read_text(encoding="utf-8"))["score"] == 0.9
+    assert not (output_dir / LEGACY_RESULT_FILENAME).exists()
 
 
 def test_workbench_vlm_eval_dry_run_does_not_write(tmp_path) -> None:
@@ -124,7 +127,7 @@ def test_workbench_vlm_eval_run_maps_backend_flags(mocker, tmp_path) -> None:
             backend="api",
             input_path="rollouts",
             output_path=str(output_dir),
-            result_uri=str(output_dir / "vlm_eval_stub.json"),
+            result_uri=str(output_dir / RESULT_FILENAME),
             task="place cube",
             model="open-vlm",
             score=0.82,
@@ -269,7 +272,8 @@ def test_vlm_eval_sdk_wrapper_accepts_string_flags(capsys, tmp_path) -> None:
     assert payload["backend"] == "stub"
     assert payload["frame_selection"] == "final"
     assert payload["score"] == 0.72
-    assert (output_dir / "vlm_eval_stub.json").exists()
+    assert (output_dir / RESULT_FILENAME).exists()
+    assert not (output_dir / LEGACY_RESULT_FILENAME).exists()
 
 
 def _visual_review_cli_args(tmp_path: Path) -> list[str]:
