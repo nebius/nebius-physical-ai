@@ -1762,6 +1762,36 @@ def test_grade_gate_promotes_above_threshold(tmp_path: Path, monkeypatch) -> Non
     assert json.loads(decision_path.read_text())["decision"] == "promote_checkpoint"
 
 
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+def test_grade_gate_retained_parser_does_not_depend_on_request_profile_dispatch(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
+    report = _provider_vlm_report(monkeypatch, tmp_path, backend=backend)
+    monkeypatch.setattr(
+        vlm_eval,
+        "_parse_backend_verdict",
+        lambda **_kwargs: pytest.fail(
+            "Retained evidence must not dispatch a request profile"
+        ),
+    )
+    (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+    assert (
+        dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
+        == "promote_checkpoint"
+    )
+
+
+@pytest.mark.parametrize("model", ["", " ", 42, [], {}])
+def test_grade_gate_rejects_malformed_self_hosted_identity(
+    tmp_path: Path, monkeypatch, model: object
+) -> None:
+    report = _provider_vlm_report(monkeypatch, tmp_path, backend="self-hosted")
+    completion = json.loads(report["evidence"]["provider"]["raw_response"])
+    completion["model"] = model
+    _replace_retained_completion(report, completion)
+    _assert_completion_blocked(tmp_path, report, "provider_response_invalid")
+
+
 @pytest.mark.parametrize("omit_rubric", [False, True])
 @pytest.mark.parametrize("custom", [False, True])
 def test_grade_gate_binds_effective_rubric_and_supports_historical_default(

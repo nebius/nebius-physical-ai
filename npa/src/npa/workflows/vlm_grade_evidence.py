@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import math
 import re
@@ -251,20 +252,26 @@ def _retained_verdict(report: dict[str, Any], provider: dict):
     choice, content = _promotion_completion(data)
     if report["backend"] == "api" and data.get("model") != report["model"]:
         raise _InvalidEvidence("provider_model_mismatch")
-    # Preserve the backend's recorded parser identity after checking promotion
-    # eligibility. The legacy self-hosted reader remains permissive.
+    # Retained evidence uses content parsers, not request-profile dispatch.
+    # Request tuning can evolve without changing historical parser provenance.
     try:
-        parsed = vlm_eval._parse_backend_verdict(
-            backend=report["backend"],
-            requested_model=report["model"],
-            choice=choice,
-            data=data,
-            message=content,
-        )
+        parsed = _parse_retained_content(report["backend"], data, content)
     except vlm_eval.VlmEvalError as exc:
         raise _InvalidEvidence("provider_response_invalid") from exc
     _validate_provider_metadata(provider, data, choice, parsed.parser_version)
     return parsed
+
+
+def _parse_retained_content(backend: str, data: dict, content: str):
+    model = data.get("model")
+    if model is not None and (not isinstance(model, str) or not model.strip()):
+        raise vlm_eval.VlmEvalError("Invalid retained model identity")
+    if backend == "api":
+        if model is None:
+            raise vlm_eval.VlmEvalError("Missing retained hosted model identity")
+        return vlm_eval._parse_api_structured_response(content, served_model=model)
+    parsed = vlm_eval.parse_structured_response(content)
+    return replace(parsed, served_model=model)
 
 
 def _unique_provider_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
