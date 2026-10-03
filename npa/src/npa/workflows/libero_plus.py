@@ -24,6 +24,7 @@ ASSET_REPOSITORY = "Sylvest/LIBERO-plus"
 ASSET_REVISION = "dd2bd61b7d9a6fef1abc52d606e983b41886a149"
 ASSET_FILE = "assets.zip"
 ASSET_SHA256 = "96764a4bfbdaea98d4411598caeab235458318fe0f549611b93d1a323027b3cf"
+SOURCE_LICENSE_STATUS = "unresolved"
 DIMENSIONS = (
     "Objects Layout",
     "Camera Viewpoints",
@@ -131,7 +132,7 @@ def _cache_root() -> Path:
 
 
 def _ensure_upstream() -> Path:
-    """Fetch the exact upstream source and MIT asset archive into a locked cache.
+    """Fetch approved upstream source and assets into a locked cache.
 
     Args:
         None.
@@ -142,6 +143,12 @@ def _ensure_upstream() -> Path:
     Raises:
         LiberoPlusError: An immutable identity or safe extraction check fails.
     """
+    if SOURCE_LICENSE_STATUS != "approved":
+        raise LiberoPlusError(
+            "LIBERO-Plus source execution is blocked: the pinned upstream source "
+            "has no declared license; update this reviewed source record only after "
+            "an explicit upstream license or authorization is available"
+        )
     root = _cache_root()
     ready = root / "READY.json"
     if ready.exists():
@@ -454,6 +461,9 @@ def compare(
     digest = hashlib.sha256(protocol).hexdigest()
     if baseline["protocol_sha256"] != digest or candidate["protocol_sha256"] != digest:
         raise LiberoPlusError("rollouts did not consume the exact prepared protocol")
+    baseline_sha256 = hashlib.sha256(baseline_payload).hexdigest()
+    if candidate.get("matched_baseline_sha256") != baseline_sha256:
+        raise LiberoPlusError("candidate rollouts did not consume the exact baseline")
     values: dict[str, list[float]] = {dimension: [] for dimension in DIMENSIONS}
     for left, right in zip(baseline["results"], candidate["results"], strict=True):
         if left["task_id"] != right["task_id"] or left["category"] != right["category"]:

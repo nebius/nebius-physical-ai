@@ -1443,6 +1443,21 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "libero-plus-robustness.yaml",
+        "gpu",
+        plan_only=True,
+        plan_only_justification=(
+            "The pinned LIBERO-Plus source has no declared license, and the "
+            "workflow intentionally refuses source execution until upstream terms "
+            "are explicitly resolved."
+        ),
+        notes=(
+            "Five real-stage matched robustness workflow; local planning and RRD "
+            "contracts are verified, while image build and GPU execution remain "
+            "legally blocked."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-maniskill.yaml",
         "multi",
         plan_only=True,

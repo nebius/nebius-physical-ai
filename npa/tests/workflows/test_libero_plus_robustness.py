@@ -60,7 +60,14 @@ def test_compare_requires_same_prepared_protocol_and_reports_all_dimensions(
     candidate_rows = [dict(row, success=not row["success"]) for row in rows]
     candidate.write_text(
         json.dumps(
-            {"protocol_sha256": digest, "results": candidate_rows, "smoke_only": True}
+            {
+                "protocol_sha256": digest,
+                "results": candidate_rows,
+                "smoke_only": True,
+                "matched_baseline_sha256": libero_plus.hashlib.sha256(
+                    baseline.read_bytes()
+                ).hexdigest(),
+            }
         )
     )
 
@@ -90,7 +97,14 @@ def test_compare_requires_same_prepared_protocol_and_reports_all_dimensions(
     )
     candidate.write_text(
         json.dumps(
-            {"protocol_sha256": digest, "results": rows_with_media, "smoke_only": True}
+            {
+                "protocol_sha256": digest,
+                "results": rows_with_media,
+                "smoke_only": True,
+                "matched_baseline_sha256": libero_plus.hashlib.sha256(
+                    baseline.read_bytes()
+                ).hexdigest(),
+            }
         )
     )
     report = tmp_path / "report.json"
@@ -121,3 +135,12 @@ def test_full_protocol_refuses_smoke_policy(tmp_path: Path) -> None:
         assert "cannot produce a complete benchmark" in str(error)
     else:
         raise AssertionError("full benchmark accepted smoke-only adapter")
+
+
+def test_unlicensed_pinned_source_fails_before_any_upstream_fetch() -> None:
+    try:
+        libero_plus._ensure_upstream()
+    except libero_plus.LiberoPlusError as error:
+        assert "source execution is blocked" in str(error)
+    else:
+        raise AssertionError("unlicensed source fetch was not blocked")
