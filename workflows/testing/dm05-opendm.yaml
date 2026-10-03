@@ -1,0 +1,218 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: dm05-opendm
+  description: >
+    Pinned OpenDM DM05 LIBERO preparation, full upstream fine-tuning, HTTP
+    action rollout, Dexbotic closed-loop evaluation, and factual RRD/MP4
+    provenance.  The model checkpoint and LIBERO data are runtime-fetched and
+    never part of the image.
+
+config:
+  # An operator-owned bucket and a unique run id make every large dataset,
+  # checkpoint, report, and video hand-off run-scoped and immutable by path.
+  bucket: example-bucket
+  prefix: "dm05-opendm/{{run.id}}"
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+
+  # This intentionally fails closed until an operator builds the private,
+  # immutable BYOF image documented in docs/workbench/dm05-opendm.md.  Do not
+  # put Dexmal code, model weights, LIBERO data, or a registry identity here.
+  runtime_image: "registry.example.invalid/operator/dm05-opendm@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  source_overlay: true
+  repo_root: /opt/byof
+  evaluator_root: /opt/dexbotic-benchmark
+  opendm_python: /opt/opendm-venv/bin/python
+  evaluator_python: /opt/libero-venv/bin/python
+
+  # These are upstream-native defaults, not an NPA reduced smoke recipe.
+  train_nproc_per_node: "8"
+  train_steps: "100000"
+  eval_trials_per_task: "50"
+  gpu_type: B200
+  train_gpu_count: "8"
+  serve_gpu_count: "1"
+  eval_gpu_count: "2"
+  gpu_cpus: "32"
+  gpu_memory: 256Gi
+  gpu_disk_size: "1000"
+  cpu_cpus: "32"
+  cpu_memory: 192Gi
+  cpu_disk_size: "1000"
+
+  prepared_uri: "{{config.run_root_uri}}prepared"
+  prepared_manifest_uri: "{{config.prepared_uri}}/manifest.json"
+  checkpoint_uri: "{{config.run_root_uri}}checkpoint"
+  checkpoint_manifest_uri: "{{config.checkpoint_uri}}/manifest.json"
+  rollout_uri: "{{config.run_root_uri}}rollout"
+  rollout_manifest_uri: "{{config.rollout_uri}}/manifest.json"
+  evaluation_uri: "{{config.run_root_uri}}evaluation"
+  evaluation_manifest_uri: "{{config.evaluation_uri}}/manifest.json"
+  report_uri: "{{config.run_root_uri}}report"
+  provenance_uri: "{{config.report_uri}}/provenance.json"
+  rrd_uri: "{{config.report_uri}}/dm05-opendm.rrd"
+  report_manifest_uri: "{{config.report_uri}}/manifest.json"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: "{{config.cpu_cpus}}"
+    memory: "{{config.cpu_memory}}"
+    disk_size: "{{config.cpu_disk_size}}"
+    image: "{{config.runtime_image}}"
+  train_gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.train_gpu_count}}"
+    cpus: "{{config.gpu_cpus}}"
+    memory: "{{config.gpu_memory}}"
+    disk_size: "{{config.gpu_disk_size}}"
+    image: "{{config.runtime_image}}"
+  serve_gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.serve_gpu_count}}"
+    cpus: "{{config.gpu_cpus}}"
+    memory: "{{config.gpu_memory}}"
+    disk_size: "{{config.gpu_disk_size}}"
+    image: "{{config.runtime_image}}"
+  eval_gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.eval_gpu_count}}"
+    cpus: "{{config.gpu_cpus}}"
+    memory: "{{config.gpu_memory}}"
+    disk_size: "{{config.gpu_disk_size}}"
+    image: "{{config.runtime_image}}"
+
+initial: prepare_libero
+
+states:
+  prepare_libero:
+    description: >
+      Runtime-fetch the exact Dexmal LIBERO revision, invoke upstream archive
+      organization, and calculate the actual OpenDM chunk-10 normalization
+      statistics before any model or GPU work starts.
+    resources: cpu
+    run:
+      shell: >
+        python3 -m npa.workflows.dm05_opendm prepare
+        --repo-root '{{config.repo_root}}'
+        --opendm-python '{{config.opendm_python}}'
+        --prepared-uri '{{config.prepared_uri}}'
+    outputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.dm05-opendm.prepare.v1
+    next: train_dm05
+
+  train_dm05:
+    description: >
+      Runtime-fetch the exact DM05 base checkpoint and run Dexmal's native
+      full LIBERO SFT launcher for its documented 100,000 steps on eight GPUs.
+      The resulting checkpoint carries the exact prepared normalization file.
+    resources: train_gpu
+    inputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.dm05-opendm.prepare.v1
+    run:
+      shell: >
+        python3 -m npa.workflows.dm05_opendm train
+        --repo-root '{{config.repo_root}}'
+        --prepared-uri '{{config.prepared_uri}}'
+        --checkpoint-uri '{{config.checkpoint_uri}}'
+        --nproc-per-node '{{config.train_nproc_per_node}}'
+        --train-steps '{{config.train_steps}}'
+    outputs:
+      - uri: "{{config.checkpoint_manifest_uri}}"
+        schema: npa.dm05-opendm.train.v1
+    next: serve_rollout
+
+  serve_rollout:
+    description: >
+      Start the checkpoint-derived upstream DM05 HTTP server and make a real
+      v1 action-chunk request from a prepared LIBERO observation, enforcing two
+      camera slots, the 8D Franka state, 7D actions, and chunk length ten.
+    resources: serve_gpu
+    inputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.dm05-opendm.prepare.v1
+      - uri: "{{config.checkpoint_manifest_uri}}"
+        schema: npa.dm05-opendm.train.v1
+    run:
+      shell: >
+        python3 -m npa.workflows.dm05_opendm serve-rollout
+        --repo-root '{{config.repo_root}}'
+        --opendm-python '{{config.opendm_python}}'
+        --prepared-uri '{{config.prepared_uri}}'
+        --checkpoint-uri '{{config.checkpoint_uri}}'
+        --rollout-uri '{{config.rollout_uri}}'
+        --port 7891
+        --server-cuda-visible-devices 0
+    outputs:
+      - uri: "{{config.rollout_manifest_uri}}"
+        schema: npa.dm05-opendm.serve-rollout.v1
+    next: evaluate_libero
+
+  evaluate_libero:
+    description: >
+      Re-start the exact checkpoint-derived HTTP server on one GPU and invoke
+      the pinned upstream Dexbotic LIBERO evaluator on a separate GPU.  It
+      consumes the served rollout proof, writes numerical closed-loop results,
+      and preserves actual evaluator MP4 rollouts.
+    resources: eval_gpu
+    inputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.dm05-opendm.prepare.v1
+      - uri: "{{config.checkpoint_manifest_uri}}"
+        schema: npa.dm05-opendm.train.v1
+      - uri: "{{config.rollout_manifest_uri}}"
+        schema: npa.dm05-opendm.serve-rollout.v1
+    run:
+      shell: >
+        python3 -m npa.workflows.dm05_opendm evaluate
+        --repo-root '{{config.repo_root}}'
+        --evaluator-root '{{config.evaluator_root}}'
+        --opendm-python '{{config.opendm_python}}'
+        --evaluator-python '{{config.evaluator_python}}'
+        --prepared-uri '{{config.prepared_uri}}'
+        --checkpoint-uri '{{config.checkpoint_uri}}'
+        --rollout-uri '{{config.rollout_uri}}'
+        --evaluation-uri '{{config.evaluation_uri}}'
+        --eval-trials '{{config.eval_trials_per_task}}'
+        --port 7892
+        --server-cuda-visible-devices 0
+        --evaluator-cuda-visible-devices 1
+    outputs:
+      - uri: "{{config.evaluation_manifest_uri}}"
+        schema: npa.dm05-opendm.closed-loop-evaluation.v1
+    next: emit_reviewable_artifacts
+
+  emit_reviewable_artifacts:
+    description: >
+      Independently package only measured upstream results, the actual RRD,
+      one factual evaluator MP4, and pinned-source/model/data provenance. This
+      stage makes no convergence or physical-robot-success claim.
+    resources: cpu
+    inputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.dm05-opendm.prepare.v1
+      - uri: "{{config.checkpoint_manifest_uri}}"
+        schema: npa.dm05-opendm.train.v1
+      - uri: "{{config.rollout_manifest_uri}}"
+        schema: npa.dm05-opendm.serve-rollout.v1
+      - uri: "{{config.evaluation_manifest_uri}}"
+        schema: npa.dm05-opendm.closed-loop-evaluation.v1
+    run:
+      shell: >
+        python3 -m npa.workflows.dm05_opendm report
+        --prepared-uri '{{config.prepared_uri}}'
+        --checkpoint-uri '{{config.checkpoint_uri}}'
+        --rollout-uri '{{config.rollout_uri}}'
+        --evaluation-uri '{{config.evaluation_uri}}'
+        --report-uri '{{config.report_uri}}'
+    outputs:
+      - uri: "{{config.provenance_uri}}"
+        schema: npa.dm05-opendm.provenance.v1
+      - uri: "{{config.rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.report_manifest_uri}}"
+        schema: npa.dm05-opendm.report.v1
+    terminal: true

@@ -874,6 +874,16 @@ skills:
           - workflows/testing/flex-pi-rtxpro-inference.yaml
       - type: file_exists
         path: npa/docker/workbench/flex-pi/REDISTRIBUTION.md
+  - name: opendm
+    category: tools
+    when_to_use: "Run, package, validate, or troubleshoot Dexmal OpenDM DM05 LIBERO training, HTTP inference, closed-loop evaluation, normalization, and factual RRD/MP4 outputs through the private NPA workflow."
+    path: skills/tools/opendm/SKILL.md
+    smoke:
+      - type: file_exists
+        path: docs/workbench/dm05-opendm.md
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/dm05-opendm.yaml
   - name: retargeting
     category: tools
     when_to_use: "Motion retargeting, SONIC retargeted motion artifacts, SkyPilot retargeting YAMLs, or CLI behavior."
