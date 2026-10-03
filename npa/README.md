@@ -500,6 +500,9 @@ The existing protected nightly workflow also runs this entrypoint with
 using only its Token Factory key. Receipt acceptance rechecks retained request,
 rubric, response hashes, exact model identity, bare-JSON completion and positive
 integer token usage after test execution; passing test counts alone are insufficient.
+Before execution it freezes the actual selected frame bytes and shared request
+context. Both retained outcomes and audit-only metadata must match that frozen
+task, rubric, threshold, sampling, model-only request and digest binding.
 This verifies internal evidence integrity, not provider authentication or promotion.
 It uploads sanitized receipts, not raw visuals
 or provider responses. This lane does not provision a GPU or replace the existing

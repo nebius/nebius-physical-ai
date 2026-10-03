@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -14,6 +15,7 @@ import sys
 
 import pytest
 
+from npa.workbench import vlm_eval
 from npa.workbench.vlm_eval import (
     HOSTED_RESPONSE_PARSER_VERSION,
     JUDGE_COMPARISON_RESULT_FILENAME,
@@ -253,6 +255,7 @@ def _verify(
     config_bytes = _read_private_artifact(config_path, target)
     receipt["configuration_sha256"] = hashlib.sha256(config_bytes).hexdigest()
     config = json.loads(config_bytes)
+    paired_bindings = _paired_bindings(config)
     if generated:
         _scheduled_preflight()
         receipt["credential_and_catalog_preflight_passed"] = True
@@ -266,7 +269,7 @@ def _verify(
     expected = sum(len(audit_controls(case)) for case in config["cases"].values())
     outcomes = _public_comparisons(target)
     receipt["outcomes"] = outcomes
-    complete = _artifacts_complete(config, outcomes, target)
+    complete = _artifacts_complete(config, outcomes, target, paired_bindings)
     if not complete:
         receipt["failure"] = "missing_or_unexpected_audit_artifacts"
     receipt["passed"] = (
@@ -284,7 +287,78 @@ def _verify(
     )
 
 
-def _artifacts_complete(config: dict, outcomes: list[dict], target: Path) -> bool:
+def _paired_bindings(config: dict) -> list[dict]:
+    return [
+        _paired_control_binding(control)
+        for control in audit_controls(config["cases"]["paired-judges"]).values()
+    ]
+
+
+def _paired_control_binding(control: dict) -> dict:
+    options = dict(control["request"])
+    request = VlmJudgeComparisonRequest(**options)
+    models = vlm_eval._comparison_models(request.primary_model, request.secondary_model)
+    values = asdict(request)
+    for field in ("primary_model", "secondary_model", "rubric_path"):
+        values.pop(field)
+    values["rubric"] = vlm_eval._load_rubric(
+        rubric=request.rubric, rubric_path=request.rubric_path
+    )
+    with vlm_eval._materialized_input(request.input_path) as local:
+        if "input_sha256" in control:
+            if (
+                hashlib.sha256(local.read_bytes()).hexdigest()
+                != control["input_sha256"]
+            ):
+                raise _AuditConfigurationError("audit_control_input_changed")
+        context = vlm_eval._comparison_context(local_input=local, **values)
+    common = vlm_eval._common_hosted_request(
+        prompt=context.prompt, frames=context.frames
+    )
+    return {
+        "report": _paired_report_binding(context, common),
+        "judges": [
+            _paired_judge_binding(context, vlm_eval._request_for_model(common, model))
+            for model in models
+        ],
+    }
+
+
+def _paired_report_binding(context, common: dict) -> dict:
+    return {
+        "schema_version": vlm_eval.JUDGE_COMPARISON_SCHEMA_VERSION,
+        "deployment_status": "audit_only",
+        "operational_rate_estimated": False,
+        "requests_differ_only_by_model": True,
+        "input_path": context.input_path,
+        "output_path": context.output_path,
+        "result_uri": vlm_eval.judge_comparison_result_uri_for(context.output_path),
+        "task": context.task,
+        "rubric": context.rubric,
+        "success_threshold": context.success_threshold,
+        "frame_selection": context.frame_selection,
+        "frame_count": len(context.frames),
+        "shared_frame_sha256": [
+            hashlib.sha256(frame.data).hexdigest() for frame in context.frames
+        ],
+        "common_request_sha256": vlm_eval._sha256_json(common),
+        "limitations": list(vlm_eval._comparison_limitations()),
+    }
+
+
+def _paired_judge_binding(context, request: dict) -> dict:
+    evidence = asdict(vlm_eval._comparison_request_evidence(request, context))
+    evidence.pop("requested_at")
+    return {
+        "model": request["model"],
+        "transport_request_sha256": vlm_eval._sha256_json(request),
+        "request": json.loads(json.dumps(evidence)),
+    }
+
+
+def _artifacts_complete(
+    config: dict, outcomes: list[dict], target: Path, paired_bindings: list[dict]
+) -> bool:
     controls = audit_controls(config["cases"]["paired-judges"])
     if [outcome["control_index"] for outcome in outcomes] != list(range(len(controls))):
         return False
@@ -296,9 +370,64 @@ def _artifacts_complete(config: dict, outcomes: list[dict], target: Path) -> boo
         content = _read_private_artifact(path, target)
         if hashlib.sha256(content).hexdigest() != outcomes[index]["artifact_sha256"]:
             return False
-        if not _retained_matches(control, json.loads(content)):
+        report = json.loads(content)
+        if not _retained_matches(control, report):
             return False
+        _require_paired_binding(report, paired_bindings[index])
     return True
+
+
+def _require_paired_binding(report: dict, binding: dict) -> None:
+    for field, expected in binding["report"].items():
+        _require_bound_value(report.get(field), expected)
+    if "mean_score" in report:
+        raise _AuditConfigurationError("paired_request_binding_mismatch")
+    for judge, expected in zip(
+        ("primary", "secondary"), binding["judges"], strict=True
+    ):
+        _require_judge_binding(report[judge], expected, binding["report"])
+    if all(
+        report[judge].get("result") is not None for judge in ("primary", "secondary")
+    ):
+        delta = round(
+            report["secondary"]["result"]["score"]
+            - report["primary"]["result"]["score"],
+            4,
+        )
+        _require_bound_value(report.get("score_delta_secondary_minus_primary"), delta)
+
+
+def _require_judge_binding(outcome: dict, expected: dict, report_binding: dict) -> None:
+    for field in ("model", "transport_request_sha256"):
+        _require_bound_value(outcome.get(field), expected[field])
+    result = outcome.get("result")
+    if result is None:
+        return
+    for field in (
+        "input_path",
+        "output_path",
+        "result_uri",
+        "task",
+        "rubric",
+        "success_threshold",
+        "frame_selection",
+        "frame_count",
+    ):
+        _require_bound_value(result.get(field), report_binding[field])
+    request = dict(result["evidence"]["request"])
+    request.pop("requested_at", None)
+    _require_bound_value(request, expected["request"])
+
+
+def _require_bound_value(actual, expected) -> None:
+    if type(expected) is bool:
+        require_boolean(actual, field="paired_binding")
+    elif type(expected) is int:
+        require_integer(actual, field="paired_binding")
+    elif type(expected) is float:
+        require_number(actual, field="paired_binding")
+    if json.dumps(actual, sort_keys=True) != json.dumps(expected, sort_keys=True):
+        raise _AuditConfigurationError("paired_request_binding_mismatch")
 
 
 def _read_private_artifact(path: Path, target: Path) -> bytes:
@@ -372,7 +501,8 @@ def _validate_retained_judge(outcome: dict) -> None:
     if (
         provider["status_code"] != 200
         or provider["parser_version"] != HOSTED_RESPONSE_PARSER_VERSION
-        or not provider["provider_request_id"]
+        or not isinstance(provider["provider_request_id"], str)
+        or not provider["provider_request_id"].strip()
     ):
         raise _AuditConfigurationError("invalid_retained_judge_evidence")
     usage = provider["usage"]

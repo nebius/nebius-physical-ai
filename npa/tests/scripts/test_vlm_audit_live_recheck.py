@@ -3,17 +3,18 @@
 import importlib.util
 import copy
 from dataclasses import asdict
-from io import BytesIO
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+from unittest.mock import patch
 
 import pytest
 from PIL import Image
 
 from npa.workbench import vlm_eval
+from npa.live_verification.vlm_audit_controls import audit_controls
 
 
 def _runner():
@@ -25,6 +26,7 @@ def _runner():
 
 
 def _config(monkeypatch, tmp_path):
+    Image.new("RGB", (2, 2)).save(tmp_path / "control.png")
     config = tmp_path / "source.json"
     config.write_text(
         json.dumps(
@@ -51,58 +53,21 @@ def _config(monkeypatch, tmp_path):
     return config
 
 
-def _report():
-    return {
-        "status": "judges_agree_needs_iteration",
-        "passed": False,
-        "escalation_required": False,
-        "primary": {
-            "model": "first/model",
-            "result": _judge_result("first/model"),
-            "error": None,
-        },
-        "secondary": {
-            "model": "second/model",
-            "result": _judge_result("second/model"),
-            "error": None,
-        },
-    }
-
-
-def _judge_result(model):
-    stream = BytesIO()
-    Image.new("RGB", (2, 2)).save(stream, format="PNG")
-    frame = vlm_eval.SelectedFrame("synthetic", "image/png", stream.getvalue())
-    prompt = vlm_eval._build_prompt(
-        task="synthetic", rubric="synthetic", frame_selection="final", frame_count=1
-    )
-    request = vlm_eval._build_request_evidence(
-        backend="api",
-        model=model,
-        prompt=prompt,
-        rubric="synthetic",
-        request={"temperature": 0},
-        frames=[frame],
-        frame_selection="final",
-        max_frames=1,
-    )
-    structured = vlm_eval._strict_comparison_verdict(
-        model=model, request=request, response=_synthetic_response(model)
-    )
-    return asdict(
-        vlm_eval._result_from_structured(
-            backend="api",
-            input_path="synthetic.png",
-            output_path="synthetic-output",
-            task="synthetic",
-            model=model,
-            success_threshold=0.5,
-            frame_selection="final",
-            frame_count=1,
-            rubric="synthetic",
-            structured=structured,
+def _report(target, index=0, config=None):
+    if config is None:
+        config = json.loads((target / "audit-config.json").read_text())
+    controls = list(audit_controls(config["cases"]["paired-judges"]).values())
+    request = controls[min(index, len(controls) - 1)]["request"]
+    if index >= len(controls):
+        request = {**request, "output_path": str(target / "paired-judges" / str(index))}
+    with patch.object(
+        vlm_eval,
+        "_post_with_readiness_retry",
+        side_effect=lambda **kwargs: _synthetic_response(kwargs["request"]["model"]),
+    ):
+        return asdict(
+            vlm_eval.compare_vlm_judges(vlm_eval.VlmJudgeComparisonRequest(**request))
         )
-    )
 
 
 def _synthetic_response(model):
@@ -245,7 +210,7 @@ def test_receipt_requires_real_execution_counts(
         directory = target / "paired-judges"
         directory.mkdir()
         (directory / runner.JUDGE_COMPARISON_RESULT_FILENAME).write_text(
-            json.dumps(_report())
+            json.dumps(_report(target))
         )
         (directory / runner.JUDGE_COMPARISON_RESULT_FILENAME).chmod(0o600)
         return exit_code
@@ -340,7 +305,7 @@ def test_symlink_loop_config_fails_closed_without_private_paths(
     assert loop.name not in public
 
 
-def test_symlink_loop_input_stays_in_private_log(monkeypatch, tmp_path, capsys):
+def test_symlink_loop_input_fails_before_execution(monkeypatch, tmp_path, capsys):
     runner = _runner()
     config = _config(monkeypatch, tmp_path)
     loop = tmp_path / "private-input-loop"
@@ -348,16 +313,15 @@ def test_symlink_loop_input_stays_in_private_log(monkeypatch, tmp_path, capsys):
     value = json.loads(config.read_text())
     case = value["cases"]["paired-judges"]
     case["request"]["input_path"] = str(loop)
-    # The real child verifies input bytes before any provider call.
+    # Freezing the actual input rejects the loop before child/provider execution.
     case["input_sha256"] = "0" * 64
     config.write_text(json.dumps(value))
     target = tmp_path / "evidence"
     assert runner.main(["--evidence-dir", str(target)]) == 1
     receipt = (target / "receipt.json").read_text()
     counts = json.loads(receipt)["counts"]
-    assert counts["collected"] == counts["executed"] == counts["failed"] == 1
-    assert counts["skipped"] == counts["deselected"] == 0
-    assert "Too many levels of symbolic links" in (target / "pytest.log").read_text()
+    assert not any(counts.values())
+    assert not (target / "pytest.log").exists()
     public = receipt + capsys.readouterr().out
     assert str(tmp_path) not in public
     assert loop.name not in public
@@ -562,7 +526,7 @@ def test_malformed_summary_scalar_fails_with_sanitized_receipt(
 
     def execute(root, target, config):
         _write_passing_execution(target, 1)
-        report = _report()
+        report = _report(target)
         if field in ("primary", "secondary"):
             report[field]["result"]["passed"] = invalid
         elif field.endswith("_score"):
@@ -670,10 +634,11 @@ def test_green_pytest_counts_cannot_mask_retained_artifact_faults(
 
     def execute(root, target, config):
         _write_passing_execution(target, 3)
+        prepared = json.loads(config.read_text())
         _child_report_fault(config, target, fault)
         if fault == "mutated_config":
             _mutate_frozen_expectations(config)
-        _write_fault_artifacts(runner, target, fault)
+        _write_fault_artifacts(runner, target, fault, prepared)
         return 0
 
     monkeypatch.setattr(runner, "_execute", execute)
@@ -732,7 +697,7 @@ def _change_bytes_after_first_read(monkeypatch, runner):
     monkeypatch.setattr(runner, "_read_private_artifact", read)
 
 
-def _write_fault_artifacts(runner, target, fault):
+def _write_fault_artifacts(runner, target, fault, prepared):
     if fault == "directory_symlink":
         elsewhere = target / "private-elsewhere"
         elsewhere.mkdir()
@@ -747,9 +712,9 @@ def _write_fault_artifacts(runner, target, fault):
         )
         directory.mkdir(parents=True)
         report = (
-            _fault_report(fault)
+            _fault_report(fault, target, index, prepared)
             if index == 0 or fault == "mutated_config"
-            else _report()
+            else _report(target, index, prepared)
         )
         path = directory / runner.JUDGE_COMPARISON_RESULT_FILENAME
         if index == 0 and fault == "fifo":
@@ -763,8 +728,8 @@ def _write_fault_artifacts(runner, target, fault):
             path.chmod(0o644 if index == 0 and fault == "readable_by_others" else 0o600)
 
 
-def _fault_report(fault):
-    report = _report()
+def _fault_report(fault, target, index, prepared):
+    report = _report(target, index, prepared)
     if fault in ("wrong_expectation", "mutated_config"):
         report.update(status="judges_agree_passed", passed=True)
         for judge in ("primary", "secondary"):
@@ -854,7 +819,7 @@ def test_malformed_provider_artifacts_cannot_pass_receipt(
 
     def execute(root, target, config):
         _write_passing_execution(target, 1)
-        report = _report()
+        report = _report(target)
         value = report[judge]["result"]
         components = field.split(".")
         for component in components[:-1]:
@@ -894,6 +859,7 @@ def test_malformed_provider_artifacts_cannot_pass_receipt(
         "status_missing",
         "status_float",
         "request_id_missing",
+        "request_id_whitespace",
     ],
 )
 def test_retained_semantic_fault_cannot_pass_receipt(
@@ -914,10 +880,13 @@ def test_retained_semantic_fault_cannot_pass_receipt(
             )
         elif fault.startswith("status_"):
             provider["status_code"] = None if fault == "status_missing" else 200.0
-        elif fault == "request_id_missing":
+        elif fault in ("request_id_missing", "request_id_whitespace"):
             raw = json.loads(provider["raw_response"])
-            raw.pop("id")
-            provider["provider_request_id"] = None
+            if fault == "request_id_missing":
+                raw.pop("id")
+                provider["provider_request_id"] = None
+            else:
+                raw["id"] = provider["provider_request_id"] = "   "
             _replace_raw(provider, raw)
         else:
             _mutate_completion(provider, fault)
@@ -969,13 +938,20 @@ def test_retained_usage_literals_cannot_pass_receipt(
     _assert_retained_rejected(monkeypatch, tmp_path, mutate)
 
 
-def _assert_retained_rejected(monkeypatch, tmp_path, mutate):
+def _assert_retained_rejected(
+    monkeypatch, tmp_path, mutate, request_updates=None, replace_pixels=False
+):
     runner = _runner()
     _config(monkeypatch, tmp_path)
 
     def execute(root, target, config):
         _write_passing_execution(target, 1)
-        report = _report()
+        altered = json.loads(config.read_text())
+        request = altered["cases"]["paired-judges"]["request"]
+        request.update(request_updates or {})
+        if replace_pixels:
+            Image.new("RGB", (2, 2), "red").save(request["input_path"])
+        report = _report(target, config=altered)
         mutate(report)
         directory = target / "paired-judges"
         directory.mkdir()
@@ -992,3 +968,100 @@ def _assert_retained_rejected(monkeypatch, tmp_path, mutate):
     assert receipt["counts"]["passed"] == 1
     assert receipt["passed"] is False and receipt["failure"] is not None
     assert str(tmp_path) not in body and "private-" not in body
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("task", "different task"),
+        ("rubric", "different rubric"),
+        ("success_threshold", 0.4),
+        ("frame_selection", "sequence"),
+        ("max_frames", 7),
+    ],
+)
+def test_complete_production_report_is_bound_to_frozen_options(
+    monkeypatch, tmp_path, field, value
+):
+    _assert_retained_rejected(
+        monkeypatch, tmp_path, lambda report: None, {field: value}
+    )
+
+
+def test_complete_production_report_is_bound_to_pre_execution_pixels(
+    monkeypatch, tmp_path
+):
+    _assert_retained_rejected(
+        monkeypatch, tmp_path, lambda report: None, replace_pixels=True
+    )
+
+
+@pytest.mark.parametrize("judge", ["primary", "secondary"])
+@pytest.mark.parametrize("field", ["task", "rubric", "frame", "generation"])
+def test_internally_rehashed_judge_cannot_change_shared_request(
+    monkeypatch, tmp_path, judge, field
+):
+    def mutate(report):
+        result = report[judge]["result"]
+        request = result["evidence"]["request"]
+        manifest = request["request_manifest"]
+        if field in ("task", "rubric"):
+            result[field] = "different private instructions"
+            request["prompt_sha256"] = vlm_eval._sha256_text(
+                vlm_eval._comparison_prompt(
+                    result["task"],
+                    result["rubric"],
+                    result["frame_selection"],
+                    result["frame_count"],
+                )
+            )
+            request["rubric_sha256"] = vlm_eval._sha256_text(result["rubric"])
+            manifest.update(
+                prompt_sha256=request["prompt_sha256"],
+                rubric_sha256=request["rubric_sha256"],
+            )
+        elif field == "frame":
+            request["frames"][0]["sha256"] = "f" * 64
+            manifest["frames"] = copy.deepcopy(request["frames"])
+        else:
+            manifest["generation_parameters"]["temperature"] = 1
+        request["request_manifest_sha256"] = vlm_eval._sha256_json(manifest)
+
+    _assert_retained_rejected(monkeypatch, tmp_path, mutate)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("deployment_status", "promoted"),
+        ("operational_rate_estimated", True),
+        ("operational_rate_estimated", 0),
+        ("requests_differ_only_by_model", False),
+        ("requests_differ_only_by_model", 1),
+        ("schema_version", "wrong-schema"),
+        ("common_request_sha256", "0" * 64),
+        ("shared_frame_sha256", ["0" * 64]),
+        ("task", "different top-level task"),
+        ("rubric", "different top-level rubric"),
+        ("frame_count", True),
+        ("score_delta_secondary_minus_primary", False),
+        ("score_delta_secondary_minus_primary", 0.5),
+        ("mean_score", 0),
+        ("limitations", []),
+    ],
+)
+def test_complete_report_requires_canonical_audit_metadata(
+    monkeypatch, tmp_path, field, value
+):
+    _assert_retained_rejected(
+        monkeypatch, tmp_path, lambda report: report.update({field: value})
+    )
+
+
+@pytest.mark.parametrize("judge", ["primary", "secondary"])
+def test_complete_report_requires_exact_transport_digest(monkeypatch, tmp_path, judge):
+    _assert_retained_rejected(
+        monkeypatch,
+        tmp_path,
+        lambda report: report[judge].update(transport_request_sha256="0" * 64),
+    )
