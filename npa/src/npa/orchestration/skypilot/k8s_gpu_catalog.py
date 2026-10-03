@@ -447,6 +447,9 @@ class KubernetesGpuInventory:
     nodes: tuple[KubernetesGpuNode, ...] = ()
     unbound_pending_gpu_pods: int = 0
     unbound_pending_gpu_requests: int = 0
+    # Keep Kubernetes label keys: marketing-name aliases do not establish
+    # whether a pending pod can bind a particular candidate node.
+    unbound_pending_gpu_selectors: tuple[tuple[dict[str, str], int], ...] = ()
     diagnostics: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
@@ -475,6 +478,9 @@ class KubernetesGpuInventory:
             "nodes": [node.to_dict() for node in self.nodes],
             "unbound_pending_gpu_pods": self.unbound_pending_gpu_pods,
             "unbound_pending_gpu_requests": self.unbound_pending_gpu_requests,
+            "unbound_pending_gpu_selectors": [
+                list(entry) for entry in self.unbound_pending_gpu_selectors
+            ],
         }
 
 
@@ -693,6 +699,7 @@ def discover_kubernetes_gpu_inventory(
         committed_by_node: dict[str, tuple[int, int, int, int, int]] = {}
         unbound_pending_gpu_pods = 0
         unbound_pending_gpu_requests = 0
+        unbound_pending_gpu_selectors: list[tuple[dict[str, str], int]] = []
         for pod in pod_payload.get("items", []):
             node_name, gpu, cpu, memory, pod_slots, storage = _pod_commitment(pod)
             if node_name:
@@ -711,6 +718,13 @@ def discover_kubernetes_gpu_inventory(
                 # still free for a new gang.
                 unbound_pending_gpu_pods += 1
                 unbound_pending_gpu_requests += gpu
+                selector = (pod.get("spec") or {}).get("nodeSelector") or {}
+                if not isinstance(selector, dict) or not all(
+                    isinstance(key, str) and isinstance(value, str)
+                    for key, value in selector.items()
+                ):
+                    selector = {}
+                unbound_pending_gpu_selectors.append((dict(selector), gpu))
     except (OSError, ValueError, subprocess.SubprocessError, KubernetesGpuCatalogError):
         return KubernetesGpuInventory(
             context,
@@ -902,6 +916,7 @@ def discover_kubernetes_gpu_inventory(
         ),
         unbound_pending_gpu_pods=unbound_pending_gpu_pods,
         unbound_pending_gpu_requests=unbound_pending_gpu_requests,
+        unbound_pending_gpu_selectors=tuple(unbound_pending_gpu_selectors),
     )
 
 
@@ -1061,6 +1076,34 @@ def _compatible_gang_nodes(inventory: KubernetesGpuInventory, shape: _GangRequir
     ]
 
 
+def _pending_gpu_contention(inventory, candidates) -> tuple[int, int]:
+    """Exclude demand only when exact node selectors prove non-contention."""
+    selectors = inventory.unbound_pending_gpu_selectors
+    if (
+        len(selectors) != inventory.unbound_pending_gpu_pods
+        or sum(count for _, count in selectors)
+        != inventory.unbound_pending_gpu_requests
+    ):
+        return (
+            inventory.unbound_pending_gpu_pods,
+            inventory.unbound_pending_gpu_requests,
+        )
+    contending = [
+        count
+        for selector, count in selectors
+        if not selector
+        or not isinstance(selector, Mapping)
+        or any(
+            not node.labels
+            or all(
+                dict(node.labels).get(key) == value for key, value in selector.items()
+            )
+            for node in candidates
+        )
+    ]
+    return len(contending), sum(contending)
+
+
 def _require_free_gang(inventory, shape, compatible_nodes, candidates):
     if len(candidates) < shape.nodes:
         error = (
@@ -1081,12 +1124,15 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
             "aggregate capacity on one node cannot satisfy multiple gang ranks."
         )
     if inventory.unbound_pending_gpu_pods:
-        raise PendingGpuPlacementError(
-            "free shared GPU capacity is indeterminate: Kubernetes has "
-            f"{inventory.unbound_pending_gpu_pods} active unbound GPU pod(s) "
-            f"requesting {inventory.unbound_pending_gpu_requests} GPU(s); wait for "
-            "authoritative placement or remove only the owned pending workload"
-        )
+        pending_pods, pending_requests = _pending_gpu_contention(inventory, candidates)
+        if pending_pods:
+            raise PendingGpuPlacementError(
+                "free shared GPU capacity is indeterminate: Kubernetes has "
+                f"{pending_pods} active unbound GPU pod(s) requesting "
+                f"{pending_requests} GPU(s); available placement evidence cannot "
+                f"rule out contention for {shape.accelerator.name}; wait "
+                "for authoritative placement or remove only the owned pending workload"
+            )
 
 
 def preflight_kubernetes_gpu_gang(
@@ -1311,6 +1357,12 @@ def discover_kubernetes_gpu_catalog(
     return parse_kubernetes_gpu_catalog(output, context=context)
 
 
+# Values are the SkyPilot ``skypilot.co/accelerator`` label value, which
+# SkyPilot's ``SkyPilotLabelFormatter`` derives as ``accelerator.lower()`` and
+# rejects unless it is all lowercase (``validate_label_value``). An uppercase
+# value such as "B200" is written to the node but never matches SkyPilot's
+# optimizer and fails ``FAILED_PRECHECKS``, so every value here must be
+# lowercase.
 _KNOWN_SKYPILOT_LABELS = {
     "b200": "b200",
     "nvidiab200": "b200",
@@ -1325,7 +1377,9 @@ def _known_skypilot_label(labels: dict[str, str]) -> str:
     for key in ("nvidia.com/gpu.product", "nebius.com/gpu-name"):
         normalized = _normalize(labels.get(key, ""))
         if normalized in _KNOWN_SKYPILOT_LABELS:
-            return _KNOWN_SKYPILOT_LABELS[normalized]
+            # Guard the SkyPilot lowercase invariant even if a future mapping
+            # entry is added in mixed case.
+            return _KNOWN_SKYPILOT_LABELS[normalized].lower()
     return ""
 
 
