@@ -90,12 +90,18 @@ The build command must:
   source revision, including upstream CUDA 12.8 PyTorch and FlashAttention;
 - clone Dexbotic at its exact revision and initialize only its pinned LIBERO
   submodule, then create the evaluator's Python 3.8 environment from the
-  upstream LIBERO requirements;
+  upstream LIBERO requirements. Install the standard `cmake` build tool too:
+  the upstream `egl_probe` dependency compiles with CMake;
 - install `rerun-sdk` and the NPA runtime dependencies used by the staged
   adapter;
 - emit source/dependency/license inventory into the private build evidence; and
 - scan the complete image before the private push. It remains outside public
   registry admission unless a separate, complete redistribution review passes.
+
+The generic BYOF builder makes the checked-out OpenDM tree owned by the runtime
+user. When the root-owned build layer records its revision, use the scoped
+`git -c safe.directory=/opt/byof -C /opt/byof rev-parse HEAD` form; do not
+write a global Git configuration.
 
 Run the image build through `npa workbench byof run` (or its
 `npa/scripts/run_byof_repo.py` equivalent) with `--repo-url
