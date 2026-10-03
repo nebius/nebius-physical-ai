@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import shutil
 import socket
@@ -41,7 +42,7 @@ VISUALIZATION_SCHEMA = "npa.cosmos3.fastwam-k2.visualization.v1"
 
 FRAMEWORK_REPOSITORY = "https://github.com/NVIDIA/cosmos-framework.git"
 FRAMEWORK_REVISION = "4e26181d87878a0b14c37ca021b0e2cd4f28dc5f"
-ROBOLAB_REPOSITORY = "https://github.com/NVIDIA/RoboLab.git"
+ROBOLAB_REPOSITORY = "https://github.com/NVlabs/RoboLab.git"
 ROBOLAB_REVISION = "ad45d4f974725d020f82c2b0d77d78533aeba2b3"
 DERIVATIVE_REPOSITORY = "geonmin-kim/Cosmos3-Edge-Policy-DROID-FastWAM-K2"
 DERIVATIVE_REVISION = "04cc10f6f790153fa5db1ff90e95ecf9196e88c5"
@@ -421,7 +422,7 @@ def _numeric(values: Iterable[Any]) -> list[float]:
     """Return finite numeric values while excluding booleans and malformed rows."""
     output: list[float] = []
     for value in values:
-        if type(value) in (int, float) and float(value) >= 0.0:
+        if type(value) in (int, float) and math.isfinite(float(value)) and float(value) >= 0.0:
             output.append(float(value))
     return output
 
@@ -435,11 +436,15 @@ def summarize_episode_metrics(rows: list[dict[str, Any]], tasks: Iterable[str]) 
     all_latency: list[float] = []
     for task in tasks:
         task_rows = grouped[task]
+        if not task_rows:
+            raise FastWamK2Error(f"RoboLab result rows lack requested task-success evidence: {task}")
         latency = _numeric(
             row.get("timing", {}).get("policy_inference_avg_ms")
             for row in task_rows
             if isinstance(row.get("timing"), dict)
         )
+        if len(latency) != len(task_rows):
+            raise FastWamK2Error(f"RoboLab result rows lack native policy latency evidence: {task}")
         all_latency.extend(latency)
         summary["tasks"][task] = {
             "episodes": len(task_rows),
@@ -642,9 +647,15 @@ def _rerun_module() -> Any:
     return rr
 
 
-def _log_rrd(rr: Any, destination: Path, comparison: dict[str, Any], videos: list[Path]) -> None:
+def _rrd_recording_id(comparison: dict[str, Any]) -> str:
+    """Bind a workflow RRD to its renderer-provided run identity when available."""
+    return os.environ.get("NPA_WORKFLOW_RUN_ID", "").strip() or comparison["prepared_sha256"]
+
+
+def _log_rrd(rr: Any, destination: Path, comparison: dict[str, Any], videos: list[Path]) -> str:
     """Write a factual Rerun recording from actual comparison metrics and MP4 files."""
-    recording = rr.RecordingStream("npa_cosmos3_fastwam_k2", recording_id=comparison["prepared_sha256"])
+    recording_id = _rrd_recording_id(comparison)
+    recording = rr.RecordingStream("npa_cosmos3_fastwam_k2", recording_id=recording_id)
     rr.save(str(destination), recording=recording)
     summary = json.dumps(comparison, indent=2, sort_keys=True)
     rr.log("reports/comparison", rr.TextDocument(summary, media_type="application/json"), static=True, recording=recording)
@@ -657,6 +668,7 @@ def _log_rrd(rr: Any, destination: Path, comparison: dict[str, Any], videos: lis
     flush = getattr(recording, "flush", None)
     if callable(flush):
         flush()
+    return recording_id
 
 
 def emit_visualization(*, full_wam_path: str, k2_path: str, comparison_path: str, output_path: str) -> dict[str, Any]:
@@ -674,7 +686,7 @@ def emit_visualization(*, full_wam_path: str, k2_path: str, comparison_path: str
         for index, video in enumerate(videos):
             shutil.copyfile(video, artifact_root / f"rollout-{index:04d}.mp4")
         rrd_path = artifact_root / "fastwam-k2-screening.rrd"
-        _log_rrd(_rerun_module(), rrd_path, comparison_body, videos)
+        recording_id = _log_rrd(_rerun_module(), rrd_path, comparison_body, videos)
         if not rrd_path.is_file() or rrd_path.stat().st_size == 0:
             raise FastWamK2Error("Rerun did not emit a nonempty recording")
         report = {
@@ -684,6 +696,7 @@ def emit_visualization(*, full_wam_path: str, k2_path: str, comparison_path: str
             "screening_only": comparison_body["screening_only"],
             "benchmark_claim": False,
             "rrd": "fastwam-k2-screening.rrd",
+            "rrd_recording_id": recording_id,
             "rollout_mp4_count": len(videos),
         }
         write_local_json(artifact_root / "visualization-result.json", report)

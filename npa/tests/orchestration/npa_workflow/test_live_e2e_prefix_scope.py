@@ -317,6 +317,29 @@ def test_other_marker_seeds_match_materialization(
     assert all(key.startswith(expected + "/") for key in storage[0].writes)
 
 
+def test_fastwam_k2_seed_is_a_protocol_request_under_the_materialized_root(
+    helpers, root, storage, tmp_path
+):
+    name = "cosmos3-fastwam-k2-eval.yaml"
+    path = helpers.materialize_live_spec(tmp_path, name, bucket=BUCKET, run_id=RUN_ID)
+    expected = f"{root}/{Path(name).stem}"
+    assert load_spec(path).config["prefix"] == expected
+
+    helpers.seed_live_workflow_inputs(spec_name=name, bucket=BUCKET, run_id=RUN_ID)
+
+    assert storage[0].writes == [f"{expected}/inputs/evaluation-request.json"]
+    request = json.loads(storage[0].objects[storage[0].writes[0]])
+    assert request == {
+        "protocol": "screening",
+        "tasks": ["RubiksCubesInBinTask", "StackYellowOnRedTask"],
+        "num_episodes_adaptive": 200,
+        "ci_pp_width": 0.14,
+        "num_envs": 1,
+        "instruction_type": "default",
+        "video_mode": "sensor",
+    }
+
+
 def test_delayed_trigger_captures_materialized_root(
     helpers, root, storage, monkeypatch, tmp_path
 ):

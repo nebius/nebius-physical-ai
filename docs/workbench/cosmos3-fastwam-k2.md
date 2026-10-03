@@ -50,8 +50,9 @@ The full-WAM arm uses the base checkpoint revision
 4. `compare` consumes both completed arms and reports paired task-success and
    actual native policy latency; it excludes open-loop error as a decision
    signal.
-5. `visualize` consumes those exact artifacts and emits a factual Rerun `.rrd`
-   plus copied rollout MP4s.
+5. `visualize` consumes those exact artifacts and emits a factual run-identified
+   Rerun `.rrd` plus copied rollout MP4s; the prepared-input hash remains in
+   the report as the comparison-provenance identity.
 
 The card calls the two named tasks a discriminative screen, not a benchmark.
 The supplied request uses `RubiksCubesInBinTask` and `StackYellowOnRedTask` with
@@ -64,7 +65,7 @@ A positive screen still requires a separately defined full-suite evaluation.
 | --- | --- | --- |
 | K=2 checkpoint | Publisher: [geonmin-kim](https://huggingface.co/geonmin-kim); model card claims NVIDIA copyright and identifies the NVIDIA Edge base | The card metadata links the NVIDIA Open Model License while the shipped card text includes OpenMDW-1.1. This discrepancy is recorded rather than resolved by NPA. Fetch at runtime at the exact revision; no checkpoint, adapter, or cache is put in an image or committed artifact. |
 | Cosmos Framework | [NVIDIA/cosmos-framework](https://github.com/NVIDIA/cosmos-framework/tree/4e26181d87878a0b14c37ca021b0e2cd4f28dc5f), NVIDIA copyright/NOTICE and third-party attributions retained | `LICENSE` is OpenMDW-1.1. Source is fetched at runtime; the overlay's modification and hashes are recorded with the run. |
-| RoboLab | [NVIDIA/RoboLab](https://github.com/NVIDIA/RoboLab/tree/ad45d4f974725d020f82c2b0d77d78533aeba2b3), authored by Xuning Yang and contributors | Apache-2.0 with upstream `THIRD_PARTY_NOTICES.md`. Source and Isaac runtime remain runtime-only. |
+| RoboLab | [NVlabs/RoboLab](https://github.com/NVlabs/RoboLab/tree/ad45d4f974725d020f82c2b0d77d78533aeba2b3), authored by Xuning Yang and contributors | Apache-2.0 with upstream `THIRD_PARTY_NOTICES.md`. Source and Isaac runtime remain runtime-only. |
 | Isaac Sim / Isaac Lab runtime | NVIDIA product runtime consumed by RoboLab's documented `uv sync --extra isaac50` path | No Isaac bytes or acceptance variable are baked into the NPA image or workflow. The upstream README identifies `OMNI_KIT_ACCEPT_EULA=Y` as its documented first-use mechanism outside tests; no new NPA checkbox, `ACCEPT_*` flag, or duplicate attestation is created here. A run may use only an existing operator-authorized product mechanism. |
 | Output | Native RoboLab rows, MP4s, RRD, and NPA provenance | Output remains run-scoped. It carries upstream identities and is not treated as a redistribution grant for checkpoints, source, or simulator assets. |
 
@@ -75,6 +76,13 @@ source-matched immutable replacement after its local and registry gates pass.
 This change does not publish an image or make an OCI-metadata claim. A live run
 must record the exact resolved image digest and inspect the produced artifacts
 before any live-ready claim.
+
+The opt-in live-submit case seeds only the documented evaluation protocol, then
+requires the five native stages to publish every result. Its independent
+read-back verifies every declared artifact hash, finite native latency and task
+success values, the K=2 serving record, decoded RRD application/run identity,
+and an MP4 from each policy arm. It requires an explicit source-matched image
+digest; it never falls back to the quarantined release.
 
 RoboLab's upstream citation is retained below. Neither the model card nor the
 pinned framework README supplied a separate BibTeX entry in the inspected

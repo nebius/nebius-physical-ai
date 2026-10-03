@@ -670,6 +670,23 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         ),
     ),
     SubmitLiveCase(
+        "cosmos3-fastwam-k2-eval.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        image_tool="cosmos3",
+        rotation_skip=True,
+        skip_reason=(
+            "Requires an operator-built, source-matched immutable Cosmos3 image and a "
+            "qualified two-RTX-PRO-6000 closed-loop target; the public Cosmos3 release is "
+            "quarantined and must not be substituted."
+        ),
+        notes=(
+            "Five-stage native RoboLab screening: hash matched tasks, full-WAM rollout, "
+            "exact retained-vision K=2 rollout, paired closed-loop success/latency, and "
+            "factual RRD/MP4 read-back. It is not a benchmark or physical-robot claim."
+        ),
+    ),
+    SubmitLiveCase(
         "cosmos3-super-b200-benchmark.yaml",
         "gpu",
         secret_envs=(

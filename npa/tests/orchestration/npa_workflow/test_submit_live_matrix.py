@@ -935,6 +935,19 @@ def test_cosmos3_generate_registered_for_live_infra() -> None:
     assert not case.runtime
 
 
+def test_cosmos3_fastwam_k2_is_an_opt_in_native_gpu_qualification() -> None:
+    case = next(
+        (c for c in SUBMIT_LIVE_MATRIX if c.spec == "cosmos3-fastwam-k2-eval.yaml"), None
+    )
+
+    assert case is not None, "cosmos3-fastwam-k2-eval.yaml missing from SUBMIT_LIVE_MATRIX"
+    assert case.tier == "gpu"
+    assert case.image_tool == "cosmos3"
+    assert case.rotation_skip and not case.plan_only
+    assert {"HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"} <= set(case.secret_envs)
+    assert "source-matched immutable Cosmos3 image" in case.skip_reason
+
+
 @pytest.mark.parametrize(
     "spec",
     ["byof-wan2.2.yaml", "byof-wan2.2-multigpu.yaml"],

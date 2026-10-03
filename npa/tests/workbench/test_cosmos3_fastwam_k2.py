@@ -10,16 +10,19 @@ from npa.workbench.cosmos.fastwam_k2 import (
     CONDITIONING_LATENT_FRAMES,
     KEEP_GENERATED_VISION_FRAMES,
     PREPARED_SCHEMA,
+    ROBOLAB_REPOSITORY,
     TOKENS_PER_VISION_LATENT_FRAME,
     VARIANT_SCHEMA,
     EvaluationRequest,
     FastWamK2Error,
     _isaac_runtime_env,
     _prepared_payload,
+    _rrd_recording_id,
     _run_robolab,
     apply_k2_runtime_overlay,
     compare_variants,
     server_argv,
+    summarize_episode_metrics,
 )
 from npa.workbench.cosmos.policy_artifacts import publish_bundle, write_local_json
 
@@ -79,6 +82,11 @@ def test_overlay_retains_k2_generated_frames_and_native_condition_mask(tmp_path:
     assert "kept_latent_frames = min(num_latent_frames, needed_latent_frames + keep_generated)" in model
     assert "condition_indexes" in model
     assert "condition_mask" in model
+
+
+def test_robolab_checkout_uses_the_upstream_published_repository() -> None:
+    """Pin the repository namespace named by both upstream policy cards."""
+    assert ROBOLAB_REPOSITORY == "https://github.com/NVlabs/RoboLab.git"
 
 
 def test_server_argv_never_uses_k0_drop_generated_vision(tmp_path: Path) -> None:
@@ -162,3 +170,38 @@ def test_comparison_requires_matched_closed_loop_manifests(tmp_path: Path) -> No
     assert persisted["decision_basis"] == "closed-loop task success; open-loop errors are intentionally excluded"
     assert persisted["benchmark_claim"] is False
     assert persisted["paired_task_metrics"]["RubiksCubesInBinTask"]["success_rate_delta"] == 0.25
+
+
+def test_episode_metrics_require_native_latency_for_every_closed_loop_row() -> None:
+    rows = [
+        {
+            "task_name": "RubiksCubesInBinTask",
+            "success": True,
+            "timing": {"policy_inference_avg_ms": 12.5},
+        },
+        {
+            "task_name": "RubiksCubesInBinTask",
+            "success": False,
+            "timing": {"policy_inference_avg_ms": 7.5},
+        },
+    ]
+
+    metrics = summarize_episode_metrics(rows, ["RubiksCubesInBinTask"])
+
+    assert metrics["tasks"]["RubiksCubesInBinTask"]["success_rate"] == 0.5
+    assert metrics["overall"]["policy_inference_avg_ms"] == 10.0
+    rows[1]["timing"] = {}
+    try:
+        summarize_episode_metrics(rows, ["RubiksCubesInBinTask"])
+    except FastWamK2Error as exc:
+        assert "native policy latency" in str(exc)
+    else:  # pragma: no cover - a non-measurement must not produce a report
+        raise AssertionError("missing native latency was accepted")
+
+
+def test_rrd_uses_the_renderer_run_identity_when_present(monkeypatch) -> None:
+    comparison = {"prepared_sha256": "prepared-evidence"}
+
+    assert _rrd_recording_id(comparison) == "prepared-evidence"
+    monkeypatch.setenv("NPA_WORKFLOW_RUN_ID", "workflow-run-identity")
+    assert _rrd_recording_id(comparison) == "workflow-run-identity"
