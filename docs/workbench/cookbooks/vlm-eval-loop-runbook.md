@@ -61,6 +61,8 @@ it can extract embedded JSON, accept duplicate keys and coerced types, clamp
 scores, and return a verdict with missing or non-`stop` completion metadata.
 Retained evidence does not make such a verdict eligible for promotion. The live
 provenance lane below separately requires complete output and checks its framing.
+The promotion gate rejects compatibility-only results, requiring a completed,
+non-refused, strictly typed retained verdict for either backend.
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
 
@@ -207,10 +209,72 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 
 `scores_uri` receives:
 
-- `rollouts/<rollout-id>/vlm_eval_stub.json`: one structured result per rollout.
+- `rollouts/<rollout-id>/vlm_eval.json`: one structured result per rollout.
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
   per-rollout `{success, score, rationale}` records.
+
+`vlm_eval.json` is backend-neutral; inspect the payload's `backend` and
+`evidence.provider` fields to distinguish real inference from a fixture.
+Readers retain `vlm_eval_stub.json` only for historical bundles. Do not declare
+that legacy name in new workflows.
+
+For external scripts, dashboards, and workflow consumers migrating to this version:
+
+1. Write and declare `vlm_eval.json` for new directory or object-prefix outputs,
+   including each rollout subdirectory. No legacy alias or duplicate is emitted.
+2. Read the canonical filename first. Fall back to `vlm_eval_stub.json` only when
+   the canonical object is absent. If it exists but is malformed, empty, unreadable,
+   or fails validation, report that failure; never substitute a stale legacy score.
+3. Preserve explicitly supplied `.json` output paths exactly. Custom paths do not
+   receive a renamed file, and `task_success_report.json` remains unchanged.
+4. Determine fixture versus inference status from the payload and retained evidence,
+   never from either filename. Historical bundles can keep their original names.
+
+The data-factory `grade_gate` requires consistent retained inference evidence
+before a VLM result can promote a checkpoint. Stub results, score overrides, and
+historical reports without provider evidence produce `loop_back` with an explicit
+reason. The gate checks submitted-frame metadata, request and response hashes,
+and agreement between the retained response and serialized result. These checks
+establish internal consistency, not provider authentication or visual correctness.
+Frame digests are checked for valid SHA-256 format and binding to the request
+manifest; this gate does not fetch image bytes to recompute their hashes. Consumers
+that need payload verification must retain and independently hash the submitted
+normalized images. Schema-v2 sampling counts, indices, timestamps, and coverage
+flags must agree with the frame metadata. A known, uniform source kind, a source
+count, and in-range selected indices are required for `coverage_complete: true`;
+unknown or mixed source kinds normalize to null with incomplete coverage.
+The producer emits v2. Historical v1 evidence remains valid without sampling
+fields and is not upgraded to complete sampling. Other schema versions fail closed.
+
+New results retain the effective `rubric` so custom-rubric prompt and rubric
+hashes can be checked. Historical v1 results without this field are accepted only
+when the default rubric reproduces both hashes. The gate requires exact requested
+and returned model identity for hosted results, including unregistered models.
+Invalid evidence retains `reason: vlm_provider_evidence_invalid` for existing
+consumers and adds `evidence_reason` to distinguish schema, request, digest,
+sampling, frame metadata, provider response/transport/metadata, and verdict failures.
+
+Promotion eligibility is stricter than the legacy self-hosted reader. Both VLM
+backends must retain an explicit `finish_reason: stop`, no provider refusal, and
+one complete JSON object, optionally inside a complete Markdown JSON fence.
+The verdict must contain a boolean `success`, a finite numeric `score` in `[0, 1]`,
+and a nonempty string `rationale`. Duplicate keys, surrounding prose, partial
+fences, clamped scores, and coerced field types cannot promote a checkpoint.
+The self-hosted reader still parses its historical compatibility inputs and
+records its original parser version; obtaining a score through that reader does
+not make the result eligible for promotion. An absent completion status also
+blocks promotion. Missing self-hosted request/model identity metadata remains
+compatible when the completion and other evidence satisfy the gate.
+
+These refusals retain the public `vlm_provider_evidence_invalid` reason.
+`evidence_reason` distinguishes `provider_completion_incomplete`,
+`provider_completion_filtered`, `provider_completion_refused`,
+`provider_refusal_invalid`, and `provider_verdict_invalid`. Duplicate keys in the
+retained response envelope produce `provider_response_invalid`.
+Provider `success` remains in the retained response; optional serialized
+`provider_success` fields are checked when present. The numeric score and
+threshold still determine the score gate. The Cosmos Evaluator contract is unchanged.
 
 Read the report:
 
