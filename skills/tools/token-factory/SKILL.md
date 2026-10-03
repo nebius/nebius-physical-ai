@@ -139,6 +139,10 @@ fails the aggregate, is written before the CLI exits 1, and does not trigger a s
 retry. Later selected images are still attempted once. `--dry-run` emits the
 same failed result and exits 1 without writing it.
 
+The partial-result guarantee applies to cooperative sentinel responses, not
+provider/configuration exceptions or storage-write failures; those can abort
+before an artifact is saved.
+
 Caption preserves existing model defaults when neither thinking flag is present.
 If an explicitly selected reasoning-capable vision model returns no visible
 caption, retry the command with `--no-thinking`. `--thinking` deliberately
