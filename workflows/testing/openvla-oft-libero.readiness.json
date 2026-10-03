@@ -1,10 +1,10 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "c32bca41b58c9841bbc8941f7f294e12c4c92ce831dd61571569ac1193b2e68a",
+  "workflow_sha256": "fc1f32beb57ba68d2447c08df646409660878cc7546cde98ee42b015ca26c7e5",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected.",
+      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected; its upstream-compatible H100 train and rollout profiles retain the same GPU product.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/openvla-oft-libero.yaml --json",
         "npa workbench workflow plan-spec workflows/testing/openvla-oft-libero.yaml --check-render --json"
@@ -12,7 +12,7 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Focused tests execute the RLDS preparation and verified rollout-to-evaluation-to-visualization artifact chain, bind all five native toolRefs to their real CLI flags, verify the upstream eight-process torchrun launcher and immutable model-cache identity, and reject stock OpenVLA decoder-only checkpoints.",
+      "reason": "Focused tests execute the RLDS preparation and verified rollout-to-evaluation-to-visualization artifact chain, bind all five native toolRefs to their real CLI flags, verify the documented upstream torchrun argv and immutable model-cache identity, preserve the training LoRA rank through rollout, reject stock OpenVLA decoder-only checkpoints, and fail closed before an unlicensed direct dependency can mutate a runtime cache.",
       "evidence": [
         "npa/tests/test_openvla_workbench.py",
         "npa/tests/guardrails/test_three_tier_contract.py",
@@ -30,14 +30,14 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "Authoritative public source, model, suite-checkpoint, and modified LIBERO metadata were inspected, but this session did not materialize the full RLDS data or OFT runtime on a worker.",
+      "reason": "Authoritative public source, model, suite-checkpoint, and modified LIBERO metadata were inspected, but this session did not materialize the full RLDS data or OFT runtime on a worker. The pinned upstream package's unversioned dlimp_openvla dependency lacks a repository license, so the runtime now refuses before it is fetched or installed.",
       "evidence": [
         "docs/workbench/openvla-oft.md"
       ]
     },
     "credentials": {
       "status": "verified",
-      "reason": "NPA HF, object-storage, Nebius, and NGC preflight checks passed using existing operator configuration; the public source/model/data endpoints required no new acceptance mechanism.",
+      "reason": "NPA HF, object-storage, Nebius, and NGC preflight checks passed using existing operator configuration. Exact-revision model, adapter, and dataset payload access remains unverified until the direct-dependency terms issue is resolved and the runtime fetch can lawfully proceed.",
       "evidence": [
         "npa workbench health preflight --json",
         "npa workbench health preflight --checks nebius --json"

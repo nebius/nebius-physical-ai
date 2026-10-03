@@ -43,13 +43,16 @@ resources:
     image: "{{config.runtime_image}}"
   train:
     cloud: kubernetes
-    accelerators: B200:8
+  # Upstream pins PyTorch 2.2.0 and reports A100 execution. H100 is the
+  # selected NPA CUDA-generation target; train and rollout use the same product
+  # to retain the upstream device-consistency constraint.
+    accelerators: H100:8
     cpus: 16
     memory: 128Gi
     image: "{{config.runtime_image}}"
   rollout:
     cloud: kubernetes
-    accelerators: B200:1
+    accelerators: H100:1
     cpus: 16
     memory: 128Gi
     image: "{{config.runtime_image}}"

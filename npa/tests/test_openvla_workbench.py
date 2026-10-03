@@ -100,6 +100,28 @@ def test_finetune_launcher_uses_upstream_eight_process_torchrun(tmp_path: Path) 
     assert command[4].endswith(pipe.UPSTREAM_FINETUNE_SCRIPT)
 
 
+def test_finetune_arguments_match_the_documented_decay_flag(tmp_path: Path) -> None:
+    """The upstream decay flag accepts one value before the next flag."""
+    arguments = pipe._finetune_arguments(
+        pipe.TrainConfig("prepared.json", "output", "runtime"),
+        tmp_path / "model",
+        tmp_path / "rlds",
+        "libero_spatial_no_noops",
+        tmp_path / "results",
+    )
+    decay_index = arguments.index("--num_steps_before_decay")
+    assert arguments[decay_index + 1] == "100000"
+    assert arguments[decay_index + 2] == "--max_steps"
+    assert arguments[arguments.index("--dataset_name") + 1] == "libero_spatial_no_noops"
+
+
+def test_bootstrap_refuses_the_unlicensed_direct_dependency(tmp_path: Path) -> None:
+    """An unresolved direct runtime dependency fails before cache mutation."""
+    with pytest.raises(pipe.OpenVLAPipelineError, match="before download"):
+        pipe.bootstrap_runtime(str(tmp_path / "runtime"))
+    assert not (tmp_path / "runtime").exists()
+
+
 def test_immutable_model_cache_requires_matching_ready_identity(tmp_path: Path) -> None:
     runtime = tmp_path / "runtime"
     identity = hashlib.sha256(
@@ -139,6 +161,13 @@ def test_runtime_identity_requires_resolved_dependency_provenance(
     (runtime / "ready.json").write_text('{"status": "ready"}')
     with pytest.raises(pipe.OpenVLAPipelineError, match="dependency provenance"):
         pipe._runtime_identity(runtime)
+
+
+def test_training_lora_rank_is_bound_into_rollout_provenance() -> None:
+    """A rollout must preserve the rank chosen by its source training bundle."""
+    assert pipe._training_lora_rank({"algorithm": {"lora_rank": 16}}) == 16
+    with pytest.raises(pipe.OpenVLAPipelineError, match="invalid LoRA"):
+        pipe._training_lora_rank({"algorithm": {"lora_rank": 0}})
 
 
 def test_train_config_rejects_moving_model_reference() -> None:
@@ -189,6 +218,31 @@ def test_official_suite_contract_has_immutable_component_identity(suite: str) ->
     assert re.fullmatch(r"[0-9a-f]{40}", entry["revision"])
     assert entry["component_step"].isdigit()
     assert entry["repo_id"].startswith("moojink/openvla-7b-oft-finetuned-")
+    assert entry["action_head"] == f"action_head--{entry['component_step']}_checkpoint.pt"
+    assert entry["proprio_projector"] == (
+        f"proprio_projector--{entry['component_step']}_checkpoint.pt"
+    )
+    assert entry["lora_adapter"] == "lora_adapter"
+
+
+def test_pipeline_main_dispatches_prepare(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """The module entrypoint dispatches one parsed command without mutation bugs."""
+    monkeypatch.setattr(pipe, "prepare", lambda config: {"dataset": config.dataset_name})
+    result = pipe.main(
+        [
+            "prepare",
+            "--dataset-uri",
+            "s3://bucket/rlds/",
+            "--dataset-name",
+            "libero_spatial_no_noops",
+            "--task-suite",
+            "libero_spatial",
+            "--output-uri",
+            "s3://bucket/prepare/",
+        ]
+    )
+    assert result == 0
+    assert json.loads(capsys.readouterr().out)["dataset"] == "libero_spatial_no_noops"
 
 
 @pytest.mark.parametrize(

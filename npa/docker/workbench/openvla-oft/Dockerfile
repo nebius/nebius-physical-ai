@@ -12,7 +12,6 @@ LABEL npa.tool="openvla-oft" \
       npa.source.ref="e4287e94541f459edc4feabc4e181f537cd569a8" \
       npa.weights="runtime-only" \
       npa.data="runtime-only" \
-      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.revision="${NPA_SOURCE_COMMIT}"
 
 ENV DEBIAN_FRONTEND=noninteractive \

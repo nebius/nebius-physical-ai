@@ -58,6 +58,13 @@ DEFAULT_LORA_RANK = 32
 DEFAULT_SEED = 7
 DEFAULT_TRIALS = 50
 
+# The pinned OFT project declares this direct Git dependency without a revision.
+# Its current upstream repository does not carry a license file.  Do not resolve
+# a moving, unlicensed runtime dependency merely because the top-level OFT source
+# is MIT licensed.  The runtime can resume after the upstream owners publish an
+# authoritative license/permission for a specific revision.
+_UNLICENSED_RUNTIME_DEPENDENCY = "moojink/dlimp_openvla"
+
 PREPARE_SCHEMA = "npa.workbench.openvla-oft.prepare.v1"
 TRAIN_SCHEMA = "npa.workbench.openvla-oft.train.v1"
 ROLLOUT_SCHEMA = "npa.workbench.openvla-oft.rollout.v1"
@@ -71,26 +78,41 @@ OFFICIAL_SUITE_CHECKPOINTS: dict[str, dict[str, str]] = {
         "repo_id": "moojink/openvla-7b-oft-finetuned-libero-spatial",
         "revision": "6d0231af0e48c5985f1ff86908f4674b84bc049b",
         "component_step": "150000",
+        "action_head": "action_head--150000_checkpoint.pt",
+        "proprio_projector": "proprio_projector--150000_checkpoint.pt",
+        "lora_adapter": "lora_adapter",
     },
     "libero_object": {
         "repo_id": "moojink/openvla-7b-oft-finetuned-libero-object",
         "revision": "4c89574e1c538b6c102f43f0526d60a9d3650148",
         "component_step": "150000",
+        "action_head": "action_head--150000_checkpoint.pt",
+        "proprio_projector": "proprio_projector--150000_checkpoint.pt",
+        "lora_adapter": "lora_adapter",
     },
     "libero_goal": {
         "repo_id": "moojink/openvla-7b-oft-finetuned-libero-goal",
         "revision": "c2d0f9fbbd82674683b397ff923168a12f6a307b",
         "component_step": "50000",
+        "action_head": "action_head--50000_checkpoint.pt",
+        "proprio_projector": "proprio_projector--50000_checkpoint.pt",
+        "lora_adapter": "lora_adapter",
     },
     "libero_10": {
         "repo_id": "moojink/openvla-7b-oft-finetuned-libero-10",
         "revision": "95220f9a3421a7ff12d4218e73d09ade830fa9a3",
         "component_step": "150000",
+        "action_head": "action_head--150000_checkpoint.pt",
+        "proprio_projector": "proprio_projector--150000_checkpoint.pt",
+        "lora_adapter": "lora_adapter",
     },
     "libero_90": {
         "repo_id": "moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10",
         "revision": "638918f3d1c2e43a39a8a20772bdb8b91835e4b7",
         "component_step": "300000",
+        "action_head": "action_head--300000_checkpoint.pt",
+        "proprio_projector": "proprio_projector--300000_checkpoint.pt",
+        "lora_adapter": "lora_adapter",
     },
 }
 
@@ -268,10 +290,11 @@ def _runtime_identity(runtime: Path) -> dict[str, Any]:
 
 
 def bootstrap_runtime(runtime_root: str) -> Path:
-    """Fetch/install the immutable OFT source in an operator-owned cache.
+    """Fetch/install OFT after its direct-dependency terms are resolved.
 
     The ready marker is written only after the complete source/runtime install.
     """
+    _reject_unlicensed_runtime_dependency()
     root = Path(_require(runtime_root, "runtime_root")).expanduser().resolve()
     with _runtime_cache_lock(root):
         return _bootstrap_runtime_unlocked(root)
@@ -397,6 +420,15 @@ def _bootstrap_runtime_unlocked(root: Path) -> Path:
         shutil.rmtree(root, ignore_errors=True)
         raise
     return root
+
+
+def _reject_unlicensed_runtime_dependency() -> None:
+    """Fail before fetching OFT's unresolved direct dependency."""
+    raise OpenVLAPipelineError(
+        "OFT runtime is blocked before download: "
+        f"{_UNLICENSED_RUNTIME_DEPENDENCY} is an unpinned direct dependency "
+        "with no authoritative repository license at the resolved revision"
+    )
 
 
 def _materialize_model_snapshot(
@@ -562,6 +594,54 @@ def _validate_oft_components(root: Path) -> dict[str, str]:
     }
 
 
+def _finetune_arguments(
+    cfg: TrainConfig,
+    model_snapshot: Path,
+    data_root: Path,
+    dataset_name: str,
+    results: Path,
+) -> list[str]:
+    """Return the documented LIBERO OFT fine-tuning arguments."""
+    return [
+        "--vla_path",
+        str(model_snapshot),
+        "--data_root_dir",
+        str(data_root),
+        "--dataset_name",
+        dataset_name,
+        "--run_root_dir",
+        str(results),
+        "--use_l1_regression",
+        "True",
+        "--use_diffusion",
+        "False",
+        "--use_film",
+        "False",
+        "--num_images_in_input",
+        "2",
+        "--use_proprio",
+        "True",
+        "--batch_size",
+        str(cfg.batch_size),
+        "--learning_rate",
+        str(cfg.learning_rate),
+        "--num_steps_before_decay",
+        "100000",
+        "--max_steps",
+        str(cfg.max_steps),
+        "--save_freq",
+        "10000",
+        "--save_latest_checkpoint_only",
+        "False",
+        "--image_aug",
+        "True",
+        "--lora_rank",
+        str(cfg.lora_rank),
+        "--seed",
+        str(cfg.seed),
+    ]
+
+
 def train(cfg: TrainConfig) -> dict[str, Any]:
     """Run upstream OFT LoRA fine-tuning and publish its component bundle."""
     cfg.validate()
@@ -591,44 +671,9 @@ def train(cfg: TrainConfig) -> dict[str, Any]:
             runtime,
             UPSTREAM_FINETUNE_SCRIPT,
             cfg.processes,
-            [
-                "--vla_path",
-                str(model_snapshot),
-                "--data_root_dir",
-                str(data_root),
-                "--dataset_name",
-                dataset_name,
-                "--run_root_dir",
-                str(results),
-                "--use_l1_regression",
-                "True",
-                "--use_diffusion",
-                "False",
-                "--use_film",
-                "False",
-                "--num_images_in_input",
-                "2",
-                "--use_proprio",
-                "True",
-                "--batch_size",
-                str(cfg.batch_size),
-                "--learning_rate",
-                str(cfg.learning_rate),
-                "--max_steps",
-                str(cfg.max_steps),
-                "--num_steps_before_decay",
-                "100000",
-                "--save_freq",
-                "10000",
-                "--save_latest_checkpoint_only",
-                "False",
-                "--image_aug",
-                "True",
-                "--lora_rank",
-                str(cfg.lora_rank),
-                "--seed",
-                str(cfg.seed),
-            ],
+            _finetune_arguments(
+                cfg, model_snapshot, data_root, dataset_name, results
+            ),
         )
         _run(command, cwd=runtime / "source", log=workspace / "train.log")
         components = _validate_oft_components(results)
@@ -708,6 +753,17 @@ def _parse_rollout_log(log: Path) -> dict[str, Any]:
     return result
 
 
+def _training_lora_rank(training: dict[str, Any]) -> int:
+    """Extract and validate the training bundle's LoRA-rank compatibility key."""
+    algorithm = training.get("algorithm")
+    if not isinstance(algorithm, dict):
+        raise OpenVLAPipelineError("training bundle is missing algorithm provenance")
+    rank = algorithm.get("lora_rank")
+    if isinstance(rank, bool) or not isinstance(rank, int) or rank <= 0:
+        raise OpenVLAPipelineError("training bundle has an invalid LoRA rank")
+    return rank
+
+
 def rollout(cfg: RolloutConfig) -> dict[str, Any]:
     """Run closed-loop upstream LIBERO rollouts using OFT-only components."""
     cfg.validate()
@@ -716,6 +772,7 @@ def rollout(cfg: RolloutConfig) -> dict[str, Any]:
         training = materialize_bundle(cfg.training_manifest_uri, trained, TRAIN_SCHEMA)
         checkpoint = trained / "checkpoint"
         components = _validate_oft_components(checkpoint)
+        lora_rank = _training_lora_rank(training)
         runtime, logs = bootstrap_runtime(cfg.runtime_root), workspace / "rollouts"
         runtime_identity = _runtime_identity(runtime)
         logs.mkdir()
@@ -746,7 +803,7 @@ def rollout(cfg: RolloutConfig) -> dict[str, Any]:
                 "--num_open_loop_steps",
                 "8",
                 "--lora_rank",
-                "32",
+                str(lora_rank),
                 "--local_log_dir",
                 str(logs),
                 "--use_wandb",
@@ -779,7 +836,11 @@ def rollout(cfg: RolloutConfig) -> dict[str, Any]:
                 "result": result,
                 "video_count": len(videos),
                 "components": components,
-                "official_suite_checkpoint": OFFICIAL_SUITE_CHECKPOINTS[cfg.task_suite],
+                "training_lora_rank": lora_rank,
+                "official_suite_checkpoint_contract": OFFICIAL_SUITE_CHECKPOINTS[
+                    cfg.task_suite
+                ],
+                "checkpoint_source": "training bundle; not an official suite adapter",
             },
         )
         report = {
