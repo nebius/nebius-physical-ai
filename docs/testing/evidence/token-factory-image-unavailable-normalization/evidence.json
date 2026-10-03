@@ -1,0 +1,246 @@
+{
+  "schema": "npa.public-evidence.token-factory-image-unavailable-normalization.v1",
+  "source": {
+    "commit": "15ebe402794d98793f297655f5d48713ce92233c",
+    "tree": "72c309b4878a4c9f6f91563abc8e8b207a6fb861",
+    "stack_parent_commit": "2eb541023b9c7778aed765e88786de240f4658db",
+    "git_archive_sha256": "3a7d951f07b32268727d1617e85a096f373ca0f489b344cba1428bf1126cf060"
+  },
+  "frozen_review": {
+    "plan_sha256": "798a2faf522a7a4dcdcaa849d150c6864eee073ba2763f6ac4160f73d2744520",
+    "plan_review_verdict": "APPROVED_PLAN",
+    "plan_review_sha256": "2328f232b3cc790d020b3b13b789b1ff8f5973f67a3751f9efabb903a1fe657f",
+    "source_review_verdict": "APPROVED_SOURCE",
+    "source_review_sha256": "75264bcc9672396c8ed0339c8ffe40814f6c70c5c2cb0708693401d1b837b267"
+  },
+  "inherited_hosted_evidence": {
+    "claim": "vlm-image-availability-sentinel-v1",
+    "source_commit": "3df75c244e173ec1c3a134eaad20e6ed0b26db8e",
+    "publication_commit": "2eb541023b9c7778aed765e88786de240f4658db",
+    "public_path": "../token-factory-image-availability-sentinel/",
+    "readme_sha256": "99d977a2f93f8d455239d3b4f0f8fee9deec852cf6d7eb9c0b26b6488b6dd47c",
+    "evidence_json_sha256": "996cdc9a157064c9d5fa0725010c13ae5fc5a09de850b8feba171e40fdda419d",
+    "observed_no_image_answer": "NO IMAGE RECEIVED.",
+    "observed_positive_image_answer": "A red square, a blue circle, and a green triangle are arranged in a horizontal row against a white background.",
+    "formatting_variants_observed": [],
+    "not_observed": [
+      "periodless sentinel",
+      "Markdown-bold sentinel",
+      "quoted sentinel",
+      "inner-whitespace sentinel",
+      "case-varied sentinel"
+    ],
+    "replayed_for_followup": false
+  },
+  "normalization_contract": {
+    "core": "NO IMAGE RECEIVED",
+    "optional_suffix": ".",
+    "matching_wrapper_pairs": [
+      [
+        "**",
+        "**"
+      ],
+      [
+        "__",
+        "__"
+      ],
+      [
+        "'",
+        "'"
+      ],
+      [
+        "\"",
+        "\""
+      ],
+      [
+        "‘",
+        "’"
+      ],
+      [
+        "“",
+        "”"
+      ]
+    ],
+    "maximum_wrapper_pairs_removed": 1,
+    "comparison": "case-insensitive whole answer",
+    "retained_answer": "original visible answer after only the existing outer whitespace strip",
+    "excluded": [
+      "substring matching",
+      "prefix or suffix matching",
+      "semantic refusal matching",
+      "arbitrary punctuation removal",
+      "pair-agnostic quote matching",
+      "recursive wrapper removal"
+    ]
+  },
+  "deterministic_matrix": {
+    "normalization_control_count": 47,
+    "end_to_end_case_count": 46,
+    "classifier_only_case_count": 1,
+    "accepted_count": 28,
+    "actual_client_reachable_completed_count": 18,
+    "accepted_classes": [
+      {
+        "class": "two punctuation cores across unwrapped plus six matching wrapper pairs",
+        "count": 14
+      },
+      {
+        "class": "inner whitespace in each matching wrapper pair",
+        "count": 6
+      },
+      {
+        "class": "case variation across unwrapped plus six matching wrapper pairs",
+        "count": 7
+      },
+      {
+        "class": "outer whitespace",
+        "count": 1
+      }
+    ],
+    "rejected_answers": [
+      "The sign says NO IMAGE RECEIVED.",
+      "\"The sign says NO IMAGE RECEIVED.\"",
+      "NO IMAGE RECEIVED. Additional explanation.",
+      "NO IMAGE RECEIVED!",
+      "NO IMAGE RECEIVED..",
+      "NO IMAGE RECEIVED…",
+      "NO IMAGE RECEIVED。",
+      "**NO IMAGE RECEIVED**.",
+      "\"NO IMAGE RECEIVED\".",
+      "`NO IMAGE RECEIVED.`",
+      "```NO IMAGE RECEIVED.```",
+      "\"**NO IMAGE RECEIVED.**\"",
+      "**\"NO IMAGE RECEIVED.\"**",
+      "“NO IMAGE RECEIVED.\"",
+      "\"NO IMAGE RECEIVED.”",
+      "‘NO IMAGE RECEIVED.'",
+      "'NO IMAGE RECEIVED.’",
+      "I'm sorry, I cannot see any image."
+    ],
+    "all_expected_classifications_passed": true,
+    "all_end_to_end_client_calls": 1,
+    "all_retained_answers_equal_outer_stripped_inputs": true
+  },
+  "empty_output_contract": {
+    "classifier_only_input": "",
+    "classifier_reports_image_unavailable": false,
+    "client_reachable_completed_caption": false,
+    "actual_client_control": {
+      "transport": "httpx.MockTransport",
+      "http_status": 200,
+      "visible_content": "",
+      "local_request_count": 1,
+      "caption_images_error": "TokenFactoryToolError",
+      "caption_item_emitted": false,
+      "result_artifact_written": false,
+      "provider_requests": 0
+    }
+  },
+  "request_side_proof": {
+    "transport": "httpx.MockTransport",
+    "local_request_count": 1,
+    "image_url_part_count": 1,
+    "url_prefix": "data:image/png;base64,",
+    "strict_base64_decode": true,
+    "decoded_byte_count": 96,
+    "decoded_sha256": "f965f4352a62295e4ae326ec8741ecc72eeaddd2a2bebf080f092106b98313b7",
+    "decoded_format": "PNG",
+    "decoded_mode": "RGB",
+    "decoded_dimensions": [
+      32,
+      24
+    ],
+    "positive_dimensions": true,
+    "provider_requests": 0
+  },
+  "mutation_results": {
+    "mutation_count": 13,
+    "killed_count": 13,
+    "all_killed": true,
+    "mutations": [
+      "restore-exact-punctuation-only-equality",
+      "drop-markdown-asterisks",
+      "drop-markdown-underscores",
+      "drop-ascii-single-quotes",
+      "drop-ascii-double-quotes",
+      "drop-smart-single-quotes",
+      "drop-smart-double-quotes",
+      "use-substring-matching",
+      "use-pair-agnostic-quote-matching",
+      "strip-unbounded-periods",
+      "remove-period-before-wrapper-recognition",
+      "recursively-unwrap-nested-wrappers",
+      "rewrite-retained-caption-to-canonical-sentinel"
+    ],
+    "recursive_mutant": "restart wrapper recognition after every successful unwrap until no pair matches",
+    "recursive_nested_wrapper_kills": [
+      "\"**NO IMAGE RECEIVED.**\"",
+      "**\"NO IMAGE RECEIVED.\"**"
+    ],
+    "source_restored_exactly": true
+  },
+  "validation": [
+    {
+      "scope": "focused caption tool",
+      "result": "62 passed"
+    },
+    {
+      "scope": "Token Factory workbench, batch, client, CLI, and SDK",
+      "result": "155 passed"
+    },
+    {
+      "scope": "workbench and skill contracts",
+      "result": "163 passed"
+    },
+    {
+      "scope": "Ruff lint and formatting across npa",
+      "result": "passed; 2,562 files formatted"
+    }
+  ],
+  "private_evidence_identity": {
+    "offline_harness_sha256": "6fe71a54e7377242fbbdbddd4bb90e5f618272507040290f993f5f6af33cafe3",
+    "offline_result_sha256": "f4362c45849c7a5f81fa9d6173f8f3fe70f7dbf76735d5370ef50e87d4aef74f",
+    "mutation_harness_sha256": "3f8bfe5c7457c50691dfb635cad342b69ee4b900014e103d2a96fccbecf88f01",
+    "mutation_result_sha256": "3bd79e7dc8cc8364439ed335ef96eb0f412304690cc643ed030d349aacde0a30",
+    "validation_sha256": "a20337f2395337ed9f141939f5738d6689d01f4259de67ec819ae3a79fcb1876"
+  },
+  "call_accounting": {
+    "followup_provider_calls": 0,
+    "followup_health_calls": 0,
+    "followup_model_list_calls": 0,
+    "followup_credentials_accessed": false,
+    "inherited_hosted_replays": 0
+  },
+  "hardware_applicability": [
+    {
+      "stage": "normalization, request capture, mutation testing, and review",
+      "customer_hardware": "CPU; no local GPU or cluster required",
+      "hosted_hardware": "not applicable"
+    },
+    {
+      "stage": "inherited vision completions only",
+      "customer_hardware": "no customer cluster or GPU",
+      "hosted_hardware": "provider-managed; accelerator details not exposed",
+      "new_hosted_execution_in_this_followup": false
+    }
+  ],
+  "sanitization": {
+    "classification": "public derivative of independently approved exact-source deterministic evidence",
+    "omitted": [
+      "credentials and authorization headers",
+      "private paths and exact operational timestamps",
+      "provider request identifiers and system fingerprints",
+      "key-scoped model inventory",
+      "raw provider response bodies",
+      "full image data URLs",
+      "private endpoints and infrastructure identifiers"
+    ]
+  },
+  "limitations": [
+    "Inherited hosted evidence observed only the exact punctuated sentinel; no hosted formatting variant was observed.",
+    "A legitimate image whose complete salient text normalizes to the sentinel can false-fail.",
+    "Operator or in-image text can induce or suppress the cooperative sentinel.",
+    "These controls do not estimate an operational image-delivery failure rate or prove that the provider consumed image pixels.",
+    "This evidence does not qualify a visual judge or prove physical correctness, usefulness, or robot safety."
+  ]
+}
