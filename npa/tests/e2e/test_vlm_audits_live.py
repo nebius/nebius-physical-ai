@@ -14,24 +14,27 @@ operator-declared visual controls, not physical correctness or robot safety.
 
 from __future__ import annotations
 
+import base64
 from dataclasses import asdict
 import hashlib
+from io import BytesIO
 import json
 import os
 from pathlib import Path
 from typing import Any
 
 import pytest
+from PIL import Image
 
 from npa.workbench import vlm_eval
-from npa.literal_values import require_integer
 from npa.live_verification.vlm_audit_controls import (
     audit_controls,
     configured_audit_cases,
 )
+from npa.literal_values import require_integer
 
 pytestmark = [pytest.mark.e2e, pytest.mark.token_factory_e2e]
-AUDIT_CASES = ("paired-judges",)
+AUDIT_CASES = ("paired-judges", "blinded-preference")
 
 
 def _canonical_sha256(value: Any) -> str:
@@ -45,6 +48,12 @@ def _invoke_audit_case(case: str, request: dict[str, Any]) -> Any:
             vlm_eval.VlmJudgeComparisonRequest(**request)
         )
         vlm_eval.write_result(asdict(report), result_uri=report.result_uri)
+        return report
+    if case == "blinded-preference":
+        report = vlm_eval.compare_vlm_preference(
+            vlm_eval.VlmPreferenceComparisonRequest(**request)
+        )
+        vlm_eval.write_preference_report(asdict(report), result_uri=report.result_uri)
         return report
     raise ValueError("Unknown live audit case")
 
@@ -89,6 +98,55 @@ def _assert_private_local_report(report: Any) -> None:
     assert path.is_file() and not path.is_symlink()
     assert path.stat().st_mode & 0o777 == 0o600
     assert json.loads(path.read_text()) == json.loads(json.dumps(asdict(report)))
+
+
+def _preference_request_skeleton(outcome: Any) -> dict[str, Any]:
+    transport = json.loads(json.dumps(outcome.transport_request))
+    content = transport["messages"][0]["content"]
+    assert [part.get("text") for part in content[1::2]] == ["IMAGE A", "IMAGE B"]
+    assert len(content) == 5
+    for part, frame in zip(content[2::2], outcome.request.frames, strict=True):
+        prefix, encoded = part["image_url"]["url"].split(",", 1)
+        assert prefix == "data:image/png;base64"
+        data = base64.b64decode(encoded, validate=True)
+        assert hashlib.sha256(data).hexdigest() == frame.sha256
+        assert len(data) == frame.byte_count
+        with Image.open(BytesIO(data)) as image:
+            assert image.size == (frame.width, frame.height)
+            assert image.info == {}
+        part["image_url"]["url"] = "<normalized-image>"
+    text = json.dumps(transport).casefold()
+    assert "baseline" not in text and "candidate" not in text
+    return transport
+
+
+def _assert_preference(report: Any, request: dict[str, Any]) -> None:
+    assert report.deployment_status == "audit_only"
+    assert report.operational_rate_estimated is False
+    assert report.requests_counterbalanced is True
+    assert not {"passed", "score", "mean_score"}.intersection(asdict(report))
+    first, second = report.first_order, report.reversed_order
+    for outcome in (first, second):
+        assert outcome.error is None and outcome.verdict is not None
+        _assert_request_evidence(outcome.request)
+        _assert_provider_evidence(outcome.provider, request["model"])
+        assert outcome.transport_request_sha256 == _canonical_sha256(
+            outcome.transport_request
+        )
+    assert _preference_request_skeleton(first) == _preference_request_skeleton(second)
+    assert [frame.sha256 for frame in first.request.frames] == [
+        frame.sha256 for frame in reversed(second.request.frames)
+    ]
+    assert [frame.sha256 for frame in first.request.frames] == [
+        report.normalized_baseline_sha256,
+        report.normalized_candidate_sha256,
+    ]
+    if any(outcome.verdict.confidence != "high" for outcome in (first, second)):
+        assert report.escalation_required is True
+        assert report.agreement_eligible is False
+    if report.mapped_preferences[0] != report.mapped_preferences[1]:
+        assert report.escalation_required is True
+        assert report.agreement_eligible is False
 
 
 def _assert_judges(report: Any, request: dict[str, Any]) -> None:
@@ -141,13 +199,28 @@ def test_real_hosted_audit_contract(case: str, control: str) -> None:
         pytest.skip("provide an operator-owned NPA_VLM_AUDIT_LIVE_CONFIG")
     config = json.loads(Path(config_path).read_text())
     configured = audit_controls(config["cases"][case])[control]
-    request = configured["request"]
+    request_type = (
+        vlm_eval.VlmPreferenceComparisonRequest
+        if case == "blinded-preference"
+        else vlm_eval.VlmJudgeComparisonRequest
+    )
+    request = asdict(request_type(**configured["request"]))
     if "input_sha256" in configured:
         assert (
             hashlib.sha256(Path(request["input_path"]).read_bytes()).hexdigest()
-            == (configured["input_sha256"])
+            == configured["input_sha256"]
         )
+    for arm in ("baseline", "candidate"):
+        expected_hash = configured.get(f"{arm}_sha256")
+        if expected_hash is not None:
+            assert (
+                hashlib.sha256(Path(request[f"{arm}_path"]).read_bytes()).hexdigest()
+                == expected_hash
+            )
     report = _invoke_audit_case(case, request)
     _assert_private_local_report(report)
-    _assert_judges(report, request)
+    if case == "blinded-preference":
+        _assert_preference(report, request)
+    else:
+        _assert_judges(report, request)
     _assert_expected_controls(report, configured.get("expectations", {}))
