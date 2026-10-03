@@ -1,4 +1,5 @@
 {
+  "independent_rationale_caveat": "Both gray responses describe uniform RGB128 gray frames as white; numeric label agreement does not establish factual grounding. Original text and earlier proof commit remain retained.",
   "cases": {
     "complete-keyframes": {
       "evidence_checks": "passed",
