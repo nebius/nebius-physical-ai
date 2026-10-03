@@ -15,8 +15,13 @@ a versioned heading when a release is cut.
   claim-specific color masks, signed motion, and actor separation before any
   evaluator activity, then reuses the exact selected frames and metadata-derived
   task for real-backend scoring without changing stub or fixture-score behavior.
-- Benchmarks now require both expected-label classes and unique resolved item
-  IDs before frame selection. Reports add specificity and balanced accuracy,
+- **Breaking dataset contract:** all benchmark manifests, including calls to
+  `load_benchmark_dataset`, now require both expected-label classes and unique
+  resolved item IDs before frame selection. Single-class manifests are rejected;
+  add independently justified positive and negative cases rather than inventing
+  labels to satisfy the validator. Direct dataset loading still rejects an empty
+  path; only benchmark/CLI default selection uses the packaged illustrative sample.
+  Reports add specificity and balanced accuracy,
   and rank configurations by balanced accuracy before existing tie-breakers.
 
 ### Open3D recordings verify persisted geometry inputs

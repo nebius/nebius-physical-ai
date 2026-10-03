@@ -56,7 +56,18 @@ npa/.venv/bin/python -m pytest \
   npa/tests/scripts/test_capture_isaac_lab_scene_frames.py -q
 ```
 
-The focused source run completed with 94 passed, one expected live-GPU skip,
+### Historical execution claims (not current-head gates)
+
+The following figures were recorded in the original contribution without
+execution-head, environment or raw-receipt bindings. They remain historical
+claims, not independently bound evidence for a later integration candidate.
+Current validation uses the separately bound
+[original full/local gate record](../../testing/evidence/cursor-agency-calibration-20261003/local-gates-31b64fd6.json)
+and [hosted observations](https://github.com/nebius/nebius-physical-ai/blob/6efa5e3b08b0653082173f4a547d98f1de56e624/docs/testing/evidence/cursor-agency-calibration-20261003/readme.md).
+Those records retain their own execution SHAs; neither is a later-head full or
+inference claim.
+
+The historical focused source run was reported as 94 passed, one expected live-GPU skip,
 and zero failures. The inherited completion-boundary suite separately completed
 with 62 passed and zero failures. No provider, credential, GPU, or network call
 was made.
@@ -87,6 +98,9 @@ guard.
 
 These frames are synthetic stylized stand-ins, not Isaac Sim renders. Color
 masks are valid only for this explicitly configured fixture. Horizontal
+mask boxes fuse every matching pixel; they do not separate connected components.
+Additional same-color objects or overlays below the excluded title rows can
+change the box and invalidate its interpretation for other images. Horizontal
 separation can reject the frozen grasp claim. `actor_causes_motion` is therefore
 a one-sided refuter: `fail` disproves the configured claim; `inconclusive`
 blocks benchmark preflight and must not be treated as success. Proximity is

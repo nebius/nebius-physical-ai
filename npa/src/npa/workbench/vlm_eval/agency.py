@@ -1,4 +1,10 @@
-"""Measure the narrow stylized-frame oracle used by VLM agency calibration."""
+"""Measure the narrow stylized-frame oracle used by VLM agency calibration.
+
+Each color mask forms one fused bounding box, not connected-component segments.
+An extra same-color object or overlay below the excluded title rows changes that
+box. This version is only an oracle for its configured, hash-pinned frame bytes;
+it does not identify arbitrary objects, contact, physical causality or safety.
+"""
 
 from __future__ import annotations
 

@@ -431,27 +431,29 @@ def benchmark_vlm_eval(
 ) -> VlmBenchmarkReport:
     """Run a labeled VLM-eval sweep and rank configs by label agreement."""
 
-    benchmark_dataset = load_benchmark_dataset(dataset, default_task=task)
-    preselected_frames, preselected_tasks, structural_results = (
-        _preflight_structural_checks(
-            benchmark_dataset,
-            frame_selection=frame_selection,
-            max_frames=max_frames,
-        )
-    )
+    if max_frames <= 0:
+        raise VlmEvalError("--max-frames must be positive")
+    if timeout_s <= 0:
+        raise VlmEvalError("--timeout-s must be positive")
     threshold_values = _normalize_thresholds(thresholds)
     model_values = _normalize_strings(models, label="models")
+    effective_frame_selection = _normalize_frame_selection(frame_selection)
+    benchmark_dataset = load_benchmark_dataset(
+        _resolve_benchmark_dataset_alias(dataset), default_task=task
+    )
     rubric_values = _resolve_benchmark_rubrics(
         rubrics,
         dataset_rubrics=benchmark_dataset.rubrics,
         dataset_path=benchmark_dataset.path,
     )
+    preselected_frames, preselected_tasks, structural_results = (
+        _preflight_structural_checks(
+            benchmark_dataset,
+            frame_selection=effective_frame_selection,
+            max_frames=max_frames,
+        )
+    )
     effective_backend = _normalize_backend(backend)
-    effective_frame_selection = _normalize_frame_selection(frame_selection)
-    if max_frames <= 0:
-        raise VlmEvalError("--max-frames must be positive")
-    if timeout_s <= 0:
-        raise VlmEvalError("--timeout-s must be positive")
 
     config_results: list[VlmBenchmarkConfigResult] = []
     for model, (rubric_name, rubric_text), threshold in product(
@@ -537,6 +539,8 @@ def load_benchmark_dataset(
 ) -> VlmBenchmarkDataset:
     """Load a labeled benchmark dataset manifest from a local path or S3 URI."""
 
+    if not dataset or not dataset.strip():
+        raise VlmEvalError("--dataset is required")
     dataset = _resolve_benchmark_dataset_alias(dataset)
     with _materialized_benchmark_manifest(dataset) as local_manifest:
         try:
@@ -677,10 +681,8 @@ def _select_structural_frames_and_task(
         cached = (frames, fallback_task)
         selection_cache[cache_key] = cached
     frames, fallback_task = cached
-    effective_task = (
-        item.task if item.task and item.task != "sim-to-real" else fallback_task
-    )
-    return frames, effective_task
+    explicit_task = _explicit_task_text(item.task)
+    return frames, fallback_task if explicit_task is None else explicit_task
 
 
 def _evaluate_structural_item(
@@ -1451,11 +1453,12 @@ def _safe_ratio(numerator: int, denominator: int) -> float | None:
 
 def _benchmark_rank_key(result: VlmBenchmarkConfigResult) -> tuple[Any, ...]:
     metrics = result.metrics
+    balanced = -1.0 if metrics.balanced_accuracy is None else metrics.balanced_accuracy
     precision = -1.0 if metrics.precision is None else metrics.precision
     recall = -1.0 if metrics.recall is None else metrics.recall
     f1 = -1.0 if metrics.f1 is None else metrics.f1
     return (
-        -metrics.balanced_accuracy,
+        -balanced,
         -metrics.accuracy,
         -f1,
         -precision,
@@ -1766,9 +1769,16 @@ def _materialized_input(input_path: str) -> Iterator[Path]:
         yield Path(local)
 
 
+def _explicit_task_text(task: str) -> str | None:
+    """Share operator-task precedence between ordinary and preselected scoring."""
+
+    return task if task and task != "sim-to-real" else None
+
+
 def _resolve_task_text(local_input: Path, task: str) -> str:
-    if task and task != "sim-to-real":
-        return task
+    explicit_task = _explicit_task_text(task)
+    if explicit_task is not None:
+        return explicit_task
 
     for candidate in (
         local_input / "meta" / "tasks.parquet",

@@ -505,8 +505,10 @@ def _emit_benchmark(payload: dict[str, Any], output: OutputFormat) -> None:
     typer.echo(f"    agreement: {metrics['agreement']}")
     typer.echo(f"    precision: {_format_metric(metrics['precision'])}")
     typer.echo(f"    recall: {_format_metric(metrics['recall'])}")
-    typer.echo(f"    specificity: {metrics['specificity']}")
-    typer.echo(f"    balanced_accuracy: {metrics['balanced_accuracy']}")
+    typer.echo(f"    specificity: {_format_metric(metrics.get('specificity'))}")
+    typer.echo(
+        f"    balanced_accuracy: {_format_metric(metrics.get('balanced_accuracy'))}"
+    )
     typer.echo(f"    f1: {_format_metric(metrics['f1'])}")
     typer.echo(
         "    confusion: "
