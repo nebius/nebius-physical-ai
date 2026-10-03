@@ -16,6 +16,7 @@ __all__ = [
     "genesis",
     "groot",
     "insights",
+    "intrinsic",
     "isaac_lab",
     "isaac_arena",
     "lancedb",

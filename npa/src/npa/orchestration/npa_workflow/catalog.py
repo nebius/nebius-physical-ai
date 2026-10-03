@@ -68,6 +68,9 @@ PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.openvla.eval": "public OpenVLA evaluation primitive (upstream argv planning; eval plan-only)",
     "workbench.newton.generate_demos": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
     "workbench.newton.eval": "public Newton physics simulation primitive (config validation; train/eval plan-only)",
+    "workbench.intrinsic.preflight": "public Intrinsic Core preflight primitive (host + runtime checks; ROS 2 Lyrical, k3s, inctl)",
+    "workbench.intrinsic.icon_status": "public Intrinsic Core ICON status primitive (read-only)",
+    "workbench.intrinsic.world_probe": "public Intrinsic Core digital-twin reachability primitive (read-only)",
 }
 
 
@@ -2480,6 +2483,31 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "--output-uri",
             "{{config.evaluation_uri}}",
         ],
+    ),
+    "workbench.intrinsic.preflight": ToolEntry(
+        name="workbench.intrinsic.preflight",
+        description=(
+            "Check Intrinsic Core prerequisites (Ubuntu >= 22.04, ROS 2 Lyrical, "
+            "k3s, inctl, runtime pods, ingress); exits non-zero with remediation "
+            "when unusable. Read-only."
+        ),
+        argv_template=["npa", "workbench", "intrinsic", "preflight"],
+    ),
+    "workbench.intrinsic.icon_status": ToolEntry(
+        name="workbench.intrinsic.icon_status",
+        description=(
+            "Report read-only ICON real-time control status for an Intrinsic "
+            "Core instance."
+        ),
+        argv_template=["npa", "workbench", "intrinsic", "icon-status"],
+    ),
+    "workbench.intrinsic.world_probe": ToolEntry(
+        name="workbench.intrinsic.world_probe",
+        description=(
+            "Probe Intrinsic Core digital-twin (world) reachability without "
+            "mutating state."
+        ),
+        argv_template=["npa", "workbench", "intrinsic", "world-probe"],
     ),
     "workbench.isaac_lab.byof_repo": ToolEntry(
         name="workbench.isaac_lab.byof_repo",
