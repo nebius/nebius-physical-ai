@@ -14,10 +14,12 @@ No GPU or Cosmos runtime is touched: inference and S3 are both fakes.
 
 from __future__ import annotations
 
+import errno
 import json
 import socket
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from typer.testing import CliRunner
@@ -35,6 +37,218 @@ ATTEMPT = "wave-attempt-1"
 def _scheduler_fence_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("NPA_WORKFLOW_FENCE_SEQUENCE", "1")
     monkeypatch.setenv("NPA_WORKFLOW_FENCE_ATTEMPT", "1")
+
+
+class _ReservedListener:
+    def __init__(self):
+        self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.listener.bind(("127.0.0.1", 0))
+        self.address = self.listener.getsockname()
+        self.connections = []
+        self.claimed = False
+
+    def socket(self, family, kind):
+        assert (family, kind) == (socket.AF_INET, socket.SOCK_STREAM)
+        assert not self.claimed
+        self.claimed = True
+        return self
+
+    def bind(self, address):
+        # Hand off the held descriptor; releasing then rebinding races other tests.
+        assert address == self.address
+        assert self.listener.getsockname() == address
+
+    def accept(self):
+        connection, peer = self.listener.accept()
+        self.connections.append(connection)
+        return connection, peer
+
+    def __getattr__(self, name):
+        return getattr(self.listener, name)
+
+    def close_connections(self):
+        for connection in self.connections:
+            _close_socket(connection)
+
+
+def _close_socket(connection):
+    try:
+        connection.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass  # Already closed or an unconnected listener.
+    connection.close()
+
+
+class _RendezvousThreads:
+    def __init__(self):
+        self.threads = []
+        self.tearing_down = threading.Event()
+        self.errors = []
+        self.error_lock = threading.Lock()
+
+    def startable(self, *, target, **kwargs):
+        def run(*args):
+            try:
+                target(*args)
+            except BaseException as error:
+                forced_accept_close = (
+                    kwargs.get("name") == "npa-cosmos-gang-attempt"
+                    and self.tearing_down.is_set()
+                    and isinstance(error, OSError)
+                    and error.errno in (errno.EBADF, errno.EINVAL)
+                )
+                if not forced_accept_close:
+                    with self.error_lock:
+                        self.errors.append(error)
+
+        thread = threading.Thread(target=run, **kwargs)
+        self.threads.append(thread)
+        return thread
+
+    def join_servers(self):
+        # Joining the accept loop first freezes the set of member handlers.
+        servers = [t for t in self.threads if t.name == "npa-cosmos-gang-attempt"]
+        for thread in servers:
+            thread.join(timeout=5)
+        assert not any(thread.is_alive() for thread in servers)
+
+    def join_members(self):
+        for thread in list(self.threads):
+            thread.join(timeout=5)
+        assert not any(thread.is_alive() for thread in self.threads)
+
+    def assert_success(self):
+        assert not self.errors, f"rendezvous thread errors: {self.errors!r}"
+
+
+def _cleanup_rendezvous(listener, threads):
+    threads.tearing_down.set()
+    _close_socket(listener.listener)
+    try:
+        threads.join_servers()
+    finally:
+        listener.close_connections()
+        try:
+            threads.join_members()
+        finally:
+            listener.close_connections()
+
+
+@pytest.fixture
+def reserved_rendezvous(monkeypatch):
+    listener = _ReservedListener()
+    threads = _RendezvousThreads()
+    monkeypatch.setattr(cosmos2, "_rendezvous_port", lambda *_: listener.address[1])
+    monkeypatch.setattr(
+        cosmos2,
+        "socket",
+        SimpleNamespace(**(vars(socket) | {"socket": listener.socket})),
+    )
+    monkeypatch.setattr(
+        cosmos2,
+        "threading",
+        SimpleNamespace(**(vars(threading) | {"Thread": threads.startable})),
+    )
+    try:
+        yield listener, threads
+        threads.join_servers()
+        threads.join_members()
+        assert listener.claimed
+        assert listener.listener.fileno() == -1
+        assert all(connection.fileno() == -1 for connection in listener.connections)
+    finally:
+        _cleanup_rendezvous(listener, threads)
+        threads.assert_success()
+
+
+@pytest.mark.parametrize(
+    "error", [RuntimeError("broken handler"), OSError(errno.EIO, "io")]
+)
+def test_rendezvous_harness_surfaces_owned_thread_failures(error):
+    threads = _RendezvousThreads()
+
+    def fail():
+        raise error
+
+    thread = threads.startable(target=fail, name="npa-cosmos-gang-attempt")
+    thread.start()
+    threads.join_servers()
+    threads.join_members()
+    assert threads.errors == [error]
+    with pytest.raises(AssertionError, match="rendezvous thread errors"):
+        threads.assert_success()
+
+
+def _read_until_owned_close(connection, threads, may_read):
+    assert may_read.wait(5)
+    try:
+        connection.recv(1)
+    except OSError as error:
+        if not (
+            error.errno == errno.EBADF
+            and threads.tearing_down.is_set()
+            and connection.fileno() == -1
+        ):
+            raise
+
+
+def _release_after_cleanup_closes_sockets(listener, threads, listener_closed, may_read):
+    joined = threads.join_servers
+
+    def after_close():
+        assert listener.listener.fileno() == -1
+        listener_closed.set()
+        joined()
+
+    threads.join_servers = after_close
+    joined_members = threads.join_members
+
+    def after_connections_close():
+        assert all(connection.fileno() == -1 for connection in listener.connections)
+        may_read.set()
+        joined_members()
+
+    threads.join_members = after_connections_close
+
+
+@pytest.mark.parametrize("delayed_member", [False, True])
+def test_rendezvous_cleanup_handles_late_accepted_socket(delayed_member):
+    listener = _ReservedListener()
+    listener.listener.listen(1)
+    threads = _RendezvousThreads()
+    accepted = threading.Event()
+    listener_closed = threading.Event()
+    may_read = threading.Event()
+    if not delayed_member:
+        may_read.set()
+    _release_after_cleanup_closes_sockets(listener, threads, listener_closed, may_read)
+
+    def accept_then_register():
+        connection, _ = listener.listener.accept()
+        accepted.set()
+        assert listener_closed.wait(5)
+        listener.connections.append(connection)
+        member = threads.startable(
+            target=_read_until_owned_close,
+            args=(connection, threads, may_read),
+            name="member",
+        )
+        member.start()
+
+    server = threads.startable(
+        target=accept_then_register, name="npa-cosmos-gang-attempt"
+    )
+    server.start()
+    try:
+        with socket.create_connection(listener.address, timeout=5) as client:
+            assert accepted.wait(5)
+            _cleanup_rendezvous(listener, threads)
+            assert client.recv(1) == b""
+    finally:
+        _cleanup_rendezvous(listener, threads)
+    threads.assert_success()
+    assert len(listener.connections) == 1
+    assert listener.connections[0].fileno() == -1
 
 
 class FakeStorage:
@@ -504,6 +718,7 @@ def test_attempt_identity_is_shared_and_only_outer_retry_may_advance_it(
     assert recovered[4] == rank0[4] + 1
 
 
+@pytest.mark.usefixtures("reserved_rendezvous")
 def test_rank_zero_rendezvous_shares_one_generation_over_scheduler_membership() -> None:
     offered = {
         "attempt_id": "a" * 64,
@@ -534,6 +749,7 @@ def test_rank_zero_rendezvous_shares_one_generation_over_scheduler_membership() 
     assert leader == follower == offered
 
 
+@pytest.mark.usefixtures("reserved_rendezvous")
 def test_rendezvous_retries_a_rank_when_the_first_response_is_not_acknowledged(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -605,6 +821,7 @@ def test_rendezvous_retries_a_rank_when_the_first_response_is_not_acknowledged(
     )
 
 
+@pytest.mark.usefixtures("reserved_rendezvous")
 def test_hung_ack_does_not_block_a_later_rank(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -681,6 +898,7 @@ def test_hung_ack_does_not_block_a_later_rank(
     )
 
 
+@pytest.mark.usefixtures("reserved_rendezvous")
 def test_concurrent_duplicate_rank_has_exactly_one_committed_member() -> None:
     offered = {
         "attempt_id": "d" * 64,
@@ -795,6 +1013,7 @@ def test_concurrent_duplicate_rank_has_exactly_one_committed_member() -> None:
     )
 
 
+@pytest.mark.usefixtures("reserved_rendezvous")
 def test_lost_commit_confirmation_is_idempotent_for_the_same_claimant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -866,6 +1085,7 @@ def test_lost_commit_confirmation_is_idempotent_for_the_same_claimant(
     )
 
 
+@pytest.mark.usefixtures("reserved_rendezvous")
 def test_recovery_rendezvous_rejects_stale_launch_and_duplicate_rank() -> None:
     offered = {
         "attempt_id": "b" * 64,
@@ -932,6 +1152,27 @@ def test_recovery_rendezvous_rejects_stale_launch_and_duplicate_rank() -> None:
         )
         == offered
     )
+
+
+def test_rank_zero_refuses_an_actually_occupied_owned_listener(monkeypatch) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+        occupied.bind(("127.0.0.1", 0))
+        occupied.listen(1)
+        port = occupied.getsockname()[1]
+        monkeypatch.setattr(cosmos2, "_rendezvous_port", lambda *_: port)
+        with pytest.raises(cosmos2.typer.BadParameter) as failure:
+            cosmos2._sky_gang_rendezvous(
+                rank=0,
+                node_count=2,
+                node_ips=["127.0.0.1", "127.0.0.2"],
+                logical_wave_id="occupied",
+                membership_digest="members",
+                internal_job_id="42",
+                offered={},
+            )
+        assert isinstance(failure.value.__cause__, OSError)
+        assert failure.value.__cause__.errno == errno.EADDRINUSE
+        assert occupied.fileno() >= 0
 
 
 def test_identity_rendezvous_has_only_an_explicit_opt_in_timeout(
