@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 
 from npa.clients.project_credentials import storage_env_for_project
+from npa.workbench.vlm_eval import RESULT_FILENAME
 
 
 pytestmark = pytest.mark.e2e
@@ -101,10 +102,10 @@ def test_e2e_data_sync_and_vlm_eval_write_real_s3_artifacts(
     eval_payload = json.loads(eval_result.stdout)
     assert eval_payload["status"] == "passed"
     assert eval_payload["passed"] is True
-    assert eval_payload["written_uri"] == f"{eval_uri}vlm_eval_stub.json"
+    assert eval_payload["written_uri"] == f"{eval_uri}{RESULT_FILENAME}"
     eval_object = s3_helper.client.get_object(
         Bucket=e2e_test_bucket,
-        Key="sim-to-real/run/vlm-eval/vlm_eval_stub.json",
+        Key=f"sim-to-real/run/vlm-eval/{RESULT_FILENAME}",
     )
     written_eval = json.loads(eval_object["Body"].read().decode("utf-8"))
     assert written_eval["backend"] == "stub"
