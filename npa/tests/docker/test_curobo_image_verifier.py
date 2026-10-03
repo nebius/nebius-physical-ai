@@ -26,6 +26,14 @@ SPEC = importlib.util.spec_from_file_location(
 )
 VERIFIER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VERIFIER)
+PAYLOAD_SPEC = importlib.util.spec_from_file_location(
+    "curobo_payload_binding",
+    ROOT / "npa/scripts/scan_image_omniverse_payload.py",
+)
+assert PAYLOAD_SPEC and PAYLOAD_SPEC.loader
+PAYLOAD_SCANNER = importlib.util.module_from_spec(PAYLOAD_SPEC)
+sys.modules[PAYLOAD_SPEC.name] = PAYLOAD_SCANNER
+PAYLOAD_SPEC.loader.exec_module(PAYLOAD_SCANNER)
 
 
 def digest(data):
@@ -74,6 +82,21 @@ def payload():
     notice = b"Synthetic complete NVSHMEM notice including third-party licenses."
     contract["nvshmem_notice"].update(sha256=digest(notice), size=len(notice))
     entries.append(entry(contract["nvshmem_notice"]["path"], notice))
+    libgomp = contract["libgomp"]
+    for index, row in enumerate([libgomp["runtime"], *libgomp["license_files"]]):
+        data = f"Synthetic reviewed libgomp runtime or license {index}.".encode()
+        row.update(sha256=digest(data), size=len(data))
+        entries.append(entry(row["path"], data))
+    entries.append(
+        entry(
+            libgomp["runtime"]["soname_path"],
+            kind=tarfile.SYMTYPE,
+            link=libgomp["runtime"]["soname_target"],
+        )
+    )
+    receipt = b"Synthetic real benchmark import receipt."
+    contract["runtime_import_receipt"].update(sha256=digest(receipt), size=len(receipt))
+    entries.append(entry(contract["runtime_import_receipt"]["path"], receipt))
     return contract, entries, excluded
 
 
@@ -155,12 +178,37 @@ def test_complete_image_binds_config_all_diff_ids_and_independent_bytes(
     report = verify(tmp_path, payload, compressed=compressed, oci_paths=oci_paths)
     assert report["valid"] is True
     assert report["retained_runtime_count"] == 8
-    assert report["required_payload_count"] == 10
+    assert report["verified_libgomp_payload_count"] == 3
+    assert report["verified_libgomp_soname_link"] is True
+    assert report["runtime_import_receipt_verified"] is True
+    assert report["required_payload_count"] == 14
     assert report["layer_count"] == 1
     assert len(report["verified_layer_diff_ids"]) == 1
-    assert report["regular_files_read"] == 10
+    assert report["regular_files_read"] == 14
     assert report["content_bytes_read"] == sum(len(row[1]) for row in payload[1])
     assert report["docker_save_sha256"] == digest((tmp_path / "image.tar").read_bytes())
+
+
+def test_classic_verifier_report_drives_truthful_payload_identity(tmp_path, payload):
+    contract, entries, _ = payload
+    archive, image_id = save_image(tmp_path, [entries])
+    graph = VERIFIER.verify_image(
+        archive, expected_image_id=image_id, contract=contract
+    )
+    graph_path = tmp_path / "graph.json"
+    graph_path.write_text(json.dumps(graph))
+
+    report = PAYLOAD_SCANNER.scan(
+        None,
+        archive,
+        verification_report=graph_path,
+    )
+
+    assert graph["image_manifest_digest"] is None
+    assert report.clean
+    assert report.digest == graph["image_config_digest"]
+    assert report.archive_binding["archive_format"] == "docker-save-classic"
+    assert report.archive_binding["content_identity_kind"] == "image-config-digest"
 
 
 def test_normal_root_and_system_links_are_never_extracted_or_followed(
@@ -184,6 +232,59 @@ def test_rejects_changed_or_empty_required_runtime(tmp_path, payload, replacemen
     report = verify(tmp_path, payload, [entries])
     assert not report["valid"]
     assert "retained_payload_hash_mismatch" in codes(report)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "usr/lib/x86_64-linux-gnu/libgomp.so.1.0.0",
+        "usr/share/doc/gcc-14-base/copyright",
+        "usr/share/common-licenses/GPL-3",
+        "usr/share/doc/npa-curobo/runtime-import.json",
+    ],
+)
+def test_rejects_changed_libgomp_closure_or_runtime_import_receipt(
+    tmp_path, payload, path
+):
+    entries = []
+    for item in payload[1]:
+        entries.append(
+            entry(item[0], b"changed required byte") if item[0] == path else item
+        )
+    report = verify(tmp_path, payload, [entries])
+    assert not report["valid"]
+    assert "retained_payload_hash_mismatch" in codes(report)
+
+
+@pytest.mark.parametrize(
+    ("replacement", "expected_code"),
+    [
+        (None, "required_link_missing"),
+        (
+            entry(
+                "usr/lib/x86_64-linux-gnu/libgomp.so.1",
+                kind=tarfile.SYMTYPE,
+                link="changed-libgomp.so",
+            ),
+            "retained_link_target_mismatch",
+        ),
+        (
+            entry("usr/lib/x86_64-linux-gnu/libgomp.so.1", b"not a symlink"),
+            "retained_link_not_symlink",
+        ),
+    ],
+)
+def test_rejects_missing_changed_or_non_symlink_libgomp_soname(
+    tmp_path, payload, replacement, expected_code
+):
+    soname = payload[0]["libgomp"]["runtime"]["soname_path"]
+    entries = [item for item in payload[1] if item[0] != soname]
+    if replacement is not None:
+        entries.append(replacement)
+    report = verify(tmp_path, payload, [entries])
+    assert not report["valid"]
+    assert expected_code in codes(report)
+    assert report["verified_libgomp_soname_link"] is False
 
 
 def test_full_notice_is_verified_independently_of_image_authored_manifest(
@@ -427,6 +528,40 @@ def test_production_contract_matches_locked_artifacts_and_notice():
         and notice["url"] in docker
         and "/" + notice["path"] in docker
     )
+    libgomp = contract["libgomp"]
+    packages = {row["name"]: row for row in libgomp["binary_packages"]}
+    assert packages["libgomp1"] == {
+        "name": "libgomp1",
+        "version": "14.2.0-4ubuntu2~24.04.1",
+        "architecture": "amd64",
+        "url": "https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/libgomp1_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+        "sha256": "e8a95ec58125b4933597f30ff56c2ae10edf90f287262e366d4b6edea3019144",
+        "size": 148062,
+    }
+    assert "libgomp1=14.2.0-4ubuntu2~24.04.1" in docker
+    assert libgomp["runtime"]["sha256"] == (
+        "135f3c8f006d2fe5e68e51281c7974cb991a03de3bfb3593d68d174dfcf854d1"
+    )
+    assert libgomp["runtime"]["soname_target"] == "libgomp.so.1.0.0"
+    assert libgomp["license_expression"] == ("GPL-3.0-or-later WITH GCC-exception-3.1")
+    assert {row["sha256"] for row in libgomp["license_files"]} == {
+        "20390f8a6f3b1e4d7cb45dd8652dabb259bbef688cbad839bcdb0b9ba7252f79",
+        "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+    }
+    assert {row["sha256"] for row in libgomp["source_package"]["artifacts"]} == {
+        "768c314c11eeab56ccebb91eb42ec4a41122fa94f0d83400126401942622197b",
+        "cfece214c2fb790ef5f3baffb9a53e40618e7ae12d053610b251e94d77d08ade",
+        "50950080874a6ec6780dd60c243e21d9cda9d736bb32bca98d16095d27cc01b5",
+    }
+    redistribution = (IMAGE / "REDISTRIBUTION.md").read_text()
+    assert "`libgomp.so.1` to remain an exact" in redistribution
+    assert "`libgomp.so.1.0.0`" in redistribution
+    for row in [
+        *libgomp["binary_packages"],
+        *libgomp["license_files"],
+        *libgomp["source_package"]["artifacts"],
+    ]:
+        assert row["sha256"] in redistribution
 
 
 def test_trusted_workflow_checks_local_bytes_before_push_and_exact_pushed_bytes():
@@ -450,6 +585,19 @@ def test_trusted_workflow_checks_local_bytes_before_push_and_exact_pushed_bytes(
     )
     assert '--docker-save "$RUNNER_TEMP/${TOOL}-pushed.tar"' in commands[second:]
     assert commands.count("npa/scripts/scan_image_omniverse_payload.py") == 2
+    assert commands.count("--verification-report") >= 4
+    assert (
+        '--verification-report "$RUNNER_TEMP/${TOOL}-curobo-payload.json"'
+        in commands[:push]
+    )
+    assert "--expected-manifest-digest" not in commands[:push]
+    assert "--registry-image" not in commands[:push]
+    assert (
+        '--verification-report "$RUNNER_TEMP/${TOOL}-pushed-curobo-payload.json"'
+        in commands[push:]
+    )
+    assert '--registry-image "$exact"' in commands[push:]
+    assert '--expected-manifest-digest "$DIGEST"' in commands[push:]
 
 
 def test_no_member_size_cap_and_no_required_file_sample(tmp_path, payload):
@@ -461,7 +609,7 @@ def test_no_member_size_cap_and_no_required_file_sample(tmp_path, payload):
     assert report["content_bytes_read"] == len(data) + sum(
         len(row[1]) for row in payload[1]
     )
-    assert report["regular_files_read"] == 11
+    assert report["regular_files_read"] == 15
 
 
 def test_same_layer_directory_replacement_invalidates_regular_proof(tmp_path, payload):
@@ -524,7 +672,7 @@ def test_duplicate_canonical_inner_paths_are_rejected(tmp_path, payload, alias):
     duplicate = entry(("./" if alias else "") + original[0], original[1])
     report = verify(tmp_path, payload, [[*payload[1], duplicate]])
     assert "duplicate_layer_path" in codes(report)
-    assert report["regular_files_read"] == 11  # Duplicate bytes are still scanned.
+    assert report["regular_files_read"] == 15  # Duplicate bytes are still scanned.
     assert report["retained_runtime_count"] == 8
     assert not report["valid"]
 
@@ -655,7 +803,7 @@ def test_oci_graph_binds_manifest_and_classic_ids_with_repeated_ordered_blobs(
     assert report["verified_layer_diff_ids"][0] == report["verified_layer_diff_ids"][2]
     assert report["image_config_digest"] == classic_id
     assert report["image_manifest_digest"] == manifest_id
-    assert report["regular_files_read"] == 10
+    assert report["regular_files_read"] == 14
 
 
 def test_repeated_nonempty_blob_is_scanned_for_every_occurrence(tmp_path, payload):
@@ -664,7 +812,7 @@ def test_repeated_nonempty_blob_is_scanned_for_every_occurrence(tmp_path, payloa
         archive, expected_image_id=image_id, contract=payload[0]
     )
     assert report["valid"]
-    assert report["regular_files_read"] == 20
+    assert report["regular_files_read"] == 28
     assert report["content_bytes_read"] == 2 * sum(len(row[1]) for row in payload[1])
 
 
@@ -784,8 +932,8 @@ def test_reviewed_torch_adapter_bytes_and_complete_license_pass(
     report = verify(tmp_path, adapter_payload)
     assert report["valid"]
     assert report["verified_torch_adapter_count"] == 52
-    assert report["required_payload_count"] == 160
-    assert report["regular_files_read"] == 160
+    assert report["required_payload_count"] == 164
+    assert report["regular_files_read"] == 164
 
 
 @pytest.mark.parametrize(
@@ -846,7 +994,7 @@ def test_unknown_header_under_torch_namespace_is_still_rejected(
 def test_ancestor_adapter_tampering_remains_rejected_after_valid_replacement(
     tmp_path, adapter_payload
 ):
-    path = adapter_payload[1][10][0]
+    path = next(item[0] for item in adapter_payload[1] if "/torch/include/" in item[0])
     report = verify(
         tmp_path,
         adapter_payload,
@@ -858,7 +1006,9 @@ def test_ancestor_adapter_tampering_remains_rejected_after_valid_replacement(
 
 
 def test_adapter_whiteout_cannot_keep_prior_proof(tmp_path, adapter_payload):
-    path = Path(adapter_payload[1][10][0])
+    path = Path(
+        next(item[0] for item in adapter_payload[1] if "/torch/include/" in item[0])
+    )
     report = verify(
         tmp_path,
         adapter_payload,

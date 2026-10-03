@@ -169,6 +169,20 @@ def verify_image(
         )
     notice = contract["nvshmem_notice"]
     expected[_path(notice["path"])] = notice
+    libgomp = contract["libgomp"]
+    libgomp_payload = [libgomp["runtime"], *libgomp["license_files"]]
+    if len(libgomp_payload) != 3:
+        raise ImageVerificationError(
+            "expected libgomp runtime, package copyright and GPL text"
+        )
+    for row in libgomp_payload:
+        expected[_path(row["path"])] = row
+    libgomp_soname = _path(libgomp["runtime"]["soname_path"])
+    expected_links = {
+        libgomp_soname: libgomp["runtime"]["soname_target"],
+    }
+    runtime_import_receipt = contract["runtime_import_receipt"]
+    expected[_path(runtime_import_receipt["path"])] = runtime_import_receipt
     # PyTorch's generated cuDNN operator declarations are BSD-licensed adapters,
     # not NVIDIA SDK headers. Only exact independently verified wheel bytes at
     # these exact paths qualify, together with the wheel's complete license.
@@ -216,9 +230,12 @@ def verify_image(
         )
     }
     ancestors = {
-        str(parent) for path in expected for parent in PurePosixPath(path).parents
+        str(parent)
+        for path in (*expected, *expected_links)
+        for parent in PurePosixPath(path).parents
     }
     observed = {}
+    observed_links = {}
     findings = []
     entries_read = regular_files_read = content_bytes_read = 0
 
@@ -304,6 +321,7 @@ def verify_image(
                 raise ImageVerificationError("saved-image layer diff ID mismatch")
             # Whiteouts affect lower layers, including when recorded after new files.
             current = {}
+            current_links = {}
             seen_paths = set()
             # Use exactly the same decoding for the diff ID and tar contents.
             # Auto-detection here would accept an undeclared bz2/xz codec while
@@ -334,6 +352,11 @@ def verify_image(
                             for p, v in observed.items()
                             if directory != "." and not p.startswith(directory + "/")
                         }
+                        observed_links = {
+                            p: v
+                            for p, v in observed_links.items()
+                            if directory != "." and not p.startswith(directory + "/")
+                        }
                     elif whiteout:
                         target = str(PurePosixPath(directory) / basename[4:])
                         observed = {
@@ -341,10 +364,17 @@ def verify_image(
                             for p, v in observed.items()
                             if p != target and not p.startswith(target + "/")
                         }
+                        observed_links = {
+                            p: v
+                            for p, v in observed_links.items()
+                            if p != target and not p.startswith(target + "/")
+                        }
                     else:
                         # Every type replacement invalidates proof of that exact file.
                         observed.pop(path, None)
+                        observed_links.pop(path, None)
                         current.pop(path, None)
+                        current_links.pop(path, None)
                         if not entry.isdir():
                             observed = {
                                 p: v
@@ -354,6 +384,16 @@ def verify_image(
                             current = {
                                 p: v
                                 for p, v in current.items()
+                                if not p.startswith(path + "/")
+                            }
+                            observed_links = {
+                                p: v
+                                for p, v in observed_links.items()
+                                if not p.startswith(path + "/")
+                            }
+                            current_links = {
+                                p: v
+                                for p, v in current_links.items()
                                 if not p.startswith(path + "/")
                             }
                         # Required files may not be reached through links or a regular
@@ -368,6 +408,8 @@ def verify_image(
                             issue(
                                 "retained_payload_not_regular", layer_index, entry_index
                             )
+                        if path in expected_links and not entry.issym():
+                            issue("retained_link_not_symlink", layer_index, entry_index)
                         # Ancestor bytes remain distributed even if later hidden.
                         if not entry.isdir():
                             if _SDK_NAME.fullmatch(basename) and path not in adapters:
@@ -403,6 +445,18 @@ def verify_image(
                                 "nvidia_cudnn"
                             ) and basename.lower().endswith(".whl"):
                                 issue("cached_cudnn_wheel", layer_index, entry_index)
+                        if path in expected_links and entry.issym():
+                            matches = entry.linkname == expected_links[path]
+                            current_links[path] = {
+                                "target": entry.linkname,
+                                "matches": matches,
+                            }
+                            if not matches:
+                                issue(
+                                    "retained_link_target_mismatch",
+                                    layer_index,
+                                    entry_index,
+                                )
                     if entry.isfile():
                         digest, size = _hash_stream(layer.extractfile(entry))
                         if size != entry.size:
@@ -434,11 +488,17 @@ def verify_image(
                                     entry_index,
                                 )
             observed.update(current)
+            observed_links.update(current_links)
         for path in expected:
             if path not in observed:
                 # Expected names originate in reviewed code, never the image.
                 findings.append(
                     {"code": "required_payload_missing", "expected_path": path}
+                )
+        for path in expected_links:
+            if path not in observed_links:
+                findings.append(
+                    {"code": "required_link_missing", "expected_path": path}
                 )
     return {
         "schema_version": "npa.curobo.image-verification.v1",
@@ -466,6 +526,18 @@ def verify_image(
             path in observed and observed[path]["matches"]
             for path in expected
             if expected[path].get("kind") == "runtime"
+        ),
+        "verified_libgomp_payload_count": sum(
+            row["path"] in observed and observed[row["path"]]["matches"]
+            for row in libgomp_payload
+        ),
+        "verified_libgomp_soname_link": (
+            libgomp_soname in observed_links
+            and observed_links[libgomp_soname]["matches"]
+        ),
+        "runtime_import_receipt_verified": (
+            runtime_import_receipt["path"] in observed
+            and observed[runtime_import_receipt["path"]]["matches"]
         ),
         "required_payload_count": len(expected),
         "findings": findings,

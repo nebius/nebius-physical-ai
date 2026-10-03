@@ -7,6 +7,12 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### cuRobo single-mode benchmark validation
+
+- The independent audit accepts complete kinematic-only or dynamics-only
+  benchmark populations. Requested modes are explicit, missing or extra cells
+  still fail, and all frozen per-mode acceptance thresholds remain unchanged.
+
 ### Open3D recordings verify persisted geometry inputs
 
 - Visualization rejects changed meshes, fused clouds, pose graphs, manifests,

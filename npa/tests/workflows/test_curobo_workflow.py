@@ -27,6 +27,9 @@ def test_complete_benchmark_and_factual_rrd_are_reachable():
     spec = yaml.safe_load(path.read_text())
     assert spec["config"]["curobo_mode"] == "both"
     assert len(spec["states"]) == 4
+    assert spec["states"]["benchmark"]["resources"] == "gpu"
+    assert spec["states"]["validate"]["resources"] == "gpu"
+    assert spec["states"]["visualize"]["resources"] == "cpu"
     for state in spec["states"].values():
         argv = TOOL_CATALOG[state["toolRef"]].argv_template
         assert argv[:3] == ["npa", "workbench", "curobo"]

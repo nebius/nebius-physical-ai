@@ -42,6 +42,136 @@ def test_complete_shipped_catalog_compiles_with_all_bound_proofs(tmp_path, monke
     }
 
 
+def test_curobo_same_byte_remediation_binds_all_ten_exact_record_classes():
+    root = ROOT / "npa/scripts/image_byte_scan/public_policies"
+    policy = json.loads((root / "curobo-v2.json").read_text())
+    sources = {
+        row["record_sha256"]: row
+        for row in json.loads((root / "curobo-v2-sources.json").read_text())["content"]
+    }
+    semantics = {
+        row["record_sha256"]: row
+        for row in json.loads((root / "curobo-v2-semantics.json").read_text())[
+            "content"
+        ]
+    }
+    expected = {
+        "09339f848f60bb1111a61ee0fe91ed0c25132b7ff63298244d7ac14e61b58466": (
+            "layer_regular_content",
+            162565256,
+            2,
+            "encoded-device-payload",
+        ),
+        "404ccd5811e79ed47c95dc7d5ab6f6d66c15cc2ee576a5150f224db28c07a01f": (
+            "layer_regular_content",
+            170430,
+            1,
+            "public-source-symbol",
+        ),
+        "707a84f218ac88c75c7a82164cd74ec85684dace82e015d2dc49b4b356f3a54c": (
+            "layer_regular_content",
+            245899,
+            2,
+            "public-source-symbol",
+        ),
+        "80d4c51e0d3ace8f28f108c7c7f9ac984e9a636da7833e3aa41cf0fa93bec8b1": (
+            "layer_regular_content",
+            170466,
+            1,
+            "public-source-symbol",
+        ),
+        "8e49cebd373d90b55f3626da71dd97fe8e95c68dc4c064d8962b27907690736e": (
+            "layer_regular_content",
+            696512,
+            1,
+            "package-integrity-metadata",
+        ),
+        "c571d524fc5571e6c8a5784d51f75fbe8cf17590463c397a06e48428cb926c48": (
+            "layer_regular_content",
+            141152872,
+            1,
+            "encoded-device-payload",
+        ),
+        "ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98": (
+            "layer_regular_content",
+            2065824,
+            10,
+            "cryptographic-self-test",
+        ),
+        "e03287709e8e16898a6834541beaf96414631cae385a54a63fcfb55826381725": (
+            "logical_tar_path",
+            45,
+            1,
+            "public-package-path-metadata",
+        ),
+        "e12607320178caa224182665d31c28501194573ece6d104d2cd7ccdea6439dc7": (
+            "layer_regular_content",
+            114691,
+            1,
+            "public-source-symbol",
+        ),
+        "fb46c104e3ef44f1353c323c847b2ed7e224eb3d23b1e7df90ec0253f10f9270": (
+            "logical_tar_path",
+            49,
+            1,
+            "public-package-path-metadata",
+        ),
+    }
+    entries = {
+        row["record_sha256"]: row
+        for row in policy["entries"]
+        if row["record_sha256"] in expected
+    }
+    assert entries.keys() == expected.keys() <= sources.keys() & semantics.keys()
+    for digest, (kind, size, findings, role) in expected.items():
+        row = entries[digest]
+        assert (
+            row["record_kind"],
+            row["record_bytes"],
+            len(row["native_findings"]),
+            row["semantic_role"],
+            row["operational_credential"],
+        ) == (kind, size, findings, role, False)
+        assert sources[digest]["public_origin"]
+        assert semantics[digest]["lexical_source_context"]
+        assert "Deferred" not in semantics[digest]["reason"]
+
+    gnutls = sources["ddbae2995750875c07bc218d12a062d73f8250678f54dedda7e9be5068781c98"]
+    assert gnutls["public_origin"]["version"] == "3.8.3-1.1ubuntu3.6"
+    assert gnutls["semantic_source"]["patch_application"]["applied_patch_count"] == 46
+    assert len(gnutls["semantic_source"]["constant_declarations"]) == 10
+
+    for digest, count in (
+        (
+            "c571d524fc5571e6c8a5784d51f75fbe8cf17590463c397a06e48428cb926c48",
+            1,
+        ),
+        (
+            "09339f848f60bb1111a61ee0fe91ed0c25132b7ff63298244d7ac14e61b58466",
+            2,
+        ),
+    ):
+        containers = semantics[digest]["lexical_source_context"][0]["containers"]
+        assert len(containers) == count
+        assert all(
+            row["original_native_pattern_survives_decoding"] is False
+            for row in containers
+        )
+
+    bytecode = sources[
+        "80d4c51e0d3ace8f28f108c7c7f9ac984e9a636da7833e3aa41cf0fa93bec8b1"
+    ]["public_origin"]
+    assert bytecode["kind"] == "exact-checked-hash-bytecode"
+    assert bytecode["header"]["source_hash_matches_exact_source"] is True
+    assert bytecode["marshal"]["recursive_code_objects"] == 117
+    assert bytecode["whole_file_reproduction"]["whole_file_equal"] is True
+
+    openssl = sources[
+        "8e49cebd373d90b55f3626da71dd97fe8e95c68dc4c064d8962b27907690736e"
+    ]
+    assert openssl["semantic_source"]["section"]["name"] == ".gnu_debuglink"
+
+
 def fixture():
     native = {"rule_id": "generic-api-key", "start_line": 0, "end_line": 0}
     rows = [

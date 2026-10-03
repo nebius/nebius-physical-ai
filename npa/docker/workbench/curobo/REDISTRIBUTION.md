@@ -41,6 +41,34 @@ No published image or measured performance is claimed by this record.
   install the optional pybind backend or need the full CUDA development image,
   its unused Nsight profiler, or operating-system development headers. Native
   GPU execution remains a required qualification gate.
+- OpenMP runtime: Pinocchio requires `libgomp.so.1`, so the image installs
+  Ubuntu Noble `libgomp1=14.2.0-4ubuntu2~24.04.1` from the same immutable
+  `20260920T000000Z` snapshot as the rest of the distro closure. The exact
+  `libgomp1` deb is 148062 bytes with SHA256
+  `e8a95ec58125b4933597f30ff56c2ae10edf90f287262e366d4b6edea3019144`;
+  its 352304-byte `libgomp.so.1.0.0` has SHA256
+  `135f3c8f006d2fe5e68e51281c7974cb991a03de3bfb3593d68d174dfcf854d1`.
+  The final-image verifier also requires `libgomp.so.1` to remain an exact
+  symbolic link to `libgomp.so.1.0.0`.
+  Its exact `gcc-14-base` dependency is 51014 bytes with SHA256
+  `b95c172411a7fdae70307cf33a9f5320ba5e056b556454543dd5b679d5ce1c4f`.
+  The matching `gcc-14-base` copyright file is retained at
+  `/usr/share/doc/gcc-14-base/copyright` (69004 bytes, SHA256
+  `20390f8a6f3b1e4d7cb45dd8652dabb259bbef688cbad839bcdb0b9ba7252f79`)
+  together with `/usr/share/common-licenses/GPL-3` (35149 bytes, SHA256
+  `3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986`).
+  libgomp is `GPL-3.0-or-later WITH GCC-exception-3.1`. Matching corresponding
+  source remains available from that immutable snapshot as
+  [the upstream archive](https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14_14.2.0.orig.tar.gz)
+  (SHA256 `768c314c11eeab56ccebb91eb42ec4a41122fa94f0d83400126401942622197b`),
+  [Ubuntu packaging](https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14_14.2.0-4ubuntu2~24.04.1.debian.tar.xz)
+  (SHA256 `cfece214c2fb790ef5f3baffb9a53e40618e7ae12d053610b251e94d77d08ade`)
+  and [the source descriptor](https://snapshot.ubuntu.com/ubuntu/20260920T000000Z/pool/main/g/gcc-14/gcc-14_14.2.0-4ubuntu2~24.04.1.dsc)
+  (SHA256 `50950080874a6ec6780dd60c243e21d9cda9d736bb32bca98d16095d27cc01b5`).
+  Public release remains blocked if those source or license bytes cannot be
+  delivered. `runtime-payload.json` and the complete-layer verifier bind these
+  identities; the image build additionally imports the real upstream benchmark
+  through Pinocchio and checks all 800 MotionBenchMaker and 1800 MPiNets rows.
 - Reproducible Python bytecode: the build helper and trusted workflow pass the
   exact source commit epoch as a build-only `SOURCE_DATE_EPOCH` argument. The
   pinned CPython compiler then uses PEP 552 checked-hash bytecode for newly

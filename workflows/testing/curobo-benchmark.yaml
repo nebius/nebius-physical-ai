@@ -5,8 +5,9 @@ metadata:
   description: >-
     Run the complete pinned MotionBenchMaker and MPiNets benchmarks with NVIDIA
     cuRobo V2, both kinematic and 3 kg dynamics configurations. Preserve failed
-    and excluded inputs, real trajectory/pose/timing/dynamics metrics, verified
-    S3 artifacts, and factual Rerun joint timelines and FK tool paths.
+    and excluded inputs, real trajectory/pose/timing/dynamics evidence,
+    independently recomputed validation, verified S3 artifacts, and factual
+    Rerun joint timelines, goal markers and FK tool paths.
 config:
   bucket: example-bucket
   prefix: "runs/{{run.id}}/curobo"
@@ -51,7 +52,9 @@ states:
     next: validate
   validate:
     toolRef: workbench.curobo.validate
-    resources: cpu
+    # Independent FK replay executes the retained joints through cuRobo again;
+    # Pinocchio torque replay is CPU-side inside the same digest-pinned image.
+    resources: gpu
     params:
       curobo_input_uri: "{{config.results_uri}}"
       curobo_output_uri: "{{config.validation_uri}}"
