@@ -538,13 +538,13 @@ class VlmBenchmarkMetrics:
         true_negatives: Correct negative predictions.
         false_positives: Incorrect positive predictions.
         false_negatives: Incorrect negative predictions.
-        specificity: Negative-class recall, or None for legacy construction.
-        balanced_accuracy: Mean class recall, or None for legacy construction.
         confusion_matrix: Actual-by-predicted counts, or None for legacy construction.
         false_positive_rate: Fraction of negative cases predicted positive.
         false_negative_rate: Fraction of positive cases predicted negative.
         false_positive_item_ids: Ordered identities of incorrectly passing cases.
         false_negative_item_ids: Ordered identities of incorrectly failing cases.
+        specificity: Negative-class recall, appended after landed positional fields.
+        balanced_accuracy: Mean class recall, appended after landed positional fields.
 
     Returns:
         Immutable benchmark metrics. Generated reports measure both classes.
@@ -564,13 +564,13 @@ class VlmBenchmarkMetrics:
     true_negatives: int
     false_positives: int
     false_negatives: int
-    specificity: float | None = None
-    balanced_accuracy: float | None = None
     confusion_matrix: VlmBenchmarkConfusionMatrix | None = None
     false_positive_rate: float | None = None
     false_negative_rate: float | None = None
     false_positive_item_ids: tuple[str, ...] = ()
     false_negative_item_ids: tuple[str, ...] = ()
+    specificity: float | None = None
+    balanced_accuracy: float | None = None
 
 
 @dataclass(frozen=True)

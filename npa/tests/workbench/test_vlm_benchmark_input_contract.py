@@ -98,3 +98,59 @@ def test_task_precedence_is_shared_with_preselected_scoring(
     )
     assert len(frames) == 6
     assert task == "shared task"
+
+
+@pytest.mark.parametrize(
+    "construction", ["legacy11", "landed16", "agency18", "keyword"]
+)
+def test_metric_constructor_preserves_landed_fields(construction: str) -> None:
+    core = {
+        "total": 9,
+        "correct": 7,
+        "agreement": 0.7778,
+        "accuracy": 0.7778,
+        "precision": 0.8,
+        "recall": 0.8,
+        "f1": 0.8,
+        "true_positives": 4,
+        "true_negatives": 3,
+        "false_positives": 1,
+        "false_negatives": 1,
+    }
+    landed = {
+        "confusion_matrix": {
+            "actual_positive": {"predicted_positive": 4, "predicted_negative": 1},
+            "actual_negative": {"predicted_positive": 1, "predicted_negative": 3},
+        },
+        "false_positive_rate": 0.25,
+        "false_negative_rate": 0.2,
+        "false_positive_item_ids": ("negative-1",),
+        "false_negative_item_ids": ("positive-1",),
+    }
+    agency = {"specificity": 0.75, "balanced_accuracy": 0.775}
+    if construction == "legacy11":
+        metrics = vlm_eval.VlmBenchmarkMetrics(*core.values())
+        expected = {
+            **core,
+            "confusion_matrix": None,
+            "false_positive_rate": None,
+            "false_negative_rate": None,
+            "false_positive_item_ids": (),
+            "false_negative_item_ids": (),
+            "specificity": None,
+            "balanced_accuracy": None,
+        }
+    elif construction == "landed16":
+        metrics = vlm_eval.VlmBenchmarkMetrics(*core.values(), *landed.values())
+        expected = {**core, **landed, "specificity": None, "balanced_accuracy": None}
+    elif construction == "agency18":
+        metrics = vlm_eval.VlmBenchmarkMetrics(
+            *core.values(), *landed.values(), *agency.values()
+        )
+        expected = {**core, **landed, **agency}
+    else:
+        metrics = vlm_eval.VlmBenchmarkMetrics(**agency, **landed, **core)
+        expected = {**core, **landed, **agency}
+    assert asdict(metrics) == expected
+    if construction in {"landed16", "agency18"}:
+        assert list(asdict(metrics)) == [*core, *landed, *agency]
