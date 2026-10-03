@@ -3067,13 +3067,13 @@ def _build_preference_request(
         "temperature": 0,
         "messages": [{"role": "user", "content": content}],
     }
-    from npa.clients.token_factory import default_chat_extra
+    from npa.clients.token_factory import token_factory_chat_profile
 
-    request.update(default_chat_extra(model))
-    if model == "moonshotai/Kimi-K3":
+    profile = token_factory_chat_profile(model)
+    request.update(profile.default_extra())
+    if not profile.include_temperature:
         request.pop("temperature")
-        request["reasoning_effort"] = "low"
-    if model != "MiniMaxAI/MiniMax-M3":
+    if profile.use_vlm_response_format:
         request["response_format"] = {"type": "json_object"}
     return request
 
@@ -3199,6 +3199,8 @@ def _preference_request_evidence(
         rubric=context.rubric,
         request=request,
         frames=frames,
+        frame_selection="final",
+        max_frames=1,
     )
 
 
