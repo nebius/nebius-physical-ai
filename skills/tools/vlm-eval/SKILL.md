@@ -16,6 +16,8 @@ is Cosmos/Genesis/Isaac rollouts and whose reasoning half is
 npa workbench vlm-eval run   --input-path <one-rollout>  --output-path <eval.json>
 npa workbench vlm-eval loop  --input-path <prefix>       --output-path <prefix>
 npa workbench vlm-eval benchmark --dataset <manifest> --output <report.json>
+npa workbench vlm-eval compare-judges --input-path <one-rollout> \
+  --output-path <prefix> --primary-model <model-a> --secondary-model <model-b>
 npa workbench vlm-eval status
 npa workbench vlm-eval list
 npa workbench vlm-eval workflow
@@ -82,6 +84,20 @@ Its evidence records those facts; it does not certify strict completion or
 promotion eligibility. The operator provenance lane separately requires HTTP
 200, `finish_reason=stop`, expected served identity and verifiable framing.
 This evidence proves judge traceability, not physical correctness or safety.
+
+`compare-judges` is an API-only audit path for consequential or disputed
+reviews. It selects and normalizes frames once, sends an otherwise identical
+request to two explicitly distinct hosted models, and writes
+`vlm_judge_disagreement.json`. It retains both complete outcomes, never emits a
+mean score, and sets `passed=false` plus `escalation_required=true` when the
+score-derived verdicts disagree or either judge errors. The artifact is always
+`deployment_status: audit_only`: agreement does not qualify either judge, and a
+weak judge can make disagreement common without making the scene intrinsically
+ambiguous. Unlike ordinary single-judge compatibility parsing, this path
+rejects Markdown-fenced JSON as a typed judge error instead of transforming the
+output. It also does not defend against in-image instructions or prove a
+critical visible defect absent. Full provider responses stay in the private
+artifact; CLI output is a bounded summary.
 
 `passed` and `status` come only from `score >= success_threshold`, using the
 serialized score rounded to four decimal places for every backend and override.
@@ -151,6 +167,8 @@ them when present.
 ## In workflows
 
 toolRefs: `workbench.vlm_eval.run`, `.loop`, `.judge_against_plan`, `.benchmark`.
+The reusable audit-only paired primitive is
+`workbench.vlm_eval.compare_judges`.
 Specs under `workflows/testing/`: `vlm-eval-single.yaml`,
 `vlm-eval-loop.yaml`, `vlm-eval-benchmark.yaml`, `vlm-eval-token-factory.yaml`
 (the zero-GPU judge), plus the rollout-judge combinations listed in
