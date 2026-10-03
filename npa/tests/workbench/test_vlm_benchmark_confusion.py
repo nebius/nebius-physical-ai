@@ -158,7 +158,10 @@ def test_f1_uses_exact_counts_until_final_rounding(
         # A zero denominator remains undefined, but a generated benchmark
         # cannot measure balanced accuracy from one class. Keep both contracts.
         assert vlm_eval._safe_ratio(0, 0) is None
-        with pytest.raises(vlm_eval.VlmEvalError, match="both pass and fail"):
+        with pytest.raises(
+            vlm_eval.VlmEvalError,
+            match="at least one pass and one fail expected_label",
+        ):
             benchmark(dataset=str(dataset), backend="stub", thresholds=(0.8,))
         return
     if all(label for label, _score in labels_and_scores):
