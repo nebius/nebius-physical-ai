@@ -159,8 +159,9 @@ e2e:
 
 Current Cosmos constraints:
 
-- NIM and Triton are accepted CLI enum values but exit as not implemented.
-- `finetune` and `optimize` are roadmap placeholders.
+- The legacy Cosmos CLI exposes only its executable `basic` serving backend.
+  Fine-tuning and optimization are not legacy Cosmos CLI commands; use the
+  current Cosmos3 post-training guidance for those workflows.
 - Basic serverless endpoint inference can validate endpoint health and job
   completion, but the public CLI does not yet provide a serverless-side S3
   export contract for generated endpoint outputs.
