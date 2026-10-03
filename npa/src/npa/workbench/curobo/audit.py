@@ -183,7 +183,7 @@ def _quaternion_distance(first: np.ndarray, second: np.ndarray) -> float:
 
 
 def _audit_success(row: dict[str, Any], *, benchmark: bool) -> dict[str, float]:
-    _, goal, goal_quaternion = _query(row)
+    start, goal, goal_quaternion = _query(row)
     trajectory = row.get("trajectory")
     if not isinstance(trajectory, dict):
         raise AuditError("successful row has no trajectory")
@@ -193,9 +193,18 @@ def _audit_success(row: dict[str, Any], *, benchmark: bool) -> dict[str, float]:
     jerk = _array(trajectory["jerk"], name="joint jerk")
     tool = _array(trajectory["tool_position"], name="FK tool position")
     tool_quaternion = _array(trajectory["tool_quaternion"], name="FK tool quaternion")
-    _joint_names(
+    names = _joint_names(
         trajectory.get("joint_names"), position.shape[1], name="successful trajectory"
     )
+    # Rebind the durable query independently of the producer's field checks.
+    # Extra finger columns and arbitrary serialization order must not change
+    # Franka's fixed seven-active-joint input convention.
+    active = [f"panda_joint{index}" for index in range(1, 8)]
+    if start.shape != (7,) or not set(active).issubset(names):
+        raise AuditError("trajectory lacks the executed Franka start joints")
+    initial = position[0, [names.index(name) for name in active]]
+    if np.any(np.abs(initial - start) > 1e-6):
+        raise AuditError("trajectory start does not match the executed query")
     dt = trajectory.get("dt")
     if (
         position.shape != velocity.shape

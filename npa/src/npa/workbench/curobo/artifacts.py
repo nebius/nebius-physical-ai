@@ -212,6 +212,20 @@ def _validate_planner_metrics(row: dict[str, Any], *, kind: str) -> None:
         raise CuroboError("torque violation must be a zero/one indicator")
     if row["status"] == "success":
         trajectory = row["trajectory"]
+        # The pinned planner executes Franka's seven active joints in this order;
+        # full interpolation may interleave locked fingers with those joints.
+        active_names = [f"panda_joint{index}" for index in range(1, 8)]
+        names = trajectory["joint_names"]
+        start = np.asarray(row["query"]["start"], dtype=float)
+        if start.shape != (7,) or any(name not in names for name in active_names):
+            raise CuroboError("trajectory lacks the executed Franka start joints")
+        initial = np.asarray(trajectory["position"][0], dtype=float)[
+            [names.index(name) for name in active_names]
+        ]
+        # Float32 spline evaluation can round its initial boundary. This fixed
+        # absolute radian allowance is not the independent torque tolerance.
+        if not np.allclose(initial, start, rtol=0, atol=1e-6):
+            raise CuroboError("trajectory start does not match the executed query")
         duration = (len(trajectory["position"]) - 1) * trajectory["dt"]
         if metrics["trajectory_duration_seconds"] <= 0 or not math.isclose(
             metrics["trajectory_duration_seconds"], duration, rel_tol=1e-9, abs_tol=1e-9

@@ -25,7 +25,7 @@ def plan_row():
         "problem_id": "pose",
         "status": "success",
         "query": {
-            "start": [0.0],
+            "start": [0.0] * 7,
             "goal_pose": {
                 "position_xyz": [0.1, 0.0, 0.0],
                 "quaternion_wxyz": [1.0, 0.0, 0.0, 0.0],
@@ -43,12 +43,12 @@ def plan_row():
             "max_abs_jerk_rad_s3": 0.0,
         },
         "trajectory": {
-            "joint_names": ["joint"],
+            "joint_names": [f"panda_joint{index}" for index in range(1, 8)],
             "dt": 0.1,
-            "position": [[0.0], [0.2]],
-            "velocity": [[0.0], [0.1]],
-            "acceleration": [[0.0], [0.0]],
-            "jerk": [[0.0], [0.0]],
+            "position": [[0.0] * 7, [0.2, *([0.0] * 6)]],
+            "velocity": [[0.0] * 7, [0.1, *([0.0] * 6)]],
+            "acceleration": [[0.0] * 7, [0.0] * 7],
+            "jerk": [[0.0] * 7, [0.0] * 7],
             "tool_position": [[0.0, 0.0, 0.0], [0.1, 0.0, 0.0]],
             "tool_quaternion": [
                 [1.0, 0.0, 0.0, 0.0],

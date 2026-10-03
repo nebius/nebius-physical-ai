@@ -112,7 +112,7 @@ def test_same_population_and_recomputed_summary_cannot_hide_wrong_inputs(change)
 def solved_row(monkeypatch):
     """Drive the actual runner formatter through mocked CUDA/planner boundaries."""
 
-    active_names = [f"joint{i}" for i in range(7)]
+    active_names = [f"panda_joint{i}" for i in range(1, 8)]
 
     class Tensor:
         def __init__(self, data):
@@ -226,6 +226,7 @@ def solved_row(monkeypatch):
             assert not include_fingers
             values = np.asarray(positions)
             assert values.ndim == 2 and values.shape[1] == 7
+            problem["start"] = values[0].astype(float).tolist()
             path.joint_names = active_names.copy()
             path.position = Tensor(values)
             for field in ("velocity", "acceleration", "jerk"):
@@ -235,14 +236,14 @@ def solved_row(monkeypatch):
             # them between active joints so slicing the first seven is invalid.
             names = [
                 "left_finger",
-                "joint6",
-                "joint2",
-                "joint0",
+                "panda_joint7",
+                "panda_joint3",
+                "panda_joint1",
                 "right_finger",
-                "joint5",
-                "joint1",
-                "joint4",
-                "joint3",
+                "panda_joint6",
+                "panda_joint2",
+                "panda_joint5",
+                "panda_joint4",
             ]
             for field in ("position", "velocity", "acceleration", "jerk"):
                 source = getattr(path, field).data
@@ -347,14 +348,14 @@ def test_full_interpolation_retains_fingers_and_orders_active_joints_for_fk(solv
     trajectory = row["trajectory"]
     assert trajectory["joint_names"] == [
         "left_finger",
-        "joint6",
-        "joint2",
-        "joint0",
+        "panda_joint7",
+        "panda_joint3",
+        "panda_joint1",
         "right_finger",
-        "joint5",
-        "joint1",
-        "joint4",
-        "joint3",
+        "panda_joint6",
+        "panda_joint2",
+        "panda_joint5",
+        "panda_joint4",
     ]
     for field in ("position", "velocity", "acceleration", "jerk"):
         assert np.asarray(trajectory[field]).shape == (2, 9)
@@ -367,13 +368,82 @@ def test_benchmark_retains_named_active_order_used_for_dynamics(solved_row):
 
     assert len(row["trajectory"]["joint_names"]) == 9
     assert row["dynamics_evidence"]["trajectory"]["joint_names"] == [
-        f"joint{index}" for index in range(7)
+        f"panda_joint{index}" for index in range(1, 8)
     ]
     for field in ("position", "velocity", "acceleration", "jerk"):
         assert np.asarray(row["dynamics_evidence"]["trajectory"][field]).shape == (
             2,
             7,
         )
+
+
+@pytest.mark.parametrize("validator", ["producer", "auditor"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "none",
+        "column_order",
+        "roundoff",
+        "other_query",
+        "swapped_query",
+        "missing_joint",
+        "short_query",
+        "beyond_roundoff",
+    ],
+)
+def test_success_binds_start_to_named_active_franka_joints(
+    solved_row, validator, change
+):
+    initial = np.arange(7, dtype=float) / 10
+    row = {
+        "mode": "kinematic",
+        "dataset": "operator",
+        "problem_id": "start-binding",
+        **solved_row(positions=np.asarray([initial, initial + 0.1])),
+    }
+    if change == "column_order":
+        # Retain extra locked fingers with nonzero positions; using the first
+        # seven columns or relying on serialized joint order must not pass.
+        permutation = [6, 2, 0, 5, 1, 4, 3]
+        trajectory = row["trajectory"]
+        trajectory["joint_names"] = (
+            ["left_finger"]
+            + [trajectory["joint_names"][i] for i in permutation]
+            + ["right_finger"]
+        )
+        for field in ("position", "velocity", "acceleration", "jerk"):
+            finger = 0.04 if field == "position" else 0.0
+            trajectory[field] = [
+                [finger, *(sample[i] for i in permutation), finger]
+                for sample in trajectory[field]
+            ]
+    elif change == "roundoff":
+        row["query"]["start"][0] += 0.5e-6
+    elif change == "beyond_roundoff":
+        row["query"]["start"][0] += 2e-6
+    elif change == "other_query":
+        row["query"]["start"][0] += 0.25
+    elif change == "swapped_query":
+        row["query"]["start"] = list(reversed(row["query"]["start"]))
+    elif change == "missing_joint":
+        row["trajectory"]["joint_names"][0] = "unknown_joint"
+    elif change == "short_query":
+        row["query"]["start"].pop()
+    report = report_for([row], kind="plan")
+    journal = canonical(row) + b"\n"
+    report["journal_sha256"] = hashlib.sha256(journal).hexdigest()
+
+    def validate():
+        if validator == "producer":
+            validate_report(report, [row], run_id="report-test")
+        else:
+            audit.audit_bytes(canonical(report), journal, run_id="report-test")
+
+    if change in {"none", "column_order", "roundoff"}:
+        validate()
+    else:
+        with pytest.raises((CuroboError, audit.AuditError), match="start"):
+            validate()
 
 
 def test_actual_runner_metrics_bind_serialized_float32_trajectory(solved_row):

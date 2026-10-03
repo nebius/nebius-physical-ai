@@ -37,7 +37,12 @@ The exact optimized trajectory and torque samples behind dynamics metrics are
 retained. Both journal validators bind every retained joint position and derivative
 to that dynamics series, accounting for the pinned cubic B-spline interpolation
 and derivative retiming. Equal endpoints or self-consistent energy alone cannot
-bind a different interior path. The digest-pinned GPU validation stage independently replays FK from
+bind a different interior path. Both validators also bind the first retained
+sample to the executed start in Franka's seven named active-joint order, allowing
+only a fixed absolute `1e-6` radian float32 boundary roundoff, with no relative
+tolerance. Locked fingers and reordered columns do not change that binding;
+this allowance does not alter the independent torque gate.
+The digest-pinned GPU validation stage independently replays FK from
 joint samples while Pinocchio recomputes per-sample torque, energy and limit
 violations CPU-side in the same image. This is a measured downstream consumer,
 not hardware-execution permission. No upstream published performance number is
@@ -91,7 +96,7 @@ time or job limits. Parsed JSON rows and comparison state remain memory-resident
 this is not a constant-memory validator. The `cpu` selector does not provision a
 persistent scratch volume or reserve its disk capacity. Measure free space and
 resource requests before choosing the node. Journal regeneration and failed-run
-log/journal publication stream bytes, including read-back hashing, without
+log/journal and visualization RRD publication stream bytes, including read-back hashing, without
 truncating or discarding failed records. Temporary CPU scratch is removed at
 operation exit; failed runner working directories and durable failure artifacts
 remain available for diagnosis.

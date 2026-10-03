@@ -350,9 +350,9 @@ def visualize(request: RunRequest):
             rows=rows,
             run_id=request.run_id,
         )
-        _publish(
+        _publish_file(
             uri_join(request.output_path, "planning.rrd"),
-            (root / "planning.rrd").read_bytes(),
+            root / "planning.rrd",
         )
         _publish(uri_join(request.output_path, "rrd-manifest.json"), canonical(result))
         return result

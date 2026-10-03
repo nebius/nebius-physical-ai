@@ -260,6 +260,12 @@ def _assert_decoded_clear_order(events: list[dict]) -> None:
 def plan_row():
     result = row()
     result["dataset"] = "operator"
+    result["query"]["start"] = [0.0] * 7
+    result["trajectory"]["joint_names"] = [f"panda_joint{i}" for i in range(1, 8)]
+    for field in ("position", "velocity", "acceleration", "jerk"):
+        result["trajectory"][field] = [
+            [*sample, *([0.0] * 6)] for sample in result["trajectory"][field]
+        ]
     result["metrics"].update(
         planner_total_seconds=0.008,
         solver_seconds=0.006,
@@ -649,6 +655,65 @@ def test_failure_namespace_is_never_an_accepted_result(operation, monkeypatch):
     )
     with pytest.raises(CuroboError, match="not an accepted cuRobo result"):
         operation(failed)
+
+
+@pytest.mark.parametrize("changed_readback", [False, True])
+def test_visualize_streams_actual_decoded_rrd_and_checks_readback(
+    tmp_path, monkeypatch, changed_readback
+):
+    problem = plan_row()
+    journal = canonical(problem) + b"\n"
+    report = {
+        "schema_version": "npa.curobo.result.v1",
+        "engine": "nvidia-curobo-v2",
+        "source_revision": SOURCE_REVISION,
+        "dataset_revision": None,
+        "run_id": "unit-run",
+        "kind": "plan",
+        "requested_modes": ["kinematic"],
+        "journal_sha256": hashlib.sha256(journal).hexdigest(),
+        "summary": summarize([problem]),
+    }
+    objects = {
+        request().input_path + "/problems.jsonl": journal,
+        request().input_path + "/result.json": canonical(report),
+    }
+    monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(tmp_path))
+    marker = tmp_path / "outside-marker"
+    marker.write_bytes(b"retained")
+    reads = []
+
+    def read(uri):
+        reads.append(uri)
+        value = objects[uri]
+        return b"altered" if changed_readback and uri.endswith(".rrd") else value
+
+    def write(uri, value):
+        objects[uri] = value
+
+    monkeypatch.setattr(runtime, "read_bytes_uri", read)
+    monkeypatch.setattr(runtime, "write_bytes_uri", write)
+    _mock_streamed_evidence(monkeypatch, read, write)
+    original = Path.read_bytes
+
+    def reject_whole_recording(path):
+        assert path.suffix != ".rrd", "whole-recording byte allocation"
+        return original(path)
+
+    monkeypatch.setattr(Path, "read_bytes", reject_whole_recording)
+    if changed_readback:
+        with pytest.raises(CuroboError, match="digest mismatch"):
+            runtime.visualize(request())
+    else:
+        result = runtime.visualize(request())
+        assert result["decode"]["semantic_compare"] == "passed"
+        assert result["problem_count"] == 1
+    assert request().output_path + "/planning.rrd" in reads
+    assert bool(request().output_path + "/rrd-manifest.json" in objects) is (
+        not changed_readback
+    )
+    assert list(tmp_path.iterdir()) == [marker]
+    assert marker.read_bytes() == b"retained"
 
 
 @pytest.fixture
