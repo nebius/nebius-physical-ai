@@ -506,10 +506,13 @@ The existing protected nightly workflow also runs this entrypoint with
 using only its Token Factory key. Receipt acceptance rechecks retained request,
 rubric, response hashes, exact model identity, bare-JSON completion and positive
 integer token usage after test execution; passing test counts alone are insufficient.
-Before execution it freezes the actual selected frame bytes and shared request
-context. Both retained outcomes and audit-only metadata must match that frozen
-task, rubric, threshold, sampling, model-only request and digest binding.
-This verifies internal evidence integrity, not provider authentication or promotion.
+Before child execution, the runner freezes actual normalized inputs and effective
+request settings. Acceptance binds paired judges to the same configured request,
+and preference orders to distinct source identities and exact neutral A/B reversals.
+Changed inputs, internally rehashed requests, or non-audit metadata fail closed.
+The preference lane also reparses both retained responses with its strict five-field
+schema and requires equality with the recorded verdicts. These checks establish
+internal evidence integrity, not provider authentication or promotion.
 It uploads sanitized receipts, not raw visuals
 or provider responses. This lane does not provision a GPU or replace the existing
 hosted nightly suites; registration alone is not a successful live-run claim.
@@ -773,3 +776,27 @@ live CLI response, proves it matches Terraform state and desired attachment,
 and rejects a changed GPU-cluster ID. It does not replace provisioning's GPU
 health and CUDA validation. Keep configuration, state, and provider responses
 outside Git.
+
+### Blinded VLM preference audits
+
+For a blinded image audit, run `npa workbench vlm-eval compare-preference`
+with `--baseline-path`, `--candidate-path`, `--output-path`, and `--task`.
+It sends metadata-free RGB images under neutral labels in both orders, stores
+complete private evidence, and reports only a bounded console summary. See the
+[VLM evaluation runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md)
+for credentials, rubric options, and recovery without another provider call.
+This hosted API command needs no local GPU and never emits an acceptance gate.
+
+Preference audits default to Nebius Token Factory only when no ambient API base
+URL is set. If `VLM_EVAL_API_BASE_URL`, `OPENAI_BASE_URL`,
+`NEBIUS_TOKEN_FACTORY_BASE_URL`, or `NEBIUS_BASE_URL` is set, supply an explicit
+`--endpoint-url`; these variables never silently redirect preference images.
+Custom endpoints require the key in the exact `--api-key-env` variable (default
+`VLM_EVAL_API_KEY`), with no credential fallback. A custom key variable also
+requires an explicit endpoint. The default Nebius route accepts
+`VLM_EVAL_API_KEY`, or `NEBIUS_TOKEN_FACTORY_KEY` from the environment or the
+configured credentials file. `OPENAI_API_KEY` is never an automatic fallback;
+use an explicit endpoint and `--api-key-env OPENAI_API_KEY` for that route.
+Routing refusals report a fixed reason code and corrective guidance in text or
+JSON output. They happen before transport or journal creation; they do not
+imply that a private evidence bundle exists.
