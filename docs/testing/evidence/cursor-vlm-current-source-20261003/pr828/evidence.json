@@ -1,0 +1,260 @@
+{
+  "schema": "cursor-explore.vlm-current-source-bridge/v1",
+  "pr": 828,
+  "candidate": {
+    "head": "c5a9f2ae60cf9e99c44d7b2c02df14d8407d793c",
+    "tree": "6c20f91013a853af9ab18bb01950bc9af65375f3",
+    "runtime_sha256": "253d602cfa2e9ebe5e3eb60a2979629a33ef73c4b8aa9da6e1de9d4d74f4b89e"
+  },
+  "integration_base": "e1f627dfd54c961cbe10d82084f97e334b9e12c9",
+  "scope": "Fresh CPU source/interface execution and offline replay, not fresh hosted inference or final readiness.",
+  "original_hosted_execution": {
+    "client_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+    "head": "2bcc2badfb102a17341df354f95782316874e7e3",
+    "runtime_sha256": "011df1d16046c5d745c0e368f5dc0ab2dae45bef0cc42e66f09ba8db64d1c6d8",
+    "tree": "21ae45b452b89224ea3f5302f1266bf7baa23bdb"
+  },
+  "original_artifacts_rewritten": false,
+  "new_provider_calls": 0,
+  "rows": [
+    {
+      "case": "api-MiniMax-M3-positive",
+      "original_provider_execution_head": "2bcc2badfb102a17341df354f95782316874e7e3",
+      "request_sha256": "f72ac3bcabeb749ed68c7f9efc0a9243fad17fe75c2a77ce9bee8c87137097e6",
+      "response_sha256": "ffb1b43acd0c59e00580c0de52510d0dfb0a0a859e1e84d0320a761f73025ef5",
+      "derivative_artifact_sha256": "0778a3d65edd3d1f436adfbf205067ba8cacad3d821229ff58b9233681e5f720",
+      "score": 1,
+      "passed": true,
+      "rationale": "The image clearly shows a red circle on a white background. The shape is a circle and the color is red, fully satisfying the task requirement of identifying a visible red circle.",
+      "decision": "promote_checkpoint",
+      "unchanged_request": true
+    },
+    {
+      "case": "api-MiniMax-M3-negative",
+      "original_provider_execution_head": "2bcc2badfb102a17341df354f95782316874e7e3",
+      "request_sha256": "5fafaf5a7088798c310b42f6dad40c192460969df4facc3416a2208a208c9833",
+      "response_sha256": "87eb944629cb36c6c47cd97a589c66757e32f8fee5f638509e9cb256d8df34ec",
+      "derivative_artifact_sha256": "bda7fb1780941b2cf627418fa230fb0d88bcddc24791d5f6291e69accd5c45f9",
+      "score": 0,
+      "passed": false,
+      "rationale": "The image is a uniform blank/gray frame with no visible shapes or colors. There is no red circle present, so the task of identifying a red circle is not completed.",
+      "decision": "loop_back",
+      "unchanged_request": true
+    },
+    {
+      "case": "self-hosted-gemma-3-27b-it-positive",
+      "original_provider_execution_head": "2bcc2badfb102a17341df354f95782316874e7e3",
+      "request_sha256": "624b2d403e9fc83d8f42725472ebe1497f2cbd8f8d630768bd2197167d169f53",
+      "response_sha256": "e16585691886a2f6f441b001d7d8179f61ef55a4fddf4dea18034a1d950f54c2",
+      "derivative_artifact_sha256": "b40cdc3e0301c8be09bc46d03d4ba0c711a9c473d980d1483bd35e983e5cf414",
+      "score": 1,
+      "passed": true,
+      "rationale": "The image clearly contains a red circle. The task is fully completed.",
+      "decision": "promote_checkpoint",
+      "unchanged_request": true
+    },
+    {
+      "case": "self-hosted-gemma-3-27b-it-negative",
+      "original_provider_execution_head": "2bcc2badfb102a17341df354f95782316874e7e3",
+      "request_sha256": "29aa0f25c679ff63a79ec1116c9e84b8d988e8a76d2ac30eff669e59dad7346b",
+      "response_sha256": "476515130377e9d1d6750fe9b96b36038998fa4cb4ee85cae9c0b00c0f19613f",
+      "derivative_artifact_sha256": "84763002a7e19586dd1c79a2f01361f87822a0fa6e15298a75ea590ffafca452",
+      "score": 0,
+      "passed": false,
+      "rationale": "The image is a uniform gray color. There are no visible shapes, and specifically no red circle. The task requires a clearly visible red circle to be present for successful completion.",
+      "decision": "loop_back",
+      "unchanged_request": true
+    }
+  ],
+  "source_bridges": [
+    {
+      "all_function_class_ASTs_equal": false,
+      "all_other_existing_ASTs_equal_baseline": true,
+      "baseline_head": "349481b40d69122035cf307a91cc0c92c4acae6e",
+      "baseline_sha256": "a83d2aa593c5403e2e99939bfc68ca54a41882956c9892822c4e7be032bb4dab",
+      "benchmark_merge_only_appends_exact_schema_keyword": true,
+      "candidate_sha256": "253d602cfa2e9ebe5e3eb60a2979629a33ef73c4b8aa9da6e1de9d4d74f4b89e",
+      "function_class_count": 167,
+      "incoming_ASTs_equal_exact_landed_main_except_preserved_benchmark_model_prefix": true,
+      "incoming_added_AST_nodes": [
+        "VlmBenchmarkConfusionMatrix",
+        "VlmBenchmarkConfusionRow",
+        "_benchmark_bucket_ids",
+        "_benchmark_confusion_matrix",
+        "_benchmark_outcome_buckets",
+        "_benchmark_outcome_name",
+        "_require_unique_benchmark_item_ids"
+      ],
+      "incoming_changed_existing_AST_nodes": [
+        "VlmBenchmarkMetrics",
+        "VlmBenchmarkReport",
+        "_benchmark_metrics",
+        "benchmark_vlm_eval",
+        "load_benchmark_dataset"
+      ],
+      "incoming_main": "e1f627dfd54c961cbe10d82084f97e334b9e12c9",
+      "original_sha256": "011df1d16046c5d745c0e368f5dc0ab2dae45bef0cc42e66f09ba8db64d1c6d8",
+      "parent_main622_bridges": [
+        {
+          "all_function_class_ASTs_equal": false,
+          "all_other_existing_ASTs_equal_baseline": true,
+          "baseline_head": "a57cc908dcee90b01ac332afb8bce5b8ee2c34aa",
+          "baseline_sha256": "103c454c74ff3b8687fe03d78f95a5dd4896f5c2b77dd002716a8e4fda1a444f",
+          "benchmark_effective_model_deduplicated": false,
+          "candidate_sha256": "a83d2aa593c5403e2e99939bfc68ca54a41882956c9892822c4e7be032bb4dab",
+          "function_class_count": 160,
+          "incoming_ASTs_equal_exact_landed_main_except_explicit_paired_guard": true,
+          "incoming_added_AST_nodes": [
+            "VlmJudgeComparisonReport",
+            "VlmJudgeComparisonRequest",
+            "VlmJudgeError",
+            "VlmJudgeOutcome",
+            "_VlmJudgeContext",
+            "_assert_model_only_request_difference",
+            "_available_response_choice",
+            "_backend_response_from_http",
+            "_build_judge_comparison_report",
+            "_call_comparison_judge",
+            "_captured_http_response",
+            "_common_hosted_request",
+            "_comparison_context",
+            "_comparison_error_outcome",
+            "_comparison_limitations",
+            "_comparison_models",
+            "_comparison_prompt",
+            "_comparison_request_evidence",
+            "_comparison_score_delta",
+            "_comparison_status",
+            "_comparison_success_outcome",
+            "_comparison_transport_error_kind",
+            "_comparison_transport_error_outcome",
+            "_connection_failure",
+            "_decode_backend_json",
+            "_evaluate_judge_pair",
+            "_outcome_request",
+            "_parse_comparison_response",
+            "_post_backend_once",
+            "_post_comparison_request",
+            "_publish_private_comparison",
+            "_raise_for_backend_status",
+            "_request_for_model",
+            "_retain_response",
+            "_run_judge_comparison",
+            "_strict_comparison_verdict",
+            "_unparsed_provider_evidence",
+            "_validate_comparison_outcome",
+            "_validate_shared_comparison_evidence",
+            "_write_comparison_artifact",
+            "compare_vlm_judges",
+            "judge_comparison_result_uri_for"
+          ],
+          "incoming_changed_existing_AST_nodes": [
+            "_post_with_readiness_retry",
+            "_resolve_task_text",
+            "write_result"
+          ],
+          "incoming_main": "cbd10457cb77d2054f63ad66979df0971579b3c8",
+          "original_sha256": "011df1d16046c5d745c0e368f5dc0ab2dae45bef0cc42e66f09ba8db64d1c6d8",
+          "paired_completion_guard_added": true,
+          "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+          "prior_repair_changed_AST_nodes": [],
+          "scope": "Incoming metadata-reader/capture/writer runtime change; actual original requests replayed, not entire evaluator equality"
+        },
+        {
+          "byte_equal_expected": true,
+          "byte_equal_original": true,
+          "expected_scope": "original client",
+          "original_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+          "path": "npa/src/npa/clients/token_factory.py",
+          "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+        },
+        {
+          "byte_equal_expected": true,
+          "byte_equal_original": false,
+          "expected_scope": "exact landed622CLIregistration",
+          "original_sha256": "2b3f02b361920466e5804e03b9546fa77b20535c75fa08c8f7e34a01dd2f83b7",
+          "path": "npa/src/npa/cli/workbench/vlm_eval.py",
+          "sha256": "875a9727265f4fbd44e90ad8bdc9da5277c4800c726f3e8869d4049f20c65121"
+        }
+      ],
+      "parent_main622_receipt_sha256": "bb0ad58e3c79947703ef7739176f7575dc4a899bfbee52f59ef1e95469ce4b65",
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "scope": "Incoming benchmark report/metrics/unique-ID runtime change; previous622 completion/identity/capture/writer source bridge retained, not entire evaluator equality"
+    },
+    {
+      "byte_equal_expected": true,
+      "byte_equal_original": true,
+      "expected_scope": "original client",
+      "original_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    {
+      "byte_equal_expected": true,
+      "byte_equal_original": false,
+      "expected_scope": "exact landed622CLIregistration",
+      "original_sha256": "2b3f02b361920466e5804e03b9546fa77b20535c75fa08c8f7e34a01dd2f83b7",
+      "path": "npa/src/npa/cli/workbench/vlm_eval.py",
+      "sha256": "875a9727265f4fbd44e90ad8bdc9da5277c4800c726f3e8869d4049f20c65121"
+    }
+  ],
+  "local_gates": {
+    "main622": {
+      "head": "349481b40d69122035cf307a91cc0c92c4acae6e",
+      "passed": 1426,
+      "skipped": 2,
+      "warnings": 8,
+      "seconds": 101.34
+    },
+    "main624": {
+      "head": "c5a9f2ae60cf9e99c44d7b2c02df14d8407d793c",
+      "passed": 566,
+      "skipped": 2,
+      "warnings": 8,
+      "seconds": 11.11
+    },
+    "precheck": 270,
+    "docs_check": "PASS",
+    "reachable_confidentiality": "PASS",
+    "reachable_gitleaks": "PASS",
+    "current_security": {"head": "c5a9f2ae60cf9e99c44d7b2c02df14d8407d793c", "passed": 898, "seconds": 230.73, "cpu_torch": "2.14.0+cpu", "source_distribution_before_after_equal": true},
+    "current_smoke": {"head": "c5a9f2ae60cf9e99c44d7b2c02df14d8407d793c", "passed": 118, "seconds": 44.17},
+    "current_guardrails": {"head": "c5a9f2ae60cf9e99c44d7b2c02df14d8407d793c", "passed": 5881, "skipped": 1, "warnings": 1, "seconds": 216.94}
+  },
+  "original_full": {
+    "head": "2bcc2badfb102a17341df354f95782316874e7e3",
+    "passed": 39824,
+    "skipped": 213,
+    "non_strict_xpass": 1,
+    "coverage_percent": 77.47,
+    "coverage_floor": 60,
+    "not_current_candidate_execution": true
+  },
+  "negative_controls": {
+    "retained_grade_tamper_rejections": 15,
+    "canonical_legacy_precedence_cases": 5,
+    "paired_incomplete_cases": 12,
+    "whole_loop_abort": "Previously completed report retained; incomplete second rollout produces no second report or new aggregate.",
+    "workflow_failure": "Actual shipped workflow interpreter/executor with scripted failed judge submits no gate or publish stage and never reads a favorable stale decision; zero cloud jobs/network.",
+    "manual_legacy_reader_limit": "Ignoring a failed producer and separately grading a reused destination can promote an old valid legacy file when canonical is absent. Existing compatibility contract, not fixed or authenticated by these controls."
+  },
+  "claude_review": {
+    "job": "pr-828-pass-2-a57cc908dcee",
+    "source_head": "a57cc908dcee90b01ac332afb8bce5b8ee2c34aa",
+    "source_tree": "6dfb9daf79a6c274ab83501357ab339f3500690e",
+    "provider": "firstParty",
+    "actual_model": "claude-opus-5",
+    "packet_sha256": "10ad1efcd996fb468a9ce85b2e074a2f19dd3c89536fb58f60b97c7a7a000d22",
+    "worker_reported_output_sha256": "e311e3b0982555de7198b1fd4e995fa3303e855dfac54bdef68f08e64d49d48d",
+    "verdict": "clear(code)",
+    "limits": "Distinct AI source review only; no human approval, no execution/pixel review, no approval of the later paired completion repair or incoming main. Original Mac output hash is worker-reported, not a byte-recomputation on this host."
+  },
+  "limitations": [
+    "Retained-response replay is not a new model call or network packet capture.",
+    "Geometry controls do not establish calibrated quality, physical correctness or robot safety.",
+    "Compatible self-hosted client inference used an actual hosted service, not operator-owned GPU serving.",
+    "Present malformed/ineligible canonical reports block favorable legacy; partial artifacts are not successful runs.",
+    "Old test failures, skipped/XPASS/canceled attempts and original refusal limitations remain retained at their original execution identities.",
+    "Current published-head CI, independent final gates and coordinator queue/integration remain separate conditions."
+  ]
+}
