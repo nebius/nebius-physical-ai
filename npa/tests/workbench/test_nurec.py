@@ -15,12 +15,13 @@ import pytest
 from click.utils import strip_ansi
 from typer.testing import CliRunner
 
-from npa.cli import nurec as cli_nurec
+from npa.cli import nurec as nurec_cli
 from npa.cli.main import app
 from npa.workbench.nurec import nurec as mod
 from npa.workbench.nurec.nurec import (
     DEFAULT_CONFIG_NAME,
     DEFAULT_DATASET_ID,
+    DEFAULT_GT_FRAME_STEP_CAMERA,
     DEFAULT_NRE_ENTRYPOINT,
     DEFAULT_NRE_IMAGE,
     NO_LIDAR_SENTINEL,
@@ -88,6 +89,7 @@ def test_config_defaults_are_the_ga_container_and_ungated_dataset() -> None:
     # The GA channel is the one a standard NGC key can pull.
     assert config.image.endswith("-ga:26.04")
     assert config.dataset_id == DEFAULT_DATASET_ID
+    assert config.resolved_dataset_revision == mod.DEFAULT_DATASET_REVISION
     assert config.config_name == DEFAULT_CONFIG_NAME
     assert config.entrypoint == DEFAULT_NRE_ENTRYPOINT
     assert config.resolved_cache_dir.as_posix().startswith("/tmp/")
@@ -309,7 +311,11 @@ def test_export_gt_args_match_the_real_subcommand_surface() -> None:
 
     assert args[0] == "export-ncore-benchmark-gt"
     assert "--dataset-path" in args and "/d/s.json" in args
-    assert "--frame-step-camera" in args
+    frame_step_index = args.index("--frame-step-camera")
+    assert args[frame_step_index : frame_step_index + 2] == [
+        "--frame-step-camera",
+        str(DEFAULT_GT_FRAME_STEP_CAMERA),
+    ]
     # There is no --camera-id on this sub-command.
     assert "--camera-id" not in args
 
@@ -819,7 +825,35 @@ def test_reconstruct_collects_the_usdz_metrics_and_ground_truth(tmp_path: Path) 
     assert result.metrics["test/psnr"] == pytest.approx(27.75)
     assert result.gt_dir.endswith("gt")
     assert len(calls) == 2
-    assert calls[1][-1] == "7"
+    export_command = calls[1]
+    frame_step_index = export_command.index("--frame-step-camera")
+    assert export_command[frame_step_index : frame_step_index + 2] == [
+        "--frame-step-camera",
+        "7",
+    ]
+
+
+def test_reconstruct_ignores_an_optional_ground_truth_export_failure(
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "out"
+    run_dir = out / "nre"
+
+    def fake_runner(command, **_kwargs):
+        if "export-ncore-benchmark-gt" in command:
+            return _completed(1, "export unavailable")
+        (run_dir / "artifacts").mkdir(parents=True, exist_ok=True)
+        (run_dir / "artifacts" / "030000.usdz").write_text("gaussians")
+        return _completed(0)
+
+    config = NurecConfig.from_env(environ={}, out_dir=out)
+    result = reconstruct_scene(
+        config, ncore_json="/d/s.json", environ={}, runner=fake_runner
+    )
+    assert result.ok is True
+    assert result.usdz_path.endswith("030000.usdz")
+    assert result.gt_dir == ""
+    assert result.errors == ()
 
 
 def test_reconstruct_fails_loudly_without_an_artifact(tmp_path: Path) -> None:
@@ -894,6 +928,7 @@ def test_fetch_downloads_extracts_and_locates_the_sequence(tmp_path: Path) -> No
     member = cache / "hf" / config.ncore_member
 
     def fake_runner(command, **_kwargs):
+        assert command[command.index("--revision") + 1] == mod.DEFAULT_DATASET_REVISION
         # Stand in for the `hf download` CLI by materializing the archive.
         member.parent.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(member, "w") as bundle:
@@ -924,6 +959,19 @@ def test_fetch_downloads_extracts_and_locates_the_sequence(tmp_path: Path) -> No
     assert result.lidar_ids == ("virtual_lidar",)
     assert result.shard_count == 1
     assert result.bytes_downloaded > 0
+    assert result.dataset_revision == mod.DEFAULT_DATASET_REVISION
+    assert result.archive_sha256 == mod._file_sha256(member)
+
+
+def test_revision_pin_does_not_apply_to_an_unrelated_dataset():
+    config = NurecConfig.from_env(environ={}, dataset_id="example/reference")
+    assert config.resolved_dataset_revision == "main"
+    selected = NurecConfig.from_env(environ={"NPA_NUREC_DATASET_REVISION": "reference"})
+    assert selected.resolved_dataset_revision == "reference"
+    explicit = NurecConfig.from_env(
+        environ={"NPA_NUREC_DATASET_REVISION": "reference"}, dataset_revision="a" * 40
+    )
+    assert explicit.resolved_dataset_revision == "a" * 40
 
 
 def test_fetch_surfaces_a_download_failure_with_redaction(tmp_path: Path) -> None:
@@ -1083,26 +1131,29 @@ def test_cli_reconstruct_dry_run_prints_the_resolved_nre_command(
     assert "checkpoint.artifact.enabled=true" in command
 
 
-def test_cli_reconstruct_forwards_ground_truth_frame_step(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize(
+    ("extra_args", "expected_frame_step"),
+    [
+        ([], DEFAULT_GT_FRAME_STEP_CAMERA),
+        (["--gt-frame-step", "7"], 7),
+    ],
+)
+def test_cli_reconstruct_forwards_the_ground_truth_frame_step(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    extra_args: list[str],
+    expected_frame_step: int,
 ) -> None:
     ncore = tmp_path / "scene.json"
     ncore.write_text("{}")
-    seen: dict[str, object] = {}
+    observed: list[int] = []
+    original_reconstruct_scene = mod.reconstruct_scene
 
-    class Result:
-        ok = True
-        gt_dir = None
+    def recording_reconstruct_scene(config, **kwargs):
+        observed.append(kwargs["gt_frame_step"])
+        return original_reconstruct_scene(config, **kwargs)
 
-        @staticmethod
-        def as_dict() -> dict[str, object]:
-            return {"status": "ok"}
-
-    def fake_reconstruct(*_args, **kwargs):
-        seen.update(kwargs)
-        return Result()
-
-    monkeypatch.setattr(cli_nurec, "reconstruct_scene", fake_reconstruct)
+    monkeypatch.setattr(nurec_cli, "reconstruct_scene", recording_reconstruct_scene)
     result = runner.invoke(
         app,
         [
@@ -1111,15 +1162,16 @@ def test_cli_reconstruct_forwards_ground_truth_frame_step(
             "reconstruct",
             "--ncore-json",
             str(ncore),
-            "--gt-frame-step",
-            "7",
+            "--out-dir",
+            str(tmp_path / "out"),
+            "--dry-run",
             "--output",
             "json",
+            *extra_args,
         ],
     )
-
-    assert result.exit_code == 0, result.output
-    assert seen["gt_frame_step"] == 7
+    assert result.exit_code == 0, strip_ansi(result.output)
+    assert observed == [expected_frame_step]
 
 
 def test_cli_reconstruct_without_a_sequence_fails_with_guidance(tmp_path: Path) -> None:

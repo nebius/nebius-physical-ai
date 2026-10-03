@@ -574,6 +574,64 @@ def test_rest_contract_rejects_string_boolean() -> None:
         spec_from_mapping(data)
 
 
+@pytest.mark.parametrize("malformed", ["false", 0, 1, None, [], {}])
+@pytest.mark.parametrize(
+    ("field", "worker_index"),
+    [
+        ("preemptible", 0),
+        ("docker_cache", 0),
+        ("accounting", None),
+        ("telemetry", None),
+        ("use_default_apparmor_profile", None),
+    ],
+)
+def test_operational_flags_reject_non_boolean_values(
+    field: str, worker_index: int | None, malformed: object
+) -> None:
+    data = _base_spec_mapping()
+    target = data if worker_index is None else data["workers"][worker_index]
+    target[field] = malformed
+
+    with pytest.raises(SoperatorSpecError, match=field):
+        spec_from_mapping(data)
+
+
+@pytest.mark.parametrize("value", [False, True])
+@pytest.mark.parametrize(
+    ("field", "worker_index"),
+    [
+        ("preemptible", 0),
+        ("docker_cache", 0),
+        ("accounting", None),
+        ("telemetry", None),
+        ("use_default_apparmor_profile", None),
+    ],
+)
+def test_operational_flags_accept_exact_booleans_and_omission(
+    field: str, worker_index: int | None, value: bool
+) -> None:
+    data = _base_spec_mapping()
+    target = data if worker_index is None else data["workers"][worker_index]
+    target.pop(field, None)
+    omitted = spec_from_mapping(data)
+
+    target[field] = value
+    explicit = spec_from_mapping(data)
+
+    omitted_value = (
+        getattr(omitted, field)
+        if worker_index is None
+        else getattr(omitted.workers[worker_index], field)
+    )
+    explicit_value = (
+        getattr(explicit, field)
+        if worker_index is None
+        else getattr(explicit.workers[worker_index], field)
+    )
+    assert omitted_value is False
+    assert explicit_value is value
+
+
 def test_solutions_library_ref_requires_immutable_commit() -> None:
     from npa.soperator.lifecycle import _validate_immutable_solutions_library_ref
 
@@ -2885,6 +2943,30 @@ def test_json_mode_terraform_runner_captures_child_output(
     assert seen["check"] is False
 
 
+def test_json_mode_terraform_error_survives_long_progress_output(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.soperator import lifecycle
+
+    monkeypatch.setattr(
+        lifecycle,
+        "_run_capture",
+        lambda *args, **kwargs: _Done(
+            returncode=1,
+            stdout="normal Terraform progress\n" * 50,
+            stderr="Error: could not download chart: missing cached repository\n",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="missing cached repository"):
+        lifecycle._run_terraform_command(
+            ["terraform", "apply"],
+            cwd=tmp_path,
+            env={},
+            timeout=42,
+            stream_output=False,
+        )
+
+
 def test_superseded_activechecks_upgrade_aborts_only_old_hook(monkeypatch) -> None:
     from npa.soperator import lifecycle
 
@@ -3442,7 +3524,8 @@ def test_patch_nodeconfigurator_allows_enroot_userns_and_is_idempotent(
     assert "sysctl -w kernel.apparmor_restrict_unprivileged_userns=0" in patched
     assert '[ "${apparmor_enabled}" = "false" ]' in patched
     assert "sysctl -w net.core.rmem_max=536870912" in patched
-    assert patched.index("initContainers:") < patched.index("resources: {}")
+    assert "name: terraform-nodeconfigurator" in patched
+    assert patched.index("initContainers:") > patched.index("resources: {}")
 
     assert lifecycle._patch_nodeconfigurator_userns(tmp_path) is False
     assert template.read_text() == patched
@@ -4153,3 +4236,58 @@ def test_deploy_reservation_failure_stops_before_render_init_or_provider_mutatio
 
     with pytest.raises(ValueError, match="reserved capacity is insufficient"):
         lifecycle.deploy_cluster(spec, terraform_dir=recipe)
+
+
+@pytest.mark.parametrize(
+    "field, malformed",
+    [
+        ("size", True),
+        ("size", False),
+        ("size", "2"),
+        ("size", 1.5),
+        ("size", None),
+        ("size", []),
+        ("size", {}),
+        ("size", 0),
+        ("size", -1),
+        ("fabric", True),
+        ("fabric", 1),
+        ("fabric", None),
+        ("fabric", []),
+        ("fabric", {}),
+    ],
+)
+def test_worker_scalars_reject_yaml_before_deploy(
+    tmp_path, monkeypatch, field, malformed
+):
+    import yaml
+    from npa.soperator import lifecycle
+
+    def unexpected_deploy(*args, **kwargs):
+        pytest.fail("malformed spec reached deployment")
+
+    monkeypatch.setattr(lifecycle, "deploy_cluster", unexpected_deploy)
+    data = _base_spec_mapping()
+    data["workers"][1][field] = malformed
+    path = tmp_path / "cluster.yaml"
+    path.write_text(yaml.safe_dump(data))
+    with pytest.raises(SoperatorSpecError, match=field):
+        load_spec(path)
+    result = runner.invoke(app, ["soperator", "deploy", "--spec", str(path)])
+    assert result.exit_code != 0
+    assert field in result.output
+
+
+def test_worker_scalar_yaml_defaults_and_explicit_values(tmp_path):
+    import yaml
+
+    data = _base_spec_mapping()
+    path = tmp_path / "cluster.yaml"
+    path.write_text(yaml.safe_dump(data))
+    spec = load_spec(path)
+    assert spec.workers[0].size == 1
+    assert spec.workers[0].fabric == ""
+    assert spec.workers[1].size == 2
+    assert spec.workers[1].fabric == "us-central1-b"
+    result = runner.invoke(app, ["soperator", "plan", "--spec", str(path)])
+    assert result.exit_code == 0, result.output

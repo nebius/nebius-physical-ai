@@ -31,7 +31,7 @@ concurrency:
 jobs:
   image-policy:
     name: Image policy and complete-byte security
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Check out full history
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,6 +75,7 @@ jobs:
           npa/.venv/bin/python npa/docker/workbench/check_tag_consistency.py
           npa/.venv/bin/python -m pytest \
             npa/tests/docker/test_image_payload_scan.py \
+            npa/tests/docker/test_antioch_image_payload_scan.py \
             npa/tests/docker/test_packaging_contract.py \
             npa/tests/docker/test_isaac_bootstrap.py \
             npa/tests/guardrails/test_workbench_image_k8s_prereqs.py \
@@ -129,7 +130,7 @@ jobs:
           always() && steps.scope.outputs.deep == 'true' &&
           (github.event_name == 'push' || github.event_name == 'schedule' ||
           github.event_name == 'workflow_dispatch')
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:dockerfile-static-scan
         with:
@@ -138,7 +139,7 @@ jobs:
 
   base-image-plan:
     name: Plan base image CVE inventory
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     outputs:
       deep: ${{ steps.scope.outputs.deep }}
       matrix: ${{ steps.inventory.outputs.matrix }}
@@ -186,7 +187,7 @@ jobs:
     name: Base image CVE / ${{ matrix.entry }}
     needs: base-image-plan
     if: needs.base-image-plan.outputs.deep == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.base-image-plan.outputs.matrix) }}
@@ -215,8 +216,13 @@ jobs:
 
       - name: Reclaim unused hosted-runner SDK space
         run: |
+          set -euo pipefail
           # CUDA images and Trivy's exports must coexist on this disposable runner.
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc
+          # These trees are disjoint; delete them concurrently so runner-image
+          # size does not add several serial minutes to every matrix entry.
+          printf '%s\0' \
+            /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc | \
+            xargs -0 -r -n1 -P4 sudo rm -rf --
           df -h /
 
       - name: Scan the exact inventory entry
@@ -240,7 +246,7 @@ jobs:
 
       - name: Upload base SARIF
         if: always() && github.event_name != 'pull_request' && github.event_name != 'merge_group'
-        uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4
         env:
           CODEQL_ACTION_ANALYSIS_KEY: .github/workflows/image-security-scan.yml:base-image-cve-scan
         with:
@@ -252,7 +258,7 @@ jobs:
     needs: [base-image-plan, base-image-entry]
     # Report scan failures, but release superseded runs without waiting for a runner.
     if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_PRIORITY_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     steps:
       - name: Require complete scoped inventory
         env:
@@ -269,7 +275,7 @@ jobs:
 
   omniverse-payload-scan:
     name: Omniverse payload scan (built image)
-    runs-on: ubuntu-latest
+    runs-on: ${{ contains(fromJSON('["pull_request", "merge_group"]'), github.event_name) && (vars.NPA_CI_TEST_RUNNER || 'ubuntu-latest') || 'ubuntu-latest' }}
     if: github.event_name == 'workflow_dispatch' && inputs.omniverse_payload_scan_image != ''
     steps:
       - name: Check out repository

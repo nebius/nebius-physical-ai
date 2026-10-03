@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -48,6 +50,43 @@ def check_raw_env_generation() -> CheckResult:
     return CheckResult("raw env generation", True, f"rows={len(envs)}")
 
 
+def check_non_root_runtime_readability() -> CheckResult:
+    """Prove the flattened image can import its exact source without PYTHONPATH."""
+
+    uid = os.geteuid()
+    if uid == 0:
+        return CheckResult(
+            "non-root runtime readability",
+            False,
+            "golden eval unexpectedly ran as root",
+        )
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    probe = (
+        "import os; from pathlib import Path; import tetgen; "
+        "from npa.workflows import sim2real_envgen; "
+        "paths=(Path(tetgen.__file__), Path(sim2real_envgen.__file__)); "
+        "assert all(path.is_file() and os.access(path, os.R_OK) for path in paths); "
+        "print(*(str(path) for path in paths), sep=' | ')"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", probe],
+        check=False,
+        capture_output=True,
+        env=environment,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "import probe failed").strip()
+        return CheckResult("non-root runtime readability", False, detail[-400:])
+    return CheckResult(
+        "non-root runtime readability",
+        True,
+        f"uid={uid}; {completed.stdout.strip()}",
+    )
+
+
 def check_genesis_cuda_step() -> CheckResult:
     import torch
 
@@ -75,6 +114,7 @@ def check_genesis_cuda_step() -> CheckResult:
 
 def main() -> int:
     checks: list[Callable[[], CheckResult]] = [
+        check_non_root_runtime_readability,
         check_raw_env_generation,
         check_genesis_cuda_step,
     ]

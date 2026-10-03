@@ -137,7 +137,7 @@ def test_explicit_zero_polls_past_declared_wait_until_success(
     harness, case, monkeypatch
 ):
     monkeypatch.setenv(WAIT_ENV, "0")
-    # Virtual time crosses both the 3600s default and NuRec's 5400s declaration.
+    # Virtual time crosses the finite fallback without sleeping or GPU execution.
     monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS", "6000")
 
     harness.mod.test_npa_workflow_submit_live_reaches_terminal(**harness.args)
@@ -159,7 +159,7 @@ def test_finite_wait_keeps_polling_and_timeout_cleanup(
 ):
     if env_value is not None:
         monkeypatch.setenv(WAIT_ENV, env_value)
-    expected = 5400 if case.spec == "nurec-reconstruct.yaml" else fallback
+    expected = case.max_wait_seconds or fallback
     interval = expected // 3
     monkeypatch.setenv("NPA_E2E_NPA_WORKFLOW_SUBMIT_POLL_SECONDS", str(interval))
 
@@ -195,9 +195,7 @@ def test_runtime_entrypoint_forwards_selected_wait(
 
     harness.invoke.assert_called_once()
     argv = harness.invoke.call_args.args[1]
-    expected = (
-        5400 if case.spec == "nurec-reconstruct.yaml" and env_value != "0" else fallback
-    )
+    expected = 0 if env_value == "0" else case.max_wait_seconds or fallback
     assert "--runtime" in argv
     assert argv[argv.index("--max-wait-seconds") + 1] == str(expected)
 

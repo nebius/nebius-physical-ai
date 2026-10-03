@@ -1,0 +1,11 @@
+{
+  "adapter_manifest": "/runtime/manifests/adapter-files.json",
+  "adapter_root": "/runtime/npa-behavior-adapter",
+  "checkpoint_archive": "/runtime/checkpoints/published-parent.zip",
+  "checkpoint_root": "/runtime/checkpoints/published-parent",
+  "dataset_root": "/runtime/datasets/released-rgb-view",
+  "dataset_validation": "/runtime/manifests/dataset-validation.json",
+  "episode_split": "/runtime/manifests/episode-split.json",
+  "source_manifest": "/runtime/manifests/source-manifest.json",
+  "source_root": "/runtime/source/behavior-policy"
+}

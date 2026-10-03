@@ -1,0 +1,98 @@
+{
+  "schema": "npa.cosmos3.wam-native-transport-snapshot.v1",
+  "captured_utc": "2026-09-30T02:51:48.613600+00:00",
+  "node_rank": 0,
+  "processes": [
+    {
+      "rank": 0,
+      "node_rank": 0,
+      "local_rank": 0,
+      "nccl_log_sha256": "e805323c6b97e87f4f71744807f034792f04c17d08bfc6a30a415b118ed75ded",
+      "bytes": 88358,
+      "infiniband_selected": true,
+      "world_size": 32,
+      "initialized_communicators": 3,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 1,
+      "node_rank": 0,
+      "local_rank": 1,
+      "nccl_log_sha256": "d53c7be55067696bfa76d303c1a8873fbb1f3f0b5575924a24fb90c31b7d96a4",
+      "bytes": 83003,
+      "infiniband_selected": true,
+      "world_size": 32,
+      "initialized_communicators": 3,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 2,
+      "node_rank": 0,
+      "local_rank": 2,
+      "nccl_log_sha256": "f66bb6504b8f15095dfe451a61b9ae0795b7d386617b1fcb097d508cfbc97cfa",
+      "bytes": 83101,
+      "infiniband_selected": true,
+      "world_size": 32,
+      "initialized_communicators": 3,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 3,
+      "node_rank": 0,
+      "local_rank": 3,
+      "nccl_log_sha256": "2021470a3c52bedc6758a096c3b888ee78be1c6f7978ea730d87a7abd6b9b943",
+      "bytes": 83104,
+      "infiniband_selected": true,
+      "world_size": 32,
+      "initialized_communicators": 3,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 4,
+      "node_rank": 0,
+      "local_rank": 4,
+      "nccl_log_sha256": "9006d69d83a815198e767da8010bff0fd1d56fd32599418d11f1a493e1cd24b6",
+      "bytes": 83079,
+      "infiniband_selected": true,
+      "world_size": 32,
+      "initialized_communicators": 3,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 5,
+      "node_rank": 0,
+      "local_rank": 5,
+      "nccl_log_sha256": "b4d1b2e53a0c875935298c7677b42a63ab254e81e912845cb36d5c01b6711036",
+      "bytes": 83082,
+      "infiniband_selected": true,
+      "world_size": 32,
+      "initialized_communicators": 3,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 6,
+      "node_rank": 0,
+      "local_rank": 6,
+      "nccl_log_sha256": "50ff71646ec9816f421a504619dad6eb1d0f7224dbe52c0789d7955b72c899ef",
+      "bytes": 83214,
+      "infiniband_selected": true,
+      "world_size": 32,
+      "initialized_communicators": 3,
+      "nccl_warning_lines": 0
+    },
+    {
+      "rank": 7,
+      "node_rank": 0,
+      "local_rank": 7,
+      "nccl_log_sha256": "b3f1574dc4164fcd39d8a4b66e7ddec372af4932988858354957756e35a19749",
+      "bytes": 82930,
+      "infiniband_selected": true,
+      "world_size": 32,
+      "initialized_communicators": 3,
+      "nccl_warning_lines": 0
+    }
+  ],
+  "capture_source_sha256": "69251c3a18889ff164571c50dc91ec7902fb7b42f7e1a043c1ba3045d4a438f4",
+  "attribution_source_sha256": "89d1438a9f692d5f56872bcc9905834d9fee33c631c0b63c301453652f97296c",
+  "scope": "Frozen NCCL log prefixes matched to active native trainer processes, job and configuration; no link-rate or collective-bandwidth claim"
+}

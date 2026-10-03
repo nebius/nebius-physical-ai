@@ -23,6 +23,16 @@ LanceDB CLI/API/SDK parity reviews.
    npa workbench lancedb query --help
    ```
 
+   `create-table` accepts rows from local Parquet, JSON, JSONL, or directory
+   inputs. Server-side `s3://` import is not implemented. For a zero-row table,
+   pass `--schema`; never seed a placeholder row. The schema is a JSON object
+   containing only a non-empty `fields` list. Each field has `name`, `type`, and
+   optional boolean `nullable` (default `true`). Primitive types use PyArrow
+   aliases. List types use `{"name": "list", "item_type": "string"}`; fixed
+   vectors use `{"name": "fixed_size_list", "item_type": "float32",
+   "list_size": 512}`. Supplied field order, Arrow types, and nullability are
+   the stored schema, and supplied append schemas must match them exactly.
+
 3. Import supported datasets through current commands:
 
    ```bash

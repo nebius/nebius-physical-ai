@@ -95,6 +95,20 @@ The reference camera defaults to the longest trajectory; this supplies NRE's
 required rig edge without claiming that independently photographed cameras
 formed a measured synchronized rig.
 
+For COLMAP conversion, NPA preserves each frame's actual camera-to-world poses
+in `T_sensor_worlds`, including composition through downsampled camera parents.
+The derived `npa_rig` group uses explicitly virtual identity camera-to-rig
+calibrations and the reference camera's world trajectory for scene extent.
+NRE's native per-frame pose override restores each camera's independent world
+trajectory. This does not assert a measured physical multi-camera rig. Original
+poses, image bytes, calibration, masks and point records remain independently
+audited; malformed or contradictory pose contracts fail before reconstruction.
+
+The native `dataset.frame_generic_data_pose_overwrite=true` setting is selected
+from the validated conversion sidecar. Explicitly disabling it or replacing
+`npa_rig` is rejected. The reference trajectory must cover every camera frame;
+training budgets and input membership are unchanged.
+
 Reconstruction selects all discovered cameras. With the default native
 `configs/experimental/3dgut/3dgut_colmap.yaml` recipe and a derived rig, selecting
 multiple cameras switches its background initializer to the supported native
@@ -471,6 +485,10 @@ from the ordered source render paths, requires each selected identity exactly
 once, and compares JPEG bytes independently re-encoded from the source renders
 using those settings. Deliberately sampled recordings remain valid; missing or
 duplicate review frames fail readback even when every camera still has an image.
+Native validation images retain their full relative modality and camera path,
+such as `reconstruction/val/pred_rgb/cam_00`. RGB, distance and opacity therefore
+remain separate entities even when their camera and frame names match. Each
+entity preserves the native frame index and its own bounded review sample.
 
 Before marking the feature live validated, retain exact-image scan evidence,
 independently reopen the sequence, parsed NRE metrics, USDZ and RRD, decode the

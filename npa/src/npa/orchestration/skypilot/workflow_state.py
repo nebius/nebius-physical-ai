@@ -22,6 +22,10 @@ from botocore.config import Config as BotoConfig
 
 from npa.clients.config import resolve_project_storage
 from npa.clients.credentials import load_credentials, storage_endpoint_url
+from npa.diagnostic_redaction import (
+    SECRET_ENV_NAMES as SECRET_ENV_NAMES,
+    redact_diagnostic_text,
+)
 
 UTC = timezone.utc
 
@@ -38,22 +42,14 @@ _MANIFEST_FETCH_WORKERS = 8
 DEFAULT_WORKFLOW_MOUNT_PATH = "/mnt/npa-workflow-state"
 DEFAULT_WORKFLOW_STATE_PREFIX = ""
 WORKFLOW_SCHEMA_VERSION = 1
-SECRET_ENV_NAMES = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
-_SENSITIVE_ENV_NAMES = (
-    *SECRET_ENV_NAMES,
-    "HF_TOKEN",
-    "HUGGING_FACE_HUB_TOKEN",
-    "HUGGINGFACE_TOKEN",
-    "HUGGINGFACE_HUB_TOKEN",
-    "NGC_API_KEY",
-    "GITHUB_TOKEN",
-    "GH_TOKEN",
-    "SKYPILOT_DOCKER_PASSWORD",
-)
 
 
 class WorkflowStateError(RuntimeError):
     """Raised when durable workflow state cannot be read or written."""
+
+
+class _WorkflowStateUnreadableError(WorkflowStateError):
+    """Read failure outside the provider lookup that can establish absence."""
 
 
 @dataclass(frozen=True)
@@ -342,7 +338,7 @@ def read_stage_status(state: WorkflowS3Config, stage: str) -> dict[str, Any] | N
     try:
         return get_json(state, "logs", stage, "status.json")
     except WorkflowStateError as exc:
-        if "not found" in str(exc).lower():
+        if workflow_state_error_is_missing(exc):
             return None
         raise
 
@@ -648,48 +644,52 @@ def get_json(
     return payload
 
 
-def get_text(state: WorkflowS3Config, *parts: str, client: Any = None) -> str:
-    """Read one object as text.
+def _get_object_for_read(state: WorkflowS3Config, key: str, client: Any) -> Any:
+    message = f"S3 object not found or unreadable: {_join_s3_uri(state.bucket, key)}"
+    try:
+        s3 = client if client is not None else state.client()
+    except Exception as exc:  # Client setup cannot prove object absence.
+        raise _WorkflowStateUnreadableError(message) from exc
+    try:
+        return s3.get_object(Bucket=state.bucket, Key=key)
+    except Exception as exc:  # boto3 exposes provider-specific ClientError payloads.
+        raise WorkflowStateError(message) from exc
 
-    Pass ``client`` when the caller is reading many objects from the same
-    bucket/endpoint concurrently (see ``list_runs`` / ``discover_workflow_run_state``):
-    it reuses one already-built client instead of each call building its own
-    through ``state.client()``, which constructs clients through boto3's
-    shared default session and is not documented as safe to do concurrently.
+
+def get_text(state: WorkflowS3Config, *parts: str, client: Any = None) -> str:
+    """Read one object as text, preserving whether its lookup proved absence.
 
     Args:
         state: Bucket/prefix/credentials to read from.
-        *parts: Path segments joined onto ``state.prefix`` to form the key.
-        client: Optional pre-built boto3 client to reuse instead of calling
-            ``state.client()``.
-
+        *parts: Path segments joined onto the run prefix.
+        client: Optional pre-built client for concurrent reads; reuse avoids
+            constructing clients through boto3's shared default session.
     Returns:
-        The object's bytes, decoded as UTF-8 (invalid bytes replaced).
-
+        The object's bytes decoded as UTF-8, with invalid bytes replaced.
     Raises:
-        WorkflowStateError: The client could not be built, or the provider
-            rejected the GET (missing object, auth failure, or any other
-            provider error).
+        WorkflowStateError: Client setup, provider lookup, response shape,
+            body read, or body cleanup failed.
     """
 
     key = _key(state.prefix, *parts)
+    response = _get_object_for_read(state, key, client)
     try:
-        s3 = client if client is not None else state.client()
-        response = s3.get_object(Bucket=state.bucket, Key=key)
-    except Exception as exc:  # boto3 exposes provider-specific ClientError payloads.
-        raise WorkflowStateError(
-            f"S3 object not found or unreadable: {_join_s3_uri(state.bucket, key)}"
+        body = response["Body"]
+        try:
+            return body.read().decode("utf-8", errors="replace")
+        finally:
+            body.close()
+    except Exception as exc:  # An opened object is not absent when its body fails.
+        raise _WorkflowStateUnreadableError(
+            f"S3 object response unreadable: {_join_s3_uri(state.bucket, key)}"
         ) from exc
-    body = response["Body"]
-    try:
-        return body.read().decode("utf-8", errors="replace")
-    finally:
-        body.close()
 
 
 def workflow_state_error_is_missing(exc: BaseException) -> bool:
     """Return whether a read failure is an actual missing object, not auth/network."""
 
+    if isinstance(exc, _WorkflowStateUnreadableError):
+        return False
     cause = exc.__cause__
     if isinstance(cause, (FileNotFoundError, KeyError)):
         return True
@@ -731,6 +731,7 @@ def tail_live_job_logs(
     stage: str = "",
     follow: bool = False,
     timeout: int = 300,
+    isolated_config_dir: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Read managed-job logs through the selected, verified SkyPilot runtime.
 
@@ -740,6 +741,7 @@ def tail_live_job_logs(
         stage: Optional task ID or stage name.
         follow: Whether to follow the live log stream.
         timeout: Subprocess timeout in seconds.
+        isolated_config_dir: Exact SkyPilot state root that owns the job identity.
     Returns:
         Captured SkyPilot log process result.
     Raises:
@@ -751,7 +753,7 @@ def tail_live_job_logs(
     from npa.orchestration.skypilot._bin import ensure_skypilot_version, resolve_config
     from npa.orchestration.skypilot.cleanup import sky_environment
 
-    runtime = resolve_config(sky_bin=sky_bin)
+    runtime = resolve_config(sky_bin=sky_bin, isolated_config_dir=isolated_config_dir)
     env = sky_environment(runtime.isolated_config_dir)
     if runtime.global_config_path is not None:
         env["SKYPILOT_GLOBAL_CONFIG"] = str(runtime.global_config_path)
@@ -890,26 +892,7 @@ def cancel_workflow_job(
 
 
 def redact_text(text: str, secrets: Sequence[str] | None = None) -> str:
-    redacted = text
-    for secret in secrets or ():
-        if secret:
-            redacted = redacted.replace(secret, "<redacted>")
-    for name in _SENSITIVE_ENV_NAMES:
-        redacted = re.sub(
-            rf"({re.escape(name)}\s*[:=]\s*)[^\s,;'\"]+",
-            r"\1<redacted>",
-            redacted,
-            flags=re.IGNORECASE,
-        )
-    patterns = (
-        r"hf_[A-Za-z0-9_=-]{8,}",
-        r"nvapi-[A-Za-z0-9_=-]{8,}",
-        r"gh[pousr]_[A-Za-z0-9_=-]{20,}",
-        r"(?:AKIA|ASIA)[A-Z0-9]{16}",
-    )
-    for pattern in patterns:
-        redacted = re.sub(pattern, "<redacted>", redacted)
-    return redacted
+    return redact_diagnostic_text(text, secrets=secrets or ())
 
 
 def _load_yaml_documents(path: Path) -> list[dict[str, Any]]:

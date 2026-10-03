@@ -1,0 +1,46 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: flex-pi-rtxpro-inference
+  description: >-
+    Run flex-pi's real 6B action-only policy inference on one pinned public
+    RoboTwin observation. The image contains no checkpoint, observation media,
+    or populated model cache; runtime assets are fetched under the operator's
+    authorized use and outputs are published to operator-owned object storage.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/flex-pi"
+  input_uri: /opt/flex-pi/npa/public_robotwin_sample.json
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/inference/"
+  checkpoint_id: flex-pi/flexpi-robotwin
+  checkpoint_revision: 87d3833ea3bd89c4922945631db81b346e780785
+  num_inference_steps: "4"
+  seed: "42"
+  expected_gpu: RTXPRO6000
+
+resources:
+  gpu:
+    cloud: kubernetes
+    # Action-only inference is measured upstream on RTX 5090 and needs 16-26 GB.
+    # RTX PRO 6000 adds headroom and exercises the requested sm_120 path.
+    accelerators: RTXPRO6000:1
+    cpus: 16
+    memory: 128Gi
+
+initial: infer
+
+states:
+  infer:
+    description: Predict and semantically validate a 32x14 bimanual action chunk.
+    toolRef: workbench.flex_pi.infer
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.workbench.flex_pi.inference.v1
+      - uri: "{{config.output_uri}}actions.json"
+        schema: npa.flex_pi.actions.v1
+      - uri: "{{config.output_uri}}input.json"
+        schema: npa.flex_pi.public_observation.v1
+    terminal: true

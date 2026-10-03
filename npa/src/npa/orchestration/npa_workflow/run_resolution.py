@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 import re
 from typing import Any, Literal, Mapping, cast
 from urllib.parse import urlparse
 
 from npa.orchestration.npa_workflow.run_state import (
     PAIDF_WORKFLOW_NAME,
+    RUN_SCHEMA_VERSION,
     paidf_artifact_prefix,
     paidf_workflow_prefix,
 )
@@ -68,6 +70,10 @@ class RunResolution:
     manifest_uri: str = ""
     workflow_name: str = ""
     durable_terminal_state: str = ""
+    sky_bin: str = ""
+    isolated_config_dir: Path | None = None
+    controller_route_recorded: bool = False
+    controller_route_error: str = ""
     checks: list[ResolutionCheck] = field(default_factory=list)
 
     def checks_payload(self) -> list[dict[str, str]]:
@@ -232,10 +238,34 @@ def _probe_manifest(
     return "found", manifest, f"{state.uri.rstrip('/')}/manifest.json"
 
 
-def _probe_exact_prefix(state: WorkflowS3Config) -> tuple[ResolutionOutcome, str]:
-    """Check one exact PAIDF run prefix with a bounded, paginated query."""
+def _has_unambiguous_parent_run_root(
+    state: WorkflowS3Config,
+    *,
+    run_id: str,
+) -> bool:
+    """Return whether removing the control suffix preserves exact run identity."""
 
-    run_prefix = state.prefix.rstrip("/").removesuffix("/npa-workflow") + "/"
+    parts = state.prefix.strip("/").split("/")
+    if len(parts) < 3 or parts[-1] != "npa-workflow":
+        return False
+    if parts[-3:] == [PAIDF_WORKFLOW_NAME, run_id, "npa-workflow"]:
+        return True
+    return len(parts) >= 4 and parts[-3] == run_id
+
+
+def _probe_exact_prefix(
+    state: WorkflowS3Config,
+    *,
+    run_id: str,
+) -> tuple[ResolutionOutcome, str]:
+    """Check one proven run prefix with a bounded, paginated query."""
+
+    state_prefix = state.prefix.rstrip("/")
+    run_prefix = (
+        state_prefix.removesuffix("/npa-workflow")
+        if _has_unambiguous_parent_run_root(state, run_id=run_id)
+        else state_prefix
+    ) + "/"
     try:
         paginator = state.client().get_paginator("list_objects_v2")
         pages = paginator.paginate(
@@ -300,6 +330,87 @@ def _receipt_launch(receipt: Mapping[str, Any]) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {}
 
 
+def _receipt_controller_route(
+    receipt: Mapping[str, Any],
+) -> tuple[Path | None, str] | None:
+    """Parse the exact controller route recorded at submission."""
+    value = receipt.get("controller")
+    if value is None:
+        return None
+    expected = {"schema", "isolated", "isolated_config_dir", "sky_bin"}
+    if not isinstance(value, Mapping) or set(value) != expected:
+        raise ValueError("submission controller route schema differs")
+    isolated = value.get("isolated")
+    raw_dir = value.get("isolated_config_dir")
+    raw_bin = value.get("sky_bin")
+    if (
+        type(isolated) is not bool
+        or not isinstance(raw_dir, str)
+        or not isinstance(raw_bin, str)
+        or value.get("schema") != "npa.workflow.controller-route.v1"
+        or any(ord(char) < 32 for char in raw_dir + raw_bin)
+    ):
+        raise ValueError("submission controller route values differ")
+    recorded_dir = Path(raw_dir) if raw_dir else None
+    if (
+        isolated != bool(recorded_dir)
+        or (recorded_dir is not None and not recorded_dir.is_absolute())
+        or (
+            recorded_dir is not None
+            and recorded_dir.expanduser().resolve() != recorded_dir
+        )
+        or not raw_bin
+        or not Path(raw_bin).is_absolute()
+        or Path(raw_bin).expanduser().resolve() != Path(raw_bin)
+    ):
+        raise ValueError("submission controller isolation route differs")
+    return recorded_dir, raw_bin
+
+
+def _apply_receipt_controller_route(
+    result: RunResolution,
+    receipt: Mapping[str, Any],
+    *,
+    explicit_sky_bin: str,
+    explicit_isolated_config_dir: Path | None,
+) -> None:
+    """Bind live queries to the controller route recorded at submission."""
+    try:
+        route = _receipt_controller_route(receipt)
+    except ValueError as exc:
+        result.controller_route_error = str(exc)
+        return
+    if route is None:
+        return
+    recorded_dir, raw_bin = route
+    if explicit_isolated_config_dir is not None:
+        explicit_dir = Path(explicit_isolated_config_dir).expanduser().resolve()
+        if recorded_dir is None or explicit_dir != recorded_dir:
+            result.controller_route_error = (
+                "explicit controller state root conflicts with submission receipt"
+            )
+            return
+        recorded_dir = explicit_dir
+    elif recorded_dir is None:
+        from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+
+        active_dir = resolve_isolated_config_dir(None)
+        if active_dir is not None:
+            result.controller_route_error = "recorded shared controller conflicts with active isolated SkyPilot state"
+            return
+    normalized_explicit_bin = (
+        str(Path(explicit_sky_bin).expanduser().resolve()) if explicit_sky_bin else ""
+    )
+    if normalized_explicit_bin and normalized_explicit_bin != raw_bin:
+        result.controller_route_error = (
+            "explicit SkyPilot executable conflicts with submission receipt"
+        )
+        return
+    result.sky_bin = normalized_explicit_bin or raw_bin
+    result.isolated_config_dir = recorded_dir
+    result.controller_route_recorded = True
+
+
 def _mark_manifest(
     result: RunResolution,
     *,
@@ -323,6 +434,17 @@ def _mark_manifest(
     ) or state.uri.removesuffix("/npa-workflow")
     result.manifest_uri = f"{state.uri.rstrip('/')}/manifest.json"
     _attach_runtime_state(result, state)
+    if result.job_id and not (
+        result.controller_route_recorded
+        or result.sky_bin
+        or result.isolated_config_dir is not None
+    ):
+        result.controller_route_error = (
+            "durable managed-job identity has no recorded controller route; "
+            "supply the exact --sky-bin and, for isolated state, the exact "
+            "--isolated-config-dir used at submission"
+        )
+        result.verification_unavailable = True
     return result
 
 
@@ -335,6 +457,7 @@ def resolve_run(
     s3_bucket: str = "",
     s3_endpoint: str = "",
     sky_bin: str = "",
+    isolated_config_dir: Path | None = None,
     exact_job_id: str = "",
     allow_local_not_submitted: bool = False,
 ) -> RunResolution:
@@ -342,13 +465,31 @@ def resolve_run(
 
     resolved_id = run_id_from_locator(run_id, workflow_s3_uri)
     ledger_project = project or "default"
+    effective_isolated_config_dir = isolated_config_dir
+    if sky_bin and isolated_config_dir is None:
+        from npa.orchestration.skypilot._bin import resolve_isolated_config_dir
+
+        effective_isolated_config_dir = resolve_isolated_config_dir(None)
     result = RunResolution(
-        run_id=resolved_id, project=project, job_id=exact_job_id.strip()
+        run_id=resolved_id,
+        project=project,
+        job_id=exact_job_id.strip(),
+        sky_bin=str(Path(sky_bin).expanduser().resolve()) if sky_bin else "",
+        isolated_config_dir=effective_isolated_config_dir,
     )
     explicit_uri = workflow_s3_uri or (
         run_id if str(run_id).startswith("s3://") else ""
     )
     planned_only_candidate = False
+    receipt_read = inspect_submission_state(ledger_project, resolved_id)
+    if receipt_read.outcome == "found":
+        result.receipt = receipt_read.payload
+        _apply_receipt_controller_route(
+            result,
+            result.receipt,
+            explicit_sky_bin=sky_bin,
+            explicit_isolated_config_dir=effective_isolated_config_dir,
+        )
 
     if explicit_uri:
         try:
@@ -360,7 +501,10 @@ def resolve_run(
             )
             outcome, manifest, detail = _probe_manifest(explicit_state, resolved_id)
             if outcome == "absent":
-                prefix_outcome, prefix_detail = _probe_exact_prefix(explicit_state)
+                prefix_outcome, prefix_detail = _probe_exact_prefix(
+                    explicit_state,
+                    run_id=resolved_id,
+                )
                 if prefix_outcome == "found":
                     outcome, detail = "found", prefix_detail
                     result.found = True
@@ -398,7 +542,6 @@ def resolve_run(
             )
         )
 
-    receipt_read = inspect_submission_state(ledger_project, resolved_id)
     result.checks.append(
         ResolutionCheck(
             "durable_submission_receipt", receipt_read.outcome, receipt_read.error
@@ -407,7 +550,6 @@ def resolve_run(
     if receipt_read.outcome == "unavailable":
         result.verification_unavailable = True
     elif receipt_read.outcome == "found":
-        result.receipt = receipt_read.payload
         workflow = _receipt_workflow(result.receipt)
         launch = _receipt_launch(result.receipt)
         if (
@@ -461,7 +603,10 @@ def resolve_run(
                         source="durable_submission_receipt",
                     )
                 if outcome == "absent":
-                    prefix_outcome, prefix_detail = _probe_exact_prefix(receipt_state)
+                    prefix_outcome, prefix_detail = _probe_exact_prefix(
+                        receipt_state,
+                        run_id=resolved_id,
+                    )
                     if prefix_outcome == "found":
                         _attach_runtime_state(result, receipt_state)
                         result.checks[-1] = ResolutionCheck(
@@ -534,7 +679,10 @@ def resolve_run(
                     manifest=manifest,
                     source="canonical_paidf_s3_prefix",
                 )
-            prefix_outcome, prefix_detail = _probe_exact_prefix(canonical_state)
+            prefix_outcome, prefix_detail = _probe_exact_prefix(
+                canonical_state,
+                run_id=resolved_id,
+            )
             combined: ResolutionOutcome = (
                 "found"
                 if prefix_outcome == "found"
@@ -581,11 +729,33 @@ def resolve_run(
             )
         )
 
-    managed = lookup_managed_job(
-        result.job_name or resolved_id,
-        job_id=result.job_id,
-        sky_bin=sky_bin or None,
+    explicit_route = bool(result.sky_bin or result.isolated_config_dir is not None)
+    route_missing = bool(result.job_id) and not (
+        result.controller_route_recorded or explicit_route
     )
+    if result.controller_route_error:
+        managed = ManagedJobEvidence("unavailable", error=result.controller_route_error)
+    elif route_missing:
+        result.controller_route_error = (
+            "durable managed-job identity has no recorded controller route; "
+            "supply the exact --sky-bin and, for isolated state, the exact "
+            "--isolated-config-dir used at submission"
+        )
+        result.verification_unavailable = True
+        managed = ManagedJobEvidence("unavailable", error=result.controller_route_error)
+    else:
+        from npa.orchestration.skypilot.storage_context import (
+            call_with_workflow_storage,
+        )
+
+        managed = call_with_workflow_storage(
+            result.state,
+            lookup_managed_job,
+            result.job_name or resolved_id,
+            job_id=result.job_id,
+            sky_bin=result.sky_bin or None,
+            isolated_config_dir=result.isolated_config_dir,
+        )
     result.managed_job = managed
     managed_outcome: ResolutionOutcome = (
         cast(ResolutionOutcome, managed.outcome)
@@ -720,17 +890,31 @@ def list_resolved_artifacts(
         raise WorkflowStateError(
             "run was found via managed-job evidence but its artifact location is unavailable"
         )
-    is_paidf = (
-        resolution.workflow_name == PAIDF_WORKFLOW_NAME
-        or PAIDF_WORKFLOW_NAME in state.prefix.split("/")
-        or resolution.manifest_pending
+    manifest_schema = (
+        str(resolution.manifest.get("schema_version") or "")
+        if isinstance(resolution.manifest, dict)
+        else ""
     )
-    if not is_paidf:
+    # Declarative outputs may use any path below the exact run root. The
+    # historical ``artifacts/`` convention applies only to raw schema-v1 runs.
+    state_prefix = state.prefix.rstrip("/")
+    declarative_run_root = state_prefix.removesuffix("/npa-workflow")
+    has_declarative_control_prefix = (
+        manifest_schema == RUN_SCHEMA_VERSION
+        and state_prefix.endswith("/npa-workflow")
+        and str((resolution.manifest or {}).get("run_prefix_uri") or "").rstrip("/")
+        == f"s3://{state.bucket}/{declarative_run_root}"
+    )
+    uses_run_root_layout = (
+        has_declarative_control_prefix
+        or _has_unambiguous_parent_run_root(state, run_id=resolution.run_id)
+    )
+    if not uses_run_root_layout:
         from npa.orchestration.skypilot.workflow_state import list_artifacts
 
-        return list_artifacts(state, stage or None)
+        return list_artifacts(state, stage or None)[:limit]
 
-    run_prefix = state.prefix.rstrip("/").removesuffix("/npa-workflow") + "/"
+    run_prefix = declarative_run_root + "/"
     objects: list[str] = []
     try:
         paginator = state.client().get_paginator("list_objects_v2")

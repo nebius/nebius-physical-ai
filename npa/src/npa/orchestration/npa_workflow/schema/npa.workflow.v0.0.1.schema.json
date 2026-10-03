@@ -42,7 +42,8 @@
           "properties": {
             "shell": { "type": "string" },
             "argv": { "type": "array", "items": { "type": "string" } }
-          }
+          },
+          "additionalProperties": false
         },
         "toolRef": { "type": "string" },
         "sequence": { "type": "array", "items": { "type": "string" } },
@@ -83,8 +84,10 @@
         "inputs": { "$ref": "#/$defs/artifacts" },
         "outputs": { "$ref": "#/$defs/artifacts" },
         "resources": { "type": "string" },
-        "multiNodeMode": { "enum": ["sharded"] },
-        "terminal": { "type": "boolean" }
+        "multiNodeMode": { "enum": ["forbidden", "sharded"] },
+        "terminal": { "type": "boolean" },
+        "writesDecision": { "type": "boolean" },
+        "writes_decision": { "type": "boolean" }
       }
     },
     "artifacts": {

@@ -1,0 +1,127 @@
+"""Explore isolated SM120 kernel configurations; preserve failed candidates as evidence."""
+
+import argparse
+import hashlib
+import inspect
+import json
+import statistics
+import time
+import traceback
+import types
+from pathlib import Path
+
+import torch
+
+from attention_benchmark_backend import attention_backend, benchmark_environment
+from attention_kernel_benchmark import _cases, _correctness, _inputs, _profile, _timings
+
+
+def candidate(configuration, report):
+    from flash_attn.cute import interface
+    from flash_attn.cute.flash_fwd_sm120 import FlashAttentionForwardSm120
+
+    original = interface._flash_attn_fwd
+    namespace = dict(original.__globals__)
+    isolated = types.FunctionType(original.__code__, namespace, original.__name__, original.__defaults__, original.__closure__)
+    isolated.__kwdefaults__ = original.__kwdefaults__
+    isolated.compile_cache = {}
+    namespace['_flash_attn_fwd'] = isolated
+
+    def constructor(dtype, head_dim, head_dim_v, qheads_per_kvhead, **options):
+        options.update(num_threads=configuration['threads'], num_stages=configuration['stages'], Q_in_regs=configuration['q_regs'])
+        legal = FlashAttentionForwardSm120.can_implement(dtype, head_dim, head_dim_v, options['tile_m'], options['tile_n'], options['num_stages'], options['num_threads'], options['is_causal'], options['Q_in_regs'])
+        if not legal:
+            raise ValueError('Candidate exceeds the SM120 resource/layout constraints')
+        report['constructed'].append({key: value for key, value in options.items() if key in ('num_threads', 'num_stages', 'Q_in_regs', 'tile_m', 'tile_n', 'is_causal', 'pack_gqa')})
+        return FlashAttentionForwardSm120(dtype, head_dim, head_dim_v, qheads_per_kvhead, **options)
+
+    namespace['FlashAttentionForwardSm120'] = constructor
+
+    def forward(query, key, value, *, causal=False):
+        return isolated(query, key, value, causal=causal, tile_mn=tuple(configuration['tile']), pack_gqa=configuration.get('pack_gqa', False), num_splits=1)[0]
+
+    report['upstream_interface_sha256'] = hashlib.sha256(Path(inspect.getfile(original)).read_bytes()).hexdigest()
+    report['cache_isolation'] = 'private function globals and private compile dictionary for this configuration'
+    return forward
+
+
+def graph_times(operation):
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        for _ in range(5):
+            operation()
+    torch.cuda.current_stream().wait_stream(stream)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        for _ in range(10):
+            operation()
+    for _ in range(5):
+        graph.replay()
+    torch.cuda.synchronize()
+    samples = []
+    for _ in range(5):
+        start, stop = (torch.cuda.Event(enable_timing=True) for _ in range(2))
+        start.record()
+        for _ in range(10):
+            graph.replay()
+        stop.record()
+        stop.synchronize()
+        samples.append(start.elapsed_time(stop) / 100)
+    return samples
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--configuration', required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--all-cases', action='store_true')
+    args = parser.parse_args()
+    configuration = json.loads(args.configuration)
+    report = {'configuration': configuration, 'constructed': [], 'results': [], 'source_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+    backend = configuration.get('backend', 'fa4')
+    report['environment'] = benchmark_environment(backend)
+    if configuration.get('direct'):
+        from direct_attention import make_direct
+        report['direct_source_sha256'] = hashlib.sha256(Path(__file__).with_name('direct_attention.py').read_bytes()).hexdigest()
+        function = make_direct(configuration, report)
+    elif 'tile' in configuration:
+        function = candidate(configuration, report)
+    else:
+        function = attention_backend(backend, tuning=configuration.get('tuning'))
+    selected = {'sdxl-q4096-k77', 'sdxl-q4096-k4096', 'sdxl-q6144-k6144', 'transformer-s1024-kv4', 'transformer-s4096-kv4', 'transformer-s4096-kv16'}
+    for case in _cases():
+        if not args.all_cases and case['name'] not in selected:
+            continue
+        started = time.perf_counter()
+        entry = {'case': case}
+        report['results'].append(entry)
+        try:
+            tensors = _inputs(torch, case, False)
+            with torch.inference_mode():
+                entry['correctness'] = _correctness(torch, function, tensors, case, False)
+                operation = lambda: function(*tensors, causal=case['causal'])
+                entry['eager_samples'] = _timings(torch, operation, 5, 25, 5)
+                entry['graph_ms'] = graph_times(operation)
+                entry['kernels'] = _profile(torch, operation)
+            entry['median_wall_ms'] = statistics.median(sample['wall_ms'] for sample in entry['eager_samples'])
+            entry['median_graph_ms'] = statistics.median(entry['graph_ms'])
+            entry['status'] = 'pass'
+        except Exception as error:
+            entry['status'] = 'filtered' if str(error) == 'Candidate exceeds the SM120 resource/layout constraints' else 'failed'
+            entry['error'] = type(error).__name__ + ': ' + str(error)
+            entry['traceback'] = traceback.format_exc()
+            entry['elapsed_seconds'] = time.perf_counter() - started
+            args.output.write_text(json.dumps(report, indent=2) + '\n')
+            print(case['name'], entry['status'], entry['error'], flush=True)
+            # A CUDA launch failure can poison the context. Do not reuse it.
+            if isinstance(error, RuntimeError) and ('CUDA' in str(error) or 'illegal' in str(error)):
+                raise
+            continue
+        entry['elapsed_seconds'] = time.perf_counter() - started
+        args.output.write_text(json.dumps(report, indent=2) + '\n')
+        print(case['name'], entry['status'], entry['median_wall_ms'], entry['median_graph_ms'], flush=True)
+
+
+if __name__ == '__main__':
+    main()

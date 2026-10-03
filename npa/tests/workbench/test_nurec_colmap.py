@@ -616,15 +616,33 @@ def ncore_fixture(tmp_path, *, corruption=""):
     for index in range(2):
         buffer = io.BytesIO()
         Image.new("RGB", (4, 3), (20, index * 100, 50)).save(buffer, format="PNG")
+        frame_poses = np.repeat(expected_poses[index][None], 2, axis=0)
+        if corruption == "frame_world_translation":
+            frame_poses[:, 0, 3] += 7
+        elif corruption == "frame_world_nan":
+            frame_poses[0, 0, 0] = np.nan
+        elif corruption == "frame_world_shape":
+            frame_poses = frame_poses[0]
+        elif corruption == "frame_world_integer":
+            frame_poses = frame_poses.astype(np.int64)
         camera.store_frame(
             image_binary_data=b"not an image"
             if corruption == "image" and index == 1
             else buffer.getvalue(),
             image_format="png",
             frame_timestamps_us=np.array([index * 1_000_000] * 2, dtype=np.uint64),
-            generic_data={"mask": np.zeros((6, 8), dtype=np.uint8)}
-            if corruption == "mask"
-            else {},
+            generic_data={
+                **(
+                    {"T_sensor_worlds": frame_poses}
+                    if corruption != "frame_world_missing"
+                    else {}
+                ),
+                **(
+                    {"mask": np.zeros((6, 8), dtype=np.uint8)}
+                    if corruption == "mask"
+                    else {}
+                ),
+            },
             generic_meta_data={},
         )
     schemas, attributes, rgb_hash = _point_rgb_fixture(corruption)
@@ -1190,6 +1208,11 @@ def _rewrite_derived_trajectory(meta, mutation):
         poses_writer.store_dynamic_pose(
             *edge, poses, timestamps, require_sequence_time_coverage=False
         )
+    for edge, transform in poses_reader.get_static_poses():
+        transform = np.array(transform)
+        if edge == ("camera1", "rig") and mutation == "original_edge":
+            transform[0, 3] += 7
+        poses_writer.store_static_pose(*edge, transform)
     paths = [
         path
         for path in reader.component_store_paths
@@ -1680,6 +1703,11 @@ def test_official_downsampling_preserves_each_camera_calibration(tmp_path, diffe
     meta = out / "capture/capture.json"
     assert colmap.validate_ncore_sequence(meta, source) == source["counts"]
     assert source["counts"] == {"cameras": 4, "images": 8, "poses": 8, "points": 2}
+    colmap._derive_in_place(meta, "")
+    assert (
+        colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
+        == source["counts"]
+    )
     intrinsics = SequenceComponentGroupsReader([UPath(meta)]).open_component_readers(
         IntrinsicsComponent.Reader
     )["default"]
@@ -1993,3 +2021,163 @@ def test_empty_remote_prefix_never_returns_a_previous_cached_capture(tmp_path, c
     assert staged != cache
     assert find_ncore_json(staged) is None
     assert {path.name: path.read_bytes() for path in cache.iterdir()} == previous
+
+
+def test_derived_static_calibration_never_interpolates_uninitialized_time(
+    tmp_path, monkeypatch
+):
+    """A real SDK scalar-allocation poison reproduces the original NRE failure."""
+    import numpy as np
+
+    pytest.importorskip("ncore.data.v4")
+    from ncore.data.v4 import SequenceComponentGroupsReader, SequenceLoaderV4
+    from upath import UPath
+
+    meta, source = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    loader = SequenceLoaderV4(
+        reader,
+        poses_component_group_name="npa_rig",
+        masks_component_group_name=None,
+        cuboids_component_group_name=None,
+    )
+    original_empty = np.empty
+
+    def poisoned(shape, dtype=float, **kwargs):
+        if shape == () and np.dtype(dtype) == np.dtype(np.uint64):
+            return np.asarray(4555682279880358000, dtype=np.uint64)
+        return original_empty(shape, dtype=dtype, **kwargs)
+
+    monkeypatch.setattr("ncore.impl.data.compat.np.empty", poisoned)
+    assert np.array_equal(loader.get_camera_sensor("camera1").T_sensor_rig, np.eye(4))
+    assert (
+        colmap.validate_ncore_sequence(meta, source, rig_mode="derive")
+        == source["counts"]
+    )
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "dataset.frame_generic_data_pose_overwrite=false",
+        "+dataset.frame_generic_data_pose_overwrite=0",
+        "~dataset.frame_generic_data_pose_overwrite",
+        "~dataset.frame_generic_data_pose_overwrite=true",
+    ],
+)
+def test_independent_frame_pose_contract_rejects_disabled_native_override(
+    tmp_path, override
+):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig, NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    with pytest.raises(NurecError, match="cannot be disabled"):
+        plan_frame_poses(NurecConfig(extra_overrides=(override,)), str(meta))
+
+
+def test_independent_frame_pose_contract_selects_native_path_without_budget_change(
+    tmp_path,
+):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    config = NurecConfig(max_epochs=0, world_size=1)
+    selected = plan_frame_poses(config, str(meta))
+    assert selected.max_epochs == 0 and selected.world_size == 1
+    assert selected.poses_component_group == "npa_rig"
+    assert "dataset.frame_generic_data_pose_overwrite=true" in selected.extra_overrides
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "frame_world_missing",
+        "frame_world_shape",
+        "frame_world_nan",
+        "frame_world_integer",
+        "frame_world_translation",
+    ],
+)
+def test_derived_frame_world_poses_require_exact_original_geometry(
+    tmp_path, corruption
+):
+    meta, _ = ncore_fixture(tmp_path, corruption=corruption)
+    with pytest.raises(colmap.NcoreConversionError, match="rig derivation failed"):
+        colmap._derive_in_place(meta, "camera1")
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "dataset.poses_component_group=default",
+        "+dataset.poses_component_group=other",
+        "~dataset.poses_component_group",
+        "~dataset.poses_component_group=npa_rig",
+    ],
+)
+def test_independent_frame_pose_contract_rejects_replaced_pose_group(
+    tmp_path, override
+):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig, NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    with pytest.raises(NurecError, match="cannot be replaced"):
+        plan_frame_poses(NurecConfig(extra_overrides=(override,)), str(meta))
+
+
+def test_independent_frame_pose_contract_rejects_unknown_mode(tmp_path):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig, NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    sidecar_path = meta.parent / "npa-rig.json"
+    sidecar = json.loads(sidecar_path.read_text())
+    sidecar["frame_pose_mode"] = "unknown-mode"
+    sidecar_path.write_text(json.dumps(sidecar))
+    with pytest.raises(NurecError, match="unsupported or conflicting"):
+        plan_frame_poses(NurecConfig(), str(meta))
+
+
+def test_reference_extent_cannot_drop_camera_frames(tmp_path):
+    import numpy as np
+
+    pytest.importorskip("ncore.data.v4")
+    from ncore.data.v4 import SequenceComponentGroupsReader
+    from upath import UPath
+    from npa.workbench.nurec.ncore_frame_poses import _require_reference_coverage
+    from npa.workbench.nurec.nurec import NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    reader = SequenceComponentGroupsReader([UPath(meta)])
+    with pytest.raises(NurecError, match="does not cover every camera frame"):
+        _require_reference_coverage(reader, np.array([0, 500_000], dtype=np.uint64))
+    _require_reference_coverage(reader, np.array([0, 1_000_000], dtype=np.uint64))
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "dataset={frame_generic_data_pose_overwrite:false}",
+        "dataset={poses_component_group:default}",
+        "+dataset={frame_generic_data_pose_overwrite:false}",
+        "~dataset",
+    ],
+)
+def test_independent_frame_pose_contract_rejects_whole_dataset_replacement(
+    tmp_path, override
+):
+    from npa.workbench.nurec.ncore_frame_poses import plan_frame_poses
+    from npa.workbench.nurec.nurec import NurecConfig, NurecError
+
+    meta, _ = ncore_fixture(tmp_path)
+    colmap._derive_in_place(meta, "camera1")
+    with pytest.raises(NurecError, match="dataset cannot be replaced"):
+        plan_frame_poses(NurecConfig(extra_overrides=(override,)), str(meta))

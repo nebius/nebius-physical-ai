@@ -592,6 +592,7 @@ def _validate_rig_sidecar(
         "sequence_id": sequence_id,
         "reference_camera": reference,
         "poses_component_group": "npa_rig",
+        "frame_pose_mode": "independent-camera-world-v1",
         "pose_count": len(source["cameras"][reference]["frames"]),
         "cameras": sorted(
             name
@@ -610,6 +611,20 @@ def _validate_rig_sidecar(
         raise NcoreConversionError("derived rig sidecar differs from source selection")
 
 
+def _validate_frame_pose_contract(reader: Any) -> None:
+    from npa.workbench.nurec.ncore_frame_poses import (
+        _camera_frame_poses,
+        _validate_static_calibrations,
+    )
+
+    try:
+        _validate_static_calibrations(reader, _camera_frame_poses(reader))
+    except (KeyError, ValueError, NurecError) as exc:
+        raise NcoreConversionError(
+            "derived rig camera frame pose contract differs"
+        ) from exc
+
+
 def _validate_derived_rig(
     meta_path: Path,
     source: dict[str, Any],
@@ -619,6 +634,7 @@ def _validate_derived_rig(
 ) -> None:
     reference = _rig_reference(source, reference_camera)
     _validate_rig_sidecar(meta_path, source, str(reader.sequence_id), reference)
+    _validate_frame_pose_contract(reader)
     frames = source["cameras"][reference]["frames"]
     expected_ts = np.arange(len(frames), dtype=np.uint64) * 1_000_000
     edge = ("rig", "world")
@@ -807,7 +823,9 @@ def validate_ncore_sequence(
             )
         edge = (camera_id, expected["target"])
         # Check original AND copied derived trajectories; neither may hide bad geometry.
-        for poses_group in trajectories.values():
+        for group_name, poses_group in trajectories.items():
+            if group_name == "npa_rig":
+                continue  # Its virtual calibrations and frame world poses are checked below.
             if edge not in poses_group:
                 raise NcoreConversionError("camera pose edge is absent")
             poses, pose_ts = poses_group[edge]
@@ -1014,6 +1032,7 @@ def _derive_in_place(meta: Path, reference_camera: str) -> None:
         output_dir=meta.parent,
         reference_camera=reference_camera,
         sequence_meta_name=meta.name,
+        frame_pose_overwrite=True,
     )
     if not result.ok:
         raise NcoreConversionError("NCore rig derivation failed")

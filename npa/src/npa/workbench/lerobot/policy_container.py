@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from npa.literal_values import require_boolean
 from npa.workbench.training_config import (
     TrainingConfig,
     TrainingConfigError,
@@ -83,6 +84,13 @@ def jail_output_dir(raw: str | None, *, default_name: str) -> Path:
 
 class PolicyContainerError(Exception):
     """Raised when policy-container inference or feedback training fails."""
+
+
+def _boolean_field(payload: dict[str, Any], field_name: str, *, default: bool) -> bool:
+    try:
+        return require_boolean(payload.get(field_name, default), field=field_name)
+    except ValueError as exc:
+        raise PolicyContainerError(f"{field_name} must be a boolean") from exc
 
 
 @dataclass(frozen=True)
@@ -187,6 +195,7 @@ class VlmSignalUpdateResult:
             raise PolicyContainerError(
                 "VlmSignalUpdateResult.from_dict requires a JSON object payload"
             )
+        control = _boolean_field(payload, "control", default=False)
         for required in ("reward_head_after", "policy_output_after", "policy_delta_l2"):
             if required not in payload:
                 raise PolicyContainerError(
@@ -222,7 +231,7 @@ class VlmSignalUpdateResult:
             resume_checkpoint_uri=str(payload.get("resume_checkpoint_uri", "")),
             resume_checkpoint_sha256=str(payload.get("resume_checkpoint_sha256", "")),
             signal_count=int(payload.get("signal_count", 0)),
-            control=bool(payload.get("control", False)),
+            control=control,
             loss_integration_point=str(
                 payload.get("loss_integration_point", "byo_trainer_command")
             ),
@@ -693,7 +702,7 @@ def parse_feedback_batch(
             raise PolicyContainerError("feedback rationale must not be empty")
         parsed.append(
             FeedbackItem(
-                success=bool(item["success"]),
+                success=_boolean_field(item, "success", default=False),
                 score=score,
                 rationale=rationale,
                 source=str(item.get("source") or "vlm"),
@@ -1154,6 +1163,12 @@ def create_app() -> Any:
             payload.get("schema", "")
         ).startswith("npa.sim2real.rl_signal.")
         try:
+            feedback = None if is_signal else parse_feedback_batch(payload)
+            control = (
+                _boolean_field(payload, "control", default=False)
+                if is_signal
+                else False
+            )
             output_dir = jail_output_dir(
                 payload.get("output_dir"),
                 default_name="vlm-signal" if is_signal else "feedback",
@@ -1164,10 +1179,9 @@ def create_app() -> Any:
                     output_dir=output_dir,
                     learning_rate=float(payload.get("learning_rate") or 0.05),
                     signal_loss_weight=float(payload.get("signal_loss_weight") or 1.0),
-                    control=bool(payload.get("control", False)),
+                    control=control,
                 )
                 return signal_update.to_dict()
-            feedback = parse_feedback_batch(payload)
             feedback_update = run_feedback_training_step(
                 feedback,
                 output_dir=output_dir,

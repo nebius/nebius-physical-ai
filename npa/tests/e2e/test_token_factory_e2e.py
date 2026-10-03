@@ -1,8 +1,9 @@
 """Live Nebius Token Factory API tests.
 
 These are first-class live tests: they hit the real Token Factory endpoint and
-require a real ``NEBIUS_TOKEN_FACTORY_KEY``. They self-skip when no key is configured, so
-they are safe to leave in the suite. Run explicitly with:
+require a real Token Factory key from the environment or NPA credential store.
+They self-skip when no key is configured, so they are safe to leave in the
+suite. Run explicitly with:
 
     NEBIUS_TOKEN_FACTORY_KEY=... npa/.venv/bin/python -m pytest \
         npa/tests/e2e/test_token_factory_e2e.py -v
@@ -13,6 +14,7 @@ They live under ``tests/e2e`` (excluded from the default unit run via
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from contextlib import redirect_stdout
@@ -325,8 +327,9 @@ def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("inside", [True, False])
+@pytest.mark.parametrize("model", [DEFAULT_VISION_MODEL, "moonshotai/Kimi-K3"])
 def test_live_visual_judge_distinguishes_completion(
-    tmp_path: Path, inside: bool
+    tmp_path: Path, inside: bool, model: str
 ) -> None:
     _require_key()
     from npa.workbench.vlm_eval import evaluate_vlm, write_result
@@ -340,16 +343,82 @@ def test_live_visual_judge_distinguishes_completion(
         input_path=str(frames),
         output_path=str(output),
         backend="api",
+        model=model,
         task="Move the red square fully inside the green rectangular outline by the final frame.",
         frame_selection="sequence",
     )
     write_result(asdict(result), result_uri=result.result_uri)
     saved = json.loads(output.read_text())
-    assert saved["model"] == DEFAULT_VISION_MODEL
-    assert saved["served_model"] == DEFAULT_VISION_MODEL
+    assert saved["model"] == model
+    assert saved["served_model"] == model
     assert saved["frame_count"] == 3
     assert saved["passed"] is inside
     assert saved["rationale"].strip()
+    _assert_hosted_judge_claims(saved)
+    _assert_visual_judge_evidence(saved, frames, model)
+
+
+def _assert_visual_judge_evidence(saved: dict, frames: Path, model: str) -> None:
+    from npa.workbench.vlm_eval import select_rollout_frames
+
+    evidence = saved["evidence"]
+    assert evidence["request"]["endpoint_role"] == "hosted-api"
+    submitted = select_rollout_frames(frames, frame_selection="sequence", max_frames=4)
+    assert [frame["sha256"] for frame in evidence["request"]["frames"]] == [
+        hashlib.sha256(frame.data).hexdigest() for frame in submitted
+    ]
+    manifest = json.dumps(
+        evidence["request"]["request_manifest"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert (
+        evidence["request"]["request_manifest_sha256"]
+        == hashlib.sha256(manifest.encode()).hexdigest()
+    )
+    raw_response = evidence["provider"]["raw_response"]
+    assert (
+        evidence["provider"]["raw_response_sha256"]
+        == hashlib.sha256(raw_response.encode()).hexdigest()
+    )
+    assert evidence["provider"]["finish_reason"] == "stop"
+    if model == "moonshotai/Kimi-K3":
+        assert evidence["request"]["request_manifest"]["generation_parameters"] == {
+            "reasoning_effort": "low",
+            "response_format": {"type": "json_object"},
+        }
+
+
+def _assert_hosted_judge_claims(saved: dict) -> None:
+    from npa.workbench.vlm_eval import _build_prompt, _parse_api_structured_response
+
+    evidence = saved["evidence"]
+    response = json.loads(evidence["provider"]["raw_response"])
+    verdict = _parse_api_structured_response(
+        response["choices"][0]["message"]["content"], served_model=response["model"]
+    )
+    assert saved["score"] == round(verdict.score, 4)
+    assert saved["passed"] is (saved["score"] >= saved["success_threshold"])
+    assert saved["status"] == ("passed" if saved["passed"] else "needs_iteration")
+    assert saved["provider_success"] is verdict.provider_success
+    assert saved["provider_success_matches_score_gate"] is (
+        verdict.provider_success == saved["passed"]
+    )
+    prompt = _build_prompt(
+        **{
+            field: saved[field]
+            for field in ("task", "rubric", "frame_selection", "frame_count")
+        }
+    )
+    assert (
+        evidence["request"]["prompt_sha256"]
+        == hashlib.sha256(prompt.encode()).hexdigest()
+    )
+    assert (
+        evidence["request"]["rubric_sha256"]
+        == hashlib.sha256(saved["rubric"].encode()).hexdigest()
+    )
 
 
 def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:

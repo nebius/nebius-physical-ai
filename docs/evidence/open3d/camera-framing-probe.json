@@ -1,0 +1,212 @@
+{
+  "after": {
+    "camera_fitted_against": "each view's own contents",
+    "cameras": {
+      "Observed scan only": {
+        "distance": 3.198560133854029,
+        "elevation_degrees": 28.0,
+        "eye": [
+          4.2890139891284536,
+          3.1389871382366956,
+          3.5357080431004024
+        ],
+        "fov_degrees": 55.0,
+        "look_target": [
+          2.292030615512724,
+          1.6373541135315965,
+          1.538724669484673
+        ],
+        "scene_extent": [
+          3.562084694108059,
+          1.5797097631441965,
+          2.001216666846432
+        ],
+        "scene_span": 4.380502077551835,
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "Removed: unsupported surface": {
+        "distance": 4.043808887225604,
+        "elevation_degrees": 28.0,
+        "eye": [
+          4.816735131892311,
+          3.2316769512368664,
+          3.7080924271074407
+        ],
+        "fov_degrees": 55.0,
+        "look_target": [
+          2.2920306473970413,
+          1.3332236733435878,
+          1.1833879426121712
+        ],
+        "scene_extent": [
+          3.9182933270931244,
+          2.187970643520214,
+          2.7178331464529037
+        ],
+        "scene_span": 5.246604153736667,
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "Scene: observed scan and supported surface": {
+        "distance": 3.2419754923055737,
+        "elevation_degrees": 28.0,
+        "eye": [
+          4.328642766932145,
+          3.138596490160973,
+          3.5442055112695394
+        ],
+        "fov_degrees": 55.0,
+        "look_target": [
+          2.304553525251076,
+          1.6165811892747173,
+          1.5201162695884705
+        ],
+        "scene_extent": [
+          3.587130513584763,
+          1.621255611657955,
+          2.044376492500305
+        ],
+        "scene_span": 4.43570178471357,
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "Supported surface only": {
+        "distance": 3.238528937020101,
+        "elevation_degrees": 28.0,
+        "eye": [
+          4.329273815471821,
+          3.134102220609865,
+          3.5420536950418287
+        ],
+        "fov_degrees": 55.0,
+        "look_target": [
+          2.307336390018463,
+          1.6137049794197083,
+          1.5201162695884705
+        ],
+        "scene_extent": [
+          3.581564784049988,
+          1.615503191947937,
+          2.044376492500305
+        ],
+        "scene_span": 4.429100598160857,
+        "up": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      }
+    },
+    "clipped_views": [],
+    "views": {
+      "Observed scan only": {
+        "fraction_outside_frame": 0.0,
+        "points": 6341,
+        "points_behind_camera": 0,
+        "worst_horizontal_reach": 0.9257753548993093,
+        "worst_vertical_reach": 0.6433045060503284
+      },
+      "Removed: unsupported surface": {
+        "fraction_outside_frame": 0.0,
+        "points": 39490,
+        "points_behind_camera": 0,
+        "worst_horizontal_reach": 0.9259080775495193,
+        "worst_vertical_reach": 0.79752933224345
+      },
+      "Scene: observed scan and supported surface": {
+        "fraction_outside_frame": 0.0,
+        "points": 21077,
+        "points_behind_camera": 0,
+        "worst_horizontal_reach": 0.9257282087422317,
+        "worst_vertical_reach": 0.6407254569529783
+      },
+      "Supported surface only": {
+        "fraction_outside_frame": 0.0,
+        "points": 14736,
+        "points_behind_camera": 0,
+        "worst_horizontal_reach": 0.9257269702641501,
+        "worst_vertical_reach": 0.6389765202748793
+      }
+    }
+  },
+  "aspect": 1.3333333333333333,
+  "before": {
+    "camera": {
+      "distance": 3.198560133854029,
+      "elevation_degrees": 28.0,
+      "eye": [
+        4.2890139891284536,
+        3.1389871382366956,
+        3.5357080431004024
+      ],
+      "fov_degrees": 55.0,
+      "look_target": [
+        2.292030615512724,
+        1.6373541135315965,
+        1.538724669484673
+      ],
+      "scene_extent": [
+        3.562084694108059,
+        1.5797097631441965,
+        2.001216666846432
+      ],
+      "scene_span": 4.380502077551835,
+      "up": [
+        0.0,
+        1.0,
+        0.0
+      ]
+    },
+    "camera_fitted_against": "fused cloud only, shared by every view",
+    "clipped_views": [
+      "Removed: unsupported surface"
+    ],
+    "views": {
+      "Observed scan only": {
+        "fraction_outside_frame": 0.0,
+        "points": 6341,
+        "points_behind_camera": 0,
+        "worst_horizontal_reach": 0.9257753548993093,
+        "worst_vertical_reach": 0.6433045060503284
+      },
+      "Removed: unsupported surface": {
+        "fraction_outside_frame": 0.0015953405925550773,
+        "points": 39490,
+        "points_behind_camera": 0,
+        "worst_horizontal_reach": 1.232607771572078,
+        "worst_vertical_reach": 1.0301683061694595
+      },
+      "Scene: observed scan and supported surface": {
+        "fraction_outside_frame": 0.0,
+        "points": 21077,
+        "points_behind_camera": 0,
+        "worst_horizontal_reach": 0.9515646708733649,
+        "worst_vertical_reach": 0.659731076496658
+      },
+      "Supported surface only": {
+        "fraction_outside_frame": 0.0,
+        "points": 14736,
+        "points_behind_camera": 0,
+        "worst_horizontal_reach": 0.9515646708733649,
+        "worst_vertical_reach": 0.659731076496658
+      }
+    }
+  },
+  "view_names": {
+    "removed": "Removed: unsupported surface",
+    "scan": "Observed scan only",
+    "scene": "Scene: observed scan and supported surface",
+    "surface": "Supported surface only"
+  },
+  "what": "Projects each view's own geometry through the camera that view uses, in frame half-extents: 1.0 is exactly the edge and above 1.0 is off screen. 'before' shares one camera fitted to the fused cloud across all views, which is what shipped; 'after' fits one camera per view."
+}

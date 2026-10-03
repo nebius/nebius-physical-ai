@@ -35,6 +35,20 @@ building. Its `--keyring` option defaults to
 path explicitly. Packaging guards execute the complete committed snapshot and
 require successful test execution, including setup and teardown.
 
+## Independent COLMAP camera poses
+
+For COLMAP conversion, NPA preserves each frame's actual camera-to-world poses
+in `T_sensor_worlds`, including composition through downsampled camera parents.
+The derived `npa_rig` group uses explicitly virtual identity camera-to-rig
+calibrations and the reference camera's world trajectory for scene extent.
+NRE's native per-frame pose override restores each camera's independent world
+trajectory. This does not assert a measured physical multi-camera rig. Original
+poses, image bytes, calibration, masks and point records remain independently
+audited; malformed or contradictory pose contracts fail before reconstruction.
+
+This source repair requires new exact-image and conversion qualification. The
+retained earlier NRE timestamp failure is not a successful reconstruction.
+
 ## Runtime setup
 
 At container startup, the unprivileged user fetches two exact Debian native

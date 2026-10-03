@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import runpy
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -13,9 +16,43 @@ RUNNER_FILES = (
     ROOT / ".github" / "workflows" / "dev-vm-daily-tests.yml",
 )
 
+
+@pytest.fixture(scope="module")
+def metadata_live_contract() -> dict[str, object]:
+    return runpy.run_path(str(E2E / "test_agent_metadata_live.py"))
+
+
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_AGENT_PROVISION_BOOLEAN_LIVE_CONFIG": (
+        "requires private connection credentials for an operator-selected isolated CPU agent; "
+        "run with npa/tests/e2e/README.md"
+    ),
+    "NPA_E2E_RUNTIME_STORAGE": (
+        "CPU control-storage execution requires an operator-selected project, "
+        "fresh science/control prefixes, and an owned isolated controller"
+    ),
+    "NPA_BEHAVIOR_RUNTIME_CACHE_LIVE_CONFIG": (
+        "CPU runtime cache transport checks write temporary objects in an operator-selected private storage prefix"
+    ),
+    "NPA_LIVE_MANAGED_JOB_POD_DIAGNOSTICS": (
+        "read-only pod identity checks require an operator-selected existing controller, "
+        "job, task, context, kubeconfig, and SkyPilot binary"
+    ),
+    "NPA_NAMESPACE_LIVE_E2E": (
+        "requires an explicitly selected disposable cluster with administrator access; "
+        "creates namespaces, temporary client contexts, and CPU pods"
+    ),
+    "NPA_FIELD_FAILURE_LIVE": "Navigation acceptance requires operator-owned failure captures, policy code, and immutable adapters",
+    "NPA_NAVIGATION_LIVE": (
+        "requires the operator's exact Isaac BYOF navigation task image, scene/reset bundle, RT-core GPU and private S3 output; "
+        "run with docs/workbench/guides/shared-scene-navigation.md"
+    ),
+    "NPA_SCAN_TO_ISAAC_LIVE": (
+        "requires operator-supplied scene, calibrated collision geometry, ray probes, "
+        "and an immutable Isaac image; run with docs/workbench/guides/scan-to-isaac-navigation.md"
+    ),
     "NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE": (
         "requires Token Factory credentials, MuJoCo rendering, and an isolated native LeRobot reader; "
         "run with docs/workbench/token-factory-robot-sdg.md"
@@ -35,6 +72,7 @@ MANUAL_GATES = {
         "native working-directory source delivery requires an operator-selected Ray Jobs endpoint and private evidence"
     ),
     "NPA_AGENT_RECOVERY_LIVE_CONFIG": "creates and destroys an isolated operator-selected agent VM while injecting a credential staging failure",
+    "NPA_AGENT_METADATA_LIVE_CONFIG": "creates and destroys an isolated operator-selected CPU agent with private configuration and authenticated metadata evidence",
     "NPA_RAY_CLIP_RESULTS": "requires operator-selected downloaded native Ray CLIP CUDA result artifacts",
     "NPA_FLEET_KUBERAY_LIVE_CONFIG": (
         "native Ray worker execution requires an operator-selected CPU Fleet, exact kubeconfig and private evidence"
@@ -83,17 +121,41 @@ MANUAL_GATES = {
     ),
     "NPA_BURST_E2E_IMAGE": "operator supplies the exact immutable burst validation image",
     "NPA_E2E_BURST": "full burst GPU coverage is an explicitly selected live suite",
+    "NPA_BYOF_ROBOMIMIC_LIVE_B200": (
+        "robomimic B200 training requires operator runtime approval and exact private selectors"
+    ),
     "NPA_BYOF_LIVE_CONTAINER": "BYOF executes third-party source only after operator review",
     "NPA_BYOF_LIVE_GPU": "BYOF GPU mutation requires a reviewed onboarding target",
+    "NPA_BYOF_GYMNASIUM_ROBOTICS_LIVE_GPU": (
+        "Gymnasium-Robotics MuJoCo EGL acceptance requires manager-reserved RTX PRO capacity and private evidence"
+    ),
     "NPA_BYOF_OD_VERIFY_RUN": "Open Dreamer verification requires an explicitly selected run",
     "NPA_BYOF_OPEN_DREAMER_LIVE_GPU": "Open Dreamer GPU mutation remains an operator acceptance test",
+    "NPA_BYOF_LIBERO_LIVE_B200": (
+        "LIBERO qualification consumes an accepted immutable candidate image and one reserved B200"
+    ),
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
+    "NPA_BYOF_ROBOTWIN_LIVE": (
+        "RoboTwin mutation requires the manager-owned STRICT RTX PRO runtime context and operator license decisions"
+    ),
+    "NPA_ANTIOCH_ACCEPT_TERMS": (
+        "Antioch live validation requires the operator's own runtime terms acceptance"
+    ),
+    "NPA_OPENPI_ACCEPT_GEMMA_TERMS": (
+        "OpenPI live validation requires the operator's own Gemma terms acceptance"
+    ),
     "NPA_BYOF_WAN22_LIVE_GPU": "Wan single-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_MULTIGPU_LIVE_GPU": "Wan multi-GPU BYOF mutation requires an explicitly selected validation run",
     "NPA_BYOF_WAN22_WORKER_VERIFY": (
         "read-only completed Wan worker verification requires operator-selected private run artifacts and generation controls"
     ),
     "NPA_BYOF_LIVE_UBUNTU": "BYOF Ubuntu mutation is a dedicated onboarding acceptance",
+    "NPA_HABITAT_SIM_IMAGE_LIVE": (
+        "the dedicated Habitat renderer requires an operator-authorized exact image and RTX run"
+    ),
+    "NPA_HABITAT_SIM_IMAGE_LIVE_RECEIPT": (
+        "an owner-only receipt binds the exact image, pod, workflow, storage, and STRICT RTX target"
+    ),
     # Not merely operator-selected: an automated runner *must not* reach this
     # suite. It needs a token entitled to the gated Lightricks/LTX-2.5
     # repository, which Lightricks grants only after a human accepts its terms
@@ -182,6 +244,71 @@ def test_every_e2e_environment_gate_is_reachable_or_explicitly_manual() -> None:
     assert all(len(reason.split()) >= 5 for reason in MANUAL_GATES.values())
 
 
+def test_metadata_live_uses_one_exact_deploy_and_cleanup_identity(
+    metadata_live_contract,
+) -> None:
+    exact_value = metadata_live_contract["_exact_option_value"]
+    assert callable(exact_value)
+    args = [
+        "agent",
+        "deploy",
+        "--project",
+        "project-alias",
+        "--name",
+        "fresh-agent",
+    ]
+    assert exact_value(args, "--project") == "project-alias"
+    assert exact_value(args, "--name") == "fresh-agent"
+
+
+@pytest.mark.parametrize(
+    ("args", "flag"),
+    [
+        (["--project", "one", "--project", "two"], "--project"),
+        (["--project=one"], "--project"),
+        (["--project", " project-alias "], "--project"),
+        (["--name", "\tfresh-agent"], "--name"),
+        (["--name"], "--name"),
+        (["--name", "--project"], "--name"),
+    ],
+)
+def test_metadata_live_rejects_ambiguous_or_non_exact_selectors(
+    metadata_live_contract,
+    args: list[str],
+    flag: str,
+) -> None:
+    exact_value = metadata_live_contract["_exact_option_value"]
+    assert callable(exact_value)
+    with pytest.raises(AssertionError):
+        exact_value(args, flag)
+
+
+def test_metadata_live_evidence_stays_private_and_outside_checkout(
+    metadata_live_contract,
+    tmp_path: Path,
+) -> None:
+    evidence_directory = metadata_live_contract["_private_evidence_directory"]
+    assert callable(evidence_directory)
+
+    private = tmp_path / "private"
+    assert evidence_directory(str(private)) == private.resolve()
+    assert private.stat().st_mode & 0o077 == 0
+
+    with pytest.raises(AssertionError, match="outside the checkout"):
+        evidence_directory(str(ROOT / "never-create-live-evidence"))
+
+    checkout_link = tmp_path / "checkout-link"
+    checkout_link.symlink_to(ROOT, target_is_directory=True)
+    with pytest.raises(AssertionError, match="outside the checkout"):
+        evidence_directory(str(checkout_link / "evidence"))
+
+    public = tmp_path / "public"
+    public.mkdir(mode=0o755)
+    public.chmod(0o755)
+    with pytest.raises(AssertionError, match="owner-only"):
+        evidence_directory(str(public))
+
+
 def test_pr218_mutation_gates_are_runner_reachable_not_manual() -> None:
     runner_text = "\n".join(path.read_text(encoding="utf-8") for path in RUNNER_FILES)
     for gate in (
@@ -190,6 +317,55 @@ def test_pr218_mutation_gates_are_runner_reachable_not_manual() -> None:
     ):
         assert gate in runner_text
         assert gate not in MANUAL_GATES
+
+
+def test_robotwin_hard_gate_reaches_the_workload_only_through_normal_submit() -> None:
+    path = E2E / "test_byof_onboarding_live_e2e.py"
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == "test_live_robotwin_build_push_run_and_artifacts"
+    )
+    assignments = {
+        target.id: value
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+        for value in (node.value,)
+    }
+    base_command = assignments.get("base_cmd")
+    assert isinstance(base_command, ast.List)
+    constant_argv = [
+        item.value
+        for item in base_command.elts
+        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+    ]
+    command_index = constant_argv.index("workbench")
+    assert ["workbench", "workflow", "submit"] == constant_argv[
+        command_index : command_index + 3
+    ]
+    assert constant_argv.count("--secret-env") == 3
+    assert not any(
+        isinstance(node, ast.Name) and node.id == "BYOF_RUNNER"
+        for node in ast.walk(function)
+    )
+    launch_calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "subprocess"
+        and node.func.attr == "run"
+    ]
+    assert len(launch_calls) == 1
+    assert launch_calls[0].args
+    assert isinstance(launch_calls[0].args[0], ast.Name)
+    assert launch_calls[0].args[0].id == "base_cmd"
 
 
 def test_fleet_storage_verification_has_an_opt_in_daily_runner() -> None:

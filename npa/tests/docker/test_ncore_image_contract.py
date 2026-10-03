@@ -251,6 +251,18 @@ MASK_SOURCE = """                if mask_path is not None:
                     masks_found += 1
 """
 
+FRAME_POSE_SOURCE = "                generic_data: dict[str, np.ndarray] = {}\n"
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_frame_pose_patch_rejects_changed_anchor_without_writing(tmp_path, count):
+    source = tmp_path / "converter.py"
+    original = DOWNSAMPLE_SOURCE + FRAME_POSE_SOURCE * count + MASK_SOURCE
+    source.write_text(original)
+    with pytest.raises(ValueError, match="camera frame source changed"):
+        _stager().patch_frame_world_poses(source)
+    assert source.read_text() == original
+
 
 def test_mask_patch_is_narrow_and_asserts_source_drift(tmp_path):
     source = tmp_path / "converter.py"
@@ -311,7 +323,9 @@ def test_staging_records_postpatch_converter_inventory(monkeypatch, tmp_path):
     }
     contents = {
         "ncore": {
-            "tools/data_converter/colmap/converter.py": DOWNSAMPLE_SOURCE + MASK_SOURCE,
+            "tools/data_converter/colmap/converter.py": (
+                DOWNSAMPLE_SOURCE + FRAME_POSE_SOURCE + MASK_SOURCE
+            ),
             "deps/pycolmap/fix-python3-map.patch": "synthetic patch boundary",
         },
         "pycolmap": {"pycolmap/scene_manager.py": "INVALID_POINT3D = np.uint64(-1)\n"},
@@ -343,11 +357,14 @@ def test_staging_records_postpatch_converter_inventory(monkeypatch, tmp_path):
     patched = (output / relative).read_bytes()
     assert b"colmap_camera=camera," in patched
     assert b"PILImage.Resampling.NEAREST" in patched
+    assert b"'T_sensor_worlds': np.repeat(frame_pose[None], 2, axis=0)" in patched
     inventory = json.loads((output / "source-inventory.json").read_text())
     assert inventory["files"][relative] == hashlib.sha256(patched).hexdigest()
     assert (
         inventory["files"][relative]
-        != hashlib.sha256((DOWNSAMPLE_SOURCE + MASK_SOURCE).encode()).hexdigest()
+        != hashlib.sha256(
+            (DOWNSAMPLE_SOURCE + FRAME_POSE_SOURCE + MASK_SOURCE).encode()
+        ).hexdigest()
     )
     reader = "pycolmap/pycolmap/scene_manager.py"
     assert (output / reader).read_text().endswith("# text reader patched\n")

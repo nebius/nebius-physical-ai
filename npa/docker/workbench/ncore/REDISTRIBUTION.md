@@ -8,8 +8,8 @@ separate proprietary operations.
 ## Narrow dependency boundary
 
 The image carries CPython/Debian bootstrap tools, the pinned official NCore
-converter/V4 reader Python source, trueprice's COLMAP reader, and 20 NPA source
-files (including two compatibility aliases). It does not install the NPA Python
+converter/V4 reader Python source, trueprice's COLMAP reader, and 25 NPA import
+paths (23 source files and two compatibility aliases). It does not install the NPA Python
 distribution. `npa.workflows.ncore` registers the existing conversion callback
 and the independent post-S3 audit callback. Conversion, path validation, JSON
 output, rig derivation, full sequence validation, immutable S3 publication, and
@@ -117,9 +117,12 @@ required base-component notices remain included.
 
 `source-lock.json` binds the upstream archive hashes. The stager retains source
 and build/licensing metadata, applies NVIDIA's original
-`deps/pycolmap/fix-python3-map.patch`, and marks two narrowly checked NPA changes:
-the unsigned maximum point sentinel remains valid under NumPy 1 and 2; and each
-downsampled camera uses its own calibration. Patches fail on source-context drift.
+`deps/pycolmap/fix-python3-map.patch`, and marks the narrow NPA changes: the unsigned maximum point sentinel remains
+valid under NumPy 1 and 2; text readers distinguish blank records from EOF;
+downsampled cameras use their own calibration and verified resized masks; and
+each frame retains its actual camera-to-world poses in `T_sensor_worlds`. The
+last change composes parent poses for downsampled cameras and enables NRE's
+native independent-camera pose override. Patches fail on source-context drift.
 Every retained post-patch source file is hashed in `source-inventory.json`.
 The actual converter is NVIDIA's `//tools/data_converter/colmap:convert` Python
 module, not a replacement conversion implementation or PyPI's unrelated pycolmap.
