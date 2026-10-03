@@ -122,6 +122,9 @@ work lives).
   `npa.sdk.workbench.lancedb` resolved to either the implementation module or the
   SDK client depending on import order. `npa/tests/test_sdk_surface.py` covers
   each, and fails on any public SDK module left out of `__all__`.
+- The SDK remains v0 and unstable; consumers should pin the exact `npa`
+  version. Closing this backlog item makes no v1-stability, deployment,
+  cloud, or GPU qualification claim.
 
 #### [M] Add standalone LeRobot library validation test
 

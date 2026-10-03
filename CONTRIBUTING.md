@@ -145,7 +145,7 @@ Workload verbs are chosen by domain:
 - FiftyOne: `launch`, `load-dataset`, `curate`, `eval`, `open`.
 - Genesis: `train-teacher`, `generate-demos`, `eval-teacher`, `diagnose`, `tune`.
 - Isaac Lab: `train`, `eval`, `export-lerobot`.
-- Cosmos: `serve`, `train`, `finetune`, `optimize`, `infer`.
+- Cosmos: `serve`, `train`, `infer`.
 - GR00T: `download`, `finetune`, `eval`, `serve`, `infer`, `convert`.
 - LanceDB: `import-bdd100k`, `backfill`, `create-mv`, `query-table`.
 - SONIC: `train`, `serve`.
