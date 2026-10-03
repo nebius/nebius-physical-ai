@@ -1,0 +1,294 @@
+{
+  "capability": "The six-stage Open3D npa.workflow runs through the standard SkyPilot runtime on rebuilt source, and the artifact it ships carries the corrected semantics.",
+  "why_this_was_needed": "Neither the earlier 256c26bc runtime evidence nor the aggregate preview links this newer source to a real runtime. The preview reads PLYs an older run left behind; the older run predates every semantic correction. Only a fresh run on the corrected source can show that the correction survives the trip through the runtime.",
+  "recorded_utc": "2026-09-21T06:11:26Z",
+  "source_commit": "b18d7aef5",
+  "image": {
+    "digest": "sha256:926325abdab02b96110c1a0ea26922d31cb55ccf0f8c597e03692bd5ebbc2855",
+    "delivery": "private registry, by digest; not published",
+    "byte_verified_not_label_trusted": {
+      "runner_py_at_commit": "0ede699e5856fad35cb2a897e7b46946a45d284179b41cd16fac70b5fb6ce75b",
+      "runner_py_inside_image": "0ede699e5856fad35cb2a897e7b46946a45d284179b41cd16fac70b5fb6ce75b",
+      "smoke_at_commit": "19694eadb7fc6fb94388551cd3159094a25ae16a2339cf60276ee698b7ffe2c8",
+      "smoke_inside_image": "19694eadb7fc6fb94388551cd3159094a25ae16a2339cf60276ee698b7ffe2c8",
+      "why": "An earlier image carried a build-arg revision label reading 651b094c while holding different source. A label is a string someone passed in; these are the bytes."
+    },
+    "this_image_failed_its_qualification": {
+      "verdict": "The image these six stages ran on did not pass. Independent qualification of sha256:926325ab... from b18d7aef5 returned FAILED_CURRENT_IMAGE_REBUILD_REQUIRED.",
+      "four_fixable_critical_findings": [
+        "libglib2.0-0t64 2.84.4-3~deb13u3, fixed in 2.84.4-3~deb13u4 (CVE-2026-58016)",
+        "perl-base 5.40.1-6, fixed in 5.40.1-6+deb13u1 (CVE-2026-13221, CVE-2026-42496, CVE-2026-8376)"
+      ],
+      "licence_notice_gap": "The installed mcap 1.4.0 delivers no licence file in either its wheel or its sdist, so the image shipped the MIT classifier without the grant.",
+      "complete_byte_scan": "Still running when the qualification receipt was written. Not complete, and not a pass.",
+      "what_a_source_fix_does_not_do": "Correcting the package pins in this repository does not retroactively qualify sha256:926325ab... and is not a new image. A fresh build, a fresh scan and the runs that depend on them are all still pending; no runtime success recorded here transfers to bytes that do not exist yet.",
+      "what_this_run_therefore_is": "Evidence that the six stages execute and that the corrected semantics reach a shipped artifact. It is not evidence that the image is fit to publish."
+    }
+  },
+  "runtime": {
+    "path": "npa workbench workflow submit, controller-backend kubernetes, isolated state root",
+    "run_and_job_identifiers": "Omitted. They identify live infrastructure and are retained in lane evidence; see replay-b18d-public-report.json for what is published instead.",
+    "managed_job": "One managed job, reconciled on a controller the isolated state root created",
+    "controller_isolation": "No shared controller was bound, rebound, renamed or cleaned up. The shared-controller guard asked for a --rebind, which is exactly what is not permitted here; the isolated root answers it instead.",
+    "plan_only_first": "PLANNED, six steps, argv contract renders for all six toolRefs.",
+    "accelerator": "none requested; Open3D's registration and geometry paths have no CUDA path"
+  },
+  "six_stages_all_succeeded": {
+    "order": [
+      "stage",
+      "register",
+      "validate",
+      "multiway",
+      "reconstruct",
+      "visualize"
+    ],
+    "observed": "Each moved PENDING -> STARTING -> RUNNING -> SUCCEEDED in that order, read from the controller's own managed-job state, first stage starting 05:47:54Z and visualize succeeding by 05:59:15Z."
+  },
+  "guards_answered_in_order": [
+    {
+      "guard": "spec bucket placeholder",
+      "answer": "Refused correctly. Answered with the project-scoped bucket."
+    },
+    {
+      "guard": "storage_owner",
+      "answer": "The global storage bucket is not provably in the selected project; that project's own bucket is. Refused correctly."
+    },
+    {
+      "guard": "cluster_owner: ambient context is not execution evidence",
+      "answer": "Refused correctly. Answered with one explicit context."
+    },
+    {
+      "guard": "no NPA cluster identity for the raw context name",
+      "answer": "Answered by registering an explicit cluster identity with its own credentials file, rather than letting the raw context stand in for one."
+    },
+    {
+      "guard": "shared controller owner mismatch",
+      "answer": "Refused correctly and asked for a rebind. Answered with an isolated state root owning its own controller instead."
+    }
+  ],
+  "the_failure_worth_recording": {
+    "what": "The first three provisioning attempts died with ErrImagePull: denied, the stage pod reaching Pending and being torn down and retried.",
+    "cause": "A previous run's housekeeping had removed the image pull secret after that run, so the private image could not be pulled.",
+    "fix": "A fresh pull secret was provisioned. The very next retry pulled and ran.",
+    "worth_knowing": "Cleaning up a pull secret is correct hygiene and it makes the next run fail in a way that looks like a scheduling problem rather than a credentials one. The pod says Pending, not ImagePullBackOff, until you read the container status inside the provision log.",
+    "identifiers": "The cluster, namespace, secret and registry involved are omitted as live infrastructure detail; none of them is needed to read the lesson above."
+  },
+  "actual_run_parameters": {
+    "voxel_size": 0.05,
+    "icp_estimation": "point_to_plane",
+    "fragments": [
+      "cloud_bin_0",
+      "cloud_bin_1",
+      "cloud_bin_2"
+    ],
+    "up_axis_inference": {
+      "angle_to_snapped_axis_degrees": 19.95573279874127,
+      "measured_plane_normal": [
+        -0.34111809031252655,
+        0.010957246686592842,
+        -0.9399565879372219
+      ],
+      "plane_inlier_fraction": 0.33775043382236947,
+      "plane_inliers": 2141,
+      "source": "largest-plane-normal-snapped-to-axis",
+      "up": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    "camera": {
+      "distance": 4.440082580089803,
+      "elevation_degrees": 28.0,
+      "eye": [
+        5.076666834717019,
+        4.388693346811067,
+        -0.5643733771617505
+      ],
+      "fov_degrees": 55.0,
+      "look_target": [
+        2.3045535340874754,
+        1.6165800461815227,
+        1.5201191306114197
+      ],
+      "pane_aspect": 0.8888888888888888,
+      "scene_extent": [
+        3.5871304959119636,
+        1.621257855424569,
+        2.0443822145462036
+      ],
+      "scene_span": 4.4357052277659665,
+      "up": [
+        0.0,
+        0.0,
+        -1.0
+      ]
+    },
+    "note": "These are this run's own values, not the preview's. The aggregate preview declared 0.02 and a different inferred up; this run measured 0.05 and its own."
+  },
+  "shipped_recording": {
+    "path": "reports/point_cloud.rrd",
+    "sha256": "b4089d51d94b832f86c024c045ed5d2e92a873d6eeaf62bcfa6d1ebcf0206436",
+    "bytes": 8101326,
+    "manifest_agrees": true,
+    "decoded": {
+      "entities": [
+        "/__properties",
+        "/provenance",
+        "/world/fragments/cloud_bin_0",
+        "/world/fragments/cloud_bin_1",
+        "/world/fragments/cloud_bin_2",
+        "/world/fused",
+        "/world/mesh",
+        "/world/mesh_unsupported"
+      ],
+      "timelines": [
+        "fragment_index",
+        "log_tick",
+        "log_time"
+      ],
+      "application_id": "npa.open3d",
+      "fragments_are_real": "cloud_bin_0/1/2 are this run's actual registered fragments, with their own poses, unlike the preview which logs zero fragments because it had none to log."
+    }
+  },
+  "the_correction_survived_the_runtime": {
+    "why_this_is_the_point": "The claim retraction was made in source and proven in unit tests and a native smoke. This is the same wording arriving in an artifact a real six-stage run shipped.",
+    "reads_as": "far from any observation",
+    "measured_share_beyond_three_voxels": 0.7298500028435703,
+    "note_shipped": "73.0% of the unsupported area lay more than three voxels from any sample, above the 10% mark that separates these two readings, so the crop removed surface that no observation lies near. Why it lies far out is not something this separates: thin coverage there and surface that does not belong there both read this way. Whether the surface is wrong is a separate question this cannot answer: a correct surface over a sparsely covered region reads the same way. Measured, on a cube that was exactly its own ground truth, sampled densely on five faces and sparsely on the sixth: 0.4169 of its unsupported area sat past three voxels with nothing invented anywhere. Deciding fabrication needs a reference surface. Check whether coverage of the removed region was thin before concluding anything.",
+    "what_to_check_in_it": [
+      "The label is 'far from any observation', not the retracted 'extrapolated shell'.",
+      "It states the measured 73.0% rather than saying 'Most'.",
+      "It says why the area lies far out is not something the reading separates, instead of denying a sampling explanation.",
+      "It says whether the surface is wrong is a separate question it cannot answer.",
+      "It carries the cube counterexample's 0.4169 as the reason."
+    ],
+    "support_before_crop": {
+      "max_vertex_distance_to_sample": 0.904325373107301,
+      "median_vertex_distance_to_sample": 0.021915970172531427,
+      "p95_vertex_distance_to_sample": 0.2177125861087167,
+      "unsupported_area": 11.733001803930748,
+      "unsupported_area_beyond_1_5_voxels": 0.4843131800276271,
+      "unsupported_area_beyond_3_voxels": 0.3849116484413695,
+      "unsupported_area_fraction": 0.5273845953849617,
+      "voxel_size": 0.05
+    }
+  },
+  "capture": {
+    "frame": "viewer-ui/ordinary-native-replay.png",
+    "frame_sha256": "1082371502b4e643e4e385f07bf9b0f0eecd03621c1e6e8d3bc7494faadf2b28",
+    "window": "1024x768, measured at capture time rather than assumed",
+    "mechanism": "ffmpeg x11grab of the whole window under one synchronous xvfb-run, no --screenshot-to",
+    "wgpu_error_in_this_ordinary_run": false,
+    "viewer_exit_status": 143,
+    "viewer_exit_meaning": "SIGTERM from this harness's own graceful cleanup after the capture succeeded. Not a crash.",
+    "measured": {
+      "frame": "ordinary-native-replay.png",
+      "size": [
+        1024,
+        768
+      ],
+      "divider_x": 681,
+      "scene_pane": {
+        "pane_aspect": 1.171,
+        "width_span": 0.767,
+        "height_span": 0.386,
+        "touches_pane_edges": [],
+        "clipped": false
+      },
+      "active_tab_pane": {
+        "pane_aspect": 0.576,
+        "width_span": 0.841,
+        "height_span": 0.208,
+        "touches_pane_edges": [],
+        "clipped": false
+      }
+    },
+    "renderer": "wgpu Vulkan on llvmpipe software rasterizer; the banner is visible and retained"
+  },
+  "the_audit_was_wrong_a_third_time": {
+    "what_happened": "The pane audit reported this frame's scene pane clipped against its right edge. It was not. It had put the divider at 628 on a frame whose divider is at 681.",
+    "why": "Its previous fix scored columns by the share of dark rows, which suited the green background of earlier captures and failed on this run's purple one.",
+    "fix": "The divider is now found by the one signal that does not depend on the palette: the two panes render independent scenes, so the background itself steps at the divider. That step measures 19 to 27 against a median near 1 on every capture tried.",
+    "and_it_now_declines": "When no column stands out it returns no verdict, because a guessed divider produced both wrong verdicts.",
+    "controls": {
+      "catches_real_clipping": "The original 256c26bc capture, which is the frame that first showed the clipping defect, is still reported clipped on both panes.",
+      "declines_when_it_cannot_tell": "pair-oneaspect.png returns pane_detection failed rather than a number.",
+      "does_not_flip_a_correct_verdict": "The previous clean frame is still unclipped."
+    },
+    "and_then_a_fourth_thing": "The abstention it had just gained was unreachable. `audit` called `_pane_body(frame, split)`, which computes `split - 40`, before checking `split is None`, so the case it declared it would decline raised TypeError instead. No committed frame is flat, so nothing here had exercised it. The refusal now runs before that use, with both controls recorded in pane-abstention-control.json: a flat frame reaches the declared abstention and reproduces the old TypeError under the old call order, and this capture still returns divider 681 with both panes unclipped.",
+    "honest_summary": "This script has now been wrong four times and is the least reliable instrument in this evidence set. Every clipping verdict it produced before this fix should be read as unproven rather than as evidence."
+  },
+  "artifact_hashes": {
+    "graph/fused.ply": "163cd17ff6fd4049ba9166616262efd059265259e2b2d36054799028abb9d761",
+    "graph/pairs.jsonl": "271d1fe3cef50e51ad3f92382a172a8abafec9578c737b092e5fb0ea8546b358",
+    "graph/pose_graph.json": "97645b7e0825287b51e7a037d5f76ef93de9940ce498c54c23053c127b074109",
+    "graph/result.json": "38e5a566cb831f290fed116fd63b1828e1db29e0153995c48fcb57f8e4932ec2",
+    "npa-workflow/manifest.json": "2b6fdbef7d76d200c5cf6e6fa9e51720fae6e46b199a15ffc1df31737f9cd184",
+    "npa-workflow/status.json": "43542b7d44453b4ead91142365bd2bd48b6136b7f20b98fa7923256d1e3a77bb",
+    "pairs/aligned/cloud_bin_0__cloud_bin_1.ply": "96c287659616a4a13f57210b26fb035bb08e1771f41902c0d0a62d8701310b8e",
+    "pairs/aligned/cloud_bin_1__cloud_bin_2.ply": "1bdea0d8be8ca79544c7eda20c54e73647e1fa36d8770fdf72d21fba5c1b70d9",
+    "pairs/pairs.jsonl": "456a93871734923a132913e84258b41343555fe6a7b2c71fbf698ee47cbb4282",
+    "pairs/result.json": "5594227ea7e85e7e8425978d9cfa50282188458c5b28f2d915ca647f74004057",
+    "prepared/fragments/cloud_bin_0.pcd": "e1e100802c29ef454c6b523084668ee0e2f365ec52eaeebe79ae804c20447b15",
+    "prepared/fragments/cloud_bin_1.pcd": "a4c3dc0ad7b1279736491b9b2638991d4c808605997be4f9ab174c24a9fa6e52",
+    "prepared/fragments/cloud_bin_2.pcd": "1e68e194ebc1941f0f29764e4daf89340e69b224d2b80db5efbc1373a17f8b4a",
+    "prepared/manifest.json": "b0398a7ecfa4a18999c99135fe57281a4808b134b701bca1e4a80b6adb86e67a",
+    "reports/point_cloud.rrd": "b4089d51d94b832f86c024c045ed5d2e92a873d6eeaf62bcfa6d1ebcf0206436",
+    "reports/rrd-manifest.json": "e4dc7a761ac76b162cdcf7eeb762c30455eda4a8f3c3ad7c85459fad1feb73f9",
+    "surface/mesh.ply": "52f1ff2467566dc08846e0615c399a2b1ec6da6c19c24647a93f50a5c5a748c9",
+    "surface/mesh_uncropped.ply": "6fe008977b57dad6078a0d581fcfad62d37f9f1ec952012fd5d7db29a1647495",
+    "surface/result.json": "3f58d841a3d4c588ad1dc3fcc43026d3306e017f0262400fd42be835fb069999",
+    "validation/validation.json": "126214328d244ccd08a4b375fd4240262132814e32d091151d55bdfacbde9c88"
+  },
+  "what_this_does_not_prove": [
+    "Nothing about GPUs. Every stage is CPU-only by construction.",
+    "Not a performance result: the capture renders on a software rasterizer.",
+    "Not durable-S3 resume, which remains unproven.",
+    "The reconstruction has real holes and partial surfaces, and the mesh is neither edge-manifold, vertex-manifold nor watertight. No collision, physics or mesh-readiness claim is made.",
+    "The capture is accepted for presentation only. It is not a rendering-quality, VLM or general scene-quality result.",
+    "Nothing about the image's fitness to publish: the image these stages ran on failed its qualification, and no rebuild has been scanned.",
+    "This is a separate run from 256c26bc and from the aggregate preview; none of the three stands in for another."
+  ],
+  "resubmitting_this_run_id_wedged_its_project": {
+    "what_happened": "The same logical run id was submitted a second time to test whether completed stages are skipped, and then a third time through the --resume-run remedy the runtime advises. Three immutable managed jobs ended up under one logical name, and the reconciler then refused to act on a name mapping to three IDs.",
+    "why_it_is_a_defect_rather_than_misuse": "The remedy launches another job under the same name before failing, so following the advice deepens the ambiguity it is complaining about. Both the lifecycle guard and the reconciler are individually right and each points at the other.",
+    "resubmission_does_not_skip_completed_stages": "It re-executes every stage and overwrites its outputs. The earlier reading that stages were skipped came from comparing ~18-second stages against minutes that were pod provisioning, not execution.",
+    "corrected_since_first_recorded": {
+      "the_third_job_did_launch": "The --resume-run attempt returned failed/indeterminate JSON with an empty job_id, which read as though nothing started. It did start: the retained stderr says the job was submitted with ID 3, and the controller holds its submitted timestamp and stage execution. Do not infer the launch from the ambiguity message alone; the receipt is what settles it.",
+      "cleanup_is_possible_after_all": "An earlier version of this record said a controller created under an isolated state root could not be cleaned up because `cancel` has no isolated-config flag. That was wrong. The documented environment-variable selection reaches it: cancel by logical run with the explicit job id drained only the active job, and the supported cleanup-controller command then removed the owned isolated controller, with its absence independently confirmed.",
+      "final_job_states": "Two jobs succeeded outright; the third recorded four stages succeeded and two cancelled.",
+      "one_defect_remains": "Cleanup returned degraded_local_metadata, because the ownership record it went to remove named a different cluster. Metadata closure is not claimed."
+    },
+    "the_earlier_durable_s3_blocker_was_not_one": "This lane recorded that exercising durable-S3 resume needed a shared credentials profile to match project storage, and called it a coordination question. It is not: the flag names a profile, so a lane-owned credentials file answers it. Durable-S3 resume is still unproven, but for the reason above rather than that one."
+  },
+  "housekeeping": {
+    "pull_secret": "A lane-owned pull secret was created for this run and should be removed again, with the knowledge that doing so is what made this run's first three attempts fail.",
+    "controller": "The isolated controller is left for inspection and named in the runtime block.",
+    "coordination": "root and openarm were notified before submitting, because the reachable CPU slot is in a cluster associated with openarm's validation work."
+  },
+  "where_the_json_artifacts_live": "Nothing the run wrote is committed here. The publishable content of its nine small JSON artifacts is in replay-b18d-public-report.json, derived from them by allowlist. The artifacts themselves, along with the point clouds, meshes and the 8.1 MB recording, are retained in access-controlled lane evidence and identified here by hash.",
+  "derived_public_report": {
+    "path": "replay-b18d-public-report.json",
+    "sha256": "40e7a891e6ac77736b38cd4774e1feee83de1bfd1a04623e9e62f7186501264b",
+    "this_hash_is_of": "the derived file in this directory, not of any artifact the run wrote. The hashes under artifact_hashes are the originals'. They are different things and neither substitutes for the other.",
+    "generator": "harness/derive_public_run_report.py",
+    "how_it_was_derived": "Deny by default. A field reaches the report only because the generator's allowlist names it, and a field matching neither the allowlist nor a declared omission stops the generator. 543 fields were carried through at their exact values; 63 were omitted, in the categories below.",
+    "omitted_categories": [
+      "run identity",
+      "object-store location",
+      "scheduler job identity",
+      "resolved execution profile",
+      "run timestamp"
+    ],
+    "nothing_was_substituted": "No placeholder bucket, path or run identifier appears in the report. An invented identifier reads as a disclosure and is not a sanitization."
+  },
+  "artifact_hashes_are_of_the_originals": "Every hash under artifact_hashes is of the bytes the run wrote. Those files are not in this repository, so those hashes deliberately resolve to nothing here.",
+  "a_mistake_worth_leaving_visible": {
+    "what_happened": "This evidence was published twice before it was safe. The first push committed the run's artifacts raw, carrying its object-store locations into the repository. The second replaced the bucket name only, which left the run identifier and every object key beneath it in place.",
+    "who_found_it": "Independent review, both times, ahead of the owner. The repository's own confidentiality scan also refuses the first of them.",
+    "not_caught_before_publication": "Both had already been pushed. Describing this as caught before publication would be false.",
+    "what_was_done": "This branch's owned history was rebuilt so that neither commit is an ancestor of the candidate. That repairs what is reachable from this branch and nothing else: it makes no claim about objects a remote or its provider has already retained.",
+    "why_not_a_later_deletion": "Deleting the files in a follow-up commit leaves the values in the history the scan reads, so it is not a repair."
+  }
+}

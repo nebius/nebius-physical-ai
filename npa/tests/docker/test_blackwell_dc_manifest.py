@@ -62,6 +62,22 @@ def test_manifest_does_not_hardcode_a_live_nebius_identifier(manifest: dict) -> 
     assert "${NPA_REGISTRY}" in manifest["registry_ref"]
 
 
+def test_fa2_build_variant_has_its_own_unpublished_rtx_scope(
+    entries: list[dict],
+) -> None:
+    base = next(entry for entry in entries if entry["name"] == "npa-base")
+    variant = base["build_variants"]["fa2"]
+    assert variant["purpose"] == "benchmark-comparison"
+    assert variant["publication"] == "local-only"
+    assert variant["datacenter_validation"] == "not-qualified"
+    assert variant["default_cuda_archs"] == ["sm_120"]
+    assert not any(key.startswith("published_") for key in variant)
+    assert (ROOT / variant["guide"]).is_file()
+    evidence = json.loads((ROOT / variant["source_recipe_evidence"]).read_text())
+    assert evidence["backend"] == "fa2" and evidence["status"] == "passed"
+    assert evidence["environment"]["capability"] == [12, 0]
+
+
 def test_every_entry_is_well_formed(manifest: dict, entries: list[dict]) -> None:
     allowed_verdicts = set(manifest["verdicts"])
     allowed_validation = set(manifest["validation_states"])
@@ -102,6 +118,29 @@ def test_blocked_entries_track_an_upstream_reason(entries: list[dict]) -> None:
         assert entry.get("upstream_tracking", "").strip(), (
             f"{name} is blocked with nothing to track upstream"
         )
+
+
+def test_habitat_block_binds_to_the_graphics_path_contract(manifest: dict) -> None:
+    """Habitat's refusal names its OpenGL/EGL gate, not unrelated RT hardware."""
+
+    habitat = next(
+        item for item in manifest["images"] if item["name"] == "npa-habitat-sim"
+    )
+    reason = habitat["blocked_reason"]
+    assert "supported NVIDIA OpenGL/EGL headless rendering path" in reason
+    assert "no such path is verified" in reason
+    assert "STRICT-bound to one RTX PRO 6000 Blackwell" in reason
+    assert "RT core" not in reason
+
+    matrix = (ROOT / "docs/workbench/image-gpu-compatibility-matrix.md").read_text(
+        encoding="utf-8"
+    )
+    habitat_row = next(
+        line for line in matrix.splitlines() if "`npa-habitat-sim`" in line
+    )
+    assert "supported NVIDIA OpenGL/EGL path unverified" in habitat_row
+    assert "no RT cores" not in habitat_row
+    assert "strict RTX-only route" in habitat_row
 
 
 def test_port_entries_name_their_blocker(entries: list[dict]) -> None:

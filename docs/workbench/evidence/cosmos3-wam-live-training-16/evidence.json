@@ -1,0 +1,26 @@
+{
+  "schema": "npa.cosmos3.wam-live-training-multinode.v1",
+  "snapshots": [
+    {
+      "file": "node-0.json",
+      "sha256": "56b04a39646f2918d290968d4c2807c502009aa4b212472bdbe70c7a3499e1c2"
+    },
+    {
+      "file": "node-1.json",
+      "sha256": "a540cabaf9d26e4bed83c2c2997f1514575bf0f048a1bd42a829b07265966b13"
+    }
+  ],
+  "training_recipe_commit": "315f68f31d0158d848df8d97e5dc72da99328e32",
+  "training_gpus": 16,
+  "nodes": 2,
+  "scope": "Two actual node snapshots during the same incomplete native training run. Each device process was checked against the training command, configuration, Slurm cgroup and global/local rank assignments. Node observations have separate timestamps; no throughput or quality claim.",
+  "observation_files_sha256": {
+    "live-window.json": "30a8b8f81ccc5d16e81ce34753e650ac4fb8fc18c96ddf5f5745d0ce7a62df47",
+    "window-node-0/evidence.json": "1c5e0f30a06de9b5d7f7396a4c7cfeea2c75ad12a022de593cb9657fb368f237",
+    "window-node-1/evidence.json": "f71190c1ff00cd2af90b001b286879e6754e9a9e8a4df208238c6e75545f4d4b",
+    "capture.py": "89d1438a9f692d5f56872bcc9905834d9fee33c631c0b63c301453652f97296c",
+    "export_window.py": "990134ea1b27fbeb6d603d579113edf3e87b00a1bab8c0c461be0cce475899d6",
+    "plot.py": "ac6b2e61b9aafc067918073230b551b2435ef28ccc4cdca1a88975d49ac43346",
+    "plot_window.py": "ce15fff83ba9b97d79a4608b75cfe440038274552a1bfeaf07462e663775ffe8"
+  }
+}

@@ -314,6 +314,80 @@ def test_real_listener_owned_and_same_process_adopted_on_retry(local_runtime):
     ).stat().st_mode & 0o777 == 0o600
 
 
+@pytest.fixture
+def listener_procfs(monkeypatch):
+    pid = 731
+    process_netns = Path(f"/proc/{pid}/ns/net")
+    self_netns = Path("/proc/self/ns/net")
+    process_tcp = Path(f"/proc/{pid}/net/tcp")
+    original_readlink = Path.readlink
+
+    def readlink(path: Path) -> Path:
+        if path in {process_netns, self_netns}:
+            return Path("net:[4026531840]")
+        return original_readlink(path)
+
+    monkeypatch.setattr(api.sys, "platform", "linux")
+    monkeypatch.setattr(Path, "readlink", readlink)
+    return pid, process_netns, process_tcp
+
+
+@pytest.mark.parametrize("exit_error", [FileNotFoundError, ProcessLookupError])
+def test_listener_owned_treats_exit_between_proc_reads_as_absent(
+    monkeypatch, listener_procfs, exit_error
+):
+    pid, _process_netns, process_tcp = listener_procfs
+    original_read_text = Path.read_text
+
+    def read_text(path: Path, *args, **kwargs) -> str:
+        if path == process_tcp:
+            raise exit_error(process_tcp)
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+
+    assert not api._listener_owned({"port": 43127}, {"pid": pid})
+
+
+@pytest.mark.parametrize("boundary", ["namespace", "listener-table"])
+def test_listener_owned_preserves_permission_failure(
+    monkeypatch, listener_procfs, boundary
+):
+    pid, process_netns, process_tcp = listener_procfs
+    method = "readlink" if boundary == "namespace" else "read_text"
+    denied_path = process_netns if boundary == "namespace" else process_tcp
+    original = getattr(Path, method)
+
+    def denied(path: Path, *args, **kwargs):
+        if path == denied_path:
+            raise PermissionError("fixture procfs access denied")
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, method, denied)
+
+    with pytest.raises(PermissionError, match="fixture procfs access denied"):
+        api._listener_owned({"port": 43127}, {"pid": pid})
+
+
+def test_listener_owned_rejects_foreign_network_namespace(monkeypatch, listener_procfs):
+    pid, process_netns, _process_tcp = listener_procfs
+    original = Path.readlink
+
+    def foreign_namespace(path: Path) -> Path:
+        if path == process_netns:
+            return Path("net:[4026531841]")
+        return original(path)
+
+    def unexpected_listener_read(*args, **kwargs):
+        pytest.fail("foreign namespace must fail before inspecting listeners")
+
+    monkeypatch.setattr(Path, "readlink", foreign_namespace)
+    monkeypatch.setattr(Path, "read_text", unexpected_listener_read)
+
+    with pytest.raises(api.IsolatedApiError, match="another network namespace"):
+        api._listener_owned({"port": 43127}, {"pid": pid})
+
+
 @pytest.mark.parametrize("missed_scans", [1, 3])
 def test_live_new_server_waits_for_process_discovery(
     local_runtime, monkeypatch, missed_scans
@@ -2340,3 +2414,107 @@ def test_paidf_documented_cleanup_keeps_receipt_selection_in_original_shell(
         and record["start_ticks"] is None
     )
     assert api._session_members(fixture["original"]) == []
+
+
+def _demo_storage_fixture(monkeypatch):
+    from npa.clients.config import StorageConfig
+    from npa.orchestration.npa_workflow import demos
+
+    storage = StorageConfig(
+        "example-bucket",
+        "https://storage.example.invalid",
+        "saved-access",
+        "saved-secret",
+    )
+    monkeypatch.setattr(
+        demos, "_storage", lambda project: ("example", storage, "example-bucket", "")
+    )
+    selection = {
+        "project": "example",
+        "s3_bucket": "example-bucket",
+        "s3_endpoint": storage.endpoint_url,
+        "s3_prefix": "demo/run",
+    }
+    state = workflow_state.WorkflowS3Config(
+        "example-bucket",
+        "demo/run",
+        storage.endpoint_url,
+        storage.aws_access_key_id,
+        storage.aws_secret_access_key,
+        "example",
+    )
+    return state, demos.demo_storage_environment(selection)
+
+
+def _observer_without_storage(environment):
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
+
+    removed = {
+        *STORAGE_ENDPOINT_ENV_NAMES,
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "NPA_SKYPILOT_PROJECT",
+    }
+    return {key: value for key, value in environment.items() if key not in removed}
+
+
+def test_demo_stop_status_resume_preserves_actual_controller_identity(
+    local_runtime, monkeypatch
+):
+    from npa.orchestration.skypilot.storage_context import call_with_workflow_storage
+
+    state, demo_environment = _demo_storage_fixture(monkeypatch)
+    base = dict(local_runtime["environment"])
+    local_runtime["environment"] = cleanup.sky_environment(
+        local_runtime["isolated_dir"], environment={**base, **demo_environment}
+    )
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    assert original["project_alias"] == state.project == "example"
+    api.stop_isolated_api(local_runtime["isolated_dir"])
+    assert not _record(local_runtime).get("project_alias")
+    observer_environment = _observer_without_storage(base)
+    monkeypatch.setattr(os, "environ", observer_environment)
+    call_with_workflow_storage(
+        state, cleanup.sky_environment, local_runtime["isolated_dir"]
+    )
+    recovered = _record(local_runtime)
+    assert recovered["project_alias"] == state.project
+    assert recovered["pid"] != original["pid"]
+    assert (
+        recovered["marker"] == original["marker"]
+        and recovered["port"] == original["port"]
+    )
+    api.ensure_isolated_api(**local_runtime)
+    assert _record(local_runtime)["pid"] == recovered["pid"]
+    assert os.environ == observer_environment
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL_S3",
+        "NPA_SKYPILOT_PROJECT",
+    ],
+)
+def test_resolved_storage_scope_does_not_relax_foreign_principal_fence(
+    local_runtime, monkeypatch, field
+):
+    from npa.orchestration.skypilot.storage_context import call_with_workflow_storage
+
+    state, demo_environment = _demo_storage_fixture(monkeypatch)
+    local_runtime["environment"].update(demo_environment)
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    foreign = {
+        **local_runtime,
+        "environment": {**local_runtime["environment"], field: "different-principal"},
+    }
+    with pytest.raises(api.IsolatedApiError, match="different executing identity"):
+        call_with_workflow_storage(state, api.ensure_isolated_api, **foreign)
+    assert _record(local_runtime)["pid"] == original["pid"]

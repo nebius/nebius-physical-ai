@@ -196,3 +196,12 @@ References: [Foxglove shareable links](https://docs.foxglove.dev/docs/visualizat
 [Foxglove importing data](https://docs.foxglove.dev/docs/data/importing-data),
 [Foxglove API](https://docs.foxglove.dev/api), and
 [Foxglove pricing](https://foxglove.dev/pricing).
+
+### Simulator ground-truth validation
+
+MCAP conversion validates every present simulator ground-truth flag and the
+ground-truth object before creating or truncating the output. Missing flags
+default to false; present null, strings, numbers, and containers fail with the
+source filename, action index, and flag name. Completion reasons still control
+the phase, while `success` retains its measured `placement_stable` meaning.
+Phase and status fields consume the same validated evidence.

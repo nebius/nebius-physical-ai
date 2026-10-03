@@ -14,6 +14,12 @@ requires an explicit ``--model`` (no default) and the model id is pinned to
 the provisional ``gemini-robotics-er-2-preview`` constant until the production
 model id is confirmed.
 
+Workflow tasks use the default CPU image with staged NPA source because the
+adapter calls a hosted API. Pass `--secret-env GOOGLE_API_KEY` when submitting;
+the renderer declares that credential hint and does not select a local model
+image. Explicit API/model overrides remain required. Transport tests do not
+establish live provider availability.
+
 ## Interfaces
 
 - CLI: `npa workbench gemini-robotics <plan|eval> --help`

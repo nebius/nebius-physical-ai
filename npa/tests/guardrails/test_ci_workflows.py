@@ -56,6 +56,10 @@ def test_one_pr_workflow_owns_every_merge_gate() -> None:
     assert "guardrails-gate" not in jobs
     precheck = "\n".join(step.get("run", "") for step in jobs["pr-precheck"]["steps"])
     assert "bash npa/scripts/ci_precheck.sh" in precheck
+    assert "npa/scripts/ci_merge_precheck.py" in precheck
+    assert '--base "$BASE_SHA" --head "$HEAD_SHA"' in precheck
+    checkout = jobs["pr-precheck"]["steps"][0]
+    assert checkout["with"]["fetch-depth"] == "0"
     assert jobs["gitleaks"]["name"].endswith("|| 'gitleaks' }}")
     assert jobs["scan"]["name"] == "scan"
     required = set(jobs["security-regression"]["needs"])
@@ -121,7 +125,7 @@ def test_merge_queue_suite_is_sharded_and_scheduled_audit_keeps_compatibility() 
     shard_matrix = job["strategy"]["matrix"]["shard"]
     assert '["pull_request", "merge_group"]' in shard_matrix
     assert "[1, 2, 3, 4]" in shard_matrix
-    assert "[1, 2, 3, 4, 5, 6, 7, 8]" in shard_matrix
+    assert "[1, 2, 3, 4, 5, 6]" in shard_matrix
     assert job["strategy"]["fail-fast"] == (
         "${{ github.event_name == 'merge_group' || github.event_name == 'pull_request' }}"
     )
@@ -189,7 +193,7 @@ def test_coverage_shards_are_parallel_and_merged_before_enforcement() -> None:
         "NPA_E2E_PROJECT_ID": "project-test-00000000",
         "NPA_E2E_GROOT_BUCKET": "test-bucket-00000000",
         "NPA_CI_SHARD_INDEX": "${{ matrix.shard }}",
-        "NPA_CI_TOTAL_SHARDS": '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) && 8 || 4 }}',
+        "NPA_CI_TOTAL_SHARDS": '${{ contains(fromJSON(\'["pull_request", "merge_group"]\'), github.event_name) && 6 || 4 }}',
         "COVERAGE_FILE": ".coverage.${{ matrix.python-version }}.${{ matrix.shard }}",
         "NPA_CI_TIMING_OUTPUT": "ci-timings-${{ matrix.python-version }}-${{ matrix.shard }}.json",
         "NPA_REQUIRE_FFMPEG": "1",
@@ -280,9 +284,12 @@ def test_ci_installers_pin_versions_cache_packages_and_keep_cpu_runtime() -> Non
         ("browser-mocked", "Install the production UI renderer"),
     ):
         command = _step("test.yml", job, step)["run"]
-        assert command.index("ci_requirements.py --check") < command.index(
-            "uv pip install"
+        full_install = next(
+            line
+            for line in command.splitlines()
+            if "uv pip install" in line and " -e " in line
         )
+        assert command.index("ci_requirements.py --check") < command.index(full_install)
 
 
 def test_timing_report_is_read_only_and_runs_after_the_required_gate() -> None:
@@ -429,6 +436,13 @@ def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> N
     assert parent["jobs"]["scan"]["if"] == "github.event_name != 'push'"
     leaks = _step("security-regression.yml", "gitleaks", "Reject committed secrets")
     assert leaks["if"] == "github.event_name != 'push'"
+    dependency_check = _step(
+        "security-regression.yml",
+        "gitleaks",
+        "Reject stale or directly edited CI requirements",
+    )
+    assert dependency_check["if"] == "github.event_name != 'push'"
+    assert "ci_requirements.py --check" in dependency_check["run"]
     assert "if" not in parent["jobs"]["security-scanners"]
     for job in (
         "test-gate",
@@ -442,8 +456,49 @@ def test_test_scope_is_trusted_and_does_not_filter_required_security_jobs() -> N
             assert "needs.gitleaks.outputs.mode == 'full'" in condition
         else:
             assert "retest" in condition and "contains(fromJSON" in condition
-        assert "needs.pr-precheck.result == 'success'" in condition
-        assert parent["jobs"][job]["needs"] == ["gitleaks", "pr-precheck"]
+        assert "needs.pr-precheck" not in condition
+        assert parent["jobs"][job]["needs"] == "gitleaks"
+
+
+def test_confidentiality_always_scans_public_patterns_before_private_policy() -> None:
+    """Keep fork and Dependabot PRs on a deterministic blocking scan.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Secret-free PRs can bypass every confidentiality pattern.
+    """
+    command = _step("security-regression.yml", "scan", "Reject confidential data")[
+        "run"
+    ]
+    public_scan = command.index("--built-in-nebius-infra")
+    private_scan = command.index("--pattern-env CUSTOMER_DENYLIST")
+    assert public_scan < private_scan
+    public_command = command[:public_scan]
+    assert '--diff-range "${BASE_SHA}..HEAD"' in public_command
+    assert "--tree" not in public_command.split("npa/.venv/bin/python")[-1]
+
+
+def test_dependabot_does_not_edit_generated_ci_constraints() -> None:
+    """Keep dependency automation on source manifests, not generated pins.
+
+    Args:
+        None.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Dependabot can bypass the repository pin generator.
+    """
+    configuration = yaml.safe_load((REPO_ROOT / ".github/dependabot.yml").read_text())
+    pip_updates = [
+        update
+        for update in configuration["updates"]
+        if update["package-ecosystem"] == "pip"
+    ]
+    assert len(pip_updates) == 1
+    assert "/npa/ci" not in pip_updates[0]["directories"]
 
 
 def test_compatibility_checks_cannot_be_deferred_until_the_queue() -> None:
@@ -816,4 +871,75 @@ def test_queue_proof_uses_base_code_and_receipt_only_follows_success():
         == "validated-candidate-${{ github.run_attempt }}-${{ github.sha }}"
     )
     assert receipt["with"]["if-no-files-found"] == "error"
-    assert jobs["pr-precheck"]["timeout-minutes"] == "5"
+    assert "timeout-minutes" not in jobs["pr-precheck"]
+
+
+def _write_fingerprint_probe(tmp_path: Path) -> None:
+    interpreter = tmp_path / "npa/.venv/bin/python"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.write_text(
+        "#!/bin/bash\nset -eu\n"
+        '[[ "$*" == "npa/scripts/ci_requirements.py --check" ]]\n'
+        'if [[ "$PYTHON_VERSION" == 3.10 ]]; then test -e tomli-installed; fi\n'
+        'echo fingerprint >> "$BOOTSTRAP_LOG"\nexit "$FINGERPRINT_EXIT"\n'
+    )
+    interpreter.chmod(0o700)
+
+
+def _run_fresh_install_step(tmp_path: Path, version: str, fingerprint_exit: int):
+    step = _step("test.yml", "test", "Install npa")
+    assert step["env"] == {"NPA_CI_PYTHON_VERSION": "${{ matrix.python-version }}"}
+    command = step["run"]
+    assert "${{" not in command
+    environment = dict(os.environ, GITHUB_WORKSPACE=str(tmp_path))
+    environment["GITHUB_PATH"] = str(tmp_path / "github-path")
+    environment["BOOTSTRAP_LOG"] = str(tmp_path / "commands")
+    environment["FINGERPRINT_EXIT"] = str(fingerprint_exit)
+    environment["PYTHON_VERSION"] = version
+    environment["NPA_CI_PYTHON_VERSION"] = version
+    _write_fingerprint_probe(tmp_path)
+    functions = """
+python() { [[ "$*" == "-m venv npa/.venv" ]]; }
+uv() {
+  [[ "$*" == "pip install --python npa/.venv/bin/python -c npa/ci/requirements.txt "* ]]
+  if [[ "${@: -1}" == tomli ]]; then
+    touch tomli-installed
+    echo bootstrap >> "$BOOTSTRAP_LOG"
+  else
+    [[ "${@: -2}" == "-e npa[dev,adapter,encord]" ]]
+    echo full-install >> "$BOOTSTRAP_LOG"
+  fi
+}
+"""
+    result = subprocess.run(
+        ["bash", "-euc", functions + command],
+        cwd=tmp_path,
+        env=environment,
+        text=True,
+        capture_output=True,
+    )
+    return result, (tmp_path / "commands").read_text().splitlines()
+
+
+@pytest.mark.parametrize("version", ["3.10", "3.12", "3.14"])
+@pytest.mark.parametrize("fingerprint_exit", [0, 42])
+def test_fresh_ci_environment_checks_fingerprint_before_full_install(
+    tmp_path: Path, version: str, fingerprint_exit: int
+) -> None:
+    """Bootstrap only the missing TOML parser and reject stale dependency pins.
+
+    Args:
+        tmp_path: Isolated shell environment without installed dependencies.
+        version: Supported CI interpreter.
+        fingerprint_exit: Result returned by the dependency fingerprint check.
+    Returns:
+        None.
+    Raises:
+        AssertionError: Setup omits the parser or installs with stale pins.
+    """
+    result, commands = _run_fresh_install_step(tmp_path, version, fingerprint_exit)
+    expected = ["bootstrap", "fingerprint"] if version == "3.10" else ["fingerprint"]
+    if fingerprint_exit == 0:
+        expected.append("full-install")
+    assert result.returncode == fingerprint_exit, result.stderr
+    assert commands == expected

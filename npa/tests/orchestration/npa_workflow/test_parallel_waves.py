@@ -6,6 +6,8 @@ process.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import textwrap
 from pathlib import Path
 
@@ -358,11 +360,9 @@ def test_serial_renderer_still_rejects_parallel_option(parallel_spec) -> None:
 
 # --------------------------------------------------------- field type failures
 #
-# NOTE: the shipped JSON Schema is only enforced at the document level — the
-# hand-rolled walker in schema_validation.py does not resolve `$ref`/`$defs`, so
-# `states.<name>.*` bodies have never been schema-checked. Type errors for the new
-# fields therefore have to raise (with an actionable message) from the Python
-# parser/validator, which is what these tests pin.
+# State shapes are checked in both the parser and the lightweight JSON Schema
+# walker. The parser runs first so these domain-specific failures retain an
+# actionable message instead of exposing schema implementation details.
 
 
 @pytest.mark.parametrize(
@@ -677,11 +677,46 @@ def test_setup_uses_uv_when_the_selected_environment_has_no_pip() -> None:
     from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
 
     setup = default_npa_setup()
-    pip_probe = setup.index('"$npa_install_python" -m pip --version')
-    uv_fallback = setup.index('uv pip install -q --python "$npa_install_python"')
+    pip_probe = setup.index('"$npa_setup_python" -m pip --version')
+    uv_fallback = setup.index('uv pip install -q --python "$npa_setup_python"')
     assert pip_probe < uv_fallback
-    assert 'npa_install_python="$(command -v python3)"' in setup
-    assert "python3 has no pip and uv is unavailable" in setup
+    assert 'npa_setup_python="${NPA_BAKED_PYTHON:-}"' in setup
+    assert 'npa_setup_python="$(command -v python3)"' in setup
+    assert "selected python has no pip and uv is unavailable" in setup
+
+
+def test_setup_pip_uses_a_working_baked_interpreter(tmp_path: Path) -> None:
+    """Isaac setup must not probe or mutate externally managed system Python."""
+
+    from npa.orchestration.npa_workflow.skypilot_render import default_npa_setup
+
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    trace = tmp_path / "trace"
+    interpreter = '#!/bin/sh\nprintf \'%s:%s\\n\' "$0" "$*" >> "$TRACE"\nexit 0\n'
+    baked = binaries / "baked-python"
+    system = binaries / "python3"
+    baked.write_text(interpreter)
+    system.write_text(interpreter)
+    baked.chmod(0o700)
+    system.chmod(0o700)
+
+    setup = default_npa_setup()
+    start = setup.index('npa_setup_python="')
+    end = setup.index("if ! command -v npa")
+    script = "set -e\n" + setup[start:end] + "npa_pip_install example\n"
+    environment = {
+        **os.environ,
+        "NPA_BAKED_PYTHON": str(baked),
+        "PATH": str(binaries),
+        "TRACE": str(trace),
+    }
+    subprocess.run(["/bin/bash", "-c", script], env=environment, check=True)
+
+    calls = trace.read_text().splitlines()
+    assert calls
+    assert all(line.startswith(f"{baked}:") for line in calls)
+    assert not any(line.startswith(f"{system}:") for line in calls)
 
 
 def test_shipped_trigger_spec_reads_its_knobs_from_config() -> None:

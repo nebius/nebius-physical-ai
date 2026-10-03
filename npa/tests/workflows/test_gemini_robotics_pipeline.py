@@ -8,6 +8,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+import yaml
+
 from npa.cli.workbench.gemini_robotics import (
     EvalResult,
     PlanResult,
@@ -40,6 +43,51 @@ class FakeClient:
             raw_text="{}",
             model=kwargs.get("model", ""),
         )
+
+
+def _hosted_workflow_spec(operation: str) -> dict:
+    return {
+        "apiVersion": "npa.workflow/v0.0.1",
+        "kind": "Workflow",
+        "metadata": {"name": "gemini-hosted-contract"},
+        "config": {
+            "api_base_url": "https://provider.example.invalid",
+            "model_id": "operator-selected-model",
+            "task": "inspect the scene",
+            "output_dir": "/tmp/gemini-report",
+            "plan_path": "/tmp/plan.json",
+            "rubric_path": "/tmp/rubric.txt",
+        },
+        "resources": {"cpu": {"cloud": "kubernetes", "cpus": 2}},
+        "initial": "audit",
+        "states": {
+            "audit": {
+                "toolRef": f"workbench.gemini_robotics.{operation}",
+                "resources": "cpu",
+                "terminal": True,
+            }
+        },
+    }
+
+
+@pytest.mark.parametrize("operation", ["plan", "eval"])
+def test_hosted_workflow_renders_cpu_and_declares_google_secret(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
+
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/source/npa")
+    path = tmp_path / "gemini.yaml"
+    path.write_text(yaml.safe_dump(_hosted_workflow_spec(operation)))
+    prepared = prepare_npa_workflow_for_submit(path, run_id="gemini-contract")
+    try:
+        assert "GOOGLE_API_KEY" in prepared.secret_env_hints
+        tasks = list(yaml.safe_load_all(prepared.skypilot_yaml_path.read_text()))
+        assert "accelerators" not in tasks[1]["resources"]
+        assert "image_id" not in tasks[1]["resources"]
+        assert "gemini_robotics_pipeline" in tasks[1]["run"]
+    finally:
+        prepared.temp_dir.cleanup()
 
 
 def _config(tmp_path: Path, **kwargs) -> GeminiRoboticsPipelineConfig:

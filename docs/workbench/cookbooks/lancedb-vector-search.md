@@ -29,6 +29,10 @@ npa workbench lancedb deploy \
   --image "<your-registry>/<namespace>/npa-lancedb:cuda13-b300-0.30.3-sm80-sm90-sm100-sm103-sm120-20260803T031514Z"
 ```
 
+The local storage directory is bind-mounted into the container, so tables
+survive container replacement. Kubernetes deployments require an `s3://`
+storage path instead of pod-local storage.
+
 Create a table from local JSON, JSONL, parquet, or a directory of parquet
 files:
 

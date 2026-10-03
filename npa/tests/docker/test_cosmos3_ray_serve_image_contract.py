@@ -242,3 +242,43 @@ def test_payload_scan_allows_framework_source(tmp_path: Path) -> None:
     _docker_archive(archive, "opt/cosmos3/cosmos-framework/README.md", b"framework")
     report = scan_tarball(archive)
     assert report["verdict"] == "clean"
+
+
+# A fixed, obviously fake PEM block. It is not a key and opens nothing; the
+# scanner keys on the marker line, so no real key material is needed to test it.
+SYNTHETIC_KEY = (
+    b"-----BEGIN OPENSSH PRIVATE KEY-----\n"
+    b"NOT-A-REAL-KEY-SYNTHETIC-CONTROL-FIXTURE-ONLY\n"
+    b"-----END OPENSSH PRIVATE KEY-----\n"
+)
+
+
+@pytest.mark.parametrize(
+    "member",
+    [
+        "etc/ssh/ssh_host_ed25519_key",
+        "root/.ssh/id_rsa",
+        "home/ubuntu/.ssh/id_ed25519",
+        # No conventional name: only the content check can catch this one.
+        "opt/cosmos3/secrets/deploy_key",
+    ],
+)
+def test_payload_scan_rejects_private_keys(tmp_path: Path, member: str) -> None:
+    # This module's docstring promises to reject credential payload, but before
+    # the shared rules landed its only credential rule was a path list of cloud
+    # and registry files, so every one of these returned a clean verdict.
+    archive = tmp_path / "image.tar"
+    _docker_archive(archive, member, SYNTHETIC_KEY)
+    report = scan_tarball(archive)
+    assert report["verdict"] == "restricted-payload-detected"
+    assert report["credential_hits"], "the finding must be attributed to a credential"
+
+
+def test_payload_scan_still_accepts_an_image_with_no_credential(tmp_path: Path) -> None:
+    # The negative control. Without it the parametrised test above would pass
+    # just as well against a scanner that rejects everything.
+    archive = tmp_path / "image.tar"
+    _docker_archive(archive, "opt/cosmos3/serve.py", b"print('serve')\n")
+    report = scan_tarball(archive)
+    assert report["verdict"] == "clean"
+    assert report["credential_hits"] == []

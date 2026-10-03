@@ -1,0 +1,521 @@
+{
+  "source_commit": "b002a53e32d7d149219ec45a11f96ec7d8b42904",
+  "measurement_delivery": "Retained separate FA2/FA4 images; FA4 helper mounted read-only at its installed path. Actual helper and worker hashes are recorded. These measurements do not describe an unmodified historical FA4 image.",
+  "helper_sha256": "10dc701a6a303561287779ea503e5e67b88874d14aa9621f74c9be8209cd70de",
+  "kernel_protocol": {
+    "warmup": 1000,
+    "iterations": 200,
+    "repeats": 9,
+    "blocks_per_backend": 2
+  },
+  "kernel_results": [
+    {
+      "name": "sdxl-q1024-k77",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.02381572499871254,
+        "block_medians_wall_ms": [
+          0.024069414998848515,
+          0.023562034998576564
+        ],
+        "minimum_wall_ms": 0.023333815001933544,
+        "maximum_wall_ms": 0.024863670000740967
+      },
+      "default": {
+        "median_wall_ms": 0.03770938249886058,
+        "block_medians_wall_ms": [
+          0.03793169499886062,
+          0.037487069998860534
+        ],
+        "minimum_wall_ms": 0.03715132500019536,
+        "maximum_wall_ms": 0.041755719998946006
+      },
+      "tuned": {
+        "median_wall_ms": 0.013233949999857941,
+        "block_medians_wall_ms": [
+          0.012681324999448407,
+          0.013786575000267476
+        ],
+        "minimum_wall_ms": 0.012575514999753068,
+        "maximum_wall_ms": 0.014654080000582326
+      },
+      "fa2_over_default": 0.6315596655403242,
+      "fa2_over_tuned": 1.7995930919315992,
+      "default_over_tuned": 2.8494427211275064
+    },
+    {
+      "name": "sdxl-q1024-k1024",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.04025263500011533,
+        "block_medians_wall_ms": [
+          0.04128702000116391,
+          0.03921824999906676
+        ],
+        "minimum_wall_ms": 0.03919265499916946,
+        "maximum_wall_ms": 0.041425360000175715
+      },
+      "default": {
+        "median_wall_ms": 0.0396713625002576,
+        "block_medians_wall_ms": [
+          0.039702280000710743,
+          0.03964044499980446
+        ],
+        "minimum_wall_ms": 0.03910798500101009,
+        "maximum_wall_ms": 0.04012049000039042
+      },
+      "tuned": {
+        "median_wall_ms": 0.0371118500004286,
+        "block_medians_wall_ms": [
+          0.03709960500145826,
+          0.03712409499939895
+        ],
+        "minimum_wall_ms": 0.03708398500066323,
+        "maximum_wall_ms": 0.037396269999590004
+      },
+      "fa2_over_default": 1.0146521940065445,
+      "fa2_over_tuned": 1.0846302461249024,
+      "default_over_tuned": 1.0689675265393517
+    },
+    {
+      "name": "sdxl-q1536-k77",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.028978595001944996,
+        "block_medians_wall_ms": [
+          0.028703155001039704,
+          0.029254035002850287
+        ],
+        "minimum_wall_ms": 0.028552855001180433,
+        "maximum_wall_ms": 0.029522545000872924
+      },
+      "default": {
+        "median_wall_ms": 0.040049569998927836,
+        "block_medians_wall_ms": [
+          0.04027742999824113,
+          0.03982170999961454
+        ],
+        "minimum_wall_ms": 0.039658939999753784,
+        "maximum_wall_ms": 0.04108505999965928
+      },
+      "tuned": {
+        "median_wall_ms": 0.01636134750015117,
+        "block_medians_wall_ms": [
+          0.01542112000151974,
+          0.0173015749987826
+        ],
+        "minimum_wall_ms": 0.01522077500112573,
+        "maximum_wall_ms": 0.01808552500051519
+      },
+      "fa2_over_default": 0.7235681931846154,
+      "fa2_over_tuned": 1.771161880259389,
+      "default_over_tuned": 2.447816110412532
+    },
+    {
+      "name": "sdxl-q1536-k1536",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.08383220749919928,
+        "block_medians_wall_ms": [
+          0.08421012999860977,
+          0.0834542849997888
+        ],
+        "minimum_wall_ms": 0.0828801000011481,
+        "maximum_wall_ms": 0.08437974499884149
+      },
+      "default": {
+        "median_wall_ms": 0.08231607499851634,
+        "block_medians_wall_ms": [
+          0.08231829999886031,
+          0.08231384999817237
+        ],
+        "minimum_wall_ms": 0.08225480999954016,
+        "maximum_wall_ms": 0.08269430499922237
+      },
+      "tuned": {
+        "median_wall_ms": 0.08009442999991734,
+        "block_medians_wall_ms": [
+          0.08008811499848889,
+          0.08010074500134579
+        ],
+        "minimum_wall_ms": 0.07915814500165652,
+        "maximum_wall_ms": 0.08030840999936117
+      },
+      "fa2_over_default": 1.018418425571315,
+      "fa2_over_tuned": 1.0466671340227505,
+      "default_over_tuned": 1.0277378214515203
+    },
+    {
+      "name": "sdxl-q4096-k77",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.02881587250044504,
+        "block_medians_wall_ms": [
+          0.028794980000839132,
+          0.028836765000050946
+        ],
+        "minimum_wall_ms": 0.02849156000138464,
+        "maximum_wall_ms": 0.0329207050003788
+      },
+      "default": {
+        "median_wall_ms": 0.03995374250052919,
+        "block_medians_wall_ms": [
+          0.04052938000086215,
+          0.03937810500019623
+        ],
+        "minimum_wall_ms": 0.03883254500124167,
+        "maximum_wall_ms": 0.040653519999978016
+      },
+      "tuned": {
+        "median_wall_ms": 0.01385794000043461,
+        "block_medians_wall_ms": [
+          0.013397300001543044,
+          0.014318579999326175
+        ],
+        "minimum_wall_ms": 0.013218125000094005,
+        "maximum_wall_ms": 0.015188459999535553
+      },
+      "fa2_over_default": 0.7212308709268818,
+      "fa2_over_tuned": 2.079376335843662,
+      "default_over_tuned": 2.8830939157823
+    },
+    {
+      "name": "sdxl-q4096-k4096",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.2712493974991048,
+        "block_medians_wall_ms": [
+          0.2709231249991717,
+          0.2715756699990379
+        ],
+        "minimum_wall_ms": 0.27082896499905473,
+        "maximum_wall_ms": 0.27186556500055303
+      },
+      "default": {
+        "median_wall_ms": 0.27085527500048556,
+        "block_medians_wall_ms": [
+          0.2708142999995289,
+          0.27089625000144224
+        ],
+        "minimum_wall_ms": 0.27076217500052735,
+        "maximum_wall_ms": 0.2712161499994181
+      },
+      "tuned": {
+        "median_wall_ms": 0.26567572999965705,
+        "block_medians_wall_ms": [
+          0.2656903249999232,
+          0.2656611349993909
+        ],
+        "minimum_wall_ms": 0.2638926350005022,
+        "maximum_wall_ms": 0.2659817800008568
+      },
+      "fa2_over_default": 1.0014551036475792,
+      "fa2_over_tuned": 1.0209792121374992,
+      "default_over_tuned": 1.0194957401672904
+    },
+    {
+      "name": "sdxl-q6144-k77",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.029344500001116103,
+        "block_medians_wall_ms": [
+          0.029284180000104243,
+          0.029404820002127963
+        ],
+        "minimum_wall_ms": 0.029106629999660072,
+        "maximum_wall_ms": 0.03127552499790909
+      },
+      "default": {
+        "median_wall_ms": 0.039797805000034714,
+        "block_medians_wall_ms": [
+          0.03943483000057313,
+          0.0401607799994963
+        ],
+        "minimum_wall_ms": 0.039203974999963975,
+        "maximum_wall_ms": 0.04042993499979275
+      },
+      "tuned": {
+        "median_wall_ms": 0.01668864750058674,
+        "block_medians_wall_ms": [
+          0.016687465001723467,
+          0.016689829999450012
+        ],
+        "minimum_wall_ms": 0.01666527999987011,
+        "maximum_wall_ms": 0.01687804000084725
+      },
+      "fa2_over_default": 0.7373396598402979,
+      "fa2_over_tuned": 1.7583509987903099,
+      "default_over_tuned": 2.384723207715634
+    },
+    {
+      "name": "sdxl-q6144-k6144",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.5952818399975968,
+        "block_medians_wall_ms": [
+          0.5924007599992365,
+          0.598162919995957
+        ],
+        "minimum_wall_ms": 0.5922371649990055,
+        "maximum_wall_ms": 0.5983429949992569
+      },
+      "default": {
+        "median_wall_ms": 0.5968802724987654,
+        "block_medians_wall_ms": [
+          0.5967681099991751,
+          0.5969924349983557
+        ],
+        "minimum_wall_ms": 0.5964125149989741,
+        "maximum_wall_ms": 0.5974956249997376
+      },
+      "tuned": {
+        "median_wall_ms": 0.5830507799998941,
+        "block_medians_wall_ms": [
+          0.5829697750004925,
+          0.5831317849992956
+        ],
+        "minimum_wall_ms": 0.5826464799997666,
+        "maximum_wall_ms": 0.5833453550008016
+      },
+      "fa2_over_default": 0.9973220215597393,
+      "fa2_over_tuned": 1.020977692539413,
+      "default_over_tuned": 1.0237191904603469
+    },
+    {
+      "name": "transformer-s1024-kv4",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.05553954250103743,
+        "block_medians_wall_ms": [
+          0.055557055000008404,
+          0.05552203000206646
+        ],
+        "minimum_wall_ms": 0.05548176000047533,
+        "maximum_wall_ms": 0.05569139500039455
+      },
+      "default": {
+        "median_wall_ms": 0.05974205250026898,
+        "block_medians_wall_ms": [
+          0.05974493000167058,
+          0.059739174998867384
+        ],
+        "minimum_wall_ms": 0.05970206000029066,
+        "maximum_wall_ms": 0.060033770000700315
+      },
+      "tuned": {
+        "median_wall_ms": 0.04539653750157413,
+        "block_medians_wall_ms": [
+          0.04538839000133521,
+          0.04540468500181305
+        ],
+        "minimum_wall_ms": 0.04534025499879135,
+        "maximum_wall_ms": 0.04578595499879157
+      },
+      "fa2_over_default": 0.929655747947183,
+      "fa2_over_tuned": 1.223431247352545,
+      "default_over_tuned": 1.31600460713986
+    },
+    {
+      "name": "transformer-s1024-kv4",
+      "mode": "forward+backward",
+      "fa2": {
+        "median_wall_ms": 1.2727073774999553,
+        "block_medians_wall_ms": [
+          1.2118653500010623,
+          1.3335494049988483
+        ],
+        "minimum_wall_ms": 0.9810527650006406,
+        "maximum_wall_ms": 1.3530790450022323
+      },
+      "default": {
+        "median_wall_ms": 1.1357277125000564,
+        "block_medians_wall_ms": [
+          1.0939190049998615,
+          1.1775364200002514
+        ],
+        "minimum_wall_ms": 0.8368750099998579,
+        "maximum_wall_ms": 1.4987239650008632
+      },
+      "fa2_over_default": 1.120609599899934
+    },
+    {
+      "name": "transformer-s1024-kv16",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.05747886749986719,
+        "block_medians_wall_ms": [
+          0.05966265000097337,
+          0.05529508499876101
+        ],
+        "minimum_wall_ms": 0.055159035000542644,
+        "maximum_wall_ms": 0.05988631500031261
+      },
+      "default": {
+        "median_wall_ms": 0.0584689750007783,
+        "block_medians_wall_ms": [
+          0.05843777500103897,
+          0.05850017500051763
+        ],
+        "minimum_wall_ms": 0.05826510500128279,
+        "maximum_wall_ms": 0.0588115999994443
+      },
+      "tuned": {
+        "median_wall_ms": 0.04540655000027982,
+        "block_medians_wall_ms": [
+          0.0454235899997002,
+          0.045389510000859445
+        ],
+        "minimum_wall_ms": 0.04534704999969108,
+        "maximum_wall_ms": 0.04568559000063033
+      },
+      "fa2_over_default": 0.9830661047008618,
+      "fa2_over_tuned": 1.2658717189373114,
+      "default_over_tuned": 1.2876771082678156
+    },
+    {
+      "name": "transformer-s1024-kv16",
+      "mode": "forward+backward",
+      "fa2": {
+        "median_wall_ms": 1.2147962074993757,
+        "block_medians_wall_ms": [
+          1.1882551399980912,
+          1.2413372750006602
+        ],
+        "minimum_wall_ms": 0.9110554249991765,
+        "maximum_wall_ms": 1.3299801549965196
+      },
+      "default": {
+        "median_wall_ms": 1.1135393175004538,
+        "block_medians_wall_ms": [
+          1.1129520250005953,
+          1.1141266100003122
+        ],
+        "minimum_wall_ms": 0.9508149399994181,
+        "maximum_wall_ms": 1.5362446500012084
+      },
+      "fa2_over_default": 1.0909324784563619
+    },
+    {
+      "name": "transformer-s4096-kv4",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.4860423724994689,
+        "block_medians_wall_ms": [
+          0.4859895849995155,
+          0.4860951599994223
+        ],
+        "minimum_wall_ms": 0.4855500099984056,
+        "maximum_wall_ms": 0.4877439050005705
+      },
+      "default": {
+        "median_wall_ms": 0.5293835975010097,
+        "block_medians_wall_ms": [
+          0.5292618950011274,
+          0.529505300000892
+        ],
+        "minimum_wall_ms": 0.5291483649989459,
+        "maximum_wall_ms": 0.5301654300001246
+      },
+      "tuned": {
+        "median_wall_ms": 0.4539995424988774,
+        "block_medians_wall_ms": [
+          0.4537401449988465,
+          0.4542589399989083
+        ],
+        "minimum_wall_ms": 0.45292732500001875,
+        "maximum_wall_ms": 0.4552149300002384
+      },
+      "fa2_over_default": 0.9181288857340199,
+      "fa2_over_tuned": 1.0705789918294262,
+      "default_over_tuned": 1.1660443413383368
+    },
+    {
+      "name": "transformer-s4096-kv4",
+      "mode": "forward+backward",
+      "fa2": {
+        "median_wall_ms": 1.755830912500187,
+        "block_medians_wall_ms": [
+          1.7489346899992597,
+          1.7627271350011142
+        ],
+        "minimum_wall_ms": 1.7459988950008665,
+        "maximum_wall_ms": 1.8313183349982864
+      },
+      "default": {
+        "median_wall_ms": 1.9391377974989155,
+        "block_medians_wall_ms": [
+          1.9387859349990322,
+          1.9394896599987987
+        ],
+        "minimum_wall_ms": 1.9383904350002013,
+        "maximum_wall_ms": 1.9401914399986708
+      },
+      "fa2_over_default": 0.9054699025334062
+    },
+    {
+      "name": "transformer-s4096-kv16",
+      "mode": "forward",
+      "fa2": {
+        "median_wall_ms": 0.48898672750055994,
+        "block_medians_wall_ms": [
+          0.48838825000075303,
+          0.48958520500036684
+        ],
+        "minimum_wall_ms": 0.48826841499931106,
+        "maximum_wall_ms": 0.49002094000115903
+      },
+      "default": {
+        "median_wall_ms": 0.5304598800000804,
+        "block_medians_wall_ms": [
+          0.5303897699991467,
+          0.5305299900010141
+        ],
+        "minimum_wall_ms": 0.5302872749984999,
+        "maximum_wall_ms": 0.5314320100001169
+      },
+      "tuned": {
+        "median_wall_ms": 0.45715495250078675,
+        "block_medians_wall_ms": [
+          0.4572023800005809,
+          0.4571075250009926
+        ],
+        "minimum_wall_ms": 0.45629490000010264,
+        "maximum_wall_ms": 0.4580885449991001
+      },
+      "fa2_over_default": 0.9218166084501732,
+      "fa2_over_tuned": 1.0696301654956224,
+      "default_over_tuned": 1.160350286261347
+    },
+    {
+      "name": "transformer-s4096-kv16",
+      "mode": "forward+backward",
+      "fa2": {
+        "median_wall_ms": 1.719447432499237,
+        "block_medians_wall_ms": [
+          1.7122799449998638,
+          1.7266149199986103
+        ],
+        "minimum_wall_ms": 1.7102493899983529,
+        "maximum_wall_ms": 1.7277091050027593
+      },
+      "default": {
+        "median_wall_ms": 2.1705530500014447,
+        "block_medians_wall_ms": [
+          2.1702255900004275,
+          2.170880510002462
+        ],
+        "minimum_wall_ms": 2.1690972150008747,
+        "maximum_wall_ms": 2.1711175400014326
+      },
+      "fa2_over_default": 0.7921701948257347
+    }
+  ],
+  "sdxl_protocol": {
+    "blocks_per_backend": 2,
+    "warmup_generations_per_case": 1,
+    "timed_generations_per_case": 5,
+    "denoising_steps": 30,
+    "total_generations": 108
+  },
+  "interpretation": "Ratios are FA2 or default-FA4 time divided by tuned-FA4 time; above 1 favors tuned FA4. Ranges are descriptive, not confidence intervals."
+}

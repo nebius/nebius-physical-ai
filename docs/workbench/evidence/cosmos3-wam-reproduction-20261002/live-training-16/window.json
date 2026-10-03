@@ -1,0 +1,20 @@
+{
+  "start_utc": "2026-10-02T18:10:54.054447+00:00",
+  "end_utc": "2026-10-02T18:12:54.054447+00:00",
+  "start_unix": 1790964654.054447,
+  "end_unix": 1790964774.054447,
+  "selection": "First 120 seconds after both active-trainer snapshots; all recorded samples retained, including zero utilization.",
+  "samples_per_node": 960,
+  "source_files_sha256": {
+    "after-window-node-0.json": "5a62c454f1c69e7d6d754f416206a62042de4f794bfd38fbd90ddf0588ee7c70",
+    "after-window-node-1.json": "a217caf43698f8e8041d109db72bb1080cf543218b77536303ee33417b66ac02",
+    "gpu-window-node-0.csv": "1cdac801dd99421f521ac815d4d55df78e115e028147cc6971849193ddefb4d9",
+    "gpu-window-node-1.csv": "1f24159bcabaa46bd35a9b98359ea2ca8675e8ecba0c756026486d9afba509d9",
+    "live-gpu-node-0.json": "087456d6754c921231485c2eb41c6f5f01982928c6291c75b7692f536bb6cbb6",
+    "live-gpu-node-1.json": "23eca753a34cfad8487910a51d7c8d0ce34c33cce455dbb0135eda183fc1ff6e",
+    "transport-node-0.json": "9972a54af544387ffa2a17c22dd5aaa0e22ec24ef5a2fbd540e54258b3f79474",
+    "transport-node-1.json": "6bb8394f449186cac81b18ce3f707a4e19be101f1268a9ed6341b48c52f62f31"
+  },
+  "extractor_sha256": "29799f2e0f6ba3102043dcc99fc093e7aca0cd0cfef3d93e1cee433f9a3fdbd1",
+  "scope": "One-second NVML readings during this fixed interval, with native trainer process attribution on both sides; not whole-run utilization, throughput, or policy quality."
+}

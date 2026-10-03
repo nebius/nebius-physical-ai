@@ -234,7 +234,48 @@ class ChatHandler(BaseHTTPRequestHandler):
             return self._events(query)
         if path == "/chat/api/state":
             return self._state()
+        if path == "/chat/api/delivery":
+            return self._delivery_receipt(query["clientUserMessageId"])
         raise ValueError("Unknown chat route.")
+
+    def _delivery_receipt(self, identifier):
+        receipt = self.server.deliveries.status(identifier)
+        if receipt["state"] in {"pending", "uncertain"} and receipt.get("threadId"):
+            result = self._confirmed_delivery(receipt["threadId"], identifier)
+            if result is not None:
+                self.server.deliveries.confirm(identifier, result)
+                return self.server.deliveries.status(identifier)
+        return receipt
+
+    def _confirmed_delivery(self, thread_id, identifier):
+        try:
+            turns = self.server.rpc.call(
+                "thread/turns/list",
+                {
+                    "threadId": thread_id,
+                    "limit": 10,
+                    "sortDirection": "desc",
+                    "itemsView": "full",
+                },
+            )["data"]
+        except RuntimeError:
+            return None
+        for turn in turns:
+            for item in turn.get("items", []):
+                if item.get("type") not in {"userMessage", "steeringUserMessage"}:
+                    continue
+                if identifier not in {
+                    item.get("clientUserMessageId"),
+                    item.get("clientId"),
+                }:
+                    continue
+                self.server.created.pop(thread_id, None)
+                return {
+                    "clientUserMessageId": identifier,
+                    "turnId": turn["id"],
+                    "delivery": {"visible": True, "target": "conversation"},
+                }
+        return None
 
     def _state(self):
         rpc = self.server.rpc
@@ -272,7 +313,7 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _thread(self, identifier):
         created = self.server.created.get(identifier)
         if created is not None:
-            return created
+            return {**created, "archived": self._archived(created)}
         thread = self.server.rpc.call(
             "thread/read", {"threadId": identifier, "includeTurns": False}
         )["thread"]
@@ -280,10 +321,12 @@ class ChatHandler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _archived(thread):
-        return (
-            bool(thread.get("archived"))
-            or "archived_sessions" in Path(thread.get("path") or "").parts
-        )
+        archived = thread.get("archived", False)
+        # Desktop assets run without npa installed. Keep this standalone boundary
+        # equivalent to npa.literal_values.require_boolean (contract-tested).
+        if type(archived) is not bool:
+            raise ValueError("thread.archived must be a literal boolean")
+        return archived or "archived_sessions" in Path(thread.get("path") or "").parts
 
     def _turns(self, query):
         if query["id"] in self.server.created:
@@ -325,16 +368,20 @@ class ChatHandler(BaseHTTPRequestHandler):
                 "archived": query.get("archived") == "true",
             },
         )
-        return {
-            **page,
-            "data": [
+        entries, errors = [], []
+        for thread in page["data"]:
+            try:
+                archived = self._archived(thread)
+            except ValueError as error:
+                errors.append({"id": thread.get("id"), "error": str(error)})
+                continue
+            entries.append(
                 {
                     **_thread_list_entry(thread),
-                    "archived": query.get("archived") == "true",
+                    "archived": archived or query.get("archived") == "true",
                 }
-                for thread in page["data"]
-            ],
-        }
+            )
+        return {**page, "data": entries, "errors": errors}
 
     def do_POST(self):
         """Apply explicit, same-origin chat actions.
@@ -357,7 +404,8 @@ class ChatHandler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length))
             if not isinstance(body, dict):
                 raise ValueError("Send a JSON object.")
-            self._respond(200, self._action(urlsplit(self.path).path, body))
+            result = self._action(urlsplit(self.path).path, body)
+            self._respond(202 if result.get("state") == "pending" else 200, result)
         except (ValueError, RuntimeError, KeyError, TypeError) as error:
             self._respond(400, {"error": str(error)})
         except (BrokenPipeError, ConnectionResetError):
@@ -453,7 +501,7 @@ class ChatHandler(BaseHTTPRequestHandler):
     def _resume(self, identifier):
         created = self.server.created.get(identifier)
         if created is not None:
-            return {"thread": created}
+            return {"thread": self._thread(identifier)}
         rpc = self.server.rpc
         thread = self._thread(identifier)
         if self._archived(thread):
@@ -465,17 +513,14 @@ class ChatHandler(BaseHTTPRequestHandler):
         result = rpc.call(
             "thread/resume", {"threadId": identifier, "excludeTurns": True}
         )
+        result["thread"] = {
+            **result["thread"],
+            "archived": self._archived(result["thread"]),
+        }
         self.server.attached.add(identifier)
         return result
 
     def _send(self, body):
-        thread = self._thread(body["id"])
-        if self._archived(thread):
-            raise ValueError("Restore this chat before sending a message.")
-        if self._owned_elsewhere(thread):
-            raise ValueError(
-                "This session is open in an older Codex client. Close it there, then refresh to continue here."
-            )
         text = body.get("text", "")
         images = body.get("images", [])
         if not isinstance(text, str) or (not text.strip() and not images):
@@ -501,12 +546,20 @@ class ChatHandler(BaseHTTPRequestHandler):
         identifier = body.get("clientUserMessageId")
         if identifier is not None:
             params["clientUserMessageId"] = identifier
-            return self.server.deliveries.execute(
-                identifier, body, lambda: self._start_or_steer(body, params)
-            )
+            deliver = self.server.deliveries.execute
+            if self.headers.get("Prefer") == "respond-async":
+                deliver = self.server.deliveries.submit
+            return deliver(identifier, body, lambda: self._start_or_steer(body, params))
         return self._start_or_steer(body, params)
 
     def _start_or_steer(self, body, params):
+        thread = self._thread(body["id"])
+        if self._archived(thread):
+            raise ValueError("Restore this chat before sending a message.")
+        if self._owned_elsewhere(thread):
+            raise ValueError(
+                "This session is open in an older Codex client. Close it there, then refresh to continue here."
+            )
         if body.get("turnId"):
             params["expectedTurnId"] = body["turnId"]
             return self.server.rpc.call("turn/steer", params)
