@@ -217,6 +217,10 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
   score, samples rather than continuous behavior, and does not establish
   physical correctness or safety. Stub reports state that no VLM call occurred.
 
+Each direct result also emits `provider_call_made`: real backend execution sets
+it to true; stub and caller-supplied score overrides set it to false. Every path
+retains `independent_human_label_calibration_established: false`.
+
 Read the report:
 
 ```bash

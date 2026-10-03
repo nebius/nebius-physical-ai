@@ -253,6 +253,7 @@ class VlmEvalResult:
     provider_success_matches_score_gate: bool | None = None
     independent_human_label_calibration_established: bool = False
     limitations: tuple[str, ...] = _DIRECT_RESULT_LIMITATIONS
+    provider_call_made: bool = False
 
 
 @dataclass(frozen=True)
@@ -1169,6 +1170,7 @@ def _result_from_structured(
         provider_success_matches_score_gate=provider_success_matches_score_gate,
         evidence=structured.evidence,
         limitations=_direct_result_limitations(provider_call_made=provider_call_made),
+        provider_call_made=provider_call_made,
     )
 
 

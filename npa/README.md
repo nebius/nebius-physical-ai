@@ -439,7 +439,9 @@ npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.
 VLM score, loop, and benchmark artifacts disclose that independent human-label
 calibration is not established. Their ordered limitations distinguish sampled
 observations, mean-score loop gates, and fixture/stub inputs from real provider
-evidence. See the [VLM runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#outputs).
+evidence. Direct results also emit `provider_call_made`, which is false for
+stub and score-override paths. See the
+[VLM runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#outputs).
 
 For GPU VLM provenance, use the
 [operator verification lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#live-provenance-verification).

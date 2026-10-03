@@ -155,10 +155,12 @@ def _assert_disclosures(evidence, loop, benchmark, override, transports):
     assert benchmark.independent_human_label_calibration_established is False
     assert len(benchmark.limitations) == 3
     assert override.evidence is None
+    assert override.provider_call_made is False
     assert "no VLM call occurred" in override.limitations[-1]
     for result in (evidence / "loop/rollouts").glob("*/*.json"):
         payload = json.loads(result.read_text())
         assert payload["independent_human_label_calibration_established"] is False
+        assert payload["provider_call_made"] is True
         assert len(payload["limitations"]) == 2
         provider = payload["evidence"]["provider"]
         assert (

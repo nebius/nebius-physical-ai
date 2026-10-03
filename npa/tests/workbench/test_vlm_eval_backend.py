@@ -166,6 +166,7 @@ def test_golden_set_scores_known_good_and_bad_rollouts(
     assert good.frame_count == 3
     for result in (good, bad):
         assert result.independent_human_label_calibration_established is False
+        assert result.provider_call_made is False
         assert result.limitations == _DIRECT_LIMITATIONS
         assert isinstance(result.limitations, tuple)
 
