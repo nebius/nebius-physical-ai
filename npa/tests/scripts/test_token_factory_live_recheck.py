@@ -158,6 +158,34 @@ def test_missing_configured_model_fails_catalog_and_still_requests_it():
     assert any(call["model"] == "synthetic/required-model" for call in client.calls)
 
 
+@pytest.mark.parametrize("minimax_available", [True, False])
+def test_independent_minimax_catalog_pin_survives_default_drift(
+    monkeypatch: pytest.MonkeyPatch, minimax_available: bool
+):
+    from npa.live_verification import token_factory_contract as contract
+
+    # A changed default must not silently remove the independent catalog pin.
+    monkeypatch.setattr(contract, "DEFAULT_TEXT_MODEL", LIGHTNING)
+    monkeypatch.setattr(contract, "DEFAULT_REASONER_MODEL", LIGHTNING)
+    monkeypatch.setattr(contract, "DEFAULT_VISION_MODEL", LIGHTNING)
+    client = FakeProvider()
+    client.list_models = lambda: [LIGHTNING, *([MINIMAX] if minimax_available else [])]
+    report = contract.run_contract(client)
+    catalog = report["checks"][0]
+    assert catalog["check"] == "required_model_catalog"
+    assert catalog["required_count"] == 2
+    assert catalog["missing_models"] == ([] if minimax_available else [MINIMAX])
+    assert catalog["passed"] is minimax_available
+    assert report["passed"] is minimax_available
+    assert set(report["required_models"]) == {LIGHTNING, MINIMAX}
+    inferred = {
+        check["requested_model"]
+        for check in report["checks"]
+        if check["check"] == "required_model_inference"
+    }
+    assert inferred == {LIGHTNING}
+
+
 @pytest.mark.parametrize(
     "mutation,error",
     [
