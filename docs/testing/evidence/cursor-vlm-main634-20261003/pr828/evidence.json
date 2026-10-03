@@ -1,0 +1,192 @@
+{
+  "schema": "cursor-explore.vlm-main634-addendum/v1",
+  "pr": 828,
+  "execution": {
+    "head": "c5085c8757f50889cc296bce69b25cbb4ed77e40",
+    "tree": "49e32764ea17a58bad8b6ed3f911ed82ccedf9aa",
+    "base": "88fd1b1356c942745244e49d2316800634c530ae",
+    "source_files": [
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "0e09a1d18677dd2ee85e8d34679f9de4c76ee3f37b13906fbceedf0065e0b31d"
+      },
+      {
+        "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+        "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e"
+      },
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+      }
+    ],
+    "original_harness_sha256": "840530a8226fa3f7fd5a536f7fbcc3477a46f1e401ceea7e42f1d0832d9d1771",
+    "original_execution_sha256": "d55b0c7fc3d2d4a2f5d583f3a66e0ca9407a60bce4a0c7ef5b3ef78bab1f3714",
+    "http_responses": 4,
+    "status_code": 200,
+    "finish_reason": "stop",
+    "original_harness_result": "FAILED four post-retention assertions at the in-memory tuple versus serialized JSON-list grade boundary",
+    "corrected_receipt": "Separate CPU-only validation of the original persisted JSON; all four reports pass grade evidence validation",
+    "correction_new_provider_calls": 0
+  },
+  "frozen_protocol": {
+    "task": "Identify the visible shapes and colors. Judge whether the image contains a red circle. Task completion requires a clearly visible red circle; a uniform blank image does not complete the task.",
+    "rubric_sha256": "4bc517d520b2ce454d88e6385928fd4c4e9f005aa1d42e17c96169caea4d1d06",
+    "threshold": 0.8,
+    "sampling": {
+      "frame_selection": "keyframes",
+      "max_frames": 8
+    },
+    "labels": {
+      "negative": false,
+      "positive": true
+    },
+    "acceptance": {
+      "negative_gate": false,
+      "negative_score": 0,
+      "positive_gate": true,
+      "strict_grade_evidence": true
+    },
+    "cases": [
+      {
+        "content_sha256": "59a3cab1f5b3cfb05b26ecddbd708eb47b2600e171e4c076e49380de4e295dd1",
+        "image_sha256": "b5c8938bfdcdaf7a2fc9653cbc29ec301c69d64be6e9a0de732bf7357604099e",
+        "name": "positive",
+        "normalized_frame_sha256": [
+          "69ec5a81250b2a7a6f2fb0d8c877d84cebce0b43dbf9ad48ac6ea7dd3505fde7"
+        ],
+        "prompt_sha256": "4eaa1127f9b93510ddf81956f864b7b8abb783141aaed3e22d86428896277193"
+      },
+      {
+        "content_sha256": "a61aaadde7ba656762fd11f3c6f7e98eecfd8439240f01837b27271250ba0c8c",
+        "image_sha256": "79a8c7190d6ecdedeb11ef42add22344dff7749eaa96bdb9667b429e7657e9e5",
+        "name": "negative",
+        "normalized_frame_sha256": [
+          "56f5ca147f569d666bde0a4707aba5c290cddeb585d85c1390fe3e57fafe6148"
+        ],
+        "prompt_sha256": "4eaa1127f9b93510ddf81956f864b7b8abb783141aaed3e22d86428896277193"
+      }
+    ]
+  },
+  "rows": [
+    {
+      "name": "api-MiniMax-M3-positive",
+      "score": 1,
+      "gate": true,
+      "result_sha256": "3ac156f61e7ac5a40ad1b151254c434f91bb9097ca08f66dd2dcbb23488bc8af",
+      "response_sha256": "452bb99a935b056034719a79d539c6d441f9131196fa05bd98c557d069e7ce99",
+      "request_sha256": "bfe8bd814110f507abe10c66af894fab9cda7cbf1f1654660d708597a9ba3401",
+      "content_sha256": "59a3cab1f5b3cfb05b26ecddbd708eb47b2600e171e4c076e49380de4e295dd1",
+      "rationale_sha256": "e545a7cf7c3e7bb27bbe93231cc2ae906b04559ad26d23a0a9a5a284d25fea9e",
+      "serialized_grade_block": {},
+      "original_in_memory_boundary_block": {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "request_binding_mismatch"
+      }
+    },
+    {
+      "name": "api-MiniMax-M3-negative",
+      "score": 0,
+      "gate": false,
+      "result_sha256": "00eac2341fcd074ffe5c05d10eebae35ce8da4a5eb7112990c46ee2469994298",
+      "response_sha256": "47ba18db0ec95eb3468c9a4880e8f70e40b519b7ebb989aebf4a06a36ca8b740",
+      "request_sha256": "564a839383659cddd307dfcd747f332d402923cc0e0904dc9e4549ee51fa1dc3",
+      "content_sha256": "a61aaadde7ba656762fd11f3c6f7e98eecfd8439240f01837b27271250ba0c8c",
+      "rationale_sha256": "af264fdf930db891e9bbb38debfe0b4b1f320515610c40d21963342102185100",
+      "serialized_grade_block": {},
+      "original_in_memory_boundary_block": {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "request_binding_mismatch"
+      }
+    },
+    {
+      "name": "self-hosted-gemma-3-27b-it-positive",
+      "score": 1,
+      "gate": true,
+      "result_sha256": "14f775472928f8ca5b45811c39e94896a2bd881ad9af628890580bb4b62b95cf",
+      "response_sha256": "e72125cbcef35624d32573f8e545998a27b1e8e3f7073a627b461fd635e9e0fd",
+      "request_sha256": "39f2a4ea09a804f215bbc9a65b56e5721f239576e256e16afa96b96d51a41fd4",
+      "content_sha256": "59a3cab1f5b3cfb05b26ecddbd708eb47b2600e171e4c076e49380de4e295dd1",
+      "rationale_sha256": "89135591cd6ad4d11fa842b59cda73ea0447843ea8884eb0c091b3df3a97d90f",
+      "serialized_grade_block": {},
+      "original_in_memory_boundary_block": {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "request_binding_mismatch"
+      }
+    },
+    {
+      "name": "self-hosted-gemma-3-27b-it-negative",
+      "score": 0,
+      "gate": false,
+      "result_sha256": "c25fdc1e8828933dc77d2cceefee61436cde287ee14258afea31da88e9da7cc5",
+      "response_sha256": "59025d39dd144444bf9e0ee184210820db5ec970d7cb91b74417db84eebb5f7b",
+      "request_sha256": "4a8e0e80cd23768e50a6dd2d2ed06d231043ff2fbe0166704a11982d065da25c",
+      "content_sha256": "a61aaadde7ba656762fd11f3c6f7e98eecfd8439240f01837b27271250ba0c8c",
+      "rationale_sha256": "ad9049aafb7b74c1ef26dabd896f814b54ea362a606f36ed95db6a673eed6eb3",
+      "serialized_grade_block": {},
+      "original_in_memory_boundary_block": {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "request_binding_mismatch"
+      }
+    }
+  ],
+  "local_selected_gates": {
+    "head": "c5085c8757f50889cc296bce69b25cbb4ed77e40",
+    "affected": {
+      "passed": 1600,
+      "skipped": 2,
+      "skip_scope": "inherited opt-in GPU"
+    },
+    "standard_smoke": {
+      "passed": 118
+    },
+    "guardrails": {
+      "passed": 5899,
+      "skipped": 1
+    },
+    "required_live_caller": {
+      "passed": 39,
+      "skipped": 0,
+      "network_calls": 0
+    },
+    "precheck": {
+      "passed": 270
+    },
+    "docs": "PASS",
+    "aggregate_confidentiality": "PASS",
+    "aggregate_gitleaks": "PASS",
+    "merge_precheck": "PASS",
+    "source_module_distribution_before_after": "equal"
+  },
+  "historical": {
+    "full_execution_head": "2bcc2badfb102a17341df354f95782316874e7e3",
+    "full_passed": 39824,
+    "full_skipped": 213,
+    "full_non_strict_xpass": 1,
+    "package_coverage_percent": 77.47,
+    "coverage_floor_percent": 60,
+    "original_proof": "585d7703c4c392022f0680d760433b839c909da5",
+    "prior_source_addendum": "7e8fd7435c3c96502985cddd56d894fe80a16e66",
+    "scope": "Original full, source bridges and actual inference remain tied to their original execution commits. This addendum is not a new full-suite run."
+  },
+  "review": {
+    "claude": {
+      "model": "claude-opus-5",
+      "provider": "first-party operator Claude Code",
+      "reviewed_head": "a57cc908dcee90b01ac332afb8bce5b8ee2c34aa",
+      "verdict": "clear(code)",
+      "packet_sha256": "10ad1efcd996fb468a9ce85b2e074a2f19dd3c89536fb58f60b97c7a7a000d22",
+      "worker_output_sha256": "e311e3b0982555de7198b1fd4e995fa3303e855dfac54bdef68f08e64d49d48d",
+      "scope": "Distinct AI code review plus later independently selected incoming-runtime controls; no future-head or human approval."
+    },
+    "current_source_live_independent": "Requested separately; this proof alone does not confer readiness."
+  },
+  "limits": [
+    "Synthetic single-frame geometry, not robot terminal-sequence quality/calibration/safety.",
+    "MiniMax blank rationale says no visible colors despite gray; wording limitation retained.",
+    "Four fixed calls only; no threshold, label or favorable-answer tuning.",
+    "Self-hosted denotes the compatible client backend, not an operator-deployed GPU server.",
+    "The main634 default rubric, grounded prompt, image-interleaved anchors and grade reconstruction really changed. Historical responses are not current-payload live evidence.",
+    "Actual shipped workflows stop on failed judges. Manually ignoring failure with an absent canonical report and valid legacy artifact remains a disclosed compatibility limitation.",
+    "Current-head CI, exact main integration, app-bound rules and coordinator queue admission are separate gates."
+  ]
+}
