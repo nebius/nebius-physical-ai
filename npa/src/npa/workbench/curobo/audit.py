@@ -298,11 +298,30 @@ def _audit_dynamics(row: dict[str, Any]) -> None:
         raise AuditError("torque-violation indicator does not independently recompute")
 
 
-def benchmark_acceptance(cells: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    if set(cells) != set(_CELL_GATES):
+def _requested_benchmark_gates(requested_modes: Any) -> dict[str, dict[str, int]]:
+    if (
+        not isinstance(requested_modes, list)
+        or not requested_modes
+        or not all(isinstance(mode, str) for mode in requested_modes)
+        or len(requested_modes) != len(set(requested_modes))
+        or not set(requested_modes) <= {"kinematic", "dynamics"}
+    ):
+        raise AuditError("benchmark requested modes are invalid")
+    return {
+        name: gate
+        for name, gate in _CELL_GATES.items()
+        if name.split("/", 1)[0] in requested_modes
+    }
+
+
+def benchmark_acceptance(
+    cells: dict[str, dict[str, Any]], *, requested_modes: list[str]
+) -> dict[str, Any]:
+    gates = _requested_benchmark_gates(requested_modes)
+    if set(cells) != set(gates):
         raise AuditError("benchmark acceptance cells differ")
     verdicts = {}
-    for name, gate in _CELL_GATES.items():
+    for name, gate in gates.items():
         cell = cells[name]
         if (
             cell["input_count"] != gate["input_count"]
@@ -352,7 +371,8 @@ def audit_bytes(
     benchmark = report.get("kind") == "benchmark"
     if benchmark:
         modes = report.get("requested_modes")
-        expected = benchmark_identities(modes) if isinstance(modes, list) else {}
+        _requested_benchmark_gates(modes)
+        expected = benchmark_identities(modes)
         observed = {(row["mode"], row["dataset"], row["problem_id"]) for row in rows}
         if (
             not expected
@@ -444,7 +464,7 @@ def audit_bytes(
         ],
     }
     if benchmark:
-        result["acceptance"] = benchmark_acceptance(cells)
+        result["acceptance"] = benchmark_acceptance(cells, requested_modes=modes)
     return result
 
 

@@ -269,7 +269,9 @@ def acceptance_cells():
 
 
 def test_benchmark_acceptance_uses_combined_failure_and_torque_gate():
-    result = audit.benchmark_acceptance(acceptance_cells())
+    result = audit.benchmark_acceptance(
+        acceptance_cells(), requested_modes=["kinematic", "dynamics"]
+    )
     assert result["passed"] is True
     assert result["cells"]["dynamics/motion_benchmaker"]["unusable_eligible"] == 39
     assert result["cells"]["dynamics/mpinets"]["unusable_eligible"] == 89
@@ -292,4 +294,40 @@ def test_benchmark_acceptance_rejects_one_row_beyond_each_gate(cell, field):
     if field == "failed":
         cells[cell]["success"] -= 1
     with pytest.raises(audit.AuditError, match="unusable-row gate"):
-        audit.benchmark_acceptance(cells)
+        audit.benchmark_acceptance(cells, requested_modes=["kinematic", "dynamics"])
+
+
+@pytest.mark.parametrize("mode", ["kinematic", "dynamics"])
+def test_benchmark_acceptance_uses_exact_requested_mode_cells(mode):
+    cells = {k: v for k, v in acceptance_cells().items() if k.startswith(mode + "/")}
+    result = audit.benchmark_acceptance(cells, requested_modes=[mode])
+    assert result["passed"] is True
+    assert set(result["cells"]) == set(cells)
+    for cell in cells.values():
+        cell["failed"] += 1
+        cell["success"] -= 1
+    with pytest.raises(audit.AuditError, match="unusable-row gate"):
+        audit.benchmark_acceptance(cells, requested_modes=[mode])
+
+
+@pytest.mark.parametrize("mode", ["kinematic", "dynamics"])
+@pytest.mark.parametrize("change", ["missing_dataset", "extra_mode", "wrong_count"])
+def test_single_mode_acceptance_preserves_population_gates(mode, change):
+    cells = {k: v for k, v in acceptance_cells().items() if k.startswith(mode + "/")}
+    if change == "missing_dataset":
+        cells.pop(f"{mode}/mpinets")
+    elif change == "extra_mode":
+        cells = acceptance_cells()
+    else:
+        cells[f"{mode}/mpinets"]["input_count"] -= 1
+    with pytest.raises(audit.AuditError, match="cells differ|population differs"):
+        audit.benchmark_acceptance(cells, requested_modes=[mode])
+
+
+@pytest.mark.parametrize(
+    "modes",
+    [None, [], "kinematic", ["kinematic", "kinematic"], ["other"], [True], [[]]],
+)
+def test_benchmark_acceptance_rejects_invalid_requested_modes(modes):
+    with pytest.raises(audit.AuditError, match="requested modes"):
+        audit.benchmark_acceptance(acceptance_cells(), requested_modes=modes)

@@ -19,6 +19,12 @@ joint/FK recordings. Use the normal workflow submission command and your own
 S3 destination. The default evaluates both kinematic and 3 kg dynamics
 configurations. B200 and RTX PRO 6000 require separate GPU qualification.
 
+A benchmark manifest may request just `kinematic` or just `dynamics`. Validation
+requires both complete datasets for each requested mode (2,600 inputs, including
+10 upstream exclusions), and rejects missing datasets or unrequested modes.
+Each mode retains its original frozen failure and torque-violation gates; choosing
+a single mode does not relax its acceptance threshold.
+
 ```bash
 npa workbench workflow submit workflows/testing/curobo-benchmark.yaml --var bucket="<your-bucket>"
 ```

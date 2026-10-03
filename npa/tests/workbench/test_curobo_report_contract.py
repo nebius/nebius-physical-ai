@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from copy import deepcopy
 import sys
 from types import SimpleNamespace
 
@@ -311,6 +312,34 @@ def test_actual_runner_benchmark_record_matches_strict_metrics_contract(solved_r
     rows = benchmark_rows()
     rows[0].update(solved_row(benchmark=True))
     validate_report(report_for(rows), rows, run_id="report-test")
+
+
+@pytest.mark.parametrize(
+    "modes", [("kinematic",), ("dynamics",), ("kinematic", "dynamics")]
+)
+def test_independent_audit_accepts_full_requested_synthetic_population(
+    solved_row, modes
+):
+    rows = benchmark_rows(modes)
+    solution = solved_row(benchmark=True)
+    for row in rows:
+        if row["status"] != "invalid":
+            row.update(deepcopy(solution))
+            row["dynamics_evidence"]["attached_mass_kg"] = (
+                3.0 if row["mode"] == "dynamics" else 0.0
+            )
+    report = report_for(rows)
+    journal = b"".join(canonical(row) + b"\n" for row in rows)
+    report["journal_sha256"] = hashlib.sha256(journal).hexdigest()
+    result = audit.audit_bytes(canonical(report), journal, run_id="report-test")
+    assert result["valid"] is True
+    assert result["problem_count"] == 2600 * len(modes)
+    assert result["successful_trajectory_count"] == 2590 * len(modes)
+    assert set(result["acceptance"]["cells"]) == {
+        f"{mode}/{dataset}"
+        for mode in modes
+        for dataset in ("motion_benchmaker", "mpinets")
+    }
 
 
 def test_full_interpolation_retains_fingers_and_orders_active_joints_for_fk(solved_row):
