@@ -22,7 +22,7 @@ from npa.workbench.vlm_eval import (
     benchmark_vlm_eval,
 )
 
-pytestmark = pytest.mark.token_factory_e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.token_factory_e2e]
 
 
 def _evidence_path(tmp_path: Path) -> Path:

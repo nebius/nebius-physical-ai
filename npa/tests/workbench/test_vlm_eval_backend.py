@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import ast
 import json
 import os
 from pathlib import Path
@@ -1407,6 +1408,28 @@ def test_benchmark_unicode_limitations_preserve_json_order_and_duplicates(
     report = benchmark_vlm_eval(dataset=str(manifest), backend="stub")
     assert report.dataset_limitations == tuple(limitations)
     assert json.loads(json.dumps(asdict(report)))["dataset_limitations"] == limitations
+
+
+def test_owned_scope_live_protocol_requires_explicit_opt_in() -> None:
+    path = (
+        Path(vlm_eval.__file__).resolve().parents[4]
+        / "tests/e2e/test_vlm_benchmark_scope_live_e2e.py"
+    )
+    module = ast.parse(path.read_text())
+    assignment = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "pytestmark"
+            for target in node.targets
+        )
+    )
+    assert {
+        node.attr
+        for node in ast.walk(assignment.value)
+        if isinstance(node, ast.Attribute)
+    } >= {"e2e", "token_factory_e2e"}
 
 
 def test_benchmark_dataclass_additions_preserve_old_constructors() -> None:
