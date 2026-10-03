@@ -17,7 +17,11 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
-from npa.workbench.vlm_eval import DEFAULT_TIMEOUT_S, select_rollout_frames
+from npa.workbench.vlm_eval import (
+    DEFAULT_TIMEOUT_S,
+    _chat_completions_url,
+    select_rollout_frames,
+)
 from token_factory_live_recheck import (
     PROVENANCE_SUITE,
     Results,
@@ -78,8 +82,7 @@ def _check_local_artifacts(config: dict[str, str], root: Path) -> None:
 
 
 def _check_endpoint(config: dict[str, str]) -> None:
-    endpoint = config["endpoint_url"].rstrip("/").removesuffix("/chat/completions")
-    parsed = urlsplit(endpoint)
+    parsed = urlsplit(config["endpoint_url"])
     if (
         parsed.scheme not in {"http", "https"}
         or not parsed.hostname
@@ -94,6 +97,9 @@ def _check_endpoint(config: dict[str, str]) -> None:
         raise ValueError(
             "The configured endpoint credential environment variable is required"
         )
+    endpoint = _chat_completions_url(config["endpoint_url"]).removesuffix(
+        "/chat/completions"
+    )
     response = httpx.get(
         endpoint + "/models",
         headers={"Authorization": f"Bearer {os.environ[key_env]}"},
@@ -172,9 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     Args:
         argv: Optional command-line arguments.
     Returns:
-        Zero only when every required live test executed and passed.
-    Raises:
-        OSError: If private evidence cannot be created.
+        Zero only when every required live test passed and evidence was saved.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
@@ -182,9 +186,13 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(__file__).resolve().parents[2]
     if Path.cwd().resolve() != root:
         parser.error("Run from the repository root using npa/.venv/bin/python")
-    target = _private_path(str(args.evidence_dir), root)
-    target.mkdir(parents=True, mode=0o700, exist_ok=False)
-    receipt = _receipt(root)
+    try:
+        target = _private_path(str(args.evidence_dir), root)
+        target.mkdir(parents=True, mode=0o700, exist_ok=False)
+        receipt = _receipt(root)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print(json.dumps({"passed": False, "failure": "Private evidence setup failed"}))
+        return 1
     results = Results((PROVENANCE_SUITE,), provider_contract=False)
     exit_code = 2
     try:
@@ -200,7 +208,11 @@ def main(argv: list[str] | None = None) -> int:
         tests=list(results.reports.values()),
         passed=results.complete(exit_code),
     )
-    write_receipt(target / "receipt.json", receipt)
+    try:
+        write_receipt(target / "receipt.json", receipt)
+    except (OSError, ValueError, TypeError):
+        print(json.dumps({"passed": False, "failure": "Private receipt write failed"}))
+        return 1
     print(json.dumps({key: receipt[key] for key in ("passed", "counts")}))
     return 0 if receipt["passed"] else 1
 

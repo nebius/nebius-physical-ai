@@ -98,9 +98,22 @@ def test_fixture_checks_fail_before_endpoint(runner, config, tmp_path, invalid):
         runner._check_local_artifacts(config, Path.cwd())
 
 
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://example.test",
+        "https://example.test/",
+        "https://example.test/v1",
+        "https://example.test/v1/",
+        "https://example.test/v1/chat/completions",
+        "https://example.test/v1/chat/completions/",
+    ],
+)
 def test_endpoint_probe_uses_selected_credential_and_exact_model(
-    runner, config, monkeypatch
+    runner, config, monkeypatch, endpoint
 ):
+    config["endpoint_url"] = endpoint
+
     def get(url, **kwargs):
         assert url == "https://example.test/v1/models"
         assert kwargs["headers"] == {"Authorization": "Bearer synthetic-test-key"}
@@ -116,6 +129,56 @@ def test_endpoint_probe_uses_selected_credential_and_exact_model(
     config["expected_served_model"] = "other-model"
     with pytest.raises(ValueError, match="expected served model"):
         runner._check_endpoint(config)
+
+
+@pytest.mark.parametrize("phase", ["setup", "write"])
+@pytest.mark.parametrize("error_type", [OSError, ValueError])
+def test_private_evidence_errors_fail_closed_without_disclosure(
+    runner, config, monkeypatch, tmp_path, capsys, phase, error_type
+):
+    def fail(*args):
+        raise error_type(f"private-path={tmp_path}/operator-secret.json")
+
+    def verify(root, target, receipt, results):
+        node = (
+            runner.PROVENANCE_SUITE + "::test_self_hosted_result_retains_served_model"
+        )
+        results.collected = [node]
+        results.pytest_runtest_logreport(
+            SimpleNamespace(
+                nodeid=node,
+                when="call",
+                passed=True,
+                failed=False,
+                skipped=False,
+                user_properties=[],
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(runner, "_verify", verify)
+    monkeypatch.setattr(
+        runner, "_receipt" if phase == "setup" else "write_receipt", fail
+    )
+    assert runner.main(["--evidence-dir", str(tmp_path / "receipt")]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["passed"] is False
+    assert str(tmp_path) not in captured.out + captured.err
+    assert "operator-secret" not in captured.out + captured.err
+    assert "Traceback" not in captured.out + captured.err
+    assert not (tmp_path / "receipt" / "receipt.json").exists()
+
+
+def test_existing_evidence_directory_error_is_sanitized(
+    runner, config, monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(
+        runner, "_verify", lambda *args: pytest.fail("inference reached")
+    )
+    assert runner.main(["--evidence-dir", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["passed"] is False
+    assert str(tmp_path) not in captured.out + captured.err
 
 
 @pytest.mark.parametrize(
