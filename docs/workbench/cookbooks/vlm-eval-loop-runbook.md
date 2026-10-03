@@ -242,9 +242,8 @@ normalized images. Schema-v2 sampling counts, indices, timestamps, and coverage
 flags must agree with the frame metadata. A known, uniform source kind, a source
 count, and in-range selected indices are required for `coverage_complete: true`;
 unknown or mixed source kinds normalize to null with incomplete coverage.
-This describes reader compatibility with v2, not a new sampling producer.
-The current v1 writer and historical v1 evidence remain valid without sampling
-fields. Other schema versions fail closed.
+The producer emits v2. Historical v1 evidence remains valid without sampling
+fields and is not upgraded to complete sampling. Other schema versions fail closed.
 
 New results retain the effective `rubric` so custom-rubric prompt and rubric
 hashes can be checked. Historical v1 results without this field are accepted only
