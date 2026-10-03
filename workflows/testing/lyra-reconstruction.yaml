@@ -1,0 +1,36 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: lyra-reconstruction
+  executionMode: runtime
+  description: Reconstruct captured video with pinned Lyra 2 weights; retain Gaussian appearance, predicted depth and camera poses for calibrated scene integration.
+config:
+  bucket: example-bucket
+  prefix: lyra-reconstruction/{{run.id}}
+  source_overlay: true
+  input_uri: s3://{{config.bucket}}/lyra-input/
+  output_uri: s3://{{config.bucket}}/{{config.prefix}}/reconstruction/
+  accelerator: RTXPRO6000:1
+  views: 128
+  resolution: 640
+resources:
+  rtx:
+    cloud: kubernetes
+    accelerators: '{{config.accelerator}}'
+    cpus: 16
+    memory: 96Gi
+    image: ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:bb735577809f9b427493fda78efebc543dcf02e3deac2ec8a36ac019bff8ee46
+initial: reconstruct
+states:
+  reconstruct:
+    resources: rtx
+    run:
+      argv: [python3, -m, npa.workflows.lyra_stage, --input-path, '{{config.input_uri}}', --output-path, '{{config.output_uri}}', --views, '{{config.views}}', --resolution, '{{config.resolution}}']
+    inputs:
+      - uri: '{{config.input_uri}}checksums.json'
+    outputs:
+      - uri: '{{config.output_uri}}reconstruction.json'
+      - uri: '{{config.output_uri}}reconstructed_scene.ply'
+      - uri: '{{config.output_uri}}gs_trajectory.mp4'
+      - uri: '{{config.output_uri}}geometry.npz'
+    terminal: true
