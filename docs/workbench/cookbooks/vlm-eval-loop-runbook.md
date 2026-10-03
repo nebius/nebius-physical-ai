@@ -66,6 +66,47 @@ non-refused, strictly typed retained verdict for either backend.
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
 
+For a consequential or disputed review, `compare-judges` preserves two hosted
+outcomes without averaging:
+
+```bash
+npa workbench vlm-eval compare-judges \
+  --input-path <one-rollout> \
+  --output-path <private-evidence-prefix> \
+  --primary-model <hosted-vision-model-a> \
+  --secondary-model <hosted-vision-model-b> \
+  --task "Describe the exact visible completion evidence."
+```
+
+The direct SDK surface takes a typed
+`npa.sdk.workbench.vlm_eval.VlmJudgeComparisonRequest` and passes it to
+`npa.sdk.workbench.vlm_eval.compare_judges`.
+
+The command materializes and selects frames once, builds one prompt, and proves
+the transported request objects differ only in `model`. It writes
+`vlm_judge_disagreement.json`, retains each complete result or typed error, and
+requires escalation on disagreement or judge error. Both requested model IDs
+must return their exact requested identity. A substituted or missing returned
+model is a typed judge error, with its original response retained for review.
+Models requiring incompatible generation settings are rejected before input
+preparation or provider calls. Compatibility uses the shared hosted profile's
+temperature support, not a separate model-name list. Kimi-K3 cannot participate in this
+shared-temperature experiment. This command does not change single-judge model support.
+The report is always
+`audit_only`; agreement does not qualify either model, estimate an operational
+disagreement rate, establish physical correctness, or certify robot safety.
+Markdown-fenced JSON is a typed judge error on this strict path, not repaired
+into a verdict. The command also does not defend against instructions embedded
+in the submitted pixels or prove that a critical visible defect is absent. Full
+rationales and raw provider responses are written only to the private artifact;
+console output is a bounded summary.
+
+Paired artifacts are created atomically without replacing an existing file or
+S3 object. Local reports are `0600` regardless of umask; local symlink targets
+are rejected. Use a new output prefix for each comparison. Invalid artifact
+filenames fail before any provider call. To execute the configured live audit
+lane, follow [the audit contract guide](../../testing/vlm-audit-live-contracts.md).
+
 The serialized result retains the effective `rubric`, so the exact prompt can
 be reconstructed from `task`, `rubric`, `frame_selection`, and `frame_count`.
 `passed` is always `score >= success_threshold`, using the serialized score
@@ -131,7 +172,9 @@ authenticated endpoint readiness, run the lane, then collect results and tear
 down only job-owned serving compute in the job's cleanup path, including when
 inference fails. Retain the cleanup receipt separately: this runner consumes an
 already provisioned endpoint and cannot certify cloud teardown. Reused shared
-endpoints remain their owner's responsibility and must not be destroyed.
+endpoints remain their owner's responsibility and must not be destroyed. Follow
+the [run lifecycle](../../run-lifecycle.md) when canceling jobs and stopping
+job-owned endpoints; this runner provisions and deletes nothing.
 
 The hosted Token Factory nightly runner has a separate credential and workload
 contract. It does not execute this GPU lane. Scheduling requires an operator
