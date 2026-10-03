@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "c32bca41b58c9841bbc8941f7f294e12c4c92ce831dd61571569ac1193b2e68a",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The five-stage specification passed schema validation and production SkyPilot render planning with all handoff URIs connected.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/openvla-oft-libero.yaml --json",
+        "npa workbench workflow plan-spec workflows/testing/openvla-oft-libero.yaml --check-render --json"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused tests execute the RLDS preparation and verified rollout-to-evaluation-to-visualization artifact chain, bind all five native toolRefs to their real CLI flags, verify the upstream eight-process torchrun launcher and immutable model-cache identity, and reject stock OpenVLA decoder-only checkpoints.",
+      "evidence": [
+        "npa/tests/test_openvla_workbench.py",
+        "npa/tests/guardrails/test_three_tier_contract.py",
+        "npa/tests/guardrails/test_module_toolref_argv.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Configured health preflight passed, but the template's run-scoped example prefix was not created or independently read back.",
+      "evidence": [
+        "npa workbench health preflight --json"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "Authoritative public source, model, suite-checkpoint, and modified LIBERO metadata were inspected, but this session did not materialize the full RLDS data or OFT runtime on a worker.",
+      "evidence": [
+        "docs/workbench/openvla-oft.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "NPA HF, object-storage, Nebius, and NGC preflight checks passed using existing operator configuration; the public source/model/data endpoints required no new acceptance mechanism.",
+      "evidence": [
+        "npa workbench health preflight --json",
+        "npa workbench health preflight --checks nebius --json"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "A neutral local bootstrap image was built and smoke-run, but it has not been byte-scanned, pushed, independently pulled, or qualified; the template therefore requires an operator-selected immutable private runtime image.",
+      "evidence": [
+        "docs/workbench/openvla-oft.md"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No NPA/SkyPilot/Kubernetes execution was submitted because a qualified immutable runtime image and staged RLDS input were unavailable. No simulator metric, benchmark, convergence, or physical-robot claim is made.",
+      "evidence": [
+        "docs/workbench/openvla-oft.md"
+      ]
+    }
+  }
+}

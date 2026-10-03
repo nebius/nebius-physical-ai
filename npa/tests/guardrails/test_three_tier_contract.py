@@ -162,17 +162,6 @@ SPEC_GAP_REASONS: dict[str, dict[str, str]] = {
         "train_steps": "knob",
         "seed": "knob",
     },
-    "openvla/train": {
-        "dataset_name": "knob",
-        "batch_size": "knob",
-        "max_steps": "knob",
-        "learning_rate": "knob",
-        "lora_rank": "knob",
-        "lora_dropout": "knob",
-        "image_aug": "boolean",
-        "seed": "knob",
-        "dry_run": "boolean",
-    },
     "molmoact/finetune": {
         "max_steps": "knob",
         "batch_size": "knob",
@@ -257,32 +246,24 @@ CONTRACTS: tuple[CapabilityContract, ...] = (
         cli_callback="train_cmd",
         sdk_module="npa.sdk.workbench.openvla",
         sdk_attr="train",
-        spec_path=SPECS / "openvla-train.yaml",
+        spec_path=SPECS / "openvla-oft-libero.yaml",
         tool_ref="workbench.openvla.train",
-        spec_gap=(
-            "dataset_name",
-            "batch_size",
-            "max_steps",
-            "learning_rate",
-            "lora_rank",
-            "lora_dropout",
-            "image_aug",
-            "seed",
-            "dry_run",
-        ),
         params=(
+            _p(
+                "prepared_manifest_uri",
+                "prepared_manifest_uri",
+                "--prepared-manifest-uri",
+            ),
+            _p("output_uri", "output_uri", "--output-uri"),
+            _p("runtime_root", "runtime_root", "--runtime-root"),
             _p("model_id", "model_id", "--model-id"),
-            _p("dataset_uri", "dataset_uri", "--dataset-uri"),
-            _p("dataset_name", "dataset_name", "--dataset-name"),
-            _p("output_dir", "output_dir", "--output-dir"),
+            _p("model_revision", "model_revision", "--model-revision"),
             _p("batch_size", "batch_size", "--batch-size"),
             _p("max_steps", "max_steps", "--max-steps"),
             _p("learning_rate", "learning_rate", "--learning-rate"),
             _p("lora_rank", "lora_rank", "--lora-rank"),
-            _p("lora_dropout", "lora_dropout", "--lora-dropout"),
-            _p("image_aug", "image_aug", "--image-aug"),
+            _p("processes", "processes", "--processes"),
             _p("seed", "seed", "--seed"),
-            _p("dry_run", "dry_run", "--dry-run"),
         ),
     ),
     CapabilityContract(
@@ -944,10 +925,9 @@ def test_new_workbench_tools_require_contract_or_explicit_seam() -> None:
         # npa/tests/workbench/test_nurec_access.py::
         # test_catalog_entries_call_the_real_cli_flags, which checks every catalog
         # argv flag against the real Typer options.
-        # OpenVLA toolRefs emit upstream argv plans and raise (train/serve/eval
-        # not yet wired), so there is no service tier to keep coherent with a
-        # YAML env block. CLI <-> catalog argv coherence is enforced by
-        # test_module_toolref_argv.py instead.
+        # OpenVLA-OFT invokes its upstream training and simulator entrypoints
+        # directly. It has no separate service/YAML environment tier; CLI <->
+        # catalog argv coherence is enforced by test_module_toolref_argv.py.
         "openvla",
         "nurec",
         "scenario-gen",

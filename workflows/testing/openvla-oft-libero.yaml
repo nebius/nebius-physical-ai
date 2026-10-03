@@ -1,0 +1,123 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: openvla-oft-libero
+  description: >-
+    Native OpenVLA-OFT LIBERO pipeline. It inspects RLDS bytes and normalization,
+    runs the upstream continuous-action/proprioception fine-tuning recipe, runs
+    closed-loop simulator rollouts with MP4 evidence, evaluates the held-out
+    successes, and emits factual comparison artifacts. The OFT source, base
+    model, adapters, and data are runtime materialized; they are not image bytes.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/openvla-oft-libero"
+  # An operator supplies an immutable private runtime image after it passes the
+  # byte/build gates. This deliberately does not infer a registry or credential.
+  runtime_image: ""
+  runtime_root: "/workspace/.cache/npa/openvla-oft/e4287e94541f459edc4feabc4e181f537cd569a8"
+  dataset_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/libero-rlds/"
+  dataset_name: "libero_spatial_no_noops"
+  task_suite: "libero_spatial"
+  model_id: "openvla/openvla-7b"
+  model_revision: "47a0ec7fc4ec123775a391911046cf33cf9ed83f"
+  batch_size: "8"
+  max_steps: "150005"
+  learning_rate: "0.0005"
+  lora_rank: "32"
+  processes: "8"
+  trials_per_task: "50"
+  seed: "7"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepare/"
+  training_uri: "s3://{{config.bucket}}/{{config.prefix}}/train/"
+  rollout_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollout/"
+  evaluation_uri: "s3://{{config.bucket}}/{{config.prefix}}/evaluate/"
+  comparison_uri: "s3://{{config.bucket}}/{{config.prefix}}/comparison/"
+
+resources:
+  prepare:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+    image: "{{config.runtime_image}}"
+  train:
+    cloud: kubernetes
+    accelerators: B200:8
+    cpus: 16
+    memory: 128Gi
+    image: "{{config.runtime_image}}"
+  rollout:
+    cloud: kubernetes
+    accelerators: B200:1
+    cpus: 16
+    memory: 128Gi
+    image: "{{config.runtime_image}}"
+  evidence:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    image: "{{config.runtime_image}}"
+
+initial: prepare
+
+states:
+  prepare:
+    description: Inspect the supplied RLDS data and persist the normalization handoff.
+    toolRef: workbench.openvla.prepare
+    resources: prepare
+    inputs:
+      - uri: "{{config.dataset_uri}}"
+        schema: rlds.dataset.v1
+    outputs:
+      - uri: "{{config.prepared_uri}}preparation.json"
+        schema: npa.workbench.openvla-oft.prepare.v1
+    next: train
+
+  train:
+    description: Fine-tune OFT's continuous action head, LoRA adapter, and proprioception projector.
+    toolRef: workbench.openvla.train
+    resources: train
+    inputs:
+      - uri: "{{config.prepared_uri}}preparation.json"
+        schema: npa.workbench.openvla-oft.prepare.v1
+    outputs:
+      - uri: "{{config.training_uri}}training.json"
+        schema: npa.workbench.openvla-oft.train.v1
+    next: rollout
+
+  rollout:
+    description: Execute closed-loop OFT policy rollouts in the selected held-out LIBERO suite and retain MP4s.
+    toolRef: workbench.openvla.rollout
+    resources: rollout
+    inputs:
+      - uri: "{{config.training_uri}}training.json"
+        schema: npa.workbench.openvla-oft.train.v1
+    outputs:
+      - uri: "{{config.rollout_uri}}rollout-manifest.json"
+        schema: npa.workbench.openvla-oft.rollout.v1
+    next: evaluate
+
+  evaluate:
+    description: Independently verify raw rollout counts and calculate success statistics.
+    toolRef: workbench.openvla.evaluate
+    resources: evidence
+    inputs:
+      - uri: "{{config.rollout_uri}}rollout-manifest.json"
+        schema: npa.workbench.openvla-oft.rollout.v1
+    outputs:
+      - uri: "{{config.evaluation_uri}}evaluation.json"
+        schema: npa.workbench.openvla-oft.evaluation.v1
+    next: visualize
+
+  visualize:
+    description: Produce CSV and SVG comparison artifacts from the verified evaluation metric.
+    toolRef: workbench.openvla.visualize
+    resources: evidence
+    inputs:
+      - uri: "{{config.evaluation_uri}}evaluation.json"
+        schema: npa.workbench.openvla-oft.evaluation.v1
+    outputs:
+      - uri: "{{config.comparison_uri}}comparison.json"
+        schema: npa.workbench.openvla-oft.comparison.v1
+    terminal: true

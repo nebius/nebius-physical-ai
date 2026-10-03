@@ -1,179 +1,207 @@
-"""Tests for the OpenVLA workbench ToolRefs (issue #500).
-
-Covers the honest surface of this PR: upstream argv planning for
-``vla-scripts/finetune.py`` / ``vla-scripts/deploy.py``, the public
-HuggingFace accessibility check (mocked transport, no network), the
-plan-only eval contract, and the catalog ToolEntry argv templates.
-
-No GPU, no network access, and no upstream OpenVLA checkout required.
-"""
+"""Native, no-GPU contract tests for the OpenVLA-OFT LIBERO pipeline."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from npa.cli.workbench.openvla import app as openvla_app
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.workflows.byof import openvla_pipeline as pipe
 
-MODEL_ID = "openvla/openvla-7b"
-
 
 def _toolref_stage_argv(name: str) -> list[str]:
-    """Substitute dummy config values into a catalog ToolEntry argv template."""
     entry = TOOL_CATALOG[name]
-    return [re.sub(r"{{(.*?)}}", r"DUMMY", a) for a in entry.argv_template]
+
+    def replace(match: re.Match[str]) -> str:
+        values = {
+            "config.task_suite": "libero_spatial",
+            "config.batch_size": "8",
+            "config.max_steps": "150005",
+            "config.learning_rate": "0.0005",
+            "config.lora_rank": "32",
+            "config.processes": "8",
+            "config.trials_per_task": "50",
+            "config.seed": "7",
+        }
+        return values.get(match.group(1), "DUMMY")
+
+    return [re.sub(r"{{(.*?)}}", replace, item) for item in entry.argv_template]
 
 
-class _FakeHTTPResponse:
-    def __init__(self, status: int, payload: dict):
-        self.status = status
-        self._payload = payload
-
-    def read(self) -> bytes:
-        return json.dumps(self._payload).encode("utf-8")
-
-
-class _FakeHTTPSConnection:
-    def __init__(self, status: int, payload: dict):
-        self.status = status
-        self.payload = payload
-
-    def request(self, method: str, path: str, headers=None) -> None:
-        assert method == "GET"
-        assert path.startswith("/api/models/")
-
-    def getresponse(self) -> _FakeHTTPResponse:
-        return _FakeHTTPResponse(self.status, self.payload)
-
-    def close(self) -> None:
-        pass
-
-
-def _fake_urlopen(status: int, payload: dict, monkeypatch):
-    def _connect(host, timeout=None):
-        assert host == "huggingface.co"
-        return _FakeHTTPSConnection(status, payload)
-
-    monkeypatch.setattr(pipe.http.client, "HTTPSConnection", _connect)
-
-
-def test_train_argv_targets_upstream_finetune_script() -> None:
-    cfg = pipe.TrainConfig(
-        model_id=MODEL_ID, dataset_uri="s3://bucket/dataset", output_dir="runs/test"
+def _write_rollout_bundle(root: Path, *, successes: int = 3, episodes: int = 5) -> Path:
+    source = root / "rollout-source"
+    source.mkdir()
+    (source / "rollout.json").write_text(
+        json.dumps(
+            {
+                "schema": pipe.ROLLOUT_SCHEMA,
+                "status": "succeeded",
+                "task_suite": "libero_spatial",
+                "result": {
+                    "successes": successes,
+                    "episodes": episodes,
+                    "success_rate": successes / episodes,
+                },
+            }
+        )
     )
-    argv = cfg.to_upstream_argv()
-    assert argv[1].endswith("vla-scripts/finetune.py")
-    assert "--vla_path" in argv and MODEL_ID in argv
-    assert "--data_root_dir" in argv and "s3://bucket/dataset" in argv
-    assert "--run_root_dir" in argv and "runs/test" in argv
-    assert "--lora_rank" in argv and "--learning_rate" in argv
-
-
-def test_train_rejects_empty_dataset() -> None:
-    cfg = pipe.TrainConfig(model_id=MODEL_ID, dataset_uri="")
-    with pytest.raises(pipe.OpenVLAPipelineError):
-        cfg.validate()
-
-
-def test_serve_argv_targets_upstream_deploy_script() -> None:
-    cfg = pipe.ServeConfig(checkpoint="runs/openvla-oft", host="127.0.0.1", port=8123)
-    argv = cfg.to_upstream_argv()
-    assert argv[1].endswith("vla-scripts/deploy.py")
-    assert "--openvla_path" in argv and "runs/openvla-oft" in argv
-    assert "--host" in argv and "127.0.0.1" in argv
-    assert "--port" in argv and "8123" in argv
-
-
-def test_serve_rejects_bad_port() -> None:
-    with pytest.raises(pipe.OpenVLAPipelineError):
-        pipe.ServeConfig(checkpoint="ckpt", port=0).validate()
-
-
-def test_eval_plan_contract_is_json_serializable() -> None:
-    cfg = pipe.EvalConfig(
-        checkpoint="runs/openvla-oft", dataset_uri="s3://bucket/eval", num_episodes=4
+    report = pipe.publish_bundle(
+        source,
+        str(root / "rollout-output"),
+        {"schema": pipe.ROLLOUT_SCHEMA, "status": "succeeded"},
+        "rollout-manifest.json",
     )
-    plan = cfg.plan()
-    assert plan["checkpoint"] == "runs/openvla-oft"
-    assert plan["dataset_uri"] == "s3://bucket/eval"
-    assert plan["num_episodes"] == 4
-    json.dumps(plan)
+    assert report["status"] == "succeeded"
+    return root / "rollout-output" / "rollout-manifest.json"
 
 
-def test_eval_rejects_empty_checkpoint() -> None:
-    with pytest.raises(pipe.OpenVLAPipelineError):
-        pipe.EvalConfig(checkpoint="", dataset_uri="s3://bucket/eval").plan()
-
-
-def test_eval_is_plan_only_even_when_not_dry_run(monkeypatch, capsys) -> None:
-    """Eval never executes rollouts: non-dry-run still returns 0 without a subprocess."""
-
-    def _no_exec(*args, **kwargs):  # pragma: no cover - must not be called
-        raise AssertionError("eval must not execute a subprocess")
-
-    monkeypatch.setattr(pipe.subprocess, "run", _no_exec)
-    cfg = pipe.EvalConfig(
-        checkpoint="runs/openvla-oft", dataset_uri="s3://bucket/eval", dry_run=False
+def test_prepare_reads_actual_rlds_file_and_publishes_normalization(
+    tmp_path: Path,
+) -> None:
+    dataset = tmp_path / "dataset"
+    dataset.mkdir()
+    (dataset / "episode-000.tfrecord").write_bytes(b"not-a-placeholder-rlds-record")
+    (dataset / "dataset_statistics.json").write_text('{"action": {"mean": [0]}}')
+    output = tmp_path / "prepared"
+    report = pipe.prepare(
+        pipe.PrepareConfig(
+            str(dataset), str(output), "libero_spatial_no_noops", "libero_spatial"
+        )
     )
-    assert pipe.evaluate(cfg) == 0
-    out = capsys.readouterr().out
-    assert "stub" in out and "rollout" in out
+    assert report["schema"] == pipe.PREPARE_SCHEMA
+    normalization = json.loads((output / "normalization.json").read_text())
+    assert normalization["proprio_dim"] == 8
+    assert normalization["action_mode"] == "continuous_l1"
+    assert normalization["rlds_files"][0]["sha256"]
 
 
-def test_check_model_accessible_public_repo(monkeypatch) -> None:
-    _fake_urlopen(200, {"id": MODEL_ID, "private": False}, monkeypatch)
-    assert pipe.check_model_accessible(MODEL_ID) is True
+def test_stock_decoder_bundle_is_rejected(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "stock"
+    checkpoint.mkdir()
+    (checkpoint / "model.safetensors").write_bytes(b"stock")
+    with pytest.raises(pipe.OpenVLAPipelineError, match="stock OpenVLA"):
+        pipe._validate_oft_components(checkpoint)
 
 
-def test_check_model_accessible_private_repo(monkeypatch) -> None:
-    _fake_urlopen(200, {"id": MODEL_ID, "private": True}, monkeypatch)
-    assert pipe.check_model_accessible(MODEL_ID) is False
+def test_finetune_launcher_uses_upstream_eight_process_torchrun(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    (runtime / "venv" / "bin").mkdir(parents=True)
+    (runtime / "source" / "vla-scripts").mkdir(parents=True)
+    (runtime / "venv" / "bin" / "torchrun").touch()
+    (runtime / "source" / pipe.UPSTREAM_FINETUNE_SCRIPT).touch()
+    command = pipe._upstream_torchrun_command(
+        runtime, pipe.UPSTREAM_FINETUNE_SCRIPT, 8, ["--vla_path", "/model"]
+    )
+    assert command[1:4] == ["--standalone", "--nnodes=1", "--nproc_per_node=8"]
+    assert command[4].endswith(pipe.UPSTREAM_FINETUNE_SCRIPT)
 
 
-def test_check_model_accessible_http_error(monkeypatch) -> None:
-    _fake_urlopen(404, {}, monkeypatch)
-    assert pipe.check_model_accessible("no/such-model") is False
+def test_immutable_model_cache_requires_matching_ready_identity(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    identity = hashlib.sha256(
+        f"{pipe.DEFAULT_MODEL_ID}@{pipe.MODEL_REVISION}".encode()
+    ).hexdigest()
+    snapshot = runtime / "models" / identity
+    snapshot.mkdir(parents=True)
+    (snapshot / "config.json").write_text("{}")
+    (snapshot / "ready.json").write_text(
+        json.dumps(
+            {
+                "repo_id": pipe.DEFAULT_MODEL_ID,
+                "revision": pipe.MODEL_REVISION,
+                "status": "ready",
+            }
+        )
+    )
+    assert pipe._materialize_model_snapshot(
+        runtime, pipe.DEFAULT_MODEL_ID, pipe.MODEL_REVISION
+    ) == snapshot
 
 
-def test_check_model_accessible_network_failure(monkeypatch) -> None:
-    def _boom(host, timeout=None):
-        raise OSError("no network")
+def test_runtime_identity_requires_resolved_dependency_provenance(
+    tmp_path: Path,
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "ready.json").write_text(
+        json.dumps(
+            {
+                "status": "ready",
+                "dependency_inventory_sha256": "a" * 64,
+            }
+        )
+    )
+    assert pipe._runtime_identity(runtime)["status"] == "ready"
+    (runtime / "ready.json").write_text('{"status": "ready"}')
+    with pytest.raises(pipe.OpenVLAPipelineError, match="dependency provenance"):
+        pipe._runtime_identity(runtime)
 
-    monkeypatch.setattr(pipe.http.client, "HTTPSConnection", _boom)
-    assert pipe.check_model_accessible(MODEL_ID) is False
+
+def test_train_config_rejects_moving_model_reference() -> None:
+    with pytest.raises(pipe.OpenVLAPipelineError, match="immutable 40-character"):
+        pipe.TrainConfig(
+            "prepared.json", "output", "runtime", model_revision="main"
+        ).validate()
+
+
+def test_parse_rollout_log_requires_consistent_measured_counts(tmp_path: Path) -> None:
+    log = tmp_path / "eval.txt"
+    log.write_text(
+        "Total episodes: 5\nTotal successes: 3\nOverall success rate: 0.6000 (60.0%)\n"
+    )
+    assert pipe._parse_rollout_log(log) == {
+        "episodes": 5,
+        "successes": 3,
+        "success_rate": 0.6,
+    }
+    log.write_text(
+        "Total episodes: 5\nTotal successes: 4\nOverall success rate: 0.6000 (60.0%)\n"
+    )
+    with pytest.raises(pipe.OpenVLAPipelineError, match="disagrees"):
+        pipe._parse_rollout_log(log)
+
+
+def test_evaluate_then_visualize_preserves_real_rollout_metric(tmp_path: Path) -> None:
+    rollout_manifest = _write_rollout_bundle(tmp_path)
+    evaluated = tmp_path / "evaluated"
+    evaluation = pipe.evaluate(
+        pipe.EvaluateConfig(str(rollout_manifest), str(evaluated))
+    )
+    assert evaluation["schema"] == pipe.EVALUATION_SCHEMA
+    metrics = json.loads((evaluated / "metrics.json").read_text())
+    assert metrics["success_rate"] == pytest.approx(0.6)
+    compared = tmp_path / "compared"
+    comparison = pipe.visualize(
+        pipe.VisualizeConfig(str(evaluated / "evaluation.json"), str(compared))
+    )
+    assert comparison["schema"] == pipe.COMPARISON_SCHEMA
+    assert "3/5" in (compared / "comparison.svg").read_text()
+    assert "closed_loop_success_rate" in (compared / "comparison.csv").read_text()
+
+
+@pytest.mark.parametrize("suite", sorted(pipe.OFFICIAL_SUITE_CHECKPOINTS))
+def test_official_suite_contract_has_immutable_component_identity(suite: str) -> None:
+    entry = pipe.OFFICIAL_SUITE_CHECKPOINTS[suite]
+    assert re.fullmatch(r"[0-9a-f]{40}", entry["revision"])
+    assert entry["component_step"].isdigit()
+    assert entry["repo_id"].startswith("moojink/openvla-7b-oft-finetuned-")
 
 
 @pytest.mark.parametrize(
-    ("tool_name", "stage"),
+    "tool_name",
     [
-        ("workbench.openvla.train", "train"),
-        ("workbench.openvla.serve", "serve"),
-        ("workbench.openvla.eval", "eval"),
+        "workbench.openvla.prepare",
+        "workbench.openvla.train",
+        "workbench.openvla.rollout",
+        "workbench.openvla.evaluate",
+        "workbench.openvla.visualize",
     ],
 )
-def test_toolref_argv_parses_against_pipeline(tool_name: str, stage: str) -> None:
+def test_toolref_argv_parses_against_native_pipeline(tool_name: str) -> None:
     argv = _toolref_stage_argv(tool_name)
     assert argv[:3] == ["python3", "-m", "npa.workflows.byof.openvla_pipeline"]
-    args = pipe.build_parser().parse_args(argv[3:])
-    assert args.command == stage
-
-
-def test_cli_eval_dry_run_prints_plan() -> None:
-    result = CliRunner().invoke(
-        openvla_app,
-        [
-            "eval",
-            "--checkpoint",
-            "runs/openvla-oft",
-            "--dataset-uri",
-            "s3://bucket/eval",
-            "--dry-run",
-        ],
-    )
-    assert result.exit_code == 0, result.output
-    assert "runs/openvla-oft" in result.output
+    pipe.build_parser().parse_args(argv[3:])
