@@ -7,6 +7,8 @@ from typer.testing import CliRunner
 from npa.cli.main import app
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
+    LEGACY_RESULT_FILENAME,
+    RESULT_FILENAME,
     VlmEvalResult,
 )
 
@@ -80,8 +82,9 @@ def test_workbench_vlm_eval_run_writes_local_json(tmp_path) -> None:
     assert payload["served_model"] is None
     assert payload["independent_human_label_calibration_established"] is False
     assert payload["limitations"] == _DIRECT_NO_CALL_LIMITATIONS
-    written = output_dir / "vlm_eval_stub.json"
+    written = output_dir / RESULT_FILENAME
     assert written.exists()
+    assert not (output_dir / LEGACY_RESULT_FILENAME).exists()
     persisted = json.loads(written.read_text(encoding="utf-8"))
     assert persisted["score"] == 0.9
     assert persisted["model"] == DEFAULT_MODEL
@@ -152,7 +155,7 @@ def test_workbench_vlm_eval_run_maps_backend_flags(mocker, tmp_path) -> None:
             backend="api",
             input_path="rollouts",
             output_path=str(output_dir),
-            result_uri=str(output_dir / "vlm_eval_stub.json"),
+            result_uri=str(output_dir / RESULT_FILENAME),
             task="place cube",
             model="open-vlm",
             score=0.82,
@@ -386,4 +389,5 @@ def test_vlm_eval_sdk_wrapper_accepts_string_flags(capsys, tmp_path) -> None:
     assert payload["backend"] == "stub"
     assert payload["frame_selection"] == "final"
     assert payload["score"] == 0.72
-    assert (output_dir / "vlm_eval_stub.json").exists()
+    assert (output_dir / RESULT_FILENAME).exists()
+    assert not (output_dir / LEGACY_RESULT_FILENAME).exists()
