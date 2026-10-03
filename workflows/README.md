@@ -176,6 +176,12 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 #### Generation and reconstruction
 
+The [Physis-Lang physical-prompting experiment](testing/physis-lang.yaml)
+compares three prompt arms across six scenarios and two paired seeds using full
+Wan 2.1 14B generation, sealed artifacts, and blinded video judgments.
+This is an independent paper-inspired inference implementation; see the
+[guide and reproduction limits](../docs/workbench/physis-lang.md).
+
 | Spec | Notes |
 | --- | --- |
 | [`content-agents-rigid-object.yaml`](testing/content-agents-rigid-object.yaml) | NVIDIA Content Agents with a public image and runtime-fetched OVRTX: source USD → real Material/Physics Agents + OVRTX → upstream validation → rigid Isaac object USDZ/adapter ([guide](../docs/workbench/content-agents.md)) |

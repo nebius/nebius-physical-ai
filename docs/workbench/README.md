@@ -24,6 +24,10 @@ Python and HTTP access follow each tool's documented contract.
 
 ## Generation and scenes
 
+[Physis-Lang physical prompting](physis-lang.md) provides an independent
+paper-inspired paired Wan 2.1 14B experiment with full videos and blinded
+assertion judgments.
+
 | Capability | Guide |
 | --- | --- |
 | Cosmos 3 batch generation | [Generate](cosmos3-generate.md) · [access preflight](cosmos3-access-preflight.md) |
