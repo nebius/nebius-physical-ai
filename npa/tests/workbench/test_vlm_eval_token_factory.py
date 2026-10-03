@@ -252,6 +252,17 @@ def test_api_judge_rejects_invalid_complete_contract(monkeypatch, content) -> No
         _call_completion(monkeypatch, _completion(content=content))
 
 
+@pytest.mark.parametrize("success", [None, 0, 1, "false", [], {}])
+def test_api_judge_rejects_non_literal_provider_success(monkeypatch, success) -> None:
+    content = json.dumps(
+        {"success": success, "score": 0.9, "rationale": "visible evidence"}
+    )
+    with pytest.raises(
+        VlmEvalError, match="^Hosted VLM response success must be a boolean$"
+    ):
+        _call_completion(monkeypatch, _completion(content=content))
+
+
 @pytest.mark.parametrize("finish", ["length", "content_filter", None])
 def test_api_judge_rejects_incomplete_output_even_when_json_valid(
     monkeypatch, finish

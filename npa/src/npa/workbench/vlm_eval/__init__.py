@@ -26,6 +26,8 @@ import numpy as np
 from PIL import Image
 from urllib.parse import urlparse
 
+from npa.literal_values import require_boolean
+
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
     from npa.clients.token_factory import TokenFactoryChatProfile
@@ -702,6 +704,14 @@ def select_rollout_frames(
     )
 
 
+def _literal_provider_success(value: Any) -> bool | None:
+    try:
+        return require_boolean(value, field="success")
+    except ValueError:
+        # Legacy self-hosted coercion is not literal provider evidence.
+        return None
+
+
 def parse_structured_response(text: str) -> VlmStructuredResponse:
     """Parse a VLM JSON response and clamp its score into [0, 1]."""
 
@@ -713,9 +723,7 @@ def parse_structured_response(text: str) -> VlmStructuredResponse:
     score = _clamp_score(payload["score"])
     success_supplied = "success" in payload
     success = _coerce_bool(payload["success"]) if success_supplied else score >= 0.5
-    provider_success = payload.get("success")
-    if not isinstance(provider_success, bool):
-        provider_success = None
+    provider_success = _literal_provider_success(payload.get("success"))
     return VlmStructuredResponse(
         success=success,
         score=score,
@@ -756,7 +764,8 @@ def _parse_api_structured_response(
         ) from exc
     if not isinstance(payload, dict):
         raise VlmEvalError("Hosted VLM response JSON must be an object")
-    if not isinstance(payload.get("success"), bool):
+    provider_success = _literal_provider_success(payload.get("success"))
+    if provider_success is None:
         raise VlmEvalError("Hosted VLM response success must be a boolean")
     score = payload.get("score")
     if (
@@ -772,12 +781,12 @@ def _parse_api_structured_response(
     if not isinstance(rationale, str) or not rationale.strip():
         raise VlmEvalError("Hosted VLM response rationale must be a nonempty string")
     return VlmStructuredResponse(
-        success=payload["success"],
+        success=provider_success,
         score=float(score),
         rationale=rationale,
         served_model=served_model,
         parser_version=_parser_version(HOSTED_RESPONSE_PARSER_VERSION, deframed),
-        provider_success=payload["success"],
+        provider_success=provider_success,
     )
 
 
