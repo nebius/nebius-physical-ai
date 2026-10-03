@@ -124,6 +124,17 @@ Reasoning sends the selected images together with the task. Neither command
 reads video files directly; extract frames first. Check saved results against
 the source images:
 
+`caption` leaves thinking control unchanged unless `--thinking` or
+`--no-thinking` is explicit. The built-in Lightning and MiniMax defaults already
+disable thinking with their verified model-specific fields; other selected
+models receive the generic `thinking` field only after an explicit override.
+Use `--no-thinking` when a reasoning-capable vision model returns no visible
+caption. Use `--thinking` only deliberately: reasoning can consume the output
+allowance and still leave no visible caption. A provider may reject or ignore a
+control it does not support, in which case captioning fails closed. This option
+is available to direct CLI, workbench, and SDK callers; the existing
+`workbench.token_factory.caption` workflow toolRef does not expose it.
+
 | Artifact | Check |
 | --- | --- |
 | `captions.json` | `image_count` matches the attempted inputs; `failed_count` is zero; every entry has `status: completed`, names an image, and has a useful `caption`. |

@@ -18,6 +18,7 @@ from npa.clients.token_factory import (
     TokenFactoryError,
     resolve_config,
     split_reasoning,
+    thinking_chat_extra,
     validate_model_access,
 )
 
@@ -498,6 +499,7 @@ def test_chat_completion_text_raises_on_reasoning_only_response() -> None:
     [
         ("nvidia/Nemotron-3_5-Lightning", {"enable_thinking": False}),
         ("MiniMaxAI/MiniMax-M3", {"thinking_mode": "disabled"}),
+        ("openbmb/MiniCPM-V-4_5", None),
         ("vendor/explicit-model", None),
         ("meta-llama/Llama-3.3-70B-Instruct", None),
     ],
@@ -702,6 +704,41 @@ def test_explicit_kimi_extra_wins_over_direct_output_profile() -> None:
     )
     assert requests[0]["reasoning_effort"] == "high"
     assert requests[0]["temperature"] == 1.0
+
+
+@pytest.mark.parametrize(
+    ("model", "enabled", "expected"),
+    [
+        ("nvidia/Nemotron-3_5-Lightning", False, {"enable_thinking": False}),
+        ("nvidia/Nemotron-3_5-Lightning", True, {"enable_thinking": True}),
+        ("MiniMaxAI/MiniMax-M3", False, {"thinking_mode": "disabled"}),
+        ("MiniMaxAI/MiniMax-M3", True, {"thinking_mode": "enabled"}),
+        ("openbmb/MiniCPM-V-4_5", False, {"thinking": False}),
+        ("openbmb/MiniCPM-V-4_5", True, {"thinking": True}),
+        ("vendor/explicit-model", False, {"thinking": False}),
+        ("vendor/explicit-model", True, {"thinking": True}),
+    ],
+)
+def test_explicit_thinking_override_uses_exact_payload(
+    model, enabled, expected
+) -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": "answer"}}]}
+        )
+
+    assert (
+        _client(handler).chat_completion_text(
+            model=model,
+            messages=[{"role": "user", "content": "task"}],
+            extra=thinking_chat_extra(model, enabled),
+        )
+        == "answer"
+    )
+    assert requests[0]["chat_template_kwargs"] == expected
 
 
 def test_explicit_thinking_and_other_template_parameters_win() -> None:

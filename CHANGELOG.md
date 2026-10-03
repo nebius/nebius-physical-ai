@@ -41,6 +41,13 @@ a versioned heading when a release is cut.
   numbers, and null now return HTTP 400 before any policy update or output
   directory creation. External clients must send a JSON boolean. Update-result
   decoding enforces the same contract instead of coercing truthy values.
+### Token Factory captions expose thinking control
+
+- `token-factory caption` accepts `--thinking/--no-thinking` and the SDK accepts
+  `thinking=True|False`. Omitting the option preserves existing model defaults;
+  explicit overrides use verified Lightning/MiniMax template fields and a
+  generic `thinking` field for other selected models. Reasoning-only responses
+  still fail closed and now point default callers to `--no-thinking`.
 
 ### Token Factory captions expose unavailable images
 

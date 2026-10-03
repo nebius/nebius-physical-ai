@@ -137,6 +137,17 @@ aggregate, is written before the CLI exits 1, and does not trigger a silent
 retry. Later selected images are still attempted once. `--dry-run` emits the
 same failed result and exits 1 without writing it.
 
+Caption preserves existing model defaults when neither thinking flag is present.
+If an explicitly selected reasoning-capable vision model returns no visible
+caption, retry the command with `--no-thinking`. `--thinking` deliberately
+reverses the built-in suppression for
+Lightning/MiniMax and may consume the output allowance without yielding visible
+text. Explicit overrides use verified model-specific fields for Lightning and
+MiniMax and the generic `thinking` field for other model IDs; unsupported
+providers may reject or ignore that control, and captioning then fails closed.
+The override is direct CLI/workbench/SDK only; the caption workflow toolRef does
+not expose it.
+
 **Batch text generation** over a JSONL/text prompt file — default model
 `nvidia/Nemotron-3_5-Lightning`:
 
