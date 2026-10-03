@@ -13,6 +13,8 @@ import subprocess
 import tarfile
 import uuid
 
+import yaml
+
 IMAGE = "ghcr.io/nebius/nebius-physical-ai/npa-lerobot@sha256:8d513f8558253fc484808a1e53a63a5da5a0c280ff973c4e590dd3e04b228643"
 MODULE = "npa.workflows.policy_training.public_vla"
 PYTHON = "/opt/lerobot/venv/bin/python"
@@ -207,42 +209,10 @@ def _pod_spec():
             f"exec {PYTHON} -u -m {MODULE} --input-path /pipeline/recipe.json --output-path /work/run",
         ]
     )
-    mounts = [
-        {"name": "artifacts", "mountPath": "/work"},
-        {"name": "source", "mountPath": "/pipeline", "readOnly": True},
-        # This path is an isolated memory-backed pod volume, never a host directory.
-        {"name": "shm", "mountPath": "/dev/shm"},  # nosec B108
-    ]
-    return {
-        "restartPolicy": "Never",
-        "automountServiceAccountToken": False,
-        "securityContext": {"runAsUser": 1000, "runAsGroup": 1000, "fsGroup": 1000},
-        "containers": [_training_container(command, mounts)],
-        "volumes": [
-            {"name": "artifacts", "persistentVolumeClaim": {"claimName": "pipeline"}},
-            {"name": "source", "configMap": {"name": "pipeline"}},
-            {"name": "shm", "emptyDir": {"medium": "Memory", "sizeLimit": "16Gi"}},
-        ],
-    }
-
-
-def _training_container(command, mounts):
-    return {
-        "name": "pipeline",
-        "image": IMAGE,
-        "command": ["bash", "-c", command],
-        "env": [
-            {
-                "name": "NVIDIA_DRIVER_CAPABILITIES",
-                "value": "compute,utility,graphics",
-            }
-        ],
-        "resources": {
-            "requests": {"cpu": "16", "memory": "96Gi"},
-            "limits": {"nvidia.com/gpu": "1"},
-        },
-        "volumeMounts": mounts,
-    }
+    template = Path(__file__).with_name("public-vla-pod.yaml")
+    spec = yaml.safe_load(template.read_text())["spec"]
+    spec["containers"][0].update(image=IMAGE, command=["bash", "-c", command])
+    return spec
 
 
 def _submit_kubernetes(args):

@@ -254,6 +254,12 @@ def test_kubernetes_job_runs_pinned_image_without_credentials_or_deadline():
     assert "@sha256:" in pod["containers"][0]["image"]
     assert pod["containers"][0]["resources"]["limits"]["nvidia.com/gpu"] == "1"
     assert "secret" not in json.dumps(objects).lower()
+    mounts = pod["containers"][0]["volumeMounts"]
+    shared = next(mount for mount in mounts if mount["name"] == "shm")
+    assert Path(shared["mountPath"]).parts == ("/", "dev", "shm")
+    volume = next(volume for volume in pod["volumes"] if volume["name"] == "shm")
+    assert volume["emptyDir"] == {"medium": "Memory", "sizeLimit": "16Gi"}
+    assert all("hostPath" not in volume for volume in pod["volumes"])
 
 
 def test_slurm_quotes_paths_and_allocates_a_real_gpu():
