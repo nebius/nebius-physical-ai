@@ -32,15 +32,15 @@ its value to the image, project, result, or command line.
 
 ```bash
 npa/.venv/bin/python -m npa.workflows.byof.openpi_antioch build-image \
-  --openpi-dir <pinned-openpi-checkout> \
-  --image <local-image-tag>
+  --openpi-dir '<pinned-openpi-checkout>' \
+  --image '<local-image-tag>'
 
 npa/.venv/bin/python -m npa.workflows.byof.openpi_antioch live-loop \
-  --project-dir <antioch-project> \
-  --cache-dir <operator-openpi-cache> \
-  --image <local-image-tag> \
-  --policy-host <address-reachable-from-the-simulator> \
-  --output <private-evidence.json>
+  --project-dir '<antioch-project>' \
+  --cache-dir '<operator-openpi-cache>' \
+  --image '<local-image-tag>' \
+  --policy-host '<address-reachable-from-the-simulator>' \
+  --output '<private-evidence.json>'
 ```
 
 The default and preferred topology binds the one labelled policy container
