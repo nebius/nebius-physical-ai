@@ -23,6 +23,7 @@ from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_BENCHMARK_PATH,
     VlmBenchmarkCaseResult,
+    VlmBenchmarkMetrics,
     VlmEvalResult,
     VlmStructuredResponse,
     benchmark_vlm_eval,
@@ -54,6 +55,36 @@ _CREDENTIAL_ERROR_PATTERNS = (
     "not configured",
     "permission",
 )
+
+
+def test_benchmark_metrics_legacy_positional_constructor() -> None:
+    metrics = VlmBenchmarkMetrics(2, 2, 1.0, 1.0, 1.0, 1.0, 1.0, 1, 1, 0, 0)
+    assert metrics.f1 == 1.0
+    assert (metrics.true_positives, metrics.true_negatives) == (1, 1)
+    assert (metrics.false_positives, metrics.false_negatives) == (0, 0)
+    assert metrics.specificity is None
+    assert metrics.balanced_accuracy is None
+
+
+def test_benchmark_metrics_legacy_keyword_constructor() -> None:
+    metrics = VlmBenchmarkMetrics(
+        total=2,
+        correct=2,
+        agreement=1.0,
+        accuracy=1.0,
+        precision=1.0,
+        recall=1.0,
+        f1=1.0,
+        true_positives=1,
+        true_negatives=1,
+        false_positives=0,
+        false_negatives=0,
+    )
+    assert metrics.f1 == 1.0
+    assert (metrics.true_positives, metrics.true_negatives) == (1, 1)
+    assert (metrics.false_positives, metrics.false_negatives) == (0, 0)
+    assert metrics.specificity is None
+    assert metrics.balanced_accuracy is None
 
 
 @dataclass(frozen=True)

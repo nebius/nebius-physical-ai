@@ -260,26 +260,12 @@ def _build_result(
     bottoms = tuple(box[3] if box is not None else None for box in object_boxes)
     verdict, reason = _claim_verdict(check, object_boxes, actor_boxes, gaps, bottoms)
 
-    object_count = sum(box is not None for box in object_boxes)
-    actor_count = sum(box is not None for box in actor_boxes)
-    dual_count = sum(
-        obj is not None and actor is not None
-        for obj, actor in zip(object_boxes, actor_boxes)
-    )
-    total = len(frames)
-    endpoint_count = sum(box is not None for box in (object_boxes[0], object_boxes[-1]))
     return AgencyStructuralResult(
         kind=check.kind,
         claim=check.claim,
         verdict=verdict,
         reason=reason,
-        selected_frame_count=total,
-        object_mask_count=object_count,
-        actor_mask_count=actor_count,
-        object_completeness=object_count / total,
-        actor_completeness=actor_count / total,
-        dual_mask_coverage=dual_count / total,
-        object_endpoint_completeness=endpoint_count / 2,
+        selected_frame_count=len(frames),
         object_pixel_counts=tuple(
             measurement.object_pixels for measurement in measurements
         ),
@@ -299,7 +285,30 @@ def _build_result(
             measurement.decoded_rgb_sha256 for measurement in measurements
         ),
         config=check,
+        **_mask_coverage(object_boxes, actor_boxes),
     )
+
+
+def _mask_coverage(
+    object_boxes: Sequence[tuple[int, int, int, int] | None],
+    actor_boxes: Sequence[tuple[int, int, int, int] | None],
+) -> dict[str, int | float]:
+    total = len(object_boxes)
+    object_count = sum(box is not None for box in object_boxes)
+    actor_count = sum(box is not None for box in actor_boxes)
+    dual_count = sum(
+        obj is not None and actor is not None
+        for obj, actor in zip(object_boxes, actor_boxes)
+    )
+    endpoint_count = sum(box is not None for box in (object_boxes[0], object_boxes[-1]))
+    return {
+        "object_mask_count": object_count,
+        "actor_mask_count": actor_count,
+        "object_completeness": object_count / total,
+        "actor_completeness": actor_count / total,
+        "dual_mask_coverage": dual_count / total,
+        "object_endpoint_completeness": endpoint_count / 2,
+    }
 
 
 def _check_payload(value: Any) -> dict[str, Any]:
@@ -417,18 +426,7 @@ def _validate_selection(
 def _measure_frame(
     frame: StructuralFrame, check: AgencyStructuralCheck
 ) -> _FrameMeasurement:
-    try:
-        with Image.open(BytesIO(frame.data)) as image:
-            rgb = np.asarray(image.convert("RGB"))
-    except (OSError, ValueError) as exc:
-        raise AgencyStructuralError(
-            f"selected frame {frame.label!r} is not a valid image"
-        ) from exc
-    if check.title_rows_excluded >= rgb.shape[0]:
-        raise AgencyStructuralError(
-            "structural_check title_rows_excluded removes the whole image"
-        )
-
+    rgb = _frame_rgb(frame, check)
     red = rgb[:, :, 0].astype(np.int16)
     green = rgb[:, :, 1].astype(np.int16)
     blue = rgb[:, :, 2].astype(np.int16)
@@ -454,6 +452,22 @@ def _measure_frame(
         normalized_png_sha256=hashlib.sha256(frame.data).hexdigest(),
         decoded_rgb_sha256=hashlib.sha256(rgb.tobytes()).hexdigest(),
     )
+
+
+def _frame_rgb(frame: StructuralFrame, check: AgencyStructuralCheck) -> np.ndarray:
+    try:
+        with Image.open(BytesIO(frame.data)) as image:
+            rgb = np.asarray(image.convert("RGB"))
+    except (OSError, ValueError) as exc:
+        raise AgencyStructuralError(
+            f"selected frame {frame.label!r} is not a valid image"
+        ) from exc
+    if check.title_rows_excluded >= rgb.shape[0]:
+        raise AgencyStructuralError(
+            "structural_check title_rows_excluded removes the whole image"
+        )
+
+    return rgb
 
 
 def _mask_box(mask: np.ndarray) -> tuple[int, int, int, int] | None:

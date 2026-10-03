@@ -288,19 +288,43 @@ class VlmBenchmarkConfig:
 
 @dataclass(frozen=True)
 class VlmBenchmarkMetrics:
+    """Retain benchmark counts and metrics without breaking legacy construction.
+
+    Args:
+        total: Number of benchmark cases.
+        correct: Number of predictions matching their expected labels.
+        agreement: Fraction of predictions matching their expected labels.
+        accuracy: Fraction of correct predictions.
+        precision: Positive predictive value, or None when undefined.
+        recall: Positive-class recall, or None when undefined.
+        f1: Harmonic mean of precision and recall, or None when undefined.
+        true_positives: Correct positive predictions.
+        true_negatives: Correct negative predictions.
+        false_positives: Incorrect positive predictions.
+        false_negatives: Incorrect negative predictions.
+        specificity: Negative-class recall, or None for legacy construction.
+        balanced_accuracy: Mean class recall, or None for legacy construction.
+
+    Returns:
+        Immutable benchmark metrics. Generated reports measure both classes.
+
+    Raises:
+        None.
+    """
+
     total: int
     correct: int
     agreement: float
     accuracy: float
     precision: float | None
     recall: float | None
-    specificity: float
-    balanced_accuracy: float
     f1: float | None
     true_positives: int
     true_negatives: int
     false_positives: int
     false_negatives: int
+    specificity: float | None = None
+    balanced_accuracy: float | None = None
 
 
 @dataclass(frozen=True)
