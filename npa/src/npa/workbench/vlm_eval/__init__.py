@@ -209,6 +209,7 @@ class VlmEvalResult:
     rubric: str = DEFAULT_RUBRIC
     provider_success: bool | None = None
     provider_success_matches_score_gate: bool | None = None
+    served_model_match_enforced: bool = False
 
 
 @dataclass(frozen=True)
@@ -220,6 +221,7 @@ class VlmStructuredResponse:
     evidence: VlmEvaluationEvidence | None = None
     parser_version: str = SELF_HOSTED_RESPONSE_PARSER_VERSION
     provider_success: bool | None = None
+    served_model_match_enforced: bool = False
 
 
 @dataclass(frozen=True)
@@ -297,6 +299,9 @@ class VlmBenchmarkCaseResult:
     evidence: VlmEvaluationEvidence | None = None
     provider_success: bool | None = None
     provider_success_matches_score_gate: bool | None = None
+    requested_model: str = ""
+    served_model: str | None = None
+    served_model_match_enforced: bool = False
 
 
 @dataclass(frozen=True)
@@ -864,6 +869,9 @@ class VlmLoopRollout:
     status: str
     frame_count: int
     result_uri: str
+    requested_model: str = ""
+    served_model: str | None = None
+    served_model_match_enforced: bool = False
 
 
 def evaluate_rollout_set(
@@ -925,6 +933,9 @@ def evaluate_rollout_set(
                 status=result.status,
                 frame_count=result.frame_count,
                 result_uri=written,
+                requested_model=result.model,
+                served_model=result.served_model,
+                served_model_match_enforced=result.served_model_match_enforced,
             )
         )
 
@@ -1080,6 +1091,7 @@ def _result_from_structured(
         rationale=structured.rationale,
         rubric=rubric,
         served_model=structured.served_model,
+        served_model_match_enforced=structured.served_model_match_enforced,
         provider_success=provider_success,
         provider_success_matches_score_gate=provider_success_matches_score_gate,
         evidence=structured.evidence,
@@ -1135,6 +1147,9 @@ def _run_benchmark_case(
         rationale=result.rationale,
         frame_count=result.frame_count,
         score_source="fixture" if score is not None else result.backend,
+        requested_model=result.model,
+        served_model=result.served_model,
+        served_model_match_enforced=result.served_model_match_enforced,
         provider_success=result.provider_success,
         provider_success_matches_score_gate=result.provider_success_matches_score_gate,
         evidence=result.evidence,
@@ -1604,7 +1619,8 @@ def _hosted_structured_response(
         raise VlmEvalError(
             "Hosted VLM response model does not match the requested model"
         )
-    return _parse_api_structured_response(message, served_model=served_model)
+    result = _parse_api_structured_response(message, served_model=served_model)
+    return replace(result, served_model_match_enforced=profile.require_exact_model)
 
 
 def _openai_headers(*, backend: str, api_key_env: str) -> dict[str, str]:
