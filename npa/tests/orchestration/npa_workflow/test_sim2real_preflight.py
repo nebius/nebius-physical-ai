@@ -554,6 +554,31 @@ def test_kubernetes_preflight_surfaces_managed_driver_isaac_nodes():
     assert "--gpu-workload-profile rtx-rendering" in remediation
 
 
+@pytest.mark.parametrize(
+    "malformed", ["trailing-entry", "invalid-cpu", "unexpected-key"]
+)
+def test_kubernetes_preflight_aggregates_malformed_placement_authority(malformed):
+    def run(args):
+        if args[:2] == ["get", "nodes"]:
+            return SimpleNamespace(
+                returncode=0, stdout=_rtx_nodes(**_MANAGED_RTX_LABELS), stderr=""
+            )
+        return SimpleNamespace(returncode=1, stdout="", stderr="NotFound")
+
+    placements = _isaac_placements()
+    if malformed == "trailing-entry":
+        placements.append({})
+    elif malformed == "invalid-cpu":
+        placements.append({**placements[0], "cpus": "invalid"})
+    else:
+        placements[0]["unexpected"] = True
+
+    issues = kubernetes_prerequisites(
+        _config(), runner=run, isaac_placements=placements
+    )
+    assert any("placement could not be verified" in issue for issue, _ in issues)
+
+
 @pytest.mark.parametrize("missing", ["conditions", "allocatable"])
 def test_kubernetes_preflight_blocks_unknown_managed_node_placement(missing):
     payload = json.loads(_rtx_nodes(**_MANAGED_RTX_LABELS))

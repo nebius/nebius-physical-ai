@@ -33,6 +33,16 @@ _DEFAULT_POD = {
         {"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}
     ],
 }
+_PLACEMENT_FIELDS = frozenset(
+    {
+        "accelerator",
+        "cpus",
+        "memory",
+        "ephemeral_storage",
+        "allowed_nodes",
+        "pod_spec",
+    }
+)
 
 
 def _pod_spec(kubernetes):
@@ -210,6 +220,38 @@ def _placement_node(node):
     )
 
 
+def _validated_placements(placements):
+    if not isinstance(placements, (list, tuple)) or not placements:
+        raise ValueError("effective Isaac stage placements are required")
+    for placement in placements:
+        if not isinstance(placement, Mapping):
+            raise ValueError("effective Isaac stage placement is malformed")
+        accelerator = placement.get("accelerator")
+        pod_spec = placement.get("pod_spec")
+        if (
+            set(placement) - _PLACEMENT_FIELDS
+            or not isinstance(accelerator, str)
+            or not accelerator.strip()
+            or not isinstance(pod_spec, Mapping)
+        ):
+            raise ValueError("effective Isaac stage placement is malformed")
+    return tuple(placements)
+
+
+def _placement_inventory(node):
+    record = _placement_node(node)
+    return KubernetesGpuInventory(
+        context="driver-preflight",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=record.capacity,
+        allocatable=record.allocatable,
+        products=record.products,
+        node_labels={},
+        nodes=(record,),
+    )
+
+
 def node_can_host_isaac(node, placements):
     """Check allocatable placement without claiming or reserving free capacity.
 
@@ -222,32 +264,15 @@ def node_can_host_isaac(node, placements):
         ValueError: Placement authority or node evidence is missing or malformed.
         RuntimeError: Placement constraints cannot be evaluated authoritatively.
     """
-    if not isinstance(placements, (list, tuple)) or not placements:
-        raise ValueError("effective Isaac stage placements are required")
-    for placement in placements:
-        if (
-            not isinstance(placement, Mapping)
-            or not isinstance(placement.get("accelerator"), str)
-            or not placement["accelerator"]
-            or not isinstance(placement.get("pod_spec"), Mapping)
-        ):
-            raise ValueError("effective Isaac stage placement is malformed")
-        if not _node_available(node, placement["pod_spec"]):
-            continue
-        record = _placement_node(node)
-        inventory = KubernetesGpuInventory(
-            context="driver-preflight",
-            ready_nodes=1,
-            eligible_gpu_nodes=1,
-            capacity=record.capacity,
-            allocatable=record.allocatable,
-            products=record.products,
-            node_labels={},
-            nodes=(record,),
-        )
+    checked = _validated_placements(placements)
+    inventory = _placement_inventory(node)
+    can_host = False
+    for placement in checked:
+        available = _node_available(node, placement["pod_spec"])
         try:
             preflight_kubernetes_gpu_gang(inventory, node_count=1, **placement)
         except UnsatisfiableAcceleratorError:
             continue
-        return True
-    return False
+        if available:
+            can_host = True
+    return can_host

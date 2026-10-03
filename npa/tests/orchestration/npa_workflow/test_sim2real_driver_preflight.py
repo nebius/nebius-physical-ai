@@ -206,6 +206,30 @@ def test_missing_or_malformed_placement_authority_is_rejected(placements):
         node_can_host_isaac(_node(), placements)
 
 
+def test_every_effective_placement_is_validated_before_a_node_match():
+    placements = _placements()
+    placements.append({})
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
+def test_every_effective_placement_shape_is_evaluated_after_a_node_match():
+    placements = _placements()
+    placements.append({**placements[0], "cpus": "invalid"})
+
+    with pytest.raises(RuntimeError, match="invalid Kubernetes CPU quantity"):
+        node_can_host_isaac(_node(), placements)
+
+
+def test_unexpected_effective_placement_fields_are_rejected():
+    placements = _placements()
+    placements[0]["unexpected"] = True
+
+    with pytest.raises(ValueError, match="effective Isaac stage placement"):
+        node_can_host_isaac(_node(), placements)
+
+
 def test_unknown_affinity_fails_closed():
     placements = isaac_render_placements(
         _workflow(
