@@ -32,6 +32,7 @@ def test_self_hosted_result_retains_served_model() -> None:
     assert payload.pop("written_uri") == config["output_path"]
     saved = json.loads(Path(config["output_path"]).read_text())
     assert saved == payload
+    _assert_self_hosted_judge_claims(saved)
 
 
 def _evaluation_args(config: dict) -> list[str]:
@@ -108,3 +109,35 @@ def _assert_provider_evidence(provider: dict, config: dict) -> None:
         expected_parser += "+markdown-fence-v1"
     assert provider["parser_version"] == expected_parser
     assert isinstance(json.loads(content), dict)
+
+
+def _assert_self_hosted_judge_claims(saved: dict) -> None:
+    from npa.workbench.vlm_eval import _build_prompt, parse_structured_response
+
+    evidence = saved["evidence"]
+    response = json.loads(evidence["provider"]["raw_response"])
+    verdict = parse_structured_response(response["choices"][0]["message"]["content"])
+    assert saved["score"] == round(verdict.score, 4)
+    assert saved["passed"] is (saved["score"] >= saved["success_threshold"])
+    assert saved["status"] == ("passed" if saved["passed"] else "needs_iteration")
+    assert saved["provider_success"] is verdict.provider_success
+    matches_gate = (
+        None
+        if verdict.provider_success is None
+        else verdict.provider_success == saved["passed"]
+    )
+    assert saved["provider_success_matches_score_gate"] is matches_gate
+    prompt = _build_prompt(
+        **{
+            field: saved[field]
+            for field in ("task", "rubric", "frame_selection", "frame_count")
+        }
+    )
+    assert (
+        evidence["request"]["prompt_sha256"]
+        == hashlib.sha256(prompt.encode()).hexdigest()
+    )
+    assert (
+        evidence["request"]["rubric_sha256"]
+        == hashlib.sha256(saved["rubric"].encode()).hexdigest()
+    )

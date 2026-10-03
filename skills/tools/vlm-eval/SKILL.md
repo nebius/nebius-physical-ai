@@ -77,6 +77,15 @@ promotion eligibility. The operator provenance lane separately requires HTTP
 200, `finish_reason=stop`, expected served identity and verifiable framing.
 This evidence proves judge traceability, not physical correctness or safety.
 
+`passed` and `status` come only from `score >= success_threshold`, using the
+serialized score rounded to four decimal places for every backend and override.
+The model's own `success` boolean is retained as `provider_success` when the
+response actually includes it, and `provider_success_matches_score_gate` exposes
+disagreement. If a self-hosted response omits that boolean, both fields stay
+null rather than presenting an inferred value as provider output. Legacy
+non-boolean values such as `"true"` also stay null in those provenance fields.
+Never substitute the provider boolean for the score-derived gate.
+
 ## Scoring controls that actually change the verdict
 
 ```bash
@@ -98,6 +107,10 @@ npa workbench vlm-eval run \
 - `--rubric` / `--rubric-path` carry the scoring instructions. The default rubric
   reserves 1.0 for clear completion and 0.0 for clear failure, with intermediate
   values for partial progress, and penalizes unsafe or ambiguous outcomes.
+- Write `--task` as identify-then-judge: ask what the frames show before asking
+  whether they meet the target. A leading confirmation question such as "does
+  this show X rather than a blank?" can make an unrelated negative control pass.
+  Run blank and unrelated controls through the exact same task-plus-rubric prompt.
 - `--success-threshold` (default 0.8) is the gate. In `loop` it applies to the
   **mean** score across rollouts, which is a coarser claim than per-rollout
   success — do not report it as a per-rollout success rate.
@@ -151,8 +164,12 @@ Self-hosted VLM steps need a GPU image; set it with `--image` on
 - **The judge sees only the frames you send it.** A low score with
   `--frame-selection final --max-frames 1` may be a sampling artifact rather than
   a policy failure; re-score with keyframes before believing it.
+- **Inspect retained frame dimensions before judging thin defects.** Image
+  normalization can downscale source pixels enough to erase faceting, skeletons,
+  unsupported surfaces, or other narrow structures.
 - **Benchmark the rubric before trusting it.** Rubric wording moves scores more
-  than most people expect, which is precisely what `benchmark` is for.
+  than most people expect, which is precisely what `benchmark` is for. The task
+  text and rubric form one prompt; changing either invalidates prior calibration.
 - **A green gate does not mean a good policy.** It means the judge, at this
   rubric and threshold, on these frames, said yes.
 

@@ -354,6 +354,7 @@ def test_live_visual_judge_distinguishes_completion(
     assert saved["frame_count"] == 3
     assert saved["passed"] is inside
     assert saved["rationale"].strip()
+    _assert_hosted_judge_claims(saved)
     _assert_visual_judge_evidence(saved, frames, model)
 
 
@@ -387,6 +388,37 @@ def _assert_visual_judge_evidence(saved: dict, frames: Path, model: str) -> None
             "reasoning_effort": "low",
             "response_format": {"type": "json_object"},
         }
+
+
+def _assert_hosted_judge_claims(saved: dict) -> None:
+    from npa.workbench.vlm_eval import _build_prompt, _parse_api_structured_response
+
+    evidence = saved["evidence"]
+    response = json.loads(evidence["provider"]["raw_response"])
+    verdict = _parse_api_structured_response(
+        response["choices"][0]["message"]["content"], served_model=response["model"]
+    )
+    assert saved["score"] == round(verdict.score, 4)
+    assert saved["passed"] is (saved["score"] >= saved["success_threshold"])
+    assert saved["status"] == ("passed" if saved["passed"] else "needs_iteration")
+    assert saved["provider_success"] is verdict.provider_success
+    assert saved["provider_success_matches_score_gate"] is (
+        verdict.provider_success == saved["passed"]
+    )
+    prompt = _build_prompt(
+        **{
+            field: saved[field]
+            for field in ("task", "rubric", "frame_selection", "frame_count")
+        }
+    )
+    assert (
+        evidence["request"]["prompt_sha256"]
+        == hashlib.sha256(prompt.encode()).hexdigest()
+    )
+    assert (
+        evidence["request"]["rubric_sha256"]
+        == hashlib.sha256(saved["rubric"].encode()).hexdigest()
+    )
 
 
 def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:
