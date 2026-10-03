@@ -442,7 +442,8 @@ observations, mean-score loop gates, and fixture/stub inputs from real provider
 evidence. Direct results also emit `provider_call_made`, which is false for
 stub and score-override paths.
 
-Packaged VLM benchmark samples are synthetic 2x2 color swatches. Benchmark
+Packaged VLM benchmark samples are four synthetic 2x2 color swatches plus a
+tiny truncated-progress sequence with an omitted terminal outcome. Benchmark
 reports preserve their `illustrative_only` evidence scope and ordered dataset
 limitations; custom manifests without scope metadata remain `unspecified`.
 These sample metrics demonstrate wiring and do not validate physical tasks.
@@ -628,6 +629,15 @@ running. Without an override, Make prefers the contributor environment
 `npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
 deselected from `make test`; `make test-e2e` is the explicit live-infrastructure
 target and needs the relevant credentials and resources.
+The VLM terminal-evidence live lane requires `NPA_INTEGRATION_E2E=1` and
+`NPA_VLM_TERMINAL_LIVE_CONFIG`, an owner-only JSON file defining frozen real
+complete, truncated, ambiguous, and blank controls and a new private output
+directory. There is no default config: without the lane-specific configuration,
+this lane skips even under global integration. A supplied missing, malformed or
+invalid config fails closed. Skips are not live evidence; configured acceptance
+requires all four cases with zero skips or deselections. See the [terminal-evidence live
+check](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#terminal-evidence-live-check)
+for preparation, credential preflight, execution, and evidence review.
 For the real Cosmos Ray batch check, set `NPA_COSMOS3_RAY_LIVE_OUTPUT_URI`
 to an operator-owned S3 prefix; it has no default. The check requires an existing
 authenticated GPU service and writes two synthetic images plus their provenance.
