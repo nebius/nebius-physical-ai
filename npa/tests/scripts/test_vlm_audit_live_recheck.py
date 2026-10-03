@@ -53,13 +53,23 @@ def _report():
         "escalation_required": False,
         "primary": {
             "model": "first/model",
-            "result": {"passed": False, "score": 0},
+            "result": _judge_result("first/model"),
             "error": None,
         },
         "secondary": {
             "model": "second/model",
-            "result": {"passed": False, "score": 0},
+            "result": _judge_result("second/model"),
             "error": None,
+        },
+    }
+
+
+def _judge_result(model):
+    return {
+        "passed": False,
+        "score": 0,
+        "evidence": {
+            "provider": {"returned_model": model, "raw_response": "synthetic"}
         },
     }
 
@@ -502,13 +512,7 @@ def test_malformed_summary_scalar_fails_with_sanitized_receipt(
 
     def execute(root, target, config):
         _write_passing_execution(target, 1)
-        report = {
-            "status": "judges_agree_passed",
-            "passed": True,
-            "escalation_required": False,
-            "primary": {"result": {"passed": True, "score": 1}},
-            "secondary": {"result": {"passed": True, "score": 1}},
-        }
+        report = _report()
         if field in ("primary", "secondary"):
             report[field]["result"]["passed"] = invalid
         elif field.endswith("_score"):
@@ -779,3 +783,46 @@ def test_generated_kind_cannot_silently_select_another_lane(
     assert raised.value.code == 2
     assert "supported --audit-kind paired" in capsys.readouterr().err
     assert not target.exists()
+
+
+@pytest.mark.parametrize("judge", ["primary", "secondary"])
+@pytest.mark.parametrize(
+    "field,malformed",
+    [("evidence", value) for value in (None, [], "private-invalid-evidence")]
+    + [("evidence.provider", value) for value in (None, [], "private-provider")]
+    + [
+        ("evidence.provider.returned_model", value)
+        for value in (None, True, "", " ", "wrong/model")
+    ]
+    + [("evidence.provider.raw_response", value) for value in (None, [], "", " ")],
+)
+def test_malformed_provider_artifacts_cannot_pass_receipt(
+    monkeypatch, tmp_path, capsys, judge, field, malformed
+):
+    runner = _runner()
+    _config(monkeypatch, tmp_path)
+
+    def execute(root, target, config):
+        _write_passing_execution(target, 1)
+        report = _report()
+        value = report[judge]["result"]
+        components = field.split(".")
+        for component in components[:-1]:
+            value = value[component]
+        value[components[-1]] = malformed
+        directory = target / "paired-judges"
+        directory.mkdir()
+        path = directory / runner.JUDGE_COMPARISON_RESULT_FILENAME
+        path.write_text(json.dumps(report))
+        path.chmod(0o600)
+        return 0
+
+    monkeypatch.setattr(runner, "_execute", execute)
+    target = tmp_path / "evidence"
+    assert runner.main(["--audit-kind", "paired", "--evidence-dir", str(target)]) == 1
+    body = (target / "receipt.json").read_text()
+    receipt = json.loads(body)
+    assert receipt["passed"] is False and receipt["counts"]["passed"] == 1
+    assert receipt["failure"] == "invalid_audit_judge_provider"
+    assert "private-" not in body + capsys.readouterr().out
+    assert str(tmp_path) not in body

@@ -422,7 +422,17 @@ def test_public_score_rejects_large_integer_without_float_overflow():
 @pytest.mark.parametrize("passed", [False, True])
 def test_public_judge_preserves_literal_boolean(passed):
     runner = _module("npa/scripts/vlm_audit_live_recheck.py")
-    assert (
-        runner._public_judge({"result": {"passed": passed, "score": 0.5}})["passed"]
-        is passed
-    )
+    outcome = {
+        "model": "synthetic/model",
+        "result": {
+            "passed": passed,
+            "score": 0.5,
+            "evidence": {
+                "provider": {
+                    "returned_model": "synthetic/model",
+                    "raw_response": "synthetic",
+                }
+            },
+        },
+    }
+    assert runner._public_judge(outcome)["passed"] is passed

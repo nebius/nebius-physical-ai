@@ -414,9 +414,7 @@ def _validate_summary_status(summary: dict) -> None:
 
 def _public_judge(outcome: dict) -> dict:
     result, error, score, passed = _judge_result(outcome)
-    provider = (
-        (result.get("evidence") or {}).get("provider") or error.get("provider") or {}
-    )
+    provider = _judge_provider(outcome, result, error)
     return {
         "requested_model_sha256": hashlib.sha256(
             str(outcome.get("model", "")).encode()
@@ -431,6 +429,29 @@ def _public_judge(outcome: dict) -> dict:
         "passed": passed,
         "error_type": error.get("error_type"),
     }
+
+
+def _judge_provider(outcome: dict, result: dict, error: dict) -> dict:
+    if not error:
+        evidence = result.get("evidence")
+        if not isinstance(evidence, dict):
+            raise _AuditConfigurationError("invalid_audit_judge_provider")
+        provider = evidence.get("provider")
+    else:
+        provider = error.get("provider")
+    if provider is None and error:
+        return {}
+    if not isinstance(provider, dict):
+        raise _AuditConfigurationError("invalid_audit_judge_provider")
+    for field in ("returned_model", "raw_response"):
+        value = provider.get(field)
+        if value is not None and not isinstance(value, str):
+            raise _AuditConfigurationError("invalid_audit_judge_provider")
+        if not error and (not value or not value.strip()):
+            raise _AuditConfigurationError("invalid_audit_judge_provider")
+    if not error and provider["returned_model"] != outcome.get("model"):
+        raise _AuditConfigurationError("invalid_audit_judge_provider")
+    return provider
 
 
 def _judge_result(outcome: dict) -> tuple[dict, dict, int | float | None, bool | None]:
