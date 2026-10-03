@@ -136,7 +136,7 @@ def test_real_video_retains_source_timestamps(tmp_path) -> None:
             "-i",
             str(source / "frame-%03d.png"),
             "-c:v",
-            "libx264",
+            "mpeg4",
             "-pix_fmt",
             "yuv420p",
             str(video),

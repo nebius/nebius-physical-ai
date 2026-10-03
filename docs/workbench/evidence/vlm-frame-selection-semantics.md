@@ -17,6 +17,16 @@ least two frames are selected. It is terminal-biased temporal stratification,
 not content-aware event detection. Unknown-count fallback frames retain null
 source indices, counts, and timestamps with incomplete sampling coverage.
 
+Small budgets deliberately trade middle-of-episode coverage for terminal
+evidence: three frames from a 100-frame source select `[0, 90, 99]`; four from
+a 1,000-frame source select `[0, 450, 900, 999]`. The three-frame case has only
+one early sample, so events between the initial and terminal samples can be
+missed. This changes the default `keyframes` behavior, not `sequence`, and
+does not guarantee continuous coverage, event detection, or better model
+judgments. Exact selected indices, source counts, timestamps when known, and
+normalized frame hashes are already bound into the request-manifest hash;
+no additional sampling-schema field is needed to distinguish these requests.
+
 The exact legacy `sequence` formula is checked over frame counts 0 through
 1,000 crossed with frame limits 1 through 128. Candidate `keyframes` checks use
 the same 128,128-pair domain for cardinality, uniqueness, order, bounds, short

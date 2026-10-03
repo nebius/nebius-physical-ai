@@ -16,6 +16,14 @@ is unchanged and never invents source indices or timestamps. The original
 [hosted sampling failure](../evidence/vlm-frame-selection-semantics.md) remains
 separate from deterministic sampler correctness.
 
+The default deliberately favors terminal evidence when the budget is small:
+three of 100 frames select `[0, 90, 99]`, and four of 1,000 select
+`[0, 450, 900, 999]`. Only the first frame supplies early evidence in the
+three-frame case; unsampled middle events can be missed. This is not complete
+episode coverage or a demonstrated improvement in model judgment. Use the
+retained selected indices and frame hashes to audit what was actually shown;
+the original SO-100 failure and gray-control rationale errors remain failures.
+
 This runbook runs the sim-to-real VLM-eval loop on the self-hosted serving path:
 serve a VLM with vLLM, score rollout directories with `vlm-eval`, and write a
 task-success report.
