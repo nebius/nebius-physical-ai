@@ -107,6 +107,28 @@ def check_diffusion_policy() -> CheckResult:
         return CheckResult("construct DiffusionPolicy", False, _format_exception(exc))
 
 
+def check_fastwam_config() -> CheckResult:
+    """Import FastWAM's real policy/config gate without downloading weights.
+
+    The actual Wan, UMT5 and FastWAM checkpoints are deliberately runtime-only.
+    Instantiating the config proves that the LeRobot 0.6 optional-policy entry
+    point and its ``fastwam`` extra are present in the image without pretending
+    that a CUDA model execution or a checkpoint fetch happened at build time.
+    """
+
+    try:
+        from lerobot.policies.fastwam.configuration_fastwam import FastWAMConfig
+
+        config = FastWAMConfig()
+        return CheckResult(
+            "instantiate FastWAMConfig",
+            True,
+            f"policy: {config.type}; action horizon: {config.action_horizon}",
+        )
+    except Exception as exc:
+        return CheckResult("instantiate FastWAMConfig", False, _format_exception(exc))
+
+
 def check_imageio_uses_system_ffmpeg() -> CheckResult:
     """Prove video helpers use the distro FFmpeg, not a wheel-bundled binary."""
 
@@ -176,6 +198,7 @@ def main() -> int:
         check_import_lerobot,
         check_act_config,
         check_diffusion_policy,
+        check_fastwam_config,
         check_imageio_uses_system_ffmpeg,
         check_lerobot_train_help,
         check_lerobot_eval_help,

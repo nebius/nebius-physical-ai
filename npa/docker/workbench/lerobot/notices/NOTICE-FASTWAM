@@ -1,0 +1,84 @@
+NPA FastWAM runtime notice
+===========================
+
+This image recipe enables the ``fastwam`` optional feature from the upstream
+LeRobot 0.6.0 distribution. It does not include FastWAM, Wan, UMT5, robot
+dataset, checkpoint, cache, or rollout-output bytes in an image layer.
+
+Upstream software
+-----------------
+
+* LeRobot: https://github.com/huggingface/lerobot
+  - pinned NPA runtime release: v0.6.0
+  - source revision: 30da8e687a6dfc617fcd94afc367ac7071c376ce
+  - copyright: Hugging Face Inc. team
+  - license: Apache License 2.0; see the upstream LICENSE.
+* FastWAM base model: https://huggingface.co/lerobot/fastwam_base
+  - model card license: Apache-2.0
+  - qualified runtime revision:
+    0a868ec1dcf6ff00bcdfa9b7196d6e211ed7e616
+* Wan 2.2 TI2V 5B and its Diffusers-format component:
+  https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B and
+  https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers
+  - model-card license: Apache-2.0
+  - qualified runtime revisions: Wan base
+    921dbaf3f1674a56f47e83fb80a34bac8a8f203e; Diffusers component
+    b8fff7315c768468a5333511427288870b2e9635.
+* UMT5 XXL: https://huggingface.co/google/umt5-xxl
+  - model card license: Apache-2.0
+  - qualified runtime revision:
+    66cb9e7e85526fe440a945569e42c72fb6cbc0ad.
+* FastWAM paper and authors: Tianyuan Yuan, Zibin Dong, Yicheng Liu, and
+  Hang Zhao, "Fast-WAM: Do World Action Models Need Test-time Future
+  Imagination?", arXiv:2603.16666 (2026).
+  - BibTeX is retained by the upstream model card/paper.
+
+Required citation
+-----------------
+
+```bibtex
+@article{yuan2026fastwam,
+  title={Fast-WAM: Do World Action Models Need Test-time Future Imagination?},
+  author={Tianyuan Yuan and Zibin Dong and Yicheng Liu and Hang Zhao},
+  journal={arXiv preprint arXiv:2603.16666},
+  year={2026},
+  url={https://arxiv.org/abs/2603.16666}
+}
+
+@misc{cadene2024lerobot,
+  author={Cadene, Remi and Alibert, Simon and Soare, Alexander and Gallouedec,
+    Quentin and Zouitine, Adil and Palma, Steven and Kooijmans, Pepijn and
+    Aractingi, Michel and Shukor, Mustafa and Aubakirova, Dana and Russi,
+    Martino and Capuano, Francesco and Pascal, Caroline and Choghari, Jade and
+    Moss, Jess and Wolf, Thomas},
+  title={LeRobot: State-of-the-art Machine Learning for Real-World Robotics in Pytorch},
+  howpublished={\url{https://github.com/huggingface/lerobot}},
+  year={2024}
+}
+```
+
+Runtime dependencies and outputs
+--------------------------------
+
+The documented FastWAM implementation resolves the listed model components at
+exact revisions chosen by the workflow. Their public Apache-2.0 model-card
+licenses were inspected for this recipe, but no component byte is redistributed
+by this image. Dataset, cache, checkpoint and output terms are separate from the
+source/model notice: the operator supplies the dataset's authoritative license,
+and generated checkpoint artifacts may contain runtime model components. Keep
+those run outputs private unless their complete downstream redistribution
+closure is independently established. Access to a public endpoint does not
+change any upstream use or redistribution terms.
+
+The Wan model cards additionally say that Wan claims no rights over generated
+content, while placing responsibility for compliant use and non-harmful sharing
+on the user. This provenance record preserves that upstream statement; it does
+not create an NPA click-through, acceptance variable, or additional EULA.
+
+NPA modifications
+-----------------
+
+NPA adds an orchestration adapter only: episode-disjoint data receipt, native
+``lerobot-train`` / ``lerobot-eval`` execution, direct-action latency measurement,
+and factual MP4/RRD provenance. It does not relabel upstream FastWAM research as
+NPA work and does not implement the separate Cosmos3 FastWAM-K2 experiment.

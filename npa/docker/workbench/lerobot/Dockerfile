@@ -84,7 +84,7 @@ RUN python3.12 -m venv /opt/lerobot/venv \
     && /opt/lerobot/venv/bin/python -m pip install --upgrade pip setuptools wheel \
     && if [ "${LEROBOT_VERSION}" = "0.6.0" ]; then \
          /opt/lerobot/venv/bin/pip install \
-           "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]==${LEROBOT_VERSION}" \
+           "lerobot[training,evaluation,pusht,libero,diffusion,smolvla,fastwam]==${LEROBOT_VERSION}" \
            boto3 \
            fastapi~=0.136.1 \
            num2words \
@@ -170,6 +170,13 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 
+USER ubuntu
+
+# Keep FastWAM attribution and the runtime-fetch/redistribution boundary with
+# the image without invalidating the large dependency-installation layer above.
+USER root
+RUN install -d -m 0755 /usr/share/doc/npa
+COPY --chown=ubuntu:ubuntu docker/workbench/lerobot/notices/NOTICE-FASTWAM /usr/share/doc/npa/NOTICE-FASTWAM
 USER ubuntu
 
 EXPOSE 8080

@@ -96,17 +96,21 @@ def test_060_image_build_and_smoke_cover_real_diffusion_construction() -> None:
     dockerfile = (root / "npa/docker/workbench/lerobot/Dockerfile").read_text(
         encoding="utf-8"
     )
+    notice = root / "npa/docker/workbench/lerobot/notices/NOTICE-FASTWAM"
     smoke = (root / "npa/src/npa/smoke/test_lerobot_env.py").read_text(encoding="utf-8")
     cloud_init = (root / "npa/src/npa/deploy/terraform/cloud_init.yaml.tpl").read_text(
         encoding="utf-8"
     )
 
-    assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in dockerfile
+    assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla,fastwam]" in dockerfile
     assert "python -m npa.smoke.test_lerobot_env" in dockerfile
     assert "DiffusionPolicy(config)" in smoke
+    assert "FastWAMConfig()" in smoke
+    assert "NOTICE-FASTWAM" in dockerfile
+    assert notice.is_file()
     assert "NPA_LEROBOT_SMOKE_REQUIRE_CUDA" in smoke
     assert 'policy.to("cuda")' in smoke
-    assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla]" in cloud_init
+    assert "lerobot[training,evaluation,pusht,libero,diffusion,smolvla,fastwam]" in cloud_init
 
 
 def test_unsupported_version_raises(monkeypatch: pytest.MonkeyPatch) -> None:
