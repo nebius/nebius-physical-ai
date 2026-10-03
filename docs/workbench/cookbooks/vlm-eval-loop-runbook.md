@@ -19,6 +19,14 @@ profiles enforce this for every hosted model, including unknown identifiers.
 Self-hosted responses, stub scores, and score overrides report false. They
 must not be presented as exact identity enforcement.
 
+The aggregate model and each case's `requested_model` name the effective
+configured model after default/environment resolution. On a stub or score
+override, `requested_model` is configuration metadata, not proof that a request
+was sent; evidence remains absent and enforcement remains false. Promotion
+rechecks any present enforcement boolean against the retained backend/identity
+contract. A missing historical field remains compatible; nonliteral or false
+claims inconsistent with the retained real backend fail closed.
+
 Successful real-backend results also contain an `evidence` record. It binds the
 requested and returned model to:
 

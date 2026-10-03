@@ -80,6 +80,11 @@ Single results, loop rows, and benchmark cases disclose requested/served identit
 and `served_model_match_enforced`. All current hosted profiles require exact
 identity; self-hosted responses and non-provider scores report false. Never
 infer enforcement from a model name, a score, or an unverified returned alias.
+Aggregate and case model names use the same effective default/environment
+resolution. On stub/override paths, `requested_model` names configuration only;
+it does not mean a request occurred. Promotion validates a present enforcement
+boolean against retained backend/identity evidence, without inventing the field
+for historical reports that omit it.
 One complete JSON object wrapped only in a Markdown JSON fence is transport
 de-framed; its retained parser version ends in `+markdown-fence-v1`. Do not
 accept surrounding prose, trailing output, duplicate keys, invalid types, or a
