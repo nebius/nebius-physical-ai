@@ -1,0 +1,54 @@
+{
+  "schema": "npa.caption-sentinel.current-source-bridge/v1",
+  "original_execution_commit": "d5d146b2e2c7a8d9bc662d09ac44a007075ecb2a",
+  "original_recorded_integration_commit": "c1a2754b238fa050fa0b8be90880794da41bf690",
+  "reviewed_successor_commit": "9e8630c1aa2efeac1c20a6718cf57cdd765c4001",
+  "incoming_main_commit": "432ea8b0478872f59ce364fa1435f9f81a6a9e56",
+  "bindings": [
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "execution_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "reviewed_successor_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "byte_identical": true
+    },
+    {
+      "path": "npa/src/npa/workbench/token_factory/__init__.py",
+      "execution_sha256": "3bbf0a6610537c8a9a28e4404bcb7539b84b74989ddf9faa46c7e83fe39b5122",
+      "reviewed_successor_sha256": "3bbf0a6610537c8a9a28e4404bcb7539b84b74989ddf9faa46c7e83fe39b5122",
+      "byte_identical": true
+    },
+    {
+      "path": "npa/tests/e2e/test_token_factory_image_availability_live.py",
+      "execution_sha256": "2cab3931eb9eb436fd7ef145b0a335b7b02bbd5c2f102b6d0dfb6b1349620899",
+      "reviewed_successor_sha256": "b4c54b5b0155bb923977bfdb2df60e3c8f7b0eddfd975f71f85d533b31e8e27f",
+      "byte_identical": false,
+      "change": "Post-execution credential check hoisted before fixture read; positive-test AST and assertions equal after normalizing only that hoist. No hosted execution of these changed test bytes is claimed."
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "execution_sha256": "f9bb7489dc5db5c7aa02cdf7e5da3a6041cb9d4d40b557b78eccafac0b6c663e",
+      "reviewed_successor_sha256": "ea52d21998d25b0b6ed655351f4ca333e47841580fe9e12ddbcbb99e0543fcd3",
+      "byte_identical": false,
+      "change": "Separate landed provenance/canonical artifact integration; this caption protocol does not invoke the evaluator."
+    }
+  ],
+  "new_sdk_controls": {
+    "execution_commit": "9e8630c1aa2efeac1c20a6718cf57cdd765c4001",
+    "access": "Actual public SDK wrapper through actual CLI/client with MockTransport only",
+    "positive": "returns None and saves completed JSON",
+    "exact_sentinel": "raises typer.Exit with exit_code 1 after saving failed JSON",
+    "mixed_positive_sentinel_positive": "all three attempted, successful siblings retained, failed_count 1, failed JSON saved before raised exit",
+    "dry_run_sentinel": "raises exit 1, failure status emitted, no saved artifact",
+    "credential_skip_negative": "Original fixture-before-skip failure reproduced; successor skips before fixture read without credentials",
+    "selected_gate_tests_passed": 377,
+    "new_provider_calls": 0,
+    "scope": "CPU SDK/current registration behavior; not a new full gate, hosted run, image-delivery incident, calibrated quality or GPU workload."
+  },
+  "original_counts_unchanged": {
+    "real_hosted_requests": 2,
+    "offline_replay_requests": 1,
+    "total_original_transport_records": 3
+  },
+  "original_evidence_json_preserved_byte_exactly": true,
+  "scope": "Additive current-source bridge. Original execution/tree and historical c1a integration bindings remain original and are not relabelled current-source execution."
+}
