@@ -181,6 +181,51 @@ def test_existing_evidence_directory_error_is_sanitized(
     assert str(tmp_path) not in captured.out + captured.err
 
 
+def test_git_config_failure_does_not_disclose_subprocess_stderr(
+    runner, config, monkeypatch, tmp_path, capfd
+):
+    private_config = tmp_path / "private-git-config"
+    private_config.write_text("[unterminated\n")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(private_config))
+    assert runner.main(["--evidence-dir", str(tmp_path / "receipt")]) == 1
+    captured = capfd.readouterr()
+    assert json.loads(captured.out)["passed"] is False
+    assert str(tmp_path) not in captured.out + captured.err
+    assert "private-git-config" not in captured.out + captured.err
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize("field", ["evidence", "config", "input_path", "output_path"])
+def test_symlink_loop_is_sanitized_at_every_private_path_boundary(
+    runner, config, monkeypatch, tmp_path, capsys, field
+):
+    first = tmp_path / "private-loop-a"
+    second = tmp_path / "private-loop-b"
+    first.symlink_to(second)
+    second.symlink_to(first)
+    target = tmp_path / "receipt"
+    if field == "evidence":
+        target = first
+    elif field == "config":
+        monkeypatch.setenv("NPA_VLM_PROVENANCE_LIVE_CONFIG", str(first))
+    else:
+        config[field] = str(first)
+        (tmp_path / "config.json").write_text(json.dumps(config))
+    monkeypatch.setattr(
+        runner, "_check_endpoint", lambda *args: pytest.fail("network reached")
+    )
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["passed"] is False
+    assert str(tmp_path) not in captured.out + captured.err
+    assert "private-loop" not in captured.out + captured.err
+    assert "Traceback" not in captured.out + captured.err
+    if field != "evidence":
+        receipt = json.loads((target / "receipt.json").read_text())
+        assert receipt["passed"] is False
+        assert receipt["counts"]["executed"] == 0
+
+
 @pytest.mark.parametrize(
     "status,payload", [(401, {}), (200, []), (200, {"data": None})]
 )
@@ -196,6 +241,27 @@ def test_endpoint_rejection_or_malformed_inventory_cannot_pass(
     )
     with pytest.raises((ValueError, httpx.HTTPStatusError)):
         runner._check_endpoint(config)
+
+
+def test_malformed_endpoint_error_is_sanitized_before_network(
+    runner, config, monkeypatch, tmp_path, capsys
+):
+    config["endpoint_url"] = "https://example.test:private-port"
+    (tmp_path / "config.json").write_text(json.dumps(config))
+    monkeypatch.setattr(
+        httpx.HTTPTransport,
+        "handle_request",
+        lambda *args: pytest.fail("network reached"),
+    )
+    target = tmp_path / "receipt"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["passed"] is False
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["phase"] == "endpoint"
+    assert receipt["counts"]["executed"] == 0
+    for private in (str(tmp_path), "example.test", "private-port", "Traceback"):
+        assert private not in captured.out + captured.err + json.dumps(receipt)
 
 
 def test_missing_endpoint_key_stops_before_network(runner, config, monkeypatch):

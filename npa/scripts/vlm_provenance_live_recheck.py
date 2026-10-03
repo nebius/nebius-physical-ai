@@ -34,7 +34,11 @@ def _private_path(value: str, root: Path) -> Path:
     path = Path(value)
     if not path.is_absolute():
         raise ValueError("Live paths must be absolute")
-    path = path.resolve()
+    try:
+        path = path.resolve()
+    except RuntimeError:
+        # Python 3.12 reports symlink loops as RuntimeError, including the path.
+        raise ValueError("Live path cannot be resolved") from None
     if path.is_relative_to(root):
         raise ValueError("Live configuration and evidence must be outside the checkout")
     return path
@@ -160,7 +164,7 @@ def _receipt(root: Path) -> dict:
     return {
         "schema": "npa.vlm_provenance.live_recheck.v1",
         "commit_sha": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.PIPE
         ).strip(),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "source_file_sha256": hashes,
@@ -197,7 +201,14 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 2
     try:
         exit_code = _verify(root, target, receipt, results)
-    except (OSError, ValueError, httpx.HTTPError, TypeError, KeyError):
+    except (
+        OSError,
+        ValueError,
+        httpx.HTTPError,
+        httpx.InvalidURL,
+        TypeError,
+        KeyError,
+    ):
         receipt["failure"] = (
             "Live verification failed; see phase for the failed prerequisite"
         )
