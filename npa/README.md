@@ -464,6 +464,20 @@ The input bundle must come from real policy rollouts; this check does not launch
 training, establish policy quality, or claim a complete Sim2Real pipeline run.
 Use `NPA_CONFIG_DIR` to select an isolated operator configuration.
 
+Paired hosted VLM audits have a separate executable lane:
+`npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"`.
+Set `NPA_VLM_AUDIT_LIVE_CONFIG` to an owner-only JSON file with the two exact
+model IDs, input fixture, credential environment-variable name, task/rubric, and
+frozen score-gate expectations. The runner sets `NPA_INTEGRATION_E2E=1`, requires
+every audit to execute without skips, and retains reports in a new private
+evidence directory. See [configured audit checks](../docs/testing/vlm-audit-live-contracts.md)
+for configuration, credential checks, fixture preparation, and lifecycle.
+The existing protected nightly workflow also runs this entrypoint with
+`--generated-controls`: three frozen local visual controls and two hosted judges,
+using only its Token Factory key. It uploads sanitized receipts, not raw visuals
+or provider responses. This lane does not provision a GPU or replace the existing
+hosted nightly suites; registration alone is not a successful live-run claim.
+
 The CPU wheel exercises real checkpoint loading without a GPU. See
 [the CI environment](../.github/workflows/test.yml) for the complete coverage
 gate; some optional checks also use Node, tmux, or Docker.

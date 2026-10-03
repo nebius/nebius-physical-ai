@@ -90,8 +90,13 @@ are retained literally. The built-in confidentiality guard checks the receipt
 before it is written.
 The hosted job also runs the entrypoint with an explicitly empty key and
 requires a failed receipt with zero collected/executed tests before the
-credentialed run. GitHub uploads only those two sanitized receipts and puts
-the credentialed result in the job summary even on failure. A local invocation is labeled `local-manual`; an operator scheduler
+credentialed run. The workflow also runs the separate
+[paired hosted audit lane](vlm-audit-live-contracts.md) over three locally generated,
+frozen visual controls, with its own empty-key check. GitHub uploads only the
+four sanitized receipts and puts both credentialed results in the job summary
+even on failure. Raw paired images and provider evidence are not uploaded.
+The three hosted migration suites remain unchanged by this separate registration.
+A local invocation is labeled `local-manual`; an operator scheduler
 can set `NPA_TF_RECHECK_EXECUTION=operator-automation`. Neither is represented as
 hosted CI. Use a new evidence directory for every invocation; finalized receipts
 cannot be overwritten.
