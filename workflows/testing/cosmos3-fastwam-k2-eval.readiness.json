@@ -1,0 +1,61 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "96993f084df90c4ce251585b179e543ddfe9c639da4dd71ea309b42361b2690f",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "validate-spec accepted the workflow and plan-spec expanded five connected waves: prepare, full_wam, fastwam_k2, compare, and visualize. The plan binds every handoff to a run-scoped S3 URI.",
+      "evidence": [
+        "workflows/testing/cosmos3-fastwam-k2-eval.yaml",
+        "npa/tests/workbench/test_cosmos3_fastwam_k2.py",
+        "npa/tests/guardrails/test_tool_catalog_argv.py",
+        "npa/tests/guardrails/test_module_toolref_argv.py"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "The execution path invokes the pinned RoboLab Cosmos3 client and records its task-success rows and native inference timing. The K=2 runtime overlay retains two generated vision latents and native conditioning/denoising masks; it never substitutes the K=0 drop-generated-vision option. Screening remains explicitly non-benchmark and non-physical-robot evidence.",
+      "evidence": [
+        "docs/workbench/cosmos3-fastwam-k2.md",
+        "npa/src/npa/workbench/cosmos/fastwam_k2.py"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "Credential preflight passed, but this exact run has not yet performed a private run-prefix write/read of its request and final visualization artifacts.",
+      "evidence": [
+        "Private operator preflight evidence"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "The exact public framework, RoboLab, baseline, and FastWAM-K2 revisions are pinned and the access preflight passed. Their runtime materialization, checkpoint integrity, and Isaac installation still need the first GPU worker execution.",
+      "evidence": [
+        "docs/workbench/cosmos3-fastwam-k2.md"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The operator's Nebius, object-storage, and Cosmos3 access preflights completed for this session. This verifies access readiness only, not a model result or redistribution right.",
+      "evidence": [
+        "Private operator preflight evidence"
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The current public Cosmos3 release is quarantined by the repository's stale-layer policy. A source-matched immutable replacement is being built and must pass local verification, registry pull verification, and a real run before it can qualify this workflow.",
+      "evidence": [
+        "npa/src/npa/deploy/images.py"
+      ]
+    },
+    "target_runtime": {
+      "status": "unverified",
+      "reason": "No closed-loop RoboLab GPU workflow has completed for this source/image pair. No latency, success rate, benchmark, convergence, or physical-robot claim is made by this readiness record.",
+      "evidence": [
+        "workflows/testing/cosmos3-fastwam-k2-eval.yaml"
+      ]
+    }
+  }
+}
