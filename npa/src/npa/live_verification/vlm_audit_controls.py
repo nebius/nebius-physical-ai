@@ -1,4 +1,4 @@
-"""Generate frozen synthetic visual controls for real hosted paired-judge checks."""
+"""Generate frozen synthetic visual controls for real hosted paired and blinded-preference checks."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from npa.clients.token_factory import DEFAULT_BASE_URL
 
 PAIRED_MODELS = ("MiniMaxAI/MiniMax-M3", "google/gemma-3-27b-it")
 CONTROL_LABELS = {"inside": True, "outside": False, "blank": False}
-AUDIT_CASES_BY_KIND = {"paired": "paired-judges"}
+AUDIT_CASES_BY_KIND = {"paired": "paired-judges", "preference": "blinded-preference"}
 GENERATED_CONTROL_NAMES_BY_KIND = {"paired": tuple(CONTROL_LABELS)}
 PAIRED_CONTROL_TASK = (
     "Describe the visible shapes and their positions. Judge whether a red square "
@@ -25,6 +25,25 @@ PAIRED_CONTROL_RUBRIC = (
     "Score 0 if the red square is outside, or either shape is absent. "
     "Judge only the submitted image. Return bare JSON without Markdown fences."
 )
+
+
+PREFERENCE_MODELS = ("MiniMaxAI/MiniMax-M3",)
+CONTROL_PAIRS = {
+    "inside-first": ("inside", "outside", "baseline"),
+    "inside-second": ("outside", "inside", "candidate"),
+    "identical": ("inside", "inside", "tie"),
+}
+PREFERENCE_CONTROL_TASK = (
+    "Compare how well the visible shapes satisfy the visual requirement."
+)
+PREFERENCE_CONTROL_RUBRIC = (
+    "Prefer the image with a red square fully inside the green rectangular outline. "
+    "A square outside the outline does not satisfy the requirement. "
+    "If the images are visually equivalent under this rule, return tie. "
+    "Judge only visible shapes, not hidden physical state."
+)
+
+GENERATED_CONTROL_NAMES_BY_KIND["preference"] = tuple(CONTROL_PAIRS)
 
 
 def audit_controls(case: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -149,4 +168,55 @@ def _control_request(path: Path) -> dict[str, Any]:
         "frame_selection": "final",
         "max_frames": 1,
         "success_threshold": 0.8,
+    }
+
+
+def generated_preference_config(directory: Path) -> dict[str, Any]:
+    """Create private images and frozen preferences before real hosted inference.
+
+    Args:
+        directory: New fixture directory inside the private evidence root.
+    Returns:
+        Credential-free configuration containing three counterbalanced controls.
+    Raises:
+        OSError: The private images cannot be created exclusively.
+    """
+    directory.mkdir(mode=0o700)
+    controls = {}
+    for name, (first, second, expected) in CONTROL_PAIRS.items():
+        paths, hashes = [], []
+        for index, image in enumerate((first, second)):
+            path = directory / f"{name}-{index}.png"
+            pixels = _control_png(image)
+            descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(pixels)
+            paths.append(path)
+            hashes.append(hashlib.sha256(pixels).hexdigest())
+        controls[name] = {
+            "request": {
+                "baseline_path": str(paths[0]),
+                "candidate_path": str(paths[1]),
+                "model": PREFERENCE_MODELS[0],
+                "endpoint_url": DEFAULT_BASE_URL,
+                "api_key_env": "NEBIUS_TOKEN_FACTORY_KEY",
+                "task": PREFERENCE_CONTROL_TASK,
+                "rubric": PREFERENCE_CONTROL_RUBRIC,
+            },
+            "baseline_sha256": hashes[0],
+            "candidate_sha256": hashes[1],
+            "expectations": {
+                "mapped_preferences": [expected, expected],
+                "escalation_required": False,
+                "status": (
+                    "consistent_tie"
+                    if expected == "tie"
+                    else f"consistent_{expected}_preference"
+                ),
+            },
+        }
+    return {
+        "control_schema": "npa.preference_visual_controls.v1",
+        "audit_kind": "preference",
+        "cases": {"blinded-preference": {"controls": controls}},
     }
