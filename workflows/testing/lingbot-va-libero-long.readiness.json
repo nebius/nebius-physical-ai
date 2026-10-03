@@ -1,21 +1,22 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "a3e60e441b15549169efb3264d9cd65443be537aa7a30961f5d13255ddde90fc",
+  "workflow_sha256": "9fa9109326219d3250426601f7fac1a619a19716dc245bab7598a0a176e1843a",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "validate-spec and plan-spec --check-render accepted five connected executable stages with run-scoped S3 handoffs and rendered five Kubernetes tasks.",
+      "reason": "validate-spec and plan-spec --check-render accepted five connected executable stages with run-scoped S3 handoffs and rendered five Kubernetes tasks. The RRD output has the standard Rerun media schema.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/lingbot-va-libero-long.yaml --json",
-        "npa workbench workflow plan-spec workflows/testing/lingbot-va-libero-long.yaml --run-id lingbot-va-readiness --check-render --json",
-        "npa/tests/workflows/test_lingbot_va_workflow.py: 3 passed"
+        "npa workbench workflow plan-spec workflows/testing/lingbot-va-libero-long.yaml --run-id lingbot-va-audit-20261003 --check-render --json",
+        "npa/tests/workflows/test_lingbot_va_workflow.py: 4 passed"
       ]
     },
     "four_stage_contract": {
       "status": "verified",
-      "reason": "The successful path has five substantive stages: LeRobot/latent validation and split, upstream FSDP post-training, upstream LIBERO-90 websocket rollout, numerical evaluation, and RRD/MP4 artifact production. Direct contract tests assert every exact handoff and reject echo/sleep behavior.",
+      "reason": "The successful path has five substantive stages: LeRobot/latent validation and split, upstream FSDP post-training, upstream LIBERO-90 websocket rollout, numerical evaluation, and RRD/MP4 artifact production. Direct contract tests assert every exact handoff, reject echo/sleep behavior, and require the RRD recording to bind to the renderer-provided run identifier.",
       "evidence": [
         "npa/tests/workflows/test_lingbot_va_workflow.py::test_workflow_is_five_connected_native_stages_with_exact_artifact_handoffs",
+        "npa/tests/workflows/test_lingbot_va_workflow.py::test_visualization_binds_the_recording_to_the_workflow_run",
         "npa/tests/guardrails/test_workflow_schema_chaining.py: 4 passed"
       ]
     }
@@ -25,7 +26,7 @@
       "status": "unverified",
       "reason": "A local source-only image build and non-root inspection passed, including notices and an absence of checkpoint files. It has not been independently scanned, pushed, pulled by Kubernetes, or bound into config.candidate_image. The checked-in digest text is intentionally a refusal placeholder, not an image claim.",
       "evidence": [
-        "docker build --tag npa-lingbot-va:local-20261003 --file docker/workbench/lingbot-va/Dockerfile npa",
+        "docker build --tag npa-lingbot-va:local-audit-20261003-rerun --file npa/docker/workbench/lingbot-va/Dockerfile npa",
         "local non-root source-only image inspection"
       ]
     },
@@ -38,16 +39,19 @@
     },
     "runtime_and_model": {
       "status": "unverified",
-      "reason": "The exact runtime cache installed locally and non-root imports succeeded for PyTorch 2.9/CUDA 12.6, Flex Attention, LingBot model code, LeRobot 0.3.3, and the adapter. It has not run on a GPU worker and neither public checkpoint revision has been fetched or exercised in this image.",
+      "reason": "The exact runtime cache installed locally and non-root imports succeeded for PyTorch 2.9/CUDA 12.6, Flex Attention, LingBot model code, LeRobot 0.3.3, the adapter, and Rerun. A local synthetic-frame contract exercised RRD/MP4 emission and renderer run-ID binding. It has not run on a GPU worker and neither public checkpoint revision has been fetched or exercised in this image.",
       "evidence": [
         "npa/docker/workbench/lingbot-va/runtime-requirements.txt",
-        "lingbot-va-runtime ensure and local adapter/LeRobot import"
+        "lingbot-va-runtime ensure and local adapter/LeRobot/Rerun import",
+        "local synthetic-frame RRD/MP4 contract (not a model or benchmark result)"
       ]
     },
     "native_workflow_execution": {
       "status": "unverified",
-      "reason": "No real NPA/SkyPilot/Kubernetes run of the candidate digest has completed upstream post-training, LIBERO-90 rollout, evaluation, or independent RRD/MP4 inspection. No success, convergence, benchmark, or physical-robot result is claimed.",
-      "evidence": []
+      "reason": "No real NPA/SkyPilot/Kubernetes run of the candidate digest has completed upstream post-training, LIBERO-90 rollout, evaluation, or independent RRD/MP4 inspection. The exact target image preflight stopped at Kubernetes-context namespace resolution, before an image pull or workload, and the spec deliberately has no candidate digest. No success, convergence, benchmark, or physical-robot result is claimed.",
+      "evidence": [
+        "npa workbench workflow preflight-images workflows/testing/lingbot-va-libero-long.yaml --infra k8s/<configured-context> --json: stopped before workload at Kubernetes namespace lookup"
+      ]
     }
   }
 }

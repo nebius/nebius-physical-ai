@@ -123,7 +123,7 @@ states:
       - {uri: "{{config.rollout_root_uri}}", schema: npa.lingbot_va.rollout_tree.v1}
       - {uri: "{{config.evaluation_uri}}", schema: npa.lingbot_va.evaluation.v1}
     outputs:
-      - {uri: "{{config.rrd_uri}}", schema: application/x-rerun-recording}
+      - {uri: "{{config.rrd_uri}}", schema: application/vnd.rerun.rrd}
       - {uri: "{{config.mp4_uri}}", schema: video/mp4}
       - {uri: "{{config.visualization_uri}}", schema: npa.lingbot_va.visualization.v1}
     terminal: true
