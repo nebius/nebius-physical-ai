@@ -2668,7 +2668,7 @@ def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
 
 
 @pytest.mark.parametrize("backend", ["api", "self-hosted"])
-def test_failed_current_producer_preserves_but_does_not_validate_legacy_history(
+def test_failed_current_producer_leaves_legacy_promotable_by_separate_reader(
     tmp_path: Path, monkeypatch, backend: str
 ) -> None:
     from typer.testing import CliRunner
