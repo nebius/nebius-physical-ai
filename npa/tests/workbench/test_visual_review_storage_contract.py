@@ -57,7 +57,9 @@ def test_real_client_read_returns_exact_bytes_and_closes_stream(storage):
     assert stream.closed
 
 
-@pytest.mark.parametrize("conflict", [False, True])
+@pytest.mark.parametrize(
+    "conflict", [None, ("PreconditionFailed", 412), ("ConditionalRequestConflict", 409)]
+)
 def test_real_client_journal_create_uses_atomic_if_none_match(storage, conflict):
     client, stub = storage
     expected = {
@@ -70,8 +72,8 @@ def test_real_client_journal_create_uses_atomic_if_none_match(storage, conflict)
     if conflict:
         stub.add_client_error(
             "put_object",
-            service_error_code="PreconditionFailed",
-            http_status_code=412,
+            service_error_code=conflict[0],
+            http_status_code=conflict[1],
             expected_params=expected,
         )
         with pytest.raises(
@@ -85,6 +87,28 @@ def test_real_client_journal_create_uses_atomic_if_none_match(storage, conflict)
             )
     else:
         stub.add_response("put_object", {"ETag": '"v1"'}, expected)
+        visual_review._conditional_object_create(
+            b"{}",
+            "s3://fixture-bucket/review/reservation.json",
+            client,
+            conflict_message="already reserved",
+        )
+
+
+def test_real_client_missing_etag_fails_closed(storage):
+    client, stub = storage
+    stub.add_response(
+        "put_object",
+        {},
+        {
+            "Bucket": "fixture-bucket",
+            "Key": "review/reservation.json",
+            "Body": b"{}",
+            "ContentType": "application/json",
+            "IfNoneMatch": "*",
+        },
+    )
+    with pytest.raises(visual_review.VlmVisualReviewError):
         visual_review._conditional_object_create(
             b"{}",
             "s3://fixture-bucket/review/reservation.json",

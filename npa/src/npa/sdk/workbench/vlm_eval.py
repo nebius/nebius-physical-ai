@@ -1,4 +1,4 @@
-"""Python SDK surfaces for Workbench VLM evaluation."""
+"""SDK wrappers for the Workbench VLM eval CLI."""
 
 from __future__ import annotations
 
@@ -12,12 +12,15 @@ from npa.workbench.vlm_eval import (
     VlmVisualReviewError,
     VlmVisualReviewReport,
     VlmVisualReviewRequest,
-    benchmark_vlm_eval,
     review_visual as _review_visual_backend,
+    VlmJudgeComparisonRequest,
+    benchmark_vlm_eval,
+    compare_vlm_judges,
 )
 
 run = make_cli_wrapper("npa.cli.workbench.vlm_eval", "run_cmd", "Run VLM evaluation.")
 benchmark = benchmark_vlm_eval
+compare_judges = compare_vlm_judges
 status = make_cli_wrapper(
     "npa.cli.workbench.vlm_eval", "status_cmd", "Show VLM eval status."
 )
@@ -73,9 +76,11 @@ def review_visual(
 __all__ = [
     "VlmVisualReviewReport",
     "VlmVisualReviewRequest",
-    "benchmark",
-    "list",
     "review_visual",
+    "VlmJudgeComparisonRequest",
+    "benchmark",
+    "compare_judges",
+    "list",
     "run",
     "status",
     "workflow",

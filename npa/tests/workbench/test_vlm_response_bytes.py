@@ -44,6 +44,61 @@ def _request(root: Path):
 
 
 @pytest.mark.parametrize(
+    "helper", ["_backend_response_from_http", "_captured_http_response"]
+)
+@pytest.mark.parametrize(
+    ("body", "content_type"),
+    [
+        (b"\xff", "application/json; charset=utf-8"),
+        (b"\xfe", "application/json; charset=utf-8"),
+        (b'{"error":"caf\xe9"}', "application/json; charset=iso-8859-1"),
+        (b'{"error":"ordinary UTF-8 failure"}', "application/json"),
+        ('{"value":"caf\u00e9"}'.encode(), "application/json; charset=utf-8"),
+    ],
+)
+def test_shared_http_capture_helpers_preserve_wire_before_decoding(
+    helper, body, content_type
+) -> None:
+    events = []
+
+    class Response(httpx.Response):
+        @property
+        def content(self):
+            events.append("wire")
+            return super().content
+
+        @property
+        def text(self):
+            assert events and events[0] == "wire"
+            events.append("text")
+            return super().text
+
+        def json(self, **kwargs):
+            assert events and events[0] == "wire"
+            events.append("json")
+            return super().json(**kwargs)
+
+    response = Response(
+        502,
+        content=body,
+        headers={"content-type": content_type, "x-request-id": "synthetic-id"},
+        request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+    )
+    events.clear()
+    arguments = {"started_at": 0}
+    if helper == "_backend_response_from_http":
+        arguments["data"] = {}
+    captured = getattr(vlm_eval, helper)(response, **arguments)
+    assert events[0] == "wire"
+    assert base64.b64decode(captured.raw_body_base64, validate=True) == body
+    assert captured.raw_body_bytes_sha256 == hashlib.sha256(body).hexdigest()
+    assert captured.raw_body_byte_count == len(body)
+    assert captured.status_code == 502
+    assert captured.request_id_header == "synthetic-id"
+    assert captured.raw_body == response.text
+
+
+@pytest.mark.parametrize(
     ("body", "content_type", "status"),
     [
         (b"\xff", "application/json; charset=utf-8", 502),
