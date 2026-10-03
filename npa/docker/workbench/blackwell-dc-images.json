@@ -88,6 +88,14 @@
       "notes": "CPU-only COLMAP ingestion and NCore V4 reader; no Torch, CUDA or GPU architecture assertion. Public release remains quarantined pending exact-image scans and complete capture conversion evidence. NRE reconstruction is a separate RTX-only downstream image."
     },
     {
+      "name": "npa-open3d",
+      "dockerfile": "open3d/Dockerfile",
+      "build_script": "open3d/build.sh",
+      "verdict": "not-applicable",
+      "validation": "not-required",
+      "notes": "CPU-only Open3D registration and Poisson reconstruction; stages request no accelerator and make no GPU architecture assertion. Fresh native proof for the operator image checks known-pose recovery, real reconstruction, support filtering and decoded RRD. Historical six-stage S3 evidence predates mandatory registration_result_sha256 binding and cannot qualify replacement bytes; regenerate legacy reconstruction reports. Exact-image managed-workflow and complete-byte acceptance are separate gates. No accepted public release."
+    },
+    {
       "name": "npa-habitat-sim",
       "dockerfile": "habitat-sim/Dockerfile.bootstrap",
       "verdict": "unknown",

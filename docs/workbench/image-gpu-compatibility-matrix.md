@@ -168,6 +168,7 @@ likewise predates its current coherent release.
 | `npa-lichtblick` | CPU | CPU | CPU | CPU | CPU |
 | `npa-foxglove-embed` | CPU | CPU | CPU | CPU | CPU |
 | `npa-sonic-export` | CPU | CPU | CPU | CPU | CPU |
+| `npa-open3d` (unpublished registration candidate) | CPU | CPU | CPU | CPU | CPU |
 
 **verified** — the release represented by the cell ran a real capability workload on that GPU; follow the cell's linked evidence.
 **historical evidence** — a real capability workload ran on an earlier release, but does not qualify the current accepted bytes.
@@ -191,6 +192,17 @@ Its [source-capture workflow](guides/nurec-colmap-reconstruct.md) uses a separat
 proprietary NRE consumer on RTX PRO 6000; CPU compatibility does not make that
 rendering workflow portable to B200/B300. Public release and full live-workflow
 acceptance remain pending for the ingestion candidate.
+
+`npa-open3d` uses Open3D's CPU registration and legacy geometry operations; its
+workflow stages request no accelerator. The fresh private candidate's native
+functional gate checks known-pose recovery, reconstruction, support filtering,
+and decoded RRD output. Historical six-stage S3 proof predates the current
+mandatory registration-report hash and does not validate replacement bytes;
+regenerate legacy reconstruction artifacts before recording them. Review fresh
+exact-image managed-workflow and complete-byte evidence separately. The image
+remains a private validation candidate with no accepted public release or GPU
+architecture claim. See the [container catalog](container-image-catalog.md#pending-open3d-registration-image).
+
 
 `npa-robotwin`'s `unknown` / `pending-build` inventory record and the row above
 describe its quarantined supported-release candidate. Supported release and

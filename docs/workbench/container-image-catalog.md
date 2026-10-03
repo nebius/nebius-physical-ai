@@ -278,6 +278,34 @@ Select development bytes only with an explicit immutable image digest.
 The existing NRE GPU consumer remains separately licensed. The new full
 COLMAP-to-reconstruction workflow is **not yet live validated**.
 
+## Pending Open3D registration image
+
+`npa-open3d` is a development validation candidate for the
+[point-cloud registration workflow](../../workflows/testing/open3d-registration.yaml).
+It packages the MIT Open3D 0.20.0 PyPI wheel and the exact NPA source revision on
+the digest-pinned `python:3.11-slim-trixie` base, with no baked dataset, weights,
+or credentials; the upstream `open3d.data` scans download at runtime. Packaging
+marks it redistribution-eligible but quarantined from public publication until its
+exact-image byte scans are accepted, so there is **no accepted public release row
+and no verified anonymous pull claim** for this image. Select development bytes
+only with an explicit immutable image digest.
+
+The current recording contract binds the exact registration report, manifest,
+pose graph, fused cloud, and both mesh artifacts before publishing an RRD.
+Reconstruction reports without `registration_result_sha256` must be regenerated;
+historical six-stage S3 evidence predates this binding and does not qualify
+replacement image bytes. The fresh native functional gate passed in the private
+candidate built from `07968922ab665c53114a1c6b3bfad9fd03edbb03`, checking a known
+pose, real reconstruction, observation-distance filtering, and decoded RRD
+output. Exact-image managed-workflow and complete-byte evidence must be reviewed
+separately before acceptance; this catalog does not admit a public release.
+
+These Open3D `pipelines.registration` and legacy geometry operations run on CPU,
+so the stages request no accelerator and carry no GPU architecture claim. Demo
+inputs are the synthetic augmented ICL-NUIM scene distributed as
+`DemoICPPointClouds` under CC BY 3.0, not real sensor captures. Distance to an
+observed sample does not establish surface correctness or collision safety.
+
 ## 2026-09-04 coherent Sim2Real publication
 
 The five mandatory Sim2Real roles were built from reviewed source commit
