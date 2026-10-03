@@ -72,6 +72,14 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "flux3-action-so101-finetune.yaml",
+        "gpu",
+        secret_envs=("HF_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        rotation_skip=True,
+        skip_reason="Requires a reviewed private FLUX image and an operator-owned registry pull Secret; public publication is quarantined.",
+        notes="Real pinned SO-101 LoRA with raw/EMA adapters, native checkpoint resume, and S3 completion evidence. Supply the private image and pull Secret when materializing the workflow.",
+    ),
+    SubmitLiveCase(
         "rgbd-scan-to-policy-demo.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

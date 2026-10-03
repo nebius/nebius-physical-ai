@@ -41,7 +41,9 @@ recovery was blocked by an expired registry credential, and the exact old job
 was reconciled and cancelled. Checkpoint recovery and terminal acceptance remain
 pending in the workflow readiness record. The retained evidence does not identify
 the reason for signal 9. The workflow now requests 128 GiB host memory and
-180 GiB ephemeral storage to provide headroom for native checkpoint recovery.
+105 GB ephemeral storage to fit the existing worker disks. Older local checkpoint
+copies are removed only after successful S3 uploads and hash readbacks; the latest
+native checkpoint and every remote checkpoint remain available.
 
 ## Smallest implementation
 
@@ -108,3 +110,9 @@ base digest with `--build-arg BASE_IMAGE=<reviewed-image@sha256:digest>` and use
 `npa/` as the build context. The complete Dockerfile remains the reproducible
 from-source build. Both paths require payload scans and real GPU acceptance;
 public publication remains quarantined.
+
+The GPU live-submit matrix registers this real workflow. For the repository E2E
+runner, provide `NPA_E2E_FLUX3_IMAGE` with the reviewed immutable private digest and
+`NPA_E2E_FLUX3_PULL_SECRET` with the existing operator-owned pull Secret. Automatic
+public-image rotation excludes it while publication is quarantined. The live
+materializer retains the requested 60,000-microstep recipe.

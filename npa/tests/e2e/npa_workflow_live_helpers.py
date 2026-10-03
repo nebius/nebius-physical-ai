@@ -30,6 +30,7 @@ from urllib.parse import urlparse
 
 import httpx
 import pytest
+import yaml
 from typer.testing import Result
 
 from npa.clients.config import resolve_project_storage
@@ -1840,6 +1841,15 @@ def materialize_live_spec(
         text,
         count=1,
     )
+    if name == "flux3-action-so101-finetune.yaml":
+        image = os.environ.get("NPA_E2E_FLUX3_IMAGE", "").strip()
+        secret = os.environ.get("NPA_E2E_FLUX3_PULL_SECRET", "").strip()
+        if not re.fullmatch(r".+@sha256:[0-9a-f]{64}", image) or not secret:
+            pytest.fail("FLUX live validation requires NPA_E2E_FLUX3_IMAGE at an exact digest and NPA_E2E_FLUX3_PULL_SECRET")
+        payload = yaml.safe_load(text)
+        payload["config"]["flux3_image"] = image
+        payload["config"]["image_pull_secret"] = secret
+        text = yaml.safe_dump(payload, sort_keys=False)
     paidf_stem = name.replace(".yaml", "")
     if name in {
         "paidf-image-attribute-augmentation.yaml",

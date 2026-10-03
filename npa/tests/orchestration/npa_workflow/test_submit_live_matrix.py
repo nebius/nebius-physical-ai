@@ -1186,3 +1186,21 @@ def test_navigation_live_spec_uses_explicit_operator_inputs(tmp_path, monkeypatc
             bucket="fixture-bucket",
             run_id="fixture",
         )
+
+
+def test_flux3_live_materializer_requires_reviewed_image_and_pull_secret(monkeypatch, tmp_path):
+    helpers = _load_live_helpers()
+    monkeypatch.delenv("NPA_E2E_FLUX3_IMAGE", raising=False)
+    monkeypatch.delenv("NPA_E2E_FLUX3_PULL_SECRET", raising=False)
+    with pytest.raises(pytest.fail.Exception, match="NPA_E2E_FLUX3_IMAGE"):
+        helpers.materialize_live_spec(tmp_path, "flux3-action-so101-finetune.yaml",
+                                      bucket="example-bucket", run_id="flux-fixture")
+    image = "registry.example.invalid/npa-lerobot-flux3@sha256:" + "a" * 64
+    monkeypatch.setenv("NPA_E2E_FLUX3_IMAGE", image)
+    monkeypatch.setenv("NPA_E2E_FLUX3_PULL_SECRET", "operator-pull-secret")
+    path = helpers.materialize_live_spec(tmp_path, "flux3-action-so101-finetune.yaml",
+                                         bucket="example-bucket", run_id="flux-fixture")
+    payload = yaml.safe_load(path.read_text())
+    assert payload["config"]["flux3_image"] == image
+    assert payload["config"]["image_pull_secret"] == "operator-pull-secret"
+    assert payload["config"]["train_steps"] == "60000"

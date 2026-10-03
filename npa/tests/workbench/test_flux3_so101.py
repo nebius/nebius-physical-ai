@@ -283,3 +283,21 @@ def test_resume_checks_hashes_topology_and_training_state(tmp_path, monkeypatch)
     assert json.loads(
         (checkpoint / "pretrained_model/adapter_config.json").read_text()
     )["base_model_name_or_path"] == str(tmp_path / "policy")
+
+
+def test_prune_keeps_latest_and_preserves_last_symlink(tmp_path):
+    from npa.workbench.lerobot.flux3_so101.runner import _prune_local_checkpoints
+
+    result = tmp_path / "result"
+    for parent in (tmp_path / "trainer/checkpoints", result / "checkpoints"):
+        for name in ("005000", "010000"):
+            checkpoint = parent / name
+            checkpoint.mkdir(parents=True)
+            (checkpoint / "state").write_bytes(b"retained remotely")
+    last = tmp_path / "trainer/checkpoints/last"
+    last.symlink_to("010000", target_is_directory=True)
+    _prune_local_checkpoints(tmp_path, result, "010000")
+    assert last.resolve().is_dir()
+    for parent in (tmp_path / "trainer/checkpoints", result / "checkpoints"):
+        assert not (parent / "005000").exists()
+        assert (parent / "010000/state").read_bytes() == b"retained remotely"

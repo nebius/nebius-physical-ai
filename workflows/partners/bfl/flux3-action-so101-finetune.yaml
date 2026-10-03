@@ -20,7 +20,7 @@ resources:
     accelerators: H100:1
     cpus: 14
     memory: 128Gi
-    disk_size: 180
+    disk_size: 105
     image: "{{config.flux3_image}}"
     kubernetes:
       pod_config:

@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -175,6 +176,21 @@ def _upload_checkpoint(
     )
 
 
+def _prune_local_checkpoints(work: Path, result: Path, latest: str) -> None:
+    # Remote readbacks have passed before callers discard these redundant copies.
+    for parent in (work / "trainer/checkpoints", result / "checkpoints"):
+        if not parent.is_dir():
+            continue
+        for path in parent.iterdir():
+            if (
+                path.name.isdigit()
+                and int(path.name) < int(latest)
+                and path.is_dir()
+                and not path.is_symlink()
+            ):
+                shutil.rmtree(path)
+
+
 def _upload_diagnostics(storage: StorageClient, result: Path, output_path: str) -> None:
     for name in ("train.log", "command.json", "calibration-report.json"):
         path = result / name
@@ -224,7 +240,7 @@ def run(*, output_path: str, run_id: str, steps: int, input_path: str = "") -> d
         (result / "command.json").write_text(json.dumps(command, indent=2) + "\n")
         _upload_diagnostics(storage, result, output_path)
         log_path = result / "train.log"
-        uploaded: set[str] = set()
+        uploaded: dict[str, dict] = {}
         failures: list[Exception] = []
 
         def upload_ready() -> list[dict]:
@@ -234,9 +250,10 @@ def run(*, output_path: str, run_id: str, steps: int, input_path: str = "") -> d
             for item in records:
                 if item["directory"] not in uploaded:
                     _upload_checkpoint(storage, result, item, output_path)
-                    uploaded.add(item["directory"])
+                    uploaded[item["directory"]] = item
+                    _prune_local_checkpoints(work, result, item["directory"])
                     _upload_diagnostics(storage, result, output_path)
-            return records
+            return [uploaded[key] for key in sorted(uploaded, key=int)]
 
         with log_path.open("w") as log:
             process = subprocess.Popen(
