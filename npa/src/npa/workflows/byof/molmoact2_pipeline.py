@@ -21,7 +21,7 @@ from typing import Any, Sequence
 
 UPSTREAM_REPOSITORY = "https://github.com/allenai/molmoact2"
 UPSTREAM_REVISION = "6070080a20321b4f498ab30f28e1d09ac465edb7"
-LEROBOT_REVISION = "80633827176a0203064cb141383664fba024e050"
+LEROBOT_SOURCE_PATH = "experiments/lerobot"
 LIBERO_DATASET = "allenai/MolmoAct2-LIBERO-Dataset"
 LIBERO_DATASET_REVISION = "fe3ead447f44c0ea950396360b304cc2fb6be8f8"
 BASE_CHECKPOINT = "allenai/MolmoAct2"
@@ -217,10 +217,12 @@ def _download_prepared(prepared_uri: str, work: Path) -> tuple[Path, Path, dict[
 
 
 def _latest_inference_checkpoint(root: Path) -> Path:
-    candidates = sorted(
-        [*root.glob("step*-merged"), *root.glob("step*-unsharded")],
-        key=lambda path: path.name,
-    )
+    # The pinned upstream LeRobot evaluator documents ``step*-merged`` as the
+    # inference artifact. Prefer it even when the trainer also leaves an
+    # unsharded training export beside it.
+    candidates = sorted(root.glob("step*-merged"), key=lambda path: path.name)
+    if not candidates:
+        candidates = sorted(root.glob("step*-unsharded"), key=lambda path: path.name)
     if not candidates:
         raise MolmoAct2PipelineError("upstream trainer did not emit an inference checkpoint")
     return candidates[-1]
@@ -248,15 +250,23 @@ def finetune(args: argparse.Namespace) -> dict[str, Any]:
         "torchrun", "--standalone", "--nproc-per-node=1",
         "launch_scripts/train_lerobot.py", BASE_CHECKPOINT, "libero",
         f"--save_folder={output}",
-        "--packing=false", "--dynamic_seq_len=true", "--ft_vlm=false",
-        "--ft_action_expert=true", "--ft_embedding=none",
+        # This is the upstream LoRA recipe: it causes the trainer's native
+        # merged-checkpoint path to produce a complete inference artifact for
+        # the downstream closed-loop evaluator.
+        "--packing=false", "--dynamic_seq_len=true", "--ft_vlm=true",
+        "--ft_action_expert=true", "--ft_embedding=lm_head",
+        "--lora_enable=true", "--lora_rank=64",
     ]
     _run(command, cwd=upstream, env=environment)
     merged = _latest_inference_checkpoint(output)
     checkpoint_manifest = {
         "schema": "npa.molmoact2.libero-checkpoint.v1",
         "base_checkpoint": {"repo_id": BASE_CHECKPOINT, "revision": BASE_CHECKPOINT_REVISION},
-        "upstream": {"repository": UPSTREAM_REPOSITORY, "revision": UPSTREAM_REVISION, "lerobot_revision": LEROBOT_REVISION},
+        "upstream": {
+            "repository": UPSTREAM_REPOSITORY,
+            "revision": UPSTREAM_REVISION,
+            "lerobot_source_path": LEROBOT_SOURCE_PATH,
+        },
         "prepared_dataset_uri": args.prepared_dataset_uri,
         "train_episode_indices": split["train_episode_indices"],
         "heldout_episode_indices": split["heldout_episode_indices"],

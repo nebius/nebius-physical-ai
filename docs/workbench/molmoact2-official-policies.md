@@ -10,7 +10,7 @@ integration rather than duplicating policy runtime code.
 | Boundary | Pinned identity / decision |
 | --- | --- |
 | Source | [AllenAI `molmoact2`](https://github.com/allenai/molmoact2) `6070080a20321b4f498ab30f28e1d09ac465edb7`, Apache-2.0 ([LICENSE](https://github.com/allenai/molmoact2/blob/6070080a20321b4f498ab30f28e1d09ac465edb7/LICENSE)) |
-| Upstream LeRobot integration | `experiments/lerobot` submodule `80633827176a0203064cb141383664fba024e050`, Apache-2.0; credit to the Hugging Face LeRobot contributors |
+| Upstream LeRobot integration | Apache-2.0 `experiments/lerobot` tree committed in the exact MolmoAct2 source revision; credit to the Hugging Face LeRobot contributors. The upstream root's separate `lerobot/` gitlink is `80633827176a0203064cb141383664fba024e050`, but the runnable trainer imports `experiments/lerobot`; they are not treated as interchangeable. |
 | Foundation checkpoint | [`allenai/MolmoAct2`](https://huggingface.co/allenai/MolmoAct2) `e432d85f6e039edca44afb93c262f3084ab72a9c`; runtime fetch only. The upstream page identifies it as a foundation checkpoint, not a ready-to-run deployment policy. |
 | Official LIBERO policy/data | [`allenai/MolmoAct2-LIBERO`](https://huggingface.co/allenai/MolmoAct2-LIBERO) `0d24a92bd1faf321ef497c3bbd5681af97c65aa2`; [`allenai/MolmoAct2-LIBERO-Dataset`](https://huggingface.co/datasets/allenai/MolmoAct2-LIBERO-Dataset) `fe3ead447f44c0ea950396360b304cc2fb6be8f8`, dataset card `apache-2.0`; runtime fetch only. |
 | LIBERO simulator | [Lifelong-Robot-Learning/LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO), MIT, installed through the upstream LeRobot `libero` extra. |
@@ -57,6 +57,11 @@ The LIBERO tag contract is upstream-native: `observation.state`, `action`,
 gripper; delta end-effector action; 10-step action horizon / 10 executed
 actions. The adapter validates all keys before training and uses the checkpoint
 `norm_tag=libero`; it does not quietly rename cameras or normalize the gripper.
+The training stage uses the upstream LoRA fine-tuning form (`ft_vlm`, action
+expert, LM head, rank-64 LoRA) so the upstream trainer emits its documented
+complete `step*-merged` checkpoint for the downstream LeRobot rollout. It
+does not supply a locally invented duration, GPU count, or benchmark-success
+threshold.
 
 The source also publishes contracts for, but this workflow does not yet accept:
 

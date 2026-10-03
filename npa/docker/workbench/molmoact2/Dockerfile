@@ -4,7 +4,6 @@
 FROM nvidia/cuda:12.4.1-devel-ubuntu22.04@sha256:da6791294b0b04d7e65d87b7451d6f2390b4d36225ab0701ee7dfec5769829f5
 
 ARG MOLMOACT2_REVISION=6070080a20321b4f498ab30f28e1d09ac465edb7
-ARG LEROBOT_REVISION=80633827176a0203064cb141383664fba024e050
 
 LABEL org.opencontainers.image.source="https://github.com/allenai/molmoact2" \
       org.opencontainers.image.revision="${MOLMOACT2_REVISION}" \
@@ -37,15 +36,18 @@ RUN python3.12 -m venv /opt/venv \
     && /opt/venv/bin/pip install boto3 huggingface_hub rerun-sdk
 ENV PATH=/opt/venv/bin:$PATH
 
-# Fetch source only.  LFS smudging is disabled so no checkpoint/data payload can
-# enter a layer.  The vendored LeRobot submodule is pinned independently.
+# Fetch source only. LFS smudging is disabled so no checkpoint/data payload can
+# enter a layer. The runnable trainer imports the ``experiments/lerobot`` tree
+# committed at this source revision; it is not the separate root gitlink.
 RUN git lfs install --skip-smudge \
-    && GIT_LFS_SKIP_SMUDGE=1 git clone https://github.com/allenai/molmoact2.git /opt/molmoact2 \
+    && GIT_LFS_SKIP_SMUDGE=1 git clone --no-checkout https://github.com/allenai/molmoact2.git /opt/molmoact2 \
+    && git -C /opt/molmoact2 config filter.lfs.process '' \
+    && git -C /opt/molmoact2 config filter.lfs.required false \
+    && git -C /opt/molmoact2 config filter.lfs.smudge cat \
     && cd /opt/molmoact2 \
-    && git checkout --detach "${MOLMOACT2_REVISION}" \
-    && GIT_LFS_SKIP_SMUDGE=1 git submodule update --init --depth 1 experiments/lerobot \
-    && test "$(git -C experiments/lerobot rev-parse HEAD)" = "${LEROBOT_REVISION}" \
-    && git lfs uninstall
+    && GIT_LFS_SKIP_SMUDGE=1 git checkout --force --detach "${MOLMOACT2_REVISION}" \
+    && test -f experiments/lerobot/pyproject.toml \
+    && rm -rf /opt/molmoact2/.git
 
 RUN cd /opt/molmoact2/experiments \
     && pip install -e ".[all]" \

@@ -7,9 +7,12 @@ Copyright and attribution remain with the upstream authors. See the upstream
 [`NOTICE`](https://github.com/allenai/molmoact2/tree/6070080a20321b4f498ab30f28e1d09ac465edb7),
 and citation material in its README.
 
-It also includes the upstream-pinned `experiments/lerobot` submodule at
-`80633827176a0203064cb141383664fba024e050`, whose repository is licensed
-Apache-2.0 and attributed to the Hugging Face LeRobot contributors.
+It also includes the LeRobot-derived `experiments/lerobot` tree committed in
+that exact MolmoAct2 source revision, licensed Apache-2.0 and attributed to the
+Hugging Face LeRobot contributors. The upstream root also records a separate
+`lerobot/` gitlink at `80633827176a0203064cb141383664fba024e050`; the runnable
+MolmoAct2 trainer imports the committed `experiments/lerobot` tree instead, so
+the two are not represented as interchangeable runtime revisions.
 
 The official LIBERO benchmark source is [Lifelong-Robot-Learning/LIBERO](https://github.com/Lifelong-Robot-Learning/LIBERO),
 licensed MIT.  LIBERO simulation is installed via the upstream LeRobot extra,

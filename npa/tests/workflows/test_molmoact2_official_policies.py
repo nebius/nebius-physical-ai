@@ -82,3 +82,11 @@ def test_workflow_never_passes_foundation_checkpoint_to_rollout() -> None:
     assert pipeline.BASE_CHECKPOINT not in rollout_args
     assert "--checkpoint-uri" in rollout_args
     assert plan.steps[1].outputs[0]["uri"] in rollout_args
+
+
+def test_training_uses_upstream_lora_path_that_emits_an_inference_checkpoint() -> None:
+    source = Path(pipeline.__file__).read_text(encoding="utf-8")
+
+    assert '"--lora_enable=true"' in source
+    assert '"--lora_rank=64"' in source
+    assert 'root.glob("step*-merged")' in source
