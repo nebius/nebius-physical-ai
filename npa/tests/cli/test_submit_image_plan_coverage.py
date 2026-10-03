@@ -16,7 +16,10 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     plan_images,
 )
 from npa.orchestration.npa_workflow.submit import load_spec_for_submit
-from npa.orchestration.skypilot.registry_preflight import ImagePullCheck
+from npa.orchestration.skypilot.registry_preflight import (
+    ImagePullCheck,
+    KubernetesPullTarget,
+)
 
 
 PRIMARY_IMAGE = "registry.example.invalid/workflow/primary:release"
@@ -99,6 +102,10 @@ def external_checks(monkeypatch):
     monkeypatch.setattr(
         "npa.orchestration.skypilot.registry_preflight.check_image_pulls_with_credentials",
         pull,
+    )
+    monkeypatch.setattr(
+        "npa.orchestration.skypilot.registry_preflight.resolve_kubernetes_pull_target",
+        lambda **_kwargs: KubernetesPullTarget(namespace="target-namespace"),
     )
     monkeypatch.setattr(workflow_cli, "_preflight_image_bootstrap_contracts", bootstrap)
     return observed
