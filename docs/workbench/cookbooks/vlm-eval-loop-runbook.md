@@ -79,6 +79,8 @@ score-derived label. Before reviewing thin geometry or skeletons, compare
 retained submitted-frame dimensions with the source because normalization can
 remove the defect.
 
+## Live provenance verification
+
 ### Served-model sampling live lane
 
 To verify this against your existing authenticated GPU endpoint, set
