@@ -609,6 +609,9 @@ def test_green_pytest_counts_cannot_mask_retained_artifact_faults(
     elif fault == "typed_error":
         assert receipt["outcomes"][0]["primary"]["score"] is None
         assert receipt["outcomes"][0]["primary"]["error_type"] == "transport_error"
+    elif fault == "changed_bytes":
+        assert receipt["failure"] == "missing_or_unexpected_audit_artifacts"
+        assert [row["control_index"] for row in receipt["outcomes"]] == [0, 1, 2]
 
 
 def _three_controls(monkeypatch, tmp_path):
@@ -641,7 +644,7 @@ def _change_bytes_after_first_read(monkeypatch, runner):
 
     def read(path, target):
         content = original(path, target)
-        if path not in observed:
+        if path.name == runner.JUDGE_COMPARISON_RESULT_FILENAME and not observed:
             observed.add(path)
             path.write_bytes(content + b"\n")
         return content
