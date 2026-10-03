@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from botocore.exceptions import BotoCoreError, ClientError
 from botocore.exceptions import ConnectionError as StorageConnectionError
-from botocore.exceptions import HTTPClientError
+from botocore.exceptions import HTTPClientError, IncompleteReadError
 
 from npa.clients.storage import StorageClient, StorageError
 from npa.workbench.storage_scope import authorize_uri
@@ -640,7 +640,9 @@ def _ensure_artifacts_absent(storage: Any, uris: list[str]) -> None:
 
 
 def _storage_failure_is_retryable(error: Exception) -> bool:
-    if isinstance(error, (StorageConnectionError, HTTPClientError)):
+    if isinstance(
+        error, (StorageConnectionError, HTTPClientError, IncompleteReadError)
+    ):
         return True
     if not isinstance(error, ClientError):
         return False
