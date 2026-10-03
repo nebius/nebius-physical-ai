@@ -17,6 +17,18 @@ Every scored response must report the exact value
 missing completion metadata before parsing the verdict, including parseable
 JSON from a truncated response. Update self-hosted adapters that omit the field.
 
+Incomplete judge output aborts `run`, the entire `loop`, or the benchmark sweep;
+it is not converted to a score-zero valid verdict. The CLI exits nonzero. In a
+two-rollout loop, a completed first rollout's artifact may remain, but an
+incomplete second rollout produces neither its result nor a new aggregate
+`task_success_report.json`. Treat those earlier artifacts as partial evidence,
+not a successful run. Do not continue promotion after a failed judge command.
+Use a new run-specific output location: the evaluator does not erase artifacts
+from previous runs, and an independently invoked historical-artifact reader
+cannot infer which producer invocation failed. In particular, an absent
+canonical report can permit a valid legacy report to be read; malformed or
+ineligible **present** canonical reports never fall back to favorable legacy.
+
 Successful real-backend results also contain an `evidence` record. It binds the
 requested and returned model to:
 

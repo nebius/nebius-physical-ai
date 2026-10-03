@@ -2626,12 +2626,16 @@ def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
 ) -> None:
     legacy = tmp_path / LEGACY_RESULT_FILENAME
     legacy.write_text(json.dumps(_provider_vlm_report(monkeypatch, tmp_path)))
+    assert not (tmp_path / RESULT_FILENAME).exists()
 
     decision = dfs.grade_gate(
         str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
     )
 
     assert decision == "promote_checkpoint"
+    # This is intentional historical-artifact compatibility, not evidence that
+    # a missing/failed current producer invocation succeeded.
+    assert json.loads((tmp_path / "decision.json").read_text())["report_sha256"]
 
 
 @pytest.mark.parametrize("canonical", ['{"status": "passed"', "null", "[]", "{}"])

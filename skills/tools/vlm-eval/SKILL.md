@@ -86,6 +86,16 @@ Both real backends require the exact response value
 tool-call, aborted, empty, malformed, or missing completion metadata is rejected.
 Self-hosted adapters that omit this metadata must emit the standard field.
 
+An incomplete response aborts the whole `loop` or benchmark sweep and makes the
+CLI fail nonzero; never substitute a fabricated score-zero valid verdict.
+Previously completed per-rollout artifacts may remain, but no new aggregate
+report is written after the rejection. Retain these as partial evidence and do
+not run promotion after the failed producer. Use new run-scoped output paths;
+old artifacts are not deleted. A standalone historical report reader can accept
+a valid legacy file when the canonical file is absent, but cannot establish
+that a new producer invocation succeeded. Present malformed/ineligible canonical
+reports remain authoritative and fail closed, without favorable legacy fallback.
+
 The `self-hosted` backend preserves its legacy compatibility parser: it can
 extract embedded JSON, accept duplicate keys and coerced types, and clamp scores.
 Completion evidence does not certify promotion eligibility. The operator
