@@ -81,17 +81,18 @@ def orient_camera(env) -> None:
     env.sim.render()
 
 
-def camera_frame(env) -> np.ndarray:
+def camera_frame(env, name: str = "npa_rollout_camera") -> np.ndarray:
     """Copy one actual RTX frame with the configured image dimensions.
 
     Args:
         env: Initialized native environment with the studio camera.
+        name: Native camera sensor to sample before the next action.
     Returns:
         RGB uint8 pixels before the next applied action.
     Raises:
         ValueError: The renderer returned the wrong shape or dtype.
     """
-    camera = env.scene["npa_rollout_camera"]
+    camera = env.scene[name]
     frame = camera.data.output["rgb"].torch[0, ..., :3].detach().cpu().numpy()
     if (
         frame.shape != (camera.cfg.height, camera.cfg.width, 3)

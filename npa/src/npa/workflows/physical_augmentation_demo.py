@@ -82,7 +82,7 @@ def _trial(source, output, recipe, attempt, fps):
     frames = np.load(root / "rgb.npy", mmap_mode="r", allow_pickle=False)
     _encode_video(frames, video, fps=fps)
     metadata = _verify_video(video, attempt, recipe["presentation"], fps)
-    return {
+    trial = {
         "condition": attempt["condition"],
         "attempt": attempt["attempt"],
         "seed": attempt["seed"],
@@ -94,6 +94,23 @@ def _trial(source, output, recipe, attempt, fps):
         "video_evidence": metadata,
         "telemetry": _telemetry(root, recipe, attempt),
     }
+    if "scene_binding" in recipe:
+        _wrist_trial(root, output, trial, fps)
+    return trial
+
+
+def _wrist_trial(root, output, trial, fps):
+    frames = np.load(root / "wrist_rgb.npy", mmap_mode="r", allow_pickle=False)
+    video = (
+        output / f"demo/videos/{trial['condition']}-{trial['attempt']:03d}-wrist.mp4"
+    )
+    _encode_video(frames, video, fps=fps)
+    trial["wrist_video_evidence"] = _verify_video(
+        video, {"length": trial["frames"]}, {"width": 320, "height": 240}, fps
+    )
+    trial["wrist_video"] = (
+        "data:video/mp4;base64," + base64.b64encode(video.read_bytes()).decode()
+    )
 
 
 def _html(payload: dict, output: Path) -> None:
@@ -220,6 +237,7 @@ def _payload(source, recipe, trials, identity):
         "action_semantics": recipe["action_semantics"],
         "outcome_time_offset_s": identity["control_dt"],
         "recipe_sha256": file_sha256(source / "recipe.json"),
+        "scene_binding": recipe.get("scene_binding"),
     }
 
 

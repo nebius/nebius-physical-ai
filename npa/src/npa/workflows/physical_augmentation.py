@@ -43,6 +43,8 @@ def _collect(source: Path, output: Path) -> None:
     recipe = read_recipe(source / "recipe.json")
     output.mkdir(parents=True)
     shutil.copy2(source / "recipe.json", output / "recipe.json")
+    if "scene_binding" in recipe:
+        shutil.copy2(source / "scene.usdc", output / "scene.usdc")
     for condition in recipe["conditions"]:
         _collect_condition(source, output, condition)
     write_json(

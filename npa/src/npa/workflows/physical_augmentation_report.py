@@ -44,12 +44,15 @@ def verify_episode(root: Path, recipe: dict, dt: float) -> dict:
         OSError: Required evidence is missing.
     """
     result = json.loads((root / "result.json").read_text())
+    channels = _CHANNELS + (("wrist_rgb",) if "scene_binding" in recipe else ())
     arrays = {
         key: np.load(root / f"{key}.npy", allow_pickle=False, mmap_mode="r")
-        for key in _CHANNELS
+        for key in channels
     }
     count = result["length"]
     _validate_arrays(arrays, count, dt, recipe["presentation"])
+    if "wrist_rgb" in arrays:
+        _validate_images(arrays["wrist_rgb"], count, {"width": 320, "height": 240})
     if not np.array_equal(arrays["object"][0], result["initial_object_m"]):
         raise ValueError("Initial object pose differs from the recorded state")
     hold = longest_hold(
@@ -62,7 +65,7 @@ def verify_episode(root: Path, recipe: dict, dt: float) -> dict:
         raise ValueError("Claimed outcome differs from measured physical acceptance")
     return {
         **result,
-        "files": {f"{key}.npy": file_sha256(root / f"{key}.npy") for key in _CHANNELS},
+        "files": {f"{key}.npy": file_sha256(root / f"{key}.npy") for key in channels},
     }
 
 
@@ -190,6 +193,7 @@ def _source_revision() -> dict:
         "workflows/physical_augmentation_servo.py",
         "workflows/physical_augmentation_report.py",
         "workflows/physical_augmentation_scene.py",
+        "workflows/lyra_scene_binding.py",
         "workflows/physical_augmentation_demo.py",
         "workflows/physical_augmentation_demo.html",
         "workflows/franka_rl_validity.py",

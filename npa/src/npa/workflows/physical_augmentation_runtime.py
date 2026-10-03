@@ -23,7 +23,7 @@ from npa.workflows.physical_augmentation_contract import (
 )
 
 
-def _configuration(recipe: dict, condition: str):
+def _configuration(recipe: dict, condition: str, scene_root=None):
     import isaaclab_tasks  # noqa: F401
     from isaaclab_tasks.utils import load_cfg_from_registry
     from npa.workflows.physical_augmentation_scene import configure_scene
@@ -45,6 +45,10 @@ def _configuration(recipe: dict, condition: str):
     _configure_object(config, recipe["conditions"][condition])
     _configure_solver(config, recipe)
     configure_scene(config, recipe)
+    if "scene_binding" in recipe:
+        from npa.workflows.lyra_scene_binding import configure_imported_scene
+
+        configure_imported_scene(config, recipe["scene_binding"], scene_root)
     configure_validity(config, recipe)
     return config
 
@@ -264,6 +268,11 @@ def _transition(
         observed["tcp"], observed["object"], observed["quaternion"]
     )
     frame = camera_frame(env)
+    wrist = (
+        camera_frame(env, "npa_wrist_camera")
+        if "npa_wrist_camera" in env.scene.sensors
+        else None
+    )
     try:
         if _step(env, action):
             return observed, True
@@ -287,6 +296,8 @@ def _transition(
         "next_velocity": after["velocity"],
         "timestamp": step * float(env.step_dt),
     }
+    if wrist is not None:
+        row["wrist_rgb"] = wrist
     for key, value in row.items():
         history.setdefault(key, []).append(value)
     return after, False
@@ -303,7 +314,7 @@ def _episode(env, recipe: dict, condition: str, index: int, output: Path) -> dic
         tail = {
             key: np.asarray(value[-recipe["success"]["hold_steps"] :])
             for key, value in history.items()
-            if key != "rgb"
+            if not key.endswith("rgb")
         }
         if (
             longest_hold(accepted_steps(tail, initial["object"], recipe["success"]))
@@ -396,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
     recipe = read_recipe(args.input_path / "recipe.json")
     configure_seed(recipe["seed"])
     os.environ["OMNI_TELEMETRY_DISABLE_ANONYMOUS_DATA"] = "1"
-    config = _configuration(recipe, args.condition)
+    config = _configuration(recipe, args.condition, args.input_path)
     args.enable_cameras = True
     with launch_simulation(config, args):
         _collect_with_fault_record(config, recipe, args.condition, args.output_path)

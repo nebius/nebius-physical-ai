@@ -105,6 +105,13 @@ def read_recipe(path: Path) -> dict:
         )
     except (KeyError, TypeError) as error:
         raise ValueError("Invalid physical augmentation recipe") from error
+    if "scene_binding" in recipe:
+        from npa.workflows.lyra_scene_binding import validate_binding
+
+        validate_binding(recipe["scene_binding"], path.parent)
+        expected["scene_binding"] = recipe["scene_binding"]
+        expected["presentation"]["scene"] = "lyra-reconstructed-surface-v1"
+        expected["presentation"].update(wrist_width=320, wrist_height=240)
     if recipe != expected:
         raise ValueError(
             "Physical augmentation recipe differs from the supported contract"

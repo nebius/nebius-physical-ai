@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lyra · From captured space to useful actions</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #080d12;
+        --panel: #111b24;
+        --line: #263645;
+        --text: #e9f1f5;
+        --muted: #94aab9;
+        --green: #99f0b0;
+        --blue: #82cfff;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font:
+          15px/1.55 system-ui,
+          -apple-system,
+          sans-serif;
+      }
+      main {
+        max-width: 1440px;
+        margin: auto;
+        padding: 28px 42px 64px;
+      }
+      nav {
+        display: flex;
+        justify-content: space-between;
+        gap: 20px;
+        border-bottom: 1px solid var(--line);
+        padding-bottom: 20px;
+        font-size: 12px;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+      .brand {
+        color: var(--green);
+        font-weight: 700;
+      }
+      .scope {
+        color: var(--muted);
+      }
+      header {
+        padding: 64px 0 35px;
+        max-width: 950px;
+      }
+      h1 {
+        font-size: clamp(38px, 5.7vw, 76px);
+        font-weight: 550;
+        line-height: 1.02;
+        letter-spacing: -0.055em;
+        margin: 12px 0 24px;
+      }
+      h1 span {
+        color: var(--green);
+      }
+      .eyebrow {
+        font-size: 12px;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--blue);
+      }
+      .lede {
+        max-width: 760px;
+        color: var(--muted);
+        font-size: 19px;
+      }
+      h2 {
+        font-weight: 550;
+        font-size: 29px;
+        letter-spacing: -0.03em;
+        margin: 0;
+      }
+      h3 {
+        font-weight: 550;
+        font-size: 18px;
+        margin: 0;
+      }
+      p {
+        margin: 10px 0;
+      }
+      .flow {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1px;
+        background: var(--line);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        margin: 8px 0 32px;
+      }
+      .flow div {
+        padding: 18px;
+        background: var(--panel);
+      }
+      .flow b {
+        display: block;
+        font-size: 14px;
+      }
+      .flow small {
+        color: var(--muted);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 18px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+        background: var(--panel);
+      }
+      .cardhead {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 14px;
+        padding: 15px 20px;
+      }
+      .badge {
+        font: 11px system-ui;
+        letter-spacing: 0.07em;
+        border: 1px solid #365242;
+        border-radius: 20px;
+        color: var(--green);
+        padding: 5px 10px;
+        white-space: nowrap;
+      }
+      .badge.pending {
+        color: #f6ce88;
+        border-color: #715d39;
+      }
+      video {
+        display: block;
+        width: 100%;
+        background: #05080a;
+        aspect-ratio: 4/3;
+        object-fit: contain;
+      }
+      .caption {
+        padding: 13px 20px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+        margin: 18px 0 0;
+      }
+      button,
+      select {
+        font: inherit;
+        color: var(--text);
+        border: 1px solid #36505f;
+        background: #152631;
+        border-radius: 8px;
+        padding: 9px 14px;
+        cursor: pointer;
+      }
+      button:hover,
+      button[aria-pressed="true"] {
+        background: #294a50;
+        border-color: var(--green);
+      }
+      button:focus-visible,
+      select:focus-visible {
+        outline: 2px solid var(--green);
+        outline-offset: 3px;
+      }
+      .section {
+        margin-top: 60px;
+      }
+      .sectiontitle {
+        display: flex;
+        justify-content: space-between;
+        align-items: end;
+        gap: 20px;
+        margin-bottom: 20px;
+      }
+      .sectiontitle p {
+        color: var(--muted);
+        max-width: 590px;
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+        margin: 24px 0;
+      }
+      .stat {
+        padding: 17px 20px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+      }
+      .stat strong {
+        display: block;
+        font-size: 30px;
+        color: var(--green);
+        font-weight: 500;
+      }
+      .stat span {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .meshwrap {
+        position: relative;
+        height: 540px;
+        background: radial-gradient(ellipse at 50% 45%, #1c2d39, #071016);
+      }
+      canvas {
+        width: 100%;
+        height: 100%;
+        touch-action: none;
+      }
+      .meshhelp {
+        position: absolute;
+        left: 20px;
+        bottom: 15px;
+        color: #c2d1dc;
+        font-size: 12px;
+        pointer-events: none;
+      }
+      .empty {
+        padding: 54px 28px;
+        color: var(--muted);
+        min-height: 180px;
+      }
+      .notes {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 18px;
+      }
+      .note {
+        border-top: 1px solid var(--line);
+        padding: 20px 0;
+      }
+      .note p {
+        color: var(--muted);
+      }
+      .number {
+        color: var(--blue);
+        font-size: 12px;
+        margin-bottom: 10px;
+      }
+      .actionvideo {
+        aspect-ratio: 16/9;
+      }
+      .small {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      details {
+        border-top: 1px solid var(--line);
+        padding: 18px 0;
+      }
+      summary {
+        cursor: pointer;
+      }
+      pre {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: #101a22;
+        border: 1px solid var(--line);
+        padding: 18px;
+        border-radius: 10px;
+        font-size: 12px;
+      }
+      a {
+        color: var(--blue);
+      }
+      footer {
+        margin-top: 50px;
+        border-top: 1px solid var(--line);
+        padding-top: 20px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .progress {
+        height: 4px;
+        background: #1c3443;
+        border-radius: 4px;
+        margin: 8px 0;
+      }
+      .progress div {
+        height: 100%;
+        background: var(--green);
+        width: 0;
+      }
+      .metric {
+        display: flex;
+        justify-content: space-between;
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .privacy {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 16px;
+      }
+      @media (max-width: 760px) {
+        main {
+          padding: 20px;
+        }
+        header {
+          padding-top: 40px;
+        }
+        .grid,
+        .notes {
+          grid-template-columns: 1fr;
+        }
+        .flow,
+        .stats {
+          grid-template-columns: 1fr 1fr;
+        }
+        .sectiontitle {
+          display: block;
+        }
+        .meshwrap {
+          height: 380px;
+        }
+        nav {
+          letter-spacing: 0.07em;
+        }
+        .scope {
+          max-width: 170px;
+          text-align: right;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav>
+        <span class="brand">Workbench / Lyra 2</span
+        ><span class="scope">Private research demonstration</span>
+      </nav>
+      <header>
+        <div class="eyebrow">Capture → Reconstruction → Physics → Actions</div>
+        <h1>Make a captured world<br /><span>useful for a robot.</span></h1>
+        <p class="lede">
+          Reconstruct appearance with Lyra. Calibrate collision geometry.
+          Execute fresh actions as position, mass and friction change.
+        </p>
+        <p class="privacy" id="scope"></p>
+      </header>
+      <div class="flow" id="flow"></div>
+      <div class="grid">
+        <article class="card">
+          <div class="cardhead">
+            <h3>01 / Captured space</h3>
+            <span class="badge">Source RGB</span>
+          </div>
+          <div id="source"></div>
+          <div class="caption">
+            Real recorded views. Measured depth is reserved for calibration
+            checks, not supplied to Lyra inference.
+          </div>
+        </article>
+        <article class="card">
+          <div class="cardhead">
+            <h3>02 / Lyra reconstruction</h3>
+            <span class="badge" id="reconbadge">Pending</span>
+          </div>
+          <div id="reconstruction"></div>
+          <div class="caption">
+            Native Lyra Gaussian rendering. This is appearance reconstruction;
+            robot actions are generated in simulation below.
+          </div>
+        </article>
+      </div>
+      <div class="toolbar">
+        <button id="play-comparison">Play comparison</button
+        ><button id="restart-comparison">Restart together</button
+        ><span class="small"
+          >Original camera trajectory · synchronized replay</span
+        >
+      </div>
+      <section class="section">
+        <div class="sectiontitle">
+          <div>
+            <div class="eyebrow">A scene with an explicit physical meaning</div>
+            <h2>Inspect the collision surface.</h2>
+          </div>
+          <p>
+            Colored triangles come from Lyra-predicted depth and captured RGB.
+            The same triangles become static Isaac colliders; unseen regions
+            remain unknown.
+          </p>
+        </div>
+        <div class="stats" id="stats"></div>
+        <div class="card">
+          <div class="cardhead">
+            <h3>Reconstructed geometry</h3>
+            <button id="mesh-mode" aria-pressed="false">
+              Show collision wireframe
+            </button>
+          </div>
+          <div class="meshwrap" id="meshwrap">
+            <canvas
+              id="mesh"
+              aria-label="Interactive reconstructed collision mesh"
+            ></canvas>
+            <div class="meshhelp">
+              Drag to orbit · scroll to zoom · geometry in calibrated meters
+            </div>
+          </div>
+        </div>
+      </section>
+      <section class="section">
+        <div class="sectiontitle">
+          <div>
+            <div class="eyebrow">Physical augmentation</div>
+            <h2>Change the world. Recompute the action.</h2>
+          </div>
+          <p>
+            A fixed-base Franka manipulates an explicitly inserted 5 cm cube.
+            Each physical condition gets freshly executed, measured-state IK
+            actions.
+          </p>
+        </div>
+        <div class="toolbar" id="case-controls"></div>
+        <div class="grid" style="margin-top: 18px">
+          <article class="card">
+            <div class="cardhead">
+              <h3 id="actiontitle">Native robot execution</h3>
+              <span id="actionbadge" class="badge pending">Pending</span>
+            </div>
+            <div id="actions"></div>
+            <div class="caption" id="actioncaption"></div>
+          </article>
+          <article class="card">
+            <div class="cardhead">
+              <h3>Wrist view and outcome</h3>
+              <span class="badge">Native camera</span>
+            </div>
+            <div id="wrist"></div>
+            <div style="padding: 20px" id="telemetry"></div>
+          </article>
+        </div>
+      </section>
+      <section class="section">
+        <div class="sectiontitle">
+          <div>
+            <div class="eyebrow">Bring your own scene</div>
+            <h2>Preserve the capture. Make assumptions explicit.</h2>
+          </div>
+        </div>
+        <div class="notes">
+          <div class="note">
+            <div class="number">01 / SCENE</div>
+            <h3>Captured RGB or a Lyra export</h3>
+            <p>
+              Keep camera poses, intrinsics and scale references alongside the
+              scene. Calibrate the reconstruction before metric robot
+              interaction.
+            </p>
+          </div>
+          <div class="note">
+            <div class="number">02 / PHYSICS</div>
+            <h3>Separate static and movable objects</h3>
+            <p>
+              Background colliders stay static. Manipulated objects need
+              separate geometry, mass, friction, joints and task bindings.
+              Appearance alone does not supply these properties.
+            </p>
+          </div>
+          <div class="note">
+            <div class="number">03 / WRIST QUALITY</div>
+            <h3>Validate the camera you will use</h3>
+            <p>
+              Compare held-out wrist views and contact regions. Shorter
+              reconstruction chunks can help long sequences; dynamic arms,
+              missing viewpoints and occlusions still need capture-specific
+              inspection.
+            </p>
+          </div>
+        </div>
+        <details>
+          <summary>Reproduce this pipeline</summary>
+          <pre id="commands"></pre>
+        </details>
+        <details>
+          <summary>Provenance, measurements and limits</summary>
+          <pre id="provenance"></pre>
+        </details>
+      </section>
+      <footer>
+        <span id="attribution"></span>
+        <p>
+          Lyra model outputs remain in this private, non-production R&amp;D
+          demonstration. Native simulated success does not establish policy
+          improvement or physical-robot performance.
+          <a href="https://github.com/nv-tlabs/lyra/tree/main/Lyra-2"
+            >Lyra source</a
+          >
+          ·
+          <a
+            href="https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-internal-scientific-research-and-development-model-license/"
+            >Model terms</a
+          >
+        </p>
+      </footer>
+    </main>
+    <script id="demo-data" type="application/json">
+      __LYRA_DEMO_DATA__
+    </script>
+    <script>
+      "use strict";
+      const d = JSON.parse(document.getElementById("demo-data").textContent),
+        byId = (id) => document.getElementById(id);
+      function text(id, value) {
+        byId(id).textContent = value;
+      }
+      function video(id, uri, action = false) {
+        const parent = byId(id);
+        parent.replaceChildren();
+        if (!uri) {
+          const p = document.createElement("div");
+          p.className = "empty";
+          p.textContent =
+            "No completed native output is available for this stage.";
+          parent.append(p);
+          return null;
+        }
+        const v = document.createElement("video");
+        v.src = uri;
+        v.controls = true;
+        v.muted = true;
+        v.playsInline = true;
+        v.preload = "metadata";
+        if (action) v.className = "actionvideo";
+        parent.append(v);
+        return v;
+      }
+      text("scope", d.scope);
+      text("attribution", d.attribution);
+      text("commands", d.commands);
+      text("provenance", JSON.stringify(d.evidence, null, 2));
+      for (const [name, status] of d.stages) {
+        const box = document.createElement("div"),
+          b = document.createElement("b"),
+          s = document.createElement("small");
+        b.textContent = name;
+        s.textContent = status;
+        box.append(b, s);
+        byId("flow").append(box);
+      }
+      const source = video("source", d.source_video),
+        recon = video("reconstruction", d.reconstruction_video);
+      text("reconbadge", recon ? "Native output" : "Pending");
+      if (!recon) byId("reconbadge").classList.add("pending");
+      byId("play-comparison").onclick = () => {
+        for (const v of [source, recon].filter(Boolean)) {
+          if (v.paused) v.play().catch(() => {});
+          else v.pause();
+        }
+      };
+      byId("restart-comparison").onclick = () => {
+        for (const v of [source, recon].filter(Boolean)) {
+          v.currentTime = 0;
+          v.play().catch(() => {});
+        }
+      };
+      for (const [value, label] of d.stats) {
+        const box = document.createElement("div");
+        box.className = "stat";
+        const strong = document.createElement("strong"),
+          small = document.createElement("span");
+        strong.textContent = value;
+        small.textContent = label;
+        box.append(strong, small);
+        byId("stats").append(box);
+      }
+      function followVideo(leader, follower) {
+        if (!leader || !follower) return;
+        leader.addEventListener("play", () => follower.play().catch(() => {}));
+        leader.addEventListener("pause", () => follower.pause());
+        leader.addEventListener("timeupdate", () => {
+          if (Math.abs(follower.currentTime - leader.currentTime) > 0.15)
+            follower.currentTime = leader.currentTime;
+        });
+      }
+      function telemetryRows(trial, frame) {
+        const t = trial.telemetry,
+          action = t.actions[frame];
+        return [
+          ["Lift", t.lift_cm[frame].toFixed(1) + " cm"],
+          ["Object speed", t.speed_cm_s[frame].toFixed(2) + " cm/s"],
+          ["Stable hold", t.hold_steps[frame] + " / 30 steps"],
+          [
+            "TCP command",
+            action
+              .slice(0, 3)
+              .map((x) => x.toFixed(3))
+              .join(", ") + " m",
+          ],
+          ["Gripper", action[7] > 0 ? "Open" : "Close"],
+        ];
+      }
+      function renderTelemetry(trial, currentTime) {
+        const frame = Math.min(
+          trial.telemetry.actions.length - 1,
+          Math.floor(currentTime * trial.fps),
+        );
+        const pane = byId("telemetry");
+        pane.replaceChildren();
+        for (const [name, value] of telemetryRows(trial, frame)) {
+          const row = document.createElement("p");
+          row.className = "metric";
+          const label = document.createElement("span"),
+            result = document.createElement("strong");
+          label.textContent = name;
+          result.textContent = value;
+          row.append(label, result);
+          pane.append(row);
+        }
+        const note = document.createElement("p");
+        note.className = "small";
+        note.textContent =
+          "Acceptance: ≥10 cm lift, ≤3 cm/s speed, 30 consecutive stable control steps. Telemetry follows this recorded attempt.";
+        pane.append(note);
+      }
+      function selectCase(index) {
+        const trial = d.trials[index];
+        const actionVideo = video("actions", trial.video, true);
+        followVideo(actionVideo, video("wrist", trial.wrist_video));
+        text("actiontitle", trial.label);
+        text("actionbadge", trial.success ? "Accepted" : "Rejected");
+        byId("actionbadge").classList.toggle("pending", !trial.success);
+        text("actioncaption", trial.description);
+        for (const [i, button] of [...byId("case-controls").children].entries())
+          button.setAttribute("aria-pressed", String(i === index));
+        actionVideo?.addEventListener("timeupdate", () =>
+          renderTelemetry(trial, actionVideo.currentTime),
+        );
+        renderTelemetry(trial, 0);
+      }
+      if (d.trials.length) {
+        d.trials.forEach((t, i) => {
+          const b = document.createElement("button");
+          b.textContent = t.label;
+          b.onclick = () => selectCase(i);
+          byId("case-controls").append(b);
+        });
+        selectCase(0);
+      } else {
+        video("actions", null);
+        video("wrist", null);
+        text(
+          "telemetry",
+          "Robot execution has not completed. No action success is claimed.",
+        );
+        text(
+          "actioncaption",
+          "Scene binding and native physics validation are required before useful action data can be exported.",
+        );
+      }
+      function array(b64, Type) {
+        const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+        return new Type(bytes.buffer);
+      }
+      const vertexShader = `#version 300 es
+precision highp float;
+in vec3 position; in vec3 color;
+uniform vec3 center; uniform vec4 camera;
+out vec3 rgb;
+void main() {
+  vec3 p = position - center;
+  float a = camera.x, b = camera.y;
+  vec3 q = vec3(cos(a)*p.x-sin(a)*p.y, sin(a)*p.x+cos(a)*p.y, p.z);
+  vec3 r = vec3(q.x, cos(b)*q.y-sin(b)*q.z, sin(b)*q.y+cos(b)*q.z);
+  gl_Position = vec4(r.x/(camera.z*camera.w), r.z/camera.z, -r.y/(camera.z*8.0), 1);
+  rgb = color;
+}`;
+      const fragmentShader = `#version 300 es
+precision highp float;
+in vec3 rgb; uniform bool wire; out vec4 outColor;
+void main() { outColor = vec4(wire ? vec3(.4,.85,1) : rgb, 1); }`;
+      function meshProgram(gl) {
+        const program = gl.createProgram();
+        for (const [type, code] of [
+          [gl.VERTEX_SHADER, vertexShader],
+          [gl.FRAGMENT_SHADER, fragmentShader],
+        ]) {
+          const shader = gl.createShader(type);
+          gl.shaderSource(shader, code);
+          gl.compileShader(shader);
+          if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS))
+            throw Error(gl.getShaderInfoLog(shader));
+          gl.attachShader(program, shader);
+        }
+        gl.linkProgram(program);
+        if (!gl.getProgramParameter(program, gl.LINK_STATUS))
+          throw Error(gl.getProgramInfoLog(program));
+        gl.useProgram(program);
+        return program;
+      }
+      function meshBuffers(gl, program) {
+        for (const name of ["position", "color"]) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+          gl.bufferData(
+            gl.ARRAY_BUFFER,
+            array(d.mesh[name], Float32Array),
+            gl.STATIC_DRAW,
+          );
+          const location = gl.getAttribLocation(program, name);
+          gl.enableVertexAttribArray(location);
+          gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 0, 0);
+        }
+        const triangles = array(d.mesh.triangles, Uint32Array);
+        const edges = new Uint32Array(triangles.length * 2);
+        for (let i = 0, j = 0; i < triangles.length; i += 3) {
+          for (const [a, b] of [
+            [0, 1],
+            [1, 2],
+            [2, 0],
+          ]) {
+            edges[j++] = triangles[i + a];
+            edges[j++] = triangles[i + b];
+          }
+        }
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer());
+        gl.enable(gl.DEPTH_TEST);
+        return { triangles, edges };
+      }
+      function drawMesh(viewer) {
+        const { canvas, gl, program, camera, buffers } = viewer;
+        const ratio = Math.min(devicePixelRatio || 1, 2);
+        canvas.width = canvas.clientWidth * ratio;
+        canvas.height = canvas.clientHeight * ratio;
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0.035, 0.062, 0.082, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.uniform3fv(gl.getUniformLocation(program, "center"), d.mesh.center);
+        gl.uniform4f(
+          gl.getUniformLocation(program, "camera"),
+          camera.yaw,
+          camera.pitch,
+          camera.zoom,
+          canvas.width / canvas.height,
+        );
+        gl.uniform1i(gl.getUniformLocation(program, "wire"), camera.wire);
+        const selected = camera.wire ? buffers.edges : buffers.triangles;
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, selected, gl.STATIC_DRAW);
+        gl.drawElements(
+          camera.wire ? gl.LINES : gl.TRIANGLES,
+          selected.length,
+          gl.UNSIGNED_INT,
+          0,
+        );
+      }
+      function orbitControls(viewer) {
+        const { canvas, camera } = viewer;
+        let drag = null;
+        canvas.onpointerdown = (e) => {
+          drag = [e.clientX, e.clientY];
+          canvas.setPointerCapture(e.pointerId);
+        };
+        canvas.onpointermove = (e) => {
+          if (!drag) return;
+          camera.yaw += (e.clientX - drag[0]) * 0.006;
+          camera.pitch = Math.max(
+            -1.5,
+            Math.min(1.5, camera.pitch + (e.clientY - drag[1]) * 0.006),
+          );
+          drag = [e.clientX, e.clientY];
+          drawMesh(viewer);
+        };
+        canvas.onpointerup = canvas.onpointercancel = () => {
+          drag = null;
+        };
+        canvas.onwheel = (e) => {
+          e.preventDefault();
+          camera.zoom = Math.max(
+            d.mesh.radius * 0.1,
+            Math.min(
+              d.mesh.radius * 5,
+              camera.zoom * Math.exp(e.deltaY * 0.001),
+            ),
+          );
+          drawMesh(viewer);
+        };
+        byId("mesh-mode").onclick = () => {
+          camera.wire = !camera.wire;
+          byId("mesh-mode").setAttribute("aria-pressed", String(camera.wire));
+          drawMesh(viewer);
+        };
+      }
+      function meshViewer() {
+        if (!d.mesh) {
+          byId("meshwrap").className = "empty";
+          text("meshwrap", "Collision extraction has not completed.");
+          return;
+        }
+        const canvas = byId("mesh"),
+          gl = canvas.getContext("webgl2", { antialias: true });
+        if (!gl) {
+          text(
+            "meshwrap",
+            "WebGL 2 is unavailable. The reconstruction videos remain viewable.",
+          );
+          return;
+        }
+        const program = meshProgram(gl);
+        const viewer = {
+          canvas,
+          gl,
+          program,
+          buffers: meshBuffers(gl, program),
+          camera: {
+            yaw: 0.4,
+            pitch: 0.6,
+            zoom: d.mesh.radius * 1.15,
+            wire: false,
+          },
+        };
+        orbitControls(viewer);
+        new ResizeObserver(() => drawMesh(viewer)).observe(canvas);
+        drawMesh(viewer);
+      }
+      meshViewer();
+      window.lyraDemo = {
+        stages: d.stages,
+        trialCount: d.trials.length,
+        reconstructionAvailable: !!recon,
+        meshAvailable: !!d.mesh,
+      };
+    </script>
+  </body>
+</html>
