@@ -122,6 +122,13 @@ npa workbench token-factory caption \
   --instruction "Describe the scene, objects, and any action."
 ```
 
+Caption requests append `If you cannot see the image pixels, respond exactly:
+NO IMAGE RECEIVED.` after the operator instruction. An exact case-insensitive
+whole-answer match is retained with `status: image_unavailable`; the aggregate
+result is failed, is written before the CLI exits 1, and does not trigger a
+silent retry. Later selected images are still attempted once. `--dry-run` emits
+the same failed result and exits 1 without writing it.
+
 **Batch text generation** over a JSONL/text prompt file — default model
 `nvidia/Nemotron-3_5-Lightning`:
 
