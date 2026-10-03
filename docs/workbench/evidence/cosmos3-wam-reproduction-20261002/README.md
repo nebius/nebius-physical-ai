@@ -14,8 +14,10 @@ between jobs, outside training and profiling windows.
 
 **Measurement status: in progress.** All six timing repetitions completed
 successfully, and every run's complete archive passed SHA-256 read-back.
-Profiling is running; full schedules and checkpoint evaluations remain pending. These timing
-records do not establish a new full-schedule duration or policy-quality result.
+Both separate CUDA profiles also completed and passed archive verification.
+The eight-GPU full schedule is running; the sixteen-GPU full schedule and
+checkpoint evaluations remain pending. The completed timing records do not
+establish a new full-schedule duration or policy-quality result.
 
 ## Repeated timing results
 
@@ -55,6 +57,15 @@ Bars show arithmetic means across run measurements; dots show individual run
 means and error bars show sample standard deviation. The table reports pooled
 token throughput. Run `plot-scaling.py` to reproduce the figure; its inputs and
 output are hash-bound in the [render manifest](scaling-render-manifest.json).
+
+The figure renderers use Python 3.12.12, Matplotlib 3.11.2, and NumPy 2.5.3.
+Install the plotting libraries in the local Workbench checkout's virtualenv;
+the remote training runtime has its
+own frozen dependencies:
+
+```bash
+uv pip install --python npa/.venv/bin/python matplotlib==3.11.2 numpy==2.5.3
+```
 
 For the first completed pair, training-process durations were
 3,137.80 and 1,930.45 seconds, including final checkpoint saves of 399.61 and
@@ -110,6 +121,9 @@ All 20 camera-file and decoded-pixel hashes were independently checked after
 collection. The receipt identifies the pinned simulator packages; its camera
 files are retained with the private qualification evidence. This preflight executes no
 model policy and does not establish task success.
+The [historical comparison](simulation-reproduction.json) also verifies
+identical pinned package versions, all task-state hashes, and all 20 camera
+PNG and pixel hashes against the original simulator-readiness record.
 
 The initial four-node Soperator preflight lacked both reserved GPU headroom
 and non-GPU CPU quota. This reproduction therefore started on the documented
@@ -183,20 +197,28 @@ The [telemetry render manifest](telemetry-render-manifest.json) records the
 source and output hashes and library versions. A second render produced
 identical PNG bytes.
 
+The separate [full-schedule capture](live-full-8.json) matches all eight
+physical-device processes to the 2,000-update run after update 52. Each device
+reported 100% utilization in that live sample. This establishes execution of
+the full-schedule configuration, not completion or whole-run utilization.
+
 ## CUDA profiling
 
-The separate 110-update eight-GPU run completed successfully. Its recorded
-rank-zero window covers two native profiler steps in 29.07 seconds.
+Both separate 110-update profile runs completed successfully. The eight-GPU
+run's recorded rank-zero window covers two native profiler steps in 29.07 seconds.
 The [timeline export](profile-8/timeline/evidence.json) verifies the original
 compressed trace against the completed profile report before computing interval
-unions. The 16-GPU profile remains pending.
+unions. The [sixteen-GPU export](profile-16/timeline/evidence.json) covers ranks
+zero and eight, with two native profiler steps in 14.99 seconds on each rank.
 
 ![CUDA kernel activity across two recorded steps on rank zero of the eight-B200 profiling run.](profile-8/timeline/cuda-timeline.png)
 
+![CUDA kernel activity across two recorded steps on ranks zero and eight of the sixteen-B200 profiling run.](profile-16/timeline/cuda-timeline.png)
+
 The heatmap reports kernel interval coverage in 0.25-second bins. Categories
 overlap, so their rows cannot be added into exposed communication stalls or
-wall-time fractions. Only rank zero is sampled here. The profiled run is
-excluded from throughput comparisons.
+wall-time fractions. Only one rank per node is sampled, and each rank's time
+origin is independent. Both profiled runs are excluded from throughput comparisons.
 
 Set `WAM_PROFILE_RUN` to the retained run directory containing the native trace,
 settings, and `profile.json`; set `WAM_PROFILE_EXPORT` to a new output directory.
