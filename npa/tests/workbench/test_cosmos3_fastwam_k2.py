@@ -16,6 +16,7 @@ from npa.workbench.cosmos.fastwam_k2 import (
     FastWamK2Error,
     _isaac_runtime_env,
     _prepared_payload,
+    _run_robolab,
     apply_k2_runtime_overlay,
     compare_variants,
     server_argv,
@@ -105,6 +106,32 @@ def test_robolab_uses_only_the_shared_isaac_acceptance_surface() -> None:
         assert "explicitly opted out" in str(exc)
     else:  # pragma: no cover - an opt-out must never reach a runtime fetch
         raise AssertionError("explicit Isaac opt-out was accepted")
+
+
+def test_robolab_client_keeps_the_shared_isaac_acceptance_surface(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured: dict[str, str] = {}
+    output = tmp_path / "robolab/output/npa-fastwam-k2-full-wam"
+    output.mkdir(parents=True)
+
+    def fake_run(_argv, *, cwd, env, log) -> None:
+        captured.update(env)
+
+    monkeypatch.setattr("npa.workbench.cosmos.fastwam_k2._run", fake_run)
+    result = _run_robolab(
+        tmp_path / "python",
+        tmp_path / "robolab",
+        EvaluationRequest(),
+        "full-wam",
+        {"ACCEPT_EULA": "Y"},
+        tmp_path / "robolab.log",
+    )
+
+    assert result == output
+    assert captured["ACCEPT_EULA"] == "Y"
+    assert captured["OMNI_KIT_ACCEPT_EULA"] == "YES"
+    assert captured["CUDA_VISIBLE_DEVICES"] == "1"
 
 
 def test_prepared_payload_hashes_matched_task_sources(tmp_path: Path) -> None:

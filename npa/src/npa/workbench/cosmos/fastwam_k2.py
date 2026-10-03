@@ -362,7 +362,12 @@ def _wait_for_server(process: subprocess.Popen[bytes], log: Path) -> None:
 
 
 def _run_robolab(
-    robolab_python: Path, robolab: Path, request: EvaluationRequest, variant: str, log: Path
+    robolab_python: Path,
+    robolab: Path,
+    request: EvaluationRequest,
+    variant: str,
+    env: dict[str, str],
+    log: Path,
 ) -> Path:
     """Run actual closed-loop RoboLab episodes and retain their native result rows."""
     output_name = f"npa-fastwam-k2-{variant}"
@@ -389,8 +394,8 @@ def _run_robolab(
         "--output-folder-name",
         output_name,
     ]
-    env = dict(os.environ, CUDA_VISIBLE_DEVICES="1")
-    _run(argv, cwd=robolab, env=env, log=log)
+    client_env = dict(_isaac_runtime_env(env), CUDA_VISIBLE_DEVICES="1")
+    _run(argv, cwd=robolab, env=client_env, log=log)
     output = robolab / "output" / output_name
     if not output.is_dir():
         raise FastWamK2Error("RoboLab completed without its expected output directory")
@@ -504,7 +509,14 @@ def run_variant(*, input_path: str, output_path: str, variant: str, baseline_pat
             process = subprocess.Popen(command, cwd=framework, env=server_env, stdout=stream, stderr=stream)
             try:
                 _wait_for_server(process, artifacts / "server-ready.txt")
-                output = _run_robolab(robolab_python, robolab, request, variant, root / "robolab.log")
+                output = _run_robolab(
+                    robolab_python,
+                    robolab,
+                    request,
+                    variant,
+                    dict(os.environ),
+                    root / "robolab.log",
+                )
             finally:
                 process.terminate()
                 try:
