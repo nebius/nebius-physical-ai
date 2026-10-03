@@ -31,6 +31,18 @@ exact-model responses from both judges and satisfy its frozen expectations.
 Changing labels to match a response is not permitted. These are visual contract
 controls, not robot-performance measurements or proof of deterministic models.
 
+This is a **common-body experiment**, not a comparison of each model's tuned
+single-judge profile. Both bodies contain only `model`, `temperature`, and
+`messages`; paired judging deliberately omits scalar-profile
+`chat_template_kwargs`, `reasoning_effort`, and `response_format`. The shared
+profile gate checks compatibility with the common temperature request, not
+equality of optional scalar defaults. In particular, this does not claim
+MiniMax thinking is disabled or Gemma JSON mode is enabled. Use individual
+evaluation for those model-specific settings. A formatting failure is retained
+as a judge error and fails the frozen acceptance controls; the scheduled step
+does not ignore it. Passing controls establishes the observed pair's contract
+on those requests, not future response determinism or general model ranking.
+
 The workflow first verifies that the same generated lane fails with an empty
 key. It then executes the credentialed lane even if a preceding hosted check
 failed. Only sanitized receipts are uploaded. Raw images, configuration, logs,

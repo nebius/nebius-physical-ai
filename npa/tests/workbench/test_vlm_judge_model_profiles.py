@@ -3,7 +3,31 @@
 import pytest
 
 from npa.clients.token_factory import TokenFactoryChatProfile
+from npa.live_verification.vlm_audit_controls import PAIRED_MODELS
 from npa.workbench import vlm_eval
+
+
+def test_scheduled_pair_intentionally_uses_common_not_scalar_profile_body():
+    profiles = [vlm_eval.token_factory_chat_profile(model) for model in PAIRED_MODELS]
+    assert all(profile.include_temperature for profile in profiles)
+    assert profiles[0].default_extra() != profiles[1].default_extra()
+    assert profiles[0].use_vlm_response_format != profiles[1].use_vlm_response_format
+    assert vlm_eval._comparison_models(*PAIRED_MODELS) == PAIRED_MODELS
+
+    common = vlm_eval._common_hosted_request(prompt="frozen prompt", frames=[])
+    assert common == {
+        "temperature": 0,
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "frozen prompt"}]}
+        ],
+    }
+    requests = [vlm_eval._request_for_model(common, model) for model in PAIRED_MODELS]
+    assert all(
+        set(request) == {"model", "temperature", "messages"} for request in requests
+    )
+    assert vlm_eval._assert_model_only_request_difference(
+        requests
+    ) == vlm_eval._sha256_json(common)
 
 
 @pytest.mark.parametrize("kimi_first", [True, False])

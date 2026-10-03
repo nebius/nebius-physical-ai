@@ -977,6 +977,8 @@ def _run_judge_comparison(
 def _common_hosted_request(
     *, prompt: str, frames: Sequence[SelectedFrame]
 ) -> dict[str, Any]:
+    # Compare models under one controlled body, not their individually tuned
+    # scalar profiles. Model-specific extras/JSON mode would change the experiment.
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     for frame in frames:
         encoded = base64.b64encode(frame.data).decode("ascii")
@@ -2363,6 +2365,8 @@ def _resolve_task_text(
                 else candidate.read_text(encoding="utf-8")
             )
         except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
             continue
         for key in ("task", "instruction", "description"):
             value = payload.get(key)
