@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "40911f90abbf12bb63796704e64acf64c86afa38c9e911710996e183dc862f8f",
+  "workflow_sha256": "7818702a84c875ca8569f478723f8a8c490bcdc3958989b168d4478c9fdfdd78",
   "planning": {
     "validation": {
       "status": "verified",
@@ -30,13 +30,13 @@
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "A genuine 17-frame DROID window from the documented held-out split was independently extracted and hash-checked, but was intentionally not staged until an authorized immutable image and matching target are ready.",
+      "reason": "A genuine 17-frame DROID window from the documented held-out split was independently extracted and hash-checked, but it must be re-emitted with its aligned raw action.gripper_position array before staging. The new manifest is intentionally deferred until an authorized immutable image and matching target are ready.",
       "evidence": [
         "access-controlled operator input-selection evidence"
       ]
     },
     "credentials": {
-      "status": "partially_verified",
+      "status": "unverified",
       "reason": "Nebius authentication and exact public Cosmos payload access pass. The derivative repository resolves exactly to the configured immutable revision and its export manifest identifies the card's framework commit, but full checkpoint-byte hashing still belongs to the selected worker's runtime fetch.",
       "evidence": [
         "access-controlled operator access and checkpoint-identity receipts"

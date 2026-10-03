@@ -40,6 +40,14 @@ JSON action array; Cosmos Framework verifies that raw width and performs the
 documented zero-padding to 64 channels itself. The `[16,64]` action artifact
 remains in the handoff and is hash-bound in provenance.
 
+The selection manifest carries `poses_abs` with 17 absolute end-effector poses
+and `gripper_actions_raw` with 16 values copied from the source
+`action.gripper_position` column. Entry *i* is paired with the pose delta from
+frame *i* to frame *i + 1*. The stage rejects a missing, out-of-range, or
+mis-sized gripper array rather than substituting observation gripper state;
+those are distinct DROID fields and substituting one for the other changes the
+checkpoint input.
+
 Each composite has the 640×360 wrist camera on top, with the two exterior
 cameras resized to half size and concatenated along the bottom, yielding a
 640×540 input canvas. This preserves the model's `concat_view` geometry.
