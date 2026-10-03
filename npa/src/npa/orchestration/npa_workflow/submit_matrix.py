@@ -72,6 +72,27 @@ class SubmitLiveCase:
 
 SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
     SubmitLiveCase(
+        "molmoact2-jetson-thor-edge.yaml",
+        "cpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "The workflow verifies artifacts produced by a Jetson AGX Thor with the exact "
+            "JetPack and TensorRT contract. The current NPA Kubernetes path has no Thor "
+            "target dispatcher, and x86 execution must not be represented as target validation."
+        ),
+        rotation_skip=True,
+        skip_reason=(
+            "Requires a qualified Jetson AGX Thor target to create the upstream TensorRT "
+            "qualification and VLA action-trace artifacts before the cloud verification stages."
+        ),
+        notes=(
+            "Five connected stages: actual observation preparation, target-engine evidence "
+            "verification, target action-trace verification, numerical action/latency evaluation, "
+            "and digest-bound Rerun evidence."
+        ),
+    ),
+    SubmitLiveCase(
         "rgbd-scan-to-policy-demo.yaml",
         "gpu",
         secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),

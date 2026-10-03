@@ -35,6 +35,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Alibaba Wan 2.2 TI2V-5B | `Wan-Video/Wan2.2` `42bf4cf…` | `wan2.2_ti2v_5b_text_to_video` | capability JSON + runtime inventory + MP4 | `byof-wan2.2.yaml` |
 | Lightricks LTX-2.5 (**accepted public image; entitled runtime fetch**) | `Lightricks/LTX-2` `fd4ded7f…` | `ltx2_5_text_to_video` | `ltx2_5_text_to_video.json` + provenance manifest + MP4 | `byof-ltx2.yaml` |
 | Alibaba Wan 2.2 TI2V-5B (**4-GPU distributed**) | same pinned source/checkpoint | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | multi-GPU capability JSON + rank topology + runtime inventory + MP4 | `byof-wan2.2-multigpu.yaml` |
+| MolmoAct2 LIBERO Jetson-Thor (**target-only edge derivative; not live-qualified**) | `Agents2AgentsAI/vla-edge` `747fd96a…` + `agents2agents/MolmoAct2-LIBERO-Jetson-Thor` `7d2de215…` | `molmoact2_libero_thor_tensorrt_qualified_action_trace` | target qualification + action trace → metrics + RRD | `molmoact2-jetson-thor-edge.yaml` |
 
 ## Live capability results
 
@@ -79,6 +80,7 @@ unique and must be tested with its own upstream-named capabilities.
 | Wan 2.2 TI2V-5B | `wan2.2_ti2v_5b_text_to_video_multigpu_fsdp_ulysses` | **accepted historical evidence** | prior Torch 2.7.1/CUDA 12.8/NCCL 2.27.7 runtime: one node, 4×B200 (`sm_100`), world size 4, T5/DiT FULL_SHARD FSDP, Ulysses size 4, and official `generate.py`; current NCCL 2.29.7 gate is not yet live-qualified |
 | Wan 2.2 TI2V-5B | `wan2.2_distributed_rank_topology_validation` | **accepted historical evidence** | same prior run: four unique GPU hashes/ranks 0–3, NCCL sum 10/10 per rank, 480 distributed-attention and 1,920 all-to-all calls per rank, three barriers, final barrier, and process-group teardown |
 | Wan 2.2 TI2V-5B | `wan2.2_decoded_mp4_validation` (distributed run) | **accepted historical evidence** | same prior run: 2,809,770-byte H.264 MP4, 1280x704, 17 frames at 24 fps; spatial stddev 71.9485, pixel range 255, temporal delta 9.714725, SHA-256 `9574f79c…94865` |
+| MolmoAct2 LIBERO Jetson-Thor | `molmoact2_libero_thor_tensorrt_qualified_action_trace` | **target hardware blocked; cloud contracts locally verified** | Exact Jetson AGX Thor / JetPack R39 rev 2.1 / TensorRT 10.16.2.10 is unavailable to the assigned session. The five-stage workflow does not treat x86 as proof; see [edge guide](molmoact2-jetson-thor.md). |
 
 ## Native Capabilities Per Container
 

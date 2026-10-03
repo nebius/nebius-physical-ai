@@ -1,0 +1,62 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "de1d4102f0ef5b1d17f136fe9052414366f26a7a8a66e6c5057bd69580a4f91c",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "The final YAML passed schema validation, render checking, and scheduler planning with five serial tasks; no provider action or registry secret was materialized.",
+      "evidence": [
+        "2026-10-03: npa workbench workflow validate-spec workflows/testing/molmoact2-jetson-thor-edge.yaml --json (status=valid)",
+        "2026-10-03: npa workbench workflow plan-spec workflows/testing/molmoact2-jetson-thor-edge.yaml --run-id molmoact2-thor-readiness --check-render --json (status=valid, tasks=5)",
+        "2026-10-03: npa workbench workflow run-spec workflows/testing/molmoact2-jetson-thor-edge.yaml --run-id molmoact2-thor-readiness --plan-only --scheduler-plan --json (status=planned, tasks=5)"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Focused tests exercise the connected observation, qualification, trace, numerical-evaluation, and Rerun artifact contracts; the workflow is explicit that target inference is an open-loop trace, not a closed-loop success claim.",
+      "evidence": [
+        "2026-10-03: npa/.venv/bin/python -m pytest npa/tests/workflows/test_molmoact2_jetson_thor.py -q --tb=short (5 passed)",
+        "2026-10-03: npa/.venv/bin/python -m pytest npa/tests/orchestration/npa_workflow/test_submit_live_matrix.py npa/tests/smoke/test_all_workflow_yamls.py -q --tb=short (328 passed)"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The assigned VDI's generic S3 health check passed, but no operator-selected bucket and run prefix have been supplied or exercised for this workflow.",
+      "evidence": [
+        "2026-10-03: npa workbench health preflight --warn-only --json (S3 service check passed; no workflow output was written)"
+      ]
+    },
+    "worker_input": {
+      "status": "unverified",
+      "reason": "A real two-camera LIBERO observation NPZ with calibration and evaluation rows has not been supplied by the operator.",
+      "evidence": [
+        "The local contract test uses a synthetic fixture only and does not represent a live input dataset."
+      ]
+    },
+    "credentials": {
+      "status": "unverified",
+      "reason": "Generic NPA service credential preflight passed, but exact model LFS-byte access and the target device's existing NVIDIA installer acceptance have not been checked on the unavailable Thor.",
+      "evidence": [
+        "2026-10-03: npa workbench health preflight --warn-only --json (generic service checks passed)",
+        "Pinned model metadata was inspected without downloading the 10.5-GB LFS payload on x86."
+      ]
+    },
+    "source_image": {
+      "status": "unverified",
+      "reason": "The workflow deliberately uses a submitted source overlay and does not name an immutable image. No generic x86 image was built or pushed because it cannot qualify the target TensorRT plans.",
+      "evidence": [
+        "workflows/testing/molmoact2-jetson-thor-edge.yaml config.source_overlay=true"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "The assigned VDI is x86_64 without Jetson or NVIDIA GPU runtime. The upstream engine bundle requires a Jetson AGX Thor Developer Kit (aarch64/sm_110a), JetPack R39 rev 2.1, and TensorRT 10.16.2.10; x86 cannot establish compatibility, policy execution, or latency.",
+      "evidence": [
+        "2026-10-03: local system inspection found x86_64 and no Jetson release marker, tegrastats, or nvidia-smi.",
+        "Pinned upstream model card README Hardware and contents section; pinned vla-edge TensorRT-on-Thor recipe."
+      ]
+    }
+  }
+}
