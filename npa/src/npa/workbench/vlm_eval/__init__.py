@@ -900,8 +900,11 @@ def _comparison_context(
     endpoint_url: str,
     api_key_env: str,
     timeout_s: float,
+    metadata_reader: Callable[[Path], bytes] | None = None,
 ) -> _VlmJudgeContext:
-    effective_task = _resolve_task_text(local_input, task)
+    effective_task = _resolve_task_text(
+        local_input, task, metadata_reader=metadata_reader
+    )
     frames = tuple(
         select_rollout_frames(
             local_input,
@@ -2317,7 +2320,12 @@ def _materialized_input(input_path: str) -> Iterator[Path]:
         yield Path(local)
 
 
-def _resolve_task_text(local_input: Path, task: str) -> str:
+def _resolve_task_text(
+    local_input: Path,
+    task: str,
+    *,
+    metadata_reader: Callable[[Path], bytes] | None = None,
+) -> str:
     if task and task != "sim-to-real":
         return task
 
@@ -2325,12 +2333,14 @@ def _resolve_task_text(local_input: Path, task: str) -> str:
         local_input / "meta" / "tasks.parquet",
         local_input.parent / "meta" / "tasks.parquet",
     ):
-        if not candidate.exists():
+        if not os.path.lexists(candidate):
             continue
+        # Strict audit readers must fail before the optional parquet fallback.
+        source = BytesIO(metadata_reader(candidate)) if metadata_reader else candidate
         try:
             import pyarrow.parquet as pq
 
-            table = pq.read_table(candidate)
+            table = pq.read_table(source)
             if "task" in table.column_names and table.num_rows:
                 value = table.column("task")[0].as_py()
                 if value:
@@ -2343,10 +2353,15 @@ def _resolve_task_text(local_input: Path, task: str) -> str:
         local_input / "info.json",
         local_input / "manifest.json",
     ):
-        if not candidate.exists():
+        if not os.path.lexists(candidate):
             continue
+        content = metadata_reader(candidate) if metadata_reader else None
         try:
-            payload = json.loads(candidate.read_text(encoding="utf-8"))
+            payload = json.loads(
+                content.decode("utf-8")
+                if content is not None
+                else candidate.read_text(encoding="utf-8")
+            )
         except (OSError, json.JSONDecodeError):
             continue
         for key in ("task", "instruction", "description"):

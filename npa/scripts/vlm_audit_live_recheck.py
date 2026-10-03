@@ -312,7 +312,9 @@ def _paired_control_binding(control: dict) -> dict:
                 != control["input_sha256"]
             ):
                 raise _AuditConfigurationError("audit_control_input_changed")
-        context = vlm_eval._comparison_context(local_input=local, **values)
+        context = vlm_eval._comparison_context(
+            local_input=local, metadata_reader=_read_task_metadata, **values
+        )
     common = vlm_eval._common_hosted_request(
         prompt=context.prompt, frames=context.frames
     )
@@ -338,6 +340,8 @@ def _paired_options(values: dict) -> VlmJudgeComparisonRequest:
             request.success_threshold, field="success_threshold", minimum=0, maximum=1
         )
         require_number(request.timeout_s, field="timeout_s", minimum=0)
+        if request.timeout_s == 0:
+            raise ValueError("timeout_s must be positive")
     except ValueError:
         raise _AuditConfigurationError("invalid_audit_request") from None
     return request
@@ -354,6 +358,15 @@ def _read_control_file(path: Path) -> bytes:
             return stream.read()
     finally:
         os.close(descriptor)
+
+
+def _read_task_metadata(path: Path) -> bytes:
+    content = _read_control_file(path)
+    if path.suffix == ".json" and not isinstance(
+        json.loads(content.decode("utf-8")), dict
+    ):
+        raise _AuditConfigurationError("invalid_audit_task_metadata")
+    return content
 
 
 def _paired_report_binding(context, common: dict) -> dict:

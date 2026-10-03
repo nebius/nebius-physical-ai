@@ -1116,3 +1116,135 @@ def _assert_prechild_refusal(monkeypatch, tmp_path, capsys, runner):
     assert not any(receipt["counts"].values())
     assert str(tmp_path) not in body + capsys.readouterr().out
     assert "private-control" not in body
+
+
+_TASK_METADATA_PATHS = (
+    "local/meta/tasks.parquet",
+    "parent/meta/tasks.parquet",
+    "local/meta/info.json",
+    "local/info.json",
+    "local/manifest.json",
+)
+
+
+def _metadata_config(monkeypatch, tmp_path, location, task, *, single_image=False):
+    path = _config(monkeypatch, tmp_path)
+    config = json.loads(path.read_text())
+    local = tmp_path / "frames"
+    local.mkdir()
+    image = local / "00.png"
+    Image.new("RGB", (2, 2)).save(image)
+    selected = image if single_image else local
+    config["cases"]["paired-judges"]["request"].update(
+        input_path=str(selected), task=task
+    )
+    path.write_text(json.dumps(config))
+    origin, relative = location.split("/", 1)
+    metadata = (selected if origin == "local" else selected.parent) / relative
+    metadata.parent.mkdir(parents=True, exist_ok=True)
+    return metadata
+
+
+@pytest.mark.parametrize("location", _TASK_METADATA_PATHS)
+@pytest.mark.parametrize("task", ["", "sim-to-real"])
+@pytest.mark.parametrize("kind", ["fifo", "directory", "symlink_loop"])
+def test_task_discovery_rejects_special_files_before_child(
+    monkeypatch, tmp_path, capsys, location, task, kind
+):
+    metadata = _metadata_config(monkeypatch, tmp_path, location, task)
+    if kind == "fifo":
+        os.mkfifo(metadata, mode=0o600)
+    elif kind == "directory":
+        metadata.mkdir()
+    else:
+        metadata.symlink_to(metadata.name)
+    _assert_prechild_refusal(monkeypatch, tmp_path, capsys, _runner())
+
+
+@pytest.mark.parametrize("task", ["", "sim-to-real"])
+def test_single_image_parent_parquet_fifo_rejected_before_child(
+    monkeypatch, tmp_path, capsys, task
+):
+    metadata = _metadata_config(
+        monkeypatch, tmp_path, "parent/meta/tasks.parquet", task, single_image=True
+    )
+    os.mkfifo(metadata, mode=0o600)
+    _assert_prechild_refusal(monkeypatch, tmp_path, capsys, _runner())
+
+
+@pytest.mark.parametrize("location", _TASK_METADATA_PATHS[2:])
+@pytest.mark.parametrize("task", ["", "sim-to-real"])
+@pytest.mark.parametrize("value", [[], None, 42])
+def test_task_discovery_requires_json_object_before_child(
+    monkeypatch, tmp_path, capsys, location, task, value
+):
+    metadata = _metadata_config(monkeypatch, tmp_path, location, task)
+    metadata.write_text(json.dumps(value))
+    _assert_prechild_refusal(monkeypatch, tmp_path, capsys, _runner())
+
+
+@pytest.mark.parametrize("timeout", [0, 0.0, -0.0])
+def test_zero_timeout_rejected_before_child(monkeypatch, tmp_path, capsys, timeout):
+    path = _config(monkeypatch, tmp_path)
+    config = json.loads(path.read_text())
+    config["cases"]["paired-judges"]["request"]["timeout_s"] = timeout
+    path.write_text(json.dumps(config))
+    _assert_prechild_refusal(monkeypatch, tmp_path, capsys, _runner())
+
+
+def _assert_task_discovery_receipt(monkeypatch, tmp_path, expected_task):
+    runner = _runner()
+
+    def execute(root, target, config_path):
+        _write_passing_execution(target, 1)
+        report = _report(target)
+        assert report["task"] == expected_task
+        directory = target / "paired-judges"
+        directory.mkdir()
+        runner._write_private(
+            directory / runner.JUDGE_COMPARISON_RESULT_FILENAME, json.dumps(report)
+        )
+        return 0
+
+    monkeypatch.setattr(runner, "_execute", execute)
+    target = tmp_path / "evidence"
+    assert runner.main(["--audit-kind", "paired", "--evidence-dir", str(target)]) == 0
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["passed"] is True and receipt["counts"]["passed"] == 1
+
+
+@pytest.mark.parametrize("location", _TASK_METADATA_PATHS)
+@pytest.mark.parametrize("task", ["", "sim-to-real"])
+def test_regular_task_metadata_preserves_production_discovery(
+    monkeypatch, tmp_path, location, task
+):
+    metadata = _metadata_config(monkeypatch, tmp_path, location, task)
+    if metadata.suffix == ".parquet":
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        pq.write_table(pa.table({"task": ["discovered visual task"]}), metadata)
+    else:
+        metadata.write_text(json.dumps({"task": "discovered visual task"}))
+    _assert_task_discovery_receipt(monkeypatch, tmp_path, "discovered visual task")
+
+
+@pytest.mark.parametrize("location", _TASK_METADATA_PATHS)
+def test_explicit_task_does_not_read_metadata(monkeypatch, tmp_path, location):
+    metadata = _metadata_config(monkeypatch, tmp_path, location, "explicit task")
+    os.mkfifo(metadata, mode=0o600)
+    _assert_task_discovery_receipt(monkeypatch, tmp_path, "explicit task")
+
+
+def test_task_metadata_parquet_order_and_json_fallback(monkeypatch, tmp_path):
+    metadata = _metadata_config(
+        monkeypatch, tmp_path, "local/meta/tasks.parquet", "sim-to-real"
+    )
+    metadata.write_bytes(b"not a parquet table")
+    (metadata.parent / "info.json").write_text(
+        json.dumps({"instruction": "fallback task"})
+    )
+    (metadata.parent.parent / "manifest.json").write_text(
+        json.dumps({"task": "later task"})
+    )
+    _assert_task_discovery_receipt(monkeypatch, tmp_path, "fallback task")
