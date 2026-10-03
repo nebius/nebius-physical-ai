@@ -71,6 +71,12 @@ class FrameSelection(str, Enum):
     sequence = "sequence"
 
 
+_FRAME_SELECTION_HELP = (
+    "Frame selection: final; keyframes (terminal-stratified for known-count "
+    "inputs); or sequence (uniform full-span)."
+)
+
+
 @dataclass(frozen=True)
 class _VisualReviewCliOptions:
     input_path: str
@@ -107,7 +113,7 @@ _VISUAL_BASELINE = typer.Option(
 _VISUAL_FRAME_SELECTION = typer.Option(
     FrameSelection.keyframes,
     "--frame-selection",
-    help="Frame selection applied independently to each source.",
+    help=_FRAME_SELECTION_HELP,
 )
 _VISUAL_MAX_FRAMES = typer.Option(
     DEFAULT_MAX_FRAMES,
@@ -182,7 +188,7 @@ def run_cmd(
     frame_selection: FrameSelection = typer.Option(
         FrameSelection.keyframes,
         "--frame-selection",
-        help="Rollout frame selection: final, keyframes, or sequence.",
+        help=_FRAME_SELECTION_HELP,
     ),
     max_frames: int = typer.Option(
         DEFAULT_MAX_FRAMES,
@@ -382,7 +388,7 @@ def loop_cmd(
     frame_selection: FrameSelection = typer.Option(
         FrameSelection.keyframes,
         "--frame-selection",
-        help="Rollout frame selection: final, keyframes, or sequence.",
+        help=_FRAME_SELECTION_HELP,
     ),
     max_frames: int = typer.Option(
         DEFAULT_MAX_FRAMES,
@@ -481,7 +487,7 @@ def benchmark_cmd(
     frame_selection: FrameSelection = typer.Option(
         FrameSelection.keyframes,
         "--frame-selection",
-        help="Rollout frame selection: final, keyframes, or sequence.",
+        help=_FRAME_SELECTION_HELP,
     ),
     max_frames: int = typer.Option(
         DEFAULT_MAX_FRAMES,
