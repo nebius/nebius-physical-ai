@@ -113,9 +113,11 @@ the model's exact stripped answer. Longer answers, mismatched wrappers, code
 wrappers, punctuation outside the wrappers, other punctuation, and paraphrases
 do not match. Any legitimate complete caption that normalizes to the sentinel
 can therefore false-fail, including an image whose only salient text is that
-phrase. The retained hosted evidence observed only the exact punctuated
-sentinel; periodless, wrapped, nested, and emphasis variants are deterministic
-local controls, not observed hosted outputs.
+phrase. Earlier hosted evidence observed the punctuated sentinel; the composed
+thinking panel also observed MiniMax's periodless sentinel for a valid blank
+PNG. Both are false unavailability indications, not proof of missing image
+delivery. Wrapped, nested, and emphasis variants remain deterministic local
+controls, not observed hosted outputs.
 The command continues through every selected image once, writes the complete
 failed result, and exits 1 if any image was unavailable. It does not silently
 retry the sentinel.
@@ -131,7 +133,9 @@ models receive the generic `thinking` field only after an explicit override.
 Use `--no-thinking` when a reasoning-capable vision model returns no visible
 caption. Use `--thinking` only deliberately: reasoning can consume the output
 allowance and still leave no visible caption. A provider may reject or ignore a
-control it does not support, in which case captioning fails closed. This option
+control it does not support. Rejected requests and empty or reasoning-only
+answers fail; silently ignored controls that still produce visible text cannot
+be detected, so control compliance is not validated. This option
 is available to direct CLI, workbench, and SDK callers; the existing
 `workbench.token_factory.caption` workflow toolRef does not expose it.
 

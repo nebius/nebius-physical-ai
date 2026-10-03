@@ -130,10 +130,12 @@ ASCII quotes, or smart quotes. It does not accept longer answers, mismatched
 wrappers, code wrappers, punctuation outside the wrappers, other punctuation,
 or paraphrases, and it retains the exact stripped answer. Exact-answer
 induction can still false-fail, including when an image's only salient text is
-the sentinel. Retained hosted evidence observed only the exact punctuated
-sentinel; periodless, wrapped, nested, and emphasis variants are deterministic
-local controls, not observed hosted outputs. An unavailable item fails the
-aggregate, is written before the CLI exits 1, and does not trigger a silent
+the sentinel. Earlier retained hosted evidence observed the exact punctuated
+sentinel; the composed thinking panel also observed MiniMax's periodless
+sentinel for a valid blank PNG. These false unavailability indications do not
+prove missing image delivery. Wrapped, nested, and emphasis variants remain
+deterministic local controls, not observed hosted outputs. An unavailable item
+fails the aggregate, is written before the CLI exits 1, and does not trigger a silent
 retry. Later selected images are still attempted once. `--dry-run` emits the
 same failed result and exits 1 without writing it.
 
@@ -144,7 +146,9 @@ reverses the built-in suppression for
 Lightning/MiniMax and may consume the output allowance without yielding visible
 text. Explicit overrides use verified model-specific fields for Lightning and
 MiniMax and the generic `thinking` field for other model IDs; unsupported
-providers may reject or ignore that control, and captioning then fails closed.
+providers may reject or ignore that control. Rejected requests and empty or
+reasoning-only answers fail, but silently ignored controls with visible text
+cannot be detected; control compliance is not validated.
 The override is direct CLI/workbench/SDK only; the caption workflow toolRef does
 not expose it.
 
