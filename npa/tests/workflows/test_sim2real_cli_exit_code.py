@@ -12,6 +12,8 @@ import pytest
 
 from npa.workflows.sim2real import cli
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 
 class _FakeWorkflow:
     """Stand-in for Sim2RealWorkflow that returns a canned report."""

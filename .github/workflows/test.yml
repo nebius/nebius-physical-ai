@@ -85,6 +85,7 @@ jobs:
             npa/tests/docker/test_base_image_scan.py \
             npa/tests/orchestration/skypilot/test_workflow_logs.py \
             npa/tests/workbench/test_cosmos3_nano_video_server.py \
+            npa/tests/workflows/test_cosmos3_wam_scaling_report.py \
             -q
 
       - name: Set up Python 3.14 compatibility
@@ -105,6 +106,7 @@ jobs:
             npa/tests/docker/test_base_image_scan.py \
             npa/tests/orchestration/skypilot/test_workflow_logs.py \
             npa/tests/workbench/test_cosmos3_nano_video_server.py \
+            npa/tests/workflows/test_cosmos3_wam_scaling_report.py \
             -q
 
   pr-smoke:
@@ -212,18 +214,7 @@ jobs:
             npa/ci/constraints.in
 
       - name: Install ffmpeg
-        # Runner vendor repositories (such as Chrome) can publish inconsistent
-        # indexes. Media-validator prerequisites come from Ubuntu's signed sources.
-        run: |
-          test -s /etc/apt/sources.list.d/ubuntu.sources
-          apt_options=(
-            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
-            -o Dir::Etc::sourceparts=-
-          )
-          sudo apt-get "${apt_options[@]}" update
-          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends ffmpeg
-          ffmpeg -version
-          ffprobe -version
+        run: bash npa/scripts/ci_install_ffmpeg.sh
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

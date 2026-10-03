@@ -24,6 +24,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import textwrap
 import threading
 import time
 import uuid
@@ -1377,6 +1378,9 @@ _ESSENTIAL_HEALTHY_NODES_OVERRIDE = (
     "      }\n"
 )
 _NODECONFIGURATOR_USERNS_MARKER = "# npa: allow Enroot user namespaces on Ubuntu hosts"
+_NODECONFIGURATOR_VALUESFROM_MARKER = (
+    "# npa: pass Enroot configuration through the chart valuesFrom contract"
+)
 _NODECONFIGURATOR_USERNS_VALUES = (
     "              " + _NODECONFIGURATOR_USERNS_MARKER + "\n"
     "              # Preserve the chart's complete default init-container list; Helm\n"
@@ -1566,7 +1570,7 @@ def _yaml_mapping_block_bounds(text: str, key: str) -> tuple[int, int, int]:
     return start, end, indent
 
 
-def _patch_nodeconfigurator_text(text: str) -> tuple[str, bool]:
+def _legacy_nodeconfigurator_text(text: str) -> tuple[str, bool]:
     section_start, section_end, section_indent = _yaml_mapping_block_bounds(
         text, "nodeConfigurator"
     )
@@ -1594,6 +1598,42 @@ def _patch_nodeconfigurator_text(text: str) -> tuple[str, bool]:
     )
 
 
+def _nodeconfigurator_values_configmap() -> str:
+    """Supply the optional ConfigMap actually consumed by the pinned Flux chart."""
+
+    values = textwrap.dedent(_NODECONFIGURATOR_USERNS_VALUES)
+    values = values.replace(
+        "        sysctl -w kernel.unprivileged_userns_clone=1",
+        "        set -eu\n        sysctl -w kernel.unprivileged_userns_clone=1",
+    )
+    return (
+        "\n  " + _NODECONFIGURATOR_VALUESFROM_MARKER + "\n"
+        "  - apiVersion: v1\n"
+        "    kind: ConfigMap\n"
+        "    metadata:\n"
+        "      name: terraform-nodeconfigurator\n"
+        "      labels:\n"
+        "        reconcile.fluxcd.io/watch: Enabled\n"
+        "    data:\n"
+        "      values.yaml: |\n" + textwrap.indent(values, "        ")
+    )
+
+
+def _patch_nodeconfigurator_text(text: str) -> tuple[str, bool]:
+    """Migrate the ignored legacy values into the chart's watched ConfigMap."""
+
+    configmap = _nodeconfigurator_values_configmap()
+    if text.endswith(configmap):
+        return text, False
+    if _NODECONFIGURATOR_VALUESFROM_MARKER in text:
+        raise UpstreamContractError("modified nodeConfigurator valuesFrom patch")
+    legacy, _ = _legacy_nodeconfigurator_text(text)
+    if legacy.count(_NODECONFIGURATOR_USERNS_VALUES) != 1:
+        raise UpstreamContractError("modified legacy nodeConfigurator patch")
+    pristine = legacy.replace(_NODECONFIGURATOR_USERNS_VALUES, "", 1)
+    return pristine + configmap, True
+
+
 def _patch_nodeconfigurator_userns(recipe_dir: Path) -> bool:
     """Teach the upstream node configurator about Ubuntu's AppArmor userns gate.
 
@@ -1601,8 +1641,10 @@ def _patch_nodeconfigurator_userns(recipe_dir: Path) -> bool:
     newer host images independently deny unprivileged user namespaces through
     ``kernel.apparmor_restrict_unprivileged_userns``. Enroot/Pyxis image startup
     then fails even though the worker container itself is AppArmor-unconfined.
-    Override the chart's full init-container list and disable the second gate
-    only when Soperator's default AppArmor profile is intentionally disabled.
+    The Flux chart ignores arbitrary ``nodeConfigurator.values`` entries. Its
+    optional ``terraform-nodeconfigurator`` valuesFrom ConfigMap reaches the
+    operator-managed NodeConfigurator resource without replacing other values.
+    Disable the second gate only for the intentionally unconfined profile.
     """
 
     template = (
@@ -1733,7 +1775,11 @@ def _assert_solutions_library_contract(
             raise UpstreamContractError(
                 f"missing pinned patch target {relative}"
             ) from exc
-        if current not in (pristine, expected_patched):
+        allowed = (pristine, expected_patched)
+        if transform is _patch_nodeconfigurator_text:
+            legacy, _ = _legacy_nodeconfigurator_text(pristine)
+            allowed += (legacy,)
+        if current not in allowed:
             raise UpstreamContractError(
                 f"unexpected local mutation in pinned patch target {relative}"
             )
@@ -2955,7 +3001,7 @@ def _run_terraform_command(
         from npa.clients.nebius import redact_nebius_output
 
         detail = redact_nebius_output(
-            _tail_diagnostic(completed.stderr, completed.stdout)
+            _tail_diagnostic(completed.stdout, completed.stderr)
         )
         raise RuntimeError(
             f"Terraform command failed ({completed.returncode}): {' '.join(args[:2])}"

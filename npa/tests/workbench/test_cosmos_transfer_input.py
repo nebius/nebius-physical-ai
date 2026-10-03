@@ -913,6 +913,180 @@ def test_publish_marks_real_gpu_mode_and_conditioning(
     assert meta["effective_guidance"] == 2.25
 
 
+@pytest.mark.parametrize(
+    ("provenance", "expected_conditioning", "expected_guardrails"),
+    [
+        ({}, False, True),
+        (
+            {"input_conditioned": False, "content_guardrails_enabled": False},
+            False,
+            False,
+        ),
+        (
+            {"input_conditioned": True, "content_guardrails_enabled": True},
+            True,
+            True,
+        ),
+    ],
+)
+def test_publish_transfer_clip_preserves_exact_provenance_booleans(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provenance: dict[str, bool],
+    expected_conditioning: bool,
+    expected_guardrails: bool,
+) -> None:
+    video = tmp_path / "out.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(tx, "extract_frames", lambda *_args, **_kwargs: [])
+    metadata: list[dict[str, object]] = []
+
+    class FakeStorage:
+        def upload_file(self, local: str, uri: str) -> str:
+            if uri.endswith("metadata.json"):
+                metadata.append(json.loads(Path(local).read_text(encoding="utf-8")))
+            return uri
+
+    clip = tx.publish_transfer_clip(
+        {"video_path": str(video), **provenance},
+        "s3://bucket/run/augment/",
+        storage_client=FakeStorage(),
+    )
+
+    assert clip["input_conditioned"] is expected_conditioning
+    assert clip["content_guardrails_enabled"] is expected_guardrails
+    assert metadata[-1]["input_conditioned"] is expected_conditioning
+    assert metadata[-1]["content_guardrails_enabled"] is expected_guardrails
+
+
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+@pytest.mark.parametrize("malformed", ["false", 0, 1.0])
+def test_publish_transfer_clip_rejects_malformed_provenance_before_upload(
+    field: str, malformed: object
+) -> None:
+    uploads: list[str] = []
+
+    class FakeStorage:
+        def upload_file(self, _local: str, uri: str) -> str:
+            uploads.append(uri)
+            return uri
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        tx.publish_transfer_clip(
+            {field: malformed},
+            "s3://bucket/run/augment/",
+            storage_client=FakeStorage(),
+        )
+
+    assert uploads == []
+
+
+@pytest.mark.parametrize(
+    ("provenance", "expected_conditioning", "expected_guardrails"),
+    [
+        ({}, False, True),
+        (
+            {"input_conditioned": False, "content_guardrails_enabled": False},
+            False,
+            False,
+        ),
+        (
+            {"input_conditioned": True, "content_guardrails_enabled": True},
+            True,
+            True,
+        ),
+    ],
+)
+def test_build_run_manifest_preserves_exact_provenance_booleans(
+    provenance: dict[str, bool],
+    expected_conditioning: bool,
+    expected_guardrails: bool,
+) -> None:
+    manifest = tx.build_run_manifest([{"clip": "aug-0", **provenance}])
+
+    assert manifest["input_conditioned"] is expected_conditioning
+    assert manifest["content_guardrails_enabled"] is expected_guardrails
+
+
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+@pytest.mark.parametrize("malformed", ["false", 0, 1.0])
+def test_write_run_manifest_rejects_malformed_provenance_before_upload(
+    field: str, malformed: object
+) -> None:
+    uploads: list[str] = []
+
+    class FakeStorage:
+        def upload_file(self, _local: str, uri: str) -> str:
+            uploads.append(uri)
+            return uri
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        tx.write_run_manifest(
+            [{"clip": "aug-0", field: malformed}],
+            "s3://bucket/run/augment/",
+            storage_client=FakeStorage(),
+        )
+
+    assert uploads == []
+
+
+@pytest.mark.parametrize("field", ["input_conditioned", "content_guardrails_enabled"])
+def test_write_run_manifest_checks_provenance_on_later_clips(field: str) -> None:
+    class NoUploadStorage:
+        def upload_file(self, _local: str, _uri: str) -> str:
+            pytest.fail("invalid later-clip provenance reached publication")
+
+    with pytest.raises(ValueError, match=rf"^{field} must be a boolean$"):
+        tx.write_run_manifest(
+            [{"clip": "aug-0", field: False}, {"clip": "aug-1", field: "false"}],
+            "s3://bucket/run/augment/",
+            storage_client=NoUploadStorage(),
+        )
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_build_run_manifest_summarizes_all_variants(reverse: bool) -> None:
+    clips = [
+        {"clip": "aug-0"},
+        {
+            "clip": "aug-1",
+            "input_conditioned": True,
+            "content_guardrails_enabled": False,
+        },
+    ]
+    if reverse:
+        clips.reverse()
+    manifest = tx.build_run_manifest(clips)
+
+    assert manifest["variant_count"] == 2
+    assert manifest["input_conditioned"] is False
+    assert manifest["content_guardrails_enabled"] is False
+    variants = {variant["clip"]: variant for variant in manifest["variants"]}
+    assert variants["aug-0"]["input_conditioned"] is False
+    assert variants["aug-0"]["content_guardrails_enabled"] is True
+    assert variants["aug-1"]["input_conditioned"] is True
+    assert variants["aug-1"]["content_guardrails_enabled"] is False
+
+
+def test_build_run_manifest_requires_evidence_for_positive_run_provenance() -> None:
+    empty = tx.build_run_manifest([])
+    assert empty["input_conditioned"] is False
+    assert empty["content_guardrails_enabled"] is False
+
+    manifest = tx.build_run_manifest(
+        [
+            {
+                "clip": name,
+                "input_conditioned": True,
+                "content_guardrails_enabled": True,
+            }
+            for name in ("aug-0", "aug-1")
+        ]
+    )
+    assert manifest["input_conditioned"] is True
+    assert manifest["content_guardrails_enabled"] is True
+
+
 def test_multi_variant_publish_writes_one_clip_per_combo(
     tmp_path: Path, monkeypatch
 ) -> None:

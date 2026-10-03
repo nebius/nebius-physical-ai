@@ -1059,8 +1059,22 @@ def test_habitat_development_evidence_reuse_requires_unchanged_image_inputs() ->
     assert "npa/src/npa/workflows/habitat_sim_smoke.py" in {
         entry["path"] for entry in inputs
     }
-    for entry in inputs:
-        assert (
-            hashlib.sha256((ROOT / entry["path"]).read_bytes()).hexdigest()
-            == entry["sha256"]
-        )
+    changed = {
+        entry["path"]
+        for entry in inputs
+        if hashlib.sha256((ROOT / entry["path"]).read_bytes()).hexdigest()
+        != entry["sha256"]
+    }
+    reuse = manifest.get("current_source_reuse", {})
+    if changed:
+        assert reuse.get("status") == "requires-requalification"
+        assert changed == set(reuse["changed_inputs"])
+        assert manifest["release_authorized"] is False
+        assert manifest["supported_release_selection"] == "quarantined"
+        for name in ("container-image-catalog.md", "byof-habitat-sim.md"):
+            assert (
+                "requires fresh image qualification"
+                in (ROOT / "docs/workbench" / name).read_text()
+            )
+    else:
+        assert not reuse.get("changed_inputs")

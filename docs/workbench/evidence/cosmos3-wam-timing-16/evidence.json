@@ -1,0 +1,88 @@
+{
+  "schema": "npa.cosmos3.wam-timing-evidence.v1",
+  "date": "2026-09-28",
+  "scope": "Three separate unprofiled sixteen-GPU runs from the same base checkpoint and seed.",
+  "conditions": "Warm runtime and filesystem caches; no evaluation or archival jobs overlapped the repetitions. Final checkpoint writing is outside timed iterations and included in native process time.",
+  "files_sha256": {
+    "repeat-1/measurement.json": "6bd27c1269dbd39757108e54c84831d64c8de764204a3f22e43c55d2c2f96896",
+    "repeat-1/iteration-series.csv": "37d0dabd4032d9aca4c19a0837987724bf60f6f193554745a532043aee85b4aa",
+    "repeat-1/checkpoint-hashes.json": "ad78a5c1d47a3a03501c52aab2cc97b030daf704bf7bed8fff7ac5d2604e8be5",
+    "repeat-1/distributed-preflight.json": "fa6eb131a99edd1cdc4259e62c31aa8be9e134cdccc4b47fcb434c9dadbacceb",
+    "repeat-2/measurement.json": "400f0b6f67d955c3466ad3871f241a7c2e416163890b690e06e760131c086200",
+    "repeat-2/iteration-series.csv": "16b1a319714e38beed9a1507927f4a30fe7d596fc8e583c2dbf3b6d2affd8243",
+    "repeat-2/checkpoint-hashes.json": "1def099ef87aa4ea5bf1c02d6ec5791ee6068f2bb5a2a568ab6d8c41d1fedcb7",
+    "repeat-2/distributed-preflight.json": "fa6eb131a99edd1cdc4259e62c31aa8be9e134cdccc4b47fcb434c9dadbacceb",
+    "repeat-3/measurement.json": "ae6e4854b6e8f144d409e2fe61d53410a63e84b0b8231ea5de13412d3c8cc4ed",
+    "repeat-3/iteration-series.csv": "4ab4a598619576073c430c19ed15d3b74588f0fa376b1dc3c742ad0a1d191b0d",
+    "repeat-3/checkpoint-hashes.json": "45cd04d96d98d79e0629faa5b11dde48580d3f10694ed99b5208fa258d83dc79",
+    "repeat-3/distributed-preflight.json": "fa6eb131a99edd1cdc4259e62c31aa8be9e134cdccc4b47fcb434c9dadbacceb"
+  },
+  "repetitions": [
+    {
+      "repetition": 1,
+      "completion_receipts_sha256": {
+        "0": "f06effa6500ac0efd6a9b55b332920fb645094d661f924be0863e6f4754e13cb",
+        "1": "92f4589468b312700f2fe48b44178ec9659c9ba3fa258ba1d39f1e7ab443c94e"
+      },
+      "run_settings_sha256": "1d20cbbe4af028e66506282823b6e180932572faa97bbcd43ab7cc435b9fc36d",
+      "checkpoint_files": 68,
+      "checkpoint_bytes": 177284842160,
+      "scheduler": {
+        "state": "COMPLETED",
+        "exit_code": "0:0",
+        "allocation_seconds": 2063,
+        "allocated_gpus": 16,
+        "allocated_cpus": 320,
+        "allocated_nodes": 2,
+        "started_utc": "2026-09-28T08:31:51Z",
+        "ended_utc": "2026-09-28T09:06:14Z",
+        "allocated_gpu_hours": 9.168888888888889,
+        "private_campaign_accounting_sha256": "ee39db24d500e273a680f7dbe6df639daaf95395fdd8164c854f371d073cbf5e"
+      }
+    },
+    {
+      "repetition": 2,
+      "completion_receipts_sha256": {
+        "0": "2d15f629e81814a74947a4697206ee3d3d0fd401a6fce4947eae3acda4a3c94f",
+        "1": "5d29e127bbffb5d484af68ec060965a5fdae52473cad58429b0f47f169d4b41f"
+      },
+      "run_settings_sha256": "1a6c4dbb52565fc6f132c4bca82b48ef2512f3b1cb8c6fc69512067bfd5f7136",
+      "checkpoint_files": 68,
+      "checkpoint_bytes": 177284842160,
+      "scheduler": {
+        "state": "COMPLETED",
+        "exit_code": "0:0",
+        "allocation_seconds": 2066,
+        "allocated_gpus": 16,
+        "allocated_cpus": 320,
+        "allocated_nodes": 2,
+        "started_utc": "2026-09-28T09:06:14Z",
+        "ended_utc": "2026-09-28T09:40:40Z",
+        "allocated_gpu_hours": 9.182222222222222,
+        "private_campaign_accounting_sha256": "ee39db24d500e273a680f7dbe6df639daaf95395fdd8164c854f371d073cbf5e"
+      }
+    },
+    {
+      "repetition": 3,
+      "completion_receipts_sha256": {
+        "0": "b2a3a07687467c7c05c0bbfc41ac8fb495e079b7c8267617f5636764fa6ce628",
+        "1": "fe2177c9e513d445282cebe49a8ce14b1932c69bccae6c12aa403d03c7803249"
+      },
+      "run_settings_sha256": "0f5fb09831ba1bf87e70e166ab2d8679d0b083c019050c3e8c7e7896dbc034a8",
+      "checkpoint_files": 68,
+      "checkpoint_bytes": 177284842160,
+      "scheduler": {
+        "state": "COMPLETED",
+        "exit_code": "0:0",
+        "allocation_seconds": 2081,
+        "allocated_gpus": 16,
+        "allocated_cpus": 320,
+        "allocated_nodes": 2,
+        "started_utc": "2026-09-28T09:40:40Z",
+        "ended_utc": "2026-09-28T10:15:21Z",
+        "allocated_gpu_hours": 9.248888888888889,
+        "private_campaign_accounting_sha256": "ee39db24d500e273a680f7dbe6df639daaf95395fdd8164c854f371d073cbf5e"
+      }
+    }
+  ]
+}

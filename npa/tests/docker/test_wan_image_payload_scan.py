@@ -24,6 +24,21 @@ sys.modules[_SPEC.name] = scanner
 _SPEC.loader.exec_module(scanner)
 
 
+def test_libssh2_audit_matches_reviewed_debian_package() -> None:
+    lock = json.loads(
+        (
+            _SCRIPT.parents[1] / "docker/workbench/ncore/native-bootstrap-lock.json"
+        ).read_text()
+    )
+    package = next(
+        item for item in lock["debian_binaries"] if item["name"] == "libssh2-1"
+    )
+    library = package["elf_files"][0]
+    assert (
+        scanner.AUDITED_SECRET_LITERAL_FILE_SHA256[library["path"]] == library["sha256"]
+    )
+
+
 def _gzip(payload: bytes) -> bytes:
     """Stable gzip bytes so xdist workers collect identical parametrized IDs."""
 

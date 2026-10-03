@@ -144,6 +144,65 @@ on AMD64 and ARM64. NPA checks the SHA-bound platform metadata, initializes with
 On a lock mismatch, intentionally regenerate and review the provider lock;
 removing it would discard the verification contract.
 
+### Provider request deadlines
+
+Deadline injection is advisory. Unsupported HCL/JSON, ambiguous providers, symlinks,
+concurrent source changes, or unavailable writes leave recipe bytes unchanged and
+record `status: advisory` with a stable `reason_code` in the deployment sidecar.
+Terraform still validates and applies the original materialized recipe. Invalid
+requested apply timeouts remain errors; unsafe paths are never traversed or rewritten.
+
+The shared MK8s backend supplies omitted Nebius provider `timeout`,
+`per_retry_timeout`, and `auth_timeout` attributes from the existing NPA apply
+`--timeout` budget, expressed in minutes. This avoids the provider SDK's shorter
+request default ending a create RPC before its resource identity is returned.
+These are request deadlines; they are not a guarantee that asynchronous resource
+creation succeeds or that GPU capacity is available.
+
+In the pinned provider schema, `auth_timeout` covers the request including
+authentication; it is not an authentication-only budget. Leaving that ceiling
+or the per-attempt deadline at a shorter default would still interrupt a slow
+create request. Giving an attempt the full apply budget deliberately allows one
+slow attempt to consume that budget. Earlier transient failures can still retry
+under the existing retry count; NPA does not promise time for every retry.
+
+NPA edits only the owned materialized provider block. Explicit operator values,
+expressions, nulls, retry counts, aliases, and override-file settings remain
+unchanged. The source recipe remains unchanged. The deployment sidecar records
+the inserted defaults and materialized source hashes before Terraform runs.
+
+Destroy retains those materialized provider settings so the recorded KubeRay
+input digest and recovery provenance remain valid. Its own NPA outer deadline
+and cancellation still apply. Existing installations without these generated
+defaults retain their original settings until an ordinary supported reapply.
+
+
+The provider inspection uses `python-hcl2` 8.x and supports the pinned NPA
+recipes, ordinary block/line comments, heredocs, aliases and Terraform JSON.
+It refuses syntax the parser cannot represent before writing or running
+Terraform. One known valid-Terraform limitation is a block comment between the
+`provider` keyword and its label, such as `provider /* note */ "nebius" {}`.
+Such a custom recipe must move that comment outside the block header; NPA does
+not attempt a text/regex rewrite or silently run with uninspected defaults.
+
+For live verification, set `NPA_MK8S_RPC_LIVE_CONFIG` to a private JSON evidence
+configuration and run `npa/tests/e2e/test_mk8s_provider_rpc_live.py` with
+`NPA_INTEGRATION_E2E=1`. Run its `live` phase after a supported owned provision,
+and its `cleanup` phase after supported teardown. The verifier is read-only:
+it binds the producing source/start/result, exact state and deployment
+sidecar, materialized provider hash, and actual provider identities. Cleanup
+requires typed NotFound for the exact cluster and each recorded node group.
+Before those reads, the verifier requires the same plain service-account
+profile, credential/config file byte hashes, endpoint, project and tenant that
+the provision-start receipt recorded. It checks the live project/tenant identity
+and removes ambient Nebius selectors from the subprocess environment. Missing
+legacy authority bindings are refused; never backfill them after a run. This
+read-only harness supports explicit key-backed profiles, not attached metadata
+or arbitrary authentication plugins.
+It does not adopt or destroy resources, and a failed provision cannot be
+reported as a successful lifecycle. Keep all configuration and receipts
+private because they contain operational identifiers.
+
 ## Cleanup
 
 Stop active jobs and preserve needed outputs before removing this cluster:
@@ -156,3 +215,69 @@ Read the proposed scope before confirming. Cluster deletion does not mean all
 project storage or services are gone; follow the [teardown guide](../../docs/teardown.md)
 for those separately owned resources. Preserve Terraform state after an
 incomplete deletion so the exact operation can be resumed.
+### Terminal recovery after an already completed teardown
+
+`npa cluster reconcile-absent --evidence-file <private-manifest.json>` closes one
+failed standalone MK8s operation only after verifying its original producer
+records and fresh provider absence. It changes the exact local journal to
+`destroyed` and releases that operation's project lease. It never deletes,
+adopts, restores Terraform state, or relaunches a cloud resource. The original
+provisioning failure and original records remain retained.
+
+The version-1 private manifest pins the original journal, provision start/result,
+runner source and stdout/stderr, original key-backed profile binding, native
+backend archive, and cleanup-intent receipt by absolute path and SHA-256. It also
+selects the original producer repository and operation ID. The native archive
+must contain exactly one regular `.npa-fleet-env.json` and
+`k8s-training/terraform.tfstate`. The implementation binds the operation ID
+printed by the original NPA process, operation-generation timestamps, exact
+project/tenant/name, source revision and cleanup hash chain. It does not invent
+an `operation_id` missing from old native metadata. A newly authored summary
+cannot replace missing original records; incomplete legacy evidence is refused.
+
+Recovery verifies the same plain service-account config and credential bytes,
+the active project/tenant, typed absence of every recorded cluster, node group
+and application release, and complete paginated inventories. Unsupported managed
+resource instances, live resources, denied/unknown reads, ambiguous names,
+changed original bytes, active execution, and journal/lease races fail closed.
+Local leases serialize cooperating NPA writers, not external provider actors.
+The verification is a fresh observation, not a permanent guarantee of absence.
+
+Keep the manifest and raw records private. Successful recovery retains an
+owner-only audit under the original operation directory. Repeating the same
+terminal recovery verifies its recorded audit and exact original project lease.
+If a process stopped after writing the terminal journal, the retry completes only
+that same lease release under the original project and execution locks. Changed
+or foreign leases are refused. It returns `already-reconciled` only after durable
+release readback, without claiming fresh provider reads. A failed provision is never relabeled
+as a successful deployment or workload result.
+
+The opt-in `test_cluster_absence_recovery_live.py` accepts
+`NPA_ABSENCE_RECOVERY_LIVE_CONFIG` with the exact reviewed source, operation,
+manifest hash and `allow_terminal_reconciliation: true`. Run it only for the
+operator-owned operation after scoped cleanup and source review. Offline tests
+use synthetic original records and real separate processes to exercise locks,
+pagination, identity mismatches and hostile provider responses.
+
+
+Absence verification uses a 120-second deadline for each external read. Set
+`--verification-timeout-seconds SECONDS` on `npa cluster reconcile-absent` to
+adjust it; `0` disables that deadline while retaining cancellation cleanup.
+This is a read deadline, not a provisioning or workflow execution budget.
+Timeouts kill and join only the verifier's owned process group, preserve the
+failed journal and lease, and return `verification-unavailable` with
+`reconciled: false`. Retry after restoring the provider or local Git reader.
+Malformed evidence also returns that sanitized envelope without private paths.
+
+The verifier observes child exit without reaping, then stops the owned process
+group while its leader PID remains reserved, and only then joins the leader.
+Nested reader mode requires the parent-issued marker and an owned child session;
+it must never be entered by the caller holding the recovery locks. SIGINT joins
+owned children before propagating; SIGTERM temporarily becomes a sanitized
+verification failure and the previous handler is restored afterward.
+
+`NPA_ABSENCE_MAX_OUTPUT_BYTES` sets the accepted bytes per captured stream
+(default 67108864, or 64 MiB; `0` explicitly disables this size limit). Capture
+sizes are monitored while the read runs and checked before loading output into
+memory. Excess output refuses verification and stops owned children; it never
+establishes absence. This is an evidence-read bound, not a workflow/run budget.

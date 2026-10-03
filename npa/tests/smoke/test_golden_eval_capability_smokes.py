@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from importlib.util import find_spec
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -21,11 +22,63 @@ def test_sim2real_envgen_raw_generation_passes() -> None:
     assert result.ok, result.detail
 
 
+def test_sim2real_envgen_runtime_readability_probe_is_non_root_and_drops_pythonpath(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.smoke import test_sim2real_envgen_functional as envgen_smoke
+
+    observed: dict[str, object] = {}
+
+    def fake_run(args, **kwargs):
+        observed["args"] = args
+        observed["environment"] = kwargs["env"]
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout="/opt/npa/compat/tetgen.py | /opt/npa/src/npa/workflows/sim2real_envgen.py\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(envgen_smoke.os, "geteuid", lambda: 1000)
+    monkeypatch.setenv("PYTHONPATH", "/operator/overlay")
+    monkeypatch.setattr(envgen_smoke.subprocess, "run", fake_run)
+
+    result = envgen_smoke.check_non_root_runtime_readability()
+
+    assert result.ok, result.detail
+    assert observed["args"][:2] == [envgen_smoke.sys.executable, "-c"]
+    assert "PYTHONPATH" not in observed["environment"]
+    assert "uid=1000" in result.detail
+
+
+def test_sim2real_envgen_runtime_readability_probe_rejects_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from npa.smoke import test_sim2real_envgen_functional as envgen_smoke
+
+    monkeypatch.setattr(envgen_smoke.os, "geteuid", lambda: 0)
+
+    result = envgen_smoke.check_non_root_runtime_readability()
+
+    assert not result.ok
+    assert "unexpectedly ran as root" in result.detail
+
+
 def test_cosmos3_reason_cache_wiring_passes() -> None:
     from npa.smoke.test_cosmos3_reason_functional import check_reason_cache_wiring
 
     result = check_reason_cache_wiring()
     assert result.ok, result.detail
+
+
+def test_lancedb_bdd100k_dhash_runtime_passes() -> None:
+    from npa.smoke.test_lancedb_functional import check_bdd100k_dhash_runtime
+
+    result = check_bdd100k_dhash_runtime()
+
+    assert result.ok, result.detail
+    assert "Pillow=12." in result.detail
+    assert "dhash=0" in result.detail
 
 
 def test_lerobot_vlm_rl_signal_step_passes() -> None:
@@ -86,17 +139,17 @@ def test_manifest_covers_all_tools_with_container_smokes_or_server_smokes() -> N
     )
 
 
-def test_run_all_dry_run_includes_all_tools() -> None:
+def test_run_all_dry_run_includes_all_runnable_tools() -> None:
     from npa.deploy.images import CONTAINER_IMAGE_NAMES
     from npa.smoke.batch import iter_containers, run_all
     from npa.smoke.manifest import load_manifest
 
-    blocked = {
+    unrunnable = {
         name
         for name, spec in load_manifest().items()
-        if spec.golden_eval.status == "blocked-on-upstream"
+        if spec.golden_eval.status in {"blocked-on-upstream", "needs-image-update"}
     }
-    expected = set(CONTAINER_IMAGE_NAMES) - blocked
+    expected = set(CONTAINER_IMAGE_NAMES) - unrunnable
     names = iter_containers(tools_only=True, include_foundation=False)
     batch = run_all(names, serverless=False, execute=False)
     assert {r.name for r in batch.results} == expected

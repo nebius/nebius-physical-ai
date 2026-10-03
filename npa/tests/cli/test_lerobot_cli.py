@@ -26,6 +26,9 @@ from .test_workbench_cli import _cfg, app, runner
 from .test_workbench_cli import *  # noqa: F401,F403
 
 
+_OPERATOR_LEROBOT_IMAGE = "registry.example.invalid/npa-lerobot:reviewed"
+
+
 def _mock_serverless_train(
     mocker, *, existing: JobInfo | None = None, poll_status: str = "succeeded"
 ):
@@ -155,6 +158,8 @@ def _serverless_train_args(*extra: str) -> list[str]:
         "1",
         "--output-path",
         "s3://bucket/out/",
+        "--image",
+        _OPERATOR_LEROBOT_IMAGE,
         "--output",
         "json",
         *extra,
@@ -198,6 +203,8 @@ def _serverless_profile_args(script: Path, *extra: str) -> list[str]:
         "profile-1",
         "--output-path",
         "s3://bucket/out/",
+        "--image",
+        _OPERATOR_LEROBOT_IMAGE,
         "--output",
         "json",
         *extra,
@@ -565,10 +572,7 @@ def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     kwargs = client.create_job.call_args.kwargs
     assert kwargs["project_id"] == "project-1"
     assert kwargs["name"] == "train-1"
-    assert kwargs["image"] == (
-        "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:"
-        "cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-    )
+    assert kwargs["image"] == _OPERATOR_LEROBOT_IMAGE
     assert kwargs["gpu_type"] == "gpu-h200-sxm"
     assert kwargs["subnet_id"] == "vpcsubnet-1"
     assert kwargs["output_path"] == "s3://bucket/out/"
@@ -581,7 +585,23 @@ def test_lerobot_train_serverless_submit_only_creates_job(mocker) -> None:
     update.assert_called_once()
 
 
-def test_lerobot_train_serverless_lerobot_version_060_selects_image(mocker) -> None:
+def test_lerobot_train_serverless_default_public_image_is_quarantined(mocker) -> None:
+    client, _update = _mock_serverless_train(mocker)
+    args = _serverless_train_args("--submit-only")
+    image_index = args.index("--image")
+    del args[image_index : image_index + 2]
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ValueError)
+    assert "public release metadata is quarantined" in str(result.exception)
+    client.create_job.assert_not_called()
+
+
+def test_lerobot_train_serverless_lerobot_version_060_uses_explicit_image(
+    mocker,
+) -> None:
     client, _update = _mock_serverless_train(mocker)
 
     result = runner.invoke(
@@ -591,9 +611,7 @@ def test_lerobot_train_serverless_lerobot_version_060_selects_image(mocker) -> N
 
     assert result.exit_code == 0, result.output
     kwargs = client.create_job.call_args.kwargs
-    assert kwargs["image"] == (
-        "ghcr.io/nebius/nebius-physical-ai/npa-lerobot:0.6.0-d6-extras-20260912"
-    )
+    assert kwargs["image"] == _OPERATOR_LEROBOT_IMAGE
     assert "--env_eval_freq=1000000" in kwargs["command"]
     assert "--eval_freq=" not in kwargs["command"]
 

@@ -158,8 +158,11 @@ node_group_version: "72"
    interrupted. For the default
    unconfined worker profile, NPA also extends the node configurator's sysctls so
    Ubuntu's AppArmor user-namespace gate does not block Enroot/Pyxis jobs. The
-   template mutation is indentation-bounded to `nodeConfigurator.values` and is
-   tied to the verified chart contract. Post-apply monitoring repair is
+   pinned Flux chart does not forward arbitrary `nodeConfigurator.values`
+   entries. NPA supplies its watched `terraform-nodeconfigurator` ConfigMap
+   through the chart's `valuesFrom` contract, which reaches the operator-managed
+   NodeConfigurator resource. Exact earlier NPA patches migrate automatically;
+   unknown source changes still fail before provider mutation. Post-apply monitoring repair is
    best-effort: RBAC/transient failures are returned as diagnostics and do not
    turn an otherwise healthy Terraform reconciliation into a failed deploy.
    The direct GPU creation check is a required validation, not a best-effort
@@ -223,3 +226,9 @@ npa soperator plan --help
 npa soperator deploy --help
 npa/.venv/bin/python -m pytest npa/tests/unit/test_soperator_cli.py -q
 ```
+
+To verify the user-namespace setting and actual non-root namespace creation on
+every worker of an existing dedicated cluster, use
+`npa/tests/e2e/test_soperator_userns_live.py`. Its required context and exact
+worker-count selectors are documented in `npa/tests/e2e/README.md`. This probe
+does not substitute for the mandatory creation-time CUDA checks.
