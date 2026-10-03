@@ -904,38 +904,43 @@ def test_configure_discovery_recovers_tenant_from_profile_project(
 
 
 def test_configure_project_scoped_profile_uses_profile_defaults(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, mocker
 ) -> None:
     """A tenant-list denial must not strand a project-scoped profile."""
     import yaml
-
-    from npa.clients import config as config_module
-    from npa.clients import credentials as credentials_module
     import npa.clients.nebius as nebius_module
 
-    config_path = tmp_path / "config.yaml"
-    monkeypatch.setattr(
-        credentials_module, "CREDENTIALS_PATH", tmp_path / "credentials.yaml"
-    )
-    monkeypatch.setattr(config_module, "CONFIG_PATH", config_path)
-    monkeypatch.setattr(cli_main, "_ensure_nebius_profile", lambda: True)
+    _, config_path = _fresh_configure_paths(monkeypatch, tmp_path)
     _stub_nebius_defaults(monkeypatch, project="project-scoped", tenant="tenant-scoped")
-    # list_projects_in_tenant is best-effort and returns [] when the profile has
-    # no tenant-wide list permission.
     monkeypatch.setattr(nebius_module, "list_projects_in_tenant", lambda _tenant: [])
-
+    process = mocker.patch(
+        "subprocess.Popen", side_effect=AssertionError("unexpected process escape")
+    )
+    lookup = mocker.patch.object(nebius_module, "bucket_exists", return_value=False)
+    provision = mocker.patch(
+        "npa.clients.storage_setup.provision_storage",
+        side_effect=nebius_module.NebiusError("synthetic storage refusal"),
+    )
     result = runner.invoke(
         app,
         ["configure", "--interactive", "--provision"],
         input="\n".join([""] * 12) + "\n",
     )
-
     assert result.exit_code == 0, result.output
     assert "expected for project-scoped IAM access" in result.output
     config = yaml.safe_load(config_path.read_text())
     stanza = next(iter(config["projects"].values()))
     assert stanza["tenant_id"] == "tenant-scoped"
     assert stanza["project_id"] == "project-scoped"
+    provision.assert_called_once()
+    requested = provision.call_args.kwargs
+    lookup.assert_called_once_with("project-scoped", requested["bucket_name"])
+    assert requested["project_id"] == "project-scoped"
+    assert requested["tenant_id"] == "tenant-scoped"
+    assert re.fullmatch(
+        r"npa-bucket-\d{8}t\d{6}z-[a-z0-9]+-[a-z0-9]+", requested["bucket_name"]
+    )
+    process.assert_not_called()
 
 
 def test_configure_discovery_prompts_when_several_tenants(
