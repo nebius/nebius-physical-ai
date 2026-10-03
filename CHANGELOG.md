@@ -7,6 +7,18 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM benchmarks distinguish outcome from agency
+
+- A packaged `isaac-agency` calibration pairs one true elevated-object claim
+  with one false grasp-and-lift claim on the same six exact stylized frames.
+  Its optional structural preflight validates frame hashes, complete
+  claim-specific color masks, signed motion, and actor separation before any
+  evaluator activity, then reuses the exact selected frames and metadata-derived
+  task for real-backend scoring without changing stub or fixture-score behavior.
+- Benchmarks now require both expected-label classes and unique resolved item
+  IDs before frame selection. Reports add specificity and balanced accuracy,
+  and rank configurations by balanced accuracy before existing tie-breakers.
+
 ### Open3D recordings verify persisted geometry inputs
 
 - Visualization rejects changed meshes, fused clouds, pose graphs, manifests,

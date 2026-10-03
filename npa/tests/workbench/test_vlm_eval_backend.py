@@ -732,6 +732,8 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
     assert report.best_config.metrics.accuracy == 1.0
     assert report.best_config.metrics.precision == 1.0
     assert report.best_config.metrics.recall == 1.0
+    assert report.best_config.metrics.specificity == 1.0
+    assert report.best_config.metrics.balanced_accuracy == 1.0
     assert report.best_config.metrics.true_positives == 2
     assert report.best_config.metrics.true_negatives == 2
     assert all(0.0 <= case.score <= 1.0 for case in report.best_config.results)
