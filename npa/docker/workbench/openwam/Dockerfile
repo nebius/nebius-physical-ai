@@ -112,9 +112,12 @@ COPY --chmod=0444 docker/workbench/openwam/REDISTRIBUTION.md /usr/share/doc/npa-
 COPY --chmod=0444 docker/workbench/openwam/THIRD_PARTY_NOTICES.md /usr/share/doc/npa-openwam/THIRD_PARTY_NOTICES.md
 
 RUN install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache /workspace/.cache/huggingface \
+    && chmod 0755 /usr/share/doc/npa-openwam \
     && chown -R ubuntu:ubuntu /home/ubuntu /workspace /opt/openwam \
+    && sudo -u ubuntu -H /opt/openwam-venv/bin/rerun analytics disable >/dev/null 2>&1 \
     && test -r /usr/share/doc/npa-openwam/REDISTRIBUTION.md \
-    && test -r /usr/share/doc/npa-openwam/THIRD_PARTY_NOTICES.md
+    && test -r /usr/share/doc/npa-openwam/THIRD_PARTY_NOTICES.md \
+    && test -s /home/ubuntu/.config/rerun/analytics.json
 
 VOLUME ["/workspace/.cache/huggingface"]
 WORKDIR /opt/openwam

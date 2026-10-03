@@ -26,3 +26,8 @@ resolved OS, CUDA, PyTorch, Python-package, source, data, model, cache, and
 output terms separately. No new NPA EULA, `ACCEPT_*` variable, or per-image
 attestation is required by this recipe; any future upstream acceptance follows
 only the upstream provider's documented mechanism.
+
+Optional telemetry remains disabled: the image sets Weights & Biases offline
+mode and invokes Rerun's documented `analytics disable` command for its final
+user during build. Neither setting accepts an upstream term or grants an
+upstream payload right.
