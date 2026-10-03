@@ -2,6 +2,8 @@
 
 import importlib.util
 import copy
+from dataclasses import asdict
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -9,6 +11,9 @@ import subprocess
 import sys
 
 import pytest
+from PIL import Image
+
+from npa.workbench import vlm_eval
 
 
 def _runner():
@@ -65,13 +70,58 @@ def _report():
 
 
 def _judge_result(model):
-    return {
-        "passed": False,
-        "score": 0,
-        "evidence": {
-            "provider": {"returned_model": model, "raw_response": "synthetic"}
-        },
+    stream = BytesIO()
+    Image.new("RGB", (2, 2)).save(stream, format="PNG")
+    frame = vlm_eval.SelectedFrame("synthetic", "image/png", stream.getvalue())
+    prompt = vlm_eval._build_prompt(
+        task="synthetic", rubric="synthetic", frame_selection="final", frame_count=1
+    )
+    request = vlm_eval._build_request_evidence(
+        backend="api",
+        model=model,
+        prompt=prompt,
+        rubric="synthetic",
+        request={"temperature": 0},
+        frames=[frame],
+        frame_selection="final",
+        max_frames=1,
+    )
+    structured = vlm_eval._strict_comparison_verdict(
+        model=model, request=request, response=_synthetic_response(model)
+    )
+    return asdict(
+        vlm_eval._result_from_structured(
+            backend="api",
+            input_path="synthetic.png",
+            output_path="synthetic-output",
+            task="synthetic",
+            model=model,
+            success_threshold=0.5,
+            frame_selection="final",
+            frame_count=1,
+            rubric="synthetic",
+            structured=structured,
+        )
+    )
+
+
+def _synthetic_response(model):
+    body = {
+        "id": "synthetic-request",
+        "model": model,
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": json.dumps(
+                        {"success": False, "score": 0, "rationale": "synthetic"}
+                    )
+                },
+            }
+        ],
     }
+    return vlm_eval._VlmBackendResponse(body, json.dumps(body), 200, None, 0.1)
 
 
 @pytest.mark.parametrize(
@@ -826,3 +876,119 @@ def test_malformed_provider_artifacts_cannot_pass_receipt(
     assert receipt["failure"] == "invalid_audit_judge_provider"
     assert "private-" not in body + capsys.readouterr().out
     assert str(tmp_path) not in body
+
+
+@pytest.mark.parametrize("judge", ["primary", "secondary"])
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "non_json",
+        "wrong_hash",
+        "wrong_model",
+        "truncated",
+        "refused",
+        "fenced",
+        "score_changed",
+        "rubric_changed",
+        "manifest_changed",
+        "status_missing",
+        "status_float",
+        "request_id_missing",
+    ],
+)
+def test_retained_semantic_fault_cannot_pass_receipt(
+    monkeypatch, tmp_path, judge, fault
+):
+    def mutate(report):
+        result = report[judge]["result"]
+        provider = result["evidence"]["provider"]
+        if fault == "non_json":
+            provider["raw_response"] = "private-not-json"
+        elif fault == "wrong_hash":
+            provider["raw_response_sha256"] = "0" * 64
+        elif fault == "rubric_changed":
+            result["rubric"] = "private-changed-rubric"
+        elif fault == "manifest_changed":
+            result["evidence"]["request"]["request_manifest"]["requested_model"] = (
+                "other/model"
+            )
+        elif fault.startswith("status_"):
+            provider["status_code"] = None if fault == "status_missing" else 200.0
+        elif fault == "request_id_missing":
+            raw = json.loads(provider["raw_response"])
+            raw.pop("id")
+            provider["provider_request_id"] = None
+            _replace_raw(provider, raw)
+        else:
+            _mutate_completion(provider, fault)
+
+    _assert_retained_rejected(monkeypatch, tmp_path, mutate)
+
+
+def _mutate_completion(provider, fault):
+    raw = json.loads(provider["raw_response"])
+    choice = raw["choices"][0]
+    if fault == "wrong_model":
+        raw["model"] = provider["returned_model"] = "different/model"
+    elif fault == "truncated":
+        choice["finish_reason"] = provider["finish_reason"] = "length"
+    elif fault == "refused":
+        choice["message"]["refusal"] = "private-refusal"
+    elif fault == "fenced":
+        choice["message"]["content"] = (
+            "```json\n" + choice["message"]["content"] + "\n```"
+        )
+        provider["parser_version"] += "+markdown-fence-v1"
+    else:
+        verdict = json.loads(choice["message"]["content"])
+        verdict["score"] = 1
+        choice["message"]["content"] = json.dumps(verdict)
+    _replace_raw(provider, raw)
+
+
+def _replace_raw(provider, raw):
+    provider["raw_response"] = json.dumps(raw)
+    provider["raw_response_sha256"] = vlm_eval._sha256_text(provider["raw_response"])
+
+
+@pytest.mark.parametrize("field", ["prompt_tokens", "completion_tokens"])
+@pytest.mark.parametrize("value", [True, False, 1.0, "1", None, 0, -1])
+@pytest.mark.parametrize("location", ["raw", "metadata", "both"])
+def test_retained_usage_literals_cannot_pass_receipt(
+    monkeypatch, tmp_path, field, value, location
+):
+    def mutate(report):
+        provider = report["primary"]["result"]["evidence"]["provider"]
+        raw = json.loads(provider["raw_response"])
+        if location in ("metadata", "both"):
+            provider["usage"][field] = value
+        if location in ("raw", "both"):
+            raw["usage"][field] = value
+        _replace_raw(provider, raw)
+
+    _assert_retained_rejected(monkeypatch, tmp_path, mutate)
+
+
+def _assert_retained_rejected(monkeypatch, tmp_path, mutate):
+    runner = _runner()
+    _config(monkeypatch, tmp_path)
+
+    def execute(root, target, config):
+        _write_passing_execution(target, 1)
+        report = _report()
+        mutate(report)
+        directory = target / "paired-judges"
+        directory.mkdir()
+        path = directory / runner.JUDGE_COMPARISON_RESULT_FILENAME
+        path.write_text(json.dumps(report))
+        path.chmod(0o600)
+        return 0
+
+    monkeypatch.setattr(runner, "_execute", execute)
+    target = tmp_path / "private-evidence"
+    assert runner.main(["--audit-kind", "paired", "--evidence-dir", str(target)]) == 1
+    body = (target / "receipt.json").read_text()
+    receipt = json.loads(body)
+    assert receipt["counts"]["passed"] == 1
+    assert receipt["passed"] is False and receipt["failure"] is not None
+    assert str(tmp_path) not in body and "private-" not in body

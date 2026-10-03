@@ -15,9 +15,11 @@ import sys
 import pytest
 
 from npa.workbench.vlm_eval import (
+    HOSTED_RESPONSE_PARSER_VERSION,
     JUDGE_COMPARISON_RESULT_FILENAME,
     VlmJudgeComparisonRequest,
 )
+from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
 from npa.clients.token_factory import (
     DEFAULT_BASE_URL,
     TokenFactoryClient,
@@ -347,10 +349,42 @@ def _retained_matches(control: dict, report: dict) -> bool:
             require_boolean(actual, field=field)
         if actual != expected:
             return False
-    return all(
-        report[judge]["model"] == control["request"][f"{judge}_model"]
-        for judge in ("primary", "secondary")
-    )
+    for judge in ("primary", "secondary"):
+        outcome = report[judge]
+        if outcome["model"] != control["request"][f"{judge}_model"]:
+            return False
+        if outcome.get("result") is not None:
+            _validate_retained_judge(outcome)
+    return True
+
+
+def _validate_retained_judge(outcome: dict) -> None:
+    result = outcome["result"]
+    # Reuse the retained-evidence contract, not the promotion action. The paired
+    # report remains audit-only even when both individual evidence records validate.
+    if (
+        result.get("backend") != "api"
+        or result.get("model") != outcome["model"]
+        or vlm_grade_block_details(result)
+    ):
+        raise _AuditConfigurationError("invalid_retained_judge_evidence")
+    provider = result["evidence"]["provider"]
+    if (
+        provider["status_code"] != 200
+        or provider["parser_version"] != HOSTED_RESPONSE_PARSER_VERSION
+        or not provider["provider_request_id"]
+    ):
+        raise _AuditConfigurationError("invalid_retained_judge_evidence")
+    usage = provider["usage"]
+    raw_usage = json.loads(provider["raw_response"]).get("usage")
+    if not isinstance(usage, dict) or not isinstance(raw_usage, dict):
+        raise _AuditConfigurationError("invalid_retained_judge_evidence")
+    try:
+        for field in ("prompt_tokens", "completion_tokens"):
+            require_integer(usage.get(field), field=field, minimum=1)
+            require_integer(raw_usage.get(field), field=field, minimum=1)
+    except ValueError:
+        raise _AuditConfigurationError("invalid_retained_judge_evidence") from None
 
 
 def _public_comparisons(target: Path) -> list[dict]:

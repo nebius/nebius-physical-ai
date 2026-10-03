@@ -497,7 +497,11 @@ evidence directory. See [configured audit checks](../docs/testing/vlm-audit-live
 for configuration, credential checks, fixture preparation, and lifecycle.
 The existing protected nightly workflow also runs this entrypoint with
 `--generated-controls`: three frozen local visual controls and two hosted judges,
-using only its Token Factory key. It uploads sanitized receipts, not raw visuals
+using only its Token Factory key. Receipt acceptance rechecks retained request,
+rubric, response hashes, exact model identity, bare-JSON completion and positive
+integer token usage after test execution; passing test counts alone are insufficient.
+This verifies internal evidence integrity, not provider authentication or promotion.
+It uploads sanitized receipts, not raw visuals
 or provider responses. This lane does not provision a GPU or replace the existing
 hosted nightly suites; registration alone is not a successful live-run claim.
 
