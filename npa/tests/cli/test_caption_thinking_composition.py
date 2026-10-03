@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import ast
+from pathlib import Path
 
 import httpx
 from PIL import Image
@@ -30,6 +32,28 @@ _CASES = {
         "A red square is visible.",
     ],
 }
+
+
+def test_owned_caption_live_protocol_requires_explicit_opt_in():
+    path = (
+        Path(tool.__file__).resolve().parents[4]
+        / "tests/e2e/test_token_factory_caption_thinking_live.py"
+    )
+    module = ast.parse(path.read_text())
+    assignment = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "pytestmark"
+            for target in node.targets
+        )
+    )
+    assert {
+        node.attr
+        for node in ast.walk(assignment.value)
+        if isinstance(node, ast.Attribute)
+    } >= {"e2e", "token_factory_e2e"}
 
 
 def _install_transport(monkeypatch, replies, requests):

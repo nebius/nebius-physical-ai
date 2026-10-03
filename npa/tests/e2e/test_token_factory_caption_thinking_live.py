@@ -14,7 +14,7 @@ import pytest
 from npa.clients.token_factory import TokenFactoryClient, resolve_config
 from npa.workbench.token_factory import TokenFactoryToolError, caption_images
 
-pytestmark = pytest.mark.token_factory_e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.token_factory_e2e]
 _INSTRUCTION = (
     "Describe only the visible shapes and their colors. State when no shape is visible."
 )
