@@ -315,6 +315,8 @@ def test_structural_pair_propagates_custom_rubric_to_request_evidence(
     def fake_call(**kwargs: Any) -> VlmStructuredResponse:
         rubrics.append(kwargs["rubric"])
         assert f"Rubric: {kwargs['rubric']}" in kwargs["prompt"]
+        assert kwargs["frame_selection"] == "sequence"
+        assert kwargs["max_frames"] == 6
         return VlmStructuredResponse(success=False, score=0.1, rationale="control")
 
     monkeypatch.setattr(vlm_eval, "_call_openai_compatible", fake_call)
@@ -328,6 +330,55 @@ def test_structural_pair_propagates_custom_rubric_to_request_evidence(
         max_frames=6,
     )
     assert rubrics == ["Frozen custom agency rubric."] * 2
+
+
+def test_structural_pair_retains_landed_sampling_provenance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completion = {
+        "model": "MiniMaxAI/MiniMax-M3",
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "success": False,
+                            "score": 0.25,
+                            "rationale": "Synthetic metadata control.",
+                        }
+                    )
+                },
+            }
+        ],
+    }
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(
+        vlm_eval, "_post_with_readiness_retry", lambda **kwargs: completion
+    )
+    report = benchmark_vlm_eval(
+        dataset="isaac-agency",
+        backend="api",
+        models=["MiniMaxAI/MiniMax-M3"],
+        thresholds=[0.5],
+        frame_selection="sequence",
+        max_frames=6,
+    )
+    assert len(report.best_config.results) == 2
+    for case in report.best_config.results:
+        assert case.evidence is not None
+        assert case.evidence.schema_version == "npa_vlm_eval_evidence_v2"
+        sampling = case.evidence.request.request_manifest["sampling"]
+        assert sampling["strategy"] == "sequence"
+        assert sampling["max_frames"] == sampling["selected_count"] == 6
+        assert sampling["source_kind"] == "image-sequence"
+        assert sampling["source_count"] == 6
+        assert sampling["selected_indices"] == list(range(6))
+        assert sampling["selected_timestamps_s"] == [None] * 6
+        assert sampling["coverage_complete"] is True
+        assert [frame.source_index for frame in case.evidence.request.frames] == list(
+            range(6)
+        )
 
 
 @pytest.mark.parametrize(

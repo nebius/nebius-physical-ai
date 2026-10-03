@@ -101,6 +101,7 @@ def _verify_pair(report, model: str) -> None:
             == hashlib.sha256(DEFAULT_RUBRIC.encode()).hexdigest()
         )
         selected = tuple(frame.sha256 for frame in case.evidence.request.frames)
+        _verify_sampling(case.evidence)
         assert len(selected) == 6
         assert frames is None or frames == selected
         frames = selected
@@ -116,3 +117,21 @@ def _verify_pair(report, model: str) -> None:
         )
         == 2
     )
+
+
+def _verify_sampling(evidence) -> None:
+    assert evidence.schema_version == "npa_vlm_eval_evidence_v2"
+    frames = evidence.request.frames
+    assert [frame.source_kind for frame in frames] == ["image-sequence"] * 6
+    assert [frame.source_index for frame in frames] == list(range(6))
+    assert [frame.source_count for frame in frames] == [6] * 6
+    sampling = evidence.request.request_manifest["sampling"]
+    assert sampling["strategy"] == PROTOCOL["frame_selection"]
+    assert (
+        sampling["max_frames"] == sampling["selected_count"] == PROTOCOL["max_frames"]
+    )
+    assert sampling["source_kind"] == "image-sequence"
+    assert sampling["source_count"] == 6
+    assert sampling["selected_indices"] == list(range(6))
+    assert sampling["selected_timestamps_s"] == [None] * 6
+    assert sampling["coverage_complete"] is True

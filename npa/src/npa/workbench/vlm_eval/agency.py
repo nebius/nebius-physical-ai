@@ -266,12 +266,8 @@ def _build_result(
         verdict=verdict,
         reason=reason,
         selected_frame_count=len(frames),
-        object_pixel_counts=tuple(
-            measurement.object_pixels for measurement in measurements
-        ),
-        actor_pixel_counts=tuple(
-            measurement.actor_pixels for measurement in measurements
-        ),
+        object_pixel_counts=tuple(item.object_pixels for item in measurements),
+        actor_pixel_counts=tuple(item.actor_pixels for item in measurements),
         object_boxes=object_boxes,
         actor_boxes=actor_boxes,
         horizontal_gaps=gaps,
