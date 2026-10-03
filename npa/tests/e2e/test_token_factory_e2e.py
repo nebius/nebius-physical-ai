@@ -327,11 +327,12 @@ def test_live_caption_and_reason_saved_artifacts(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("inside", [True, False])
+@pytest.mark.parametrize("model", [DEFAULT_VISION_MODEL, "moonshotai/Kimi-K3"])
 def test_live_visual_judge_distinguishes_completion(
-    tmp_path: Path, inside: bool
+    tmp_path: Path, inside: bool, model: str
 ) -> None:
     _require_key()
-    from npa.workbench.vlm_eval import evaluate_vlm, select_rollout_frames, write_result
+    from npa.workbench.vlm_eval import evaluate_vlm, write_result
     from dataclasses import asdict
 
     frames = tmp_path / "rollout"
@@ -342,16 +343,24 @@ def test_live_visual_judge_distinguishes_completion(
         input_path=str(frames),
         output_path=str(output),
         backend="api",
+        model=model,
         task="Move the red square fully inside the green rectangular outline by the final frame.",
         frame_selection="sequence",
     )
     write_result(asdict(result), result_uri=result.result_uri)
     saved = json.loads(output.read_text())
-    assert saved["model"] == DEFAULT_VISION_MODEL
-    assert saved["served_model"] == DEFAULT_VISION_MODEL
+    assert saved["model"] == model
+    assert saved["served_model"] == model
     assert saved["frame_count"] == 3
     assert saved["passed"] is inside
     assert saved["rationale"].strip()
+    _assert_hosted_judge_claims(saved)
+    _assert_visual_judge_evidence(saved, frames, model)
+
+
+def _assert_visual_judge_evidence(saved: dict, frames: Path, model: str) -> None:
+    from npa.workbench.vlm_eval import select_rollout_frames
+
     evidence = saved["evidence"]
     assert evidence["request"]["endpoint_role"] == "hosted-api"
     submitted = select_rollout_frames(frames, frame_selection="sequence", max_frames=4)
@@ -374,6 +383,42 @@ def test_live_visual_judge_distinguishes_completion(
         == hashlib.sha256(raw_response.encode()).hexdigest()
     )
     assert evidence["provider"]["finish_reason"] == "stop"
+    if model == "moonshotai/Kimi-K3":
+        assert evidence["request"]["request_manifest"]["generation_parameters"] == {
+            "reasoning_effort": "low",
+            "response_format": {"type": "json_object"},
+        }
+
+
+def _assert_hosted_judge_claims(saved: dict) -> None:
+    from npa.workbench.vlm_eval import _build_prompt, _parse_api_structured_response
+
+    evidence = saved["evidence"]
+    response = json.loads(evidence["provider"]["raw_response"])
+    verdict = _parse_api_structured_response(
+        response["choices"][0]["message"]["content"], served_model=response["model"]
+    )
+    assert saved["score"] == round(verdict.score, 4)
+    assert saved["passed"] is (saved["score"] >= saved["success_threshold"])
+    assert saved["status"] == ("passed" if saved["passed"] else "needs_iteration")
+    assert saved["provider_success"] is verdict.provider_success
+    assert saved["provider_success_matches_score_gate"] is (
+        verdict.provider_success == saved["passed"]
+    )
+    prompt = _build_prompt(
+        **{
+            field: saved[field]
+            for field in ("task", "rubric", "frame_selection", "frame_count")
+        }
+    )
+    assert (
+        evidence["request"]["prompt_sha256"]
+        == hashlib.sha256(prompt.encode()).hexdigest()
+    )
+    assert (
+        evidence["request"]["rubric_sha256"]
+        == hashlib.sha256(saved["rubric"].encode()).hexdigest()
+    )
 
 
 def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:

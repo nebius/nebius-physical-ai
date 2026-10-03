@@ -37,6 +37,16 @@ a versioned heading when a release is cut.
   errors and returning zero for defined all-error cases. It remains null when
   there are neither labeled nor predicted positives.
 
+### Kimi-K3 direct-output requests preserve a visible answer
+
+- Token Factory and hosted VLM evaluation now share one model request profile.
+  Kimi-K3 defaults to its documented low reasoning effort and omits the ordinary
+  temperature field. Hosted VLM evaluation retains constrained JSON, requires
+  exact returned-model identity, and imposes no output-token cap. Existing
+  Lightning and MiniMax request settings and self-hosted behavior remain unchanged.
+  Unregistered hosted model IDs now also require an exact returned identity;
+  aliases that resolve to a different model fail before producing a verdict.
+
 ### LeRobot feedback control mode requires a JSON boolean
 
 - `POST /feedback/train-step` accepts `control: true` or `control: false`;

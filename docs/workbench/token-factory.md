@@ -130,8 +130,23 @@ score in `[0, 1]`, a nonempty rationale, and a completed provider response.
 MiniMax uses prompted JSON because its constrained JSON modes were malformed
 in the verified scope; invalid output is rejected without score repair. Results
 preserve the requested `model` and separately report the actual `served_model`.
-The public replacement IDs must match the provider response exactly; explicit
-custom aliases may resolve to another nonempty model identity.
+Every hosted model ID must match the provider response exactly, including IDs
+without a registered request profile. An alias that resolves to a different
+model is rejected; select the provider's canonical model ID instead.
+
+When `moonshotai/Kimi-K3` is explicitly selected for hosted VLM evaluation, NPA
+requests low reasoning effort and leaves fixed sampling and output-token limits
+unset so the response allowance remains available for visible JSON. The
+returned model must match the requested Kimi-K3 ID exactly. Model availability
+remains key-scoped; verify it with `npa workbench token-factory models` before
+inference.
+
+VLM evaluation records the effective generation settings, including Kimi's
+`reasoning_effort`, together with frame hashes and the exact provider response.
+Request evidence excludes authentication headers. The same provenance path
+preserves the existing request format for other hosted models. Self-hosted
+endpoints still record the actual served identity separately from the requested
+alias.
 
 ## Batch generation
 
@@ -254,5 +269,11 @@ unavailable default is an error. Ordinary pytest invocations remain able to
 skip without credentials, so their skipped tests are not provider proof.
 The [protected provider workflow](../testing/token-factory-live-contracts.md)
 uses this same entrypoint, verifies a missing key fails closed, and rechecks
-model availability, thinking controls, complete outputs, and MiniMax JSON
-behavior. Its daily schedule activates only after the workflow reaches `main`.
+model availability, thinking controls, complete outputs, MiniMax JSON behavior,
+and Kimi-K3 visual verdicts for completed and incomplete diagrams. Kimi is an
+explicit required model in that lane; lack of access fails instead of skipping.
+Its daily schedule activates only after the workflow reaches `main`.
+
+GPU served-model provenance uses the separate
+[operator provenance lane](cookbooks/vlm-eval-loop-runbook.md#live-provenance-verification),
+with private local fixtures, endpoint credentials, and explicit resource lifecycle.
