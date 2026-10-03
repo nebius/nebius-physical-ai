@@ -445,3 +445,121 @@ def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:
         check.question and check.vlm_answer and not check.error
         for check in result.checks
     )
+
+
+def _benchmark_diagram_dataset(tmp_path: Path) -> Path:
+    items = []
+    for inside in (True, False):
+        item_id = "inside" if inside else "outside"
+        frame = _shape_frame(tmp_path / f"{item_id}.png", red_inside=inside)
+        items.append({"id": item_id, "rollout": frame.name, "expected_label": inside})
+    dataset = tmp_path / "benchmark.json"
+    dataset.write_text(json.dumps({"items": items}))
+    return dataset
+
+
+def _assert_live_benchmark_case(case: dict, threshold: float) -> None:
+    from npa.workbench.vlm_eval import select_rollout_frames
+
+    assert case["score_source"] == "api"
+    assert case["predicted_label"] is case["passed"]
+    assert case["passed"] is (case["score"] >= threshold)
+    assert case["expected_label"] is (case["item_id"] == "inside")
+    evidence = case["evidence"]
+    assert evidence["request"]["endpoint_role"] == "hosted-api"
+    submitted = select_rollout_frames(
+        case["rollout"], frame_selection="final", max_frames=1
+    )
+    assert [frame["sha256"] for frame in evidence["request"]["frames"]] == [
+        hashlib.sha256(frame.data).hexdigest() for frame in submitted
+    ]
+    manifest = json.dumps(
+        evidence["request"]["request_manifest"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert (
+        evidence["request"]["request_manifest_sha256"]
+        == hashlib.sha256(manifest.encode()).hexdigest()
+    )
+    _assert_live_benchmark_provider(evidence["provider"], case)
+
+
+def _assert_live_benchmark_provider(provider: dict, case: dict) -> None:
+    from npa.workbench.vlm_eval import parse_structured_response
+
+    raw = provider["raw_response"]
+    assert provider["raw_response_sha256"] == hashlib.sha256(raw.encode()).hexdigest()
+    response = json.loads(raw)
+    assert provider["returned_model"] == response["model"] == DEFAULT_VISION_MODEL
+    assert provider["status_code"] == 200 and provider["finish_reason"] == "stop"
+    assert response["choices"][0]["finish_reason"] == "stop"
+    message = response["choices"][0]["message"]
+    assert message.get("refusal") in (None, "")
+    structured = parse_structured_response(message["content"])
+    assert case["score"] == round(structured.score, 4)
+
+
+def _assert_live_benchmark_confusion(config: dict) -> None:
+    cases = config["results"]
+    assert [case["item_id"] for case in cases] == ["inside", "outside"]
+    metrics = config["metrics"]
+    matrix = metrics["confusion_matrix"]
+    expected_counts = {}
+    for actual, actual_name in ((True, "positive"), (False, "negative")):
+        for predicted, predicted_name in ((True, "positive"), (False, "negative")):
+            matching = [
+                case["item_id"]
+                for case in cases
+                if case["expected_label"] is actual
+                and case["predicted_label"] is predicted
+            ]
+            assert matrix[f"actual_{actual_name}"][
+                f"predicted_{predicted_name}"
+            ] == len(matching)
+            outcome = f"{'true' if actual == predicted else 'false'}_{predicted_name}"
+            expected_counts[outcome] = len(matching)
+            assert metrics[f"{outcome}s"] == len(matching)
+            if actual != predicted:
+                assert metrics[f"{outcome}_item_ids"] == matching
+    assert metrics["total"] == len(cases) == 2
+    assert sum(expected_counts.values()) == metrics["total"]
+    assert metrics["false_positive_rate"] == expected_counts["false_positive"]
+    assert metrics["false_negative_rate"] == expected_counts["false_negative"]
+
+
+def test_live_benchmark_confusion_preserves_provider_evidence(tmp_path: Path) -> None:
+    """Check real hosted report arithmetic on diagrams, without qualifying a judge."""
+    _require_key()
+    from dataclasses import asdict
+    from npa.sdk.workbench.vlm_eval import benchmark
+    from npa.workbench.vlm_eval import write_benchmark_report
+
+    report = benchmark(
+        dataset=str(_benchmark_diagram_dataset(tmp_path)),
+        backend="api",
+        models=(DEFAULT_VISION_MODEL,),
+        thresholds=(0.5, 0.8),
+        task=(
+            "Describe the red square and green rectangular outline in this synthetic "
+            "diagram, then judge whether the red square is fully inside the outline."
+        ),
+        frame_selection="final",
+        max_frames=1,
+        use_fixture_scores=False,
+    )
+    output = tmp_path / "benchmark-report.json"
+    write_benchmark_report(asdict(report), output_path=str(output))
+    saved = json.loads(output.read_text())
+    assert saved["schema_version"] == "npa_vlm_eval_benchmark_report_v2"
+    assert saved["sweep"]["fixture_scores"] is False
+    assert saved["best_config"] == saved["ranked_configs"][0]
+    assert {row["config"]["success_threshold"] for row in saved["ranked_configs"]} == {
+        0.5,
+        0.8,
+    }
+    for config in saved["ranked_configs"]:
+        _assert_live_benchmark_confusion(config)
+        for case in config["results"]:
+            _assert_live_benchmark_case(case, config["config"]["success_threshold"])
