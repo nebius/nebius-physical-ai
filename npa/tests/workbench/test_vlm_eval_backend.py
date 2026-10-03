@@ -214,39 +214,33 @@ def test_exported_dataclasses_keep_legacy_positional_constructors() -> None:
     assert case.provider_success is None
 
 
-def test_parse_structured_response_clamps_score() -> None:
+def test_parse_structured_response_preserves_valid_score() -> None:
     parsed = parse_structured_response(
-        '{"success": true, "score": 1.4, "rationale": "clear completion"}'
+        '{"success": true, "score": 0.93, "rationale": "clear completion"}'
     )
 
     assert parsed.success is True
     assert parsed.provider_success is True
-    assert parsed.score == 1.0
+    assert parsed.score == 0.93
     assert parsed.rationale == "clear completion"
 
 
-def test_parse_structured_response_marks_score_derived_success() -> None:
-    parsed = parse_structured_response(
-        '{"score": 0.7, "rationale": "partial completion"}'
-    )
-
-    assert parsed.success is True
-    assert parsed.provider_success is None
+def test_parse_structured_response_rejects_omitted_success() -> None:
+    with pytest.raises(vlm_eval.VlmEvalError, match="success must be a boolean"):
+        parse_structured_response('{"score":0.7,"rationale":"partial completion"}')
 
 
 @pytest.mark.parametrize(
-    ("raw_success", "compatibility_success"),
-    [('"false"', False), ("null", False), ("1", True)],
+    "raw_success",
+    ['"false"', "null", "1"],
 )
-def test_parse_structured_response_does_not_promote_non_boolean_provider_success(
-    raw_success: str, compatibility_success: bool
+def test_parse_structured_response_rejects_non_boolean_provider_success(
+    raw_success: str,
 ) -> None:
-    parsed = parse_structured_response(
-        f'{{"success":{raw_success},"score":0.7,"rationale":"legacy"}}'
-    )
-
-    assert parsed.success is compatibility_success
-    assert parsed.provider_success is None
+    with pytest.raises(vlm_eval.VlmEvalError, match="success must be a boolean"):
+        parse_structured_response(
+            f'{{"success":{raw_success},"score":0.7,"rationale":"legacy"}}'
+        )
 
 
 def test_mocked_self_hosted_endpoint_returns_structured_score(
@@ -287,7 +281,7 @@ def test_mocked_self_hosted_endpoint_returns_structured_score(
     assert 0.0 <= structured["score"] <= 1.0
 
 
-def test_self_hosted_omitted_success_is_not_reported_as_provider_value(
+def test_self_hosted_omitted_success_is_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     rollout = _write_image_rollout(tmp_path / "rollout", [(20, 120, 40)])
@@ -306,23 +300,18 @@ def test_self_hosted_omitted_success_is_not_reported_as_provider_value(
         vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: completion
     )
 
-    result = evaluate_vlm(
-        input_path=str(rollout),
-        output_path=str(tmp_path / "result.json"),
-        task="identify visible task progress",
-        backend="self-hosted",
-        success_threshold=0.8,
-    )
-
-    assert result.score == 0.7
-    assert result.passed is False
-    assert result.provider_success is None
-    assert result.provider_success_matches_score_gate is None
-    assert result.evidence is not None
+    with pytest.raises(vlm_eval.VlmEvalError, match="success must be a boolean"):
+        evaluate_vlm(
+            input_path=str(rollout),
+            output_path=str(tmp_path / "result.json"),
+            task="identify visible task progress",
+            backend="self-hosted",
+            success_threshold=0.8,
+        )
 
 
 @pytest.mark.parametrize("raw_success", ["false", None, 1])
-def test_self_hosted_non_boolean_success_is_not_reported_as_provider_value(
+def test_self_hosted_non_boolean_success_is_rejected(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raw_success: object
 ) -> None:
     rollout = _write_image_rollout(tmp_path / "rollout", [(20, 120, 40)])
@@ -347,17 +336,14 @@ def test_self_hosted_non_boolean_success_is_not_reported_as_provider_value(
         vlm_eval, "_post_with_readiness_retry", lambda **_kwargs: completion
     )
 
-    result = evaluate_vlm(
-        input_path=str(rollout),
-        output_path=str(tmp_path / "result.json"),
-        task="identify visible task progress",
-        backend="self-hosted",
-        success_threshold=0.8,
-    )
-
-    assert result.provider_success is None
-    assert result.provider_success_matches_score_gate is None
-    assert result.evidence is not None
+    with pytest.raises(vlm_eval.VlmEvalError, match="success must be a boolean"):
+        evaluate_vlm(
+            input_path=str(rollout),
+            output_path=str(tmp_path / "result.json"),
+            task="identify visible task progress",
+            backend="self-hosted",
+            success_threshold=0.8,
+        )
 
 
 def test_http_status_error_includes_bounded_server_detail(

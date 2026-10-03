@@ -7,6 +7,12 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### Self-hosted VLM scores reject invalid literal verdicts
+
+- Self-hosted verdicts require boolean success, finite numeric scores in [0, 1],
+  and nonempty string rationale. Invalid values fail before scoring; completion
+  rejection remains enforced. Valid scores are rounded without legacy repair.
+
 ### VLM gates reject incomplete self-hosted completions
 
 - Both real VLM-eval backends require exact `finish_reason="stop"` before
