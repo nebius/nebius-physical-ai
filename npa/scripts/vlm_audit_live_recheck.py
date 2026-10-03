@@ -25,6 +25,7 @@ from npa.clients.token_factory import (
     resolve_config,
 )
 from npa.guardrails.confidentiality import compile_builtin_nebius_infra, scan_text
+from npa.literal_values import require_boolean, require_integer
 from npa.live_verification.vlm_audit_controls import (
     PREFERENCE_MODELS,
     audit_controls,
@@ -88,6 +89,15 @@ def _prepare_control(control: dict, output: Path) -> None:
         raise _AuditConfigurationError("missing_audit_credential")
     expectations = control.get("expectations", {})
     mapped = expectations.get("mapped_preferences")
+    try:
+        require_boolean(
+            expectations.get("escalation_required"),
+            field="expectations.escalation_required",
+        )
+    except ValueError:
+        raise _AuditConfigurationError(
+            "missing_frozen_preference_expectations"
+        ) from None
     if (
         not isinstance(mapped, list)
         or len(mapped) != 2
@@ -95,7 +105,6 @@ def _prepare_control(control: dict, output: Path) -> None:
             value not in ("baseline", "candidate", "tie", "unresolved")
             for value in mapped
         )
-        or type(expectations.get("escalation_required")) is not bool
     ):
         raise _AuditConfigurationError("missing_frozen_preference_expectations")
     control["request"] = asdict(options)
@@ -237,9 +246,16 @@ def _verify(
     exit_code = _execute(root, target, config_path)
     receipt["pytest_exit_code"] = exit_code
     execution = json.loads((target / "execution.json").read_text())
-    counts = {field: execution[field] for field in receipt["counts"]}
-    if any(type(value) is not int or value < 0 for value in counts.values()):
-        raise _AuditConfigurationError("invalid_execution_counts")
+    try:
+        counts = {
+            field: require_integer(
+                execution[field], field=f"execution.{field}", minimum=0
+            )
+            for field in receipt["counts"]
+        }
+        xfail = require_boolean(execution["xfail"], field="execution.xfail")
+    except (KeyError, ValueError):
+        raise _AuditConfigurationError("invalid_execution_counts") from None
     receipt["counts"] = counts
     config = json.loads(config_path.read_text())
     expected = sum(len(audit_controls(case)) for case in config["cases"].values())
@@ -248,7 +264,7 @@ def _verify(
         and counts["collected"] == counts["executed"] == counts["passed"] == expected
         and counts["collected"] == execution["collected"]
         and counts["failed"] == counts["skipped"] == counts["deselected"] == 0
-        and not execution["xfail"]
+        and not xfail
     )
     receipt["outcomes"] = _public_comparisons(target)
 
@@ -276,8 +292,13 @@ def _public_comparisons(target: Path) -> list[dict]:
                 "status": report["status"]
                 if report["status"] in statuses
                 else "unknown",
-                "escalation_required": report["escalation_required"] is True,
-                "requests_counterbalanced": report["requests_counterbalanced"] is True,
+                "escalation_required": require_boolean(
+                    report["escalation_required"], field="report.escalation_required"
+                ),
+                "requests_counterbalanced": require_boolean(
+                    report["requests_counterbalanced"],
+                    field="report.requests_counterbalanced",
+                ),
                 "first_order": _public_order(report["first_order"]),
                 "reversed_order": _public_order(report["reversed_order"]),
             }
