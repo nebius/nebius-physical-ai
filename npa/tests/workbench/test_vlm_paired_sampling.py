@@ -12,6 +12,14 @@ import pytest
 from npa.workbench import vlm_eval
 
 
+def _completion(model):
+    content = json.dumps({"success": True, "score": 1.0, "rationale": "visible frames"})
+    return {
+        "model": model,
+        "choices": [{"finish_reason": "stop", "message": {"content": content}}],
+    }
+
+
 def _recorded_pair(monkeypatch, tmp_path, strategy, cap):
     source = tmp_path / "source"
     source.mkdir()
@@ -22,23 +30,7 @@ def _recorded_pair(monkeypatch, tmp_path, strategy, cap):
     def post(**kwargs):
         request = kwargs["request"]
         requests.append(request)
-        return {
-            "model": request["model"],
-            "choices": [
-                {
-                    "finish_reason": "stop",
-                    "message": {
-                        "content": json.dumps(
-                            {
-                                "success": True,
-                                "score": 1.0,
-                                "rationale": "visible frames",
-                            }
-                        )
-                    },
-                }
-            ],
-        }
+        return _completion(request["model"])
 
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **_: "synthetic-key")
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
