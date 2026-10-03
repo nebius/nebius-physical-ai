@@ -17,7 +17,9 @@ with required `--input-path`, `--output-path`, `--model`, and neutral `--task`.
 Its SDK is `npa.sdk.workbench.vlm_eval.review_visual`. Optional `--baseline-path`
 sends both independently sampled sources in both neutral A/B orders. Keep
 task evidence, content fidelity, reviewability, subjective impressiveness,
-and usefulness hypotheses separate; disagreement requires escalation.
+and usefulness hypotheses separate; dimension-signature disagreement requires
+escalation. Matching signatures do not establish semantic agreement of prose;
+inspect both retained outcomes, including contradictory text.
 This record never affects the normalized score or gate.
 
 Use a fresh private output identity and preserve consumed journals after

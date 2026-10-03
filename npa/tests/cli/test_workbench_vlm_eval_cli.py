@@ -378,6 +378,30 @@ def _expected_visual_review_request(tmp_path: Path) -> VlmVisualReviewRequest:
     )
 
 
+def test_review_visual_default_text_under_json_contract(monkeypatch, tmp_path):
+    import npa.cli.workbench.vlm_eval as cli_vlm_eval
+
+    monkeypatch.setattr(
+        cli_vlm_eval,
+        "run_visual_review",
+        lambda _request: SimpleNamespace(
+            schema_version="npa_vlm_visual_review_v1",
+            status="completed",
+            escalation_required=False,
+            attempt_count=2,
+            model="hosted/vision-model",
+        ),
+    )
+    arguments = _visual_review_cli_args(tmp_path)
+    assert arguments[-2:] == ["--output-format", "json"]
+    result = runner.invoke(app, arguments[:-2])
+    assert result.exit_code == 0
+    assert "schema_version: npa_vlm_visual_review_v1" in result.output
+    assert "status: completed" in result.output
+    assert "attempt_count: 2" in result.output
+    assert "private-current" not in result.output
+
+
 def test_workbench_vlm_eval_review_visual_sanitizes_generic_failure(
     monkeypatch, tmp_path: Path
 ) -> None:

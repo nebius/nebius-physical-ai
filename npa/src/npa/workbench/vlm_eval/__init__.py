@@ -2558,24 +2558,43 @@ def _post_backend_once(
         observed = _backend_response_from_http(
             response, data={}, started_at=started_at, wire=wire
         )
-        _retain_response(observed, response_sink)
+        has_decoded_text = getattr(response, "text", None) is not None
+        if has_decoded_text:
+            _retain_response(observed, response_sink)
         consistent_error_sink = _response_sink_with_latency(
-            observed.latency_s, error_response_sink
+            observed.latency_s, error_response_sink, wire=wire
         )
         _raise_for_backend_status(response, started_at, consistent_error_sink)
         data = _decode_backend_json(response, started_at, consistent_error_sink)
-        return replace(observed, data=data)
+        decoded = replace(
+            observed,
+            data=data,
+            raw_body=observed.raw_body if has_decoded_text else _canonical_json(data),
+        )
+        if not has_decoded_text:
+            _retain_response(decoded, response_sink)
+        return decoded
 
 
 def _response_sink_with_latency(
     latency_s: float,
     sink: Callable[[_VlmBackendResponse], None] | None,
+    *,
+    wire: dict[str, Any] | None = None,
 ) -> Callable[[_VlmBackendResponse], None] | None:
     if sink is None:
         return None
 
     def retain(response: _VlmBackendResponse) -> None:
-        sink(replace(response, latency_s=latency_s))
+        sink(
+            replace(
+                response,
+                latency_s=latency_s,
+                raw_body_base64=wire["body_base64"] if wire else None,
+                raw_body_bytes_sha256=wire["body_sha256"] if wire else None,
+                raw_body_byte_count=wire["byte_count"] if wire else None,
+            )
+        )
 
     return retain
 

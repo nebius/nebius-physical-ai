@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 from dataclasses import asdict
 import hashlib
 import json
@@ -47,6 +48,12 @@ def _assert_bound_outcome(outcome, model: str) -> None:
     )
     assert outcome.error is None
     assert outcome.verdict is not None
+    wire = outcome.response_bytes
+    assert wire is not None
+    body = base64.b64decode(wire.body_base64, validate=True)
+    assert wire.body_sha256 == hashlib.sha256(body).hexdigest()
+    assert wire.byte_count == len(body)
+    assert wire.status_code == 200
 
 
 @pytest.mark.parametrize("case", ["complete-vs-incomplete", "gray-absence"])
