@@ -51,11 +51,14 @@ RUN git lfs install --skip-smudge \
 
 # The two upstream dependency sets both permit this current protobuf release;
 # installing it after LeRobot lets `pip check` verify the assembled runtime.
+# The editable LeRobot source includes tiny test fixture tensors/datasets. They
+# are not runtime code and must not be redistributed in the BYOF runtime image.
 RUN cd /opt/molmoact2/experiments \
     && pip install -e ".[all]" \
     && pip install -e "./lerobot[async,libero]" \
     && pip install "protobuf>=6.33.5,<7" \
-    && pip check
+    && pip check \
+    && rm -rf /opt/molmoact2/experiments/lerobot/tests
 
 COPY docker/workbench/molmoact2/THIRD_PARTY_NOTICES.md /usr/share/doc/molmoact2/THIRD_PARTY_NOTICES.md
 COPY docker/workbench/molmoact2/REDISTRIBUTION.md /usr/share/doc/molmoact2/REDISTRIBUTION.md
