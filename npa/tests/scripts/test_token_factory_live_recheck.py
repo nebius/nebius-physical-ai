@@ -271,7 +271,7 @@ def test_no_collection_or_missing_suite_cannot_pass():
 
 def test_deselected_required_inference_cannot_pass():
     results = _completed_results()
-    results.pytest_deselected([SimpleNamespace(nodeid="test_kimi_visual_verdict")])
+    results.pytest_deselected([SimpleNamespace(nodeid="test_required_visual_verdict")])
     assert results.summary()["deselected"] == 1
     assert not results.complete(0)
 
