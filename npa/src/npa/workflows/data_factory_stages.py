@@ -955,9 +955,13 @@ def _immutable_candidate_copy(
         raise RuntimeError("candidate selection media write could not be verified")
 
 
-def _quality_gate_contract(report: dict[str, Any], threshold: float) -> dict[str, Any]:
-    """Evaluate the one authoritative completed/hard-check/score contract."""
+def _quality_gate_contract(
+    report: dict[str, Any], threshold: float, *, producer: str
+) -> dict[str, Any]:
+    """Evaluate the authoritative terminal-status/hard-check/score contract."""
 
+    if producer not in {"cosmos", "vlm"}:
+        raise ValueError("unknown quality report producer")
     score = float(report.get("score", 0.0))
     if not math.isfinite(score):
         raise ValueError("expected a finite quality score")
@@ -966,9 +970,18 @@ def _quality_gate_contract(report: dict[str, Any], threshold: float) -> dict[str
     if raw_passed is not None and not isinstance(raw_passed, bool):
         raise TypeError("expected 'passed' to be a boolean")
     hard_checks_passed = raw_passed is True
+    block_details: dict[str, str] = {}
+    if producer == "vlm":
+        from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
+
+        block_details = vlm_grade_block_details(report)
+    expected_status = "passed" if producer == "vlm" else "completed"
     decision = (
         "promote_checkpoint"
-        if status == "completed" and hard_checks_passed and score >= threshold
+        if status == expected_status
+        and hard_checks_passed
+        and score >= threshold
+        and not block_details
         else "loop_back"
     )
     return {
@@ -977,7 +990,19 @@ def _quality_gate_contract(report: dict[str, Any], threshold: float) -> dict[str
         "threshold": threshold,
         "report_status": status,
         "hard_checks_passed": hard_checks_passed,
+        **block_details,
     }
+
+
+def _quality_report_producer(
+    report: dict[str, Any],
+    expected: str | None,
+) -> str:
+    """Identify an explicit custom JSON result without widening producer contracts."""
+
+    if expected is not None:
+        return expected
+    return "vlm" if "backend" in report else "cosmos"
 
 
 def _quality_threshold(value: float | str) -> float:
@@ -1510,11 +1535,11 @@ def grade_gate(
     The blueprint's evaluate stage runs the real NVIDIA Cosmos Evaluator, which
     writes ``cosmos_evaluator.json``. Runs produced before that stage existed (and
     any spec still pointing the loop at ``workbench.vlm_eval.run``) wrote the
-    vlm_eval tool's RESULT_FILENAME instead, so both locations are inspected,
-    newest contract first. Promotion still requires the complete modern
-    status/passed/score contract. Both filenames come from the producing tool's
-    own constant rather than a literal here, so the gate cannot drift from its
-    producer.
+    vlm_eval tool's result instead, so both producer contracts are inspected,
+    newest first. The pre-neutral-name VLM filename remains a final read-only
+    fallback for historical runs. Promotion still requires the complete modern
+    status/passed/score contract. The filenames come from the producing tools'
+    constants rather than literals here, so the gate cannot drift from them.
 
     ``threshold`` accepts a str (the blueprint interpolates a quoted config value)
     or float; a non-numeric value falls back to 0.5.
@@ -1526,14 +1551,25 @@ def grade_gate(
     from npa.workbench.cosmos_evaluator import (
         RESULT_FILENAME as COSMOS_EVALUATOR_RESULT,
     )
-    from npa.workbench.vlm_eval import RESULT_FILENAME as VLM_EVAL_RESULT
+    from npa.workbench.vlm_eval import (
+        LEGACY_RESULT_FILENAME as LEGACY_VLM_EVAL_RESULT,
+        RESULT_FILENAME as VLM_EVAL_RESULT,
+    )
 
     threshold = _quality_threshold(threshold)
     if scores_uri.endswith(".json"):
-        candidates = [scores_uri]
+        filename = scores_uri.rsplit("/", 1)[-1]
+        expected_producer = (
+            "vlm" if filename in {VLM_EVAL_RESULT, LEGACY_VLM_EVAL_RESULT} else None
+        )
+        candidates: list[tuple[str, str | None]] = [(scores_uri, expected_producer)]
     else:
         base = scores_uri.rstrip("/")
-        candidates = [f"{base}/{COSMOS_EVALUATOR_RESULT}", f"{base}/{VLM_EVAL_RESULT}"]
+        candidates = [
+            (f"{base}/{COSMOS_EVALUATOR_RESULT}", "cosmos"),
+            (f"{base}/{VLM_EVAL_RESULT}", "vlm"),
+            (f"{base}/{LEGACY_VLM_EVAL_RESULT}", "vlm"),
+        ]
     contract = {
         "decision": "loop_back",
         "score": 0.0,
@@ -1544,14 +1580,17 @@ def grade_gate(
     report: dict[str, Any] = {}
     source = ""
     problems: list[str] = []
-    for candidate in candidates:
+    for candidate, expected_producer in candidates:
         try:
             report = _download_json(candidate)
             if not isinstance(report, dict):
                 raise TypeError(f"expected a JSON object, got {type(report).__name__}")
             # Parsed inside the try on purpose: malformed reports degrade to a
             # loop-back decision rather than aborting the refinement loop.
-            candidate_contract = _quality_gate_contract(report, float(threshold))
+            producer = _quality_report_producer(report, expected_producer)
+            candidate_contract = _quality_gate_contract(
+                report, float(threshold), producer=producer
+            )
         except FileNotFoundError:
             # Absence is the only condition under which a pre-Cosmos-Evaluator
             # legacy report may be authoritative.
@@ -1612,6 +1651,12 @@ def grade_gate(
                 "report_contract": "selected" if source else "missing",
                 "report_status": contract["report_status"],
                 "hard_checks_passed": contract["hard_checks_passed"],
+                **({"reason": contract["reason"]} if "reason" in contract else {}),
+                **(
+                    {"evidence_reason": contract["evidence_reason"]}
+                    if "evidence_reason" in contract
+                    else {}
+                ),
             }
         )
     )
@@ -1785,7 +1830,9 @@ def prepare_refinement(
                 "refinement state is contradictory: an evaluator result has no committed policy"
             )
         try:
-            contract = _quality_gate_contract(report, numeric_threshold)
+            contract = _quality_gate_contract(
+                report, numeric_threshold, producer="cosmos"
+            )
         except (TypeError, ValueError):
             raise RefinementStateError(
                 "prior evaluator report does not satisfy the quality-gate schema"

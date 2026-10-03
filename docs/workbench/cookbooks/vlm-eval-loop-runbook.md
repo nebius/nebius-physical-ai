@@ -33,84 +33,22 @@ wiring checks, never visual proof. Real `benchmark` reports retain the evidence
 for every case so calibration failures and model disagreement remain inspectable.
 If a model wraps one complete JSON object in a single Markdown JSON fence, the
 parser removes only that transport wrapper and appends `+markdown-fence-v1` to
-the retained parser version. Hosted `api` evaluation rejects surrounding prose,
-duplicate keys, non-finite numbers, invalid types, incomplete output and model
-substitution. The `self-hosted` backend retains its legacy compatibility parser:
-it can extract embedded JSON, accept duplicate keys and coerced types, clamp
-scores, and return a verdict with missing or non-`stop` completion metadata.
-Retained evidence does not make such a verdict eligible for promotion. The live
-provenance lane below separately requires complete output and checks its framing.
+the retained parser version. Prefixes, suffixes, duplicate keys, non-finite
+numbers, invalid types, and partial output fail in the hosted parser. The legacy
+self-hosted parser still accepts historical coercion and embedded-JSON inputs;
+the promotion gate below rejects those compatibility-only results.
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
 
-The serialized result retains the effective `rubric`, so the exact prompt can
-be reconstructed from `task`, `rubric`, `frame_selection`, and `frame_count`.
-`passed` is always `score >= success_threshold`, using the serialized score
-rounded to four decimal places for real, stub, and override evaluations. When
-a real backend actually returns a `success` boolean, the result records it as
-`provider_success` and reports whether it agrees in
-`provider_success_matches_score_gate`.
-Self-hosted responses that omit the boolean leave both fields null rather than
-presenting a score-derived fallback as provider output. Legacy non-boolean
-values such as `"true"` are likewise not promoted to provider booleans. A real
-disagreement is calibration evidence, not permission to replace the
-score-derived label. Before reviewing thin geometry or skeletons, compare
-retained submitted-frame dimensions with the source because normalization can
-remove the defect.
-
-## Live provenance verification
-
-The operator lane runs `test_vlm_served_model_live.py` against an existing GPU
-endpoint. It fails if configuration, authentication, expected model readiness,
-or actual inference is missing. A skipped or empty test run cannot pass. This
-is separate from the nightly hosted Token Factory suites, which need no GPU.
-
-Before provisioning a dedicated endpoint, prove credentials with
-`npa workbench health preflight --checks nebius --json` and verify exact model
-payload access before any download. Use the
-[access preflight](../../../skills/atomic/access-approval/SKILL.md) for gated
-weights and record the checkpoint revision, serving image digest, selected GPU
-family/count and resource ownership privately. Use a compatible serving runtime;
-the model name returned by inference does not identify its checkpoint bytes.
-Provision and clean up only resources owned by this validation run.
-
-Stage a local rollout fixture with decodable images or video outside the
-checkout. Its actual normalized frames will be reloaded and hashed to verify
-the request evidence. Create an owner-only output directory and a fresh local
-JSON result filename; S3 fixtures/results are not supported by this verification
-lane. Keep the task, fixture, provider response, and result private.
-
-Set `NPA_VLM_PROVENANCE_LIVE_CONFIG` to the absolute path of an owner-only
-(`0600`) JSON file outside the checkout. Required keys are `input_path`
-(absolute local fixture path), `output_path` (absolute fresh `.json` filename
-in an existing `0700` directory), `endpoint_url` (OpenAI-compatible `/v1` base
-or `/v1/chat/completions` URL), `model` (requested ID), `expected_served_model`
-(actual server ID), and `task`. Optional `api_key_env` defaults to
-`VLM_EVAL_API_KEY`; supply the endpoint credential in that environment variable,
-never in the file or URL. The endpoint must expose authenticated `/v1/models`
-and `/v1/chat/completions` routes.
-
-From the repository root, with the configuration and credential in the process
-environment:
-
-```bash
-NPA_INTEGRATION_E2E=1 npa/.venv/bin/python \
-  npa/scripts/vlm_provenance_live_recheck.py \
-  --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"
-```
-
-Use a fresh absolute evidence directory outside the checkout for each run.
-`receipt.json` contains test counts, source hashes, and sanitized status. The
-verdict stays at the configured `output_path`. Success requires an executed
-provider call, HTTP 200, `finish_reason=stop`, the expected returned model,
-recomputable frame/manifest/response hashes, and saved-result readback. A model
-listing is readiness evidence only. This lane proves traceability of inference;
-it does not prove a policy succeeded or a scene is physically safe.
-
-The runner provisions and deletes nothing. After collecting the result and
-receipt, cancel run-owned jobs, stop the endpoint and destroy run-owned compute
-using the [run lifecycle](../../run-lifecycle.md). Preserve evidence and shared
-resources. Cleanup remains required when validation fails.
+To verify this against your existing GPU endpoint, set
+`NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
+JSON file containing `input_path`, `output_path` (a local JSON filename),
+`endpoint_url`, `model`, `expected_served_model`, and `task`. Supply credentials
+through the environment variable named by `api_key_env` (default
+`VLM_EVAL_API_KEY`). Run
+`npa/.venv/bin/python -m pytest npa/tests/e2e/test_vlm_served_model_live.py -q`.
+The test calls the real endpoint and retains its verdict; it provisions and
+destroys no resources.
 
 ## Prerequisites
 
@@ -181,10 +119,73 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 
 `scores_uri` receives:
 
-- `rollouts/<rollout-id>/vlm_eval_stub.json`: one structured result per rollout.
+- `rollouts/<rollout-id>/vlm_eval.json`: one structured result per rollout.
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
   per-rollout `{success, score, rationale}` records.
+
+`vlm_eval.json` is backend-neutral; inspect the payload's `backend` and
+`evidence.provider` fields to distinguish real inference from a fixture.
+Readers retain `vlm_eval_stub.json` only for historical bundles. Do not declare
+that legacy name in new workflows.
+
+For external scripts, dashboards, and workflow consumers migrating to this version:
+
+1. Write and declare `vlm_eval.json` for new directory or object-prefix outputs,
+   including each rollout subdirectory. No legacy alias or duplicate is emitted.
+2. Read the canonical filename first. Fall back to `vlm_eval_stub.json` only when
+   the canonical object is absent. If it exists but is malformed, empty, unreadable,
+   or fails validation, report that failure; never substitute a stale legacy score.
+3. Preserve explicitly supplied `.json` output paths exactly. Custom paths do not
+   receive a renamed file, and `task_success_report.json` remains unchanged.
+4. Determine fixture versus inference status from the payload and retained evidence,
+   never from either filename. Historical bundles can keep their original names.
+
+The data-factory `grade_gate` requires consistent retained inference evidence
+before a VLM result can promote a checkpoint. Stub results, score overrides, and
+historical reports without provider evidence produce `loop_back` with an explicit
+reason. The gate checks submitted-frame metadata, request and response hashes,
+and agreement between the retained response and serialized result. These checks
+establish internal consistency, not provider authentication or visual correctness.
+Frame digests are checked for valid SHA-256 format and binding to the request
+manifest; this gate does not fetch image bytes to recompute their hashes. Consumers
+that need payload verification must retain and independently hash the submitted
+normalized images. Schema-v2 sampling counts, indices, timestamps, and coverage
+flags must agree with the frame metadata. A known, uniform source kind, a source
+count, and in-range selected indices are required for `coverage_complete: true`;
+unknown or mixed source kinds normalize to null with incomplete coverage.
+This describes reader compatibility with v2, not a new sampling producer.
+The current v1 writer and historical v1 evidence remain valid without sampling
+fields. Other schema versions fail closed.
+
+New results retain the effective `rubric` so custom-rubric prompt and rubric
+hashes can be checked. Historical v1 results without this field are accepted only
+when the default rubric reproduces both hashes. The gate requires exact requested
+and returned model identity for hosted results, including unregistered models.
+Invalid evidence retains `reason: vlm_provider_evidence_invalid` for existing
+consumers and adds `evidence_reason` to distinguish schema, request, digest,
+sampling, frame metadata, provider response/transport/metadata, and verdict failures.
+
+Promotion eligibility is stricter than the legacy self-hosted reader. Both VLM
+backends must retain an explicit `finish_reason: stop`, no provider refusal, and
+one complete JSON object, optionally inside a complete Markdown JSON fence.
+The verdict must contain a boolean `success`, a finite numeric `score` in `[0, 1]`,
+and a nonempty string `rationale`. Duplicate keys, surrounding prose, partial
+fences, clamped scores, and coerced field types cannot promote a checkpoint.
+The self-hosted reader still parses its historical compatibility inputs and
+records its original parser version; obtaining a score through that reader does
+not make the result eligible for promotion. An absent completion status also
+blocks promotion. Missing self-hosted request/model identity metadata remains
+compatible when the completion and other evidence satisfy the gate.
+
+These refusals retain the public `vlm_provider_evidence_invalid` reason.
+`evidence_reason` distinguishes `provider_completion_incomplete`,
+`provider_completion_filtered`, `provider_completion_refused`,
+`provider_refusal_invalid`, and `provider_verdict_invalid`. Duplicate keys in the
+retained response envelope produce `provider_response_invalid`.
+Provider `success` remains in the retained response; optional serialized
+`provider_success` fields are checked when present. The numeric score and
+threshold still determine the score gate. The Cosmos Evaluator contract is unchanged.
 
 Read the report:
 
@@ -203,11 +204,6 @@ points at the same rollout directories and includes `expected_label` for each
 item, then run the sweep below.
 
 ## Tune
-
-Use neutral identify-then-judge task text. Ask what the frames show before
-asking whether they satisfy the target; do not ask the model to confirm the
-desired answer. A blank and an unrelated rollout must score low under the exact
-same task-plus-rubric prompt before the positive score is usable evidence.
 
 Sweep thresholds, rubrics, and models against labeled rollouts:
 
