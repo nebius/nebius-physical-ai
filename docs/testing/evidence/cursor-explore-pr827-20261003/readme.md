@@ -74,3 +74,20 @@ executions. The original `f1b1f7e6` full result, `d5338599` hosted controls,
 standalone 202-case limitation and all original evidence files remain unchanged.
 Main-target publication and current-head CI are separate integration gates;
 these private execution identities do not themselves claim queue admission.
+
+## Subsequent terminal-evidence integration
+
+[incoming634-source-bridge.json](incoming634-source-bridge.json) binds frozen
+`dc098692` on actual main `88fd1b13`: 1,482 affected CPU tests passed, with one
+skip and eight warnings. The quiet skip node identity was not captured.
+The selected terminal/grounded/grade, paired, CLI/SDK, catalog and registration
+controls passed; source and this checkout's packages were stable before/after.
+
+This incoming main changes evaluator rubric, prompt, frame-label content and
+grade reconstruction. It is not a same-request evaluator bridge. The caption
+protocol does not invoke that evaluator, and its client/core/CLI/SDK plus the
+201-case normalization test file retain the prior exact bytes. Consequently no
+direct caption inference was repeated. The original full and hosted executions
+above, their skips/XPASS and the unverified historical 202-case population remain
+unchanged. This additive integration report is not a new full, hosted answer,
+calibrated quality claim or current-head CI result.
