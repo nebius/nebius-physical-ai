@@ -1,6 +1,7 @@
 """Test configured audit lane failure gates without treating mocks as live evidence."""
 
 import importlib.util
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,37 @@ def _config(monkeypatch, tmp_path):
     monkeypatch.setenv("NPA_VLM_AUDIT_LIVE_CONFIG", str(config))
     monkeypatch.setenv("VLM_EVAL_API_KEY", "synthetic-test-credential")
     return config
+
+
+def _valid_report():
+    outcome = {
+        "provider": {"returned_model": "vision/model", "raw_response": "synthetic"},
+        "verdict": {
+            "preference": "tie",
+            "confidence": "high",
+            "observable_support": ["Same visible shape."],
+            "critical_defects": {"A": ["None visible."], "B": ["None visible."]},
+            "uncertainty": "Synthetic unit-test evidence, not inference.",
+        },
+        "error": None,
+    }
+    return {
+        "status": "consistent_tie",
+        "escalation_required": False,
+        "requests_counterbalanced": True,
+        "deployment_status": "audit_only",
+        "operational_rate_estimated": False,
+        "mapped_preferences": ["tie", "tie"],
+        "first_order": deepcopy(outcome),
+        "reversed_order": deepcopy(outcome),
+    }
+
+
+def _write_report(runner, output, report):
+    output.mkdir(parents=True, exist_ok=True)
+    (output / runner.PREFERENCE_COMPARISON_RESULT_FILENAME).write_text(
+        json.dumps(report)
+    )
 
 
 @pytest.mark.parametrize(
@@ -129,6 +161,7 @@ def test_receipt_requires_real_execution_counts(
                 }
             )
         )
+        _write_report(runner, target / "blinded-preference", _valid_report())
         return exit_code
 
     monkeypatch.setattr(runner, "_execute", execute)
@@ -394,13 +427,7 @@ def test_execution_and_report_booleans_fail_closed(
             "deselected": 0,
             "xfail": False,
         }
-        report = {
-            "status": "consistent_tie",
-            "escalation_required": False,
-            "requests_counterbalanced": True,
-            "first_order": {},
-            "reversed_order": {},
-        }
+        report = _valid_report()
         evidence = execution if boundary == "xfail" else report
         if value == "missing":
             del evidence[boundary]
@@ -422,10 +449,144 @@ def test_execution_and_report_booleans_fail_closed(
     assert receipt["failure"] == (
         "invalid_execution_counts"
         if boundary == "xfail"
-        else "audit_configuration_or_execution_failed"
+        else "audit_artifact_contract_failed"
     )
     assert receipt["passed"] is False
     assert "private-invalid-boolean" not in body
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing",
+        "status",
+        "preference",
+        "confidence",
+        "missing_preference",
+        "null_confidence",
+        "empty_verdict",
+        "both_verdict_and_error",
+        "neither",
+        "unknown_error",
+        "typed_error",
+        "malformed_provider",
+        "nullable_error_model",
+        "missing_support",
+        "wrong_expectation",
+        "not_counterbalanced",
+        "not_audit_only",
+        "config_changed",
+        "symlink_loop",
+        "missing_execution",
+        "malformed_execution",
+        "none",
+    ],
+)
+def test_receipt_acceptance_requires_each_frozen_artifact(monkeypatch, tmp_path, fault):
+    runner = _runner()
+    path = _config(monkeypatch, tmp_path)
+    config = json.loads(path.read_text())
+    control = config["cases"]["blinded-preference"]
+    config["cases"]["blinded-preference"] = {
+        "controls": {f"control-{index}": deepcopy(control) for index in range(3)}
+    }
+    path.write_text(json.dumps(config))
+
+    def execute(root, target, config_path):
+        configured = json.loads(config_path.read_text())
+        for index, control in enumerate(
+            configured["cases"]["blinded-preference"]["controls"].values()
+        ):
+            report = _valid_report()
+            output = Path(control["request"]["output_path"])
+            if index == 1:
+                order = report["first_order"]
+                if fault == "missing":
+                    _write_report(runner, output.with_name("9"), report)
+                    continue
+                if fault in {"preference", "confidence"}:
+                    order["verdict"][fault] = "private-invalid-outcome"
+                elif fault == "status":
+                    report["status"] = "private-invalid-outcome"
+                elif fault == "missing_preference":
+                    del order["verdict"]["preference"]
+                elif fault == "null_confidence":
+                    order["verdict"]["confidence"] = None
+                elif fault == "missing_support":
+                    del order["verdict"]["observable_support"]
+                elif fault == "empty_verdict":
+                    order["verdict"] = {}
+                elif fault in {
+                    "both_verdict_and_error",
+                    "unknown_error",
+                    "typed_error",
+                    "nullable_error_model",
+                }:
+                    order["error"] = {"error_type": "transport_error"}
+                    if fault != "both_verdict_and_error":
+                        order["verdict"] = None
+                        order["provider"] = None
+                    if fault == "unknown_error":
+                        order["error"]["error_type"] = "private-invalid-outcome"
+                    if fault == "nullable_error_model":
+                        order["provider"] = {
+                            "returned_model": None,
+                            "raw_response": "synthetic failure",
+                        }
+                    report["status"] = "judge_error"
+                    report["escalation_required"] = True
+                elif fault == "neither":
+                    order["verdict"] = None
+                elif fault == "malformed_provider":
+                    order["provider"] = False
+                elif fault == "wrong_expectation":
+                    report["mapped_preferences"] = ["candidate", "candidate"]
+                elif fault == "not_counterbalanced":
+                    report["requests_counterbalanced"] = False
+                elif fault == "not_audit_only":
+                    report["deployment_status"] = "accepted"
+                elif fault == "symlink_loop":
+                    output.mkdir(parents=True)
+                    report_path = output / runner.PREFERENCE_COMPARISON_RESULT_FILENAME
+                    report_path.symlink_to(report_path.name)
+                    continue
+            _write_report(runner, output, report)
+        if fault == "config_changed":
+            configured["cases"]["blinded-preference"]["controls"].pop("control-2")
+            config_path.write_text(json.dumps(configured))
+        if fault != "missing_execution":
+            (target / "execution.json").write_text(
+                json.dumps(
+                    {
+                        "collected": "3" if fault == "malformed_execution" else 3,
+                        "executed": 3,
+                        "passed": 3,
+                        "failed": 0,
+                        "skipped": 0,
+                        "deselected": 0,
+                        "xfail": False,
+                    }
+                )
+            )
+        return 0
+
+    monkeypatch.setattr(runner, "_execute", execute)
+    target = tmp_path / "run"
+    assert runner.main(
+        ["--audit-kind", "preference", "--evidence-dir", str(target)]
+    ) == (0 if fault == "none" else 1)
+    body = (target / "receipt.json").read_text()
+    receipt = json.loads(body)
+    assert receipt["passed"] is (fault == "none")
+    assert [row["control_index"] for row in receipt["outcomes"]] == [0, 1, 2]
+    assert "failure" not in receipt["outcomes"][0]
+    assert "failure" not in receipt["outcomes"][2]
+    if fault in {"typed_error", "nullable_error_model"}:
+        order = receipt["outcomes"][1]["first_order"]
+        assert order["preference"] is None
+        assert order["error_type"] == "transport_error"
+    assert "private-invalid-outcome" not in body
+    assert str(tmp_path) not in body
 
 
 @pytest.mark.parametrize("kind", [None, "paired", "unknown-private-value"])
