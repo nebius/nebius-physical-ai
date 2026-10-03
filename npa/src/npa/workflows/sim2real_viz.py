@@ -25,6 +25,14 @@ from typing import Any
 
 import numpy as np
 
+from npa.workflows.sim2real.stage10_execution import (
+    MAX_RENDER_ENCODED_BYTES,
+    assert_safe_render_dimensions,
+)
+from npa.workflows.sim2real.viz_contract import (
+    heldout_policy_metadata as _heldout_policy_metadata,
+)
+
 
 REFERENCE_ROLLOUT_SCHEMA = "npa.sim2real.action_rollout.v1"
 REFERENCE_STUB_FRAME_SHAPE = (32, 32)
@@ -146,6 +154,7 @@ class Sim2RealMcapResult:
     channel_counts: dict[str, int] = field(default_factory=dict)
     message_count: int = 0
     camera_message_count: int = 0
+    heldout_frame_count: int = 0
     scalar_message_count: int = 0
     log_message_count: int = 0
     pointcloud_message_count: int = 0
@@ -158,6 +167,7 @@ class Sim2RealMcapResult:
             "channel_counts": dict(self.channel_counts),
             "message_count": self.message_count,
             "camera_message_count": self.camera_message_count,
+            "heldout_frame_count": self.heldout_frame_count,
             "scalar_message_count": self.scalar_message_count,
             "log_message_count": self.log_message_count,
             "pointcloud_message_count": self.pointcloud_message_count,
@@ -222,6 +232,7 @@ def emit_sim2real_rerun(
             rr,
             recording,
             heldout_report=heldout_report or {},
+            run_metadata=run_metadata or {},
             counts=counts,
         )
     else:
@@ -529,15 +540,32 @@ def _validation_iteration(value: Any) -> int:
     return value
 
 
+def _requires_checkpoint_bound_validation(
+    payload: dict[str, Any],
+    *,
+    allow_local_only_legacy: bool,
+) -> bool:
+    """Distinguish canonical validation URIs from local-only legacy evidence."""
+
+    for record in payload.get("iterations") or []:
+        if not isinstance(record, dict):
+            raise Sim2RealVizError("Inner-loop iteration evidence must be an object")
+        if "vlm_eval_uri" in record or "signal_uri" in record:
+            return True
+    if not allow_local_only_legacy:
+        raise Sim2RealVizError("Local-only legacy validation evidence is disabled")
+    return False
+
+
 def _validation_candidates(
     payload: dict[str, Any], outer: int
 ) -> dict[int, dict[str, Any]] | None:
     """Require one validation candidate for every pass in canonical evidence."""
 
     if "checkpoint_candidates" not in payload:
-        if any(
-            "vlm_eval_uri" in record or "signal_uri" in record
-            for record in payload.get("iterations") or []
+        if _requires_checkpoint_bound_validation(
+            payload,
+            allow_local_only_legacy=True,
         ):
             raise Sim2RealVizError("Canonical validation candidates are missing")
         return None
@@ -856,7 +884,10 @@ def _log_summary_documents(
         "summary/stage_progress": _stage_progress_markdown(
             stage_components, run_metadata=run_metadata
         ),
-        "summary/policy_access": _policy_access_markdown(run_metadata),
+        "summary/policy_access": _policy_access_markdown(
+            run_metadata,
+            heldout_report,
+        ),
         "summary/embodiment": _embodiment_markdown(run_metadata),
         "summary/augmentation": _augmentation_markdown(index),
         "summary/artifacts": _artifacts_markdown(index),
@@ -1044,37 +1075,168 @@ def _stage_progress_markdown(
     return "\n".join(rows)
 
 
-def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
-    heldout_loaded = bool(run_metadata.get("heldout_policy_loaded_for_inference"))
+def _run_metadata_identity_evidence(
+    projected: dict[str, Any],
+    key: str,
+) -> tuple[tuple[str, Any], ...]:
+    if key not in projected:
+        return ()
+    return ((f"run_metadata.{key}", projected[key]),)
+
+
+def _run_metadata_optional_identity_evidence(
+    projected: dict[str, Any],
+    key: str,
+) -> tuple[tuple[str, Any], ...]:
+    if projected.get(key) in (None, ""):
+        return ()
+    return _run_metadata_identity_evidence(projected, key)
+
+
+_HELDOUT_DECLARATION_FIELDS = (
+    "heldout_policy_stock_or_scripted_policy",
+    "heldout_policy_actor_is_learned",
+    "heldout_policy_scripted_post_actor_controller",
+    "heldout_policy_composition",
+    "heldout_policy_post_actor_controller",
+    "heldout_policy_post_actor_controller_declared",
+    "heldout_policy_learned_actor_only",
+)
+
+
+def _reconcile_policy_declarations(
+    projected: dict[str, Any],
+    policy_metadata: dict[str, Any],
+) -> None:
+    mismatches = [
+        key
+        for key in _HELDOUT_DECLARATION_FIELDS
+        if key in projected and projected[key] != policy_metadata.get(key)
+    ]
+    for key in mismatches:
+        policy_metadata[key] = (
+            False if key == "heldout_policy_learned_actor_only" else None
+        )
+    if mismatches:
+        policy_metadata["heldout_policy_learned_actor_only"] = False
+    policy_metadata["heldout_policy_declaration_mismatches"] = mismatches
+
+
+def _reconciled_heldout_policy_metadata(
+    run_metadata: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Recompute report claims and conservatively reconcile projected metadata."""
+
+    projected = dict(run_metadata) if isinstance(run_metadata, dict) else {}
+    report_available = isinstance(heldout_report, dict)
+    policy_metadata = _heldout_policy_metadata(
+        heldout_report if report_available else None,
+        checkpoint_uri_evidence=_run_metadata_identity_evidence(
+            projected, "heldout_policy_checkpoint"
+        ),
+        checkpoint_sha256_evidence=_run_metadata_identity_evidence(
+            projected, "heldout_policy_checkpoint_sha256"
+        ),
+        checkpoint_size_evidence=_run_metadata_identity_evidence(
+            projected, "heldout_policy_checkpoint_size_bytes"
+        ),
+        generator_sha256_evidence=_run_metadata_optional_identity_evidence(
+            projected, "heldout_policy_generator_sha256"
+        ),
+    )
+    for key in (
+        "heldout_policy_identity_verified",
+        "heldout_policy_loaded_for_inference",
+    ):
+        if key in projected and projected[key] is not True:
+            policy_metadata[key] = False
+            policy_metadata["heldout_policy_learned_actor_only"] = False
+    _reconcile_policy_declarations(projected, policy_metadata)
+    policy_metadata["heldout_policy_reconciled"] = report_available
+    return policy_metadata
+
+
+def _learned_policy_clause(policy_metadata: dict[str, Any]) -> str:
+    if policy_metadata.get("heldout_policy_learned_actor_only") is True:
+        return (
+            " The complete learned-actor-only contract is proven, including "
+            "`stock_or_scripted_policy=false`."
+        )
+    if policy_metadata.get("heldout_policy_stock_or_scripted_policy") is True:
+        return " `stock_or_scripted_policy=true`; this is not learned-only evidence."
+    return " The complete learned-actor-only contract was not proven."
+
+
+def _heldout_inference_statement(policy_metadata: dict[str, Any]) -> str:
+    heldout_loaded = policy_metadata.get("heldout_policy_loaded_for_inference") is True
+    identity_verified = policy_metadata.get("heldout_policy_identity_verified") is True
+    if not heldout_loaded:
+        return "Held-out inference checkpoint loading was not proven in this recording."
+    if not identity_verified:
+        return (
+            "A literal held-out load claim exists, but exact checkpoint identity was "
+            "not proven."
+        )
     inference_statement = (
         "The synchronized held-out Isaac cameras and 3D point cloud were generated "
-        "after loading these exact candidate checkpoint bytes; "
-        "`stock_or_scripted_policy=false`."
-        if heldout_loaded
-        else "Held-out inference checkpoint loading was not proven in this recording."
+        "after loading these exact candidate checkpoint bytes."
     )
-    return "\n".join(
+    inference_statement += _learned_policy_clause(policy_metadata)
+    mismatches = policy_metadata.get("heldout_policy_declaration_mismatches")
+    if isinstance(mismatches, list) and mismatches:
+        inference_statement += (
+            " Published run metadata and held-out report declarations disagree; "
+            "the conservative verdict is not proven."
+        )
+    return inference_statement
+
+
+def _policy_access_rows(
+    run_metadata: dict[str, Any],
+    policy_metadata: dict[str, Any],
+) -> list[str]:
+    value = run_metadata.get
+    return [
+        "# Deployable policy and viewer access",
+        "",
+        f"- Run: `{value('run_id', '')}`",
+        f"- Policy checkpoint: `{value('policy_checkpoint', '')}`",
+        f"- Checkpoint identity: `{value('policy_checkpoint_identity', '')}`",
+        f"- SHA-256: `{value('policy_checkpoint_sha256', '')}`",
+        f"- Size (bytes): `{value('policy_checkpoint_size_bytes', '')}`",
+        f"- Deployable: `{value('policy_deployable', False)}`",
+        f"- Held-out inference checkpoint: `{value('heldout_policy_checkpoint', '')}`",
+        f"- Held-out inference SHA-256: `{value('heldout_policy_checkpoint_sha256', '')}`",
+        f"- Held-out generator policy SHA-256: `{value('heldout_policy_generator_sha256', '')}`",
+        f"- Held-out inference size (bytes): `{value('heldout_policy_checkpoint_size_bytes', '')}`",
+        f"- Held-out report reconciled: `{policy_metadata.get('heldout_policy_reconciled') is True}`",
+        f"- Loaded for held-out inference: `{policy_metadata.get('heldout_policy_loaded_for_inference') is True}`",
+        f"- Exact held-out identity verified: `{policy_metadata.get('heldout_policy_identity_verified') is True}`",
+        f"- Learned actor only: `{policy_metadata.get('heldout_policy_learned_actor_only') is True}`",
+        f"- Held-out identity issues: `{json.dumps(policy_metadata.get('heldout_policy_identity_errors') or [])}`",
+        f"- Candidate record: `{value('candidate_s3_uri', '')}`",
+        f"- Rerun recording: `{value('rrd_s3_uri', '')}`",
+        f"- Artifact root: `{value('artifact_root', '')}`",
+        f"- Viewer command: `{value('viewer_command', '')}`",
+        f"- Authenticated checkpoint download: `{value('policy_download_command', '')}`",
+        f"- UI action: {value('policy_ui_action', '')}",
+        "- The Rerun viewer inspects behavior and links the checkpoint; it does not execute the policy.",
+        f"- {_heldout_inference_statement(policy_metadata)}",
+    ]
+
+
+def _policy_access_markdown(
+    run_metadata: dict[str, Any],
+    heldout_report: dict[str, Any] | None,
+) -> str:
+    policy_metadata = _reconciled_heldout_policy_metadata(
+        run_metadata,
+        heldout_report,
+    )
+    rows = _policy_access_rows(run_metadata, policy_metadata)
+    rows.extend(
         [
-            "# Deployable policy and viewer access",
-            "",
-            f"- Run: `{run_metadata.get('run_id', '')}`",
-            f"- Policy checkpoint: `{run_metadata.get('policy_checkpoint', '')}`",
-            f"- Checkpoint identity: `{run_metadata.get('policy_checkpoint_identity', '')}`",
-            f"- SHA-256: `{run_metadata.get('policy_checkpoint_sha256', '')}`",
-            f"- Size (bytes): `{run_metadata.get('policy_checkpoint_size_bytes', '')}`",
-            f"- Deployable: `{run_metadata.get('policy_deployable', False)}`",
-            f"- Held-out inference checkpoint: `{run_metadata.get('heldout_policy_checkpoint', '')}`",
-            f"- Held-out inference SHA-256: `{run_metadata.get('heldout_policy_checkpoint_sha256', '')}`",
-            f"- Held-out inference size (bytes): `{run_metadata.get('heldout_policy_checkpoint_size_bytes', '')}`",
-            f"- Loaded for held-out inference: `{heldout_loaded}`",
-            f"- Candidate record: `{run_metadata.get('candidate_s3_uri', '')}`",
-            f"- Rerun recording: `{run_metadata.get('rrd_s3_uri', '')}`",
-            f"- Artifact root: `{run_metadata.get('artifact_root', '')}`",
-            f"- Viewer command: `{run_metadata.get('viewer_command', '')}`",
-            f"- Authenticated checkpoint download: `{run_metadata.get('policy_download_command', '')}`",
-            f"- UI action: {run_metadata.get('policy_ui_action', '')}",
-            "- The Rerun viewer inspects behavior and links the checkpoint; it does not execute the policy.",
-            f"- {inference_statement}",
             "",
             "## Runtime parameters",
             "",
@@ -1085,6 +1247,7 @@ def _policy_access_markdown(run_metadata: dict[str, Any]) -> str:
             "```",
         ]
     )
+    return "\n".join(rows)
 
 
 def _embodiment_markdown(run_metadata: dict[str, Any]) -> str:
@@ -2125,6 +2288,7 @@ def _log_real_isaac_scene_context(
     recording: Any,
     *,
     heldout_report: dict[str, Any],
+    run_metadata: dict[str, Any] | None = None,
     counts: dict[str, int],
 ) -> None:
     """Add truthful task geometry around the measured Isaac RGB-D point cloud.
@@ -2188,7 +2352,18 @@ def _log_real_isaac_scene_context(
             ),
             recording=recording,
         )
-    provenance = heldout_report.get("policy_inference_provenance") or {}
+    policy_metadata = _reconciled_heldout_policy_metadata(
+        run_metadata,
+        heldout_report,
+    )
+    loaded_for_inference = (
+        policy_metadata["heldout_policy_loaded_for_inference"] is True
+    )
+    identity_verified = policy_metadata["heldout_policy_identity_verified"] is True
+    stock_or_scripted_absent = (
+        policy_metadata["heldout_policy_stock_or_scripted_policy"] is False
+    )
+    learned_actor_only = policy_metadata["heldout_policy_learned_actor_only"] is True
     rr.log(
         "world/task_context/provenance",
         rr.TextDocument(
@@ -2197,9 +2372,13 @@ def _log_real_isaac_scene_context(
             "from the synchronized real Isaac held-out cameras. The translucent "
             "table, cube/goal regions, and Franka home skeleton are nominal task "
             "context—not a synthetic motion claim.\n\n"
-            f"Checkpoint: `{provenance.get('checkpoint_uri', '')}`\n\n"
-            f"SHA-256: `{provenance.get('checkpoint_sha256', '')}`\n\n"
-            f"Loaded for inference: `{provenance.get('loaded_for_inference', False)}`",
+            f"Checkpoint: `{policy_metadata['heldout_policy_checkpoint']}`\n\n"
+            f"SHA-256: `{policy_metadata['heldout_policy_checkpoint_sha256']}`\n\n"
+            f"Loaded for inference (strict proof): `{loaded_for_inference}`\n\n"
+            f"Exact checkpoint identity verified: `{identity_verified}`\n\n"
+            "Stock or scripted policy proven absent: "
+            f"`{stock_or_scripted_absent}`\n\n"
+            f"Complete learned-actor-only contract: `{learned_actor_only}`",
             media_type="text/markdown",
         ),
         recording=recording,
@@ -2372,44 +2551,154 @@ def is_reference_stub_rollout(rollout_dir: Path, frames: list[np.ndarray]) -> bo
     return "quality" in manifest
 
 
+def _contained_render_path(
+    local_dir: Path,
+    value: object,
+    *,
+    source: str,
+    require_relative: bool = False,
+) -> Path:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise Sim2RealVizError(f"{source} render path is malformed")
+    root = Path(local_dir).resolve()
+    candidate = Path(value)
+    if require_relative and candidate.is_absolute():
+        raise Sim2RealVizError(f"{source} render path must be relative and contained")
+    if ".." in candidate.parts:
+        raise Sim2RealVizError(
+            f"{source} render path must be contained without parent traversal"
+        )
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        resolved = candidate.resolve()
+    except OSError as exc:
+        raise Sim2RealVizError(f"{source} render path cannot be resolved") from exc
+    if resolved == root or not resolved.is_relative_to(root):
+        raise Sim2RealVizError(f"{source} render path must be below local_dir")
+    return resolved
+
+
+def _heldout_renders_root(
+    local_dir: Path,
+    heldout_report: dict[str, Any] | None,
+) -> Path:
+    report = heldout_report if isinstance(heldout_report, dict) else {}
+    raw_lineage = report.get("render_lineage")
+    if raw_lineage is not None and not isinstance(raw_lineage, dict):
+        raise Sim2RealVizError("render_lineage must be an object")
+    lineage = raw_lineage or {}
+    report_split = report.get("evaluation_split")
+    lineage_split = lineage.get("evaluation_split")
+    for source, split in (
+        ("held-out render report", report_split),
+        ("held-out render lineage", lineage_split),
+    ):
+        if split not in (None, "", "gold_heldout"):
+            raise Sim2RealVizError(f"{source} has the wrong evaluation split")
+    sealed = report_split == "gold_heldout" or lineage_split == "gold_heldout"
+    sealed_default: Path | None = None
+    if sealed:
+        outer = report.get("outer_iteration")
+        if not isinstance(outer, int) or isinstance(outer, bool) or outer <= 0:
+            raise Sim2RealVizError("sealed gold report has an invalid outer iteration")
+        sealed_default = _contained_render_path(
+            local_dir,
+            f"eval/gold-heldout/outer-{outer:02d}/renders",
+            source="default held-out",
+            require_relative=True,
+        )
+    candidates: list[tuple[str, Path]] = []
+    if report.get("local_renders_dir") not in (None, ""):
+        candidates.append(
+            (
+                "local_renders_dir",
+                _contained_render_path(
+                    local_dir,
+                    report["local_renders_dir"],
+                    source="local_renders_dir",
+                ),
+            )
+        )
+    if lineage.get("local_relative_dir") not in (None, ""):
+        candidates.append(
+            (
+                "render_lineage.local_relative_dir",
+                _contained_render_path(
+                    local_dir,
+                    lineage["local_relative_dir"],
+                    source="render_lineage.local_relative_dir",
+                    require_relative=True,
+                ),
+            )
+        )
+    if len({path for _source, path in candidates}) > 1:
+        raise Sim2RealVizError("render path sources disagree")
+    if candidates:
+        if sealed_default is not None and candidates[0][1] != sealed_default:
+            raise Sim2RealVizError(
+                "sealed gold render path disagrees with its outer iteration"
+            )
+        return candidates[0][1]
+    if sealed_default is not None:
+        return sealed_default
+    return _contained_render_path(
+        local_dir,
+        "eval/heldout/renders",
+        source="default held-out",
+        require_relative=True,
+    )
+
+
+def _manifest_child_path(root: Path, value: object, *, source: str) -> Path:
+    if not isinstance(value, str) or not value or value != value.strip():
+        raise Sim2RealVizError(f"{source} must be a non-empty relative path")
+    relative = Path(value)
+    if relative.is_absolute() or relative == Path(".") or ".." in relative.parts:
+        raise Sim2RealVizError(f"{source} must be contained in the render root")
+    candidate = root
+    for part in relative.parts:
+        candidate /= part
+        if candidate.is_symlink():
+            raise Sim2RealVizError(f"{source} traverses a symlink")
+    if not candidate.resolve().is_relative_to(root.resolve()):
+        raise Sim2RealVizError(f"{source} must be contained in the render root")
+    return candidate
+
+
 def _heldout_render_episodes(
     local_dir: Path,
     heldout_report: dict[str, Any] | None,
 ) -> list[tuple[str, dict[str, list[np.ndarray]]]]:
-    report = heldout_report or {}
-    renders_value = str(report.get("local_renders_dir") or "")
-    recorded = Path(renders_value) if renders_value else Path()
-    try:
-        usable_recorded = bool(
-            renders_value
-            and recorded.resolve().is_relative_to(Path(local_dir).resolve())
-        )
-    except OSError:
-        usable_recorded = False
-    relative = str((report.get("render_lineage") or {}).get("local_relative_dir") or "")
-    renders_root = (
-        recorded
-        if usable_recorded
-        else local_dir / relative
-        if relative
-        else local_dir / "eval" / "heldout" / "renders"
-    )
+    renders_root = _heldout_renders_root(local_dir, heldout_report)
     manifest = (heldout_report or {}).get("render_manifest") or {}
     episodes: list[tuple[str, dict[str, list[np.ndarray]]]] = []
     for item in manifest.get("episodes") or []:
         if not isinstance(item, dict):
             continue
-        env_id = str(item.get("env_id") or "")
-        if not env_id:
-            continue
-        env_dir = renders_root / env_id
+        raw_env_id = item.get("env_id")
+        env_dir = _manifest_child_path(
+            renders_root, raw_env_id, source="render manifest env_id"
+        )
+        env_id = str(raw_env_id)
         view_names = item.get("camera_views") or {"primary": item.get("frames") or []}
         views = {
             str(view_name): _usable_camera_frames(
                 [
                     frame
                     for name in names or []
-                    if (frame := _read_image(env_dir / str(name))) is not None
+                    if (
+                        (
+                            frame := _read_image(
+                                _manifest_child_path(
+                                    env_dir,
+                                    name,
+                                    source="render manifest frame",
+                                )
+                            )
+                        )
+                        is not None
+                    )
                 ]
             )
             for view_name, names in view_names.items()
@@ -2421,8 +2710,21 @@ def _heldout_render_episodes(
         return episodes
     if not renders_root.is_dir():
         return []
-    for env_dir in sorted(path for path in renders_root.iterdir() if path.is_dir()):
-        grouped = _camera_paths_by_view(sorted(env_dir.glob("camera-*.png")))
+    for env_dir in sorted(
+        path
+        for path in renders_root.iterdir()
+        if path.is_dir() and not path.is_symlink()
+    ):
+        grouped = _camera_paths_by_view(
+            [
+                _manifest_child_path(
+                    env_dir,
+                    frame_path.name,
+                    source="render fallback frame",
+                )
+                for frame_path in sorted(env_dir.glob("camera-*.png"))
+            ]
+        )
         views = {
             view_name: _usable_camera_frames(
                 [
@@ -2484,23 +2786,50 @@ def _heldout_pointcloud_frames(
     reconstructed sim geometry. Empty when no point clouds were captured.
     """
 
-    renders_value = str((heldout_report or {}).get("local_renders_dir") or "")
-    renders_root = (
-        Path(renders_value)
-        if renders_value
-        else local_dir / "eval" / "heldout" / "renders"
+    renders_root = _heldout_renders_root(local_dir, heldout_report)
+    root = _manifest_child_path(
+        renders_root,
+        POINTCLOUD_SUBDIR,
+        source="held-out pointcloud directory",
     )
-    root = renders_root / POINTCLOUD_SUBDIR
     if not root.is_dir():
         return []
-    env_dirs = sorted(path for path in root.iterdir() if path.is_dir())
+    env_dirs: list[Path] = []
+    for candidate in root.iterdir():
+        path = _manifest_child_path(
+            root,
+            candidate.name,
+            source="held-out pointcloud environment directory",
+        )
+        if path.is_dir():
+            env_dirs.append(path)
+    env_dirs.sort()
     if not env_dirs:
         return []
     env_dir = env_dirs[0]
-    view_dirs = sorted(path for path in env_dir.iterdir() if path.is_dir())
+    view_dirs: list[Path] = []
+    for candidate in env_dir.iterdir():
+        path = _manifest_child_path(
+            env_dir,
+            candidate.name,
+            source="held-out pointcloud view directory",
+        )
+        if path.is_dir():
+            view_dirs.append(path)
+    view_dirs.sort()
     if not view_dirs:
         view_dirs = [env_dir]
-    view_frames = [sorted(path.glob("cloud-*.npz")) for path in view_dirs]
+    view_frames = [
+        [
+            _manifest_child_path(
+                path,
+                candidate.name,
+                source="held-out pointcloud sample",
+            )
+            for candidate in sorted(path.glob("cloud-*.npz"))
+        ]
+        for path in view_dirs
+    ]
     frames: list[tuple[np.ndarray, np.ndarray]] = []
     for frame_index in range(max((len(paths) for paths in view_frames), default=0)):
         clouds = [
@@ -2741,6 +3070,8 @@ def _read_image(path: Path) -> np.ndarray | None:
 
 def _read_png(path: Path) -> np.ndarray | None:
     try:
+        if path.stat().st_size > MAX_RENDER_ENCODED_BYTES:
+            return None
         data = path.read_bytes()
     except OSError:
         return None
@@ -2765,6 +3096,7 @@ def _read_png_with_pillow(data: bytes) -> np.ndarray | None:
         return None
     try:
         with Image.open(io.BytesIO(data)) as image:
+            assert_safe_render_dimensions(*image.size)
             return np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
     except Exception:
         logging.getLogger(__name__).debug("Pillow PNG decode failed", exc_info=True)
@@ -2787,14 +3119,24 @@ def _decode_png_bytes(data: bytes) -> np.ndarray | None:
     import struct
     import zlib
 
+    if len(data) > MAX_RENDER_ENCODED_BYTES:
+        return None
     index = 8
     width = height = 0
     bit_depth = color_type = interlace = 0
     idat = bytearray()
     while index + 8 <= len(data):
         length = struct.unpack("!I", data[index : index + 4])[0]
+        if length > MAX_RENDER_ENCODED_BYTES or index + 12 + length > len(data):
+            return None
         chunk_type = data[index + 4 : index + 8]
         chunk = data[index + 8 : index + 8 + length]
+        expected_crc = struct.unpack(
+            "!I",
+            data[index + 8 + length : index + 12 + length],
+        )[0]
+        if zlib.crc32(chunk_type + chunk) & 0xFFFFFFFF != expected_crc:
+            return None
         index += 12 + length
         if chunk_type == b"IHDR" and len(chunk) >= 13:
             width, height = struct.unpack("!II", chunk[:8])
@@ -2816,12 +3158,22 @@ def _decode_png_bytes(data: bytes) -> np.ndarray | None:
     ):
         return None
     try:
-        raw = zlib.decompress(bytes(idat))
-    except zlib.error:
+        assert_safe_render_dimensions(width, height, channels=channels)
+    except ValueError:
         return None
     row_len = width * channels
     stride = row_len + 1
-    if len(raw) < height * stride:
+    expected_bytes = height * stride
+    try:
+        decompressor = zlib.decompressobj()
+        raw = decompressor.decompress(bytes(idat), expected_bytes + 1)
+    except zlib.error:
+        return None
+    if (
+        len(raw) != expected_bytes
+        or not decompressor.eof
+        or decompressor.unconsumed_tail
+    ):
         return None
     bpp = channels
     # Rows are carried as Python int lists, not numpy rows. Average and Paeth are
@@ -3305,7 +3657,7 @@ def emit_sim2real_mcap(
                 label="reward_trend",
             )
 
-        _emit_mcap_heldout_cameras(
+        heldout_frame_count = _emit_mcap_heldout_cameras(
             emitter, heldout_episodes, frame_period_ns=heldout_frame_period_ns
         )
         _emit_mcap_pointclouds(
@@ -3362,6 +3714,7 @@ def emit_sim2real_mcap(
         channel_counts=emitter.channel_counts,
         message_count=content_total + emitter.transform_message_count,
         camera_message_count=emitter.camera_message_count,
+        heldout_frame_count=heldout_frame_count,
         scalar_message_count=emitter.scalar_message_count,
         log_message_count=emitter.log_message_count,
         pointcloud_message_count=emitter.pointcloud_message_count,
@@ -3517,7 +3870,8 @@ def _emit_mcap_heldout_cameras(
     episodes: list[tuple[str, dict[str, list[np.ndarray]]]],
     *,
     frame_period_ns: int,
-) -> None:
+) -> int:
+    emitted_frames = 0
     for episode_index, (env_id, episode_views) in enumerate(episodes):
         views = _normalize_camera_views(episode_views)
         root = f"/heldout/camera/{env_id}"
@@ -3528,6 +3882,7 @@ def _emit_mcap_heldout_cameras(
                 if frame_index >= len(frames):
                     continue
                 payload = _png_bytes(frames[frame_index])
+                emitted_frames += 1
                 if view_name != "primary":
                     emitter.log_image_bytes(
                         f"{root}/{view_name}/camera", payload, "png", stamp_ns
@@ -3541,6 +3896,7 @@ def _emit_mcap_heldout_cameras(
                             MCAP_PRIMARY_CAMERA_TOPIC, payload, "png", stamp_ns
                         )
             stamp_ns += frame_period_ns
+    return emitted_frames
 
 
 def _emit_mcap_pointclouds(

@@ -18,6 +18,12 @@ from npa.workflows.sim2real.constants import (
     DEFAULT_PREFIX,
     DEFAULT_S3_ENDPOINT,
 )
+from npa.workflows.sim2real.publication import (
+    assert_legacy_publication_unjournaled,
+    read_verified_committed_publication_bytes,
+    resolve_committed_publication_snapshot,
+    verify_committed_publication_object,
+)
 
 
 @dataclass(frozen=True)
@@ -347,6 +353,53 @@ def _load_s3_json(
     return payload if isinstance(payload, dict) else None
 
 
+def _resolved_publication_object(
+    client: StorageClient,
+    bucket: str,
+    key: str,
+) -> tuple[str, str] | None:
+    canonical_uri = f"s3://{bucket}/{key}"
+    publication = resolve_committed_publication_snapshot(client, canonical_uri)
+    resolved_uri = verify_committed_publication_object(
+        client,
+        publication,
+        canonical_uri,
+    )
+    if resolved_uri is None:
+        return None
+    value = resolved_uri.removeprefix("s3://")
+    if value == resolved_uri or "/" not in value:
+        raise ValueError("publication journal resolved a malformed S3 URI")
+    resolved_bucket, resolved_key = value.split("/", 1)
+    if resolved_bucket != bucket:
+        raise ValueError("publication journal resolved outside the selected bucket")
+    if not _s3_object_exists(client, resolved_bucket, resolved_key):
+        return None
+    assert_legacy_publication_unjournaled(client, publication)
+    return resolved_bucket, resolved_key
+
+
+def _load_publication_json(
+    client: StorageClient,
+    bucket: str,
+    key: str,
+) -> dict[str, Any] | None:
+    canonical_uri = f"s3://{bucket}/{key}"
+    publication = resolve_committed_publication_snapshot(client, canonical_uri)
+    payload_bytes = read_verified_committed_publication_bytes(
+        client,
+        publication,
+        canonical_uri,
+    )
+    if payload_bytes is None:
+        return None
+    try:
+        payload = json.loads(payload_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _load_workflow_state(
     client: StorageClient,
     bucket: str,
@@ -405,7 +458,11 @@ def _extract_eval_metrics(
             metrics.setdefault("threshold", decision.get("threshold"))
 
     if any(key not in metrics for key in ("success_rate", "decision", "threshold")):
-        report = _load_s3_json(client, bucket, f"{prefix}/reports/sim2real-report.json")
+        report = _load_publication_json(
+            client,
+            bucket,
+            f"{prefix}/reports/sim2real-report.json",
+        )
         if report:
             outer = report.get("outer_loop") or {}
             latest_eval = outer.get("latest_heldout_report") or {}
@@ -435,6 +492,9 @@ def _artifact_rule_matches(
             if not key.endswith("/"):
                 key = f"{key}/"
             checks.append(_s3_prefix_nonempty(client, bucket, key))
+        elif rel_path == "reports/sim2real-report.json":
+            resolved = _resolved_publication_object(client, bucket, key)
+            checks.append(resolved is not None)
         else:
             checks.append(_s3_object_exists(client, bucket, key))
     if rule.match == "all":

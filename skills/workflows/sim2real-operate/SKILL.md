@@ -103,6 +103,15 @@ Stage 8→9 barrier. Also restart during Stage 14 in the integration ladder. The
 runtime must adopt/replay complete waves from declared S3 outputs and resubmit
 only incomplete work.
 
+## Diagnostic held-out rerun
+
+`npa workbench sim2real rerun heldout-only --run-id <run-id>` is diagnostic.
+With publication enabled it writes the new report and render tree only under
+`eval/gold-heldout/outer-XX/attempts/<attempt>/`; it never replaces the
+canonical Stage 10 report or render aliases. The command reports those immutable
+attempt URIs. Use `--no-publish` for local-only diagnosis, and use the canonical
+workflow/resume path when Stage 10 authority must advance.
+
 ## Audit
 
 Require exactly 14 canonical ComponentRecords. Stages 1–11, 13, and 14 are

@@ -9,11 +9,27 @@ from __future__ import annotations
 
 # This source is embedded into backend.py, where these adapter dependencies are
 # defined by the surrounding generated module.
+import hashlib
 import json
 import re
 from pathlib import Path
 
 from botocore.exceptions import BotoCoreError, ClientError
+
+try:
+    from agent_backend.publication_reader import (
+        PublicationConflict,
+        REPORT_SUFFIX,
+        RESERVED_SUFFIXES,
+        resolve_committed_publication,
+    )
+except ModuleNotFoundError:
+    from npa.agent_backend.publication_reader import (
+        PublicationConflict,
+        REPORT_SUFFIX,
+        RESERVED_SUFFIXES,
+        resolve_committed_publication,
+    )
 
 # NPA_EMBED_STANDALONE_START
 # These adapter globals are intentionally supplied by the rendered backend. Use
@@ -35,38 +51,59 @@ if __name__ == "npa.cli.agent_stage_runtime":
         _slug,
         _validated_resolved_prefix,
         _workflow_draft_from_state,
+        Artifact,
+        artifact_role_for_relative_key,
         artifact_bucket_projects,
         build_artifact_backed_stages,
         coerce_authoritative_stage_evidence,
         find_run_artifacts,
         find_run_artifacts_across_buckets,
+        is_inline_render,
         list_artifacts,
         local_demo_run_details,
         merge_stage_evidence,
         parse_stage_evidence_documents,
+        render_hint_for_object,
         resolve_run_source,
         run_owns_workflow_stage_overlay,
         select_preferred_artifact,
         summarize_stage_evidence,
         validate_run_id,
-    ) = (None,) * 28
+    ) = (None,) * 32
 # NPA_EMBED_STANDALONE_END
 
 
 _MAX_STAGE_EVIDENCE_DOCUMENTS = 8
 _MAX_STAGE_EVIDENCE_BYTES = 65_536
+_MAX_PUBLICATION_JOURNAL_BYTES = 1024 * 1024
 
 
 def _read_bounded_json_object(
-    s3, bucket: str, key: str, *, max_bytes: int = _MAX_STAGE_EVIDENCE_BYTES
+    s3,
+    bucket: str,
+    key: str,
+    *,
+    max_bytes: int = _MAX_STAGE_EVIDENCE_BYTES,
+    expected_sha256: str = "",
+    expected_size: int | None = None,
 ):
     """Read one JSON object with a hard byte bound and deterministic cleanup."""
+    if expected_size is not None and expected_size > max_bytes:
+        raise PublicationConflict("committed report exceeds its bounded read limit")
     body = None
     try:
         response = s3.get_object(Bucket=bucket, Key=key)
         body = response["Body"]
         raw = body.read(max_bytes + 1)
         encoded = raw.encode("utf-8") if isinstance(raw, str) else bytes(raw)
+        if expected_size is not None and len(encoded) != expected_size:
+            raise PublicationConflict(
+                "committed report size changed between verification and read"
+            )
+        if expected_sha256 and hashlib.sha256(encoded).hexdigest() != expected_sha256:
+            raise PublicationConflict(
+                "committed report bytes changed between verification and read"
+            )
         if len(encoded) > max_bytes:
             return None
         payload = json.loads(encoded)
@@ -80,6 +117,311 @@ def _read_bounded_json_object(
                 # Cleanup must not turn an otherwise safely bounded read into a
                 # request failure. StreamingBody.close() is best-effort here.
                 pass
+
+
+def _read_publication_journal(s3, bucket: str, uri: str) -> bytes | None:
+    prefix = f"s3://{bucket}/"
+    if not uri.startswith(prefix):
+        raise PublicationConflict(
+            "publication journal resolved outside the selected artifact bucket"
+        )
+    body = None
+    try:
+        response = s3.get_object(Bucket=bucket, Key=uri.removeprefix(prefix))
+        body = response["Body"]
+        raw = body.read(_MAX_PUBLICATION_JOURNAL_BYTES + 1)
+        payload = raw.encode("utf-8") if isinstance(raw, str) else bytes(raw)
+    except KeyError:
+        return None
+    except ClientError as exc:
+        code = str(exc.response.get("Error", {}).get("Code", ""))
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        raise
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            try:
+                close()
+            except (OSError, RuntimeError, ValueError):
+                pass
+    if len(payload) > _MAX_PUBLICATION_JOURNAL_BYTES:
+        raise PublicationConflict("publication journal exceeds its bounded read limit")
+    return payload
+
+
+def _verify_publication_target(s3, bucket: str, target) -> dict:
+    """Bind one immutable object to the size and digest in its journal target."""
+
+    uri = str(target.immutable_uri or "")
+    prefix = f"s3://{bucket}/"
+    if not uri.startswith(prefix):
+        raise PublicationConflict(
+            "committed publication object is outside the selected artifact bucket"
+        )
+    key = uri.removeprefix(prefix)
+    head_object = getattr(s3, "head_object", None)
+    head = {}
+    if callable(head_object):
+        head = head_object(Bucket=bucket, Key=key)
+        if int(head.get("ContentLength") or -1) != int(target.size_bytes):
+            raise PublicationConflict(
+                "committed publication object size disagrees with its journal"
+            )
+        metadata_digest = str((head.get("Metadata") or {}).get("npa-sha256") or "")
+        if metadata_digest and metadata_digest != target.sha256:
+            raise PublicationConflict(
+                "committed publication object digest disagrees with its journal"
+            )
+    body = None
+    try:
+        response = s3.get_object(Bucket=bucket, Key=key)
+        body = response["Body"]
+        digest = hashlib.sha256()
+        size = 0
+        while size <= target.size_bytes:
+            chunk = body.read(min(1024 * 1024, target.size_bytes + 1 - size))
+            if not chunk:
+                break
+            material = chunk.encode("utf-8") if isinstance(chunk, str) else bytes(chunk)
+            digest.update(material)
+            size += len(material)
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+    if size != target.size_bytes or digest.hexdigest() != target.sha256:
+        raise PublicationConflict(
+            "committed publication object bytes disagree with its journal"
+        )
+    return head
+
+
+def _run_root_key(artifacts: list, run_id: str) -> str:
+    roots: set[str] = set()
+    for item in artifacts:
+        key = str(item.key or "")
+        relative = str(getattr(item, "relative_key", "") or "").lstrip("/")
+        suffix = f"/{relative}" if relative else ""
+        if suffix and key.endswith(suffix):
+            root = key[: -len(suffix)]
+            if root == run_id or root.endswith(f"/{run_id}"):
+                roots.add(root)
+    if len(roots) == 1:
+        return roots.pop()
+    if roots:
+        raise PublicationConflict("artifact inventory spans multiple run roots")
+
+    marker = f"/{run_id}/"
+    for item in artifacts:
+        key = str(item.key or "")
+        if marker in key:
+            return key.rsplit(marker, 1)[0] + f"/{run_id}"
+        if key.startswith(f"{run_id}/"):
+            return run_id
+    raise PublicationConflict("artifact inventory does not identify one run root")
+
+
+def _resolve_committed_artifact_key(
+    s3,
+    bucket: str,
+    run_root_key: str,
+    key: str,
+) -> str:
+    """Resolve reserved aliases and reject stale immutable generations."""
+
+    root_key = str(run_root_key or "").strip("/")
+    normalized_key = str(key or "").strip("/")
+    root_prefix = f"{root_key}/"
+    if not root_key or not normalized_key.startswith(root_prefix):
+        raise PublicationConflict("artifact key is outside the selected run root")
+    relative = normalized_key[len(root_prefix) :]
+    canonical_relatives = tuple(suffix.lstrip("/") for suffix in RESERVED_SUFFIXES)
+    immutable = relative.startswith("reports/generations/") or relative.startswith(
+        "components/history/stage_14/"
+    )
+    if relative not in canonical_relatives and not immutable:
+        return normalized_key
+
+    publication = resolve_committed_publication(
+        lambda uri: _read_publication_journal(s3, bucket, uri),
+        f"s3://{bucket}/{root_key}{REPORT_SUFFIX}",
+    )
+    if not publication.journaled:
+        if immutable:
+            raise PublicationConflict(
+                "immutable publication artifact has no committed journal authority"
+            )
+        return normalized_key
+
+    requested_uri = f"s3://{bucket}/{normalized_key}"
+    if relative in canonical_relatives:
+        target = publication.target(requested_uri)
+        resolved_uri = publication.resolve(requested_uri)
+        if resolved_uri is None:
+            raise PublicationConflict(
+                "the committed publication marks this artifact absent"
+            )
+    else:
+        target = next(
+            (
+                candidate
+                for candidate in publication.objects.values()
+                if candidate.immutable_uri == requested_uri
+            ),
+            None,
+        )
+        if target is None:
+            raise PublicationConflict(
+                "artifact does not belong to the committed publication generation"
+            )
+        resolved_uri = requested_uri
+    _verify_publication_target(s3, bucket, target)
+
+    bucket_prefix = f"s3://{bucket}/"
+    if not str(resolved_uri).startswith(bucket_prefix):
+        raise PublicationConflict(
+            "committed publication artifact resolved outside its selected bucket"
+        )
+    resolved_key = str(resolved_uri).removeprefix(bucket_prefix)
+    if not resolved_key.startswith(root_prefix):
+        raise PublicationConflict(
+            "committed publication artifact resolved outside its selected run"
+        )
+    return resolved_key
+
+
+def _committed_publication_artifacts(
+    s3,
+    bucket: str,
+    run_id: str,
+    artifacts: list,
+    *,
+    require_complete: bool = True,
+    include_snapshot: bool = False,
+) -> tuple:
+    keys = [str(item.key or "") for item in artifacts]
+    root_key = _run_root_key(artifacts, run_id)
+    canonical_report_uri = f"s3://{bucket}/{root_key}/reports/sim2real-report.json"
+    publication = resolve_committed_publication(
+        lambda uri: _read_publication_journal(s3, bucket, uri),
+        canonical_report_uri,
+    )
+    if not publication.journaled:
+        report = next(
+            (
+                item
+                for item in artifacts
+                if str(item.key).endswith("/reports/sim2real-report.json")
+            ),
+            None,
+        )
+        result = (artifacts, report, select_preferred_artifact(artifacts), keys)
+        return (*result, publication) if include_snapshot else result
+
+    by_uri = {str(item.s3_uri or ""): item for item in artifacts}
+    committed_uris = {
+        target.immutable_uri
+        for target in publication.objects.values()
+        if target.immutable_uri is not None
+    }
+    missing = sorted(uri for uri in committed_uris if uri not in by_uri)
+    if missing and require_complete:
+        raise PublicationConflict(
+            "committed publication objects are absent from the artifact inventory"
+        )
+    verified_heads = {}
+    for target in publication.objects.values():
+        if target.immutable_uri is not None:
+            verified_heads[str(target.immutable_uri)] = _verify_publication_target(
+                s3, bucket, target
+            )
+    if not require_complete:
+        run_scope = f"{root_key}/"
+        namespace = (
+            root_key[: -len(f"/{run_id}")] if root_key.endswith(f"/{run_id}") else ""
+        )
+        for target in publication.objects.values():
+            uri = str(target.immutable_uri or "")
+            if (
+                not uri
+                or uri in by_uri
+                or not str(target.canonical_uri).endswith(
+                    ("/reports/sim2real.rrd", "/reports/sim2real.mcap")
+                )
+            ):
+                continue
+            key = uri.removeprefix(f"s3://{bucket}/")
+            if not key.startswith(run_scope):
+                raise PublicationConflict(
+                    "committed publication artifact resolved outside its selected run"
+                )
+            relative_key = key[len(run_scope) :]
+            head = verified_heads.get(uri) or {}
+            modified = head.get("LastModified")
+            if hasattr(modified, "isoformat"):
+                modified = modified.isoformat()
+            render = render_hint_for_object(key=key)
+            by_uri[uri] = Artifact(
+                run_id=run_id,
+                key=key,
+                s3_uri=uri,
+                size=int(target.size_bytes),
+                last_modified=str(modified or ""),
+                render=render,
+                inline=is_inline_render(render),
+                role=artifact_role_for_relative_key(relative_key),
+                namespace=namespace or "<bucket-root>",
+                relative_key=relative_key,
+            )
+    report_uri = publication.resolve(canonical_report_uri)
+    report = by_uri.get(str(report_uri or ""))
+    canonical_rrd_uri = f"s3://{bucket}/{root_key}/reports/sim2real.rrd"
+    canonical_mcap_uri = f"s3://{bucket}/{root_key}/reports/sim2real.mcap"
+    viewable_uris = {
+        publication.resolve(canonical_rrd_uri),
+        publication.resolve(canonical_mcap_uri),
+    }
+    preferred = select_preferred_artifact(
+        [by_uri[uri] for uri in viewable_uris if isinstance(uri, str) and uri in by_uri]
+    )
+    reserved_alias_keys = {
+        target.canonical_uri.removeprefix(f"s3://{bucket}/")
+        for target in publication.objects.values()
+    }
+    visible = [
+        item
+        for item in artifacts
+        if str(item.key) not in reserved_alias_keys
+        and (
+            "/reports/generations/" not in str(item.key)
+            and "/components/history/stage_14/" not in str(item.key)
+            or str(item.s3_uri) in committed_uris
+        )
+    ]
+    logical_keys = [str(item.key or "") for item in visible]
+    logical_keys.extend(
+        target.canonical_uri.removeprefix(f"s3://{bucket}/")
+        for target in publication.objects.values()
+        if target.immutable_uri is not None
+    )
+    result = (visible, report, preferred, logical_keys)
+    return (*result, publication) if include_snapshot else result
+
+
+def _assert_legacy_publication_snapshot_still_unjournaled(
+    s3,
+    bucket: str,
+    publication,
+) -> None:
+    """Fence mutable-alias reads against the first journal publication."""
+
+    if publication.journaled:
+        return
+    if _read_publication_journal(s3, bucket, publication.journal_uri) is not None:
+        raise PublicationConflict(
+            "publication journal appeared during a legacy artifact read"
+        )
 
 
 def _stage_evidence_candidate_rank(key: str) -> int | None:
@@ -254,7 +596,7 @@ def _public_workflow_command(argv) -> str:
             public.append("Bearer")
             pending = "secret"
             continue
-        public.append(value)
+        public.append(_public_workflow_output_uri(value) if "://" in value else value)
     return " ".join(public)[:2000]
 
 
@@ -371,22 +713,40 @@ def _artifact_backed_run_details(
         return None
     if not artifacts:
         return None
-    keys = [str(item.key or "") for item in artifacts]
-    marker = "/" + str(run_id) + "/"
+    run_root_key = _run_root_key(artifacts, run_id)
+    run_suffix = f"/{run_id}"
+    derived_prefix = (
+        run_root_key[: -len(run_suffix)] if run_root_key.endswith(run_suffix) else ""
+    )
     effective_prefix = (
         exact_prefix
         if resource_bucket
-        else (
-            keys[0].split(marker, 1)[0]
-            if marker in keys[0]
-            else settings.get("prefix", "")
-        )
+        else derived_prefix or settings.get("prefix", "")
     )
-    evidence_documents = _stage_evidence_documents(s3, run_bucket, artifacts)
+    try:
+        (
+            visible_artifacts,
+            report_artifact,
+            preferred,
+            authority_keys,
+            publication_snapshot,
+        ) = _committed_publication_artifacts(
+            s3,
+            run_bucket,
+            run_id,
+            artifacts,
+            include_snapshot=True,
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
+    evidence_documents = _stage_evidence_documents(s3, run_bucket, visible_artifacts)
     parsed_evidence = parse_stage_evidence_documents(evidence_documents)
     workflow_steps = _workflow_run_steps(evidence_documents)
     stages = build_artifact_backed_stages(
-        keys,
+        authority_keys,
         run_id=run_id,
         prefix=effective_prefix,
         workflow_stage_defs=_workflow_stage_defs_from_state(state),
@@ -394,19 +754,35 @@ def _artifact_backed_run_details(
         authoritative_stages=parsed_evidence.get("stages", []),
         evidence_keys=[str(key) for key in parsed_evidence.get("consumed_sources", [])],
     )
-    preferred = select_preferred_artifact(artifacts)
     report_note = ""
-    report_artifact = next(
-        (
-            item
-            for item in artifacts
-            if item.key.endswith("/reports/sim2real-report.json")
-        ),
-        None,
-    )
     if report_artifact:
+        read_identity: dict[str, object] = {}
+        if publication_snapshot.journaled:
+            canonical_report_uri = (
+                f"s3://{run_bucket}/{run_root_key}/reports/sim2real-report.json"
+            )
+            report_target = publication_snapshot.target(canonical_report_uri)
+            if report_target.immutable_uri != str(report_artifact.s3_uri or ""):
+                raise HTTPException(
+                    status_code=409,
+                    detail="the selected publication generation is not committed",
+                )
+            read_identity = {
+                "expected_sha256": report_target.sha256,
+                "expected_size": report_target.size_bytes,
+            }
         try:
-            report = _read_bounded_json_object(s3, run_bucket, report_artifact.key)
+            report = _read_bounded_json_object(
+                s3,
+                run_bucket,
+                report_artifact.key,
+                **read_identity,
+            )
+        except PublicationConflict as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="the selected publication generation is not committed",
+            ) from exc
         except (ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
             report = None
         if report:
@@ -431,6 +807,17 @@ def _artifact_backed_run_details(
                     )
                     + "."
                 )
+    try:
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     stage_summary = summarize_stage_evidence(stages)
     authoritative_run_status = str(parsed_evidence.get("run_status") or "").strip()
     return {
@@ -456,14 +843,14 @@ def _artifact_backed_run_details(
         "selection": {},
         "stages": stages,
         "stage_summary": stage_summary,
-        "artifact_count": len(artifacts),
+        "artifact_count": len(visible_artifacts),
         "workflow_steps": workflow_steps,
         "logs": [
             {
                 "timestamp": _now_iso(),
                 "level": "info",
                 "message": (
-                    f"Observed {len(artifacts)} S3 artifacts across "
+                    f"Observed {len(visible_artifacts)} S3 artifacts across "
                     f"{stage_summary.get('observed_stage_count', 0)} logical groups; "
                     "artifact presence does not establish execution success."
                 ),
@@ -504,7 +891,7 @@ def _artifact_backed_run_details(
                 or "No structured run report summary was available.",
             },
         ],
-        "artifacts": [item.to_dict() for item in artifacts[:25]],
+        "artifacts": [item.to_dict() for item in visible_artifacts[:25]],
     }
 
 

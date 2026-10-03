@@ -257,6 +257,8 @@ class Artifact:
     role: str = "output"
     namespace: str = ""
     relative_key: str = ""
+    source_etag: str = ""
+    source_version_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         data_role = artifact_data_role(self.key, self.run_id)
@@ -3566,6 +3568,7 @@ def list_artifacts(
                         role=artifact_role_for_relative_key(relative_key),
                         namespace=namespace,
                         relative_key=relative_key,
+                        source_etag=str(item.get("ETag") or "").strip(),
                     )
                 )
     except (ClientError, BotoCoreError) as exc:
@@ -3622,6 +3625,7 @@ def list_artifacts_page(
                 role=artifact_role_for_relative_key(relative_key),
                 namespace=namespace,
                 relative_key=relative_key,
+                source_etag=str(item.get("ETag") or "").strip(),
             )
         )
     artifacts.sort(key=lambda item: (item.last_modified, item.key), reverse=True)

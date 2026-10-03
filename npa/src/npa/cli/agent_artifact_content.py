@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from pathlib import Path
 import re
+import tempfile
 from typing import TYPE_CHECKING
+
+from botocore.exceptions import ClientError
+
+try:
+    from agent_backend.publication_reader import canonical_publication_uri
+except ModuleNotFoundError:
+    from npa.agent_backend.publication_reader import canonical_publication_uri
 
 if TYPE_CHECKING:
     from npa.workflows.artifacts import (
@@ -65,6 +75,74 @@ def _summary_documents_for_run(s3, bucket: str, artifacts: list) -> dict:
     return documents
 
 
+def _publication_bound_artifact_key(
+    s3,
+    bucket: str,
+    run_root_key: str,
+    key: str,
+) -> str:
+    try:
+        return _resolve_committed_artifact_key(
+            s3,
+            bucket,
+            run_root_key,
+            key,
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
+
+
+def _authorized_artifact_from_head(
+    s3,
+    *,
+    run_id: str,
+    bucket: str,
+    source_prefix: str,
+    key: str,
+):
+    run_root_key = "/".join(part for part in (source_prefix, run_id) if part)
+    resolved_key = _publication_bound_artifact_key(
+        s3,
+        bucket,
+        run_root_key,
+        key,
+    )
+    scope = f"{run_root_key}/"
+    if not resolved_key.startswith(scope):
+        raise HTTPException(
+            status_code=404,
+            detail="artifact key is outside the selected run source",
+        )
+    relative_key = resolved_key[len(scope) :]
+    if not relative_key:
+        raise HTTPException(
+            status_code=404,
+            detail="artifact key does not identify an object in the selected run",
+        )
+    head = s3.head_object(Bucket=bucket, Key=resolved_key)
+    modified = head.get("LastModified")
+    if hasattr(modified, "isoformat"):
+        modified = modified.isoformat()
+    render = render_hint_for_object(key=resolved_key)
+    return Artifact(
+        run_id=run_id,
+        key=resolved_key,
+        s3_uri=f"s3://{bucket}/{resolved_key}",
+        size=int(head.get("ContentLength") or 0),
+        last_modified=str(modified or ""),
+        render=render,
+        inline=is_inline_render(render),
+        role=artifact_role_for_relative_key(relative_key),
+        namespace=source_prefix or "<bucket-root>",
+        relative_key=relative_key,
+        source_etag=str(head.get("ETag") or "").strip(),
+        source_version_id=str(head.get("VersionId") or "").strip(),
+    )
+
+
 def _resolved_artifact_for_content(
     s3,
     settings,
@@ -100,28 +178,12 @@ def _resolved_artifact_for_content(
                 status_code=404,
                 detail="artifact key is outside the selected run source",
             )
-        relative_key = normalized_key[len(discovered_scope) :]
-        if not relative_key:
-            raise HTTPException(
-                status_code=404,
-                detail="artifact key does not identify an object in the selected run",
-            )
-        head = s3.head_object(Bucket=run_bucket, Key=normalized_key)
-        modified = head.get("LastModified")
-        if hasattr(modified, "isoformat"):
-            modified = modified.isoformat()
-        render = render_hint_for_object(key=normalized_key)
-        artifact = Artifact(
+        artifact = _authorized_artifact_from_head(
+            s3,
             run_id=normalized_run,
+            bucket=run_bucket,
+            source_prefix=source_prefix,
             key=normalized_key,
-            s3_uri=f"s3://{run_bucket}/{normalized_key}",
-            size=int(head.get("ContentLength") or 0),
-            last_modified=str(modified or ""),
-            render=render,
-            inline=is_inline_render(render),
-            role=artifact_role_for_relative_key(relative_key),
-            namespace=source_prefix or "<bucket-root>",
-            relative_key=relative_key,
         )
         return normalized_run, run_bucket, artifact
     if exact_membership:
@@ -140,23 +202,12 @@ def _resolved_artifact_for_content(
         key_parts = [part for part in normalized_key.split("/") if part]
         run_index = key_parts.index(normalized_run)
         source_prefix = "/".join(key_parts[:run_index])
-        relative_key = "/".join(key_parts[run_index + 1 :])
-        head = s3.head_object(Bucket=run_bucket, Key=normalized_key)
-        modified = head.get("LastModified")
-        if hasattr(modified, "isoformat"):
-            modified = modified.isoformat()
-        render = render_hint_for_object(key=normalized_key)
-        artifact = Artifact(
+        artifact = _authorized_artifact_from_head(
+            s3,
             run_id=normalized_run,
+            bucket=run_bucket,
+            source_prefix=source_prefix,
             key=normalized_key,
-            s3_uri=f"s3://{run_bucket}/{normalized_key}",
-            size=int(head.get("ContentLength") or 0),
-            last_modified=str(modified or ""),
-            render=render,
-            inline=is_inline_render(render),
-            role=artifact_role_for_relative_key(relative_key),
-            namespace=source_prefix or "<bucket-root>",
-            relative_key=relative_key,
         )
         return normalized_run, run_bucket, artifact
     try:
@@ -186,7 +237,26 @@ def _resolved_artifact_for_content(
             status_code=404,
             detail="artifact key is not present in the authorized run inventory",
         ) from exc
-    artifact = next(item for item in artifacts if str(item.key) == normalized_key)
+    run_root_key = _run_root_key(artifacts, normalized_run)
+    normalized_key = _publication_bound_artifact_key(
+        s3,
+        run_bucket,
+        run_root_key,
+        normalized_key,
+    )
+    artifact = next(
+        (item for item in artifacts if str(item.key) == normalized_key),
+        None,
+    )
+    if artifact is None or not (artifact.source_etag or artifact.source_version_id):
+        source_prefix = run_root_key[: -(len(normalized_run) + 1)]
+        artifact = _authorized_artifact_from_head(
+            s3,
+            run_id=normalized_run,
+            bucket=run_bucket,
+            source_prefix=source_prefix,
+            key=normalized_key,
+        )
     artifact_bucket, artifact_key = parse_s3_uri(str(artifact.s3_uri))
     if artifact_bucket != run_bucket or artifact_key != normalized_key:
         raise HTTPException(
@@ -268,6 +338,195 @@ def _artifact_stream(body):
             body.close()
         except (AttributeError, OSError, RuntimeError):
             pass
+
+
+def _artifact_read_conditions(artifact, *, required: bool) -> dict[str, str]:
+    """Pin a content read to the exact object version authorized by HEAD."""
+
+    conditions: dict[str, str] = {}
+    etag = str(getattr(artifact, "source_etag", "") or "").strip()
+    version_id = str(getattr(artifact, "source_version_id", "") or "").strip()
+    if etag:
+        conditions["IfMatch"] = etag
+    if version_id:
+        conditions["VersionId"] = version_id
+    if required and not conditions:
+        raise HTTPException(
+            status_code=409,
+            detail="artifact object identity is unavailable; list the run again",
+        )
+    return conditions
+
+
+def _get_authorized_artifact_object(s3, **kwargs):
+    try:
+        return s3.get_object(**kwargs)
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        code = str(error.get("Code", ""))
+        status = int(
+            exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode", 0) or 0
+        )
+        if code in {
+            "409",
+            "412",
+            "ConditionalRequestConflict",
+            "PreconditionFailed",
+        } or status in {409, 412}:
+            raise HTTPException(
+                status_code=409,
+                detail="artifact changed after its exact object version was authorized",
+            ) from exc
+        raise
+
+
+def _publication_snapshot_for_artifact(s3, run_bucket: str, artifact):
+    artifact_uri = str(artifact.s3_uri or "")
+    try:
+        canonical_uri = canonical_publication_uri(artifact_uri)
+    except ValueError:
+        return None, None
+    publication = resolve_committed_publication(
+        lambda uri: _read_publication_journal(s3, run_bucket, uri),
+        canonical_uri,
+    )
+    if publication.journaled:
+        target = publication.target(canonical_uri)
+        if target.immutable_uri != artifact_uri:
+            raise PublicationConflict(
+                "artifact is not part of the current committed publication"
+            )
+        return publication, target
+    if artifact_uri != canonical_uri:
+        raise PublicationConflict(
+            "immutable publication artifact has no committed journal authority"
+        )
+    return publication, publication.target(canonical_uri)
+
+
+def _verified_publication_artifact_body(s3, run_bucket: str, artifact):
+    """Stage and verify the exact reserved bytes that the response will serve."""
+
+    publication, target = _publication_snapshot_for_artifact(
+        s3,
+        run_bucket,
+        artifact,
+    )
+    if publication is None:
+        return None
+    body = None
+    staged = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024, mode="w+b")
+    try:
+        response = _get_authorized_artifact_object(
+            s3,
+            Bucket=run_bucket,
+            Key=str(artifact.key),
+            **_artifact_read_conditions(artifact, required=not publication.journaled),
+        )
+        body = response["Body"]
+        digest = hashlib.sha256()
+        size = 0
+        while True:
+            chunk = body.read(1024 * 1024)
+            if not chunk:
+                break
+            material = chunk.encode("utf-8") if isinstance(chunk, str) else bytes(chunk)
+            digest.update(material)
+            staged.write(material)
+            size += len(material)
+        if publication.journaled and (
+            size != int(target.size_bytes) or digest.hexdigest() != str(target.sha256)
+        ):
+            raise PublicationConflict(
+                "committed publication object bytes disagree with its journal"
+            )
+        if not publication.journaled:
+            if size != int(artifact.size or 0):
+                raise PublicationConflict(
+                    "legacy publication alias changed after authorization"
+                )
+            if (
+                _read_publication_journal(
+                    s3,
+                    run_bucket,
+                    publication.journal_uri,
+                )
+                is not None
+            ):
+                raise PublicationConflict(
+                    "publication journal appeared during a legacy alias read"
+                )
+        staged.seek(0)
+        return staged, size
+    except Exception:
+        staged.close()
+        raise
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+
+
+def _verify_downloaded_publication_artifact(
+    s3,
+    run_bucket: str,
+    artifact,
+    path,
+) -> None:
+    """Bind a completed local download to the current publication snapshot."""
+
+    publication, target = _publication_snapshot_for_artifact(
+        s3,
+        run_bucket,
+        artifact,
+    )
+    if publication is None:
+        return
+    digest = hashlib.sha256()
+    size = 0
+    with Path(path).open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+    if publication.journaled and (
+        size != int(target.size_bytes) or digest.hexdigest() != str(target.sha256)
+    ):
+        raise PublicationConflict(
+            "downloaded publication object bytes disagree with its journal"
+        )
+    if not publication.journaled:
+        if size != int(artifact.size or 0):
+            raise PublicationConflict(
+                "legacy publication alias changed after authorization"
+            )
+        if (
+            _read_publication_journal(
+                s3,
+                run_bucket,
+                publication.journal_uri,
+            )
+            is not None
+        ):
+            raise PublicationConflict(
+                "publication journal appeared during a legacy alias download"
+            )
+
+
+def _artifact_file_stream(body, *, start: int = 0, length: int | None = None):
+    try:
+        body.seek(start)
+        remaining = length
+        while remaining is None or remaining > 0:
+            chunk = body.read(
+                1024 * 1024 if remaining is None else min(1024 * 1024, remaining)
+            )
+            if not chunk:
+                break
+            if remaining is not None:
+                remaining -= len(chunk)
+            yield chunk
+    finally:
+        body.close()
 
 
 def _artifact_content_response(
@@ -386,7 +645,46 @@ def _artifact_content_response_context(
 def _artifact_head_response(
     s3, run_bucket: str, artifact, context: _ArtifactContentResponseContext
 ):
-    head = s3.head_object(Bucket=run_bucket, Key=str(artifact.key))
+    try:
+        publication, target = _publication_snapshot_for_artifact(
+            s3,
+            run_bucket,
+            artifact,
+        )
+        head = s3.head_object(Bucket=run_bucket, Key=str(artifact.key))
+        expected_etag = str(getattr(artifact, "source_etag", "") or "").strip()
+        expected_version = str(getattr(artifact, "source_version_id", "") or "").strip()
+        if (expected_etag and str(head.get("ETag") or "").strip() != expected_etag) or (
+            expected_version
+            and str(head.get("VersionId") or "").strip() != expected_version
+        ):
+            raise PublicationConflict(
+                "artifact changed after its exact object version was authorized"
+            )
+        if publication is not None:
+            if publication.journaled and int(head.get("ContentLength") or -1) != int(
+                target.size_bytes
+            ):
+                raise PublicationConflict(
+                    "committed publication object size disagrees with its journal"
+                )
+            if (
+                not publication.journaled
+                and _read_publication_journal(
+                    s3,
+                    run_bucket,
+                    publication.journal_uri,
+                )
+                is not None
+            ):
+                raise PublicationConflict(
+                    "publication journal appeared during a legacy alias read"
+                )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     total = int(head.get("ContentLength") or 0)
     context.headers["Content-Length"] = str(total)
     return Response(
@@ -399,11 +697,31 @@ def _artifact_head_response(
 def _read_artifact_text_preview(s3, run_bucket: str, artifact, total: int) -> bytes:
     if not total:
         return b""
+    try:
+        verified = _verified_publication_artifact_body(s3, run_bucket, artifact)
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
+    if verified is not None:
+        body, actual_total = verified
+        try:
+            if actual_total != total:
+                raise HTTPException(
+                    status_code=409,
+                    detail="artifact changed since inventory discovery; list the run again",
+                )
+            return body.read(INLINE_TEXT_MAX_BYTES + 1)
+        finally:
+            body.close()
     end = min(total - 1, INLINE_TEXT_MAX_BYTES)
-    obj = s3.get_object(
+    obj = _get_authorized_artifact_object(
+        s3,
         Bucket=run_bucket,
         Key=str(artifact.key),
         Range=f"bytes=0-{end}",
+        **_artifact_read_conditions(artifact, required=True),
     )
     raw = obj["Body"].read(INLINE_TEXT_MAX_BYTES + 1)
     content_range = str(obj.get("ContentRange") or "")
@@ -470,7 +788,11 @@ def _artifact_requested_range(range_value: str, total: int):
 def _artifact_stream_request(
     run_bucket: str, artifact, selected_range, total: int, headers
 ):
-    get_kwargs = {"Bucket": run_bucket, "Key": str(artifact.key)}
+    get_kwargs = {
+        "Bucket": run_bucket,
+        "Key": str(artifact.key),
+        **_artifact_read_conditions(artifact, required=True),
+    }
     status_code = 200
     if selected_range is not None:
         start, end = selected_range
@@ -517,10 +839,40 @@ def _artifact_stream_response(
 ):
     range_value = str(request.headers.get("range") or "").strip()
     selected_range = _artifact_requested_range(range_value, context.total)
+    try:
+        verified = _verified_publication_artifact_body(s3, run_bucket, artifact)
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
+    if verified is not None:
+        body, actual_total = verified
+        if actual_total != context.total:
+            body.close()
+            raise HTTPException(
+                status_code=409,
+                detail="artifact changed since inventory discovery; list the run again",
+            )
+        status_code = 200
+        start = 0
+        length = actual_total
+        if selected_range is not None:
+            start, end = selected_range
+            length = end - start + 1
+            status_code = 206
+            context.headers["Content-Range"] = f"bytes {start}-{end}/{actual_total}"
+        context.headers["Content-Length"] = str(length)
+        return StreamingResponse(
+            _artifact_file_stream(body, start=start, length=length),
+            status_code=status_code,
+            media_type=context.content_type,
+            headers=context.headers,
+        )
     get_kwargs, status_code = _artifact_stream_request(
         run_bucket, artifact, selected_range, context.total, context.headers
     )
-    obj = s3.get_object(**get_kwargs)
+    obj = _get_authorized_artifact_object(s3, **get_kwargs)
     content_length = _validated_artifact_stream_length(
         obj, selected_range, context.total, context.headers
     )

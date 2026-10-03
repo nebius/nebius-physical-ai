@@ -4,17 +4,23 @@ from __future__ import annotations
 import logging
 
 import base64
+import hashlib
 import json
 import os
 import re
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
+from npa.agent_backend.publication_reader import canonical_publication_uri
 from npa.clients.config import StorageConfig, resolve_project_storage
 from npa.clients.scoped_credentials import bucket_from_s3_uri
+from npa.workflows.sim2real.publication import (
+    PublicationConflict,
+    resolve_committed_publication_snapshot,
+)
 
 # rerunio/rerun:* is not published on Docker Hub; serve via PyPI bootstrap or a
 # registry-built npa-rerun-viewer image. Legacy npa-sim2real-rerun-viewer refs still resolve.
@@ -80,6 +86,8 @@ class RerunServeConfig:
     rrd_s3_uri_override: str = ""
     auth_user: str = ""
     auth_password: str = ""
+    rrd_sha256: str = ""
+    rrd_size_bytes: int = 0
 
     def __post_init__(self) -> None:
         if bool(self.auth_user) != bool(self.auth_password):
@@ -99,6 +107,17 @@ class RerunServeConfig:
             raise RerunServeError(
                 "Rerun password must contain no NUL and at most 72 UTF-8 bytes"
             )
+        if bool(self.rrd_sha256) != bool(self.rrd_size_bytes):
+            raise RerunServeError(
+                "Committed Rerun identity requires both SHA-256 and byte size"
+            )
+        if self.rrd_sha256 and (
+            len(self.rrd_sha256) != 64
+            or any(char not in "0123456789abcdef" for char in self.rrd_sha256)
+            or type(self.rrd_size_bytes) is not int
+            or self.rrd_size_bytes <= 0
+        ):
+            raise RerunServeError("Committed Rerun identity is invalid")
 
     @property
     def auth_enabled(self) -> bool:
@@ -196,16 +215,191 @@ def validate_run_id(run_id: str) -> str:
 validate_staged_run_id = validate_run_id
 
 
+def _resolve_committed_rrd_target(
+    uri: str,
+    *,
+    get_object: Callable[..., Any],
+) -> tuple[str, object | None]:
+    try:
+        canonical_uri = canonical_publication_uri(uri)
+    except ValueError as exc:
+        if "/reports/generations/" in uri and uri.endswith("/sim2real.rrd"):
+            raise RerunServeError(f"invalid Rerun publication URI: {uri}") from exc
+        return uri, None
+    if not canonical_uri.endswith("/reports/sim2real.rrd"):
+        return uri, None
+    from botocore.exceptions import ClientError
+
+    class _Reader:
+        @staticmethod
+        def read_bytes_with_etag(object_uri: str) -> tuple[bytes, str] | None:
+            without_scheme = object_uri.removeprefix("s3://")
+            bucket, separator, key = without_scheme.partition("/")
+            if (
+                not object_uri.startswith("s3://")
+                or not bucket
+                or not separator
+                or not key
+            ):
+                raise RerunServeError(f"invalid publication journal URI: {object_uri}")
+            try:
+                response = get_object(Bucket=bucket, Key=key)
+            except ClientError as exc:
+                code = str(exc.response.get("Error", {}).get("Code", ""))
+                if code in {"404", "NoSuchKey", "NotFound"}:
+                    return None
+                raise
+            body = response["Body"]
+            try:
+                payload = body.read(1024 * 1024 + 1)
+            finally:
+                body.close()
+            if len(payload) > 1024 * 1024:
+                raise RerunServeError("publication journal exceeds 1 MiB")
+            etag = str(response.get("ETag") or "").strip()
+            if not etag:
+                raise RerunServeError("publication journal has no ETag")
+            return bytes(payload), etag
+
+    try:
+        publication = resolve_committed_publication_snapshot(
+            _Reader(),
+            canonical_uri,
+        )
+    except PublicationConflict as exc:
+        raise RerunServeError(str(exc)) from exc
+    if not publication.journaled:
+        if uri != canonical_uri:
+            raise RerunServeError(
+                f"Rerun generation has no committed journal authority: {uri}"
+            )
+        return uri, None
+    resolved = publication.resolve(canonical_uri)
+    if resolved is None:
+        raise RerunServeError(f"Rerun recording is disabled at {canonical_uri}")
+    if uri != canonical_uri and uri != resolved:
+        raise RerunServeError(
+            f"Rerun generation is not the committed publication: {uri}"
+        )
+    return resolved, publication.target(canonical_uri)
+
+
+def _resolve_committed_rrd_uri(
+    uri: str,
+    *,
+    get_object: Callable[..., Any],
+) -> str:
+    return _resolve_committed_rrd_target(uri, get_object=get_object)[0]
+
+
+def _verify_committed_rrd_bytes(
+    *,
+    uri: str,
+    target: object,
+    get_object: Callable[..., Any],
+) -> None:
+    without_scheme = uri.removeprefix("s3://")
+    bucket, separator, key = without_scheme.partition("/")
+    if uri == without_scheme or not bucket or not separator or not key:
+        raise RerunServeError(f"invalid committed Rerun URI: {uri}")
+    expected_size = int(getattr(target, "size_bytes", -1))
+    expected_digest = str(getattr(target, "sha256", ""))
+    body = None
+    try:
+        response = get_object(Bucket=bucket, Key=key)
+        body = response["Body"]
+        digest = hashlib.sha256()
+        size = 0
+        while size <= expected_size:
+            chunk = body.read(min(1024 * 1024, expected_size + 1 - size))
+            if not chunk:
+                break
+            material = chunk.encode("utf-8") if isinstance(chunk, str) else bytes(chunk)
+            digest.update(material)
+            size += len(material)
+    finally:
+        close = getattr(body, "close", None)
+        if callable(close):
+            close()
+    if size != expected_size or digest.hexdigest() != expected_digest:
+        raise RerunServeError(
+            f"committed Rerun bytes disagree with the publication journal: {uri}"
+        )
+
+
+def _assert_legacy_rrd_still_unjournaled(
+    uri: str,
+    *,
+    get_object: Callable[..., Any],
+) -> None:
+    """Linearize a legacy alias read before any first journal publication."""
+
+    resolved, target = _resolve_committed_rrd_target(uri, get_object=get_object)
+    if target is not None or resolved != uri:
+        raise RerunServeError(
+            "publication journal appeared during a legacy Rerun read; retry "
+            "against the committed generation"
+        )
+
+
+def _rrd_verification_result(
+    uri: str,
+    target: object | None,
+    *,
+    include_identity: bool,
+) -> str | tuple[str, str, int]:
+    if not include_identity:
+        return uri
+    if target is None:
+        return uri, "", 0
+    return (
+        uri,
+        str(getattr(target, "sha256", "")),
+        int(getattr(target, "size_bytes", 0)),
+    )
+
+
 def verify_rrd_exists_on_s3(
     config: RerunServeConfig,
     *,
     head_object: Callable[..., Any] | None = None,
-) -> None:
+    get_object: Callable[..., Any] | None = None,
+    include_identity: bool = False,
+) -> str | tuple[str, str, int]:
     import boto3
     from botocore.config import Config
     from botocore.exceptions import ClientError
 
-    uri = config.rrd_s3_uri
+    client = None
+    if head_object is None and get_object is None:
+        client_kwargs: dict[str, Any] = {
+            "aws_access_key_id": config.aws_access_key_id,
+            "aws_secret_access_key": config.aws_secret_access_key,
+            "config": Config(signature_version="s3v4"),
+            "region_name": config.aws_region,
+        }
+        if config.s3_endpoint:
+            client_kwargs["endpoint_url"] = config.s3_endpoint
+        client = boto3.client("s3", **client_kwargs)
+    journal_reader = get_object or (client.get_object if client is not None else None)
+    if journal_reader is None and head_object is not None:
+        owner = getattr(head_object, "__self__", None)
+        bound_reader = getattr(owner, "get_object", None)
+        if callable(bound_reader):
+            journal_reader = bound_reader
+        else:
+            raise RerunServeError(
+                "publication-aware Rerun verification requires get_object when "
+                "head_object is injected"
+            )
+    target = None
+    if journal_reader is not None:
+        uri, target = _resolve_committed_rrd_target(
+            config.rrd_s3_uri,
+            get_object=journal_reader,
+        )
+    else:
+        uri = config.rrd_s3_uri
     if not uri.startswith("s3://"):
         raise RerunServeError(f"invalid rrd s3 uri: {uri}")
     without_scheme = uri[5:]
@@ -215,33 +409,68 @@ def verify_rrd_exists_on_s3(
 
     if head_object is not None:
         try:
-            head_object(Bucket=bucket, Key=key)
+            head = head_object(Bucket=bucket, Key=key)
         except ClientError as exc:
             code = exc.response.get("Error", {}).get("Code", "missing")
             raise RerunServeError(
                 f"Rerun recording not found at {uri} ({code}). "
                 "Wait for reports/sim2real.rrd on S3 before rerun serve."
             ) from exc
-        return
-
-    client_kwargs: dict[str, Any] = {
-        "aws_access_key_id": config.aws_access_key_id,
-        "aws_secret_access_key": config.aws_secret_access_key,
-        "config": Config(signature_version="s3v4"),
-        "region_name": config.aws_region,
-    }
-    if config.s3_endpoint:
-        client_kwargs["endpoint_url"] = config.s3_endpoint
-    client = boto3.client("s3", **client_kwargs)
+        if target is not None:
+            if int(head.get("ContentLength") or -1) != int(
+                getattr(target, "size_bytes", -1)
+            ):
+                raise RerunServeError(
+                    "committed Rerun size disagrees with the publication journal"
+                )
+            if journal_reader is not None:
+                _verify_committed_rrd_bytes(
+                    uri=uri,
+                    target=target,
+                    get_object=journal_reader,
+                )
+        elif journal_reader is not None:
+            _assert_legacy_rrd_still_unjournaled(
+                config.rrd_s3_uri,
+                get_object=journal_reader,
+            )
+        return _rrd_verification_result(
+            uri,
+            target,
+            include_identity=include_identity,
+        )
+    effective_get = get_object or (client.get_object if client is not None else None)
+    if effective_get is None:
+        raise RerunServeError("S3 client does not support object existence checks")
     try:
-        response = client.get_object(Bucket=bucket, Key=key, Range="bytes=0-0")
+        if target is not None:
+            _verify_committed_rrd_bytes(
+                uri=uri,
+                target=target,
+                get_object=effective_get,
+            )
+            return _rrd_verification_result(
+                uri,
+                target,
+                include_identity=include_identity,
+            )
+        response = effective_get(Bucket=bucket, Key=key, Range="bytes=0-0")
         response["Body"].close()
+        _assert_legacy_rrd_still_unjournaled(
+            config.rrd_s3_uri,
+            get_object=effective_get,
+        )
     except ClientError as exc:
         code = exc.response.get("Error", {}).get("Code", "missing")
         raise RerunServeError(
             f"Rerun recording not found at {uri} ({code}). "
             "Wait for reports/sim2real.rrd on S3 before rerun serve."
         ) from exc
+    return _rrd_verification_result(
+        uri,
+        target,
+        include_identity=include_identity,
+    )
 
 
 def _k8s_name_slug(value: str) -> str:
@@ -599,10 +828,18 @@ def build_rerun_serve_manifest(
     secret_data["AWS_DEFAULT_REGION"] = _b64(config.aws_region)
     secret_data["S3_URI"] = _b64(config.rrd_s3_uri)
 
-    init_script = """\
+    committed_identity_check = ""
+    if config.rrd_sha256:
+        committed_identity_check = f"""\
+actual_size="$(wc -c < /data/sim2real.rrd | tr -d '[:space:]')"
+test "${{actual_size}}" = "{config.rrd_size_bytes}"
+printf '%s  %s\\n' "{config.rrd_sha256}" /data/sim2real.rrd | sha256sum -c -
+"""
+    init_script = f"""\
 set -eu
-aws s3 cp "${S3_URI}" /data/sim2real.rrd
+aws s3 cp "${{S3_URI}}" /data/sim2real.rrd
 test -s /data/sim2real.rrd
+{committed_identity_check}\
 """
     serve_command = _rerun_serve_command(config)
     nginx_config = build_rerun_nginx_config(
@@ -877,9 +1114,24 @@ def apply_rerun_serve(
     clock = now or time.monotonic
     waiter = sleep or time.sleep
 
-    verify_rrd_exists_on_s3(config)
-    sync_token = fetch_rrd_sync_token(config)
-    manifest = build_rerun_serve_manifest(config, rrd_sync_token=sync_token)
+    verified = verify_rrd_exists_on_s3(config, include_identity=True)
+    if isinstance(verified, tuple) and len(verified) == 3:
+        resolved_uri, rrd_sha256, rrd_size_bytes = verified
+    else:
+        resolved_uri = verified if isinstance(verified, str) else config.rrd_s3_uri
+        rrd_sha256 = ""
+        rrd_size_bytes = 0
+    effective_config = replace(
+        config,
+        rrd_s3_uri_override=resolved_uri,
+        rrd_sha256=rrd_sha256,
+        rrd_size_bytes=rrd_size_bytes,
+    )
+    sync_token = fetch_rrd_sync_token(effective_config)
+    manifest = build_rerun_serve_manifest(
+        effective_config,
+        rrd_sync_token=sync_token,
+    )
     runner(["apply", "-f", "-"], stdin=json.dumps(manifest), kubeconfig=kubeconfig)
     try:
         runner(
@@ -913,7 +1165,10 @@ def apply_rerun_serve(
             waiter(5)
 
     return rerun_serve_result(
-        config, status="deployed", public_url=public_url, kubeconfig=kubeconfig
+        effective_config,
+        status="deployed",
+        public_url=public_url,
+        kubeconfig=kubeconfig,
     )
 
 

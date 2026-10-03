@@ -7814,10 +7814,17 @@ def sim_viz_load_run(payload: dict | None = None):
     session_response = _load_session_run_if_known(body=session_body, run_id=run_id, requested_camera=requested_camera)
     if session_response is not None:
         return session_response
+    requested_bucket, requested_project, requested_resolved_prefix, source_selected = _selected_run_request(body)
+    exact_source_requested = bool(
+        requested_run_ref
+        or requested_bucket
+        or requested_project
+        or "resolved_prefix" in body
+        or source_selected
+    )
     try:
         s3, settings = _agent_artifact_s3_client()
         requested_prefix = str(body.get("prefix") or "")
-        requested_bucket, requested_project, requested_resolved_prefix, source_selected = _selected_run_request(body)
         artifacts = []
         resolution = None
         selected_prefix = ""
@@ -7848,12 +7855,31 @@ def sim_viz_load_run(payload: dict | None = None):
                 run_ref=requested_run_ref,
                 prefix=requested_prefix,
             )
-        preferred = select_preferred_artifact(artifacts)
+        artifacts, _report_artifact, preferred, _authority_keys, publication_snapshot = (
+            _committed_publication_artifacts(
+                s3,
+                selected_bucket,
+                resolved_run_id,
+                artifacts,
+                include_snapshot=True,
+            )
+        )
         # Prefer a run-scoped Rerun recording over stale history entries.
         if preferred and (preferred.render == "rerun" or (requested_bucket and source_selected)):
             local_name = _artifact_filename(preferred.key)
             local_path = RECORDINGS_DIR / local_name
             download_s3_uri(preferred.s3_uri, local_path, s3=s3)
+            _verify_downloaded_publication_artifact(
+                s3,
+                selected_bucket,
+                preferred,
+                local_path,
+            )
+            _assert_legacy_publication_snapshot_still_unjournaled(
+                s3,
+                selected_bucket,
+                publication_snapshot,
+            )
             state = _load_state()
             sim_viz = _apply_loaded_artifact(
                 state=state,
@@ -7874,6 +7900,11 @@ def sim_viz_load_run(payload: dict | None = None):
                 "run_ref": resolved_ref,
             }}
         if artifacts:
+            _assert_legacy_publication_snapshot_still_unjournaled(
+                s3,
+                selected_bucket,
+                publication_snapshot,
+            )
             # A selected run is still real and usable when its capability is a
             # service/session artifact rather than an RRD recording. Persist an
             # artifact-backed active context so conditional tabs (LeIsaac in
@@ -7938,6 +7969,11 @@ def sim_viz_load_run(payload: dict | None = None):
             }}
         if requested_bucket:
             raise HTTPException(status_code=404, detail="selected artifact source has no loadable artifacts")
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
@@ -7950,7 +7986,19 @@ def sim_viz_load_run(payload: dict | None = None):
         raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
     except HTTPException:
         raise
-    except (ClientError, BotoCoreError, OSError, KeyError, TypeError, ValueError):
+    except (
+        ClientError,
+        BotoCoreError,
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        if exact_source_requested:
+            raise HTTPException(
+                status_code=502,
+                detail="the selected artifact source could not be verified",
+            ) from exc
         # Fall back to the historical in-memory run selector below; callers still
         # get a useful 404 if the run has never been seen.
         pass
@@ -8309,6 +8357,11 @@ def artifacts_runs(
             effective_prefix=base,
             source_tuples=source_tuples,
         )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8557,12 +8610,43 @@ def artifacts_for_run(
             cursor=cursor,
             s3=s3,
         )
-        preferred = select_preferred_artifact(page.artifacts)
-        role_counts = artifact_inventory_counts(page.artifacts)
+        (
+            visible_artifacts,
+            _report_artifact,
+            preferred,
+            _authority_keys,
+            publication_snapshot,
+        ) = (
+            _committed_publication_artifacts(
+                s3,
+                run_bucket,
+                normalized_run,
+                page.artifacts,
+                require_complete=False,
+                include_snapshot=True,
+            )
+        )
+        page = ArtifactListPage(
+            artifacts=visible_artifacts,
+            truncated=page.truncated,
+            next_cursor=page.next_cursor,
+            page_size=page.page_size,
+        )
+        role_counts = artifact_inventory_counts(visible_artifacts)
+        summary_artifacts = list(visible_artifacts)
+        if preferred is not None and all(
+            str(item.key) != str(preferred.key) for item in summary_artifacts
+        ):
+            summary_artifacts.append(preferred)
         summary = build_run_summary(
             normalized_run,
-            page.artifacts,
-            _summary_documents_for_run(s3, run_bucket, page.artifacts),
+            summary_artifacts,
+            _summary_documents_for_run(s3, run_bucket, visible_artifacts),
+        )
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
         )
         if exact_source_request:
             # The card is rendered immediately before its playback action. Keep
@@ -8583,7 +8667,7 @@ def artifacts_for_run(
                 resource_bucket=run_bucket,
                 project_id=str(bucket_projects.get(run_bucket) or ""),
                 resolved_prefix=artifact_prefix,
-                artifacts=page.artifacts,
+                artifacts=summary_artifacts,
             )
         return build_artifact_run_detail_response(
             selected=selected,
@@ -8602,6 +8686,11 @@ def artifacts_for_run(
                 "recording_state": str(summary.get("recording_state") or ""),
             }},
         )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except AmbiguousRunError as exc:
         raise HTTPException(
             status_code=409,
@@ -8696,6 +8785,16 @@ def artifacts_stage(
             )
             if selected_project:
                 bucket_projects[run_bucket] = selected_project
+        artifacts, _report, _preferred, _logical_keys, publication_snapshot = (
+            _committed_publication_artifacts(
+                s3,
+                run_bucket,
+                normalized_run,
+                artifacts,
+                require_complete=False,
+                include_snapshot=True,
+            )
+        )
         wanted = str(stage_key or "").strip()
         keys = [str(item.key or "") for item in artifacts]
         marker = "/" + normalized_run + "/"
@@ -8731,6 +8830,11 @@ def artifacts_stage(
                     info[rel] = _public_artifact_info(payload)
             except Exception:
                 continue
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
+        )
         return {{
             "ok": True,
             "run_id": normalized_run,
@@ -8745,6 +8849,11 @@ def artifacts_stage(
             "artifacts": [item.to_dict() for item in stage_arts],
             "info": info,
         }}
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8799,6 +8908,17 @@ def fiftyone_dataset(
                 prefix=prefix,
             )
 
+        artifacts, _report, _preferred, _logical_keys, publication_snapshot = (
+            _committed_publication_artifacts(
+                s3,
+                bucket,
+                normalized_run,
+                artifacts,
+                require_complete=False,
+                include_snapshot=True,
+            )
+        )
+
         def _read_json(key: str):
             if not key:
                 return None
@@ -8810,6 +8930,11 @@ def fiftyone_dataset(
 
         keys = [str(a.key or "") for a in artifacts]
         dataset = build_fiftyone_dataset(keys, run_id=normalized_run, read_json=_read_json, bucket=bucket)
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            bucket,
+            publication_snapshot,
+        )
         return {{
             "ok": True,
             "run_id": normalized_run,
@@ -8819,6 +8944,11 @@ def fiftyone_dataset(
             "resolved_prefix": exact_prefix,
             **dataset,
         }}
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8872,6 +9002,16 @@ def artifacts_run_provenance(
                 run_id=normalized_run,
                 prefix=prefix,
             )
+        artifacts, _report, _preferred, _logical_keys, publication_snapshot = (
+            _committed_publication_artifacts(
+                s3,
+                run_bucket,
+                normalized_run,
+                artifacts,
+                require_complete=False,
+                include_snapshot=True,
+            )
+        )
         keys = [str(a.key or "") for a in artifacts]
 
         def _read_json(key: str):
@@ -8884,6 +9024,11 @@ def artifacts_run_provenance(
                 return None
 
         prov = build_run_provenance(keys, run_id=normalized_run, read_json=_read_json)
+        _assert_legacy_publication_snapshot_still_unjournaled(
+            s3,
+            run_bucket,
+            publication_snapshot,
+        )
         return {{
             "ok": True,
             "run_id": normalized_run,
@@ -8892,6 +9037,11 @@ def artifacts_run_provenance(
             "resolved_prefix": exact_prefix,
             **prov,
         }}
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception as exc:
@@ -8962,6 +9112,12 @@ def sim_viz_load_artifact(payload: dict | None = None):
         local_name = _artifact_filename(key)
         local_path = RECORDINGS_DIR / local_name
         download_s3_uri(s3_uri, local_path, s3=s3)
+        _verify_downloaded_publication_artifact(
+            s3,
+            bucket,
+            artifact,
+            local_path,
+        )
         render = render_hint_for_object(key=key)
         state = _load_state()
         run_summary = build_run_summary(
@@ -8995,6 +9151,11 @@ def sim_viz_load_artifact(payload: dict | None = None):
         ) from exc
     except ArtifactDiscoveryError as exc:
         raise HTTPException(status_code=400, detail="invalid run artifact request") from exc
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
     except HTTPException:
         raise
     except Exception:
@@ -9228,17 +9389,46 @@ def _foxglove_resolve_artifact_with_access(payload: dict) -> dict:
             resolved_prefix=source_prefix,
             artifacts=resolution.artifacts,
         )
-    artifact = next((item for item in resolution.artifacts if item.key == key), None)
+    run_root_key = "/".join(
+        part for part in (resolution.source_prefix, resolution.run_id) if part
+    )
+    try:
+        authoritative_key = _resolve_committed_artifact_key(
+            s3,
+            resolution.bucket,
+            run_root_key,
+            key,
+        )
+    except PublicationConflict as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="the selected publication generation is not committed",
+        ) from exc
+    artifact = next(
+        (item for item in resolution.artifacts if item.key == authoritative_key),
+        None,
+    )
+    if artifact is None and exact_source_request:
+        artifact = _authorized_artifact_from_head(
+            s3,
+            run_id=resolution.run_id,
+            bucket=resolution.bucket,
+            source_prefix=source_prefix,
+            key=authoritative_key,
+        )
     if artifact is None:
         raise HTTPException(status_code=400, detail="artifact key is outside the selected run")
     if not exact_source_request:
         source_bucket, source_project, source_prefix = _artifact_source_metadata(
-            _agent_access_report(), resolution.bucket, key, resolution.run_id
+            _agent_access_report(),
+            resolution.bucket,
+            authoritative_key,
+            resolution.run_id,
         )
     selected = {{
         "run_id": resolution.run_id,
         "run_ref": resolution.run_ref,
-        "key": key,
+        "key": authoritative_key,
         "s3_uri": str(artifact.s3_uri),
         "bucket": source_bucket or resolution.bucket,
         "resource_bucket": source_bucket or resolution.bucket,
@@ -9256,9 +9446,11 @@ def _foxglove_resolve_artifact_with_access(payload: dict) -> dict:
             if requested_field == "bucket" and "resource_bucket" in body
             else requested_field
         )
-        if request_key in body and str(body.get(request_key) or "") != str(
-            selected.get(actual_field) or ""
-        ):
+        requested_value = str(body.get(request_key) or "")
+        accepted_values = {{str(selected.get(actual_field) or "")}}
+        if requested_field == "s3_uri":
+            accepted_values.add(f"s3://{{resolution.bucket}}/{{key}}")
+        if request_key in body and requested_value not in accepted_values:
             raise HTTPException(
                 status_code=409,
                 detail=f"the selected Foxglove artifact {{requested_field}} does not match discovery",

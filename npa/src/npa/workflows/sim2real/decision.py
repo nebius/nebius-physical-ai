@@ -140,6 +140,9 @@ def threshold_decision(
             "evaluated_at": _utc_now(),
             "promoted_at": _utc_now() if promoted else "",
         }
+        if candidate_payload["deployable_policy"] is not True:
+            candidate_payload.pop("policy_download_command", None)
+            candidate_payload.pop("policy_ui_action", None)
         _write_json_artifact(candidate_path, candidate_payload)
         # The pod filesystem is disposable.  Keep the complete policy handoff
         # in the identity-bound Stage 11 durable unit so finalization can
