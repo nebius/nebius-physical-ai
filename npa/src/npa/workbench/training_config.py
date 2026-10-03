@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from npa.literal_values import require_boolean
 
 OverrideStyle = Literal["hydra", "cli"]
 
@@ -149,10 +150,16 @@ def training_config_from_mapping(values: Mapping[str, Any] | None) -> TrainingCo
     payload = dict(values or {})
     checkpoint = dict(payload.get("checkpoint_s3") or {})
     wandb = dict(payload.get("wandb") or {})
+    try:
+        wandb_enabled = require_boolean(
+            wandb.get("enabled", False), field="wandb.enabled"
+        )
+    except ValueError as exc:
+        raise TrainingConfigError("wandb.enabled must be a boolean") from exc
     return build_training_config(
         data_path=str(payload.get("data_path") or ""),
         overrides=_overrides_from_value(payload.get("overrides")),
-        wandb_enabled=bool(wandb.get("enabled", False)),
+        wandb_enabled=wandb_enabled,
         wandb_project=str(wandb.get("project") or ""),
         wandb_run_name=str(wandb.get("run_name") or ""),
         wandb_mode=str(wandb.get("mode") or "offline"),

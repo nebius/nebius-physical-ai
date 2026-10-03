@@ -1,8 +1,9 @@
 """Live Nebius Token Factory API tests.
 
 These are first-class live tests: they hit the real Token Factory endpoint and
-require a real ``NEBIUS_TOKEN_FACTORY_KEY``. They self-skip when no key is configured, so
-they are safe to leave in the suite. Run explicitly with:
+require a real Token Factory key from the environment or NPA credential store.
+They self-skip when no key is configured, so they are safe to leave in the
+suite. Run explicitly with:
 
     NEBIUS_TOKEN_FACTORY_KEY=... npa/.venv/bin/python -m pytest \
         npa/tests/e2e/test_token_factory_e2e.py -v
@@ -13,6 +14,7 @@ They live under ``tests/e2e`` (excluded from the default unit run via
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from contextlib import redirect_stdout
@@ -329,7 +331,7 @@ def test_live_visual_judge_distinguishes_completion(
     tmp_path: Path, inside: bool
 ) -> None:
     _require_key()
-    from npa.workbench.vlm_eval import evaluate_vlm, write_result
+    from npa.workbench.vlm_eval import evaluate_vlm, select_rollout_frames, write_result
     from dataclasses import asdict
 
     frames = tmp_path / "rollout"
@@ -350,6 +352,28 @@ def test_live_visual_judge_distinguishes_completion(
     assert saved["frame_count"] == 3
     assert saved["passed"] is inside
     assert saved["rationale"].strip()
+    evidence = saved["evidence"]
+    assert evidence["request"]["endpoint_role"] == "hosted-api"
+    submitted = select_rollout_frames(frames, frame_selection="sequence", max_frames=4)
+    assert [frame["sha256"] for frame in evidence["request"]["frames"]] == [
+        hashlib.sha256(frame.data).hexdigest() for frame in submitted
+    ]
+    manifest = json.dumps(
+        evidence["request"]["request_manifest"],
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    assert (
+        evidence["request"]["request_manifest_sha256"]
+        == hashlib.sha256(manifest.encode()).hexdigest()
+    )
+    raw_response = evidence["provider"]["raw_response"]
+    assert (
+        evidence["provider"]["raw_response_sha256"]
+        == hashlib.sha256(raw_response.encode()).hexdigest()
+    )
+    assert evidence["provider"]["finish_reason"] == "stop"
 
 
 def test_live_attribute_question_and_vision_chain(tmp_path: Path) -> None:

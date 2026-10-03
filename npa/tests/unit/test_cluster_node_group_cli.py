@@ -640,3 +640,48 @@ def test_list_table_without_cluster_scans_local(monkeypatch) -> None:
     assert result.exit_code == 0
     assert "cluster-a-h100-gpu" in result.output
     assert "RUNNING" in result.output
+
+
+def test_list_quarantines_bad_cache_and_keeps_remote_inventory(
+    monkeypatch, tmp_path, caplog
+) -> None:
+    from npa.cluster import state as state_mod
+
+    monkeypatch.setattr(state_mod, "CLUSTERS_DIR", tmp_path)
+    state_mod.save_cluster_state(_cluster_state())
+    healthy = replace(_node_state(), name="healthy-local")
+    state_mod.save_node_group_state(healthy)
+    corrupt = state_mod.save_node_group_state(_node_state())
+    payload = json.loads(corrupt.read_text())
+    payload["public_ip"] = "false"
+    corrupt.write_text(json.dumps(payload))
+    original = corrupt.read_bytes()
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def get_cluster(self, name, *, project_id=""):
+            return _cluster()
+
+        def list_node_groups(self, cluster_id):
+            return [_node_group(), replace(_node_group(), name="remote-only")]
+
+        def get_node_group(self, cluster_id, name):
+            raise NodeGroupNotFoundError(name)
+
+    monkeypatch.setattr(node_group_mod, "MK8sClient", FakeClient)
+    result = runner.invoke(
+        app,
+        ["node-group", "list", "--cluster-name", "cluster-a", "--format", "json"],
+    )
+    assert result.exit_code == 0, result.output
+    rows = json.loads(result.stdout)
+    assert {row["name"] for row in rows} == {
+        healthy.name,
+        _node_state().name,
+        "remote-only",
+    }
+    assert str(corrupt) in caplog.text
+    assert "public_ip must be a literal boolean" in caplog.text
+    assert corrupt.read_bytes() == original
