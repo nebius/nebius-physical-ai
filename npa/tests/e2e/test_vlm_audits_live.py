@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 from npa.workbench import vlm_eval
+from npa.literal_values import require_integer
 from npa.live_verification.vlm_audit_controls import (
     audit_controls,
     configured_audit_cases,
@@ -77,8 +78,8 @@ def _assert_provider_evidence(provider: Any, expected_model: str) -> None:
     assert raw["choices"][0]["message"].get("refusal") in (None, "")
     assert isinstance(raw.get("usage"), dict)
     assert provider.provider_request_id
-    assert raw["usage"].get("prompt_tokens", 0) > 0
-    assert raw["usage"].get("completion_tokens", 0) > 0
+    for field in ("prompt_tokens", "completion_tokens"):
+        require_integer(raw["usage"].get(field), field=field, minimum=1)
 
 
 def _assert_private_local_report(report: Any) -> None:

@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from PIL import Image
 import pytest
@@ -31,6 +32,42 @@ def _module(path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _usage_provider(field, value):
+    usage = {"prompt_tokens": 1, "completion_tokens": 1, field: value}
+    raw = json.dumps(
+        {
+            "model": "first/model",
+            "usage": usage,
+            "choices": [{"finish_reason": "stop", "message": {}}],
+        }
+    )
+    return SimpleNamespace(
+        status_code=200,
+        returned_model="first/model",
+        finish_reason="stop",
+        provider_request_id="synthetic-request",
+        raw_response=raw,
+        raw_response_sha256=hashlib.sha256(raw.encode()).hexdigest(),
+    )
+
+
+@pytest.mark.parametrize("field", ["prompt_tokens", "completion_tokens"])
+@pytest.mark.parametrize("value", [True, False, 1.0, "1", None, 0, -1])
+def test_paired_e2e_provider_usage_rejects_non_integer_counts(
+    monkeypatch, field, value
+):
+    monkeypatch.delenv("NPA_VLM_AUDIT_LIVE_CONFIG", raising=False)
+    suite = _module("npa/tests/e2e/test_vlm_audits_live.py")
+    with pytest.raises(ValueError, match=field):
+        suite._assert_provider_evidence(_usage_provider(field, value), "first/model")
+
+
+def test_paired_e2e_provider_usage_accepts_positive_integer_counts(monkeypatch):
+    monkeypatch.delenv("NPA_VLM_AUDIT_LIVE_CONFIG", raising=False)
+    suite = _module("npa/tests/e2e/test_vlm_audits_live.py")
+    suite._assert_provider_evidence(_usage_provider("prompt_tokens", 2), "first/model")
 
 
 def test_generated_controls_have_frozen_pixels_labels_and_shared_prompts(tmp_path):
