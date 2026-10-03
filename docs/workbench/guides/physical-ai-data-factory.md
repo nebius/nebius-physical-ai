@@ -587,7 +587,12 @@ fixture fallback.
 The source is committed last via `input/provenance.json`; `source.mp4`,
 `conditioning.mp4`, and `conditioning-frame-*.png` carry digests. A retry with
 the same run ID verifies and reuses the source, repairs deterministic derived
-objects if needed, and refuses a different explicit source. Provenance records
+objects if needed, and refuses a different explicit source. If staging stops
+before provenance is written, retrying without an input selector adopts the
+single staged source alongside that run's conditioning video and numbered frames.
+It verifies existing bytes, writes only missing objects, and commits provenance
+last. Unrelated siblings require an explicit source selection; multiple source
+videos are never chosen implicitly. Provenance records
 `input_origin`, `source_kind`, authoritative URL/revision, license/attribution,
 SHA-256, canonical S3 URI, and source→conditioning→frame derivation. The durable
 workflow manifest, config/final reports, Rerun panel, and FiftyOne-backed dataset
@@ -603,6 +608,13 @@ upstream's documented `--disable-guardrails` setup option and records
 `content_guardrails_enabled: false` in Transfer metadata. This opt-out does not
 weaken the downstream attribute, hallucination, temporal, protected-appearance,
 or quality-disposition checks; it should not be made a shared default.
+
+The run manifest reports `input_conditioned` or `content_guardrails_enabled` as
+true only when every variant has that property. Each `variants` entry retains
+its own flags, so mixed runs remain inspectable regardless of clip order.
+An empty run asserts neither property. Omitted clip flags keep their defaults:
+unconditioned input and enabled content guardrails; malformed flags reject
+publication even when another variant already makes the run-level flag false.
 
 ## Runtime placement
 

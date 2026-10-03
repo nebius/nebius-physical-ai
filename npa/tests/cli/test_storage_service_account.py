@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -1279,6 +1280,88 @@ def test_verified_absence_dry_run_does_not_remove_ownership_before_real_pass(
     )
     assert real.exit_code == 0, real.output
     assert not credentials_path.exists()
+
+
+@pytest.mark.parametrize(
+    ("reason", "stored"),
+    [
+        (
+            "Review https://example.invalid/review?page=2",
+            "Review https://example.invalid/review?<redacted>",
+        ),
+        (
+            "bearer of bad news: legacy ownership",
+            "Bearer <redacted> bad news: legacy ownership",
+        ),
+        (
+            "Review https://example.invalid/review?opaque-private-value",
+            "Review https://example.invalid/review?<redacted>",
+        ),
+        ("Recorded Bearer synthetic-opaque-value", "Recorded Bearer <redacted>"),
+    ],
+)
+def test_reconcile_accepts_conservative_redaction_without_storing_raw_reason(
+    monkeypatch, tmp_path, reason, stored
+) -> None:
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path, managed_by="")
+    _stub_iam(monkeypatch)
+    result = runner.invoke(
+        app,
+        [
+            "storage",
+            "service-account",
+            "reconcile",
+            "--project",
+            "prod",
+            "--id",
+            "serviceaccount-storage",
+            "--reason",
+            reason,
+            "--attest-npa-created",
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    journal = yaml.safe_load(credentials_path.read_text())["storage_iam"]
+    assert journal["recovery"]["reason"] == stored
+    assert reason not in credentials_path.read_text()
+    assert reason not in result.output
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Authorization: Bearer synthetic-opaque-value",
+        "password=synthetic-opaque-value",
+        "https://example.invalid/review?X-Amz-Signature=synthetic-signature",
+        "-----BEGIN PRIVATE KEY-----\nsynthetic-private-key",
+    ],
+)
+def test_reconcile_rejects_explicit_credentials_before_recording_attestation(
+    monkeypatch, tmp_path, reason
+) -> None:
+    credentials_path = _seed_owned_account(monkeypatch, tmp_path, managed_by="")
+    _stub_iam(monkeypatch)
+    result = runner.invoke(
+        app,
+        [
+            "storage",
+            "service-account",
+            "reconcile",
+            "--project",
+            "prod",
+            "--id",
+            "serviceaccount-storage",
+            "--reason",
+            reason,
+            "--attest-npa-created",
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "credential material" in result.output
+    assert "recovery" not in yaml.safe_load(credentials_path.read_text())["storage_iam"]
+    assert reason not in result.output
 
 
 def test_reconcile_dry_run_and_explicit_attestation_feed_guarded_delete(

@@ -1,0 +1,51 @@
+{
+  "what_this_checks": "that the declared no-divider abstention is reachable, and that reaching it earlier did not silence the verdict on a frame that has a divider",
+  "generator": "harness/pane_abstention_control.py",
+  "audited": "harness/viewer_pane_audit.py",
+  "negative_control": {
+    "control": "flat frame, no divider",
+    "size": [
+      1024,
+      768
+    ],
+    "fill": 128,
+    "divider_found": null,
+    "pre_fix_call_order": "TypeError: unsupported operand type(s) for -: 'NoneType' and 'int'",
+    "audit": {
+      "frame": "flat-no-divider.png",
+      "size": [
+        1024,
+        768
+      ],
+      "pane_detection": "failed",
+      "why": "no column stood out as the divider between the two view panes; a guessed divider is what produced two earlier wrong clipping verdicts, so none is reported for this frame"
+    }
+  },
+  "positive_control": {
+    "control": "the run's actual native capture",
+    "frame": "viewer-ui/ordinary-native-replay.png",
+    "frame_sha256": "1082371502b4e643e4e385f07bf9b0f0eecd03621c1e6e8d3bc7494faadf2b28",
+    "audit": {
+      "frame": "ordinary-native-replay.png",
+      "size": [
+        1024,
+        768
+      ],
+      "divider_x": 681,
+      "scene_pane": {
+        "pane_aspect": 1.171,
+        "width_span": 0.767,
+        "height_span": 0.386,
+        "touches_pane_edges": [],
+        "clipped": false
+      },
+      "active_tab_pane": {
+        "pane_aspect": 0.576,
+        "width_span": 0.841,
+        "height_span": 0.208,
+        "touches_pane_edges": [],
+        "clipped": false
+      }
+    }
+  }
+}

@@ -18,6 +18,7 @@ cosmos3  Cosmos3 omni-model generation and reasoning workflow contracts.
 cosmos-curate  NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips.
 cosmos-evaluator  Cosmos Evaluator checks plus NPA source-relative temporal and protected-appearance diagnostics.
 fiftyone  Voxel51 FiftyOne dataset curation and visualization workbench.
+flex-pi  Flex-Pi multi-stream policy inference and public training.
 foxglove  Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets.
 genesis  Genesis simulation: teacher training, demo generation, evaluation.
 groot  NVIDIA Isaac GR00T humanoid foundation-model workbench.
@@ -32,6 +33,7 @@ namespace  Create or select Kubernetes namespaces.
 molmoact  MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented).
 openvla  OpenVLA: OFT fine-tuning, checkpoint serving, evaluation.
 openarm  Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab.
+open3d  Open3D point-cloud registration and surface reconstruction.
 robocasa  RoboCasa kitchen-task simulation workbench.
 newton  Newton physics engine: teacher training, demo generation, evaluation.
 lichtblick  Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer.
@@ -72,6 +74,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `cosmos-curate` | NVIDIA Cosmos Curator: split, transcode, motion-score, and catalog video clips. |
 | `cosmos-evaluator` | Cosmos Evaluator checks plus NPA source-relative temporal and protected-appearance diagnostics. |
 | `fiftyone` | Voxel51 FiftyOne dataset curation and visualization workbench. |
+| `flex-pi` | Flex-Pi multi-stream policy inference and public training. |
 | `foxglove` | Foxglove embedded viewer: MCAP conversion, inspection, and SDK assets. |
 | `genesis` | Genesis simulation: teacher training, demo generation, evaluation. |
 | `groot` | NVIDIA Isaac GR00T humanoid foundation-model workbench. |
@@ -85,6 +88,7 @@ golden-eval  Per-container golden-eval / hello-world reruns.
 | `molmoact` | MolmoAct VLA: validate fine-tune/serve/eval configs (planning only; execution not implemented). |
 | `openvla` | OpenVLA: OFT fine-tuning, checkpoint serving, evaluation. |
 | `openarm` | Enactic OpenArm simulation with real MuJoCo and Isaac Sim/Isaac Lab. |
+| `open3d` | Open3D point-cloud registration and surface reconstruction. |
 | `robocasa` | RoboCasa kitchen-task simulation workbench. |
 | `newton` | Newton physics engine: teacher training, demo generation, evaluation. |
 | `lichtblick` | Lichtblick (MPL-2.0) - an open-source, Foxglove-compatible MCAP / ROS-bag log viewer. |

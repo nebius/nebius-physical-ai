@@ -6,17 +6,25 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import importlib.util
+import io
 import json
 import os
 import re
+import secrets
 import stat
 import subprocess
 import sys
 import tempfile
-from contextlib import ExitStack
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
+from collections.abc import Callable
+from functools import wraps
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
+
+import yaml
 
 from npa.clients.config import resolve_container_registry
 from npa.clients.project_credentials import storage_env_for_project
@@ -25,6 +33,8 @@ from npa.deploy.images import (
     LIBERO_OUTPUT_STORAGE_AUTHORIZATION_PUBLIC_KEY_FILE_ENV,
     LiberoCustomerAuthorizationDenied,
     container_image_for_tool,
+    is_public_registry,
+    public_container_registry,
     libero_customer_acceptance_notification,
     libero_image_manifest,
     libero_publication_lineage_values,
@@ -32,6 +42,28 @@ from npa.deploy.images import (
     validate_libero_customer_runtime_authorization,
     validate_libero_qualified_image_manifest,
     wan_accepted_image_manifest,
+)
+from npa.orchestration.npa_workflow.robotwin_preflight import (
+    BUILD_COMMAND_SHA256 as ROBOTWIN_BUILD_COMMAND_SHA256,
+    CHILD_BUCKET_ENV as ROBOTWIN_CHILD_BUCKET_ENV,
+    CHILD_CONFIG_PATH_ENV as ROBOTWIN_CHILD_CONFIG_PATH_ENV,
+    CHILD_IMAGE_ENV as ROBOTWIN_CHILD_IMAGE_ENV,
+    CHILD_OUTPUT_PREFIX_ENV as ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV,
+    CHILD_OUTPUT_ROOT_ENV as ROBOTWIN_CHILD_OUTPUT_ROOT_ENV,
+    CHILD_RUNTIME_AUTH_ENV as ROBOTWIN_CHILD_RUNTIME_AUTH_ENV,
+    CHILD_RUN_ID_ENV as ROBOTWIN_CHILD_RUN_ID_ENV,
+    CONTEXT_ENV_NAMES as ROBOTWIN_CONTEXT_ENV_NAMES,
+    CUSTOMER_ENTITLEMENT_ENV as ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV,
+    CUSTOMER_TERMS as ROBOTWIN_CUSTOMER_TERMS,
+    INVOCATION as ROBOTWIN_INVOCATION,
+    PUBLIC_CONTEXT_ENV as ROBOTWIN_RUNTIME_CONTEXT_ENV,
+    SMOKE_COMMAND_SHA256 as ROBOTWIN_SMOKE_COMMAND_SHA256,
+    RobotwinAuthorization as _RuntimeAuthorization,
+    encode_runtime_authorization,
+    is_robotwin_request,
+    load_runtime_authorization,
+    require_runtime_lock_complete,
+    validate_invocation,
 )
 from npa.orchestration.skypilot.cleanup import cluster_name_patterns_for_run
 from npa.workflows.byof.live import (
@@ -56,11 +88,83 @@ from npa.workflows.byof.worker import (
     run_prebuilt_smoke,
 )
 
+__all__ = [
+    "ROBOTWIN_BUILD_COMMAND_SHA256",
+    "ROBOTWIN_INVOCATION",
+    "ROBOTWIN_CUSTOMER_ENTITLEMENT_ENV",
+    "ROBOTWIN_CUSTOMER_TERMS",
+    "ROBOTWIN_RUNTIME_CONTEXT_ENV",
+    "ROBOTWIN_SMOKE_COMMAND_SHA256",
+    "main",
+]
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 ISAAC_RUNNER = SCRIPT_DIR / "run_isaac_lab_rl.py"
 DATAGEN_RUNNER = SCRIPT_DIR / "run_byof_datagen.py"
 CONTAINER_VERIFY_RUNNER = SCRIPT_DIR / "run_byof_container_verify.py"
+ROBOTWIN_IMAGE_SCANNER = SCRIPT_DIR / "scan_image_robotwin_payload.py"
 BYOF_REPO_MOUNT = "/opt/byof"
+ROBOMIMIC_REPO_URL = "https://github.com/ARISE-Initiative/robomimic.git"
+ROBOMIMIC_REPO_REF = "d309eaecc18acf4152a830a895a6984b8ac71b05"
+ROBOMIMIC_BASE_IMAGE = "tool://robomimic"
+ROBOMIMIC_PUBLIC_REGISTRY = "ghcr.io/nebius/nebius-physical-ai"
+ROBOMIMIC_BUILD_COMMAND_SHA256 = (
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+)
+ROBOMIMIC_SMOKE_COMMAND_SHA256 = (
+    "5415a073ecf5e53bac7c967f5c657ec642f2fc70d5e844462977951e3e777f18"
+)
+ROBOMIMIC_RUN_ID_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?")
+IMMUTABLE_IMAGE_DIGEST_RE = re.compile(r".+@(sha256:[0-9a-f]{64})", re.I)
+ROBOMIMIC_PROFILE = (
+    SCRIPT_DIR.parent
+    / "src"
+    / "npa"
+    / "workflows"
+    / "byof"
+    / "profiles"
+    / "byof-solution-smoke-robomimic-b200-gpu.yaml"
+)
+ROBOMIMIC_RUNTIME_LOCK = (
+    SCRIPT_DIR.parent
+    / "docker"
+    / "workbench"
+    / "robomimic"
+    / "runtime-requirements.lock"
+)
+ROBOMIMIC_ENTITLEMENT_TARGET = "/opt/npa-runtime-authorization/robomimic.json"
+ROBOMIMIC_ENTITLEMENT_MAX_BYTES = 16 * 1024
+ROBOMIMIC_ENTITLEMENT_TERMS = [
+    {
+        "name": "NVIDIA CUDA Toolkit EULA",
+        "url": "https://docs.nvidia.com/cuda/eula/index.html",
+    },
+    {
+        "name": "NVIDIA Software License Agreement",
+        "url": (
+            "https://www.nvidia.com/en-us/agreements/enterprise-software/"
+            "nvidia-software-license-agreement/"
+        ),
+    },
+    {
+        "name": "NVIDIA cuDNN Software License Agreement",
+        "url": (
+            "https://docs.nvidia.com/deeplearning/cudnn/backend/latest/"
+            "reference/eula.html"
+        ),
+    },
+]
+
+
+class RobomimicEntitlementError(ValueError):
+    """A stable, value-free customer-entitlement refusal."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.public_message = message
+
+
 LIBERO_SOLUTION_NAME = "libero"
 LIBERO_PROFILE_NAME = "byof-solution-smoke-libero-b200-gpu"
 LIBERO_REPOSITORY = "https://github.com/Lifelong-Robot-Learning/LIBERO"
@@ -93,6 +197,24 @@ SKYPILOT_BOOTSTRAP_PACKAGE_CAPABILITIES = (
     "fuse",
     "fuse3",
     "openssh-server",
+)
+
+# These are ordinary execution prerequisites, not authorization or routing
+# inputs. Keep the allowlist explicit so authorized RoboTwin handoff does not
+# inherit ambient credentials, controller knobs, or output destinations.
+_ROBOTWIN_EXECUTION_BASELINE_ENV_NAMES = (
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "LD_LIBRARY_PATH",
+    "LOGNAME",
+    "PATH",
+    "PYTHONPATH",
+    "SSL_CERT_DIR",
+    "SSL_CERT_FILE",
+    "TMPDIR",
+    "USER",
+    "VIRTUAL_ENV",
 )
 
 DEFAULT_REPO_URL = "https://github.com/LightwheelAI/leisaac.git"
@@ -134,6 +256,64 @@ def _redact_text(value: str, redactions: tuple[str, ...]) -> str:
     return result
 
 
+def _redact_payload(value: Any, redactions: tuple[str, ...]) -> Any:
+    if isinstance(value, str):
+        return _redact_text(value, redactions)
+    if isinstance(value, list):
+        return [_redact_payload(item, redactions) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_redact_payload(item, redactions) for item in value)
+    if isinstance(value, dict):
+        return {
+            _redact_text(str(key), redactions): _redact_payload(item, redactions)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _load_runtime_authorization(
+    args: argparse.Namespace,
+) -> _RuntimeAuthorization | None:
+    reference = args.runtime_context_env.strip()
+    if not _is_robotwin_request(args):
+        if reference:
+            raise ValueError("runtime authorization is not supported for this solution")
+        return None
+    if reference != ROBOTWIN_RUNTIME_CONTEXT_ENV:
+        raise ValueError(
+            f"RoboTwin requires --runtime-context-env {ROBOTWIN_RUNTIME_CONTEXT_ENV}"
+        )
+    return require_runtime_lock_complete(load_runtime_authorization())
+
+
+def _apply_runtime_authorization(
+    args: argparse.Namespace, authorization: _RuntimeAuthorization
+) -> None:
+    args.project = authorization.project
+    args.base_image = authorization.bootstrap_image
+    args.image = authorization.bootstrap_image
+    args.registry = _registry_path(authorization.bootstrap_image)
+    args.output_root = authorization.output_root
+    args.run_id = authorization.run_id
+    args.config_path = authorization.skypilot_config_path
+
+
+def _validate_robotwin_invocation(args: argparse.Namespace) -> None:
+    validate_invocation(args)
+
+
+def _is_robotwin_request(args: argparse.Namespace) -> bool:
+    return is_robotwin_request(
+        solution_name=args.solution_name,
+        repo_url=args.repo_url,
+        base_image=args.base_image,
+        image=args.image,
+        smoke_command=args.smoke_command,
+        capability_name=args.capability_name,
+        yaml_path=args.yaml,
+    )
+
+
 def _utc_stamp() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
@@ -143,6 +323,872 @@ def _normalize_optional(value: str) -> str:
     if cleaned in PLACEHOLDER_VALUES:
         return ""
     return cleaned
+
+
+def _robomimic_immutable_image_digest(value: str) -> str:
+    match = IMMUTABLE_IMAGE_DIGEST_RE.fullmatch(
+        str(value or "").strip().removeprefix("docker:")
+    )
+    return match.group(1).lower() if match else ""
+
+
+def _normalized_robomimic_registry(registry: str) -> str:
+    """Canonicalize a registry only for the governed robomimic boundary."""
+
+    candidate = str(registry or "").strip().rstrip("/")
+    host, separator, path = candidate.partition("/")
+    if not host.startswith("[") and ":" in host:
+        hostname, port = host.rsplit(":", 1)
+        if port.isdigit():
+            host = hostname
+    host = host.rstrip(".")
+    return f"{host}{separator}{path}".lower()
+
+
+def _is_public_robomimic_registry(registry: str) -> bool:
+    """Fail the robomimic gate for alternate spellings of public registries."""
+
+    candidate = _normalized_robomimic_registry(registry)
+    return is_public_registry(candidate) or candidate == _normalized_robomimic_registry(
+        public_container_registry()
+    )
+
+
+def _is_robomimic_request(args: argparse.Namespace) -> bool:
+    """Recognize the exact registered robomimic candidate despite renamed labels."""
+
+    repo = args.repo_url.rstrip("/").removesuffix(".git").rsplit("/", 1)[-1].lower()
+    image_refs = (args.base_image, args.image)
+    manager_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip().lower()
+    manager_digest = _robomimic_immutable_image_digest(manager_image)
+    image_signaled = any(
+        value.strip().lower() == ROBOMIMIC_BASE_IMAGE
+        or value.strip().lower() == manager_image
+        or bool(
+            manager_digest
+            and _robomimic_immutable_image_digest(value) == manager_digest
+        )
+        or value.strip()
+        .lower()
+        .removeprefix("docker:")
+        .split("@", 1)[0]
+        .rsplit("/", 1)[-1]
+        .split(":", 1)[0]
+        in {"robomimic", "npa-robomimic"}
+        for value in image_refs
+        if value.strip()
+    )
+    return (
+        args.solution_name.strip().lower() == "robomimic"
+        or repo == "robomimic"
+        or args.repo_ref.strip().lower() == ROBOMIMIC_REPO_REF
+        or image_signaled
+        or args.capability_name.strip() == "lift_ph_lowdim_checkpoint_reload_action"
+        or args.smoke_artifact_name.strip() == "robomimic-smoke.json"
+        or "robomimic-entrypoint" in args.smoke_command
+    )
+
+
+def _robomimic_observer_name(run_id: str) -> str:
+    digest = hashlib.sha256(run_id.encode()).hexdigest()[:12]
+    return f"npa-robomimic-{digest}"
+
+
+def _require_robomimic_safe_run_id(run_id: str) -> None:
+    if ROBOMIMIC_RUN_ID_RE.fullmatch(run_id) is None:
+        raise ValueError(
+            "robomimic run ID must be a 1-63 character alphanumeric and hyphen slug"
+        )
+
+
+def _robomimic_customer_binding_sha256(customer_identity: str) -> str:
+    identity = customer_identity.strip()
+    if not identity:
+        raise ValueError("robomimic customer identity is required")
+    return hashlib.sha256(
+        b"npa.robomimic.customer-binding.v1\0" + identity.encode("utf-8")
+    ).hexdigest()
+
+
+def _robomimic_runtime_lock() -> tuple[dict[str, Any], str]:
+    raw = ROBOMIMIC_RUNTIME_LOCK.read_bytes()
+    lock = json.loads(raw)
+    if not isinstance(lock, dict):
+        raise ValueError("robomimic runtime lock is invalid")
+    contract = lock.get("customer_entitlement")
+    if not isinstance(contract, dict) or set(contract) != {
+        "schema",
+        "maximum_validity_seconds",
+        "responsibilities",
+        "terms",
+    }:
+        raise ValueError("robomimic customer entitlement contract is invalid")
+    if (
+        contract.get("schema") != "npa.robomimic.customer-runtime-entitlement.v1"
+        or contract.get("maximum_validity_seconds") != 86_400
+        or contract.get("responsibilities")
+        != [
+            "runtime-use",
+            "derivative-use",
+            "service-use",
+            "output-use",
+            "no-redistribution-grant",
+        ]
+    ):
+        raise ValueError("robomimic customer entitlement contract is invalid")
+    terms = contract.get("terms")
+    if terms != ROBOMIMIC_ENTITLEMENT_TERMS:
+        raise ValueError("robomimic customer entitlement terms are invalid")
+    return lock, hashlib.sha256(raw).hexdigest()
+
+
+def _robomimic_entitlement_notice_sha256(
+    *, lock: dict[str, Any], lock_sha256: str
+) -> str:
+    contract = lock["customer_entitlement"]
+    notice_identity = {
+        "schema": contract["schema"],
+        "runtime_id": lock["runtime_id"],
+        "runtime_lock_sha256": lock_sha256,
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+    }
+    return hashlib.sha256(
+        json.dumps(notice_identity, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    ).hexdigest()
+
+
+def _robomimic_utc_timestamp(value: str, *, field: str) -> datetime:
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"robomimic entitlement {field} is invalid") from exc
+
+
+def _open_robomimic_entitlement_parent(path: Path) -> int:
+    """Open and pin one symlink-free, owner-private record parent directory."""
+
+    if not path.is_absolute() or path.name in {"", ".", ".."}:
+        raise RobomimicEntitlementError(
+            "invalid-path", "robomimic customer entitlement path is invalid"
+        )
+    flags = (
+        os.O_RDONLY
+        | os.O_CLOEXEC
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = -1
+    try:
+        descriptor = os.open(os.sep, flags)
+        for component in path.parent.parts[1:]:
+            next_descriptor = os.open(component, flags, dir_fd=descriptor)
+            os.close(descriptor)
+            descriptor = next_descriptor
+    except OSError as exc:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise RobomimicEntitlementError(
+            "unsafe-parent",
+            "robomimic customer entitlement parent is unavailable or unsafe",
+        ) from exc
+    details = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(details.st_mode)
+        or details.st_uid != os.geteuid()
+        or details.st_mode & 0o077
+    ):
+        os.close(descriptor)
+        raise RobomimicEntitlementError(
+            "unsafe-parent",
+            "robomimic customer entitlement parent must be owner-only",
+        )
+    return descriptor
+
+
+def _require_robomimic_entitlement_parent_identity(
+    path: Path, expected: os.stat_result
+) -> None:
+    """Reject a parent pathname replaced after its directory was pinned."""
+
+    descriptor = _open_robomimic_entitlement_parent(path)
+    try:
+        observed = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (observed.st_dev, observed.st_ino) != (expected.st_dev, expected.st_ino):
+        raise RobomimicEntitlementError(
+            "parent-changed",
+            "robomimic customer entitlement parent changed during access",
+        )
+
+
+def _read_robomimic_entitlement(path: Path) -> tuple[dict[str, Any], bytes]:
+    parent_descriptor = _open_robomimic_entitlement_parent(path)
+    parent_identity = os.fstat(parent_descriptor)
+    flags = (
+        os.O_RDONLY
+        | os.O_CLOEXEC
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    descriptor = -1
+    try:
+        descriptor = os.open(path.name, flags, dir_fd=parent_descriptor)
+    except OSError as exc:
+        os.close(parent_descriptor)
+        raise RobomimicEntitlementError(
+            "file-unavailable",
+            "robomimic customer entitlement file is unavailable",
+        ) from exc
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or opened.st_uid != os.geteuid()
+            or opened.st_mode & 0o077
+        ):
+            raise RobomimicEntitlementError(
+                "unsafe-file",
+                "robomimic customer entitlement must be an owner-only regular file",
+            )
+        if opened.st_size > ROBOMIMIC_ENTITLEMENT_MAX_BYTES:
+            raise RobomimicEntitlementError(
+                "oversized-file",
+                "robomimic customer entitlement exceeds its byte limit",
+            )
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            raw = handle.read(ROBOMIMIC_ENTITLEMENT_MAX_BYTES + 1)
+        closed = os.fstat(descriptor)
+        if (
+            len(raw) != opened.st_size
+            or closed.st_size != opened.st_size
+            or closed.st_dev != opened.st_dev
+            or closed.st_ino != opened.st_ino
+            or closed.st_nlink != 1
+            or closed.st_uid != os.geteuid()
+            or closed.st_mode & 0o077
+        ):
+            raise RobomimicEntitlementError(
+                "file-changed",
+                "robomimic customer entitlement changed while read",
+            )
+        _require_robomimic_entitlement_parent_identity(path, parent_identity)
+    except OSError as exc:
+        raise RobomimicEntitlementError(
+            "file-read-failed",
+            "robomimic customer entitlement could not be read safely",
+        ) from exc
+    finally:
+        os.close(descriptor)
+        os.close(parent_descriptor)
+    try:
+        value = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RobomimicEntitlementError(
+            "invalid-json", "robomimic customer entitlement is invalid JSON"
+        ) from exc
+    if not isinstance(value, dict):
+        raise RobomimicEntitlementError(
+            "invalid-json", "robomimic customer entitlement must be a JSON object"
+        )
+    return value, raw
+
+
+def _verify_robomimic_entitlement(
+    *,
+    path: Path,
+    customer_identity: str,
+    run_id: str,
+    runtime_inventory_sha256: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    record, raw = _read_robomimic_entitlement(path)
+    lock, lock_sha256 = _robomimic_runtime_lock()
+    contract = lock["customer_entitlement"]
+    expected = {
+        "schema": contract["schema"],
+        "decision": "accepted",
+        "customer_binding_sha256": _robomimic_customer_binding_sha256(
+            customer_identity
+        ),
+        "run_id": run_id,
+        "source_revision": lock["source_revision"],
+        "runtime_id": lock["runtime_id"],
+        "runtime_manifest_sha256": runtime_inventory_sha256,
+        "runtime_lock_sha256": lock_sha256,
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+        "notice_sha256": _robomimic_entitlement_notice_sha256(
+            lock=lock, lock_sha256=lock_sha256
+        ),
+    }
+    expected_keys = set(expected) | {"accepted_at", "expires_at"}
+    if set(record) != expected_keys:
+        raise ValueError("robomimic customer entitlement fields are invalid")
+    mismatched = sorted(
+        key
+        for key, expected_value in expected.items()
+        if record.get(key) != expected_value
+    )
+    if mismatched:
+        raise ValueError(
+            "robomimic customer entitlement binding mismatch: " + ", ".join(mismatched)
+        )
+    accepted_at = _robomimic_utc_timestamp(record["accepted_at"], field="accepted_at")
+    expires_at = _robomimic_utc_timestamp(record["expires_at"], field="expires_at")
+    observed_now = now or datetime.now(timezone.utc)
+    if accepted_at > observed_now:
+        raise ValueError("robomimic customer entitlement acceptance is in the future")
+    validity_seconds = int((expires_at - accepted_at).total_seconds())
+    if validity_seconds <= 0 or validity_seconds > contract["maximum_validity_seconds"]:
+        raise ValueError("robomimic customer entitlement validity is out of bounds")
+    if observed_now >= expires_at:
+        raise ValueError("robomimic customer entitlement has expired")
+    return {
+        "record_sha256": hashlib.sha256(raw).hexdigest(),
+        "customer_binding_sha256": expected["customer_binding_sha256"],
+        "expires_at": record["expires_at"],
+    }
+
+
+def _robomimic_entitlement_notice() -> dict[str, Any]:
+    lock, lock_sha256 = _robomimic_runtime_lock()
+    contract = lock["customer_entitlement"]
+    return {
+        "schema": "npa.robomimic.customer-runtime-entitlement-notice.v1",
+        "runtime_id": lock["runtime_id"],
+        "runtime_lock_sha256": lock_sha256,
+        "terms": contract["terms"],
+        "customer_responsibilities": contract["responsibilities"],
+        "notice_sha256": _robomimic_entitlement_notice_sha256(
+            lock=lock, lock_sha256=lock_sha256
+        ),
+        "notice": (
+            "The customer must determine that its use of the exact runtime is "
+            "permitted by these terms. Acceptance authorizes only this customer's "
+            "bound run and does not grant redistribution, publication, service, "
+            "derivative, or output rights beyond the applicable terms."
+        ),
+        "actions": ["accept", "decline", "resume"],
+    }
+
+
+def _write_robomimic_entitlement(path: Path, record: dict[str, Any]) -> str:
+    raw = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    if len(raw) > ROBOMIMIC_ENTITLEMENT_MAX_BYTES:
+        raise RobomimicEntitlementError(
+            "oversized-file", "robomimic customer entitlement exceeds its byte limit"
+        )
+    parent_descriptor = _open_robomimic_entitlement_parent(path)
+    parent_identity = os.fstat(parent_descriptor)
+    temporary_name = f".{path.name}.{secrets.token_hex(16)}"
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | os.O_CLOEXEC
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = -1
+    temporary_exists = False
+    target_created = False
+    published = False
+    try:
+        descriptor = os.open(temporary_name, flags, 0o600, dir_fd=parent_descriptor)
+        temporary_exists = True
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(
+                temporary_name,
+                path.name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+                follow_symlinks=False,
+            )
+        except FileExistsError as exc:
+            raise RobomimicEntitlementError(
+                "record-exists",
+                "robomimic customer entitlement already exists; refuse overwrite",
+            ) from exc
+        target_created = True
+        target_descriptor = os.open(
+            path.name,
+            os.O_RDONLY
+            | os.O_CLOEXEC
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=parent_descriptor,
+        )
+        try:
+            source_identity = os.fstat(descriptor)
+            target_identity = os.fstat(target_descriptor)
+            if (source_identity.st_dev, source_identity.st_ino) != (
+                target_identity.st_dev,
+                target_identity.st_ino,
+            ):
+                raise RobomimicEntitlementError(
+                    "publication-race",
+                    "robomimic customer entitlement publication raced",
+                )
+        finally:
+            os.close(target_descriptor)
+        os.unlink(temporary_name, dir_fd=parent_descriptor)
+        temporary_exists = False
+        final_identity = os.fstat(descriptor)
+        if (
+            final_identity.st_nlink != 1
+            or final_identity.st_uid != os.geteuid()
+            or final_identity.st_mode & 0o077
+        ):
+            raise RobomimicEntitlementError(
+                "publication-race",
+                "robomimic customer entitlement publication raced",
+            )
+        _require_robomimic_entitlement_parent_identity(path, parent_identity)
+        os.fsync(parent_descriptor)
+        published = True
+    except RobomimicEntitlementError:
+        raise
+    except OSError as exc:
+        raise RobomimicEntitlementError(
+            "write-failed",
+            "robomimic customer entitlement could not be written safely",
+        ) from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if target_created and not published:
+            try:
+                os.unlink(path.name, dir_fd=parent_descriptor)
+            except FileNotFoundError:
+                pass
+        if temporary_exists:
+            try:
+                os.unlink(temporary_name, dir_fd=parent_descriptor)
+            except FileNotFoundError:
+                pass
+        os.close(parent_descriptor)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _handle_robomimic_entitlement_action(
+    args: argparse.Namespace,
+) -> tuple[int, dict[str, Any]] | None:
+    action = args.robomimic_runtime_entitlement_action
+    notice = _robomimic_entitlement_notice()
+    if action == "notice":
+        return 64, {"status": "notice", **notice, "external_action_started": False}
+    if action == "decline":
+        return 64, {
+            "status": "declined",
+            **notice,
+            "external_action_started": False,
+        }
+    entitlement_value = args.robomimic_runtime_entitlement_file.strip()
+    if not entitlement_value:
+        raise ValueError("robomimic customer runtime entitlement file is required")
+    entitlement_path = Path(os.path.abspath(Path(entitlement_value).expanduser()))
+    runtime_inventory = os.environ.get(
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""
+    ).strip()
+    if re.fullmatch(r"[0-9a-f]{64}", runtime_inventory) is None:
+        raise ValueError("robomimic exact runtime inventory digest is required")
+    _require_robomimic_safe_run_id(args.run_id)
+    if action == "accept":
+        if not args.robomimic_runtime_entitlement_expires_at.strip():
+            raise ValueError("robomimic customer entitlement expiry is required")
+        accepted_at = datetime.now(timezone.utc).replace(microsecond=0)
+        expires_at = _robomimic_utc_timestamp(
+            args.robomimic_runtime_entitlement_expires_at.strip(), field="expires_at"
+        )
+        lock, lock_sha256 = _robomimic_runtime_lock()
+        contract = lock["customer_entitlement"]
+        notice_sha256 = _robomimic_entitlement_notice_sha256(
+            lock=lock, lock_sha256=lock_sha256
+        )
+        if args.robomimic_runtime_entitlement_notice_sha256 != notice_sha256:
+            raise RobomimicEntitlementError(
+                "notice-mismatch",
+                "robomimic customer must present the exact current notice digest",
+            )
+        validity_seconds = int((expires_at - accepted_at).total_seconds())
+        if (
+            validity_seconds <= 0
+            or validity_seconds > contract["maximum_validity_seconds"]
+        ):
+            raise ValueError("robomimic customer entitlement validity is out of bounds")
+        record = {
+            "schema": contract["schema"],
+            "decision": "accepted",
+            "customer_binding_sha256": _robomimic_customer_binding_sha256(args.project),
+            "run_id": args.run_id,
+            "source_revision": lock["source_revision"],
+            "runtime_id": lock["runtime_id"],
+            "runtime_manifest_sha256": runtime_inventory,
+            "runtime_lock_sha256": lock_sha256,
+            "terms": contract["terms"],
+            "customer_responsibilities": contract["responsibilities"],
+            "notice_sha256": notice_sha256,
+            "accepted_at": accepted_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "expires_at": expires_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        record_sha256 = _write_robomimic_entitlement(entitlement_path, record)
+        return 0, {
+            "status": "entitlement-recorded",
+            **notice,
+            "record_sha256": record_sha256,
+            "run_binding_recorded": True,
+            "runtime_manifest_binding_recorded": True,
+            "external_action_started": False,
+        }
+    proof = _verify_robomimic_entitlement(
+        path=entitlement_path,
+        customer_identity=args.project,
+        run_id=args.run_id,
+        runtime_inventory_sha256=runtime_inventory,
+    )
+    args._robomimic_runtime_entitlement_file = str(entitlement_path)
+    args._robomimic_runtime_entitlement_sha256 = proof["record_sha256"]
+    args._robomimic_customer_binding_sha256 = proof["customer_binding_sha256"]
+    return None
+
+
+def _robomimic_expected_profile(
+    *,
+    run_id: str,
+    namespace: str,
+    runtime_pvc: str,
+    runtime_inventory_sha256: str,
+    entitlement_file: str,
+    entitlement_sha256: str,
+    customer_binding_sha256: str,
+) -> list[dict[str, Any]]:
+    documents = list(yaml.safe_load_all(ROBOMIMIC_PROFILE.read_text(encoding="utf-8")))
+    if len(documents) != 2 or not all(isinstance(doc, dict) for doc in documents):
+        raise ValueError("checked-in robomimic resource profile is malformed")
+    task = documents[1]
+    service_account = _robomimic_observer_name(run_id)
+    task["envs"]["NPA_ROBOMIMIC_STRICT_B200_ATTESTED"] = "1"
+    task["envs"]["NPA_ROBOMIMIC_EXPECTED_NAMESPACE"] = namespace
+    task["envs"]["NPA_ROBOMIMIC_EXPECTED_SERVICE_ACCOUNT"] = service_account
+    task["envs"]["NPA_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"] = runtime_inventory_sha256
+    task["envs"]["NPA_ROBOMIMIC_RUNTIME_ENTITLEMENT_SHA256"] = entitlement_sha256
+    task["envs"]["NPA_ROBOMIMIC_CUSTOMER_BINDING_SHA256"] = customer_binding_sha256
+    task["file_mounts"][ROBOMIMIC_ENTITLEMENT_TARGET] = entitlement_file
+    task["config"]["kubernetes"]["pod_config"]["spec"]["serviceAccountName"] = (
+        service_account
+    )
+    volumes = task["config"]["kubernetes"]["pod_config"]["spec"]["volumes"]
+    runtime_volume = next(
+        item for item in volumes if item["name"] == "robomimic-runtime"
+    )
+    runtime_volume["persistentVolumeClaim"]["claimName"] = runtime_pvc
+    return documents
+
+
+def _require_robomimic_profile(
+    args: argparse.Namespace,
+    *,
+    namespace: str,
+    runtime_pvc: str,
+    runtime_inventory_sha256: str,
+    entitlement_file: str,
+    entitlement_sha256: str,
+    customer_binding_sha256: str,
+) -> None:
+    try:
+        profile = resolve_byof_profile_path(args.yaml)
+    except ValueError as exc:
+        raise ValueError(
+            "robomimic requires its reviewed resource-profile template"
+        ) from exc
+    try:
+        observed = list(yaml.safe_load_all(profile.read_text(encoding="utf-8")))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ValueError("robomimic attested resource profile is unreadable") from exc
+    expected = _robomimic_expected_profile(
+        run_id=args.run_id,
+        namespace=namespace,
+        runtime_pvc=runtime_pvc,
+        runtime_inventory_sha256=runtime_inventory_sha256,
+        entitlement_file=entitlement_file,
+        entitlement_sha256=entitlement_sha256,
+        customer_binding_sha256=customer_binding_sha256,
+    )
+    template = list(yaml.safe_load_all(ROBOMIMIC_PROFILE.read_text(encoding="utf-8")))
+    if observed not in (expected, template):
+        raise ValueError(
+            "robomimic resource profile is neither the immutable template nor its "
+            "run-local attested form"
+        )
+
+
+def _materialize_robomimic_profile_for_launch(
+    destination: Path, *, args: argparse.Namespace
+) -> Path:
+    """Render the reviewed template with run-bound execution identities."""
+
+    documents = _robomimic_expected_profile(
+        run_id=args.run_id,
+        namespace=os.environ["NPA_BYOF_K8S_NAMESPACE"],
+        runtime_pvc=os.environ["NPA_BYOF_ROBOMIMIC_RUNTIME_PVC"],
+        runtime_inventory_sha256=os.environ[
+            "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"
+        ],
+        entitlement_file=args._robomimic_runtime_entitlement_file,
+        entitlement_sha256=args._robomimic_runtime_entitlement_sha256,
+        customer_binding_sha256=args._robomimic_customer_binding_sha256,
+    )
+    destination.write_text(
+        yaml.safe_dump_all(documents, sort_keys=False), encoding="utf-8"
+    )
+    return destination
+
+
+def _with_robomimic_profile_lifetime(
+    function: Callable[..., int],
+) -> Callable[..., int]:
+    """Keep the attested profile alive through its run and clean every exit."""
+
+    @wraps(function)
+    def invoke(*args: Any, **kwargs: Any) -> int:
+        with ExitStack() as lifetime_stack:
+            return function(*args, lifetime_stack=lifetime_stack, **kwargs)
+
+    return invoke
+
+
+def _require_robomimic_immutable_inputs(
+    args: argparse.Namespace,
+    *,
+    registry: str,
+    image: str,
+    namespace: str,
+    accepted_image: str,
+    runtime_pvc: str,
+    runtime_inventory_sha256: str,
+) -> None:
+    accepted_pattern = re.compile(
+        re.escape(f"{registry.rstrip('/')}/npa-robomimic@sha256:") + r"[0-9a-f]{64}"
+    )
+    if accepted_pattern.fullmatch(accepted_image) is None:
+        raise ValueError(
+            "operator-selected robomimic image must be an exact npa-robomimic digest"
+        )
+    values = {
+        "repository": (args.repo_url, ROBOMIMIC_REPO_URL),
+        "source revision": (args.repo_ref, ROBOMIMIC_REPO_REF),
+        "base image": (_normalize_optional(args.base_image), ROBOMIMIC_BASE_IMAGE),
+        "workload": (args.workload, "solution-smoke"),
+        "solution": (args.solution_name, "robomimic"),
+        "capability": (args.capability_name, "lift_ph_lowdim_checkpoint_reload_action"),
+        "smoke artifact": (args.smoke_artifact_name, "robomimic-smoke.json"),
+        "image": (image, accepted_image),
+    }
+    mismatched = sorted(name for name, pair in values.items() if pair[0] != pair[1])
+    if mismatched:
+        raise ValueError(
+            "robomimic immutable inputs do not match: " + ", ".join(mismatched)
+        )
+    if args.repo_auth != "none":
+        raise ValueError("robomimic public source requires repo-auth=none")
+    if args.skip_run or args.skip_push or not args.cleanup:
+        raise ValueError("robomimic forbids skip-push, skip-run, and no-cleanup")
+    if not args.skip_build:
+        raise ValueError(
+            "robomimic requires skip-build with the exact operator-selected candidate digest"
+        )
+    hashes = {
+        "build command": hashlib.sha256(args.build_command.encode()).hexdigest(),
+        "smoke command": hashlib.sha256(args.smoke_command.encode()).hexdigest(),
+    }
+    expected_hashes = {
+        "build command": ROBOMIMIC_BUILD_COMMAND_SHA256,
+        "smoke command": ROBOMIMIC_SMOKE_COMMAND_SHA256,
+    }
+    if hashes != expected_hashes:
+        raise ValueError(
+            "robomimic build or smoke command is not the immutable contract"
+        )
+    _require_robomimic_profile(
+        args,
+        namespace=namespace,
+        runtime_pvc=runtime_pvc,
+        runtime_inventory_sha256=runtime_inventory_sha256,
+        entitlement_file=args._robomimic_runtime_entitlement_file,
+        entitlement_sha256=args._robomimic_runtime_entitlement_sha256,
+        customer_binding_sha256=args._robomimic_customer_binding_sha256,
+    )
+
+
+def _require_robomimic_public_development_image(image: str) -> None:
+    """Bind an official public digest to the selected immutable development tag."""
+
+    source_sha = os.environ.get("NPA_BYOF_ROBOMIMIC_DEVELOPMENT_SHA", "").strip()
+    if re.fullmatch(r"[0-9a-f]{40}", source_sha) is None:
+        raise ValueError(
+            "robomimic public execution requires the full development source SHA"
+        )
+    repository = f"{ROBOMIMIC_PUBLIC_REGISTRY}/npa-robomimic"
+    if re.fullmatch(re.escape(repository) + r"@sha256:[0-9a-f]{64}", image) is None:
+        raise ValueError(
+            "robomimic public execution requires an exact official development digest"
+        )
+    result = subprocess.run(
+        [
+            "docker",
+            "buildx",
+            "imagetools",
+            "inspect",
+            f"{repository}:dev-{source_sha}",
+            "--format",
+            "{{json .Manifest}}",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if json.loads(result.stdout).get("digest") != image.rsplit("@", 1)[1]:
+        raise ValueError(
+            "robomimic public digest does not match the selected development tag"
+        )
+
+
+def _require_robomimic_execution_context(
+    args: argparse.Namespace, *, registry: str, image: str, base_profile: str
+) -> None:
+    """Validate the governed robomimic run before pulling runtime or data bytes.
+
+    These values attest only the operator-selected execution target and registry
+    visibility. Runtime-use permission is established independently by the
+    customer-created entitlement record.
+    """
+
+    if not _is_robomimic_request(args):
+        return
+    _require_robomimic_safe_run_id(args.run_id)
+    selectors = {
+        "NPA_E2E_PROJECT": os.environ.get("NPA_E2E_PROJECT", "").strip(),
+        "NPA_BYOF_ROBOMIMIC_REGISTRY": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_REGISTRY", ""
+        ).strip(),
+        "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY", ""
+        ).strip(),
+        "NPA_BYOF_KUBECONFIG": os.environ.get("NPA_BYOF_KUBECONFIG", "").strip(),
+        "NPA_BYOF_K8S_CONTEXT": os.environ.get("NPA_BYOF_K8S_CONTEXT", "").strip(),
+        "NPA_BYOF_K8S_NAMESPACE": os.environ.get("NPA_BYOF_K8S_NAMESPACE", "").strip(),
+        "NPA_E2E_S3_BUCKET": os.environ.get("NPA_E2E_S3_BUCKET", "").strip(),
+        "NPA_E2E_MK8S_RESERVED_CAPACITY": os.environ.get(
+            "NPA_E2E_MK8S_RESERVED_CAPACITY", ""
+        ).strip(),
+        "NPA_BYOF_LIVE_GPU": os.environ.get("NPA_BYOF_LIVE_GPU", "").strip(),
+        "NPA_BYOF_ROBOMIMIC_LIVE_B200": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_LIVE_B200", ""
+        ).strip(),
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_RUNTIME_PVC", ""
+        ).strip(),
+        "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256": os.environ.get(
+            "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256", ""
+        ).strip(),
+    }
+    accepted_image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
+    missing = sorted(name for name, value in selectors.items() if not value)
+    if missing:
+        raise ValueError(
+            "robomimic execution context is incomplete; missing: " + ", ".join(missing)
+        )
+    if args.project.strip() != selectors["NPA_E2E_PROJECT"]:
+        raise ValueError(
+            "robomimic --project does not match the operator-selected project"
+        )
+    if base_profile != "prebuilt":
+        raise ValueError("robomimic requires its immutable prebuilt profile")
+    selected_registry = registry.rstrip("/")
+    if selected_registry != selectors["NPA_BYOF_ROBOMIMIC_REGISTRY"].rstrip("/"):
+        raise ValueError(
+            "robomimic registry does not match the operator-selected registry"
+        )
+    official_public = selected_registry == ROBOMIMIC_PUBLIC_REGISTRY
+    if _is_public_robomimic_registry(selected_registry) and not official_public:
+        raise ValueError(
+            "robomimic requires an operator-private registry or official public development image"
+        )
+    effective_registry = _registry_path(image).rstrip("/")
+    if effective_registry != selected_registry:
+        raise ValueError(
+            "robomimic image does not target the operator-selected registry"
+        )
+    expected_visibility = "public" if official_public else "private"
+    if (
+        selectors["NPA_BYOF_ROBOMIMIC_REGISTRY_VISIBILITY"].lower()
+        != expected_visibility
+    ):
+        raise ValueError(
+            f"operator-selected robomimic registry visibility must be {expected_visibility}"
+        )
+    if official_public:
+        _require_robomimic_public_development_image(image)
+    output_bucket = _bare_s3_bucket(args.output_root)
+    manager_bucket = _bare_s3_bucket(selectors["NPA_E2E_S3_BUCKET"])
+    expected_output_root = f"s3://{manager_bucket}/oss-solutions/robomimic"
+    if (
+        output_bucket != manager_bucket
+        or args.output_root.strip().rstrip("/") != expected_output_root
+    ):
+        raise ValueError(
+            "robomimic --output-root must be the operator-selected bucket and solution prefix"
+        )
+    kubeconfig = Path(selectors["NPA_BYOF_KUBECONFIG"])
+    if not kubeconfig.is_file():
+        raise ValueError(
+            "operator-selected robomimic kubeconfig is not a readable file"
+        )
+    if selectors["NPA_BYOF_K8S_NAMESPACE"] == "default":
+        raise ValueError(
+            "robomimic requires an operator-selected non-default namespace"
+        )
+    if selectors["NPA_E2E_MK8S_RESERVED_CAPACITY"] != "1":
+        raise ValueError("robomimic requires the operator's STRICT capacity binding")
+    if (
+        selectors["NPA_BYOF_LIVE_GPU"] != "1"
+        or selectors["NPA_BYOF_ROBOMIMIC_LIVE_B200"] != "1"
+    ):
+        raise ValueError(
+            "robomimic requires explicit selection of its dedicated live gate"
+        )
+    if (
+        re.fullmatch(
+            r"[0-9a-f]{64}",
+            selectors["NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"],
+        )
+        is None
+    ):
+        raise ValueError(
+            "robomimic requires an operator-selected exact runtime inventory digest"
+        )
+    _require_robomimic_immutable_inputs(
+        args,
+        registry=selected_registry,
+        image=image,
+        namespace=selectors["NPA_BYOF_K8S_NAMESPACE"],
+        accepted_image=accepted_image,
+        runtime_pvc=selectors["NPA_BYOF_ROBOMIMIC_RUNTIME_PVC"],
+        runtime_inventory_sha256=selectors[
+            "NPA_BYOF_ROBOMIMIC_RUNTIME_INVENTORY_SHA256"
+        ],
+    )
 
 
 class LiberoCustomerAcceptanceRequired(ValueError):
@@ -448,13 +1494,39 @@ def _run(
     capture: bool = False,
     env: dict[str, str] | None = None,
     redactions: tuple[str, ...] = (),
+    inherit_env: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    runtime_env = dict(os.environ)
+    runtime_env = (
+        dict(os.environ)
+        if inherit_env
+        else {
+            name: os.environ[name]
+            for name in (
+                "HOME",
+                "LANG",
+                "LC_ALL",
+                "LD_LIBRARY_PATH",
+                "LOGNAME",
+                "PATH",
+                "PYTHONPATH",
+                "SSL_CERT_DIR",
+                "SSL_CERT_FILE",
+                "TMPDIR",
+                "USER",
+                "VIRTUAL_ENV",
+            )
+            if os.environ.get(name)
+        }
+    )
     # Avoid stale operator tokens overriding profile-based auth on shared VMs.
     runtime_env.pop("NEBIUS_IAM_TOKEN", None)
     runtime_env.pop("NEBIUS_IAM_TOKEN_FILE", None)
+    for name in ROBOTWIN_CONTEXT_ENV_NAMES:
+        runtime_env.pop(name, None)
     if env is not None:
         runtime_env.update(env)
+    for name in ROBOTWIN_CONTEXT_ENV_NAMES:
+        runtime_env.pop(name, None)
     kwargs: dict[str, Any] = {"text": True, "check": False}
     if stdin is not None:
         kwargs["input"] = stdin
@@ -510,14 +1582,18 @@ def _source_prune_path(value: str) -> str:
 
 
 def _resolve_pushed_image_digest(
-    image_ref: str, *, env: dict[str, str] | None = None
+    image_ref: str,
+    *,
+    env: dict[str, str] | None = None,
+    redactions: tuple[str, ...] = (),
 ) -> str:
     """Resolve a just-pushed tag and return the immutable pull reference."""
 
+    run_kwargs: dict[str, Any] = {"env": env, "capture": True}
+    if redactions:
+        run_kwargs["redactions"] = redactions
     inspected = _run(
-        ["docker", "buildx", "imagetools", "inspect", image_ref],
-        env=env,
-        capture=True,
+        ["docker", "buildx", "imagetools", "inspect", image_ref], **run_kwargs
     )
     combined = "\n".join((inspected.stdout or "", inspected.stderr or ""))
     match = re.search(r"(?im)^\s*Digest:\s*(sha256:[0-9a-f]{64})\s*$", combined)
@@ -537,7 +1613,9 @@ def _bare_s3_bucket(value: str) -> str:
     return text.split("/", 1)[0].strip()
 
 
-def _live_runner_env(project: str, *, libero: bool = False) -> dict[str, str]:
+def _live_runner_env(
+    project: str, *, redactions: tuple[str, ...] = (), libero: bool = False
+) -> dict[str, str]:
     env: dict[str, str] = {}
     target = resolve_byof_kubernetes_target(project or None)
     if target.kubeconfig:
@@ -595,7 +1673,10 @@ def _live_runner_env(project: str, *, libero: bool = False) -> dict[str, str]:
                 )
             )
         except Exception as exc:
-            print(f"WARN: skipped BYOF storage env resolution: {exc}", file=sys.stderr)
+            warning = _redact_text(
+                f"WARN: skipped BYOF storage env resolution: {exc}", redactions
+            )
+            print(warning, file=sys.stderr)
     # Project configs often store checkpoint_bucket as s3://bucket/prefix. BYOF
     # SkyPilot templates expect a bare bucket name in NPA_S3_BUCKET.
     for key in ("NPA_S3_BUCKET", "S3_BUCKET"):
@@ -624,7 +1705,10 @@ def _live_runner_env(project: str, *, libero: bool = False) -> dict[str, str]:
             if bare:
                 env["NPA_S3_BUCKET"] = bare
         except Exception as exc:
-            print(f"WARN: skipped BYOF bucket resolution: {exc}", file=sys.stderr)
+            warning = _redact_text(
+                f"WARN: skipped BYOF bucket resolution: {exc}", redactions
+            )
+            print(warning, file=sys.stderr)
     return env
 
 
@@ -635,6 +1719,23 @@ def _registry_path(image_ref: str) -> str:
     if last_slash <= 0:
         return ""
     return without_digest[:last_slash]
+
+
+def _private_image_redactions(image_ref: str) -> tuple[str, ...]:
+    """Return every private coordinate derivable from an authorized image."""
+
+    return tuple(
+        dict.fromkeys(
+            value
+            for value in (
+                image_ref,
+                _repository_without_tag(image_ref),
+                _registry_path(image_ref),
+                _registry_server(image_ref),
+            )
+            if value
+        )
+    )
 
 
 def _skypilot_bootstrap_guard_script() -> str:
@@ -932,6 +2033,7 @@ def _dockerfile_text() -> str:
         "      git ca-certificates python3 python3-pip sudo coreutils rsync \\\n"
         "      curl wget gcc patch pciutils fuse3 \\\n"
         "      openssh-client openssh-server netcat-openbsd \\\n"
+        "  && rm -f /etc/ssh/ssh_host_* \\\n"
         "  && rm -rf /var/lib/apt/lists/*\n"
         "RUN <<'NPA_SKYPILOT_GUARD_INSTALL'\n"
         "set -eu\n"
@@ -948,7 +2050,6 @@ def _dockerfile_text() -> str:
         "  && (grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
         "    || sed -i '/^  start)$/a\\    ssh-keygen -A' /etc/init.d/ssh) \\\n"
         "  && grep -q 'ssh-keygen -A' /etc/init.d/ssh \\\n"
-        "  && rm -f /etc/ssh/ssh_host_* \\\n"
         "  && printf '%s\\n' 'PasswordAuthentication no' 'PermitRootLogin no' \\\n"
         "    > /etc/ssh/sshd_config.d/99-npa-container.conf \\\n"
         "  && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \\\n"
@@ -1038,17 +2139,35 @@ def _dockerfile_text() -> str:
 
 
 def _parse_last_json(text: str) -> dict[str, Any] | None:
-    for line in reversed(text.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
+    """Decode the final complete object embedded in mixed command output.
+
+    The verifier emits a pretty-printed receipt, so line-oriented parsing can
+    never recover its launch identity or terminal result.  Decode complete
+    JSON values instead and let the authorized RoboTwin path validate the
+    required receipt fields before recording a result.
+    """
+
+    decoder = json.JSONDecoder()
+    candidates: list[dict[str, Any]] = []
+    index = 0
+    while index < len(text):
+        starts = [
+            position
+            for token in ("{", "[")
+            if (position := text.find(token, index)) >= 0
+        ]
+        if not starts:
+            break
+        start = min(starts)
         try:
-            payload = json.loads(line)
+            payload, end = decoder.raw_decode(text, start)
         except json.JSONDecodeError:
+            index = start + 1
             continue
         if isinstance(payload, dict):
-            return payload
-    return None
+            candidates.append(payload)
+        index = max(end, start + 1)
+    return candidates[-1] if candidates else None
 
 
 def _ubuntu_base_image_candidates() -> list[str]:
@@ -1093,6 +2212,14 @@ def _base_image_candidates(
         tool = explicit_base.removeprefix("tool://").strip()
         if not tool:
             raise ValueError("tool:// base image must name a registered image tool")
+        if tool == "robomimic":
+            accepted = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
+            if not accepted:
+                raise ValueError(
+                    "robomimic has no public release; a manager-accepted exact private "
+                    "candidate digest is required"
+                )
+            return [accepted]
         resolved = container_image_for_tool(tool, registry=registry)
         if tool == "wan2-2":
             slash = resolved.rfind("/")
@@ -1112,6 +2239,205 @@ def _base_image_candidates(
             "prebuilt profile requires --base-image tool://<registered-tool>"
         )
     return _ubuntu_base_image_candidates()
+
+
+def _scan_robotwin_image(image: str, *, redactions: tuple[str, ...]) -> dict[str, Any]:
+    if re.fullmatch(r".+@sha256:[0-9a-f]{64}", image) is None:
+        raise ValueError("RoboTwin requires an immutable image before byte scanning")
+    with tempfile.TemporaryDirectory(prefix="npa-robotwin-image-scan-") as tmp:
+        report_path = Path(tmp) / "report.json"
+        scanner_env = {
+            name: os.environ[name]
+            for name in ("DOCKER_CONFIG",)
+            if os.environ.get(name)
+        }
+        _run(
+            [
+                sys.executable,
+                str(ROBOTWIN_IMAGE_SCANNER),
+                "--image-stdin",
+                "--output",
+                str(report_path),
+            ],
+            stdin=image,
+            capture=True,
+            env=scanner_env,
+            redactions=redactions,
+            inherit_env=False,
+        )
+        report_bytes = report_path.read_bytes()
+    report = json.loads(report_bytes)
+    if report.get("status") != "pass" or report.get("findings") != []:
+        raise RuntimeError("RoboTwin exact-image byte scan did not pass")
+    if report.get("image") != image or int(report.get("archives_scanned", 0)) < 2:
+        raise RuntimeError("RoboTwin exact-image byte scan evidence is incomplete")
+    return {
+        "format": "npa_robotwin_image_byte_scan_v1",
+        "report_sha256": hashlib.sha256(report_bytes).hexdigest(),
+        "archives_scanned": int(report["archives_scanned"]),
+        "status": "pass",
+    }
+
+
+def _authorized_live_env(
+    authorization: _RuntimeAuthorization | None,
+    scan_evidence: dict[str, Any],
+    *,
+    project: str,
+    image: str,
+) -> dict[str, str]:
+    if authorization is None:
+        return _live_runner_env(project)
+    # The outer worker receives only values selected by the owner client. Do not
+    # inherit generic BYOF/SkyPilot knobs that could redirect or weaken the
+    # already-authorized inner launch.
+    env = {
+        name: os.environ[name]
+        for name in _ROBOTWIN_EXECUTION_BASELINE_ENV_NAMES
+        if os.environ.get(name)
+    }
+    env.update(
+        {
+            name: os.environ[name]
+            for name in (
+                "AWS_ACCESS_KEY_ID",
+                "AWS_SECRET_ACCESS_KEY",
+                "AWS_SESSION_TOKEN",
+            )
+            if os.environ.get(name)
+        }
+    )
+    endpoint = next(
+        (
+            os.environ[name]
+            for name in (
+                "AWS_ENDPOINT_URL",
+                "NEBIUS_S3_ENDPOINT",
+                "AWS_ENDPOINT_URL_S3",
+                "NPA_STORAGE_ENDPOINT",
+                "S3_ENDPOINT_URL",
+            )
+            if os.environ.get(name)
+        ),
+        "",
+    )
+    if endpoint:
+        env.update(
+            {
+                "AWS_ENDPOINT_URL": endpoint,
+                "NEBIUS_S3_ENDPOINT": endpoint,
+            }
+        )
+    output_prefix = f"{authorization.output_root.rstrip('/')}/{authorization.run_id}/"
+    env.update(
+        {
+            "KUBECONFIG": authorization.kubeconfig,
+            "KUBECONTEXT": authorization.kubernetes_context,
+            "NPA_BYOF_K8S_CONTEXT": authorization.kubernetes_context,
+            "NPA_NEBIUS_PROFILE": authorization.profile,
+            "NEBIUS_PROFILE": authorization.profile,
+            "NPA_BYOF_PROJECT": authorization.project,
+            ROBOTWIN_CHILD_BUCKET_ENV: authorization.bucket,
+            ROBOTWIN_CHILD_CONFIG_PATH_ENV: authorization.skypilot_config_path,
+            ROBOTWIN_CHILD_IMAGE_ENV: image,
+            ROBOTWIN_CHILD_OUTPUT_PREFIX_ENV: output_prefix,
+            ROBOTWIN_CHILD_OUTPUT_ROOT_ENV: authorization.output_root,
+            ROBOTWIN_CHILD_RUN_ID_ENV: authorization.run_id,
+            ROBOTWIN_CHILD_RUNTIME_AUTH_ENV: encode_runtime_authorization(
+                authorization
+            ),
+            "NPA_BYOF_ROBOTWIN_RESERVATION_EVIDENCE_SHA256": authorization.context_sha256,
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_SHA256": str(scan_evidence["report_sha256"]),
+            "NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES": str(
+                scan_evidence["archives_scanned"]
+            ),
+        }
+    )
+    return env
+
+
+def _private_runtime_redactions(env: dict[str, str]) -> tuple[str, ...]:
+    """Close over every private environment value and useful textual alias."""
+
+    aliases: list[str] = []
+    public_evidence_names = {"NPA_BYOF_ROBOTWIN_IMAGE_SCAN_ARCHIVES"}
+
+    def scalar_values(value: Any) -> list[str]:
+        if isinstance(value, dict):
+            return [item for nested in value.values() for item in scalar_values(nested)]
+        if isinstance(value, (list, tuple)):
+            return [item for nested in value for item in scalar_values(nested)]
+        return [str(value)] if isinstance(value, (str, int, float)) else []
+
+    def add_aliases(raw: str) -> None:
+        value = raw.strip()
+        if not value:
+            return
+        decoded = unquote(value)
+        candidates = {value, decoded, value.rstrip("/"), decoded.rstrip("/")}
+        for candidate in (value, decoded):
+            try:
+                parsed = urlsplit(candidate)
+            except ValueError:
+                parsed = None
+            if parsed is not None and parsed.scheme and parsed.netloc:
+                candidates.update(
+                    {
+                        f"{parsed.netloc}{parsed.path}".rstrip("/"),
+                        parsed.netloc,
+                        parsed.path,
+                        parsed.path.rstrip("/"),
+                    }
+                )
+        if "@sha256:" in value:
+            candidates.add(value.split("@sha256:", 1)[0])
+        aliases.extend(
+            candidate for candidate in candidates if candidate and len(candidate) >= 4
+        )
+
+    for name, raw_value in env.items():
+        value = str(raw_value or "").strip()
+        if not value or name in public_evidence_names:
+            continue
+        add_aliases(value)
+        try:
+            structured = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            structured = None
+        for scalar in scalar_values(structured):
+            add_aliases(scalar)
+    return tuple(dict.fromkeys(aliases))
+
+
+def _run_robotwin_container_verify(
+    cmd: list[str],
+    *,
+    authorization: _RuntimeAuthorization,
+    environment: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    """Keep the validated authorization in-process until the inner Sky bridge."""
+
+    spec = importlib.util.spec_from_file_location(
+        "npa_robotwin_container_verify", CONTAINER_VERIFY_RUNNER
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("RoboTwin container verifier could not be loaded")
+    module = importlib.util.module_from_spec(spec)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    with redirect_stdout(stdout), redirect_stderr(stderr):
+        spec.loader.exec_module(module)
+        returncode = module.run_authorized_robotwin(
+            cmd[2:],
+            authorization=authorization,
+            environment=environment,
+        )
+    return subprocess.CompletedProcess(
+        cmd,
+        int(returncode),
+        stdout=stdout.getvalue(),
+        stderr=stderr.getvalue(),
+    )
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -1182,11 +2508,50 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--solution-name", default=os.environ.get("NPA_BYOF_SOLUTION_NAME", "")
     )
     parser.add_argument(
+        "--runtime-context-env",
+        default="",
+        help=(
+            "Environment-variable name containing owner-only runtime authorization; "
+            "the authorization value never enters argv."
+        ),
+    )
+    parser.add_argument(
         "--capability-name", default=os.environ.get("NPA_BYOF_CAPABILITY_NAME", "")
     )
     parser.add_argument(
         "--smoke-artifact-name",
         default=os.environ.get("NPA_BYOF_SMOKE_ARTIFACT_NAME", ""),
+    )
+    parser.add_argument(
+        "--robomimic-runtime-entitlement-action",
+        choices=("notice", "accept", "decline", "resume"),
+        default="resume",
+        help=(
+            "Customer-controlled robomimic runtime terms step. Notice and decline "
+            "never mutate; accept records a run-bound decision and exits; resume "
+            "requires that exact unexpired record."
+        ),
+    )
+    parser.add_argument(
+        "--robomimic-runtime-entitlement-file",
+        default=os.environ.get("NPA_BYOF_ROBOMIMIC_RUNTIME_ENTITLEMENT_FILE", ""),
+        help="Owner-only path for the run-bound robomimic runtime entitlement record.",
+    )
+    parser.add_argument(
+        "--robomimic-runtime-entitlement-expires-at",
+        default="",
+        help=(
+            "UTC expiry for a new robomimic entitlement record, formatted "
+            "YYYY-MM-DDTHH:MM:SSZ and no more than 24 hours after acceptance."
+        ),
+    )
+    parser.add_argument(
+        "--robomimic-runtime-entitlement-notice-sha256",
+        default="",
+        help=(
+            "Exact digest returned by the preceding robomimic notice action; "
+            "required when recording acceptance."
+        ),
     )
     parser.add_argument(
         "--wan-acceptance-candidate-image",
@@ -1242,8 +2607,71 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _authorization_failure(
+    args: argparse.Namespace, exc: Exception, redactions: tuple[str, ...]
+) -> int:
+    """Emit one sanitized authorization refusal."""
+
+    payload = {
+        "status": "failed",
+        "solution_name": args.solution_name,
+        "error": _redact_text(str(exc), redactions),
+    }
+    print(json.dumps(_redact_payload(payload, redactions), indent=2, sort_keys=True))
+    return 1
+
+
+def _run_authorized_robotwin(
+    argv: list[str], *, authorization: _RuntimeAuthorization
+) -> int:
+    """Run RoboTwin only from the validated normal-submit worker bridge.
+
+    Args:
+        argv: Exact public toolRef arguments already recognized by preflight.
+        authorization: Validated manager context materialized by the CPU worker.
+
+    Returns:
+        The standard BYOF process exit status.
+    """
+
+    args = _parse_args(argv)
+    redactions = tuple(
+        dict.fromkeys(
+            (
+                *authorization.redactions,
+                *_private_image_redactions(authorization.bootstrap_image),
+            )
+        )
+    )
+    try:
+        require_runtime_lock_complete(authorization)
+        _validate_robotwin_invocation(args)
+        _apply_runtime_authorization(args, authorization)
+        return _run_parsed(args, authorization=authorization, redactions=redactions)
+    except Exception as exc:
+        return _authorization_failure(args, exc, redactions)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    if _is_robotwin_request(args):
+        return _authorization_failure(
+            args,
+            ValueError(
+                "RoboTwin requires the normal npa workbench workflow submit "
+                "CPU launcher"
+            ),
+            (),
+        )
+    return _run_parsed(args, authorization=None, redactions=())
+
+
+def _run_parsed(
+    args: argparse.Namespace,
+    *,
+    authorization: _RuntimeAuthorization | None,
+    redactions: tuple[str, ...],
+) -> int:
     try:
         _validate_libero_identity(args)
     except LiberoCustomerAcceptanceRequired as exc:
@@ -1263,6 +2691,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     private_source = args.repo_auth == "github"
+    effective_redactions = redactions
     try:
         validate_repository_url(args.repo_url, private=private_source)
     except RepositoryAuthenticationError as exc:
@@ -1299,12 +2728,72 @@ def main(argv: list[str] | None = None) -> int:
     explicit_base = _normalize_optional(args.base_image)
     if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
         explicit_base = _libero_qualified_candidate(
-            args.libero_qualified_candidate_image,
-            args._libero_qualification,
+            args.libero_qualified_candidate_image, args._libero_qualification
         )
     base_profile = _normalize_optional(args.base_profile) or "ubuntu"
-    registry = args.registry.strip() or resolve_container_registry(args.project or None)
-    image = args.image.strip() or f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
+    robomimic_request = _is_robomimic_request(args)
+    if robomimic_request and not args.project.strip():
+        args.project = os.environ.get("NPA_E2E_PROJECT", "").strip()
+    if robomimic_request:
+        try:
+            entitlement_result = _handle_robomimic_entitlement_action(args)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            if isinstance(exc, RobomimicEntitlementError):
+                error_code = exc.code
+                error_message = exc.public_message
+            else:
+                error_code = "entitlement-refused"
+                error_message = "robomimic customer runtime entitlement refused"
+            print(
+                json.dumps(
+                    {
+                        "status": "refused",
+                        "solution_name": args.solution_name or "robomimic",
+                        "build_started": False,
+                        "push_started": False,
+                        "run_started": False,
+                        "error_code": error_code,
+                        "error": error_message,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+            return 64
+        if entitlement_result is not None:
+            status, payload = entitlement_result
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return status
+    registry = args.registry.strip()
+    if not registry and robomimic_request:
+        registry = os.environ.get("NPA_BYOF_ROBOMIMIC_REGISTRY", "").strip()
+    if not registry and not robomimic_request:
+        registry = resolve_container_registry(args.project or None)
+    image = args.image.strip()
+    if not image and robomimic_request:
+        image = os.environ.get("NPA_BYOF_ROBOMIMIC_IMAGE", "").strip()
+    if not image and not robomimic_request:
+        image = f"{registry.rstrip('/')}/npa-byof:{args.run_id}"
+    try:
+        _require_robomimic_execution_context(
+            args, registry=registry, image=image, base_profile=base_profile
+        )
+    except ValueError as exc:
+        print(
+            json.dumps(
+                {
+                    "status": "refused",
+                    "solution_name": args.solution_name or "robomimic",
+                    "build_started": False,
+                    "push_started": False,
+                    "run_started": False,
+                    "error": str(exc),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return 64
     base_candidates = _base_image_candidates(
         profile=base_profile,
         image=image,
@@ -1352,7 +2841,6 @@ def main(argv: list[str] | None = None) -> int:
     # must already exist in the caller's Docker config; NPA never mints provider IAM
     # registry tokens or creates a hidden registry-specific credential directory.
     docker_env: dict[str, str] = {}
-    redactions: tuple[str, ...] = ()
     try:
         with ExitStack() as secret_stack:
             source_secrets: RepositorySecretFiles | None = None
@@ -1372,14 +2860,24 @@ def main(argv: list[str] | None = None) -> int:
                         source_secrets.source_prune_path_sha256
                     ),
                 }
-            redactions = (
-                source_secrets.redaction_values if source_secrets is not None else ()
+            effective_redactions = tuple(
+                dict.fromkeys(
+                    (
+                        *effective_redactions,
+                        *(
+                            source_secrets.redaction_values
+                            if source_secrets is not None
+                            else ()
+                        ),
+                    )
+                )
             )
             return _run_byof(
                 args,
+                authorization=authorization,
                 summary=summary,
                 source_secrets=source_secrets,
-                redactions=redactions,
+                redactions=effective_redactions,
                 docker_env=docker_env,
                 base_candidates=base_candidates,
                 base_image=base_image,
@@ -1390,7 +2888,7 @@ def main(argv: list[str] | None = None) -> int:
                 skip_push=skip_push,
             )
     except Exception as exc:
-        message = _redact_text(str(exc), redactions)
+        message = _redact_text(str(exc), effective_redactions)
         summary["status"] = "failed"
         summary["error"] = message
         if isinstance(exc, RepositoryAuthenticationError):
@@ -1412,7 +2910,13 @@ def main(argv: list[str] | None = None) -> int:
                 "Grant write access to the target repository, or use --skip-push "
                 "with an already-published image."
             )
-        print(json.dumps(summary, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                _redact_payload(summary, effective_redactions),
+                indent=2,
+                sort_keys=True,
+            )
+        )
         hint = str(summary.get("hint") or "").strip()
         if hint:
             print(f"HINT: {hint}", file=sys.stderr)
@@ -1473,9 +2977,11 @@ def _run_worker(
     return 0
 
 
+@_with_robomimic_profile_lifetime
 def _run_byof(
     args: argparse.Namespace,
     *,
+    authorization: _RuntimeAuthorization | None,
     summary: dict[str, Any],
     source_secrets: RepositorySecretFiles | None,
     redactions: tuple[str, ...],
@@ -1487,7 +2993,9 @@ def _run_byof(
     registry: str,
     skip_build: bool,
     skip_push: bool,
+    lifetime_stack: ExitStack,
 ) -> int:
+    effective_redactions = redactions
     try:
         postprocess_key = _required_postprocess_key(
             args, base_image=base_image, base_profile=base_profile
@@ -1506,7 +3014,9 @@ def _run_byof(
             raise ValueError(
                 "--source-prune-path requires building the source image in this invocation"
             )
-        if in_workflow_worker():
+        # RoboTwin's authenticated CPU outer task launches its one reserved RTX
+        # workload; it is not the generic already-allocated capability worker.
+        if authorization is None and in_workflow_worker():
             return _run_worker(
                 args,
                 summary,
@@ -1610,16 +3120,22 @@ def _run_byof(
                     assert last_build_error is not None
                     raise last_build_error
             if not skip_push:
-                push_proc = _run(
-                    ["docker", "push", image], env=docker_env or None, capture=True
-                )
+                push_kwargs: dict[str, Any] = {
+                    "env": docker_env or None,
+                    "capture": True,
+                }
+                if redactions:
+                    push_kwargs["redactions"] = redactions
+                push_proc = _run(["docker", "push", image], **push_kwargs)
                 if push_proc.stdout:
-                    sys.stdout.write(push_proc.stdout)
+                    sys.stdout.write(_redact_text(push_proc.stdout, redactions))
                 if push_proc.stderr:
-                    sys.stderr.write(push_proc.stderr)
+                    sys.stderr.write(_redact_text(push_proc.stderr, redactions))
                 tagged_image = image
                 image = _resolve_pushed_image_digest(
-                    tagged_image, env=docker_env or None
+                    tagged_image,
+                    env=docker_env or None,
+                    redactions=redactions,
                 )
                 summary["image_tag"] = tagged_image
                 summary["image"] = image
@@ -1634,7 +3150,30 @@ def _run_byof(
         else:
             summary["build"] = {"ok": True, "skipped": True}
 
+        scan_evidence: dict[str, Any] = {}
+        if authorization is not None:
+            scan_evidence = _scan_robotwin_image(image, redactions=effective_redactions)
+            summary["robotwin_image_scan"] = scan_evidence
+
         if not args.skip_run:
+            launch_profile = args.yaml
+            if _is_robomimic_request(args):
+                # This path is unreachable while the Phase A legal/transaction
+                # refusal is active. Once an authorized change lifts that refusal,
+                # only the reviewed template with manager-bound identities reaches
+                # the nested SkyPilot launch.
+                launch_profile_root = Path(
+                    lifetime_stack.enter_context(
+                        tempfile.TemporaryDirectory(
+                            prefix="npa-robomimic-attested-profile-"
+                        )
+                    )
+                )
+                launch_profile = str(
+                    _materialize_robomimic_profile_for_launch(
+                        launch_profile_root / "profile.yaml", args=args
+                    )
+                )
             if args.workload == "datagen":
                 cmd = [
                     sys.executable,
@@ -1657,20 +3196,19 @@ def _run_byof(
                     BYOF_REPO_MOUNT,
                 ]
             elif args.workload in {"container-verify", "solution-smoke"}:
-                cmd = [
-                    sys.executable,
-                    str(CONTAINER_VERIFY_RUNNER),
-                    "--image",
-                    image,
-                    "--run-id",
-                    args.run_id,
-                    "--wait-timeout",
-                    str(args.wait_timeout),
-                    "--poll-interval",
-                    str(args.poll_interval),
-                    "--repo-root",
-                    BYOF_REPO_MOUNT,
-                ]
+                cmd = [sys.executable, str(CONTAINER_VERIFY_RUNNER)]
+                if authorization is None:
+                    cmd.extend(["--image", image, "--run-id", args.run_id])
+                cmd.extend(
+                    [
+                        "--wait-timeout",
+                        str(args.wait_timeout),
+                        "--poll-interval",
+                        str(args.poll_interval),
+                        "--repo-root",
+                        BYOF_REPO_MOUNT,
+                    ]
+                )
                 if args.smoke_command:
                     cmd.extend(["--smoke-command", args.smoke_command])
                 if args.solution_name:
@@ -1698,20 +3236,34 @@ def _run_byof(
                     "--poll-interval",
                     str(args.poll_interval),
                 ]
-            if args.yaml:
-                cmd.extend(["--yaml", args.yaml])
+            if launch_profile:
+                cmd.extend(["--yaml", launch_profile])
             if args.output_root:
-                cmd.extend(["--output-root", args.output_root])
+                if authorization is None:
+                    cmd.extend(["--output-root", args.output_root])
             if args.sky_bin:
                 cmd.extend(["--sky-bin", args.sky_bin])
-            if args.config_path:
+            if args.config_path and authorization is None:
                 cmd.extend(["--config-path", args.config_path])
             if args.cleanup:
                 cmd.append("--cleanup")
-            live_env = (
-                _live_runner_env(args.project, libero=True)
-                if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME
-                else _live_runner_env(args.project)
+            if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
+                live_env = _live_runner_env(args.project, libero=True)
+            else:
+                live_env = _authorized_live_env(
+                    authorization, scan_evidence, project=args.project, image=image
+                )
+            effective_redactions = (
+                tuple(
+                    dict.fromkeys(
+                        (
+                            *effective_redactions,
+                            *_private_runtime_redactions(live_env),
+                        )
+                    )
+                )
+                if authorization is not None
+                else effective_redactions
             )
             if args.solution_name.strip().lower() == LIBERO_SOLUTION_NAME:
                 authorization_bytes = args._libero_customer_authorization_bytes
@@ -1740,23 +3292,93 @@ def _run_byof(
                         ),
                     }
                 )
-            run_proc = _run(cmd, capture=True, env=live_env)
-            sys.stdout.write(run_proc.stdout)
-            if run_proc.stderr:
-                sys.stderr.write(run_proc.stderr)
-            summary["run"] = _parse_last_json(run_proc.stdout) or {
-                "status": "submitted"
+            run_kwargs = {
+                "capture": True,
+                "env": live_env,
             }
+            if authorization is not None:
+                run_kwargs["inherit_env"] = False
+            if effective_redactions:
+                run_kwargs["redactions"] = effective_redactions
+            run_proc = (
+                _run_robotwin_container_verify(
+                    cmd,
+                    authorization=authorization,
+                    environment=live_env,
+                )
+                if authorization is not None
+                else _run(cmd, **run_kwargs)
+            )
+            # Validate the authorized receipt against its raw captured bytes before
+            # redaction. The run-scoped launch identity is intentionally also present
+            # in the private runtime authorization envelope, so redacting first would
+            # turn a valid receipt into a deterministic identity mismatch. Raw bytes
+            # remain transient and are never printed, stored, or included in errors.
+            parsed_run = (
+                _parse_last_json(run_proc.stdout) if authorization is not None else None
+            )
+            sanitized_stdout = _redact_text(run_proc.stdout, effective_redactions)
+            sanitized_stderr = _redact_text(run_proc.stderr, effective_redactions)
+            sys.stdout.write(sanitized_stdout)
+            if sanitized_stderr:
+                sys.stderr.write(sanitized_stderr)
+            if authorization is not None and run_proc.returncode != 0:
+                summary["run"] = {
+                    "status": "failed",
+                    "returncode": run_proc.returncode,
+                    "stdout": sanitized_stdout,
+                    "stderr": sanitized_stderr,
+                }
+                raise RuntimeError(
+                    f"authorized RoboTwin verifier failed with exit {run_proc.returncode}"
+                )
+            if authorization is None:
+                parsed_run = _parse_last_json(sanitized_stdout)
+            if authorization is not None:
+                if not isinstance(parsed_run, dict):
+                    raise RuntimeError(
+                        "authorized RoboTwin verifier returned no complete JSON receipt"
+                    )
+                if parsed_run.get("launch_id") != authorization.inner_launch_id:
+                    raise RuntimeError(
+                        "authorized RoboTwin verifier receipt launch identity mismatch"
+                    )
+                if (
+                    str(parsed_run.get("status", "")).strip().lower() != "succeeded"
+                    or type(parsed_run.get("returncode")) is not int
+                    or parsed_run.get("returncode") != 0
+                ):
+                    raise RuntimeError(
+                        "authorized RoboTwin verifier receipt was not successful"
+                    )
+            else:
+                parsed_run = parsed_run or {"status": "submitted"}
+            summary["run"] = _redact_payload(parsed_run, effective_redactions)
             _postprocess_solution(args, postprocess_key, summary)
         else:
             summary["run"] = {"skipped": True}
         summary["status"] = "ok"
-        print(json.dumps(summary, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                _redact_payload(summary, effective_redactions),
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     except Exception as exc:
-        # Do not retain an unsanitized exception as ``__cause__``: callers may
-        # serialize the exception chain even though the top-level message is safe.
-        raise RuntimeError(_redact_text(str(exc), redactions)) from None
+        _raise_sanitized_runtime_error(_redact_text(str(exc), effective_redactions))
+
+
+def _raise_sanitized_runtime_error(message: str) -> None:
+    """Raise without retaining any exception handled by the BYOF boundary."""
+
+    try:
+        raise RuntimeError(message) from None
+    except RuntimeError as failure:
+        failure.__cause__ = None
+        failure.__context__ = None
+        raise
 
 
 if __name__ == "__main__":

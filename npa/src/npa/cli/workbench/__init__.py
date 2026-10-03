@@ -87,6 +87,7 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.dataset import app as dataset_app
     from npa.cli.workbench.detection_training import app as detection_training_app
     from npa.cli.workbench.encord import app as encord_app
+    from npa.cli.workbench.flex_pi import app as flex_pi_app
     from npa.cli.workbench.foxglove import app as foxglove_app
     from npa.cli.workbench.golden_eval import app as golden_eval_app
     from npa.cli.workbench.health import app as health_app
@@ -98,6 +99,8 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.lichtblick import app as lichtblick_app
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
+    from npa.cli.workbench.open3d import app as open3d_app
+
     from npa.cli.workbench.namespace import app as namespace_app
     from npa.cli.workbench.molmoact import app as molmoact_app
     from npa.cli.workbench.openvla import app as openvla_app
@@ -134,6 +137,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(cosmos_curate_app, name="cosmos-curate")
     full.add_typer(cosmos_evaluator_app, name="cosmos-evaluator")
     full.add_typer(fiftyone_app, name="fiftyone")
+    full.add_typer(flex_pi_app, name="flex-pi")
     full.add_typer(foxglove_app, name="foxglove")
     full.add_typer(genesis_app, name="genesis")
     full.add_typer(groot_app, name="groot")
@@ -147,6 +151,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(molmoact_app, name="molmoact")
     full.add_typer(openvla_app, name="openvla")
     full.add_typer(openarm_app, name="openarm")
+    full.add_typer(open3d_app, name="open3d")
     full.add_typer(robocasa_app, name="robocasa")
     full.add_typer(newton_app, name="newton")
     full.add_typer(lichtblick_app, name="lichtblick")

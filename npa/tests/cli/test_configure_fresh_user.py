@@ -181,7 +181,11 @@ def test_known_project_provision_is_explicit_and_summarized(
 ) -> None:
     _point_configure_at_tmp(monkeypatch, tmp_path)
     monkeypatch.setattr(nebius, "get_iam_token", lambda: "synthetic-iam")
-    monkeypatch.setattr(nebius, "set_profile_project", lambda *_args: True)
+    monkeypatch.setattr(
+        nebius,
+        "set_profile_project",
+        lambda *_args: nebius.ProfileMutationResult.UPDATED,
+    )
     provision_calls: list[str] = []
 
     def provision(*_args, **kwargs):

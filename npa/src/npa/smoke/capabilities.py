@@ -38,6 +38,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "raw predicted masks and a fully decoded overlay MP4 are retained",
         "unchanged source pixels are checked after video encoding",
     ],
+    "robotwin": [
+        "genuine missing-manager-authorization refusal executes on CPU",
+        "refusal creates no source, runtime cache, asset, or output path",
+        "zero-payload packaging check only; no SAPIEN or GPU capability claimed",
+    ],
     "gymnasium-robotics": [
         "future exact candidate runs the registered Shadow Dexterous Hand environment",
         "120 MuJoCo steps and 2,400 substeps prove contact, touch, and orientation change",
@@ -58,6 +63,23 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",
         "source inventory hashes match; no functional capture validation claimed",
+    ],
+    "open3d": [
+        "real RANSAC/FPFH global registration refined by Open3D ICP",
+        "recovered transform matches the applied ground-truth pose within 1 deg",
+        "ICP lowers the RANSAC inlier RMSE on every pair",
+        "global_optimization returns a pose graph anchored at node 0",
+        "Poisson reconstruction yields a positive-area surface",
+        "factual RRD artifact passes decoder verification",
+    ],
+    "habitat-sim": [
+        "neutral bootstrap with accompanying Ubuntu source; pinned MIT Habitat-Sim "
+        "and its scientific/native dependencies are fetched at runtime",
+        "official CC BY 4.0 Skokloster archive fetched only at runtime with exact hashes",
+        "real greedy-follower traversal produces distinct RGB and finite-depth frames",
+        "Bullet world time advances with nonzero agent displacement",
+        "NVIDIA EGL renders on exactly one RTX PRO 6000 Blackwell, never B200",
+        "pod digest, exit zero, artifact hashes, and storage readback all agree",
     ],
     "mjlab": [
         "native MJLab PPO training writes a loadable RSL-RL checkpoint",
@@ -97,6 +119,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "gated PhysicalAI-AV surround-camera sample loads under the operator HF token",
         "real ego-trajectory inference produces projected trajectory JSON",
         "calibrated-camera trajectory PNG and immutable result provenance are written",
+    ],
+    "flex-pi": [
+        "pinned upstream 6B flex-pi checkpoint and required encoders load on CUDA",
+        "three-camera public RoboTwin observation and 14D state are hash-verified",
+        "real four-step action-only inference produces a finite 32x14 action chunk",
+        "latency, peak GPU memory, model/input hashes, and RTX PRO 6000 identity are recorded",
     ],
     "lerobot": [
         "LeRobot package version pin",
@@ -250,6 +278,11 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "upstream Isaac-Reach-OpenArm-v0 vectorized environment steps on CUDA",
         "upstream RSL-RL trainer writes a real checkpoint",
     ],
+    "robomimic": [
+        "neutral image contains pinned robomimic source and no CUDA runtime",
+        "missing external runtime refuses without network or cache mutation",
+        "real four-step BC, held-out validation, checkpoint reload, and one-B200 proof remain deferred",
+    ],
     "wan2-2": [
         "pinned Wan source import with OSS CPU dependency base",
         "machine-readable runtime health/version contract",
@@ -259,7 +292,7 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "machine-readable runtime health/version contract",
         "source and weight fetch both refuse without the operator's own "
         "entitlement on the gated Lightricks/LTX-2.5 repository",
-        "CUDA runtime fetch refuses before NVIDIA terms acceptance",
+        "offline CUDA runtime probe refuses without downloading the absent cache",
         "no LTX source, weights, or CUDA distribution present in the image",
     ],
     "sim2real-control": [

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -158,6 +159,121 @@ def test_check_hallucination_rejects_an_out_of_range_threshold(tmp_path: Path) -
         hal.check_hallucination(
             clip_id="c", original_video=clip, augmented_video=clip, threshold=1.5
         )
+
+
+@pytest.mark.parametrize("passed", [True, False])
+def test_upstream_hallucination_result_requires_a_boolean_verdict(passed: bool) -> None:
+    result = hal._parse_upstream_result(
+        {
+            "clip_id": "upstream-clip",
+            "passed": passed,
+            "threshold": 0.73,
+            "score": 0.41,
+            "total_frames": 8,
+            "total_hallucinated_dynamic_pixels": 5,
+            "total_augmented_dynamic_pixels": 12,
+        },
+        clip_id="requested-clip",
+        params={"threshold": 0.68},
+    )
+
+    assert result is not None
+    assert result.passed is passed
+    assert result.score == 0.41
+    assert result.threshold == 0.73
+
+
+@pytest.mark.parametrize("passed", ["false", 0, 1, None, [], {}])
+def test_upstream_hallucination_result_falls_back_on_malformed_verdicts(
+    passed: Any,
+) -> None:
+    result = hal._parse_upstream_result(
+        {"passed": passed, "score": 1.0, "threshold": 0.5},
+        clip_id="clip",
+        params={"threshold": 0.5},
+    )
+
+    assert result is None
+
+
+@pytest.fixture
+def upstream_hallucination_payload(monkeypatch, tmp_path):
+    calls = []
+
+    def install(payload):
+        class Processor:
+            def __init__(self, **kwargs):
+                self.params = kwargs["params"]
+
+            def process(self, clip_id, original, augmented):
+                calls.append((clip_id, original, augmented))
+                return payload
+
+        monkeypatch.setattr(hal, "ensure_upstream_importable", lambda: tmp_path)
+        monkeypatch.setitem(
+            sys.modules,
+            "checks.hallucination.processor",
+            SimpleNamespace(HallucinationProcessor=Processor),
+        )
+        return calls
+
+    return install
+
+
+@pytest.mark.parametrize("payload", [{"passed": "false"}, {"passed": None}, {}])
+def test_invalid_upstream_verdict_runs_pixel_check(
+    monkeypatch, tmp_path, upstream_hallucination_payload, payload
+):
+    calls = upstream_hallucination_payload({**payload, "score": 1.0})
+    original, augmented = tmp_path / "original.mp4", tmp_path / "augmented.mp4"
+    original.touch()
+    augmented.touch()
+    static = np.zeros((24, 24), dtype=np.uint8)
+    invented = static.copy()
+    invented[8:16, 8:16] = 255
+    monkeypatch.setattr(hal, "_probe_size", lambda path: static.shape)
+
+    def decode(path, height, width):
+        yield static
+        yield static if path == original else invented
+
+    monkeypatch.setattr(hal, "_iter_gray_frames", decode)
+    result = hal.check_hallucination(
+        clip_id="clip",
+        original_video=original,
+        augmented_video=augmented,
+        blur_ksize=1,
+        morph_k=1,
+    )
+
+    assert calls == [("clip", str(original), str(augmented))]
+    assert result.engine == hal.ENGINE_PORT
+    assert result.passed is False
+    assert result.score == 0.0
+    assert result.total_frames == 2
+    assert result.total_hallucinated_dynamic_pixels == 64
+
+
+@pytest.mark.parametrize("passed", [True, False])
+def test_valid_upstream_verdict_is_preserved_without_rechecking_pixels(
+    monkeypatch, tmp_path, upstream_hallucination_payload, passed
+):
+    calls = upstream_hallucination_payload({"passed": passed, "score": 0.8})
+    clip = tmp_path / "clip.mp4"
+    clip.touch()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("a valid upstream result must not execute the fallback")
+
+    monkeypatch.setattr(hal, "_run_port", forbidden)
+    result = hal.check_hallucination(
+        clip_id="clip", original_video=clip, augmented_video=clip
+    )
+
+    assert calls == [("clip", str(clip), str(clip))]
+    assert result.engine == hal.ENGINE_UPSTREAM
+    assert result.passed is passed
+    assert result.score == 0.8
 
 
 # ---------------------------------------------------------------------------

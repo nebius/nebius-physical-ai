@@ -1093,6 +1093,10 @@ def _image_for_tool(tool: str) -> str:
         return container_image_for_tool(tool, tag=tag)
     except KeyError:
         return f"ghcr.io/nebius/nebius-physical-ai/npa-{tool}:{tag}"
+    except ValueError:
+        return (
+            "unavailable (public release quarantined; use an explicit operator image)"
+        )
 
 
 def _format_tool_family_capabilities(
@@ -1321,14 +1325,24 @@ def format_infra_backends(state: dict[str, Any]) -> str:
         if isinstance(infra.get("cloud_clusters"), list)
         else []
     )
+    cloud_unavailable = (infra.get("cloud_discovery") or {}).get(
+        "status"
+    ) == "unavailable"
+    cloud_summary = (
+        "unavailable" if cloud_unavailable else _infra_status_counts(cloud_clusters)
+    )
     lines = [
         "**Kubernetes / workflow infra status**:",
         f"- **agent_npa_ready**: `{bool(infra.get('agent_npa_ready'))}`",
         f"- **configured backends**: `{len(configured)}`",
         f"- **agent-local contexts**: `{len(local_clusters)}`",
-        f"- **Nebius MK8s backends**: `{_infra_status_counts(cloud_clusters)}`",
+        f"- **Nebius MK8s backends**: `{cloud_summary}`",
     ]
-    if not bool(infra.get("has_infra")):
+    if cloud_unavailable:
+        lines.append(
+            "- Cloud discovery failed; backend absence and accelerator availability are unverified. Retry discovery before provisioning. Configured backends remain usable."
+        )
+    elif not bool(infra.get("has_infra")):
         lines.extend(
             [
                 "- **No Kubernetes infra is currently specified or available.**",

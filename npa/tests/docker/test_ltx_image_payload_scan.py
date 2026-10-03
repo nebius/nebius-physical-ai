@@ -35,6 +35,21 @@ walker = _load("scan_image_wan_payload")
 scanner = _load("scan_image_ltx_payload")
 
 
+def test_libssh2_audit_matches_reviewed_debian_package() -> None:
+    lock = json.loads(
+        (
+            _SCRIPTS.parent / "docker/workbench/ncore/native-bootstrap-lock.json"
+        ).read_text()
+    )
+    package = next(
+        item for item in lock["debian_binaries"] if item["name"] == "libssh2-1"
+    )
+    library = package["elf_files"][0]
+    assert (
+        scanner.AUDITED_SECRET_LITERAL_FILE_SHA256[library["path"]] == library["sha256"]
+    )
+
+
 def _tar(path: Path, members: dict[str, bytes]) -> Path:
     with tarfile.open(path, "w") as archive:
         for name, payload in members.items():

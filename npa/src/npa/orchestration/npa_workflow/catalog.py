@@ -54,6 +54,7 @@ class ToolEntry:
 # TOOL_CATALOG must be reachable from at least one shipped spec.
 PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.curobo.plan": "Operator-provided Franka start/goal/scene manifests; benchmark workflow exercises the shared planner and artifact path.",
+    "workbench.open3d.prepare": "Operator-provided scan prefixes; the shipped registration workflow exercises the same manifest contract through stage-demo.",
     "infra.fleet.deploy": "public npa.fleet deployment primitive",
     "infra.soperator.deploy": "public npa.soperator deployment primitive",
     "workbench.cosmos2.transfer": "public Cosmos Transfer composition primitive",
@@ -101,6 +102,8 @@ _BYOF_REPO_ARGV = [
     "{{config.capability_name}}",
     "--smoke-artifact-name",
     "{{config.smoke_artifact_name}}",
+    "--runtime-context-env",
+    "{{config.runtime_context_env}}",
     "--libero-qualified-candidate-image",
     "{{config.libero_qualified_candidate_image}}",
     "--yaml",
@@ -126,6 +129,7 @@ _BYOF_REPO_ARGV = [
 _BYOF_REPO_CONFIG_DEFAULTS = {
     "repo_auth": "none",
     "repo_token_env": "",
+    "runtime_context_env": "",
     "source_prune_path": "",
     "libero_qualified_candidate_image": "",
 }
@@ -153,7 +157,27 @@ _CONTENT_AGENTS_PIPELINE = [
 
 _PAIDF_NATIVE_PIPELINE = ["python3", "-m", "npa.workflows.paidf_native"]
 
+_HABITAT_SIM_SMOKE = ["python3", "-m", "npa.workflows.habitat_sim_smoke"]
+
 TOOL_CATALOG: dict[str, ToolEntry] = {
+    "workflow.habitat_sim.smoke": ToolEntry(
+        name="workflow.habitat_sim.smoke",
+        description=(
+            "Render the pinned official Skokloster scene with RGB, depth, Bullet, "
+            "and real navigation on one RTX PRO 6000 Blackwell."
+        ),
+        argv_template=[
+            *_HABITAT_SIM_SMOKE,
+            "--output-dir",
+            "{{config.output_dir}}",
+            "--output-uri",
+            "{{config.output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--plan-sha256",
+            "{{config.plan_sha256}}",
+        ],
+    ),
     "workbench.encord.push": ToolEntry(
         name="workbench.encord.push",
         description="Register S3 media with Encord SaaS or explicitly upload a copy.",
@@ -236,6 +260,46 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.encord_roundtrip_report_uri}}",
             "--workflow-run",
             "{{run.id}}",
+            "--json",
+        ],
+    ),
+    "workbench.encord.import_labels": ToolEntry(
+        name="workbench.encord.import_labels",
+        description="Create a new Encord project with content-bound video prelabels.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "import-labels",
+            "--input-path",
+            "{{config.encord_label_plan_uri}}",
+            "--receipt-uri",
+            "{{config.encord_receipt_uri}}",
+            "--project-title",
+            "{{config.encord_project}}",
+            "--output-path",
+            "{{config.encord_label_receipt_uri}}",
+            "--workflow-run",
+            "{{run.id}}",
+            "--json",
+        ],
+    ),
+    "workbench.encord.render_labels": ToolEntry(
+        name="workbench.encord.render_labels",
+        description="Verify exported Encord tracks and render annotated MP4s.",
+        argv_template=[
+            "npa",
+            "workbench",
+            "encord",
+            "render-labels",
+            "--input-path",
+            "{{config.encord_manifest_uri}}",
+            "--label-receipt-uri",
+            "{{config.encord_label_receipt_uri}}",
+            "--verification-uri",
+            "{{config.encord_roundtrip_report_uri}}",
+            "--output-path",
+            "{{config.encord_demo_uri}}",
             "--json",
         ],
     ),
@@ -695,6 +759,147 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.open3d.stage_demo": ToolEntry(
+        name="workbench.open3d.stage_demo",
+        description=(
+            "Publish the upstream open3d.data DemoICPPointClouds indoor scans and "
+            "the registration manifest describing them."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "stage-demo",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--voxel-size",
+            "{{config.open3d_voxel_size}}",
+            "--icp-estimation",
+            "{{config.open3d_icp_estimation}}",
+        ],
+    ),
+    "workbench.open3d.prepare": ToolEntry(
+        name="workbench.open3d.prepare",
+        description=(
+            "Index the .pcd/.ply scans under an operator prefix into a digest-bound "
+            "registration manifest."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "prepare",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--voxel-size",
+            "{{config.open3d_voxel_size}}",
+            "--icp-estimation",
+            "{{config.open3d_icp_estimation}}",
+        ],
+    ),
+    "workbench.open3d.register": ToolEntry(
+        name="workbench.open3d.register",
+        description=(
+            "Open3D global RANSAC/FPFH registration refined by ICP, pair by pair, "
+            "with each aligned cloud published."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "register",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.open3d.validate": ToolEntry(
+        name="workbench.open3d.validate",
+        description=(
+            "Re-verify a published Open3D registration from its journal and result "
+            "alone, without the native library."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "validate",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.open3d.multiway": ToolEntry(
+        name="workbench.open3d.multiway",
+        description=(
+            "Open3D multiway registration: full pairwise pose graph, "
+            "global_optimization, and one fused cloud."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "multiway",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.open3d.reconstruct": ToolEntry(
+        name="workbench.open3d.reconstruct",
+        description=(
+            "Poisson surface reconstruction over a fused multiway cloud, with "
+            "manifold and watertight facts reported."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "reconstruct",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--poisson-depth",
+            "{{config.open3d_poisson_depth}}",
+            "--density-quantile",
+            "{{config.open3d_density_quantile}}",
+            "--support-distance-factor",
+            "{{config.open3d_support_distance_factor}}",
+        ],
+    ),
+    "workbench.open3d.visualize": ToolEntry(
+        name="workbench.open3d.visualize",
+        description=(
+            "Emit and decode-verify an RRD of the optimized scans, the fused cloud "
+            "and the reconstructed surface."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "visualize",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.alpamayo2_super.infer": ToolEntry(
         name="workbench.alpamayo2_super.infer",
         description=(
@@ -835,6 +1040,76 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.flex_pi.train": ToolEntry(
+        name="workbench.flex_pi.train",
+        description="Train the immutable public YAM utensil workload with four GPUs, full validation and verified fresh checkpoint resume.",
+        multi_node_mode="sharded",
+        shard_activation_config="training_nodes",
+        shard_output_config="output_uri",
+        argv_template=[
+            "npa",
+            "workbench",
+            "flex-pi",
+            "train",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--mode",
+            "{{config.training_mode}}",
+            "--normalization-path",
+            "{{config.normalization_path}}",
+            "--normalization-sha256",
+            "{{config.normalization_sha256}}",
+            "--num-workers",
+            "{{config.num_workers}}",
+            "--prefetch-factor",
+            "{{config.prefetch_factor}}",
+            "--optimizer",
+            "{{config.optimizer}}",
+            "--memory-fill",
+            "{{config.memory_fill}}",
+            "--activation-checkpointing",
+            "{{config.activation_checkpointing}}",
+            "--microbatch-per-rank",
+            "{{config.microbatch_per_rank}}",
+            "--cuda-graphs",
+            "{{config.cuda_graphs}}",
+            "--runtime-image",
+            "{{config.runtime_image}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.flex_pi.infer": ToolEntry(
+        name="workbench.flex_pi.infer",
+        description=(
+            "Run flex-pi's genuine action-only policy inference on a pinned "
+            "public RoboTwin observation. Model and observation bytes are "
+            "fetched at runtime and validated before artifact publication."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "flex-pi",
+            "infer",
+            "--input-path",
+            "{{config.input_uri}}",
+            "--output-path",
+            "{{config.output_uri}}",
+            "--checkpoint-id",
+            "{{config.checkpoint_id}}",
+            "--checkpoint-revision",
+            "{{config.checkpoint_revision}}",
+            "--num-inference-steps",
+            "{{config.num_inference_steps}}",
+            "--seed",
+            "{{config.seed}}",
+            "--torch-compile",
+            "--expected-gpu",
+            "{{config.expected_gpu}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "infra.fleet.deploy": ToolEntry(
         name="infra.fleet.deploy",
         description=(
@@ -883,6 +1158,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "authorization, and that the GPU has RT cores, before any GPU work."
         ),
         access_capabilities=("nurec",),
+        config_defaults={"dataset_revision": ""},
+        omit_flags_when_empty=("--revision",),
         argv_template=[
             "npa",
             "workbench",
@@ -892,6 +1169,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.nurec_image}}",
             "--dataset",
             "{{config.dataset_id}}",
+            "--revision",
+            "{{config.dataset_revision}}",
             "--scene",
             "{{config.scene}}",
             "--variant",
@@ -950,6 +1229,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "Download and unpack real NCore V4 shards and derive the rig->world "
             "pose edge NRE requires for object-centric captures."
         ),
+        config_defaults={"dataset_revision": ""},
+        omit_flags_when_empty=("--revision",),
         argv_template=[
             "npa",
             "workbench",
@@ -957,6 +1238,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "fetch",
             "--dataset",
             "{{config.dataset_id}}",
+            "--revision",
+            "{{config.dataset_revision}}",
             "--scene",
             "{{config.scene}}",
             "--variant",
@@ -1628,6 +1911,46 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.augmented_frames_uri}}",
         ],
     ),
+    "workbench.isaac_lab.prepare_rgbd_reference": ToolEntry(
+        name="workbench.isaac_lab.prepare_rgbd_reference",
+        description="Collect the public warehouse with MDL dependencies and prepare a 265-pose RGB-D rig input.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "prepare-reference",
+            "--output-path",
+            "{{config.capture_input_prefix}}",
+        ],
+    ),
+    "workbench.isaac_lab.capture_rgbd": ToolEntry(
+        name="workbench.isaac_lab.capture_rgbd",
+        description="Render a calibrated RGB-D rig with Isaac Sim and publish verified synchronized data.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "capture",
+            "--input-path",
+            "{{config.capture_input_uri}}",
+            "--output-path",
+            "{{config.capture_uri}}",
+        ],
+    ),
+    "workflow.rgbd.validate": ToolEntry(
+        name="workflow.rgbd.validate",
+        description="Decode RGB-D capture bytes and verify alignment, poses, depth masks, and point clouds.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "validate",
+            "--input-path",
+            "{{config.capture_uri}}/manifest.json",
+            "--output-path",
+            "{{config.validation_uri}}",
+        ],
+    ),
     "workbench.isaac_lab.capture_frames": ToolEntry(
         name="workbench.isaac_lab.capture_frames",
         description="Capture RGB frames from a headless Isaac Lab task and publish them.",
@@ -1726,6 +2049,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
+            "--runtime-context-env",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),
@@ -2164,6 +2488,7 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
         omit_flags_when_empty=(
             "--source-prune-path",
             "--libero-qualified-candidate-image",
+            "--runtime-context-env",
         ),
         config_defaults=dict(_BYOF_REPO_CONFIG_DEFAULTS),
     ),

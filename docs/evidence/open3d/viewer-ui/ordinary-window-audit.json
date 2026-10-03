@@ -1,0 +1,50 @@
+[
+  {
+    "frame": "ordinary-window-4x3.png",
+    "size": [
+      1024,
+      768
+    ],
+    "divider_x": 682,
+    "scene_pane": {
+      "pane_aspect": 0.972,
+      "width_span": 0.833,
+      "height_span": 0.401,
+      "touches_pane_edges": [],
+      "clipped": false
+    },
+    "active_tab_pane": {
+      "pane_aspect": 0.476,
+      "width_span": 0.801,
+      "height_span": 0.2,
+      "touches_pane_edges": [],
+      "clipped": false
+    }
+  },
+  {
+    "frame": "pair-perpane.png",
+    "size": [
+      3840,
+      2400
+    ],
+    "pane_detection": "failed",
+    "detected_body_rows": [
+      104,
+      684
+    ],
+    "why": "the 3D background was not found across enough rows to be the pane; no clipping verdict is reported for this frame"
+  },
+  {
+    "frame": "pair-oneaspect.png",
+    "size": [
+      3840,
+      2400
+    ],
+    "pane_detection": "failed",
+    "detected_body_rows": [
+      104,
+      568
+    ],
+    "why": "the 3D background was not found across enough rows to be the pane; no clipping verdict is reported for this frame"
+  }
+]
