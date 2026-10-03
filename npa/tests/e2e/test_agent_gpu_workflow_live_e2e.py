@@ -36,6 +36,7 @@ from npa.orchestration.skypilot.workflow import workflow_status
 from npa.workbench.insights.analytics import query_metrics
 from npa.workbench.insights.schemas import IngestRunRequest, QueryRequest
 from npa.workbench.insights.store import ingest_run
+from npa.workbench.vlm_eval import RESULT_FILENAME
 
 from .agent_live_helpers import load_agent_live_context
 from .npa_workflow_live_helpers import (
@@ -312,7 +313,7 @@ def test_agent_confirmation_to_real_gpu_artifact_and_grounded_answer(
 
     resolved = _resolved_config(load_spec(spec_path), run_id)
     run_prefix = str(resolved["prefix"]).strip("/")
-    artifact_key = f"{run_prefix}/scores/vlm_eval_stub.json"
+    artifact_key = f"{run_prefix}/scores/{RESULT_FILENAME}"
     manifest_key = f"{run_prefix}/npa-workflow/manifest.json"
     s3 = s3_client_for_project(e2e_project, allow_host_creds=True)
     artifact = json.loads(s3.get_object(Bucket=bucket, Key=artifact_key)["Body"].read())
