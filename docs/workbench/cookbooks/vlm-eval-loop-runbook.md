@@ -241,3 +241,69 @@ a workflow stage.
   `vlm-eval benchmark` on labeled rollouts before using the gate.
 - S3 writes fail: verify `AWS_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud`
   and that the storage keys can read `rollouts_uri` and write `scores_uri`.
+
+## Blinded preference audits
+
+For a matched baseline/candidate image comparison, use neutral labels and both
+orders:
+
+```bash
+npa workbench vlm-eval compare-preference \
+  --baseline-path "<matched-image-1>" \
+  --candidate-path "<matched-image-2>" \
+  --output-path "<private-evidence-prefix>" \
+  --task "Compare two matched scene views." \
+  --rubric "Prefer visible measured detail and penalize unsupported surfaces."
+```
+
+The typed SDK request is
+`npa.sdk.workbench.vlm_eval.VlmPreferenceComparisonRequest`; call
+`npa.sdk.workbench.vlm_eval.compare_preference`. The command is hosted API-only
+and uses model-specific request settings identically for both image orders. Kimi-K3
+uses low reasoning effort and JSON output without a temperature field;
+MiniMax retains its existing request settings. Neither path adds an output-token cap
+and needs no local GPU. It writes `vlm_preference_comparison.json` exactly once,
+retains both full provider outcomes privately, and escalates errors, unresolved
+or low-confidence output, and
+`order_disagreement_or_nondeterminism`. Even an order-consistent candidate
+preference is an audit observation, not proof of geometry accuracy, physical
+validity, or robot safety. The prompt's instruction to ignore image text is not
+a defense against in-image instructions. For S3 output, private access remains
+an operator/storage-policy requirement; the client uses an atomic create-only
+write but does not infer bucket policy or ACL state.
+
+Both image orders receive the same neutral typed JSON Schema. Preference
+image normalization copies only RGB pixels, discarding embedded profiles and
+metadata that could reveal a source role. Visible text remains part of the
+image and is not removed or trusted as an instruction. The strict
+response contract requires a nonempty `critical_defects` list for each image:
+when no critical defect is visible, use a truthful absence statement without
+inventing defects. Positive observations belong in `observable_support`.
+The exact `uncertainty` field must contain text describing what the views cannot
+establish. Schema validity alone does not establish that observations are grounded
+in the pixels; retain both outcomes for review.
+
+An omitted or empty rubric uses the shared task-completion rubric; supply
+`rubric` or `rubric_path` when comparing other visible qualities. The effective
+rubric is retained in the report. The SDK returns that report and retains a
+private journal; unlike the CLI, it leaves the canonical report write to the
+caller:
+
+```python
+from dataclasses import asdict
+from npa.sdk.workbench.vlm_eval import compare_preference
+from npa.workbench.vlm_eval import write_preference_report
+
+report = compare_preference(request)
+write_preference_report(asdict(report), result_uri=report.result_uri)
+```
+
+If the caller stops after inference, the journal's `report-ready.json` retains
+the complete report. Pass that JSON payload to `write_preference_report` with
+the original result URI to finish the write without another model call. The
+writer refuses an existing canonical report. Preserve the journal; rerunning
+the comparison against that output is deliberately refused.
+
+The scheduled hosted lane runs real visual controls; see the
+[live audit contract](../../testing/vlm-audit-live-contracts.md) for configuration,
+strict execution counts, and evidence privacy.

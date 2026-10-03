@@ -460,3 +460,25 @@ def test_the_audit_would_catch_the_original_bash_defect() -> None:
     assert argv_flag_drift("workbench.lancedb.create_failure_views", broken) == (
         "--table",
     )
+
+
+def test_vlm_compare_preference_tool_ref_passes_blind_pair_contract() -> None:
+    entry = TOOL_CATALOG["workbench.vlm_eval.compare_preference"]
+
+    assert entry.argv_template[:4] == [
+        "npa",
+        "workbench",
+        "vlm-eval",
+        "compare-preference",
+    ]
+    for flag in (
+        "--baseline-path",
+        "--candidate-path",
+        "--output-path",
+        "--model",
+        "--task",
+        "--rubric",
+        "--api-key-env",
+    ):
+        assert flag in entry.argv_template
+    assert "NEBIUS_TOKEN_FACTORY_KEY" in entry.argv_template

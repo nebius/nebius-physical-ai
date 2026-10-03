@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from dataclasses import replace
 import json
 import os
@@ -2775,3 +2776,52 @@ def test_render_validates_complete_selector_set_once_per_batch(mocker) -> None:
     assert len(list(yaml.safe_load_all(rendered))) == len(plan.steps) + 1
     assert len(plan.steps) >= 10
     validate.assert_called_once()
+
+
+def test_compare_preference_plan_forwards_only_token_factory_secret() -> None:
+    step = SimpleNamespace(
+        tool_ref="workbench.vlm_eval.compare_preference",
+        argv=["npa", "workbench", "vlm-eval", "compare-preference"],
+    )
+
+    assert secret_env_hints_for_plan([step]) == ("NEBIUS_TOKEN_FACTORY_KEY",)
+
+
+def _render_preference_task_with_global_backend(tmp_path: Path, backend: str) -> dict:
+    document = yaml.safe_load((NPA_SPECS / "vlm-eval-single.yaml").read_text())
+    document["config"].update(
+        vlm_backend=backend,
+        baseline_uri="s3://example-bucket/first.png",
+        candidate_uri="s3://example-bucket/second.png",
+    )
+    document["resources"] = {"cpu": {"cloud": "kubernetes", "cpus": 2}}
+    document["states"]["score-rollouts"].update(
+        toolRef="workbench.vlm_eval.compare_preference",
+        resources="cpu",
+        outputs=[{"uri": "{{config.scores_uri}}vlm_preference_comparison.json"}],
+    )
+    path = tmp_path / "preference.yaml"
+    path.write_text(yaml.safe_dump(document))
+    spec = load_spec(path)
+    text = render_skypilot_yaml(
+        spec,
+        build_plan(spec, run_id="preference-test"),
+        run_id="preference-test",
+        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+    )
+    return next(doc for doc in yaml.safe_load_all(text) if doc and "run" in doc)
+
+
+@pytest.mark.parametrize("backend", ["self-hosted", "self_hosted"])
+@pytest.mark.parametrize("field", ["setup", "run"])
+def test_compare_preference_excludes_local_vllm_lifecycle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, backend: str, field: str
+) -> None:
+    monkeypatch.setenv("NPA_SRC_S3_URI", "s3://example-bucket/npa-src/npa")
+    task = _render_preference_task_with_global_backend(tmp_path, backend)
+
+    assert "vllm" not in task[field].lower()
+    assert "snapshot_download" not in task[field]
+    assert "npa workbench vlm-eval compare-preference" in task["run"]
+    assert "NEBIUS_TOKEN_FACTORY_KEY is required" in task["setup"]
+    assert "accelerators" not in task["resources"]

@@ -1,0 +1,562 @@
+"""Run configured hosted VLM audits and retain private evidence without skipped proof."""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import asdict
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import stat
+import subprocess
+import sys
+
+import pytest
+from jsonschema import Draft202012Validator
+
+from npa.workbench.vlm_eval import (
+    PREFERENCE_COMPARISON_RESULT_FILENAME,
+    VlmPreferenceComparisonRequest,
+)
+from npa.clients.token_factory import (
+    DEFAULT_BASE_URL,
+    TokenFactoryClient,
+    TokenFactoryError,
+    resolve_config,
+)
+from npa.guardrails.confidentiality import compile_builtin_nebius_infra, scan_text
+from npa.literal_values import require_boolean, require_integer
+from npa.workbench.vlm_eval.preference_schema import preference_response_schema
+from npa.live_verification.vlm_audit_controls import (
+    PREFERENCE_MODELS,
+    audit_controls,
+    generated_preference_config,
+)
+
+SUITES = ("npa/tests/e2e/test_vlm_audits_live.py",)
+CONFIG_ENV = "NPA_VLM_AUDIT_LIVE_CONFIG"
+_VERDICT_VALIDATOR = Draft202012Validator(preference_response_schema())
+
+
+class _AuditConfigurationError(ValueError):
+    """Carry only a fixed public configuration failure reason."""
+
+
+def _write_private(path: Path, body: str) -> None:
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write(body)
+
+
+def _operator_config() -> dict:
+    configured_path = os.environ.get(CONFIG_ENV, "")
+    if not configured_path:
+        raise _AuditConfigurationError("missing_audit_configuration")
+    path = Path(configured_path)
+    metadata = path.stat()
+    if not path.is_file() or metadata.st_mode & 0o077 or metadata.st_uid != os.getuid():
+        raise _AuditConfigurationError("audit_configuration_must_be_owner_only")
+    return json.loads(path.read_text())
+
+
+def _prepare_config(
+    target: Path, *, generated: bool = False, audit_kind: str | None = None
+) -> Path:
+    if audit_kind not in (None, "preference") or (generated and audit_kind is None):
+        raise _AuditConfigurationError("unavailable_or_missing_audit_kind")
+    config = (
+        generated_preference_config(target / "controls")
+        if generated
+        else _operator_config()
+    )
+    if set(config["cases"]) != {"blinded-preference"}:
+        raise _AuditConfigurationError("unavailable_audit_case")
+    case = config["cases"]["blinded-preference"]
+    controls = audit_controls(case)
+    for index, control in enumerate(controls.values()):
+        output = target / "blinded-preference"
+        if "controls" in case:
+            output = output / str(index)
+        _prepare_control(control, output)
+    destination = target / "audit-config.json"
+    _write_private(destination, json.dumps(config))
+    return destination
+
+
+def _prepare_control(control: dict, output: Path) -> None:
+    request = dict(control["request"])
+    request["output_path"] = str(output)
+    options = VlmPreferenceComparisonRequest(**request)
+    if not os.environ.get(options.api_key_env, "").strip():
+        raise _AuditConfigurationError("missing_audit_credential")
+    expectations = control.get("expectations", {})
+    mapped = expectations.get("mapped_preferences")
+    try:
+        require_boolean(
+            expectations.get("escalation_required"),
+            field="expectations.escalation_required",
+        )
+    except ValueError:
+        raise _AuditConfigurationError(
+            "missing_frozen_preference_expectations"
+        ) from None
+    if (
+        not isinstance(mapped, list)
+        or len(mapped) != 2
+        or any(
+            value not in ("baseline", "candidate", "tie", "unresolved")
+            for value in mapped
+        )
+    ):
+        raise _AuditConfigurationError("missing_frozen_preference_expectations")
+    control["request"] = asdict(options)
+
+
+def _scheduled_preflight() -> None:
+    key = os.environ.get("NEBIUS_TOKEN_FACTORY_KEY", "").strip()
+    config = resolve_config(api_key=key, base_url=DEFAULT_BASE_URL, environ={})
+    available = TokenFactoryClient(config).list_models()
+    if not set(PREFERENCE_MODELS).issubset(available):
+        raise _AuditConfigurationError("required_preference_model_not_advertised")
+
+
+def _test_environment(config_path: Path) -> dict[str, str]:
+    environment = dict(os.environ)
+    for name in (
+        "PYTEST_ADDOPTS",
+        "PYTEST_PLUGINS",
+        "NPA_CI_SHARD_INDEX",
+        "NPA_CI_TOTAL_SHARDS",
+        "NPA_DRY_RUN",
+    ):
+        environment.pop(name, None)
+    environment.update(
+        NPA_INTEGRATION_E2E="1", NPA_VLM_AUDIT_LIVE_CONFIG=str(config_path)
+    )
+    return environment
+
+
+def _execute(root: Path, target: Path, config_path: Path) -> int:
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--pytest-child",
+        str(target),
+    ]
+    descriptor = os.open(
+        target / "pytest.log", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+    )
+    with os.fdopen(descriptor, "w") as log:
+        return subprocess.run(
+            command,
+            cwd=root,
+            env=_test_environment(config_path),
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            check=False,
+        ).returncode
+
+
+class _NoExpectedFailures:
+    def __init__(self) -> None:
+        self.observed = False
+        self.collected = 0
+        self.executed = 0
+        self.deselected = 0
+        self.results: dict[str, set[str]] = {}
+
+    def pytest_collection_finish(self, session: pytest.Session) -> None:
+        self.collected = len(session.items)
+
+    def pytest_deselected(self, items: list[pytest.Item]) -> None:
+        self.deselected += len(items)
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        self.observed |= hasattr(report, "wasxfail")
+        self.executed += report.when == "call"
+        results = self.results.setdefault(report.nodeid, set())
+        if report.failed:
+            results.add("failed")
+        if report.skipped:
+            results.add("skipped")
+        if report.when == "call" and report.passed:
+            results.add("passed")
+
+    def counts(self) -> dict[str, int]:
+        return {
+            "collected": self.collected,
+            "executed": self.executed,
+            "deselected": self.deselected,
+            "passed": sum(row == {"passed"} for row in self.results.values()),
+            "failed": sum("failed" in row for row in self.results.values()),
+            "skipped": sum("skipped" in row for row in self.results.values()),
+        }
+
+
+def _run_tests(target: Path) -> int:
+    failures = _NoExpectedFailures()
+    code = pytest.main(
+        [
+            *SUITES,
+            "-q",
+            "--tb=short",
+            "-o",
+            "addopts=",
+            "-o",
+            "xfail_strict=true",
+            "--junitxml",
+            str(target / "pytest.xml"),
+            "--basetemp",
+            str(target / "pytest"),
+        ],
+        plugins=[failures],
+    )
+    _write_private(
+        target / "execution.json",
+        json.dumps(
+            {
+                **failures.counts(),
+                "xfail": failures.observed,
+            }
+        ),
+    )
+    incomplete = (
+        failures.collected == 0
+        or failures.collected != failures.executed
+        or failures.deselected
+        or failures.observed
+    )
+    return 1 if incomplete else int(code)
+
+
+def _verify(
+    root: Path,
+    target: Path,
+    receipt: dict,
+    *,
+    generated: bool = False,
+    audit_kind: str | None = None,
+) -> None:
+    config_path = _prepare_config(target, generated=generated, audit_kind=audit_kind)
+    receipt["audit_kind"] = "preference"
+    configured_bytes = config_path.read_bytes()
+    receipt["configuration_sha256"] = hashlib.sha256(configured_bytes).hexdigest()
+    config = json.loads(configured_bytes)
+    controls = audit_controls(config["cases"]["blinded-preference"])
+    reports = tuple(
+        (
+            index,
+            Path(control["request"]["output_path"])
+            / PREFERENCE_COMPARISON_RESULT_FILENAME,
+            control["expectations"],
+        )
+        for index, control in enumerate(controls.values())
+    )
+    if generated:
+        _scheduled_preflight()
+        receipt["credential_and_catalog_preflight_passed"] = True
+    exit_code = _execute(root, target, config_path)
+    receipt["pytest_exit_code"] = exit_code
+    receipt["outcomes"] = _public_comparisons(target, reports)
+    execution = json.loads(_read_artifact(target, target / "execution.json"))
+    try:
+        counts = {
+            field: require_integer(
+                execution[field], field=f"execution.{field}", minimum=0
+            )
+            for field in receipt["counts"]
+        }
+        xfail = require_boolean(execution["xfail"], field="execution.xfail")
+    except (KeyError, ValueError):
+        raise _AuditConfigurationError("invalid_execution_counts") from None
+    receipt["counts"] = counts
+    if _read_artifact(target, config_path) != configured_bytes:
+        raise _AuditConfigurationError("audit_configuration_changed_during_execution")
+    if any("failure" in outcome for outcome in receipt["outcomes"]):
+        raise _AuditConfigurationError("audit_artifact_contract_failed")
+    expected = len(reports)
+    receipt["passed"] = (
+        exit_code == 0
+        and counts["collected"] == counts["executed"] == counts["passed"] == expected
+        and counts["collected"] == execution["collected"]
+        and counts["failed"] == counts["skipped"] == counts["deselected"] == 0
+        and not xfail
+    )
+
+
+def _read_artifact(target: Path, path: Path) -> bytes:
+    relative = path.relative_to(target)
+    directory = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for component in relative.parts[:-1]:
+            child = os.open(
+                component,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                dir_fd=directory,
+            )
+            os.close(directory)
+            directory = child
+        descriptor = os.open(
+            relative.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=directory,
+        )
+    finally:
+        os.close(directory)
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("Audit artifact must be a regular file")
+        return stream.read()
+
+
+def _public_comparisons(
+    target: Path, reports: tuple[tuple[int, Path, dict], ...]
+) -> list[dict]:
+    summaries = []
+    for index, path, expectations in reports:
+        summary = {"control_index": index}
+        try:
+            content = _read_artifact(target, path)
+            summary["artifact_sha256"] = hashlib.sha256(content).hexdigest()
+            report = json.loads(content)
+            summary.update(_public_comparison(report))
+            if not _artifact_accepted(report, summary, expectations):
+                summary["failure"] = "audit_artifact_did_not_meet_contract"
+        except (OSError, ValueError, KeyError, TypeError):
+            summary["failure"] = "invalid_or_missing_audit_artifact"
+        summaries.append(summary)
+    return summaries
+
+
+def _artifact_accepted(report: dict, summary: dict, expectations: dict) -> bool:
+    # Typed errors are valid retained outcomes, never successful live proof.
+    if (
+        summary["first_order"]["error_type"] is not None
+        or summary["reversed_order"]["error_type"] is not None
+        or summary["requests_counterbalanced"] is not True
+        or report["deployment_status"] != "audit_only"
+        or require_boolean(
+            report["operational_rate_estimated"],
+            field="report.operational_rate_estimated",
+        )
+    ):
+        return False
+    for field, expected in expectations.items():
+        actual = report
+        for component in field.split("."):
+            actual = actual[component]
+        if actual != expected:
+            return False
+    return True
+
+
+def _public_comparison(report: dict) -> dict:
+    statuses = {
+        "judge_error",
+        "unresolved",
+        "low_confidence",
+        "order_disagreement_or_nondeterminism",
+        "consistent_candidate_preference",
+        "consistent_baseline_preference",
+        "consistent_tie",
+    }
+    if not isinstance(report, dict) or report["status"] not in statuses:
+        raise ValueError("Invalid audit status")
+    return {
+        "status": report["status"],
+        "escalation_required": require_boolean(
+            report["escalation_required"], field="report.escalation_required"
+        ),
+        "requests_counterbalanced": require_boolean(
+            report["requests_counterbalanced"], field="report.requests_counterbalanced"
+        ),
+        "first_order": _public_order(report["first_order"]),
+        "reversed_order": _public_order(report["reversed_order"]),
+    }
+
+
+def _public_order(outcome: dict) -> dict:
+    error_types = {
+        "transport_error",
+        "provider_http_status_error",
+        "provider_response_decode_error",
+        "response_contract_error",
+    }
+    if not isinstance(outcome, dict):
+        raise ValueError("Invalid audit order")
+    provider = outcome.get("provider")
+    verdict = outcome.get("verdict")
+    error = outcome.get("error")
+    if (verdict is None) == (error is None):
+        raise ValueError("Audit order needs exactly one verdict or error")
+    if verdict is not None and not _VERDICT_VALIDATOR.is_valid(verdict):
+        raise ValueError("Invalid audit verdict")
+    if error is not None and (
+        not isinstance(error, dict) or error.get("error_type") not in error_types
+    ):
+        raise ValueError("Invalid audit error")
+    if provider is None:
+        if error is None:
+            raise ValueError("Successful audit order needs provider evidence")
+        provider = {}
+    if not isinstance(provider, dict):
+        raise ValueError("Invalid audit provider evidence")
+    returned_model = provider.get("returned_model")
+    raw_response = provider.get("raw_response")
+    if any(
+        value is not None and not isinstance(value, str)
+        for value in (returned_model, raw_response)
+    ):
+        raise ValueError("Invalid audit provider evidence")
+    if error is None and (not returned_model or not raw_response):
+        raise ValueError("Successful audit order needs provider evidence")
+    return {
+        "returned_model_sha256": hashlib.sha256(
+            (returned_model if returned_model is not None else "").encode()
+        ).hexdigest(),
+        "raw_response_sha256": hashlib.sha256(
+            (raw_response if raw_response is not None else "").encode()
+        ).hexdigest(),
+        "preference": verdict["preference"] if verdict is not None else None,
+        "confidence": verdict["confidence"] if verdict is not None else None,
+        "error_type": error["error_type"] if error is not None else None,
+    }
+
+
+def _prepare_evidence_directory(root: Path, path: Path) -> Path:
+    try:
+        target = path.resolve()
+    except RuntimeError as exc:
+        # Python 3.12 reports symlink loops as RuntimeError, not OSError.
+        # Normalize only that pathlib failure, not arbitrary runtime bugs.
+        if not str(exc).startswith("Symlink loop from "):
+            raise
+        raise _AuditConfigurationError("invalid_audit_evidence_directory") from None
+    except (OSError, ValueError):
+        raise _AuditConfigurationError("invalid_audit_evidence_directory") from None
+    if target.is_relative_to(root):
+        raise _AuditConfigurationError("audit_evidence_must_be_outside_checkout")
+    try:
+        target.mkdir(parents=True, mode=0o700)
+    except (OSError, ValueError):
+        raise _AuditConfigurationError("audit_evidence_directory_unavailable") from None
+    return target
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Execute the configured audit suite and emit a sanitized summary.
+
+    Args:
+        argv: Optional command-line arguments.
+    Returns:
+        Zero only when every collected audit executes successfully without skips.
+    Raises:
+        RuntimeError: An unexpected implementation error occurs, not a path failure.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--evidence-dir", type=Path, required=True)
+    parser.add_argument(
+        "--audit-kind",
+        help="Generated audit kind; this standalone runner supports preference.",
+    )
+    parser.add_argument(
+        "--generated-controls",
+        action="store_true",
+        help="Run frozen local visual controls with the protected Token Factory key.",
+    )
+    args = parser.parse_args(argv)
+    root = Path(__file__).resolve().parents[2]
+    receipt = _new_receipt(root)
+    try:
+        target = _prepare_evidence_directory(root, args.evidence_dir)
+    except _AuditConfigurationError as exc:
+        receipt["failure"] = str(exc)
+        print(
+            json.dumps({key: receipt[key] for key in ("passed", "counts", "failure")})
+        )
+        return 1
+    receipt["control_source"] = (
+        "generated-visual-contract-v1" if args.generated_controls else "operator"
+    )
+    _complete_receipt(
+        root,
+        target,
+        receipt,
+        generated=args.generated_controls,
+        audit_kind=args.audit_kind,
+    )
+    _write_receipt(target / "receipt.json", receipt)
+    print(json.dumps({key: receipt[key] for key in ("passed", "counts", "failure")}))
+    return 0 if receipt["passed"] else 1
+
+
+def _complete_receipt(
+    root: Path,
+    target: Path,
+    receipt: dict,
+    *,
+    generated: bool,
+    audit_kind: str | None = None,
+) -> None:
+    try:
+        _verify(root, target, receipt, generated=generated, audit_kind=audit_kind)
+    except _AuditConfigurationError as exc:
+        receipt["failure"] = str(exc)
+    except (ValueError, KeyError, TypeError, OSError):
+        receipt["failure"] = "audit_configuration_or_execution_failed"
+    except TokenFactoryError:
+        receipt["failure"] = "audit_provider_preflight_failed"
+    receipt["passed"] = receipt["passed"] and receipt["failure"] is None
+    receipt["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+
+def _write_receipt(path: Path, receipt: dict) -> None:
+    body = json.dumps(receipt, indent=2) + "\n"
+    if scan_text(body, compile_builtin_nebius_infra(), source="audit-receipt"):
+        raise ValueError("Refusing audit receipt that failed confidentiality checks")
+    _write_private(path, body)
+
+
+def _new_receipt(root: Path) -> dict:
+    sources = [
+        *SUITES,
+        "npa/scripts/vlm_audit_live_recheck.py",
+        "npa/tests/conftest.py",
+        "npa/tests/e2e/conftest.py",
+        ".github/workflows/token-factory-live.yml",
+    ]
+    sources.extend(
+        str(path.relative_to(root)) for path in (root / "npa/src").rglob("*.py")
+    )
+    return {
+        "schema": "npa.vlm_audit.live_recheck.v1",
+        "required_live": True,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "commit_sha": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True
+        ).strip(),
+        "source_file_sha256": {
+            name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+            for name in sorted(sources)
+        },
+        "suites": list(SUITES),
+        "passed": False,
+        "failure": None,
+        "pytest_exit_code": None,
+        "counts": {
+            "collected": 0,
+            "executed": 0,
+            "passed": 0,
+            "failed": 0,
+            "skipped": 0,
+            "deselected": 0,
+        },
+    }
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--pytest-child":
+        raise SystemExit(_run_tests(Path(sys.argv[2])))
+    raise SystemExit(main())

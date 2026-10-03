@@ -25,6 +25,21 @@ def test_required_images_are_covered_by_comprehensive_workflows() -> None:
     dc.assert_coverage()
 
 
+def test_api_only_preference_has_no_container_coverage_obligation() -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import (
+        TOOL_REF_IMAGE_TOOL,
+        tool_image_key,
+    )
+
+    assert tool_image_key("workbench.vlm_eval.compare_preference") is None
+    assert None not in dc.WORKFLOW_IMAGE_TOOLS
+    assert dc.WORKFLOW_IMAGE_TOOLS == {
+        image for image in TOOL_REF_IMAGE_TOOL.values() if image is not None
+    }
+    assert tool_image_key("workbench.vlm_eval.run") == "cosmos"
+    assert "cosmos" in dc.WORKFLOW_IMAGE_TOOLS - dc.EXEMPT_IMAGE_TOOLS
+
+
 def test_covered_and_exempt_do_not_overlap() -> None:
     report = dc.image_coverage()
     assert not (report.covered & dc.EXEMPT_IMAGE_TOOLS), (
