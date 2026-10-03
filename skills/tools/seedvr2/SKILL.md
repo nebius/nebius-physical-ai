@@ -63,6 +63,8 @@ or media. Artifacts move through S3 and are create-only per object. A partial
 publication remains failure evidence; retry it under a new run ID and prefix.
 Source and output frames must stay within the reviewed 1920x1080 area budget; output
 dimensions must also preserve source aspect ratio and be divisible by 16.
+Inputs must contain at least two decodable frames; the CPU probe and restore
+input check reject single-frame files before model resolution or GPU inference.
 
 Configure the optional service with `SEEDVR2_TOKEN` and
 `SEEDVR2_ALLOWED_S3_ROOTS`. Keep authentication, request serialization,
@@ -78,8 +80,11 @@ decoded media properties, and SHA-256 values. Verify S3 bytes after upload.
 Treat `verification.json` as artifact/runtime consistency evidence only; pair it
 with the platform workflow receipt that identifies the actual producer pod.
 
-For the fixed real Aloha-Agilex proof, compare candidate and bicubic against the
-original high-resolution reference. Report per-frame, per-stratum, and aggregate
+For the pinned RoboPro `roboreal_all_80tasks` robot-kitchen asset, compare
+candidate and bicubic against the original high-resolution reference. Its
+real-world capture origin is unverified; the immutable quality pack describes
+synthetic footage, not independently authenticated physical-robot capture.
+Report per-frame, per-stratum, and aggregate
 LPIPS and SSIM; optical-flow warp error; bottle-mask centroid error and IoU.
 Keep all failures and negative-case regressions. Run matched, blinded
 image-capable annotation and calibrated VLM review. A presentation score cannot

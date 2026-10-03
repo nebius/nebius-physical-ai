@@ -39,8 +39,10 @@ This record is engineering classification, not legal advice.
    image by about 14.6 GB and binds each run to the exact model bytes; it is not
    an access or license gate.
 4. Datasets and inputs: none are baked. Operators supply an S3 video under
-   their own rights. The lane's real proof uses a separately attributed
-   CC-BY-4.0 RoboPro capture, fetched outside the image.
+   their own rights. The lane's execution proof uses a separately attributed
+   CC-BY-4.0 RoboPro `roboreal_all_80tasks` robot-kitchen video, fetched outside
+   the image. Its real-world capture origin is unverified; the immutable
+   quality pack describes synthetic footage.
 5. Runtime caches: Hugging Face payloads use the shared operator-selected cache
    environment. The default cache is node-local ephemeral. Credentials and
    cache bytes never enter a later image layer or output manifest.

@@ -342,9 +342,39 @@ def test_seedvr2_blackwell_manifest_records_built_h100_arches() -> None:
 def test_seedvr2_golden_eval_runs_real_gpu_capability() -> None:
     golden = load_manifest()["seedvr2"].golden_eval
     assert golden.gpu == "required"
-    assert golden.serverless_gpu == "h100"
+    assert golden.serverless_gpu == "b200"
+    assert golden.command.endswith("--expected-gpu B200")
     assert golden.module == "npa.smoke.test_seedvr2_functional"
     assert golden.status == "needs-image-update"
+
+
+@pytest.mark.parametrize(
+    ("expected", "name", "capability", "accepted"),
+    [
+        ("B200", "NVIDIA B200", "10.0", True),
+        ("H100", "NVIDIA H100 80GB HBM3", "9.0", True),
+        ("B200", "NVIDIA H100 80GB HBM3", "9.0", False),
+        ("H100", "NVIDIA B200", "10.0", False),
+        ("B200", "NVIDIA B200", "9.0", False),
+    ],
+)
+def test_seedvr2_golden_gpu_identity_matches_explicit_target(
+    monkeypatch, expected, name, capability, accepted
+) -> None:
+    from types import SimpleNamespace
+    from npa.smoke import test_seedvr2_functional as golden
+
+    inventory = {"name": name, "capability": capability}
+    monkeypatch.setattr(
+        golden.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout=json.dumps(inventory)),
+    )
+    if accepted:
+        assert golden._require_gpu(expected) == inventory
+    else:
+        with pytest.raises(RuntimeError, match=f"requires one {expected}"):
+            golden._require_gpu(expected)
 
 
 @pytest.mark.parametrize("tags", [None, []])

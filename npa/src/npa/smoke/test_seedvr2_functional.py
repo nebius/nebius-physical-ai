@@ -1,7 +1,11 @@
-"""Run real SeedVR2 restoration on a pinned physical-robot video excerpt."""
+"""Run actual SeedVR2 restoration on a pinned RoboPro robot-kitchen excerpt.
+
+The real-world capture origin of this asset is not independently verified.
+"""
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 from pathlib import Path
@@ -12,6 +16,7 @@ from urllib.parse import urlparse
 import httpx
 
 from npa.workbench.seedvr2.artifacts import probe as probe_input
+from npa.workbench.seedvr2.hardware import GPU_CONTRACTS
 from npa.workbench.seedvr2.runtime import _probe_video, restore
 from npa.workbench.seedvr2.schemas import RestoreRequest, VideoArtifactRequest
 
@@ -113,10 +118,10 @@ def _degrade(source: Path, output: Path) -> None:
         raise RuntimeError("golden-eval degradation did not retain nine frames")
 
 
-def _require_h100() -> dict[str, str]:
+def _require_gpu(expected: str) -> dict[str, str]:
     code = (
         "import json,torch; "
-        "assert torch.cuda.is_available(); "
+        "assert torch.cuda.is_available() and torch.cuda.device_count()==1; "
         "p=torch.cuda.get_device_properties(0); "
         "print(json.dumps({'name':p.name,'capability':"
         "f'{p.major}.{p.minor}','torch':torch.__version__,"
@@ -129,13 +134,19 @@ def _require_h100() -> dict[str, str]:
         check=True,
     )
     inventory = json.loads(completed.stdout)
-    if "H100" not in inventory["name"] or inventory["capability"] != "9.0":
-        raise RuntimeError("SeedVR2 golden eval requires one H100 (sm_90)")
+    capability, _ = GPU_CONTRACTS[expected]
+    if expected not in inventory["name"] or inventory["capability"] != capability:
+        raise RuntimeError(f"SeedVR2 golden eval requires one {expected}")
     return inventory
 
 
 def main() -> None:
-    """Execute and validate the smallest retained real-video restoration."""
+    """Execute and validate restoration of the pinned RoboPro video excerpt."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--expected-gpu", choices=tuple(GPU_CONTRACTS), default="B200")
+    args = parser.parse_args()
+    inventory = _require_gpu(args.expected_gpu)
 
     root = Path("/workspace/seedvr2-golden-eval")
     shutil.rmtree(root, ignore_errors=True)
@@ -162,6 +173,7 @@ def main() -> None:
             output_height=480,
             output_width=640,
             seed=666,
+            expected_gpu=args.expected_gpu,
         ),
         storage_factory=lambda: storage,
     )
@@ -176,7 +188,7 @@ def main() -> None:
         "degraded_sha256": _sha256(degraded),
         "restored_sha256": _sha256(restored),
         "media": probe,
-        "gpu": _require_h100(),
+        "gpu": inventory,
         "model": result["model"],
     }
     (root / "seedvr2.json").write_text(

@@ -68,7 +68,9 @@ npa workbench seedvr2 restore \
 `--input-path` must identify one MP4 object and `--output-path` must be an S3
 prefix. `--probe-path` is mandatory for every non-dry restoration, and the run
 fails if the probe run ID, URI, byte hash, or decoded media no longer matches
-the input. Source and output frames may contain at most 1920x1080 pixels;
+the input. Inputs must contain at least two decodable frames; single-frame
+files fail the CPU probe and restore input check before model or GPU work.
+Source and output frames may contain at most 1920x1080 pixels;
 output dimensions must also be divisible by 16 and preserve the source aspect
 ratio. Non-dry execution requires exactly one full-memory, non-MIG device matching `--expected-gpu`
 (`H100` by default, or explicitly `B200`), a digest-bound

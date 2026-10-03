@@ -1404,9 +1404,9 @@ containers:
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_seedvr2_functional
-      command: python -m npa.smoke.test_seedvr2_functional
+      command: python -m npa.smoke.test_seedvr2_functional --expected-gpu B200
       artifact: /workspace/seedvr2-golden-eval/seedvr2.json
-      serverless_gpu: h100
+      serverless_gpu: b200
       gpu: required
       timeout_seconds: unlimited
       status: needs-image-update

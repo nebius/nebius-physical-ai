@@ -377,6 +377,62 @@ def test_dimensions_must_fit_the_reviewed_h100_pixel_budget() -> None:
         )
 
 
+def test_single_frame_is_rejected_before_gpu_or_model_work_and_publication(
+    tmp_path: Path,
+    source_video: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    single_frame = tmp_path / "single-frame.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-nostdin",
+            "-i",
+            str(source_video),
+            "-frames:v",
+            "1",
+            "-c:v",
+            "copy",
+            str(single_frame),
+        ],
+        check=True,
+    )
+    storage = FakeStorage({INPUT_URI: single_frame.read_bytes()})
+    monkeypatch.setenv("NPA_SEEDVR2_WORK_DIR", str(tmp_path / "runs"))
+    error = "at least two decodable frames"
+    with pytest.raises(runtime.SeedVR2Error, match=error):
+        artifacts.probe(
+            VideoArtifactRequest(
+                input_path=INPUT_URI, output_path=PROBE_URI, run_id="single-frame"
+            ),
+            storage_factory=lambda: storage,
+        )
+    with pytest.raises(runtime.SeedVR2Error, match=error):
+        runtime.restore(
+            RestoreRequest(
+                input_path=INPUT_URI,
+                output_path=OUTPUT_PREFIX,
+                probe_path=PROBE_URI,
+                run_id="single-frame",
+                output_height=16,
+                output_width=32,
+            ),
+            storage_factory=lambda: storage,
+            model_resolver=lambda: pytest.fail("model resolution must not run"),
+            runtime_identity_resolver=lambda expected: pytest.fail(
+                "GPU resolution must not run"
+            ),
+            inference_runner=lambda *args, **kwargs: pytest.fail(
+                "inference must not run"
+            ),
+        )
+    assert storage.objects == {INPUT_URI: single_frame.read_bytes()}
+    assert list((tmp_path / "runs").glob("*/failure.json"))
+    assert runtime._probe_video(source_video)["frames"] == 3
+
+
 def test_restore_rejects_source_aspect_ratio_change_before_model_resolution(
     tmp_path: Path,
     source_video: Path,
