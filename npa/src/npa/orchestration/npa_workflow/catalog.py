@@ -3313,6 +3313,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
     ),
     "workbench.lerobot.flux3_so101_finetune": ToolEntry(
         name="workbench.lerobot.flux3_so101_finetune",
+        omit_flags_when_empty=("--input-path",),
+        config_defaults={"resume_checkpoint": ""},
         access_capabilities=("flux3-so101",),
         description="Fine-tune the pinned BFL FLUX 3 Action SO-101 policy on calibrated PickOrange demonstrations.",
         argv_template=[
@@ -3320,6 +3322,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "workbench",
             "lerobot",
             "flux3-so101-finetune",
+            "--input-path",
+            "{{config.resume_checkpoint}}",
             "--output-path",
             "{{config.output_uri}}",
             "--run-id",

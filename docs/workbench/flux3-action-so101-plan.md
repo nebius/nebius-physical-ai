@@ -36,8 +36,12 @@ and splits CUDA dependencies into registry-friendly layers. The image passes
 dataset import and real AV1 decode. The exact private registry manifest, amd64
 pull, and target-cluster pull with a task-owned Secret passed. A four-microstep
 H100 smoke reached terminal success with finite loss, verified raw and EMA
-adapters, and a complete S3 artifact. The full 60,000-step run is live on one H100; terminal completion and
-artifacts remain to be verified in the workflow readiness record.
+adapters, and a complete S3 artifact. Full training was interrupted with exit 137 after saving step 50,000. Managed
+recovery was blocked by an expired registry credential, and the exact old job
+was reconciled and cancelled. Checkpoint recovery and terminal acceptance remain
+pending in the workflow readiness record. The retained evidence does not identify
+the reason for signal 9. The workflow now requests 128 GiB host memory and
+180 GiB ephemeral storage to provide headroom for native checkpoint recovery.
 
 ## Smallest implementation
 
@@ -83,3 +87,24 @@ Sources: [BFL SO-101 recipe](https://docs.bfl.ai/flux_3/flux3_action_so101),
 [LeRobot FLUX 3 integration](https://huggingface.co/docs/lerobot/main/en/flux3),
 [BFL SO-101 model card](https://huggingface.co/black-forest-labs/flux-3-action-so101),
 [PickOrange dataset card](https://huggingface.co/datasets/LightwheelAI/leisaac-pick-orange).
+
+## Checkpoint recovery
+
+After an interruption, reconcile and cancel the exact old managed job before
+starting a successor. Keep its artifacts. Use a fresh run ID and output prefix,
+and pass `--var resume_checkpoint=s3://<your-bucket>/<old-prefix>/artifacts/checkpoints/050000/`
+to the same workflow. The checkpoint must have `COMPLETE.json`, raw and EMA
+adapters, and the native optimizer, scheduler, RNG, and EMA training state.
+The tool checks hashes, finite tensors, calibration, dataset revision, and the
+original batch/accumulation settings, then uses LeRobot's native `--resume=true`.
+The requested `train_steps` is the final total, including restored microsteps.
+The final record reports restored steps and checkpoint hashes without the private
+source URI. Preserve logs from both attempts when making training-loss claims.
+
+The checked-in `npa/docker/workbench/lerobot-flux3/Dockerfile.overlay` updates
+only the NPA runner/CLI/catalog on an independently scanned immutable base image.
+It is for private operator validation while iterating; pass an exact reviewed
+base digest with `--build-arg BASE_IMAGE=<reviewed-image@sha256:digest>` and use
+`npa/` as the build context. The complete Dockerfile remains the reproducible
+from-source build. Both paths require payload scans and real GPU acceptance;
+public publication remains quarantined.

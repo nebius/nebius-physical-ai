@@ -11,6 +11,7 @@ config:
   flux3_image: registry.example.invalid/npa-lerobot-flux3:replace-with-reviewed-image
   image_pull_secret: registry-pull-secret
   train_steps: "60000"
+  resume_checkpoint: ""
   output_uri: "s3://{{config.bucket}}/{{config.prefix}}/artifacts/"
 
 resources:
@@ -18,8 +19,8 @@ resources:
     cloud: kubernetes
     accelerators: H100:1
     cpus: 14
-    memory: 64Gi
-    disk_size: 90
+    memory: 128Gi
+    disk_size: 180
     image: "{{config.flux3_image}}"
     kubernetes:
       pod_config:

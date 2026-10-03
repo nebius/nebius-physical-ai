@@ -117,6 +117,7 @@ def test_cli_invokes_shared_runner(monkeypatch):
         "output_path": "s3://example-bucket/runs/smoke/",
         "run_id": "smoke",
         "steps": 4,
+        "input_path": "",
     }
 
 
@@ -153,3 +154,132 @@ def test_remote_checkpoint_marker_is_uploaded_last(tmp_path):
     _upload_checkpoint(storage, tmp_path, record, "s3://example/run/")
     assert storage.order[-1].endswith("/COMPLETE.json")
     assert json.loads(storage.objects[storage.order[-1]]) == {}
+
+
+def test_resume_uses_native_config_without_policy_path():
+    args = training_command(
+        Path("/tmp/work"),
+        Path("/tmp/policy"),
+        Path("/tmp/base"),
+        60000,
+        Path("/tmp/resume"),
+    )
+    assert "--config_path=/tmp/resume/pretrained_model/train_config.json" in args
+    assert "--resume=true" in args
+    assert not any(arg.startswith("--policy.path=") for arg in args)
+    assert "--steps=60000" in args
+
+
+def test_resume_checks_hashes_topology_and_training_state(tmp_path, monkeypatch):
+    import hashlib
+    import json
+    from npa.workbench.lerobot.flux3_so101 import resume
+    from npa.workbench.lerobot.flux3_so101.runner import RECIPE
+    from npa.workbench.lerobot.flux3_so101.calibration import ID
+
+    checkpoint = tmp_path / "resume"
+    checkpoint.mkdir()
+    record = {"step": 50000, "calibration_id": ID}
+    for variant, key in (
+        ("pretrained_model", "adapter_sha256"),
+        ("pretrained_model_ema", "ema_adapter_sha256"),
+    ):
+        folder = checkpoint / variant
+        folder.mkdir()
+        payload = variant.encode()
+        (folder / "adapter_model.safetensors").write_bytes(payload)
+        record[key] = hashlib.sha256(payload).hexdigest()
+        (folder / "adapter_config.json").write_text(
+            json.dumps({"base_model_name_or_path": RECIPE["policy"]["repo_id"]})
+        )
+    config = {
+        "dataset": RECIPE["dataset"],
+        "policy": {"use_peft": True},
+        "ema": {"enable": True},
+    }
+    (checkpoint / "pretrained_model/train_config.json").write_text(json.dumps(config))
+    state = checkpoint / "training_state"
+    state.mkdir()
+    metadata = {
+        "step": 50000,
+        "dp_world_size": 1,
+        "batch_size": 2,
+        "grad_accum_steps": 4,
+        "mixed_precision": "bf16",
+    }
+    (state / "training_step.json").write_text(json.dumps(metadata))
+    for name in (
+        "optimizer_state.safetensors",
+        "optimizer_param_groups.json",
+        "rng_state.safetensors",
+        "scheduler_state.json",
+        "ema_state.pt",
+    ):
+        (state / name).write_bytes(b"state")
+    (checkpoint / "COMPLETE.json").write_text(json.dumps(record))
+
+    class Storage:
+        def download_directory(self, uri, destination):
+            assert uri == "s3://example/checkpoints/050000/"
+            assert destination == str(checkpoint)
+
+    monkeypatch.setattr(resume, "_verify_finite", lambda path: None)
+    with pytest.raises(ValueError, match="precede"):
+        resume.restore(
+            Storage(),
+            "s3://example/checkpoints/050000/",
+            checkpoint,
+            tmp_path / "policy",
+            RECIPE,
+            50000,
+        )
+    metadata["grad_accum_steps"] = 1
+    (state / "training_step.json").write_text(json.dumps(metadata))
+    with pytest.raises(ValueError, match="topology"):
+        resume.restore(
+            Storage(),
+            "s3://example/checkpoints/050000/",
+            checkpoint,
+            tmp_path / "policy",
+            RECIPE,
+            60000,
+        )
+    metadata["grad_accum_steps"] = 4
+    (state / "training_step.json").write_text(json.dumps(metadata))
+    (checkpoint / "pretrained_model/adapter_model.safetensors").write_bytes(b"corrupt")
+    with pytest.raises(ValueError, match="SHA-256"):
+        resume.restore(
+            Storage(),
+            "s3://example/checkpoints/050000/",
+            checkpoint,
+            tmp_path / "policy",
+            RECIPE,
+            60000,
+        )
+    (checkpoint / "pretrained_model/adapter_model.safetensors").write_bytes(
+        b"pretrained_model"
+    )
+    (state / "ema_state.pt").unlink()
+    with pytest.raises(FileNotFoundError, match="ema_state"):
+        resume.restore(
+            Storage(),
+            "s3://example/checkpoints/050000/",
+            checkpoint,
+            tmp_path / "policy",
+            RECIPE,
+            60000,
+        )
+    (state / "ema_state.pt").write_bytes(b"ema")
+    result = resume.restore(
+        Storage(),
+        "s3://example/checkpoints/050000/",
+        checkpoint,
+        tmp_path / "policy",
+        RECIPE,
+        60000,
+    )
+    assert result["microsteps"] == 50000
+    assert result["optimizer_updates"] == 12500
+    assert json.loads(
+        (checkpoint / "pretrained_model/adapter_config.json").read_text()
+    )["base_model_name_or_path"] == str(tmp_path / "policy")

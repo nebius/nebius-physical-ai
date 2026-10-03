@@ -134,3 +134,12 @@ publication only; closed-loop policy quality needs separate paired evaluation.
 The image is a candidate until its local build, payload scan, and Nebius GPU
 run pass. Supply an immutable reviewed image, an operator bucket, and an existing
 Kubernetes image pull Secret when submitting the private validation image.
+
+For interrupted SO-101 training, first reconcile and cancel the exact managed job.
+Pass `--input-path s3://.../checkpoints/050000/` to resume a complete numbered
+checkpoint into a **fresh** output prefix. In the YAML, set `resume_checkpoint`
+to that prefix. `--steps 60000` remains the final total, including restored steps.
+The tool checks raw/EMA hashes, finite adapter/optimizer tensors, calibration,
+dataset revision, and training topology before native LeRobot restores optimizer,
+scheduler, RNG, sampler offset, and EMA. Training diagnostics are uploaded at each
+completed checkpoint. A saved checkpoint does not establish terminal success.

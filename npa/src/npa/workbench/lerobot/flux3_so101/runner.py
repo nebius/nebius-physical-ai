@@ -19,18 +19,29 @@ from npa.clients.storage import StorageClient
 from .calibration import ID as CALIBRATION_ID, check_model_overlap
 from .prepare_dataset import prepare
 from .publish import publish
+from .resume import restore
 
 RECIPE = json.loads(Path(__file__).with_name("recipe.json").read_text())
 LOSS = re.compile(r"\bloss[:=]\s*([^\s,]+)")
 
 
-def training_command(work: Path, policy: Path, encoders: Path, steps: int) -> list[str]:
+def training_command(
+    work: Path, policy: Path, encoders: Path, steps: int, checkpoint: Path | None = None
+) -> list[str]:
+    source = [
+        "--config_path=/opt/lerobot/examples/flux3/lora.json",
+        f"--policy.path={policy}",
+    ]
+    if checkpoint is not None:
+        source = [
+            f"--config_path={checkpoint / 'pretrained_model/train_config.json'}",
+            "--resume=true",
+        ]
     return [
         sys.executable,
         "-m",
         "lerobot.scripts.lerobot_train",
-        "--config_path=/opt/lerobot/examples/flux3/lora.json",
-        f"--policy.path={policy}",
+        *source,
         "--policy.device=cuda",
         f"--policy.video_vae_id={encoders / 'video_vae.safetensors'}",
         f"--policy.text_encoder_id={encoders / 'text_encoder'}",
@@ -164,7 +175,14 @@ def _upload_checkpoint(
     )
 
 
-def run(*, output_path: str, run_id: str, steps: int) -> dict:
+def _upload_diagnostics(storage: StorageClient, result: Path, output_path: str) -> None:
+    for name in ("train.log", "command.json", "calibration-report.json"):
+        path = result / name
+        if path.is_file():
+            storage.upload_file(str(path), output_path + name)
+
+
+def run(*, output_path: str, run_id: str, steps: int, input_path: str = "") -> dict:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", run_id):
         raise ValueError("run_id must contain letters, digits, dash, or underscore")
     if steps < 4 or steps % 4:
@@ -196,8 +214,15 @@ def run(*, output_path: str, run_id: str, steps: int) -> dict:
         )
         if calibration["frames"] != RECIPE["dataset"]["frames"]:
             raise ValueError("calibrated dataset frame count mismatch")
-        command = training_command(work, policy, encoders, steps)
+        checkpoint = work / "resume" if input_path else None
+        resumed = (
+            restore(storage, input_path, checkpoint, policy, RECIPE, steps)
+            if checkpoint
+            else None
+        )
+        command = training_command(work, policy, encoders, steps, checkpoint)
         (result / "command.json").write_text(json.dumps(command, indent=2) + "\n")
+        _upload_diagnostics(storage, result, output_path)
         log_path = result / "train.log"
         uploaded: set[str] = set()
         failures: list[Exception] = []
@@ -210,6 +235,7 @@ def run(*, output_path: str, run_id: str, steps: int) -> dict:
                 if item["directory"] not in uploaded:
                     _upload_checkpoint(storage, result, item, output_path)
                     uploaded.add(item["directory"])
+                    _upload_diagnostics(storage, result, output_path)
             return records
 
         with log_path.open("w") as log:
@@ -239,6 +265,7 @@ def run(*, output_path: str, run_id: str, steps: int) -> dict:
             finally:
                 stop.set()
                 watcher.join()
+                _upload_diagnostics(storage, result, output_path)
         if failures:
             raise RuntimeError(
                 f"checkpoint publication failed: {failures[0]}"
@@ -266,6 +293,7 @@ def run(*, output_path: str, run_id: str, steps: int) -> dict:
             "recipe": RECIPE,
             "calibration_id": CALIBRATION_ID,
             "microsteps": steps,
+            "resume": resumed,
             "optimizer_updates": steps // 4,
             "dataset": dataset,
             "losses": losses,

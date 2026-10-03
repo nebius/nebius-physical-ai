@@ -4016,6 +4016,9 @@ def train_student_cmd(
 
 @app.command("flux3-so101-finetune")
 def flux3_so101_finetune(
+    input_path: str = typer.Option(
+        "", "--input-path", help="Optional complete numbered S3 checkpoint to resume."
+    ),
     output_path: str = typer.Option(
         ..., "--output-path", help="Run-scoped S3 output prefix."
     ),
@@ -4029,7 +4032,7 @@ def flux3_so101_finetune(
 
     try:
         output_path = validate_write_path(output_path, tool="lerobot", required=True)
-        record = run(output_path=output_path, run_id=run_id, steps=steps)
+        record = run(output_path=output_path, run_id=run_id, steps=steps, input_path=input_path)
     except (
         PathContractError,
         ValueError,
