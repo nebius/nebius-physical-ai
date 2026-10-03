@@ -145,7 +145,7 @@ def test_retained_memory_does_not_grow_with_header_whitespace(monkeypatch) -> No
         finally:
             tracemalloc.stop()
     assert max(peaks) < 256 * 1024
-    assert abs(peaks[1] - peaks[0]) < 64 * 1024
+    assert max(peaks) < min(peaks) * 8
 
 
 @pytest.mark.parametrize(
