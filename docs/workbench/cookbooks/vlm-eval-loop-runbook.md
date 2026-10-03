@@ -63,8 +63,9 @@ the retained parser version. Hosted `api` evaluation rejects surrounding prose,
 duplicate keys, non-finite numbers, invalid types, incomplete output and model
 substitution. The `self-hosted` backend retains its legacy compatibility parser:
 it can extract embedded JSON, accept duplicate keys and coerced types, clamp
-scores, and return a verdict with missing or non-`stop` completion metadata.
-Retained evidence does not make such a verdict eligible for promotion. The live
+scores, but both real backends reject missing or non-`stop` completion metadata
+before parsing. Retained evidence does not make compatible framing equivalent
+to strict hosted JSON. The live
 provenance lane below separately requires complete output and checks its framing.
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
