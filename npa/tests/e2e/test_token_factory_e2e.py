@@ -362,7 +362,24 @@ def _assert_visual_judge_evidence(saved: dict, frames: Path, model: str) -> None
     from npa.workbench.vlm_eval import select_rollout_frames
 
     evidence = saved["evidence"]
+    assert evidence["schema_version"] == "npa_vlm_eval_evidence_v2"
     assert evidence["request"]["endpoint_role"] == "hosted-api"
+    frame_evidence = evidence["request"]["frames"]
+    assert [frame["source_kind"] for frame in frame_evidence] == ["image-sequence"] * 3
+    assert [frame["source_index"] for frame in frame_evidence] == [0, 1, 2]
+    assert [frame["source_count"] for frame in frame_evidence] == [3, 3, 3]
+    assert [frame["source_timestamp_s"] for frame in frame_evidence] == [None] * 3
+    assert evidence["request"]["request_manifest"]["sampling"] == {
+        "strategy": "sequence",
+        "max_frames": 4,
+        "selected_count": 3,
+        "source_kind": "image-sequence",
+        "source_count": 3,
+        "selected_indices": [0, 1, 2],
+        "selected_timestamps_s": [None, None, None],
+        "coverage_complete": True,
+        "timestamps_complete": None,
+    }
     submitted = select_rollout_frames(frames, frame_selection="sequence", max_frames=4)
     assert [frame["sha256"] for frame in evidence["request"]["frames"]] == [
         hashlib.sha256(frame.data).hexdigest() for frame in submitted
