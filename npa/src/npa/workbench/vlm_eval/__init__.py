@@ -619,8 +619,8 @@ def evaluate_vlm(
         success_threshold=success_threshold,
         frame_selection=frame_selection,
         frame_count=frame_count,
-        structured=structured,
         rubric=effective_rubric,
+        structured=structured,
     )
 
 
@@ -1038,8 +1038,8 @@ def _result_from_structured(
     success_threshold: float,
     frame_selection: str,
     frame_count: int,
+    rubric: str,
     structured: VlmStructuredResponse,
-    rubric: str = DEFAULT_RUBRIC,
 ) -> VlmEvalResult:
     score = round(_clamp_score(structured.score), 4)
     passed = score >= success_threshold
@@ -1058,9 +1058,9 @@ def _result_from_structured(
         frame_selection=frame_selection,
         frame_count=frame_count,
         rationale=structured.rationale,
+        rubric=rubric,
         served_model=structured.served_model,
         evidence=structured.evidence,
-        rubric=rubric,
     )
 
 
