@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 import os
 from pathlib import Path
@@ -441,6 +440,297 @@ def test_select_rollout_frames_from_numpy_final_frame(tmp_path: Path) -> None:
     assert selected[0].label == "obs_workspace.npy:4"
     assert selected[0].media_type == "image/png"
     assert selected[0].data.startswith(b"\x89PNG")
+
+
+def test_select_rollout_frames_retains_numpy_sampling_coverage(tmp_path: Path) -> None:
+    rollout = tmp_path / "episode_0000"
+    rollout.mkdir()
+    frames = np.zeros((6, 8, 8, 3), dtype=np.uint8)
+    np.save(rollout / "obs_workspace.npy", frames)
+
+    selected = select_rollout_frames(rollout, frame_selection="keyframes", max_frames=3)
+
+    assert [frame.source_index for frame in selected] == [0, 2, 5]
+    assert [frame.source_count for frame in selected] == [6, 6, 6]
+    assert all(frame.source_kind == "numpy-episode" for frame in selected)
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="ffmpeg and ffprobe are required for video sampling provenance",
+)
+def test_select_rollout_frames_retains_video_indices_and_timestamps(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "rollout.mp4"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=16x16:rate=2:duration=3",
+            "-c:v",
+            "mpeg4",
+            "-pix_fmt",
+            "yuv420p",
+            str(video),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    selected = select_rollout_frames(video, frame_selection="sequence", max_frames=3)
+
+    assert [frame.source_index for frame in selected] == [0, 2, 5]
+    assert [frame.source_count for frame in selected] == [6, 6, 6]
+    assert [frame.source_timestamp_s for frame in selected] == pytest.approx(
+        [0.0, 1.0, 2.5]
+    )
+    assert all(frame.source_kind == "video" for frame in selected)
+
+
+def _write_multistream_provenance_video(path: Path) -> None:
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:size=16x16:rate=10:duration=1",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=blue:size=32x32:rate=20:duration=1",
+            "-map",
+            "0:v",
+            "-map",
+            "1:v",
+            "-c:v",
+            "mpeg4",
+            "-disposition:v:0",
+            "0",
+            "-disposition:v:1",
+            "default",
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="ffmpeg and ffprobe are required for video sampling provenance",
+)
+@pytest.mark.parametrize("strategy", ["sequence", "final"])
+@pytest.mark.parametrize("unknown_count", [False, True])
+def test_video_pixels_and_provenance_use_the_same_stream(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    strategy: str,
+    unknown_count: bool,
+) -> None:
+    from io import BytesIO
+
+    video = tmp_path / "two-streams.mp4"
+    _write_multistream_provenance_video(video)
+    if unknown_count:
+        monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: None)
+    selected = select_rollout_frames(video, frame_selection=strategy, max_frames=3)
+    assert selected
+    for frame in selected:
+        with Image.open(BytesIO(frame.data)) as image:
+            assert image.size == (16, 16)
+            red, green, blue = image.convert("RGB").getpixel((0, 0))
+            assert red > 200 and green < 30 and blue < 30
+        if unknown_count:
+            assert frame.source_count is None
+            assert frame.source_timestamp_s is None
+        else:
+            assert frame.source_count == 10
+            assert frame.source_timestamp_s == pytest.approx(frame.source_index / 10)
+
+
+@pytest.mark.skipif(
+    not shutil.which("ffmpeg") or not shutil.which("ffprobe"),
+    reason="ffmpeg and ffprobe are required for video sampling provenance",
+)
+@pytest.mark.parametrize("strategy", ["sequence", "final"])
+def test_inaccurate_video_count_cannot_claim_complete_sampling(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, strategy: str
+) -> None:
+    video = tmp_path / "two-streams.mp4"
+    _write_multistream_provenance_video(video)
+    # A stale frame count plans samples beyond the ten actual source frames.
+    # Exercise real extraction: ffmpeg exits successfully with fewer outputs.
+    monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: 110)
+
+    with pytest.raises(vlm_eval.VlmEvalError, match="sampling provenance"):
+        select_rollout_frames(video, frame_selection=strategy, max_frames=4)
+
+
+def test_video_timestamps_use_structured_ffprobe_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "frames": [
+                    {"best_effort_timestamp_time": "0.0"},
+                    {"best_effort_timestamp_time": "0.5"},
+                    {"best_effort_timestamp_time": "1.0"},
+                ]
+            }
+        ),
+        stderr="input filename pts_time:999 must not be parsed",
+    )
+    monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/ffprobe")
+    monkeypatch.setattr(vlm_eval.subprocess, "run", lambda *_args, **_kwargs: response)
+
+    timestamps = vlm_eval._video_frame_timestamps(tmp_path / "pts_time:999.mp4", [0, 2])
+
+    assert timestamps == [0.0, 1.0]
+
+
+def test_video_timestamps_fail_closed_on_incomplete_frame_metadata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    response = subprocess.CompletedProcess(
+        args=[],
+        returncode=0,
+        stdout='{"frames":[{"best_effort_timestamp_time":"0.0"}]}',
+        stderr="",
+    )
+    monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/ffprobe")
+    monkeypatch.setattr(vlm_eval.subprocess, "run", lambda *_args, **_kwargs: response)
+
+    assert vlm_eval._video_frame_timestamps(tmp_path / "video.mp4", [0, 2]) == [
+        None,
+        None,
+    ]
+
+
+def test_extracted_video_frames_sort_by_numeric_ordinal() -> None:
+    frames = [
+        Path("frame-1000.png"),
+        Path("frame-101.png"),
+        Path("frame-099.png"),
+    ]
+
+    assert sorted(frames, key=vlm_eval._video_output_frame_number) == [
+        Path("frame-099.png"),
+        Path("frame-101.png"),
+        Path("frame-1000.png"),
+    ]
+
+
+def test_unknown_video_count_does_not_infer_sampling_coverage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    video = tmp_path / "rollout.mp4"
+    video.write_bytes(b"placeholder")
+    monkeypatch.setattr(vlm_eval.shutil, "which", lambda _name: "/usr/bin/tool")
+    monkeypatch.setattr(vlm_eval, "_video_frame_count", lambda _path: None)
+
+    def fake_sample(
+        _video_path: Path, output_dir: Path, *, max_frames: int
+    ) -> list[float | None]:
+        assert max_frames == 2
+        Image.new("RGB", (8, 8), "green").save(output_dir / "frame-001.png")
+        return []
+
+    monkeypatch.setattr(vlm_eval, "_extract_video_sample", fake_sample)
+
+    selected = select_rollout_frames(video, frame_selection="sequence", max_frames=2)
+    sampling = vlm_eval._sampling_manifest(
+        selected, frame_selection="sequence", max_frames=2
+    )
+
+    assert selected[0].source_index is None
+    assert selected[0].source_count is None
+    assert selected[0].source_timestamp_s is None
+    assert sampling["selected_indices"] == [None]
+    assert sampling["coverage_complete"] is False
+    assert sampling["timestamps_complete"] is False
+
+    partial = [
+        vlm_eval.SelectedFrame(
+            "frame-0",
+            "image/png",
+            b"",
+            source_kind="image-sequence",
+            source_index=0,
+            source_count=2,
+        ),
+        vlm_eval.SelectedFrame(
+            "frame-1",
+            "image/png",
+            b"",
+            source_kind="image-sequence",
+            source_index=1,
+        ),
+    ]
+    partial_sampling = vlm_eval._sampling_manifest(
+        partial, frame_selection="sequence", max_frames=2
+    )
+    assert partial_sampling["source_count"] is None
+    assert partial_sampling["coverage_complete"] is False
+
+    empty_kind = [
+        vlm_eval.SelectedFrame(
+            "frame-0",
+            "image/png",
+            b"",
+            source_kind="",
+            source_index=0,
+            source_count=1,
+        )
+    ]
+    empty_kind_sampling = vlm_eval._sampling_manifest(
+        empty_kind, frame_selection="final", max_frames=1
+    )
+    assert empty_kind_sampling["source_kind"] is None
+    assert empty_kind_sampling["coverage_complete"] is False
+
+
+@pytest.mark.parametrize(
+    "kinds", [(None, None), ("unknown", "unknown"), ("video", "image-sequence")]
+)
+def test_sampling_needs_a_known_uniform_source_kind(kinds) -> None:
+    frames = [
+        vlm_eval.SelectedFrame(
+            "frame", "image/png", b"", source_kind=kind, source_index=i, source_count=2
+        )
+        for i, kind in enumerate(kinds)
+    ]
+
+    sampling = vlm_eval._sampling_manifest(
+        frames, frame_selection="sequence", max_frames=2
+    )
+
+    assert sampling["source_kind"] is None
+    assert sampling["coverage_complete"] is False
+
+
+def test_frame_evidence_preserves_legacy_constructor() -> None:
+    frame = vlm_eval.VlmFrameEvidence("label", "image/png", "sha256", 10, 8, 6)
+    assert frame.source_kind is None
+    assert frame.source_index is None
+    assert frame.source_count is None
+    assert frame.source_timestamp_s is None
 
 
 def _structured_eval_payload(result) -> dict[str, object]:

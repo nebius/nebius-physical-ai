@@ -228,6 +228,13 @@ def _component_record(stage: int) -> dict[str, Any]:
                     "workflow_job": f"job-{stage}",
                 }
             )
+            if stage in {3, 7, 9, 10}:
+                provenance.update(
+                    {
+                        "gpu_products": ["NVIDIA H100"],
+                        "gpu_rows": ["NVIDIA H100, GPU-test-0000"],
+                    }
+                )
         artifacts.update(provenance)
     payload = {
         "schema": "npa.sim2real.component_record.v1",
