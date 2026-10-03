@@ -1,0 +1,153 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: lingbot-world-controlled-continuation
+  description: >
+    Five connected LingBot World Base (Cam) stages: verify and prepare one context
+    image plus paired camera trajectories, execute prescribed and matched alternative
+    native FSDP/Ulysses continuations, decode and measure their control response, then
+    emit synchronized MP4/RRD provenance. This is camera conditioning, not robot action
+    dynamics, calibrated geometry, or training.
+
+config:
+  bucket: example-bucket
+  prefix: "oss-solutions/lingbot-world-controlled/{{run.id}}"
+  source_overlay: true
+  prompt: A smooth camera move reveals a large bright industrial hangar, preserving coherent geometry and lighting.
+  seed: 42
+  degree: 4
+  input_uri: s3://example-bucket/inputs/scene.jpg
+  input_sha256: <complete-input-sha256>
+
+  prepared_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/manifest.json"
+  prescribed_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/prescribed/manifest.json"
+  alternative_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/alternative/manifest.json"
+  control_response_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/evaluation/control-response.json"
+  visualization_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/visualization/manifest.json"
+  comparison_mp4_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/visualization/comparison.mp4"
+  comparison_rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/visualization/comparison.rrd"
+
+resources:
+  cpu:
+    cloud: kubernetes
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lingbot-world@sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277
+    cpus: 8
+    memory: 32Gi
+  lingbot:
+    cloud: kubernetes
+    image: ghcr.io/nebius/nebius-physical-ai/npa-lingbot-world@sha256:5e2a3998bf7d54987d0916f7c249b4963ef87f489e9e893ec8d94da196286277
+    accelerators: B200:4
+    cpus: 64
+    memory: 700Gi
+    disk_size: 256
+
+initial: prepare
+
+states:
+  prepare:
+    description: Verify the selected context image and create the paired 161-frame OpenCV camera-control arrays.
+    resources: cpu
+    run:
+      shell: >
+        test -n "$NPA_CONTROL_PYTHON" && "$NPA_CONTROL_PYTHON" -m
+        npa.workflows.lingbot_world prepare --input-uri "{{config.input_uri}}"
+        --input-sha256 "{{config.input_sha256}}" --manifest-uri
+        "{{config.prepared_manifest_uri}}" --run-id "{{run.id}}"
+    inputs:
+      - uri: "{{config.input_uri}}"
+        schema: image/jpeg
+    outputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+    next: generate-prescribed
+
+  generate-prescribed:
+    description: Run upstream generate.py across four FSDP/Ulysses ranks using the prescribed authored camera trajectory.
+    needs: [prepare]
+    resources: lingbot
+    run:
+      shell: >
+        model-runtime ensure && test -n "$NPA_CONTROL_PYTHON" && "$NPA_CONTROL_PYTHON"
+        -m npa.workflows.lingbot_world generate --prepared-manifest-uri
+        "{{state.prepare.uri}}" --manifest-uri "{{config.prescribed_manifest_uri}}"
+        --prompt "{{config.prompt}}" --seed {{config.seed}} --degree {{config.degree}}
+        --controls prescribed --run-id "{{run.id}}"
+    inputs:
+      - uri: "{{state.prepare.uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+    outputs:
+      - uri: "{{config.prescribed_manifest_uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+    next: generate-alternative
+
+  generate-alternative:
+    description: Consume the prescribed continuation, then run the same upstream topology with the matched alternative camera trajectory.
+    needs: [prepare, generate-prescribed]
+    resources: lingbot
+    run:
+      shell: >
+        model-runtime ensure && test -n "$NPA_CONTROL_PYTHON" && "$NPA_CONTROL_PYTHON"
+        -m npa.workflows.lingbot_world generate --prepared-manifest-uri
+        "{{state.prepare.uri}}" --previous-manifest-uri "{{state.generate-prescribed.uri}}"
+        --manifest-uri "{{config.alternative_manifest_uri}}" --prompt "{{config.prompt}}"
+        --seed {{config.seed}} --degree {{config.degree}} --controls alternative
+        --run-id "{{run.id}}"
+    inputs:
+      - uri: "{{state.prepare.uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+      - uri: "{{state.generate-prescribed.uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+    outputs:
+      - uri: "{{config.alternative_manifest_uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+    next: evaluate-control-response
+
+  evaluate-control-response:
+    description: Decode every frame of both continuations and measure trajectory divergence plus paired RGB response.
+    needs: [generate-prescribed, generate-alternative]
+    resources: cpu
+    run:
+      shell: >
+        test -n "$NPA_CONTROL_PYTHON" && "$NPA_CONTROL_PYTHON" -m
+        npa.workflows.lingbot_world evaluate --prescribed-manifest-uri
+        "{{state.generate-prescribed.uri}}" --alternative-manifest-uri
+        "{{state.generate-alternative.uri}}" --report-uri "{{config.control_response_uri}}"
+        --run-id "{{run.id}}"
+    inputs:
+      - uri: "{{state.generate-prescribed.uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+      - uri: "{{state.generate-alternative.uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+    outputs:
+      - uri: "{{config.control_response_uri}}"
+        schema: npa.workbench.lingbot_world.control_response.v1
+    next: visualize
+
+  visualize:
+    description: Produce an all-frame synchronized side-by-side MP4, a Rerun recording, and provenance after independent media inspection.
+    needs: [evaluate-control-response]
+    resources: cpu
+    run:
+      shell: >
+        test -n "$NPA_CONTROL_PYTHON" && "$NPA_CONTROL_PYTHON" -m
+        npa.workflows.lingbot_world visualize --prescribed-manifest-uri
+        "{{state.generate-prescribed.uri}}" --alternative-manifest-uri
+        "{{state.generate-alternative.uri}}" --report-uri
+        "{{state.evaluate-control-response.uri}}" --manifest-uri
+        "{{config.visualization_manifest_uri}}" --run-id "{{run.id}}"
+    inputs:
+      - uri: "{{state.generate-prescribed.uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+      - uri: "{{state.generate-alternative.uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+      - uri: "{{state.evaluate-control-response.uri}}"
+        schema: npa.workbench.lingbot_world.control_response.v1
+    outputs:
+      - uri: "{{config.visualization_manifest_uri}}"
+        schema: npa.workbench.lingbot_world.controlled_continuation.v1
+      - uri: "{{config.comparison_mp4_uri}}"
+        schema: video/mp4
+      - uri: "{{config.comparison_rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+    terminal: true

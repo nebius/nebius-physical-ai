@@ -137,6 +137,62 @@ and all-to-all calls. This pins the v1 camera model; the separate World Infinity
 successor, action control, training and real-time performance are outside its
 validated scope.
 
+### LingBot World Base (Cam) controlled-continuation contract
+
+[`lingbot-world-controlled-continuation.yaml`](../../workflows/testing/lingbot-world-controlled-continuation.yaml)
+is the durable base contract for SwitchWorld integrations. It is deliberately a
+camera/control-conditioned video contract, not a robot interface: one verified RGB
+context frame is paired with 161 OpenCV `poses.npy` records shaped `[161, 4, 4]`
+and `intrinsics.npy` records shaped `[161, 4]`. The five connected stages prepare
+the context and paired trajectories, make a prescribed native continuation, make a
+matched alternative-control continuation while consuming the first result, decode
+and measure the two videos, then publish an all-frame synchronized comparison MP4,
+RRD and provenance. The two generation stages call the pinned upstream
+`generate.py` path through the established four-rank B200 FSDP/Ulysses adapter;
+they are not a metadata wrapper or a training job.
+
+The upstream Base (Cam) README illustrates an eight-rank FSDP/Ulysses command.
+The pre-existing NPA LingBot adapter intentionally supports its independently
+qualified two- or four-rank path and this workflow selects four. It preserves a
+genuine native distributed execution topology, but it does **not** claim
+configuration, quality, throughput, or scaling equivalence to the upstream
+eight-rank example.
+
+The input, both controls, model result, decode facts, and final media artifacts are
+bound by SHA-256 in run-scoped S3 manifests. The evaluation reports decoded frame
+counts, media dimensions and motion statistics, pose-trajectory divergence, and
+paired RGB difference. A nonzero RGB difference only establishes an observed
+rendered response to different authored controls; it does not establish calibrated
+pose accuracy, robot-action dynamics, physical-world accuracy, robot success, or
+real-time performance. The RRD timeline is generated-video frame time, not a
+physical-camera clock.
+
+#### Attribution, terms, and redistribution boundary
+
+The upstream source is [Robbyant/lingbot-world at
+`a43bec7f8091c83e9b30b16b912f6fc906236fa6`](https://github.com/Robbyant/lingbot-world/tree/a43bec7f8091c83e9b30b16b912f6fc906236fa6),
+credited to the Robbyant Team and distributed under its
+[Apache-2.0 license](https://github.com/Robbyant/lingbot-world/blob/a43bec7f8091c83e9b30b16b912f6fc906236fa6/LICENSE.txt).
+The runtime checkpoint is [LingBot World Base (Cam) at
+`6fc824ffc338d64c97c77e2eb8c0f4cfc24d82bd`](https://huggingface.co/robbyant/lingbot-world-base-cam/tree/6fc824ffc338d64c97c77e2eb8c0f4cfc24d82bd),
+which labels the release Apache-2.0; its pinned text encoder is
+[`google/umt5-xxl` at `66cb9e7e85526fe440a945569e42c72fb6cbc0ad`](https://huggingface.co/google/umt5-xxl/tree/66cb9e7e85526fe440a945569e42c72fb6cbc0ad).
+Credit the upstream citation as *Robbyant Team, Advancing Open-source World
+Models, arXiv:2601.20540 (2026)*, and retain the upstream acknowledgement of the
+Wan2.2 team. NPA's modification is limited to durable artifact wiring, matched
+control evaluation, and visualization; inference remains upstream `generate.py`.
+
+The 2026-10-03 exact-revision review found the source license and Base (Cam)
+model-card license above, with a public model page and no separate documented
+click-through or output-use term on those exact pages. Therefore this integration
+adds no NPA EULA, acceptance flag, telemetry, or duplicate attestation. The public
+OCI image remains a redistributable source-only bootstrap: the LingBot checkpoint,
+uMT5 checkpoint, CUDA runtime, and operator cache are fetched at runtime and are
+not image layers. User-provided context media, their S3 retention, and any
+downstream use of generated output remain the operator's separate data-governance
+responsibility. Recheck these upstream pages before publishing a different source
+or checkpoint revision; access to a payload alone is not a redistribution grant.
+
 `byof-depth-anything-v2.yaml` uses the shared Diffusers/Transformers image.
 The native Transformers `AutoModelForDepthEstimation` runs the pinned Depth
 Anything V2 Small checkpoint on CUDA. `byof-sam2.1.yaml` uses the SAM image and
