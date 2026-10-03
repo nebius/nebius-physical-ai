@@ -322,14 +322,32 @@ def caption_images(
             for image_path in image_paths
         ]
 
+    return _caption_result(
+        input_path,
+        output_path,
+        effective_model,
+        effective_instruction,
+        request_instruction,
+        captions,
+    )
+
+
+def _caption_result(
+    input_path: str,
+    output_path: str,
+    model: str,
+    instruction: str,
+    request_instruction: str,
+    captions: list[CaptionItem],
+) -> CaptionResult:
     failed_count = sum(item.status == "image_unavailable" for item in captions)
     return CaptionResult(
         status="failed" if failed_count else "completed",
         input_path=input_path,
         output_path=output_path,
         result_uri=caption_result_uri_for(output_path),
-        model=effective_model,
-        instruction=effective_instruction,
+        model=model,
+        instruction=instruction,
         image_count=len(captions),
         generated_at=_now(),
         captions=captions,
