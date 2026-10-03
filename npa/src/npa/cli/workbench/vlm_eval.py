@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -26,8 +26,10 @@ from npa.workbench.vlm_eval import (
     SUPPORTED_BACKENDS,
     SUPPORTED_FRAME_SELECTIONS,
     VlmEvalError,
+    VlmJudgeComparisonRequest,
     benchmark_result_uri_for,
     benchmark_vlm_eval,
+    compare_vlm_judges,
     evaluate_rollout_set,
     evaluate_vlm,
     write_benchmark_report,
@@ -64,6 +66,76 @@ class FrameSelection(str, Enum):
     final = "final"
     keyframes = "keyframes"
     sequence = "sequence"
+
+
+@dataclass(frozen=True)
+class _ComparisonCliOptions:
+    input_path: str
+    output_path: str
+    primary_model: str
+    secondary_model: str
+    task: str
+    endpoint_url: str
+    api_key_env: str
+    frame_selection: str
+    max_frames: int
+    rubric: str
+    rubric_path: str
+    success_threshold: float
+    timeout_s: float
+
+
+_COMPARE_INPUT = typer.Option(
+    ..., "--input-path", help="S3 or local artifact path to review."
+)
+_COMPARE_OUTPUT_PATH = typer.Option(
+    ..., "--output-path", help="S3 or local path for the comparison JSON."
+)
+_COMPARE_PRIMARY = typer.Option(
+    ..., "--primary-model", help="First hosted vision model ID."
+)
+_COMPARE_SECONDARY = typer.Option(
+    ..., "--secondary-model", help="Distinct second hosted vision model ID."
+)
+_COMPARE_TASK = typer.Option("sim-to-real", "--task", help="Evaluation task label.")
+_COMPARE_ENDPOINT = typer.Option(
+    "",
+    "--endpoint-url",
+    help="Hosted OpenAI-compatible base URL or /chat/completions URL.",
+)
+_COMPARE_API_KEY = typer.Option(
+    DEFAULT_API_KEY_ENV,
+    "--api-key-env",
+    help="Environment variable containing the hosted API key.",
+)
+_COMPARE_FRAME_SELECTION = typer.Option(
+    FrameSelection.keyframes,
+    "--frame-selection",
+    help="Rollout frame selection: final, keyframes, or sequence.",
+)
+_COMPARE_MAX_FRAMES = typer.Option(
+    DEFAULT_MAX_FRAMES,
+    "--max-frames",
+    help="Maximum shared frames sent to each judge.",
+)
+_COMPARE_RUBRIC = typer.Option(DEFAULT_RUBRIC, "--rubric", help="Scoring rubric text.")
+_COMPARE_RUBRIC_PATH = typer.Option(
+    "", "--rubric-path", help="Path to a scoring rubric text file."
+)
+_COMPARE_THRESHOLD = typer.Option(
+    0.8,
+    "--success-threshold",
+    help="Score threshold used independently for both verdicts.",
+)
+_COMPARE_TIMEOUT = typer.Option(
+    DEFAULT_TIMEOUT_S,
+    "--timeout-s",
+    help="Timeout for each hosted judge request.",
+)
+_COMPARE_DRY_RUN = typer.Option(
+    False, "--dry-run", help="Run both judges without writing the artifact."
+)
+_COMPARE_OUTPUT = typer.Option(OutputFormat.text, "--output", help="Output format.")
 
 
 @app.command("run")
@@ -171,6 +243,99 @@ def run_cmd(
         _fail(str(exc))
         return
     _emit(payload, output)
+
+
+def _comparison_console_summary(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "schema_version": payload["schema_version"],
+        "status": payload["status"],
+        "passed": payload["passed"],
+        "escalation_required": payload["escalation_required"],
+        "deployment_status": payload["deployment_status"],
+        "operational_rate_estimated": payload["operational_rate_estimated"],
+        "requests_differ_only_by_model": payload["requests_differ_only_by_model"],
+        "frame_count": payload["frame_count"],
+        "primary": _judge_console_summary(payload["primary"]),
+        "secondary": _judge_console_summary(payload["secondary"]),
+        "artifact_written": "written_uri" in payload,
+        "dry_run": payload["dry_run"],
+    }
+
+
+def _judge_console_summary(outcome: dict[str, Any]) -> dict[str, Any]:
+    result = outcome.get("result")
+    if isinstance(result, dict):
+        return {
+            "model": outcome["model"],
+            "status": result["status"],
+            "score": result["score"],
+            "passed": result["passed"],
+        }
+    error = outcome.get("error") or {}
+    return {
+        "model": outcome["model"],
+        "status": "error",
+        "error_stage": error.get("stage"),
+        "error_type": error.get("error_type"),
+    }
+
+
+@app.command("compare-judges")
+def compare_judges_cmd(
+    input_path: str = _COMPARE_INPUT,
+    output_path: str = _COMPARE_OUTPUT_PATH,
+    primary_model: str = _COMPARE_PRIMARY,
+    secondary_model: str = _COMPARE_SECONDARY,
+    task: str = _COMPARE_TASK,
+    endpoint_url: str = _COMPARE_ENDPOINT,
+    api_key_env: str = _COMPARE_API_KEY,
+    frame_selection: FrameSelection = _COMPARE_FRAME_SELECTION,
+    max_frames: int = _COMPARE_MAX_FRAMES,
+    rubric: str = _COMPARE_RUBRIC,
+    rubric_path: str = _COMPARE_RUBRIC_PATH,
+    success_threshold: float = _COMPARE_THRESHOLD,
+    timeout_s: float = _COMPARE_TIMEOUT,
+    dry_run: bool = _COMPARE_DRY_RUN,
+    output: OutputFormat = _COMPARE_OUTPUT,
+) -> None:
+    """Compare two hosted judges without averaging their outcomes."""
+    options = _ComparisonCliOptions(
+        input_path,
+        output_path,
+        primary_model,
+        secondary_model,
+        task,
+        endpoint_url,
+        api_key_env,
+        _enum_value(frame_selection),
+        max_frames,
+        rubric,
+        rubric_path,
+        success_threshold,
+        timeout_s,
+    )
+    try:
+        payload = _execute_judge_comparison(options, dry_run=dry_run)
+    except VlmEvalError as exc:
+        _fail(str(exc))
+        return
+    _emit(_comparison_console_summary(payload), output)
+
+
+def _execute_judge_comparison(
+    options: _ComparisonCliOptions,
+    *,
+    dry_run: bool,
+) -> dict[str, Any]:
+    report = compare_vlm_judges(VlmJudgeComparisonRequest(**asdict(options)))
+    payload = asdict(report)
+    payload["dry_run"] = dry_run or _env_dry_run()
+    if not payload["dry_run"]:
+        payload["written_uri"] = write_result(
+            payload,
+            result_uri=report.result_uri,
+        )
+    return payload
 
 
 #: How much of a plan to carry into the judge prompt; the retired template used this budget.
