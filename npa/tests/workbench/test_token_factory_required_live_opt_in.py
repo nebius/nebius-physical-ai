@@ -10,6 +10,30 @@ import sys
 import pytest
 
 
+def _live_hook_fixture(repo: Path, tmp_path: Path) -> Path:
+    hook_path = repo / "npa/tests/e2e/conftest.py"
+    (tmp_path / "conftest.py").write_text(
+        "import importlib.util\n"
+        f"spec = importlib.util.spec_from_file_location('actual_live_hooks', {str(hook_path)!r})\n"
+        "hooks = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(hooks)\n"
+        "pytest_addoption = hooks.pytest_addoption\n"
+        "pytest_configure = hooks.pytest_configure\n"
+        "pytest_collection_modifyitems = hooks.pytest_collection_modifyitems\n",
+        encoding="utf-8",
+    )
+    node = tmp_path / "test_live_control.py"
+    node.write_text(
+        "import pytest\n"
+        "from npa.clients.token_factory import TokenFactoryClient\n"
+        "pytestmark = [pytest.mark.e2e, pytest.mark.token_factory_e2e]\n"
+        "def test_live_control():\n"
+        "    TokenFactoryClient().list_models()\n",
+        encoding="utf-8",
+    )
+    return node
+
+
 @pytest.mark.parametrize(
     ("required", "opt_in", "key_present", "exit_code", "spy_reached"),
     [
@@ -23,16 +47,7 @@ def test_required_live_cannot_succeed_as_a_skipped_run(
     tmp_path, required, opt_in, key_present, exit_code, spy_reached
 ):
     repo = Path(__file__).resolve().parents[3]
-    live_node = next(
-        "npa/tests/e2e/" + name
-        for name in (
-            "test_vlm_disclosures_live_e2e.py",
-            "test_token_factory_caption_thinking_live.py",
-            "test_vlm_benchmark_scope_live_e2e.py",
-            "test_token_factory_image_availability_live.py",
-        )
-        if (repo / "npa/tests/e2e" / name).is_file()
-    )
+    live_node = _live_hook_fixture(repo, tmp_path)
     plugin = tmp_path / "blocked_provider.py"
     reached = tmp_path / "provider-spy-reached"
     plugin.write_text(
@@ -61,7 +76,11 @@ def test_required_live_cannot_succeed_as_a_skipped_run(
         sys.executable,
         "-m",
         "pytest",
-        live_node,
+        str(live_node),
+        "--confcutdir",
+        str(tmp_path),
+        "-c",
+        str(repo / "npa/pyproject.toml"),
         "-p",
         "blocked_provider",
         "--basetemp",
@@ -71,9 +90,7 @@ def test_required_live_cannot_succeed_as_a_skipped_run(
     ]
     if required:
         command.append("--require-token-factory-live")
-    result = subprocess.run(
-        command, cwd=repo, env=env, capture_output=True, text=True
-    )
+    result = subprocess.run(command, cwd=repo, env=env, capture_output=True, text=True)
     (tmp_path / "child-output.log").write_text(result.stdout + result.stderr)
     assert result.returncode == exit_code, result.stdout + result.stderr
     assert reached.exists() is spy_reached
