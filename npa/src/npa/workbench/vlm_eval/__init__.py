@@ -1161,6 +1161,10 @@ def _strict_comparison_verdict(
     if response.data.get("model") != model:
         raise VlmEvalError("Paired judge returned a different model identity")
     choice, message = _response_choice_and_content(response.data)
+    if choice.get("finish_reason") != "stop":
+        raise VlmEvalError(
+            "Paired judge response did not complete with finish_reason=stop"
+        )
     if not isinstance(message, str):
         raise VlmEvalError("Hosted VLM response content must be a JSON string")
     if _deframe_json_text(message)[1]:

@@ -426,6 +426,33 @@ def test_compare_judges_retains_provider_error_and_other_outcome(
     assert report.secondary.error is None
 
 
+@pytest.mark.parametrize("judge_index", [0, 1])
+@pytest.mark.parametrize(
+    "finish", ["length", "content_filter", "tool_calls", None, True, " STOP "]
+)
+def test_paired_judge_rejects_each_incomplete_completion_and_retains_other(
+    monkeypatch, tmp_path, judge_index, finish
+):
+    completions = [
+        _completion(model="MiniMaxAI/MiniMax-M3"),
+        _completion(model="openbmb/MiniCPM-V-4_5"),
+    ]
+    completions[judge_index]["choices"][0]["finish_reason"] = finish
+    report, requests, _frame = _run_judge_comparison(monkeypatch, tmp_path, completions)
+    assert len(requests) == 2
+    assert report.status == "judge_error"
+    assert report.passed is False
+    assert report.escalation_required is True
+    assert report.score_delta_secondary_minus_primary is None
+    outcomes = (report.primary, report.secondary)
+    assert outcomes[judge_index].result is None
+    assert outcomes[judge_index].error.stage == "response_contract"
+    retained = json.loads(outcomes[judge_index].error.provider.raw_response)
+    assert retained["choices"][0]["finish_reason"] == finish
+    assert outcomes[1 - judge_index].result is not None
+    assert outcomes[1 - judge_index].error is None
+
+
 def test_compare_judges_rejects_markdown_fenced_json_without_repair(
     monkeypatch, tmp_path
 ) -> None:
