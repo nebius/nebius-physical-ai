@@ -21,6 +21,7 @@ __all__ = [
     "lancedb",
     "lerobot",
     "mjlab",
+    "gemini_robotics",
     "open3d",
     "molmoact",
     "openvla",
