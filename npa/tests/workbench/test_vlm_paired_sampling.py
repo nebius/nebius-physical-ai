@@ -48,7 +48,9 @@ def _recorded_pair(monkeypatch, tmp_path, strategy, cap):
 
 
 def _assert_transported_frames(request, evidence, indices):
-    content = request["messages"][1]["content"]
+    assert len(request["messages"]) == 1
+    assert request["messages"][0]["role"] == "user"
+    content = request["messages"][0]["content"]
     images = [
         part["image_url"]["url"] for part in content if part["type"] == "image_url"
     ]
