@@ -599,7 +599,7 @@ def test_keyring_preparation_precedes_expensive_native_preparation(
         cli._prepare(args)
 
 
-def test_ci_passes_prepared_keyring_to_prepare_build_and_publish():
+def test_quarantined_ci_retains_keyring_contract_without_publication():
     import yaml
 
     workflow = yaml.safe_load(
@@ -609,7 +609,8 @@ def test_ci_passes_prepared_keyring_to_prepare_build_and_publish():
     commands = [
         step["run"] for step in steps if "publish_ncore_oci.py" in step.get("run", "")
     ]
-    assert len(commands) == 3
+    assert len(commands) == 2
+    assert not any("publish_ncore_oci.py publish" in command for command in commands)
     assert all(
         '--keyring "' in command and "/keyring/debian-archive-keyring.gpg" in command
         for command in commands

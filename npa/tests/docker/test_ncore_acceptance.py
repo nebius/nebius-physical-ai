@@ -16,6 +16,58 @@ from ncore_publication import acceptance  # noqa: E402
 SHA = "a" * 40
 
 
+def _change_usd_contract(manifest, evidence, changed):
+    if changed == "manifest":
+        manifest["rtx_proof"]["usd_runtime_version"] = "25.11"
+    elif changed == "objective":
+        path = evidence / "qualification-audit.json"
+        objective = json.loads(path.read_text())
+        objective["usdz"]["usd_runtime_version"] = "25.11"
+        _write(path, objective)
+        manifest["rtx_proof"]["report_sha256"] = acceptance.file_sha(path)
+        manifest["rtx_proof"]["rrd"]["report_sha256"] = acceptance.file_sha(path)
+
+
+@pytest.mark.parametrize("changed", [None, "manifest", "objective"])
+def test_statement_binds_real_usd_runtime_across_receipt_and_manifest(
+    tmp_path, monkeypatch, changed
+):
+    from ncore_acceptance_fixture import synthetic_statement_inputs
+
+    manifest, evidence = synthetic_statement_inputs(tmp_path, acceptance.file_sha)
+    assert manifest["rtx_proof"]["usd_runtime_version"] == "26.8"
+    _change_usd_contract(manifest, evidence, changed)
+    proposed = _write(tmp_path / "proposed.json", manifest)
+    gates = tmp_path / "gates"
+    _write(gates / "prepublication.json", {"synthetic_fixture": True})
+    # This cross-layer CPU test exercises the real USD decoder, complete manifest
+    # validator, qualification receipt binder, inventory and statement builder.
+    # Scanner and hosted-VLM boundaries have separate tests; no live proof is claimed.
+    monkeypatch.setattr(acceptance, "_prepublication", lambda *_: None)
+    monkeypatch.setattr(acceptance, "_visual", lambda *_: {"synthetic_fixture": True})
+    with W.authorized_roots(tmp_path, ROOT):
+        if changed:
+            match = "usd_runtime_version" if changed == "manifest" else "native_receipt"
+            with pytest.raises((RuntimeError, ValueError), match=match):
+                acceptance.build_statement(
+                    analysis_root=tmp_path,
+                    gate_dir=gates,
+                    evidence_root=evidence,
+                    proposed_manifest_path=proposed,
+                    output_path=tmp_path / acceptance.STATEMENT_PATH,
+                )
+        else:
+            statement = acceptance.build_statement(
+                analysis_root=tmp_path,
+                gate_dir=gates,
+                evidence_root=evidence,
+                proposed_manifest_path=proposed,
+                output_path=tmp_path / acceptance.STATEMENT_PATH,
+            )
+            assert statement["status"] == "pending_independent_review"
+            assert statement["manifest"]["rtx_proof"]["usd_runtime_version"] == "26.8"
+
+
 def _write(path: Path, value) -> Path:
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.write_text(json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n")

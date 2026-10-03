@@ -6,6 +6,10 @@ import re
 from typing import Any
 
 
+USD_RUNTIME_VERSION = (0, 26, 8)
+USD_RUNTIME_LABEL = ".".join(map(str, USD_RUNTIME_VERSION[1:]))
+
+
 def _require(condition: bool, field: str) -> None:
     if not condition:
         raise RuntimeError(f"NCore acceptance requires valid {field}")

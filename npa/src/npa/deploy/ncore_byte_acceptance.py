@@ -33,16 +33,13 @@ def validate_disposition(scan, prepublication):
     """
     resolution = scan.get("resolution")
     _require(resolution in {"raw-clean", "public-attribution"}, "byte resolution")
-    _require(
-        scan.get("policy_kind") in {"regex-v1", "exact-literals-v1"}, "byte policy kind"
-    )
+    # Exact literals remain useful local diagnostics, not the release policy.
+    _exact(scan, "policy_kind", "regex-v1")
     clean = resolution == "raw-clean"
     _exact(scan, "raw_valid", clean)
     _exact(scan, "raw_findings", 0 if clean else 2)
     _exact(scan, "dispositioned_findings", 0 if clean else 2)
     _exact(scan, "unresolved_findings", 0)
-    if not clean:
-        _exact(scan, "policy_kind", "regex-v1")
     for field in _ATTRIBUTION_FIELDS:
         value = prepublication.get(field)
         if clean:

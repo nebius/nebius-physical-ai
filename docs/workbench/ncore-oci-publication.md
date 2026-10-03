@@ -7,13 +7,16 @@ RTX NRE training/rendering and readback acceptance. This command publishes only
 `ghcr.io/nebius/nebius-physical-ai/npa-ncore:dev-<full-source-sha>`. It does not
 fill acceptance records, change a release tag or add a public catalog row.
 
-The NCore branch of `publish-public-images.yml` uses
-`npa/scripts/publish_ncore_oci.py`. Other tools retain their existing workflow.
+The shared `publish-public-images.yml` workflow excludes NCore from automatic
+selection and rejects explicit NCore requests. No authorized private acceptance-
+bundle transport is configured for Actions. Use the private
+`npa/scripts/publish_ncore_oci.py` route for qualification and, only with separate
+publication authorization, an exact independently reviewed `--acceptance` bundle.
+There is no fallback to the in-tree manifest. Other tools retain their workflow.
 The CLI requires Linux amd64, the checkout's CPython 3.12 environment with the
 NPA development dependencies, Docker/buildx, `dpkg-deb`, `gpgv`, and
 `skopeo` plus `gh` for publication. Use an exclusively controlled builder and
-registry writer for this immutable tag. CI dispatches sharing a development SHA
-are serialized by the existing workflow concurrency group. Skopeo/OCI registry
+registry writer for this immutable tag. Skopeo/OCI registry
 tag writes do not offer a portable atomic create-if-absent operation: a separate
 writer that ignores this serialization can race a tag check. Do not run another
 publisher for the same tag concurrently.
@@ -105,10 +108,12 @@ success marker and mandatory publication gates are unchanged.
 
 An operator with an existing exact-literal policy can instead supply
 `--policy-mode exact-literals --literal-inventory <private-file>` to each
-command. The nonempty owner-only JSON inventory must be inside the analysis
-directory. It uses the existing verified native matcher with
+diagnostic preparation, build, and check command. The nonempty owner-only JSON
+inventory must be inside the analysis directory. It uses the verified native matcher with
 `exact-substring-v1`; all literal values remain private. CI keeps its existing
 regex policy. Neither mode changes the credential detector or byte coverage.
+Publication acceptance requires `regex-v1` for both raw-clean and adjudicated
+scans; an exact-literal clean report cannot authorize publication.
 
 Choose a fresh owner-only `NCORE_OCI_ROOT` directory outside the checkout and set
 `SOURCE_SHA` to the reviewed full SHA. The directory must already exist with
@@ -137,7 +142,7 @@ npa/.venv/bin/python npa/scripts/publish_ncore_oci.py check \
 existing base lock over verified HTTPS. It checks the package hash, reads the
 single regular keyring member without installing the package, and checks the
 keyring's independently locked hash. `--keyring` defaults to
-`$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg`; CI passes that path explicitly.
+`$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg`.
 Build, check and publish require the prepared owner-only file and verify its
 hash before their expensive work. No ambient Ubuntu keyring is used. The
 existing signed Debian metadata checks retain the same exact keyring hash.
@@ -234,7 +239,11 @@ attestations or graph used for publication and anonymous readback.
 
 Publication requires an owner-only Docker/containers auth file under
 `NCORE_OCI_ROOT`, supplied by the coordinator's existing registry login, and
-the existing `gh` authentication. Never put credentials on the command line.
+the existing `gh` authentication. It also requires the receipt-derived
+`$NCORE_OCI_ROOT/acceptance/accepted-manifest.json`, finalized by
+`npa/scripts/assemble_ncore_acceptance.py` after independent review of the exact
+source/image, complete-byte policy, runtime, quality, visual and cleanup evidence.
+Never put credentials on the command line.
 `publish` reruns all gates into a new directory; a previous pass JSON cannot
 authorize a later write:
 
@@ -246,7 +255,8 @@ npa/.venv/bin/python npa/scripts/publish_ncore_oci.py publish \
   --metadata "$NCORE_OCI_ROOT/metadata" \
   --keyring "$NCORE_OCI_ROOT/keyring/debian-archive-keyring.gpg" \
   --bootstrap-source "$NCORE_OCI_ROOT/bootstrap-source" \
-  --authfile "$NCORE_OCI_ROOT/registry-auth.json"
+  --authfile "$NCORE_OCI_ROOT/registry-auth.json" \
+  --acceptance "$NCORE_OCI_ROOT/acceptance/accepted-manifest.json"
 ```
 
 The command verifies the index selected by Skopeo before its first registry
@@ -300,19 +310,14 @@ downloaded archive. Equality binds source, payload, security, bootstrap and SBOM
 evidence to those same registry bytes. A failed readback never produces a
 `published.json` receipt.
 
-Dispatch the same supported path after the coordinator commits the integrated
-metadata, native-delivery, selected-SBOM and publication changes:
-
-```bash
-gh workflow run publish-public-images.yml --ref "$REVIEWED_REF" \
-  -f dry_run=true -f development_sha="$SOURCE_SHA" \
-  -f build_development_tools=ncore -f tool=ncore
-```
-
-Here `dry_run` controls release promotion, as in the existing workflow; requesting
-a development build publishes after its gates. NCore does not enter generic
-failed-build cleanup because the tag may have existed before this run. Retain
-failed evidence privately, establish exact creation/tag/digest ownership before
+Do not dispatch `build_development_tools=ncore` through the shared Actions
+publisher: explicit requests are refused before matrix execution, and automatic
+plans exclude it. Private qualification does not require or enable that route.
+Enabling Actions publication would require a separately reviewed, authorized
+private acceptance-bundle transport; `dry_run` is not such authorization.
+NCore does not enter generic failed-build cleanup because the tag may have
+existed before this run. Retain failed evidence privately, establish exact
+creation/tag/digest ownership before
 any cleanup, and use the existing explicit cleanup procedure. Public downloads
 cannot be revoked by deleting a tag.
 

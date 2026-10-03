@@ -2135,7 +2135,9 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
         count(proof, field, 1)
     for field in ("report_sha256", "usdz_sha256", "render_sha256"):
         match(proof, field, r"[0-9a-f]{64}")
-    equal(proof, "usd_runtime_version", "25.11")
+    from .ncore_acceptance import USD_RUNTIME_LABEL
+
+    equal(proof, "usd_runtime_version", USD_RUNTIME_LABEL)
     equal(proof, "rendered_usdz_sha256", proof["usdz_sha256"])
     for field in ("trained_scene_reopened", "finite_pixels", "novel_view"):
         equal(proof, field, True)

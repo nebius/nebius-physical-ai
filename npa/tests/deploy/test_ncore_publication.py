@@ -169,7 +169,7 @@ def accepted():
             "train_exit_code": 0,
             "usdz_sha256": HASH,
             "usdz_bytes": 1024,
-            "usd_runtime_version": "25.11",
+            "usd_runtime_version": "26.8",
             "trained_scene_reopened": True,
             "render_exit_code": 0,
             "rendered_usdz_sha256": HASH,
@@ -295,14 +295,13 @@ def test_acceptance_validates_complete_evidence(accepted):
     assert images.validate_ncore_accepted_image_manifest(accepted) == accepted
 
 
-@pytest.mark.parametrize("policy_kind", ["regex-v1", "exact-literals-v1"])
-def test_clean_byte_manifest_needs_no_attribution(accepted, policy_kind):
+def test_clean_byte_manifest_needs_no_attribution(accepted):
     accepted["byte_scan"].update(
         resolution="raw-clean",
         raw_valid=True,
         raw_findings=0,
         dispositioned_findings=0,
-        policy_kind=policy_kind,
+        policy_kind="regex-v1",
     )
     for field in (
         "attribution_receipt_sha256",
@@ -311,6 +310,20 @@ def test_clean_byte_manifest_needs_no_attribution(accepted, policy_kind):
     ):
         accepted["prepublication"].pop(field)
     assert images.validate_ncore_accepted_image_manifest(accepted) == accepted
+
+
+def test_clean_exact_literal_scan_is_not_publication_acceptance(accepted):
+    test_clean_byte_manifest_needs_no_attribution(accepted)
+    accepted["byte_scan"]["policy_kind"] = "exact-literals-v1"
+    with pytest.raises(RuntimeError, match="policy_kind"):
+        images.validate_ncore_accepted_image_manifest(accepted)
+
+
+@pytest.mark.parametrize("version", ["25.11", "26.7", "", None])
+def test_acceptance_rejects_other_usd_runtimes(accepted, version):
+    accepted["rtx_proof"]["usd_runtime_version"] = version
+    with pytest.raises(RuntimeError, match="usd_runtime_version"):
+        images.validate_ncore_accepted_image_manifest(accepted)
 
 
 @pytest.mark.parametrize(

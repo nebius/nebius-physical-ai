@@ -31,9 +31,15 @@ and bootstrap evidence is required before this replacement can be accepted.
 The [OCI publication procedure](../../../../docs/workbench/ncore-oci-publication.md)
 prepares the exact locked public Debian keyring before scanner preparation or
 building. Its `--keyring` option defaults to
-`<analysis-root>/keyring/debian-archive-keyring.gpg`; CI supplies the prepared
-path explicitly. Packaging guards execute the complete committed snapshot and
-require successful test execution, including setup and teardown.
+`<analysis-root>/keyring/debian-archive-keyring.gpg`. Packaging guards execute the
+complete committed snapshot and require successful test execution, including
+setup and teardown.
+
+The shared Actions image publisher excludes NCore on automatic runs and rejects
+explicit NCore requests: it has no authorized private acceptance-bundle transport.
+Private `prepare`, `build`, `check`, and qualification remain available. A separately
+authorized private CLI publication requires the exact reviewed `--acceptance`
+bundle; neither a passing local check nor an in-tree manifest is a substitute.
 
 Receipt-derived acceptance records `byte_scan.resolution` as `raw-clean` or
 `public-attribution`, preserving `raw_valid`, `raw_findings` and
@@ -44,8 +50,10 @@ hashes. Both paths freshly replay the complete authorized scanner and compare
 the retained report and ledger byte-for-byte. Original reports are never edited.
 `policy_kind` distinguishes `regex-v1` from `exact-literals-v1`; the latter proves
 only the operator-provided exact inventory, not equivalent coverage to a private
-CI denylist. This distinction does not authorize image publication or waive any
-runtime, quality, independent-review or release gate.
+CI denylist. Publication acceptance requires `regex-v1` in both disposition
+branches; exact-literal scans remain diagnostic evidence only. This distinction
+does not authorize image publication or waive any runtime, quality,
+independent-review or release gate.
 
 ## Independent COLMAP camera poses
 

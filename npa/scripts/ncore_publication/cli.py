@@ -490,17 +490,13 @@ def _require_accepted_publication(
     evidence_manifest_sha256,
     acceptance_path=None,
 ):
-    """Refuse every registry write until exact workload acceptance is committed."""
-    from npa.deploy import images
+    """Refuse registry writes without a verified private acceptance bundle."""
     from . import acceptance
 
-    accepted = (
-        acceptance.verify_final_acceptance(
-            Path(acceptance_path).absolute().parents[1],
-            Path(acceptance_path).absolute(),
-        )
-        if acceptance_path is not None
-        else images.ncore_accepted_image_manifest()
+    W.require(acceptance_path is not None, "publication_acceptance_required")
+    accepted = acceptance.verify_final_acceptance(
+        Path(acceptance_path).absolute().parents[1],
+        Path(acceptance_path).absolute(),
     )
     expected = {
         "development_sha": source_sha,

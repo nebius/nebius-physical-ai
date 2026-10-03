@@ -802,10 +802,19 @@ def test_production_qualification_audit_binds_complete_readback(
 
 
 def test_qualification_usd_runtime_matches_development_pin():
+    import tomllib
+
     from npa.workbench.nurec.qualification_audit import USD_RUNTIME_VERSION
 
     version = ".".join(map(str, USD_RUNTIME_VERSION[1:]))
-    assert f'"usd-core=={version}"' in (ROOT / "npa/pyproject.toml").read_text()
+    project = tomllib.loads((ROOT / "npa/pyproject.toml").read_text())["project"]
+    for extra in ("nurec-audit", "dev"):
+        usd_pins = [
+            pin
+            for pin in project["optional-dependencies"][extra]
+            if pin.startswith("usd-core")
+        ]
+        assert usd_pins == [f"usd-core=={version}"]
 
 
 def test_qualification_rejects_an_unpinned_usd_runtime(tmp_path, monkeypatch):

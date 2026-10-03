@@ -473,14 +473,14 @@ def test_publication_cannot_transfer_quarantined_bytes_without_acceptance(
     monkeypatch.setattr(
         images,
         "ncore_accepted_image_manifest",
-        lambda: (_ for _ in ()).throw(RuntimeError("NCore remains unaccepted")),
+        lambda: pytest.fail("in-tree acceptance fallback must not be consulted"),
     )
     monkeypatch.setattr(
         registry,
         "transfer",
         lambda *_: pytest.fail("registry write reached without acceptance"),
     )
-    with pytest.raises(RuntimeError, match="unaccepted"):
+    with pytest.raises(ValueError, match="publication_acceptance_required"):
         cli._check_or_publish(args)
     assert (
         json.loads((args.output_dir / "prepublication.json").read_text())[
@@ -490,7 +490,9 @@ def test_publication_cannot_transfer_quarantined_bytes_without_acceptance(
     )
 
 
-def test_publication_acceptance_must_match_exact_graph_and_archive(monkeypatch):
+def test_publication_acceptance_must_match_exact_graph_and_archive(
+    monkeypatch, tmp_path
+):
     graph = {
         "image_manifest_digest": "sha256:" + "c" * 64,
         "image_config_digest": "sha256:" + "d" * 64,
@@ -507,27 +509,24 @@ def test_publication_acceptance_must_match_exact_graph_and_archive(monkeypatch):
             "evidence_manifest_sha256": evidence_manifest_sha256,
         },
     }
+    path = tmp_path / "acceptance" / "accepted.json"
     monkeypatch.setattr(
-        images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
+        acceptance, "verify_final_acceptance", lambda *_: copy.deepcopy(accepted)
     )
     assert (
-        cli._require_accepted_publication(SHA, build, graph, evidence_manifest_sha256)[
-            "oci_digest"
-        ]
+        cli._require_accepted_publication(
+            SHA, build, graph, evidence_manifest_sha256, path
+        )["oci_digest"]
         == build["image_digest"]
     )
     accepted["development_sha"] = "f" * 40
-    monkeypatch.setattr(
-        images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
-    )
     with pytest.raises(ValueError, match="does_not_match"):
-        cli._require_accepted_publication(SHA, build, graph, evidence_manifest_sha256)
+        cli._require_accepted_publication(
+            SHA, build, graph, evidence_manifest_sha256, path
+        )
     accepted["development_sha"] = SHA
-    monkeypatch.setattr(
-        images, "ncore_accepted_image_manifest", lambda: copy.deepcopy(accepted)
-    )
     with pytest.raises(ValueError, match="does_not_match"):
-        cli._require_accepted_publication(SHA, build, graph, "0" * 64)
+        cli._require_accepted_publication(SHA, build, graph, "0" * 64, path)
 
 
 def test_publication_can_consume_external_acceptance_at_exact_candidate(
@@ -908,6 +907,38 @@ def test_private_inputs_reject_context_aliases_and_metadata_mixing(
         cli._inputs(args)
 
 
+@pytest.mark.parametrize("action", ["check", "publish"])
+def test_cli_acceptance_is_mandatory_and_publish_only(private, monkeypatch, action):
+    monkeypatch.setattr(cli, "committed_source", lambda _: "c" * 64)
+    monkeypatch.setenv("CUSTOMER_DENYLIST", "synthetic-customer-marker")
+    for name in ("annex", "metadata", "bootstrap"):
+        (private / name).mkdir(mode=0o700)
+    auth = private / "auth.json"
+    auth.write_text("{}")
+    auth.chmod(0o600)
+    args = SimpleNamespace(
+        analysis_root=private,
+        source_sha=SHA,
+        action=action,
+        output_dir=private / "gates",
+        annex=private / "annex",
+        native_source=private / "annex",
+        metadata=private / "metadata",
+        bootstrap_source=private / "bootstrap",
+        policy_mode="ci-regex",
+        literal_inventory=None,
+        authfile=auth,
+        acceptance=None if action == "publish" else auth,
+    )
+    expected = (
+        "external_acceptance_required"
+        if action == "publish"
+        else "acceptance_is_publish_only"
+    )
+    with pytest.raises(ValueError, match=expected):
+        cli._inputs(args)
+
+
 def test_shipped_source_is_compared_to_commit_bytes(private, monkeypatch):
     checkout = private / "source"
     packaging = checkout / "npa/docker/workbench/ncore"
@@ -994,8 +1025,10 @@ def test_workflow_scopes_ncore_away_from_generic_load_push_and_attestations():
         "Attest exact pushed digest SBOM",
     ):
         assert by_name[name]["if"] == "matrix.tool != 'ncore'"
-    ncore = by_name["Gate accepted exact NCore OCI graph and publish"]
+    ncore = by_name["Refuse unsupported NCore Actions publication"]
+    assert steps[0] == ncore
     assert ncore["if"] == "matrix.tool == 'ncore'"
-    assert "publish_ncore_oci.py publish" in ncore["run"]
-    assert "--metadata" in ncore["run"] and "--authfile" in ncore["run"]
+    assert "exit 1" in ncore["run"]
+    assert "publish_ncore_oci.py publish" not in str(steps)
+    assert "env" not in ncore
     assert "upload-artifact" not in str(ncore)
