@@ -54,6 +54,26 @@ uses `sim2real-eval/Dockerfile`, and `reference-policy` is a derived EnvGen
 image. Build sources, eligibility, publication, and functional validation are
 separate claims.
 
+The [FA4 RTX PRO 6000 recipe update](flash-attention.md) changes the CUDA 13
+foundation source. `npa-base` is outside the public tool release plan;
+the locally built candidate does not replace any release listed here. On
+2026-09-28, anonymous verification confirmed all 38 current accepted release
+digests still matched. Historical aliases were not re-audited in that check.
+
+To adopt that stack in your own application, start with the
+[RTX PRO 6000 FA4 guide](guides/rtx6000-fa4.md). New base builds use the shared
+`cuda13-blackwell` family and receive a `cuda13-b300` compatibility alias for the
+same image. This naming change introduces no new published catalog row and
+does not change the accepted release tags or digests below.
+
+The opt-in [`cuda13-blackwell-fa2` comparison variant](guides/fa2-fa4-comparison.md)
+builds standalone FA2 for RTX SM120 from the same foundation recipe. It remains
+outside the public release inventory. The [RTX comparison](fa2-fa4-validation.md)
+records the exact local FA2 and FA4 image identities, numerical checks and 108
+complete SDXL generations. The opt-in FA4 inference profile improves selected
+attention calls; complete-model performance is effectively tied with FA2.
+These candidates do not change the accepted images listed below.
+
 The current source inventory has **60 packaging entries** (51 redistribution-eligible
 and nine restricted) and **51 mapped tools**: 26 public-release members, two
 restricted tools, and 23 quarantined tools. These counts come from
@@ -856,9 +876,11 @@ run record, and the
 [container packaging contract](container-packaging.md) for security and
 redistribution requirements.
 
-The cuRobo V2 candidate is separately publication-quarantined: its permissively
-licensed source, robot assets and benchmark data have a checked-in recipe, but
-no public release is claimed until exact-image and real-GPU gates are accepted.
+The cuRobo V2 candidate, `0.8.0-cuda13-blackwell-unbuilt`, is separately
+publication-quarantined: its permissively licensed source, robot assets and
+benchmark data have a checked-in recipe, but no public release is claimed until
+exact-image and real-GPU gates are accepted. Renaming this unpublished placeholder
+does not change an accepted image digest or establish GPU compatibility.
 
 ## Rerun SDK migration in build sources
 

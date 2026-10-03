@@ -9,16 +9,12 @@ ARG TORCH_VERSION=2.13.0
 ARG TORCHVISION_VERSION=0.28.0
 # TorchAudio 2.11 is forward-compatible with later Torch releases.
 ARG TORCHAUDIO_VERSION=2.11.0
-ARG FLASH_ATTN_COMMIT=0409f9adcbdebff6cc19eb95f370d40e896980bc
-# flash-attn-4 requires nvidia-cutlass-dsl>=4.4.2 and quack-kernels>=0.4.0, both
-# unbounded, so pip resolves to whatever is newest. CUTLASS DSL 4.6.x dropped
-# cutlass.cute.core.ThrMma, which this flash-attn commit still references, so an
-# unpinned build installs successfully and then fails on `import flash_attn`
-# with "module 'cutlass.cute.core' has no attribute 'ThrMma'". 4.5.3 is the
-# newest DSL that still exposes it; quack 0.5.0 is the newest quack that accepts
-# a 4.5.x DSL (0.5.3+ pin an exact 4.6 release). Bump all three together.
-ARG CUTLASS_DSL_VERSION=4.5.3
-ARG QUACK_KERNELS_VERSION=0.5.0
+# Includes SM120 dispatch/backward fixes (#2671) and varlen tile guards (#2763).
+# Quack 0.6.4 requires exactly CUTLASS DSL 4.6.2; update this trio together and
+# execute the forward/gradient smoke on each claimed GPU architecture.
+ARG FLASH_ATTN_COMMIT=eed1971f5132630dc296fe37601e834d4b57a248
+ARG CUTLASS_DSL_VERSION=4.6.2
+ARG QUACK_KERNELS_VERSION=0.6.4
 # SASS is per-arch with no cross-major compatibility, so every architecture a
 # source-compiled extension must run on has to be listed here explicitly:
 #   8.0  = A100 (sm_80)          9.0  = H100/H200 (sm_90)
@@ -32,15 +28,15 @@ ARG TORCH_CUDA_ARCH_LIST="8.0 9.0 10.0 10.3 12.0"
 # report for the build to succeed. Empty disables the assertion.
 ARG REQUIRE_TORCH_ARCHS="sm_80 sm_90 sm_100 sm_120"
 
-LABEL npa.image="cuda13-b300" \
+LABEL npa.image="cuda13-blackwell" \
       npa.cuda.base="${CUDA_BASE_TAG}" \
       npa.torch.version="${TORCH_VERSION}+cu130" \
-      npa.flash_attn_4.commit="${FLASH_ATTN_COMMIT}" \
+      npa.flash_attention.commit="${FLASH_ATTN_COMMIT}" \
       npa.cutlass_dsl.version="${CUTLASS_DSL_VERSION}" \
       npa.quack_kernels.version="${QUACK_KERNELS_VERSION}" \
       npa.cuda_arch_list="${TORCH_CUDA_ARCH_LIST}" \
       npa.build_ts="${BUILD_TS}" \
-      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION};flash_attn_4_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
+      npa.build_info="cuda=${CUDA_BASE_TAG};torch=${TORCH_VERSION}+cu130;torchvision=${TORCHVISION_VERSION}+cu130;torchaudio=${TORCHAUDIO_VERSION};flash_attention_commit=${FLASH_ATTN_COMMIT};cutlass_dsl=${CUTLASS_DSL_VERSION};quack_kernels=${QUACK_KERNELS_VERSION};torch_cuda_arch_list=${TORCH_CUDA_ARCH_LIST}"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -131,40 +127,53 @@ RUN python -m pip install \
 
 ARG CUTLASS_DSL_VERSION
 ARG QUACK_KERNELS_VERSION
+RUN python -m pip install \
+      "nvidia-cutlass-dsl[cu13]==${CUTLASS_DSL_VERSION}" \
+      "quack-kernels==${QUACK_KERNELS_VERSION}"
+
+ARG ATTENTION_BACKEND=fa4
+# The FA2 extension is compiled specifically for the RTX comparison target.
+ARG FA2_CUDA_ARCHS=120
+# Compiler parallelism affects build memory, not attention execution.
+ARG FA2_NVCC_THREADS=4
+ENV NPA_ATTENTION_BACKEND=${ATTENTION_BACKEND} \
+    NPA_FLASH_ATTN_COMMIT=${FLASH_ATTN_COMMIT}
+LABEL npa.attention.backend="${ATTENTION_BACKEND}" \
+      npa.fa2.cuda_archs="${FA2_CUDA_ARCHS}"
 RUN git clone https://github.com/Dao-AILab/flash-attention.git /tmp/flash-attention \
     && cd /tmp/flash-attention \
     && git checkout "${FLASH_ATTN_COMMIT}" \
-    && python -m pip install \
-      "nvidia-cutlass-dsl[cu13]==${CUTLASS_DSL_VERSION}" \
-      "quack-kernels==${QUACK_KERNELS_VERSION}" \
-      "flash_attn/cute[cu13]" \
+    && test "$(git rev-parse HEAD)" = "${FLASH_ATTN_COMMIT}" \
+    && if [ "${ATTENTION_BACKEND}" = fa4 ]; then \
+         python -m pip install "flash_attn/cute[cu13]"; \
+       elif [ "${ATTENTION_BACKEND}" = fa2 ]; then \
+         FLASH_ATTENTION_FORCE_BUILD=TRUE FLASH_ATTN_CUDA_ARCHS="${FA2_CUDA_ARCHS}" \
+           NVCC_THREADS="${FA2_NVCC_THREADS}" \
+           python -m pip install --no-build-isolation --no-deps .; \
+       else echo "Unsupported ATTENTION_BACKEND" >&2; exit 2; fi \
     && rm -rf /tmp/flash-attention
 
-# flash-attn-4 exposes flash_attn.cute. Provide the legacy root import used by
-# existing smoke scripts while still routing calls to the FA4 CuTe implementation.
+# The root import is a restricted, keyword-only-options FA4 adapter. Never
+# forward ambiguous FA2 positional arguments into the incompatible FA4 API.
+COPY scripts/flash_attn_root.py /npa/flash_attn_root.py
+COPY scripts/flash_attn_rtx.py /npa/flash_attn_rtx.py
 RUN python - <<'PY'
 from importlib import metadata
 from pathlib import Path
+import os
 import site
 
-site_dir = Path(site.getsitepackages()[0])
-pkg = site_dir / "flash_attn"
-pkg.mkdir(exist_ok=True)
-(pkg / "__init__.py").write_text(
-    "from importlib import metadata as _metadata\n"
-    "__version__ = _metadata.version('flash-attn-4')\n"
-    "from flash_attn.cute import flash_attn_func as _cute_flash_attn_func\n"
-    "from flash_attn.cute import flash_attn_varlen_func as _cute_flash_attn_varlen_func\n"
-    "def _tensor_result(result):\n"
-    "    return result[0] if isinstance(result, tuple) else result\n"
-    "def flash_attn_func(*args, **kwargs):\n"
-    "    return _tensor_result(_cute_flash_attn_func(*args, **kwargs))\n"
-    "def flash_attn_varlen_func(*args, **kwargs):\n"
-    "    return _tensor_result(_cute_flash_attn_varlen_func(*args, **kwargs))\n"
-    "__all__ = ['flash_attn_func', 'flash_attn_varlen_func']\n",
-    encoding="utf-8",
-)
-print("flash-attn-4", metadata.version("flash-attn-4"))
+if os.environ["NPA_ATTENTION_BACKEND"] == "fa4":
+    pkg = Path(site.getsitepackages()[0]) / "flash_attn"
+    pkg.mkdir(exist_ok=True)
+    (pkg / "__init__.py").write_bytes(Path("/npa/flash_attn_root.py").read_bytes())
+    (pkg / "rtx.py").write_bytes(Path("/npa/flash_attn_rtx.py").read_bytes())
+    print("flash-attn-4", metadata.version("flash-attn-4"))
+else:
+    assert metadata.version("flash-attn").startswith("2.")
+    import torch  # Load libtorch/libc10 before the standalone CUDA extension.
+    import flash_attn_2_cuda
+    print("flash-attn", metadata.version("flash-attn"))
 PY
 
 # Baked in so every derived image can validate itself on whatever GPU it lands
@@ -181,10 +190,10 @@ import importlib.metadata as metadata
 import flash_attn
 from flash_attn import flash_attn_func
 
-# Import only: the flash-attn-4 CuTe kernel needs a GPU with TMA, so whether it
-# actually runs is decided by /npa/gpu_capability_smoke.py at deploy time.
+# Imports do not prove kernel execution or backward correctness. The baked
+# gpu_capability_smoke.py checks both on the actual target GPU.
 print("nvidia-nccl-cu13", metadata.version("nvidia-nccl-cu13"))
-print("flash-attn-4", flash_attn.__version__)
+print("flash_attn", flash_attn.__version__)
 print("flash_attn_func", flash_attn_func)
 PY
 
