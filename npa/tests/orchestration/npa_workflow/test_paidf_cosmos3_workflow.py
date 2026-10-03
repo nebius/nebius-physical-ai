@@ -71,7 +71,7 @@ def test_source_overlay_is_selected_by_the_spec(monkeypatch):
         plan,
         run_id="overlay-contract",
         options=SkypilotRenderOptions(
-            registry="ghcr.io/nebius/nebius-physical-ai",
+            registry="registry.example.invalid/operator/validated",
             materialize_registry_secrets=False,
         ),
     )
@@ -90,7 +90,7 @@ def test_source_overlay_is_selected_by_the_spec(monkeypatch):
         task for task in tasks if "paidf_cosmos3_annotation" in task["run"]
     )
     assert annotation["resources"]["image_id"] == "docker:" + container_image_for_tool(
-        "rerun-viewer", registry="ghcr.io/nebius/nebius-physical-ai"
+        "rerun-viewer", registry="registry.example.invalid/operator/validated"
     )
     assert not annotation["resources"].get("accelerators")
 

@@ -71,5 +71,6 @@ Generated from `npa --help`. Run `bash scripts/build_docs.sh` after CLI changes.
 - [npa uninstall](uninstall.md)
 - [npa viz](viz.md)
 - [npa workbench vlm-eval](vlm-eval.md)
+- [npa workbench workflow demo](workbench-workflow-demo.md)
 - [npa workbench](workbench.md)
 - [npa workbench workflow](workflow.md)

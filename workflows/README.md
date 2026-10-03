@@ -8,6 +8,9 @@ These `npa.workflow/v0.0.1` YAML files compose Workbench operations into a state
 graph. NPA validates the graph, renders SkyPilot tasks, and manages run-scoped
 artifacts. Start with a runbook that matches the result you want.
 
+For automatic public sample setup and a common launch/view command, start with
+[the four public workflow demos](../docs/workbench/guides/public-workflow-demos.md).
+
 Kubernetes GPU profiles accept a string such as `RTXPRO6000:2` or a single-entry
 mapping such as `{RTXPRO6000: 2}`. Both preserve the count when resolving the
 cluster's GPU product name. Select one GPU request before submitting a Kubernetes
@@ -17,10 +20,15 @@ profile; see the [resource preflight guide](../docs/workbench/npa-workflow-guide
 
 | Goal | Spec and runbook |
 | --- | --- |
+| Run a complete public sample with one command | [Four workflow demos](../docs/workbench/guides/public-workflow-demos.md) — automatic inputs, standard GPU execution, and offline HTML results |
 | Label videos in Encord and export an annotated MP4 | [Encord partner workflows](partners/encord/README.md) — real object tracks, exported-label verification, and media roundtrip |
 | Augment a video or LeRobot episode | [PAIDF + Cosmos 3](guides/paidf-cosmos3.md) — public starter, local MP4, and episode/camera inputs |
 | Generate an image or video | [Cosmos 3](../docs/workbench/cosmos3-generate.md) |
+| Compare Cosmos3-Super serving topologies | [Benchmark results and workflows](../benchmark/cosmos3-super/README.md) |
+| Improve a navigation policy from field failures | [Field failure workflow](testing/field-failure-policy-improvement.yaml) · [native and operator adapter runbook](../docs/workbench/cookbooks/field-failure-policy-improvement.md) — sealed data/runtime required; GPU acceptance pending |
 | Reconstruct a captured scene | [NuRec](../docs/workbench/guides/neural-reconstruction.md) |
+| Prepare a reconstructed scene for Isaac navigation | [Scan-to-Isaac handoff](../docs/workbench/guides/scan-to-isaac-navigation.md) — supplied collision mesh, portable USDZ, and native PhysX probes |
+| Reconstruct metric RGB-D into a collision scene | [RGB-D scan to Isaac](../docs/workbench/guides/rgbd-scan-to-isaac.md) — measured TSDF surface, held-out depth qualification, colored USDZ, native PhysX; [explicit native-training handoff](../docs/workbench/guides/rgbd-scan-to-isaac.md#continue-into-native-navigation-training) requires the companion navigation implementation |
 | Compose the 14-stage robot loop | [Sim2Real](../docs/workbench/guides/sim2real-workflow.md) |
 | Train a GR00T policy | [GR00T N1.7](../docs/workbench/cookbooks/groot-1-7-training.md) |
 | Evaluate a BEHAVIOR 2026 policy | [Start here](../docs/workbench/challenge-onboarding.md) · [Workflow](testing/behavior-challenge-eval.yaml) · [measured scope and limits](../docs/workbench/behavior-campaign.md#scope-and-validation-status) — operator runtime required |
@@ -187,6 +195,9 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | [`cosmos3-super-b200-single-gpu.yaml`](testing/cosmos3-super-b200-single-gpu.yaml) | Isolated Cosmos3-Super TP-1 validation on one B200; distinct from node-throughput benchmarks |
 | [`cosmos3-text-to-image.yaml`](testing/cosmos3-text-to-image.yaml) | Public Cosmos3-Nano image generation with guardrails disabled → verified image and manifest |
 | [`nurec-colmap-reconstruct.yaml`](testing/nurec-colmap-reconstruct.yaml) | Full COLMAP source -> Apache-2.0 NCore CPU conversion -> separately licensed NRE full-default reconstruction/render on RTX PRO 6000 -> Rerun -> final report; not yet live validated ([guide](../docs/workbench/guides/nurec-colmap-reconstruct.md)) |
+| [`scan-to-isaac-navigation.yaml`](testing/scan-to-isaac-navigation.yaml) | Existing NuRec visual scene + operator collision USD mesh and measured transforms → portable USDZ/provenance → actual Isaac PhysX ray probes; live qualification pending, no navigation-policy claim ([guide](../docs/workbench/guides/scan-to-isaac-navigation.md), [readiness](testing/scan-to-isaac-navigation.readiness.json)) |
+| [`rgbd-scan-to-isaac.yaml`](testing/rgbd-scan-to-isaac.yaml) | Metric RGB-D with poses → real Open3D TSDF and held-out depth gate → derived colored USDZ and exact triangle colliders → native Isaac PhysX; complete managed public capture qualified, with a verified navigation-input handoff ([guide](../docs/workbench/guides/rgbd-scan-to-isaac.md)) |
+| [`rgbd-scan-to-policy-demo.yaml`](testing/rgbd-scan-to-policy-demo.yaml) | Automatic public RGB-D sample → measured collision scene → native navigation training → held-out goals and offline HTML ([guide](../docs/workbench/guides/public-workflow-demos.md)) |
 | [`paidf-defect-image-generation.yaml`](testing/paidf-defect-image-generation.yaml) | Direct DIG Day-1 manual-ROI translation → runtime base-checkpoint setup → real AnomalyGen fine-tune → inference and native labels; B200; operator-authorized data/weights only |
 | [`paidf-event-video-generation.yaml`](testing/paidf-event-video-generation.yaml) | Direct EVG DAG translation → Cosmos3 Super image2video → real detection/captioning/two Visual-QA passes/PAS → anomaly dataset |
 | [`paidf-image-attribute-augmentation.yaml`](testing/paidf-image-attribute-augmentation.yaml) | Direct IAA DAG translation → Qwen Image Edit service → real paidf-augmentation verification → real Person Attribute Search → dataset |
@@ -197,12 +208,17 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 
 | Spec | Notes |
 | --- | --- |
+| [`field-failure-reference-demo.yaml`](testing/field-failure-reference-demo.yaml) | Public inputs → baseline training → observed simulation failures → capture admission and reconstruction → mixed-scene replay → development gate → independently held-out comparison and offline HTML ([guide](../docs/workbench/guides/public-workflow-demos.md)) |
+
 | [`behavior-comet-native-full-training.yaml`](testing/behavior-comet-native-full-training.yaml) | Portable real OpenPI native training reference: same-entrypoint CPU input preflight → direct native GPU updates → complete FP32 TrainState/optimizer milestones with provider readback and durable resume ([guide](../docs/workbench/comet-native-full-training.md)); exact private inputs remain operator supplied |
 | [`curobo-benchmark.yaml`](testing/curobo-benchmark.yaml) | Complete pinned MotionBenchMaker and MPiNets benchmark in cuRobo V2 kinematic and payload-dynamics modes; image remains publication-quarantined pending image checks and real GPU validation ([guide](../docs/workbench/curobo.md)) |
 | [`groot-1-7-finetune.yaml`](testing/groot-1-7-finetune.yaml) | Real GR00T data → parameterized 1-to-many-GPU optimizer smoke → immutable checkpoint → aligned offline evaluation → outcome classification → RRD/MCAP → inspected S3 publication → NPA agent viewer handoff; no rollout or statistical-learning claim |
 | [`isaac-arena-evaluation-b200.yaml`](testing/isaac-arena-evaluation-b200.yaml) | Four-seed Arena zero-action state regression on B200; completed scored episodes and hash-bound reports, with no visual claim ([guide](../docs/workbench/isaac-arena.md)) |
 | [`isaac-arena-evaluation-rtxpro.yaml`](testing/isaac-arena-evaluation-rtxpro.yaml) | Arena replay on RTX PRO 6000; exact-digest qualification completed with upstream task success and simulator-ground-truth-bound viewport motion ([readiness](testing/isaac-arena-evaluation-rtxpro.readiness.json)) |
 | [`isaac-franka-capture-reason.yaml`](testing/isaac-franka-capture-reason.yaml) | Headless Isaac Lab Franka RGB capture on GPU → hosted manipulation reasoning |
+| [`multicamera-rgbd-capture.yaml`](testing/multicamera-rgbd-capture.yaml) | Calibrated USD sensor rig → synchronized RGB/depth/poses and optional colored world points → decoded S3 validation; GPU acceptance pending ([guide](../docs/workbench/multicamera-rgbd-capture.md)) |
+| [`multicamera-rgbd-warehouse.yaml`](testing/multicamera-rgbd-warehouse.yaml) | Runtime-collect NVIDIA's full warehouse → four 1280×720 RGB-D streams at 265 poses → per-camera and fused world clouds with decoded S3 validation; complete native RTX qualification and artifact readback recorded for the public demo ([source-bound evidence](../docs/workbench/evidence/public-demos/README.md), [guide](../docs/workbench/multicamera-rgbd-capture.md)) |
+| [`shared-scene-navigation.yaml`](testing/shared-scene-navigation.yaml) | Native Isaac public quadruped reference or BYOF navigation with shared-scene physics/perception probes, checkpoint resume and held-out evaluation. Public bundle builder supplies a cluttered warehouse; reconstructed scenes require measured resets. GPU acceptance unverified. [Contract and runbook](../docs/workbench/guides/shared-scene-navigation.md). |
 | [`isaac-lab-rl-sweep.yaml`](testing/isaac-lab-rl-sweep.yaml) | **Parallel** GPU sweep (port of the `execution: parallel` SkyPilot template) + ranking barrier; submit with `--runtime` |
 | [`lerobot-subtask-proof.yaml`](testing/lerobot-subtask-proof.yaml) | CPU post-review gate: complete LeRobot v3 `subtask_index` coverage → catalog resolution → row-level proof bound to the source Parquet digest ([guide](../docs/workbench/guides/lerobot-subtask-labeling.md)) |
 | [`mjlab-eval.yaml`](testing/mjlab-eval.yaml) | Measured native MJLab checkpoint evaluation |
@@ -244,6 +260,7 @@ Jump to: [Generation and reconstruction](#generation-and-reconstruction) · [Rob
 | Spec | Notes |
 | --- | --- |
 | [`byof-droid-policy-learning.yaml`](testing/byof-droid-policy-learning.yaml) | OSS registry: DROID policy learning pinned image + RLDS config smoke |
+| [`byof-evo.yaml`](testing/byof-evo.yaml) | Plan-only catalog definition; run pinned evo APE/RPE controls and matched KITTI plots through the direct BYOF runner |
 | [`habitat-sim-smoke.yaml`](testing/habitat-sim-smoke.yaml) | Quarantined dedicated Habitat image: exact runtime-fetched Skokloster RGB/depth traversal, Bullet, and NVIDIA EGL on one STRICT-bound RTX PRO 6000 (never B200); image and live proof remain pending |
 | [`byof-ltx2.yaml`](testing/byof-ltx2.yaml) | LTX-2.5 video generation and FiftyOne curation; source and gated weights fetched at runtime |
 | [`byof-maniskill.yaml`](testing/byof-maniskill.yaml) | OSS registry: ManiSkill pinned image + PickCube smoke |

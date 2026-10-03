@@ -1,0 +1,60 @@
+{
+  "observed_utc": "2026-09-30T07:21:44.585182+00:00",
+  "verified_native_policy_processes": 8,
+  "verified_unique_b200_devices": 8,
+  "checkpoint_step": 2000,
+  "same_visual_job_environment": true,
+  "module": "cosmos_framework.scripts.action_policy_server_libero",
+  "gpu_samples": [
+    {
+      "index": 0,
+      "name": "NVIDIA B200",
+      "memory_mib": 34236.0,
+      "utilization_percent": 0.0
+    },
+    {
+      "index": 1,
+      "name": "NVIDIA B200",
+      "memory_mib": 33536.0,
+      "utilization_percent": 5.0
+    },
+    {
+      "index": 2,
+      "name": "NVIDIA B200",
+      "memory_mib": 34178.0,
+      "utilization_percent": 0.0
+    },
+    {
+      "index": 3,
+      "name": "NVIDIA B200",
+      "memory_mib": 33418.0,
+      "utilization_percent": 2.0
+    },
+    {
+      "index": 4,
+      "name": "NVIDIA B200",
+      "memory_mib": 34178.0,
+      "utilization_percent": 0.0
+    },
+    {
+      "index": 5,
+      "name": "NVIDIA B200",
+      "memory_mib": 33588.0,
+      "utilization_percent": 9.0
+    },
+    {
+      "index": 6,
+      "name": "NVIDIA B200",
+      "memory_mib": 34168.0,
+      "utilization_percent": 0.0
+    },
+    {
+      "index": 7,
+      "name": "NVIDIA B200",
+      "memory_mib": 34132.0,
+      "utilization_percent": 0.0
+    }
+  ],
+  "private_source_sha256": "dba0a1634e3b5d32584d7a4d09d60fb86f260da2cb946e87fd749c8765f5cf73",
+  "scope": "A single live policy-server snapshot during the final recorded visual pass. Native inference uses B200; simulator camera rendering uses CPU OSMesa. This snapshot does not measure policy quality or sustained throughput."
+}

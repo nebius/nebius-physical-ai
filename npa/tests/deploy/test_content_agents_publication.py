@@ -67,7 +67,10 @@ def _stub_registry_reads(mocker, accepted):
     attestation_digest = "sha256:" + "a" * 64
     index = _accepted_index(accepted["amd64_manifest"], attestation_digest)
 
-    def manifest(args):
+    def registry_json(args):
+        if args[0] == "config":
+            assert args[1].endswith("@" + accepted["oci_digest"])
+            return {"config": {"Labels": {}}}
         assert args[0] == "manifest"
         if args[1].endswith("@" + attestation_digest):
             return {"layers": layers}
@@ -82,7 +85,7 @@ def _stub_registry_reads(mocker, accepted):
         "_crane_manifest_readable",
         return_value=(True, "fixture-readable"),
     )
-    mocker.patch.object(publish_public, "_crane_json", side_effect=manifest)
+    mocker.patch.object(publish_public, "_crane_json", side_effect=registry_json)
     mocker.patch.object(
         publish_public,
         "_crane_blob_json",
