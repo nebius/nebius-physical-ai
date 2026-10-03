@@ -78,9 +78,9 @@ rounded to four decimal places for real, stub, and override evaluations. When
 a real backend actually returns a `success` boolean, the result records it as
 `provider_success` and reports whether it agrees in
 `provider_success_matches_score_gate`.
-Self-hosted responses that omit the boolean leave both fields null rather than
-presenting a score-derived fallback as provider output. Legacy non-boolean
-values such as `"true"` are likewise not promoted to provider booleans. A real
+Both real backends reject missing or non-boolean `success` values before
+publishing a result. Stub and explicit-score override provenance fields remain
+null; they are not provider output. A real
 disagreement is calibration evidence, not permission to replace the
 score-derived label. Before reviewing thin geometry or skeletons, compare
 retained submitted-frame dimensions with the source because normalization can
