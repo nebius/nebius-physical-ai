@@ -3568,6 +3568,7 @@ def list_artifacts(
                         role=artifact_role_for_relative_key(relative_key),
                         namespace=namespace,
                         relative_key=relative_key,
+                        source_etag=str(item.get("ETag") or "").strip(),
                     )
                 )
     except (ClientError, BotoCoreError) as exc:
@@ -3624,6 +3625,7 @@ def list_artifacts_page(
                 role=artifact_role_for_relative_key(relative_key),
                 namespace=namespace,
                 relative_key=relative_key,
+                source_etag=str(item.get("ETag") or "").strip(),
             )
         )
     artifacts.sort(key=lambda item: (item.last_modified, item.key), reverse=True)

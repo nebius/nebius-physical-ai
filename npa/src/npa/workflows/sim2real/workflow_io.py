@@ -393,7 +393,7 @@ def _record_provenance_is_valid(
         and isinstance(artifacts.get("workflow_job"), str)
         and artifacts["workflow_job"].strip()
         and (not gpu_evidence_present or gpu_valid)
-        and (stage != 4 or gpu_valid)
+        and (stage not in {3, 4, 7, 9, 10} or gpu_valid)
     )
 
 

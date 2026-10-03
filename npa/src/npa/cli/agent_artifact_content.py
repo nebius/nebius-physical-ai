@@ -248,7 +248,7 @@ def _resolved_artifact_for_content(
         (item for item in artifacts if str(item.key) == normalized_key),
         None,
     )
-    if artifact is None:
+    if artifact is None or not (artifact.source_etag or artifact.source_version_id):
         source_prefix = run_root_key[: -(len(normalized_run) + 1)]
         artifact = _authorized_artifact_from_head(
             s3,
@@ -421,7 +421,7 @@ def _verified_publication_artifact_body(s3, run_bucket: str, artifact):
             s3,
             Bucket=run_bucket,
             Key=str(artifact.key),
-            **_artifact_read_conditions(artifact, required=False),
+            **_artifact_read_conditions(artifact, required=not publication.journaled),
         )
         body = response["Body"]
         digest = hashlib.sha256()
