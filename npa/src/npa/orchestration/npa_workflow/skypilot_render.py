@@ -45,6 +45,11 @@ TOOL_REF_IMAGE_TOOL: dict[str, str] = {
     "workbench.cosmos3.policy_eval": "cosmos3",
     "workbench.cosmos3.policy_feedback": "cosmos3",
     "workbench.cosmos3.failure_candidates": "cosmos3",
+    "workbench.cosmos3.fastwam_k2_prepare": "cosmos3",
+    "workbench.cosmos3.fastwam_k2_full_wam": "cosmos3",
+    "workbench.cosmos3.fastwam_k2_eval": "cosmos3",
+    "workbench.cosmos3.fastwam_k2_compare": "cosmos3",
+    "workbench.cosmos3.fastwam_k2_visualize": "cosmos3",
     "workbench.cosmos3.generate_variants": "cosmos3",
     "workbench.cosmos3.prepare_video_input": "cosmos3",
     "workbench.cosmos3.checkpoint_eval": "cosmos3",
@@ -1337,6 +1342,12 @@ def self_hosted_vlm_model(config: Mapping[str, Any]) -> str:
 ISAAC_EULA_ENV = "ACCEPT_EULA"
 #: Image keys in TOOL_REF_IMAGE_TOOL that resolve to an Isaac-based image.
 ISAAC_IMAGE_TOOLS = frozenset({"isaac-lab", "isaac-arena", "sonic"})
+FASTWAM_K2_ISAAC_TOOL_REFS = frozenset(
+    {
+        "workbench.cosmos3.fastwam_k2_full_wam",
+        "workbench.cosmos3.fastwam_k2_eval",
+    }
+)
 
 
 def routes_at_an_isaac_image(
@@ -1355,6 +1366,8 @@ def routes_at_an_isaac_image(
     """
 
     if tool_image_key(tool_ref) in ISAAC_IMAGE_TOOLS:
+        return True
+    if tool_ref in FASTWAM_K2_ISAAC_TOOL_REFS:
         return True
     workflow_config = config or {}
     if tool_ref == "workbench.byof.repo":

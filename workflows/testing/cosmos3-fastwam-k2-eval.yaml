@@ -1,0 +1,122 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: cosmos3-fastwam-k2-eval
+  description: >-
+    Matched closed-loop RoboLab screening of the pinned Cosmos3 Edge full-WAM
+    baseline and FastWAM-K2 derivative. This is not a benchmark or a physical
+    robot claim: decisions use task success and native policy latency only.
+
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/cosmos3-fastwam-k2"
+  source_overlay: true
+  request_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/evaluation-request.json"
+  prepared_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/"
+  prepared_manifest_uri: "{{config.prepared_uri}}prepared.json"
+  full_wam_uri: "s3://{{config.bucket}}/{{config.prefix}}/full-wam/"
+  full_wam_manifest_uri: "{{config.full_wam_uri}}full-wam.json"
+  fastwam_k2_uri: "s3://{{config.bucket}}/{{config.prefix}}/fastwam-k2/"
+  fastwam_k2_manifest_uri: "{{config.fastwam_k2_uri}}fastwam-k2.json"
+  comparison_uri: "s3://{{config.bucket}}/{{config.prefix}}/comparison/"
+  comparison_manifest_uri: "{{config.comparison_uri}}comparison.json"
+  visualization_uri: "s3://{{config.bucket}}/{{config.prefix}}/visualization/"
+
+resources:
+  control:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+  closed_loop:
+    cloud: kubernetes
+    # RoboLab records sensor video through Isaac; use an RT-core GPU rather than
+    # treating a datacenter accelerator as a rendering substitute. GPU 0 hosts
+    # the policy server and GPU 1 runs the simulator client.
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:2
+    cpus: 32
+    memory: 256Gi
+
+initial: prepare
+
+states:
+  prepare:
+    description: Materialize and hash the exact RoboLab task definitions for both arms.
+    toolRef: workbench.cosmos3.fastwam_k2_prepare
+    resources: control
+    outputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.prepared.v1
+    next: full_wam
+
+  full_wam:
+    description: Run the pinned full-WAM baseline in native closed-loop RoboLab.
+    toolRef: workbench.cosmos3.fastwam_k2_full_wam
+    resources: closed_loop
+    params:
+      prepared_manifest_uri: "{{config.prepared_manifest_uri}}"
+      full_wam_uri: "{{config.full_wam_uri}}"
+    inputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.prepared.v1
+    outputs:
+      - uri: "{{config.full_wam_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.variant.v1
+    next: fastwam_k2
+
+  fastwam_k2:
+    description: Run K=2 retained generated vision frames with the documented denoising mask contract.
+    toolRef: workbench.cosmos3.fastwam_k2_eval
+    resources: closed_loop
+    params:
+      prepared_manifest_uri: "{{config.prepared_manifest_uri}}"
+      full_wam_manifest_uri: "{{config.full_wam_manifest_uri}}"
+      fastwam_k2_uri: "{{config.fastwam_k2_uri}}"
+    inputs:
+      - uri: "{{config.prepared_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.prepared.v1
+      - uri: "{{config.full_wam_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.variant.v1
+    outputs:
+      - uri: "{{config.fastwam_k2_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.variant.v1
+    next: compare
+
+  compare:
+    description: Compare matched closed-loop task success and actual latency; never score open-loop error.
+    toolRef: workbench.cosmos3.fastwam_k2_compare
+    resources: control
+    params:
+      full_wam_manifest_uri: "{{config.full_wam_manifest_uri}}"
+      fastwam_k2_manifest_uri: "{{config.fastwam_k2_manifest_uri}}"
+      comparison_uri: "{{config.comparison_uri}}"
+    inputs:
+      - uri: "{{config.full_wam_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.variant.v1
+      - uri: "{{config.fastwam_k2_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.variant.v1
+    outputs:
+      - uri: "{{config.comparison_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.comparison.v1
+    next: visualize
+
+  visualize:
+    description: Publish factual paired rollout MP4s, RRD, and comparison provenance.
+    toolRef: workbench.cosmos3.fastwam_k2_visualize
+    resources: control
+    params:
+      full_wam_manifest_uri: "{{config.full_wam_manifest_uri}}"
+      fastwam_k2_manifest_uri: "{{config.fastwam_k2_manifest_uri}}"
+      comparison_manifest_uri: "{{config.comparison_manifest_uri}}"
+      visualization_uri: "{{config.visualization_uri}}"
+    inputs:
+      - uri: "{{config.full_wam_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.variant.v1
+      - uri: "{{config.fastwam_k2_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.variant.v1
+      - uri: "{{config.comparison_manifest_uri}}"
+        schema: npa.cosmos3.fastwam-k2.comparison.v1
+    outputs:
+      - uri: "{{config.visualization_uri}}visualization.json"
+        schema: npa.cosmos3.fastwam-k2.visualization.v1
+    terminal: true

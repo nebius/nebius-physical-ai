@@ -10,6 +10,7 @@ from typing import Optional
 import typer
 
 from npa.cli.workbench import cosmos3_policy
+from npa.cli.workbench import cosmos3_fastwam_k2
 from npa.lifecycle_intent import json_stdout_contract
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.cosmos.text_to_image import DEFAULT_UV_GROUP
@@ -49,6 +50,11 @@ app.command("policy-train")(cosmos3_policy.policy_train_cmd)
 app.command("policy-eval")(cosmos3_policy.policy_eval_cmd)
 app.command("policy-feedback")(cosmos3_policy.policy_feedback_cmd)
 app.command("failure-candidates")(cosmos3_policy.failure_candidates_cmd)
+app.command("fastwam-k2-prepare")(cosmos3_fastwam_k2.prepare_cmd)
+app.command("fastwam-k2-full-wam")(cosmos3_fastwam_k2.full_wam_cmd)
+app.command("fastwam-k2-eval")(cosmos3_fastwam_k2.fastwam_k2_cmd)
+app.command("fastwam-k2-compare")(cosmos3_fastwam_k2.compare_cmd)
+app.command("fastwam-k2-visualize")(cosmos3_fastwam_k2.visualize_cmd)
 
 
 @app.command("nano-video-augment")
