@@ -158,9 +158,14 @@ npa workbench vlm-eval benchmark \
 
 `--rubrics` accepts names from the dataset, inline text, or `@file` paths.
 `--dataset` defaults to a packaged sample fixture, which is useful for proving
-the sweep runs but tells you nothing about your task. `--use-fixture-scores`
-honors recorded `fixture_score` values for non-stub backends; stub always uses
-them when present.
+the sweep runs but tells you nothing about your task. Its reports declare
+`dataset_evidence_scope: illustrative_only`: each rollout is a synthetic 2x2
+color swatch, and the four caller labels are color-correlated. The resulting
+metrics are wiring examples, not task-validation or operational error-rate
+evidence. Custom manifests default to `dataset_evidence_scope: unspecified`;
+declare `evidence_scope` and ordered `limitations` in the manifest when their
+scope is known. `--use-fixture-scores` honors recorded `fixture_score` values for
+non-stub backends; stub always uses them when present.
 
 Benchmark `expected_label` values are caller-supplied; the manifest does not
 establish independent human authorship or independence. Reports therefore keep

@@ -1071,6 +1071,17 @@ def test_sample_benchmark_fixture_reports_best_threshold() -> None:
         _BENCHMARK_FIXTURE_LIMITATION,
     )
     assert isinstance(report.limitations, tuple)
+    assert report.dataset_evidence_scope == "illustrative_only"
+    assert report.dataset_limitations == (
+        "Each rollout frame is a synthetic 2x2 color swatch that does not depict "
+        "the stated physical task.",
+        "Expected labels are color-correlated across this four-item fixture.",
+        "Its metrics exercise benchmark wiring and are not task-validation or "
+        "operational error-rate evidence.",
+    )
+    serialized = json.loads(json.dumps(asdict(report)))
+    assert serialized["dataset_evidence_scope"] == "illustrative_only"
+    assert serialized["dataset_limitations"] == list(report.dataset_limitations)
 
 
 def test_benchmark_limitations_follow_actual_stub_and_fixture_sources(
@@ -1161,6 +1172,193 @@ def test_load_benchmark_dataset_resolves_relative_rollouts() -> None:
     assert len(dataset.items) == 4
     assert all(Path(item.rollout).exists() for item in dataset.items)
     assert {"default", "strict"} <= set(dataset.rubrics)
+    assert dataset.evidence_scope == "illustrative_only"
+    assert len(dataset.limitations) == 3
+
+
+@pytest.mark.parametrize("dataset", ["sample", "default", ""])
+def test_sample_benchmark_sentinels_preserve_evidence_scope(dataset: str) -> None:
+    report = benchmark_vlm_eval(
+        dataset=dataset,
+        backend="stub",
+        thresholds=[0.8],
+        rubrics=["default"],
+        models=[DEFAULT_MODEL],
+    )
+
+    assert report.dataset_evidence_scope == "illustrative_only"
+    assert (
+        report.dataset_limitations
+        == load_benchmark_dataset(str(DEFAULT_SAMPLE_BENCHMARK_PATH)).limitations
+    )
+
+
+def _write_metadata_benchmark(tmp_path: Path, payload) -> Path:
+    rollout = tmp_path / "rollout"
+    rollout.mkdir(exist_ok=True)
+    Image.new("RGB", (8, 8), "green").save(rollout / "frame.png")
+    item = {
+        "id": "case",
+        "rollout": str(rollout),
+        "expected_label": True,
+        "task": "Confirm green.",
+        "fixture_score": 0.9,
+    }
+    manifest = tmp_path / "benchmark.json"
+    document = [item] if isinstance(payload, list) else {"items": [item], **payload}
+    manifest.write_text(json.dumps(document), encoding="utf-8")
+    return manifest
+
+
+@pytest.mark.parametrize("manifest_form", ["list", "object"])
+def test_legacy_benchmark_metadata_defaults_are_compatible(
+    tmp_path: Path, manifest_form: str
+) -> None:
+    manifest = _write_metadata_benchmark(
+        tmp_path, [] if manifest_form == "list" else {}
+    )
+    dataset = load_benchmark_dataset(str(manifest))
+    report = benchmark_vlm_eval(
+        dataset=str(manifest),
+        backend="stub",
+        thresholds=[0.8],
+        rubrics=["default"],
+        models=[DEFAULT_MODEL],
+    )
+
+    assert dataset.evidence_scope == "unspecified"
+    assert dataset.limitations == ()
+    assert report.dataset_evidence_scope == "unspecified"
+    assert report.dataset_limitations == ()
+
+
+def test_benchmark_metadata_round_trips_in_order(tmp_path: Path) -> None:
+    limitations = ["first limitation", "second limitation", "first limitation"]
+    manifest = _write_metadata_benchmark(
+        tmp_path,
+        {
+            "evidence_scope": "illustrative_only",
+            "limitations": limitations,
+        },
+    )
+    dataset = load_benchmark_dataset(str(manifest))
+    report = benchmark_vlm_eval(
+        dataset=str(manifest),
+        backend="stub",
+        thresholds=[0.8],
+        rubrics=["default"],
+        models=[DEFAULT_MODEL],
+    )
+
+    assert dataset.evidence_scope == "illustrative_only"
+    assert dataset.limitations == tuple(limitations)
+    assert report.dataset_evidence_scope == dataset.evidence_scope
+    assert report.dataset_limitations == dataset.limitations
+    assert json.loads(json.dumps(asdict(report)))["dataset_limitations"] == limitations
+
+
+def test_benchmark_metadata_accepts_explicit_unspecified_and_empty_limitations(
+    tmp_path: Path,
+) -> None:
+    manifest = _write_metadata_benchmark(
+        tmp_path,
+        {"evidence_scope": "unspecified", "limitations": []},
+    )
+    dataset = load_benchmark_dataset(str(manifest))
+    report = benchmark_vlm_eval(
+        dataset=str(manifest),
+        backend="stub",
+        thresholds=[0.8],
+        rubrics=["default"],
+        models=[DEFAULT_MODEL],
+    )
+
+    assert dataset.evidence_scope == "unspecified"
+    assert dataset.limitations == ()
+    assert report.dataset_evidence_scope == "unspecified"
+    assert report.dataset_limitations == ()
+    assert json.loads(json.dumps(asdict(report)))["dataset_limitations"] == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "",
+        "unknown",
+        "Illustrative_only",
+        " illustrative_only",
+        "illustrative_only ",
+        1,
+        True,
+        [],
+    ],
+)
+def test_benchmark_evidence_scope_rejects_noncanonical_values(
+    tmp_path: Path, value
+) -> None:
+    manifest = _write_metadata_benchmark(tmp_path, {"evidence_scope": value})
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError, match="evidence_scope must be exactly one of"
+    ):
+        load_benchmark_dataset(str(manifest))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        "text",
+        1,
+        {},
+        [1],
+        [""],
+        [" "],
+        [" padded"],
+        ["padded "],
+        [None],
+    ],
+)
+def test_benchmark_limitations_reject_invalid_values(tmp_path: Path, value) -> None:
+    manifest = _write_metadata_benchmark(tmp_path, {"limitations": value})
+
+    with pytest.raises(
+        vlm_eval.VlmEvalError, match="benchmark dataset limitations|limitation 1"
+    ):
+        load_benchmark_dataset(str(manifest))
+
+
+def test_benchmark_dataclass_additions_preserve_old_constructors() -> None:
+    dataset = vlm_eval.VlmBenchmarkDataset(
+        "dataset.json",
+        "npa_vlm_eval_benchmark_v1",
+        [],
+        {},
+    )
+    existing = benchmark_vlm_eval(
+        dataset=str(DEFAULT_SAMPLE_BENCHMARK_PATH),
+        backend="stub",
+        thresholds=[0.8],
+        rubrics=["default"],
+        models=[DEFAULT_MODEL],
+    )
+    report = vlm_eval.VlmBenchmarkReport(
+        existing.status,
+        existing.dataset_path,
+        existing.dataset_format,
+        existing.item_count,
+        existing.generated_at,
+        existing.sweep,
+        existing.best_config,
+        existing.ranked_configs,
+    )
+
+    assert dataset.evidence_scope == "unspecified"
+    assert dataset.limitations == ()
+    assert report.dataset_evidence_scope == "unspecified"
+    assert report.dataset_limitations == ()
+    assert report.limitations == vlm_eval._BENCHMARK_REPORT_LIMITATIONS
 
 
 def test_select_rollout_frames_accepts_sample_ppm_fixture() -> None:

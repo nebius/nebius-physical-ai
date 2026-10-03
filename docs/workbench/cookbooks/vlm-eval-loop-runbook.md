@@ -273,6 +273,14 @@ generalization, physical correctness, or safety. Report limitations identify
 cases whose `score_source` is `fixture` or `stub` as dry-validation or wiring
 inputs rather than VLM evidence.
 
+Manifests may also declare `evidence_scope` as exactly `unspecified` or
+`illustrative_only`, plus an ordered `limitations` array. Reports preserve them
+as `dataset_evidence_scope` and `dataset_limitations`. The packaged default is
+`illustrative_only`: its four inputs are synthetic 2x2 color swatches whose
+caller labels are color-correlated, so its metrics prove benchmark wiring only.
+Custom manifests that omit the metadata remain `unspecified`; omission does not
+certify task validity.
+
 These disclosure keys are additive. Consumers that reject unknown JSON keys
 must update their schema; consumers that ignore unknown keys retain the previous
 fields and values.
