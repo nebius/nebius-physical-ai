@@ -1,0 +1,180 @@
+{
+  "schema": "npa_owned_current_main_source_gate_bridge_v1",
+  "pr": 647,
+  "candidate_head": "a72868227a69627b96d31d988b913c25cabee355",
+  "candidate_tree": "48b50aa649e9f47a0bdf08e0ded4aea6a410210d",
+  "parents": [
+    "fde03795c63cc083805ab526d83651a070f9ab21"
+  ],
+  "integration_main": "88fd1b1356c942745244e49d2316800634c530ae",
+  "candidate_published": false,
+  "source_bindings": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "f8096bda550b8964ff421a19233eb854da4b5b3b9d46f78e9dfeb54379f69398"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/visual_review.py",
+      "sha256": "171061e1cf4f8b5e08481a609628e34fef22743b371b177a4da02555ed2f1722"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/visual_review_schema.py",
+      "sha256": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    {
+      "path": "npa/src/npa/clients/storage.py",
+      "sha256": "b2c38afb7dacd731c09c6ba65a0adfe2feb85f550fcdb1878a41bf6b0a17ad79"
+    },
+    {
+      "path": "npa/src/npa/workflows/vlm_grade_evidence.py",
+      "sha256": "1aa4d525928fbb2b536a054ccaca5af52f3b7b9f563dc377d76cb024f9bf467e"
+    },
+    {
+      "path": "npa/src/npa/cli/workbench/vlm_eval.py",
+      "sha256": "d7e6e9d08267dccf64015f91baf7fd55b3217141441a963b495a41566f2978a6"
+    },
+    {
+      "path": "npa/src/npa/sdk/workbench/vlm_eval.py",
+      "sha256": "35e7c0bd637299894bb7641e29d771fe51f2a9dcc25677c4a0b6c2c494254d3f"
+    },
+    {
+      "path": "npa/tests/e2e/conftest.py",
+      "sha256": "4232d4fe9c0427e901f614de060ef48383b79b686a6fcf84967b90e39e44e16d"
+    },
+    {
+      "path": "npa/scripts/token_factory_live_recheck.py",
+      "sha256": "6a501fb2dda9304586f69f6380628fa379490b346352a60c73e0554f4a719643"
+    },
+    {
+      "path": "npa/tests/cli/test_main.py",
+      "sha256": "32ad6ad27f70772f67118e4ed52074f4ea31b016fcaff48b24340d8f37a533dd"
+    }
+  ],
+  "wire_retention_ASTs": [
+    {
+      "name": "_retain_response_bytes",
+      "AST_sha256": "780f007d2f291d87a160df9e7acbb48e50335733f7ffcf24ec3eb3acd92dc607"
+    },
+    {
+      "name": "_backend_response_from_http",
+      "AST_sha256": "7070c9abdf3f5d9a71519d19616af03acea607f43239a30c16a14b2acf9aed56"
+    },
+    {
+      "name": "_captured_http_response",
+      "AST_sha256": "ac7ccc98d3430af7472a02e3563ec33472eb814f7bee4af9595fb4dee7294150"
+    },
+    {
+      "name": "_post_comparison_request",
+      "AST_sha256": "522366d139fff3b47167f20577ebc3c052f7a07c92a9f36feb82335aac576a5c"
+    },
+    {
+      "name": "_backend_response_byte_evidence",
+      "AST_sha256": "5749cbe34abb94c620683c7ec586a2c66a06e6dda3128ac977f9f86941e1eb72"
+    },
+    {
+      "name": "_preference_response_bytes_sink",
+      "AST_sha256": "0df5eb61c4a9f51554e85daad6bebe454f7b2fd7d49669bb8cec88a624dfc67b"
+    }
+  ],
+  "configure_fixture_commit": "4bbaba55c1e0c3af3b678c1be49baa3f0bda0298",
+  "required_live_caller_component_commits": [
+    "a34e5fc6e5a7d3f1fea31e4ae1dc940048d09603",
+    "a9c1521e720956e061f39abb8699124cd1cbf193",
+    "1cd6f3c48bdefbfd5cd9fb9139fff60a16d12645"
+  ],
+  "local_gates": {
+    "affected": {
+      "execution_head": "fde03795c63cc083805ab526d83651a070f9ab21",
+      "passed": 2966,
+      "skipped": 1,
+      "failed": 0,
+      "full": false
+    },
+    "security": {
+      "execution_head": "a72868227a69627b96d31d988b913c25cabee355",
+      "passed": 898,
+      "skipped": 0,
+      "failed": 0,
+      "packages_unchanged": true
+    },
+    "docs_contracts": {
+      "execution_head": "a72868227a69627b96d31d988b913c25cabee355",
+      "passed": 1194,
+      "failed": 0
+    },
+    "precheck": {
+      "execution_head": "a72868227a69627b96d31d988b913c25cabee355",
+      "passed": 270
+    },
+    "smoke": {
+      "execution_head": "a72868227a69627b96d31d988b913c25cabee355",
+      "passed": 118
+    },
+    "merge_precheck": {
+      "execution_head": "a72868227a69627b96d31d988b913c25cabee355",
+      "observed_main": "88fd1b1356c942745244e49d2316800634c530ae",
+      "state": "passed"
+    },
+    "aggregate_scans": {
+      "execution_head": "a72868227a69627b96d31d988b913c25cabee355",
+      "range": "f1ecd4255131374c417cdbb1f6c3e0d84b2a3514..HEAD",
+      "confidentiality": "passed built-in diff scanner, not secret CI denylist",
+      "gitleaks": "passed"
+    },
+    "guardrails": {
+      "execution_head": "a72868227a69627b96d31d988b913c25cabee355",
+      "passed": 5906,
+      "skipped": 1,
+      "failed": 0,
+      "warnings": 1
+    },
+    "original_response_cpu_replay": {
+      "original_execution_head": "a860bdcedf1aa87c2550320bec6624b0c81d2e24",
+      "replay_execution_head": "fde03795c63cc083805ab526d83651a070f9ab21",
+      "responses": 3,
+      "new_calls": 0,
+      "rich_payload": "exact unchanged source/request/frame/response hashes; scalar/grade incoming changes explicitly separate"
+    },
+    "full": {
+      "execution_head": "8565a9f9edb3d917b9cc5750c3b59881bc779f8d",
+      "passed": 39995,
+      "skipped": 213,
+      "xpassed": 1,
+      "failed": 0,
+      "coverage_percent": 77.55,
+      "missing_provenance_limits": "Historical run lacks contemporaneous per-node and package snapshot; no later capture is backdated",
+      "current_source_bridge": "Original full scope independently accepted through a860; new main88/wire interface review pending, not current-head execution"
+    },
+    "retained_failures": [
+      "Original reversed paired strict JSON failure",
+      "Historical six rich acceptance attempts failed",
+      "Current smoke/docs combined attempt exited4 at nonexistent docs path; scans not executed in that partial attempt; corrected separate docs/scans passed"
+    ]
+  },
+  "new_provider_calls_for_main88_composition": 0,
+  "current_head_CI": "Absent: implementation candidate unpublished; historical published-head checks are not candidate proof",
+  "draft": true,
+  "ready": false,
+  "claude": {
+    "provider": "firstParty",
+    "model": "claude-opus-5",
+    "AI_not_human": true,
+    "no_pixel_or_execution_review_claim": true,
+    "job_id": "pr-647-pass-2-a860bdcedf1a",
+    "reviewed_head": "a860bdcedf1aa87c2550320bec6624b0c81d2e24",
+    "packet_sha256": "4795b650cfed2a270f896edf155cd45a366534f30032047116a712771f63b993",
+    "output_sha256": "bb58a01e3ccfc7a6614cd7eca95dc31d081a2a9bbccd471ffd8e55e914306de3",
+    "receipt_sha256": "ff8ce67b94ee72d014a4d2c4778d585e294e99d76ec5a2d6277c5ede11566dc0",
+    "disposition": "Source-level material repairs clear at a860; six residuals nonblocking and separately dispositioned; no future-head approval or third review"
+  },
+  "limits": [
+    "Source/CPU correctness is separate from model quality, physical safety, GPU/image release, current-head CI and queue admission.",
+    "All earlier failed runs and model rationales remain unchanged; no labels/threshold tuning or favorable retry substitution.",
+    "Original inference stays bound to original execution SHA; CPU replay does not become new-payload inference.",
+    "Current immutable private implementation candidates are not published or ready; source review and lifecycle remain separate."
+  ]
+}
