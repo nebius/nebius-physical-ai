@@ -9,7 +9,9 @@
         "validate-spec and plan-spec --check-render PASS, one H100 task",
         "386 focused workflow/toolRef/readiness tests PASS",
         "target-cluster image pull with task-owned Secret PASS",
-        "managed H100 smoke reached terminal SUCCEEDED"
+        "managed H100 smoke reached terminal SUCCEEDED",
+        "recovery validate-spec and plan-spec --check-render PASS, 128 GiB memory and 105 GB disk",
+        "581 scoped runner, catalog, live-matrix, and packaging tests PASS"
       ]
     },
     "task_fidelity": {
@@ -52,24 +54,28 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The private linux/amd64 validation image uses the previously scanned Dockerfile build plus the tested runner fix. Its immutable digest passed registry manifest, exact pull, target-cluster pull, full restricted-payload scan, and live H100 smoke. Public publication remains quarantined.",
+      "reason": "The original private image passed an H100 smoke. The recovery overlay adds native checkpoint restoration and verified-upload local checkpoint pruning; its exact immutable OCI digest passed independent manifest hashing, a complete restricted-payload scan, and target-cluster image/bootstrap preflight. Recovery GPU training acceptance remains pending. Public publication remains quarantined.",
       "evidence": [
-        "private validation digest sha256:ef3fd51f957dfd511aef853b393eee66639cca62bd2a73e3e46157b6f597497d",
-        "registry manifest and linux/amd64 pull PASS",
-        "target-cluster pull with task-owned Secret PASS",
-        "full image scan: 114313 entries, zero restricted payload/history hits",
-        "live H100 smoke SUCCEEDED using this digest"
+        "original smoke digest sha256:ef3fd51f957dfd511aef853b393eee66639cca62bd2a73e3e46157b6f597497d reached SUCCEEDED",
+        "recovery digest sha256:958f1a6c1cef792a55ef30f147f4ef455b7d8a635492a5e21d084af434d162e2",
+        "recovery registry manifest independently hashed and matched OCI index digest",
+        "recovery full image scan: 114314 entries, zero restricted payload/history hits",
+        "recovery target-cluster image pull and bootstrap compatibility preflight PASS"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The H100 smoke succeeded. Full training saved complete checkpoints through microstep 50,000 before its worker was interrupted with exit 137. Managed-job recovery was blocked by an expired registry credential; exact job 4 was reconciled and cancelled. Checkpoint-based recovery and final acceptance remain pending. The precise reason for signal 9 is not available in retained controller evidence.",
+      "reason": "The H100 smoke succeeded. Full training saved checkpoint 50,000 before exit 137; the precise signal-9 cause is unavailable. Expired registry credentials blocked managed recovery, and exact job 4 was reconciled and cancelled. A first recovery candidate failed disk-capacity preflight and was independently confirmed absent from the managed-job queue. After reducing disk to 105 GB and adding local checkpoint pruning, one checkpoint-based successor was submitted. Live NPA reports RUNNING, verified job 5, and a running worker pod. Native GPU restoration and final 60,000-step acceptance remain pending.",
       "evidence": [
         "live NPA job 4 PENDING after interruption; no training pod remained",
         "controller recorded exit 137 and recovery at 2026-10-03T15:29:50Z",
         "checkpoint 050000 COMPLETE.json available with raw/EMA hashes and native training state",
         "exact-name/id reconciliation confirmed job 4 CANCELLED",
-        "60,000 total microsteps and final COMPLETE.json not yet verified"
+        "60,000 total microsteps and final COMPLETE.json not yet verified",
+        "first recovery candidate: capacity preflight rejected before launch; exact-name managed job ABSENT",
+        "native LeRobot CPU configuration validation accepted the real saved smoke checkpoint with restored step 4 and accumulation 4",
+        "checkpoint-based successor: submit returned 0; live NPA status RUNNING, live_verified true, managed job 5",
+        "recovery worker pod Running and ready; dataset conversion completed; model inputs preparing"
       ]
     }
   }

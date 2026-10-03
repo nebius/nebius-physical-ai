@@ -12,6 +12,17 @@ and follow [installation](../docs/install.md) and
 The [command reference](../docs/cli/workbench.md) lists the installed tools;
 `npa workbench <tool> --help` exposes each tool's actual commands.
 
+[FLUX 3 Action SO-101 task LoRA](../docs/workbench/flux3-action-so101-plan.md)
+uses the pinned PickOrange dataset and one H100 through
+`npa workbench lerobot flux3-so101-finetune` or the linked workflow YAML.
+`--steps` (workflow `train_steps`) defaults to 60,000 total microsteps.
+For recovery, the optional `--input-path` (workflow `resume_checkpoint`, empty
+by default) accepts a complete numbered S3 checkpoint. Reconcile and cancel
+the interrupted job, then use a fresh run ID and output prefix. The tool checks
+checkpoint hashes and native training state before resuming to the requested
+total. Full training acceptance is still pending; the guide and readiness record
+track the live evidence.
+
 The [NuRec sample workflow](../docs/workbench/guides/neural-reconstruction.md)
 and [four-camera warehouse workflow](../docs/workbench/multicamera-rgbd-capture.md)
 download public sample data automatically and publish compact, offline
