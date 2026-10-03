@@ -173,6 +173,19 @@ the sweep runs but tells you nothing about your task. `--use-fixture-scores`
 honors recorded `fixture_score` values for non-stub backends; stub always uses
 them when present.
 
+Each `npa_vlm_eval_benchmark_report_v2` configuration includes the full 2x2
+confusion matrix, false-positive and false-negative rates, and ordered
+`false_positive_item_ids` / `false_negative_item_ids`. Resolve those IDs in the
+same configuration's complete `results` list before choosing a threshold; an
+aggregate accuracy can hide the exact false pass that matters. Rates are null
+when the labeled dataset has no examples of the required class. Item IDs must
+be unique. Historical reports without `schema_version` are v1; their counts can
+be recomputed from retained per-item labels and predictions, but absent v2
+fields must not be presented as if the producer emitted them.
+Manually constructed reports retain the v1 constructor default even if optional
+calibration fields are supplied. Feature-detect a non-null `confusion_matrix`
+rather than inferring field absence from the version alone.
+
 ## In workflows
 
 toolRefs: `workbench.vlm_eval.run`, `.loop`, `.judge_against_plan`, `.benchmark`.
@@ -211,3 +224,24 @@ Self-hosted VLM steps need a GPU image; set it with `--image` on
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 ```
+
+## Blinded preference audits
+
+`compare-preference` is an API-only, audit-only matched-image primitive. It
+normalizes each input exactly once from RGB pixels without embedded metadata,
+hides source semantics behind neutral A/B
+labels, and sends the pair in both orders with identical prompting and
+generation settings. The private `vlm_preference_comparison.json` retains both
+exact requests and complete provider outcomes. Errors, unresolved output,
+confidence below `high`, or different mapped preferences produce escalation;
+the latter is named `order_disagreement_or_nondeterminism` because one request
+per order cannot isolate an order effect from provider nondeterminism. The
+command never retries or averages preferences, and refuses an existing output.
+Task and rubric text containing `baseline` or `candidate` is rejected before
+transport. Telling the model not to follow image text is not a defense against
+in-image instructions. Its CLI summary omits paths, prompts, visible support,
+uncertainty, request IDs, and raw responses.
+
+Use toolRef `workbench.vlm_eval.compare_preference`. See
+[the live audit contract](../../../docs/testing/vlm-audit-live-contracts.md)
+for the scheduled real hosted lane and private operator configuration.
