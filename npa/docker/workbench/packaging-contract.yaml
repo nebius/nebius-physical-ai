@@ -163,6 +163,17 @@ redistribution:
 
 # Relative to npa/docker/workbench/
 images:
+  openvla-oft:
+    dockerfile: openvla-oft/Dockerfile
+    tier: job
+    redistribution: unvalidated
+    notes: >-
+      Neutral runtime-fetch bootstrap. OpenVLA-OFT source, its custom
+      Transformers dependency, OpenVLA/Llama-derived base weights, OFT adapters,
+      LIBERO data/assets, CUDA/Torch runtime packages, credentials, caches, and
+      outputs are not baked. Exact built-byte license/SBOM/provenance review,
+      private immutable push, runtime capability proof, and independent artifact
+      inspection are still required before any public-release determination.
   libero:
     dockerfile: libero/Dockerfile
     tier: job
