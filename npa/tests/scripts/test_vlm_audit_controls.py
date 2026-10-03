@@ -215,6 +215,9 @@ def test_generated_lane_rejects_silently_removed_controls(monkeypatch, tmp_path)
                     "executed": 1,
                     "deselected": 0,
                     "xfail": False,
+                    "passed": 1,
+                    "failed": 0,
+                    "skipped": 0,
                 }
             )
         )

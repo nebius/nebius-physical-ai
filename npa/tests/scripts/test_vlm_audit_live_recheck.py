@@ -119,6 +119,13 @@ def test_receipt_requires_real_execution_counts(
                     "executed": 1 if "<testcase" in xml else 0,
                     "deselected": 0,
                     "xfail": False,
+                    "passed": int(
+                        "<testcase" in xml
+                        and "<skipped" not in xml
+                        and "<failure" not in xml
+                    ),
+                    "failed": int("<failure" in xml),
+                    "skipped": int("<skipped" in xml),
                 }
             )
         )
@@ -133,8 +140,8 @@ def test_receipt_requires_real_execution_counts(
     assert original.read_bytes() == before
     assert "synthetic-test-credential" not in receipt.read_text()
     assert str(tmp_path) not in receipt.read_text()
-    with pytest.raises(FileExistsError):
-        runner.main(["--evidence-dir", str(target)])
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    assert json.loads(receipt.read_text())["passed"] is passed
 
 
 def test_operator_request_defaults_are_resolved_before_live_execution(
@@ -188,6 +195,60 @@ def test_actual_entrypoint_missing_config_fails_without_skips(tmp_path):
     summary = json.loads(result.stdout)
     assert summary["failure"] == "missing_audit_configuration"
     assert summary["counts"]["skipped"] == summary["counts"]["collected"] == 0
+
+
+@pytest.mark.parametrize("nested", [False, True])
+def test_actual_evidence_symlink_loop_is_sanitized(tmp_path, nested):
+    loop = tmp_path / "private-evidence-loop"
+    loop.symlink_to(loop.name)
+    target = loop / "output" if nested else loop
+    result = subprocess.run(
+        [sys.executable, str(_runner().__file__), "--evidence-dir", str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stdout)["failure"] == "invalid_audit_evidence_directory"
+    assert str(tmp_path) not in result.stdout + result.stderr
+    assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("boundary", ["config", "generated-controls"])
+def test_private_configuration_symlink_loops_fail_closed(
+    monkeypatch, tmp_path, capsys, boundary
+):
+    runner = _runner()
+    target = tmp_path / "run"
+    target.mkdir(mode=0o700)
+    loop = target / (
+        "controls" if boundary == "generated-controls" else "private-config"
+    )
+    loop.symlink_to(loop.name)
+    monkeypatch.setenv(runner.CONFIG_ENV, str(loop))
+    monkeypatch.setattr(runner, "_execute", lambda *_: pytest.fail("must not execute"))
+    receipt = runner._new_receipt(Path(__file__).resolve().parents[3])
+    runner._complete_receipt(
+        Path(__file__).resolve().parents[3],
+        target,
+        receipt,
+        generated=boundary == "generated-controls",
+    )
+    assert receipt["passed"] is False
+    assert receipt["failure"] == "audit_configuration_or_execution_failed"
+    assert str(tmp_path) not in json.dumps(receipt)
+    assert str(tmp_path) not in capsys.readouterr().out
+
+
+def test_unrelated_resolve_runtime_error_is_not_swallowed(monkeypatch, tmp_path):
+    runner = _runner()
+
+    def fail(_):
+        raise RuntimeError("unrelated runtime bug")
+
+    monkeypatch.setattr(Path, "resolve", fail)
+    with pytest.raises(RuntimeError, match="unrelated runtime bug"):
+        runner._prepare_evidence_directory(tmp_path, tmp_path / "run")
 
 
 @pytest.mark.parametrize("mode", ["xpass", "skip", "deselection"])

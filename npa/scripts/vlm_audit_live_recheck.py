@@ -11,7 +11,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -147,6 +146,7 @@ class _NoExpectedFailures:
         self.collected = 0
         self.executed = 0
         self.deselected = 0
+        self.results: dict[str, set[str]] = {}
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         self.collected = len(session.items)
@@ -157,6 +157,23 @@ class _NoExpectedFailures:
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         self.observed |= hasattr(report, "wasxfail")
         self.executed += report.when == "call"
+        results = self.results.setdefault(report.nodeid, set())
+        if report.failed:
+            results.add("failed")
+        if report.skipped:
+            results.add("skipped")
+        if report.when == "call" and report.passed:
+            results.add("passed")
+
+    def counts(self) -> dict[str, int]:
+        return {
+            "collected": self.collected,
+            "executed": self.executed,
+            "deselected": self.deselected,
+            "passed": sum(row == {"passed"} for row in self.results.values()),
+            "failed": sum("failed" in row for row in self.results.values()),
+            "skipped": sum("skipped" in row for row in self.results.values()),
+        }
 
 
 def _run_tests(target: Path) -> int:
@@ -181,9 +198,7 @@ def _run_tests(target: Path) -> int:
         target / "execution.json",
         json.dumps(
             {
-                "collected": failures.collected,
-                "executed": failures.executed,
-                "deselected": failures.deselected,
+                **failures.counts(),
                 "xfail": failures.observed,
             }
         ),
@@ -195,21 +210,6 @@ def _run_tests(target: Path) -> int:
         or failures.observed
     )
     return 1 if incomplete else int(code)
-
-
-def _counts(path: Path) -> dict[str, int]:
-    cases = ET.parse(path).getroot().findall(".//testcase")
-    failed = sum(
-        case.find("failure") is not None or case.find("error") is not None
-        for case in cases
-    )
-    skipped = sum(case.find("skipped") is not None for case in cases)
-    return {
-        "collected": len(cases),
-        "passed": len(cases) - failed - skipped,
-        "failed": failed,
-        "skipped": skipped,
-    }
 
 
 def _verify(
@@ -224,9 +224,10 @@ def _verify(
         receipt["credential_and_catalog_preflight_passed"] = True
     exit_code = _execute(root, target, config_path)
     receipt["pytest_exit_code"] = exit_code
-    counts = _counts(target / "pytest.xml")
     execution = json.loads((target / "execution.json").read_text())
-    counts.update(executed=execution["executed"], deselected=execution["deselected"])
+    counts = {field: execution[field] for field in receipt["counts"]}
+    if any(type(value) is not int or value < 0 for value in counts.values()):
+        raise _AuditConfigurationError("invalid_execution_counts")
     receipt["counts"] = counts
     config = json.loads(config_path.read_text())
     expected = sum(len(audit_controls(case)) for case in config["cases"].values())
@@ -301,6 +302,26 @@ def _public_order(outcome: dict) -> dict:
     }
 
 
+def _prepare_evidence_directory(root: Path, path: Path) -> Path:
+    try:
+        target = path.resolve()
+    except RuntimeError as exc:
+        # Python 3.12 reports symlink loops as RuntimeError, not OSError.
+        # Normalize only that pathlib failure, not arbitrary runtime bugs.
+        if not str(exc).startswith("Symlink loop from "):
+            raise
+        raise _AuditConfigurationError("invalid_audit_evidence_directory") from None
+    except (OSError, ValueError):
+        raise _AuditConfigurationError("invalid_audit_evidence_directory") from None
+    if target.is_relative_to(root):
+        raise _AuditConfigurationError("audit_evidence_must_be_outside_checkout")
+    try:
+        target.mkdir(parents=True, mode=0o700)
+    except (OSError, ValueError):
+        raise _AuditConfigurationError("audit_evidence_directory_unavailable") from None
+    return target
+
+
 def main(argv: list[str] | None = None) -> int:
     """Execute the configured audit suite and emit a sanitized summary.
 
@@ -309,7 +330,7 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Zero only when every collected audit executes successfully without skips.
     Raises:
-        OSError: The new private evidence directory cannot be created.
+        RuntimeError: An unexpected implementation error occurs, not a path failure.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
@@ -320,11 +341,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
     root = Path(__file__).resolve().parents[2]
-    target = args.evidence_dir.resolve()
-    if target.is_relative_to(root):
-        parser.error("audit evidence must be outside the checkout")
-    target.mkdir(parents=True, mode=0o700)
     receipt = _new_receipt(root)
+    try:
+        target = _prepare_evidence_directory(root, args.evidence_dir)
+    except _AuditConfigurationError as exc:
+        receipt["failure"] = str(exc)
+        print(
+            json.dumps({key: receipt[key] for key in ("passed", "counts", "failure")})
+        )
+        return 1
     receipt["control_source"] = (
         "generated-visual-contract-v1" if args.generated_controls else "operator"
     )
@@ -341,7 +366,7 @@ def _complete_receipt(
         _verify(root, target, receipt, generated=generated)
     except _AuditConfigurationError as exc:
         receipt["failure"] = str(exc)
-    except (ValueError, KeyError, TypeError, OSError, ET.ParseError):
+    except (ValueError, KeyError, TypeError, OSError):
         receipt["failure"] = "audit_configuration_or_execution_failed"
     except TokenFactoryError:
         receipt["failure"] = "audit_provider_preflight_failed"
