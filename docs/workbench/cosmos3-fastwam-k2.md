@@ -68,11 +68,13 @@ A positive screen still requires a separately defined full-suite evaluation.
 | Isaac Sim / Isaac Lab runtime | NVIDIA product runtime consumed by RoboLab's documented `uv sync --extra isaac50` path | No Isaac bytes or acceptance variable are baked into the NPA image or workflow. The upstream README identifies `OMNI_KIT_ACCEPT_EULA=Y` as its documented first-use mechanism outside tests; no new NPA checkbox, `ACCEPT_*` flag, or duplicate attestation is created here. A run may use only an existing operator-authorized product mechanism. |
 | Output | Native RoboLab rows, MP4s, RRD, and NPA provenance | Output remains run-scoped. It carries upstream identities and is not treated as a redistribution grant for checkpoints, source, or simulator assets. |
 
-The runtime image is the existing immutable NPA Cosmos image selected by the
-workflow renderer with a source overlay. This change adds no image and makes no
-new public-image or OCI-metadata claim. A live run must still record the exact
-resolved image digest and inspect the produced artifacts before any
-live-ready claim.
+The workflow routes through the NPA Cosmos image family with a source overlay.
+The currently configured public Cosmos release is quarantined by the repository
+stale-layer policy, so a live submission must use a freshly built,
+source-matched immutable replacement after its local and registry gates pass.
+This change does not publish an image or make an OCI-metadata claim. A live run
+must record the exact resolved image digest and inspect the produced artifacts
+before any live-ready claim.
 
 RoboLab's upstream citation is retained below. Neither the model card nor the
 pinned framework README supplied a separate BibTeX entry in the inspected
