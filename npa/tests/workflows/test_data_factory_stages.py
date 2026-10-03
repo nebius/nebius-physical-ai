@@ -1792,6 +1792,63 @@ def test_grade_gate_promotes_above_threshold(tmp_path: Path, monkeypatch) -> Non
     assert json.loads(decision_path.read_text())["decision"] == "promote_checkpoint"
 
 
+def test_paired_prompt_cannot_be_relabelled_as_scalar_promotion_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    report = _provider_vlm_report(monkeypatch, tmp_path)
+    prompt = vlm_eval._comparison_prompt(
+        report["task"],
+        report["rubric"],
+        report["frame_selection"],
+        report["frame_count"],
+    )
+    request = report["evidence"]["request"]
+    request["prompt_sha256"] = vlm_eval._sha256_text(prompt)
+    request["request_manifest"]["prompt_sha256"] = request["prompt_sha256"]
+    request["request_manifest_sha256"] = vlm_eval._sha256_json(
+        request["request_manifest"]
+    )
+    _assert_completion_blocked(tmp_path, report, "digest_mismatch")
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+@pytest.mark.parametrize("fence", [None, "json", ""])
+def test_public_paired_validator_requires_bare_hosted_json(
+    tmp_path: Path, monkeypatch, backend: str, fence: str | None
+) -> None:
+    from npa.workflows.vlm_grade_evidence import vlm_paired_audit_block_details
+
+    completion = _provider_completion(success=True, metadata=True)
+    message = completion["choices"][0]["message"]
+    if fence is not None:
+        message["content"] = f"```{fence}\n{message['content']}\n```"
+    report = _provider_vlm_report(
+        monkeypatch, tmp_path, backend=backend, completion=completion
+    )
+    report = json.loads(json.dumps(report))
+    prompt = vlm_eval._comparison_prompt(
+        report["task"],
+        report["rubric"],
+        report["frame_selection"],
+        report["frame_count"],
+    )
+    request = report["evidence"]["request"]
+    request["prompt_sha256"] = vlm_eval._sha256_text(prompt)
+    request["request_manifest"]["prompt_sha256"] = request["prompt_sha256"]
+    request["request_manifest_sha256"] = vlm_eval._sha256_json(
+        request["request_manifest"]
+    )
+    expected = (
+        {}
+        if backend == "api" and fence is None
+        else {
+            "reason": "vlm_provider_evidence_invalid",
+            "evidence_reason": "provider_parser_invalid",
+        }
+    )
+    assert vlm_paired_audit_block_details(report) == expected
+
+
 @pytest.mark.parametrize("backend", ["api", "self-hosted"])
 def test_grade_gate_retained_parser_does_not_depend_on_request_profile_dispatch(
     tmp_path: Path, monkeypatch, backend: str
@@ -2554,6 +2611,55 @@ def test_grade_gate_rejects_dry_run_even_with_copied_provider_evidence(
 
     assert dfs.grade_gate(str(tmp_path), str(decision)) == "loop_back"
     assert json.loads(decision.read_text())["reason"] == "vlm_non_inference_backend"
+
+
+def _pre_ordinal_prompt(*, task, rubric, frame_selection, frame_count):
+    """Historical production text, for a synthetic migration fixture only."""
+    return "\n".join(
+        [
+            "You are scoring a robot rollout from visual evidence.",
+            f"Task/instruction: {task}",
+            f"Rubric: {rubric}",
+            f"Frame selection: {frame_selection}; frames supplied: {frame_count}.",
+            "Return only a JSON object with this schema:",
+            '{"success": boolean, "score": number between 0 and 1, "rationale": string}',
+            "The score is the only downstream contract; make it repeatable and calibrated.",
+        ]
+    )
+
+
+@pytest.mark.parametrize("schema", ["v1", "v2"])
+@pytest.mark.parametrize("custom_rubric", [False, True])
+def test_grade_gate_requires_reevaluation_for_pre_ordinal_prompts(
+    tmp_path: Path, monkeypatch, schema: str, custom_rubric: bool
+) -> None:
+    rubric = (
+        "Require a visibly horizontal lever."
+        if custom_rubric
+        else vlm_eval.DEFAULT_RUBRIC
+    )
+    with monkeypatch.context() as legacy:
+        legacy.setattr(vlm_eval, "_build_prompt", _pre_ordinal_prompt)
+        report = _provider_vlm_report(legacy, tmp_path, rubric=rubric)
+    if schema == "v1":
+        evidence = report["evidence"]
+        request = evidence["request"]
+        manifest = request["request_manifest"]
+        evidence["schema_version"] = manifest["schema_version"] = (
+            "npa_vlm_eval_evidence_v1"
+        )
+        manifest.pop("sampling")
+        for frame in request["frames"]:
+            for key in (
+                "source_kind",
+                "source_index",
+                "source_count",
+                "source_timestamp_s",
+            ):
+                frame.pop(key)
+        manifest["frames"] = request["frames"]
+        request["request_manifest_sha256"] = vlm_eval._sha256_json(manifest)
+    _assert_completion_blocked(tmp_path, report, "digest_mismatch")
 
 
 def test_grade_gate_accepts_retained_v1_inference_evidence(
