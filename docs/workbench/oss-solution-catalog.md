@@ -20,6 +20,7 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- | --- | --- |
 | Habitat-Sim (**neutral runtime-fetch; development proof only**) | `facebookresearch/habitat-sim` `57ee4941…` | `skokloster_castle_rgb_depth_bullet_traversal` | `habitat-sim-smoke.json` + saved RGB/depth observations | `habitat-sim-smoke.yaml` |
 | LIBERO | `Lifelong-Robot-Learning/LIBERO` `8f1084e3…` | `libero_spatial_bc_rnn_train_reload_heldout` | Canonical `libero-smoke.json` + checkpoint digest/reload evidence (checkpoint remains local and is never uploaded) | `byof-libero.yaml` |
+| Sylvest OpenVLA-OFT mixed-data checkpoint (**deferred; no image**) | `sylvestf/LIBERO-plus` `4976dc30…` + `moojink/openvla-oft` `e4287e94…` | `openvla_oft_libero_plus_paired_robustness` | paired `rollouts.json` files, MP4 manifests, `comparison.json`, report, and RRD (not produced) | `sylvest-oft-mixdata-libero-plus-comparison.yaml` |
 | ManiSkill | `mani-skill/ManiSkill` `v3.0.1` | `gymnasium_pickcube_registration` | `maniskill_pickcube_step.json` | `byof-maniskill.yaml` |
 | MuJoCo Playground | `google-deepmind/mujoco_playground` `v0.2.0` | `mjx_cartpole_step` (+ CheetahRun) | `mujoco_playground_cartpole_step.json` | `byof-mujoco-playground.yaml` |
 | Gymnasium-Robotics | `Farama-Foundation/Gymnasium-Robotics` `4d1ebecb…` | `HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1` | `gymnasium-robotics-smoke.json` | `byof-gymnasium-robotics.yaml` |
@@ -42,6 +43,7 @@ unique and must be tested with its own upstream-named capabilities.
 | --- | --- | --- | --- |
 | Habitat-Sim | `skokloster_castle_rgb_depth_bullet_traversal` / `headless_nvidia_egl_rgb_depth_render` / `bullet_physics_world_step` / `greedy_geodesic_agent_traversal` | **development evidence; supported release quarantined** | [Exact-digest development manifest](validation/habitat-sim-development-image-manifest.json): 19 RGB/depth frame pairs, 19 Bullet steps and 2.2466 metres of navigation on one RTX PRO 6000 Blackwell. Historical producer evidence; no policy-training or long-benchmark claim. |
 | LIBERO | `libero_spatial_bc_rnn_train_reload_heldout` | **qualification pending; payload-free public-development staging permitted; not released** | Requires complete-byte and anonymous-pull proof followed by one STRICT-bound B200 run of the exact candidate digest: eight upstream BC-RNN/Adam steps on the official LIBERO-Spatial demonstration, checkpoint reload, and full trajectory-disjoint held-out evaluation |
+| Sylvest OpenVLA-OFT mixed-data checkpoint | `openvla_oft_libero_plus_paired_robustness` | **deferred; no live image or run** | Pinned LIBERO-Plus source has no published license file, and the candidate card lacks an authoritative mix-SFT task inventory. The local five-stage spec, exact payload probes, report/decoded-RRD fixture test, and workflow planning do not establish benchmark performance. |
 | ManiSkill | `gymnasium_pickcube_registration` | **accepted** | `defcap-maniskill-20260708-230227` (81 `-v1` envs) |
 | ManiSkill | `pickcube_cpu_step` / `pickcube_parallel_envs` / `pickcube_gpu_rgb_render` | **accepted** | `defcap11-maniskill-20260709-043408` (sapien 3.0.3 on CUDA Ubuntu22.04/py3.10; Blackwell render OK) |
 | MuJoCo Playground | `mjx_cartpole_step` | **accepted** | `defcap8-mujoco-playground-20260709-024455` (+ prior `…-005745`) |
@@ -156,6 +158,33 @@ requires the Pod-observed immutable image digest in `libero-smoke.json`; imports
 BDDL parsing, dataset inventory, or zero-step training do not pass. Rendered
 closed-loop sweeps, all 130 tasks, lifelong-algorithm comparison, and physical
 robots remain deferred. See [`byof-libero.md`](byof-libero.md).
+
+### Sylvest OpenVLA-OFT mixed-data checkpoint
+
+This separate checkpoint-evaluation candidate does not inherit LIBERO's
+admission, source rights, image, or evidence. It pins
+`sylvestf/LIBERO-plus@4976dc30028e805ff8094b55501d532c48fec182`,
+`moojink/openvla-oft@e4287e94541f459edc4feabc4e181f537cd569a8`, candidate
+`Sylvest/openvla-7b-oft-finetuned-libero-plus-mixdata@a85655ec941bae6644c9fbdf62db02b9726d7cf5`,
+and baseline
+`moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10@638918f3d1c2e43a39a8a20772bdb8b91835e4b7`.
+
+| Capability | Status | Upstream basis / artifact contract |
+| --- | --- | --- |
+| `libero_plus_heldout_protocol_preparation` | deferred | Published `task_classification.json` for `libero_spatial`, `libero_object`, `libero_goal`, or `libero_10`; emits hash-bound `protocol.json` only after excluding an authoritative mix-SFT task inventory. |
+| `openvla_oft_libero_plus_paired_rollouts` | deferred hard gate | Upstream `experiments.robot.libero.run_libero_eval.run_task` once per exact task/seed for each pinned checkpoint; emits two distinct `rollouts.json` files and upstream MP4 manifests. |
+| `paired_robustness_difference` | deferred | Identical protocol hash/case identity is required before numerical delta, category summaries, normal interval, and exact McNemar p-value are emitted. |
+| `paired_rollout_rrd_report` | local artifact test passed; live deferred | Measured comparison feeds `report.json`, checksums, and decoded `comparison.rrd`; no real rollout metric has been produced. |
+
+The source repository has no `LICENSE`, `NOTICE`, or `COPYING` at this pinned
+revision and its repository license metadata is absent. Therefore no functional
+image is built, no source is runtime-fetched, and no live NPA/SkyPilot/Kubernetes
+workflow is submitted. The model/data cards' MIT declarations do not repair this
+separate source-rights gap. No generic NPA EULA or `ACCEPT_*` flag is added.
+The candidate card also does not enumerate the mix-SFT training tasks, so a
+held-out claim remains unavailable until its authors provide the inventory. See
+[`sylvest-oft-mixdata.md`](sylvest-oft-mixdata.md) and the adjacent workflow
+readiness record for the precise resume gate.
 
 ### ManiSkill
 

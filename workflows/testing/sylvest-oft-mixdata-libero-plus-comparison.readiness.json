@@ -1,0 +1,58 @@
+{
+  "schema_version": "workflow-readiness/v1",
+  "workflow_sha256": "c458dc48445f801454b79d612b74076e0044baeb0c7239caab00aae2941f6545",
+  "planning": {
+    "validation": {
+      "status": "verified",
+      "reason": "Local workflow schema validation and planning succeeded for the five connected stages. The plan retains the example bucket and an empty runtime image as execution prerequisites rather than silently selecting either.",
+      "evidence": [
+        "npa workbench workflow validate-spec workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml --json: status valid",
+        "npa workbench workflow plan-spec workflows/testing/sylvest-oft-mixdata-libero-plus-comparison.yaml --run-id sylvest-oft-mixdata-plan --json: five ordered steps with run-scoped S3-style handoffs"
+      ]
+    },
+    "task_fidelity": {
+      "status": "verified",
+      "reason": "Local tests prove five substantive stages are connected, comparison refuses unpaired cases, report artifacts arise from supplied paired data, and the wrapper refuses unlicensed LIBERO-Plus source instead of introducing a generic acceptance flag.",
+      "evidence": [
+        "npa/tests/workflows/test_sylvest_oft_mixdata.py: 4 passed",
+        "npa/.venv/bin/rerun rrd verify and rerun rrd print independently decoded the local measured-fixture comparison.rrd and exposed metrics/delta_success",
+        "npa/src/npa/workflows/sylvest_oft_mixdata.py invokes the upstream OpenVLA-OFT LIBERO run_task path for each exact prepared case"
+      ]
+    }
+  },
+  "prerequisites": {
+    "output_storage": {
+      "status": "unverified",
+      "reason": "The committed example bucket is deliberately non-routable; an owned writable run-scoped prefix must be selected and independently read back.",
+      "evidence": []
+    },
+    "worker_input": {
+      "status": "blocked",
+      "reason": "A live run needs the authors' applicable LIBERO-Plus source license and an authoritative immutable mix-SFT training-task inventory. The checkpoint card does not provide that split.",
+      "evidence": [
+        "Pinned sylvestf/LIBERO-plus@4976dc30028e805ff8094b55501d532c48fec182 has no LICENSE, NOTICE, or COPYING file; repository license metadata is absent",
+        "Direct prepare-stage invocation against the pinned checkout exited 1 before reading the unavailable inventory, with the explicit no-license message"
+      ]
+    },
+    "credentials": {
+      "status": "verified",
+      "reason": "The configured Nebius, S3, and Hugging Face credential preflight passed. Exact-revision one-kilobyte action-head payload probes for both public checkpoints returned HTTP 206; this establishes technical fetch access only, not broader legal permission.",
+      "evidence": [
+        "npa workbench health preflight --checks nebius,s3,hf --warn-only --json: PASS for all three checks (private operational receipt)",
+        "Exact pinned candidate and baseline action-head range probes: HTTP 206, 1024 bytes each (private operational receipt)"
+      ]
+    },
+    "source_image": {
+      "status": "blocked",
+      "reason": "A functional immutable runtime image would contain or fetch LIBERO-Plus source. It must not be built, published, or pulled until the missing source license is resolved.",
+      "evidence": [
+        "No image was built, pushed, or published by this onboarding task"
+      ]
+    },
+    "target_runtime": {
+      "status": "blocked",
+      "reason": "No real NPA/SkyPilot/Kubernetes execution occurred because the required source license and held-out inventory are unavailable. There is no benchmark, convergence, or physical-robot claim.",
+      "evidence": []
+    }
+  }
+}
