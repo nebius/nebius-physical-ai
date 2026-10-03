@@ -258,6 +258,7 @@ def test_counts_require_every_suite_executed_with_no_skips():
         "failed": 0,
         "skipped": 1,
         "collection_errors": 0,
+        "deselected": 0,
     }
 
 
@@ -265,6 +266,13 @@ def test_no_collection_or_missing_suite_cannot_pass():
     assert not _runner().Results().complete(0)
     results = _completed_results()
     results.collected.pop()
+    assert not results.complete(0)
+
+
+def test_deselected_required_inference_cannot_pass():
+    results = _completed_results()
+    results.pytest_deselected([SimpleNamespace(nodeid="test_required_visual_verdict")])
+    assert results.summary()["deselected"] == 1
     assert not results.complete(0)
 
 
@@ -455,6 +463,7 @@ def test_actual_pytest_failure_diagnostics_exclude_private_exception_data(
         "failed": 4,
         "skipped": 0,
         "collection_errors": 0,
+        "deselected": 0,
     }
     expected = {
         "test_call": (

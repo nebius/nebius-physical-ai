@@ -57,7 +57,7 @@ RESULT_FILENAME = "vlm_eval_stub.json"
 LOOP_REPORT_FILENAME = "task_success_report.json"
 BENCHMARK_RESULT_FILENAME = "vlm_eval_benchmark.json"
 BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
-EVIDENCE_SCHEMA_VERSION = "npa_vlm_eval_evidence_v1"
+EVIDENCE_SCHEMA_VERSION = "npa_vlm_eval_evidence_v2"
 HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_hosted_json_v1"
 SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v1"
 MARKDOWN_FENCE_PARSER_SUFFIX = "+markdown-fence-v1"
@@ -94,6 +94,10 @@ class VlmFrameEvidence:
         byte_count: Size of the submitted bytes.
         width: Submitted image width in pixels.
         height: Submitted image height in pixels.
+        source_kind: Input family from which the frame was selected.
+        source_index: Zero-based source frame index when known.
+        source_count: Number of available source frames when known.
+        source_timestamp_s: Source video timestamp in seconds when known.
 
     Returns:
         None.
@@ -108,6 +112,10 @@ class VlmFrameEvidence:
     byte_count: int
     width: int
     height: int
+    source_kind: str | None = None
+    source_index: int | None = None
+    source_count: int | None = None
+    source_timestamp_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -228,6 +236,10 @@ class SelectedFrame:
     label: str
     media_type: str
     data: bytes
+    source_kind: str | None = None
+    source_index: int | None = None
+    source_count: int | None = None
+    source_timestamp_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -603,6 +615,8 @@ def evaluate_vlm(
                 rubric=effective_rubric,
                 frames=frames,
                 timeout_s=timeout_s,
+                frame_selection=frame_selection,
+                max_frames=max_frames,
             )
             frame_count = len(frames)
 
@@ -1530,6 +1544,8 @@ def _call_openai_compatible(
     rubric: str = DEFAULT_RUBRIC,
     frames: list[SelectedFrame],
     timeout_s: float,
+    frame_selection: str = DEFAULT_FRAME_SELECTION,
+    max_frames: int = DEFAULT_MAX_FRAMES,
 ) -> VlmStructuredResponse:
     url = _chat_completions_url(
         _resolve_endpoint_url(backend=backend, endpoint_url=endpoint_url)
@@ -1548,6 +1564,8 @@ def _call_openai_compatible(
         rubric=rubric,
         request=request,
         frames=frames,
+        frame_selection=frame_selection,
+        max_frames=max_frames,
     )
     started_at = time.monotonic()
     raw_response = _post_with_readiness_retry(
@@ -1644,6 +1662,8 @@ def _build_request_evidence(
     rubric: str,
     request: dict[str, Any],
     frames: Sequence[SelectedFrame],
+    frame_selection: str,
+    max_frames: int,
 ) -> VlmRequestEvidence:
     frame_evidence = tuple(_frame_evidence(frame) for frame in frames)
     prompt_sha256 = _sha256_text(prompt)
@@ -1661,6 +1681,9 @@ def _build_request_evidence(
         "prompt_sha256": prompt_sha256,
         "rubric_sha256": rubric_sha256,
         "frames": [asdict(frame) for frame in frame_evidence],
+        "sampling": _sampling_manifest(
+            frames, frame_selection=frame_selection, max_frames=max_frames
+        ),
     }
     return VlmRequestEvidence(
         requested_at=datetime.now(timezone.utc).isoformat(),
@@ -1670,6 +1693,63 @@ def _build_request_evidence(
         request_manifest_sha256=_sha256_json(manifest),
         request_manifest=manifest,
         frames=frame_evidence,
+    )
+
+
+def _sampling_manifest(
+    frames: Sequence[SelectedFrame],
+    *,
+    frame_selection: str,
+    max_frames: int,
+) -> dict[str, Any]:
+    source_kind, source_count = _uniform_source_metadata(frames)
+    indices = [frame.source_index for frame in frames]
+    timestamps = [frame.source_timestamp_s for frame in frames]
+    timestamps_complete = (
+        all(timestamp is not None for timestamp in timestamps)
+        if source_kind == "video"
+        else None
+    )
+    return {
+        "strategy": _normalize_frame_selection(frame_selection),
+        "max_frames": max_frames,
+        "selected_count": len(frames),
+        "source_kind": source_kind,
+        "source_count": source_count,
+        "selected_indices": indices,
+        "selected_timestamps_s": timestamps,
+        "coverage_complete": source_kind is not None
+        and _source_indices_complete(frames, source_count),
+        "timestamps_complete": timestamps_complete,
+    }
+
+
+def _uniform_source_metadata(
+    frames: Sequence[SelectedFrame],
+) -> tuple[str | None, int | None]:
+    if not frames:
+        return None, None
+    source_kind = frames[0].source_kind
+    if source_kind not in {"image-sequence", "numpy-episode", "video"} or any(
+        frame.source_kind != source_kind for frame in frames
+    ):
+        source_kind = None
+    source_count = frames[0].source_count
+    if source_count is None or any(
+        frame.source_count != source_count for frame in frames
+    ):
+        source_count = None
+    return source_kind, source_count
+
+
+def _source_indices_complete(
+    frames: Sequence[SelectedFrame], source_count: int | None
+) -> bool:
+    if not frames or source_count is None:
+        return False
+    return all(
+        frame.source_index is not None and 0 <= frame.source_index < source_count
+        for frame in frames
     )
 
 
@@ -1748,6 +1828,10 @@ def _frame_evidence(frame: SelectedFrame) -> VlmFrameEvidence:
         byte_count=len(frame.data),
         width=width,
         height=height,
+        source_kind=frame.source_kind,
+        source_index=frame.source_index,
+        source_count=frame.source_count,
+        source_timestamp_s=frame.source_timestamp_s,
     )
 
 
@@ -1933,14 +2017,18 @@ def _frames_from_images(
     image_paths = _discover_image_paths(path)
     if not image_paths:
         return []
+    source_count = len(image_paths)
     indices = _selected_indices(
-        len(image_paths), frame_selection=frame_selection, max_frames=max_frames
+        source_count, frame_selection=frame_selection, max_frames=max_frames
     )
     return [
         SelectedFrame(
             label=_image_frame_label(path, image_paths[index]),
             media_type="image/png",
             data=_image_file_to_png(image_paths[index]),
+            source_kind="image-sequence",
+            source_index=index,
+            source_count=source_count,
         )
         for index in indices
     ]
@@ -1984,6 +2072,9 @@ def _frames_from_numpy(
                 label=f"{label}:{index}",
                 media_type="image/png",
                 data=_array_frame_to_png(array[index]),
+                source_kind="numpy-episode",
+                source_index=index,
+                source_count=int(array.shape[0]),
             )
             for index in indices
         ]
@@ -2043,23 +2134,72 @@ def _frames_from_videos(
     with tempfile.TemporaryDirectory(prefix="npa-vlm-video-") as tmp:
         output_dir = Path(tmp)
         count = _video_frame_count(video_path)
-        if count:
-            indices = _selected_indices(
-                count, frame_selection=frame_selection, max_frames=max_frames
-            )
-            _extract_video_indices(video_path, output_dir, indices)
-        elif frame_selection == "final":
-            _extract_final_video_frame(video_path, output_dir)
-        else:
-            _extract_video_sample(video_path, output_dir, max_frames=max_frames)
-        return [
-            SelectedFrame(
-                label=f"{video_path.name}:{frame.name}",
-                media_type="image/png",
-                data=_image_file_to_png(frame),
-            )
-            for frame in sorted(output_dir.glob("frame-*.png"))
-        ]
+        source_indices, timestamps = _extract_selected_video_frames(
+            video_path,
+            output_dir,
+            source_count=count,
+            frame_selection=frame_selection,
+            max_frames=max_frames,
+        )
+        return _selected_video_frames(
+            video_path,
+            output_dir,
+            source_count=count,
+            source_indices=source_indices,
+            timestamps=timestamps,
+        )
+
+
+def _extract_selected_video_frames(
+    video_path: Path,
+    output_dir: Path,
+    *,
+    source_count: int | None,
+    frame_selection: str,
+    max_frames: int,
+) -> tuple[list[int], list[float | None]]:
+    if source_count:
+        indices = _selected_indices(
+            source_count,
+            frame_selection=frame_selection,
+            max_frames=max_frames,
+        )
+        return indices, _extract_video_indices(video_path, output_dir, indices)
+    if frame_selection == "final":
+        return [], _extract_final_video_frame(video_path, output_dir)
+    return [], _extract_video_sample(video_path, output_dir, max_frames=max_frames)
+
+
+def _selected_video_frames(
+    video_path: Path,
+    output_dir: Path,
+    *,
+    source_count: int | None,
+    source_indices: Sequence[int],
+    timestamps: Sequence[float | None],
+) -> list[SelectedFrame]:
+    extracted = sorted(output_dir.glob("frame-*.png"), key=_video_output_frame_number)
+    if source_count is not None and len(extracted) != len(source_indices):
+        raise VlmEvalError(
+            "Video extraction did not produce every selected source frame; "
+            "sampling provenance cannot be verified"
+        )
+    return [
+        SelectedFrame(
+            label=f"{video_path.name}:{frame.name}",
+            media_type="image/png",
+            data=_image_file_to_png(frame),
+            source_kind="video",
+            source_index=source_indices[ordinal]
+            if ordinal < len(source_indices)
+            else None,
+            source_count=source_count,
+            source_timestamp_s=(
+                timestamps[ordinal] if ordinal < len(timestamps) else None
+            ),
+        )
+        for ordinal, frame in enumerate(extracted)
+    ]
 
 
 def _discover_video_paths(path: Path) -> list[Path]:
@@ -2113,9 +2253,10 @@ def _video_frame_count(video_path: Path) -> int | None:
 
 def _extract_video_indices(
     video_path: Path, output_dir: Path, indices: list[int]
-) -> None:
+) -> list[float | None]:
     if not indices:
-        return
+        return []
+    timestamps = _video_frame_timestamps(video_path, indices)
     expression = "+".join(f"eq(n\\,{index})" for index in indices)
     cmd = [
         "ffmpeg",
@@ -2124,6 +2265,8 @@ def _extract_video_indices(
         "-y",
         "-i",
         str(video_path),
+        "-map",
+        "0:v:0",
         "-vf",
         f"select={expression}",
         "-vsync",
@@ -2131,9 +2274,12 @@ def _extract_video_indices(
         str(output_dir / "frame-%03d.png"),
     ]
     _run_ffmpeg(cmd)
+    return timestamps
 
 
-def _extract_final_video_frame(video_path: Path, output_dir: Path) -> None:
+def _extract_final_video_frame(
+    video_path: Path, output_dir: Path
+) -> list[float | None]:
     cmd = [
         "ffmpeg",
         "-v",
@@ -2143,16 +2289,19 @@ def _extract_final_video_frame(video_path: Path, output_dir: Path) -> None:
         "-0.1",
         "-i",
         str(video_path),
+        "-map",
+        "0:v:0",
         "-frames:v",
         "1",
         str(output_dir / "frame-001.png"),
     ]
     _run_ffmpeg(cmd)
+    return []
 
 
 def _extract_video_sample(
     video_path: Path, output_dir: Path, *, max_frames: int
-) -> None:
+) -> list[float | None]:
     cmd = [
         "ffmpeg",
         "-v",
@@ -2160,6 +2309,8 @@ def _extract_video_sample(
         "-y",
         "-i",
         str(video_path),
+        "-map",
+        "0:v:0",
         "-vf",
         "fps=1",
         "-frames:v",
@@ -2167,15 +2318,67 @@ def _extract_video_sample(
         str(output_dir / "frame-%03d.png"),
     ]
     _run_ffmpeg(cmd)
+    return []
 
 
-def _run_ffmpeg(cmd: list[str]) -> None:
+def _run_ffmpeg(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise VlmEvalError(f"ffmpeg frame extraction failed: {exc}") from exc
     if proc.returncode != 0:
         raise VlmEvalError(f"ffmpeg frame extraction failed: {proc.stderr[-500:]}")
+    return proc
+
+
+def _video_frame_timestamps(
+    video_path: Path, indices: Sequence[int]
+) -> list[float | None]:
+    unavailable = [None] * len(indices)
+    if not indices or not shutil.which("ffprobe"):
+        return unavailable
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "frame=best_effort_timestamp_time",
+        "-of",
+        "json",
+        str(video_path),
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        frames = json.loads(proc.stdout).get("frames", [])
+    except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+        return unavailable
+    if (
+        proc.returncode != 0
+        or not isinstance(frames, list)
+        or max(indices) >= len(frames)
+    ):
+        return unavailable
+    return [_parsed_video_timestamp(frames[index]) for index in indices]
+
+
+def _parsed_video_timestamp(frame: Any) -> float | None:
+    raw_timestamp = (
+        frame.get("best_effort_timestamp_time") if isinstance(frame, dict) else None
+    )
+    try:
+        timestamp = float(raw_timestamp)
+    except (TypeError, ValueError):
+        return None
+    return timestamp if math.isfinite(timestamp) else None
+
+
+def _video_output_frame_number(path: Path) -> int:
+    match = re.fullmatch(r"frame-(?P<number>\d+)\.png", path.name)
+    if match is None:
+        raise VlmEvalError(f"Unexpected extracted video frame name: {path.name}")
+    return int(match.group("number"))
 
 
 def _selected_indices(

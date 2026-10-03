@@ -17,6 +17,8 @@ requested and returned model to:
 
 - SHA-256 hashes, dimensions, media types, byte counts, and source-relative
   labels for the exact normalized image bytes submitted to the model;
+- source kind, zero-based source index, source frame count, and source video
+  timestamp when extraction can establish them;
 - hashes of the prompt, rubric, and secret-free request manifest;
 - request time, endpoint role, HTTP status when available, latency, finish
   reason, provider request ID and usage when returned;
@@ -24,7 +26,26 @@ requested and returned model to:
 
 The request manifest intentionally excludes authorization, endpoint addresses,
 input/output locations, prompts, and base64 image data. It contains enough
-information to recompute what was submitted without copying pixels or secrets.
+metadata to compare against separately retained source media. A syntactically
+valid SHA-256 digest establishes only format. Recomputing the manifest hash
+checks the recorded metadata and claimed digests; it does not independently
+prove that those digests describe the submitted pixels. For payload binding,
+normalize the retained source frames to RGB PNGs (at most 768 pixels per side)
+and recompute their hashes, dimensions, and byte counts. Hashing the original
+JPEG or video file is not equivalent to hashing the normalized submitted PNG.
+Its `sampling` block records the strategy, requested frame limit, selected
+indices and timestamps, source count, and whether index and timestamp coverage
+are complete. Unknown video metadata stays null; a generated extraction ordinal
+is never presented as a source frame index. `coverage_complete` means every
+submitted frame has auditable source-index metadata, not that every available
+source frame was submitted.
+This producer emits `npa_vlm_eval_evidence_v2`; legacy v1 records have no
+source-sampling contract and must not be interpreted as complete sampling.
+The v2 aggregate `source_kind` is null for absent, unrecognized, or mixed kinds,
+and `coverage_complete` is false even if their counts and indices agree.
+`source_count` is retained only when all frames agree on a non-null count.
+`timestamps_complete` is boolean for a known uniform video source and null
+otherwise. These fields do not upgrade or reinterpret existing v1 artifacts.
 The full result still belongs in private run storage because the provider
 response and existing task fields can describe operator data.
 
@@ -38,15 +59,55 @@ numbers, invalid types, and partial output still fail rather than being repaired
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
 
-To verify this against your existing GPU endpoint, set
+### Served-model sampling live lane
+
+To verify this against your existing authenticated GPU endpoint, set
 `NPA_INTEGRATION_E2E=1` and point `NPA_VLM_PROVENANCE_LIVE_CONFIG` at a private
-JSON file containing `input_path`, `output_path` (a local JSON filename),
+owner-only JSON file containing `input_path` (absolute local media path),
+`output_path` (a new absolute JSON filename in an existing owner-only directory),
 `endpoint_url`, `model`, `expected_served_model`, and `task`. Supply credentials
 through the environment variable named by `api_key_env` (default
-`VLM_EVAL_API_KEY`). Run
-`npa/.venv/bin/python -m pytest npa/tests/e2e/test_vlm_served_model_live.py -q`.
-The test calls the real endpoint and retains its verdict; it provisions and
-destroys no resources.
+`VLM_EVAL_API_KEY`). Both gating variables are unset by default. Install the
+`dev` extra, `ffmpeg`, and `ffprobe`, then run from the repository root:
+
+```bash
+export NPA_INTEGRATION_E2E=1
+export NPA_VLM_PROVENANCE_LIVE_CONFIG="<private-config.json>"
+npa/.venv/bin/python npa/scripts/vlm_provenance_live_recheck.py \
+  --evidence-dir "<new-private-evidence-directory>"
+```
+
+The runner requires all ten real inference cases to pass: one operator input
+plus `final`, `keyframes`, and `sequence` sampling over six-frame image, NumPy,
+and lossless-video inputs. Known source pixels and timestamps provide an
+independent oracle for normalized hashes and selected indices. Fixture creation
+alone is not inference evidence. Missing credentials, missing video tools,
+skipped cases, partial collection, or failed teardown hooks fail the lane.
+The shared provenance runner verifies authenticated expected-model readiness
+before inference. Readiness alone cannot pass the lane. Configuration and
+outputs must remain outside the checkout; the custom result must not collide
+with the runner's `receipt.json` or `pytest/` paths. Private output includes the
+configured custom result, a sanitized `receipt.json`, and per-case inputs and
+provider results under `pytest/`. Preserve both the custom result and the
+complete evidence directory. The receipt binds the sampling helper source.
+
+The endpoint lifecycle belongs to the operator job. Before creating compute,
+use a dedicated project and task-scoped NPA configuration, prove its selected
+profile with `npa workbench health preflight --checks nebius`, and verify exact
+model payload access before fetching gated weights. Record the model revision,
+serving image digest, GPU product/count, and private deployment identity. Verify
+authenticated endpoint readiness, run the lane, then collect results and tear
+down only job-owned serving compute in the job's cleanup path, including when
+inference fails. Retain the cleanup receipt separately: this runner consumes an
+already provisioned endpoint and cannot certify cloud teardown. Reused shared
+endpoints remain their owner's responsibility and must not be destroyed.
+
+The hosted Token Factory nightly runner has a separate credential and workload
+contract. It does not execute this GPU lane. Scheduling requires an operator
+job with the private configuration, access checks, endpoint lifecycle, and
+cleanup above; adding this suite to hosted `SUITES` without them is insufficient.
+These checks establish request traceability, not color recognition accuracy or
+physical task completion.
 
 ## Prerequisites
 
