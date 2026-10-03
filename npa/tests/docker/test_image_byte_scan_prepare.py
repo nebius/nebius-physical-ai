@@ -192,6 +192,74 @@ def test_habitat_contract_binding_uses_committed_blob_and_rejects_drift(tmp_path
         P._trusted_contract(root, revision)
 
 
+def _prepared_habitat_handoff(tmp_path, monkeypatch, detector_type, fixture):
+    seed = fixture(tmp_path)
+    verification = W.bound_json(seed["verification_report"])
+    revision = P._trusted_revision(CHECKOUT)
+    verification.update(
+        schema_version=W.HABITAT_VERIFICATION_SCHEMA,
+        archive_sha256=verification["docker_save_sha256"],
+        expected_source_revision=revision,
+    )
+    verification_path = Path(seed["verification_report"]["path"])
+    verification_path.write_bytes(W.canonical(verification))
+    _contract, contract_binding = P._trusted_contract(CHECKOUT, revision)
+    monkeypatch.setattr(P, "tools_bindings", lambda _: (seed["helper"], seed["config"]))
+    monkeypatch.setattr(P, "native_engine", lambda _: None)
+    monkeypatch.setattr(P, "_verify_habitat_report", lambda *_: contract_binding)
+    monkeypatch.setattr(W, "Detector", detector_type)
+    original_snapshots = W.input_snapshots
+    monkeypatch.setattr(W, "input_snapshots", lambda _: [])
+    monkeypatch.setenv("CUSTOMER_DENYLIST", "synthetic-required-policy")
+    prepared_dir = tmp_path / "prepared"
+    prepared_dir.mkdir(mode=0o700)
+    args = SimpleNamespace(
+        tools_receipt=seed["tools_receipt"]["path"],
+        native_receipt=None,
+        archive=seed["archive"]["path"],
+        verification_report=str(verification_path),
+        expected_image_id=seed["expected_image_id"],
+        policy_mode="ci-regex",
+        literal_inventory=None,
+        trusted_root=CHECKOUT,
+    )
+    authorization = P.authorize(args, prepared_dir)
+    authorization.pop("literal_engine")
+    monkeypatch.setattr(W, "input_snapshots", original_snapshots)
+    return authorization, verification
+
+
+def test_habitat_prepare_authorization_runs_scanner_handoff(tmp_path, monkeypatch):
+    from image_byte_scan import habitat_sim_verification as H
+    from test_image_byte_scan import FakeDetector, fixture
+
+    with W.authorized_roots(tmp_path, CHECKOUT):
+        authorization, verification = _prepared_habitat_handoff(
+            tmp_path, monkeypatch, FakeDetector, fixture
+        )
+        generic = {
+            **verification,
+            "schema_version": "npa.curobo.image-verification.v1",
+        }
+        monkeypatch.setattr(
+            H,
+            "inspect",
+            lambda fd, size, image_id: {
+                "layers": W.graph(fd, size, generic, image_id),
+                "receipt": {"kind": "synthetic-habitat-handoff"},
+            },
+        )
+        monkeypatch.setattr(H, "bind", lambda *_: None)
+        scan_dir = tmp_path / "scan"
+        scan_dir.mkdir(mode=0o700)
+        report = W._scan(authorization, scan_dir, detector_type=FakeDetector)
+
+    assert report["valid"] is True and report["complete"] is True
+    assert any(
+        item["role"] == "trusted_contract" for item in report["input_snapshot_receipts"]
+    )
+
+
 def test_invalid_cli_never_echoes_value(capsys):
     assert P.main(["check-policy", "--unrecognized", "synthetic-private-argument"]) == 1
     captured = capsys.readouterr()
@@ -280,6 +348,36 @@ def test_prepare_exact_image_and_policy_inputs_are_bound(tmp_path, monkeypatch):
         assert all(path.stat().st_mode & 0o077 == 0 for path in directory.iterdir())
 
 
+def test_prepare_bounds_literal_inventory_before_json_parse(tmp_path, monkeypatch):
+    from test_image_byte_scan import fixture
+
+    with W.authorized_roots(tmp_path, CHECKOUT):
+        authorization = fixture(tmp_path)
+        monkeypatch.setattr(
+            P,
+            "tools_bindings",
+            lambda _: (authorization["helper"], authorization["config"]),
+        )
+        monkeypatch.setattr(
+            P, "native_engine", lambda _: {"kind": "synthetic-unexecuted-binding"}
+        )
+        monkeypatch.setattr(W, "LITERAL_INVENTORY_JSON_LIMIT", 1)
+        directory = tmp_path / "prepared"
+        directory.mkdir(mode=0o700)
+        args = SimpleNamespace(
+            tools_receipt=authorization["tools_receipt"]["path"],
+            native_receipt=None,
+            archive=authorization["archive"]["path"],
+            verification_report=authorization["verification_report"]["path"],
+            expected_image_id=authorization["expected_image_id"],
+            policy_mode="exact-literals",
+            literal_inventory=authorization["literal_inventory"]["path"],
+            literal_matching_policy="exact-substring-v1",
+        )
+        with pytest.raises(W.ScanError, match="literal_inventory_json_limit"):
+            P.authorize(args, directory)
+
+
 def test_no_secret_environment_is_inherited_by_detector_fixture(tmp_path, monkeypatch):
     from test_image_byte_scan import fixture
 
@@ -322,6 +420,21 @@ def test_explicit_native_command_fails_when_tools_are_missing(tmp_path, capsys):
     assert captured.out == "native image byte checks failed\n" and captured.err == ""
     result = json.loads((output / "native-checks-failure.json").read_bytes())
     assert result["passed"] is False and result["synthetic_only"] is True
+
+
+def test_native_cancellation_wrapper_is_spawn_safe(tmp_path):
+    from image_byte_scan import real_helper_checks as N
+
+    script = N.cancellation_wrapper(CHECKOUT, tmp_path / "marker.json")
+
+    assert script.count("W.main()") == 1
+    assert 'if __name__ == "__main__":\n raise SystemExit(W.main())' in script
+
+
+def test_native_duplex_fixture_stays_below_record_finding_limit():
+    from image_byte_scan import real_helper_checks as N
+
+    assert N.DUPLEX_LOUD_SECRETS == W.RECORD_FINDING_LIMIT - 1
 
 
 def test_cancellation_scope_restores_handler_and_marks_controlled_failure():

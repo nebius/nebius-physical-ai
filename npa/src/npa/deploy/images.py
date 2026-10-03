@@ -484,7 +484,7 @@ SUPPORTED_TOOL_VERSIONS = {
     "sonic-mujoco": "0.2.0-runtime",
     "retargeting": "0.1.1",
     "envgen": "0.1.2-sim2real-coherent-20260904",
-    "robocasa": "0.1.0",
+    "robocasa": "0.1.1",
     "robomimic": "0.1.0-neutral-unbuilt",
     "reference-policy": "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
     "lerobot-vlm-rl": "cuda13-b300-0.1.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z",
@@ -2407,6 +2407,17 @@ def container_image_for_tool(
     made otherwise-public workloads depend on private registry credentials.
     """
     resolved_registry = registry or DEFAULT_CONTAINER_REGISTRY
+    if tool == "robocasa":
+        if not tag:
+            raise ValueError(
+                f"{tool} has no accepted default image and remains quarantined. "
+                "Supply an immutable image "
+                "override or explicitly select a dev-<full-source-sha> tag for validation."
+            )
+        if re.fullmatch(r"dev-[0-9a-f]{40}", tag) is None:
+            raise ValueError(
+                f"{tool} is quarantined; validation requires an exact dev-<full-source-sha> tag"
+            )
     public_registry = is_public_registry(resolved_registry)
     # Some newly registered workflows need a stable, visibly unbuilt reference
     # for validation and planning before any runnable release exists.  Keep this

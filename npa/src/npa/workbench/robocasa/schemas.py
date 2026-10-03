@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -14,6 +15,8 @@ DEFAULT_ENV_ID = "robocasa/PickPlaceCounterToCabinet"
 DEFAULT_ITERATIONS = 1
 DEFAULT_NUM_ENVS = 1
 DEFAULT_TIMEOUT_SECONDS = 3600
+SOURCE_SHA_PATTERN = re.compile(r"^[0-9a-f]{40}$")
+MANIFEST_DIGEST_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 RunStatus = Literal["queued", "running", "completed", "failed"]
 
@@ -34,6 +37,8 @@ class RoboCasaRunRequest(BaseModel):
     checkpoint_uri: str = ""
     train_env_ids: str = ""
     heldout_env_ids: str = ""
+    expected_image_source_sha: str = ""
+    expected_image_manifest_digest: str = ""
 
     @field_validator("env_id", "capability", "output_uri")
     @classmethod
@@ -68,6 +73,26 @@ class RoboCasaRunRequest(BaseModel):
             required=True,
         )
 
+    @field_validator("expected_image_source_sha")
+    @classmethod
+    def _validate_expected_source_sha(cls, value: str) -> str:
+        resolved = value.strip().lower()
+        if resolved and not SOURCE_SHA_PATTERN.fullmatch(resolved):
+            raise ValueError(
+                "expected image source SHA must be exactly 40 hex characters"
+            )
+        return resolved
+
+    @field_validator("expected_image_manifest_digest")
+    @classmethod
+    def _validate_expected_manifest_digest(cls, value: str) -> str:
+        resolved = value.strip().lower()
+        if resolved and not MANIFEST_DIGEST_PATTERN.fullmatch(resolved):
+            raise ValueError(
+                "expected image manifest digest must be sha256 followed by 64 hex characters"
+            )
+        return resolved
+
 
 class RoboCasaRunResponse(BaseModel):
     """Response returned by the run endpoint and SDK."""
@@ -92,6 +117,7 @@ class RoboCasaStatusResponse(BaseModel):
     capability: str
     env_id: str
     output_uri: str
+    manifest_sha256: str = ""
     error: str | None = None
     result: dict[str, Any] | None = None
 
@@ -116,6 +142,12 @@ class RoboCasaSystemInfo(BaseModel):
     robosuite_version: str = ""
     mujoco_version: str = ""
     gymnasium_version: str = ""
+    lerobot_version: str = ""
+    torch_version: str = ""
+    torchvision_version: str = ""
+    source_identity: str = "local_unbound"
+    image_source_sha: str = ""
+    image_manifest_digest: str = ""
     cuda_available: bool = False
     cuda_device_count: int = 0
     cuda_device_name: str = ""
