@@ -1,4 +1,4 @@
-"""Author a portable industrial reference scene and render it with native Cycles CUDA."""
+"""Author portable industrial scenes and render native CUDA or RTX OptiX viewpoints."""
 
 from __future__ import annotations
 
@@ -206,29 +206,48 @@ def _lighting(bpy):
 
 
 def _cuda_devices(bpy):
+    return _gpu_devices(bpy, "CUDA")
+
+
+def _gpu_devices(bpy, backend):
     preferences = bpy.context.preferences.addons["cycles"].preferences
-    preferences.compute_device_type = "CUDA"
+    preferences.compute_device_type = backend
     preferences.refresh_devices()
     devices = []
     for device in preferences.devices:
-        device.use = device.type == "CUDA"
+        device.use = device.type == backend
         if device.use:
             devices.append({"name": device.name, "type": device.type})
     if not devices:
         raise RuntimeError(
-            "Cycles CUDA requires a real CUDA GPU; CPU rendering is disabled"
+            f"Cycles {backend} requires a compatible GPU; CPU rendering is disabled"
         )
     bpy.context.scene.render.engine = "CYCLES"
     bpy.context.scene.cycles.device = "GPU"
     return devices
 
 
-def _render(bpy, root, views, samples):
+def _camera_pose(index, views, scene_id):
+    if scene_id == "industrial-campus":
+        import digital_twin_campus
+
+        return digital_twin_campus._camera(index, views)
+    angle = -math.pi / 3 + 2 * math.pi * index / views
+    return (
+        "Factory cell",
+        (14 * math.cos(angle), 14 * math.sin(angle), 11),
+        (0, 0, 0.8),
+        45,
+    )
+
+
+def _render(bpy, root, views, samples, scene_id):
     from mathutils import Vector
 
     scene = bpy.context.scene
     scene.cycles.samples, scene.cycles.use_denoising = samples, True
-    scene.render.resolution_x, scene.render.resolution_y = 1280, 720
+    resolution = (2560, 1440) if scene_id == "industrial-campus" else (1280, 720)
+    scene.render.resolution_x, scene.render.resolution_y = resolution
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
     bpy.ops.object.camera_add(location=(10, -12, 9))
@@ -237,47 +256,75 @@ def _render(bpy, root, views, samples):
     scene.camera = camera
     poses = []
     for index in range(views):
-        angle = -math.pi / 3 + 2 * math.pi * index / views
-        camera.location = (14 * math.cos(angle), 14 * math.sin(angle), 11)
+        route, position, target, lens = _camera_pose(index, views, scene_id)
+        camera.location, camera.data.lens = position, lens
+        camera.data.clip_end = 10000
         camera.rotation_euler = (
-            (Vector((0, 0, 0.8)) - camera.location).to_track_quat("-Z", "Y").to_euler()
+            (Vector(target) - camera.location).to_track_quat("-Z", "Y").to_euler()
         )
         scene.render.filepath = str(root / f"frame-{index:03d}.png")
         bpy.ops.render.render(write_still=True)
         poses.append(
             {
                 "frame": index,
+                "route": route,
+                "lens_mm": lens,
                 "camera_to_world": [list(row) for row in camera.matrix_world],
             }
         )
     return poses
 
 
-def _main():
-    import bpy
-
+def _arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-path", type=Path, required=True)
     parser.add_argument("--views", type=int, required=True)
     parser.add_argument("--samples", type=int, required=True)
-    args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
-    devices = _cuda_devices(bpy)
+    parser.add_argument(
+        "--scene", choices=("factory-cell", "industrial-campus"), default="factory-cell"
+    )
+    parser.add_argument("--gpu-backend", choices=("CUDA", "OPTIX"), default="CUDA")
+    return parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
+
+
+def _build_scene(bpy, scene_id):
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
+    if scene_id == "industrial-campus":
+        import digital_twin_campus
+
+        return digital_twin_campus._build(bpy)
     _factory(bpy)
     _lighting(bpy)
+    return {}
+
+
+def _main():
+    import bpy
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    args = _arguments()
+    devices = _gpu_devices(bpy, args.gpu_backend)
+    statistics = _build_scene(bpy, args.scene)
     root = args.output_path
     root.mkdir(parents=True, exist_ok=False)
-    poses = _render(bpy, root, args.views, args.samples)
+    poses = _render(bpy, root, args.views, args.samples, args.scene)
     bpy.ops.wm.usd_export(filepath=str(root / "scene.usdc"), export_animation=False)
     bpy.ops.export_scene.gltf(filepath=str(root / "scene.glb"), export_format="GLB")
     receipt = {
-        "backend": "Blender Cycles CUDA",
+        "backend": "Blender Cycles OptiX"
+        if args.gpu_backend == "OPTIX"
+        else "Blender Cycles CUDA",
         "version": ".".join(str(part) for part in bpy.app.version),
         "devices": devices,
         "cpu_rendering": False,
         "samples": args.samples,
-        "resolution": [1280, 720],
+        "scene_id": args.scene,
+        "scene_statistics": statistics,
+        "resolution": [
+            bpy.context.scene.render.resolution_x,
+            bpy.context.scene.render.resolution_y,
+        ],
         "cameras": poses,
     }
     (root / "native-render.json").write_text(json.dumps(receipt, indent=2) + "\n")

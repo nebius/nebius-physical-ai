@@ -2,6 +2,14 @@
 
 [Workbench](../README.md) · [NuRec reconstruction](neural-reconstruction.md)
 
+For a large authored environment, the
+[RTX campus workflow](../../../workflows/testing/digital-twin-campus-render.yaml)
+renders an 18-hectare site with native Blender OptiX. Its cutaway robotics and
+fulfillment halls, freight terminal, operations tower, solar field and process
+yard share one OpenUSD/glTF scene. The offline HTML provides four inspection
+routes, thumbnails, scrubbing, keyboard navigation, playback and fullscreen views.
+Scene counts come from the exported model; they do not represent live operations.
+
 Use the RTX path to reconstruct a real capture into a Gaussian USDZ scene, render
 new camera views on a GPU, and inspect the results in a portable HTML file.
 The infrastructure uses a dedicated project, a CPU pool for coordination and
@@ -15,6 +23,7 @@ are separate renderer contracts: B200 availability does not make NuRec compatibl
 
 | Input and purpose | Renderer | Infrastructure |
 | --- | --- | --- |
+| Authored 18-hectare industrial campus → aerial and close inspection routes | Blender 4.5.3 Cycles OptiX | RTX PRO 6000, on-demand or explicitly authorized preemptible |
 | Real calibrated capture → appearance reconstruction and new views | NVIDIA NuRec/NRE | [RTX PRO 6000](../../../npa/examples/fleet/digital-twin.yaml) |
 | Repository-authored factory cell → rendered views and portable geometry | Blender 4.5.3 Cycles CUDA | [B200](../../../npa/examples/fleet/digital-twin-cuda.yaml); RTX CUDA qualification is separate |
 
@@ -53,6 +62,18 @@ private reservation ID. Fleet verifies the reservation and uses strict binding.
 Omitting that field selects ordinary on-demand allocation. A full reservation
 does not silently select another pool. Preemptible allocation requires an
 explicit operator decision.
+
+When preemptible use is authorized, remove the reservation field and set
+`defaults.gpu_nodes.preemptible: true` in the private spec. Keep the CPU pool
+on-demand and preserve GPU count, driver profile and disk allocations. A reclaim
+can interrupt a render; inspect the same run and use its standard resume path.
+Only completed, verified bundles receive a publication receipt.
+
+For another region, select a project belonging to that region and use the
+provider's advertised platform and preset. Some regions expose
+`gpu-rtx6000-a`; preserve that exact platform so Fleet configures the matching
+GPU Operator driver selector. Fleet preflight verifies project identity,
+regional quotas and any reservation before provisioning.
 
 ```bash
 npa fleet plan --spec '<private-fleet.yaml>'
@@ -139,6 +160,71 @@ Only selected hardware measurements and content hashes enter the report; private
 infrastructure identifiers, credentials, storage locations, and arbitrary receipt
 metadata are excluded. Full-resolution images, the USDZ and Rerun recording
 remain separate run artifacts.
+
+## Render the industrial campus on RTX
+
+Prepare the dedicated RTX infrastructure and project storage above, then select
+the [campus workflow](../../../workflows/testing/digital-twin-campus-render.yaml):
+
+```bash
+npa workbench health preflight --project twin --checks nebius,s3 --json
+npa workbench workflow validate-spec workflows/testing/digital-twin-campus-render.yaml
+npa workbench workflow prepare-run 'workflows/testing/digital-twin-campus-render.yaml' --project twin
+npa workbench workflow preflight-images workflows/testing/digital-twin-campus-render.yaml \
+  --project twin --infra 'k8s/<rtx-context>'
+npa workbench workflow submit workflows/testing/digital-twin-campus-render.yaml \
+  --run-id '<prepared-run-id>' --project twin --infra 'k8s/<rtx-context>' \
+  --var bucket='<your-bucket>' --var prefix='digital-twin/<prepared-run-id>' \
+  --secret-env AWS_ACCESS_KEY_ID --secret-env AWS_SECRET_ACCESS_KEY
+```
+
+Use the deployment's exact kubeconfig and the prepared run ID, as in the CUDA
+example below. The default renders 32 views at 2560 × 1440 and 128 path-tracing
+samples. `views` and `samples` are quality controls; the campus requires at least
+four views so every inspection route has real rendered media. Native OptiX
+selection disables both CPU and CUDA render devices and refuses fallback if
+OptiX is unavailable. GPU activity is required before the campus HTML is emitted.
+
+The scene contains 32 industrial robots, 600 modeled warehouse inventory units,
+108 solar arrays, autonomous carriers, stacked freight containers, two gantry
+cranes and an operations tower. Shared meshes keep repeated geometry compact.
+The native receipt records measured object and triangle counts, asset-role
+counts and every camera matrix. SHA-256 evidence binds both scene source modules,
+the pinned Blender archive, native receipt, scene exports and rendered frames.
+
+The bundle resolves through `rendered/completion.json`. Its `index.html` embeds
+1920-pixel previews derived from the original 1440p PNG frames; it makes no
+network requests. It presents recorded viewpoints of an authored reference
+environment, not live simulation, synchronized telemetry or an XR session.
+
+After independently materializing the completed publication:
+
+```bash
+NPA_INTEGRATION_E2E=1 NPA_DIGITAL_TWIN_CAMPUS_LIVE_DIR='<materialized-campus-directory>' \
+  npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_digital_twin_render_live.py -q
+```
+
+This verifies native RTX OptiX selection, observed GPU activity, source hashes,
+full-resolution distinct frames, all four camera routes and a populated exported
+scene. The adjacent readiness record distinguishes planning from live execution.
+
+### Verified RTX campus execution
+
+The campus workflow completed on one preemptible NVIDIA RTX PRO 6000 with
+Blender 4.5.3 Cycles OptiX. It produced all 32 distinct 2560 × 1440 views at 128
+samples, with CPU rendering disabled. The exported scene contains 8,404 mesh
+objects, 22 shared meshes and 208,984 instanced triangles, including 139 freight
+containers. Native execution, including scene setup and exports, took 247.162
+seconds. Device-wide observations covered 238 samples and reached 98% utilization
+and 4231 MiB GPU memory. This is one execution, not a throughput benchmark.
+
+Immutable publication and independent readback passed. Live acceptance verified
+both executed scene-source hashes, native OptiX selection, decoded original
+frames and populated scene exports. Desktop and mobile browser checks passed
+for all four routes, thumbnails, scrubbing, play/pause and fullscreen, with no
+horizontal mobile overflow, network requests or JavaScript errors. Exact resource
+identities and operational receipts remain in access-controlled evidence.
 
 ## Render the authored CUDA reference scene
 
