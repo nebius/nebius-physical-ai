@@ -197,7 +197,14 @@ syntax/contract tested; this live qualification used Kubernetes.
 - Learning curves show measured optimizer loss, averaged in windows for
   readability. Loss improvement alone does not establish better robot success.
 - The final-test panel shows the measured result and configured quality gate.
-  A completed run can fail that gate; no positive outcome is fabricated.
+  A failed gate stops the runner before checkpoint export and returns an error.
+  Failed evaluation evidence remains available for diagnosis. Completion is
+  recorded only after both evaluation thresholds and offline export verification
+  pass. This final export gate does not implement the two training retry loops
+  in the separate Slurm workflow.
+  Evaluation requests bind the checkpoint files, task, seed and initial-state
+  partition before execution. Cached evaluations with missing or mismatched
+  identity cannot approve an export; use a new evaluation directory to rerun.
   `selection.json` records `quality_gate_passed`, the final test score, and the
   selected checkpoint hash for automation. This qualifies the simulator recipe.
 - Checkpoint hashes identify the trained bytes, and the runtime line shows the

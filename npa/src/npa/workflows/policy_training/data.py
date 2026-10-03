@@ -56,15 +56,16 @@ def _sample(fo: Any, episode: dict[str, Any], preview: Path) -> Any:
         raise ValueError("detections must contain reviewed detector labels")
     if not all(isinstance(label, str) and label for label in detections):
         raise ValueError("detection labels must be nonempty strings")
-    if not isinstance(episode["inhouse_keep"], bool):
-        raise ValueError("inhouse_keep must be a boolean review result")
+    review = episode.get("inhouse_keep")
+    if review is not None and not isinstance(review, bool):
+        raise ValueError("inhouse_keep must be a boolean review result when provided")
     return fo.Sample(
         filepath=str(preview),
         episode_key=digest(episode),
         brightness=brightness,
         sharpness=sharpness,
         detection_count=len(detections),
-        inhouse_keep=episode["inhouse_keep"],
+        inhouse_keep=review,
         detections=fo.Classifications(
             classifications=[fo.Classification(label=label) for label in detections]
         ),
@@ -157,7 +158,8 @@ def _write_curated(episodes, selected, policy, output_uri, measurements=None):
     kept = [e for e in episodes if selection == "all" or digest(e) in selected]
     if not kept:
         raise ValueError("FiftyOne curation selected no episodes")
-    disagreement = sum((digest(e) in selected) != e["inhouse_keep"] for e in episodes)
+    reviewed = [e for e in episodes if e.get("inhouse_keep") is not None]
+    disagreement = sum((digest(e) in selected) != e["inhouse_keep"] for e in reviewed)
     write_json_uri(
         output_uri,
         {
@@ -167,7 +169,8 @@ def _write_curated(episodes, selected, policy, output_uri, measurements=None):
             "policy": policy,
             "input_count": len(episodes),
             "selected_count": len(kept),
-            "inhouse_disagreement_count": disagreement,
+            "inhouse_reviewed_count": len(reviewed),
+            "inhouse_disagreement_count": disagreement if reviewed else None,
             "detection_source": "provided-labels",
             "quality_scope": "preview-frame",
             "selection": selection,
@@ -176,7 +179,7 @@ def _write_curated(episodes, selected, policy, output_uri, measurements=None):
                 {
                     "episode_sha256": digest(e),
                     "quality_pass": digest(e) in selected,
-                    "inhouse_keep": e["inhouse_keep"],
+                    "inhouse_keep": e.get("inhouse_keep"),
                     "measurements": (measurements or {}).get(digest(e), {}),
                 }
                 for e in episodes

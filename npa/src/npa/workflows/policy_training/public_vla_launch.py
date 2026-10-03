@@ -210,7 +210,8 @@ def _pod_spec():
     mounts = [
         {"name": "artifacts", "mountPath": "/work"},
         {"name": "source", "mountPath": "/pipeline", "readOnly": True},
-        {"name": "shm", "mountPath": "/dev/shm"},
+        # This path is an isolated memory-backed pod volume, never a host directory.
+        {"name": "shm", "mountPath": "/dev/shm"},  # nosec B108
     ]
     return {
         "restartPolicy": "Never",

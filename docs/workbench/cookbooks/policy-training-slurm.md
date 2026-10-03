@@ -144,8 +144,11 @@ pods, defaulting to the generic name `policy-batch-client`.
 4. `batch_settings_uri`: private Slurm transport and script selection, described
    below. No credentials belong in this JSON.
 
-The curation stage invokes real FiftyOne dataset queries. It compares its
-selection with `inhouse_keep` and reports the disagreement count. It checks
+The curation stage invokes real FiftyOne dataset queries. Where supplied, it
+compares its selection with the optional boolean `inhouse_keep` review and
+reports the reviewed and disagreement counts. Without review labels, the
+disagreement count is null; public data does not fabricate an in-house review.
+It checks
 LeRobot `meta/info.json` for `codebase_version: v3.0` and episode-count bounds.
 It retains references to the source dataset, rather than rewriting LeRobot
 Parquet/video shards. Training scripts must load precisely the listed episode

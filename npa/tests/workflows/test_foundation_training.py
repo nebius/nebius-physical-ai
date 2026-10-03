@@ -150,6 +150,26 @@ def test_flagging_retains_failed_episodes_when_all_data_is_selected(tmp_path):
     assert [r["quality_pass"] for r in output["review"]] == [False, True]
 
 
+def test_public_curation_does_not_invent_inhouse_review_labels(tmp_path):
+    episodes = [{"episode_index": index} for index in range(2)]
+    path = tmp_path / "curated.json"
+    _write_curated(episodes, {digest(episodes[0])}, {"selection": "all"}, str(path))
+    output = json.loads(path.read_text())
+    assert output["inhouse_reviewed_count"] == 0
+    assert output["inhouse_disagreement_count"] is None
+    assert all(row["inhouse_keep"] is None for row in output["review"])
+
+
+def test_curation_comparison_counts_only_supplied_reviews(tmp_path):
+    episodes = [{"episode_index": 0}, {"episode_index": 1, "inhouse_keep": False}]
+    path = tmp_path / "curated.json"
+    selected = {digest(episode) for episode in episodes}
+    _write_curated(episodes, selected, {"selection": "all"}, str(path))
+    output = json.loads(path.read_text())
+    assert output["inhouse_reviewed_count"] == 1
+    assert output["inhouse_disagreement_count"] == 1
+
+
 def _checkpoint(tmp_path):
     directory = tmp_path / "checkpoint"
     directory.mkdir()
@@ -244,7 +264,7 @@ def test_slurm_recipe_quotes_literal_arguments_and_uses_rank_per_node(tmp_path):
         ("nodes", True),
         ("master_port", 70000),
         ("image", "trainer:latest"),
-        ("output_path", "/tmp/outside"),
+        ("output_path", "/outside/shared-root"),
         ("mode", "train"),
     ],
 )

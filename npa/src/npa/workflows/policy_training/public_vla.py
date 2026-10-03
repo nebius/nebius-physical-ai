@@ -220,14 +220,6 @@ def _run_pipeline(root, recipe):
     _evaluate(root, recipe, specialist, "specialist", 0)
     chosen = _select_candidate(root, recipe, generalist, specialist)
     _evaluate(root, recipe, chosen, "test", recipe["evaluation_episodes"])
-    write_json(
-        root / "completed.json",
-        {
-            "training_executed": True,
-            "evaluation_executed": True,
-            "selected_phase": chosen.parts[-4],
-        },
-    )
     _finish(root, chosen)
 
 
@@ -235,6 +227,7 @@ def _finish(root, chosen):
     from .public_vla_export import export_policy
     from .public_vla_report import build_report
 
+    selection = _require_quality_gate(root, chosen)
     if not (root / "execution.json").exists():
         _record_execution(root)
     exported = export_policy(root, chosen)
@@ -249,16 +242,44 @@ def _finish(root, chosen):
         root / "logs/export-verification.log",
         os.environ.copy(),
     )
-    selection = json.loads((root / "selection.json").read_text())
-    test = json.loads((root / "evaluation/test/eval_info.json").read_text())["overall"]
-    selection["test_success"] = test["pc_success"] / 100
-    selection["quality_gate_passed"] = bool(
-        selection["validation_pass"]
-        and selection["test_success"] >= selection["minimum_success"]
-    )
     selection["checkpoint_sha256"] = exported["trained_weights_sha256"]
     write_json(root / "selection.json", selection)
+    write_json(
+        root / "completed.json",
+        {
+            "training_executed": True,
+            "evaluation_executed": True,
+            "selected_phase": selection["selected"],
+        },
+    )
     build_report(root, root / "report")
+
+
+def _require_quality_gate(root, chosen):
+    recipe = _recipe(root / "recipe.json")
+    selection = json.loads((root / "selection.json").read_text())
+    phase = selection["selected"]
+    if phase not in {"generalist", "specialist"}:
+        raise ValueError("unknown selected training phase")
+    _require_evaluation_identity(root / "evaluation" / phase, recipe, chosen, 0)
+    _require_evaluation_identity(
+        root / "evaluation/test", recipe, chosen, recipe["evaluation_episodes"]
+    )
+    threshold = recipe["minimum_success"]
+    validation = _evaluation_metrics(root / "evaluation" / phase, recipe)
+    test = _evaluation_metrics(root / "evaluation/test", recipe)
+    selection.update(
+        validation_pass=validation["pc_success"] / 100 >= threshold,
+        minimum_success=threshold,
+        test_success=test["pc_success"] / 100,
+    )
+    selection["quality_gate_passed"] = bool(
+        selection["validation_pass"] and selection["test_success"] >= threshold
+    )
+    write_json(root / "selection.json", selection)
+    if not selection["quality_gate_passed"]:
+        raise ValueError("quality gate failed; checkpoint export is blocked")
+    return selection
 
 
 def _train_phase(root, recipe, inputs, corpus, source, phase, task):
@@ -329,9 +350,22 @@ def _train_arguments(root, recipe, source, selection, phase, steps):
 def _evaluate(root, recipe, policy, phase, offset):
     output = root / "evaluation" / phase
     if (output / "eval_info.json").exists():
+        _require_evaluation_identity(output, recipe, policy, offset)
         _evaluation_metrics(output, recipe)
         return
-    command = [
+    write_json(output / "request.json", _evaluation_request(recipe, policy, offset))
+    env = os.environ | {"NPA_VLA_INIT_OFFSET": str(offset)}
+    _execute(
+        _evaluation_command(recipe, policy, output),
+        root / "logs" / f"evaluate-{phase}.log",
+        env,
+    )
+    _require_evaluation_identity(output, recipe, policy, offset)
+    _evaluation_metrics(output, recipe)
+
+
+def _evaluation_command(recipe, policy, output):
+    return [
         sys.executable,
         "-m",
         "npa.workflows.policy_training.public_vla_eval",
@@ -349,15 +383,49 @@ def _evaluate(root, recipe, policy, phase, offset):
         f"--seed={recipe['seed']}",
         f"--output_dir={output}",
     ]
-    env = os.environ | {"NPA_VLA_INIT_OFFSET": str(offset)}
-    _execute(command, root / "logs" / f"evaluate-{phase}.log", env)
-    _evaluation_metrics(output, recipe)
+
+
+def _evaluation_request(recipe, policy, offset):
+    from .public_vla_export import file_sha256
+
+    if not (policy / "model.safetensors").is_file():
+        raise ValueError("evaluation requires a saved policy checkpoint")
+    return {
+        "schema": "npa.public-vla.evaluation-request.v1",
+        "policy_files": {
+            path.name: file_sha256(path)
+            for path in sorted(policy.iterdir())
+            if path.is_file()
+            and path.suffix in {".json", ".safetensors"}
+            and path.name != "train_config.json"
+        },
+        "suite": recipe["suite"],
+        "task_id": recipe["task_id"],
+        "seed": recipe["seed"],
+        "episodes": recipe["evaluation_episodes"],
+        "initial_state_offset": offset,
+    }
+
+
+def _require_evaluation_identity(output, recipe, policy, offset):
+    path = output / "request.json"
+    if not path.is_file():
+        raise ValueError(
+            "evaluation has no checkpoint identity; rerun in a new directory"
+        )
+    if json.loads(path.read_text()) != _evaluation_request(recipe, policy, offset):
+        raise ValueError("evaluation checkpoint, task or holdout identity changed")
 
 
 def _evaluation_metrics(output, recipe):
     info = json.loads((output / "eval_info.json").read_text())["overall"]
-    if info["n_episodes"] != recipe["evaluation_episodes"] or not math.isfinite(
-        info["pc_success"]
+    count, success = info["n_episodes"], info["pc_success"]
+    if (
+        type(count) is not int
+        or count != recipe["evaluation_episodes"]
+        or type(success) not in (int, float)
+        or not math.isfinite(success)
+        or not 0 <= success <= 100
     ):
         raise ValueError("incomplete or nonfinite simulator evaluation")
     videos = list((output / "videos").rglob("*.mp4"))

@@ -115,6 +115,94 @@ def test_output_directory_cannot_change_recipe(tmp_path):
         runner._bind_recipe(tmp_path, recipe | {"seed": 99})
 
 
+def _gate_evidence(root, validation, test):
+    recipe = runner._recipe(None)
+    data.write_json(root / "recipe.json", recipe)
+    policy = root / "candidate"
+    policy.mkdir()
+    (policy / "model.safetensors").write_bytes(b"unit-test-checkpoint")
+    data.write_json(policy / "config.json", {"type": "unit-test"})
+    data.write_json(
+        root / "selection.json",
+        {"selected": "generalist", "validation_pass": True, "minimum_success": 0.1},
+    )
+    for phase, score in [("generalist", validation), ("test", test)]:
+        output = root / "evaluation" / phase
+        data.write_json(
+            output / "eval_info.json",
+            {"overall": {"n_episodes": 10, "pc_success": score}},
+        )
+        data.write_json(
+            output / "request.json",
+            runner._evaluation_request(recipe, policy, 10 if phase == "test" else 0),
+        )
+        (output / "videos").mkdir()
+        for episode in range(10):
+            (output / "videos" / f"{episode}.mp4").touch()
+
+
+@pytest.mark.parametrize("validation,test", [(60, 80), (80, 60), (60, 60)])
+def test_failed_quality_gate_blocks_export_and_completion(
+    tmp_path, monkeypatch, validation, test
+):
+    _gate_evidence(tmp_path, validation, test)
+    monkeypatch.setattr(
+        export, "export_policy", lambda *args: pytest.fail("rejected policy exported")
+    )
+    with pytest.raises(ValueError, match="export is blocked"):
+        runner._finish(tmp_path, tmp_path / "candidate")
+    selection = json.loads((tmp_path / "selection.json").read_text())
+    assert selection["quality_gate_passed"] is False
+    assert selection["minimum_success"] == 0.7
+    assert not (tmp_path / "completed.json").exists()
+
+
+@pytest.mark.parametrize("score", [-1, 101, float("nan"), float("inf"), True])
+def test_invalid_scores_cannot_promote_a_checkpoint(tmp_path, score):
+    _gate_evidence(tmp_path, 80, 80)
+    path = tmp_path / "evaluation/test/eval_info.json"
+    path.write_text(json.dumps({"overall": {"n_episodes": 10, "pc_success": score}}))
+    with pytest.raises(ValueError, match="evaluation"):
+        runner._require_quality_gate(tmp_path, tmp_path / "candidate")
+
+
+def test_export_verification_failure_does_not_mark_run_complete(tmp_path, monkeypatch):
+    _gate_evidence(tmp_path, 80, 80)
+    monkeypatch.setattr(export, "export_policy", lambda *args: {})
+
+    def failed_verification(*args):
+        raise ValueError("offline verification failed")
+
+    monkeypatch.setattr(runner, "_execute", failed_verification)
+    with pytest.raises(ValueError, match="offline verification failed"):
+        runner._finish(tmp_path, tmp_path / "candidate")
+    assert not (tmp_path / "completed.json").exists()
+
+
+def test_passing_gate_recomputes_approval_from_bound_recipe(tmp_path):
+    _gate_evidence(tmp_path, 70, 70)
+    selection = runner._require_quality_gate(tmp_path, tmp_path / "candidate")
+    assert selection["minimum_success"] == 0.7
+    assert selection["quality_gate_passed"] is True
+
+
+@pytest.mark.parametrize("change", ["weights", "config", "holdout", "missing"])
+def test_passing_scores_cannot_approve_different_policy_or_holdout(tmp_path, change):
+    _gate_evidence(tmp_path, 80, 80)
+    request_path = tmp_path / "evaluation/test/request.json"
+    if change == "weights":
+        (tmp_path / "candidate/model.safetensors").write_bytes(b"different-checkpoint")
+    elif change == "config":
+        data.write_json(tmp_path / "candidate/config.json", {"type": "different"})
+    elif change == "holdout":
+        request = json.loads(request_path.read_text())
+        data.write_json(request_path, request | {"initial_state_offset": 0})
+    else:
+        request_path.unlink()
+    with pytest.raises(ValueError, match="identity"):
+        runner._require_quality_gate(tmp_path, tmp_path / "candidate")
+
+
 def test_fixed_validation_and_test_states_are_disjoint():
     def original(instance, episode):
         instance._init_states = list(range(50))
