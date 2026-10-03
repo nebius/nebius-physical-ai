@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import importlib
 import io
 import json
 import multiprocessing
@@ -1695,6 +1696,8 @@ def _provider_vlm_report(
     frame_selection="keyframes",
     completion=None,
     rubric=vlm_eval.DEFAULT_RUBRIC,
+    input_path=None,
+    max_frames=4,
 ) -> dict:
     frame = tmp_path / "rollout.png"
     Image.new("RGB", (4, 4), "gray").save(frame)
@@ -1713,17 +1716,44 @@ def _provider_vlm_report(
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
     monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **_kwargs: "")
     result = vlm_eval.evaluate_vlm(
-        input_path=str(frame),
+        input_path=str(frame if input_path is None else input_path),
         output_path=str(tmp_path),
         backend=backend,
         model="hosted/unit-vision",
         success_threshold=0.5,
         endpoint_url="https://provider.invalid/v1",
         frame_selection=frame_selection,
+        max_frames=max_frames,
         rubric=rubric,
     )
     assert len(calls) == 1
     return asdict(result)
+
+
+@pytest.mark.parametrize("strategy", ["final", "keyframes", "sequence"])
+@pytest.mark.parametrize("kind", ["image-sequence", "numpy-episode", "video"])
+def test_grade_gate_accepts_actual_sampling_producer_and_rejects_rebound_strategy(
+    tmp_path: Path, monkeypatch, kind: str, strategy: str
+) -> None:
+    """Exercise real media selection with a synthetic, complete provider response."""
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    helpers = importlib.import_module("e2e.vlm_sampling_live_helpers")
+    source, expected = helpers.make_sampling_input(tmp_path / "input", kind)
+    report = _provider_vlm_report(
+        monkeypatch, tmp_path, input_path=source, frame_selection=strategy, max_frames=3
+    )
+    report = json.loads(json.dumps(report))
+    helpers.assert_sampling_evidence(report, kind, strategy, expected)
+    (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+    assert (
+        dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
+        == "promote_checkpoint"
+    )
+    request = report["evidence"]["request"]
+    manifest = request["request_manifest"]
+    manifest["sampling"]["strategy"] = "keyframes" if strategy == "final" else "final"
+    request["request_manifest_sha256"] = vlm_eval._sha256_json(manifest)
+    _assert_completion_blocked(tmp_path, report, "sampling_mismatch")
 
 
 def _as_v2_report(report: dict) -> None:
