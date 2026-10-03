@@ -21,7 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     WANDB_MODE=disabled
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential ca-certificates ffmpeg git git-lfs libegl1 libgl1 \
+    build-essential ca-certificates cmake ffmpeg git git-lfs libegl1 libgl1 \
       libglib2.0-0 libsm6 libxext6 libxrender1 netcat-openbsd openssh-client \
       openssh-server procps python3 python3-pip python3-venv rsync sudo \
       software-properties-common \
