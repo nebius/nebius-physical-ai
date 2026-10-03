@@ -247,3 +247,24 @@ Self-hosted VLM steps need a GPU image; set it with `--image` on
 ```bash
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_skills_index.py -q
 ```
+
+## Blinded preference audits
+
+`compare-preference` is an API-only, audit-only matched-image primitive. It
+normalizes each input exactly once from RGB pixels without embedded metadata,
+hides source semantics behind neutral A/B
+labels, and sends the pair in both orders with identical prompting and
+generation settings. The private `vlm_preference_comparison.json` retains both
+exact requests and complete provider outcomes. Errors, unresolved output,
+confidence below `high`, or different mapped preferences produce escalation;
+the latter is named `order_disagreement_or_nondeterminism` because one request
+per order cannot isolate an order effect from provider nondeterminism. The
+command never retries or averages preferences, and refuses an existing output.
+Task and rubric text containing `baseline` or `candidate` is rejected before
+transport. Telling the model not to follow image text is not a defense against
+in-image instructions. Its CLI summary omits paths, prompts, visible support,
+uncertainty, request IDs, and raw responses.
+
+Use toolRef `workbench.vlm_eval.compare_preference`. See
+[the live audit contract](../../../docs/testing/vlm-audit-live-contracts.md)
+for the scheduled real hosted lane and private operator configuration.

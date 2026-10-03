@@ -27,6 +27,10 @@ from npa.workbench.model_cache import (
     resolve_model_cache_root,
 )
 
+API_ONLY_VLM_AUDIT_TOOLS = frozenset(
+    {"workbench.vlm_eval.compare_judges", "workbench.vlm_eval.compare_preference"}
+)
+
 # Map toolRef prefixes / exact names onto CONTAINER_IMAGE_NAMES keys.
 # Token Factory is a hosted HTTP API client. Do not pin the heavy cosmos image:
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
@@ -36,6 +40,8 @@ TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
+    # Blinded preference is API-only, even under a global self-hosted backend.
+    "workbench.vlm_eval.compare_preference": None,
     # Paired judging is hosted API-only and must not inherit the self-hosted
     # VLM family's heavy Cosmos image.
     "workbench.vlm_eval.compare_judges": None,
@@ -112,6 +118,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # only through the workflow secret channel when one is available.
     "workbench.flex_pi": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workbench.vlm_eval.compare_preference": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval.compare_judges": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
@@ -1158,9 +1165,9 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
         # ENV values. Keep the narrow baked adapter importable on CPU stages too,
         # without invoking the render-only runtime bootstrap above.
         return content_agents_pythonpath
-    if not tool_ref.startswith("workbench.vlm_eval") or tool_ref == (
-        "workbench.vlm_eval.compare_judges"
-    ):
+    if tool_ref in API_ONLY_VLM_AUDIT_TOOLS:
+        return ""
+    if not tool_ref.startswith("workbench.vlm_eval"):
         return ""
     # #236 skipped the benchmark toolRef here, correctly for the twin it had: a `sample`
     # fixture scored with backend=stub needs no server. This branch's benchmark twin scores a
@@ -1979,14 +1986,14 @@ def render_setup_for_tool(
     backend = str(config.get("vlm_backend") or "").strip().lower()
     if (
         tool_ref.startswith("workbench.vlm_eval")
-        and tool_ref != "workbench.vlm_eval.compare_judges"
+        and tool_ref not in API_ONLY_VLM_AUDIT_TOOLS
         and backend in {"self-hosted", "self_hosted"}
     ):
         parts.append(_vllm_install_setup(self_hosted_vlm_model(config)))
     if tool_ref.startswith("workbench.sonic"):
         parts.append(_sonic_deps_setup())
-    if tool_ref.startswith("workbench.token_factory") or tool_ref == (
-        "workbench.vlm_eval.compare_judges"
+    if tool_ref.startswith("workbench.token_factory") or (
+        tool_ref in API_ONLY_VLM_AUDIT_TOOLS
     ):
         # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
         parts.append(

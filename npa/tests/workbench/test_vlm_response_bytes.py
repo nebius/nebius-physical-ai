@@ -1,7 +1,7 @@
 """Verify durable response bytes precede decoding and strict failure parsing."""
 
 import base64
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import hashlib
 import json
 from pathlib import Path
@@ -41,6 +41,231 @@ def _request(root: Path):
         model="MiniMaxAI/MiniMax-M3",
         task="Describe visible placement evidence.",
     )
+
+
+def _preference_request(root: Path):
+    first, second = root / "first.png", root / "second.png"
+    Image.new("RGB", (12, 9), "red").save(first)
+    Image.new("RGB", (12, 9), "blue").save(second)
+    return vlm_eval.VlmPreferenceComparisonRequest(
+        baseline_path=str(first),
+        candidate_path=str(second),
+        output_path=str(root / "private-preference"),
+        model="MiniMaxAI/MiniMax-M3",
+        task="Compare visible placement evidence.",
+        rubric="Use only visible pixels.",
+        endpoint_url="https://example.test/v1",
+        api_key_env="SYNTHETIC_PREFERENCE_KEY",
+    )
+
+
+@pytest.mark.parametrize(
+    ("bodies", "content_type", "status"),
+    [
+        ([b"\xff", b"\xfe"], "application/json; charset=utf-8", 502),
+        ([b"\xff", b"\xfe"], "application/json; charset=utf-8", 200),
+        ([b'{"error":"caf\xe9"}'] * 2, "application/json; charset=iso-8859-1", 502),
+        ([b'{"error":"ordinary UTF-8 failure"}'] * 2, "application/json", 502),
+        (
+            ['{"error":"caf\u00e9"}'.encode()] * 2,
+            "application/json; charset=utf-8",
+            502,
+        ),
+    ],
+)
+def test_preference_retains_wire_before_decode_in_journal_and_outcome(
+    monkeypatch, tmp_path, bodies, content_type, status
+) -> None:
+    request = _preference_request(tmp_path)
+    journal = Path(request.output_path) / ".vlm_preference_comparison"
+    count = 0
+
+    class Response(httpx.Response):
+        @property
+        def text(self):
+            assert (journal / f"response-bytes-{count:02d}.json").is_file()
+            return super().text
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, *_args, **_kwargs):
+            nonlocal count
+            body = bodies[count]
+            count += 1
+            return Response(
+                status,
+                content=body,
+                headers={"content-type": content_type},
+                request=httpx.Request(
+                    "POST", "https://example.test/v1/chat/completions"
+                ),
+            )
+
+    monkeypatch.setattr(vlm_eval.httpx, "Client", Client)
+    monkeypatch.setattr(vlm_eval, "_preference_api_key", lambda **_kwargs: "synthetic")
+    report = vlm_eval.compare_vlm_preference(request)
+    assert count == 2
+    assert report.deployment_status == "audit_only"
+    assert report.status == "judge_error" and report.escalation_required
+    payload = json.loads(json.dumps(asdict(report)))
+    for index, name in enumerate(("first_order", "reversed_order"), 1):
+        wire = payload[name]["response_bytes"]
+        assert base64.b64decode(wire["body_base64"], validate=True) == bodies[index - 1]
+        assert wire["body_sha256"] == hashlib.sha256(bodies[index - 1]).hexdigest()
+        assert wire["byte_count"] == len(bodies[index - 1])
+        assert wire == json.loads(
+            (journal / f"response-bytes-{index:02d}.json").read_text()
+        )
+        assert (
+            wire
+            == json.loads(
+                (journal / f"transport-boundary-{index:02d}.json").read_text()
+            )["response_bytes"]
+        )
+        assert (
+            wire
+            == json.loads((journal / f"response-{index:02d}.json").read_text())[
+                "response_bytes"
+            ]
+        )
+    if bodies == [b"\xff", b"\xfe"]:
+        assert (
+            report.first_order.provider.raw_response
+            == report.reversed_order.provider.raw_response
+        )
+        assert (
+            report.first_order.response_bytes["body_sha256"]
+            != report.reversed_order.response_bytes["body_sha256"]
+        )
+
+
+@pytest.mark.parametrize("damage", ["hash", "count", "encoding", "missing"])
+def test_preference_byte_evidence_rejects_incomplete_or_tampered_capture(damage):
+    response = vlm_eval._VlmBackendResponse(
+        {},
+        "\ufffd",
+        502,
+        None,
+        0.1,
+        raw_body_base64="/w==",
+        raw_body_bytes_sha256=hashlib.sha256(b"\xff").hexdigest(),
+        raw_body_byte_count=1,
+    )
+    fields = {
+        "hash": {"raw_body_bytes_sha256": "0" * 64},
+        "count": {"raw_body_byte_count": 2},
+        "encoding": {"raw_body_base64": "!invalid!"},
+        "missing": {"raw_body_bytes_sha256": None},
+    }
+    with pytest.raises(vlm_eval.VlmEvalError, match="provider response byte"):
+        vlm_eval._backend_response_byte_evidence(replace(response, **fields[damage]))
+
+
+def test_preference_text_only_adapters_do_not_invent_wire_bytes():
+    response = vlm_eval._VlmBackendResponse({}, "legacy decoded text", 502, None, 0.1)
+    assert vlm_eval._backend_response_byte_evidence(response) is None
+
+
+def test_preference_success_retains_exact_wire_without_changing_request(
+    monkeypatch, tmp_path
+):
+    request = _preference_request(tmp_path)
+    verdict = {
+        "preference": "tie",
+        "confidence": "high",
+        "observable_support": ["Both images have visible detail."],
+        "critical_defects": {"A": ["No visible defect."], "B": ["No visible defect."]},
+        "uncertainty": "Hidden state is not observable.",
+    }
+    body = json.dumps(
+        {
+            "model": request.model,
+            "choices": [
+                {"finish_reason": "stop", "message": {"content": json.dumps(verdict)}}
+            ],
+        }
+    ).encode()
+    response = httpx.Response(
+        200,
+        content=body,
+        request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+    )
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _client(response))
+    monkeypatch.setattr(vlm_eval, "_preference_api_key", lambda **_kwargs: "synthetic")
+    report = vlm_eval.compare_vlm_preference(request)
+    assert report.agreement_eligible
+    assert report.deployment_status == "audit_only"
+    payload = json.loads(json.dumps(asdict(report)))
+    journal = Path(request.output_path) / ".vlm_preference_comparison"
+    for index, name in enumerate(("first_order", "reversed_order"), 1):
+        outcome = payload[name]
+        assert outcome["transport_request_sha256"] == vlm_eval._sha256_json(
+            outcome["transport_request"]
+        )
+        assert outcome["verdict"] == verdict
+        assert (
+            base64.b64decode(outcome["response_bytes"]["body_base64"], validate=True)
+            == body
+        )
+        assert outcome["response_bytes"] == json.loads(
+            (journal / f"response-bytes-{index:02d}.json").read_text()
+        )
+    assert json.loads((journal / "report-ready.json").read_text()) == payload
+
+
+def test_preference_byte_journal_failure_stops_before_decoding_or_second_call(
+    monkeypatch, tmp_path
+):
+    request = _preference_request(tmp_path)
+    calls = []
+    original_write = vlm_eval._write_preference_journal
+
+    def write(journal, name, payload):
+        if name.startswith("response-bytes-"):
+            raise vlm_eval.VlmEvalError("synthetic byte journal refusal")
+        return original_write(journal, name, payload)
+
+    class Response(httpx.Response):
+        @property
+        def text(self):
+            pytest.fail("Byte journal failure must stop before decoding")
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, *_args, **_kwargs):
+            calls.append("synthetic HTTP")
+            return Response(
+                502,
+                content=b"\xff",
+                request=httpx.Request(
+                    "POST", "https://example.test/v1/chat/completions"
+                ),
+            )
+
+    monkeypatch.setattr(vlm_eval.httpx, "Client", Client)
+    monkeypatch.setattr(vlm_eval, "_preference_api_key", lambda **_kwargs: "synthetic")
+    monkeypatch.setattr(vlm_eval, "_write_preference_journal", write)
+    with pytest.raises(
+        vlm_eval.VlmEvalError, match="provider response bytes could not be retained"
+    ):
+        vlm_eval.compare_vlm_preference(request)
+    assert calls == ["synthetic HTTP"]
 
 
 @pytest.mark.parametrize(

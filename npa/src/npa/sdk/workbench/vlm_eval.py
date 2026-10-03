@@ -13,13 +13,16 @@ from npa.workbench.vlm_eval import (
     VlmVisualReviewReport,
     VlmVisualReviewRequest,
     review_visual as _review_visual_backend,
+    VlmPreferenceComparisonRequest,
     VlmJudgeComparisonRequest,
     benchmark_vlm_eval,
+    compare_vlm_preference,
     compare_vlm_judges,
 )
 
 run = make_cli_wrapper("npa.cli.workbench.vlm_eval", "run_cmd", "Run VLM evaluation.")
 benchmark = benchmark_vlm_eval
+compare_preference = compare_vlm_preference
 compare_judges = compare_vlm_judges
 status = make_cli_wrapper(
     "npa.cli.workbench.vlm_eval", "status_cmd", "Show VLM eval status."
@@ -77,6 +80,8 @@ __all__ = [
     "VlmVisualReviewReport",
     "VlmVisualReviewRequest",
     "review_visual",
+    "VlmPreferenceComparisonRequest",
+    "compare_preference",
     "VlmJudgeComparisonRequest",
     "benchmark",
     "compare_judges",
