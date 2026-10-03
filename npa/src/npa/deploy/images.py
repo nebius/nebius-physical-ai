@@ -152,6 +152,7 @@ LIBERO_SIGSTORE_PUBLICATION_REFERRERS = (
 CONTAINER_IMAGE_NAMES = {
     "antioch": "npa-antioch",
     "openpi": "npa-openpi",
+    "openvla-oft": "npa-openvla-oft",
     "habitat-sim": "npa-habitat-sim",
     "lerobot": "npa-lerobot",
     "sim2real-control": "npa-sim2real-control",
@@ -313,8 +314,10 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 # truthful development-build path; release promotion remains blocked by the
 # development-build quarantine above instead of a pre-registration build refusal.
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
-NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
-NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
+NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset({"openvla-oft"})
+NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {
+    "openvla-oft": "runtime-fetch-legal-blocked-unbuilt",
+}
 # Previously accepted releases whose published bytes no longer satisfy the
 # repository's current security contract. Keep this separate from
 # UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,

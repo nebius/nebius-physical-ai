@@ -59,6 +59,12 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "trajectory-disjoint held-out loss and actions plus exact image and "
         "GPU evidence are required in libero-smoke.json",
     ],
+    "openvla-oft": [
+        "legal fail-closed bootstrap refuses the unlicensed moving dlimp_openvla dependency before any cache mutation",
+        "after authoritative upstream terms and an immutable dependency revision, upstream OFT training binds the continuous action head, proprioception projector, and LoRA adapter",
+        "closed-loop LIBERO rollouts preserve upstream MP4s and independently verified success-rate, interval, SVG, and CSV artifacts",
+        "the current neutral image remains private, unbuilt for release purposes, and has no accepted GPU or benchmark result",
+    ],
     "ncore": [
         "pinned official NCore V4 reader imports in the NPA interpreter on CPU",
         "native COLMAP converter CLI schema loads with patched trueprice/pycolmap",

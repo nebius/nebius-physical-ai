@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from npa.deploy import images
 from npa.orchestration.npa_workflow.catalog import TOOL_CATALOG
 from npa.workflows.byof import openvla_pipeline as pipe
 
@@ -120,6 +121,14 @@ def test_bootstrap_refuses_the_unlicensed_direct_dependency(tmp_path: Path) -> N
     with pytest.raises(pipe.OpenVLAPipelineError, match="before download"):
         pipe.bootstrap_runtime(str(tmp_path / "runtime"))
     assert not (tmp_path / "runtime").exists()
+
+
+def test_neutral_image_is_publication_quarantined() -> None:
+    """The legal block cannot be bypassed through normal image resolution."""
+    assert images.CONTAINER_IMAGE_NAMES["openvla-oft"] == "npa-openvla-oft"
+    assert "openvla-oft" in images.NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    assert images.supported_tool_version("openvla-oft").endswith("-unbuilt")
+    assert not images.is_publicly_redistributable("openvla-oft")
 
 
 def test_immutable_model_cache_requires_matching_ready_identity(tmp_path: Path) -> None:

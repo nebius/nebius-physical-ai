@@ -127,6 +127,37 @@ containers:
       gpu: required
       timeout_seconds: 7200
       status: needs-image-update
+  openvla-oft:
+    image: npa-openvla-oft
+    dockerfile: npa/docker/workbench/openvla-oft/Dockerfile
+    physical_ai:
+      useful: true
+      role: >-
+        Runs upstream OpenVLA-OFT continuous-action fine-tuning and closed-loop
+        LIBERO evaluation with action-head, proprioception-projector, adapter,
+        MP4, and measured-success lineage.
+    safety:
+      runs_as: ubuntu
+      base_image: python:3.10-slim-bookworm@sha256:019e31cc1f52e4139d338bca44f27b71339a9da261738fd80fab9cf4595152fc
+      network: >-
+        Current bootstrap fails before network or cache mutation because OFT's
+        moving dlimp_openvla dependency lacks an authoritative license.
+      external_fetch: []
+      notes: >-
+        Neutral, publication-quarantined bootstrap: it contains no OFT source,
+        OpenVLA weights, OFT adapters, RLDS data, CUDA/Torch runtime, cache,
+        credential, or output. It is blocked on exact upstream dependency terms,
+        then needs a fresh immutable runtime dependency pin, byte/SBOM/provenance
+        review, private push/pull qualification, real GPU workflow evidence, and
+        independent artifact inspection. No vendor EULA or acceptance flag was
+        introduced.
+    golden_eval:
+      kind: container-smoke
+      command: python3 -m npa.workflows.byof.openvla_pipeline bootstrap-runtime --runtime-root /workspace/.cache/npa/openvla-oft/probe
+      artifact: /workspace/openvla-oft-golden-eval.json
+      gpu: required
+      timeout_seconds: unlimited
+      status: blocked-on-upstream
   antioch:
     image: npa-antioch
     dockerfile: npa/docker/workbench/antioch/Dockerfile

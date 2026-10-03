@@ -477,7 +477,7 @@ def test_rebuilt_surfaces_including_detection_training_are_gpu_accepted() -> Non
         frozenset({"openpi", "curobo", "ncore", "libero", "sam3"})
         | ({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
     )
-    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset()
+    assert NEUTRAL_UNBUILT_CANDIDATE_TOOLS == frozenset({"openvla-oft"})
     assert is_publicly_redistributable("robomimic")
     assert STALE_PUBLICATION_TOOLS == frozenset(
         {
