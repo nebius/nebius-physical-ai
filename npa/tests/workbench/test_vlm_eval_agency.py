@@ -781,7 +781,9 @@ def test_packaged_balanced_fixture_exposes_stub_all_yes_specificity() -> None:
 
     metrics = report.best_config.metrics
     assert metrics.true_positives == 2
-    assert metrics.false_positives == 2
+    assert metrics.false_positives == 3
+    assert report.item_count == metrics.total == 5
+    assert "progress-without-terminal-fail" in metrics.false_positive_item_ids
     assert metrics.true_negatives == 0
     assert metrics.false_negatives == 0
     assert metrics.recall == 1.0

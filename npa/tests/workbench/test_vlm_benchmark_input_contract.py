@@ -26,8 +26,7 @@ def test_benchmark_default_remains_the_packaged_sample() -> None:
     )
     assert report.item_count == len(sample.items) == 5
     assert any(
-        item.item_id == "progress-without-terminal-fail"
-        and item.expected_label is False
+        item.id == "progress-without-terminal-fail" and item.expected_label is False
         for item in sample.items
     )
 
