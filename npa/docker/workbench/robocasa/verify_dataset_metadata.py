@@ -31,6 +31,12 @@ def _load_case(root: Path, name: str, reference: str) -> tuple[int, int, int]:
     # repository resolution or remote dataset script participates in this test.
     builder = ImageFolder(
         data_dir=str(folder),
+        data_files={
+            "train": [
+                str(folder / "metadata.jsonl"),
+                str(folder / "nested" / "inside.png"),
+            ]
+        },
         cache_dir=str(root / "cache" / name),
     )
     builder.download_and_prepare()
