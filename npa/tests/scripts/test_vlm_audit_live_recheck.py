@@ -320,8 +320,13 @@ raise SystemExit(runner._run_tests(Path(sys.argv[3])))
     assert (tmp_path / "pytest.xml").is_file()
 
 
-@pytest.mark.parametrize("bad_count", [True, -1, "1", None])
-def test_malformed_execution_counts_fail_closed(monkeypatch, tmp_path, bad_count):
+@pytest.mark.parametrize(
+    "field", ["collected", "executed", "passed", "failed", "skipped", "deselected"]
+)
+@pytest.mark.parametrize("bad_count", [True, False, -1, "1", None, 1.0, [], {}])
+def test_malformed_execution_counts_fail_closed(
+    monkeypatch, tmp_path, field, bad_count
+):
     runner = _runner()
     _config(monkeypatch, tmp_path)
 
@@ -329,13 +334,14 @@ def test_malformed_execution_counts_fail_closed(monkeypatch, tmp_path, bad_count
         (target / "execution.json").write_text(
             json.dumps(
                 {
-                    "collected": bad_count,
+                    "collected": 1,
                     "executed": 1,
                     "passed": 1,
                     "failed": 0,
                     "skipped": 0,
                     "deselected": 0,
                     "xfail": False,
+                    field: bad_count,
                 }
             )
         )
@@ -347,6 +353,79 @@ def test_malformed_execution_counts_fail_closed(monkeypatch, tmp_path, bad_count
     receipt = json.loads((target / "receipt.json").read_text())
     assert receipt["failure"] == "invalid_execution_counts"
     assert receipt["passed"] is False
+
+
+@pytest.mark.parametrize(
+    "value", [0, 1, None, "false", "private-invalid-boolean", 0.0, [], {}]
+)
+def test_escalation_expectation_requires_literal_boolean(monkeypatch, tmp_path, value):
+    runner = _runner()
+    path = _config(monkeypatch, tmp_path)
+    config = json.loads(path.read_text())
+    config["cases"]["blinded-preference"]["expectations"]["escalation_required"] = value
+    path.write_text(json.dumps(config))
+    monkeypatch.setattr(runner, "_execute", lambda *_: pytest.fail("must not execute"))
+    target = tmp_path / "run"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    body = (target / "receipt.json").read_text()
+    assert json.loads(body)["failure"] == "missing_frozen_preference_expectations"
+    assert "private-invalid-boolean" not in body
+
+
+@pytest.mark.parametrize(
+    "boundary", ["xfail", "escalation_required", "requests_counterbalanced"]
+)
+@pytest.mark.parametrize(
+    "value", [0, 1, None, "false", "private-invalid-boolean", 0.0, [], {}, "missing"]
+)
+def test_execution_and_report_booleans_fail_closed(
+    monkeypatch, tmp_path, boundary, value
+):
+    runner = _runner()
+    _config(monkeypatch, tmp_path)
+
+    def execute(root, target, config):
+        execution = {
+            "collected": 1,
+            "executed": 1,
+            "passed": 1,
+            "failed": 0,
+            "skipped": 0,
+            "deselected": 0,
+            "xfail": False,
+        }
+        report = {
+            "status": "consistent_tie",
+            "escalation_required": False,
+            "requests_counterbalanced": True,
+            "first_order": {},
+            "reversed_order": {},
+        }
+        evidence = execution if boundary == "xfail" else report
+        if value == "missing":
+            del evidence[boundary]
+        else:
+            evidence[boundary] = value
+        (target / "execution.json").write_text(json.dumps(execution))
+        output = target / "blinded-preference"
+        output.mkdir()
+        (output / runner.PREFERENCE_COMPARISON_RESULT_FILENAME).write_text(
+            json.dumps(report)
+        )
+        return 0
+
+    monkeypatch.setattr(runner, "_execute", execute)
+    target = tmp_path / "run"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    body = (target / "receipt.json").read_text()
+    receipt = json.loads(body)
+    assert receipt["failure"] == (
+        "invalid_execution_counts"
+        if boundary == "xfail"
+        else "audit_configuration_or_execution_failed"
+    )
+    assert receipt["passed"] is False
+    assert "private-invalid-boolean" not in body
 
 
 @pytest.mark.parametrize("kind", [None, "paired", "unknown-private-value"])
