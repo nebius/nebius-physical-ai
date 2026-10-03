@@ -87,9 +87,7 @@ def test_caption_thinking_composes_with_availability(
     result = CliRunner().invoke(
         app, _caption_args(tmp_path, model, thinking, len(replies))
     )
-    expected_failures = sum(
-        tool._is_image_unavailable_answer(reply) for reply in replies
-    )
+    expected_failures = 0 if case == "positive" else 1
     assert result.exit_code == (1 if expected_failures else 0), result.output
     payload = json.loads(result.output)
     persisted = json.loads((tmp_path / "out/captions.json").read_text())
@@ -115,6 +113,6 @@ def _assert_records(payload, requests, replies, model, thinking):
             in body["messages"][0]["content"][0]["text"]
         )
         assert item["caption"] == reply
-        unavailable = tool._is_image_unavailable_answer(reply)
+        unavailable = reply in {"NO IMAGE RECEIVED.", "**“'no image received.'”**"}
         assert item["status"] == ("image_unavailable" if unavailable else "completed")
     assert payload["captions"][-1]["caption"] == replies[-1]

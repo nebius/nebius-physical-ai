@@ -74,7 +74,12 @@ def _call_caption(evidence, client, model, thinking, image):
             temperature=0.0,
             client=client,
         )
-        result.update(status="completed", caption=caption.captions[0].caption)
+        result.update(
+            status=caption.status,
+            caption=caption.captions[0].caption,
+            failed_count=caption.failed_count,
+            item_status=caption.captions[0].status,
+        )
     except TokenFactoryToolError as exc:
         result.update(status="failed", error=str(exc))
     (evidence / f"result-{case}.json").write_text(json.dumps(result, indent=2) + "\n")
@@ -123,6 +128,12 @@ def _assert_controls(records, outcomes):
         response = json.loads(record["raw_response"])
         assert response["model"] == model
         if outcome["status"] == "failed":
-            assert "no visible caption" in outcome["error"]
+            if "error" in outcome:
+                assert "no visible caption" in outcome["error"]
+            else:
+                assert outcome["failed_count"] == 1
+                assert outcome["item_status"] == "image_unavailable"
         else:
             assert outcome["caption"].strip()
+            assert outcome["failed_count"] == 0
+            assert outcome["item_status"] == "completed"
