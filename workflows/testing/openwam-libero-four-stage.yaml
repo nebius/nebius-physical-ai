@@ -1,0 +1,148 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: openwam-libero-four-stage
+  description: >
+    Runtime-fetch the pinned public OpenWAM-alpha, Wan 2.2, and LIBERO inputs;
+    run OpenWAM's native LIBERO fine-tuner; serve and roll out the resulting
+    checkpoint; evaluate a distinct LIBERO episode; then emit a factual Rerun
+    recording. The checked-in configuration is an operational debug training
+    smoke, not a claim of full-benchmark convergence or robot success.
+
+config:
+  bucket: example-bucket
+  prefix: "openwam/libero/{{run.id}}"
+  # An operator-built private image must replace this placeholder with the
+  # immutable digest produced from npa/docker/workbench/openwam/Dockerfile.
+  runtime_image: "registry.example.invalid/operator/openwam@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  openwam_root: /opt/openwam
+  gpu_type: B200
+  gpu_count: "1"
+  policy_port: "8848"
+
+  prepare_work_dir: /workspace/openwam/prepare
+  training_work_dir: /workspace/openwam/fine-tune
+  rollout_work_dir: /workspace/openwam/rollout
+  evaluation_work_dir: /workspace/openwam/evaluation
+  visualization_work_dir: /workspace/openwam/visualization
+
+  run_root_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  prepared_archive_uri: "{{config.run_root_uri}}prepared/assets.tar.gz"
+  prepared_assets_uri: "{{config.run_root_uri}}prepared/manifest.json"
+  training_checkpoint_archive_uri: "{{config.run_root_uri}}training/checkpoint.tar.gz"
+  training_uri: "{{config.run_root_uri}}training/report.json"
+  rollout_uri: "{{config.run_root_uri}}rollout/results.json"
+  evaluation_uri: "{{config.run_root_uri}}evaluation/results.json"
+  rrd_uri: "{{config.run_root_uri}}visualization/openwam-libero.rrd"
+  visualization_uri: "{{config.run_root_uri}}visualization/report.json"
+
+resources:
+  prepare-cpu:
+    cloud: kubernetes
+    cpus: 16
+    memory: 64Gi
+    disk_size: "160"
+    image: "{{config.runtime_image}}"
+  openwam-gpu:
+    cloud: kubernetes
+    accelerators: "{{config.gpu_type}}:{{config.gpu_count}}"
+    cpus: 32
+    memory: 192Gi
+    disk_size: "320"
+    image: "{{config.runtime_image}}"
+  visualize-cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+    disk_size: "32"
+    image: "{{config.runtime_image}}"
+
+initial: prepare-assets
+
+states:
+  prepare-assets:
+    description: >
+      Download the immutable OpenWAM-alpha, Wan 2.2, and LIBERO revisions,
+      verify the foundation checkpoint layout, and archive their notices and
+      exact provenance for downstream training.
+    toolRef: workflow.openwam.prepare
+    resources: prepare-cpu
+    outputs:
+      - uri: "{{config.prepared_archive_uri}}"
+        schema: application/gzip
+      - uri: "{{config.prepared_assets_uri}}"
+        schema: npa.openwam.prepared-assets.v1
+    next: fine-tune-openwam
+
+  fine-tune-openwam:
+    description: >
+      Invoke the upstream OpenWAM LIBERO fine-tuner with the archived
+      OpenWAM-alpha checkpoint and persist the actual trained checkpoint,
+      configuration, and normalization statistics.
+    toolRef: workflow.openwam.fine_tune
+    resources: openwam-gpu
+    needs: [prepare-assets]
+    inputs:
+      - uri: "{{config.prepared_archive_uri}}"
+      - uri: "{{config.prepared_assets_uri}}"
+    outputs:
+      - uri: "{{config.training_checkpoint_archive_uri}}"
+        schema: application/gzip
+      - uri: "{{config.training_uri}}"
+        schema: npa.openwam.fine-tune.v1
+    next: deployed-policy-rollout
+
+  deployed-policy-rollout:
+    description: >
+      Start the upstream OpenWAM policy server from the trained checkpoint and
+      execute a real native-action LIBERO spatial-suite episode through its
+      WebSocket policy bridge.
+    toolRef: workflow.openwam.rollout
+    resources: openwam-gpu
+    needs: [fine-tune-openwam]
+    inputs:
+      - uri: "{{config.prepared_assets_uri}}"
+      - uri: "{{config.training_checkpoint_archive_uri}}"
+      - uri: "{{config.training_uri}}"
+    outputs:
+      - uri: "{{config.rollout_uri}}"
+        schema: npa.openwam.libero-rollout.v1
+    next: evaluate-heldout-episode
+
+  evaluate-heldout-episode:
+    description: >
+      Independently serve the same trained checkpoint and evaluate the next
+      held-out LIBERO episode, retaining numerical success and policy-step
+      evidence rather than fabricating a benchmark aggregate.
+    toolRef: workflow.openwam.evaluate
+    resources: openwam-gpu
+    needs: [deployed-policy-rollout]
+    inputs:
+      - uri: "{{config.prepared_assets_uri}}"
+      - uri: "{{config.training_checkpoint_archive_uri}}"
+      - uri: "{{config.training_uri}}"
+      - uri: "{{config.rollout_uri}}"
+    outputs:
+      - uri: "{{config.evaluation_uri}}"
+        schema: npa.openwam.libero-heldout-evaluation.v1
+    next: emit-factual-rrd
+
+  emit-factual-rrd:
+    description: >
+      Build and decode-verify a Rerun recording from the real checkpoint,
+      rollout, and held-out evaluation reports, preserving their exact
+      artifact URIs and measured values.
+    toolRef: workflow.openwam.visualize
+    resources: visualize-cpu
+    needs: [evaluate-heldout-episode]
+    inputs:
+      - uri: "{{config.training_uri}}"
+      - uri: "{{config.rollout_uri}}"
+      - uri: "{{config.evaluation_uri}}"
+    outputs:
+      - uri: "{{config.rrd_uri}}"
+        schema: application/vnd.rerun.rrd
+      - uri: "{{config.visualization_uri}}"
+        schema: npa.openwam.visualization.v1
+    terminal: true

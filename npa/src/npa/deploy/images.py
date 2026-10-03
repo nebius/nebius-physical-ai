@@ -238,6 +238,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "sim2real-control",
         "envgen",
         "robomimic",
+        "openwam",
     }
 )
 

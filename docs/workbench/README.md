@@ -42,6 +42,7 @@ Python and HTTP access follow each tool's documented contract.
 | Locomotion | [G1 / SONIC](guides/g1-humanoid-walk-sonic.md) · [quadruped / Isaac Lab](guides/quadruped-isaac-lab.md) |
 | GR00T fine-tuning | [GR00T N1.7](cookbooks/groot-1-7-training.md) |
 | OpenPI policy training | [Pi0.5 / Polaris](openpi-pi05-polaris.md) |
+| OpenWAM foundation → LIBERO policy | [OpenWAM-alpha candidate](openwam.md) |
 | Simulation-to-policy pipeline | [Sim2Real runbook](guides/sim2real-workflow.md) · [data contracts](guides/sim2real-data-contracts.md) · [customer assets](guides/sim2real-customer-assets.md) · [robot spec](guides/sim2real-robot-spec.md) |
 | Browser teleoperation | [LeIsaac](leisaac-teleoperation.md) · [latency measurement](guides/leisaac-transport-latency.md) |
 | Motion planning | [cuRobo](curobo.md) |
