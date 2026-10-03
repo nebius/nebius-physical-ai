@@ -70,6 +70,45 @@ def _report(target, index=0, config=None):
         )
 
 
+def test_retained_paired_judge_validates_its_own_prompt_namespace(
+    monkeypatch, tmp_path
+):
+    from npa.workflows.vlm_grade_evidence import vlm_paired_audit_block_details
+
+    _config(monkeypatch, tmp_path)
+    _runner()._prepare_config(tmp_path)
+    outcome = json.loads(json.dumps(_report(tmp_path)))["primary"]
+    assert vlm_paired_audit_block_details(outcome["result"]) == {}
+    _runner()._validate_retained_judge(outcome)
+
+
+def test_retained_scalar_judge_cannot_be_relabelled_as_paired_evidence(
+    monkeypatch, tmp_path
+):
+    from npa.workflows.vlm_grade_evidence import vlm_paired_audit_block_details
+
+    runner = _runner()
+    _config(monkeypatch, tmp_path)
+    runner._prepare_config(tmp_path)
+
+    def scalar_prompt(task, rubric, frame_selection, frame_count):
+        return vlm_eval._build_prompt(
+            task=task,
+            rubric=rubric,
+            frame_selection=frame_selection,
+            frame_count=frame_count,
+        )
+
+    with patch.object(vlm_eval, "_comparison_prompt", side_effect=scalar_prompt):
+        outcome = json.loads(json.dumps(_report(tmp_path)))["primary"]
+    assert vlm_paired_audit_block_details(outcome["result"]) == {
+        "reason": "vlm_provider_evidence_invalid",
+        "evidence_reason": "digest_mismatch",
+    }
+    with pytest.raises(runner._AuditConfigurationError, match="invalid_retained"):
+        runner._validate_retained_judge(outcome)
+
+
 def _synthetic_response(model):
     body = {
         "id": "synthetic-request",
