@@ -28,7 +28,8 @@ RUN apt-get update \
     && (id -u "${NPA_RUNTIME_USER}" >/dev/null 2>&1 \
         || useradd -m -s /bin/bash -u 1000 "${NPA_RUNTIME_USER}") \
     && install -d -m 0755 -o "${NPA_RUNTIME_USER}" -g "${NPA_RUNTIME_USER}" \
-      /workspace /workspace/.cache/npa/openvla-oft /opt/npa/openvla-oft
+      /workspace /workspace/.cache/npa/openvla-oft /opt/npa/openvla-oft \
+    && install -d -m 0755 -o root -g root /usr/share/doc/npa-openvla-oft
 
 COPY docker/workbench/openvla-oft/control-requirements.lock /tmp/openvla-oft-control-requirements.lock
 RUN python3 -m pip install --no-cache-dir --require-hashes \

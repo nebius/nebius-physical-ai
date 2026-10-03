@@ -131,6 +131,15 @@ def test_neutral_image_is_publication_quarantined() -> None:
     assert not images.is_publicly_redistributable("openvla-oft")
 
 
+def test_neutral_image_preserves_nonroot_access_to_its_notices() -> None:
+    """Runtime attribution stays readable after Docker COPY preserves file modes."""
+    dockerfile = (
+        Path(__file__).resolve().parents[1]
+        / "docker/workbench/openvla-oft/Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "install -d -m 0755 -o root -g root /usr/share/doc/npa-openvla-oft" in dockerfile
+
+
 def test_immutable_model_cache_requires_matching_ready_identity(tmp_path: Path) -> None:
     runtime = tmp_path / "runtime"
     identity = hashlib.sha256(
