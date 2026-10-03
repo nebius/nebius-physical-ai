@@ -8,6 +8,7 @@ import httpx
 from PIL import Image
 import pytest
 from typer.testing import CliRunner
+from typer import Exit
 
 from npa.cli.main import app
 from npa.clients.token_factory import (
@@ -17,6 +18,7 @@ from npa.clients.token_factory import (
     thinking_chat_extra,
 )
 import npa.workbench.token_factory as tool
+from npa.sdk.workbench import token_factory as sdk
 
 _CASES = {
     "positive": ["A green circle is visible."],
@@ -116,3 +118,83 @@ def _assert_records(payload, requests, replies, model, thinking):
         unavailable = reply in {"NO IMAGE RECEIVED.", "**“'no image received.'”**"}
         assert item["status"] == ("image_unavailable" if unavailable else "completed")
     assert payload["captions"][-1]["caption"] == replies[-1]
+
+
+def _direct_caption_args(args, thinking):
+    return {
+        "input_path": args[args.index("--input-path") + 1],
+        "output_path": args[args.index("--output-path") + 1],
+        "model": "moonshotai/Kimi-K3",
+        "thinking": thinking,
+    }
+
+
+@pytest.mark.parametrize("thinking", [True, False])
+@pytest.mark.parametrize("path", ["cli", "sdk", "module"])
+def test_kimi_thinking_refuses_before_transport_and_artifacts(
+    monkeypatch, tmp_path, thinking, path
+):
+    requests = []
+    _install_transport(monkeypatch, ["answer"], requests)
+    args = _caption_args(tmp_path, "moonshotai/Kimi-K3", thinking, 1)
+    direct = _direct_caption_args(args, thinking)
+    if path == "cli":
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 1
+        assert "reasoning_effort" in result.output
+    elif path == "sdk":
+        with pytest.raises(Exit) as failure:
+            sdk.caption(**direct)
+        assert failure.value.exit_code == 1
+    else:
+        with pytest.raises(tool.TokenFactoryToolError, match="reasoning_effort"):
+            tool.caption_images(**direct)
+    assert requests == []
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("path", ["cli", "sdk", "module"])
+def test_kimi_omitted_control_keeps_known_request_profile(monkeypatch, tmp_path, path):
+    requests = []
+    _install_transport(monkeypatch, ["answer"], requests)
+    args = _caption_args(tmp_path, "moonshotai/Kimi-K3", None, 1)
+    direct = _direct_caption_args(args, None)
+    if path == "cli":
+        result = CliRunner().invoke(app, args)
+        assert result.exit_code == 0, result.output
+    elif path == "sdk":
+        sdk.caption(**direct)
+    else:
+        assert tool.caption_images(**direct).status == "completed"
+    assert len(requests) == 1
+    assert requests[0]["reasoning_effort"] == "low"
+    assert "chat_template_kwargs" not in requests[0]
+    assert "temperature" not in requests[0]
+
+
+@pytest.mark.parametrize("thinking", [None, True, False])
+def test_actual_sdk_partial_failure_is_persisted_and_raises(
+    monkeypatch, tmp_path, capsys, thinking
+):
+    replies, requests = _CASES["mixed"], []
+    _install_transport(monkeypatch, replies, requests)
+    args = _caption_args(tmp_path, "MiniMaxAI/MiniMax-M3", thinking, len(replies))
+    with pytest.raises(Exit) as failure:
+        sdk.caption(
+            input_path=args[args.index("--input-path") + 1],
+            output_path=args[args.index("--output-path") + 1],
+            model="MiniMaxAI/MiniMax-M3",
+            thinking=thinking,
+            output="json",
+        )
+    assert failure.value.exit_code == 1
+    payload = json.loads(capsys.readouterr().out)
+    persisted = json.loads((tmp_path / "out/captions.json").read_text())
+    assert payload["written_uri"] == str(tmp_path / "out/captions.json")
+    assert {key: value for key, value in payload.items() if key != "written_uri"} == (
+        persisted
+    )
+    assert payload["status"] == "failed"
+    assert payload["failed_count"] == 1
+    assert len(requests) == 3
+    _assert_records(payload, requests, replies, "MiniMaxAI/MiniMax-M3", thinking)

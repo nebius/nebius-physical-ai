@@ -145,7 +145,11 @@ caption, retry the command with `--no-thinking`. `--thinking` deliberately
 reverses the built-in suppression for
 Lightning/MiniMax and may consume the output allowance without yielding visible
 text. Explicit overrides use verified model-specific fields for Lightning and
-MiniMax and the generic `thinking` field for other model IDs; unsupported
+MiniMax and the generic `thinking` field for other model IDs, except known
+`reasoning_effort` profiles such as Kimi-K3. Those reject either boolean override
+before inference instead of sending a known unsupported template field; omitted
+thinking options retain their defaults. Direct client `extra` can set
+`reasoning_effort` explicitly. Other unsupported
 providers may reject or ignore that control. Rejected requests and empty or
 reasoning-only answers fail, but silently ignored controls with visible text
 cannot be detected; control compliance is not validated.

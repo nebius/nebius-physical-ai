@@ -129,7 +129,12 @@ the source images:
 `caption` leaves thinking control unchanged unless `--thinking` or
 `--no-thinking` is explicit. The built-in Lightning and MiniMax defaults already
 disable thinking with their verified model-specific fields; other selected
-models receive the generic `thinking` field only after an explicit override.
+models receive the generic `thinking` field only after an explicit override,
+except known `reasoning_effort` profiles such as Kimi-K3: those reject either
+boolean override before inference, rather than send an unsupported template
+field while silently retaining the existing effort. Omitting the option keeps
+their model-specific defaults; direct client callers may set `reasoning_effort`
+through `extra` explicitly.
 Use `--no-thinking` when a reasoning-capable vision model returns no visible
 caption. Use `--thinking` only deliberately: reasoning can consume the output
 allowance and still leave no visible caption. A provider may reject or ignore a

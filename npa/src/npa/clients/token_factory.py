@@ -201,9 +201,10 @@ def _validate_chat_completion_input(
 def thinking_chat_extra(model: str, enabled: bool) -> dict[str, Any]:
     """Build an explicit model-specific thinking override.
 
-    Known replacement models use their verified template keys. Other explicit
-    model IDs use the OpenAI-compatible ``thinking`` key only because the caller
-    requested an override; defaults for unknown models remain untouched.
+    Verified template controls come from the centralized request profile.
+    Profiles using reasoning_effort reject a boolean override rather than
+    silently retain that effort. Other explicit IDs use the generic thinking
+    key; defaults for unknown models remain untouched.
 
     Args:
         model: Exact model ID sent to Token Factory.
@@ -212,14 +213,21 @@ def thinking_chat_extra(model: str, enabled: bool) -> dict[str, Any]:
         Extra chat-completion fields for :meth:`TokenFactoryClient.chat_completion`.
 
     Raises:
-        TokenFactoryError: If enabled is not a literal boolean.
+        TokenFactoryError: If the boolean or model control is unsupported.
     """
 
     if not isinstance(enabled, bool):
         raise TokenFactoryError("thinking must be a literal boolean")
-    if model == "nvidia/Nemotron-3_5-Lightning":
+    profile = token_factory_chat_profile(model)
+    if profile.reasoning_effort is not None:
+        raise TokenFactoryError(
+            f"{model} does not support a boolean thinking override; "
+            "use its reasoning_effort control explicitly"
+        )
+    template = dict(profile.chat_template_kwargs)
+    if "enable_thinking" in template:
         control: dict[str, Any] = {"enable_thinking": enabled}
-    elif model == "MiniMaxAI/MiniMax-M3":
+    elif "thinking_mode" in template:
         control = {"thinking_mode": "enabled" if enabled else "disabled"}
     else:
         control = {"thinking": enabled}
