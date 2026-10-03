@@ -239,3 +239,114 @@ claimed.
 Full live acceptance, independent source/evidence review,
 current published-head CI and the actual merge-queue integration gate remain.
 The PR stays draft; no merge or queue action has been taken.
+
+## Completed repaired CPU gate and current integration
+
+The later frozen runtime `064b4ddf5d9083b9077f103d3a40bf92388948d8`
+completed the local Linux coverage suite: 41,109 passed, 193 skipped, one existing
+non-strict XPASS, zero failures/errors, 77.85% package coverage, in 2319.56 seconds.
+Its source and environment remained frozen. Original XML SHA-256:
+`d9bcf2e7d71ab35706aecbc18c33171cd8776ae3ccea2f6bcdeff3a16fd23ef2`.
+This local run is not the distributed current-head CI admission gate.
+
+Exact064 also passed 898 required security controls, 1,134 affected controls
+with one explicit self-hosted GPU opt-in skip, 37 cache/SDK/CAS controls on each
+of Python 3.10 and 3.14, 12 CLI installation checks, and 28 native plus 235
+Cypress browser checks. Browser API/protocol fixtures are not a rendered Isaac
+workload. Fresh actual S3 publication controls passed three tests; four further
+real S3 controls deliberately induced native pretransport validation and
+postwrite lost-response phases. They are phase controls, not a demonstrated
+production PUT failure. Disposable fixture cleanup was verified.
+
+The earlier `070358156` full result remains failed: 40,562 passed, 200 skipped,
+one existing XPASS, seven failures and one error, 77.76% coverage. The earlier
+`28385f1ba` full result remains failed: 40,529 passed, 213 skipped, one existing
+XPASS and three failures, 77.72% coverage. Original import, SDK GET, semantic,
+cache, dependency, transport and private protocol failures are retained.
+Corrections do not relabel these executions or erase their original assertions.
+
+Signed runtime candidate `c1755debcb8fd08c7865b063343895a83bc07a12`, tree
+`2391cb70fa2377e1906511410f002fe6c945b64a`, composes actual main
+`88fd1b1356c942745244e49d2316800634c530ae`. Its own isolated environment passed
+1,599 affected prompt/rubric/content/grade/paired/metadata/CLI/SDK/registration,
+cache and hostile-input controls, with one explicit live-GPU opt-in skip.
+Root-cwd precheck passed 6,696 tests with six skips and collected 42,642 tests.
+Original integration XML SHA-256:
+`a58bd547b44fbca55dbfb2a3e8967f6f6d4438b2e5c4677d774fa98b19c22675`.
+Fifteen relevant publication, regeneration, authority and storage production
+files are byte-identical between064 and this candidate. Changed cache and
+incoming VLM/grade paths have fresh affected controls, not a fabricated
+candidate-SHA full execution. An earlier borrowed-environment attempt retained
+13 failures because protected subprocesses imported the old editable source;
+the isolated current environment passes without changing those assertions.
+
+## Separate cache, review and shared-storage scopes
+
+Independent Codex AI review at exact064 closed the auxiliary-timeline and
+recursive-clear semantic collisions and local CLI rejected-RRD cache defect.
+It reopened all four original failed recordings, preserved decoded disagreements,
+and ran 52 scoped CPU controls with no skips. Current replay writer and immutable
+original input authority remain separate. The relevant producer and regeneration
+files are unchanged throughc175; this is a reviewed-source bridge, not a later
+full-pipeline execution or human approval.
+
+A separate parent review found a late process-wide cache installation defect:
+three failed postrename observations left 48 unindexed bytes under a 20-byte,
+one-entry retention budget. Candidatec175 registers renamed-leaf ownership
+before observation and cleans only the matching candidate on failure. Failed
+unlink remains indexed for retry; the primary exception and previously opened
+readers survive. Five new negative controls fail the frozen original runtime
+and pass in the fresh affected candidate population. Cleanup budget limits
+retention, not accepted recording size or workload count. Full byte/journal/
+version authentication remains mandatory; no HEAD-only shortcut was added.
+The exact new delta still requires its separate independent receipt.
+
+Actual first-party operator Mac Claude Code primary and sole focused follow-up
+both returned **changes required**. The substantive model was `claude-opus-5`,
+provider `firstParty`. Confirmed findings were repaired or separately adjudicated;
+the original results remain unchanged and no third review was requested. An
+independent reviewed-delta bridge is required for later repairs. These are AI
+text/source reviews, not human approval, Claude pixel inspection or GPU proof.
+Earlier native-VDI unavailability observations are historical; the Mac route
+became available without copying credentials.
+
+The committed595/846 shared-storage composition passed 234 CPU controls and four
+real S3 controls. The S3 execution remains at
+`4e7330642d6104db7af1912637fa330f0d05178b`; its capability/storage source is
+byte-identical through the completed CPU composition
+`831f667148de06c34b28202b167001e688643d0c` and relevant latest595 dependency
+files. The cases exercise conditional create/retry, exact full-byte recovery,
+hostile replacement rejection and unrelated-prefix preservation. Advisory
+digest metadata absence was observed and retained; it is not authentication.
+595's CopyObject failure and846's conditional GET parser failure are distinct.
+No IAM expansion, private image publication or shared-service change occurred.
+
+## Current request evidence versus historical responses
+
+Main634 changes the default rubric, prompt, interleaved Frame labels, paired
+request contract and grade reconstruction. Old `ae74dd3b` responses remain
+traceable CPU replay inputs but now fail the current prompt-digest gate; they
+are not new-payload hosted proof or current promotion evidence.
+
+The separately retained main634 four-control execution at
+`4cbaef3273e210b92ec0937af8b2e22575848de2` has an exact bridge to the candidate:
+eight committed request/profile/parser helper ASTs match, all four full wire
+bodies match their frozen and actual transmitted bytes, and frame, model,
+prompt, rubric and protocol hashes match. Thirteen fresh CPU bridge/writer/
+grade/canonical-precedence controls passed. Original bridge XML SHA-256:
+`24be665d139085138e1945a834b52f776df7fc3647e5bb48430e0e9c29b354dd`.
+No new provider call occurred in this bridge. Changed inherited transport and
+current consumers have CPU controls; original hosted execution stays at4cba.
+
+The [original narrow qualification](../../../workbench/evidence/vlm-terminal-ordinal-qualification.md)
+retains one complete and three incomplete/ambiguous/blank controls at the frozen
+0.8 threshold, plus documented rationale inaccuracies. It does not calibrate
+model quality, qualify alternate models, establish physical safety or reverse
+earlier rejected panels. Inherited paired audits remain audit-only; they cannot
+be renamed into a scalar promotion artifact.
+
+Full14-stage GPU/model/render acceptance still requires the exact qualified
+controller/Transfer/EnvGen/Isaac/viewer delivery. Source/CPU/S3 closure, independent
+final evidence review, current published-head CI and queue integration are
+distinct gates. The PR remains draft and not merge-ready. Only the campaign
+coordinator may enqueue after every gate; this owner has not merged or queued it.
