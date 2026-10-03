@@ -2638,6 +2638,54 @@ def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
     assert json.loads((tmp_path / "decision.json").read_text())["report_sha256"]
 
 
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+def test_failed_current_producer_preserves_but_does_not_validate_legacy_history(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
+    from typer.testing import CliRunner
+    from npa.cli.main import app
+
+    legacy = tmp_path / LEGACY_RESULT_FILENAME
+    historical = _provider_vlm_report(monkeypatch, tmp_path, backend=backend)
+    legacy.write_text(json.dumps(historical))
+    original_bytes = legacy.read_bytes()
+    incomplete = _provider_completion(success=True, metadata=True)
+    incomplete["choices"][0]["finish_reason"] = "length"
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **_: incomplete)
+    invocation = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "run",
+            "--input-path",
+            str(tmp_path / "rollout.png"),
+            "--output-path",
+            str(tmp_path),
+            "--backend",
+            backend,
+            "--model",
+            "hosted/unit-vision",
+            "--endpoint-url",
+            "https://provider.invalid/v1",
+            "--output",
+            "json",
+        ],
+    )
+    assert invocation.exit_code == 1
+    assert "finish_reason=stop" in invocation.output
+    assert not (tmp_path / RESULT_FILENAME).exists()
+    assert legacy.read_bytes() == original_bytes
+    # A manually invoked compatibility reader still grades the historical
+    # artifact. It cannot establish that the failed current invocation succeeded;
+    # the orchestrator must honor nonzero exit and use fresh run-scoped outputs.
+    assert (
+        dfs.grade_gate(str(tmp_path), str(tmp_path / "history-decision.json"))
+        == "promote_checkpoint"
+    )
+    assert legacy.read_bytes() == original_bytes
+
+
 @pytest.mark.parametrize("canonical", ['{"status": "passed"', "null", "[]", "{}"])
 def test_grade_gate_does_not_fall_back_from_malformed_canonical_vlm_result(
     tmp_path: Path,
