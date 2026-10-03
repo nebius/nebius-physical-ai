@@ -41,17 +41,18 @@
       ]
     },
     "source_image": {
-      "status": "verified",
-      "reason": "The pinned Cosmos image passed authenticated pull preflight.",
+      "status": "blocked",
+      "reason": "Current Workbench main quarantines the configured public Cosmos3 release pending a rebuilt and accepted image. The new parameter matrix attempt stopped at image preflight before GPU submission; historical native runs predate this quarantine.",
       "evidence": [
-        "workflow preflight-images"
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation"
       ]
     },
     "target_runtime": {
-      "status": "verified",
-      "reason": "The standard runtime completed both Cosmos3-Nano workers on RTX PRO 6000, paired review and real Postgres/MLflow tracking. The unchanged quality gate rejected both outputs and publication failed as intended. B200 and multi-window execution are not verified by this run.",
+      "status": "blocked",
+      "reason": "Earlier explicit-variant runs completed Cosmos3-Nano generation, paired review and Postgres/MLflow tracking on RTX PRO 6000, with all six outputs rejected. The new parameter matrix has local coverage but no live GPU execution because image preflight blocks submission. B200 and multi-window execution remain unverified.",
       "evidence": [
-        "workflows/guides/video-variant-sweep.md#native-runtime-evidence"
+        "workflows/guides/video-variant-sweep.md#native-runtime-evidence",
+        "workflows/guides/video-variant-sweep.md#parameter-matrix-validation"
       ]
     }
   }

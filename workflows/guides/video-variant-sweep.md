@@ -39,6 +39,12 @@ Set `accelerators` to a verified alternative such as `RTXPRO6000:1` when using
 that GPU family. GPU placement and model access are checked before submission;
 selecting a GPU does not establish its inference compatibility.
 
+Current live execution is blocked by Workbench's public Cosmos3 image quarantine.
+The configured release needs a rebuilt and accepted image; the operator stops at
+image preflight before staging or submitting GPU work. Do not reuse the old tag
+or digest to bypass that check. Offline matrix planning remains available. See
+[the current validation scope](#parameter-matrix-validation).
+
 The current graph has two parallel workers. Each processes a disjoint partition
 of **every source × variant** combination. This does not limit the number of
 sources or variants. Changing worker concurrency still requires corresponding
@@ -318,6 +324,21 @@ decisions, mobile overflow checks and zero external requests.
 This validates the executed component path and strict rejection behavior.
 It does not qualify realistic training data, B200 placement, multi-window
 continuity or the default hosted Cosmos3 reasoner.
+
+### Parameter matrix validation
+
+The new matrix configuration defines one source × two structural guidance values
+× two text guidance values × two seeds: eight candidates, partitioned across two
+workers. Unit tests exercise all 24 combinations of a larger two-source grid,
+complete worker joins, fixed prompt reuse, immutable input protection and the
+mapping from recorded matrix cells to clips. The offline eight-candidate HTML
+preview passed desktop/mobile checks with no external requests or script errors.
+
+The live matrix attempt passed credential and exact-model access checks, then
+stopped at image preflight because current Workbench main quarantines the
+configured Cosmos3 release pending a rebuilt and accepted image. No matrix GPU
+jobs, generated clips or dataset were created. The six earlier native clips above
+predate this attempt and are not evidence that the new parameter matrix ran.
 
 ## Transfer 2.5 compatibility and evidence
 
