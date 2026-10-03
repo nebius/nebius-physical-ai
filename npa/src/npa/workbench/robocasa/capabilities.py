@@ -36,6 +36,7 @@ import numpy as np
 from typing import Any, BinaryIO, Callable
 
 from npa.clients.storage import safe_s3_download_target
+from npa.workbench.robocasa.asset_paths import HeldAssetDirectory, hold_asset_directory
 from npa.workbench.robocasa.schemas import (
     DEFAULT_ENV_ID,
     RoboCasaRunRequest,
@@ -477,13 +478,25 @@ def _nvidia_asset(filename: str, extract_to: str, publish_path: str) -> _AssetAr
 @contextlib.contextmanager
 def _asset_fetch_lock(assets_root: Path) -> Any:
     state_root = assets_root / ".npa_asset_fetch"
-    state_root.mkdir(parents=True, exist_ok=True)
-    with (state_root / "fetch.lock").open("a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        try:
-            yield state_root
-        finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    try:
+        with hold_asset_directory(state_root, create=True) as state:
+            descriptor = os.open(
+                "fetch.lock",
+                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=state.descriptor,
+            )
+            with os.fdopen(descriptor, "a+b") as lock_file:
+                if not stat.S_ISREG(os.fstat(lock_file.fileno()).st_mode):
+                    raise RoboCasaError("RoboCasa asset lock must be a regular file")
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    state.verify()
+                    yield state_root
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+    except OSError as exc:
+        raise RoboCasaError(f"unsafe RoboCasa asset state path: {state_root}") from exc
 
 
 def _download_assets() -> None:
@@ -496,7 +509,6 @@ def _download_assets() -> None:
         ) from exc
 
     assets_root = _assets_root()
-    assets_root.mkdir(parents=True, exist_ok=True)
     with _asset_fetch_lock(assets_root) as state_root:
         for archive in _asset_archives():
             _fetch_asset_archive(
@@ -548,11 +560,39 @@ def _stage_publish_and_receipt(
     assets_root: Path,
     receipt_path: Path,
 ) -> None:
-    temporary_parent = _asset_temporary_parent(receipt_path)
+    """Hold all mutable parents before staging, replacing or certifying bytes."""
+    try:
+        with contextlib.ExitStack() as stack:
+            assets = stack.enter_context(hold_asset_directory(assets_root))
+            receipts = stack.enter_context(hold_asset_directory(receipt_path.parent))
+            target = assets_root / archive.publish_path
+            parent = stack.enter_context(
+                hold_asset_directory(target.parent, create=True)
+            )
+            temporary = stack.enter_context(
+                hold_asset_directory(_asset_temporary_parent(receipt_path), create=True)
+            )
+            _publish_asset_with_held_parents(
+                archive, zip_path, assets, receipt_path, receipts, parent, temporary
+            )
+    except OSError as exc:
+        raise RoboCasaError("unsafe RoboCasa asset publication path") from exc
+
+
+def _publish_asset_with_held_parents(
+    archive: _AssetArchive,
+    zip_path: Path,
+    assets: HeldAssetDirectory,
+    receipt_path: Path,
+    receipts: HeldAssetDirectory,
+    parent: HeldAssetDirectory,
+    temporary: HeldAssetDirectory,
+) -> None:
+    """Publish a validated private staging tree using held destination handles."""
     with tempfile.TemporaryDirectory(
-        prefix="asset-", dir=temporary_parent
-    ) as temporary:
-        staging_root = Path(temporary)
+        prefix="asset-", dir=temporary.anchored_path
+    ) as staging_directory:
+        staging_root = Path(staging_directory)
         extract_root = (
             staging_root
             if archive.extract_to == "."
@@ -567,28 +607,33 @@ def _stage_publish_and_receipt(
                     f"RoboCasa asset archive changed while reading: {zip_path}"
                 )
         staged_publish = staging_root / archive.publish_path
-        _overlay_pinned_fixture_controls(archive, assets_root, staged_publish)
+        _overlay_pinned_fixture_controls(archive, assets.anchored_path, staged_publish)
         _validate_asset_tree(staging_root / archive.required_path, archive)
         staged_digest, file_count = _published_asset_identity(staged_publish, archive)
-        _replace_asset_tree(staged_publish, assets_root / archive.publish_path)
+        for directory in (assets, receipts, parent, temporary):
+            directory.verify()
+        _replace_asset_tree(
+            staged_publish, assets.path / archive.publish_path, parent=parent
+        )
     receipt = _asset_receipt(archive, archive_sha256, staged_digest, file_count)
-    _write_json_atomic(receipt_path, receipt)
+    for directory in (assets, receipts, parent, temporary):
+        directory.verify()
+    _write_json_atomic(receipt_path, receipt, parent=receipts)
 
 
 def _asset_temporary_parent(receipt_path: Path) -> Path:
     configured = os.environ.get(WORKER_ASSET_TEMP_ROOT_ENV, "").strip()
     if not configured:
         return receipt_path.parent
-    state_root = receipt_path.parent.parent.resolve()
-    workers_root = (state_root / "workers").resolve()
-    candidate = Path(configured).resolve()
+    state_root = receipt_path.parent.parent.absolute()
+    workers_root = state_root / "workers"
+    candidate = Path(configured).absolute()
     try:
         candidate.relative_to(workers_root)
     except ValueError as exc:
         raise RoboCasaError(
             f"{WORKER_ASSET_TEMP_ROOT_ENV} must stay under {workers_root}"
         ) from exc
-    candidate.mkdir(parents=True, exist_ok=True)
     return candidate
 
 
@@ -905,20 +950,32 @@ def _validate_asset_tree(path: Path, archive: _AssetArchive) -> None:
         )
 
 
-def _replace_asset_tree(staged: Path, target: Path) -> None:
+def _replace_asset_tree(
+    staged: Path, target: Path, *, parent: HeldAssetDirectory | None = None
+) -> None:
     if not staged.is_dir():
         raise RoboCasaError(f"staged RoboCasa asset tree does not exist: {staged}")
-    target.parent.mkdir(parents=True, exist_ok=True)
+    if parent is None:
+        try:
+            with hold_asset_directory(target.parent, create=True) as held:
+                _replace_asset_tree(staged, target, parent=held)
+        except OSError as exc:
+            raise RoboCasaError("unsafe RoboCasa asset destination parent") from exc
+        return
+    parent.verify()
     try:
-        target_mode = target.lstat().st_mode
+        target_mode = os.stat(
+            target.name, dir_fd=parent.descriptor, follow_symlinks=False
+        ).st_mode
     except FileNotFoundError:
         pass
     else:
         if stat.S_ISDIR(target_mode):
-            shutil.rmtree(target)
+            shutil.rmtree(target.name, dir_fd=parent.descriptor)
         else:
-            target.unlink()
-    os.replace(staged, target)
+            os.unlink(target.name, dir_fd=parent.descriptor)
+    parent.verify()
+    os.replace(staged, target.name, dst_dir_fd=parent.descriptor)
 
 
 def _asset_receipt_name(archive: _AssetArchive) -> str:
@@ -930,7 +987,11 @@ def _asset_receipt_name(archive: _AssetArchive) -> str:
 
 def _asset_receipt_path(state_root: Path, archive: _AssetArchive) -> Path:
     receipts = state_root / "receipts"
-    receipts.mkdir(parents=True, exist_ok=True)
+    try:
+        with hold_asset_directory(receipts, create=True):
+            pass
+    except OSError as exc:
+        raise RoboCasaError("unsafe RoboCasa asset receipt directory") from exc
     return receipts / _asset_receipt_name(archive)
 
 
@@ -980,14 +1041,47 @@ def _published_asset_identity(
 def _asset_receipt_is_valid(
     receipt_path: Path, archive: _AssetArchive, assets_root: Path
 ) -> bool:
+    """Reject unsafe ancestors and read evidence through held directory handles."""
     try:
-        receipt_stat = receipt_path.lstat()
-        if (
-            not stat.S_ISREG(receipt_stat.st_mode)
-            or receipt_stat.st_size > _ASSET_RECEIPT_SIZE_LIMIT
-        ):
-            return False
-        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        with contextlib.ExitStack() as stack:
+            assets = stack.enter_context(hold_asset_directory(assets_root))
+            receipts = stack.enter_context(hold_asset_directory(receipt_path.parent))
+            published = assets_root / archive.publish_path
+            required = assets_root / archive.required_path
+            published_parent = stack.enter_context(
+                hold_asset_directory(published.parent)
+            )
+            required_parent = stack.enter_context(hold_asset_directory(required.parent))
+            valid = _held_asset_receipt_is_valid(
+                receipts.anchored_path / receipt_path.name,
+                archive,
+                published_parent.anchored_path / published.name,
+                required_parent.anchored_path / required.name,
+            )
+            for directory in (assets, receipts, published_parent, required_parent):
+                directory.verify()
+            return valid
+    except (OSError, RoboCasaError):
+        return False
+
+
+def _held_asset_receipt_is_valid(
+    receipt_path: Path, archive: _AssetArchive, published: Path, required: Path
+) -> bool:
+    """Check a receipt and tree whose parent namespaces remain held by the caller."""
+    try:
+        descriptor = os.open(receipt_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(descriptor, "rb") as handle:
+            receipt_stat = os.fstat(handle.fileno())
+            if (
+                not stat.S_ISREG(receipt_stat.st_mode)
+                or receipt_stat.st_size > _ASSET_RECEIPT_SIZE_LIMIT
+            ):
+                return False
+            raw = handle.read(_ASSET_RECEIPT_SIZE_LIMIT + 1)
+            if len(raw) > _ASSET_RECEIPT_SIZE_LIMIT:
+                return False
+            receipt = json.loads(raw)
     except (OSError, ValueError, RecursionError):
         return False
     if not isinstance(receipt, dict):
@@ -1009,8 +1103,6 @@ def _asset_receipt_is_valid(
     receipt_file_count = receipt.get("file_count")
     if type(receipt_file_count) is not int or receipt_file_count <= 0:
         return False
-    required = assets_root / archive.required_path
-    published = assets_root / archive.publish_path
     try:
         if not required.is_dir() or required.is_symlink():
             return False
@@ -1020,12 +1112,33 @@ def _asset_receipt_is_valid(
     return tree_sha256 == receipt["tree_sha256"] and file_count == receipt_file_count
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+def _write_json_atomic(
+    path: Path, payload: dict[str, Any], *, parent: HeldAssetDirectory
+) -> None:
+    """Publish a fresh exclusive receipt without following temporary-file links."""
+    parent.verify()
+    temporary = f".{path.name}.{secrets.token_hex(16)}.tmp"
+    descriptor = os.open(
+        temporary,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+        0o600,
+        dir_fd=parent.descriptor,
     )
-    os.replace(temporary, path)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        parent.verify()
+        os.replace(
+            temporary,
+            path.name,
+            src_dir_fd=parent.descriptor,
+            dst_dir_fd=parent.descriptor,
+        )
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(temporary, dir_fd=parent.descriptor)
 
 
 def _make_env(env_id: str, *, download_assets: bool = True) -> Any:
@@ -1152,6 +1265,9 @@ def kitchen_random_rollout(
         for _ in range(iterations):
             action = env.action_space.sample()
             obs, reward, terminated, truncated, info = env.step(action)
+            reward = _native_reward(reward)
+            terminated = _native_boolean(terminated, "terminated")
+            truncated = _native_boolean(truncated, "truncated")
             try:
                 frames.append(env.render())
             except Exception as exc:  # pragma: no cover - render may be unavailable.
@@ -1358,17 +1474,18 @@ def _update_episode_outcome(
     truncated: Any,
     info: Any,
 ) -> None:
-    reward_value = float(reward)
-    if not np.isfinite(reward_value):
-        raise RoboCasaError("RoboCasa reward contains a non-finite value")
+    reward_value = _native_reward(reward)
+    terminated_value = _native_boolean(terminated, "terminated")
+    truncated_value = _native_boolean(truncated, "truncated")
     success, sources = _native_task_success(env, info, reward_value)
-    outcome["reward_sum"] += reward_value
+    reward_sum = _native_reward(outcome["reward_sum"] + reward_value)
+    outcome["reward_sum"] = reward_sum
     outcome["final_reward"] = reward_value
     outcome["max_reward"] = max(outcome["max_reward"], reward_value)
     outcome["success"] = bool(outcome["success"] or success)
     outcome["success_sources"].update(sources)
-    outcome["terminated"] = bool(terminated)
-    outcome["truncated"] = bool(truncated)
+    outcome["terminated"] = terminated_value
+    outcome["truncated"] = truncated_value
 
 
 def _trajectory_episode_record(
@@ -1852,16 +1969,44 @@ def _prepare_eval_action(action: Any, space: Any) -> _PreparedAction:
     return _PreparedAction(prepared, raw_flat, applied_flat, violation)
 
 
+def _native_boolean(value: Any, name: str) -> bool:
+    """Accept native booleans and exact numeric zero/one, never truthiness."""
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, float, np.integer, np.floating)) and value in (0, 1):
+        return bool(value)
+    raise RoboCasaError(f"RoboCasa {name} must be a boolean or exact numeric 0/1")
+
+
+def _native_reward(value: Any) -> float:
+    """Require one finite real numeric reward, excluding booleans and arrays."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(
+        value, (int, float, np.integer, np.floating)
+    ):
+        raise RoboCasaError("RoboCasa reward must be a finite real numeric scalar")
+    try:
+        reward = float(value)
+    except (ValueError, OverflowError) as exc:
+        raise RoboCasaError("RoboCasa reward must be finite") from exc
+    if not np.isfinite(reward):
+        raise RoboCasaError("RoboCasa reward contains a non-finite value")
+    return reward
+
+
 def _native_task_success(env: Any, info: Any, reward: float) -> tuple[bool, list[str]]:
     signals: dict[str, bool] = {}
-    if isinstance(info, dict):
-        for key in ("success", "is_success", "goal_reached"):
-            if key in info:
-                signals[f"info.{key}"] = bool(info[key])
+    reward = _native_reward(reward)
+    if not isinstance(info, dict):
+        raise RoboCasaError("RoboCasa step info must be a dictionary")
+    for key in ("success", "is_success", "goal_reached"):
+        if key in info:
+            signals[f"info.{key}"] = _native_boolean(info[key], f"info.{key}")
     unwrapped = getattr(env, "unwrapped", env)
     checker = getattr(unwrapped, "_check_success", None)
     if callable(checker):
-        signals["environment._check_success"] = bool(checker())
+        signals["environment._check_success"] = _native_boolean(
+            checker(), "environment._check_success"
+        )
     if reward in {0.0, 1.0}:
         signals["binary_reward"] = reward == 1.0
     if not signals:

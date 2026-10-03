@@ -1,9 +1,9 @@
 # npa-robocasa: RoboCasa kitchen-task simulation as a first-class workbench tool.
 #
-# Built independently on the exact CUDA 12.4 base that the live-accepted
-# RoboCasa BYOF evidence used, NOT on the purpose-built SONIC MuJoCo application
-# image. RoboCasa is MIT and robosuite is Apache-2.0; their immutable revisions and
-# the reviewed Python closure below match the accepted capability path.
+# Built independently on a policy-pinned CUDA 12.4 base, not the purpose-built
+# SONIC MuJoCo application image. This updated base and dependency closure need
+# their own exact-image qualification; historical BYOF results do not qualify
+# replacement bytes. RoboCasa is MIT and robosuite is Apache-2.0.
 #
 # What IS baked, and is fine to redistribute:
 #   * CUDA 12.4 Ubuntu 22.04 base
@@ -26,16 +26,15 @@ ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1
 
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
-      npa.base_image="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
-      npa.robocasa.derivative="1.0.0+npa2" \
-      npa.robocasa.patch.sha256="2966983253141bd66d3ce8ad62824ab267683ad45c07eb9ea8e174358402c01e" \
+      npa.robocasa.derivative="1.0.0+npa3" \
+      npa.robocasa.patch.sha256="8d43b8540fcaec6414928da68fbf7b33822b25bcbcf4fb2a8d7c03a57946cf88" \
       npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885" \
       npa.robosuite.revision="85abee228d1c43ab1939bce33028099945d453b4" \
       npa.lerobot.revision="${LEROBOT_SOURCE_COMMIT}" \
-      npa.lerobot.derivative="0.6.1+npa1" \
+      npa.lerobot.derivative="0.6.1+npa2" \
       npa.lerobot.archive.sha256="869026b70a9488f11ae25c92573f68a03e04e45b4ffda7d63586582ac8d506ee" \
-      npa.lerobot.patch.sha256="7d90538cc6c66351256f394d555797a6aacf34cb17dad2d0c9fc781c7e22404c" \
+      npa.lerobot.patch.sha256="38d310f1b74b67a4584861c3fca5894b7693399ed6a1a82dc86cd754ef23de41" \
       npa.runtime_user="ubuntu" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.base.name="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04" \
@@ -113,6 +112,8 @@ COPY --chmod=0644 \
     docker/workbench/robocasa/verify_lerobot_act_derivative.py \
     docker/workbench/robocasa/verify_robocasa_act_adapter.py \
     docker/workbench/robocasa/verify_fixture_controls.py \
+    docker/workbench/robocasa/verify_dataset_metadata.py \
+    docker/workbench/robocasa/verify_sim_dataset_roundtrip.py \
     src/npa/workbench/robocasa/fixture-controls.json \
     /opt/robocasa/derivative/
 
@@ -179,7 +180,7 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
     && base64 --decode /opt/robocasa/derivative/lerobot-npa-act.patch.b64 \
         > /tmp/lerobot-npa-act.patch \
     && echo \
-        "7d90538cc6c66351256f394d555797a6aacf34cb17dad2d0c9fc781c7e22404c  /tmp/lerobot-npa-act.patch" \
+        "38d310f1b74b67a4584861c3fca5894b7693399ed6a1a82dc86cd754ef23de41  /tmp/lerobot-npa-act.patch" \
         | sha256sum --check --strict - \
     && git -C /opt/robocasa/lerobot-source apply --check \
         /tmp/lerobot-npa-act.patch \
@@ -191,11 +192,11 @@ RUN PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir --no-build-isolation --no-deps \
         --wheel-dir /opt/robocasa/lerobot-wheel \
         /opt/robocasa/lerobot-source \
-    && test "$(find /opt/robocasa/lerobot-wheel -maxdepth 1 -type f -name 'lerobot-0.6.1+npa1-*.whl' | wc -l)" = 1 \
+    && test "$(find /opt/robocasa/lerobot-wheel -maxdepth 1 -type f -name 'lerobot-0.6.1+npa2-*.whl' | wc -l)" = 1 \
     && PIP_CONFIG_FILE=/dev/null python -m pip install \
         --disable-pip-version-check --no-cache-dir \
         --index-url https://pypi.org/simple \
-        /opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa1-*.whl \
+        /opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa2-*.whl \
     && python -m pip check \
     && python /opt/robocasa/derivative/verify_lerobot_act_derivative.py \
     && install -D -m 0644 /opt/robocasa/derivative/lerobot-npa-act.NOTICE \
@@ -245,7 +246,7 @@ RUN git init /opt/robocasa/source \
     && base64 --decode /opt/robocasa/derivative/robocasa-npa-act.patch.b64 \
       > /tmp/robocasa-npa-act.patch \
     && echo \
-      "2966983253141bd66d3ce8ad62824ab267683ad45c07eb9ea8e174358402c01e  /tmp/robocasa-npa-act.patch" \
+      "8d43b8540fcaec6414928da68fbf7b33822b25bcbcf4fb2a8d7c03a57946cf88  /tmp/robocasa-npa-act.patch" \
       | sha256sum --check --strict - \
     && git -C /opt/robocasa/source apply --check /tmp/robocasa-npa-act.patch \
     && git -C /opt/robocasa/source apply /tmp/robocasa-npa-act.patch \
@@ -254,7 +255,7 @@ RUN git init /opt/robocasa/source \
       --disable-pip-version-check --no-cache-dir \
       --index-url https://pypi.org/simple \
       --no-build-isolation -e /opt/robocasa/source \
-    && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa2'" \
+    && python -c "from importlib.metadata import version; assert version('robocasa') == '1.0.0+npa3'" \
     && echo \
       "5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885  /opt/robocasa/source/LICENSE" \
       | sha256sum --check --strict - \
@@ -274,7 +275,8 @@ RUN apt-get purge -y --auto-remove linux-libc-dev \
 
 # Fail the image build if the exact held-out evaluator import path is incomplete.
 RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
-    && python -c "from importlib.metadata import version; assert version('lerobot') == '0.6.1+npa1'" \
+    && python -c "from importlib.metadata import version; assert version('lerobot') == '0.6.1+npa2'" \
+    && python /opt/robocasa/derivative/verify_dataset_metadata.py \
     && python -m pip check \
     && python -c "from importlib.metadata import distributions; forbidden_names = {'nvidia-cublas', 'nvidia-cuda-cupti', 'nvidia-cuda-nvrtc', 'nvidia-cuda-runtime', 'nvidia-cudnn-cu13', 'nvidia-cufft', 'nvidia-cufile', 'nvidia-curand', 'nvidia-cusolver', 'nvidia-cusparse', 'nvidia-cusparselt-cu13', 'nvidia-nccl-cu13', 'nvidia-nvjitlink', 'nvidia-nvshmem-cu13', 'nvidia-nvtx'}; opencv_names = {'opencv-python', 'opencv-python-headless', 'opencv-contrib-python', 'opencv-contrib-python-headless'}; installed = {str(dist.metadata['Name']).lower(): str(dist.version) for dist in distributions()}; forbidden = sorted(name for name in installed if name in forbidden_names or name.endswith('-cu13')); opencv = sorted(set(installed) & opencv_names); cuda_helpers = {name: installed[name] for name in installed if name.startswith('cuda-')}; assert not forbidden, forbidden; assert opencv == ['opencv-python'], opencv; assert cuda_helpers == {'cuda-bindings': '12.9.8', 'cuda-pathfinder': '1.8.2', 'cuda-toolkit': '12.9.1'}, cuda_helpers" \
     && python -c "import torch, torchvision; assert torch.__version__ == '2.13.0+cu129'; assert torch.version.cuda == '12.9'; assert torchvision.__version__ == '0.28.0+cu129'" \
@@ -283,18 +285,20 @@ RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
 # Copy the shared workbench implementation and its two local-only helpers into
 # the image.  Keep this list explicit so the service image does not acquire the
 # full NPA CLI/client dependency tree by accident.
-RUN mkdir -p /app/npa/workbench /app/npa/clients /app/npa/cli
+RUN mkdir -p /app/npa/workbench /app/npa/clients /app/npa/cli /app/npa/adapter
 RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py \
-    /app/npa/clients/__init__.py /app/npa/cli/__init__.py
+    /app/npa/clients/__init__.py /app/npa/cli/__init__.py /app/npa/adapter/__init__.py
 COPY src/npa/clients/storage.py /app/npa/clients/storage.py
 COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py
+COPY src/npa/adapter/sim_to_lerobot.py /app/npa/adapter/sim_to_lerobot.py
 COPY src/npa/workbench/robocasa /app/npa/workbench/robocasa
 COPY src/npa/smoke/test_robocasa_functional.py /app/smoke_functional.py
 
 RUN chmod -R u=rwX,go=rX /app/npa /app/smoke_functional.py
 
 RUN python -c "from npa.workbench.robocasa.service import app; assert app is not None" \
-    && python /opt/robocasa/derivative/verify_robocasa_act_adapter.py
+    && python /opt/robocasa/derivative/verify_robocasa_act_adapter.py \
+    && python /opt/robocasa/derivative/verify_sim_dataset_roundtrip.py
 
 RUN id -u ubuntu >/dev/null 2>&1 || useradd -m -s /bin/bash -u 1000 ubuntu \
     && chown -R ubuntu:ubuntu /opt/robocasa/source/robocasa/models/assets

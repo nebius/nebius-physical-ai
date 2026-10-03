@@ -4,11 +4,11 @@ Upstream: RoboCasa commit 8f3c96ec8d1bfcd8126cad2bca887da98d30e997
 Upstream license: MIT; its LICENSE includes a separate Apache-2.0 notice for
 partial DeepMind MuJoCo code.
 Upstream LICENSE SHA-256: 5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885
-Local version: 1.0.0+npa2
+Local version: 1.0.0+npa3
 
 The local patch changes setup.py packaging metadata only. It identifies the
 derivative, updates RoboCasa's LeRobot dependency from 0.3.3 to the separately
-reviewed 0.6.1+npa1 NPA ACT derivative, and removes tianshou 0.4.10 from the
+reviewed 0.6.1+npa2 NPA ACT derivative, and removes tianshou 0.4.10 from the
 declared closure. Exact-source inspection found tianshou is imported only by
 upstream robocasa/scripts/bench_speed.py, a vectorized speed benchmark outside
 the NPA service and matched ACT rollout path. That upstream benchmark script is

@@ -1,0 +1,192 @@
+{
+  "schema": "npa.specialists.codex_cost_reaudit.v1",
+  "rows": [
+    {
+      "run": "pair1/astra-only",
+      "astra_recorded_tokens": {
+        "input_tokens": 369072,
+        "cached_input_tokens": 334592,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1717,
+        "reasoning_output_tokens": 60
+      },
+      "ordinary_input_tokens": 34480,
+      "astra_cache_hit_fraction": 0.9065764945593272,
+      "astra_standard_short_api_equivalent_usd": "0.765242",
+      "astra_standard_all_long_upper_equivalent_usd": "1.487559",
+      "codex_standard_credit_tariff_equivalent": "19.13105",
+      "actual_codex_credits_deducted": null,
+      "actual_codex_cash_spend": null,
+      "known_tofa_full_input_tariff_estimate_usd": "0",
+      "tofa_usage_complete": true,
+      "tofa_invoice_verified": false,
+      "usage_receipt_sha256": "5aaa67eb1c007af5a887ef8860382c72d53204b191c259e2de3b9e89c81859c9"
+    },
+    {
+      "run": "pair1/astra-tofa",
+      "astra_recorded_tokens": {
+        "input_tokens": 818539,
+        "cached_input_tokens": 734080,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 2934,
+        "reasoning_output_tokens": 157
+      },
+      "ordinary_input_tokens": 84459,
+      "astra_cache_hit_fraction": 0.8968173782800819,
+      "astra_standard_short_api_equivalent_usd": "1.72537",
+      "astra_standard_all_long_upper_equivalent_usd": "3.37739",
+      "codex_standard_credit_tariff_equivalent": "43.13425",
+      "actual_codex_credits_deducted": null,
+      "actual_codex_cash_spend": null,
+      "known_tofa_full_input_tariff_estimate_usd": "0.09738176",
+      "tofa_usage_complete": false,
+      "tofa_invoice_verified": false,
+      "usage_receipt_sha256": "f91d958d0eb98903c1bcab818e3dd67d33ca7a8c98cb2141a423f7fc8c2f89cd"
+    },
+    {
+      "run": "pair2/astra-only",
+      "astra_recorded_tokens": {
+        "input_tokens": 278166,
+        "cached_input_tokens": 244864,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1534,
+        "reasoning_output_tokens": 60
+      },
+      "ordinary_input_tokens": 33302,
+      "astra_cache_hit_fraction": 0.8802801205035842,
+      "astra_standard_short_api_equivalent_usd": "0.654584",
+      "astra_standard_all_long_upper_equivalent_usd": "1.270818",
+      "codex_standard_credit_tariff_equivalent": "16.3646",
+      "actual_codex_credits_deducted": null,
+      "actual_codex_cash_spend": null,
+      "known_tofa_full_input_tariff_estimate_usd": "0",
+      "tofa_usage_complete": true,
+      "tofa_invoice_verified": false,
+      "usage_receipt_sha256": "42fb7b18d7604e8cab80e290dd7ec6e8203cadc0e1eb7e1b4b5537d844bfe3b8"
+    },
+    {
+      "run": "pair2/astra-tofa",
+      "astra_recorded_tokens": {
+        "input_tokens": 59170,
+        "cached_input_tokens": 27648,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 835,
+        "reasoning_output_tokens": 0
+      },
+      "ordinary_input_tokens": 31522,
+      "astra_cache_hit_fraction": 0.4672638161230353,
+      "astra_standard_short_api_equivalent_usd": "0.384618",
+      "astra_standard_all_long_upper_equivalent_usd": "0.748361",
+      "codex_standard_credit_tariff_equivalent": "9.61545",
+      "actual_codex_credits_deducted": null,
+      "actual_codex_cash_spend": null,
+      "known_tofa_full_input_tariff_estimate_usd": "0.18754704",
+      "tofa_usage_complete": true,
+      "tofa_invoice_verified": false,
+      "usage_receipt_sha256": "d3602f8ea7e73bf787e6a67a0d5fc5faf77f4635de3c8056d754e467e5977e76"
+    },
+    {
+      "run": "pair3/astra-only",
+      "astra_recorded_tokens": {
+        "input_tokens": 336912,
+        "cached_input_tokens": 299264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1566,
+        "reasoning_output_tokens": 72
+      },
+      "ordinary_input_tokens": 37648,
+      "astra_cache_hit_fraction": 0.8882556869449589,
+      "astra_standard_short_api_equivalent_usd": "0.754044",
+      "astra_standard_all_long_upper_equivalent_usd": "1.468938",
+      "codex_standard_credit_tariff_equivalent": "18.8511",
+      "actual_codex_credits_deducted": null,
+      "actual_codex_cash_spend": null,
+      "known_tofa_full_input_tariff_estimate_usd": "0",
+      "tofa_usage_complete": true,
+      "tofa_invoice_verified": false,
+      "usage_receipt_sha256": "4a422e6f43735a19b935e75da612f114c6b52838ca2bec58173c857ba3bd4f76"
+    },
+    {
+      "run": "pair3/astra-tofa",
+      "astra_recorded_tokens": {
+        "input_tokens": 42872,
+        "cached_input_tokens": 27648,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 665,
+        "reasoning_output_tokens": 0
+      },
+      "ordinary_input_tokens": 15224,
+      "astra_cache_hit_fraction": 0.6448964359022206,
+      "astra_standard_short_api_equivalent_usd": "0.213138",
+      "astra_standard_all_long_upper_equivalent_usd": "0.409651",
+      "codex_standard_credit_tariff_equivalent": "5.32845",
+      "actual_codex_credits_deducted": null,
+      "actual_codex_cash_spend": null,
+      "known_tofa_full_input_tariff_estimate_usd": "0.19147928",
+      "tofa_usage_complete": true,
+      "tofa_invoice_verified": false,
+      "usage_receipt_sha256": "8a4df57ea6436f2f6735993b3d4c7b7f078ca966f55ad3b67e2c97c6775f5621"
+    }
+  ],
+  "findings": {
+    "auth": "Current same-VM CLI0.153.3 reports ChatGPT login. Historic exact per-request auth/tier receipts were not retained.",
+    "old_sessions": "Exact pair3 thread IDs have no rollout files or indexed state/log/history rows on VM or Mac, consistent with --ephemeral. No unrelated session content was read.",
+    "tier": "Prior argv ignores user config and contains no service_tier override; inspected system/managed tier files are absent. No provider-returned service tier exists in retained run records; do not assert billed tier.",
+    "context": "Astra API long-context pricing applies to each request prompt above272,000 input tokens, not to the sum of a complete agent turn. Aggregate336,912 baseline input cannot prove any particular request crossed threshold; API-equivalent range is conservative and cannot currently be narrowed from saved data.",
+    "cache": "Input includes cached and cache-write subsets. Formula ordinary=input\u2212cached\u2212written; price each disjoint subset once. Both pair3 runs report cache writes0.",
+    "reasoning": "Output1,566 already includes reasoning72 in baseline; no additional reasoning charge is added.",
+    "billing": "ChatGPT quota/credit consumption is separate from API-key billing. Listed credit tariffs do not prove credits were deducted, included quota was exhausted, or marginal cash expense. API-equivalent savings may not save cash inside included quota.",
+    "incremental_tofa": "Pair3 hybrid adds a known ToFa token-tariff estimate of$0.19147928, with complete recorded usage and no assumed cache discount. This is an estimate, not an invoice. Actual Codex cash change is unknown.",
+    "new_trials": "Private whitelist-only loopback OTEL instrumentation prepared for pairs4/5; request metrics must exactly reconcile to CLI aggregate before narrowing any range.",
+    "excluded_scope": "This supervising development/research conversation, preparation/model probes, compute/storage/network, human work and subscription allocation are not included in the six measured-arm token costs. Its actual invoice cost has not been established."
+  },
+  "formula": {
+    "astra_short": "((input\u2212cached\u2212written)*10 + cached*1 + written*12.5 + output*50)/1e6",
+    "astra_long": "((input\u2212cached\u2212written)*20 + cached*2 + written*25 + output*75)/1e6",
+    "codex_standard_credits": "((input\u2212cached)*250 + cached*25 + output*1250)/1e6",
+    "tofa": "(all_recorded_input*published_input_rate + output*published_output_rate)/1e6"
+  },
+  "current_astra_prices_match_original_snapshot": true,
+  "private_audit_sha256": "07c88ffe6f8f489878bf59f7d2231ec352bdccdd6ecc81821fbeb64ba63464fb",
+  "sources": [
+    {
+      "url": "https://developers.openai.com/api/docs/models/gpt-6-astra.md",
+      "retrieved_at": "2026-09-24T02:37:14.152697+00:00",
+      "sha256": "f45ae813c3f69708e2576328056de14cdf71fec174c875f4b81d236105545625"
+    },
+    {
+      "url": "https://learn.chatgpt.com/docs/pricing.md",
+      "retrieved_at": "2026-09-24T02:37:14.167790+00:00",
+      "sha256": "b6eaea46e960daf82a9ff498ceaaf61b12b42c2e2966bbf68e83568ed42e5fca"
+    },
+    {
+      "url": "https://learn.chatgpt.com/docs/auth.md",
+      "retrieved_at": "2026-09-24T02:37:14.152186+00:00",
+      "sha256": "e9d23a249d04352431b77839091276f9c777bb604b64168f639a9d68a5dece4f"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/guides/prompt-caching.md",
+      "retrieved_at": "2026-09-24T02:37:14.168161+00:00",
+      "sha256": "69680fbec38e31a7abc8b0e33a6582b0aae29687e8de98404789337a55b55e2e"
+    },
+    {
+      "url": "https://developers.openai.com/api/docs/guides/reasoning.md",
+      "retrieved_at": "2026-09-24T02:37:14.261494+00:00",
+      "sha256": "93327c5eb19df7ecf8c0bd9d581f58052dee9f090c38bb48906110b08d0ce251"
+    },
+    {
+      "url": "https://learn.chatgpt.com/docs/config-file/config-reference.md",
+      "retrieved_at": "2026-09-24T02:37:14.324890+00:00",
+      "sha256": "976e272b8feb264e735bdd1d18f80d028daf93294ac913c610aa52190f7df0aa"
+    },
+    {
+      "url": "https://learn.chatgpt.com/docs/non-interactive-mode.md",
+      "retrieved_at": "2026-09-24T02:37:14.291644+00:00",
+      "sha256": "c83fe9259825a206d1d4f7a0ac669e5697d270ce2bebd28c5d36ad829c9a2a08"
+    }
+  ],
+  "outer_turn_is_not_api_request_count": true,
+  "historical_request_count": null,
+  "supervising_development_conversation_cost_included": false,
+  "supervising_development_conversation_invoice_cost": null
+}

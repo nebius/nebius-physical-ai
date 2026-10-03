@@ -61,7 +61,7 @@ def _batch(*, state_width: int = 16) -> dict[str, torch.Tensor]:
 
 def _validate_metadata() -> None:
     """Require the derivative's declared runtime closure."""
-    assert version("lerobot") == "0.6.1+npa1"
+    assert version("lerobot") == "0.6.1+npa2"
     requirements = [
         Requirement(raw) for raw in (metadata("lerobot").get_all("Requires-Dist") or [])
     ]
@@ -71,6 +71,16 @@ def _validate_metadata() -> None:
         if requirement.marker is None and requirement.name in EXPECTED_REQUIRES
     }
     assert observed == EXPECTED_REQUIRES, observed
+    dataset_requirement = [
+        requirement
+        for requirement in requirements
+        if requirement.name == "datasets"
+        and requirement.marker is not None
+        and requirement.marker.evaluate({"extra": "dataset"})
+    ]
+    assert len(dataset_requirement) == 1, dataset_requirement
+    assert str(dataset_requirement[0].specifier) == "<6.0.0,>=5.0.1"
+    assert version("datasets") == "5.0.1"
     assert not any(
         requirement.name == "opencv-python-headless" for requirement in requirements
     )

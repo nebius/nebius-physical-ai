@@ -171,6 +171,7 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
         "pytest>=8,<10",
         "torch==2.13.0",
         "torchvision==0.28.0",
+        "datasets==5.0.1",
     ):
         assert requirement in runtime_input
     assert "diffusers" not in runtime_input
@@ -181,7 +182,7 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
         "ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1"
         in dockerfile
     )
-    assert 'npa.lerobot.derivative="0.6.1+npa1"' in dockerfile
+    assert 'npa.lerobot.derivative="0.6.1+npa2"' in dockerfile
     assert (
         'npa.lerobot.archive.sha256="869026b70a9488f11ae25c92573f68a03e04e45b4ffda7d63586582ac8d506ee"'
         in dockerfile
@@ -193,22 +194,30 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     assert "--strip-components=1 --directory /opt/robocasa/lerobot-source" in dockerfile
     assert "git -C /opt/robocasa/lerobot-source apply --check" in dockerfile
     assert (
-        "7d90538cc6c66351256f394d555797a6aacf34cb17dad2d0c9fc781c7e22404c" in dockerfile
+        "38d310f1b74b67a4584861c3fca5894b7693399ed6a1a82dc86cd754ef23de41" in dockerfile
     )
-    assert "/opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa1-*.whl" in dockerfile
+    assert "/opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa2-*.whl" in dockerfile
     local_install = dockerfile.split(
-        "/opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa1-*.whl", 1
+        "/opt/robocasa/lerobot-wheel/lerobot-0.6.1+npa2-*.whl", 1
     )[0].rsplit("python -m pip install", 1)[1]
     assert "--no-deps" not in local_install
     assert dockerfile.count("python -m pip check") >= 2
     assert "verify_lerobot_act_derivative.py" in dockerfile
 
-    assert 'version = "0.6.1+npa1"' in patch
+    assert 'version = "0.6.1+npa2"' in patch
     assert '"torch>=2.13.0,<2.14.0"' in patch
     assert '"torchvision>=0.28.0,<0.29.0"' in patch
     assert '"gymnasium==0.29.1"' in patch
     assert '"opencv-python>=4.9.0,<4.14.0"' in patch
     assert '"setuptools>=83.0.0,<84.0.0"' in patch
+    assert '"datasets>=5.0.1,<6.0.0"' in patch
+    assert "datasets==5.0.1" in runtime_lock
+    assert "verify_dataset_metadata.py" in dockerfile
+    assert "verify_sim_dataset_roundtrip.py" in dockerfile
+    assert (
+        "COPY src/npa/adapter/sim_to_lerobot.py /app/npa/adapter/sim_to_lerobot.py"
+        in dockerfile
+    )
     assert "src/lerobot" not in patch
     assert "packaging metadata only" in notice
     assert "Other LeRobot policies and training paths are not qualified" in notice
@@ -216,18 +225,18 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     assert "ACT accepted a 15-wide state" in verifier
     assert "ACT accepted a checkpoint with missing weights" in verifier
 
-    assert 'npa.robocasa.derivative="1.0.0+npa2"' in dockerfile
+    assert 'npa.robocasa.derivative="1.0.0+npa3"' in dockerfile
     assert (
         'npa.robocasa.license.sha256="5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885"'
         in dockerfile
     )
     assert (
-        'npa.robocasa.patch.sha256="2966983253141bd66d3ce8ad62824ab267683ad45c07eb9ea8e174358402c01e"'
+        'npa.robocasa.patch.sha256="8d43b8540fcaec6414928da68fbf7b33822b25bcbcf4fb2a8d7c03a57946cf88"'
         in dockerfile
     )
     assert '-        "tianshou==0.4.10",' in robocasa_patch
-    assert '+        "lerobot==0.6.1+npa1",' in robocasa_patch
-    assert 'version="1.0.0+npa2"' in robocasa_patch
+    assert '+        "lerobot==0.6.1+npa2",' in robocasa_patch
+    assert 'version="1.0.0+npa3"' in robocasa_patch
     assert "Upstream license: MIT" in robocasa_notice
     assert "partial DeepMind MuJoCo" in robocasa_notice
     assert (
@@ -248,7 +257,7 @@ def test_robocasa_uses_a_resolver_consistent_act_derivative() -> None:
     )[1]
     assert "--no-deps" not in robosuite_install
     assert "--no-deps" not in robocasa_install
-    assert "version('robocasa') == '1.0.0+npa2'" in dockerfile
+    assert "version('robocasa') == '1.0.0+npa3'" in dockerfile
     assert (
         "5da18670b3f00c59847b1ded9c28dee59940d963b1e03b528b0108d9c5a09885  /opt/robocasa/source/LICENSE"
         in dockerfile
@@ -309,7 +318,7 @@ def test_robocasa_act_derivative_binds_fixed_runtime_versions() -> None:
     assert "torchvision==0.28.0+cu129" in runtime_lock
     assert "torch==2.9.0" not in runtime_lock
     assert "torchvision==0.24.0" not in runtime_lock
-    assert "version('lerobot') == '0.6.1+npa1'" in dockerfile
+    assert "version('lerobot') == '0.6.1+npa2'" in dockerfile
     assert "torchvision.__version__ == '0.28.0+cu129'" in dockerfile
 
 
@@ -536,7 +545,7 @@ def test_robocasa_image_binds_committed_source_revision() -> None:
         f'org.opencontainers.image.base.digest="{PINNED_CUDA_BASE_DIGEST}"'
         in dockerfile
     )
-    assert f'npa.base_image="{PINNED_CUDA_BASE}"' in dockerfile
+    assert "npa.base_image=" not in dockerfile
     assert "NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA}" in dockerfile
     assert "ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1" in dockerfile
     assert "FROM --platform=" not in dockerfile
