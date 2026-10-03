@@ -1,5 +1,35 @@
 # Current hosted default vision path validation
 
+## Changed terminal/grounded request integration
+
+[incoming634-live-evidence.json](incoming634-live-evidence.json) binds the new
+execution `3dde4fd2`, tree `33dda4c0`, on externally landed main `88fd1b13`.
+This main genuinely changes the default rubric, grounded prompt, interleaved
+`Frame N` anchors and grade reconstruction. Old wire requests are not current
+requests; the original artifacts and execution identities below are untouched.
+
+The same two fixed three-frame synthetic diagram controls ran serially once
+through the actual hosted MiniMax path: **2 passed, zero skipped, two physical
+requests**, exact requested/served identity, HTTP 200 and `stop`. Scores were
+**1.0 and 0.0 at the unchanged 0.8 threshold**. The public report retains new
+source/request/response/visible-answer/frame hashes, decoded rationale and usage.
+The [inside](inside-frame.png) and [outside](outside-frame.png) images match the
+submitted bytes. No labels, threshold or model answers were tuned or retried.
+
+Separately, 1,494 affected CPU tests passed with one skip and eight warnings;
+the quiet skip node identity was not captured. Retained original answers replay
+only parser/capture/writer/current-grade behavior under explicitly changed
+requests, not current-payload model judgment. Old prompt-bound evidence fails
+closed; seven malformed-score controls reject current CPU-produced artifacts.
+Source/head/tree and this checkout's packages matched before/after execution.
+
+The rationales cite supplied frame labels and describe the visible diagrams.
+The negative's "never moves" language is limited to supplied discrete frames,
+not unseen intervals. These two controls do not qualify the model,
+prove real robot completion/safety, or replace the separate four-case terminal
+real-rollout lane. No caption/catalog/attribute/capability, full-suite or Claude
+execution was repeated. Published-head CI and final integration remain separate.
+
 Five fixed live tests passed on execution commit
 `50111ebcb9a8604c63ad6cd9d702c3c703044e7d`: original key-scoped MiniMax catalog
 membership, three saved image captions plus scene reasoning, positive and
