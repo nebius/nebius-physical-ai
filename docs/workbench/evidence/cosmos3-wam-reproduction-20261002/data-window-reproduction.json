@@ -1,0 +1,34 @@
+{
+  "schema": "npa.cosmos3.wam-data-window-reproduction.v1",
+  "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+  "dataset_revision": "e5907374380b8f96511957e6ba5582be52a1e179",
+  "train_episodes": 375,
+  "training_windows": 94250,
+  "video_frames": 17,
+  "stored_action_shape": [
+    16,
+    7
+  ],
+  "native_action_shape": [
+    16,
+    10
+  ],
+  "matches_committed_directory": "../cosmos3-wam-data",
+  "artifacts": {
+    "sample.json": {
+      "sha256": "0d2a8d3c0ed12ebef3ea4ac543613e99ce5bb692608daa7541fdd61bf49a7687",
+      "byte_identical_to_original": true
+    },
+    "front.png": {
+      "sha256": "59d8b7b58467e6837cffbbcc6f82947b404bc5a5118f306cc2331f364aca49c4",
+      "byte_identical_to_original": true
+    },
+    "wrist.png": {
+      "sha256": "a1d68503b21a584b2fc65a4327244a9c59e20cdcb1eba9d38e7ba50ba4b49d79",
+      "byte_identical_to_original": true
+    }
+  },
+  "exporter_sha256": "2892a0ea978bdce5d6a7ae884668e68e26b0c69e4ed988fcde0a62f73c5f65fe",
+  "private_export_log_sha256": "f0663a509da0c06561cd878950ca0253916d5aecbe8c73c8c9dfc275f13cb721",
+  "scope": "Fresh native CPU loader export, byte-identical to committed sample record and both camera PNGs; no model policy executed."
+}

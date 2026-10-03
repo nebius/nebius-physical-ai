@@ -99,6 +99,8 @@ def _full_app() -> typer.Typer:
     from npa.cli.workbench.lichtblick import app as lichtblick_app
     from npa.cli.workbench.ltx2 import app as ltx2_app
     from npa.cli.workbench.mjlab import app as mjlab_app
+    from npa.cli.workbench.open3d import app as open3d_app
+
     from npa.cli.workbench.namespace import app as namespace_app
     from npa.cli.workbench.molmoact import app as molmoact_app
     from npa.cli.workbench.openvla import app as openvla_app
@@ -151,6 +153,7 @@ def _full_app() -> typer.Typer:
     full.add_typer(molmoact_app, name="molmoact")
     full.add_typer(openvla_app, name="openvla")
     full.add_typer(openarm_app, name="openarm")
+    full.add_typer(open3d_app, name="open3d")
     full.add_typer(robocasa_app, name="robocasa")
     full.add_typer(newton_app, name="newton")
     full.add_typer(lichtblick_app, name="lichtblick")

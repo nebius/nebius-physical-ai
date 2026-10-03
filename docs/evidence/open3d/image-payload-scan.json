@@ -1,0 +1,24 @@
+{
+  "allowlisted_paths_present": [],
+  "digest": null,
+  "entries_scanned": 50788,
+  "format": "npa_restricted_payload_scan_v2",
+  "history_hits": [],
+  "history_only": false,
+  "image": "npa-open3d:retry-proof",
+  "payload_hits": [],
+  "scan_complete": true,
+  "skipped_metadata_layers": [
+    {
+      "media_type": "application/vnd.in-toto+json",
+      "member": "blobs/sha256/c7520d1acd631e7db03f414a4cd5379ceb87332e1c3b51b1332781ae31801a41"
+    }
+  ],
+  "source": "local-docker-stream",
+  "verdict": "clean",
+  "weight_shaped_paths": [
+    "home/ubuntu/.local/lib/python3.11/site-packages/distutils-precedence.pth",
+    "home/ubuntu/.local/lib/python3.11/site-packages/rerun_sdk.pth",
+    "usr/local/lib/python3.11/site-packages/distutils-precedence.pth"
+  ]
+}

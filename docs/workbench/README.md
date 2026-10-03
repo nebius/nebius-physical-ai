@@ -14,6 +14,8 @@ Python and HTTP access follow each tool's documented contract.
 | Run public samples | [Four workflow demos](guides/public-workflow-demos.md): qualified scan-to-policy, industrial sensors and NuRec; RL comparison with a measured rejection report |
 | Use your coding agent | [First-run prompts](agent-first-run.md) · [workflow operations](agent-workflow-operations.md) |
 | Prepare the runtime | [Workbench setup](getting-started.md) · [Kubernetes](kubernetes.md) · [direct runtime modes](runtime-modes.md) |
+| Use FA4 in your own RTX PRO 6000 container | [RTX PRO 6000 adoption guide: base → application → validation → deployment](guides/rtx6000-fa4.md) |
+| Compare FA2 and FA4 on RTX PRO 6000 | [Build and tuning guide](guides/fa2-fa4-comparison.md) · [Latest speeds, cold-start cost and actual renders](fa4-rtx-optimization.md) |
 | Author and submit | [Workflow guide](npa-workflow-guide.md) · [toolRef catalog](npa-workflow-tool-catalog.md) |
 | Integrate from Python or HTTP | [CLI / SDK walkthrough](cli-sdk-yaml-walkthrough.md) · [SDK errors](../sdk/errors.md) |
 | Inspect or recover | [Run lifecycle](../run-lifecycle.md) · [controller recovery](controller-recovery.md) · [troubleshooting](troubleshooting/known-footguns.md) · [CLI errors](../cli-errors.md) |
@@ -71,7 +73,7 @@ Python and HTTP access follow each tool's documented contract.
 | --- | --- |
 | Configure credentials | [Project configuration](../configuration.md) · [Hugging Face](huggingface-token.md) · [NGC](ngc-api-key.md) · [Token Factory key](token-factory-key.md) |
 | Select images | [Public catalog](container-image-catalog.md) · [GPU compatibility](image-gpu-compatibility-matrix.md) · [SONIC variants](sonic-image-catalog.md) |
-| Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) |
+| Use Blackwell | [B200 / B300](blackwell-datacenter-image-compatibility.md) · [RTX PRO 6000](sm120-image-catalog.md) · [RTX FA4 adoption](guides/rtx6000-fa4.md) · [FA4 evidence](flash-attention.md) · [Full-model rendering validation](fa4-sdxl-validation.md) |
 | Configure nodes and caches | [GPU driver strategy](mk8s-gpu-driver-strategy.md) · [model-weight cache](model-weight-cache.md) · [preemptible VMs](preemptible-vms.md) |
 | Reproduce benchmarks and demos | [Benchmarks](../../benchmark/README.md) · [Cookbooks](cookbooks/README.md) · [validation scope](solutions-validation.md) · [performance/reliability validation](workbench-improvements-validation.md) |
 | Add or package a solution | [Contributing](../../CONTRIBUTING.md) · [containerized solutions](contributing-a-containerized-solution.md) · [OSS catalog](oss-solution-catalog.md) · [packaging contract](container-packaging.md) · [FiftyOne image validation](../../npa/docker/workbench/fiftyone/RELEASE.md#validate-a-local-candidate) |
