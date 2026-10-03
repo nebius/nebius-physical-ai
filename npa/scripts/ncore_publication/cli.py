@@ -140,6 +140,10 @@ def _keyring_input(args):
 
 
 def _policy_input(args):
+    W.require(
+        getattr(args, "action", None) != "publish" or args.policy_mode == "ci-regex",
+        "publication_requires_ci_regex_policy",
+    )
     if args.policy_mode == "exact-literals":
         W.require(args.literal_inventory is not None, "literal_inventory_required")
         args.literal_inventory = args.literal_inventory.absolute()
@@ -435,7 +439,7 @@ def _check_or_publish(args):
             args.source_sha,
             build,
             graph,
-            file_sha(evidence_manifest),
+            evidence_manifest,
             getattr(args, "acceptance", None),
         )
         transfer = args.output_dir / "transfer"
@@ -487,11 +491,11 @@ def _require_accepted_publication(
     source_sha,
     build,
     graph,
-    evidence_manifest_sha256,
+    evidence_manifest_path,
     acceptance_path=None,
 ):
     """Refuse registry writes without a verified private acceptance bundle."""
-    from . import acceptance
+    from . import acceptance, publication_binding
 
     W.require(acceptance_path is not None, "publication_acceptance_required")
     accepted = acceptance.verify_final_acceptance(
@@ -506,10 +510,11 @@ def _require_accepted_publication(
     }
     W.require(
         all(accepted.get(name) == value for name, value in expected.items())
-        and accepted["prepublication"]["archive_sha256"] == build["archive_sha256"]
-        and accepted["prepublication"]["evidence_manifest_sha256"]
-        == evidence_manifest_sha256,
+        and accepted["prepublication"]["archive_sha256"] == build["archive_sha256"],
         "accepted_ncore_evidence_does_not_match_candidate",
+    )
+    publication_binding.verify(
+        accepted, Path(acceptance_path).absolute(), Path(evidence_manifest_path)
     )
     return accepted
 

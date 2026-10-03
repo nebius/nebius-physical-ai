@@ -589,6 +589,31 @@ def build_statement(
     return statement
 
 
+def _review_binding(statement, review, statement_sha):
+    W.require(
+        statement.get("format") == STATEMENT_FORMAT
+        and statement.get("status") == "pending_independent_review"
+        and review.get("format") == REVIEW_FORMAT
+        and review.get("verdict") == "ACCEPTED"
+        and review.get("candidate_commit") == statement.get("candidate_commit")
+        and review.get("statement_sha256") == statement_sha
+        and review.get("evidence_inventory_sha256")
+        == statement.get("evidence_inventory_sha256")
+        and review.get("manifest_sha256") == statement.get("manifest_sha256")
+        and review.get("objective_evidence_reviewed") is True
+        and review.get("visual_evidence_reviewed") is True
+        and review.get("cleanup_reviewed") is True
+        and isinstance(review.get("reviewer_id"), str)
+        and bool(review["reviewer_id"].strip()),
+        "acceptance_independent_review",
+    )
+    W.require(
+        statement.get("evidence_inventory_sha256")
+        == _sha_value(statement.get("evidence_inventory")),
+        "acceptance_inventory_hash",
+    )
+
+
 def finalize_acceptance(
     *,
     analysis_root: Path,
@@ -607,23 +632,7 @@ def finalize_acceptance(
     statement = _json(_relative_file(analysis_root, statement_path, "statement"))
     review = _json(_relative_file(analysis_root, review_path, "review"))
     statement_sha = file_sha(statement_path)
-    W.require(
-        statement.get("format") == STATEMENT_FORMAT
-        and statement.get("status") == "pending_independent_review"
-        and review.get("format") == REVIEW_FORMAT
-        and review.get("verdict") == "ACCEPTED"
-        and review.get("candidate_commit") == statement.get("candidate_commit")
-        and review.get("statement_sha256") == statement_sha
-        and review.get("evidence_inventory_sha256")
-        == statement.get("evidence_inventory_sha256")
-        and review.get("manifest_sha256") == statement.get("manifest_sha256")
-        and review.get("objective_evidence_reviewed") is True
-        and review.get("visual_evidence_reviewed") is True
-        and review.get("cleanup_reviewed") is True
-        and isinstance(review.get("reviewer_id"), str)
-        and bool(review["reviewer_id"].strip()),
-        "acceptance_independent_review",
-    )
+    _review_binding(statement, review, statement_sha)
     manifest = copy.deepcopy(statement["manifest"])
     manifest["acceptance_verification"] = {
         "format": ACCEPTANCE_FORMAT,
@@ -653,11 +662,14 @@ def verify_final_acceptance(
     review_path = analysis_root / REVIEW_PATH
     statement = _json(_relative_file(analysis_root, statement_path, "statement"))
     review = _json(_relative_file(analysis_root, review_path, "review"))
+    _review_binding(statement, review, file_sha(statement_path))
     verification = manifest.get("acceptance_verification")
     W.require(
         isinstance(verification, dict)
         and verification.get("statement_sha256") == file_sha(statement_path)
         and verification.get("review_receipt_sha256") == file_sha(review_path)
+        and verification.get("reviewer_id_sha256")
+        == hashlib.sha256(review["reviewer_id"].encode()).hexdigest()
         and verification.get("evidence_inventory_sha256")
         == statement.get("evidence_inventory_sha256")
         and review.get("statement_sha256") == file_sha(statement_path)

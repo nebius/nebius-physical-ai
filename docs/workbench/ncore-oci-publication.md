@@ -243,9 +243,26 @@ the existing `gh` authentication. It also requires the receipt-derived
 `$NCORE_OCI_ROOT/acceptance/accepted-manifest.json`, finalized by
 `npa/scripts/assemble_ncore_acceptance.py` after independent review of the exact
 source/image, complete-byte policy, runtime, quality, visual and cleanup evidence.
+This is a procedural independent-review boundary, not authenticated reviewer
+identity: the owner-only receipt and reviewer-ID hash bind the recorded decision
+but are not a signature or an external trust root. The operator must obtain that
+decision through the authorized independent lane and protect the entire bundle;
+the same filesystem owner can otherwise fabricate a self-consistent bundle.
 Never put credentials on the command line.
 `publish` reruns all gates into a new directory; a previous pass JSON cannot
-authorize a later write:
+authorize a later write. The original reviewed inventory stays immutable and
+fully hash-checked. Fresh log timings and filesystem snapshot metadata may differ,
+but the image/source/config/layers, scanner input hashes, full raw record ledger,
+regex policy, finding bytes and any exact attribution disposition must remain the
+same. New findings cannot inherit an old review, even with unchanged totals.
+The same restriction covers the complete Trivy finding population, selected-base
+inventory, component advisory decisions, delivered-license results and payload
+classification. Only known invocation timestamps, report IDs and separately bound
+local paths are normalized. Component database bytes remain exact; a changed
+database or advisory outcome needs fresh review even when the severity gate passes.
+`accepted-publication-binding.json` retains both distinct evidence-manifest and
+raw-report hashes plus the original review identity; neither old artifact is
+rewritten. `publish --policy-mode exact-literals` is rejected before running gates:
 
 ```bash
 npa/.venv/bin/python npa/scripts/publish_ncore_oci.py publish \

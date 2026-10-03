@@ -513,6 +513,9 @@ def test_publication_acceptance_must_match_exact_graph_and_archive(
     monkeypatch.setattr(
         acceptance, "verify_final_acceptance", lambda *_: copy.deepcopy(accepted)
     )
+    from ncore_publication import publication_binding
+
+    monkeypatch.setattr(publication_binding, "verify", lambda *_: None)
     assert (
         cli._require_accepted_publication(
             SHA, build, graph, evidence_manifest_sha256, path
@@ -525,6 +528,7 @@ def test_publication_acceptance_must_match_exact_graph_and_archive(
             SHA, build, graph, evidence_manifest_sha256, path
         )
     accepted["development_sha"] = SHA
+    accepted["prepublication"]["archive_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="does_not_match"):
         cli._require_accepted_publication(SHA, build, graph, "0" * 64, path)
 
@@ -555,6 +559,12 @@ def test_publication_can_consume_external_acceptance_at_exact_candidate(
         "verify_final_acceptance",
         lambda analysis_root, acceptance_path: accepted,
     )
+    from ncore_publication import publication_binding
+
+    bindings = []
+    monkeypatch.setattr(
+        publication_binding, "verify", lambda *args: bindings.append(args)
+    )
     monkeypatch.setattr(
         images,
         "ncore_accepted_image_manifest",
@@ -571,6 +581,7 @@ def test_publication_can_consume_external_acceptance_at_exact_candidate(
         )
 
     assert result == accepted
+    assert bindings == [(accepted, path.absolute(), Path(evidence_manifest_sha256))]
 
 
 def test_gate_evidence_manifest_binds_every_existing_gate_artifact(private):
