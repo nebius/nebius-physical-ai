@@ -60,14 +60,28 @@ jobs:
           assert all(value == 0 for value in receipt["counts"].values())
           assert "refusing skipped verification" in receipt["failure"]
           PY
-      - name: Run credentialed suites and provider contracts
+      - name: Run credentialed suites and Kimi provenance contracts
         env:
           NEBIUS_TOKEN_FACTORY_KEY: ${{ secrets.NEBIUS_TOKEN_FACTORY_KEY }}
           NEBIUS_TOKEN_FACTORY_BASE_URL: ${{ secrets.NEBIUS_TOKEN_FACTORY_BASE_URL }}
           NPA_TF_RECHECK_SCOPE: ${{ vars.NPA_TF_RECHECK_SCOPE || 'authorized-account' }}
-          NPA_TF_RECHECK_REQUIRED_MODELS: ${{ vars.NPA_TF_RECHECK_REQUIRED_MODELS }}
+          NPA_TF_RECHECK_REQUIRED_MODELS: moonshotai/Kimi-K3,${{ vars.NPA_TF_RECHECK_REQUIRED_MODELS }}
           NPA_TF_RECHECK_JSON_BASELINE: ${{ vars.NPA_TF_RECHECK_JSON_BASELINE || 'healthy' }}
         run: npa/.venv/bin/python npa/scripts/token_factory_live_recheck.py --evidence-dir "$RUNNER_TEMP/token-factory-live"
+      - name: Require executed Kimi visual controls
+        run: |
+          npa/.venv/bin/python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          receipt = json.loads((Path(os.environ["RUNNER_TEMP"]) / "token-factory-live/receipt.json").read_text())
+          kimi = [row for row in receipt["tests"] if "test_live_visual_judge_distinguishes_completion[moonshotai/Kimi-K3-" in row["nodeid"]]
+          assert receipt["passed"] is True
+          assert receipt["counts"]["deselected"] == receipt["counts"]["skipped"] == 0
+          assert len(kimi) == 2
+          assert all(row["executed"] and row["passed"] and not row["failed"] and not row["skipped"] for row in kimi)
+          PY
       - name: Publish sanitized result and failure visibility
         if: always()
         run: |

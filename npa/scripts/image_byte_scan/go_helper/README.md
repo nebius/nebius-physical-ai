@@ -36,6 +36,40 @@ The 1 GiB ceiling is a finite hostile-input admission bound, not a promise that
 every admitted byte pattern will fit: the unchanged 12 GiB address-space limit
 still rejects detector-memory exhaustion rather than accepting partial coverage.
 
+## Cgroup memory awareness
+
+Before loading the detector, the helper resolves its cgroup-v2 membership through
+`/proc/self/cgroup` and `/proc/self/mountinfo`. For each readable visible ancestor
+with finite `memory.max`, it subtracts that ancestor's `memory.current`, reserves
+10% of the remaining allowance, and uses the smallest result as Go's
+[`debug.SetMemoryLimit`](https://pkg.go.dev/runtime/debug#SetMemoryLimit). This
+leaves room for the Python parent and other memory already charged to the group;
+subtracting the helper's small startup footprint as well is conservative.
+An already smaller runtime limit is preserved for directly launched helpers.
+
+Unlimited, unavailable or non-v2 metadata leaves the runtime setting unchanged;
+readable ancestor limits still apply when a descendant limit is unavailable.
+A sample with no headroom, or no more allowance than the helper already owns, is
+skipped: `memory.current` includes reclaimable page cache, so transient pressure
+must not prevent scanning. Usable limits from other ancestors and an already
+stricter runtime limit remain effective. A usage file disappearing with ENOENT
+or ENODEV is also skipped. Malformed finite-limit or usage data and other usage
+read failures produce a controlled error before detection. Values above Go's
+signed addressable range are treated as unlimited. The policy is sampled at
+startup: hidden ancestors, later limit changes and competing allocations cannot
+be predicted.
+
+This is a **soft limit on Go-managed memory**, not a process-memory ceiling or an
+OOM guarantee. The [Go GC guide](https://go.dev/doc/gc-guide#Memory_limit) explains
+that the runtime can exceed the limit to preserve progress. Detector working
+memory and a single oversized record can still exhaust the cgroup; no record is
+truncated or skipped, and the existing payload admission policy is unchanged.
+If the operating system terminates the helper, the scan fails and cannot
+establish a clean result.
+
+The address-space ceiling and complete-record admission checks described above
+remain independent hard limits. Cgroup sizing does not weaken those checks.
+
 ## Prepare the helper
 
 Run on **Linux amd64 with kernel 5.9 or newer**, from an NPA checkout with its
@@ -135,6 +169,14 @@ The caller sends `SIGKILL` to the isolated helper group after direct exit and
 accepts a terminal result only after stdout reaches EOF and no live member of
 that group remains. A missing policy, retained pipe, surviving member, or policy
 installation failure rejects the scan rather than accepting incomplete cleanup.
+
+The caller may keep several records in flight; results are emitted strictly in
+record order, so the response bytes are identical at every depth. Both directions
+are live at once, so a caller must continue reading results while it writes
+records. A caller that blocks in a write without reading deadlocks against a
+helper that has filled its output pipe and stopped reading, which is why
+`core.Detector` transfers record bytes and collects results through one readiness
+wait rather than draining only before each write.
 
 | Code | Meaning |
 | --- | --- |

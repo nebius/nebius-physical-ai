@@ -33,6 +33,7 @@ PROCESS_CONTAINMENT = "seccomp-process-group-v1"
 MIN_LINUX_KERNEL = (5, 9)
 SOURCE_NAMES = (
     "main.go",
+    "memory.go",
     "main_test.go",
     "go.mod",
     "go.sum",
@@ -42,7 +43,7 @@ SOURCE_NAMES = (
     "README.md",
 )
 TEST_SOURCE_NAME = "npa/tests/docker/test_image_byte_go_build.py"
-GO_NAMES = ("main.go", "main_test.go", "go.mod", "go.sum")
+GO_NAMES = ("main.go", "memory.go", "main_test.go", "go.mod", "go.sum")
 
 
 class BuildError(Exception):

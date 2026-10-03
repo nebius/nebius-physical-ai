@@ -1053,6 +1053,16 @@ def _submission_global_config(
                 )
             worker["post_provision_runcmd"] = list(commands)
         config["allowed_clouds"] = ["kubernetes"]
+        if not controller:
+            # Ordinary Kubernetes workflows need Nebius storage discovery. The
+            # customer controller path above must never transport its credentials.
+            config["allowed_clouds"] = ["kubernetes", "nebius"]
+            nebius = config.setdefault("nebius", {})
+            if not isinstance(nebius, dict):
+                raise ValueError(
+                    "SkyPilot global config nebius section must be a mapping"
+                )
+            nebius["capabilities"] = ["storage"]
     return config
 
 

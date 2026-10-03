@@ -1,0 +1,38 @@
+{
+  ".metadata": {
+    "bytes": 2751959,
+    "sha256": "c53ead20c008ae91ba65645f5cd94b4a0f4f8994947a06cd153195bf0cd97e0a"
+  },
+  "__0_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "619f2fc04cd77da9d768004c884ec181266383b59c01e81a5a46b1e06d09fdbc"
+  },
+  "__1_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "ee6196b8793e12548cec08295a2635abb54e446ab8adc24b3244165d31ef6d11"
+  },
+  "__2_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "4fc165fa951ae531009d780a78c7f3c76ce36924e986da876c902716371c84a3"
+  },
+  "__3_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "b1fb31475f37912cf62bccfe65dd4a70dba440fcdddbd89aab182d00bd5177c7"
+  },
+  "__4_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "abe959039b6aece22e59b3b6300109ad025142c6fa9863c46b00611838c58ba5"
+  },
+  "__5_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "cdb3af6b89694d978422208f6100b073c7423a29b67e84891cf70d8b54ad66d3"
+  },
+  "__6_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "add38345a16c9992c4c7ac9a62da760de3fcc700b641c1244fe17cba15ca3442"
+  },
+  "__7_0.distcp": {
+    "bytes": 15175688098,
+    "sha256": "17b7eec606ed4948c3313c9efad4fc558897c8653224ecf50806edb721f3a6c9"
+  }
+}

@@ -1,20 +1,25 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 
+from npa.deploy import images as deploy_images
 from npa.deploy.images import (
     DEFAULT_CONTAINER_REGISTRY,
     SUPPORTED_TOOL_VERSIONS,
     UNVALIDATED_PUBLICATION_TOOLS,
     VALIDATION_CANDIDATE_TOOLS,
+    UNBUILT_CANDIDATE_TOOL_VERSIONS,
     container_image_for_tool,
     default_vlm_image,
     default_workbench_image,
     development_image_for_tool,
     development_tag,
     execution_container_registry,
+    PUBLICATION_QUARANTINE_TOOLS,
+    public_release_tag_for_tool,
     registry_from_env,
     supported_tool_version,
 )
@@ -58,10 +63,6 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
         "npa-cosmos2-transfer:2.5.1-sim2real-coherent-20260904"
     )
     assert (
-        container_image_for_tool("cosmos3") == "ghcr.io/nebius/nebius-physical-ai/"
-        "npa-cosmos3:1.2.2-cu130-r7"
-    )
-    assert (
         container_image_for_tool("cosmos3-reason")
         == "ghcr.io/nebius/nebius-physical-ai/npa-cosmos3-reason:"
         "cuda13-b300-3.0.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
@@ -71,16 +72,116 @@ def test_non_sonic_workbench_images_resolve_from_supported_tools() -> None:
         == "ghcr.io/nebius/nebius-physical-ai/npa-envgen:"
         "0.1.2-sim2real-coherent-20260904"
     )
-    assert (
-        container_image_for_tool("reference-policy")
-        == "ghcr.io/nebius/nebius-physical-ai/npa-reference-policy:"
-        "cuda13-b300-0.1.2-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+
+
+@pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
+def test_quarantined_public_release_metadata_fails_closed(tool: str) -> None:
+    with pytest.raises(ValueError, match="quarantined"):
+        public_release_tag_for_tool(tool)
+
+
+@pytest.mark.parametrize(
+    "tool",
+    sorted(
+        PUBLICATION_QUARANTINE_TOOLS
+        - {"sonic"}
+        - UNBUILT_CANDIDATE_TOOL_VERSIONS.keys()
+    ),
+)
+def test_quarantined_public_releases_fail_closed_for_consumers(tool: str) -> None:
+    with pytest.raises(ValueError, match="quarantined|no accepted release"):
+        container_image_for_tool(tool)
+    configured_tag = SUPPORTED_TOOL_VERSIONS[tool]
+    if re.fullmatch(r"dev-[0-9a-f]{40}", configured_tag):
+        assert container_image_for_tool(tool, tag=configured_tag).endswith(
+            f":{configured_tag}"
+        )
+    else:
+        with pytest.raises(ValueError, match="quarantined|no accepted release"):
+            container_image_for_tool(tool, tag=configured_tag)
+
+
+@pytest.mark.parametrize(
+    "tool",
+    sorted(PUBLICATION_QUARANTINE_TOOLS & UNBUILT_CANDIDATE_TOOL_VERSIONS.keys()),
+)
+def test_unbuilt_public_planning_sentinel_is_not_a_consumable_release(
+    tool: str,
+) -> None:
+    display_tag = UNBUILT_CANDIDATE_TOOL_VERSIONS[tool]
+
+    assert container_image_for_tool(tool).endswith(f":{display_tag}")
+    with pytest.raises(ValueError, match="quarantined"):
+        container_image_for_tool(tool, tag=display_tag)
+
+
+@pytest.mark.parametrize("tool", ["ncore", "robomimic", "robotwin"])
+def test_unaccepted_default_stays_blocked_without_quarantine_membership(
+    monkeypatch: pytest.MonkeyPatch, tool: str
+) -> None:
+    monkeypatch.setattr("npa.deploy.images.PUBLICATION_QUARANTINE_TOOLS", frozenset())
+
+    with pytest.raises(ValueError, match="no accepted release image"):
+        container_image_for_tool(tool)
+
+
+def test_sonic_public_resolution_rejects_quarantined_canonical_variant() -> None:
+    expected_tag = (
+        "cuda13-b300-0.1.2-k8s-runtime-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
     )
-    assert (
-        container_image_for_tool("loop-eval")
-        == "ghcr.io/nebius/nebius-physical-ai/npa-loop-eval:"
-        "cuda13-b300-0.1.3-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
+
+    with pytest.raises(ValueError, match="quarantined public release") as excinfo:
+        container_image_for_tool(
+            "sonic", gpu_target="gpu-rtx6000", workload="isaac-render"
+        )
+    assert expected_tag in str(excinfo.value)
+    assert "operator-controlled image" in str(excinfo.value)
+
+
+def test_sonic_variant_quarantine_does_not_depend_on_tool_level_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(deploy_images, "PUBLICATION_QUARANTINE_TOOLS", frozenset())
+
+    with pytest.raises(ValueError, match="quarantined public release"):
+        container_image_for_tool("sonic", gpu_target="gpu-rtx6000")
+
+
+def test_sonic_public_resolution_keeps_exact_candidate_and_mujoco_paths() -> None:
+    sha = "a" * 40
+    assert container_image_for_tool(
+        "sonic", gpu_target="gpu-rtx6000", tag=f"dev-{sha}"
+    ) == (f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic:dev-{sha}")
+
+    assert container_image_for_tool("sonic-mujoco") == (
+        f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic-mujoco:0.2.0-runtime"
     )
+    assert container_image_for_tool(
+        "sonic", image_variant="sonic-mujoco-runtime-fetch", workload="mujoco-eval"
+    ) == (f"{DEFAULT_CONTAINER_REGISTRY}/npa-sonic-mujoco:0.2.0-runtime")
+
+
+@pytest.mark.parametrize("variant", ["sonic-l40s-baked", "sonic-mujoco-h100-mvp"])
+def test_sonic_quarantined_variants_still_fail_closed(variant: str) -> None:
+    with pytest.raises(ValueError, match="status 'quarantined'"):
+        container_image_for_tool("sonic", image_variant=variant)
+
+
+def test_sonic_public_tag_cannot_override_active_manifest_with_stale_release() -> None:
+    with pytest.raises(ValueError, match="quarantined public release"):
+        container_image_for_tool("sonic", tag="0.1.2")
+
+
+@pytest.mark.parametrize("tool", sorted(PUBLICATION_QUARANTINE_TOOLS))
+def test_quarantined_tools_retain_explicit_candidate_paths(tool: str) -> None:
+    sha = "a" * 40
+    assert container_image_for_tool(tool, tag=f"dev-{sha}").endswith(f":dev-{sha}")
+    custom_tag = (
+        f"dev-{sha}" if tool in {"ncore", "robomimic", "robotwin", "robocasa"} else None
+    )
+    assert container_image_for_tool(
+        tool, registry="registry.example/operator", tag=custom_tag
+    ).startswith("registry.example/operator/")
 
 
 def test_repository_image_defaults_ignore_ambient_private_registry(monkeypatch) -> None:
@@ -89,9 +190,8 @@ def test_repository_image_defaults_ignore_ambient_private_registry(monkeypatch) 
     assert container_image_for_tool("retargeting") == (
         "ghcr.io/nebius/nebius-physical-ai/npa-retargeting:0.1.1"
     )
-    assert default_workbench_image().startswith(
-        "ghcr.io/nebius/nebius-physical-ai/npa-genesis:"
-    )
+    with pytest.raises(ValueError, match="quarantined"):
+        default_workbench_image()
 
 
 def test_explicit_custom_registry_remains_available() -> None:
@@ -118,6 +218,10 @@ def test_robocasa_validation_requires_an_explicit_development_tag() -> None:
 
 @pytest.mark.parametrize("tool", sorted(VALIDATION_CANDIDATE_TOOLS - {"robocasa"}))
 def test_other_validation_candidates_retain_accepted_defaults(tool: str) -> None:
+    if tool in PUBLICATION_QUARANTINE_TOOLS:
+        with pytest.raises(ValueError, match="quarantined"):
+            container_image_for_tool(tool)
+        return
     assert container_image_for_tool(tool).endswith(f":{supported_tool_version(tool)}")
 
 
@@ -143,7 +247,9 @@ def test_packaged_supported_tool_versions_match_pyproject() -> None:
     assert SUPPORTED_TOOL_VERSIONS == data["tool"]["npa"]["supported-tools"]
 
 
-def test_byo_workflow_images_have_pushed_defaults(monkeypatch) -> None:
+def test_byo_workflow_defaults_fail_closed_when_release_is_quarantined(
+    monkeypatch,
+) -> None:
     monkeypatch.delenv("NPA_VLM_IMAGE", raising=False)
     monkeypatch.delenv("NPA_WORKBENCH_IMAGE", raising=False)
     monkeypatch.delenv("NPA_REGISTRY", raising=False)
@@ -152,10 +258,8 @@ def test_byo_workflow_images_have_pushed_defaults(monkeypatch) -> None:
         default_vlm_image() == "ghcr.io/nebius/nebius-physical-ai/"
         "npa-cosmos:cu128-torch27-sm100-1.0.9-20260803T002017Z"
     )
-    assert (
-        default_workbench_image() == "ghcr.io/nebius/nebius-physical-ai/npa-genesis:"
-        "cuda13-b300-0.4.6-sm80-sm90-sm100-sm103-sm120-20260803T034152Z"
-    )
+    with pytest.raises(ValueError, match="quarantined"):
+        default_workbench_image()
 
 
 def test_byo_workflow_images_honor_env(monkeypatch) -> None:

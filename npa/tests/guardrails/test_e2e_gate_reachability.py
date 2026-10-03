@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import runpy
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -13,9 +16,19 @@ RUNNER_FILES = (
     ROOT / ".github" / "workflows" / "dev-vm-daily-tests.yml",
 )
 
+
+@pytest.fixture(scope="module")
+def metadata_live_contract() -> dict[str, object]:
+    return runpy.run_path(str(E2E / "test_agent_metadata_live.py"))
+
+
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_AGENT_PROVISION_BOOLEAN_LIVE_CONFIG": (
+        "requires private connection credentials for an operator-selected isolated CPU agent; "
+        "run with npa/tests/e2e/README.md"
+    ),
     "NPA_E2E_RUNTIME_STORAGE": (
         "CPU control-storage execution requires an operator-selected project, "
         "fresh science/control prefixes, and an owned isolated controller"
@@ -30,6 +43,15 @@ MANUAL_GATES = {
     "NPA_NAMESPACE_LIVE_E2E": (
         "requires an explicitly selected disposable cluster with administrator access; "
         "creates namespaces, temporary client contexts, and CPU pods"
+    ),
+    "NPA_FIELD_FAILURE_LIVE": "Navigation acceptance requires operator-owned failure captures, policy code, and immutable adapters",
+    "NPA_NAVIGATION_LIVE": (
+        "requires the operator's exact Isaac BYOF navigation task image, scene/reset bundle, RT-core GPU and private S3 output; "
+        "run with docs/workbench/guides/shared-scene-navigation.md"
+    ),
+    "NPA_SCAN_TO_ISAAC_LIVE": (
+        "requires operator-supplied scene, calibrated collision geometry, ray probes, "
+        "and an immutable Isaac image; run with docs/workbench/guides/scan-to-isaac-navigation.md"
     ),
     "NPA_TOKEN_FACTORY_ROBOT_SDG_LIVE": (
         "requires Token Factory credentials, MuJoCo rendering, and an isolated native LeRobot reader; "
@@ -50,6 +72,7 @@ MANUAL_GATES = {
         "native working-directory source delivery requires an operator-selected Ray Jobs endpoint and private evidence"
     ),
     "NPA_AGENT_RECOVERY_LIVE_CONFIG": "creates and destroys an isolated operator-selected agent VM while injecting a credential staging failure",
+    "NPA_AGENT_METADATA_LIVE_CONFIG": "creates and destroys an isolated operator-selected CPU agent with private configuration and authenticated metadata evidence",
     "NPA_RAY_CLIP_RESULTS": "requires operator-selected downloaded native Ray CLIP CUDA result artifacts",
     "NPA_FLEET_KUBERAY_LIVE_CONFIG": (
         "native Ray worker execution requires an operator-selected CPU Fleet, exact kubeconfig and private evidence"
@@ -219,6 +242,71 @@ def test_every_e2e_environment_gate_is_reachable_or_explicitly_manual() -> None:
     )
     assert not stale_allowlist, f"manual E2E gate reasons are stale: {stale_allowlist}"
     assert all(len(reason.split()) >= 5 for reason in MANUAL_GATES.values())
+
+
+def test_metadata_live_uses_one_exact_deploy_and_cleanup_identity(
+    metadata_live_contract,
+) -> None:
+    exact_value = metadata_live_contract["_exact_option_value"]
+    assert callable(exact_value)
+    args = [
+        "agent",
+        "deploy",
+        "--project",
+        "project-alias",
+        "--name",
+        "fresh-agent",
+    ]
+    assert exact_value(args, "--project") == "project-alias"
+    assert exact_value(args, "--name") == "fresh-agent"
+
+
+@pytest.mark.parametrize(
+    ("args", "flag"),
+    [
+        (["--project", "one", "--project", "two"], "--project"),
+        (["--project=one"], "--project"),
+        (["--project", " project-alias "], "--project"),
+        (["--name", "\tfresh-agent"], "--name"),
+        (["--name"], "--name"),
+        (["--name", "--project"], "--name"),
+    ],
+)
+def test_metadata_live_rejects_ambiguous_or_non_exact_selectors(
+    metadata_live_contract,
+    args: list[str],
+    flag: str,
+) -> None:
+    exact_value = metadata_live_contract["_exact_option_value"]
+    assert callable(exact_value)
+    with pytest.raises(AssertionError):
+        exact_value(args, flag)
+
+
+def test_metadata_live_evidence_stays_private_and_outside_checkout(
+    metadata_live_contract,
+    tmp_path: Path,
+) -> None:
+    evidence_directory = metadata_live_contract["_private_evidence_directory"]
+    assert callable(evidence_directory)
+
+    private = tmp_path / "private"
+    assert evidence_directory(str(private)) == private.resolve()
+    assert private.stat().st_mode & 0o077 == 0
+
+    with pytest.raises(AssertionError, match="outside the checkout"):
+        evidence_directory(str(ROOT / "never-create-live-evidence"))
+
+    checkout_link = tmp_path / "checkout-link"
+    checkout_link.symlink_to(ROOT, target_is_directory=True)
+    with pytest.raises(AssertionError, match="outside the checkout"):
+        evidence_directory(str(checkout_link / "evidence"))
+
+    public = tmp_path / "public"
+    public.mkdir(mode=0o755)
+    public.chmod(0o755)
+    with pytest.raises(AssertionError, match="owner-only"):
+        evidence_directory(str(public))
 
 
 def test_pr218_mutation_gates_are_runner_reachable_not_manual() -> None:

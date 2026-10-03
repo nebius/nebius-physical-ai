@@ -23,6 +23,8 @@ from npa.workflows.sim2real_health import (
 )
 from npa.workflows.sim2real_loop import build_config_from_env
 
+pytestmark = pytest.mark.usefixtures("operator_sim2real_image_defaults")
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -157,8 +159,8 @@ def test_s3_pass_and_fail_with_injected_client() -> None:
     assert "NoSuchBucket" in " ".join(bad.details)
 
 
-def test_registry_passes_for_public_default_images() -> None:
-    # Repository-owned defaults are fully qualified anonymous GHCR references.
+def test_registry_passes_for_resolved_default_images() -> None:
+    # Accepted defaults and synthetic operator replacements are fully qualified.
     result = check_registry(
         _config(), probes=DoctorProbes(image_inspector=lambda i: True)
     )

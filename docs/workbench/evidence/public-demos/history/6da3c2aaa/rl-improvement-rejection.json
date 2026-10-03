@@ -1,0 +1,143 @@
+{
+  "actual_common_cli_view_byte_equal": true,
+  "baseline_retained": true,
+  "baseline_success_rate": 0.82475,
+  "candidate_absolute_success_gate_passed": true,
+  "candidate_success_rate": 0.93,
+  "canonical_html_sha256": "ccc60baf4f15ab92e3f3b2ffc62569b734d50ade47c9cf35b654bcb971e9b8e7",
+  "checkpoint_sha256": {
+    "baseline": "361dec495e371e0666c2a956930238a3dd3457ea7854f55edb9554f6a46d87b9",
+    "candidate": "218ddaa2ba83958e54921b5fde7c25e75975555e9ff1b47cbb8d1ba9575c8001"
+  },
+  "eligible": false,
+  "final_evaluated": false,
+  "final_outcomes_consumed": false,
+  "full_training": {
+    "baseline_updates": 1500,
+    "candidate_new_updates": 1500,
+    "robots": 4000,
+    "transitions_per_policy": 48000000
+  },
+  "limitations": [
+    "Rejected historical replay recipe; this does not qualify the new baseline-retention trainer.",
+    "All original samples and metric violations are retained in external native evidence.",
+    "Required native bundles were read back and independently checked; no complete run-prefix object inventory is claimed.",
+    "Native runtime records and bounded GPU observations do not establish continuous process observation across every phase.",
+    "The original HTML is unchanged. One infrastructure-pattern match occurs only in compressed JPEG base64; exact-byte structural, metadata and text checks independently resolved that false positive.",
+    "Public simulation inputs only; no private site, physical robot, or camera-input navigation policy is qualified."
+  ],
+  "native_reasons": [
+    "warehouse regressed on success",
+    "warehouse regressed on collision_steps",
+    "candidate has 371 paired development metric violations across 257 cases; final cohort remains untouched"
+  ],
+  "native_report_scored_frames": 24,
+  "native_training_and_development_completed": true,
+  "offline_browser_widths": [
+    1440,
+    390
+  ],
+  "paired_cases": 4000,
+  "paired_non_regression_passed": false,
+  "paired_success_gain_gate_passed": true,
+  "plan_sha256": "a3f01564db0909d94ebb03409f542f25b9bb5832398680080779dbfeff1615fc",
+  "policy_quality_passed": false,
+  "qualification_date": "2026-09-29",
+  "regional_non_regression_passed": false,
+  "regions": {
+    "office": {
+      "episodes_per_policy": 2000,
+      "metrics": {
+        "collision_steps": {
+          "baseline_mean": 0.348,
+          "candidate_mean": 0.133,
+          "change": -0.21499999999999997
+        },
+        "goal_distance_m": {
+          "baseline_mean": 0.8019355593009957,
+          "candidate_mean": 0.578439992436295,
+          "change": -0.22349556686470073
+        },
+        "physical_failure_steps": {
+          "baseline_mean": 0.0375,
+          "candidate_mean": 0.01,
+          "change": -0.027499999999999997
+        },
+        "success": {
+          "baseline_mean": 0.65,
+          "candidate_mean": 0.8615,
+          "change": 0.21150000000000002
+        }
+      },
+      "regional_non_regressing": true,
+      "regressed_cases": 157,
+      "violation_count": 265,
+      "violations_by_metric": {
+        "collision_steps": 69,
+        "goal_distance_m": 113,
+        "physical_failure_steps": 17,
+        "success": 66
+      }
+    },
+    "warehouse": {
+      "episodes_per_policy": 2000,
+      "metrics": {
+        "collision_steps": {
+          "baseline_mean": 0.0005,
+          "candidate_mean": 0.0015,
+          "change": 0.001
+        },
+        "goal_distance_m": {
+          "baseline_mean": 0.31882363582311035,
+          "candidate_mean": 0.3289651781257159,
+          "change": 0.010141542302605555
+        },
+        "physical_failure_steps": {
+          "baseline_mean": 0.0,
+          "candidate_mean": 0.0,
+          "change": 0.0
+        },
+        "success": {
+          "baseline_mean": 0.9995,
+          "candidate_mean": 0.9985,
+          "change": -0.0010000000000000009
+        }
+      },
+      "regional_non_regressing": false,
+      "regressed_cases": 100,
+      "violation_count": 106,
+      "violations_by_metric": {
+        "collision_steps": 3,
+        "goal_distance_m": 100,
+        "physical_failure_steps": 0,
+        "success": 3
+      }
+    }
+  },
+  "regressed_cases": 257,
+  "schema": "npa.public-demo.rl-rejection-evidence.v1",
+  "source_bundle_sha256": "2187872810a88663089d5cbb2f9c176d1f23b63443836373d8d5accde53d2ed5",
+  "source_evidence": {
+    "baseline_development_audit_sha256": "f9ff7f5b99bba4d5de053ac56a4bc04430c3a3a1bb2da69123d072ed15c4b2f3",
+    "candidate_development_audit_sha256": "297f19091c9db861c7fbd989f9943157b4b3caeac62e817c69564bd20eed39e6",
+    "candidate_native_tensor_audit_sha256": "c33a291617bb838646615ab32d66c2eadd230a2d31168f5d1ec37de78962d65a",
+    "candidate_training_audit_sha256": "08518b2b1ca0116c3d68ddc87180fb3c30cbe68f230c621ab5a3176b499aecae",
+    "development_raw_controls_audit_sha256": "42f9c55dfdfaaad1da2bd3a0f21d906e0a44f0ffcc4f9e24eb325d0d6ad55f3a",
+    "independent_selection_audit_sha256": "4df5876e0f76700f2d73f23359a4ecaa0cfc3cc35532cc74491ac9b40f3d3080",
+    "jpeg_false_positive_disposition_sha256": "d52cba7286b38340806543b37ce7e2e2b0157ca9ef03316b4910c32347935d53",
+    "qualification_evidence_index_sha256": "a59103a1a66d1eb7758d8d3fc18e04b72cdff9f386a88cd462888d89f45e0010",
+    "selection_diagnostic_sha256": "ac0c06f126e137de0360403fd236dd8cb1c8e23a11500f3808c3f577b952f206",
+    "source_attestation_index_sha256": "2691f558341db732bc81f90974e4b992e2c7076dccbed99c3216e7499f9967a6"
+  },
+  "source_revision": "6da3c2aaa276d192089352a5fe4b4398e2d2c980",
+  "success_rate_gain": 0.10525,
+  "violation_count": 371,
+  "violations_by_metric": {
+    "collision_steps": 72,
+    "goal_distance_m": 213,
+    "physical_failure_steps": 17,
+    "success": 69
+  },
+  "warehouse_retention_passed": false,
+  "workflow_status": "FAILED"
+}

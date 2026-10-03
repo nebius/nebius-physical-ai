@@ -54,6 +54,7 @@ class ToolEntry:
 # TOOL_CATALOG must be reachable from at least one shipped spec.
 PUBLIC_REUSABLE_TOOLREFS: dict[str, str] = {
     "workbench.curobo.plan": "Operator-provided Franka start/goal/scene manifests; benchmark workflow exercises the shared planner and artifact path.",
+    "workbench.open3d.prepare": "Operator-provided scan prefixes; the shipped registration workflow exercises the same manifest contract through stage-demo.",
     "infra.fleet.deploy": "public npa.fleet deployment primitive",
     "infra.soperator.deploy": "public npa.soperator deployment primitive",
     "workbench.cosmos2.transfer": "public Cosmos Transfer composition primitive",
@@ -764,6 +765,147 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{run.id}}",
         ],
     ),
+    "workbench.open3d.stage_demo": ToolEntry(
+        name="workbench.open3d.stage_demo",
+        description=(
+            "Publish the upstream open3d.data DemoICPPointClouds indoor scans and "
+            "the registration manifest describing them."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "stage-demo",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--voxel-size",
+            "{{config.open3d_voxel_size}}",
+            "--icp-estimation",
+            "{{config.open3d_icp_estimation}}",
+        ],
+    ),
+    "workbench.open3d.prepare": ToolEntry(
+        name="workbench.open3d.prepare",
+        description=(
+            "Index the .pcd/.ply scans under an operator prefix into a digest-bound "
+            "registration manifest."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "prepare",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--voxel-size",
+            "{{config.open3d_voxel_size}}",
+            "--icp-estimation",
+            "{{config.open3d_icp_estimation}}",
+        ],
+    ),
+    "workbench.open3d.register": ToolEntry(
+        name="workbench.open3d.register",
+        description=(
+            "Open3D global RANSAC/FPFH registration refined by ICP, pair by pair, "
+            "with each aligned cloud published."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "register",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.open3d.validate": ToolEntry(
+        name="workbench.open3d.validate",
+        description=(
+            "Re-verify a published Open3D registration from its journal and result "
+            "alone, without the native library."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "validate",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.open3d.multiway": ToolEntry(
+        name="workbench.open3d.multiway",
+        description=(
+            "Open3D multiway registration: full pairwise pose graph, "
+            "global_optimization, and one fused cloud."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "multiway",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
+    "workbench.open3d.reconstruct": ToolEntry(
+        name="workbench.open3d.reconstruct",
+        description=(
+            "Poisson surface reconstruction over a fused multiway cloud, with "
+            "manifold and watertight facts reported."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "reconstruct",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+            "--poisson-depth",
+            "{{config.open3d_poisson_depth}}",
+            "--density-quantile",
+            "{{config.open3d_density_quantile}}",
+            "--support-distance-factor",
+            "{{config.open3d_support_distance_factor}}",
+        ],
+    ),
+    "workbench.open3d.visualize": ToolEntry(
+        name="workbench.open3d.visualize",
+        description=(
+            "Emit and decode-verify an RRD of the optimized scans, the fused cloud "
+            "and the reconstructed surface."
+        ),
+        argv_template=[
+            "npa",
+            "workbench",
+            "open3d",
+            "visualize",
+            "--input-path",
+            "{{config.open3d_input_uri}}",
+            "--output-path",
+            "{{config.open3d_output_uri}}",
+            "--run-id",
+            "{{run.id}}",
+        ],
+    ),
     "workbench.alpamayo2_super.infer": ToolEntry(
         name="workbench.alpamayo2_super.infer",
         description=(
@@ -1022,6 +1164,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "authorization, and that the GPU has RT cores, before any GPU work."
         ),
         access_capabilities=("nurec",),
+        config_defaults={"dataset_revision": ""},
+        omit_flags_when_empty=("--revision",),
         argv_template=[
             "npa",
             "workbench",
@@ -1031,6 +1175,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.nurec_image}}",
             "--dataset",
             "{{config.dataset_id}}",
+            "--revision",
+            "{{config.dataset_revision}}",
             "--scene",
             "{{config.scene}}",
             "--variant",
@@ -1089,6 +1235,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "Download and unpack real NCore V4 shards and derive the rig->world "
             "pose edge NRE requires for object-centric captures."
         ),
+        config_defaults={"dataset_revision": ""},
+        omit_flags_when_empty=("--revision",),
         argv_template=[
             "npa",
             "workbench",
@@ -1096,6 +1244,8 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "fetch",
             "--dataset",
             "{{config.dataset_id}}",
+            "--revision",
+            "{{config.dataset_revision}}",
             "--scene",
             "{{config.scene}}",
             "--variant",
@@ -1765,6 +1915,46 @@ TOOL_CATALOG: dict[str, ToolEntry] = {
             "{{config.envgen_seed}}",
             "--augmented-frames-uri",
             "{{config.augmented_frames_uri}}",
+        ],
+    ),
+    "workbench.isaac_lab.prepare_rgbd_reference": ToolEntry(
+        name="workbench.isaac_lab.prepare_rgbd_reference",
+        description="Collect the public warehouse with MDL dependencies and prepare a 265-pose RGB-D rig input.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "prepare-reference",
+            "--output-path",
+            "{{config.capture_input_prefix}}",
+        ],
+    ),
+    "workbench.isaac_lab.capture_rgbd": ToolEntry(
+        name="workbench.isaac_lab.capture_rgbd",
+        description="Render a calibrated RGB-D rig with Isaac Sim and publish verified synchronized data.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "capture",
+            "--input-path",
+            "{{config.capture_input_uri}}",
+            "--output-path",
+            "{{config.capture_uri}}",
+        ],
+    ),
+    "workflow.rgbd.validate": ToolEntry(
+        name="workflow.rgbd.validate",
+        description="Decode RGB-D capture bytes and verify alignment, poses, depth masks, and point clouds.",
+        argv_template=[
+            "python3",
+            "-m",
+            "npa.workflows.isaac_rgbd.cli",
+            "validate",
+            "--input-path",
+            "{{config.capture_uri}}/manifest.json",
+            "--output-path",
+            "{{config.validation_uri}}",
         ],
     ),
     "workbench.isaac_lab.capture_frames": ToolEntry(

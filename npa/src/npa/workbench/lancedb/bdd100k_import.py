@@ -845,10 +845,13 @@ def _table_version(table_obj: Any) -> int | None:
 
 
 def _list_tables(db: Any) -> list[str]:
-    table_names = getattr(db, "table_names", None)
-    if callable(table_names):
-        return _normalize_table_names(table_names())
-    return _normalize_table_names(db.list_tables())
+    list_tables = getattr(db, "list_tables", None)
+    if not callable(list_tables):
+        raise BDD100KWriteError(
+            "LanceDB connection does not expose the required list_tables API"
+        )
+    values = list_tables()
+    return _normalize_table_names(getattr(values, "tables", values))
 
 
 def _normalize_table_names(values: Any) -> list[str]:

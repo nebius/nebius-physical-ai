@@ -1,0 +1,28 @@
+{
+  "schema": "npa.cosmos3.wam-reproduction-run.v1",
+  "run": "profile-16",
+  "slurm": {
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "allocation_seconds": 1367,
+    "gpus": 16,
+    "nodes": 2
+  },
+  "final_checkpoint_save_seconds": 398.09,
+  "private_sources_sha256": {
+    "node-0.finished.json": "36ae06bd03b56c30a43bf309db407de11af2ee3e8dc040b002c8c7a07d354e4c",
+    "node-1.finished.json": "e914511b6b2013b9d468431cd8a4863942a6f13d714111ae5f79deaa5896c720",
+    "node-0.log": "9144fc606f74c375d54d737daf5739efb287795507cf012abcd610fcdb8f5351",
+    "node-1.log": "f3f11f4227a5500bc7647d94cd5dbefbd2364885524cce5c35b6b430ded3d9ba",
+    "run.json": "22c4b73fc70de9619aee101e45a8eb171aed187dd386b04e40ec4d84a85d9232",
+    "train.sbatch": "aa5905e25082e50c6716b204955217f7fc7c1ee71784de4a995819f9f860acc8",
+    "slurm-accounting.txt": "6b5d6d95f8ad358c2d104b4fe9b727726cb977463b822a77980ce1f500e43800"
+  },
+  "public_files_sha256": {
+    "measurement.json": "4c0217516ceb7e97ffc89bccb70314aea8b521b5b7307fe2442d495234298094",
+    "iteration-series.csv": "14270822808463969802c64d4319b63317656188be41a1c270bede673c972b9d",
+    "distributed-preflight.json": "fa6eb131a99edd1cdc4259e62c31aa8be9e134cdccc4b47fcb434c9dadbacceb",
+    "checkpoint-hashes.json": "69e8522a93711a3a70aa8c9e0327a68875bd1c188c4a1fda4fa7201f539b73a7",
+    "profile.json": "55dc58df670947321d80614cf2bfec9c87ee7b4d88afe474d2ccb9369992c59b"
+  }
+}

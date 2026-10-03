@@ -1,0 +1,6 @@
+{
+  "matplotlib": "3.11.2",
+  "numpy": "2.5.3",
+  "repeated_timing_sha256": "539b7a552eb7a5dcf102bf5559a96474ba5791d98a09c5486dce1fc046a43ac0",
+  "image_sha256": "8a6c6e308c479678608e6fe98ba96a9e123259ca80710ac9b4f7e95e5130d350"
+}

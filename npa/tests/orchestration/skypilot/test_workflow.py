@@ -2524,7 +2524,8 @@ def test_submit_workflow_secrets_can_come_from_extra_env(monkeypatch, tmp_path) 
         ).read_text(encoding="utf-8")
     )
     assert rendered["kubernetes"]["allowed_contexts"] == ["npa-rtxpro-mk8s"]
-    assert rendered["allowed_clouds"] == ["kubernetes"]
+    assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
+    assert rendered["nebius"]["capabilities"] == ["storage"]
 
 
 def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
@@ -2541,7 +2542,9 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
         "  pod_config:\n"
         "    spec:\n"
         "      imagePullSecrets:\n"
-        "        - name: customer-registry-auth\n",
+        "        - name: customer-registry-auth\n"
+        "nebius:\n"
+        "  capabilities: [compute]\n",
         encoding="utf-8",
     )
     sky_bin = _fake_sky(tmp_path)
@@ -2565,10 +2568,89 @@ def test_submit_workflow_replaces_stale_kubernetes_context_allowlist(
 
     rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
     assert rendered["kubernetes"]["allowed_contexts"] == ["run-owned-context"]
-    assert rendered["allowed_clouds"] == ["kubernetes"]
+    assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
+    assert rendered["nebius"]["capabilities"] == ["storage"]
     assert rendered["kubernetes"]["pod_config"]["spec"]["imagePullSecrets"] == [
         {"name": "customer-registry-auth"}
     ]
+
+
+def test_submit_workflow_allows_declared_nebius_storage_on_kubernetes(
+    monkeypatch, tmp_path
+) -> None:
+    yaml_path = tmp_path / "workflow.yaml"
+    yaml_path.write_text(
+        "name: durable-demo\n"
+        "resources:\n"
+        "  cloud: kubernetes\n"
+        "file_mounts:\n"
+        "  /mnt/state:\n"
+        "    source: nebius://example-bucket/run\n"
+        "    store: NEBIUS\n"
+        "    mode: MOUNT\n",
+        encoding="utf-8",
+    )
+    sky_bin = _fake_sky(tmp_path)
+
+    def fake_run(cmd, **kwargs):
+        if _is_status_cmd(cmd):
+            return _healthy_status(cmd)
+        return subprocess.CompletedProcess(
+            cmd, 0, stdout="Job submitted, ID: 13\n", stderr=""
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = submit_workflow(
+        yaml_path,
+        "run-nebius-storage",
+        isolated_config_dir=tmp_path / "sky-state",
+        sky_bin=sky_bin,
+        infra="k8s/run-owned-context",
+    )
+
+    rendered = yaml.safe_load(Path(result.log_paths["config"]).read_text())
+    assert rendered["kubernetes"]["allowed_contexts"] == ["run-owned-context"]
+    assert rendered["allowed_clouds"] == ["kubernetes", "nebius"]
+    assert rendered["nebius"]["capabilities"] == ["storage"]
+
+
+def test_customer_controller_does_not_enable_nebius_storage(monkeypatch):
+    from npa.workflows.byof import libero_customer
+
+    monkeypatch.setattr(libero_customer, "selected", lambda _: True)
+    monkeypatch.setattr(libero_customer, "validate_profile", lambda _: None)
+    monkeypatch.setattr(libero_customer, "controller_context", lambda *_: "controller")
+    monkeypatch.setattr(workflow_module, "_load_base_config", lambda _: {})
+    commands = ["true"]
+    documents = [
+        {
+            "resources": {
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "post_provision_runcmd": commands,
+                },
+            }
+        }
+    ]
+
+    config = workflow_module._submission_global_config(
+        SimpleNamespace(global_config_path=None),
+        "kubernetes",
+        "k8s/worker",
+        documents=documents,
+    )
+
+    assert config["allowed_clouds"] == ["kubernetes"]
+    assert config["nebius"]["remote_identity"] == "NO_UPLOAD"
+    assert config["kubernetes"]["allowed_contexts"] == ["worker", "controller"]
+    assert (
+        config["kubernetes"]["context_configs"]["worker"]["remote_identity"]
+        == "NO_UPLOAD"
+    )
+    assert (
+        config["kubernetes"]["context_configs"]["worker"]["post_provision_runcmd"]
+        == commands
+    )
 
 
 def test_robotwin_confidential_submit_bridge_hides_context_after_preflight(

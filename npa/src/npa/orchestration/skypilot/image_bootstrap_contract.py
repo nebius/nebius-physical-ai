@@ -26,6 +26,21 @@ DEFAULT_PROBE_TIMEOUT_SECONDS = 1800
 # Backward-compatible import alias. New callers should use the explicit default name.
 PROBE_TIMEOUT_SECONDS = DEFAULT_PROBE_TIMEOUT_SECONDS
 _KUBERNETES_NAME_RE = re.compile(r"^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$")
+_PULL_PLACEMENT_FIELDS = frozenset(
+    {
+        "affinity",
+        "dnsConfig",
+        "dnsPolicy",
+        "hostNetwork",
+        "nodeName",
+        "nodeSelector",
+        "priorityClassName",
+        "runtimeClassName",
+        "schedulerName",
+        "tolerations",
+        "topologySpreadConstraints",
+    }
+)
 
 
 class ImageBootstrapContractError(RuntimeError):
@@ -304,8 +319,11 @@ def probe_image_capabilities(
     image: str,
     digest: str,
     context: str,
+    namespace: str,
     kubeconfig: str = "",
     image_pull_secrets: tuple[str, ...] = (),
+    service_account_name: str = "skypilot-service-account",
+    pod_placement: Mapping[str, Any] | None = None,
     runtime_bootstrap: bool = False,
     observation_timeout_seconds: int = DEFAULT_PROBE_TIMEOUT_SECONDS,
     runner: Runner = _run,
@@ -316,8 +334,10 @@ def probe_image_capabilities(
 
     Args:
         image, digest: Registry reference and immutable bytes to inspect.
-        context, kubeconfig: Exact Kubernetes target and credentials file.
+        context, namespace, kubeconfig: Exact Kubernetes target and credentials file.
         image_pull_secrets: Existing registry authentication Secret names.
+        service_account_name: Exact ServiceAccount SkyPilot renders for the task.
+        pod_placement: Pull-relevant scheduling and runtime fields SkyPilot renders.
         runtime_bootstrap: Reproduce SkyPilot's shell override and package
             installation for vendor images; first-party byte probes stay strict.
         observation_timeout_seconds: Watch deadline; zero waits indefinitely.
@@ -337,6 +357,14 @@ def probe_image_capabilities(
         )
     if not str(context or "").strip():
         raise ImageBootstrapContractError("an exact Kubernetes context is required")
+    if not _KUBERNETES_NAME_RE.fullmatch(str(namespace or "")):
+        raise ImageBootstrapContractError(
+            "an exact valid Kubernetes namespace is required"
+        )
+    if not _KUBERNETES_NAME_RE.fullmatch(str(service_account_name or "")):
+        raise ImageBootstrapContractError(
+            "an exact valid Kubernetes ServiceAccount is required"
+        )
     pull_secret_names = tuple(
         dict.fromkeys(str(name or "").strip() for name in image_pull_secrets)
     )
@@ -362,10 +390,123 @@ def probe_image_capabilities(
     shell = "/bin/bash" if runtime_bootstrap else "/bin/sh"
     if runtime_bootstrap:
         script = _runtime_bootstrap_script() + script
-    common = ["kubectl", "--context", context]
+    common = ["kubectl", "--context", context, "--namespace", namespace]
     name = ""
     probe_id = ""
     create: subprocess.CompletedProcess[str] | None = None
+
+    def cleanup_owned_probe(
+        *,
+        probe_name: str,
+        selected_probe_id: str,
+        expected_uid: str | None,
+        require_stable_absence: bool = False,
+    ) -> tuple[str, str]:
+        absent_observations = 0
+        last_identity_read_error = ""
+        for _attempt in range(4):
+            current, current_error = _read_owned_probe_identity(
+                common=common,
+                name=probe_name,
+                probe_id=selected_probe_id,
+                immutable=immutable,
+                runner=runner,
+                env=env,
+                expected_uid=expected_uid or "",
+                allow_absent=True,
+            )
+            if current is None:
+                if current_error == "absent":
+                    absent_observations += 1
+                    if not require_stable_absence or absent_observations >= 2:
+                        return "verified", "exact probe is absent"
+                    continue
+                if current_error.startswith("probe identity read "):
+                    absent_observations = 0
+                    last_identity_read_error = current_error
+                    continue
+                return "refused_identity_mismatch", current_error
+            absent_observations = 0
+            expected_uid = current
+            delete_options = {
+                "apiVersion": "meta.k8s.io/v1",
+                "kind": "DeleteOptions",
+                "gracePeriodSeconds": 0,
+                "preconditions": {"uid": current},
+            }
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    prefix="npa-pod-delete-",
+                    suffix=".json",
+                ) as options_file:
+                    json.dump(delete_options, options_file, separators=(",", ":"))
+                    options_file.flush()
+                    delete = runner(
+                        [
+                            *common,
+                            "delete",
+                            "--raw",
+                            (f"/api/v1/namespaces/{namespace}/pods/{probe_name}"),
+                            "-f",
+                            options_file.name,
+                        ],
+                        env,
+                    )
+            except (OSError, subprocess.SubprocessError) as exc:
+                return "failed", f"probe deletion failed ({type(exc).__name__})"
+            if delete.returncode != 0:
+                return (
+                    "failed",
+                    f"probe deletion was rejected (exit {delete.returncode})",
+                )
+        return (
+            "failed",
+            last_identity_read_error or "exact probe absence was not verified",
+        )
+
+    def cleanup_owned_probe_resilient(
+        *,
+        probe_name: str,
+        selected_probe_id: str,
+        expected_uid: str | None,
+        require_stable_absence: bool = False,
+    ) -> tuple[str, str, BaseException | None]:
+        """Retry one signal-interrupted cleanup while preserving the signal."""
+
+        interrupted: BaseException | None = None
+        interruption_types = []
+        for _attempt in range(2):
+            try:
+                cleanup, detail = cleanup_owned_probe(
+                    probe_name=probe_name,
+                    selected_probe_id=selected_probe_id,
+                    expected_uid=expected_uid,
+                    require_stable_absence=require_stable_absence,
+                )
+                return cleanup, detail, interrupted
+            except BaseException as exc:
+                interrupted = interrupted or exc
+                interruption_types.append(type(exc).__name__)
+        return (
+            "failed",
+            f"cleanup interrupted twice: {', '.join(interruption_types)}",
+            interrupted,
+        )
+
+    def add_cleanup_note(
+        error: BaseException, cleanup: str, cleanup_detail: str
+    ) -> None:
+        if cleanup == "verified":
+            return
+        note = f"probe cleanup={cleanup}: {cleanup_detail[:300]}"
+        add_note = getattr(error, "add_note", None)
+        if callable(add_note):
+            add_note(note)
+        else:  # Python 3.10 compatibility; preserve the primary exception.
+            setattr(error, "__npa_cleanup_note__", note)
+
     for _attempt in range(3):
         probe_id = str(nonce_factory()).lower()
         name = probe_name(digest, probe_id)
@@ -375,23 +516,29 @@ def probe_image_capabilities(
             f"npa.nebius.com/probe-id={probe_id}"
         )
         try:
-            overrides = []
+            selected_placement = dict(pod_placement or {})
+            if any(key not in _PULL_PLACEMENT_FIELDS for key in selected_placement):
+                raise ImageBootstrapContractError(
+                    "Kubernetes pod placement contains unsupported fields"
+                )
+            try:
+                override_spec = json.loads(json.dumps(selected_placement))
+            except (TypeError, ValueError):
+                raise ImageBootstrapContractError(
+                    "Kubernetes pod placement must contain JSON-compatible values"
+                ) from None
+            override_spec["serviceAccountName"] = service_account_name
             if pull_secret_names:
-                overrides = [
-                    "--overrides="
-                    + json.dumps(
-                        {
-                            "apiVersion": "v1",
-                            "spec": {
-                                "imagePullSecrets": [
-                                    {"name": secret_name}
-                                    for secret_name in pull_secret_names
-                                ]
-                            },
-                        },
-                        separators=(",", ":"),
-                    )
+                override_spec["imagePullSecrets"] = [
+                    {"name": secret_name} for secret_name in pull_secret_names
                 ]
+            overrides = [
+                "--overrides="
+                + json.dumps(
+                    {"apiVersion": "v1", "spec": override_spec},
+                    separators=(",", ":"),
+                )
+            ]
             create = runner(
                 [
                     *common,
@@ -409,24 +556,50 @@ def probe_image_capabilities(
                 ],
                 env,
             )
-        except (OSError, subprocess.SubprocessError) as exc:
+        except BaseException as exc:
+            cleanup, cleanup_detail, cleanup_interrupt = cleanup_owned_probe_resilient(
+                probe_name=name,
+                selected_probe_id=probe_id,
+                expected_uid=None,
+                require_stable_absence=True,
+            )
+            if not isinstance(exc, (OSError, subprocess.SubprocessError)):
+                add_cleanup_note(exc, cleanup, cleanup_detail)
+                raise
+            if cleanup_interrupt is not None:
+                add_cleanup_note(cleanup_interrupt, cleanup, cleanup_detail)
+                raise cleanup_interrupt
             return _probe_evidence(
                 immutable,
                 digest,
                 state="indeterminate",
-                cleanup="not_applicable",
-                detail=f"probe creation failed: {type(exc).__name__}: {exc}",
+                cleanup=cleanup,
+                detail=(
+                    f"probe creation failed ({type(exc).__name__}); {cleanup_detail}"
+                ),
             )
         if create.returncode == 0:
             break
         detail = (create.stderr or create.stdout).strip()
         if "alreadyexists" not in detail.replace(" ", "").lower():
+            cleanup, cleanup_detail, cleanup_interrupt = cleanup_owned_probe_resilient(
+                probe_name=name,
+                selected_probe_id=probe_id,
+                expected_uid=None,
+                require_stable_absence=True,
+            )
+            if cleanup_interrupt is not None:
+                add_cleanup_note(cleanup_interrupt, cleanup, cleanup_detail)
+                raise cleanup_interrupt
             return _probe_evidence(
                 immutable,
                 digest,
                 state="indeterminate",
-                cleanup="not_applicable",
-                detail=detail[:500],
+                cleanup=cleanup,
+                detail=(
+                    f"probe creation was rejected (exit {create.returncode}); "
+                    f"{cleanup_detail}"
+                ),
             )
     if create is None or create.returncode != 0:
         return _probe_evidence(
@@ -446,35 +619,6 @@ def probe_image_capabilities(
     cleanup = "failed"
     cleanup_detail = "cleanup was not attempted"
 
-    def cleanup_owned_probe(expected_uid: str | None) -> tuple[str, str]:
-        current, current_error = _read_owned_probe_identity(
-            common=common,
-            name=name,
-            probe_id=probe_id,
-            immutable=immutable,
-            runner=runner,
-            env=env,
-            expected_uid=expected_uid,
-        )
-        if current is None:
-            return "refused_identity_mismatch", current_error
-        try:
-            delete = runner(
-                [
-                    *common,
-                    "delete",
-                    "pod",
-                    name,
-                    "--ignore-not-found=true",
-                    "--wait=true",
-                ],
-                env,
-            )
-            state = "verified" if delete.returncode == 0 else "failed"
-            return state, (delete.stderr or delete.stdout).strip()
-        except (OSError, subprocess.SubprocessError) as exc:
-            return "failed", f"{type(exc).__name__}: {exc}"
-
     try:
         identity, identity_error = _read_owned_probe_identity(
             common=common,
@@ -487,6 +631,8 @@ def probe_image_capabilities(
         identity_checked = True
         if identity is None:
             primary = identity_error
+            if identity_error.startswith("probe identity read "):
+                observation_indeterminate = True
         else:
             wait = terminal_observer(
                 [
@@ -509,40 +655,34 @@ def probe_image_capabilities(
                 )
             elif terminal_phase != "Succeeded":
                 observation_indeterminate = True
-                primary = (wait.stderr or wait.stdout).strip()
-                if not primary:
-                    primary = "probe observation ended without a terminal pod phase"
+                primary = (
+                    "probe observation ended without a terminal pod phase "
+                    f"(exit {wait.returncode})"
+                )
+    except (OSError, subprocess.SubprocessError) as exc:
+        observation_indeterminate = True
+        primary = f"probe observation failed ({type(exc).__name__})"
     except BaseException as exc:  # cleanup must run even on operator interruption
         interrupted = exc
         primary = f"probe lifecycle interrupted: {type(exc).__name__}"
     finally:
-        if identity_checked and identity is None:
+        if (
+            identity_checked
+            and identity is None
+            and not identity_error.startswith("probe identity read ")
+        ):
             cleanup = "refused_identity_mismatch"
             cleanup_detail = identity_error
         else:
-            try:
-                cleanup, cleanup_detail = cleanup_owned_probe(identity)
-            except BaseException as cleanup_exc:
-                if interrupted is None:
-                    interrupted = cleanup_exc
-                try:
-                    # A one-shot signal may interrupt the ownership re-read itself.
-                    # Retry once so the exact owned pod still gets best-effort cleanup.
-                    cleanup, cleanup_detail = cleanup_owned_probe(identity)
-                except BaseException as retry_exc:
-                    cleanup = "failed"
-                    cleanup_detail = (
-                        f"cleanup interrupted twice: {type(cleanup_exc).__name__}, "
-                        f"{type(retry_exc).__name__}"
-                    )
+            cleanup, cleanup_detail, cleanup_interrupt = cleanup_owned_probe_resilient(
+                probe_name=name,
+                selected_probe_id=probe_id,
+                expected_uid=identity,
+            )
+            if interrupted is None and cleanup_interrupt is not None:
+                interrupted = cleanup_interrupt
     if interrupted is not None:
-        if cleanup != "verified":
-            note = f"probe cleanup={cleanup}: {cleanup_detail[:300]}"
-            add_note = getattr(interrupted, "add_note", None)
-            if callable(add_note):
-                add_note(note)
-            else:  # Python 3.10 compatibility; preserve the primary exception.
-                setattr(interrupted, "__npa_cleanup_note__", note)
+        add_cleanup_note(interrupted, cleanup, cleanup_detail)
         raise interrupted
     if cleanup != "verified":
         return ImageContractEvidence(
@@ -594,7 +734,13 @@ def _probe_failure_diagnostic(
 ) -> str:
     """Return bounded terminal diagnostics without losing container fidelity."""
 
-    result = runner([*common, "get", "pod", name, "-o", "json"], env)
+    try:
+        result = runner([*common, "get", "pod", name, "-o", "json"], env)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return (
+            "probe pod entered Failed; terminal diagnostics unavailable "
+            f"({type(exc).__name__})"
+        )
     if result.returncode != 0:
         return "probe pod entered Failed; terminal diagnostics could not be read"
     try:
@@ -604,10 +750,9 @@ def _probe_failure_diagnostic(
     status = payload.get("status") if isinstance(payload, Mapping) else {}
     status = status if isinstance(status, Mapping) else {}
     parts = ["probe pod entered Failed"]
-    for key in ("reason", "message"):
-        value = str(status.get(key) or "").strip()
-        if value:
-            parts.append(f"{key}={value}")
+    reason = _bounded_kubernetes_reason(status.get("reason"))
+    if reason:
+        parts.append(f"reason={reason}")
     rows = status.get("containerStatuses")
     if isinstance(rows, list):
         for row in rows:
@@ -617,13 +762,25 @@ def _probe_failure_diagnostic(
             terminated = state.get("terminated") if isinstance(state, Mapping) else None
             if not isinstance(terminated, Mapping):
                 continue
-            fields = [f"container={str(row.get('name') or 'probe')}"]
-            for key in ("reason", "message", "exitCode"):
-                value = terminated.get(key)
-                if value not in (None, ""):
-                    fields.append(f"{key}={value}")
+            container_name = str(row.get("name") or "")
+            if not _KUBERNETES_NAME_RE.fullmatch(container_name):
+                container_name = "probe"
+            fields = [f"container={container_name}"]
+            reason = _bounded_kubernetes_reason(terminated.get("reason"))
+            if reason:
+                fields.append(f"reason={reason}")
+            exit_code = terminated.get("exitCode")
+            if isinstance(exit_code, int):
+                fields.append(f"exitCode={exit_code}")
             parts.append(" ".join(fields))
     return "; ".join(parts)[:500]
+
+
+def _bounded_kubernetes_reason(value: Any) -> str:
+    candidate = str(value or "").strip()
+    if re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", candidate):
+        return candidate
+    return ""
 
 
 def _probe_evidence(
@@ -654,15 +811,21 @@ def _read_owned_probe_identity(
     runner: Runner,
     env: Mapping[str, str],
     expected_uid: str = "",
+    allow_absent: bool = False,
 ) -> tuple[str | None, str]:
     """Read and verify the immutable identity of exactly this caller's pod."""
 
     try:
-        result = runner([*common, "get", "pod", name, "-o", "json"], env)
+        command = [*common, "get", "pod", name]
+        if allow_absent:
+            command.append("--ignore-not-found=true")
+        result = runner([*command, "-o", "json"], env)
     except (OSError, subprocess.SubprocessError) as exc:
-        return None, f"probe identity read failed: {type(exc).__name__}: {exc}"
+        return None, f"probe identity read failed ({type(exc).__name__})"
     if result.returncode != 0:
-        return None, "probe identity could not be read after creation"
+        return None, f"probe identity read was rejected (exit {result.returncode})"
+    if allow_absent and not (result.stdout or "").strip():
+        return None, "absent"
     try:
         payload = json.loads(result.stdout)
         metadata = payload["metadata"]

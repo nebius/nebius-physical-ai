@@ -489,6 +489,87 @@ Also exercised in the same smoke (live-accepted with S3 evidence):
 
 Follow-up: full / debug `train.py` once data is staged.
 
+### evo trajectory evaluation (`byof-evo.yaml`)
+
+Pinned: `MichaelGrupp/evo`
+`8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422` (`v1.35.1`).
+This is a GPL-3.0-or-later operator-built BYOF candidate; do not describe it as
+an NPA-published image without a separate conveyance/compliance decision.
+
+Hard-gate capability:
+
+- `evo_ape_rpe_trajectory_evaluation`: native `evo_ape`, `evo_rpe`, and
+  `evo_traj` commands must save decodable result archives and matched plots.
+  Exact and bounded-error controls must pass the predeclared APE/RPE thresholds;
+  nonlinear drift and malformed-input controls must fail, with zero false
+  positives and zero false negatives.
+
+Also exercised in the same live-qualified smoke:
+
+- `decoded_plot_validation`: decode the selected native metric/trajectory plots
+  and their derived review copies, require at least 800x600 pixels and
+  non-uniform RGB content, and retain their hashes across the result and capture
+  records. This is an auxiliary reviewability check, not a trajectory-quality
+  metric. It covers the six review-facing plots plus eight additional
+  `evo_ape` raw/control plots; only the six review-facing plots enter the
+  capture/review set. It does not cover the five auxiliary `evo_traj`
+  RPY/XYZ/speed plots. `synthetic_controls_speeds.png` is 651x491 and is the
+  only residual plot below the stated 800x600 floor.
+
+The same smoke evaluates the pinned upstream KITTI 00 ground truth, ORB, and
+S-PTAM examples. Treat those as representative compatibility and reviewability
+evidence, not as threshold calibration or proof of navigation success. Retain
+each error distribution, trajectory-input hash, native plot hash, derived
+review-plot hash, and decode result. The live-qualified candidate passed the
+digest-pinned CPU Kubernetes pull and execution path, all four frozen gate
+controls, and ten independent archive decodes. Its first unlabeled APE visual
+review was invalidated when exact-prompt ORB/S-PTAM cross-swaps false-passed;
+retain that failure. The corrected smoke preserves each native map and emits a
+hash-linked review copy with visible estimate/reference identity. Require
+identify-first cross-swap calibration with zero false positives before scoring
+those final plots. In `npa.evo.capture-manifest.v1`, unsuffixed
+`kitti_*_ape` keys identify the labeled review copies and `*_native` keys
+identify untouched evo maps; follow each review entry's `source_path` and
+`source_sha256` instead of guessing from the suffix. The operator-built image
+remains unpublished. Before
+registry admission, require independent review of the candidate commit and
+retained evidence; a later conveyance still needs an explicit GPL compliance
+decision.
+
+### AprilTag 3 (`byof-apriltag.yaml`)
+
+Pinned: `AprilRobotics/apriltag`
+`94be783968e5091bcc9972c72c84fd63efce2935` (`v3.4.5`).
+
+The detector source is BSD-2-Clause. Its three representative upstream
+Swarmathon photographs and expected-corner labels are separately identified by
+upstream as CC-BY-SA-2.0. Keep this an operator-built BYOF candidate unless a
+later publication review accounts for both source and data terms.
+
+Hard-gate capability: `apriltag_real_image_fiducial_detection`.
+
+- Build and rerun `native_apriltag_ctest`; an import is not acceptance.
+- Evaluate all three pinned real photographs and their upstream tag-ID/corner
+  records. Every case must reproduce the recorded ID set (precision and recall
+  1.0), with aggregate corner RMSE at most 0.1 pixel and no coordinate residual
+  above 0.1 pixel. This is upstream regression parity. The records store four
+  decimal places, so a roughly `2.74e-5 px` residual is their quantization
+  floor, not detector localization accuracy.
+- Run blank and fixed-seed random-noise controls. Both must produce zero
+  detections.
+- Emit `fiducial_observations.json` with source image hash, family, tag ID,
+  center, ordered corners, decision margin, and hamming distance for a later
+  camera-localization or calibration stage.
+- Preserve each source image and native measurement. Annotated review PNGs must
+  link back to the source hash and distinguish expected from detected corners.
+
+Calibrate visual review with a correct overlay, a deliberately shifted overlay,
+a blank image, and a mismatched annotation before scoring final exact-run
+captures. Visual alignment is review evidence; objective corner metrics are
+the upstream-parity gate. Do not call image-space corners camera-pose accuracy.
+Pose claims require calibrated intrinsics, known tag geometry, and separate
+translation / rotation error against ground truth.
+
 ### robomimic (`byof-robomimic.yaml`)
 
 Pinned: `ARISE-Initiative/robomimic`

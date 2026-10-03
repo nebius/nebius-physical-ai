@@ -33,6 +33,8 @@ dependencies = [
     "cryptography==50.0.1",
     "bcrypt>=5.0,<6.0",
     "pyyaml>=6.0,<7.0",
+    # Structure-aware edits of owned Terraform provider defaults.
+    "python-hcl2>=8.1.4,<9",
     "rich>=13.0,<16.0",
     "boto3>=1.34,<2.0",
     "jinja2>=3.1.6,<4.0",
@@ -121,7 +123,7 @@ adapter = [
 ]
 robot-sdg = [
     "gymnasium-robotics==1.4.2",
-    "mujoco==3.13.0",
+    "mujoco==3.14.0",
 ]
 groot = [
     "nvidia-gr00t-sdk==0.1.0",
@@ -140,6 +142,8 @@ sonic = [
 # standard (non-e2e) test suite collects without pulling in the GPU-heavy
 # extras (genesis, groot, sonic).
 dev = [
+    # Parse real raw USD layers/variants in sensor-rig scene preflight tests.
+    "usd-core==26.8",
     # Actual loopback HTTP regression coverage for deployed service boundaries.
     "uvicorn>=0.52.4",
     # The served agent audit explicitly selects Uvicorn's websockets protocol.
@@ -170,6 +174,7 @@ dev = [
 
 [dependency-groups]
 dev = [
+    "usd-core==26.8",
     "uvicorn>=0.52.4",
     "websockets>=10,<18",
     "google-cloud-storage==3.14.1",
@@ -251,7 +256,11 @@ sam3 = "3.1-unbuilt"
 ltx2 = "2.5-rtfetch-20260817"
 alpamayo2-super = "0.1.0-cu128-r3"
 flex-pi = "0.1.0-cu128-r2"
-curobo = "0.8.0-cuda13-b300-unbuilt"
+curobo = "0.8.0-cuda13-blackwell-unbuilt"
+# Open3D is CPU-only, so this image carries no CUDA tag family.
+open3d = "0.20.0-cpu-20260918"
+
+
 mjlab = "dev-0202f396fb23f7d066fd452b469578e67151d382"
 content-agents = "0.5.2-npa2"
 # Source inventory only: use an explicit validated image until release acceptance.

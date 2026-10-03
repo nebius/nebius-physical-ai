@@ -254,7 +254,7 @@ Build scripts should follow the `--registry` and `--push` shape used by:
 
 - `npa/docker/workbench/lerobot/build.sh`
 - `npa/docker/workbench/groot/build.sh`
-- `npa/docker/workbench/base/cuda13-b300/build.sh`
+- `npa/docker/workbench/base/cuda13-blackwell/build.sh`
 
 Keep image entrypoints explicit. LeRobot runs `python -m npa.server.app`;
 FiftyOne intentionally uses `/bin/bash` because the CLI launches the app command
@@ -397,6 +397,13 @@ Current YAML rules:
 - Use `resources.<profile>` blocks and point states at profiles by name.
 - Express dependencies with `initial`, `needs`, `next`, `parallel`, and
   `transitions`; the renderer emits the SkyPilot task documents.
+- Treat the schema as strictly typed. Omit an optional field instead of writing
+  `null`; `inputs`, `outputs`, `params`, and other collection fields reject
+  explicit nulls. Integer fields reject booleans and every YAML float (including
+  `1.0`), boolean fields accept only YAML `true`/`false`, and duplicate state
+  names are errors.
+  Quote template tokens when YAML might otherwise pre-type a scalar, and rerun
+  `validate-spec` after generated content or `--var` overrides.
 - Keep customer-specific bucket, registry, project, and credential values out of
   committed YAML.
 - Add `validate-spec`, `plan-spec`, render-only, mock-endpoint, or snapshot
@@ -510,8 +517,10 @@ the difference, several hundred more collected and skipped in CI, is the part th
 stays true.
 
 Pull requests start `pr-precheck`: dependency-input consistency, lint and
-formatting, all guardrails, smoke tests, and full test collection. Its five-minute
-execution budget provides an early signal; a pass is not permission to merge.
+formatting, all guardrails, smoke tests, and full test collection. It targets an
+early signal within five minutes; a pass is not permission to merge. It uses the
+runner's default job timeout so slow checkout or setup does not consume an
+artificially short validation budget.
 Fresh source/dependency, secret and confidentiality scans also start immediately.
 The secret-scan planner verifies the generated CI requirements before releasing
 the expensive test and image jobs. Those jobs then overlap the broader precheck,
@@ -555,10 +564,14 @@ and completing PR validation enables the faster evidence-reuse path.
 The operating targets are an early signal within five minutes, complete PR
 validation within fifteen, and queue validation within ten. Hosted-runner waiting
 is outside these execution budgets;
-GitHub does not reserve capacity for this repository. Set the queue's check
-response timeout to ten minutes only after this workflow is on main and a live
-queue candidate has verified the new path. A timeout rejects, never merges, an
-unvalidated candidate. Optional timing reports run on PR/main validation only;
+GitHub does not reserve capacity for this repository. The queue's check-response
+timeout must accommodate full fallback validation, including runner setup and
+waiting, not just the identical-tree reuse path. On October 1, 2026, the existing
+repository ruleset deadline was raised from 15 to 60 minutes after successful
+fallback runs exceeded 20 minutes. This setting lives in GitHub's merge-queue
+ruleset, independently of workflow job timeouts. Measure both paths before
+reducing it. A timeout rejects, never merges, an unvalidated candidate.
+Optional timing reports run on PR/main validation only;
 their completion is not a prerequisite for reusing already-passed required jobs.
 
 Full suites collect smoke tests in the shards and run the CLI install check in
@@ -615,6 +628,23 @@ as policy. The current profile comes from the
 whose tested tree was verified at merge, and covers 938 modules.
 
 ### CI dependency setup and timing reports
+
+Every full-suite shard requires working `ffmpeg` and `ffprobe` before running
+media validation. `npa/scripts/ci_install_ffmpeg.sh` verifies existing tools and
+installs missing tools from Ubuntu's signed package sources. For GitHub's Azure
+mirror, whether selected directly or through the hosted image's mirror-list file,
+it uses the primary Ubuntu archive over HTTPS through a temporary source file,
+preserving suites, components and signature verification without changing
+system sources or consulting unrelated vendor repositories. Package and executable
+failures remain blocking; `NPA_REQUIRE_FFMPEG=1` prevents silent media-test skips.
+
+On October 1, 2026, #807 and #769 passed queue validation after their 15-minute
+deadline. Their prior PR evidence was older than 24 hours, so the full suite ran.
+The slowest FFmpeg setup steps took 13m18s and 8m34s; the corresponding runner
+waits were only two seconds and one second. The queue runs took 27m47s and 21m10s
+to report the required gate. A subsequent #807 PR refresh also exhausted the old
+five-minute precheck timeout after checkout alone took 3m17s. Inspect individual
+setup steps before attributing a queue timeout to runner capacity.
 
 Python test jobs use uv 0.12.5 with a persistent package cache and
 `npa/ci/requirements.txt` constraints. These pins cover the core, development,
@@ -743,6 +773,15 @@ PR validation can enable the faster reuse path. Open the
 failed **Security regression** run whose event is **merge_group**, then inspect
 the first failed component job. Cancelled sibling shards usually follow a failed
 shard through matrix fail-fast; their cancellation is not the original failure.
+
+If the latest successful PR validation is more than 24 hours old, rerun the
+complete **pull_request** run before requeueing (`gh run rerun <run-id>`), then
+wait for its required checks to pass. Do not use `--failed`: a partial rerun
+cannot provide all jobs and the receipt in the same attempt. A branch update is
+needed when the tested merge tree differs from current `main`; rerunning an old
+run retains its original tree and workflow. A fresh receipt enables reuse only
+when the queue tree is identical. Never requeue solely because a removed
+candidate eventually became green; the previous removal is final.
 
 **Merge queue feedback** checks open PRs every five minutes and automatically
 comments on their latest queue rejection or a failed active merge candidate.
@@ -1210,3 +1249,10 @@ reference. It is not in the 8-tool architecture list in
 
 Use it to understand implementation mechanics. Use LeRobot or FiftyOne for
 validated Workbench tool shape.
+
+## Literal evidence validation
+
+Validate scalar evidence without coercion using the shared
+[literal-value contract and failure policy](docs/architecture/literal-value-validation.md).
+That policy distinguishes ingress rejection, discovery quarantine, transient probe
+retries, and validation before mutating reconciliation.

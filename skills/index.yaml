@@ -71,6 +71,17 @@ skills:
       - type: npa_workflow_yaml
         paths:
           - workflows/testing/curobo-benchmark.yaml
+  - name: open3d
+    category: tools
+    when_to_use: "Register overlapping point-cloud scans with real RANSAC/FPFH and ICP, optimize a multiway pose graph, reconstruct a Poisson surface, or review Open3D registration artifacts and their validators."
+    path: skills/tools/open3d/SKILL.md
+    smoke:
+      - type: cli_help
+        args: ["workbench", "open3d", "register", "--help"]
+        contains: "input-path"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/open3d-registration.yaml
   - name: access-approval
     category: atomic
     when_to_use: "Prepare, verify, or resume operator-owned Hugging Face and NVIDIA NGC access for exact dependencies, including human-bound upstream approvals and consent-gated official pages; treat a successful payload probe as operationally Ready and reuse one bounded run-scoped use declaration without duplicate NPA acceptance prompts."
@@ -667,12 +678,16 @@ skills:
           - workflows/testing/groot-1-7-finetune.yaml
   - name: isaac-lab
     category: tools
-    when_to_use: "Isaac Lab RL simulation, deployment, SkyPilot workflows, or custom fork support."
+    when_to_use: "Isaac Lab RL simulation, deployment, calibrated USD RGB-D sensor rigs, SkyPilot workflows, or custom fork support."
     path: skills/tools/isaac-lab/SKILL.md
     smoke:
       - type: cli_help
         args: ["workbench", "isaac-lab", "train", "--help"]
         contains: "task"
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/multicamera-rgbd-capture.yaml
+          - workflows/testing/shared-scene-navigation.yaml
   - name: isaac-arena
     category: tools
     when_to_use: "Package, run, validate, or troubleshoot Isaac Lab-Arena policy evaluation, its public runtime-fetch image, zero/replay/RSL-RL modes, and independent B200/RTX PRO 6000 evidence."
@@ -1037,7 +1052,7 @@ skills:
         path: workflows/testing/cosmos3-generate.yaml
   - name: cosmos3-post-training
     category: workflows
-    when_to_use: "Operate the experimental native LIBERO policy workflow or plan and review other Cosmos3 post-training recipes."
+    when_to_use: "Operate the experimental native LIBERO policy workflow, reproduce reserved-B200 multi-node Slurm scaling and profiling including NPA Soperator deployment, or plan and review other Cosmos3 post-training recipes."
     path: skills/workflows/cosmos3-post-training/SKILL.md
     smoke:
       - type: cli_help
@@ -1051,6 +1066,9 @@ skills:
       - type: workflow_yaml
         paths:
           - workflows/main/sim2real.yaml
+      - type: npa_workflow_yaml
+        paths:
+          - workflows/testing/field-failure-policy-improvement.yaml
       - type: cli_help
         args: ["workbench", "workflow", "trigger", "--help"]
         contains: "trigger"
@@ -1243,6 +1261,8 @@ skills:
         paths:
           - workflows/main/nurec-reconstruct.yaml
           - workflows/testing/nurec-colmap-reconstruct.yaml
+          - workflows/testing/scan-to-isaac-navigation.yaml
+          - workflows/testing/rgbd-scan-to-isaac.yaml
   - name: generate-npa-workflow
     category: workflows
     when_to_use: "Design a new creative npa.workflow/v0.0.1 pipeline from the tool catalog (loops, gates, reference YAML)."

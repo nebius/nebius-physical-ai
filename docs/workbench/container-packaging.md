@@ -46,6 +46,18 @@ capabilities, or a workload mount. A source change affects future image builds
 only. Existing image digests retain their original contents until a rebuilt,
 validated digest is explicitly promoted and recorded in the release manifest.
 
+Installing `openssh-server` generates host private keys during package setup.
+Every recipe must delete `/etc/ssh/ssh_host_*` in that same image layer and let
+SkyPilot's runtime `ssh-keygen -A` create per-pod keys. A later-layer deletion
+does not help: the reusable private keys remain recoverable from the install
+layer. The workbench prerequisite guard checks every Dockerfile and shared
+installer for this layer-local cleanup.
+
+For that reason, Isaac Lab deliberately has no
+`Dockerfile.k8s-prereqs` repair derivative. A historical Isaac Lab layer that
+contains generated host keys must be replaced by rebuilding its canonical
+Dockerfile; a child image cannot sanitize the ancestor blob.
+
 The accepted historical `npa-groot:0.1.0` artifact has
 the non-root `ubuntu` user, system Python, `rsync`, an SSH client, and
 passwordless sudo, but lacks `openssh-server`, runtime host-key generation, and
@@ -101,7 +113,7 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
-| Base CUDA 13 | `base/cuda13-b300/Dockerfile` | build base only |
+| Base CUDA 13 | `base/cuda13-blackwell/Dockerfile` | build base only |
 | PAIDF AnomalyGen Sky compatibility (restricted) | `paidf-anomalygen-sky/Dockerfile` | operator-built job shell; never public GHCR |
 | PAIDF Qwen Image Edit Sky compatibility (restricted) | `paidf-image-edit-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
 | PAIDF Cosmos3 Super Image2Video Sky compatibility (restricted) | `paidf-event-video-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
@@ -259,6 +271,24 @@ Required for all workbench images:
 5. **Capability drops at deploy** — K8s `securityContext` should drop `ALL`,
    set `allowPrivilegeEscalation: false`, and use `RuntimeDefault` seccomp
    (detection-training is the reference template).
+
+Do not serialize the build-time base reference into OCI config. In particular,
+the retired `npa.base_image` label exposed operator registry paths when
+`BASE_IMAGE` selected a private or staging parent. A repository-wide guard scans
+every `Dockerfile*` variant and rejects that key. The public-release preflight
+also reads each exact-digest OCI config and refuses the label, including when it
+was inherited from an ancestor image. Registry-neutral lineage labels such as
+`npa.base.image="npa-envgen"` may name a logical public foundation without copying
+its resolved registry reference.
+
+A digest pin records exact ancestry; it does not imply a clean-source rebuild.
+`detection-training` currently chains from a previously accepted
+`npa-detection-training` digest, and `lancedb` shares that accepted detector
+foundation. Those rebuilds therefore retain and extend every ancestor layer.
+Treat this as an explicit release-lineage tradeoff: keep the parent digest and
+reason visible in the Dockerfile, scan the complete built image rather than only
+its final filesystem, and move to an independent reproducible foundation when
+one is available.
 
 Strongly recommended for `service` images:
 
@@ -663,7 +693,8 @@ build hook.
    operator build/BYOF destination.
 2. Build from the checked-in Dockerfile (`skills/atomic/build-and-push-image`).
 3. Tag from `npa/pyproject.toml` `[tool.npa.supported-tools]` and
-   `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-b300`).
+   `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-blackwell`, with
+   `cuda13-b300` retained as a legacy alias).
 4. SONIC variants: `npa/src/npa/deploy/sonic_image_manifest.json`.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.

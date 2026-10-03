@@ -1,0 +1,20 @@
+{
+  "comparison_source_commit": "b002a53e32d7d149219ec45a11f96ec7d8b42904",
+  "baked_source_commit": "60d6908f09942e1c76a066ccc05ff15870d1eafb",
+  "comparison_helper_sha256": "10dc701a6a303561287779ea503e5e67b88874d14aa9621f74c9be8209cd70de",
+  "baked_helper_sha256": "21631e50bd98bdb10abd731a2129f6b2779c9f6776262eb8237051dc5033634b",
+  "unchanged_class_and_function_asts": [
+    "_DenseArguments",
+    "_Runtime",
+    "_arguments",
+    "_check_call",
+    "_compile_kernel",
+    "_direct_configuration",
+    "_direct_layout",
+    "_run_attention",
+    "_runtime",
+    "_tile",
+    "make_inference_attention"
+  ],
+  "changed_behavior": "The startup version guard accepts a longer Git abbreviation only if it identifies the exact qualified full commit and public version. Kernel construction, dispatch, layout checks, cache keys and call semantics are unchanged."
+}

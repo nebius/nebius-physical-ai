@@ -1,0 +1,8 @@
+{
+  "configurations": 40,
+  "case_outcomes": {
+    "pass": 141,
+    "filtered": 60,
+    "failed": 39
+  }
+}

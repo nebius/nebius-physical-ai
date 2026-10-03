@@ -188,6 +188,13 @@ client configuration before restarting discovery. A workflow that loses status
 access with `block_relaunch` remains unresolved: resuming reconciles the recorded
 managed job instead of submitting a second copy.
 
+Pending GPU pods block gang admission only when their exact Kubernetes node
+selectors can match a candidate node. Demand pinned to a different GPU or pool
+is excluded without translating product labels into marketing-name aliases.
+Unconstrained demand, unavailable candidate labels, and incomplete pending-pod
+inventory remain blocking. This is an admission snapshot, not a reservation;
+Kubernetes still owns final scheduling.
+
 ## Managed-Jobs Controller
 
 NPA defaults SkyPilot managed jobs to a Kubernetes controller:

@@ -196,6 +196,7 @@ CONTAINER_IMAGE_NAMES = {
     "alpamayo2-super": "npa-alpamayo2-super",
     "flex-pi": "npa-flex-pi",
     "curobo": "npa-curobo",
+    "open3d": "npa-open3d",
     "mjlab": "npa-mjlab",
     "content-agents": "npa-content-agents",
     "ncore": "npa-ncore",
@@ -234,6 +235,7 @@ SKYPILOT_BOOTSTRAP_ATTESTED_TOOLS: frozenset[str] = frozenset(
         "isaac-lab",
         "isaac-arena",
         "openarm",
+        "open3d",
         "rerun-viewer",
         "sim2real-control",
         "envgen",
@@ -304,7 +306,9 @@ OMNIVERSE_RESTRICTED_DERIVED_IMAGES = RESTRICTED_DERIVED_IMAGES
 UNVALIDATED_PUBLICATION_TOOLS: frozenset[str] = frozenset(
     {"openpi", "curobo", "ncore", "libero", "sam3"}
 ) | frozenset({"robotwin", "robomimic", "habitat-sim"} & CONTAINER_IMAGE_NAMES.keys())
-VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset({"antioch", "mjlab", "robocasa"})
+VALIDATION_CANDIDATE_TOOLS: frozenset[str] = frozenset(
+    {"antioch", "mjlab", "robocasa", "open3d"}
+)
 # A development candidate may use the trusted full-SHA builder before it has
 # earned a supported release tag.  Keep this state separate from the canonical
 # supported-tool inventory and from unbuilt release records.
@@ -315,6 +319,44 @@ DEVELOPMENT_BUILD_QUARANTINE_TOOLS: frozenset[str] = frozenset({"gymnasium-robot
 PRE_REGISTRATION_PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = frozenset(set())
 NEUTRAL_UNBUILT_CANDIDATE_TOOLS: frozenset[str] = frozenset()
 NEUTRAL_UNBUILT_DISPLAY_TAGS: dict[str, str] = {}
+# Previously accepted releases whose published bytes no longer satisfy the
+# repository's current security contract. Keep this separate from
+# UNVALIDATED_PUBLICATION_TOOLS: these images were built and capability-tested,
+# but must earn a new exact-image scan after their recipes are repaired.
+#
+# The listed base tags were inspected at their recorded public digests. Each
+# final filesystem contains package-generated /etc/ssh/ssh_host_* private keys
+# shared by every pull. Their direct Dockerfiles now remove those keys in the
+# install layer. The two derivative releases are also stale because their
+# manifests retain every layer of the affected base. Publication remains
+# quarantined until rebuilt candidates pass the image gates.
+LAYER_STALE_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {
+        "cosmos-curate",
+        "cosmos-evaluator",
+        "cosmos3",
+        "cosmos3-ray-serve",
+        "isaac-lab",
+        "isaac-arena",
+    }
+)
+# These exact public configs violate current runtime or disclosure claims even
+# though their filesystem layers are not the reason for quarantine. In
+# particular, operator-specific base-image references must never be serialized
+# into anonymously readable OCI labels.
+METADATA_STALE_PUBLICATION_TOOLS: frozenset[str] = frozenset(
+    {
+        "genesis",
+        "lerobot",
+        "lerobot-vlm-rl",
+        "loop-eval",
+        "reference-policy",
+        "sonic",
+    }
+)
+STALE_PUBLICATION_TOOLS: frozenset[str] = (
+    LAYER_STALE_PUBLICATION_TOOLS | METADATA_STALE_PUBLICATION_TOOLS
+)
 # Compatibility view used by publication callers and public imports. Derive it
 # from the canonical validation-state inventories; never maintain it
 # independently.
@@ -322,6 +364,7 @@ PUBLICATION_QUARANTINE_TOOLS: frozenset[str] = (
     UNVALIDATED_PUBLICATION_TOOLS
     | VALIDATION_CANDIDATE_TOOLS
     | NEUTRAL_UNBUILT_CANDIDATE_TOOLS
+    | STALE_PUBLICATION_TOOLS
 )
 
 # Some newer operator/BYOF pins have not yet been promoted to the supported
@@ -465,7 +508,9 @@ SUPPORTED_TOOL_VERSIONS = {
     "ltx2": "2.5-rtfetch-20260817",
     "alpamayo2-super": "0.1.0-cu128-r3",
     "flex-pi": "0.1.0-cu128-r2",
-    "curobo": "0.8.0-cuda13-b300-unbuilt",
+    "curobo": "0.8.0-cuda13-blackwell-unbuilt",
+    # CPU-only, so this image carries no CUDA tag family.
+    "open3d": "0.20.0-cpu-20260918",
     "mjlab": "dev-0202f396fb23f7d066fd452b469578e67151d382",
     "content-agents": "0.5.2-npa2",
     # Source packaging inventory only; no accepted public NCore release exists.
@@ -1910,7 +1955,7 @@ def validate_ncore_accepted_image_manifest(payload: Any) -> dict[str, Any]:
     require(isinstance(payload, dict), "manifest object")
     equal(payload, "format", "npa_ncore_accepted_image_manifest_v1")
     equal(payload, "status", "accepted")
-    equal(payload, "tag", public_release_tag_for_tool("ncore"))
+    equal(payload, "tag", _configured_public_release_tag_for_tool("ncore"))
     match(payload, "development_sha", r"[0-9a-f]{40}")
     for field in ("oci_digest", "amd64_manifest", "config_digest"):
         match(payload, field, r"sha256:[0-9a-f]{64}")
@@ -2165,6 +2210,14 @@ def supported_tool_version(tool: str) -> str:
         ) from exc
 
 
+def _configured_public_release_tag_for_tool(tool: str) -> str:
+    """Return the configured release tag without applying consumption policy."""
+
+    if tool == "sonic":
+        return SUPPORTED_TOOL_VERSIONS[tool]
+    return PUBLIC_RELEASE_TAG_OVERRIDES.get(tool, supported_tool_version(tool))
+
+
 def public_release_tag_for_tool(tool: str) -> str:
     """Return the exact repository pin that the public release channel must carry.
 
@@ -2172,9 +2225,14 @@ def public_release_tag_for_tool(tool: str) -> str:
     variant. The public inventory contract pins that validated cross-architecture
     runtime from ``SUPPORTED_TOOL_VERSIONS`` rather than either quarantined tag.
     """
-    if tool == "sonic":
-        return SUPPORTED_TOOL_VERSIONS[tool]
-    return PUBLIC_RELEASE_TAG_OVERRIDES.get(tool, supported_tool_version(tool))
+    if tool in PUBLICATION_QUARANTINE_TOOLS:
+        raise ValueError(
+            f"{tool!r} has no consumable public release: its configured release is "
+            "quarantined pending a rebuilt and accepted image. Use an explicit "
+            "operator-controlled registry/image, or validate an official immutable "
+            "dev-<full-source-sha> candidate before promotion."
+        )
+    return _configured_public_release_tag_for_tool(tool)
 
 
 def supported_lerobot_versions() -> tuple[str, ...]:
@@ -2352,28 +2410,35 @@ def container_image_for_tool(
     if tool == "robocasa":
         if not tag:
             raise ValueError(
-                f"{tool} has no accepted default image. Supply an immutable image "
+                f"{tool} has no accepted default image and remains quarantined. "
+                "Supply an immutable image "
                 "override or explicitly select a dev-<full-source-sha> tag for validation."
             )
         if re.fullmatch(r"dev-[0-9a-f]{40}", tag) is None:
             raise ValueError(
-                f"{tool} validation requires an exact dev-<full-source-sha> tag"
+                f"{tool} is quarantined; validation requires an exact dev-<full-source-sha> tag"
             )
+    public_registry = is_public_registry(resolved_registry)
+    # Some newly registered workflows need a stable, visibly unbuilt reference
+    # for validation and planning before any runnable release exists.  Keep this
+    # exception narrower than the publication quarantine: only the implicit
+    # checked-in sentinel may resolve.  An explicit use of that tag still goes
+    # through the fail-closed consumption gate below, and workflow submission
+    # requires a separately supplied exact-digest image.
+    public_unbuilt_planning_ref = (
+        public_registry and tag is None and tool in UNBUILT_CANDIDATE_TOOL_VERSIONS
+    )
     if (
         tool == "robomimic"
         and tool in PUBLICATION_QUARANTINE_TOOLS
-        and is_public_registry(resolved_registry)
+        and public_registry
         and not re.fullmatch(r"dev-[0-9a-f]{40}", tag or "")
     ):
         raise ValueError(
             "robomimic remains publication-quarantined for releases; "
             "select an explicit dev-<full-source-sha> for validation"
         )
-    if (
-        tool in {"ncore", "robomimic"}
-        and tool in PUBLICATION_QUARANTINE_TOOLS
-        and not tag
-    ):
+    if tool in {"ncore", "robomimic"} and not tag:
         display_tool = "NCore" if tool == "ncore" else tool
         raise ValueError(
             f"{display_tool} has no accepted release image. Supply the validated immutable "
@@ -2381,11 +2446,47 @@ def container_image_for_tool(
             "explicitly select a dev-<full-source-sha> tag in an operator-private "
             "registry for validation."
         )
-    if tool == "robotwin" and tool in PUBLICATION_QUARANTINE_TOOLS and not tag:
+    if tool == "robotwin" and not tag:
         raise ValueError(
             f"{tool!r} has no accepted release image. Supply a validated immutable "
             "image or explicitly select a dev-<full-source-sha> tag for validation."
         )
+    if tool in PENDING_REDISTRIBUTION_TOOLS and public_registry:
+        raise ValueError(
+            f"{tool!r} has pending corresponding-source closure and no accepted "
+            "public image. Use only a separately byte-qualified operator-private "
+            "image after its source/delivery gates pass; see "
+            "docs/workbench/byof-habitat-sim.md."
+        )
+    if not is_publicly_redistributable(tool) and public_registry:
+        raise ValueError(
+            f"{tool!r} is not publicly redistributable and is never distributed from a "
+            f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
+            f"your own registry (npa/docker/workbench/<tool>/build.sh --registry "
+            f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
+            f"docs/workbench/container-packaging.md."
+        )
+    # SONIC has a capability-aware manifest with independently accepted and
+    # quarantined image packages. Defer its tool-level decision until after
+    # resolving the variant, then gate the selected package below. This keeps
+    # the independently accepted npa-sonic-mujoco release usable without
+    # exempting the quarantined npa-sonic release from consumption policy.
+    if (
+        tool in PUBLICATION_QUARANTINE_TOOLS
+        and public_registry
+        and tool != "sonic"
+        and not public_unbuilt_planning_ref
+    ):
+        if tag is None:
+            # Centralize the actionable error shared by direct release-tag callers.
+            public_release_tag_for_tool(tool)
+        if re.fullmatch(r"dev-[0-9a-f]{40}", str(tag)) is None:
+            raise ValueError(
+                f"{tool!r} public release metadata is quarantined, so public tag "
+                f"{tag!r} cannot be consumed. Only an immutable "
+                "dev-<full-source-sha> candidate may be selected for validation; "
+                "otherwise use an explicit operator-controlled registry or --image."
+            )
     if tool == "sonic":
         entry = sonic_image_entry(
             gpu_target=gpu_target,
@@ -2393,7 +2494,32 @@ def container_image_for_tool(
             workload=workload,
         )
         image_name = str(entry["name"])
-        resolved_tag = tag or str(entry["tag"])
+        active_tag = str(entry["tag"])
+        candidate_tag = re.fullmatch(r"dev-[0-9a-f]{40}", tag or "") is not None
+        release_status = str(entry.get("public_release_status") or "quarantined")
+        if public_registry and not candidate_tag and release_status != "active":
+            reason = str(
+                entry.get("public_release_quarantine_reason")
+                or "the selected public release has not passed current image policy"
+            )
+            raise ValueError(
+                f"SONIC image variant {entry['id']!r} resolves to quarantined "
+                f"public release {image_name}:{active_tag} (status "
+                f"{release_status!r}): {reason}"
+            )
+        if (
+            public_registry
+            and tag is not None
+            and tag != active_tag
+            and not candidate_tag
+        ):
+            raise ValueError(
+                f"Public tag {tag!r} does not match active SONIC image variant "
+                f"{entry['id']!r} ({active_tag!r}). Use the manifest release, an "
+                "immutable dev-<full-source-sha> validation candidate, or an "
+                "explicit operator-controlled registry/image."
+            )
+        resolved_tag = tag or active_tag
     else:
         if image_variant:
             raise ValueError(
@@ -2412,30 +2538,18 @@ def container_image_for_tool(
             resolved_tag = tag or "neutral-unbuilt"
         else:
             image_name = CONTAINER_IMAGE_NAMES[tool]
-            resolved_tag = tag or (
-                public_release_tag_for_tool(tool)
-                if is_public_registry(resolved_registry)
-                else supported_tool_version(tool)
-            )
-    if tool in PENDING_REDISTRIBUTION_TOOLS and is_public_registry(resolved_registry):
-        raise ValueError(
-            f"{tool!r} has pending corresponding-source closure and no accepted "
-            "public image. Use only a separately byte-qualified operator-private "
-            "image after its source/delivery gates pass; see "
-            "docs/workbench/byof-habitat-sim.md."
-        )
-    if not is_publicly_redistributable(tool) and is_public_registry(resolved_registry):
-        raise ValueError(
-            f"{tool!r} is not publicly redistributable and is never distributed from a "
-            f"public registry, so {resolved_registry!r} cannot serve it. Build it into "
-            f"your own registry (npa/docker/workbench/<tool>/build.sh --registry "
-            f"<your-registry> --push) and point NPA_REGISTRY at that registry; see "
-            f"docs/workbench/container-packaging.md."
-        )
+            if tag:
+                resolved_tag = tag
+            elif public_unbuilt_planning_ref:
+                resolved_tag = supported_tool_version(tool)
+            elif public_registry:
+                resolved_tag = public_release_tag_for_tool(tool)
+            else:
+                resolved_tag = supported_tool_version(tool)
     if (
         tool == "ncore"
-        and is_public_registry(resolved_registry)
-        and resolved_tag == public_release_tag_for_tool("ncore")
+        and public_registry
+        and resolved_tag == _configured_public_release_tag_for_tool("ncore")
     ):
         ncore_accepted_image_manifest()
     return f"{resolved_registry.rstrip('/')}/{image_name}:{resolved_tag}"

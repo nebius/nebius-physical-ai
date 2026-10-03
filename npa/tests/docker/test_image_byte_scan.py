@@ -523,6 +523,30 @@ def confidential_ledger(tmp_path, detector):
     )
 
 
+def test_schedulable_cpus_prefers_the_affinity_mask(monkeypatch):
+    # The helper runs one worker per schedulable CPU, so the caller has to read
+    # the same mask rather than the machine's total.
+    monkeypatch.setattr(os, "sched_getaffinity", lambda pid: {1, 3, 5}, raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 64)
+    assert W.schedulable_cpus() == 3
+
+
+def test_schedulable_cpus_falls_back_where_there_is_no_affinity_call(monkeypatch):
+    # macOS has no sched_getaffinity, and the hermetic tests import this module
+    # there, so the accessor must not reach for it unconditionally.
+    monkeypatch.delattr(os, "sched_getaffinity", raising=False)
+    monkeypatch.setattr(os, "cpu_count", lambda: 6)
+    assert W.schedulable_cpus() == 6
+    monkeypatch.setattr(os, "cpu_count", lambda: None)
+    assert W.schedulable_cpus() == 1
+
+
+def test_pipeline_depth_follows_the_schedulable_cpu_count():
+    # A fixed depth would starve the helper's workers on a large host and
+    # oversubscribe them on a constrained one.
+    assert W.PIPELINE_RECORDS == 4 * W.schedulable_cpus()
+
+
 def test_pipeline_byte_bound_is_checked_before_the_next_record_is_read(
     tmp_path, monkeypatch
 ):
@@ -3244,14 +3268,16 @@ def test_added_source_population_is_detected_after_scan(tmp_path, monkeypatch):
     )
 
 
-@pytest.mark.parametrize("change", ["source", "config", "helper"])
+@pytest.mark.parametrize("change", ["source", "memory-source", "config", "helper"])
 def test_stale_or_different_tool_receipt_cannot_be_accepted_as_current(
     tmp_path, change
 ):
     authorization = fixture(tmp_path)
     receipt = W.bound_json(authorization["tools_receipt"])
-    if change == "source":
-        receipt["source"]["main.go"] = "0" * 64
+    if change in {"source", "memory-source"}:
+        name = "memory.go" if change == "memory-source" else "main.go"
+        assert name in receipt["source"]
+        receipt["source"][name] = "0" * 64
     elif change == "config":
         receipt["config"]["sha256"] = "0" * 64
     else:

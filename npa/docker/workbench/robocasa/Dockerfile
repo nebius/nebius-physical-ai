@@ -18,7 +18,7 @@
 #     the documented download_kitchen_assets script under the operator's own
 #     network access. No model weights are baked.
 #   * Any credentials, tokens, or EULA acceptance.
-FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4
+FROM nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42
 
 ARG ROBOCASA_VERSION=0.1.1
 ARG NPA_SOURCE_SHA
@@ -26,7 +26,7 @@ ARG LEROBOT_SOURCE_COMMIT=7e241bd630a3719a56157a497ce5d08f244784f1
 
 LABEL npa.tool="robocasa" \
       npa.version="${ROBOCASA_VERSION}" \
-      npa.base_image="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4" \
+      npa.base_image="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04@sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42" \
       npa.robocasa.revision="8f3c96ec8d1bfcd8126cad2bca887da98d30e997" \
       npa.robocasa.derivative="1.0.0+npa2" \
       npa.robocasa.patch.sha256="2966983253141bd66d3ce8ad62824ab267683ad45c07eb9ea8e174358402c01e" \
@@ -39,7 +39,7 @@ LABEL npa.tool="robocasa" \
       npa.runtime_user="ubuntu" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.base.name="nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04" \
-      org.opencontainers.image.base.digest="sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4"
+      org.opencontainers.image.base.digest="sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42"
 
 ENV NPA_IMAGE_SOURCE_SHA=${NPA_SOURCE_SHA} \
     ROBOCASA_REQUIRE_IMAGE_SOURCE_SHA=1 \
@@ -83,6 +83,7 @@ RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         python3.12 python3.12-dev python3.12-venv \
     && python3.12 -m venv /opt/robocasa/venv \
+    && test "$(printf %s "${NPA_SOURCE_SHA}" | wc -c)" -eq 40 \
     && rm -rf /var/lib/apt/lists/* /run/systemd/resolve \
     && test ! -e /run/systemd/resolve \
     && test ! -L /run/systemd/resolve
@@ -279,7 +280,9 @@ RUN printf '%s\n' "${NPA_SOURCE_SHA}" | grep -Eq '^[0-9a-f]{40}$' \
     && python -c "import torch, torchvision; assert torch.__version__ == '2.13.0+cu129'; assert torch.version.cuda == '12.9'; assert torchvision.__version__ == '0.28.0+cu129'" \
     && python -c "import gymnasium; assert gymnasium.__version__ == '0.29.1'; from lerobot.policies.act.modeling_act import ACTPolicy; from lerobot.configs.policies import PreTrainedConfig; from lerobot.policies.factory import make_pre_post_processors"
 
-# Copy the shared workbench implementation into the image.
+# Copy the shared workbench implementation and its two local-only helpers into
+# the image.  Keep this list explicit so the service image does not acquire the
+# full NPA CLI/client dependency tree by accident.
 RUN mkdir -p /app/npa/workbench /app/npa/clients /app/npa/cli
 RUN touch /app/npa/__init__.py /app/npa/workbench/__init__.py \
     /app/npa/clients/__init__.py /app/npa/cli/__init__.py

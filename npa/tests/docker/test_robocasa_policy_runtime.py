@@ -41,7 +41,7 @@ ROBOCASA_COMMIT = "8f3c96ec8d1bfcd8126cad2bca887da98d30e997"
 ROBOSUITE_COMMIT = "85abee228d1c43ab1939bce33028099945d453b4"
 PINNED_CUDA_BASE_NAME = "nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04"
 PINNED_CUDA_BASE_DIGEST = (
-    "sha256:0a1cb6e7bd047a1067efe14efdf0276352d5ca643dfd77963dab1a4f05a003a4"
+    "sha256:622e78a1d02c0f90ed900e3985d6c975d8e2dc9ee5e61643aed587dcf9129f42"
 )
 PINNED_CUDA_BASE = f"{PINNED_CUDA_BASE_NAME}@{PINNED_CUDA_BASE_DIGEST}"
 OPENCV_PROVIDERS = {
@@ -831,3 +831,20 @@ def test_robocasa_candidate_version_is_consistent() -> None:
     assert "ARG ROBOCASA_VERSION=0.1.1" in dockerfile
     assert 'ROBOCASA_VERSION="${ROBOCASA_VERSION:-0.1.1}"' in build_script
     assert "npa.cuda_architectures" not in dockerfile
+
+
+def test_robocasa_image_includes_local_runtime_dependencies_and_smokes_service() -> (
+    None
+):
+    text = DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "COPY src/npa/clients/storage.py /app/npa/clients/storage.py" in text
+    assert "COPY src/npa/cli/path_contract.py /app/npa/cli/path_contract.py" in text
+    assert (
+        'python -c "from npa.workbench.robocasa.service import app; '
+        'assert app is not None"'
+    ) in text
+
+    final_user = text.rindex("USER ubuntu")
+    runtime_smoke = text.index("&& python /app/smoke_functional.py")
+    assert final_user < runtime_smoke

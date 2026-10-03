@@ -2414,3 +2414,107 @@ def test_paidf_documented_cleanup_keeps_receipt_selection_in_original_shell(
         and record["start_ticks"] is None
     )
     assert api._session_members(fixture["original"]) == []
+
+
+def _demo_storage_fixture(monkeypatch):
+    from npa.clients.config import StorageConfig
+    from npa.orchestration.npa_workflow import demos
+
+    storage = StorageConfig(
+        "example-bucket",
+        "https://storage.example.invalid",
+        "saved-access",
+        "saved-secret",
+    )
+    monkeypatch.setattr(
+        demos, "_storage", lambda project: ("example", storage, "example-bucket", "")
+    )
+    selection = {
+        "project": "example",
+        "s3_bucket": "example-bucket",
+        "s3_endpoint": storage.endpoint_url,
+        "s3_prefix": "demo/run",
+    }
+    state = workflow_state.WorkflowS3Config(
+        "example-bucket",
+        "demo/run",
+        storage.endpoint_url,
+        storage.aws_access_key_id,
+        storage.aws_secret_access_key,
+        "example",
+    )
+    return state, demos.demo_storage_environment(selection)
+
+
+def _observer_without_storage(environment):
+    from npa.orchestration.npa_workflow.submit_credentials import (
+        STORAGE_ENDPOINT_ENV_NAMES,
+    )
+
+    removed = {
+        *STORAGE_ENDPOINT_ENV_NAMES,
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "NPA_SKYPILOT_PROJECT",
+    }
+    return {key: value for key, value in environment.items() if key not in removed}
+
+
+def test_demo_stop_status_resume_preserves_actual_controller_identity(
+    local_runtime, monkeypatch
+):
+    from npa.orchestration.skypilot.storage_context import call_with_workflow_storage
+
+    state, demo_environment = _demo_storage_fixture(monkeypatch)
+    base = dict(local_runtime["environment"])
+    local_runtime["environment"] = cleanup.sky_environment(
+        local_runtime["isolated_dir"], environment={**base, **demo_environment}
+    )
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    assert original["project_alias"] == state.project == "example"
+    api.stop_isolated_api(local_runtime["isolated_dir"])
+    assert not _record(local_runtime).get("project_alias")
+    observer_environment = _observer_without_storage(base)
+    monkeypatch.setattr(os, "environ", observer_environment)
+    call_with_workflow_storage(
+        state, cleanup.sky_environment, local_runtime["isolated_dir"]
+    )
+    recovered = _record(local_runtime)
+    assert recovered["project_alias"] == state.project
+    assert recovered["pid"] != original["pid"]
+    assert (
+        recovered["marker"] == original["marker"]
+        and recovered["port"] == original["port"]
+    )
+    api.ensure_isolated_api(**local_runtime)
+    assert _record(local_runtime)["pid"] == recovered["pid"]
+    assert os.environ == observer_environment
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_ENDPOINT_URL_S3",
+        "NPA_SKYPILOT_PROJECT",
+    ],
+)
+def test_resolved_storage_scope_does_not_relax_foreign_principal_fence(
+    local_runtime, monkeypatch, field
+):
+    from npa.orchestration.skypilot.storage_context import call_with_workflow_storage
+
+    state, demo_environment = _demo_storage_fixture(monkeypatch)
+    local_runtime["environment"].update(demo_environment)
+    api.ensure_isolated_api(**local_runtime)
+    original = _record(local_runtime)
+    foreign = {
+        **local_runtime,
+        "environment": {**local_runtime["environment"], field: "different-principal"},
+    }
+    with pytest.raises(api.IsolatedApiError, match="different executing identity"):
+        call_with_workflow_storage(state, api.ensure_isolated_api, **foreign)
+    assert _record(local_runtime)["pid"] == original["pid"]
