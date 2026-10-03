@@ -76,6 +76,10 @@ def _assert_evidence(result, configuration: dict) -> None:
     assert result.passed == (result.score >= result.success_threshold)
 
 
+def _write_live_result(result) -> None:
+    vlm_eval.write_result(asdict(result), result_uri=result.result_uri)
+
+
 @pytest.mark.parametrize("strategy", ["sequence", "keyframes"])
 @pytest.mark.parametrize("case", ["complete", "incomplete", "gray"])
 def test_frozen_hosted_sampler_controls(monkeypatch, case: str, strategy: str) -> None:
@@ -86,7 +90,7 @@ def test_frozen_hosted_sampler_controls(monkeypatch, case: str, strategy: str) -
         destination.mkdir(mode=0o700, parents=True)
         _record_transport(monkeypatch, destination)
         result = vlm_eval.evaluate_vlm(**configuration["request"])
-        vlm_eval.write_result(result, result_uri=result.result_uri)
+        _write_live_result(result)
     finally:
         os.umask(previous)
     _assert_evidence(result, configuration)

@@ -6,12 +6,27 @@ import hashlib
 from pathlib import Path
 import shutil
 import subprocess
+from dataclasses import asdict
 
 import numpy as np
 from PIL import Image
 import pytest
 
 from npa.workbench import vlm_eval
+
+
+def test_live_sampler_writer_serializes_public_result(tmp_path) -> None:
+    from tests.e2e.test_vlm_frame_selection_live import _write_live_result
+
+    result = vlm_eval.evaluate_stub(
+        input_path="synthetic-control",
+        output_path=str(tmp_path / "result.json"),
+        score=0.0,
+    )
+    _write_live_result(result)
+    import json
+
+    assert json.loads(Path(result.result_uri).read_text()) == asdict(result)
 
 
 @pytest.mark.parametrize(
