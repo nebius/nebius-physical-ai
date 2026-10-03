@@ -65,6 +65,10 @@ real pose; it does not prove full-benchmark completion.
   and report validation requires the known metrics for every status plus sample
   timeline consistency. Do not accept a self-consistent but invented journal.
 - Energy is a Pinocchio inverse-dynamics proxy on the optimized joint trajectory.
+  Validators bind all interior joint positions and derivatives to the retained
+  path using the pinned cubic interpolation/retiming law, not endpoint-only or
+  equal-timestep comparisons. Its float32 roundoff allowance is distinct from
+  the unchanged strict independent torque replay criterion.
   Planner success is upstream feasibility, not independent collision
   certification or authorization to move physical hardware.
 
@@ -116,6 +120,17 @@ failure. The mode-0700 local working directory is also retained. Inspect this
 evidence before any retry. Do not repeat a successful GPU run to repair
 telemetry. CUDA/Warp caches are node-local ephemeral state unless explicitly
 mounted by the workflow.
+
+Set `NPA_CUROBO_WORK_DIR` to an existing private writable volume for all runner,
+validation, decode and semantic-comparison scratch. For the observed complete
+5,200-input population, plan at least 8 GiB free scratch separately from image
+storage; the CPU workflow state requests 16 GiB RAM. Journal, RRD, full decoded
+text and regenerated/normalized copies coexist. Measure capacity for larger
+inputs; the CPU selector does not reserve disk or create a persistent volume.
+These are capacity planning values, not input/time/job limits. Regeneration and
+failed-run file upload/readback stream bytes, but parsed rows and semantic state
+remain memory-resident. Never rerun a successful GPU matrix merely to repair CPU
+artifact processing.
 After both result artifacts pass S3 readback verification, the runtime removes
 only that call's working directory. A cleanup failure emits a fixed warning and
 preserves the successful result; it must not trigger another GPU run.

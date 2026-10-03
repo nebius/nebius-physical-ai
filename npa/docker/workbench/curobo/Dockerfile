@@ -12,7 +12,7 @@ ARG UBUNTU_SNAPSHOT=20260920T000000Z
 LABEL npa.tool="curobo" \
       npa.version="0.8.0-cuda13-blackwell-unbuilt" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
-      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause AND (GPL-3.0-or-later WITH GCC-exception-3.1)"
+      org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause AND GPL-2.0-or-later AND GPL-3.0-or-later AND LGPL-2.1-or-later AND (GPL-3.0-or-later WITH GCC-exception-3.1) AND LicenseRef-NPA-cuRobo-Other-Notices"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
@@ -109,6 +109,7 @@ RUN pip install --no-deps --no-build-isolation --no-cache-dir /opt/npa-src \
     && rm -rf /root/.cache /tmp/pip-* /tmp/npa-curobo-import-cache
 
 COPY --chmod=0444 docker/workbench/curobo/REDISTRIBUTION.md /usr/share/doc/npa-curobo/REDISTRIBUTION.md
+COPY --chmod=0444 docker/workbench/curobo/distro-source-closure.json /usr/share/doc/npa-curobo/distro-source-closure.json
 COPY --chmod=0755 docker/workbench/curobo/entrypoint.sh /usr/local/bin/curobo-entrypoint
 RUN install -d -m 0755 -o ubuntu -g ubuntu /workspace /workspace/.cache
 WORKDIR /workspace

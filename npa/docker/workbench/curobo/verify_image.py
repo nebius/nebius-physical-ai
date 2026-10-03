@@ -183,6 +183,32 @@ def verify_image(
     }
     runtime_import_receipt = contract["runtime_import_receipt"]
     expected[_path(runtime_import_receipt["path"])] = runtime_import_receipt
+    distro = contract["distro_source_closure"]
+    distro_manifest = distro["manifest"]
+    expected[_path(distro_manifest["path"])] = distro_manifest
+    versioned = {}
+    for row in distro["copyright_files"]:
+        path = _path(row["path"])
+        if path in expected and any(
+            row[key] != expected[path][key] for key in ("sha256", "size")
+        ):
+            raise ImageVerificationError("conflicting distro notice identities")
+        expected[path] = row
+        versioned[path] = {
+            (entry["sha256"], entry["size"]) for entry in row["ancestor_versions"]
+        }
+        if (row["sha256"], row["size"]) not in versioned[path]:
+            raise ImageVerificationError("final notice is absent from its history")
+    databases = {row["sha256"]: row for row in distro["package_databases"]}
+    if not databases or len(databases) != len(distro["package_databases"]):
+        raise ImageVerificationError("missing or repeated distro package databases")
+    final_database = databases[distro["final_dpkg_database_sha256"]]
+    database_path = "var/lib/dpkg/status"
+    expected[database_path] = final_database
+    versioned[database_path] = {
+        (row["sha256"], row["size"]) for row in databases.values()
+    }
+    observed_databases = set()
     # PyTorch's generated cuDNN operator declarations are BSD-licensed adapters,
     # not NVIDIA SDK headers. Only exact independently verified wheel bytes at
     # these exact paths qualify, together with the wheel's complete license.
@@ -481,7 +507,12 @@ def verify_image(
                                 "size": size,
                                 "matches": matches,
                             }
-                            if not matches:
+                            if path == database_path:
+                                observed_databases.add(digest)
+                            allowed_version = (digest, size) in versioned.get(
+                                path, set()
+                            )
+                            if not matches and not allowed_version:
                                 issue(
                                     "retained_payload_hash_mismatch",
                                     layer_index,
@@ -495,6 +526,12 @@ def verify_image(
                 findings.append(
                     {"code": "required_payload_missing", "expected_path": path}
                 )
+            elif not observed[path]["matches"]:
+                findings.append(
+                    {"code": "final_payload_hash_mismatch", "expected_path": path}
+                )
+        if observed_databases != set(databases):
+            findings.append({"code": "distro_package_history_mismatch"})
         for path in expected_links:
             if path not in observed_links:
                 findings.append(
@@ -538,6 +575,15 @@ def verify_image(
         "runtime_import_receipt_verified": (
             runtime_import_receipt["path"] in observed
             and observed[runtime_import_receipt["path"]]["matches"]
+        ),
+        "verified_distro_database_versions": len(observed_databases & set(databases)),
+        "verified_distro_copyright_files": sum(
+            row["path"] in observed and observed[row["path"]]["matches"]
+            for row in distro["copyright_files"]
+        ),
+        "distro_source_manifest_verified": (
+            distro_manifest["path"] in observed
+            and observed[distro_manifest["path"]]["matches"]
         ),
         "required_payload_count": len(expected),
         "findings": findings,

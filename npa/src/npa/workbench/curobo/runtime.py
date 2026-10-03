@@ -16,6 +16,7 @@ from pathlib import Path
 
 from npa.cli.path_contract import validate_read_path, validate_write_path
 from npa.workbench.dataset.storage import read_bytes_uri, uri_join, write_bytes_uri
+from npa.workbench.dataset import storage as dataset_storage
 from npa.workbench.storage_scope import authorize_uri
 
 from .audit import audit_bytes
@@ -45,6 +46,35 @@ def _paths(request: RunRequest):
 def _publish(uri: str, payload: bytes):
     write_bytes_uri(uri, payload)
     if hashlib.sha256(read_bytes_uri(uri)).digest() != hashlib.sha256(payload).digest():
+        raise CuroboError("artifact S3 read-after-write digest mismatch")
+
+
+def _stream_digest(stream):
+    digest, size = hashlib.sha256(), 0
+    while chunk := stream.read(1024 * 1024):
+        digest.update(chunk)
+        size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _publish_file(uri: str, path: Path):
+    target = authorize_uri(uri, operation="write")
+    authorize_uri(uri, operation="read")
+    if target.kind != "s3":
+        raise CuroboError("cuRobo evidence publication requires S3")
+    client = dataset_storage._s3_client()
+    with path.open("rb") as stream:
+        expected = _stream_digest(stream)
+        stream.seek(0)
+        client.put_object(
+            Bucket=target.bucket, Key=target.key, Body=stream, ContentLength=expected[1]
+        )
+    body = client.get_object(Bucket=target.bucket, Key=target.key)["Body"]
+    try:
+        observed = _stream_digest(body)
+    finally:
+        body.close()
+    if expected != observed:
         raise CuroboError("artifact S3 read-after-write digest mismatch")
 
 
@@ -109,41 +139,45 @@ def _partial_journal(root: Path):
     path = root / "output/problems.jsonl"
     if not path.is_file() or path.is_symlink():
         return None
-    payload = path.read_bytes()
-    physical_lines = payload.split(b"\n") if payload else []
-    if payload.endswith(b"\n"):
-        physical_lines.pop()
-    complete_record_count = 0
-    for line in physical_lines:
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            continue
-        if isinstance(record, dict):
-            complete_record_count += 1
-    return payload, _evidence_record(
-        "partial_journal",
-        "partial-problems.jsonl",
-        payload,
-        partial=True,
-        physical_line_count=len(physical_lines),
-        complete_record_count=complete_record_count,
-    )
+    digest, size = hashlib.sha256(), 0
+    physical_lines, complete_records = 0, 0
+    with path.open("rb") as stream:
+        for line in stream:
+            digest.update(line)
+            size += len(line)
+            physical_lines += 1
+            try:
+                complete_records += isinstance(json.loads(line), dict)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                continue
+    return path, {
+        "role": "partial_journal",
+        "path": "partial-problems.jsonl",
+        "bytes": size,
+        "sha256": digest.hexdigest(),
+        "partial": True,
+        "physical_line_count": physical_lines,
+        "complete_record_count": complete_records,
+    }
+
+
+def _file_evidence_record(role: str, path: Path) -> dict:
+    with path.open("rb") as stream:
+        digest, size = _stream_digest(stream)
+    return {"role": role, "path": path.name, "bytes": size, "sha256": digest}
 
 
 def _publish_failure_evidence(
     kind: str, request: RunRequest, root: Path, exit_code: int
 ) -> str:
     namespace = uri_join(request.output_path, _FAILURE_NAMESPACE, request.run_id)
-    runtime_log = (root / "runtime.log").read_bytes()
-    artifacts = [_evidence_record("runtime_log", "runtime.log", runtime_log)]
-    _publish(uri_join(namespace, "runtime.log"), runtime_log)
+    runtime_log = root / "runtime.log"
+    artifacts = [_file_evidence_record("runtime_log", runtime_log)]
+    _publish_file(uri_join(namespace, "runtime.log"), runtime_log)
     partial = _partial_journal(root)
     if partial is not None:
-        payload, record = partial
-        _publish(uri_join(namespace, record["path"]), payload)
+        path, record = partial
+        _publish_file(uri_join(namespace, record["path"]), path)
         artifacts.append(record)
     receipt = canonical(
         {
@@ -281,7 +315,9 @@ def _require_replay_tolerance(replay: dict) -> None:
 
 
 def validate(request: RunRequest):
-    with tempfile.TemporaryDirectory(prefix="npa-curobo-validate-") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="npa-curobo-validate-", dir=os.environ.get("NPA_CUROBO_WORK_DIR")
+    ) as directory:
         result_bytes, journal, report, rows = _download_artifacts(
             request, Path(directory)
         )
@@ -299,9 +335,12 @@ def validate(request: RunRequest):
 
 
 def visualize(request: RunRequest):
-    with tempfile.TemporaryDirectory(prefix="npa-curobo-viz-") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="npa-curobo-viz-", dir=os.environ.get("NPA_CUROBO_WORK_DIR")
+    ) as directory:
         root = Path(directory)
         result_bytes, _journal, _report, rows = _download_artifacts(request, root)
+        del _journal
         result = build_rrd(
             root / "problems.jsonl", root / "planning.rrd", run_id=request.run_id
         )

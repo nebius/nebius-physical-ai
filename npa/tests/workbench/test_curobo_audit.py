@@ -206,6 +206,9 @@ def test_dynamics_audit_recomputes_torque_and_energy(mutation):
             "torque_limits_nm": [87.0, 87.0, 87.0, 87.0, 12.0, 12.0, 12.0],
         },
     }
+    # The shared-sample positive control binds the complete actual path, not
+    # just names. Independent deep retiming controls live in test_curobo_binding.
+    row["trajectory"] = json.loads(json.dumps(row["dynamics_evidence"]["trajectory"]))
     if mutation == "torque":
         row["dynamics_evidence"]["torques_nm"][1][0] = 2.0
     elif mutation == "limit":

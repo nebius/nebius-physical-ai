@@ -66,6 +66,57 @@ def test_bakes_proved_skypilot_core_bootstrap_closure():
     assert "fuse3" not in install_layer.split()
 
 
+def test_full_distro_source_and_notice_closure_is_baked_and_byte_bound():
+    source_path = DOCKERFILE.with_name("distro-source-closure.json")
+    raw = source_path.read_bytes()
+    source = json.loads(raw)
+    binding = json.loads(RUNTIME_PAYLOAD.read_text())["distro_source_closure"]
+    assert source["schema_version"] == "npa.curobo.distro-source-closure.v1"
+    assert binding["manifest"] == {
+        "path": "usr/share/doc/npa-curobo/distro-source-closure.json",
+        "size": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    assert binding["package_databases"] == source["dpkg_databases"]
+    assert binding["copyright_files"] == source["notice_files"]
+    assert binding["final_dpkg_database_sha256"] == source["final_dpkg_database_sha256"]
+    assert len(source["packages"]) == 250
+    assert len(source["dpkg_databases"]) == 4
+    assert len(source["notice_files"]) == 164
+    assert len(source["sources"]) == 143
+    sources = {(row["package"], row["version"]) for row in source["sources"]}
+    vendor = {
+        (row["package"], row["version"]) for row in source["vendor_source_exceptions"]
+    }
+    assert len(sources) == 143 and len(vendor) == 2 and not sources & vendor
+    assert {
+        (row["source"], row["source_version"]) for row in source["packages"]
+    } == sources | vendor
+    for row in source["sources"]:
+        assert row["artifacts"]
+        assert any(item["filename"].endswith(".dsc") for item in row["artifacts"])
+        for artifact in row["artifacts"]:
+            assert artifact["url"].startswith("https://snapshot.ubuntu.com/ubuntu/")
+            assert artifact["url"].endswith("/" + artifact["filename"])
+            assert artifact["bytes"] > 0
+            assert len(bytes.fromhex(artifact["sha256"])) == 32
+    notices = {row["path"]: row for row in source["notice_files"]}
+    assert len(notices) == 164
+    for row in source["vendor_source_exceptions"]:
+        assert row["notice_path"] in notices
+    for row in notices.values():
+        assert {"size": row["size"], "sha256": row["sha256"]} in row[
+            "ancestor_versions"
+        ]
+    dockerfile = DOCKERFILE.read_text()
+    assert (
+        "COPY --chmod=0444 docker/workbench/curobo/distro-source-closure.json "
+        "/usr/share/doc/npa-curobo/distro-source-closure.json"
+    ) in dockerfile
+    assert "GPL-2.0-or-later AND GPL-3.0-or-later AND LGPL-2.1-or-later" in dockerfile
+    assert "(GPL-3.0-or-later WITH GCC-exception-3.1)" in dockerfile
+
+
 def test_pip_bootstrap_distribution_is_content_pinned():
     text = DOCKERFILE.read_text()
     assert (

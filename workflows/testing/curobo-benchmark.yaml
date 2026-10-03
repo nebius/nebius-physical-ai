@@ -67,6 +67,10 @@ states:
     next: visualize
   visualize:
     toolRef: workbench.curobo.visualize
+    # This state uses 16Gi RAM; provision an existing private writable scratch
+    # volume with >=8Gi free for the observed complete population, independently
+    # of image storage. NPA_CUROBO_WORK_DIR covers decode/reference scratch too.
+    # These are capacity requirements, not workload/time/job-count limits.
     resources: cpu
     params:
       curobo_input_uri: "{{config.results_uri}}"

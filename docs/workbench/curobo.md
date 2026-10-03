@@ -34,7 +34,10 @@ that upstream excludes. The eligible success rate is also reported. Results
 include measured plan/solve times, pose errors, joint and FK tool path lengths,
 motion duration, jerk, inverse-dynamics energy proxy and torque violations.
 The exact optimized trajectory and torque samples behind dynamics metrics are
-retained. The digest-pinned GPU validation stage independently replays FK from
+retained. Both journal validators bind every retained joint position and derivative
+to that dynamics series, accounting for the pinned cubic B-spline interpolation
+and derivative retiming. Equal endpoints or self-consistent energy alone cannot
+bind a different interior path. The digest-pinned GPU validation stage independently replays FK from
 joint samples while Pinocchio recomputes per-sample torque, energy and limit
 violations CPU-side in the same image. This is a measured downstream consumer,
 not hardware-execution permission. No upstream published performance number is
@@ -76,6 +79,23 @@ namespace. If evidence publication fails, the subprocess failure remains
 primary and reports the secondary failure type without exposing its potentially
 sensitive message.
 
+Set `NPA_CUROBO_WORK_DIR` to an existing private writable volume for the runner,
+CPU artifact processing, full decoded text and regenerated comparison RRDs.
+Visualization is not lightweight: observed 5,200-input populations each retained
+approximately 540 MB of journal, 550 MB of RRD and 925 MB of decoded text, plus a
+regenerated journal/recording and normalization copies. Plan at least 8 GiB of
+available scratch, separately from image storage, for that population. The
+reference CPU state requests 16 GiB RAM; larger operator inputs require measured,
+proportionately larger capacity. These are capacity planning values, not input,
+time or job limits. Parsed JSON rows and comparison state remain memory-resident;
+this is not a constant-memory validator. The `cpu` selector does not provision a
+persistent scratch volume or reserve its disk capacity. Measure free space and
+resource requests before choosing the node. Journal regeneration and failed-run
+log/journal publication stream bytes, including read-back hashing, without
+truncating or discarding failed records. Temporary CPU scratch is removed at
+operation exit; failed runner working directories and durable failure artifacts
+remain available for diagnosis.
+
 The image is a publication candidate until exact-image scans and real hardware
 results are accepted. Source/robot assets and benchmark datasets have separate
 Apache-2.0/MIT/BSD notices. Pinocchio's distro `libgomp1` runtime and matching
@@ -114,3 +134,9 @@ Every declared artifact is uploaded to the run-scoped S3 prefix and read back
 before success. A workload failure uploads its input, partial outputs, redacted
 failure record and receipt; an upload failure retains and, when S3 remains
 reachable, publishes the per-object failure receipt.
+
+The independent digest option is serverless-only; dry-run and local execution
+reject it rather than imply an identity check. Generic `golden-eval run-all`
+does not supply an independently frozen per-image digest and cannot qualify this
+quarantined candidate. Use the explicit single-image command above; a batch
+failure is not a reason to remove its digest admission gate.

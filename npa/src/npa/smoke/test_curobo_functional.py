@@ -245,7 +245,7 @@ def _upload_tree(
 
 def main():
     run_id = os.environ.get("NPA_SMOKE_RUN_ID", "curobo-functional")
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+", run_id):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", run_id):
         raise RuntimeError("NPA_SMOKE_RUN_ID must be a filesystem-safe identity")
     source_commit = os.environ.get("NPA_IMAGE_SOURCE_SHA", "")
     if not re.fullmatch(r"[0-9a-f]{40}", source_commit):

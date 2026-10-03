@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import io
 import json
 import subprocess
 from pathlib import Path
@@ -372,6 +373,123 @@ def test_prepare_full_recipe_readback_and_hash_mismatch(monkeypatch):
         runtime.prepare(PrepareRequest(output_path="s3://example-bucket/recipe.json"))
 
 
+def _mock_streamed_evidence(monkeypatch, read, write):
+    def put(*, Bucket, Key, Body, ContentLength):
+        assert Body.seekable()
+        payload = b"".join(iter(lambda: Body.read(4096), b""))
+        assert len(payload) == ContentLength
+        write(f"s3://{Bucket}/{Key}", payload)
+
+    client = SimpleNamespace(
+        put_object=put,
+        get_object=lambda *, Bucket, Key: {
+            "Body": io.BytesIO(read(f"s3://{Bucket}/{Key}"))
+        },
+    )
+    monkeypatch.setattr(runtime.dataset_storage, "_s3_client", lambda: client)
+
+
+@pytest.mark.parametrize("changed_readback", [False, True])
+def test_file_publication_streams_and_closes_readback(
+    tmp_path, monkeypatch, changed_readback
+):
+    path = tmp_path / "large-evidence.jsonl"
+    payload = b"retained record\n" * 200_000
+    path.write_bytes(payload)
+    operations = []
+
+    class SizedBody(io.BytesIO):
+        def read(self, size=-1):
+            assert 0 < size <= 1024 * 1024
+            operations.append(("read", size))
+            return super().read(size)
+
+    remote = SizedBody(payload + (b"changed" if changed_readback else b""))
+
+    def put(**kwargs):
+        assert kwargs["ContentLength"] == len(payload)
+        assert kwargs["Bucket"] == "example-bucket"
+        assert kwargs["Key"] == "evidence/journal.jsonl"
+        source = kwargs["Body"]
+        assert source.seekable() and source.tell() == 0
+        observed = hashlib.sha256()
+        for chunk in iter(lambda: source.read(4096), b""):
+            observed.update(chunk)
+        assert observed.digest() == hashlib.sha256(payload).digest()
+        operations.append(("put", len(payload)))
+
+    monkeypatch.setattr(
+        runtime.dataset_storage,
+        "_s3_client",
+        lambda: SimpleNamespace(
+            put_object=put, get_object=lambda **_kwargs: {"Body": remote}
+        ),
+    )
+    monkeypatch.setattr(
+        Path, "read_bytes", lambda _self: pytest.fail("whole-file evidence read")
+    )
+    if changed_readback:
+        with pytest.raises(CuroboError, match="digest mismatch"):
+            runtime._publish_file("s3://example-bucket/evidence/journal.jsonl", path)
+    else:
+        runtime._publish_file("s3://example-bucket/evidence/journal.jsonl", path)
+    assert remote.closed and operations[0] == ("put", len(payload))
+    assert len([item for item in operations if item[0] == "read"]) >= 3
+
+
+@pytest.mark.parametrize("operation", [runtime.validate, runtime.visualize])
+def test_cpu_operations_use_configured_scratch_and_remove_only_own_directory(
+    operation, tmp_path, monkeypatch
+):
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    marker = scratch / "retained-other-run"
+    marker.write_bytes(b"untouched")
+    monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(scratch))
+    seen = []
+
+    def stop_after_real_directory(_request, root):
+        assert root.parent == scratch and root.is_dir()
+        assert root.stat().st_mode & 0o777 == 0o700
+        seen.append(root)
+        raise CuroboError("controlled pre-download refusal")
+
+    monkeypatch.setattr(runtime, "_download_artifacts", stop_after_real_directory)
+    with pytest.raises(CuroboError, match="controlled pre-download"):
+        operation(request())
+    assert len(seen) == 1 and not seen[0].exists()
+    assert marker.read_bytes() == b"untouched"
+
+
+def test_real_rrd_decode_and_reference_use_configured_scratch(tmp_path, monkeypatch):
+    from npa.workbench.curobo import artifacts
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    marker = scratch / "outside-marker"
+    marker.write_bytes(b"retained")
+    monkeypatch.setenv("NPA_CUROBO_WORK_DIR", str(scratch))
+    original = artifacts.tempfile.TemporaryDirectory
+    directories = []
+
+    def track(**kwargs):
+        assert Path(kwargs["dir"]) == scratch
+        actual = original(**kwargs)
+        directories.append(Path(actual.name))
+        return actual
+
+    monkeypatch.setattr(artifacts.tempfile, "TemporaryDirectory", track)
+    journal = tmp_path / "journal.jsonl"
+    journal.write_bytes(canonical(row()) + b"\n")
+    recording = tmp_path / "planning.rrd"
+    build_rrd(journal, recording, run_id="scratch-controls")
+    result = decode_rrd(recording, rows=[row()], run_id="scratch-controls")
+    assert result["verify"] == result["semantic_compare"] == "passed"
+    assert {p.name.split("-")[3] for p in directories} == {"decode", "compare"}
+    assert len(directories) == 2 and all(not p.exists() for p in directories)
+    assert marker.read_bytes() == b"retained"
+
+
 @pytest.mark.parametrize(
     ("partial_journal", "physical_line_count", "complete_record_count"),
     [
@@ -412,6 +530,7 @@ def test_gpu_subprocess_failure_preserves_empty_or_truncated_journal_and_receipt
 
     monkeypatch.setattr(runtime, "read_bytes_uri", read)
     monkeypatch.setattr(runtime, "write_bytes_uri", write)
+    _mock_streamed_evidence(monkeypatch, read, write)
     monkeypatch.setattr(runtime.subprocess, "run", run)
     with pytest.raises(
         CuroboError,
@@ -501,6 +620,7 @@ def test_failure_publication_error_preserves_subprocess_failure(
 
     monkeypatch.setattr(runtime, "read_bytes_uri", read)
     monkeypatch.setattr(runtime, "write_bytes_uri", write)
+    _mock_streamed_evidence(monkeypatch, read, write)
     monkeypatch.setattr(runtime.subprocess, "run", run)
     with pytest.raises(CuroboError) as raised:
         runtime.benchmark(request())
@@ -1018,6 +1138,20 @@ def test_decoded_rrd_coverage_rejects_any_missing_problem_or_sample_chunk(tmp_pa
         decoded, expected, run_id="coverage-run"
     )
     assert mismatches == ["trajectory/joints/0/position: expected 2, decoded 0"]
+
+
+@pytest.mark.parametrize("run_id", [".", "..", ".hidden", "-leading", "../outside"])
+def test_functional_smoke_rejects_nonportable_identity_before_work(
+    tmp_path, monkeypatch, run_id
+):
+    from npa.smoke import test_curobo_functional as smoke
+
+    monkeypatch.setenv("NPA_SMOKE_RUN_ID", run_id)
+    monkeypatch.setenv("NPA_SMOKE_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setattr(smoke, "execute", lambda *_a, **_k: pytest.fail("workload ran"))
+    with pytest.raises(RuntimeError, match="filesystem-safe identity"):
+        smoke.main()
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_functional_smoke_retains_complete_positive_and_failure_evidence(

@@ -171,9 +171,12 @@ def run(
       container image on a GPU, and wait for the PASS/FAIL result.
     """
 
-    if (registry or tag) and not serverless:
+    if (
+        any(value is not None for value in (registry, tag, expected_image_digest))
+        and not serverless
+    ):
         err_console.print(
-            "[red]--registry/--tag require --serverless; local and dry-run "
+            "[red]--registry/--tag/--expected-image-digest require --serverless; local and dry-run "
             "commands do not resolve candidate images[/red]"
         )
         raise typer.Exit(code=2)

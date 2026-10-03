@@ -97,6 +97,37 @@ def payload():
     receipt = b"Synthetic real benchmark import receipt."
     contract["runtime_import_receipt"].update(sha256=digest(receipt), size=len(receipt))
     entries.append(entry(contract["runtime_import_receipt"]["path"], receipt))
+    source_manifest = b"Synthetic complete package/source/notice contract."
+    notice = b"Synthetic complete distro copyright notice."
+    database = b"Synthetic exact package database."
+    contract["distro_source_closure"] = {
+        "manifest": {
+            "path": "usr/share/doc/npa-curobo/distro-source-closure.json",
+            "size": len(source_manifest),
+            "sha256": digest(source_manifest),
+        },
+        "package_databases": [
+            {"sha256": digest(database), "size": len(database), "package_count": 1}
+        ],
+        "final_dpkg_database_sha256": digest(database),
+        "copyright_files": [
+            {
+                "path": "usr/share/doc/example/copyright",
+                "size": len(notice),
+                "sha256": digest(notice),
+                "ancestor_versions": [{"size": len(notice), "sha256": digest(notice)}],
+            }
+        ],
+    }
+    entries.extend(
+        [
+            entry(
+                contract["distro_source_closure"]["manifest"]["path"], source_manifest
+            ),
+            entry("usr/share/doc/example/copyright", notice),
+            entry("var/lib/dpkg/status", database),
+        ]
+    )
     return contract, entries, excluded
 
 
@@ -181,10 +212,13 @@ def test_complete_image_binds_config_all_diff_ids_and_independent_bytes(
     assert report["verified_libgomp_payload_count"] == 3
     assert report["verified_libgomp_soname_link"] is True
     assert report["runtime_import_receipt_verified"] is True
-    assert report["required_payload_count"] == 14
+    assert report["required_payload_count"] == 17
+    assert report["verified_distro_database_versions"] == 1
+    assert report["verified_distro_copyright_files"] == 1
+    assert report["distro_source_manifest_verified"] is True
     assert report["layer_count"] == 1
     assert len(report["verified_layer_diff_ids"]) == 1
-    assert report["regular_files_read"] == 14
+    assert report["regular_files_read"] == 17
     assert report["content_bytes_read"] == sum(len(row[1]) for row in payload[1])
     assert report["docker_save_sha256"] == digest((tmp_path / "image.tar").read_bytes())
 
@@ -209,6 +243,102 @@ def test_classic_verifier_report_drives_truthful_payload_identity(tmp_path, payl
     assert report.digest == graph["image_config_digest"]
     assert report.archive_binding["archive_format"] == "docker-save-classic"
     assert report.archive_binding["content_identity_kind"] == "image-config-digest"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "usr/share/doc/npa-curobo/distro-source-closure.json",
+        "usr/share/doc/example/copyright",
+        "var/lib/dpkg/status",
+    ],
+)
+@pytest.mark.parametrize("replacement", [None, b"unreviewed bytes"])
+def test_distro_required_bytes_cannot_be_missing_or_modified(
+    tmp_path, payload, path, replacement
+):
+    rows = [row for row in payload[1] if row[0] != path]
+    if replacement is not None:
+        rows.append(entry(path, replacement))
+    report = verify(tmp_path, payload, [rows])
+    assert not report["valid"]
+    assert (
+        "required_payload_missing"
+        if replacement is None
+        else "retained_payload_hash_mismatch"
+    ) in codes(report)
+
+
+def test_reviewed_ancestor_notice_requires_correct_final_notice(tmp_path, payload):
+    row = payload[0]["distro_source_closure"]["copyright_files"][0]
+    older = b"Explicitly reviewed older distro notice."
+    row["ancestor_versions"].append({"sha256": digest(older), "size": len(older)})
+    report = verify(tmp_path, payload, [[entry(row["path"], older)], payload[1]])
+    assert report["valid"]
+    assert report["verified_distro_copyright_files"] == 1
+    report = verify(tmp_path, payload, [payload[1], [entry(row["path"], older)]])
+    assert not report["valid"]
+    assert "final_payload_hash_mismatch" in codes(report)
+    assert "retained_payload_hash_mismatch" not in codes(report)
+
+
+def test_unknown_ancestor_notice_is_rejected_even_after_final_repair(tmp_path, payload):
+    path = payload[0]["distro_source_closure"]["copyright_files"][0]["path"]
+    report = verify(tmp_path, payload, [[entry(path, b"unknown notice")], payload[1]])
+    assert not report["valid"]
+    assert "retained_payload_hash_mismatch" in codes(report)
+    assert report["verified_distro_copyright_files"] == 1
+
+
+def test_all_reviewed_package_database_versions_are_required(tmp_path, payload):
+    older = b"Older complete package database."
+    distro = payload[0]["distro_source_closure"]
+    distro["package_databases"].append(
+        {"sha256": digest(older), "size": len(older), "package_count": 1}
+    )
+    report = verify(
+        tmp_path, payload, [[entry("var/lib/dpkg/status", older)], payload[1]]
+    )
+    assert report["valid"]
+    assert report["verified_distro_database_versions"] == 2
+    report = verify(tmp_path, payload)
+    assert not report["valid"]
+    assert "distro_package_history_mismatch" in codes(report)
+    report = verify(
+        tmp_path, payload, [payload[1], [entry("var/lib/dpkg/status", older)]]
+    )
+    assert not report["valid"]
+    assert "final_payload_hash_mismatch" in codes(report)
+
+
+def test_unreviewed_package_database_is_not_hidden_by_final_replacement(
+    tmp_path, payload
+):
+    report = verify(
+        tmp_path,
+        payload,
+        [[entry("var/lib/dpkg/status", b"unreviewed package database")], payload[1]],
+    )
+    assert not report["valid"]
+    assert "retained_payload_hash_mismatch" in codes(report)
+    assert "distro_package_history_mismatch" in codes(report)
+
+
+def test_notice_history_cannot_omit_final_hash(tmp_path, payload):
+    payload[0]["distro_source_closure"]["copyright_files"][0]["ancestor_versions"] = []
+    with pytest.raises(
+        VERIFIER.ImageVerificationError, match="absent from its history"
+    ):
+        verify(tmp_path, payload)
+
+
+def test_overlapping_distro_and_libgomp_notice_contracts_must_agree(tmp_path, payload):
+    libgomp_notice = payload[0]["libgomp"]["license_files"][0]
+    payload[0]["distro_source_closure"]["copyright_files"][0]["path"] = libgomp_notice[
+        "path"
+    ]
+    with pytest.raises(VERIFIER.ImageVerificationError, match="conflicting distro"):
+        verify(tmp_path, payload)
 
 
 def test_normal_root_and_system_links_are_never_extracted_or_followed(
@@ -609,7 +739,7 @@ def test_no_member_size_cap_and_no_required_file_sample(tmp_path, payload):
     assert report["content_bytes_read"] == len(data) + sum(
         len(row[1]) for row in payload[1]
     )
-    assert report["regular_files_read"] == 15
+    assert report["regular_files_read"] == 18
 
 
 def test_same_layer_directory_replacement_invalidates_regular_proof(tmp_path, payload):
@@ -672,7 +802,7 @@ def test_duplicate_canonical_inner_paths_are_rejected(tmp_path, payload, alias):
     duplicate = entry(("./" if alias else "") + original[0], original[1])
     report = verify(tmp_path, payload, [[*payload[1], duplicate]])
     assert "duplicate_layer_path" in codes(report)
-    assert report["regular_files_read"] == 15  # Duplicate bytes are still scanned.
+    assert report["regular_files_read"] == 18  # Duplicate bytes are still scanned.
     assert report["retained_runtime_count"] == 8
     assert not report["valid"]
 
@@ -803,7 +933,7 @@ def test_oci_graph_binds_manifest_and_classic_ids_with_repeated_ordered_blobs(
     assert report["verified_layer_diff_ids"][0] == report["verified_layer_diff_ids"][2]
     assert report["image_config_digest"] == classic_id
     assert report["image_manifest_digest"] == manifest_id
-    assert report["regular_files_read"] == 14
+    assert report["regular_files_read"] == 17
 
 
 def test_repeated_nonempty_blob_is_scanned_for_every_occurrence(tmp_path, payload):
@@ -812,7 +942,7 @@ def test_repeated_nonempty_blob_is_scanned_for_every_occurrence(tmp_path, payloa
         archive, expected_image_id=image_id, contract=payload[0]
     )
     assert report["valid"]
-    assert report["regular_files_read"] == 28
+    assert report["regular_files_read"] == 34
     assert report["content_bytes_read"] == 2 * sum(len(row[1]) for row in payload[1])
 
 
@@ -932,8 +1062,8 @@ def test_reviewed_torch_adapter_bytes_and_complete_license_pass(
     report = verify(tmp_path, adapter_payload)
     assert report["valid"]
     assert report["verified_torch_adapter_count"] == 52
-    assert report["required_payload_count"] == 164
-    assert report["regular_files_read"] == 164
+    assert report["required_payload_count"] == 167
+    assert report["regular_files_read"] == 167
 
 
 @pytest.mark.parametrize(

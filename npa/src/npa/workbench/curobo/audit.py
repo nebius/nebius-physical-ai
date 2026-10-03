@@ -11,6 +11,8 @@ from typing import Any
 
 import numpy as np
 
+from .trajectory_binding import require_dynamics_path
+
 from .benchmark_inventory import benchmark_identities
 from .schemas import DATASET_REVISION, SOURCE_REVISION
 
@@ -296,6 +298,10 @@ def _audit_dynamics(row: dict[str, Any]) -> None:
     _close(metrics["max_torque_nm"], max_torque, name="maximum torque")
     if metrics["torque_violation"] != violation:
         raise AuditError("torque-violation indicator does not independently recompute")
+    try:
+        require_dynamics_path(trajectory, row["trajectory"])
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise AuditError("dynamics evidence is not bound to the retained path") from exc
 
 
 def _requested_benchmark_gates(requested_modes: Any) -> dict[str, dict[str, int]]:

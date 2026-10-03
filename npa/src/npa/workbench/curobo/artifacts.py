@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import re
 import shutil
@@ -17,6 +18,7 @@ import numpy as np
 
 from .benchmark_inventory import benchmark_identities
 from .schemas import DATASET_REVISION, SOURCE_REVISION
+from .trajectory_binding import require_dynamics_path
 
 
 class CuroboError(RuntimeError):
@@ -27,6 +29,14 @@ def canonical(value: Any) -> bytes:
     return json.dumps(
         value, sort_keys=True, separators=(",", ":"), allow_nan=False
     ).encode()
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -301,13 +311,18 @@ def _validate_dynamics_evidence(row: dict[str, Any]) -> None:
         or metrics["torque_violation"] != violation
     ):
         raise CuroboError("reported dynamics metrics do not match retained evidence")
+    try:
+        require_dynamics_path(trajectory, row["trajectory"])
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise CuroboError(
+            "dynamics evidence is not bound to the retained path"
+        ) from exc
 
 
 def read_journal(path: Path) -> list[dict[str, Any]]:
     try:
-        rows = [
-            json.loads(line) for line in path.read_text().splitlines() if line.strip()
-        ]
+        with path.open("rb") as stream:
+            rows = [json.loads(line) for line in stream if line.strip()]
         summarize(rows)
         return rows
     except (ValueError, KeyError, TypeError) as exc:
@@ -372,7 +387,7 @@ def _rrd_provenance(
         if any(row["dataset"] != "operator" for row in rows)
         else None,
         "run_id": run_id,
-        "journal_sha256": hashlib.sha256(journal.read_bytes()).hexdigest(),
+        "journal_sha256": _file_sha256(journal),
         "rrd_layout": _RRD_LAYOUT,
         "limitations": "FK tool paths and joint traces; no rendered robot meshes or independent collision certification.",
     }
@@ -426,8 +441,8 @@ def _rrd_manifest(
         status: sum(row["status"] == status for row in rows)
         for status in ("success", "failed", "invalid")
     }
-    journal_sha256 = hashlib.sha256(journal.read_bytes()).hexdigest()
-    rrd_sha256 = hashlib.sha256(output.read_bytes()).hexdigest()
+    journal_sha256 = _file_sha256(journal)
+    rrd_sha256 = _file_sha256(output)
     expected_chunks = _expected_rrd_chunks(rows)
     return {
         "schema_version": "npa.curobo.rrd-manifest.v1",
@@ -460,9 +475,13 @@ def _rrd_manifest(
 
 def build_rrd(journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
     """Log actual joint, FK and problem-status facts, without robot-mesh claims."""
+    rows = read_journal(journal)
+    return _write_rrd(rows, journal, output, run_id=run_id)
+
+
+def _write_rrd(rows, journal: Path, output: Path, *, run_id: str) -> dict[str, Any]:
     import rerun as rr
 
-    rows = read_journal(journal)
     recording = rr.RecordingStream("npa-curobo", recording_id=run_id)
     recording.save(str(output))
     try:
@@ -602,12 +621,16 @@ def _semantic_compare_rrd(
     path: Path, *, rows: list[dict[str, Any]], run_id: str, rerun: str
 ) -> str:
     """Regenerate journal-derived facts and compare every decoded value/timeline."""
-    with tempfile.TemporaryDirectory(prefix="npa-curobo-rrd-compare-") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="npa-curobo-rrd-compare-", dir=os.environ.get("NPA_CUROBO_WORK_DIR")
+    ) as directory:
         root = Path(directory)
         journal = root / "expected.jsonl"
-        journal.write_bytes(b"".join(canonical(row) + b"\n" for row in rows))
+        with journal.open("wb") as stream:
+            for row in rows:
+                stream.write(canonical(row) + b"\n")
         expected = root / "expected.rrd"
-        build_rrd(journal, expected, run_id=run_id)
+        _write_rrd(rows, journal, expected, run_id=run_id)
         normalized = []
         for name, source in (("observed", path), ("expected", expected)):
             output = root / f"{name}-normalized.rrd"
@@ -622,7 +645,7 @@ def _semantic_compare_rrd(
             raise CuroboError(
                 "decoded RRD values or factual timelines differ from journal"
             )
-        return hashlib.sha256(expected.read_bytes()).hexdigest()
+        return _file_sha256(expected)
 
 
 def _decode_rrd_to(
@@ -695,7 +718,9 @@ def decode_rrd(
     """Verify and fully decode an RRD while bounding in-memory evidence."""
     if decoded_output is not None:
         return _decode_rrd_to(path, decoded_output, rows=rows, run_id=run_id)
-    with tempfile.TemporaryDirectory(prefix="npa-curobo-rrd-decode-") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="npa-curobo-rrd-decode-", dir=os.environ.get("NPA_CUROBO_WORK_DIR")
+    ) as directory:
         return _decode_rrd_to(
             path, Path(directory) / "rrd-print.txt", rows=rows, run_id=run_id
         )

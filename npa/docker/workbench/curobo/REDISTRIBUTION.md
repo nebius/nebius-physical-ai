@@ -1,8 +1,45 @@
 # cuRobo V2 packaging record
 
-This candidate is eligible for public redistribution but remains in publication
-quarantine until exact-image scans and actual GPU capability validation pass.
-No published image or measured performance is claimed by this record.
+This candidate remains in publication quarantine. The records below identify
+component-specific permissions and obligations, not completed redistribution
+compliance: equivalent corresponding-source delivery, all built-layer notices,
+exact-image scans and actual GPU capability validation must pass before release.
+No published image or measured performance is claimed by this record. The OCI
+license expression names separate copyleft components; it does not extend GCC's
+runtime exception to the compiler, shell tools, or their dependencies.
+
+## Distro closure, including ancestor versions
+
+`distro-source-closure.json`, also delivered under `/usr/share/doc/npa-curobo/`,
+binds all 250 distinct binary package/version pairs from four actual layer
+package databases, including 29 source versions superseded in later layers.
+It records 143 Ubuntu source/version closures and every `.dsc`, original archive
+and packaging archive with exact public snapshot URL, size and SHA256. All were
+downloaded anonymously and checked against Ubuntu-signed source indexes; this
+does not by itself establish recipients' required source access at release.
+Keep the complete corresponding sources, patches/build scripts and applicable
+notices available with the conveyed binaries under each package's terms. A
+broken source link, incomplete ancestor closure or missing notice blocks release.
+Neither a generic source-repository link nor the GCC14 libgomp source suffices
+for the other executables. These controls also cover ordinary distro dependencies
+such as libc, GnuTLS and binutils, not only explicitly installed package names.
+
+The actual image installs GCC13 (`13.3.0-6ubuntu2~24.04.1`), not a guessed GCC14
+compiler closure. GCC's compiler/driver, binutils, patch, wget and rsync retain
+their own GPL obligations without the runtime-library exception; fuse and
+pciutils include GPL2-family components and shared libraries have their own LGPL
+or other terms. Netcat-openbsd is BSD-licensed, not a GPL substitute. The exact
+installed copyright texts, including additional OpenSSL and documentation terms,
+remain authoritative. The saved-image verifier binds 164 resolved final copyright
+files, their explicitly retained ancestor versions, all four package-database
+hashes and this source manifest. An unknown historical version, modified notice,
+missing final notice or changed package database fails validation.
+
+`LicenseRef-NPA-cuRobo-Other-Notices` refers to the additional package-specific
+grants in those retained copyright files and the vendor/Python records below;
+it is not a new blanket license grant or a claim that the short OCI expression
+enumerates every bundled component. Source eligibility remains separate from
+accepted whole-image byte/security review and supported-image release.
 
 - Source: NVIDIA cuRobo V2, revision
   `8e734f3ced1df898990bcd92de40abce475907db`, Apache-2.0. The image retains its
@@ -33,8 +70,19 @@ No published image or measured performance is claimed by this record.
   PyTorch 2.13.0 CUDA 13 wheels, NVIDIA cuda-core/runtime, Warp, Pinocchio, Rerun and
   NPA. CUDA's Linux-specific supplement (section 2.3) permits redistribution of
   Linux components with unmodified object code; Attachment A also enumerates
-  runtime/JIT libraries and runtime compilation headers. NVIDIA drivers are
-  host-injected. CUDA and container license notices remain intact.
+  runtime/JIT libraries and runtime compilation headers. The kernel driver is
+  host-provided, but the inspected base also bakes `cuda-compat-13-0`
+  `580.95.05-0ubuntu1`: user-mode forward-compatibility libraries from the
+  `nvidia-graphics-drivers-580` source package. Its complete NVIDIA Driver License
+  Agreement (February25,2025) and separate notices remain under
+  `/usr/share/doc/cuda-compat-13-0/copyright`, SHA256
+  `89b836340d5217ad1aca3097c0c7d00c85de24a2cc956361f755e08ae91df26e`.
+  The image must preserve unmodified vendor bytes and that agreement under its
+  NVIDIA-platform and distribution terms; GPL source URLs do not cover this
+  proprietary binary package. `cuda-cudart` is likewise covered by CUDA's terms,
+  not an invented Ubuntu corresponding-source package. CUDA and container
+  license notices remain intact. See NVIDIA's
+  [forward-compatibility package description](https://docs.nvidia.com/deploy/cuda-compatibility/latest/forward-compatibility.html).
   The minimal `base` image supplies cudart; pinned cuda.core/NVRTC, CUDA header
   wheels and Warp provide runtime compilation. The upstream CUDA-core backend
   discovers cudart/NVRTC headers through cuda-pathfinder. The image does not

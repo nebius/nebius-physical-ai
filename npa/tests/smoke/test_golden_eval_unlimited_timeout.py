@@ -246,10 +246,18 @@ def test_cli_serverless_forwards_candidate_image_overrides(
     assert submit.call_args.kwargs["tag"] == "candidate-123"
 
 
-def test_cli_rejects_candidate_override_without_serverless() -> None:
+@pytest.mark.parametrize("execute", [False, True])
+@pytest.mark.parametrize(
+    "option,value",
+    [("--tag", "candidate-123"), ("--expected-image-digest", "sha256:" + "a" * 64)],
+)
+def test_cli_rejects_candidate_override_without_serverless(
+    execute, option, value
+) -> None:
     result = CliRunner().invoke(
         app,
-        ["workbench", "golden-eval", "run", "lerobot", "--tag", "candidate-123"],
+        ["workbench", "golden-eval", "run", "lerobot", option, value]
+        + (["--execute"] if execute else []),
     )
     assert result.exit_code == 2
     assert "require --serverless" in result.output
