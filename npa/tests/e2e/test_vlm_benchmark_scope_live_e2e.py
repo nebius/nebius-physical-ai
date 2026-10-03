@@ -23,6 +23,12 @@ from npa.workbench.vlm_eval import (
 )
 
 pytestmark = [pytest.mark.e2e, pytest.mark.token_factory_e2e]
+FROZEN_SCOPE_PROTOCOL_PATH = DEFAULT_SAMPLE_BENCHMARK_PATH.with_name(
+    "scope_protocol_v1.json"
+)
+FROZEN_SCOPE_PROTOCOL_SHA256 = (
+    "25dee38f69e05f6b1b236b8a2a9c598aa219fdc54a1525eb65a8abeac5f31595"
+)
 
 
 def _evidence_path(tmp_path: Path) -> Path:
@@ -55,16 +61,25 @@ def _record_transport(monkeypatch, evidence):
 
 
 def _frozen_protocol(evidence):
-    dataset = DEFAULT_SAMPLE_BENCHMARK_PATH
+    # Keep the original four-item protocol byte-for-byte. The evolving bundled
+    # default is a distinct five-item wiring fixture, not a substitute protocol.
+    dataset = FROZEN_SCOPE_PROTOCOL_PATH
+    dataset_sha256 = hashlib.sha256(dataset.read_bytes()).hexdigest()
+    assert dataset_sha256 == FROZEN_SCOPE_PROTOCOL_SHA256
     protocol = {
         "model": DEFAULT_VISION_MODEL,
         "thresholds": [0.8],
         "rubrics": ["default"],
-        "dataset_sha256": hashlib.sha256(dataset.read_bytes()).hexdigest(),
+        "dataset_sha256": dataset_sha256,
+        "protocol_manifest_original_execution_sha": (
+            "a01dda9c915a731e13bec6d72a5affcf9d49745d"
+        ),
+        "request_scope": "Current runtime prompt and image anchors; not the original request payload.",
         "use_fixture_scores": False,
         "limitations": "Original physical-task labels are unverified on 2x2 swatches; measured metrics are illustrative only.",
     }
     (evidence / "protocol.json").write_text(json.dumps(protocol, indent=2) + "\n")
+    return dataset
 
 
 def test_live_benchmark_sample_scope_does_not_imply_task_validation(
@@ -74,10 +89,10 @@ def test_live_benchmark_sample_scope_does_not_imply_task_validation(
         pytest.skip("Token Factory credential is required")
     assert DEFAULT_VISION_MODEL in TokenFactoryClient().list_models()
     evidence = _evidence_path(tmp_path)
-    _frozen_protocol(evidence)
+    dataset = _frozen_protocol(evidence)
     transports = _record_transport(monkeypatch, evidence)
     report = benchmark_vlm_eval(
-        dataset="sample",
+        dataset=str(dataset),
         backend="api",
         models=[DEFAULT_VISION_MODEL],
         thresholds=[0.8],
@@ -87,7 +102,7 @@ def test_live_benchmark_sample_scope_does_not_imply_task_validation(
     payload = asdict(report)
     (evidence / "hosted-report.json").write_text(json.dumps(payload, indent=2) + "\n")
     fixture = benchmark_vlm_eval(
-        dataset="sample", backend="stub", thresholds=[0.8], rubrics=["default"]
+        dataset=str(dataset), backend="stub", thresholds=[0.8], rubrics=["default"]
     )
     (evidence / "fixture-report.json").write_text(
         json.dumps(asdict(fixture), indent=2) + "\n"
