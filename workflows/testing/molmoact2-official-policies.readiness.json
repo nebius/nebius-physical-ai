@@ -50,8 +50,10 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "No real NPA/SkyPilot/Kubernetes execution or independent S3 artifact inspection has completed. Do not infer LIBERO success, convergence, or physical-robot readiness from planning or a future image build.",
-      "evidence": []
+      "reason": "No real NPA/SkyPilot/Kubernetes execution or independent S3 artifact inspection has completed. The configured private registry rejected the local image upload with an authorization 403 before an immutable remote image could be preflighted or submitted. Do not infer LIBERO success, convergence, or physical-robot readiness from planning or local image validation.",
+      "evidence": [
+        "Private configured-registry push evidence, 2026-10-03"
+      ]
     }
   }
 }
