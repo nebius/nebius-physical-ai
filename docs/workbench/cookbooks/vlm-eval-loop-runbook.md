@@ -112,6 +112,81 @@ receipt, cancel run-owned jobs, stop the endpoint and destroy run-owned compute
 using the [run lifecycle](../../run-lifecycle.md). Preserve evidence and shared
 resources. Cleanup remains required when validation fails.
 
+## Terminal-evidence live check
+
+This owner-run lane checks frozen, real controls with the default hosted VLM
+rubric. It is deliberately fail-closed: an explicitly enabled run fails if its
+configuration, credential, exact model, selected frames, complete response, or
+negative-control verdict is missing. It is not a substitute for operator review
+of the controls, and a passing judge result does not prove physical completion
+or safety.
+
+Before spending inference tokens, verify the hosted credential and list the
+models that the same key can use. Select the exact returned vision-capable model
+ID for the configuration; do not substitute a model alias after this check.
+
+```bash
+npa workbench token-factory verify
+npa workbench token-factory models
+```
+
+Set `NPA_VLM_TERMINAL_LIVE_CONFIG` to an absolute path for an owner-only
+(`0600`) JSON file outside the checkout. It must contain exactly these keys:
+
+```json
+{
+  "model": "<exact-hosted-model-id>",
+  "task": "<identify-then-judge task>",
+  "max_frames": 4,
+  "success_threshold": 0.8,
+  "output_dir": "/absolute/private/new-output-directory",
+  "cases": {
+    "complete": {
+      "input_path": "/absolute/private/complete-rollout",
+      "frame_sha256": ["<selected-frame-sha256>"]
+    },
+    "missing-terminal": {
+      "input_path": "/absolute/private/truncated-rollout",
+      "frame_sha256": ["<selected-frame-sha256>"]
+    },
+    "ambiguous-terminal": {
+      "input_path": "/absolute/private/ambiguous-rollout",
+      "frame_sha256": ["<selected-frame-sha256>"]
+    },
+    "no-evidence": {
+      "input_path": "/absolute/private/blank-rollout",
+      "frame_sha256": ["<selected-frame-sha256>"]
+    }
+  }
+}
+```
+
+`max_frames` is an integer of at least 2 and `success_threshold` must be in
+`(0, 1]`. `output_dir` must not exist yet. Each case must retain every selected
+image-frame hash. `missing-terminal` must be a strict prefix of `complete` from
+the same source sequence; `ambiguous-terminal` must differ from `complete`; and
+`no-evidence` must repeat one frame hash that is absent from `complete`. Keep
+the controls, config, and outputs private. The API credential is resolved from
+`VLM_EVAL_API_KEY`, `NEBIUS_TOKEN_FACTORY_KEY`, `OPENAI_API_KEY`, or the local
+NPA credential store; never put it in this JSON file.
+
+Run the lane explicitly:
+
+```bash
+NPA_INTEGRATION_E2E=1 \
+NPA_VLM_TERMINAL_LIVE_CONFIG="/absolute/private/terminal-evidence.json" \
+npa/.venv/bin/python -m pytest \
+  npa/tests/e2e/test_vlm_terminal_evidence_live.py -q
+```
+
+Review all four private result files after a pass. Each must retain `backend`
+as `api`, the configured `served_model`, non-null request and provider evidence,
+HTTP 200, `finish_reason` `stop`, and hashes matching the frozen frames and
+default rubric. Only `complete` may pass; every other case must return score
+`0.0` and `success: false`. A failure is evidence that the configured model and
+frozen controls did not meet this gate; do not lower the threshold, relax the
+rubric, or replace the evidence claim to make it pass.
+
 ## Prerequisites
 
 - `npa` is installed from this repository.
