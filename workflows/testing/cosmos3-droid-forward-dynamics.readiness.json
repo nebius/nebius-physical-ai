@@ -22,25 +22,24 @@
   },
   "prerequisites": {
     "output_storage": {
-      "status": "blocked",
-      "reason": "The configured bucket is listable but rejects run-prefix writes under the current scoped profile; no artifacts were published and no alternative bucket was assumed.",
+      "status": "verified",
+      "reason": "The currently configured scoped profile completed an owned run-prefix put/get/delete probe. No DROID input or workflow artifact was staged while the independent image gate remains blocked.",
       "evidence": [
-        "private task evidence: storage-write-denial.json"
+        "access-controlled operator probe receipt"
       ]
     },
     "worker_input": {
       "status": "unverified",
-      "reason": "A genuine 17-frame DROID window from documented held-out failure episode 6150 was independently extracted and hash-checked in private evidence, but cannot yet be staged to a writable worker-visible prefix.",
+      "reason": "A genuine 17-frame DROID window from the documented held-out split was independently extracted and hash-checked, but was intentionally not staged until an authorized immutable image and matching target are ready.",
       "evidence": [
-        "private task evidence: selected-episode-6150/selection.local.json"
+        "access-controlled operator input-selection evidence"
       ]
     },
     "credentials": {
-      "status": "blocked",
-      "reason": "Nebius and public Cosmos access preflights passed, but the storage write denial blocks a complete workflow submission. The public derivative checkpoint also needs its own runtime fetch and identity check on the selected worker.",
+      "status": "partially_verified",
+      "reason": "Nebius authentication and exact public Cosmos payload access pass. The derivative repository resolves exactly to the configured immutable revision and its export manifest identifies the card's framework commit, but full checkpoint-byte hashing still belongs to the selected worker's runtime fetch.",
       "evidence": [
-        "private task evidence: upstream/model-card",
-        "private task evidence: novel-issues.md"
+        "access-controlled operator access and checkpoint-identity receipts"
       ]
     },
     "source_image": {
@@ -53,7 +52,7 @@
     },
     "target_runtime": {
       "status": "blocked",
-      "reason": "No owned GPU workflow can be submitted until a writable scoped output prefix and qualified immutable Cosmos3 image are supplied. No live acceptance, benchmark result, or robot claim is made.",
+      "reason": "The checked target advertises one RTX PRO 6000 rather than the workflow's B200:1 requirement, and the configured Cosmos3 image remains quarantined. No live acceptance, benchmark result, or robot claim is made.",
       "evidence": [
         "docs/workbench/cosmos3-droid-forward-dynamics.md"
       ]
