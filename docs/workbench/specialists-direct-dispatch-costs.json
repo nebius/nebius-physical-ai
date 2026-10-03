@@ -1,0 +1,75 @@
+{
+  "schema": "npa.specialists.telemetry_informed_standard_equivalent.v1",
+  "execution_label": "pair7",
+  "telemetry_sha256": "87aad6787e690ad2106d6229ae9b59dac2eeb27e781bab6f4cbc0798b5756253",
+  "auditor_sha256": "a9bb8280dcd6f6b7a325b42ac9b933d6d90affee938c32b7959f17f42f27163e",
+  "runs": [
+    {
+      "arm": "astra-only",
+      "audit_sha256": "869a8b1cfd18d9cc5fce37416cee0154168a9de9960a527e971311b609b4c589",
+      "tofa_recorded_tariff_usd": 0.0,
+      "actual_invoice_or_billed_tier_proven": false,
+      "astra_cli_standard_equivalent_usd": 0.666748,
+      "combined_standard_recorded_equivalent_usd": 0.666748,
+      "additional_setup_token_sensitivity_usd": {
+        "minimum": 0,
+        "maximum": 0.11103
+      },
+      "combined_standard_plus_setup_sensitivity_usd": {
+        "minimum": 0.666748,
+        "maximum": 0.777778
+      },
+      "evidence": {
+        "thread_identity_bound": true,
+        "outer_invocations": 1,
+        "completed_response_records": 13,
+        "records_after_input_only_completion": 12,
+        "maximum_observed_prompt_tokens": 31627,
+        "first_input_only_record": {
+          "input_tokens": 11103,
+          "output_tokens": 0,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "remaining_counters_equal_cli": {
+          "input_tokens": 283405,
+          "output_tokens": 1605,
+          "cached_input_tokens": 249728,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 74
+        },
+        "all_five_counters_match": true,
+        "direct_warmup_marker_captured": false,
+        "response_id_available": false
+      }
+    },
+    {
+      "arm": "astra-tofa",
+      "audit_sha256": "cf70a3e956190db06d5fc5e2bcb46e87958e2c433d01b5b8e3344bb9428f48ac",
+      "tofa_recorded_tariff_usd": 0.0100772,
+      "actual_invoice_or_billed_tier_proven": false,
+      "explicit_zero_astra_invocations_verified": true,
+      "astra_cli_standard_equivalent_usd": 0,
+      "combined_standard_recorded_equivalent_usd": 0.0100772,
+      "additional_setup_token_sensitivity_usd": {
+        "minimum": 0,
+        "maximum": 0
+      },
+      "combined_standard_plus_setup_sensitivity_usd": {
+        "minimum": 0.0100772,
+        "maximum": 0.0100772
+      }
+    }
+  ],
+  "recorded_standard_equivalent_reduction_fraction": 0.9848860439026439,
+  "reduction_with_independent_setup_sensitivity_fraction": {
+    "minimum": 0.9848860439026439,
+    "maximum": 0.9870436037018275
+  },
+  "source": "https://github.com/openai/codex/blob/rust-v0.153.3/codex-rs/core/src/client.rs",
+  "interpretation": "All captured prompts fit the standard context tariff. Exactly one first 11,103-input/zero-output completion is consistent with documented WebSocket prewarm; classification is inferred, billing is unknown. That row is retained as separate sensitivity, not silently discarded. Remaining counters exactly match CLI totals. No actual invoice, billed service tier or subscriber quota deduction is established.",
+  "raw_audits_and_conservative_context_ranges_preserved": true,
+  "reasoning_not_double_charged": true,
+  "tofa_cache_discount_assumed": false
+}
