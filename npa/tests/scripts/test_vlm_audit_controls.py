@@ -222,7 +222,8 @@ def test_public_outcomes_preserve_verdicts_without_provider_text(tmp_path):
     secondary["error"]["error_type"] = private
     primary["result"]["score"] = float("inf")
     assert runner._public_judge(secondary)["error_type"] is None
-    assert runner._public_judge(primary)["score"] is None
+    with pytest.raises(ValueError, match="score must be finite"):
+        runner._public_judge(primary)
 
 
 def test_generated_lane_rejects_silently_removed_controls(monkeypatch, tmp_path):
@@ -286,3 +287,18 @@ def test_public_outcomes_keep_original_indices_after_missing_controls(tmp_path):
         2,
         10,
     ]
+
+
+def test_public_score_rejects_large_integer_without_float_overflow():
+    runner = _module("npa/scripts/vlm_audit_live_recheck.py")
+    with pytest.raises(ValueError, match="score must be at most 1"):
+        runner._public_judge({"result": {"passed": False, "score": 10**1000}})
+
+
+@pytest.mark.parametrize("passed", [False, True])
+def test_public_judge_preserves_literal_boolean(passed):
+    runner = _module("npa/scripts/vlm_audit_live_recheck.py")
+    assert (
+        runner._public_judge({"result": {"passed": passed, "score": 0.5}})["passed"]
+        is passed
+    )

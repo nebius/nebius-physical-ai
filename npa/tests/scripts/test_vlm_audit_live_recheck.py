@@ -363,6 +363,155 @@ def test_report_counts_require_explicit_xfail_boolean():
         runner._counts(execution)
 
 
+@pytest.mark.parametrize("invalid", [0, 1, None, "", "false", [], {}])
+def test_falsy_malformed_xfail_cannot_pass_receipt(monkeypatch, tmp_path, invalid):
+    runner = _runner()
+    _config(monkeypatch, tmp_path)
+
+    def execute(root, target, config):
+        (target / "execution.json").write_text(
+            json.dumps(
+                {
+                    "collected": 1,
+                    "executed": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "skipped": 0,
+                    "deselected": 0,
+                    "xfail": invalid,
+                }
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(runner, "_execute", execute)
+    target = tmp_path / "evidence"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["failure"] == "invalid_audit_execution_counts"
+    assert receipt["passed"] is False
+
+
+@pytest.mark.parametrize(
+    "field,invalid",
+    [
+        (field, value)
+        for field in ("passed", "escalation_required", "primary", "secondary")
+        for value in (0, 1, None, "", "false", [], {})
+    ]
+    + [
+        (field, value)
+        for field in ("primary_score", "secondary_score")
+        for value in (
+            True,
+            False,
+            "1",
+            None,
+            -0.1,
+            1.1,
+            float("nan"),
+            float("inf"),
+            10**1000,
+        )
+    ],
+)
+def test_malformed_summary_scalar_fails_with_sanitized_receipt(
+    monkeypatch, tmp_path, capsys, field, invalid
+):
+    runner = _runner()
+    _config(monkeypatch, tmp_path)
+
+    def execute(root, target, config):
+        (target / "execution.json").write_text(
+            json.dumps(
+                {
+                    "collected": 1,
+                    "executed": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "skipped": 0,
+                    "deselected": 0,
+                    "xfail": False,
+                }
+            )
+        )
+        report = {
+            "status": "judges_agree_passed",
+            "passed": True,
+            "escalation_required": False,
+            "primary": {"result": {"passed": True, "score": 1}},
+            "secondary": {"result": {"passed": True, "score": 1}},
+        }
+        if field in ("primary", "secondary"):
+            report[field]["result"]["passed"] = invalid
+        elif field.endswith("_score"):
+            report[field.removesuffix("_score")]["result"]["score"] = invalid
+        else:
+            report[field] = invalid
+        directory = target / "paired-judges"
+        directory.mkdir()
+        (directory / runner.JUDGE_COMPARISON_RESULT_FILENAME).write_text(
+            json.dumps(report)
+        )
+        return 0
+
+    monkeypatch.setattr(runner, "_execute", execute)
+    target = tmp_path / "private-evidence"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    receipt = (target / "receipt.json").read_text()
+    assert json.loads(receipt)["failure"] == "audit_configuration_or_execution_failed"
+    assert json.loads(receipt)["passed"] is False
+    assert str(tmp_path) not in receipt + capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "primary.result.passed",
+        "secondary.result.passed",
+        "passed",
+        "escalation_required",
+        "requests_differ_only_by_model",
+        "operational_rate_estimated",
+    ],
+)
+@pytest.mark.parametrize("invalid", [0, None, "false"])
+def test_frozen_boolean_expectations_reject_coercion(
+    monkeypatch, tmp_path, field, invalid
+):
+    runner = _runner()
+    path = _config(monkeypatch, tmp_path)
+    config = json.loads(path.read_text())
+    config["cases"]["paired-judges"]["expectations"][field] = invalid
+    path.write_text(json.dumps(config))
+    monkeypatch.setattr(runner, "_execute", lambda *_: pytest.fail("must not execute"))
+    target = tmp_path / "evidence"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["failure"] == "missing_frozen_judge_expectations"
+    assert not any(receipt["counts"].values())
+
+
+@pytest.mark.parametrize("malformed", [False, 0, "", []])
+def test_boolean_containers_fail_with_bounded_errors(monkeypatch, malformed):
+    runner = _runner()
+    with pytest.raises(ValueError, match="invalid_audit_execution_counts"):
+        runner._counts(malformed)
+    with pytest.raises(ValueError, match="invalid_audit_judge_summary"):
+        runner._public_judge({"result": malformed})
+    monkeypatch.setenv("VLM_EVAL_API_KEY", "synthetic-key")
+    control = {
+        "request": {
+            "input_path": "unused.png",
+            "primary_model": "first/model",
+            "secondary_model": "second/model",
+        },
+        "expectations": malformed,
+    }
+    with pytest.raises(ValueError, match="missing_frozen_judge_expectations"):
+        runner._prepare_control(control, Path("unused"))
+
+
 @pytest.mark.parametrize("kind", [None, "preference", "unknown"])
 def test_generated_kind_cannot_silently_select_another_lane(
     monkeypatch, tmp_path, capsys, kind

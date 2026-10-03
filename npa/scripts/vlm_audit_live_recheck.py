@@ -6,7 +6,6 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
-import math
 import os
 from pathlib import Path
 import subprocess
@@ -25,6 +24,7 @@ from npa.clients.token_factory import (
     resolve_config,
 )
 from npa.guardrails.confidentiality import compile_builtin_nebius_infra, scan_text
+from npa.literal_values import require_boolean, require_integer, require_number
 from npa.live_verification.vlm_audit_controls import (
     PAIRED_MODELS,
     audit_controls,
@@ -81,11 +81,20 @@ def _prepare_control(control: dict, output: Path) -> None:
     if not os.environ.get(options.api_key_env, "").strip():
         raise _AuditConfigurationError("missing_audit_credential")
     expectations = control.get("expectations", {})
-    if any(
-        type(expectations.get(field)) is not bool
-        for field in ("primary.result.passed", "secondary.result.passed")
-    ):
+    if not isinstance(expectations, dict):
         raise _AuditConfigurationError("missing_frozen_judge_expectations")
+    required = ("primary.result.passed", "secondary.result.passed")
+    optional = (
+        "passed",
+        "escalation_required",
+        "requests_differ_only_by_model",
+        "operational_rate_estimated",
+    )
+    try:
+        for field in (*required, *(name for name in optional if name in expectations)):
+            require_boolean(expectations.get(field), field=field)
+    except ValueError:
+        raise _AuditConfigurationError("missing_frozen_judge_expectations") from None
     control["request"] = request
 
 
@@ -215,12 +224,16 @@ def _run_tests(target: Path) -> int:
 
 def _counts(execution: dict) -> dict[str, int]:
     fields = ("collected", "executed", "passed", "failed", "skipped", "deselected")
-    if type(execution.get("xfail")) is not bool or any(
-        type(execution.get(field)) is not int or execution[field] < 0
-        for field in fields
-    ):
+    if not isinstance(execution, dict):
         raise _AuditConfigurationError("invalid_audit_execution_counts")
-    return {field: execution[field] for field in fields}
+    try:
+        require_boolean(execution.get("xfail"), field="xfail")
+        return {
+            field: require_integer(execution.get(field), field=field, minimum=0)
+            for field in fields
+        }
+    except ValueError:
+        raise _AuditConfigurationError("invalid_audit_execution_counts") from None
 
 
 def _verify(
@@ -270,8 +283,10 @@ def _public_comparisons(target: Path) -> list[dict]:
                 "status": report["status"]
                 if report["status"] in statuses
                 else "unknown",
-                "passed": report["passed"] is True,
-                "escalation_required": report["escalation_required"] is True,
+                "passed": require_boolean(report["passed"], field="passed"),
+                "escalation_required": require_boolean(
+                    report["escalation_required"], field="escalation_required"
+                ),
                 "primary": _public_judge(report["primary"]),
                 "secondary": _public_judge(report["secondary"]),
             }
@@ -280,14 +295,25 @@ def _public_comparisons(target: Path) -> list[dict]:
 
 
 def _public_judge(outcome: dict) -> dict:
-    result = outcome.get("result") or {}
+    if not isinstance(outcome, dict):
+        raise _AuditConfigurationError("invalid_audit_judge_summary")
+    result = outcome.get("result")
+    if result is not None and not isinstance(result, dict):
+        raise _AuditConfigurationError("invalid_audit_judge_summary")
+    passed = (
+        require_boolean(result.get("passed"), field="judge.result.passed")
+        if result is not None
+        else None
+    )
+    result = {} if result is None else result
     error = outcome.get("error") or {}
     provider = (
         (result.get("evidence") or {}).get("provider") or error.get("provider") or {}
     )
-    score = result.get("score")
-    valid_score = (
-        type(score) in (int, float) and math.isfinite(score) and 0 <= score <= 1
+    score = (
+        require_number(result.get("score"), field="score", minimum=0, maximum=1)
+        if outcome.get("result") is not None
+        else None
     )
     error_types = {
         "transport_error",
@@ -305,8 +331,8 @@ def _public_judge(outcome: dict) -> dict:
         "raw_response_sha256": hashlib.sha256(
             str(provider.get("raw_response", "")).encode()
         ).hexdigest(),
-        "score": score if valid_score else None,
-        "passed": result.get("passed") if type(result.get("passed")) is bool else None,
+        "score": score,
+        "passed": passed,
         "error_type": error.get("error_type")
         if error.get("error_type") in error_types
         else None,
