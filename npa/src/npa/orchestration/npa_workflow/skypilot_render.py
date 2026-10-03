@@ -31,11 +31,13 @@ from npa.workbench.model_cache import (
 # Token Factory is a hosted HTTP API client. Do not pin the heavy cosmos image:
 # SkyPilot's k8s apt-ssh runtime setup fails inside npa-cosmos. Use the default
 # SkyPilot image and stage npa via NPA_SRC_S3_URI (or an image override).
-TOOL_REF_IMAGE_TOOL: dict[str, str] = {
+TOOL_REF_IMAGE_TOOL: dict[str, str | None] = {
     "workflow.habitat_sim.smoke": "habitat-sim",
     "workbench.nurec.convert_colmap": "ncore",
     # Visualization only needs the prebuilt pinned Rerun runtime, not NuRec.
     "workbench.nurec.visualize": "rerun-viewer",
+    # Blinded preference is API-only, even under a global self-hosted backend.
+    "workbench.vlm_eval.compare_preference": None,
     "workbench.vlm_eval": "cosmos",
     "workbench.cosmos2": "cosmos2-transfer",
     # Generation runs in the Cosmos 3 framework image; the reason stage runs in the
@@ -105,6 +107,7 @@ SECRET_ENV_HINTS: dict[str, tuple[str, ...]] = {
     # only through the workflow secret channel when one is available.
     "workbench.flex_pi": ("HF_TOKEN",),
     "workbench.token_factory": ("NEBIUS_TOKEN_FACTORY_KEY",),
+    "workbench.vlm_eval.compare_preference": ("NEBIUS_TOKEN_FACTORY_KEY",),
     "workbench.vlm_eval": (),
     # Attribute verification generates and answers its questions on Token Factory.
     "workbench.cosmos_evaluator": ("NEBIUS_TOKEN_FACTORY_KEY",),
@@ -1150,6 +1153,8 @@ def render_run_preamble_for_tool(tool_ref: str, *, config: Mapping[str, Any]) ->
         # ENV values. Keep the narrow baked adapter importable on CPU stages too,
         # without invoking the render-only runtime bootstrap above.
         return content_agents_pythonpath
+    if tool_ref == "workbench.vlm_eval.compare_preference":
+        return ""
     if not tool_ref.startswith("workbench.vlm_eval"):
         return ""
     # #236 skipped the benchmark toolRef here, correctly for the twin it had: a `sample`
@@ -1967,14 +1972,17 @@ def render_setup_for_tool(
         parts.append(render_pip_extra_setup(declared_extra))
     parts.append(render_pip_requirements_setup(tool_pip_requirements(tool_ref)))
     backend = str(config.get("vlm_backend") or "").strip().lower()
-    if tool_ref.startswith("workbench.vlm_eval") and backend in {
-        "self-hosted",
-        "self_hosted",
-    }:
+    if (
+        tool_ref.startswith("workbench.vlm_eval")
+        and tool_ref != "workbench.vlm_eval.compare_preference"
+        and backend in {"self-hosted", "self_hosted"}
+    ):
         parts.append(_vllm_install_setup(self_hosted_vlm_model(config)))
     if tool_ref.startswith("workbench.sonic"):
         parts.append(_sonic_deps_setup())
-    if tool_ref.startswith("workbench.token_factory"):
+    if tool_ref.startswith("workbench.token_factory") or tool_ref == (
+        "workbench.vlm_eval.compare_preference"
+    ):
         # Avoid ${VAR:-} bash forms so SkyPilot placeholder lint stays clean.
         parts.append(
             'if [[ -z "$NEBIUS_TOKEN_FACTORY_KEY" ]]; then\n'

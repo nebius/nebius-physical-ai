@@ -14,6 +14,17 @@ a versioned heading when a release is cut.
   deletion no longer leaves private keys recoverable from an ancestor layer;
   clean containers continue to generate independent host keys when SSH starts.
 
+### VLM image preferences are blinded and order-balanced
+
+- New `vlm-eval compare-preference` API-only audit mode normalizes one matched
+  image pair, hides source roles behind neutral A/B labels, and submits both
+  orders without retries. Its private `vlm_preference_comparison.json` retains
+  exact requests, provider provenance, strict structured verdicts, and typed
+  errors. Errors, unresolved or low-confidence output, and order disagreement
+  require escalation; even consistent preference does not establish geometry
+  accuracy, physical validity, or robot safety. Requests leave the provider
+  response length uncapped rather than imposing a hidden token budget.
+
 ### LeRobot feedback control mode requires a JSON boolean
 
 - `POST /feedback/train-step` accepts `control: true` or `control: false`;

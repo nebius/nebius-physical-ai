@@ -689,3 +689,13 @@ live CLI response, proves it matches Terraform state and desired attachment,
 and rejects a changed GPU-cluster ID. It does not replace provisioning's GPU
 health and CUDA validation. Keep configuration, state, and provider responses
 outside Git.
+
+### Blinded VLM preference audits
+
+For a blinded image audit, run `npa workbench vlm-eval compare-preference`
+with `--baseline-path`, `--candidate-path`, `--output-path`, and `--task`.
+It sends metadata-free RGB images under neutral labels in both orders, stores
+complete private evidence, and reports only a bounded console summary. See the
+[VLM evaluation runbook](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md)
+for credentials, rubric options, and recovery without another provider call.
+This hosted API command needs no local GPU and never emits an acceptance gate.

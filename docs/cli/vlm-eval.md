@@ -16,6 +16,7 @@ benchmark  Sweep VLM-eval configs over a labeled rollout benchmark set.
 workflow  Show the npa.workflow specs for VLM evaluation.
 status  Show VLM eval backend status.
 list  List available VLM eval backends.
+compare-preference  Compare two images under blinded labels in both orders.
 ```
 
 ## Options
@@ -34,6 +35,7 @@ list  List available VLM eval backends.
 | `workflow` | Show the npa.workflow specs for VLM evaluation. |
 | `status` | Show VLM eval backend status. |
 | `list` | List available VLM eval backends. |
+| `compare-preference` | Compare two images under blinded labels in both orders. |
 
 ## Examples
 
