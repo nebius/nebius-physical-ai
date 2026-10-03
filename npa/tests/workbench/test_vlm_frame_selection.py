@@ -27,7 +27,9 @@ def test_live_sampler_writer_serializes_public_result(monkeypatch, tmp_path) -> 
         score=0.0,
     )
     suite._write_live_result(result)
-    assert json.loads(Path(result.result_uri).read_text()) == asdict(result)
+    decoded = json.loads(Path(result.result_uri).read_text())
+    expected = json.loads(json.dumps(asdict(result)))
+    assert decoded == expected
 
 
 @pytest.mark.parametrize(
