@@ -166,7 +166,7 @@ def test_golden_set_scores_known_good_and_bad_rollouts(
     assert good.frame_count == 3
     for result in (good, bad):
         assert result.independent_human_label_calibration_established is False
-        assert result.provider_call_made is False
+        assert result.provider_call_made is True
         assert result.limitations == _DIRECT_LIMITATIONS
         assert isinstance(result.limitations, tuple)
 
@@ -195,6 +195,7 @@ def test_contract_matches_stub_scalar_score_range(tmp_path: Path) -> None:
             *_DIRECT_LIMITATIONS,
             _DIRECT_NO_CALL_LIMITATION,
         )
+        assert result.provider_call_made is False
         assert isinstance(result.limitations, tuple)
         assert result.provider_success is None
         assert result.provider_success_matches_score_gate is None
