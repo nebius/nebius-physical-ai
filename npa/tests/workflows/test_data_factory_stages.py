@@ -1881,9 +1881,14 @@ def test_grade_gate_v2_mixed_source_kinds_keep_incomplete_coverage(
 def test_grade_gate_rejects_self_consistent_unregistered_hosted_substitution(
     tmp_path: Path, monkeypatch
 ) -> None:
-    completion = _provider_completion(success=True, metadata=True)
+    report = _provider_vlm_report(monkeypatch, tmp_path)
+    # The producer rejects substitution before writing. Exercise the independent
+    # retained-artifact boundary with consistently tampered response metadata.
+    completion = json.loads(report["evidence"]["provider"]["raw_response"])
     completion["model"] = "different/model"
-    report = _provider_vlm_report(monkeypatch, tmp_path, completion=completion)
+    report["served_model"] = completion["model"]
+    report["evidence"]["provider"]["returned_model"] = completion["model"]
+    _replace_retained_completion(report, completion)
     _assert_completion_blocked(tmp_path, report, "provider_model_mismatch")
 
 
