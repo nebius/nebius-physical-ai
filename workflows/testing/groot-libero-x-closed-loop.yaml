@@ -1,0 +1,116 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+
+metadata:
+  name: groot-libero-x-closed-loop
+  description: >
+    Establish simulator closed-loop evidence for the public GR00T N1.7 LIBERO-X
+    derivative: hash-bound disjoint task/data preparation, NVIDIA baseline
+    rollout, derivative rollout, numerical comparison, and independently
+    inspected RRD/MP4 evidence. This is simulator evidence only, never a
+    physical-robot or benchmark-convergence claim.
+
+config:
+  bucket: example-bucket
+  prefix: "groot-libero-x-closed-loop/{{run.id}}"
+  source_overlay: true
+  # The immutable npa-groot bootstrap image runtime-fetches this exact
+  # Apache-2.0 Isaac-GR00T source into a locked, verified cache.  This native
+  # LIBERO path is separate from the optional Isaac runtime.
+  native_groot_runtime_revision: 51d4c89f72fda44cbf77285c6a8114b52676b8a1
+  baseline_model_repo: nvidia/GR00T-N1.7-LIBERO
+  baseline_model_revision: 2ea293aa20ba7cf5bbf3ba17a5fbcb1a01cbfe21
+  baseline_model_subdir: libero_10
+  derivative_model_repo: rohansiva/gr00t-libero-x
+  derivative_model_revision: b9dfbdcce8da61950db4f34199fff30b286b8f13
+  derivative_model_subdir: ""
+  episodes_per_task: "10"
+  n_envs: "5"
+  max_episode_steps: "720"
+  n_action_steps: "8"
+  evaluation_seed: "20261002"
+
+  training_task_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/derivative-training-tasks.json"
+  evaluation_task_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/disjoint-evaluation-tasks.json"
+  evaluation_dataset_manifest_uri: "s3://{{config.bucket}}/{{config.prefix}}/inputs/evaluation-dataset.json"
+  protocol_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/evaluation-protocol.json"
+  baseline_rollout_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/baseline/report.json"
+  baseline_rollout_media_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/baseline/mp4"
+  derivative_rollout_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/derivative/report.json"
+  derivative_rollout_media_uri: "s3://{{config.bucket}}/{{config.prefix}}/rollouts/derivative/mp4"
+  comparison_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/closed-loop-comparison.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/groot-libero-x-closed-loop.rrd"
+  evidence_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/closed-loop-evidence.json"
+
+resources:
+  evaluation-gpu:
+    cloud: kubernetes
+    accelerators: H100:1
+    cpus: 16
+    memory: 96Gi
+  artifact-cpu:
+    cloud: kubernetes
+    cpus: 8
+    memory: 32Gi
+
+initial: prepare_disjoint_evaluation
+
+states:
+  prepare_disjoint_evaluation:
+    description: Validate 60 documented derivative training tasks, disjoint native LIBERO evaluation tasks, and the exact materialized GR00T-format evaluation dataset.
+    toolRef: workflow.groot_libero_x.prepare_evaluation
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.training_task_manifest_uri}}", schema: npa.groot_libero_x.training_tasks.v1}
+      - {uri: "{{config.evaluation_task_manifest_uri}}", schema: npa.groot_libero_x.evaluation_tasks.v1}
+      - {uri: "{{config.evaluation_dataset_manifest_uri}}", schema: npa.groot_libero_x.evaluation_dataset.v1}
+    outputs:
+      - {uri: "{{config.protocol_uri}}", schema: npa.groot_libero_x.evaluation_protocol.v1}
+    next: run_nvidia_baseline_closed_loop
+
+  run_nvidia_baseline_closed_loop:
+    description: Execute real GR00T action forwards and native LIBERO closed-loop rollouts for the NVIDIA base LIBERO checkpoint, retaining actual MP4s.
+    toolRef: workbench.groot.libero_x_baseline
+    resources: evaluation-gpu
+    inputs:
+      - {uri: "{{config.protocol_uri}}", schema: npa.groot_libero_x.evaluation_protocol.v1}
+    outputs:
+      - {uri: "{{config.baseline_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+      - {uri: "{{config.baseline_rollout_media_uri}}", schema: video.mp4.native-libero-rollout-prefix}
+    next: run_derivative_closed_loop
+
+  run_derivative_closed_loop:
+    description: Execute real GR00T action forwards and native LIBERO closed-loop rollouts for the exact public derivative, retaining actual MP4s.
+    toolRef: workbench.groot.libero_x_derivative
+    resources: evaluation-gpu
+    inputs:
+      - {uri: "{{config.protocol_uri}}", schema: npa.groot_libero_x.evaluation_protocol.v1}
+    outputs:
+      - {uri: "{{config.derivative_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+      - {uri: "{{config.derivative_rollout_media_uri}}", schema: video.mp4.native-libero-rollout-prefix}
+    next: compare_closed_loop_metrics
+
+  compare_closed_loop_metrics:
+    description: Compare matching task success, completed episodes, and genuine GR00T action MSE/MAE without fabricating a benchmark score.
+    toolRef: workflow.groot_libero_x.compare_closed_loop
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.protocol_uri}}", schema: npa.groot_libero_x.evaluation_protocol.v1}
+      - {uri: "{{config.baseline_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+      - {uri: "{{config.derivative_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+    outputs:
+      - {uri: "{{config.comparison_uri}}", schema: npa.groot_libero_x.closed_loop_comparison.v1}
+    next: emit_verified_rollout_evidence
+
+  emit_verified_rollout_evidence:
+    description: Independently inspect all native rollout MP4s, emit a non-empty RRD with actual metrics/provenance, and publish an evidence index.
+    toolRef: workflow.groot_libero_x.emit_evidence
+    resources: artifact-cpu
+    inputs:
+      - {uri: "{{config.comparison_uri}}", schema: npa.groot_libero_x.closed_loop_comparison.v1}
+      - {uri: "{{config.baseline_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+      - {uri: "{{config.derivative_rollout_uri}}", schema: npa.groot_libero_x.closed_loop_rollout.v1}
+    outputs:
+      - {uri: "{{config.rrd_uri}}", schema: rerun.rrd.v1}
+      - {uri: "{{config.evidence_uri}}", schema: npa.groot_libero_x.closed_loop_evidence.v1}
+    terminal: true

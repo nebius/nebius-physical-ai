@@ -151,6 +151,7 @@ TOOL_REF_PIP_EXTRAS: dict[str, str] = {
     "workbench.sonic": "sonic",
     "workflow.groot.emit_learning_rrd": "viz",
     "workflow.groot.publish_learning": "viz",
+    "workflow.groot_libero_x.emit_evidence": "viz",
 }
 
 # Declarative metadata, never a package-string passthrough.
@@ -201,6 +202,14 @@ TOOL_REF_PIP_REQUIREMENTS: dict[str, tuple[tuple[str, str], ...]] = {
             'python:transformers;assert(__import__("importlib.metadata").metadata.version("transformers")=="4.57.3")',
             "transformers==4.57.3",
         ),
+    ),
+    "workbench.groot.libero_x": (
+        ("python:tomli", "tomli>=2.0.0"),
+        (
+            'python:transformers;assert(__import__("importlib.metadata").metadata.version("transformers")=="4.57.3")',
+            "transformers==4.57.3",
+        ),
+        ("python:huggingface_hub", "huggingface_hub>=0.23,<1.0"),
     ),
     "workflow.groot.prepare_split": (("python:pyarrow", "pyarrow>=15,<22"),),
     "workflow.groot.compare_learning": (
@@ -254,6 +263,8 @@ TOOL_REF_VENDOR_INTERPRETERS: dict[str, tuple[str, ...]] = {
     "workflow.xr1": ("/opt/conda/bin/python",),
     "workbench.groot.baseline_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.groot.posttrain_eval": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
+    "workbench.groot.libero_x_baseline": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
+    "workbench.groot.libero_x_derivative": ("/opt/groot/Isaac-GR00T/.venv/bin/python",),
     "workbench.lerobot": ("/opt/lerobot/venv/bin/python",),
     # Isaac Lab's simulator packages live in the Omniverse kit environment, not in the image's
     # system python. Live job 267 installed npa into /usr/bin/python3 and the stage died with
