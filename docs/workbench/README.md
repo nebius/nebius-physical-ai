@@ -34,7 +34,7 @@ Python and HTTP access follow each tool's documented contract.
 | Measure Cosmos 3 WAM training across B200 nodes | [Experimental Slurm recipe](cookbooks/cosmos3-wam-slurm.md) · [Measured 8/16-GPU results](evidence/cosmos3-wam-scaling/README.md) |
 | Scene reconstruction | [NuRec](guides/neural-reconstruction.md) · [living-lab fan-out](guides/living-lab-nurec-fanout.md) |
 | USD object preparation | [Content Agents](content-agents.md) |
-| Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) |
+| Other video models | [Wan 2.2](wan2.2.md) · [LTX-2](ltx2.md) · [LingBot-VA LIBERO-Long candidate](lingbot-va.md) |
 
 ## Robotics and simulation
 
