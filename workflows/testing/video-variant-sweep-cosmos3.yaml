@@ -41,7 +41,10 @@ initial: prepare
 
 states:
   prepare:
-    description: Expand every parameter combination, snapshot each source, and merge each distinct hint once per source.
+    description: >
+      VLM-describe each source, LLM-augment each distinct appearance hint, add protected
+      source-motion and preserve/avoid constraints, then bind the shared enhanced
+      prompt to every parameter combination. Explicit direct prompts bypass augmentation.
     resources: cpu
     toolRef: workflow.video_sweep.prepare
     inputs:

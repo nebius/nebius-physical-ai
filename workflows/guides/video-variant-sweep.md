@@ -98,6 +98,49 @@ remain verbatim. The immutable plan retains the original sweep definition;
 workers verify complete matrix coverage before generating. Changing an input or
 axis value requires a new run ID, including when resuming a previous run.
 
+### LLM augmentation before Cosmos
+
+The CPU `prepare` state performs the diagram's description and prompt-merge path:
+
+```mermaid
+flowchart LR
+    V[Source video] --> D[VLM description]
+    D --> L[LLM augmentation]
+    H[User appearance hint] --> L
+    L --> P[Enhanced appearance + protected source constraints]
+    P --> F[Source × prompt × all parameter combinations]
+    C[Sweep base + axes] --> F
+    F --> G[Cosmos3 GPU worker partitions]
+```
+
+Use `hint` to enable LLM augmentation. The selected `reasoner_model` describes
+observed geometry, motion, camera, lighting, contacts and uncertainty from ordered
+source frames. The selected `merge_model` combines that description with the hint
+and returns a validated proposed brief: `scene`, `appearance`, `preserve`, and
+`avoid`. The final prompt takes the LLM-expanded appearance and adds protected
+source-preservation and artifact-avoidance constraints. Proposed scene/motion
+claims remain private audit context; they cannot prescribe camera changes,
+freezing or new articulation. Preserve/avoid constraints are prompt text,
+not unsupported sampler parameters.
+An incomplete or malformed brief stops preparation before GPU generation.
+
+The prompt asks for stable geometry, source motion and timing, camera continuity,
+plausible contact/shadows and supported loads where visible. Those are generation
+constraints, not proof of physical fidelity; the output review still decides
+acceptance. Input/output hashes, selected model and measured response provenance
+bind each enhanced prompt to its source and hint. Workers verify that binding.
+Timestamped source frames help temporal comparison, while the full source video
+remains authoritative when a sampled caption is wrong. Prompt wording still
+cannot establish physical fidelity; generated media must pass review.
+
+One source and one hint produce one enhanced prompt (`P1`), reused verbatim across
+all eight sampling combinations in the example. Additional hint-axis values
+produce additional enhanced prompts. The HTML explicitly shows that flow, prompt
+groups and the prompt used by every candidate. It hides the actual private text.
+Using `prompt` instead of `hint` deliberately bypasses the LLM and preserves the
+provided text; the viewer labels that bypass. The earlier recorded forklift
+experiments used direct prompts and do not prove LLM augmentation.
+
 Direct workflow submissions use a `npa.video_sweep.variants.v3` manifest with
 `generator: cosmos3-nano` and this `sweep` object. Native v2 explicit variant
 rows remain supported. The result viewer shows the same matrix with recorded
@@ -339,6 +382,17 @@ stopped at image preflight because current Workbench main quarantines the
 configured Cosmos3 release pending a rebuilt and accepted image. No matrix GPU
 jobs, generated clips or dataset were created. The six earlier native clips above
 predate this attempt and are not evidence that the new parameter matrix ran.
+
+A later hosted-only preparation test ran against the synthetic forklift source
+using eight timestamped frames, MiniMax-M3 description and Nemotron-3.5-Lightning
+augmentation. It produced eight distinct candidate inputs sharing exactly one
+enhanced prompt and one merge response. The final prompt retained the actual
+LLM-expanded appearance plus five protected preservation constraints and four
+artifact-avoidance constraints. Hash binding and complete matrix coverage passed.
+No GPU inference was performed by this test. Sampled captions proved fallible
+about motion/camera details, so those proposed claims remain audit context rather
+than executable transformation instructions. This validates real prompt
+preparation and reuse, not improvement in generated-video fidelity.
 
 ## Transfer 2.5 compatibility and evidence
 

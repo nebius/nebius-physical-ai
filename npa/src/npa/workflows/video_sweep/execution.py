@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from npa.clients.token_factory import TokenFactoryClient
-from npa.workflows.video_sweep import matrix
+from npa.workflows.video_sweep import augmentation, matrix
 from npa.workflows.video_sweep.checkpoints import generate_candidate
 from npa.workflows.video_sweep.artifacts import (
     digest,
@@ -44,6 +44,8 @@ def load_plan(args) -> dict:
     if plan.get("workers") != args.workers or not plan.get("items"):
         raise ValueError("Plan worker count or item inventory differs")
     matrix.validate_plan(plan)
+    for item in plan["items"]:
+        augmentation.verify(item)
     return plan
 
 

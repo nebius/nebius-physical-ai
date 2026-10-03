@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "30bd58948aced2c381adb980c58b4628c13ef75526f782a2c4ee585ee19591b6",
+  "workflow_sha256": "bd1e7186b8032368ce5ee3cceccf839ff9f74b2315da29338f2a8c8b522a7ff7",
   "planning": {
     "validation": {
       "status": "verified",
@@ -11,10 +11,11 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Native Cosmos3 generation expands all declared parameter axes before worker partitioning; unit contracts verify Cartesian coverage, fixed prompts, immutable inputs and recorded matrix display.",
+      "reason": "Native candidates cover all parameter combinations. Timed source descriptions and LLM-expanded appearance prompts use protected motion/contact constraints. Immutable hashes bind each shared prompt to its source and hint.",
       "evidence": [
         "npa/tests/workflows/test_video_sweep_cosmos3.py",
-        "npa/tests/workflows/test_video_sweep_matrix.py"
+        "npa/tests/workflows/test_video_sweep_matrix.py",
+        "npa/tests/workflows/test_video_sweep_augmentation.py"
       ]
     }
   },

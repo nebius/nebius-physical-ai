@@ -102,6 +102,57 @@ def test_hosted_description_merge_and_paired_judge(live_review):
     assert type(report["items"][0]["accepted"]) is bool
 
 
+def test_hosted_augmented_prompt_fans_out_over_parameters(tmp_path):
+    if not os.environ.get("NPA_VIDEO_SWEEP_REASONER_MODEL"):
+        pytest.skip("Select an exact hosted model with NPA_VIDEO_SWEEP_REASONER_MODEL")
+    args = _args(tmp_path)
+    args.workers = 2
+    args.samples = 8
+    source = os.environ.get("NPA_VIDEO_SWEEP_PROMPT_SOURCE")
+    if not source:
+        source = str(tmp_path / "synthetic-source.mp4")
+        _video(Path(source))
+    _write_prompt_matrix_inputs(args, source)
+    planning.prepare(args)
+    plan = execution.load_plan(args)
+    assert len(plan["items"]) == 8
+    assert len({item["prompt"] for item in plan["items"]}) == 1
+    provenance = plan["items"][0]["merge_provenance"]
+    assert provenance["mode"] == "llm-augmented" and provenance["request_id"]
+    assert provenance["model"] == args.merge_model
+    assert all(item["merge_provenance"] == provenance for item in plan["items"])
+    assert provenance["preserve_count"] > 0 and provenance["avoid_count"] > 0
+    assert plan["items"][0]["source"]["description_provenance"]["request_id"]
+
+
+def _write_prompt_matrix_inputs(args, source):
+    operator_sweep = {
+        "base": {
+            "hint": "Warm warehouse lighting; preserve all objects and motion.",
+            "num_steps": 35,
+            "cfg_normalization": "enabled",
+            "edge_threshold": "medium",
+            "first_chunk_conditional_frames": 1,
+        },
+        "axes": {
+            "control_guidance": [1.0, 1.5],
+            "guidance": [3.0, 5.0],
+            "seed": [23, 41],
+        },
+    }
+    artifacts.write_json(
+        args.sources_uri, {"schema": "npa.video_sweep.sources.v1", "clips": [source]}
+    )
+    artifacts.write_json(
+        args.variants_uri,
+        {
+            "schema": "npa.video_sweep.variants.v3",
+            "generator": "cosmos3-nano",
+            "sweep": operator_sweep,
+        },
+    )
+
+
 def test_postgres_and_mlflow_commit_and_replay(live_review):
     if not all(
         os.environ.get(name)

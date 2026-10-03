@@ -130,6 +130,15 @@ class _Model:
     def chat_completion(self, model, messages):
         instruction = messages[0]["content"][0]["text"]
         answer = "A red block moves across a gray surface."
+        if "Augment a video-to-video" in instruction:
+            answer = json.dumps(
+                {
+                    "scene": answer,
+                    "appearance": "Retain neutral lighting.",
+                    "preserve": ["Block geometry", "Source trajectory and timing"],
+                    "avoid": ["Object deformation", "Abrupt motion changes"],
+                }
+            )
         if "Return ONLY JSON" in instruction:
             answer = json.dumps(
                 {

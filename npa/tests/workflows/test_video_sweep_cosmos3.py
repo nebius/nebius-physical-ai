@@ -136,6 +136,7 @@ def test_native_transfer_retains_the_whole_source_contract(
     monkeypatch.setattr(cosmos3, "_publish", lambda *args: {"generation": args[3]})
     cosmos3.generate(item, args, {"samples": 4})
     request = calls[0][1]
+    assert request["prompt"] == item["prompt"]
     assert request["mode"] == "video2video" and request["checkpoint"] == "Cosmos3-Nano"
     assert request["no_guardrails"] is False
     assert request["transfer"].control_guidance == 1.5

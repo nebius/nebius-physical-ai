@@ -112,7 +112,7 @@ def describe(sweep: dict, sources: int, workers: int) -> dict:
     axes = {
         key: _display_values(key, sweep["axes"][key]) for key in sorted(sweep["axes"])
     }
-    return {
+    summary = {
         "mode": "cartesian",
         "axes": axes,
         "base": {
@@ -128,6 +128,27 @@ def describe(sweep: dict, sources: int, workers: int) -> dict:
             )
         ],
     }
+    summary["prompt_groups"] = _prompt_groups(variants, summary["jobs"])
+    return summary
+
+
+def _prompt_groups(variants, jobs):
+    groups = {}
+    for job in jobs:
+        variant = variants[job["combination"] - 1]
+        field = "hint" if "hint" in variant else "prompt"
+        key = (job["source"], field, variant[field])
+        if key not in groups:
+            groups[key] = {
+                "id": f"P{len(groups) + 1}",
+                "source": job["source"],
+                "mode": "llm-augmented" if field == "hint" else "direct-user-prompt",
+                "candidates": [],
+            }
+        group = groups[key]
+        job["prompt_group"] = group["id"]
+        group["candidates"].append(job["candidate"])
+    return list(groups.values())
 
 
 def _display_values(key, values):
