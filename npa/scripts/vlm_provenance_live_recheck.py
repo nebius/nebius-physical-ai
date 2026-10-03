@@ -50,7 +50,7 @@ def _sampling_tests_collected(nodeids: list[str]) -> bool:
 def _check_sampling_inputs(config: dict[str, str], target: Path) -> None:
     if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
         raise ValueError("ffmpeg and ffprobe are required for video sampling")
-    output = Path(config["output_path"]).resolve()
+    output = _resolve_private_path(Path(config["output_path"]))
     if output == target / "receipt.json" or output.is_relative_to(target / "pytest"):
         raise ValueError(
             "The custom result must not use runner-reserved evidence paths"
@@ -72,10 +72,18 @@ def _private_path(value: str, root: Path) -> Path:
     path = Path(value)
     if not path.is_absolute():
         raise ValueError("Live paths must be absolute")
-    path = path.resolve()
+    path = _resolve_private_path(path)
     if path.is_relative_to(root):
         raise ValueError("Live configuration and evidence must be outside the checkout")
     return path
+
+
+def _resolve_private_path(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except RuntimeError:
+        # Python 3.12 reports symlink loops with RuntimeError, not OSError.
+        raise ValueError("Live paths must resolve without symlink loops") from None
 
 
 def _load_config(root: Path) -> dict[str, str]:
@@ -202,9 +210,7 @@ def _receipt(root: Path) -> dict:
         hashes[name] = hashlib.sha256((root / name).read_bytes()).hexdigest()
     return {
         "schema": "npa.vlm_provenance.live_recheck.v1",
-        "commit_sha": subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], text=True
-        ).strip(),
+        "commit_sha": _source_commit(),
         "started_at": datetime.now(timezone.utc).isoformat(),
         "source_file_sha256": hashes,
         "suites": [PROVENANCE_SUITE],
@@ -213,6 +219,15 @@ def _receipt(root: Path) -> dict:
         "endpoint_preflight_passed": False,
         "passed": False,
     }
+
+
+def _source_commit() -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.PIPE
+        ).strip()
+    except subprocess.CalledProcessError:
+        raise ValueError("Unable to identify source revision") from None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -252,7 +267,14 @@ def _verify_and_record(root: Path, target: Path) -> int:
     exit_code = 2
     try:
         exit_code = _verify(root, target, receipt, results)
-    except (OSError, ValueError, httpx.HTTPError, TypeError, KeyError):
+    except (
+        OSError,
+        ValueError,
+        httpx.HTTPError,
+        httpx.InvalidURL,
+        TypeError,
+        KeyError,
+    ):
         receipt["failure"] = (
             "Live verification failed; see phase for the failed prerequisite"
         )

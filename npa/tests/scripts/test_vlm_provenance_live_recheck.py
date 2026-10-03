@@ -277,3 +277,67 @@ def test_receipt_filesystem_errors_do_not_disclose_private_paths(
     output = capsys.readouterr()
     assert str(tmp_path) not in output.out + output.err
     assert json.loads(output.out)["passed"] is False
+
+
+@pytest.mark.parametrize("boundary", ["evidence", "configuration", "input", "output"])
+def test_real_symlink_loops_fail_without_disclosing_private_paths(
+    runner, config, monkeypatch, tmp_path, capsys, boundary
+):
+    first, second = tmp_path / "private-loop-a", tmp_path / "private-loop-b"
+    first.symlink_to(second)
+    second.symlink_to(first)
+    target = tmp_path / "receipt"
+    if boundary == "evidence":
+        with pytest.raises(SystemExit):
+            runner.main(["--evidence-dir", str(first)])
+    else:
+        if boundary == "configuration":
+            monkeypatch.setenv("NPA_VLM_PROVENANCE_LIVE_CONFIG", str(first))
+        else:
+            config[boundary + "_path"] = str(first)
+            (tmp_path / "config.json").write_text(json.dumps(config))
+        assert runner.main(["--evidence-dir", str(target)]) == 1
+        assert not json.loads((target / "receipt.json").read_text())["passed"]
+    output = capsys.readouterr()
+    assert str(tmp_path) not in output.out + output.err
+    assert "private-loop" not in output.out + output.err
+
+
+def test_sampling_output_resolution_also_sanitizes_real_symlink_loop(
+    runner, config, tmp_path
+):
+    loop = tmp_path / "private-output-loop"
+    loop.symlink_to(loop)
+    config["output_path"] = str(loop)
+    with pytest.raises(ValueError, match="without symlink loops") as error:
+        runner._check_sampling_inputs(config, tmp_path / "receipt")
+    assert str(loop) not in str(error.value)
+
+
+@pytest.mark.parametrize(
+    "endpoint", ["http://example.test:invalid-port", "http://[broken"]
+)
+def test_real_malformed_endpoint_is_a_sanitized_failed_receipt(
+    runner, config, tmp_path, capsys, endpoint
+):
+    config["endpoint_url"] = endpoint
+    (tmp_path / "config.json").write_text(json.dumps(config))
+    target = tmp_path / "receipt"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["phase"] == "endpoint" and not receipt["passed"]
+    output = capsys.readouterr()
+    assert endpoint not in output.out + output.err
+    assert str(tmp_path) not in output.out + output.err
+
+
+def test_real_git_failure_does_not_inherit_private_stderr(
+    runner, config, monkeypatch, tmp_path, capfd
+):
+    private_git_path = tmp_path / "private-non-repository"
+    monkeypatch.setenv("GIT_DIR", str(private_git_path))
+    assert runner.main(["--evidence-dir", str(tmp_path / "receipt")]) == 1
+    output = capfd.readouterr()
+    assert str(private_git_path) not in output.out + output.err
+    assert "fatal:" not in output.err
+    assert json.loads(output.out)["passed"] is False
