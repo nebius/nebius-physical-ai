@@ -219,14 +219,14 @@ def test_generated_lane_rejects_silently_removed_controls(monkeypatch, tmp_path)
     monkeypatch.setattr(runner, "_scheduled_preflight", lambda: None)
 
     def execute(root, target, config):
-        (target / "pytest.xml").write_text(
-            '<testsuites><testsuite><testcase name="one"/></testsuite></testsuites>'
-        )
         (target / "execution.json").write_text(
             json.dumps(
                 {
                     "collected": 1,
                     "executed": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "skipped": 0,
                     "deselected": 0,
                     "xfail": False,
                 }

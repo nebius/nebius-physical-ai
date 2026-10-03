@@ -77,29 +77,37 @@ def test_preconditions_fail_before_pytest(monkeypatch, tmp_path, condition, reas
 
 
 @pytest.mark.parametrize(
-    "xml,exit_code,passed",
+    "counts,exit_code,passed",
     [
         (
-            '<testsuites><testsuite><testcase name="audit"/></testsuite></testsuites>',
+            {"collected": 1, "executed": 1, "passed": 1, "failed": 0, "skipped": 0},
             0,
             True,
         ),
         (
-            "<testsuites><testsuite><testcase><skipped/></testcase></testsuite></testsuites>",
+            {"collected": 1, "executed": 0, "passed": 0, "failed": 0, "skipped": 1},
             0,
             False,
         ),
         (
-            "<testsuites><testsuite><testcase><failure/></testcase></testsuite></testsuites>",
+            {"collected": 1, "executed": 1, "passed": 0, "failed": 1, "skipped": 0},
             1,
             False,
         ),
-        ("<testsuites><testsuite/></testsuites>", 0, False),
-        ("<testsuites><testsuite><testcase/></testsuite></testsuites>", 2, False),
+        (
+            {"collected": 0, "executed": 0, "passed": 0, "failed": 0, "skipped": 0},
+            0,
+            False,
+        ),
+        (
+            {"collected": 1, "executed": 1, "passed": 1, "failed": 0, "skipped": 0},
+            2,
+            False,
+        ),
     ],
 )
 def test_receipt_requires_real_execution_counts(
-    monkeypatch, tmp_path, xml, exit_code, passed
+    monkeypatch, tmp_path, counts, exit_code, passed
 ):
     runner = _runner()
     original = _config(monkeypatch, tmp_path)
@@ -108,16 +116,8 @@ def test_receipt_requires_real_execution_counts(
     def execute(root, target, config):
         prepared = json.loads(config.read_text())["cases"]["paired-judges"]["request"]
         assert prepared["output_path"] == str(target / "paired-judges")
-        (target / "pytest.xml").write_text(xml)
         (target / "execution.json").write_text(
-            json.dumps(
-                {
-                    "collected": 1 if "<testcase" in xml else 0,
-                    "executed": 1 if "<testcase" in xml else 0,
-                    "deselected": 0,
-                    "xfail": False,
-                }
-            )
+            json.dumps({**counts, "deselected": 0, "xfail": False})
         )
         return exit_code
 
@@ -130,8 +130,9 @@ def test_receipt_requires_real_execution_counts(
     assert original.read_bytes() == before
     assert "synthetic-test-credential" not in receipt.read_text()
     assert str(tmp_path) not in receipt.read_text()
-    with pytest.raises(FileExistsError):
+    with pytest.raises(SystemExit) as raised:
         runner.main(["--evidence-dir", str(target)])
+    assert raised.value.code == 2
 
 
 def test_subprocess_environment_cannot_select_partial_or_dry_run_coverage(monkeypatch):
@@ -172,7 +173,106 @@ def test_actual_entrypoint_missing_config_fails_without_skips(tmp_path):
     assert summary["counts"]["skipped"] == summary["counts"]["collected"] == 0
 
 
-@pytest.mark.parametrize("mode", ["xpass", "skip", "deselection"])
+@pytest.mark.parametrize("generated", [False, True])
+def test_actual_entrypoint_symlink_loop_target_is_sanitized(tmp_path, generated):
+    loop = tmp_path / "private-output-loop"
+    loop.symlink_to(loop.name)
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve().parents[2] / "scripts/vlm_audit_live_recheck.py"),
+        "--evidence-dir",
+        str(loop / "evidence"),
+    ]
+    if generated:
+        command.append("--generated-controls")
+    result = subprocess.run(command, capture_output=True, text=True)
+    assert result.returncode == 2
+    assert "audit_evidence_path_invalid" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert str(tmp_path) not in result.stdout + result.stderr
+    assert loop.name not in result.stdout + result.stderr
+
+
+def test_symlink_loop_config_fails_closed_without_private_paths(
+    monkeypatch, tmp_path, capsys
+):
+    runner = _runner()
+    loop = tmp_path / "private-config-loop"
+    loop.symlink_to(loop.name)
+    monkeypatch.setenv(runner.CONFIG_ENV, str(loop))
+    monkeypatch.setattr(runner, "_execute", lambda *_: pytest.fail("must not execute"))
+    target = tmp_path / "evidence"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    receipt = (target / "receipt.json").read_text()
+    assert json.loads(receipt)["failure"] == "audit_configuration_or_execution_failed"
+    assert not any(json.loads(receipt)["counts"].values())
+    public = receipt + capsys.readouterr().out
+    assert str(tmp_path) not in public
+    assert loop.name not in public
+
+
+def test_symlink_loop_input_stays_in_private_log(monkeypatch, tmp_path, capsys):
+    runner = _runner()
+    config = _config(monkeypatch, tmp_path)
+    loop = tmp_path / "private-input-loop"
+    loop.symlink_to(loop.name)
+    value = json.loads(config.read_text())
+    case = value["cases"]["paired-judges"]
+    case["request"]["input_path"] = str(loop)
+    # The real child verifies input bytes before any provider call.
+    case["input_sha256"] = "0" * 64
+    config.write_text(json.dumps(value))
+    target = tmp_path / "evidence"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    receipt = (target / "receipt.json").read_text()
+    counts = json.loads(receipt)["counts"]
+    assert counts["collected"] == counts["executed"] == counts["failed"] == 1
+    assert counts["skipped"] == counts["deselected"] == 0
+    assert "Too many levels of symbolic links" in (target / "pytest.log").read_text()
+    public = receipt + capsys.readouterr().out
+    assert str(tmp_path) not in public
+    assert loop.name not in public
+
+
+def test_generated_control_loop_setup_is_sanitized(monkeypatch, tmp_path):
+    runner = _runner()
+    (tmp_path / "controls").symlink_to("controls")
+    monkeypatch.setattr(
+        runner, "_scheduled_preflight", lambda: pytest.fail("must not contact provider")
+    )
+    receipt = {"passed": False, "failure": None}
+    runner._complete_receipt(tmp_path, tmp_path, receipt, generated=True)
+    assert receipt["failure"] == "audit_configuration_or_execution_failed"
+    assert not receipt["passed"]
+    assert str(tmp_path) not in json.dumps(receipt)
+
+
+def test_unrelated_runtime_errors_are_not_suppressed(monkeypatch, tmp_path):
+    runner = _runner()
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("unrelated runtime defect")
+
+    monkeypatch.setattr(runner, "_verify", broken)
+    with pytest.raises(RuntimeError, match="unrelated runtime defect"):
+        runner.main(["--evidence-dir", str(tmp_path / "evidence")])
+
+
+def test_unavailable_evidence_directory_is_sanitized(tmp_path, capsys):
+    runner = _runner()
+    unavailable = tmp_path / "private-existing-file"
+    unavailable.touch()
+    with pytest.raises(SystemExit) as raised:
+        runner.main(["--evidence-dir", str(unavailable)])
+    assert raised.value.code == 2
+    public = capsys.readouterr().err
+    assert "audit_evidence_directory_unavailable" in public
+    assert str(unavailable) not in public
+
+
+@pytest.mark.parametrize(
+    "mode", ["xpass", "skip", "deselection", "setup", "teardown", "collection"]
+)
 def test_actual_incomplete_execution_cannot_pass_lane(tmp_path, mode):
     test_path = tmp_path / "test_expected.py"
     if mode == "deselection":
@@ -183,6 +283,17 @@ def test_actual_incomplete_execution_cannot_pass_lane(tmp_path, mode):
             "def pytest_collection_modifyitems(config, items):\n"
             "    config.hook.pytest_deselected(items=[items.pop()])\n"
         )
+    elif mode in ("setup", "teardown"):
+        body = "    raise ValueError('fixture error')\n"
+        if mode == "teardown":
+            body = "    yield\n" + body
+        test_path.write_text(
+            "import pytest\n@pytest.fixture(autouse=True)\ndef fixture():\n"
+            + body
+            + "def test_control():\n    pass\n"
+        )
+    elif mode == "collection":
+        test_path.write_text("raise ValueError('collection error')\n")
     else:
         marker = "xfail(strict=False)" if mode == "xpass" else "skip(reason='contract')"
         test_path.write_text(
@@ -212,7 +323,41 @@ raise SystemExit(runner._run_tests(Path(sys.argv[3])))
         "xpass": "1 xpassed",
         "skip": "1 skipped",
         "deselection": "1 deselected",
+        "setup": "1 error",
+        "teardown": "1 error",
+        "collection": "1 error",
     }
     assert expected[mode] in result.stdout
     assert result.returncode == 1
-    assert (tmp_path / "pytest.xml").is_file()
+    counts = json.loads((tmp_path / "execution.json").read_text())
+    if mode in ("setup", "teardown", "collection"):
+        assert counts["failed"] == 1
+        assert counts["passed"] == 0
+    if mode == "teardown":
+        assert counts["executed"] == 1
+    elif mode in ("setup", "collection"):
+        assert counts["executed"] == 0
+
+
+@pytest.mark.parametrize(
+    "field", ["collected", "executed", "passed", "failed", "skipped", "deselected"]
+)
+@pytest.mark.parametrize("invalid", [True, -1, 1.0, "1", None])
+def test_report_counts_reject_invalid_values(field, invalid):
+    runner = _runner()
+    execution = dict.fromkeys(
+        ("collected", "executed", "passed", "failed", "skipped", "deselected"), 0
+    )
+    execution.update(xfail=False)
+    execution[field] = invalid
+    with pytest.raises(ValueError, match="invalid_audit_execution_counts"):
+        runner._counts(execution)
+
+
+def test_report_counts_require_explicit_xfail_boolean():
+    runner = _runner()
+    execution = dict.fromkeys(
+        ("collected", "executed", "passed", "failed", "skipped", "deselected"), 0
+    )
+    with pytest.raises(ValueError, match="invalid_audit_execution_counts"):
+        runner._counts(execution)

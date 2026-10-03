@@ -130,7 +130,9 @@ Provider errors retain their private product artifact but fail this live gate.
 
 `receipt.json` records source hashes, commit SHA, configuration hash, pytest
 exit status, counts, and sanitized outcomes. Outcome indices follow control order
-(inside, outside, blank for generated controls). `pytest.log`, `pytest.xml`, the
+(inside, outside, blank for generated controls). Counts come directly from pytest
+reports, including collection, setup and teardown errors; no XML is parsed.
+`pytest.log`, `execution.json`, the
 prepared configuration, and reports under `paired-judges/` remain in the `0700` evidence
 directory. Raw logs and artifacts can contain private task/provider data: keep
 the complete directory access-controlled and publish only the sanitized receipt.
