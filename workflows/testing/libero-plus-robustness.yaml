@@ -1,0 +1,87 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: libero-plus-robustness
+  description: >-
+    Genuine upstream LIBERO-Plus task preparation, matched baseline and candidate
+    simulator rollouts, numerical robustness deltas, and factual reporting.
+config:
+  bucket: example-bucket
+  prefix: "libero-plus-robustness/{{run.id}}"
+  mode: smoke
+  seed: "20261002"
+  max_steps: "600"
+  runtime_image: "registry.example.invalid/operator/libero-plus@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  protocol_uri: "s3://{{config.bucket}}/{{config.prefix}}/prepared/task-protocol.json"
+  baseline_uri: "s3://{{config.bucket}}/{{config.prefix}}/baseline/results.json"
+  baseline_media_uri: "s3://{{config.bucket}}/{{config.prefix}}/baseline/episodes"
+  candidate_uri: "s3://{{config.bucket}}/{{config.prefix}}/candidate/results.json"
+  candidate_media_uri: "s3://{{config.bucket}}/{{config.prefix}}/candidate/episodes"
+  delta_uri: "s3://{{config.bucket}}/{{config.prefix}}/analysis/robustness-deltas.json"
+  report_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/task-level-results.json"
+  rrd_uri: "s3://{{config.bucket}}/{{config.prefix}}/reports/task-level-results.rrd"
+  baseline_policy_adapter: smoke-zero
+  candidate_policy_adapter: smoke-zero
+resources:
+  gpu:
+    cloud: kubernetes
+    image: "{{config.runtime_image}}"
+    accelerators: RTXPRO-6000-BLACKWELL-SERVER-EDITION:1
+    cpus: 16
+    memory: 96Gi
+    disk_size: 150
+initial: prepare-tasks
+states:
+  prepare-tasks:
+    description: Fetch pinned upstream source/assets and prepare genuine seven-dimension perturbation tasks.
+    run:
+      argv: [python3, -m, npa.workflows.libero_plus, prepare, --output-uri, "{{config.protocol_uri}}", --mode, "{{config.mode}}", --seed, "{{config.seed}}"]
+    resources: gpu
+    outputs: [{uri: "{{config.protocol_uri}}", schema: npa.libero-plus.task-protocol.v1}]
+    next: baseline-rollouts
+  baseline-rollouts:
+    description: Run the declared baseline on the exact prepared perturbation protocol.
+    run:
+      argv: [python3, -m, npa.workflows.libero_plus, rollout, --input-uri, "{{state.prepare-tasks.uri}}", --output-uri, "{{config.baseline_uri}}", --media-uri, "{{config.baseline_media_uri}}", --role, baseline, --policy-adapter, "{{config.baseline_policy_adapter}}", --max-steps, "{{config.max_steps}}"]
+    resources: gpu
+    inputs: [{uri: "{{state.prepare-tasks.uri}}", schema: npa.libero-plus.task-protocol.v1}]
+    outputs:
+      - {uri: "{{config.baseline_uri}}", schema: npa.libero-plus.rollouts.v1}
+      - {uri: "{{config.baseline_media_uri}}", schema: application/vnd.npa.libero-plus.episode-mp4-prefix}
+    next: candidate-rollouts
+  candidate-rollouts:
+    description: Run the declared candidate on the identical task protocol and seed.
+    run:
+      argv: [python3, -m, npa.workflows.libero_plus, rollout, --input-uri, "{{state.prepare-tasks.uri}}", --output-uri, "{{config.candidate_uri}}", --media-uri, "{{config.candidate_media_uri}}", --role, candidate, --policy-adapter, "{{config.candidate_policy_adapter}}", --max-steps, "{{config.max_steps}}", --matched-baseline-uri, "{{state.baseline-rollouts.uri}}"]
+    resources: gpu
+    inputs:
+      - {uri: "{{state.prepare-tasks.uri}}", schema: npa.libero-plus.task-protocol.v1}
+      - {uri: "{{state.baseline-rollouts.uri}}", schema: npa.libero-plus.rollouts.v1}
+    outputs:
+      - {uri: "{{config.candidate_uri}}", schema: npa.libero-plus.rollouts.v1}
+      - {uri: "{{config.candidate_media_uri}}", schema: application/vnd.npa.libero-plus.episode-mp4-prefix}
+    next: calculate-deltas
+  calculate-deltas:
+    description: Calculate per-dimension matched robustness deltas from both real rollout results.
+    run:
+      argv: [python3, -m, npa.workflows.libero_plus, compare, --protocol-uri, "{{state.prepare-tasks.uri}}", --baseline-uri, "{{state.baseline-rollouts.uri}}", --candidate-uri, "{{state.candidate-rollouts.uri}}", --output-uri, "{{config.delta_uri}}"]
+    resources: gpu
+    inputs:
+      - {uri: "{{state.prepare-tasks.uri}}", schema: npa.libero-plus.task-protocol.v1}
+      - {uri: "{{state.baseline-rollouts.uri}}", schema: npa.libero-plus.rollouts.v1}
+      - {uri: "{{state.candidate-rollouts.uri}}", schema: npa.libero-plus.rollouts.v1}
+    outputs: [{uri: "{{config.delta_uri}}", schema: npa.libero-plus.robustness-deltas.v1}]
+    next: emit-results
+  emit-results:
+    description: Emit task-level factual results, a valid RRD, and references to actual per-episode MP4 evidence.
+    run:
+      argv: [python3, -m, npa.workflows.libero_plus, report, --delta-uri, "{{state.calculate-deltas.uri}}", --baseline-uri, "{{state.baseline-rollouts.uri}}", --candidate-uri, "{{state.candidate-rollouts.uri}}", --output-uri, "{{config.report_uri}}", --rrd-uri, "{{config.rrd_uri}}"]
+    resources: gpu
+    inputs:
+      - {uri: "{{state.calculate-deltas.uri}}", schema: npa.libero-plus.robustness-deltas.v1}
+      - {uri: "{{state.baseline-rollouts.uri}}", schema: npa.libero-plus.rollouts.v1}
+      - {uri: "{{state.candidate-rollouts.uri}}", schema: npa.libero-plus.rollouts.v1}
+    outputs:
+      - {uri: "{{config.report_uri}}", schema: npa.libero-plus.report.v1}
+      - {uri: "{{config.rrd_uri}}", schema: application/vnd.rerun.rrd}
+    terminal: true
