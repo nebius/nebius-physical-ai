@@ -63,6 +63,7 @@ states:
 @pytest.mark.parametrize(
     "name",
     [
+        "video-variant-sweep.yaml",
         "vlm-eval-single.yaml",
         "tokenfactory-rollout-judge.yaml",
         "sim2real.yaml",

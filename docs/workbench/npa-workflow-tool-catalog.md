@@ -20,6 +20,12 @@ accidental dead entries fail the guardrail. The retired monolithic
 
 | toolRef | CLI / module | Typical inputs | Typical outputs | Stub? |
 | --- | --- | --- | --- | --- |
+| `workflow.video_sweep.prepare` | `python3 -m npa.workflows.video_sweep prepare` | source and variant inventories | source snapshots and merged prompts | no |
+| `workflow.video_sweep.generate` | `python3 -m npa.workflows.video_sweep generate` | fingerprinted plan | conditioned videos and worker receipt | yes |
+| `workflow.video_sweep.generate_cosmos3` | `python3 -m npa.workflows.video_sweep generate` | native generation plan | guarded Cosmos3 videos, actual edge controls and candidate checkpoints | yes |
+| `workflow.video_sweep.review` | `python3 -m npa.workflows.video_sweep review` | complete worker receipts | paired visual scores and acceptance | no |
+| `workflow.video_sweep.lineage` | `python3 -m npa.workflows.video_sweep lineage` | exact reviewed plan | Postgres and MLflow receipt | no |
+| `workflow.video_sweep.publish` | `python3 -m npa.workflows.video_sweep publish` | review and tracking receipts | accepted dataset and next-run inventory | no |
 | `workbench.curobo.prepare` | `npa workbench curobo prepare` | full benchmark mode selection | recipe JSON | no |
 | `workbench.curobo.benchmark` | `npa workbench curobo benchmark` | recipe JSON | all problem statuses, real trajectories and metrics | no |
 | `workbench.curobo.plan` | `npa workbench curobo plan` | Franka start/goal/cuboid manifest | real trajectories and metrics | no |
