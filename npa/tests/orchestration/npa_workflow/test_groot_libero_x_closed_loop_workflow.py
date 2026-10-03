@@ -10,7 +10,10 @@ from npa.orchestration.npa_workflow.interpreter import build_plan
 from npa.orchestration.npa_workflow.scheduler import build_scheduler_plan
 from npa.orchestration.npa_workflow.skypilot_render import SkypilotRenderOptions
 from npa.orchestration.npa_workflow.spec import load_spec
-from npa.orchestration.npa_workflow.submit import prepare_npa_workflow_for_submit
+from npa.orchestration.npa_workflow.submit import (
+    merge_config_overrides,
+    prepare_npa_workflow_for_submit,
+)
 
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -43,6 +46,7 @@ def test_closed_loop_workflow_has_five_connected_substantive_stages() -> None:
     assert spec.config["n_envs"] == "5"
     assert spec.config["max_episode_steps"] == "720"
     assert spec.config["n_action_steps"] == "8"
+    assert spec.config["evaluation_accelerator"] == "H100:1"
     assert spec.states[STATES[-1]].terminal is True
     assert all(
         "closed-loop" not in step.description.lower() or step.tool_ref
@@ -51,8 +55,20 @@ def test_closed_loop_workflow_has_five_connected_substantive_stages() -> None:
 
     baseline = plan.steps[1]
     derivative = plan.steps[2]
-    assert baseline.resources_profile["accelerators"] == "H100:1"
-    assert derivative.resources_profile["accelerators"] == "H100:1"
+    assert (
+        baseline.resources_profile["accelerators"]
+        == spec.config["evaluation_accelerator"]
+    )
+    assert (
+        derivative.resources_profile["accelerators"]
+        == spec.config["evaluation_accelerator"]
+    )
+    configured_plan = build_plan(
+        merge_config_overrides(spec, {"evaluation_accelerator": "RTXPRO6000:1"}),
+        run_id="groot-libero-x-operator-gpu",
+    )
+    assert configured_plan.steps[1].resources_profile["accelerators"] == "RTXPRO6000:1"
+    assert configured_plan.steps[2].resources_profile["accelerators"] == "RTXPRO6000:1"
     assert "--policy-name" in baseline.argv and "baseline" in baseline.argv
     assert "--policy-name" in derivative.argv and "derivative" in derivative.argv
     assert "--model-revision" in baseline.argv

@@ -69,6 +69,11 @@ server/client split.  The evaluator refuses empty episode sets, non-finite
 action metrics, task/result mismatch, runtime SHA mismatch, and absent MP4s.
 The runtime cache uses a per-revision lock and an atomically published ready
 marker; without the managed GR00T data mount it is private to the workflow pod.
+The GPU placement is an NPA workflow configuration input
+(`evaluation_accelerator`), rather than a fixed graph resource.  Resolve it
+against the selected target with `--var evaluation_accelerator=<catalog-name>:1`
+or the existing `NPA_WORKFLOW_GPU_ACCELERATOR` operator override; no hardware
+identifier or credential is embedded in a stage command.
 
 ## Readiness and acceptance
 

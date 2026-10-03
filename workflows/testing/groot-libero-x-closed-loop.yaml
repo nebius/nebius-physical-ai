@@ -24,6 +24,10 @@ config:
   derivative_model_repo: rohansiva/gr00t-libero-x
   derivative_model_revision: b9dfbdcce8da61950db4f34199fff30b286b8f13
   derivative_model_subdir: ""
+  # This is an NPA config input, not a graph-level placement decision. Operators
+  # resolve it with --var evaluation_accelerator=<catalog-name>:1 (or the
+  # existing NPA_WORKFLOW_GPU_ACCELERATOR override) for their target.
+  evaluation_accelerator: H100:1
   episodes_per_task: "10"
   n_envs: "5"
   max_episode_steps: "720"
@@ -45,7 +49,7 @@ config:
 resources:
   evaluation-gpu:
     cloud: kubernetes
-    accelerators: H100:1
+    accelerators: "{{config.evaluation_accelerator}}"
     cpus: 16
     memory: 96Gi
   artifact-cpu:
