@@ -7,7 +7,7 @@ identities, positive usage, response hashes, shared request evidence, and frozen
 score-gate expectations. It uses no recorded response or score override.
 
 The nightly Token Factory workflow runs this lane separately from its existing
-three hosted migration suites, using `--generated-controls`. The GPU served-model
+three hosted migration suites, using `--generated-controls --audit-kind paired`. The GPU served-model
 provenance test has its own contract and is not covered by this hosted lane:
 `NPA_VLM_PROVENANCE_LIVE_CONFIG`, described in the
 [VLM runbook](../workbench/cookbooks/vlm-eval-loop-runbook.md).
@@ -41,7 +41,7 @@ digests. For durable raw evidence, run locally in access-controlled storage:
 
 ```bash
 npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py \
-  --generated-controls --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"
+  --generated-controls --audit-kind paired --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"
 ```
 
 Load `NEBIUS_TOKEN_FACTORY_KEY` without echoing it. Generated controls pin the
@@ -129,7 +129,10 @@ preserved as an audit outcome and can satisfy a predeclared control expectation.
 Provider errors retain their private product artifact but fail this live gate.
 
 `receipt.json` records source hashes, commit SHA, configuration hash, pytest
-exit status, counts, and sanitized outcomes. Outcome indices follow control order
+exit status, the explicit `paired` audit kind, counts, and sanitized outcomes.
+Generated audits reject missing or unsupported kinds before fixture creation or
+provider access; another audit lane cannot silently substitute for this one.
+Outcome indices follow control order
 (inside, outside, blank for generated controls). Counts come directly from pytest
 reports, including collection, setup and teardown errors; no XML is parsed.
 `pytest.log`, `execution.json`, the

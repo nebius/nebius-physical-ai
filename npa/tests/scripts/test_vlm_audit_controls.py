@@ -82,11 +82,20 @@ def test_generated_lane_does_not_fall_back_to_saved_key(monkeypatch, tmp_path):
         runner, "_scheduled_preflight", lambda: pytest.fail("network probe")
     )
     assert (
-        runner.main(["--generated-controls", "--evidence-dir", str(tmp_path / "run")])
+        runner.main(
+            [
+                "--generated-controls",
+                "--audit-kind",
+                "paired",
+                "--evidence-dir",
+                str(tmp_path / "run"),
+            ]
+        )
         == 1
     )
     receipt = json.loads((tmp_path / "run/receipt.json").read_text())
     assert receipt["failure"] == "missing_audit_credential"
+    assert receipt["audit_kind"] == "paired"
     assert not any(receipt["counts"].values())
 
 
@@ -127,7 +136,10 @@ def test_scheduled_lane_preserves_branch_policy_and_uploads_only_receipts():
         "NEBIUS_TOKEN_FACTORY_KEY": "${{ secrets.NEBIUS_TOKEN_FACTORY_KEY }}"
     }
     assert step["if"] == "${{ !cancelled() }}"
-    assert "vlm_audit_live_recheck.py --generated-controls" in step["run"]
+    assert (
+        "vlm_audit_live_recheck.py --generated-controls --audit-kind paired"
+        in step["run"]
+    )
     upload = next(
         row for row in job["steps"] if "upload-artifact" in row.get("uses", "")
     )
@@ -236,7 +248,18 @@ def test_generated_lane_rejects_silently_removed_controls(monkeypatch, tmp_path)
 
     monkeypatch.setattr(runner, "_execute", execute)
     target = tmp_path / "run"
-    assert runner.main(["--generated-controls", "--evidence-dir", str(target)]) == 1
+    assert (
+        runner.main(
+            [
+                "--generated-controls",
+                "--audit-kind",
+                "paired",
+                "--evidence-dir",
+                str(target),
+            ]
+        )
+        == 1
+    )
     receipt = json.loads((target / "receipt.json").read_text())
     assert receipt["counts"]["passed"] == 1
     assert receipt["passed"] is False

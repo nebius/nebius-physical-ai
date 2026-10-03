@@ -73,7 +73,7 @@ jobs:
         env:
           NEBIUS_TOKEN_FACTORY_KEY: ""
         run: |
-          if npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --generated-controls --evidence-dir "$RUNNER_TEMP/vlm-paired-missing-key"; then
+          if npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --generated-controls --audit-kind paired --evidence-dir "$RUNNER_TEMP/vlm-paired-missing-key"; then
             echo "::error::Credentialless paired audit unexpectedly succeeded."
             exit 1
           fi
@@ -91,7 +91,7 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           NEBIUS_TOKEN_FACTORY_KEY: ${{ secrets.NEBIUS_TOKEN_FACTORY_KEY }}
-        run: npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --generated-controls --evidence-dir "$RUNNER_TEMP/vlm-paired-audit"
+        run: npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --generated-controls --audit-kind paired --evidence-dir "$RUNNER_TEMP/vlm-paired-audit"
       - name: Publish sanitized result and failure visibility
         if: always()
         run: |

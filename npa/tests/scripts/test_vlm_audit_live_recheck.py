@@ -184,7 +184,7 @@ def test_actual_entrypoint_symlink_loop_target_is_sanitized(tmp_path, generated)
         str(loop / "evidence"),
     ]
     if generated:
-        command.append("--generated-controls")
+        command.extend(["--generated-controls", "--audit-kind", "paired"])
     result = subprocess.run(command, capture_output=True, text=True)
     assert result.returncode == 2
     assert "audit_evidence_path_invalid" in result.stderr
@@ -361,3 +361,22 @@ def test_report_counts_require_explicit_xfail_boolean():
     )
     with pytest.raises(ValueError, match="invalid_audit_execution_counts"):
         runner._counts(execution)
+
+
+@pytest.mark.parametrize("kind", [None, "preference", "unknown"])
+def test_generated_kind_cannot_silently_select_another_lane(
+    monkeypatch, tmp_path, capsys, kind
+):
+    runner = _runner()
+    monkeypatch.setattr(
+        runner, "_prepare_config", lambda *_a, **_k: pytest.fail("must not prepare")
+    )
+    target = tmp_path / "evidence"
+    command = ["--generated-controls", "--evidence-dir", str(target)]
+    if kind is not None:
+        command.extend(["--audit-kind", kind])
+    with pytest.raises(SystemExit) as raised:
+        runner.main(command)
+    assert raised.value.code == 2
+    assert "supported --audit-kind paired" in capsys.readouterr().err
+    assert not target.exists()

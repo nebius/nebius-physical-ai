@@ -326,17 +326,25 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     parser.add_argument(
+        "--audit-kind", help="Explicit generated audit selection: paired."
+    )
+    parser.add_argument(
         "--generated-controls",
         action="store_true",
         help="Run frozen local visual controls with the protected Token Factory key.",
     )
     args = parser.parse_args(argv)
+    if (args.generated_controls and args.audit_kind != "paired") or (
+        args.audit_kind is not None and args.audit_kind != "paired"
+    ):
+        parser.error("generated audits require supported --audit-kind paired")
     root = Path(__file__).resolve().parents[2]
     try:
         target = _evidence_target(args.evidence_dir, root)
     except _AuditConfigurationError as exc:
         parser.error(str(exc))
     receipt = _new_receipt(root)
+    receipt["audit_kind"] = "paired"
     receipt["control_source"] = (
         "generated-visual-contract-v1" if args.generated_controls else "operator"
     )
