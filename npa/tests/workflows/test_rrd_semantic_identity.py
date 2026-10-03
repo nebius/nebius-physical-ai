@@ -114,3 +114,39 @@ def test_equivalent_multitimeline_reencoding_retains_selected_winner(tmp_path):
     assert left.read_bytes() != right.read_bytes()
     assert _selected_frame_rows(left) == _selected_frame_rows(right)
     viz._verify_existing_rrd_semantics(left, right)
+
+
+@pytest.mark.parametrize("static", [False, True])
+def test_equivalent_three_entity_reencoding_keeps_decoded_content_and_precedence(
+    tmp_path, static
+):
+    paths = [tmp_path / "joined.rrd", tmp_path / "split.rrd"]
+    entities = ("diagnostic/alpha", "diagnostic/beta", "diagnostic/gamma")
+    for split, path in enumerate(paths):
+        stream = rr.RecordingStream("multi-entity-control", recording_id="frozen-multi")
+        stream.save(path)
+        stream.set_time("frame", sequence=5)
+        stream.log("diagnostic/clock", rr.Scalars(5))
+        for index, entity in enumerate(entities):
+            stream.log(entity, rr.TextDocument(f"value-{index}"), static=static)
+            if split:
+                stream.flush()
+        stream.flush()
+        stream.disconnect()
+    assert paths[0].read_bytes() != paths[1].read_bytes()
+    for entity in entities:
+        decoded = []
+        for path in paths:
+            reader = RrdReader(path)
+            store = reader.store(store=reader.recordings()[0]).stream().collect()
+            rows = (
+                store.reader(index="frame", contents=entity)
+                .to_arrow_table()
+                .to_pydict()
+            )
+            decoded.append(
+                {key: value for key, value in rows.items() if key != "log_time"}
+            )
+        assert decoded[0] == decoded[1]
+    assert viz._rrd_semantic_sha256(paths[0]) == viz._rrd_semantic_sha256(paths[1])
+    viz._verify_existing_rrd_semantics(*paths)

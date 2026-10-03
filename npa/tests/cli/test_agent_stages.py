@@ -729,8 +729,15 @@ def test_report_summary_uses_bounded_object_read_without_persisting_download() -
         "report_artifact.key",
     ]
     assert [(keyword.arg, ast.unparse(keyword.value)) for keyword in call.keywords] == [
-        (None, "read_identity")
+        (
+            "max_bytes",
+            "_MAX_RUN_REPORT_BYTES if publication_snapshot.journaled else _MAX_STAGE_EVIDENCE_BYTES",
+        ),
+        (None, "read_identity"),
     ]
+    from npa.cli.agent_stage_runtime import _MAX_RUN_REPORT_BYTES
+
+    assert _MAX_RUN_REPORT_BYTES == 16 * 1024 * 1024
     assert "download_s3_uri" not in report_block
     assert "RECORDINGS_DIR" not in report_block
 

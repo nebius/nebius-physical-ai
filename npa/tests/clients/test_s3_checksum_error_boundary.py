@@ -10,7 +10,10 @@ from botocore.config import Config
 from botocore.exceptions import ClientError, FlexibleChecksumError
 import pytest
 
-from npa.clients.s3_response import register_s3_error_body_compat
+from npa.clients.storage import register_s3_error_body_compat
+from npa.clients.storage import StorageClient
+from npa.agent_backend import canonical_mcap
+from npa.agent_backend.publication_reader import PublicationConflict
 
 
 class _RawResponse(io.BytesIO):
@@ -79,3 +82,23 @@ def test_normal_error_xml_is_preserved_without_the_sdk_wrap():
     with pytest.raises(ClientError) as rejected:
         client.get_object(Bucket="demo-bucket", Key="object")
     assert rejected.value.response["Error"]["Code"] == "ActualDeniedCode"
+
+
+def test_wrapped_404_is_absent_at_actual_storage_reader():
+    client = StorageClient.__new__(StorageClient)
+    client._s3 = _client(404, b"<Error><Code>NoSuchKey</Code></Error>")
+    assert client.read_bytes_with_etag("s3://demo-bucket/recording") is None
+
+
+def test_wrapped_412_is_conflict_at_actual_canonical_consumer(monkeypatch, tmp_path):
+    client = _client(412, b"<Error><Code>PreconditionFailed</Code></Error>")
+    monkeypatch.setattr(
+        client, "head_object", lambda **_kwargs: {"ContentLength": 3, "ETag": '"old"'}
+    )
+    destination = tmp_path / "recording.mcap"
+    destination.write_bytes(b"previous-verified")
+    with pytest.raises(PublicationConflict):
+        canonical_mcap._download_s3_snapshot(
+            client, bucket="demo-bucket", key="recording", destination=destination
+        )
+    assert destination.read_bytes() == b"previous-verified"

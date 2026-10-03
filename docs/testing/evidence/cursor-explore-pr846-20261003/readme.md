@@ -92,6 +92,54 @@ performance. This CPU control also uses in-memory storage rather than live S3.
 
 ### Later immutable successor observations
 
+#### Preserved subsequent failures and review disposition
+
+The later frozen execution at
+`0703581562ef7e6c9001adb3997502702a6137d7` completed with 40,562 passes,
+200 skips, one existing non-strict XPASS, seven failures and one error;
+coverage was 77.76%. Three failures concern stale generated dependency pins,
+one concerns the actual standalone storage bundle importing a newly separated
+module, and three concern older viewer fixtures/assertions. The error comes
+from an extra pytest plugin introduced through the Rerun test extra. This is
+a failed full gate, not a pass at a later head. Its original logs and XML remain
+unchanged. Its separately passing root precheck, 238 affected CPU controls and
+18 real-S3/retained-response CPU controls do not override that failed gate.
+
+The sole focused first-party Claude follow-up reviewed
+`3a208dece20e1fac8f832592216e4c0b048fde81` and again returned changes required.
+Its repaired runtime files are byte-identical at the frozen execution above;
+incoming-main integration and additional files remain separate scopes. The
+actual substantive model was `claude-opus-5`, provider `firstParty`. Both
+reviews were text-only AI reviews, not human approval or media inspection.
+No third Claude review is claimed or requested.
+
+Two additional CPU controls at the frozen execution above reproduced retained
+cache growth across eight access generations and an unidentified-client cache
+namespace. Two separate fault-injected CPU controls reproduced acceptance of a
+known pre-transport SDK parameter rejection when another actor created identical
+bytes. These are narrow create-CAS counterexamples, not a demonstrated live PUT
+failure or revival of the withdrawn generic-CAS claim. During the subsequent
+working repair, an actual filesystem control also showed that same-sized local
+rewrites can retain identical timestamp metadata; the failed control is kept.
+
+The subsequent repair therefore bounds cache retention, reclaims stale access
+generations, avoids recyclable client identities, and re-authenticates retained
+local bytes by SHA-256 rather than trusting timestamps alone. The default
+1 GiB/128-entry budgets limit retention only: larger valid recordings continue
+through verified temporary streaming. Unknown clients do not reuse retained
+bytes. Local storage failure is distinct from a journal integrity conflict.
+Known pre-transport parameter errors remain errors; exact post-write lost-response
+recovery remains a separately tested supported path. Standalone storage bundles
+retain their own complete transport adapter, without a new package dependency.
+
+Cold listing still reads and verifies complete recording bytes against the
+journal and selected object version. This is an explicit authenticity policy,
+not a claim of metadata-only listing or bounded cold-read latency. Warm reuse
+avoids another provider whole-body GET but still incurs local SHA-256 I/O.
+There is no HEAD-only acceptance shortcut. Fresh frozen-source execution and
+independent delta review are required for these later repairs; none of the
+historical results approve their future source or complete the GPU pipeline.
+
 At `28385f1baab8ba47151dfa4ada374315082acedf`, the fresh standard CPU
 coverage gate completed with 40,529 passes, 213 skips, one existing non-strict
 XPASS and three failures; coverage was 77.72%. Two viewer fixtures lacked the

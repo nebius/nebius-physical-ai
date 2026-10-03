@@ -152,7 +152,8 @@ sonic = [
 dev = [
     "langgraph==1.2.11",
     # Decode actual selected-timeline winners and recursive clears in RRD tests.
-    "rerun-sdk[tests]==0.38.1",
+    # Match the SDK's declared query runtime without unrelated pytest plugins.
+    "datafusion==54.0.0",
     "langgraph-checkpoint-sqlite==3.1.1",
     # Parse real raw USD layers/variants in sensor-rig scene preflight tests.
     "usd-core==26.8",
@@ -187,7 +188,8 @@ dev = [
 [dependency-groups]
 dev = [
     "langgraph==1.2.11",
-    "rerun-sdk[tests]==0.38.1",
+    # Match the SDK's declared query runtime without unrelated pytest plugins.
+    "datafusion==54.0.0",
     "langgraph-checkpoint-sqlite==3.1.1",
     "usd-core==26.8",
     "uvicorn>=0.52.4",

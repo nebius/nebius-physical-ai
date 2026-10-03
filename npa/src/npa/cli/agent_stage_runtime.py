@@ -11,9 +11,10 @@ from __future__ import annotations
 # defined by the surrounding generated module.
 import hashlib
 import json
+import os as _publication_os
 import re
+from collections import OrderedDict as _PublicationOrderedDict
 from pathlib import Path
-import shutil as _publication_shutil
 import stat as _publication_stat
 import tempfile as _publication_tempfile
 import threading as _publication_threading
@@ -83,10 +84,14 @@ _MAX_STAGE_EVIDENCE_DOCUMENTS = 8
 _MAX_STAGE_EVIDENCE_BYTES = 65_536
 _MAX_PUBLICATION_JOURNAL_BYTES = 1024 * 1024
 _MAX_RUN_REPORT_BYTES = 16 * 1024 * 1024
+_PUBLICATION_CACHE_MAX_BYTES = 1024 * 1024 * 1024
+_PUBLICATION_CACHE_MAX_ENTRIES = 128
 _PUBLICATION_CACHE_GUARD = _publication_threading.Lock()
-_PUBLICATION_CACHE_LOCKS: dict[tuple, object] = {}
-_PUBLICATION_CACHE_ENTRIES: dict[tuple, tuple] = {}
+_PUBLICATION_CACHE_LOCKS = tuple(_publication_threading.Lock() for _ in range(16))
+_PUBLICATION_CACHE_ENTRIES = _PublicationOrderedDict()
 _PUBLICATION_CACHE_DIRECTORY = None
+_PUBLICATION_CACHE_EPOCH = 0
+_PUBLICATION_CACHE_ACCESS_GENERATION = None
 
 
 def _read_bounded_json_object(
@@ -146,14 +151,17 @@ def _read_publication_bound_json_object(
         canonical_uri = canonical_publication_uri(uri)
     except ValueError:
         return _read_bounded_json_object(s3, bucket, key, max_bytes=max_bytes)
-    if canonical_uri.endswith(REPORT_SUFFIX) and max_bytes == _MAX_STAGE_EVIDENCE_BYTES:
-        max_bytes = _MAX_RUN_REPORT_BYTES
     publication = publication_snapshot or resolve_committed_publication(
         lambda journal_uri: _read_publication_journal(s3, bucket, journal_uri),
         canonical_uri,
     )
     identity = {}
     if publication.journaled:
+        if (
+            canonical_uri.endswith(REPORT_SUFFIX)
+            and max_bytes == _MAX_STAGE_EVIDENCE_BYTES
+        ):
+            max_bytes = _MAX_RUN_REPORT_BYTES
         target = publication.target(canonical_uri)
         if target.immutable_uri != uri:
             raise PublicationConflict("report is not the selected committed object")
@@ -161,6 +169,8 @@ def _read_publication_bound_json_object(
             "expected_sha256": target.sha256,
             "expected_size": target.size_bytes,
         }
+    else:
+        max_bytes = min(max_bytes, _MAX_STAGE_EVIDENCE_BYTES)
     result = _read_bounded_json_object(s3, bucket, key, max_bytes=max_bytes, **identity)
     _assert_legacy_publication_snapshot_still_unjournaled(s3, bucket, publication)
     return result
@@ -221,8 +231,14 @@ def _publication_target_head(s3, bucket, target):
     return key, head
 
 
-def _publication_download_verified_body(s3, bucket, key, target, conditions):
-    staged = _publication_tempfile.TemporaryFile(mode="w+b")
+def _publication_download_verified_body(
+    s3, bucket, key, target, conditions, *, staged=None
+):
+    staged = (
+        staged
+        if staged is not None
+        else _publication_tempfile.TemporaryFile(mode="w+b")
+    )
     body = None
     try:
         try:
@@ -257,7 +273,10 @@ def _publication_download_verified_body(s3, bucket, key, target, conditions):
     finally:
         close = getattr(body, "close", None)
         if callable(close):
-            close()
+            try:
+                close()
+            except (OSError, RuntimeError, ValueError):
+                pass
 
 
 def _publication_cache_identity(path):
@@ -267,51 +286,171 @@ def _publication_cache_identity(path):
     return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
-def _publication_cache_scope(cache_key):
-    global _PUBLICATION_CACHE_DIRECTORY
+def _publication_cache_open(path, identity):
+    descriptor = _publication_os.open(
+        path, _publication_os.O_RDONLY | getattr(_publication_os, "O_NOFOLLOW", 0)
+    )
+    stream = _publication_os.fdopen(descriptor, "rb")
+    info = _publication_os.fstat(stream.fileno())
+    observed = (
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
+    if not _publication_stat.S_ISREG(info.st_mode) or observed != identity:
+        stream.close()
+        raise PublicationConflict("verified publication cache identity changed")
+    return stream
+
+
+def _publication_authenticate_cache_stream(stream, *, size_bytes, expected_sha256):
+    # Filesystem timestamps can be coarser than a same-sized local rewrite.
+    # Re-authenticate local bytes outside the index guard, without a provider GET.
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        while size <= size_bytes:
+            chunk = stream.read(min(1024 * 1024, size_bytes + 1 - size))
+            if not chunk:
+                break
+            digest.update(chunk)
+            size += len(chunk)
+        if size != size_bytes or digest.hexdigest() != expected_sha256:
+            raise PublicationConflict("verified publication cache bytes changed")
+        stream.seek(0)
+    except BaseException:
+        stream.close()
+        raise
+    return stream
+
+
+def _publication_cache_drop(cache_key):
+    # Caller holds the guard; only a process-owned, hash-derived leaf is unlinked.
+    entry = _PUBLICATION_CACHE_ENTRIES.pop(cache_key, None)
+    if entry is not None:
+        entry[0].unlink(missing_ok=True)
+
+
+def _clear_verified_publication_cache():
+    global _PUBLICATION_CACHE_EPOCH
     with _PUBLICATION_CACHE_GUARD:
+        _PUBLICATION_CACHE_EPOCH += 1
+        for cache_key in tuple(_PUBLICATION_CACHE_ENTRIES):
+            _publication_cache_drop(cache_key)
+
+
+def _publication_cache_scope(cache_key):
+    global _PUBLICATION_CACHE_DIRECTORY, _PUBLICATION_CACHE_ACCESS_GENERATION
+    global _PUBLICATION_CACHE_EPOCH
+    with _PUBLICATION_CACHE_GUARD:
+        generation = globals().get("_AGENT_RUN_CURSOR_GENERATION", 0)
+        if generation != _PUBLICATION_CACHE_ACCESS_GENERATION:
+            _PUBLICATION_CACHE_EPOCH += 1
+            for previous in tuple(_PUBLICATION_CACHE_ENTRIES):
+                _publication_cache_drop(previous)
+            _PUBLICATION_CACHE_ACCESS_GENERATION = generation
         if _PUBLICATION_CACHE_DIRECTORY is None:
             # Process-private0700 storage; no shared or remotely supplied path.
             _PUBLICATION_CACHE_DIRECTORY = _publication_tempfile.TemporaryDirectory(
                 prefix="npa-verified-publication-"
             )
-        lock = _PUBLICATION_CACHE_LOCKS.setdefault(
-            cache_key, _publication_threading.Lock()
-        )
+        lock = _PUBLICATION_CACHE_LOCKS[hash(cache_key) % len(_PUBLICATION_CACHE_LOCKS)]
         root = Path(_PUBLICATION_CACHE_DIRECTORY.name)
-    return lock, root
+        epoch = _PUBLICATION_CACHE_EPOCH
+    return lock, root, epoch
+
+
+def _publication_cache_read_verified(cache_key, target):
+    stream = None
+    with _PUBLICATION_CACHE_GUARD:
+        entry = _PUBLICATION_CACHE_ENTRIES.get(cache_key)
+        if entry:
+            try:
+                stream = _publication_cache_open(*entry)
+            except (OSError, PublicationConflict):
+                _publication_cache_drop(cache_key)
+            else:
+                _PUBLICATION_CACHE_ENTRIES.move_to_end(cache_key)
+    if stream is not None:
+        try:
+            return _publication_authenticate_cache_stream(
+                stream, size_bytes=target.size_bytes, expected_sha256=target.sha256
+            )
+        except (OSError, PublicationConflict):
+            with _PUBLICATION_CACHE_GUARD:
+                if _PUBLICATION_CACHE_ENTRIES.get(cache_key) == entry:
+                    _publication_cache_drop(cache_key)
+    return None
+
+
+def _publication_cache_reclaim(cache_key, size_bytes):
+    # Caller holds the guard; reclaim prior versions before evicting unrelated LRU.
+    for previous in tuple(_PUBLICATION_CACHE_ENTRIES):
+        if previous[1:3] == cache_key[1:3] and previous != cache_key:
+            _publication_cache_drop(previous)
+    while _PUBLICATION_CACHE_ENTRIES and (
+        len(_PUBLICATION_CACHE_ENTRIES) >= _PUBLICATION_CACHE_MAX_ENTRIES
+        or sum(entry[1][2] for entry in _PUBLICATION_CACHE_ENTRIES.values())
+        + size_bytes
+        > _PUBLICATION_CACHE_MAX_BYTES
+    ):
+        _publication_cache_drop(next(iter(_PUBLICATION_CACHE_ENTRIES)))
+
+
+def _publication_cache_install(s3, staged, root, cache_key, target, epoch):
+    staging_path = Path(staged.name)
+    staged.flush()
+    name = hashlib.sha256(repr(cache_key).encode()).hexdigest()
+    path = root / f"{name}-{target.sha256}.blob"
+    with _PUBLICATION_CACHE_GUARD:
+        if epoch != _PUBLICATION_CACHE_EPOCH or cache_key[
+            0
+        ] != _publication_client_scope(s3):
+            # Access invalidation during transport cannot repopulate old state.
+            return staged
+        _publication_cache_reclaim(cache_key, target.size_bytes)
+        staging_path.chmod(0o400)
+        staging_path.replace(path)
+        entry = (path, _publication_cache_identity(path))
+        _PUBLICATION_CACHE_ENTRIES[cache_key] = entry
+        stream = _publication_cache_open(*entry)
+    return _publication_authenticate_cache_stream(
+        stream, size_bytes=target.size_bytes, expected_sha256=target.sha256
+    )
 
 
 def _publication_cached_body(s3, bucket, key, target, conditions, cache_key):
-    lock, root = _publication_cache_scope(cache_key)
+    # A cache budget limits retention, never accepted recording size or run count.
+    if (
+        target.size_bytes > _PUBLICATION_CACHE_MAX_BYTES
+        or _PUBLICATION_CACHE_MAX_ENTRIES < 1
+    ):
+        return _publication_download_verified_body(s3, bucket, key, target, conditions)
+    lock, root, epoch = _publication_cache_scope(cache_key)
     with lock:
-        entry = _PUBLICATION_CACHE_ENTRIES.get(cache_key)
-        if entry:
-            path, identity = entry
-            try:
-                if _publication_cache_identity(path) == identity:
-                    return path.open("rb")
-            except (OSError, PublicationConflict):
-                pass
-        verified = _publication_download_verified_body(
-            s3, bucket, key, target, conditions
+        stream = _publication_cache_read_verified(cache_key, target)
+        if stream is not None:
+            return stream
+        staged = _publication_tempfile.NamedTemporaryFile(
+            mode="w+b", dir=root, delete=False
         )
+        staging_path = Path(staged.name)
+        returned_staging = False
         try:
-            name = hashlib.sha256(repr(cache_key).encode()).hexdigest()
-            path = root / f"{name}-{target.sha256}.blob"
-            with _publication_tempfile.TemporaryDirectory(dir=root) as directory:
-                staged = Path(directory) / "verified"
-                with staged.open("xb") as stream:
-                    _publication_shutil.copyfileobj(verified, stream)
-                staged.chmod(0o400)
-                staged.replace(path)
-            _PUBLICATION_CACHE_ENTRIES[cache_key] = (
-                path,
-                _publication_cache_identity(path),
+            _publication_download_verified_body(
+                s3, bucket, key, target, conditions, staged=staged
             )
-            return path.open("rb")
+            stream = _publication_cache_install(
+                s3, staged, root, cache_key, target, epoch
+            )
+            returned_staging = stream is staged
+            return stream
         finally:
-            verified.close()
+            staging_path.unlink(missing_ok=True)
+            if not returned_staging:
+                staged.close()
 
 
 def _verified_publication_object_body(s3, bucket, target):
@@ -322,10 +461,9 @@ def _verified_publication_object_body(s3, bucket, target):
         conditions["IfMatch"] = str(head["ETag"])
     if head.get("VersionId") and str(head["VersionId"]) != "null":
         conditions["VersionId"] = str(head["VersionId"])
-    if not conditions:
-        return _publication_download_verified_body(s3, bucket, key, target, {}), head
+    scope = _publication_client_scope(s3)
     cache_key = (
-        _publication_client_scope(s3),
+        scope,
         bucket,
         str(target.immutable_uri),
         str(target.sha256),
@@ -333,9 +471,21 @@ def _verified_publication_object_body(s3, bucket, target):
         conditions.get("IfMatch", ""),
         conditions.get("VersionId", ""),
     )
-    return _publication_cached_body(
-        s3, bucket, key, target, conditions, cache_key
-    ), head
+    try:
+        if not conditions or scope is None:
+            return _publication_download_verified_body(
+                s3, bucket, key, target, conditions
+            ), head
+        return _publication_cached_body(
+            s3, bucket, key, target, conditions, cache_key
+        ), head
+    except OSError as exc:
+        if callable(HTTPException):
+            raise HTTPException(
+                status_code=503,
+                detail="verified publication storage is temporarily unavailable",
+            ) from exc
+        raise
 
 
 def _publication_client_scope(s3):
@@ -343,9 +493,11 @@ def _publication_client_scope(s3):
     meta = getattr(s3, "meta", None)
     signer = getattr(s3, "_request_signer", None)
     if meta is None or signer is None:
-        return ("test-transport", id(s3))
+        return None
     credentials = getattr(signer, "_credentials", None)
     principal = str(getattr(credentials, "access_key", "") or "")
+    if not principal or not getattr(meta, "endpoint_url", None):
+        return None
     return (
         str(meta.endpoint_url),
         str(meta.region_name),
@@ -963,7 +1115,11 @@ def _artifact_backed_run_details(
                 s3,
                 run_bucket,
                 report_artifact.key,
-                max_bytes=_MAX_RUN_REPORT_BYTES,
+                max_bytes=(
+                    _MAX_RUN_REPORT_BYTES
+                    if publication_snapshot.journaled
+                    else _MAX_STAGE_EVIDENCE_BYTES
+                ),
                 **read_identity,
             )
         except PublicationConflict as exc:

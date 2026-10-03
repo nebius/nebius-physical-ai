@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, ParamValidationError
 
 from npa.agent_backend.publication_reader import (
     canonical_publication_uri,
@@ -367,7 +367,8 @@ def _replace_mutable_file(
         return etag
     except StoragePreconditionFailed as exc:
         raise PublicationConflict(f"publication alias was superseded: {uri}") from exc
-    except PublicationConflict:
+    except (PublicationConflict, ParamValidationError):
+        # SDK parameter validation happens before transport, not after a write.
         raise
     except Exception:
         if prior_may_match or not _remote_matches_file(
@@ -450,6 +451,9 @@ def _replace_mutable_bytes(
         return str(conditional(payload, uri, if_match=snapshot.etag))
     except StoragePreconditionFailed as exc:
         raise PublicationConflict(f"publication alias was superseded: {uri}") from exc
+    except ParamValidationError:
+        # Identical bytes created by another actor cannot prove this failed CAS.
+        raise
     except Exception as exc:
         prior_may_match = bool(
             snapshot is not None

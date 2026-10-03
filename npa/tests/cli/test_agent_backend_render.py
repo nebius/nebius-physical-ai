@@ -2262,10 +2262,17 @@ def test_rendered_readers_use_only_the_committed_publication_generation(
             return None
 
     class _S3:
-        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        def get_object(
+            self, *, Bucket: str, Key: str, **conditions
+        ) -> dict[str, object]:
             assert Bucket == bucket
             if Key not in objects:
                 raise KeyError(Key)
+            assert conditions == (
+                {}
+                if Key == journal_key
+                else {"IfMatch": hashlib.sha256(objects[Key]).hexdigest()}
+            )
             return {"Body": _Body(objects[Key])}
 
         def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
@@ -7651,11 +7658,21 @@ def test_rendered_paginated_publication_and_foxglove_bind_committed_generation(
     }
 
     class S3:
-        def get_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
+        def get_object(
+            self, *, Bucket: str, Key: str, **conditions
+        ) -> dict[str, object]:
             assert Bucket == bucket
             if Key not in objects:
                 raise KeyError(Key)
-            return {"Body": io.BytesIO(objects[Key]), "ETag": '"etag"'}
+            assert conditions == (
+                {}
+                if Key == journal_key
+                else {"IfMatch": hashlib.sha256(objects[Key]).hexdigest()}
+            )
+            return {
+                "Body": io.BytesIO(objects[Key]),
+                "ETag": hashlib.sha256(objects[Key]).hexdigest(),
+            }
 
         def head_object(self, *, Bucket: str, Key: str) -> dict[str, object]:
             assert Bucket == bucket

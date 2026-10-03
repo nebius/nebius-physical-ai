@@ -783,7 +783,7 @@ def build_s3_client(
     }
     if endpoint_url.strip():
         kwargs["endpoint_url"] = endpoint_url.strip()
-    from npa.clients.s3_response import register_s3_error_body_compat
+    from npa.clients.storage import register_s3_error_body_compat
 
     return register_s3_error_body_compat(boto3.client("s3", **kwargs))
 
