@@ -88,6 +88,27 @@ hashes bind them to the retained requests. Complete sampling coverage here means
 selected-frame provenance is known, not that all frames of arbitrary episodes
 would be sent.
 
+## Landed benchmark/confusion integration
+
+[incoming624-source-bridge.json](incoming624-source-bridge.json) binds the
+separate `5097b90f` execution on externally landed main `e1f627df`. It passed
+180 affected caption, SDK, CLI, benchmark and scalar-response controls; one
+inherited opt-in local-model/GPU control skipped. This is not a new full gate.
+Nine client/caption/SDK/grade/dependency paths are byte-identical to the prior
+published source. Five existing evaluator AST changes are confined to benchmark
+reports, loading and metrics; scalar request, prompt, transport, parser and
+result-writer ASTs are unchanged.
+
+The incoming live benchmark tests referenced a deliberately removed dynamic
+default constant. Two test references now use the explicit MiniMax model pin,
+preserving independent drift checks and all response/score assertions. The
+original lint failure is retained privately. The same two original responses
+passed offline through the actual canonical path, with identical serialized
+requests and raw bytes, scores 1.0/0.0 and frozen threshold 0.8; seven malformed
+score negatives refused promotion. No hosted calls, full suite or additional
+Claude pass were selected for this test-only composition repair. Original
+hosted/full execution identities and immutable artifacts remain unchanged.
+
 These fixed synthetic diagrams demonstrate the observed paths, not calibrated
 model quality, temporal competence, physical correctness, global availability or
 robot safety. Provider hardware was unobserved, and the input-response association
