@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from npa.workbench import vlm_eval
+from npa.workbench.vlm_eval import VlmEvalError
 
 
 @pytest.mark.parametrize("strategy", ["final", "keyframes", "sequence"])
@@ -81,7 +82,18 @@ def test_sampling_judge_claims_use_effective_rubric_and_provider_boolean(
     )
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **_: response)
     source, _ = suite.make_sampling_input(tmp_path / "input", "image-sequence")
-    result = vlm_eval.evaluate_vlm(
+    if not isinstance(provider_success, bool):
+        with pytest.raises(VlmEvalError, match="success must be a boolean"):
+            _sampling_judge_result(source, tmp_path)
+        assert not (tmp_path / "result.json").exists()
+        return
+    payload = asdict(_sampling_judge_result(source, tmp_path))
+    suite._assert_self_hosted_judge_claims(payload)
+    _assert_judge_claim_tampering_rejected(suite, payload)
+
+
+def _sampling_judge_result(source, tmp_path):
+    return vlm_eval.evaluate_vlm(
         input_path=str(source),
         output_path=str(tmp_path / "result.json"),
         task="Inspect the colors",
@@ -92,9 +104,6 @@ def test_sampling_judge_claims_use_effective_rubric_and_provider_boolean(
         frame_selection="final",
         max_frames=1,
     )
-    payload = asdict(result)
-    suite._assert_self_hosted_judge_claims(payload)
-    _assert_judge_claim_tampering_rejected(suite, payload)
 
 
 def _assert_judge_claim_tampering_rejected(suite, payload):
@@ -135,10 +144,11 @@ def test_served_evidence_accepts_only_documented_parser_versions(
     payload = suite._run_evaluation(config, strategy="keyframes", max_frames=3)
     for version in (
         "npa_vlm_eval_compatible_json_v123",
-        "npa_vlm_eval_compatible_json_v1+unknown",
-        "npa_vlm_eval_compatible_json_v1"
+        "npa_vlm_eval_compatible_json_v1",
+        "npa_vlm_eval_compatible_json_v2+unknown",
+        "npa_vlm_eval_compatible_json_v2"
         if fenced
-        else "npa_vlm_eval_compatible_json_v1+markdown-fence-v1",
+        else "npa_vlm_eval_compatible_json_v2+markdown-fence-v1",
     ):
         payload["evidence"]["provider"]["parser_version"] = version
         with pytest.raises(AssertionError):
