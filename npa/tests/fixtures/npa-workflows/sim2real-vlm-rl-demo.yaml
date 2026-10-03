@@ -83,7 +83,7 @@ states:
     toolRef: workbench.vlm_eval.run
     resources: gpu
     outputs:
-      - {uri: "{{config.scores_uri}}vlm_eval_stub.json", schema: npa.workbench.vlm_eval.report.v1}
+      - {uri: "{{config.scores_uri}}vlm_eval.json", schema: npa.workbench.vlm_eval.report.v1}
   heldout:
     run:
       shell: echo test-only-heldout
