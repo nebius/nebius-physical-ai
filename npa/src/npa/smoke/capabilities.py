@@ -92,9 +92,10 @@ GOLDEN_EVAL_CAPABILITIES: dict[str, list[str]] = {
         "factual RRD artifact passes decoder verification",
     ],
     "seedvr2": [
-        "pinned official SeedVR2-3B one-step inference executes on one H100",
+        "pinned official SeedVR2-3B golden probe targets one B200; execution remains gated",
         "four runtime-fetched public model payloads match fixed SHA-256 identities",
-        "real Aloha-Agilex observation excerpt is restored from 320x240 to 640x480",
+        "pinned RoboPro robot-kitchen excerpt is restored from 320x240 to 640x480; "
+        "physical-capture provenance is unverified",
         "decoded frame count, timing, dimensions, hashes, and provenance are retained",
     ],
     "openpi": [

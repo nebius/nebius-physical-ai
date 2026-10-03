@@ -71,6 +71,8 @@ def require_b200_build_inventory() -> None:
                 or any(not isinstance(arch, str) for arch in entry["sass"])
                 or not {"sm_90", "sm_100"}.issubset(entry["sass"])
                 or entry.get("missing")
-                or entry.get("missing_exact")
+                or entry.get("missing_exact_sass")
+                or entry.get("unexpected_sass")
+                or entry.get("unexpected_ptx")
             ):
                 raise ValueError("B200 requires native SM90 and SM100 extensions")

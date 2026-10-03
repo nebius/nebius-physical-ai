@@ -15,7 +15,9 @@ import subprocess
 from typing import Any, Callable
 from uuid import uuid4
 
-from npa.clients.storage import StorageClient
+from botocore.exceptions import BotoCoreError, ClientError
+
+from npa.clients.storage import StorageClient, StorageError
 from npa.workbench.storage_scope import authorize_uri
 
 from .conditioning import (
@@ -608,7 +610,14 @@ def _artifact_uri(prefix: str, name: str) -> str:
 
 def _ensure_artifacts_absent(storage: Any, uris: list[str]) -> None:
     for uri in uris:
-        if storage.read_bytes_with_etag(uri) is not None:
+        try:
+            existing = storage.read_bytes_with_etag(uri)
+        except (BotoCoreError, ClientError, StorageError) as exc:
+            raise SeedVR2Error(
+                "cannot establish output absence; verify output read authority "
+                "and object-storage availability"
+            ) from exc
+        if existing is not None:
             raise SeedVR2Error(f"output artifact already exists: {uri}")
 
 

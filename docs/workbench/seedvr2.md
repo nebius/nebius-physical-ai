@@ -80,6 +80,30 @@ prints the exact official `torchrun` invocation without fetching the model or
 touching storage. The Python SDK exposes `probe`, `restore`, `verify`, and
 `review`.
 
+## Runtime resource and failure-retention contract
+
+The upstream video adapter decodes the complete clip into host memory. Pixel
+admission does not bound clip length or memory use: an excessively long clip can
+exhaust RAM. The runtime imposes no frame-count or execution-time limit. Inspect
+the input duration and available memory before submitting; do not interpret the
+pixel gate as a guarantee that every admitted clip fits.
+
+Inference has no internal timeout or cancellation endpoint. A hung inference
+keeps the service busy until the owned workload is canceled through its normal
+orchestrator lifecycle. No external timeout is implied by this documentation.
+Monitor the actual run; do not restart a shared service or cancel unrelated jobs.
+
+Successful operations remove their private work directory. Failed operations
+retain their input copies and diagnostic files under the private run directory;
+there is no automatic sweep. Monitor task-owned disk usage, preserve and verify
+the required evidence, then explicitly clean up only the completed task's owned
+directory. Retention is not an unlimited-capacity guarantee.
+
+Output authority must support absence checks and readback as well as conditional
+creation. Create-only credentials are insufficient; an ambiguous or denied
+existence check fails closed before publication. Storage failures are reported
+as domain errors without exposing provider error text in the API response.
+
 ## Explicit conditioning and hardware
 
 `restore --conditioning-mode sample` keeps the upstream default and copies the

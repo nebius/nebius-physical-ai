@@ -378,31 +378,28 @@ def probe(
     _validate_artifact_request(request, input_suffix=".mp4", output_kind="json")
     directory = _create_work_directory(request.run_id)
     storage = storage_factory()
-    try:
-        source = directory / "input.mp4"
-        storage.download_file(request.input_path, str(source))
-        media = _probe_video(source)
-        hashes = _decoded_frame_hashes(source)
-        document = {
-            "schema": PROBE_SCHEMA,
-            "status": "ok",
-            "run_id": request.run_id,
-            "created_at": _utc_now(),
-            "input": {
-                "uri": request.input_path,
-                "sha256": _sha256(source),
-                "media": media,
-                "unique_decoded_frames": len(set(hashes)),
-            },
-        }
-        target = directory / "probe.json"
-        target.write_bytes(_canonical_json(document))
-        _ensure_artifacts_absent(storage, [request.output_path])
-        _publish_verified(storage, target, request.output_path, directory / "readback")
-        shutil.rmtree(directory)
-        return document
-    except Exception:
-        raise
+    source = directory / "input.mp4"
+    storage.download_file(request.input_path, str(source))
+    media = _probe_video(source)
+    hashes = _decoded_frame_hashes(source)
+    document = {
+        "schema": PROBE_SCHEMA,
+        "status": "ok",
+        "run_id": request.run_id,
+        "created_at": _utc_now(),
+        "input": {
+            "uri": request.input_path,
+            "sha256": _sha256(source),
+            "media": media,
+            "unique_decoded_frames": len(set(hashes)),
+        },
+    }
+    target = directory / "probe.json"
+    target.write_bytes(_canonical_json(document))
+    _ensure_artifacts_absent(storage, [request.output_path])
+    _publish_verified(storage, target, request.output_path, directory / "readback")
+    shutil.rmtree(directory)
+    return document
 
 
 def verify(

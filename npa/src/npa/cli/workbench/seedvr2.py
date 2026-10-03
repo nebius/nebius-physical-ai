@@ -69,9 +69,13 @@ def _optional_read_path(path: str) -> str:
         raise typer.Exit(1) from exc
 
 
-def _run(operation: Callable, request: object, output_format: OutputFormat) -> None:
+def _run(
+    operation: Callable,
+    request_factory: Callable[[], object],
+    output_format: OutputFormat,
+) -> None:
     try:
-        document = operation(request)
+        document = operation(request_factory())
     except (runtime.SeedVR2Error, ValueError) as exc:
         typer.echo(f"SeedVR2 failed: {exc}", err=True)
         raise typer.Exit(1) from exc
@@ -99,7 +103,7 @@ def probe_cmd(
     input_path, output_path = _paths(input_path, output_path)
     _run(
         artifacts.probe,
-        VideoArtifactRequest(
+        lambda: VideoArtifactRequest(
             input_path=input_path, output_path=output_path, run_id=run_id
         ),
         output_format,
@@ -134,7 +138,7 @@ def restore_cmd(
     input_path, output_path = _paths(input_path, output_path)
     _run(
         runtime.restore,
-        RestoreRequest(
+        lambda: RestoreRequest(
             input_path=input_path,
             output_path=output_path,
             run_id=run_id,
@@ -165,7 +169,7 @@ def verify_cmd(
     input_path, output_path = _paths(input_path, output_path)
     _run(
         artifacts.verify,
-        VideoArtifactRequest(
+        lambda: VideoArtifactRequest(
             input_path=input_path, output_path=output_path, run_id=run_id
         ),
         output_format,
@@ -187,7 +191,7 @@ def review_cmd(
     input_path, output_path = _paths(input_path, output_path)
     _run(
         artifacts.review,
-        VideoArtifactRequest(
+        lambda: VideoArtifactRequest(
             input_path=input_path, output_path=output_path, run_id=run_id
         ),
         output_format,

@@ -935,6 +935,40 @@ def test_gang_capacity_matches_standard_h100_gfd_label(accelerator: str) -> None
 
 
 @pytest.mark.parametrize(
+    ("accelerator", "product"),
+    [("H100", "NVIDIA-H100-PCIe"), ("B200", "NVIDIA-HGX-B200")],
+)
+def test_unmapped_explicit_variant_reports_authoritative_product(accelerator, product):
+    node = KubernetesGpuNode(
+        **{
+            **_node("variant", product=product).to_dict(),
+            "products": (product, accelerator),
+            "labels": (
+                ("nvidia.com/gpu.product", product),
+                ("nebius.com/gpu-name", accelerator),
+            ),
+        }
+    )
+    inventory = KubernetesGpuInventory(
+        context="test-context",
+        ready_nodes=1,
+        eligible_gpu_nodes=1,
+        capacity=1,
+        allocatable=1,
+        products=(product,),
+        node_labels={},
+        nodes=(node,),
+    )
+    with pytest.raises(gpu_catalog.PermanentlyUnsatisfiableAcceleratorError) as error:
+        preflight_kubernetes_gpu_gang(
+            inventory, accelerator=f"{accelerator}:1", node_count=1
+        )
+    assert product in str(error.value)
+    assert "provider label is less specific" in str(error.value)
+    assert "workload hardware contract" in str(error.value)
+
+
+@pytest.mark.parametrize(
     ("accelerator", "gfd_product"),
     [
         ("H200:1", "NVIDIA-H200"),

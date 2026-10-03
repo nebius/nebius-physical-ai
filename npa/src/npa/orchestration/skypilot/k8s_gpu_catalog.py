@@ -1135,7 +1135,8 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
             "Active pod GPU/CPU/memory/ephemeral-storage requests "
             "and allocatable pod slots are checked. SkyPilot allowed_nodes affinity "
             f"is applied ({sorted(shape.allowed) if shape.allowed else 'unrestricted'}); "
-            "aggregate capacity on one node cannot satisfy multiple gang ranks."
+            "aggregate capacity on one node cannot satisfy multiple gang ranks. "
+            + _accelerator_product_diagnostic(inventory, shape)
         )
     if inventory.unbound_pending_gpu_pods:
         pending_pods, pending_requests = _pending_gpu_contention(inventory, candidates)
@@ -1147,6 +1148,23 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
                 f"rule out contention for {shape.accelerator.name}; wait "
                 "for authoritative placement or remove only the owned pending workload"
             )
+
+
+def _accelerator_product_diagnostic(inventory, shape) -> str:
+    products = sorted(
+        {
+            dict(node.labels)["nvidia.com/gpu.product"]
+            for node in inventory.nodes
+            if (not shape.allowed or node.name in shape.allowed)
+            and dict(node.labels).get("nvidia.com/gpu.product")
+        }
+    )
+    return (
+        f"Observed authoritative GPU product labels: {products or 'unavailable'}. "
+        "Explicit aliases require an exact supported product match, even when "
+        "a provider label is less specific; inspect the workload hardware "
+        "contract before selecting an explicit accelerator name."
+    )
 
 
 def preflight_kubernetes_gpu_gang(
