@@ -1,6 +1,7 @@
 """Verify durable response bytes precede decoding and strict failure parsing."""
 
 import base64
+from dataclasses import asdict
 import hashlib
 import json
 from pathlib import Path
@@ -40,6 +41,61 @@ def _request(root: Path):
         model="MiniMaxAI/MiniMax-M3",
         task="Describe visible placement evidence.",
     )
+
+
+@pytest.mark.parametrize(
+    "helper", ["_backend_response_from_http", "_captured_http_response"]
+)
+@pytest.mark.parametrize(
+    ("body", "content_type"),
+    [
+        (b"\xff", "application/json; charset=utf-8"),
+        (b"\xfe", "application/json; charset=utf-8"),
+        (b'{"error":"caf\xe9"}', "application/json; charset=iso-8859-1"),
+        (b'{"error":"ordinary UTF-8 failure"}', "application/json"),
+        ('{"value":"caf\u00e9"}'.encode(), "application/json; charset=utf-8"),
+    ],
+)
+def test_shared_http_capture_helpers_preserve_wire_before_decoding(
+    helper, body, content_type
+) -> None:
+    events = []
+
+    class Response(httpx.Response):
+        @property
+        def content(self):
+            events.append("wire")
+            return super().content
+
+        @property
+        def text(self):
+            assert events and events[0] == "wire"
+            events.append("text")
+            return super().text
+
+        def json(self, **kwargs):
+            assert events and events[0] == "wire"
+            events.append("json")
+            return super().json(**kwargs)
+
+    response = Response(
+        502,
+        content=body,
+        headers={"content-type": content_type, "x-request-id": "synthetic-id"},
+        request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+    )
+    events.clear()
+    arguments = {"started_at": 0}
+    if helper == "_backend_response_from_http":
+        arguments["data"] = {}
+    captured = getattr(vlm_eval, helper)(response, **arguments)
+    assert events[0] == "wire"
+    assert base64.b64decode(captured.raw_body_base64, validate=True) == body
+    assert captured.raw_body_bytes_sha256 == hashlib.sha256(body).hexdigest()
+    assert captured.raw_body_byte_count == len(body)
+    assert captured.status_code == 502
+    assert captured.request_id_header == "synthetic-id"
+    assert captured.raw_body == response.text
 
 
 @pytest.mark.parametrize(
@@ -84,6 +140,114 @@ def test_visual_journal_retains_bytes_before_decoding(
     assert wire["byte_count"] == len(body)
     assert wire["status_code"] == status
     assert wire_path.stat().st_mode & 0o777 == 0o600
+    exact = report.outcomes[0].response_bytes
+    assert exact is not None
+    assert asdict(exact) == wire
+    canonical = json.loads(Path(report.result_uri).read_text())
+    assert canonical["outcomes"][0]["response_bytes"] == wire
+
+
+def test_distinct_invalid_utf8_remains_distinct_in_canonical_outcomes(
+    monkeypatch, tmp_path
+) -> None:
+    retained = []
+    for index, body in enumerate((b"\xff", b"\xfe")):
+        root = tmp_path / str(index)
+        root.mkdir(mode=0o700)
+        request = _request(root)
+        response = httpx.Response(
+            502,
+            content=body,
+            request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+        )
+        monkeypatch.setattr(vlm_eval.httpx, "Client", _client(response))
+        monkeypatch.setattr(
+            visual_review, "_resolve_provider_key", lambda *_a, **_k: "synthetic"
+        )
+        report = vlm_eval.review_visual(request)
+        retained.append(report.outcomes[0])
+    assert retained[0].provider.raw_response == retained[1].provider.raw_response
+    assert (
+        retained[0].response_bytes.body_sha256 != retained[1].response_bytes.body_sha256
+    )
+    assert (
+        retained[0].response_bytes.body_base64 != retained[1].response_bytes.body_base64
+    )
+
+
+@pytest.mark.parametrize("damage", ["missing", "hash", "count", "body", "identity"])
+def test_final_report_rejects_missing_or_divergent_wire_journal(
+    monkeypatch, tmp_path, damage
+) -> None:
+    request = _request(tmp_path)
+    response = httpx.Response(
+        502,
+        content=b"\xff",
+        request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
+    )
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _client(response))
+    monkeypatch.setattr(
+        visual_review, "_resolve_provider_key", lambda *_a, **_k: "synthetic"
+    )
+    finalize = visual_review._finalize_visual_review_report
+
+    def damage_then_finalize(report, context, journal, outcomes):
+        path = Path(journal.root_uri) / "response-bytes-01.json"
+        if damage == "missing":
+            path.unlink()
+        else:
+            wire = json.loads(path.read_text())
+            field, value = {
+                "hash": ("body_sha256", "0" * 64),
+                "count": ("byte_count", 2),
+                "body": ("body_base64", "/g=="),
+                "identity": ("request_id_header", "different-synthetic-id"),
+            }[damage]
+            wire[field] = value
+            path.write_text(json.dumps(wire))
+        finalize(report, context, journal, outcomes)
+
+    monkeypatch.setattr(
+        visual_review, "_finalize_visual_review_report", damage_then_finalize
+    )
+    with pytest.raises(vlm_eval.VlmVisualReviewError):
+        vlm_eval.review_visual(request)
+    assert not (Path(request.output_path) / "vlm_visual_review.json").exists()
+    assert (
+        Path(request.output_path)
+        / "vlm_visual_review.evidence/transport-started-01.json"
+    ).exists()
+
+
+def test_textless_adapter_retains_actual_json_not_placeholder(monkeypatch) -> None:
+    payload = {"model": "synthetic", "choices": []}
+
+    class Response:
+        status_code = 200
+        headers = {}
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    observed = []
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _client(Response()))
+    response = vlm_eval._post_backend_once(
+        url="https://example.test/v1/chat/completions",
+        headers={},
+        request={},
+        timeout_s=10,
+        started_at=0,
+        response_sink=observed.append,
+        error_response_sink=None,
+        request_body=b"{}",
+    )
+    assert response.data == payload
+    assert response.raw_body == vlm_eval._canonical_json(payload)
+    assert observed == [response]
+    assert response.raw_body_base64 is None  # Never invent wire bytes from JSON.
 
 
 def test_byte_retention_failure_stops_before_text_decoding(monkeypatch) -> None:

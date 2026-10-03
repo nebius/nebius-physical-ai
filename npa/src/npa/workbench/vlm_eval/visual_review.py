@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
+import hashlib
 import json
 import math
 import os
@@ -50,6 +51,10 @@ _ARM_FIELDS = {
     "physical_ai_usefulness",
 }
 _SOURCE_ROLE_PATTERN = re.compile(r"\b(?:baseline|candidate|current)\b", re.I)
+_SOURCE_ROLE_VOCABULARY_DISCLOSURE = (
+    "Do not use the standalone words baseline, candidate, or current in any "
+    "response string, including ordinary phrases such as 'current frame'. "
+)
 _ESTABLISHED_CLAIM_PATTERN = re.compile(
     r"\b(?:benefits?|correctness|safety|performance|success)\s+"
     r"(?:is|are|was|were|has\s+been|have\s+been)\s+"
@@ -401,6 +406,35 @@ class VlmVisualReviewFailure:
 
 
 @dataclass(frozen=True)
+class VlmVisualResponseBytes:
+    """Bind an audit outcome to exact HTTP bytes, not reconstructed decoded text.
+
+    Args:
+        schema_version: Byte-journal contract identifier.
+        encoding: Reversible byte encoding.
+        body_base64: Exact HTTP response bytes in base64.
+        body_sha256: SHA256 of those exact bytes.
+        byte_count: Exact byte length.
+        status_code: Observed HTTP status when available.
+        request_id_header: Observed response request identity when available.
+        latency_s: Original byte-retention latency.
+    Returns:
+        None.
+    Raises:
+        None.
+    """
+
+    schema_version: str
+    encoding: str
+    body_base64: str
+    body_sha256: str
+    byte_count: int
+    status_code: int | None
+    request_id_header: str | None
+    latency_s: float
+
+
+@dataclass(frozen=True)
 class VlmVisualReviewOutcome:
     """Retain one single or counterbalanced hosted attempt.
 
@@ -414,6 +448,7 @@ class VlmVisualReviewOutcome:
         provider: Raw provider evidence when a response was observed.
         verdict: Strict parsed verdict when successful.
         error: Typed generic error when parsing or transport failed.
+        response_bytes: Exact observed wire evidence, or None for older/text-only adapters.
     Returns:
         None.
     Raises:
@@ -429,6 +464,7 @@ class VlmVisualReviewOutcome:
     provider: _core.VlmProviderEvidence | None
     verdict: VlmVisualSingleVerdict | VlmVisualPairedVerdict | None
     error: VlmVisualReviewFailure | None
+    response_bytes: VlmVisualResponseBytes | None = None
 
 
 @dataclass(frozen=True)
@@ -770,6 +806,7 @@ def _finalize_visual_review_report(
 ) -> None:
     _validate_final_report(report, context, outcomes)
     _assert_journal_reservation(context, journal)
+    _assert_response_byte_journals(outcomes, journal)
     payload = asdict(report)
     _reject_sensitive_keys(payload)
     body = _json_bytes(payload)
@@ -1254,7 +1291,9 @@ def _validate_request(request: VlmVisualReviewRequest) -> None:
         not isinstance(value, str) or not value.strip() for value in required.values()
     ):
         raise VlmVisualReviewError("visual review required fields must be nonempty")
-    if request.baseline_path and request.baseline_path == request.input_path:
+    if request.baseline_path and _source_identity(
+        request.baseline_path
+    ) == _source_identity(request.input_path):
         raise VlmVisualReviewError(
             "paired visual review requires distinct source paths"
         )
@@ -1277,6 +1316,12 @@ def _validate_request(request: VlmVisualReviewRequest) -> None:
         raise VlmVisualReviewError("visual review timeout must be positive")
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", request.api_key_env) is None:
         raise VlmVisualReviewError("API key environment name is invalid")
+
+
+def _source_identity(path: str) -> str:
+    if path.startswith("s3://"):
+        return path.rstrip("/")
+    return str(Path(path).resolve())
 
 
 def _validate_request_strings(request: VlmVisualReviewRequest) -> None:
@@ -1635,7 +1680,9 @@ def _cross_field_contract_text() -> str:
         "hypothesis, and needed test plus empty required_properties. Do not add a "
         "score, rating, gate, objective verdict, or confirmation field. "
         "Refer to image sets only by their neutral A/B labels; use no relational "
-        "source-role wording. Describe downstream usefulness only as a hypothesis "
+        "source-role wording. "
+        + _SOURCE_ROLE_VOCABULARY_DISCLOSURE
+        + "Describe downstream usefulness only as a hypothesis "
         "requiring a future consumer test. Do not claim established measurement, "
         "validation, certification, correctness, safety, or performance."
     )
@@ -1726,7 +1773,10 @@ def _assert_neutral_attempts(attempts: Sequence[_AttemptSpec]) -> None:
         raise VlmVisualReviewError("visual review has an invalid attempt schedule")
     for attempt in attempts:
         text = _request_text(attempt.request)
-        if _SOURCE_ROLE_PATTERN.search(text):
+        # Only the exact, code-owned prohibited-vocabulary instruction is exempt.
+        # Additional role words or a mutated instruction still fail closed.
+        neutral_text = text.replace(_SOURCE_ROLE_VOCABULARY_DISCLOSURE, "", 1)
+        if _SOURCE_ROLE_PATTERN.search(neutral_text):
             raise VlmVisualReviewError("visual review request reveals a source role")
         _assert_co_located_markers(attempt)
     if len(attempts) == 2:
@@ -1880,6 +1930,46 @@ def _read_private_regular_file(path: Path) -> bytes:
         raise VlmVisualReviewError("visual review reservation is unavailable") from None
 
 
+def _assert_response_byte_journals(
+    outcomes: tuple[VlmVisualReviewOutcome, ...], journal: _ReviewJournal
+) -> None:
+    for ordinal, outcome in enumerate(outcomes, start=1):
+        uri = f"{journal.root_uri}/response-bytes-{ordinal:02d}.json"
+        if uri.startswith("s3://"):
+            retained = _read_s3_object(journal.storage_client, uri)
+            raw = retained[0] if retained is not None else None
+        else:
+            path = Path(uri)
+            raw = _read_private_regular_file(path) if _lexists(path) else None
+        wire = outcome.response_bytes
+        if wire is None and raw is None:
+            # Text-only adapters and historical responses have no wire proof.
+            continue
+        if wire is None or raw is None:
+            raise VlmVisualReviewError("visual review response bytes are missing")
+        try:
+            payload = _load_strict_json(raw.decode("utf-8"), "response bytes")
+            content = base64.b64decode(wire.body_base64, validate=True)
+        except (ValueError, UnicodeDecodeError, VlmVisualReviewError):
+            raise VlmVisualReviewError(
+                "visual review response bytes are invalid"
+            ) from None
+        valid = (
+            payload == asdict(wire)
+            and wire.schema_version == "npa_vlm_http_response_bytes_v1"
+            and wire.encoding == "base64"
+            and type(wire.byte_count) is int
+            and wire.byte_count == len(content)
+            and wire.body_sha256 == hashlib.sha256(content).hexdigest()
+            and outcome.provider is not None
+            and outcome.provider.status_code == wire.status_code
+        )
+        if not valid:
+            raise VlmVisualReviewError(
+                "visual review response bytes are not internally bound"
+            )
+
+
 def _read_s3_object(storage_client: Any, uri: str) -> tuple[bytes, str] | None:
     from botocore.exceptions import BotoCoreError, ClientError
     from npa.clients.storage import StorageError
@@ -1895,6 +1985,8 @@ def _read_s3_object(storage_client: Any, uri: str) -> tuple[bytes, str] | None:
 
 
 def _reserve_local_directory(result_uri: str) -> Path:
+    if os.link not in os.supports_follow_symlinks:
+        raise VlmVisualReviewError("visual review requires no-follow hard-link support")
     report = _absolute_path(Path(result_uri))
     temporary = report.with_name(f".{report.name}.tmp")
     evidence = report.parent / VISUAL_REVIEW_EVIDENCE_DIRECTORY
@@ -2158,7 +2250,7 @@ def _attempt_outcome(
         )
     except _core.VlmEvalError:
         return _response_error_outcome(attempt, evidence, response)
-    return _make_outcome(attempt, evidence, provider, verdict, None)
+    return _make_outcome(attempt, evidence, provider, verdict, None, response)
 
 
 def _transport_error_outcome(
@@ -2173,7 +2265,7 @@ def _transport_error_outcome(
         error_type=error_type,
         message="hosted visual review transport did not produce a parseable response",
     )
-    return _make_outcome(attempt, evidence, provider, None, failure)
+    return _make_outcome(attempt, evidence, provider, None, failure, response)
 
 
 def _response_error_outcome(
@@ -2186,7 +2278,9 @@ def _response_error_outcome(
         error_type="response_contract_error",
         message="hosted visual review response violated the strict contract",
     )
-    return _make_outcome(attempt, evidence, _unparsed_provider(response), None, failure)
+    return _make_outcome(
+        attempt, evidence, _unparsed_provider(response), None, failure, response
+    )
 
 
 def _unparsed_provider(
@@ -2204,6 +2298,7 @@ def _make_outcome(
     provider: _core.VlmProviderEvidence | None,
     verdict: VlmVisualSingleVerdict | VlmVisualPairedVerdict | None,
     error: VlmVisualReviewFailure | None,
+    response: _core._VlmBackendResponse | None,
 ) -> VlmVisualReviewOutcome:
     return VlmVisualReviewOutcome(
         order_id=attempt.order_id,
@@ -2215,6 +2310,26 @@ def _make_outcome(
         provider=provider,
         verdict=verdict,
         error=error,
+        response_bytes=_response_byte_evidence(response),
+    )
+
+
+def _response_byte_evidence(
+    response: _core._VlmBackendResponse | None,
+) -> VlmVisualResponseBytes | None:
+    if response is None or response.raw_body_base64 is None:
+        return None
+    if response.raw_body_bytes_sha256 is None or response.raw_body_byte_count is None:
+        raise VlmVisualReviewError("visual review response byte metadata is incomplete")
+    return VlmVisualResponseBytes(
+        schema_version="npa_vlm_http_response_bytes_v1",
+        encoding="base64",
+        body_base64=response.raw_body_base64,
+        body_sha256=response.raw_body_bytes_sha256,
+        byte_count=response.raw_body_byte_count,
+        status_code=response.status_code,
+        request_id_header=response.request_id_header,
+        latency_s=response.latency_s,
     )
 
 
@@ -2440,6 +2555,7 @@ def _fixed_limitations() -> tuple[str, ...]:
     return (
         "Audit-only visual review; it does not affect the normalized score or gate.",
         "Frame citations prove syntactic provenance, not that an observation is true.",
+        "Paired agreement compares dimension signatures, not semantic agreement of prose.",
         "Objective-evidence references are retained as unverified private locators.",
         "Matched-view metadata is unverified producer metadata.",
         "Usefulness remains hypothesis-only; no measured benefit is established.",
@@ -2516,7 +2632,7 @@ def _finalize_local_report(path: Path, body: bytes) -> None:
         os.chmod(path, 0o600)
     except FileExistsError as exc:
         raise VlmVisualReviewError("visual review report already exists") from exc
-    except OSError as exc:
+    except (OSError, NotImplementedError) as exc:
         raise VlmVisualReviewError(
             "visual review report could not be finalized"
         ) from exc

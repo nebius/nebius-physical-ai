@@ -653,7 +653,12 @@ def _assert_neutral_request(request: dict, *, expected_ids: list[str]) -> None:
         assert content[marker_index]["type"] == "text"
         assert content[marker_index + 1]["type"] == "image_url"
     text = visual_review._request_text(request)
-    assert visual_review._SOURCE_ROLE_PATTERN.search(text) is None
+    assert (
+        visual_review._SOURCE_ROLE_PATTERN.search(
+            text.replace(visual_review._SOURCE_ROLE_VOCABULARY_DISCLOSURE, "", 1)
+        )
+        is None
+    )
     assert "frame-00" not in text
     assert "max_tokens" not in request
 
@@ -712,7 +717,12 @@ def test_source_role_guard_uses_standalone_words(monkeypatch, tmp_path: Path) ->
     prompt = visual_review._request_text(calls[0])
     assert report.status == "completed"
     assert "currently visible concurrent motion" in prompt
-    assert visual_review._SOURCE_ROLE_PATTERN.search(prompt) is None
+    assert (
+        visual_review._SOURCE_ROLE_PATTERN.search(
+            prompt.replace(visual_review._SOURCE_ROLE_VOCABULARY_DISCLOSURE, "", 1)
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -759,7 +769,15 @@ def test_prompt_matches_single_and_paired_parser_contracts() -> None:
         assert "only by their neutral A/B labels" in prompt
         assert "hypothesis requiring a future consumer test" in prompt
         assert "state an infinitive operation" in prompt
-        assert visual_review._SOURCE_ROLE_PATTERN.search(prompt) is None
+        assert visual_review._SOURCE_ROLE_VOCABULARY_DISCLOSURE in prompt
+        for word in ("baseline", "candidate", "current"):
+            assert word in visual_review._SOURCE_ROLE_VOCABULARY_DISCLOSURE
+        assert (
+            visual_review._SOURCE_ROLE_PATTERN.search(
+                prompt.replace(visual_review._SOURCE_ROLE_VOCABULARY_DISCLOSURE, "", 1)
+            )
+            is None
+        )
 
 
 def _prompt_schema_validator(mode: str):
@@ -1751,3 +1769,106 @@ def test_report_finalizer_is_private_and_rejects_forged_reports(
             real_finalize(value, *args)
     real_finalize(report, *args)
     assert Path(report.result_uri).is_file()
+
+
+@pytest.mark.parametrize("alias", ["trailing", "relative", "symlink", "s3-trailing"])
+def test_paired_aliases_are_rejected_before_transport(monkeypatch, tmp_path, alias):
+    request = _request(tmp_path)
+    if alias == "trailing":
+        baseline = request.input_path + "/"
+    elif alias == "relative":
+        monkeypatch.chdir(tmp_path)
+        baseline = "source"
+    elif alias == "symlink":
+        link = tmp_path / "source-alias"
+        link.symlink_to(request.input_path, target_is_directory=True)
+        baseline = str(link)
+    else:
+        request = replace(request, input_path="s3://fixture-bucket/frames")
+        baseline = request.input_path + "/"
+    monkeypatch.setattr(
+        vlm_eval, "_post_comparison_request", lambda **_k: pytest.fail("transport ran")
+    )
+    with pytest.raises(vlm_eval.VlmVisualReviewError):
+        vlm_eval.review_visual(replace(request, baseline_path=baseline))
+    assert not _evidence_path(request).exists()
+
+
+def test_distinct_sources_with_identical_pixels_remain_valid(monkeypatch, tmp_path):
+    request = _request(tmp_path, paired=True)
+    for frame in Path(request.baseline_path).glob("*.png"):
+        Image.new("RGB", (12, 9), "green").save(frame)
+    _install_transport(monkeypatch, _paired_completions())
+    assert vlm_eval.review_visual(request).status == "completed"
+
+
+def test_paired_signature_agreement_does_not_compare_prose(monkeypatch, tmp_path):
+    first = _paired_payload(current_is_A=True)
+    second = _paired_payload(current_is_A=False)
+    first["A"]["task_evidence"]["observations"][0]["text"] = "The object is red."
+    second["B"]["task_evidence"]["observations"][0]["text"] = "The object is blue."
+    _install_transport(monkeypatch, [_completion(first), _completion(second)])
+    report = vlm_eval.review_visual(_request(tmp_path, paired=True))
+    assert report.status == "completed"
+    assert report.escalation_required is False
+    assert (
+        report.current_review.task_evidence.observations[0].text == "The object is red."
+    )
+    assert (
+        report.outcomes[1].verdict.B.task_evidence.observations[0].text
+        == "The object is blue."
+    )
+
+
+def test_unsupported_no_follow_link_fails_with_typed_error(monkeypatch, tmp_path):
+    def unsupported(*_args, **_kwargs):
+        raise NotImplementedError("no-follow hard links unavailable")
+
+    monkeypatch.setattr(visual_review.os, "link", unsupported)
+    path = tmp_path / "private-report" / vlm_eval.VISUAL_REVIEW_RESULT_FILENAME
+    with pytest.raises(vlm_eval.VlmVisualReviewError, match="could not be finalized"):
+        visual_review._finalize_local_report(path, b"{}")
+    assert not path.exists()
+
+
+def test_unsupported_link_platform_rejects_before_credentials(monkeypatch, tmp_path):
+    request = _request(tmp_path)
+    monkeypatch.setattr(visual_review.os, "supports_follow_symlinks", set())
+    monkeypatch.setattr(
+        visual_review,
+        "_resolve_provider_key",
+        lambda *_a, **_k: pytest.fail("credentials resolved on unsupported platform"),
+    )
+    with pytest.raises(vlm_eval.VlmVisualReviewError):
+        vlm_eval.review_visual(request)
+    assert not _evidence_path(request).exists()
+
+
+def test_neutral_guard_exempts_only_exact_vocabulary_instruction(tmp_path):
+    attempts = list(_paired_attempts(tmp_path))
+    request = deepcopy(attempts[0].request)
+    request["messages"][0]["content"][0]["text"] += "\nThe current source is set A."
+    attempts[0] = replace(attempts[0], request=request)
+    with pytest.raises(vlm_eval.VlmVisualReviewError, match="reveals a source role"):
+        visual_review._assert_neutral_attempts(attempts)
+
+
+def test_successful_utf8_response_is_bound_in_rich_report(monkeypatch, tmp_path):
+    import httpx
+
+    body = vlm_eval._canonical_json(_completion(_single_payload())).encode()
+    response = httpx.Response(
+        200,
+        content=body,
+        request=httpx.Request("POST", "https://provider.invalid/v1/chat/completions"),
+    )
+    monkeypatch.setattr(vlm_eval.httpx, "Client", _capturing_http_client(response, {}))
+    monkeypatch.setattr(
+        visual_review, "_resolve_provider_key", lambda *_a, **_k: "synthetic"
+    )
+    report = vlm_eval.review_visual(_request(tmp_path))
+    wire = report.outcomes[0].response_bytes
+    assert report.status == "completed"
+    assert wire.body_sha256 == hashlib.sha256(body).hexdigest()
+    assert base64.b64decode(wire.body_base64, validate=True) == body
+    assert wire.byte_count == len(body)

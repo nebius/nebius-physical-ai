@@ -6,13 +6,13 @@ import traceback
 from types import SimpleNamespace
 
 from PIL import Image
-
 from typer.testing import CliRunner
 
 from npa.cli.main import app
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
     DEFAULT_SAMPLE_BENCHMARK_PATH,
+    JUDGE_COMPARISON_RESULT_FILENAME,
     LEGACY_RESULT_FILENAME,
     RESULT_FILENAME,
     VlmEvalResult,
@@ -192,6 +192,123 @@ def test_workbench_vlm_eval_run_maps_backend_flags(mocker, tmp_path) -> None:
     assert kwargs["timeout_s"] == 45
 
 
+def test_workbench_vlm_eval_compare_judges_writes_distinct_report(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (8, 8), "green").save(frame)
+    requests = []
+
+    def post(**kwargs):
+        request = kwargs["request"]
+        requests.append(request)
+        return {
+            "id": f"request-{len(requests)}",
+            "model": request["model"],
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": (
+                            '{"success":true,"score":0.9,'
+                            '"rationale":"visible evidence"}'
+                        )
+                    },
+                }
+            ],
+        }
+
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **kwargs: "test-key")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    output_dir = tmp_path / "comparison"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "compare-judges",
+            "--input-path",
+            str(frame),
+            "--output-path",
+            str(output_dir),
+            "--primary-model",
+            "MiniMaxAI/MiniMax-M3",
+            "--secondary-model",
+            "openbmb/MiniCPM-V-4_5",
+            "--rubric",
+            "Require visible completion in both independent reviews.",
+            "--frame-selection",
+            "sequence",
+            "--max-frames",
+            "7",
+            "--output",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "judges_agree_passed"
+    assert payload["deployment_status"] == "audit_only"
+    assert payload["requests_differ_only_by_model"] is True
+    assert len(requests) == 2
+    assert "raw_response" not in result.output
+    assert "visible evidence" not in result.output
+    written = output_dir / JUDGE_COMPARISON_RESULT_FILENAME
+    assert written.exists()
+    assert not (output_dir / RESULT_FILENAME).exists()
+    retained = json.loads(written.read_text(encoding="utf-8"))
+    assert retained["primary"]["result"]["result_uri"] == str(written)
+    assert retained["secondary"]["result"]["result_uri"] == str(written)
+    assert retained["primary"]["result"]["rationale"] == "visible evidence"
+    for role in ("primary", "secondary"):
+        assert retained[role]["result"]["rubric"] == retained["rubric"]
+        assert retained[role]["result"]["provider_success"] is True
+        assert retained[role]["result"]["provider_success_matches_score_gate"] is True
+        manifest = retained[role]["result"]["evidence"]["request"]["request_manifest"]
+        assert manifest["sampling"]["strategy"] == "sequence"
+        assert manifest["sampling"]["max_frames"] == 7
+        assert manifest["sampling"]["selected_count"] == 1
+
+
+def test_workbench_vlm_eval_compare_judges_rejects_same_model(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    frame = tmp_path / "frame.png"
+    Image.new("RGB", (8, 8), "green").save(frame)
+    called = False
+
+    def post(**_kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "compare-judges",
+            "--input-path",
+            str(frame),
+            "--output-path",
+            str(tmp_path / "comparison"),
+            "--primary-model",
+            "same/model",
+            "--secondary-model",
+            "same/model",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "two distinct model IDs" in result.output
+    assert called is False
+
+
 def test_workbench_vlm_eval_workflow_path() -> None:
     result = runner.invoke(
         app, ["workbench", "vlm-eval", "workflow", "--output", "json"]
@@ -252,6 +369,19 @@ def test_vlm_eval_sdk_benchmark_returns_report() -> None:
 
     assert report.best_config.config.success_threshold == 0.8
     assert report.best_config.metrics.accuracy == 1.0
+
+
+def test_vlm_eval_sdk_exports_direct_paired_judge_surface() -> None:
+    from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
+    from npa.workbench import vlm_eval as core_vlm_eval
+    from npa.workbench.vlm_eval import (
+        VlmJudgeComparisonRequest,
+        compare_vlm_judges,
+    )
+
+    assert sdk_vlm_eval.compare_judges is compare_vlm_judges
+    assert sdk_vlm_eval.VlmJudgeComparisonRequest is VlmJudgeComparisonRequest
+    assert "VlmJudgeComparisonRequest" in core_vlm_eval.__all__
 
 
 def test_vlm_eval_sdk_wrapper_accepts_string_flags(capsys, tmp_path) -> None:
@@ -376,6 +506,30 @@ def _expected_visual_review_request(tmp_path: Path) -> VlmVisualReviewRequest:
         matched_view_map_path=str(tmp_path / "private-views.json"),
         timeout_s=45.0,
     )
+
+
+def test_review_visual_default_text_under_json_contract(monkeypatch, tmp_path):
+    import npa.cli.workbench.vlm_eval as cli_vlm_eval
+
+    monkeypatch.setattr(
+        cli_vlm_eval,
+        "run_visual_review",
+        lambda _request: SimpleNamespace(
+            schema_version="npa_vlm_visual_review_v1",
+            status="completed",
+            escalation_required=False,
+            attempt_count=2,
+            model="hosted/vision-model",
+        ),
+    )
+    arguments = _visual_review_cli_args(tmp_path)
+    assert arguments[-2:] == ["--output-format", "json"]
+    result = runner.invoke(app, arguments[:-2])
+    assert result.exit_code == 0
+    assert "schema_version: npa_vlm_visual_review_v1" in result.output
+    assert "status: completed" in result.output
+    assert "attempt_count: 2" in result.output
+    assert "private-current" not in result.output
 
 
 def test_workbench_vlm_eval_review_visual_sanitizes_generic_failure(
