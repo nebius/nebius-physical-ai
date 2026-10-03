@@ -544,6 +544,36 @@ def test_workflow_limits_credentialed_code_to_reviewed_branches():
     assert 'all(value == 0 for value in receipt["counts"].values())' in negative["run"]
 
 
+def test_nightly_executes_kimi_and_checks_both_visual_controls():
+    import yaml
+
+    root = Path(__file__).resolve().parents[3]
+    workflow = yaml.safe_load(
+        (root / ".github/workflows/token-factory-live.yml").read_text()
+    )
+    steps = workflow["jobs"]["token-factory-live"]["steps"]
+    live = next(
+        step
+        for step in steps
+        if step.get("name") == "Run credentialed suites and Kimi provenance contracts"
+    )
+    assert live["env"]["NPA_TF_RECHECK_REQUIRED_MODELS"].startswith(
+        "moonshotai/Kimi-K3,"
+    )
+    assert "token_factory_live_recheck.py" in live["run"]
+    verify = next(
+        step
+        for step in steps
+        if step.get("name") == "Require executed Kimi visual controls"
+    )
+    assert (
+        "test_live_visual_judge_distinguishes_completion[moonshotai/Kimi-K3-"
+        in verify["run"]
+    )
+    assert "assert len(kimi) == 2" in verify["run"]
+    assert 'receipt["counts"]["deselected"]' in verify["run"]
+
+
 def test_migration_agent_defaults_match_shared_client():
     """Detect drift in modules embedded into the separately deployed agent."""
     from npa.cli import agent_routing

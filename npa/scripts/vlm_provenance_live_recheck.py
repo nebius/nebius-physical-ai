@@ -128,10 +128,7 @@ def _check_local_artifacts(config: dict[str, str], root: Path) -> None:
 
 
 def _check_endpoint(config: dict[str, str]) -> None:
-    endpoint = _chat_completions_url(config["endpoint_url"]).removesuffix(
-        "/chat/completions"
-    )
-    parsed = urlsplit(endpoint)
+    parsed = urlsplit(config["endpoint_url"])
     if (
         parsed.scheme not in {"http", "https"}
         or not parsed.hostname
@@ -146,6 +143,9 @@ def _check_endpoint(config: dict[str, str]) -> None:
         raise ValueError(
             "The configured endpoint credential environment variable is required"
         )
+    endpoint = _chat_completions_url(config["endpoint_url"]).removesuffix(
+        "/chat/completions"
+    )
     response = httpx.get(
         endpoint + "/models",
         headers={"Authorization": f"Bearer {os.environ[key_env]}"},
@@ -238,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     Returns:
         Zero only when every required live test executed and passed.
     Raises:
-        OSError: If private evidence cannot be created.
+        None.
     """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence-dir", type=Path, required=True)
@@ -248,21 +248,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("Run from the repository root using npa/.venv/bin/python")
     try:
         target = _evidence_target(str(args.evidence_dir), root)
-    except ValueError as exc:
-        parser.error(str(exc))
-    try:
-        return _verify_and_record(root, target)
-    except (OSError, ValueError):
-        print(
-            json.dumps(
-                {"passed": False, "failure": "Private receipt could not be recorded"}
-            )
-        )
+        receipt = _receipt(root)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        print(json.dumps({"passed": False, "failure": "Private evidence setup failed"}))
         return 1
+    return _verify_and_record(root, target, receipt)
 
 
-def _verify_and_record(root: Path, target: Path) -> int:
-    receipt = _receipt(root)
+def _verify_and_record(root: Path, target: Path, receipt: dict) -> int:
     results = Results((PROVENANCE_SUITE,), provider_contract=False)
     exit_code = 2
     try:
@@ -286,7 +279,11 @@ def _verify_and_record(root: Path, target: Path) -> int:
         passed=results.complete(exit_code)
         and _sampling_tests_collected(results.collected),
     )
-    write_receipt(target / "receipt.json", receipt)
+    try:
+        write_receipt(target / "receipt.json", receipt)
+    except (OSError, ValueError, TypeError):
+        print(json.dumps({"passed": False, "failure": "Private receipt write failed"}))
+        return 1
     print(json.dumps({key: receipt[key] for key in ("passed", "counts")}))
     return 0 if receipt["passed"] else 1
 

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -54,14 +55,14 @@ def _run_evaluation(config: dict, *, strategy: str, max_frames: int) -> dict:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
     validate_sampling_scalars(payload)
-    _assert_provider_evidence(payload, config)
+    _assert_result_evidence(payload, config)
     _assert_self_hosted_judge_claims(payload)
     assert payload.pop("written_uri") == config["output_path"]
     assert json.loads(Path(config["output_path"]).read_text()) == payload
     return payload
 
 
-def _assert_provider_evidence(payload: dict, config: dict) -> None:
+def _assert_result_evidence(payload: dict, config: dict) -> None:
     assert payload["served_model"] == config["expected_served_model"]
     assert payload["model"] == config["model"]
     assert 0 <= payload["score"] <= 1
@@ -79,20 +80,7 @@ def _assert_provider_evidence(payload: dict, config: dict) -> None:
         evidence["request"]["request_manifest_sha256"]
         == hashlib.sha256(manifest.encode()).hexdigest()
     )
-    raw_response = evidence["provider"]["raw_response"]
-    assert (
-        evidence["provider"]["raw_response_sha256"]
-        == hashlib.sha256(raw_response.encode()).hexdigest()
-    )
-    assert json.loads(raw_response)["model"] == config["expected_served_model"]
-    assert json.loads(raw_response)["choices"][0]["finish_reason"] == "stop"
-    assert evidence["provider"]["returned_model"] == config["expected_served_model"]
-    assert evidence["provider"]["status_code"] == 200
-    assert evidence["provider"]["finish_reason"] == "stop"
-    assert evidence["provider"]["parser_version"] in {
-        "npa_vlm_eval_compatible_json_v1",
-        "npa_vlm_eval_compatible_json_v1+markdown-fence-v1",
-    }
+    _assert_provider_evidence(evidence["provider"], config)
 
 
 def test_self_hosted_result_retains_served_model(live_config: dict) -> None:
@@ -132,11 +120,7 @@ def test_self_hosted_sampling_binds_source_payloads(
 
 
 def _assert_self_hosted_judge_claims(saved: dict) -> None:
-    from npa.workbench.vlm_eval import (
-        DEFAULT_RUBRIC,
-        _build_prompt,
-        parse_structured_response,
-    )
+    from npa.workbench.vlm_eval import _build_prompt, parse_structured_response
 
     evidence = saved["evidence"]
     response = json.loads(evidence["provider"]["raw_response"])
@@ -144,9 +128,18 @@ def _assert_self_hosted_judge_claims(saved: dict) -> None:
     assert saved["score"] == round(verdict.score, 4)
     assert saved["passed"] is (saved["score"] >= saved["success_threshold"])
     assert saved["status"] == ("passed" if saved["passed"] else "needs_iteration")
+    assert saved["provider_success"] is verdict.provider_success
+    matches_gate = (
+        None
+        if verdict.provider_success is None
+        else verdict.provider_success == saved["passed"]
+    )
+    assert saved["provider_success_matches_score_gate"] is matches_gate
     prompt = _build_prompt(
-        rubric=DEFAULT_RUBRIC,
-        **{field: saved[field] for field in ("task", "frame_selection", "frame_count")},
+        **{
+            field: saved[field]
+            for field in ("task", "rubric", "frame_selection", "frame_count")
+        }
     )
     assert (
         evidence["request"]["prompt_sha256"]
@@ -154,5 +147,29 @@ def _assert_self_hosted_judge_claims(saved: dict) -> None:
     )
     assert (
         evidence["request"]["rubric_sha256"]
-        == hashlib.sha256(DEFAULT_RUBRIC.encode()).hexdigest()
+        == hashlib.sha256(saved["rubric"].encode()).hexdigest()
     )
+
+
+def _assert_provider_evidence(provider: dict, config: dict) -> None:
+    raw_response = provider["raw_response"]
+    assert (
+        provider["raw_response_sha256"]
+        == hashlib.sha256(raw_response.encode()).hexdigest()
+    )
+    assert provider["status_code"] == 200
+    assert provider["returned_model"] == config["expected_served_model"]
+    assert provider["finish_reason"] == "stop"
+    response = json.loads(raw_response)
+    assert response["model"] == config["expected_served_model"]
+    assert response["choices"][0]["finish_reason"] == "stop"
+    content = response["choices"][0]["message"]["content"].strip()
+    fence = re.fullmatch(
+        r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL | re.IGNORECASE
+    )
+    expected_parser = "npa_vlm_eval_compatible_json_v1"
+    if fence:
+        content = fence.group(1)
+        expected_parser += "+markdown-fence-v1"
+    assert provider["parser_version"] == expected_parser
+    assert isinstance(json.loads(content), dict)

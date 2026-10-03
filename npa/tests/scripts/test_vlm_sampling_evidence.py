@@ -63,6 +63,55 @@ def _synthetic_response(*, fenced=False):
     return vlm_eval._VlmBackendResponse(data, json.dumps(data), 200, None, 0.1)
 
 
+@pytest.mark.parametrize("provider_success", [True, False, None, "true"])
+def test_sampling_judge_claims_use_effective_rubric_and_provider_boolean(
+    monkeypatch, tmp_path, provider_success
+):
+    from dataclasses import asdict
+
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
+    suite = importlib.import_module("e2e.test_vlm_served_model_live")
+    response = _synthetic_response()
+    verdict = {"score": 0.9, "rationale": "synthetic test"}
+    if provider_success is not None:
+        verdict["success"] = provider_success
+    response.data["choices"][0]["message"]["content"] = json.dumps(verdict)
+    response = vlm_eval._VlmBackendResponse(
+        response.data, json.dumps(response.data), 200, None, 0.1
+    )
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **_: response)
+    source, _ = suite.make_sampling_input(tmp_path / "input", "image-sequence")
+    result = vlm_eval.evaluate_vlm(
+        input_path=str(source),
+        output_path=str(tmp_path / "result.json"),
+        task="Inspect the colors",
+        rubric="Judge the visible colors, not motion.",
+        backend="self-hosted",
+        endpoint_url="https://example.test/v1",
+        model="test-model",
+        frame_selection="final",
+        max_frames=1,
+    )
+    payload = asdict(result)
+    suite._assert_self_hosted_judge_claims(payload)
+    _assert_judge_claim_tampering_rejected(suite, payload)
+
+
+def _assert_judge_claim_tampering_rejected(suite, payload):
+    for field, value in (
+        ("rubric", vlm_eval.DEFAULT_RUBRIC),
+        ("provider_success", not payload["provider_success"]),
+        (
+            "provider_success_matches_score_gate",
+            not payload["provider_success_matches_score_gate"],
+        ),
+    ):
+        changed = copy.deepcopy(payload)
+        changed[field] = value
+        with pytest.raises(AssertionError):
+            suite._assert_self_hosted_judge_claims(changed)
+
+
 @pytest.mark.parametrize("fenced", [False, True])
 def test_served_evidence_accepts_only_documented_parser_versions(
     monkeypatch, tmp_path, fenced
@@ -87,10 +136,13 @@ def test_served_evidence_accepts_only_documented_parser_versions(
     for version in (
         "npa_vlm_eval_compatible_json_v123",
         "npa_vlm_eval_compatible_json_v1+unknown",
+        "npa_vlm_eval_compatible_json_v1"
+        if fenced
+        else "npa_vlm_eval_compatible_json_v1+markdown-fence-v1",
     ):
         payload["evidence"]["provider"]["parser_version"] = version
         with pytest.raises(AssertionError):
-            suite._assert_provider_evidence(payload, config)
+            suite._assert_result_evidence(payload, config)
 
 
 def _assert_oracle_rejects_tampering(suite, payload, tmp_path, kind, strategy):

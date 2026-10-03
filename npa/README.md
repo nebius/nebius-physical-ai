@@ -436,6 +436,17 @@ make precheck  # CI pins, lint, formatting, and CI contract regressions
 npa/.venv/bin/python -m pytest npa/tests/guardrails/test_documentation_examples.py -q
 ```
 
+For GPU VLM provenance, use the
+[operator verification lane](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#live-provenance-verification).
+It requires `NPA_INTEGRATION_E2E=1`, an owner-only JSON file selected by
+`NPA_VLM_PROVENANCE_LIVE_CONFIG`, local rollout fixtures, and the endpoint key in
+`VLM_EVAL_API_KEY` (or the file's `api_key_env`). Run
+`npa/.venv/bin/python npa/scripts/vlm_provenance_live_recheck.py --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"`
+with a fresh private directory outside the checkout. The lane fails on missing
+configuration or skipped inference and leaves endpoint provisioning and cleanup
+to the operator. Hosted Kimi-K3 visual inference runs in the separate
+`token_factory_live_recheck.py` lane with `NEBIUS_TOKEN_FACTORY_KEY`.
+
 After committing, run `git fetch origin main` and `make merge-precheck` before
 pushing. This checks committed HEAD's merge with current main for conflicts and
 inconsistent dependency fingerprints without modifying your index. It does not
