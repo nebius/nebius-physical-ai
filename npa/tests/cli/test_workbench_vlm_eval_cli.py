@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import Mock
 
+import pytest
+from botocore.exceptions import ClientError, EndpointConnectionError
 from PIL import Image
 from typer.testing import CliRunner
 
@@ -11,6 +14,7 @@ from npa.workbench.vlm_eval import (
     DEFAULT_SAMPLE_BENCHMARK_PATH,
     JUDGE_COMPARISON_RESULT_FILENAME,
     LEGACY_RESULT_FILENAME,
+    PREFERENCE_COMPARISON_RESULT_FILENAME,
     RESULT_FILENAME,
     VlmEvalResult,
 )
@@ -445,3 +449,418 @@ def test_vlm_eval_sdk_wrapper_accepts_string_flags(capsys, tmp_path) -> None:
     assert payload["score"] == 0.72
     assert (output_dir / RESULT_FILENAME).exists()
     assert not (output_dir / LEGACY_RESULT_FILENAME).exists()
+
+
+def _preference_cli_images(tmp_path, *, private_names=False):
+    first_name = "private-baseline-name.png" if private_names else "first.png"
+    second_name = "private-second-name.png" if private_names else "second.png"
+    first = tmp_path / first_name
+    second = tmp_path / second_name
+    Image.new("RGB", (8, 8), "red").save(first)
+    Image.new("RGB", (8, 8), "blue").save(second)
+    return first, second
+
+
+def _preference_cli_completion(request, ordinal):
+    preference = "B" if ordinal == 1 else "A"
+    content = {
+        "preference": preference,
+        "confidence": "high",
+        "observable_support": ["private visible support"],
+        "critical_defects": {
+            "A": ["private A defect"],
+            "B": ["private B defect"],
+        },
+        "uncertainty": "private uncertainty",
+    }
+    return {
+        "id": f"private-request-{ordinal}",
+        "model": request["model"],
+        "usage": {"completion_tokens": 12},
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {"content": json.dumps(content)},
+            }
+        ],
+    }
+
+
+def _preference_cli_argv(first, second, output, task, *, json_output):
+    argv = [
+        "workbench",
+        "vlm-eval",
+        "compare-preference",
+        "--baseline-path",
+        str(first),
+        "--candidate-path",
+        str(second),
+        "--output-path",
+        str(output),
+        "--task",
+        task,
+        "--rubric",
+        "Prefer visible detail.",
+    ]
+    return [*argv, "--output", "json"] if json_output else argv
+
+
+def _assert_private_preference_artifacts(output_dir) -> None:
+    written = output_dir / PREFERENCE_COMPARISON_RESULT_FILENAME
+    retained = json.loads(written.read_text(encoding="utf-8"))
+    assert retained["first_order"]["provider"]["provider_request_id"] == (
+        "private-request-1"
+    )
+    assert retained["reversed_order"]["verdict"]["preference"] == "A"
+    assert written.stat().st_mode & 0o777 == 0o600
+    journal = output_dir / ".vlm_preference_comparison"
+    assert {path.name for path in journal.iterdir()} == {
+        "state.json",
+        "request-01.json",
+        "transport-boundary-01.json",
+        "response-01.json",
+        "request-02.json",
+        "transport-boundary-02.json",
+        "response-02.json",
+        "report-ready.json",
+    }
+    assert journal.stat().st_mode & 0o777 == 0o700
+    assert all(path.stat().st_mode & 0o777 == 0o600 for path in journal.iterdir())
+
+
+def _assert_preference_cli_omits_private_values(result, *values) -> None:
+    for value in values:
+        assert str(value) not in result.output
+
+
+def _assert_preference_cli_success(result, requests) -> None:
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["status"] == "consistent_candidate_preference"
+    assert payload["requests_counterbalanced"] is True
+    assert payload["artifact_written"] is True
+    assert len(requests) == 2
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+def test_preference_cli_rejects_ambiguous_routing_without_transport(
+    monkeypatch, tmp_path, json_output
+):
+    from npa.workbench import vlm_eval
+
+    baseline, candidate = _preference_cli_images(tmp_path)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://private-route.invalid/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "synthetic-private-key")
+    post = Mock()
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    result = runner.invoke(
+        app,
+        _preference_cli_argv(
+            baseline,
+            candidate,
+            tmp_path / "evidence",
+            "Compare visible detail.",
+            json_output=json_output,
+        ),
+    )
+    assert result.exit_code != 0
+    post.assert_not_called()
+    _assert_preference_cli_omits_private_values(
+        result, baseline, candidate, "private-route.invalid", "synthetic-private-key"
+    )
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize(
+    ("trigger", "reason", "guidance"),
+    [
+        ("ambient", "preference_explicit_endpoint_required", "--endpoint-url"),
+        ("custom-key", "preference_explicit_endpoint_required", "--endpoint-url"),
+        ("missing-key", "preference_named_credential_required", "--api-key-env"),
+        ("store", "preference_credential_configuration_invalid", "credential store"),
+    ],
+)
+def test_preference_cli_routing_refusals_are_actionable_and_private(
+    monkeypatch, tmp_path, json_output, trigger, reason, guidance
+):
+    from npa.workbench import vlm_eval
+
+    first, second = _preference_cli_images(tmp_path, private_names=True)
+    output = tmp_path / "private-output"
+    argv = _preference_cli_argv(
+        first, second, output, "Compare visible detail.", json_output=json_output
+    )
+    _configure_preference_routing_refusal(monkeypatch, argv, trigger, output)
+    post = Mock()
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    result = runner.invoke(app, argv)
+    _assert_preference_routing_refusal(result, json_output, reason, guidance)
+    post.assert_not_called()
+    assert not output.exists()
+    _assert_preference_cli_omits_private_values(
+        result,
+        first,
+        second,
+        output,
+        "private-route.invalid",
+        "synthetic-private-key",
+        "SYNTHETIC_PRIVATE_KEY_NAME",
+    )
+
+
+def _configure_preference_routing_refusal(monkeypatch, argv, trigger, output):
+    from npa.clients import token_factory
+
+    for name in ("VLM_EVAL_API_KEY", "NEBIUS_TOKEN_FACTORY_KEY", "OPENAI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    if trigger == "ambient":
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://private-route.invalid/v1")
+        monkeypatch.setenv("OPENAI_API_KEY", "synthetic-private-key")
+    elif trigger == "custom-key":
+        argv += ["--api-key-env", "SYNTHETIC_PRIVATE_KEY_NAME"]
+    elif trigger == "store":
+        monkeypatch.setattr(
+            token_factory,
+            "resolve_config",
+            Mock(side_effect=ValueError(f"synthetic-private-key at {output}")),
+        )
+
+
+def _assert_preference_routing_refusal(result, json_output, reason, guidance):
+    assert result.exit_code == 1
+    assert reason in result.output
+    assert guidance in result.output
+    assert "inspect private evidence" not in result.output
+    assert "journal" not in result.output
+    if json_output:
+        payload = json.loads(result.stdout)
+        assert payload["result"] == "error"
+        assert payload["reason_code"] == reason
+        assert guidance in payload["message"]
+
+
+@pytest.mark.parametrize("json_output", [False, True])
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "preference_explicit_endpoint_required",
+        "preference_named_credential_required",
+        "preference_credential_configuration_invalid",
+        "unrecognized_preference_failure",
+    ],
+)
+def test_preference_cli_never_echoes_non_allowlisted_error_details(
+    monkeypatch, tmp_path, json_output, prefix
+):
+    from npa.cli.workbench import vlm_eval as cli_vlm
+
+    private_detail = "synthetic-private-key https://private-route.invalid /private/path"
+    monkeypatch.setattr(
+        cli_vlm,
+        "_execute_preference_comparison",
+        Mock(side_effect=cli_vlm.VlmEvalError(f"{prefix}: {private_detail}")),
+    )
+    first, second = _preference_cli_images(tmp_path)
+    result = runner.invoke(
+        app,
+        _preference_cli_argv(
+            first,
+            second,
+            tmp_path / "output",
+            "Visible detail.",
+            json_output=json_output,
+        ),
+    )
+    assert result.exit_code == 1
+    assert "Blinded preference comparison failed" in result.output
+    _assert_preference_cli_omits_private_values(result, prefix, private_detail)
+
+
+def test_workbench_vlm_eval_compare_preference_writes_private_report(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    baseline, candidate = _preference_cli_images(tmp_path)
+    requests = []
+
+    def post(**kwargs):
+        request = kwargs["request"]
+        requests.append(request)
+        return _preference_cli_completion(request, len(requests))
+
+    monkeypatch.setenv("VLM_EVAL_API_KEY", "test-key")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    output_dir = tmp_path / "preference"
+    argv = _preference_cli_argv(
+        baseline,
+        candidate,
+        output_dir,
+        "Compare matched scene views.",
+        json_output=True,
+    )
+    result = runner.invoke(app, argv)
+
+    _assert_preference_cli_success(result, requests)
+    _assert_preference_cli_omits_private_values(
+        result,
+        baseline,
+        candidate,
+        output_dir,
+        "private visible support",
+        "private uncertainty",
+        "private-request-1",
+        "raw_response",
+    )
+    _assert_private_preference_artifacts(output_dir)
+
+
+def test_workbench_vlm_eval_compare_preference_sanitizes_failure(
+    monkeypatch, tmp_path
+) -> None:
+    from npa.workbench import vlm_eval
+
+    baseline, candidate = _preference_cli_images(tmp_path, private_names=True)
+    called = False
+
+    def post(**_kwargs):
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    secret_task = "Prefer the candidate over the baseline for operator-task-17."
+    argv = _preference_cli_argv(
+        baseline,
+        candidate,
+        tmp_path / "private-output",
+        secret_task,
+        json_output=False,
+    )
+    result = runner.invoke(app, argv)
+
+    assert result.exit_code == 1
+    assert "Blinded preference comparison failed" in result.output
+    assert str(baseline) not in result.output
+    assert str(candidate) not in result.output
+    assert secret_task not in result.output
+    assert called is False
+
+
+def _failing_preference_storage(monkeypatch, stage, error):
+    from npa.clients.storage import StorageClient
+
+    client = Mock()
+    client.read_bytes_with_etag.return_value = None
+    factory = Mock(return_value=client)
+    boundary = {
+        "configuration": factory,
+        "preflight": client.read_bytes_with_etag,
+        "input": client.download_path,
+        "journal": client.put_bytes_conditional,
+    }.get(stage)
+    if boundary is not None:
+        boundary.side_effect = error
+    else:
+
+        def write(body, uri, **kwargs):
+            if uri.endswith("/vlm_preference_comparison.json"):
+                raise error
+
+        client.put_bytes_conditional.side_effect = write
+    monkeypatch.setattr(StorageClient, "from_environment", factory)
+
+
+@pytest.mark.parametrize(
+    "stage", ["configuration", "preflight", "input", "journal", "final"]
+)
+@pytest.mark.parametrize("error_type", ["provider", "connection", "configuration"])
+@pytest.mark.parametrize("json_output", [False, True])
+def test_preference_cli_redacts_storage_failures(
+    monkeypatch, tmp_path, stage, error_type, json_output
+):
+    from npa.workbench import vlm_eval
+
+    private_detail = "synthetic-private-storage-detail"
+    errors = {
+        "provider": ClientError(
+            {"Error": {"Code": "AccessDenied", "Message": private_detail}}, "GetObject"
+        ),
+        "connection": EndpointConnectionError(endpoint_url=private_detail),
+        "configuration": ValueError(private_detail),
+    }
+    _failing_preference_storage(monkeypatch, stage, errors[error_type])
+    baseline, candidate = _preference_cli_images(tmp_path)
+    if stage == "input":
+        baseline = "s3://private-role/source.png"
+    post = Mock(
+        side_effect=lambda **kwargs: _preference_cli_completion(kwargs["request"], 1)
+    )
+    monkeypatch.setenv("VLM_EVAL_API_KEY", "test-key")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    argv = _preference_cli_argv(
+        baseline,
+        candidate,
+        "s3://private-role/evidence",
+        "Compare matched views.",
+        json_output=json_output,
+    )
+
+    result = runner.invoke(app, argv)
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, SystemExit)
+    assert "Blinded preference comparison failed" in result.output
+    assert private_detail not in result.output
+    assert "private-role" not in result.output
+    assert post.call_count == (2 if stage == "final" else 0)
+
+
+@pytest.mark.parametrize("boundary", ["input", "output"])
+def test_preference_cli_symlink_loop_paths_are_sanitized(
+    tmp_path, monkeypatch, boundary
+):
+    from npa.workbench import vlm_eval
+
+    first, second = _preference_cli_images(tmp_path)
+    loop = tmp_path / "private-loop"
+    loop.symlink_to(loop.name)
+    post = Mock(side_effect=AssertionError("must not call provider"))
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", post)
+    output = loop if boundary == "output" else tmp_path / "output"
+    baseline = loop if boundary == "input" else first
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "compare-preference",
+            "--baseline-path",
+            str(baseline),
+            "--candidate-path",
+            str(second),
+            "--output-path",
+            str(output),
+            "--task",
+            "Compare visible shapes.",
+            "--output-format",
+            "json",
+        ],
+    )
+    assert result.exit_code == 1
+    assert str(tmp_path) not in result.output
+    assert "Traceback" not in result.output
+    assert "private-loop" not in result.output
+    post.assert_not_called()
+
+
+def test_vlm_eval_sdk_exports_blinded_preference_surface() -> None:
+    from npa.sdk.workbench import vlm_eval as sdk_vlm_eval
+    from npa.workbench import vlm_eval as core_vlm_eval
+    from npa.workbench.vlm_eval import (
+        VlmPreferenceComparisonRequest,
+        compare_vlm_preference,
+    )
+
+    assert sdk_vlm_eval.compare_preference is compare_vlm_preference
+    assert sdk_vlm_eval.VlmPreferenceComparisonRequest is VlmPreferenceComparisonRequest
+    assert "VlmPreferenceComparisonRequest" in core_vlm_eval.__all__
