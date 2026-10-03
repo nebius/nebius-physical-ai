@@ -1881,10 +1881,29 @@ def test_grade_gate_v2_mixed_source_kinds_keep_incomplete_coverage(
 def test_grade_gate_rejects_self_consistent_unregistered_hosted_substitution(
     tmp_path: Path, monkeypatch
 ) -> None:
+    report = _provider_vlm_report(monkeypatch, tmp_path)
     completion = _provider_completion(success=True, metadata=True)
     completion["model"] = "different/model"
-    report = _provider_vlm_report(monkeypatch, tmp_path, completion=completion)
+    # Model substitution now fails before evaluate_vlm returns. Construct a
+    # self-consistent historical/tampered artifact to retain reader-side coverage.
+    report["served_model"] = completion["model"]
+    provider = report["evidence"]["provider"]
+    provider["returned_model"] = completion["model"]
+    provider["raw_response"] = json.dumps(completion)
+    provider["raw_response_sha256"] = vlm_eval._sha256_text(provider["raw_response"])
     _assert_completion_blocked(tmp_path, report, "provider_model_mismatch")
+
+
+def test_hosted_substitution_fails_before_creating_promotion_report(
+    tmp_path: Path, monkeypatch
+) -> None:
+    completion = _provider_completion(success=True, metadata=True)
+    completion["model"] = "different/model"
+    with pytest.raises(
+        vlm_eval.VlmEvalError, match="does not match the requested model"
+    ):
+        _provider_vlm_report(monkeypatch, tmp_path, completion=completion)
+    assert not (tmp_path / RESULT_FILENAME).exists()
 
 
 @pytest.mark.parametrize("backend", ["stub", "api", "self-hosted"])
