@@ -86,7 +86,7 @@ def test_frozen_hosted_sampler_controls(monkeypatch, case: str, strategy: str) -
         destination.mkdir(mode=0o700, parents=True)
         _record_transport(monkeypatch, destination)
         result = vlm_eval.evaluate_vlm(**configuration["request"])
-        vlm_eval.write_result(result)
+        vlm_eval.write_result(result, result_uri=result.result_uri)
     finally:
         os.umask(previous)
     _assert_evidence(result, configuration)
