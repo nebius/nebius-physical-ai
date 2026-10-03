@@ -121,6 +121,10 @@ def _is_excluded(relative: Path) -> bool:
         return True
     if any(part.endswith(".egg-info") for part in relative.parts):
         return True
+    # Coverage may combine/delete worker data while a source plan is hashing.
+    # Exclude it in both git and exported trees, even if accidentally tracked.
+    if relative.name == ".coverage" or relative.name.startswith(".coverage."):
+        return True
     return relative.name.endswith(EXCLUDED_SUFFIXES)
 
 
