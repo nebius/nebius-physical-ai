@@ -488,7 +488,7 @@ def downstream_run(tmp_path, helpers):
     (root / "reconstruction").mkdir()
     (root / "reconstruction/parsed.yaml").write_text(
         "trainer:\n  max_epochs: 1\n"
-        "dataset:\n  camera_ids: [camera1, camera2]\n  samples_per_epoch: 30000\n"
+        "dataset:\n  camera_ids: [camera1, camera2]\n  n_samples_per_epoch: 30000\n"
     )
     (root / "reconstruction/metrics.yaml").write_text(
         yaml.safe_dump(
@@ -1205,7 +1205,15 @@ def _rrd_chunk(entity, batch):
     """Wrap a decoded batch so row mutations retain the real RRD column types."""
     from types import SimpleNamespace
 
-    return SimpleNamespace(entity_path=entity, to_record_batch=lambda: batch)
+    return SimpleNamespace(
+        entity_path=entity,
+        timeline_names=[
+            field.name
+            for field in batch.schema
+            if field.metadata and field.metadata.get(b"rerun:kind") == b"index"
+        ],
+        to_record_batch=lambda: batch,
+    )
 
 
 def _nurec_row_chunks(root):
@@ -1239,7 +1247,10 @@ def _damage_nurec_frame_rows(chunks, damage):
             chunk
             for chunk in chunks
             if not str(chunk.entity_path).startswith("/novel_view/")
-            or chunk.to_record_batch().column("frame").to_pylist() == [0]
+            or chunk.to_record_batch()
+            .column("nurec_image:" + str(chunk.entity_path).lstrip("/"))
+            .to_pylist()
+            == [0]
         ]
     if damage == "duplicate_chunk":
         return chunks + [target]
@@ -1377,7 +1388,8 @@ def test_live_rrd_rejects_extra_source_frame_or_missing_endpoint(
         chunk
         for chunk in _nurec_row_chunks(downstream_run)
         if str(chunk.entity_path) == "/novel_view/camera1"
-        and chunk.to_record_batch().column("frame").to_pylist() == [1]
+        and chunk.to_record_batch().column("nurec_image:novel_view/camera1").to_pylist()
+        == [1]
     )
     _write_sampled_nurec_rrd(downstream_run, monkeypatch, 3)
     chunks = _nurec_row_chunks(downstream_run)
@@ -1386,7 +1398,10 @@ def test_live_rrd_rejects_extra_source_frame_or_missing_endpoint(
             chunk
             for chunk in chunks
             if str(chunk.entity_path) != "/novel_view/camera1"
-            or chunk.to_record_batch().column("frame").to_pylist() != [29]
+            or chunk.to_record_batch()
+            .column("nurec_image:novel_view/camera1")
+            .to_pylist()
+            != [29]
         ]
     chunks.append(extra)
     frames = helpers._assert_nurec_novel_media(downstream_run)

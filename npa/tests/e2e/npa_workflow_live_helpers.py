@@ -1673,9 +1673,10 @@ def _nurec_rrd_review_settings(chunks: list) -> dict:
     """Read the producer's effective settings without using the reader's env."""
     settings = _nurec_rrd_document(chunks, "/provenance/rrd_review")
     assert isinstance(settings, dict), "invalid RRD review settings"
-    assert settings.get("schema") == "npa.nurec.rrd-review.v1", (
+    assert settings.get("schema") == "npa.nurec.rrd-review.v2", (
         "unsupported RRD review settings schema"
     )
+    assert settings.get("timeline_policy") == "independent-entity-filename-indices"
     for name in ("max_frames_per_entity", "max_frame_dim", "jpeg_quality"):
         assert type(settings.get(name)) is int, "invalid RRD review setting"
     return settings
@@ -1755,10 +1756,14 @@ def _nurec_rrd_frame_rows(chunks: list) -> Iterable[tuple[str, int, bytes]]:
         assert "EncodedImage:blob" in batch.schema.names, (
             "RRD novel view has no image data"
         )
-        assert "frame" in batch.schema.names, "RRD novel view has no frame timeline"
+        timeline = "nurec_image:" + entity.lstrip("/")
+        assert timeline in batch.schema.names, "RRD novel view has no frame timeline"
+        assert set(chunk.timeline_names) <= {timeline, "log_tick", "log_time"}, (
+            "RRD image mixes incompatible timelines"
+        )
         for row, index in zip(
             batch.column("EncodedImage:blob").to_pylist(),
-            batch.column("frame").to_pylist(),
+            batch.column(timeline).to_pylist(),
             strict=True,
         ):
             assert row and len(row) == 1, "RRD frame requires exactly one image"

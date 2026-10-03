@@ -23,6 +23,7 @@ from npa.workbench.nurec.evidence import (
     _decode_image,
     _decode_video,
     _nested_value,
+    _resolved_samples_per_epoch,
     _sequence_inventory,
     _yaml_mapping,
     validate_runtime_attestation,
@@ -339,7 +340,10 @@ def _rrd(root: Path, recording_id: str) -> dict[str, Any]:
             elif source.get(key) != value:
                 raise NcoreQualificationAuditError("RRD lineage values differ")
     settings = _rrd_document(chunks, "/provenance/rrd_review")
-    if settings.get("schema") != "npa.nurec.rrd-review.v1" or any(
+    if (
+        settings.get("schema") != "npa.nurec.rrd-review.v2"
+        or settings.get("timeline_policy") != "independent-entity-filename-indices"
+    ) or any(
         type(settings.get(name)) is not int
         for name in ("max_frames_per_entity", "max_frame_dim", "jpeg_quality")
     ):
@@ -373,17 +377,20 @@ def _rrd(root: Path, recording_id: str) -> dict[str, Any]:
         batch = chunk.to_record_batch()
         decoded_rows += batch.num_rows
         entity = str(chunk.entity_path)
+        if "EncodedImage:blob" in batch.schema.names:
+            _rrd_image_timeline(chunk)
         if not entity.startswith("/novel_view/"):
             continue
+        timeline = "nurec_image:" + entity.lstrip("/")
         if (
             "EncodedImage:blob" not in batch.schema.names
-            or "frame" not in batch.schema.names
+            or timeline not in batch.schema.names
         ):
             raise NcoreQualificationAuditError("RRD frame columns differ")
         camera = entity.removeprefix("/novel_view/")
         for row, index in zip(
             batch.column("EncodedImage:blob").to_pylist(),
-            batch.column("frame").to_pylist(),
+            batch.column(timeline).to_pylist(),
             strict=True,
         ):
             identity = (camera, index)
@@ -413,6 +420,16 @@ def _rrd(root: Path, recording_id: str) -> dict[str, Any]:
         "lineage_verified": True,
         "frame_artifacts_verified": True,
     }
+
+
+def _rrd_image_timeline(chunk: Any) -> None:
+    timeline = "nurec_image:" + str(chunk.entity_path).lstrip("/")
+    if timeline not in chunk.timeline_names or set(chunk.timeline_names) - {
+        timeline,
+        "log_time",
+        "log_tick",
+    }:
+        raise NcoreQualificationAuditError("RRD image mixes incompatible timelines")
 
 
 def audit_qualification(
@@ -545,11 +562,7 @@ def audit_qualification(
     except NurecEvidenceError as exc:
         raise NcoreQualificationAuditError("native NRE recipe is invalid") from exc
     resolved_epochs = _nested_value(parsed, ("trainer", "max_epochs"))
-    resolved_samples = _nested_value(
-        parsed,
-        ("dataset", "samples_per_epoch"),
-        ("data", "samples_per_epoch"),
-    )
+    resolved_samples = _resolved_samples_per_epoch(parsed)
     if (
         reconstruction.get("outputs", {}).get("usdz", {}).get("sha256")
         != usdz["sha256"]

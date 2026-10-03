@@ -62,9 +62,8 @@ def test_reconstruction_receipt_binds_real_input_recipe_and_outputs(
 ) -> None:
     meta = _sequence(tmp_path)
     parsed = tmp_path / "parsed.yaml"
-    parsed.write_text(
-        "trainer:\n  max_epochs: 1\ndataset:\n  samples_per_epoch: 30000\n"
-    )
+    native = Path(__file__).parents[1] / "fixtures/nurec/nre-26.04-recipe-budget.yaml"
+    parsed.write_bytes(native.read_bytes())
     metrics = tmp_path / "metrics.yaml"
     metrics.write_text("test:\n  psnr: 24.5\n  ssim: 0.8\n  lpips: 0.2\n")
     usdz = tmp_path / "last.usdz"
@@ -99,6 +98,24 @@ def test_reconstruction_receipt_binds_real_input_recipe_and_outputs(
     assert len(receipt["input"]["sequence_members"]) == 3
     assert receipt["input"]["conversion_report_sha256"]
     assert json.loads(target.read_text()) == receipt
+
+
+@pytest.mark.parametrize("value", [None, True, False, 0, -1, 30000.0, "30000"])
+def test_native_sample_count_rejects_nonpositive_or_noninteger_values(value):
+    assert (
+        evidence._resolved_samples_per_epoch(
+            {"dataset": {"n_samples_per_epoch": value}}
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("section", ["dataset", "data"])
+def test_native_sample_count_rejects_conflicting_legacy_alias(section):
+    parsed = {"dataset": {"n_samples_per_epoch": 30000}}
+    parsed.setdefault(section, {})["samples_per_epoch"] = 1
+    with pytest.raises(evidence.NurecEvidenceError, match="conflicting recipe"):
+        evidence._resolved_samples_per_epoch(parsed)
 
 
 def test_reconstruction_receipt_does_not_promote_missing_metrics(

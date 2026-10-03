@@ -58,6 +58,25 @@ the reference ZIP has none.
 
 ## Workflow and S3 handoffs
 
+The downstream-only qualification route also requires the original source
+attribution, conversion report and rig sidecar under the run's canonical
+`source/attribution.json`, `ncore/sequence/conversion.json` and
+`ncore/sequence/npa-rig.json` paths. An external sequence prefix does not copy
+those documents into the run automatically. Preserve their exact bytes and
+record the handoff; a reconstruction receipt claiming a conversion hash must
+not silently fall back to a lineage-free preview.
+
+Native recipe receipts read `dataset.n_samples_per_epoch` from `parsed.yaml`;
+the pinned full recipe resolves to 30,000 samples per epoch. This records the
+configured sample count, not proof that every source photograph was sampled.
+
+NuRec Rerun review schema v2 uses a separate `nurec_image:<entity>` sequence
+timeline for each image entity. Values are original filename integers, not
+synchronized capture times or source/validation/novel-view pairings. Explicit
+sidecar hashes bind the displayed lineage. A new recording derived from retained
+artifacts is separate evidence, never a rewrite of the original recording or a
+claim that failed model-quality criteria passed.
+
 [`workflows/testing/nurec-colmap-reconstruct.yaml`](../../../workflows/testing/nurec-colmap-reconstruct.yaml)
 owns the complete stage graph:
 

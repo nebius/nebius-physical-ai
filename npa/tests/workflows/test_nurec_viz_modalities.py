@@ -43,14 +43,16 @@ def _decoded_images(recording: Path) -> list[tuple[str, int, bytes]]:
         for row in chunk.to_record_batch().to_pylist():
             if "EncodedImage:blob" not in row:
                 continue
-            assert "frame" in chunk.timeline_names
+            timeline = "nurec_image:" + str(chunk.entity_path).lstrip("/")
+            assert timeline in chunk.timeline_names
+            assert set(chunk.timeline_names) <= {timeline, "log_tick", "log_time"}
             assert len(row["EncodedImage:blob"]) == 1
             payload = bytes(row["EncodedImage:blob"][0])
             with image.open(io.BytesIO(payload)) as decoded:
                 rows.append(
                     (
                         str(chunk.entity_path),
-                        row["frame"],
+                        row[timeline],
                         decoded.convert("RGB").tobytes(),
                     )
                 )

@@ -256,13 +256,25 @@ def _nested_value(payload: Mapping[str, Any], *paths: Sequence[str]) -> Any:
     if not values:
         return None
     first = values[0]
-    if any(value != first for value in values[1:]):
+    if any(type(value) is not type(first) or value != first for value in values[1:]):
         raise NurecEvidenceError("parsed NRE config has conflicting recipe values")
     return first
 
 
 def _positive_int(value: Any) -> int | None:
     return value if type(value) is int and value > 0 else None
+
+
+def _resolved_samples_per_epoch(parsed: Mapping[str, Any]) -> int | None:
+    """Read the native NRE key, rejecting contradictory historical aliases."""
+    return _positive_int(
+        _nested_value(
+            parsed,
+            ("dataset", "n_samples_per_epoch"),
+            ("dataset", "samples_per_epoch"),
+            ("data", "samples_per_epoch"),
+        )
+    )
 
 
 def _requested_digest(image: str) -> str:
@@ -331,13 +343,7 @@ def write_reconstruction_receipt(
         recipe["resolved_epochs"] = _positive_int(
             _nested_value(parsed, ("trainer", "max_epochs"))
         )
-        recipe["resolved_samples_per_epoch"] = _positive_int(
-            _nested_value(
-                parsed,
-                ("dataset", "samples_per_epoch"),
-                ("data", "samples_per_epoch"),
-            )
-        )
+        recipe["resolved_samples_per_epoch"] = _resolved_samples_per_epoch(parsed)
     observed_metrics = {
         str(name): float(value)
         for name, value in (metrics or {}).items()

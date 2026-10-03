@@ -178,6 +178,16 @@ def _set_frame(rr: Any, rec: Any, idx: int) -> None:
         rr.set_time_sequence("frame", idx, recording=rec)
 
 
+def _nurec_image_timeline(entity: str) -> str:
+    """Keep unrelated producer filename identities on independent timelines."""
+    return "nurec_image:" + entity.lstrip("/")
+
+
+def _set_nurec_image(rr: Any, rec: Any, entity: str, index: int) -> None:
+    rr.reset_time(recording=rec)
+    rr.set_time(_nurec_image_timeline(entity), sequence=index, recording=rec)
+
+
 def _log_video_asset(
     rr: Any,
     rec: Any,
@@ -452,6 +462,10 @@ def build_run_rrd(
             Path(tmp) / "run",
             storage_client=active_storage,
             require_colmap_lineage=require_colmap_lineage,
+            require_reconstruction_receipt=any(
+                row["key"] == source_prefix + "reconstruction/reconstruction.json"
+                for row in source_inventory
+            ),
         )
         review = _PaidfReview(local, input_uri)
         captions = _load_captions(local, review=review)
@@ -575,13 +589,16 @@ def build_run_rrd(
             source_video_count += 1
 
         for frame in _subsample(_image_files(input_root), RRD_MAX_FRAMES_PER_ENTITY):
-            _set_frame(rr, rec, _frame_index(frame.stem))
             if frame.name.startswith("conditioning-frame-"):
                 entity = "conditioning/derived"
             elif source_kind == "synthetic_fixture":
                 entity = "fixture/synthetic_seeded"
             else:
                 entity = f"source/{_input_entity(frame, input_root)}"
+            if effective_app_id == "neural-reconstruction":
+                _set_nurec_image(rr, rec, entity, _frame_index(frame.stem))
+            else:
+                _set_frame(rr, rec, _frame_index(frame.stem))
             _log_frame(rr, rec, entity, _load_rgb(frame))
             logged += 1
 
@@ -1257,8 +1274,9 @@ def _log_nurec_entities(rr: Any, rec: Any, local: Path) -> int:
             continue
         for group, frames in sorted(_grouped_images(root).items()):
             for frame in _subsample(frames, RRD_MAX_FRAMES_PER_ENTITY):
-                _set_frame(rr, rec, _frame_index(frame.stem))
-                _log_frame(rr, rec, f"{prefix}/{group}", _load_rgb(frame))
+                entity = f"{prefix}/{group}"
+                _set_nurec_image(rr, rec, entity, _frame_index(frame.stem))
+                _log_frame(rr, rec, entity, _load_rgb(frame))
                 logged += 1
     return logged
 
@@ -1700,7 +1718,9 @@ def _colmap_conversion_lineage(report: dict) -> dict:
     """Keep conversion facts without embedding source filenames or private paths."""
     payload = _lineage_fields(
         report,
-        "schema_version status engine counts poses_component_group time_mapping point_filter",
+        "schema_version status engine counts poses_component_group time_mapping point_filter "
+        "lineage_origin original_execution_sha source_receipt_sha256 "
+        "executed_input_inventory_sha256 original_rrd_sha256 reconstruction_receipt_sha256",
     )
     payload["source"] = _lineage_fields(
         report.get("source", {}), "archive_sha256 counts origin_points_filtered"
@@ -1711,9 +1731,50 @@ def _colmap_conversion_lineage(report: dict) -> dict:
     return payload
 
 
+def _reconstruction_conversion_sha(local: Path) -> str:
+    receipt = _read_lineage(local / "reconstruction/reconstruction.json") or {}
+    declared_input = receipt.get("input", {})
+    if not isinstance(declared_input, dict):
+        raise DataFactoryVizError("NuRec reconstruction input is invalid")
+    value = declared_input.get("conversion_report_sha256", "")
+    if not isinstance(value, str) or (
+        value and not re.fullmatch(r"[0-9a-f]{64}", value)
+    ):
+        raise DataFactoryVizError("NuRec reconstruction conversion hash is invalid")
+    return value
+
+
+def _verify_colmap_receipt_members(local: Path) -> None:
+    """Bind declared conversion and rig sidecars to the actual reconstruction input."""
+    receipt = _read_lineage(local / "reconstruction/reconstruction.json") or {}
+    if not _reconstruction_conversion_sha(local):
+        return
+    from npa.workbench.nurec.evidence import RECONSTRUCTION_RECEIPT_FORMAT
+
+    if receipt.get("format") != RECONSTRUCTION_RECEIPT_FORMAT:
+        raise DataFactoryVizError("NuRec reconstruction receipt schema differs")
+    members = receipt["input"].get("sequence_members")
+    if not isinstance(members, list):
+        raise DataFactoryVizError("NuRec reconstruction input inventory is missing")
+    for name in ("conversion.json", "npa-rig.json"):
+        rows = [
+            row for row in members if isinstance(row, dict) and row.get("path") == name
+        ]
+        path = local / "ncore/sequence" / name
+        if (
+            len(rows) != 1
+            or rows[0].get("sha256") != _sha256_path(path)
+            or rows[0].get("bytes") != path.stat().st_size
+        ):
+            raise DataFactoryVizError("NuRec reconstruction lineage member differs")
+
+
 def _load_colmap_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
     """Bind COLMAP capture, conversion and derived rig facts to their source bytes."""
-    if not any((local / relative).exists() for relative in _COLMAP_LINEAGE_MARKERS):
+    conversion_sha = _reconstruction_conversion_sha(local)
+    if not conversion_sha and not any(
+        (local / relative).exists() for relative in _COLMAP_LINEAGE_MARKERS
+    ):
         return {}
     docs: dict[str, str] = {}
     for entity, relative, title, fields in _COLMAP_LINEAGE_ARTIFACTS:
@@ -1727,16 +1788,25 @@ def _load_colmap_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
             else _lineage_fields(report, fields)
         )
         payload["artifact_sha256"] = _sha256_path(path)
+        if entity == "conversion" and conversion_sha:
+            if conversion_sha != payload["artifact_sha256"]:
+                raise DataFactoryVizError(
+                    "NuRec reconstruction conversion hash differs"
+                )
         docs[f"provenance/{entity}"] = _json_block(title, payload)
-    if docs:
-        docs["pipeline/1_ncore"] = (
-            "## NCore input capture\n\n"
-            "_Capture counts describe conversion input/output, not NRE training coverage. "
-            "Photographic ordering is not synchronized capture time; sparse SfM points "
-            "are not physical LiDAR._\n\n" + "\n".join(docs.values())
-        )
-        stage_log.append("ncore: COLMAP capture lineage recorded from run artifacts")
+    _verify_colmap_receipt_members(local)
+    docs["pipeline/1_ncore"] = _colmap_lineage_summary(docs)
+    stage_log.append("ncore: COLMAP capture lineage recorded from run artifacts")
     return docs
+
+
+def _colmap_lineage_summary(docs: dict[str, str]) -> str:
+    return (
+        "## NCore input capture\n\n"
+        "_Capture counts describe conversion input/output, not NRE training coverage. "
+        "Photographic ordering is not synchronized capture time; sparse SfM points "
+        "are not physical LiDAR._\n\n" + "\n".join(docs.values())
+    )
 
 
 def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
@@ -1750,7 +1820,13 @@ def _load_nurec_docs(local: Path, stage_log: list[str]) -> dict[str, str]:
         docs["provenance/rrd_review"] = _json_block(
             "Novel-view review settings",
             {
-                "schema": "npa.nurec.rrd-review.v1",
+                "schema": "npa.nurec.rrd-review.v2",
+                "timeline_policy": "independent-entity-filename-indices",
+                "timeline_scope": (
+                    "Each image entity has its own nurec_image:<entity> timeline. "
+                    "Values preserve trailing filename integers, not synchronized "
+                    "capture time or paired source, validation and novel views."
+                ),
                 "max_frames_per_entity": RRD_MAX_FRAMES_PER_ENTITY,
                 "max_frame_dim": RRD_MAX_FRAME_DIM,
                 "jpeg_quality": RRD_JPEG_QUALITY,
@@ -1915,6 +1991,7 @@ def _materialize_run(
     *,
     storage_client: "StorageClient | None",
     require_colmap_lineage: bool = False,
+    require_reconstruction_receipt: bool = False,
 ) -> Path:
     if not input_uri.startswith("s3://"):
         return Path(input_uri)
@@ -1931,7 +2008,11 @@ def _materialize_run(
         except Exception:
             # Optional subtrees (labeled_*) may not exist; input/augmented drive the recording.
             continue
-    _download_colmap_lineage(client, root, dest, required=require_colmap_lineage)
+    if require_reconstruction_receipt:
+        relative = "reconstruction/reconstruction.json"
+        client.download_file(f"{root}/{relative}", str(dest / relative))
+    required = require_colmap_lineage or bool(_reconstruction_conversion_sha(dest))
+    _download_colmap_lineage(client, root, dest, required=required)
     return dest
 
 
