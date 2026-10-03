@@ -21,7 +21,15 @@ def test_direct_dataset_loading_requires_an_explicit_path(dataset: str) -> None:
 def test_benchmark_default_remains_the_packaged_sample() -> None:
     report = vlm_eval.benchmark_vlm_eval(dataset="", backend="stub")
     assert report.dataset_path == str(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH)
-    assert report.item_count == 4
+    sample = vlm_eval.load_benchmark_dataset(
+        str(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH)
+    )
+    assert report.item_count == len(sample.items) == 5
+    assert any(
+        item.item_id == "progress-without-terminal-fail"
+        and item.expected_label is False
+        for item in sample.items
+    )
 
 
 @pytest.mark.parametrize(

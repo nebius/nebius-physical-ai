@@ -24,6 +24,13 @@ a versioned heading when a release is cut.
   Reports add specificity and balanced accuracy,
   and rank configurations by balanced accuracy before existing tie-breakers.
 
+### Paired VLM output contract
+
+- Paired judge requests explicitly require bare JSON, with the same instruction
+  and evidence binding for both models. Fenced responses remain retained errors;
+  this paired-only output instruction does not alter scalar prompts, parsers,
+  rubrics, or score thresholds.
+
 ### Open3D recordings verify persisted geometry inputs
 
 - Visualization rejects changed meshes, fused clouds, pose graphs, manifests,
@@ -104,6 +111,22 @@ a versioned heading when a release is cut.
   Lightning and MiniMax request settings and self-hosted behavior remain unchanged.
   Unregistered hosted model IDs now also require an exact returned identity;
   aliases that resolve to a different model fail before producing a verdict.
+
+### Default VLM rubric requires visible terminal evidence
+
+- Instruct judges to assign zero when the requested terminal state is missing
+  or ambiguous, with no partial-progress credit. Verdicts remain score-derived;
+  the rubric is not an independent visual validator.
+- Add a wiring-only missing-terminal benchmark case and a separate live lane
+  for frozen real complete, truncated, ambiguous, and blank controls. The live
+  lane rejects changed pixels, false passes, and any nonzero negative-control
+  score while retaining successful responses privately for rationale review.
+- Interleave ordinal frame anchors in real requests and ask for factual,
+  image-grounded rationales without invented times or hidden outcomes. Preserve
+  original source-frame labels, rubric, model profiles and score-gate semantics.
+- Migration: pre-ordinal retained results no longer satisfy the current prompt
+  contract. Promotion rejects them with `evidence_reason: digest_mismatch`;
+  evaluate again before promotion rather than rewriting historical hashes.
 
 ### LeRobot feedback control mode requires a JSON boolean
 
