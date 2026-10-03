@@ -1,6 +1,7 @@
 """Verify the served-model sampling oracle without calling a provider."""
 
 import base64
+import copy
 import hashlib
 import importlib
 import json
@@ -43,6 +44,7 @@ def test_live_sampling_oracle_with_local_media(monkeypatch, tmp_path, strategy, 
         hashlib.sha256(base64.b64decode(value)).hexdigest() for value in encoded
     ] == [frame["sha256"] for frame in frames]
     _assert_oracle_rejects_tampering(suite, payload, tmp_path, kind, strategy)
+    _assert_scalar_tampering_rejected(suite, payload)
 
 
 def _synthetic_response(*, fenced=False):
@@ -111,3 +113,80 @@ def _assert_oracle_rejects_tampering(suite, payload, tmp_path, kind, strategy):
     ] = False
     with pytest.raises(AssertionError):
         suite.assert_sampling_evidence(tampered, kind, strategy, expected)
+
+
+def _assert_scalar_tampering_rejected(suite, payload):
+    tampered = copy.deepcopy(payload)
+    tampered["evidence"]["provider"]["status_code"] = 200.0
+    with pytest.raises(ValueError, match="status_code"):
+        suite.validate_sampling_scalars(tampered)
+    for location in ("frames", "request_manifest"):
+        for field, bad_value in (
+            ("source_index", False),
+            ("source_count", 6.0),
+            ("width", 64.0),
+            ("height", "48"),
+            ("byte_count", True),
+            ("source_timestamp_s", False),
+            ("source_timestamp_s", float("nan")),
+        ):
+            tampered = copy.deepcopy(payload)
+            request = tampered["evidence"]["request"]
+            frames = (
+                request["frames"]
+                if location == "frames"
+                else request[location]["frames"]
+            )
+            frames[0][field] = bad_value
+            with pytest.raises(ValueError, match=field):
+                suite.validate_sampling_scalars(tampered)
+    _assert_sampling_scalar_tampering_rejected(suite, payload)
+
+
+def _assert_sampling_scalar_tampering_rejected(suite, payload):
+    for field, bad_value in (
+        ("source_count", 6.0),
+        ("max_frames", "3"),
+        ("selected_count", True),
+        ("coverage_complete", 1),
+        ("timestamps_complete", 1),
+        ("selected_indices", [False]),
+        ("selected_timestamps_s", [False]),
+        ("selected_timestamps_s", [float("inf")]),
+    ):
+        tampered = copy.deepcopy(payload)
+        tampered["evidence"]["request"]["request_manifest"]["sampling"][field] = (
+            bad_value
+        )
+        with pytest.raises(ValueError, match=field):
+            suite.validate_sampling_scalars(tampered)
+    for field, value in (
+        ("frame_count", 1.0),
+        ("dry_run", 0),
+        ("passed", 1),
+        ("score", True),
+        ("success_threshold", "0.8"),
+    ):
+        tampered = copy.deepcopy(payload)
+        tampered[field] = value
+        with pytest.raises(ValueError, match=field):
+            suite.validate_sampling_scalars(tampered)
+    _assert_unknown_scalars_preserved(suite, payload)
+
+
+def _assert_unknown_scalars_preserved(suite, payload):
+    unknown = copy.deepcopy(payload)
+    request = unknown["evidence"]["request"]
+    for frames in (request["frames"], request["request_manifest"]["frames"]):
+        for frame in frames:
+            for field in ("source_index", "source_count", "source_timestamp_s"):
+                frame[field] = None
+    sampling = request["request_manifest"]["sampling"]
+    sampling.update(
+        source_count=None,
+        coverage_complete=False,
+        timestamps_complete=None,
+        selected_indices=[None] * len(request["frames"]),
+        selected_timestamps_s=[None] * len(request["frames"]),
+    )
+    suite.validate_sampling_scalars(unknown)

@@ -13,6 +13,7 @@ from npa.workbench.vlm_eval import select_rollout_frames
 from .vlm_sampling_live_helpers import (
     assert_sampling_evidence,
     make_sampling_input,
+    validate_sampling_scalars,
 )
 
 pytestmark = [pytest.mark.e2e, pytest.mark.gpu]
@@ -52,6 +53,7 @@ def _run_evaluation(config: dict, *, strategy: str, max_frames: int) -> dict:
     result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
+    validate_sampling_scalars(payload)
     _assert_provider_evidence(payload, config)
     _assert_self_hosted_judge_claims(payload)
     assert payload.pop("written_uri") == config["output_path"]

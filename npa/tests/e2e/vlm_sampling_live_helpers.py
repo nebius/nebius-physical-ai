@@ -8,6 +8,73 @@ import subprocess
 import numpy as np
 from PIL import Image
 
+from npa.literal_values import require_boolean, require_integer, require_number
+
+
+def validate_sampling_scalars(payload: dict) -> None:
+    """Reject coerced evidence before comparing sampling values or payload hashes.
+
+    Args:
+        payload: Evaluation result containing both retained frame copies.
+
+    Returns:
+        None.
+
+    Raises:
+        KeyError: Required evidence is missing.
+        ValueError: A scalar has an invalid literal type or domain value.
+    """
+    require_integer(payload["frame_count"], field="frame_count", minimum=1)
+    for field in ("dry_run", "passed"):
+        require_boolean(payload[field], field=field)
+    for field in ("score", "success_threshold"):
+        require_number(payload[field], field=field, minimum=0, maximum=1)
+    evidence = payload["evidence"]
+    require_integer(evidence["provider"]["status_code"], field="status_code")
+    request = evidence["request"]
+    manifest = request["request_manifest"]
+    for location, frames in (
+        ("request.frames", request["frames"]),
+        ("request_manifest.frames", manifest["frames"]),
+    ):
+        for index, frame in enumerate(frames):
+            _validate_frame_scalars(frame, f"{location}[{index}]")
+    _validate_sampling_scalars(manifest["sampling"])
+
+
+def _validate_frame_scalars(frame: dict, prefix: str) -> None:
+    for field in ("byte_count", "width", "height"):
+        require_integer(frame[field], field=f"{prefix}.{field}", minimum=1)
+    for field, minimum in (("source_index", 0), ("source_count", 1)):
+        if frame[field] is not None:
+            require_integer(frame[field], field=f"{prefix}.{field}", minimum=minimum)
+    if frame["source_timestamp_s"] is not None:
+        require_number(
+            frame["source_timestamp_s"], field=f"{prefix}.source_timestamp_s"
+        )
+
+
+def _validate_sampling_scalars(sampling: dict) -> None:
+    for field in ("max_frames", "selected_count"):
+        require_integer(sampling[field], field=f"sampling.{field}", minimum=1)
+    if sampling["source_count"] is not None:
+        require_integer(
+            sampling["source_count"], field="sampling.source_count", minimum=1
+        )
+    require_boolean(sampling["coverage_complete"], field="sampling.coverage_complete")
+    if sampling["timestamps_complete"] is not None:
+        require_boolean(
+            sampling["timestamps_complete"], field="sampling.timestamps_complete"
+        )
+    for index, value in enumerate(sampling["selected_indices"]):
+        if value is not None:
+            require_integer(
+                value, field=f"sampling.selected_indices[{index}]", minimum=0
+            )
+    for index, value in enumerate(sampling["selected_timestamps_s"]):
+        if value is not None:
+            require_number(value, field=f"sampling.selected_timestamps_s[{index}]")
+
 
 def make_sampling_input(root: Path, kind: str) -> tuple[Path, list[bytes]]:
     """Create six distinct lossless frames with independently normalized PNGs.
