@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 import subprocess
@@ -128,6 +129,35 @@ def test_pair_and_rrd_use_decoded_media_not_manifests(tmp_path: Path) -> None:
     assert rrd["rerun_inspection"] == "passed"
 
 
+def test_real_pixel_cross_check_rejects_disconnected_metrics(tmp_path: Path) -> None:
+    """Require metric reports to agree with an independent decode of real MP4 frames."""
+
+    target = tmp_path / "target.mp4"
+    prediction = tmp_path / "prediction.mp4"
+    _video(target, "testsrc=size=64x48:rate=4")
+    _video(prediction, "testsrc2=size=64x48:rate=4")
+
+    independent = switchworld._independent_pixel_measurement(target, prediction)
+    upstream = {
+        "target_frames": independent["evaluated_frames"],
+        "prediction_frames": independent["evaluated_frames"],
+        "evaluated_frames": independent["evaluated_frames"],
+        "per_frame": independent["per_frame"],
+        "all_frames": independent["all_frames"],
+        "future_frames_excluding_reference": independent[
+            "future_frames_excluding_reference"
+        ],
+    }
+    verified = switchworld._verify_pixel_measurement(upstream, independent)
+    assert verified["status"] == "passed"
+    assert verified["checked_metrics"] == ["psnr_db", "mae"]
+
+    disconnected = deepcopy(upstream)
+    disconnected["per_frame"][0]["mae"] += 1.0
+    with pytest.raises(switchworld.SwitchWorldError, match="decoded pixels"):
+        switchworld._verify_pixel_measurement(disconnected, independent)
+
+
 def test_workflow_has_five_connected_real_stages() -> None:
     """Require the workflow's substantive source, inference, metric, and viz path."""
 
@@ -177,3 +207,16 @@ def test_canonical_adapter_selection_is_hash_pinned() -> None:
     for digest, size in switchworld.ADAPTER_FILES.values():
         assert len(digest) == 64
         assert size > 6_000_000_000
+
+
+def test_output_lineage_credits_lingbot_and_wan() -> None:
+    """Retain the native runtime and checkpoint lineage in generated evidence."""
+
+    lineage = switchworld._runtime_lineage()
+    assert lineage["switchworld"]["revision"] == switchworld.SWITCHWORLD_REVISION
+    assert lineage["lingbot_world"]["repository"].endswith("lingbot-world.git")
+    assert lineage["lingbot_base_checkpoint"]["repository"] == (
+        "robbyant/lingbot-world-base-cam"
+    )
+    assert lineage["umt5_tokenizer"]["repository"] == "google/umt5-xxl"
+    assert lineage["wan"]["revision"] == switchworld.WAN_REVISION

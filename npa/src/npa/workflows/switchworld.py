@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -31,6 +32,8 @@ ADAPTER_FILES = {
         6533975921,
     ),
 }
+WAN_REPOSITORY = "https://github.com/Wan-Video/Wan2.2.git"
+WAN_REVISION = "42bf4cfaa384bc21833865abc2f9e6c0e67233dc"
 PREPARED_FILES = (
     "reference.png",
     "target.mp4",
@@ -46,6 +49,46 @@ PREPARED_FILES = (
 
 class SwitchWorldError(RuntimeError):
     """Raised when a SwitchWorld artifact is incomplete, inconsistent, or unsafe."""
+
+
+def _runtime_lineage() -> dict[str, Any]:
+    """Return pinned source and checkpoint lineage for produced artifacts."""
+
+    from npa.solutions.lingbot_camera import (
+        MODEL_ID,
+        MODEL_REF,
+        SOURCE_REF as LINGBOT_WORLD_REVISION,
+        SOURCE_REPO as LINGBOT_WORLD_REPOSITORY,
+        TEXT_ENCODER_REF,
+    )
+
+    return {
+        "switchworld": {
+            "repository": SWITCHWORLD_REPOSITORY,
+            "revision": SWITCHWORLD_REVISION,
+            "license": "Apache-2.0",
+        },
+        "lingbot_world": {
+            "repository": LINGBOT_WORLD_REPOSITORY,
+            "revision": LINGBOT_WORLD_REVISION,
+            "license": "Apache-2.0",
+        },
+        "lingbot_base_checkpoint": {
+            "repository": MODEL_ID,
+            "revision": MODEL_REF,
+            "license": "Apache-2.0",
+        },
+        "umt5_tokenizer": {
+            "repository": "google/umt5-xxl",
+            "revision": TEXT_ENCODER_REF,
+            "license": "Apache-2.0",
+        },
+        "wan": {
+            "repository": WAN_REPOSITORY,
+            "revision": WAN_REVISION,
+            "license": "Apache-2.0",
+        },
+    }
 
 
 def _require_s3_uri(uri: str, *, directory: bool = False) -> str:
@@ -551,6 +594,7 @@ def run_baseline(*, prepared_uri: str, output_uri: str, seed: int) -> dict[str, 
         evidence = {
             "schema": "npa.switchworld.baseline.v1",
             "mode": "lingbot-world-baseline",
+            "lineage": _runtime_lineage(),
             "command": command,
             "prepared_sha256": _sha256(root / "prepared.json"),
             "video": _video_evidence(output),
@@ -610,11 +654,13 @@ def run_adapter(*, prepared_uri: str, output_uri: str, seed: int) -> dict[str, A
         evidence = {
             "schema": "npa.switchworld.adapter.v1",
             "mode": "switchworld-joint-adapter",
+            "lineage": _runtime_lineage(),
             "command": command,
             "prepared_sha256": _sha256(root / "prepared.json"),
             "adapter": {
                 "repository": CANONICAL_ADAPTER_REPOSITORY,
                 "revision": CANONICAL_ADAPTER_REVISION,
+                "license": "Apache-2.0",
                 "files": {
                     name: {"sha256": _sha256(path), "size_bytes": path.stat().st_size}
                     for name, path in adapters.items()
@@ -628,7 +674,7 @@ def run_adapter(*, prepared_uri: str, output_uri: str, seed: int) -> dict[str, A
 def _run_pair_evaluation(
     checkout: Path, target: Path, prediction: Path, output: Path, label: str
 ) -> dict[str, Any]:
-    """Invoke the upstream real-frame evaluator and load its measured report."""
+    """Invoke and independently cross-check the upstream real-frame evaluator."""
 
     command = [
         sys.executable,
@@ -643,7 +689,140 @@ def _run_pair_evaluation(
         label,
     ]
     subprocess.run(command, check=True, cwd=str(checkout), env=_native_environment())
-    return json.loads((output / "metrics.json").read_text(encoding="utf-8"))
+    report = json.loads((output / "metrics.json").read_text(encoding="utf-8"))
+    independent = _independent_pixel_measurement(target, prediction)
+    report["npa_independent_decoded_pixel_check"] = _verify_pixel_measurement(
+        report, independent
+    )
+    return report
+
+
+def _independent_pixel_measurement(target: Path, prediction: Path) -> dict[str, Any]:
+    """Recompute PSNR and MAE from separately decoded real video pixels.
+
+    This deliberately does not import SwitchWorld's evaluator. It makes the
+    acceptance path reject an evaluator report that is disconnected from the
+    two MP4 inputs, while leaving SwitchWorld's upstream SSIM calculation as
+    the source-of-record value.
+    """
+
+    import numpy as np
+    from PIL import Image
+
+    target_frames, _ = _decoded_frames(target)
+    prediction_frames, _ = _decoded_frames(prediction)
+    frame_count = min(len(target_frames), len(prediction_frames))
+    if frame_count == 0:
+        raise SwitchWorldError("cannot measure empty decoded video inputs")
+
+    per_frame: list[dict[str, float]] = []
+    for target_frame, prediction_frame in zip(
+        target_frames[:frame_count], prediction_frames[:frame_count], strict=True
+    ):
+        if prediction_frame.shape != target_frame.shape:
+            prediction_frame = np.asarray(
+                Image.fromarray(prediction_frame).resize(
+                    (target_frame.shape[1], target_frame.shape[0]),
+                    resample=Image.Resampling.BILINEAR,
+                )
+            )
+        error = target_frame.astype(np.float64) - prediction_frame.astype(np.float64)
+        mse = float(np.mean(error * error))
+        per_frame.append(
+            {
+                "psnr_db": float("inf")
+                if mse == 0.0
+                else 10.0 * math.log10(255.0**2 / mse),
+                "mae": float(np.mean(np.abs(error))),
+            }
+        )
+
+    def summarize(indices: list[int]) -> dict[str, float | int]:
+        """Summarize the independently decoded measurements for frame indices."""
+
+        values = [per_frame[index] for index in indices]
+        return {
+            "frames": len(values),
+            "psnr_db": sum(item["psnr_db"] for item in values) / len(values),
+            "mae": sum(item["mae"] for item in values) / len(values),
+        }
+
+    future = list(range(1, frame_count)) if frame_count > 1 else [0]
+    return {
+        "engine": "npa.switchworld.independent_decoded_pixels.v1",
+        "target_frame_count": len(target_frames),
+        "prediction_frame_count": len(prediction_frames),
+        "evaluated_frames": frame_count,
+        "per_frame": per_frame,
+        "all_frames": summarize(list(range(frame_count))),
+        "future_frames_excluding_reference": summarize(future),
+    }
+
+
+def _same_measurement_value(observed: Any, expected: float) -> bool:
+    """Return whether one upstream number agrees with the independent decode."""
+
+    if not isinstance(observed, (int, float)):
+        return False
+    if math.isinf(expected):
+        return math.isinf(float(observed)) and (float(observed) > 0) == (expected > 0)
+    return math.isclose(float(observed), expected, rel_tol=1e-4, abs_tol=1e-3)
+
+
+def _verify_pixel_measurement(
+    upstream: dict[str, Any], independent: dict[str, Any]
+) -> dict[str, Any]:
+    """Reject an upstream report that does not match decoded input-frame pixels."""
+
+    frame_count = independent["evaluated_frames"]
+    if (
+        upstream.get("evaluated_frames") != frame_count
+        or upstream.get("target_frames") != frame_count
+        or upstream.get("prediction_frames") != frame_count
+    ):
+        raise SwitchWorldError("upstream evaluator frame counts disagree with decoding")
+    per_frame = upstream.get("per_frame")
+    if not isinstance(per_frame, list) or len(per_frame) != frame_count:
+        raise SwitchWorldError("upstream evaluator lacks decoded per-frame metrics")
+    expected_frames = independent["per_frame"]
+    for index, (observed, expected) in enumerate(
+        zip(per_frame, expected_frames, strict=True)
+    ):
+        if not isinstance(observed, dict) or any(
+            not _same_measurement_value(observed.get(metric), expected[metric])
+            for metric in ("psnr_db", "mae")
+        ):
+            raise SwitchWorldError(
+                f"upstream evaluator disagrees with decoded pixels at frame {index}"
+            )
+    for summary_name in ("all_frames", "future_frames_excluding_reference"):
+        observed_summary = upstream.get(summary_name)
+        expected_summary = independent[summary_name]
+        if (
+            not isinstance(observed_summary, dict)
+            or observed_summary.get("frames") != expected_summary["frames"]
+            or any(
+                not _same_measurement_value(
+                    observed_summary.get(metric), expected_summary[metric]
+                )
+                for metric in ("psnr_db", "mae")
+            )
+        ):
+            raise SwitchWorldError(
+                f"upstream evaluator {summary_name} disagrees with decoded pixels"
+            )
+    return {
+        "status": "passed",
+        "engine": independent["engine"],
+        "checked_metrics": ["psnr_db", "mae"],
+        "target_frame_count": independent["target_frame_count"],
+        "prediction_frame_count": independent["prediction_frame_count"],
+        "evaluated_frames": frame_count,
+        "all_frames": independent["all_frames"],
+        "future_frames_excluding_reference": independent[
+            "future_frames_excluding_reference"
+        ],
+    }
 
 
 def _switch_window(report: dict[str, Any], controls: dict[str, Any]) -> dict[str, Any]:
@@ -722,10 +901,16 @@ def measure(
                     "future_frames_excluding_reference"
                 ],
                 "switch_window": _switch_window(target_vs_adapter, controls),
+                "independent_decoded_pixel_check": target_vs_adapter[
+                    "npa_independent_decoded_pixel_check"
+                ],
             },
             "baseline_vs_adapter": {
                 "all_frames": baseline_vs_adapter["all_frames"],
                 "switch_window": _switch_window(baseline_vs_adapter, controls),
+                "independent_decoded_pixel_check": baseline_vs_adapter[
+                    "npa_independent_decoded_pixel_check"
+                ],
             },
             "decoded_inputs": {
                 "target": _video_evidence(files["target.mp4"]),

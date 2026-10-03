@@ -44,6 +44,9 @@ PencilHu release to the alias.
 NPA modifications are limited to source/adaptor identity checks, S3 artifact
 contracts, actual media metrics, paired MP4/RRD output, and provenance. NPA does
 not represent SwitchWorld, LingBot-World, or Wan research as original work.
+Each baseline/adapter artifact records the pinned SwitchWorld, LingBot source,
+LingBot base checkpoint, UMT5 tokenizer, and Wan identities; adapter artifacts
+also record the canonical adapter revision and verified checkpoint file hashes.
 The inspected source commit and both adapter cards supply neither a
 `CITATION.cff` nor a BibTeX citation block, so this integration preserves that
 absence rather than inventing a citation. Existing LingBot-World and Wan
@@ -75,7 +78,9 @@ case, target media, credentials, or outputs, and adds no public container row.
    two hash-pinned canonical joint adapters.
 4. `measure-real-frames` invokes upstream `evaluate_video_pair.py` twice on
    decoded frames, reporting target/adapted and baseline/adapted PSNR, SSIM,
-   MAE, plus the declared switch window.
+   MAE, plus the declared switch window. NPA separately decodes each exact
+   input pair and recomputes PSNR/MAE; it rejects the upstream report unless
+   every checked frame and aggregate agrees with those real pixels.
 5. `emit-paired-artifacts` decodes all source videos, emits two paired H.264
    MP4s and a Rerun recording of real pixels, then runs `rerun rrd verify`.
    It also inspects the RRD entities after writing; its recording identity is

@@ -4,19 +4,22 @@
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The final YAML passed validate-spec and a five-task production render check.",
+      "reason": "The final YAML passed validate-spec and a five-task production render check after independent workflow verification.",
       "evidence": [
         "npa workbench workflow validate-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --json (2026-10-03)",
-        "npa workbench workflow plan-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --run-id switchworld-local-plan --check-render --json (2026-10-03; render sha256 206824f6d1e88225a29eec3db7fec07738dda8e37d81b826c9aaa30daaefb0c5)"
+        "npa workbench workflow plan-spec workflows/testing/switchworld-lingbot-viewpoint-switch.yaml --run-id switchworld-final-lineage-plan-20261003 --check-render --json (2026-10-03; render sha256 aeec23c2a9d7d7495422fa3f08c1919e5d5a620c03a6773ac31ba36861de618b)",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/independent-verification-20261003.json"
       ]
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "The resolved plan connects real case preparation, native baseline inference, canonical adapter inference, decoded-frame measurement, and paired MP4/RRD visualization without a mock metric backend.",
+      "reason": "The resolved plan connects real case preparation, native baseline inference, canonical adapter inference, decoded-frame measurement, and paired MP4/RRD visualization without a mock metric backend; the evaluator output is independently checked against decoded pixels.",
       "evidence": [
         "npa/tests/workflows/test_switchworld.py::test_workflow_has_five_connected_real_stages",
+        "npa/tests/workflows/test_switchworld.py::test_real_pixel_cross_check_rejects_disconnected_metrics",
         "docs/workbench/switchworld.md",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/source-comparison.md"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/source-comparison.md",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/independent-verification-20261003.json"
       ]
     }
   },
@@ -49,7 +52,8 @@
       "reason": "The configured Kubernetes context is absent from this VDI's kubeconfig, so the required exact-context image-pull probe cannot run.",
       "evidence": [
         "/tmp/npa-onboarding-20261002-switchworld/novel-issues.md",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/preflight.md"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/preflight.md",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/kubernetes-context-check-20261003-private.json"
       ]
     },
     "target_runtime": {
@@ -57,7 +61,8 @@
       "reason": "GPU placement and the real SkyPilot/Kubernetes workflow cannot be attempted until the configured Kubernetes context is restored or an approved exact replacement target is provided.",
       "evidence": [
         "/tmp/npa-onboarding-20261002-switchworld/novel-issues.md",
-        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/preflight.md"
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/preflight.md",
+        "/home/ubuntu/codex-runs/npa-onboarding-20261002/tasks/switchworld/kubernetes-context-check-20261003-private.json"
       ]
     }
   }
