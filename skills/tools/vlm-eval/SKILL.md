@@ -10,6 +10,22 @@ that number into a gate. It is the judging half of the loop whose generating hal
 is Cosmos/Genesis/Isaac rollouts and whose reasoning half is
 `skills/tools/token-factory/SKILL.md`.
 
+## Separate rich visual audit
+
+Use `npa workbench vlm-eval review-visual` for a private qualitative record,
+with required `--input-path`, `--output-path`, `--model`, and neutral `--task`.
+Its SDK is `npa.sdk.workbench.vlm_eval.review_visual`. Optional `--baseline-path`
+sends both independently sampled sources in both neutral A/B orders. Keep
+task evidence, content fidelity, reviewability, subjective impressiveness,
+and usefulness hypotheses separate; disagreement requires escalation.
+This record never affects the normalized score or gate.
+
+Use a fresh private output identity and preserve consumed journals after
+failure; the mechanism will not replay an output after transport starts.
+Inspect actual provider image capacity before paired inference. References and
+matched-view metadata remain unverified and private. See
+`docs/workbench/vlm-visual-review.md` for options, artifacts, and limitations.
+
 ## Pick the right command
 
 ```bash

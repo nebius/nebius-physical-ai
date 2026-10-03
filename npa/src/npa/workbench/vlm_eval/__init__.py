@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import tempfile
 import time
-from typing import TYPE_CHECKING, Any, Iterator, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Iterator, Sequence
 
 import httpx
 import numpy as np
@@ -63,6 +63,7 @@ BENCHMARK_DATASET_FORMAT = "npa_vlm_eval_benchmark_v1"
 EVIDENCE_SCHEMA_VERSION = "npa_vlm_eval_evidence_v2"
 HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_hosted_json_v1"
 SELF_HOSTED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_compatible_json_v1"
+UNPARSED_RESPONSE_PARSER_VERSION = "npa_vlm_eval_unparsed_response_v1"
 MARKDOWN_FENCE_PARSER_SUFFIX = "+markdown-fence-v1"
 DEFAULT_BENCHMARK_THRESHOLDS = (0.5, 0.8, 0.9)
 DEFAULT_SAMPLE_BENCHMARK_PATH = (
@@ -76,6 +77,10 @@ VIDEO_SUFFIXES = {".avi", ".mov", ".mp4", ".mpeg", ".mpg", ".webm"}
 
 class VlmEvalError(ValueError):
     """Raised when a VLM evaluation request is invalid."""
+
+
+class _VlmEvidenceRetentionError(VlmEvalError):
+    """Stop transport when exact response evidence cannot be retained."""
 
 
 @dataclass(frozen=True)
@@ -1934,67 +1939,36 @@ def _post_with_readiness_retry(
     request: dict[str, Any],
     backend: str,
     timeout_s: float,
+    response_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    request_body: bytes | None = None,
 ) -> _VlmBackendResponse:
-    """POST to an OpenAI-compatible endpoint, tolerating self-hosted warmup.
-
-    A self-hosted vLLM server started alongside the eval job needs minutes to
-    load weights; retry transient connection failures with backoff up to the
-    readiness deadline so a cold start is a bounded wait, not an instant
-    connection-refused. Hosted (``api``) backends are expected to be up and fail
-    fast. This lives in the request path so callers that stub
-    ``_call_openai_compatible`` in tests never incur the wait.
-    """
-
+    """POST while tolerating bounded self-hosted model warmup."""
     is_self_hosted = backend == "self-hosted"
     ready_timeout = _ready_timeout_s()
     deadline = time.monotonic() + (ready_timeout if is_self_hosted else 0.0)
     started_at = time.monotonic()
     delay = 2.0
-    last_conn_error = ""
     while True:
         try:
-            with httpx.Client(timeout=timeout_s) as client:
-                response = client.post(url, headers=headers, json=request)
-                response.raise_for_status()
-                data = response.json()
-                if not isinstance(data, dict):
-                    raise VlmEvalError(
-                        "VLM backend returned a non-object JSON response"
-                    )
-                raw_body = getattr(response, "text", "") or _canonical_json(data)
-                response_headers = getattr(response, "headers", {})
-                return _VlmBackendResponse(
-                    data=data,
-                    raw_body=raw_body,
-                    status_code=getattr(response, "status_code", None),
-                    request_id_header=_request_id_from_headers(response_headers),
-                    latency_s=time.monotonic() - started_at,
-                )
+            return _post_backend_once(
+                url=url,
+                headers=headers,
+                request=request,
+                timeout_s=timeout_s,
+                started_at=started_at,
+                response_sink=response_sink,
+                error_response_sink=error_response_sink,
+                request_body=request_body,
+            )
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
-            last_conn_error = str(exc) or exc.__class__.__name__
             if is_self_hosted and time.monotonic() < deadline:
                 time.sleep(delay)
                 delay = min(delay * 1.5, 15.0)
                 continue
-            if is_self_hosted:
-                raise VlmEvalError(
-                    f"VLM backend not ready at {url} after {ready_timeout:.0f}s "
-                    f"(last: {last_conn_error})"
-                ) from exc
-            raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
-        except httpx.HTTPStatusError as exc:
-            # Include a bounded response body.  vLLM uses the same HTTP 404 for
-            # an unknown route and for an unknown served-model name; the status
-            # line alone made those materially different live failures
-            # indistinguishable.  Model-server errors do not contain our API
-            # key, but keep the diagnostic bounded before it reaches logs.
-            detail = exc.response.text.strip().replace("\n", " ")[:1000]
-            suffix = f" response={detail}" if detail else ""
-            raise VlmEvalError(f"VLM backend request failed: {exc}{suffix}") from exc
+            raise _connection_failure(url, ready_timeout, is_self_hosted, exc) from exc
         except httpx.HTTPError as exc:
             raise VlmEvalError(f"VLM backend request failed: {exc}") from exc
-        except json.JSONDecodeError as exc:
-            raise VlmEvalError("VLM backend returned non-JSON response") from exc
 
 
 def _coerce_backend_response(
@@ -2553,3 +2527,281 @@ def _clamp_score(value: Any) -> float:
 def _deterministic_score(*parts: str) -> float:
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
     return int(digest[:8], 16) / 0xFFFFFFFF
+
+
+def _post_backend_once(
+    *,
+    url: str,
+    headers: dict[str, str],
+    request: dict[str, Any],
+    timeout_s: float,
+    started_at: float,
+    response_sink: Callable[[_VlmBackendResponse], None] | None,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+    request_body: bytes | None,
+) -> _VlmBackendResponse:
+    with httpx.Client(timeout=timeout_s) as client:
+        kwargs = (
+            {"content": request_body} if request_body is not None else {"json": request}
+        )
+        response = client.post(url, headers=headers, **kwargs)
+        observed = _backend_response_from_http(response, data={}, started_at=started_at)
+        _retain_response(observed, response_sink)
+        consistent_error_sink = _response_sink_with_latency(
+            observed.latency_s, error_response_sink
+        )
+        _raise_for_backend_status(response, started_at, consistent_error_sink)
+        data = _decode_backend_json(response, started_at, consistent_error_sink)
+        return replace(observed, data=data)
+
+
+def _response_sink_with_latency(
+    latency_s: float,
+    sink: Callable[[_VlmBackendResponse], None] | None,
+) -> Callable[[_VlmBackendResponse], None] | None:
+    if sink is None:
+        return None
+
+    def retain(response: _VlmBackendResponse) -> None:
+        sink(replace(response, latency_s=latency_s))
+
+    return retain
+
+
+def _raise_for_backend_status(
+    response: Any,
+    started_at: float,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        captured = _captured_http_response(response, started_at=started_at)
+        _retain_response(captured, error_response_sink)
+        detail = captured.raw_body.strip().replace("\n", " ")[:1000]
+        suffix = f" response={detail}" if detail else ""
+        raise VlmEvalError(f"VLM backend request failed: {exc}{suffix}") from exc
+
+
+def _decode_backend_json(
+    response: Any,
+    started_at: float,
+    error_response_sink: Callable[[_VlmBackendResponse], None] | None,
+) -> dict[str, Any]:
+    try:
+        data = response.json()
+    except ValueError as exc:
+        captured = _captured_http_response(response, started_at=started_at)
+        _retain_response(captured, error_response_sink)
+        raise VlmEvalError("VLM backend returned non-JSON response") from exc
+    if not isinstance(data, dict):
+        captured = _captured_http_response(response, started_at=started_at)
+        _retain_response(captured, error_response_sink)
+        raise VlmEvalError("VLM backend returned a non-object JSON response")
+    return data
+
+
+def _connection_failure(
+    url: str,
+    ready_timeout: float,
+    is_self_hosted: bool,
+    error: httpx.HTTPError,
+) -> VlmEvalError:
+    if not is_self_hosted:
+        return VlmEvalError(f"VLM backend request failed: {error}")
+    detail = str(error) or error.__class__.__name__
+    return VlmEvalError(
+        f"VLM backend not ready at {url} after {ready_timeout:.0f}s (last: {detail})"
+    )
+
+
+def _captured_http_response(
+    response: Any,
+    *,
+    started_at: float,
+) -> _VlmBackendResponse:
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    data = payload if isinstance(payload, dict) else {}
+    return _backend_response_from_http(response, data=data, started_at=started_at)
+
+
+def _backend_response_from_http(
+    response: Any,
+    *,
+    data: dict[str, Any],
+    started_at: float,
+) -> _VlmBackendResponse:
+    raw_body = getattr(response, "text", None)
+    if raw_body is None:
+        raw_body = _canonical_json(data)
+    response_headers = getattr(response, "headers", {})
+    return _VlmBackendResponse(
+        data=data,
+        raw_body=raw_body,
+        status_code=getattr(response, "status_code", None),
+        request_id_header=_request_id_from_headers(response_headers),
+        latency_s=time.monotonic() - started_at,
+    )
+
+
+def _retain_response(
+    response: _VlmBackendResponse,
+    sink: Callable[[_VlmBackendResponse], None] | None,
+) -> None:
+    if sink is not None:
+        sink(response)
+
+
+def _comparison_response_retainer(
+    observed: list[_VlmBackendResponse],
+    sink: Callable[[_VlmBackendResponse], None] | None,
+) -> Callable[[_VlmBackendResponse], None]:
+    def retain(response: _VlmBackendResponse) -> None:
+        observed.append(response)
+        try:
+            _retain_response(response, sink)
+        except VlmEvalError as exc:
+            raise _VlmEvidenceRetentionError(
+                "provider response evidence could not be retained"
+            ) from exc
+
+    return retain
+
+
+def _post_comparison_request(
+    *,
+    url: str,
+    headers: dict[str, str],
+    request: dict[str, Any],
+    timeout_s: float,
+    response_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    request_body: bytes | None = None,
+) -> tuple[_VlmBackendResponse | None, VlmEvalError | None]:
+    started_at = time.monotonic()
+    captured: list[_VlmBackendResponse] = []
+    observed: list[_VlmBackendResponse] = []
+    retain = _comparison_response_retainer(observed, response_sink)
+
+    try:
+        raw_response = _post_with_readiness_retry(
+            url=url,
+            headers=headers,
+            request=request,
+            backend="api",
+            timeout_s=timeout_s,
+            response_sink=retain,
+            error_response_sink=captured.append,
+            request_body=request_body,
+        )
+        response = _coerce_backend_response(
+            raw_response,
+            fallback_latency_s=time.monotonic() - started_at,
+        )
+        if not observed:
+            retain(response)
+        return response, None
+    except _VlmEvidenceRetentionError:
+        raise
+    except VlmEvalError as exc:
+        response = captured[0] if captured else None
+        if response is not None and not observed:
+            retain(response)
+        return response, exc
+
+
+def _comparison_transport_error_kind(
+    response: _VlmBackendResponse | None,
+) -> tuple[str, str]:
+    if response is None:
+        return "transport", "transport_error"
+    if response.status_code is not None and response.status_code >= 400:
+        return "provider_http_status", "provider_http_status_error"
+    return "response_decode", "provider_response_decode_error"
+
+
+def _available_response_choice(data: dict[str, Any]) -> dict[str, Any]:
+    choices = data.get("choices")
+    if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+        return choices[0]
+    return {}
+
+
+def _unparsed_provider_evidence(
+    response: _VlmBackendResponse,
+    choice: dict[str, Any],
+) -> VlmProviderEvidence:
+    provider_id = response.data.get("id")
+    returned_model = response.data.get("model")
+    finish_reason = choice.get("finish_reason")
+    usage = response.data.get("usage")
+    return VlmProviderEvidence(
+        provider_request_id=(
+            provider_id if isinstance(provider_id, str) else response.request_id_header
+        ),
+        returned_model=returned_model if isinstance(returned_model, str) else None,
+        finish_reason=finish_reason if isinstance(finish_reason, str) else None,
+        latency_s=round(response.latency_s, 6),
+        status_code=response.status_code,
+        usage=usage if isinstance(usage, dict) else None,
+        raw_response=response.raw_body,
+        raw_response_sha256=_sha256_text(response.raw_body),
+        parser_version=UNPARSED_RESPONSE_PARSER_VERSION,
+    )
+
+
+from .visual_review import (  # noqa: E402
+    DEFAULT_VISUAL_REVIEW_RUBRIC as DEFAULT_VISUAL_REVIEW_RUBRIC,
+    VISUAL_REVIEW_RESULT_FILENAME as VISUAL_REVIEW_RESULT_FILENAME,
+    VISUAL_REVIEW_SCHEMA_VERSION as VISUAL_REVIEW_SCHEMA_VERSION,
+    VlmVisualArmReview,
+    VlmVisualArtifactFidelity,
+    VlmVisualArtifactIssue,
+    VlmVisualAssertion,
+    VlmVisualBaselineComparison,
+    VlmVisualComparisonAssertion,
+    VlmVisualImpressiveness,
+    VlmVisualMappedComparisonAssertion,
+    VlmVisualPairComparison,
+    VlmVisualPairedVerdict,
+    VlmVisualReviewError as VlmVisualReviewError,
+    VlmVisualReviewFailure,
+    VlmVisualReviewOutcome,
+    VlmVisualReviewReport,
+    VlmVisualReviewRequest,
+    VlmVisualReviewability,
+    VlmVisualSingleVerdict,
+    VlmVisualSourceManifest,
+    VlmVisualTaskEvidence,
+    VlmVisualUsefulness,
+    parse_visual_review_response,
+    review_visual,
+    visual_review_result_uri_for,
+)
+
+__all__ += [
+    "VlmVisualArmReview",
+    "VlmVisualArtifactFidelity",
+    "VlmVisualArtifactIssue",
+    "VlmVisualAssertion",
+    "VlmVisualBaselineComparison",
+    "VlmVisualComparisonAssertion",
+    "VlmVisualImpressiveness",
+    "VlmVisualMappedComparisonAssertion",
+    "VlmVisualPairComparison",
+    "VlmVisualPairedVerdict",
+    "VlmVisualReviewFailure",
+    "VlmVisualReviewOutcome",
+    "VlmVisualReviewReport",
+    "VlmVisualReviewRequest",
+    "VlmVisualReviewability",
+    "VlmVisualSingleVerdict",
+    "VlmVisualSourceManifest",
+    "VlmVisualTaskEvidence",
+    "VlmVisualUsefulness",
+    "parse_visual_review_response",
+    "review_visual",
+    "visual_review_result_uri_for",
+]
