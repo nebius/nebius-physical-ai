@@ -135,6 +135,9 @@ MANUAL_GATES = {
         "LIBERO qualification consumes an accepted immutable candidate image and one reserved B200"
     ),
     "NPA_BYOF_OPENPI_LIVE_B200": "OpenPI B200 validation requires live GPU and registry access",
+    "NPA_OPENPI_ANTIOCH_LIVE": (
+        "Antioch validation requires an operator project and reachable policy endpoint"
+    ),
     "NPA_BYOF_ROBOTWIN_LIVE": (
         "RoboTwin mutation requires the manager-owned STRICT RTX PRO runtime context and operator license decisions"
     ),
