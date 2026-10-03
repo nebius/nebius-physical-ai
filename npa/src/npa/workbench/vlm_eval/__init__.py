@@ -27,9 +27,11 @@ from PIL import Image
 from urllib.parse import urlparse
 
 from npa.clients.token_factory import DEFAULT_VISION_MODEL
+from npa.literal_values import require_boolean
 
 if TYPE_CHECKING:
     from npa.clients.storage import StorageClient
+    from npa.clients.token_factory import TokenFactoryChatProfile
 
 
 DEFAULT_BACKEND = "self-hosted"
@@ -74,14 +76,6 @@ DEFAULT_SAMPLE_BENCHMARK_PATH = (
 )
 SUPPORTED_BACKENDS = ("self-hosted", "api", "stub")
 SUPPORTED_FRAME_SELECTIONS = ("final", "keyframes", "sequence")
-CANONICAL_HOSTED_MODELS = frozenset(
-    {
-        "MiniMaxAI/MiniMax-M3",
-        "google/gemma-3-27b-it",
-        "nvidia/Nemotron-3_5-Lightning",
-        "openbmb/MiniCPM-V-4_5",
-    }
-)
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".ppm", ".webp"}
 VIDEO_SUFFIXES = {".avi", ".mov", ".mp4", ".mpeg", ".mpg", ".webm"}
 
@@ -218,6 +212,9 @@ class VlmEvalResult:
     rationale: str = ""
     served_model: str | None = None
     evidence: VlmEvaluationEvidence | None = None
+    rubric: str = DEFAULT_RUBRIC
+    provider_success: bool | None = None
+    provider_success_matches_score_gate: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -378,6 +375,7 @@ class VlmStructuredResponse:
     served_model: str | None = None
     evidence: VlmEvaluationEvidence | None = None
     parser_version: str = SELF_HOSTED_RESPONSE_PARSER_VERSION
+    provider_success: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -469,6 +467,8 @@ class VlmBenchmarkCaseResult:
     frame_count: int
     score_source: str
     evidence: VlmEvaluationEvidence | None = None
+    provider_success: bool | None = None
+    provider_success_matches_score_gate: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -723,6 +723,7 @@ def evaluate_vlm(
         timeout_s=timeout_s,
     )
     backend = _normalize_backend(backend)
+    effective_rubric = _load_rubric(rubric=rubric, rubric_path=rubric_path)
     if backend == "stub":
         return evaluate_stub(
             input_path=input_path,
@@ -732,6 +733,7 @@ def evaluate_vlm(
             success_threshold=success_threshold,
             frame_selection=frame_selection,
             score=score,
+            rubric=effective_rubric,
         )
 
     effective_model = model or DEFAULT_MODEL
@@ -749,7 +751,6 @@ def evaluate_vlm(
         from npa.clients.token_factory import DEFAULT_VISION_MODEL
 
         effective_model = DEFAULT_VISION_MODEL
-    effective_rubric = _load_rubric(rubric=rubric, rubric_path=rubric_path)
     if score is not None:
         _validate_score_override(score)
         structured = VlmStructuredResponse(
@@ -794,6 +795,7 @@ def evaluate_vlm(
         success_threshold=success_threshold,
         frame_selection=frame_selection,
         frame_count=frame_count,
+        rubric=effective_rubric,
         structured=structured,
     )
 
@@ -853,14 +855,18 @@ def _evaluate_judge_pair(
 
 
 def _comparison_models(primary: str, secondary: str) -> tuple[str, str]:
+    from npa.clients.token_factory import token_factory_chat_profile
+
     models = (primary.strip(), secondary.strip())
     if not all(models):
         raise VlmEvalError("paired judges require two nonempty model IDs")
     if models[0] == models[1]:
         raise VlmEvalError("paired judges require two distinct model IDs")
-    # Kimi requires a different generation contract; changing one request would
-    # invalidate the model-only comparison instead of making it compatible.
-    if "moonshotai/Kimi-K3" in models:
+    # Changing one request's temperature contract would invalidate the
+    # model-only comparison instead of making it compatible.
+    if any(
+        not token_factory_chat_profile(model).include_temperature for model in models
+    ):
         raise VlmEvalError(
             "paired judges require models compatible with the shared temperature "
             "request; use individual evaluation for incompatible model profiles"
@@ -1131,6 +1137,8 @@ def _strict_comparison_verdict(
     request: VlmRequestEvidence,
     response: _VlmBackendResponse,
 ) -> VlmStructuredResponse:
+    from npa.clients.token_factory import token_factory_chat_profile
+
     if response.data.get("model") != model:
         raise VlmEvalError("Paired judge returned a different model identity")
     choice, message = _response_choice_and_content(response.data)
@@ -1143,8 +1151,8 @@ def _strict_comparison_verdict(
     structured = _parse_backend_verdict(
         backend="api",
         requested_model=model,
+        profile=token_factory_chat_profile(model),
         data=response.data,
-        choice=choice,
         message=message,
     )
     evidence = _build_evaluation_evidence(
@@ -1172,6 +1180,7 @@ def _comparison_success_outcome(
         success_threshold=context.success_threshold,
         frame_selection=context.frame_selection,
         frame_count=len(context.frames),
+        rubric=context.rubric,
         structured=structured,
     )
     result = replace(
@@ -1365,6 +1374,7 @@ def evaluate_stub(
     success_threshold: float = 0.8,
     frame_selection: str = DEFAULT_FRAME_SELECTION,
     score: float | None = None,
+    rubric: str = DEFAULT_RUBRIC,
 ) -> VlmEvalResult:
     """Return deterministic schema-compatible metrics without calling a VLM."""
 
@@ -1380,6 +1390,7 @@ def evaluate_stub(
         _deterministic_score(input_path, task, model) if score is None else score
     )
     _validate_score_override(effective_score)
+    effective_score = round(effective_score, 4)
     passed = effective_score >= success_threshold
     return VlmEvalResult(
         status="passed" if passed else "needs_iteration",
@@ -1389,13 +1400,14 @@ def evaluate_stub(
         result_uri=result_uri_for(output_path),
         task=task,
         model=model,
-        score=round(effective_score, 4),
+        score=effective_score,
         success_threshold=success_threshold,
         passed=passed,
         generated_at=datetime.now(timezone.utc).isoformat(),
         frame_selection=frame_selection,
         frame_count=0,
         rationale="Deterministic compatibility score.",
+        rubric=rubric,
     )
 
 
@@ -1435,6 +1447,14 @@ def select_rollout_frames(
     )
 
 
+def _literal_provider_success(value: Any) -> bool | None:
+    try:
+        return require_boolean(value, field="success")
+    except ValueError:
+        # Legacy self-hosted coercion is not literal provider evidence.
+        return None
+
+
 def parse_structured_response(text: str) -> VlmStructuredResponse:
     """Parse a VLM JSON response and clamp its score into [0, 1]."""
 
@@ -1444,12 +1464,15 @@ def parse_structured_response(text: str) -> VlmStructuredResponse:
     if "rationale" not in payload:
         raise VlmEvalError("VLM response JSON must include rationale")
     score = _clamp_score(payload["score"])
-    success = _coerce_bool(payload.get("success", score >= 0.5))
+    success_supplied = "success" in payload
+    success = _coerce_bool(payload["success"]) if success_supplied else score >= 0.5
+    provider_success = _literal_provider_success(payload.get("success"))
     return VlmStructuredResponse(
         success=success,
         score=score,
         rationale=str(payload["rationale"]),
         parser_version=_parser_version(SELF_HOSTED_RESPONSE_PARSER_VERSION, deframed),
+        provider_success=provider_success,
     )
 
 
@@ -1484,7 +1507,8 @@ def _parse_api_structured_response(
         ) from exc
     if not isinstance(payload, dict):
         raise VlmEvalError("Hosted VLM response JSON must be an object")
-    if not isinstance(payload.get("success"), bool):
+    provider_success = _literal_provider_success(payload.get("success"))
+    if provider_success is None:
         raise VlmEvalError("Hosted VLM response success must be a boolean")
     score = payload.get("score")
     if (
@@ -1500,11 +1524,12 @@ def _parse_api_structured_response(
     if not isinstance(rationale, str) or not rationale.strip():
         raise VlmEvalError("Hosted VLM response rationale must be a nonempty string")
     return VlmStructuredResponse(
-        success=payload["success"],
+        success=provider_success,
         score=float(score),
         rationale=rationale,
         served_model=served_model,
         parser_version=_parser_version(HOSTED_RESPONSE_PARSER_VERSION, deframed),
+        provider_success=provider_success,
     )
 
 
@@ -1849,10 +1874,17 @@ def _result_from_structured(
     success_threshold: float,
     frame_selection: str,
     frame_count: int,
+    rubric: str,
     structured: VlmStructuredResponse,
 ) -> VlmEvalResult:
     score = round(_clamp_score(structured.score), 4)
     passed = score >= success_threshold
+    provider_success = (
+        structured.provider_success if structured.evidence is not None else None
+    )
+    provider_success_matches_score_gate = (
+        provider_success == passed if provider_success is not None else None
+    )
     return VlmEvalResult(
         status="passed" if passed else "needs_iteration",
         backend=backend,
@@ -1868,7 +1900,10 @@ def _result_from_structured(
         frame_selection=frame_selection,
         frame_count=frame_count,
         rationale=structured.rationale,
+        rubric=rubric,
         served_model=structured.served_model,
+        provider_success=provider_success,
+        provider_success_matches_score_gate=provider_success_matches_score_gate,
         evidence=structured.evidence,
     )
 
@@ -1922,6 +1957,8 @@ def _run_benchmark_case(
         rationale=result.rationale,
         frame_count=result.frame_count,
         score_source="fixture" if score is not None else result.backend,
+        provider_success=result.provider_success,
+        provider_success_matches_score_gate=result.provider_success_matches_score_gate,
         evidence=result.evidence,
     )
 
@@ -2336,6 +2373,70 @@ def _ready_timeout_s() -> float:
     return value if value > 0 else DEFAULT_READY_TIMEOUT_S
 
 
+def _openai_content(prompt: str, frames: list[SelectedFrame]) -> list[dict[str, Any]]:
+    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+    for frame in frames:
+        encoded = base64.b64encode(frame.data).decode("ascii")
+        content.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{frame.media_type};base64,{encoded}"},
+            }
+        )
+    return content
+
+
+def _openai_request(
+    *, backend: str, model: str, prompt: str, frames: list[SelectedFrame]
+) -> tuple[dict[str, Any], TokenFactoryChatProfile | None]:
+    request: dict[str, Any] = {
+        "model": model,
+        "temperature": 0,
+        "response_format": {"type": "json_object"},
+        "messages": [{"role": "user", "content": _openai_content(prompt, frames)}],
+    }
+    if backend != "api":
+        return request, None
+    from npa.clients.token_factory import token_factory_chat_profile
+
+    profile = token_factory_chat_profile(model)
+    request.update(profile.default_extra())
+    if not profile.include_temperature:
+        request.pop("temperature")
+    if not profile.use_vlm_response_format:
+        request.pop("response_format")
+    return request, profile
+
+
+def _hosted_structured_response(
+    data: dict[str, Any],
+    message: Any,
+    *,
+    model: str,
+    profile: TokenFactoryChatProfile,
+) -> VlmStructuredResponse:
+    if data["choices"][0].get("finish_reason") != "stop":
+        raise VlmEvalError(
+            "Hosted VLM response did not complete with finish_reason=stop"
+        )
+    served_model = data.get("model")
+    if not isinstance(served_model, str) or not served_model.strip():
+        raise VlmEvalError("Hosted VLM response must identify the served model")
+    if profile.require_exact_model and served_model != model:
+        raise VlmEvalError(
+            "Hosted VLM response model does not match the requested model"
+        )
+    return _parse_api_structured_response(message, served_model=served_model)
+
+
+def _openai_headers(*, backend: str, api_key_env: str) -> dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    api_key = _resolve_api_key(backend=backend, api_key_env=api_key_env)
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
 def _call_openai_compatible(
     *,
     backend: str,
@@ -2347,16 +2448,9 @@ def _call_openai_compatible(
     frames: list[SelectedFrame],
     timeout_s: float,
 ) -> VlmStructuredResponse:
-    url = _chat_completions_url(
-        _resolve_endpoint_url(backend=backend, endpoint_url=endpoint_url)
-    )
-    request = _build_openai_request(
+    request, profile = _openai_request(
         backend=backend, model=model, prompt=prompt, frames=frames
     )
-    headers = {"Content-Type": "application/json"}
-    api_key = _resolve_api_key(backend=backend, api_key_env=api_key_env)
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
     request_evidence = _build_request_evidence(
         backend=backend,
         model=model,
@@ -2365,91 +2459,78 @@ def _call_openai_compatible(
         request=request,
         frames=frames,
     )
-    started_at = time.monotonic()
-    raw_response = _post_with_readiness_retry(
-        url=url,
-        headers=headers,
-        request=request,
+    response = _send_recorded_request(
         backend=backend,
+        endpoint_url=endpoint_url,
+        api_key_env=api_key_env,
+        request=request,
         timeout_s=timeout_s,
     )
-    response = _coerce_backend_response(
-        raw_response, fallback_latency_s=time.monotonic() - started_at
-    )
+    return _verdict_with_evidence(backend, model, profile, request_evidence, response)
+
+
+def _verdict_with_evidence(
+    backend: str,
+    model: str,
+    profile: TokenFactoryChatProfile | None,
+    request_evidence: VlmRequestEvidence,
+    response: _VlmBackendResponse,
+) -> VlmStructuredResponse:
     choice, message = _response_choice_and_content(response.data)
     result = _parse_backend_verdict(
         backend=backend,
         requested_model=model,
+        profile=profile,
         data=response.data,
-        choice=choice,
         message=message,
     )
     evidence = _build_evaluation_evidence(
-        request_evidence,
-        response,
-        choice,
-        parser_version=result.parser_version,
+        request_evidence, response, choice, parser_version=result.parser_version
     )
     return replace(result, evidence=evidence)
+
+
+def _send_recorded_request(
+    *,
+    backend: str,
+    endpoint_url: str,
+    api_key_env: str,
+    request: dict[str, Any],
+    timeout_s: float,
+) -> _VlmBackendResponse:
+    url = _chat_completions_url(
+        _resolve_endpoint_url(backend=backend, endpoint_url=endpoint_url)
+    )
+    headers = _openai_headers(backend=backend, api_key_env=api_key_env)
+    started_at = time.monotonic()
+    raw_response = _post_with_readiness_retry(
+        url=url, headers=headers, request=request, backend=backend, timeout_s=timeout_s
+    )
+    return _coerce_backend_response(
+        raw_response, fallback_latency_s=time.monotonic() - started_at
+    )
 
 
 def _parse_backend_verdict(
     *,
     backend: str,
     requested_model: str,
+    profile: TokenFactoryChatProfile | None,
     data: dict[str, Any],
-    choice: dict[str, Any],
     message: Any,
 ) -> VlmStructuredResponse:
+    if backend == "api":
+        assert profile is not None
+        return _hosted_structured_response(
+            data, message, model=requested_model, profile=profile
+        )
+    result = parse_structured_response(str(message))
     served_model = data.get("model")
-    if backend != "api":
-        result = parse_structured_response(str(message))
-        if served_model is None:
-            return result
-        if not isinstance(served_model, str) or not served_model.strip():
-            raise VlmEvalError(
-                "Self-hosted VLM response model must be a nonempty string"
-            )
-        return replace(result, served_model=served_model)
-    if choice.get("finish_reason") != "stop":
-        raise VlmEvalError(
-            "Hosted VLM response did not complete with finish_reason=stop"
-        )
+    if served_model is None:
+        return result
     if not isinstance(served_model, str) or not served_model.strip():
-        raise VlmEvalError("Hosted VLM response must identify the served model")
-    if requested_model in CANONICAL_HOSTED_MODELS and served_model != requested_model:
-        raise VlmEvalError(
-            "Hosted VLM response model does not match the requested model"
-        )
-    return _parse_api_structured_response(message, served_model=served_model)
-
-
-def _build_openai_request(
-    *, backend: str, model: str, prompt: str, frames: Sequence[SelectedFrame]
-) -> dict[str, Any]:
-    content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
-    for frame in frames:
-        encoded = base64.b64encode(frame.data).decode("ascii")
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:{frame.media_type};base64,{encoded}"},
-            }
-        )
-    request: dict[str, Any] = {
-        "model": model,
-        "temperature": 0,
-        "response_format": {"type": "json_object"},
-        "messages": [{"role": "user", "content": content}],
-    }
-    if backend != "api":
-        return request
-    from npa.clients.token_factory import default_chat_extra
-
-    request.update(default_chat_extra(model))
-    if model == "MiniMaxAI/MiniMax-M3":
-        request.pop("response_format")
-    return request
+        raise VlmEvalError("Self-hosted VLM response model must be a nonempty string")
+    return replace(result, served_model=served_model)
 
 
 def _build_request_evidence(
@@ -2464,16 +2545,11 @@ def _build_request_evidence(
     frame_evidence = tuple(_frame_evidence(frame) for frame in frames)
     prompt_sha256 = _sha256_text(prompt)
     rubric_sha256 = _sha256_text(rubric)
-    generation_parameters = {
-        key: request[key]
-        for key in ("temperature", "response_format", "chat_template_kwargs")
-        if key in request
-    }
     manifest = {
         "schema_version": EVIDENCE_SCHEMA_VERSION,
         "endpoint_role": "hosted-api" if backend == "api" else "self-hosted",
         "requested_model": model,
-        "generation_parameters": generation_parameters,
+        "generation_parameters": _generation_parameters(request),
         "prompt_sha256": prompt_sha256,
         "rubric_sha256": rubric_sha256,
         "frames": [asdict(frame) for frame in frame_evidence],
@@ -2487,6 +2563,16 @@ def _build_request_evidence(
         request_manifest=manifest,
         frames=frame_evidence,
     )
+
+
+def _generation_parameters(request: dict[str, Any]) -> dict[str, Any]:
+    fields = (
+        "temperature",
+        "response_format",
+        "chat_template_kwargs",
+        "reasoning_effort",
+    )
+    return {key: request[key] for key in fields if key in request}
 
 
 def _response_choice_and_content(data: dict[str, Any]) -> tuple[dict[str, Any], Any]:

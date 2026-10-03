@@ -230,6 +230,8 @@ def test_workbench_vlm_eval_compare_judges_writes_distinct_report(
             "MiniMaxAI/MiniMax-M3",
             "--secondary-model",
             "openbmb/MiniCPM-V-4_5",
+            "--rubric",
+            "Require visible completion in both independent reviews.",
             "--output",
             "json",
         ],
@@ -250,6 +252,10 @@ def test_workbench_vlm_eval_compare_judges_writes_distinct_report(
     assert retained["primary"]["result"]["result_uri"] == str(written)
     assert retained["secondary"]["result"]["result_uri"] == str(written)
     assert retained["primary"]["result"]["rationale"] == "visible evidence"
+    for role in ("primary", "secondary"):
+        assert retained[role]["result"]["rubric"] == retained["rubric"]
+        assert retained[role]["result"]["provider_success"] is True
+        assert retained[role]["result"]["provider_success_matches_score_gate"] is True
 
 
 def test_workbench_vlm_eval_compare_judges_rejects_same_model(
