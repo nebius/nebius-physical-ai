@@ -1,0 +1,169 @@
+{
+  "schema": "npa_sampler_first_full_failed_retained_proof_v1",
+  "pr": 830,
+  "execution_sha": "39aa3f336e89d011a994d2dd84b11cc88be1c701",
+  "execution_tree": "9bc3eab90c59315af956714f5db57c11d9df7435",
+  "execution_base": "432ea8b0478872f59ce364fa1435f9f81a6a9e56",
+  "full": {
+    "failed": 27,
+    "passed": 40219,
+    "skipped": 213,
+    "xpassed": 1,
+    "coverage_percent": 77.57537481206374,
+    "verdict": "FAILED retained unchanged"
+  },
+  "coverage_floor_percent": 60,
+  "source_before_after_clean_equal": true,
+  "packages_before_after_byte_equal": true,
+  "artifacts": [
+    {
+      "name": "full-execution-start.json",
+      "sha256": "6a68e86bf4073ef04ba513615a3886c8c88016358e6fad8dc1b4a5342b4d69ac"
+    },
+    {
+      "name": "full-execution-result.json",
+      "sha256": "0bb612a60f052f95c88d2253f13cebe51526d29e3eb07f62404b31b0687ab58a"
+    },
+    {
+      "name": "junit.xml",
+      "sha256": "6c182dc33314b8e93e73e82dcb6f46d2bc8d2bc0039aba26819b0b88a8b1b2c9"
+    },
+    {
+      "name": "coverage.json",
+      "sha256": "ae67cb2e9c7923af4dbe6b9afd51b02a5441d4887f40b98125d1eea97ea60c0c"
+    }
+  ],
+  "affected_isolation_controls": [
+    {
+      "head": "432ea8b0478872f59ce364fa1435f9f81a6a9e56",
+      "mode": "pid1-exact",
+      "passed": 2,
+      "failed": 3,
+      "junit_sha256": "4c345a929c92fcd9b6ef7be4a78281c611204aab431740a44422a19c5519e281",
+      "clean_source": true
+    },
+    {
+      "head": "432ea8b0478872f59ce364fa1435f9f81a6a9e56",
+      "mode": "net-exact",
+      "passed": 5,
+      "failed": 0,
+      "junit_sha256": "b4ce7a78bb560df7cda3f45b5246020c5ba7b1eaf3f32a3270bb2338b495d881",
+      "clean_source": true
+    },
+    {
+      "head": "432ea8b0478872f59ce364fa1435f9f81a6a9e56",
+      "mode": "pid-normalized",
+      "passed": 5,
+      "failed": 0,
+      "junit_sha256": "a1cf55a634688bebbb85247859ed6763d0074a5d1bda7f9ccbb7843b6c39f513",
+      "clean_source": true
+    },
+    {
+      "head": "432ea8b0478872f59ce364fa1435f9f81a6a9e56",
+      "mode": "normal-all27",
+      "passed": 27,
+      "failed": 0,
+      "junit_sha256": "859e40698833303d42391617529fedd9d310c40e8825e45be91cca567149097a",
+      "clean_source": true
+    },
+    {
+      "head": "39aa3f336e89d011a994d2dd84b11cc88be1c701",
+      "mode": "pid1-exact",
+      "passed": 2,
+      "failed": 3,
+      "junit_sha256": "7eea05161394258b63b57c35009b1e3cb0b0c8d8a3b4159707d2f422ed3edd63",
+      "clean_source": true
+    },
+    {
+      "head": "39aa3f336e89d011a994d2dd84b11cc88be1c701",
+      "mode": "net-exact",
+      "passed": 5,
+      "failed": 0,
+      "junit_sha256": "5d0adc86c21668fc95c6dcc686f37b89bdf2598a0fd98821185600aed0481b80",
+      "clean_source": true
+    },
+    {
+      "head": "39aa3f336e89d011a994d2dd84b11cc88be1c701",
+      "mode": "pid-normalized",
+      "passed": 5,
+      "failed": 0,
+      "junit_sha256": "2afe41348a00c23dd44080976a97df64f80c2e67d20096d0507fe5f1320f251b",
+      "clean_source": true
+    },
+    {
+      "head": "39aa3f336e89d011a994d2dd84b11cc88be1c701",
+      "mode": "normal-all27",
+      "passed": 27,
+      "failed": 0,
+      "junit_sha256": "4c6d01512644e3267212de285f7905d4e5549defa8fc6450df1c8c432ab29589",
+      "clean_source": true
+    }
+  ],
+  "affected_source_files": [
+    {
+      "path": "npa/tests/agent_eval/test_specialist_operation_handoff.py",
+      "sha256": "3c47e38bc7283dd517fbf90541f535fcbacfe540cb1b7740bd80fb0a8a2e43ac",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/docker/test_image_byte_scan.py",
+      "sha256": "2597e3f15be2a7e6a6c0ba0f5338ff7e65b65b35204a59a5c50e66595874936d",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/docker/test_libero_runtime_bootstrap.py",
+      "sha256": "787645fd37d6b8f92b8caa2bbc4a480661a0b8baab43c1012a4da742fd0ac925",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/docker/test_robomimic_image_contract.py",
+      "sha256": "722d53138b11478112ae0ba952e7ac4412a25876408fde6459b0407059b2ebd1",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/docker/test_robomimic_runtime_bootstrap.py",
+      "sha256": "ba8c213afd1d2829dd32422c1b281309ffa54464bcfc0000cba5d9863f37b6fa",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/docker/test_wan_runtime.py",
+      "sha256": "969aea008b277c520e3c69efcb3d20f5cd535dda7e108cf48b17103208da6289",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/test_ci_precheck.py",
+      "sha256": "2448ecffbee472b2d91544a21ff28fffbd5a9f626e2c13ffe2347bea68e28e67",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/unit/test_absence_process.py",
+      "sha256": "2bf3a779a57aaa5e19adecdddb52c55eaf8466be8c4e597d9cf84686c0042654",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/unit/test_headless_oauth_relay.py",
+      "sha256": "d2e56facd7e89f24b641ecbabd3a3819c4e42886de2d18e91dd65a97bcfb27e4",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/workbench/test_isaac_arena_phase_liveness.py",
+      "sha256": "6854bae70742c190dfc7bf0317a25f88d2a255129953b3d47f316f6ad01a8ae0",
+      "equal_at_all_three_heads": true
+    },
+    {
+      "path": "npa/tests/workflows/navigation/test_control_runtime.py",
+      "sha256": "1a86ce9c5081e5c1d808edfada73e40b1909358ea06cb72c1f2496cc89ea7c22",
+      "equal_at_all_three_heads": true
+    }
+  ],
+  "isolation_mechanism": "Original unshare fork/wait child inherited SIGINT/SIGTERM ignored and invisible sid/pgid0. Representative exact5 cases failed3 on actual432 and39; network-only passed5 both. Reset only task-child INT/TERM toSIG_DFL and setsid restored normal visible session; same PID/proc isolation passed5 and all27 exact original failure nodes on both432 and39, without source, test, assertion or timeout changes.",
+  "limits": [
+    "Original FIRST full remains FAILED27/40219PASS213SKIP1XPASS77.575percent; affected controls are not a passing full gate or waiver.",
+    "Actual execution-base432 and candidate39 run controls separately, not inferred baseline from byte equality. Incomingcbd source equality is not cbd execution.",
+    "No test, source assertion or timeout relaxed; only task-owned child signals/session normalized. No other owner process/source/env touched.",
+    "No optional sampler-version/schema expansion; exact selected indices/count/timestamps/frames are request-hash bound.",
+    "Original six actual hosted writer tests failed their result_uri harness; original responses replay offline, not relabeled as live test passes.",
+    "Historical SO-100 improvement acceptance failed and gray-rationale hallucinations remain adverse evidence; deterministic source correctness is not improved model quality.",
+    "No new provider call, GPU workload, final-source publication, current-head CI, draft removal or queue acceptance implied."
+  ]
+}

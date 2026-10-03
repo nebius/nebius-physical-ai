@@ -1,0 +1,9 @@
+# Sampler: retained first-full failure and scoped isolation controls
+
+The mandatory first full ran exactly `39aa3f336e89d011a994d2dd84b11cc88be1c701` on integration base432. It **failed27**, with40219passes,213skips,one unexpected pass and77.575percent coverage (unchanged60floor). Source head/tree and environment packages stayed unchanged. No later subset changes this verdict.
+
+[Measurements](first39aa-full-measurements.json) retain original JUnit/coverage/source receipt hashes and separately executed controls. The original PID-namespace launcher inherited ignored INT/TERM and an invisible session. Five representative cases failed3 on both actual baseline432 and39; network-only passed5 on both. Restoring normal signals/session within task-owned PID/proc isolation passed5, then all27 original failure nodes passed on both sources, with unchanged source/assertions/timeouts. These are affected subsets, **not** a full passing gate or waiver; fresh intended-source gate selection and final CI remain required.
+
+The default deliberately favors terminal evidence: three of100frames select `[0, 90, 99]`; four of1000select `[0, 450, 900, 999]`. Only the initial frame supplies early evidence in the three-frame case; middle events can be missed. This is neither event detection nor continuous coverage nor proven model improvement. Existing indices/count/timestamps/frame hashes already bind sampling into the request hash; no optional schema expansion was made.
+
+The [original six hosted writer failures and gray rationale error](readme.md), historical SO-100 improvement failure, and original response identities remain adverse evidence. No provider repeat was selected for codec/prose/base changes. Source/CPU evidence, model-quality acceptance, final current-head CI and queue admission remain separate.

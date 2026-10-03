@@ -1,0 +1,981 @@
+{
+  "schema": "npa_actual_rich_repaired_prompt_proof_v1",
+  "observed_at": "2026-10-03T21:07:07.214706+00:00",
+  "pr": 647,
+  "execution_sha": "a860bdcedf1aa87c2550320bec6624b0c81d2e24",
+  "execution_tree": "89c50a519ed03e2d4abaa942efbed6065dfa0eaf",
+  "execution_base": "432ea8b0478872f59ce364fa1435f9f81a6a9e56",
+  "configuration_sha256": "2d66167571290dce80906e28597f69078e9aba74e06b38d3254a5908962d3772",
+  "protocol_sha256": "6e5171310779cdcd4865c575f9a69ea0a508c5540153fa5c946f46829bea503a",
+  "frozen_requests_sha256": "97232e701c2988b6e751796c2e4ccc28e4a40e03d4e84e44701f20a031e21485",
+  "source_files": [
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/visual_review.py",
+      "sha256": "171061e1cf4f8b5e08481a609628e34fef22743b371b177a4da02555ed2f1722"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/visual_review_schema.py",
+      "sha256": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2"
+    },
+    {
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+      "sha256": "482a8c8aebde896152bb87490667b0342d077adae32189e087dd1466f700e52d"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    {
+      "path": "npa/tests/e2e/test_vlm_visual_review_live.py",
+      "sha256": "26859704c51f34ba0558500bad136784e2dddada44c7f91cc56e73689f03af66"
+    }
+  ],
+  "source_before_after_clean_equal": true,
+  "actual_provider_calls": 3,
+  "live_tests_passed": 2,
+  "live_tests_failed": 0,
+  "reconciliation_provider_calls": 0,
+  "calls": [
+    {
+      "case": "complete-vs-incomplete",
+      "order_id": "current_as_A",
+      "transport_request_sha256": "4b96ef8fafcfd4ac814a5f3e95fb7e88cdf28feead22a57a0bc8ad48ca995d3d",
+      "request_manifest_sha256": "c0a7bb090d79cdf0036dfffd9da339732c7cf0bad7d3bd2c9c9f92c4429ad6b3",
+      "wire_response_sha256": "ba9876eb16f8c72c35709f299852048401a5a713903aa2658bb40b1307ea532b",
+      "wire_byte_count": 5402,
+      "decoded_response_sha256": "ba9876eb16f8c72c35709f299852048401a5a713903aa2658bb40b1307ea532b",
+      "finish_reason": "stop",
+      "status_code": 200,
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "frames": [
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0001",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0002",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0003",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1929,
+          "height": 480,
+          "label": "A0004",
+          "media_type": "image/png",
+          "sha256": "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0001",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0002",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0003",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0004",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        }
+      ],
+      "sampling": {
+        "coverage_complete": true,
+        "max_frames": 4,
+        "selected_count": 8,
+        "selected_indices": [
+          0,
+          1,
+          2,
+          3,
+          0,
+          1,
+          2,
+          3
+        ],
+        "selected_timestamps_s": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "source_count": 4,
+        "source_kind": "image-sequence",
+        "strategy": "sequence",
+        "timestamps_complete": null
+      },
+      "verdict": {
+        "A": {
+          "artifact_fidelity": {
+            "issues": [],
+            "status": "no_visible_issue",
+            "uncertainty": "No visible artifacts, distortions, or rendering anomalies observed in any frame."
+          },
+          "impressiveness": {
+            "cosmetic_only": true,
+            "status": "limited",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0004"
+                ],
+                "text": "The task is a simple geometric translation with minimal visual complexity."
+              }
+            ]
+          },
+          "physical_ai_usefulness": {
+            "confirmation_status": "hypothesis_only",
+            "downstream_operation": "replay an image sequence",
+            "hypothesis": "A consumer model could use this sequence to learn object containment tasks, but this requires a future consumer test to confirm.",
+            "measured_consumer_test_needed": "Evaluate whether a downstream model can learn the containment objective from this sequence.",
+            "required_properties": [
+              "clear object boundaries",
+              "consistent scene framing",
+              "visible final state"
+            ],
+            "status": "plausible",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "A0004"
+                ],
+                "text": "Clear depiction of object containment within a target boundary."
+              },
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "Consistent visual style across frames suitable for sequence analysis."
+              }
+            ]
+          },
+          "reviewability": {
+            "limitations": [],
+            "status": "reviewable",
+            "strengths": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "All shapes are clearly visible with distinct colors and no occlusion."
+              },
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "Frame-to-frame comparison is straightforward due to consistent scene composition."
+              }
+            ]
+          },
+          "task_evidence": {
+            "hidden_state_limits": [
+              "Intermediate motion between frames is not visible; only start and end positions can be confirmed."
+            ],
+            "observations": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003"
+                ],
+                "text": "Red square is positioned outside and to the left of the green rectangular outline in the initial frames."
+              },
+              {
+                "frame_ids": [
+                  "A0004"
+                ],
+                "text": "Red square is fully contained within the green rectangular outline in the final frame."
+              },
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "Blue circle remains stationary in the upper-left region across all frames."
+              }
+            ],
+            "visible_status": "complete"
+          }
+        },
+        "B": {
+          "artifact_fidelity": {
+            "issues": [],
+            "status": "no_visible_issue",
+            "uncertainty": "No visible artifacts, distortions, or rendering anomalies observed in any frame."
+          },
+          "impressiveness": {
+            "cosmetic_only": true,
+            "status": "none",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003",
+                  "B0004"
+                ],
+                "text": "No task progression or visual change occurs across the sequence."
+              }
+            ]
+          },
+          "physical_ai_usefulness": {
+            "confirmation_status": "hypothesis_only",
+            "downstream_operation": null,
+            "hypothesis": null,
+            "measured_consumer_test_needed": null,
+            "required_properties": [],
+            "status": "unsupported",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003",
+                  "B0004"
+                ],
+                "text": "The sequence shows no task completion or meaningful state change."
+              }
+            ]
+          },
+          "reviewability": {
+            "limitations": [],
+            "status": "reviewable",
+            "strengths": [
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003",
+                  "B0004"
+                ],
+                "text": "All shapes are clearly visible with distinct colors and no occlusion."
+              },
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003",
+                  "B0004"
+                ],
+                "text": "Frame-to-frame comparison is straightforward due to consistent scene composition."
+              }
+            ]
+          },
+          "task_evidence": {
+            "hidden_state_limits": [
+              "Intermediate motion between frames is not visible; only start and end positions can be confirmed."
+            ],
+            "observations": [
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003",
+                  "B0004"
+                ],
+                "text": "Red square remains outside and to the left of the green rectangular outline in all frames."
+              },
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003",
+                  "B0004"
+                ],
+                "text": "Blue circle remains stationary in the upper-left region across all frames."
+              },
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003",
+                  "B0004"
+                ],
+                "text": "No frame shows the red square inside the green rectangular outline."
+              }
+            ],
+            "visible_status": "failure"
+          }
+        },
+        "comparison": {
+          "confidence": "high",
+          "observations": [
+            {
+              "A_frame_ids": [
+                "A0001",
+                "A0004"
+              ],
+              "B_frame_ids": [
+                "B0001",
+                "B0004"
+              ],
+              "text": "Set A shows the red square transitioning from outside to fully inside the green outline, while Set B shows the red square remaining outside the green outline in all frames."
+            },
+            {
+              "A_frame_ids": [
+                "A0004"
+              ],
+              "B_frame_ids": [
+                "B0004"
+              ],
+              "text": "Set A demonstrates task completion by the final frame; Set B shows no task progression."
+            }
+          ],
+          "preferred_set": "A",
+          "visible_evidence_difference": "materially_better"
+        }
+      },
+      "report_status": "completed",
+      "escalation_required": false,
+      "deployment_status": "audit_only",
+      "score_gate_affected": false,
+      "transport_object_exact_frozen": true,
+      "frame_hashes_exact_frozen": true,
+      "complete_wire_envelope_exact_ordinal_sidecar": true
+    },
+    {
+      "case": "complete-vs-incomplete",
+      "order_id": "baseline_as_A",
+      "transport_request_sha256": "1ade6b0758965ec0ed783488ca9d10cfc5ac0890e13acb6b27399246ff896d30",
+      "request_manifest_sha256": "aca290cf4f2d1049cd96af76a7554fb7fc97821e0707644e7ce7f50d47f49a36",
+      "wire_response_sha256": "4586413d606b9bc835f1a2c10ea1ca72f7c1b8fa0232120b0944b1ba92627ca7",
+      "wire_byte_count": 4620,
+      "decoded_response_sha256": "4586413d606b9bc835f1a2c10ea1ca72f7c1b8fa0232120b0944b1ba92627ca7",
+      "finish_reason": "stop",
+      "status_code": 200,
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "frames": [
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0001",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0002",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0003",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0004",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0001",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0002",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0003",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1929,
+          "height": 480,
+          "label": "B0004",
+          "media_type": "image/png",
+          "sha256": "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        }
+      ],
+      "sampling": {
+        "coverage_complete": true,
+        "max_frames": 4,
+        "selected_count": 8,
+        "selected_indices": [
+          0,
+          1,
+          2,
+          3,
+          0,
+          1,
+          2,
+          3
+        ],
+        "selected_timestamps_s": [
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        "source_count": 4,
+        "source_kind": "image-sequence",
+        "strategy": "sequence",
+        "timestamps_complete": null
+      },
+      "verdict": {
+        "A": {
+          "artifact_fidelity": {
+            "issues": [],
+            "status": "no_visible_issue",
+            "uncertainty": "No visible artifacts, distortions, or rendering anomalies are present in the submitted frames."
+          },
+          "impressiveness": {
+            "cosmetic_only": true,
+            "status": "none",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "No movement or task progression is visible across the frames."
+              }
+            ]
+          },
+          "physical_ai_usefulness": {
+            "confirmation_status": "hypothesis_only",
+            "downstream_operation": null,
+            "hypothesis": null,
+            "measured_consumer_test_needed": null,
+            "required_properties": [],
+            "status": "unsupported",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "The red square does not enter the green outline in any frame."
+              }
+            ]
+          },
+          "reviewability": {
+            "limitations": [],
+            "status": "reviewable",
+            "strengths": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "All shapes are clearly visible with distinct colors and no occlusion or clipping."
+              }
+            ]
+          },
+          "task_evidence": {
+            "hidden_state_limits": [
+              "No motion or trajectory information is visible; only static positions can be assessed."
+            ],
+            "observations": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "Red square remains outside the green rectangular outline in all frames."
+              }
+            ],
+            "visible_status": "failure"
+          }
+        },
+        "B": {
+          "artifact_fidelity": {
+            "issues": [],
+            "status": "no_visible_issue",
+            "uncertainty": "No visible artifacts, distortions, or rendering anomalies are present in the submitted frames."
+          },
+          "impressiveness": {
+            "cosmetic_only": true,
+            "status": "limited",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003",
+                  "B0004"
+                ],
+                "text": "The task is completed by the final frame, but the transition is abrupt with no visible intermediate motion."
+              }
+            ]
+          },
+          "physical_ai_usefulness": {
+            "confirmation_status": "hypothesis_only",
+            "downstream_operation": "replay an image sequence",
+            "hypothesis": "A consumer could use the final frame to verify that the red square is positioned inside the green outline.",
+            "measured_consumer_test_needed": "Test whether a downstream system can detect the containment relationship from the final frame alone.",
+            "required_properties": [
+              "clear color contrast between shapes",
+              "consistent spatial layout across frames",
+              "final-frame containment of target shape within outline"
+            ],
+            "status": "plausible",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "B0004"
+                ],
+                "text": "The red square is fully contained within the green outline in the final frame."
+              }
+            ]
+          },
+          "reviewability": {
+            "limitations": [],
+            "status": "reviewable",
+            "strengths": [
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003",
+                  "B0004"
+                ],
+                "text": "All shapes are clearly visible with distinct colors and no occlusion or clipping."
+              }
+            ]
+          },
+          "task_evidence": {
+            "hidden_state_limits": [
+              "Intermediate motion between frames is not visible; only endpoint positions can be confirmed."
+            ],
+            "observations": [
+              {
+                "frame_ids": [
+                  "B0001",
+                  "B0002",
+                  "B0003"
+                ],
+                "text": "Red square is outside the green rectangular outline in the first three frames."
+              },
+              {
+                "frame_ids": [
+                  "B0004"
+                ],
+                "text": "Red square is fully inside the green rectangular outline in the final frame."
+              }
+            ],
+            "visible_status": "complete"
+          }
+        },
+        "comparison": {
+          "confidence": "high",
+          "observations": [
+            {
+              "A_frame_ids": [
+                "A0001",
+                "A0002",
+                "A0003",
+                "A0004"
+              ],
+              "B_frame_ids": [
+                "B0001",
+                "B0002",
+                "B0003",
+                "B0004"
+              ],
+              "text": "Set A shows no movement of the red square toward or into the green outline across all frames."
+            },
+            {
+              "A_frame_ids": [
+                "A0001",
+                "A0002",
+                "A0003",
+                "A0004"
+              ],
+              "B_frame_ids": [
+                "B0004"
+              ],
+              "text": "Set B shows the red square fully inside the green outline in the final frame, satisfying the task."
+            }
+          ],
+          "preferred_set": "B",
+          "visible_evidence_difference": "materially_better"
+        }
+      },
+      "report_status": "completed",
+      "escalation_required": false,
+      "deployment_status": "audit_only",
+      "score_gate_affected": false,
+      "transport_object_exact_frozen": true,
+      "frame_hashes_exact_frozen": true,
+      "complete_wire_envelope_exact_ordinal_sidecar": true
+    },
+    {
+      "case": "gray-absence",
+      "order_id": "single",
+      "transport_request_sha256": "34d9b53bd4ea27e6d4189aaea672079c663d6bc4c4bbbd804e00b05b09aac788",
+      "request_manifest_sha256": "1c10cc4304df3546844c2538ab42bbc852050900549deb045d02a47bc1869646",
+      "wire_response_sha256": "afa7041d00117af295afcc9defa42d312a560d3aac17007928366c109f91fa29",
+      "wire_byte_count": 2467,
+      "decoded_response_sha256": "afa7041d00117af295afcc9defa42d312a560d3aac17007928366c109f91fa29",
+      "finish_reason": "stop",
+      "status_code": 200,
+      "returned_model": "MiniMaxAI/MiniMax-M3",
+      "frames": [
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0001",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0002",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0003",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0004",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        }
+      ],
+      "sampling": {
+        "coverage_complete": true,
+        "max_frames": 4,
+        "selected_count": 4,
+        "selected_indices": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "selected_timestamps_s": [
+          null,
+          null,
+          null,
+          null
+        ],
+        "source_count": 4,
+        "source_kind": "image-sequence",
+        "strategy": "sequence",
+        "timestamps_complete": null
+      },
+      "verdict": {
+        "arm": {
+          "artifact_fidelity": {
+            "issues": [],
+            "status": "unclear",
+            "uncertainty": "No task-relevant content is visible, so fidelity to the described task scene cannot be assessed from the submitted frames."
+          },
+          "impressiveness": {
+            "cosmetic_only": true,
+            "status": "unresolved",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "No visible content is present to support an assessment of impressiveness."
+              }
+            ]
+          },
+          "physical_ai_usefulness": {
+            "confirmation_status": "hypothesis_only",
+            "downstream_operation": null,
+            "hypothesis": null,
+            "measured_consumer_test_needed": null,
+            "required_properties": [],
+            "status": "unsupported",
+            "visible_basis": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "No task-relevant objects, motion, or scene structure are visible in the submitted frames."
+              }
+            ]
+          },
+          "reviewability": {
+            "limitations": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "All submitted frames appear blank, providing no visible task content to review."
+              }
+            ],
+            "status": "unreviewable",
+            "strengths": []
+          },
+          "task_evidence": {
+            "hidden_state_limits": [
+              "Cannot determine whether the task was completed because no task-relevant objects are visible in any submitted frame.",
+              "Cannot infer the presence, position, or motion of the red square or green outline from the visible pixels."
+            ],
+            "observations": [
+              {
+                "frame_ids": [
+                  "A0001",
+                  "A0002",
+                  "A0003",
+                  "A0004"
+                ],
+                "text": "No red square, green rectangular outline, or any other objects are visible in the submitted frames."
+              }
+            ],
+            "visible_status": "no_evidence"
+          }
+        }
+      },
+      "report_status": "completed",
+      "escalation_required": false,
+      "deployment_status": "audit_only",
+      "score_gate_affected": false,
+      "transport_object_exact_frozen": true,
+      "frame_hashes_exact_frozen": true,
+      "complete_wire_envelope_exact_ordinal_sidecar": true
+    }
+  ],
+  "gates": [
+    {
+      "kind": "affected",
+      "execution_sha": "a860bdcedf1aa87c2550320bec6624b0c81d2e24",
+      "passed": 1319,
+      "skipped": 1,
+      "result_sha256": "5c700ecd675d0940c9da6bc90baf5731cb8189b59abde1e844d9681737d64090",
+      "output_sha256": "b58dabdac4f3404a050a27ed011f8a64caf9aaee823117eb3fc33cc7da8e44c2"
+    },
+    {
+      "kind": "required_security",
+      "execution_sha": "a860bdcedf1aa87c2550320bec6624b0c81d2e24",
+      "passed": 898,
+      "skipped": 0,
+      "result_sha256": "f7bd65e92a0783ff328c1f1ed1299326e21864d41ab524fdd1dead837f6e5d96",
+      "output_sha256": "67687f62d44a9f2ca9fef1cf3a0c44c6d782900fbc72beda6a70450be4474be2"
+    },
+    {
+      "kind": "docs",
+      "execution_sha": "a860bdcedf1aa87c2550320bec6624b0c81d2e24",
+      "passed": null,
+      "skipped": null,
+      "result_sha256": "79edf0c1fc6178d3dab03598c952316728383fd6a832cde64952e1ca474d61bf",
+      "output_sha256": "e3c7c20b07ffc3d0e8949241f87ae693308997cbb0d44981138358d7203d9cdb"
+    }
+  ],
+  "historical_public_measurement": {
+    "documentation_commit": "ae7064808de51059726b2d25836cf0ef259f77ad",
+    "measurement_sha256": "ad1ac5bdec42af0eea7072344f73f2a2b155a9a9e3d23ee0c9e0ee2cb7bba9e3",
+    "actual_candidate_source_sha": "faf8cd4fa96c77a537a026644663378855591b6e",
+    "source_files": [
+      {
+        "path": "npa/src/npa/clients/token_factory.py",
+        "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "sha256": "44e36dd2fe89c8cd6be231866a92fd24f6bed6310edff4bc248843ce99b3f104"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/visual_review.py",
+        "sha256": "88ce10e363f8ae01c05e94397bba8dad8be2ef60aad56a4aab2932586b8b2de3"
+      },
+      {
+        "path": "npa/src/npa/workbench/vlm_eval/visual_review_schema.py",
+        "sha256": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2"
+      }
+    ],
+    "status": "Immutable historical pre-wire repair source, S1 repair pending was truthful then, not current readiness. Original rich execution28785 and separate schema-v2 faf8 execution retained exactly."
+  },
+  "incoming_main": "cbd10457cb77d2054f63ad66979df0971579b3c8",
+  "incoming_main_limit": "Not integrated or executed by this a860 proof. New622 task/capture/writer/paired registration boundaries and final current CI remain separate.",
+  "limits": [
+    "Prompt wording actually changed for confirmed647F3; these are new frozen once-only calls, not old responses relabeled or favorable retries.",
+    "Original28785 reversed paired extra-brace rejection and historical six rich acceptance failures preserved. New synthetic controls do not replace them.",
+    "830 original six writer failures, historical SO100 improvement failure and gray-rationale hallucinations preserved.",
+    "Qualitative synthetic audit only, no calibrated quality, physical safety, real robot, GPU workload or image-release claim.",
+    "Rich agreement compares structured signature, not semantic prose consensus; both full verdicts retained.",
+    "Original8565 full39995PASS213SKIP1XPASS77.55percent is not a860 full. Current83039 firstfull FAILED27 retained separately.",
+    "No published current implementation, current-head CI, final independent acceptance or readiness implied."
+  ],
+  "publication_scope": "New exact source-bound addendum; original ae706480 files remain unchanged. Not final implementation/readiness/CI approval."
+}
