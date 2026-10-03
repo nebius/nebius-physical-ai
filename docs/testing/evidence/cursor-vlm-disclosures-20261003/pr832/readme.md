@@ -1,5 +1,7 @@
 # Caption thinking and availability composition
 
+Provenance limitation: the private command runner recorded source/head and dirty status before invocation, but did not record a separate contemporaneous after-state. Later clean-tree/source-hash observations are supplementary, not proof that no transient historical mutation occurred.
+
 This proof records eight actual hosted calls at execution commit `26e6f8abec78d4c7bf0bd988c61b0a21d65d5122`, not at a later documentation or publication head. [Numeric/source bindings and decoded captions](summary.json) retain response and input hashes without provider request identifiers or endpoints. [Positive input](green-disk.png) and [blank input](blank.png) are generated 192×192 controls, not customer media.
 
 None/false/true pass through the extracted caption helper to real provider requests; centralized model defaults remain. Six positive-image calls produced nonempty captions. Both valid blank PNGs produced unavailable-image sentinels and remained failed items with failed_count=1. This is false unavailability indication, not proof of absent image delivery. Partial failures are not accepted as caption success. MiniMax enabled reported 28 reasoning tokens; MiniCPM's generic field reached the request, but provider honor is unestablished. A silently ignored control can still produce visible text and is not detected.

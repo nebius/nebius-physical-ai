@@ -1,5 +1,7 @@
 # VLM call and calibration disclosures
 
+Provenance limitation: the private command runner recorded source/head and dirty status before invocation, but did not record a separate contemporaneous after-state. Later clean-tree/source-hash observations are supplementary, not proof that no transient historical mutation occurred.
+
 [Sanitized numeric/source evidence](summary.json) records six actual hosted calls at `3558dec259f1f783efcf1805b3e0b5d18df9cea7` after landed provenance `f1ecd4255131374c417cdbb1f6c3e0d84b2a3514`. Original six-call schema-v1 execution at `ff54571dadae0158ad9a7d38e335df995a584ab2` is separately retained, never presented as v2 or publication-head execution. Reviewable generated inputs: [green](green.png), [red](red.png), [blank](blank.png).
 
 Both fixed loop and benchmark protocols preserve green=1, red=0, blank=0. Loop mean is1/3, gate false at0.8; two failed rollout controls are not hidden by the aggregate. Direct real results say provider_call_made=true, uncalibrated. Caller override0.9 makes zero calls, has no evidence, says provider_call_made=false and retains the no-call limitation. No model/rubric/threshold/labels were tuned. Frozen task/rubric and exact request sampling/frames/prompt/response hashes are bound in the numeric artifact; provider request identities/endpoints and raw private artifacts are excluded.

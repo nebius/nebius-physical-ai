@@ -1,5 +1,7 @@
 # Illustrative benchmark scope and observed limits
 
+Provenance limitation: the private command runner recorded source/head and dirty status before invocation, but did not record a separate contemporaneous after-state. Later clean-tree/source-hash observations are supplementary, not proof that no transient historical mutation occurred.
+
 [Sanitized numeric/source evidence](summary.json) binds four actual hosted responses at `a01dda9c915a731e13bec6d72a5affcf9d49745d`, after landed schema-v2 provenance `f1ecd4255131374c417cdbb1f6c3e0d84b2a3514`. Original schema-v1 four-call execution at `60982ba6d948b1462547599236672571fc3dc3bf` remains separate, not relabeled. Reviewable original sample inputs: [place-block](place-block-clear-pass.ppm), [align-tool](align-tool-pass.ppm), [missed-target](missed-target-fail.ppm), [unstable-state](unstable-end-state-fail.ppm). They are2×2 color swatches and do not depict those tasks.
 
 The unchanged sample tasks/rubric, MiniMax model, threshold0.8 and caller labels were frozen before inference. All four actual scores were0.0: TP0/TN2/FP0/FN2, accuracy0.5. The separately measured deterministic fixture report made zero provider calls and had accuracy1.0. Neither establishes physical task validity, generalization, independent-human calibration or an operational error rate. The disagreement is retained, not tuned away.
