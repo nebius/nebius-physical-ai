@@ -187,6 +187,16 @@ does not enqueue a second copy. SDK service calls must pass
 `expected_image_source_sha` and `expected_image_manifest_digest`, just like CLI
 service calls.
 
+Queued runs wait asynchronously for the existing single GPU execution slot;
+they do not occupy the shared HTTP worker pool while waiting. Accepted executions
+remain attached through HTTP-waiter cancellation until worker cleanup completes;
+disconnecting a request does not cancel an accepted run. Output publication
+keeps a private, seekable local snapshot, verifies its size and SHA-256 before
+writing, then uses conditional S3 PUT and full byte readback. It never relies on
+CopyObject destination preconditions or writes payloads outside the requested
+run prefix. No remote staging or delete grant is needed. Conflicting output
+objects fail closed, while an identical immutable commit can be resumed.
+
 ## Gotchas
 
 - **Without `--wait`, "started" is not "succeeded".** Check `status` before

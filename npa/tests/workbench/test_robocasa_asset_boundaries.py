@@ -9,6 +9,30 @@ import pytest
 from npa.workbench.robocasa import capabilities
 
 
+def test_asset_replacement_uses_python310_compatible_anchored_removal(
+    tmp_path, monkeypatch
+):
+    target = tmp_path / "assets" / "objects"
+    target.mkdir(parents=True)
+    (target / "old.xml").write_text("old", encoding="utf-8")
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    (staged / "new.xml").write_text("new", encoding="utf-8")
+    remove = capabilities.shutil.rmtree
+    calls = []
+
+    def python310_rmtree(path):
+        calls.append(Path(path))
+        assert str(path).startswith("/proc/self/fd/")
+        remove(path)
+
+    monkeypatch.setattr(capabilities.shutil, "rmtree", python310_rmtree)
+    capabilities._replace_asset_tree(staged, target)
+    assert len(calls) == 1
+    assert not (target / "old.xml").exists()
+    assert (target / "new.xml").read_text(encoding="utf-8") == "new"
+
+
 def _candidate(tmp_path: Path):
     archive = next(
         item

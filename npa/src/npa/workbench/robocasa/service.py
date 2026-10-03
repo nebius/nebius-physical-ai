@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ctypes
 import hmac
 import json
@@ -20,6 +21,7 @@ from multiprocessing.connection import wait as wait_connections
 from pathlib import Path
 from typing import Any
 
+import anyio
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
@@ -257,6 +259,9 @@ def create_app(
     )
     registry = runs if runs is not None else RUNS
     gpu_lock = execution_lock if execution_lock is not None else _GPU_EXECUTION_GATE
+    # The GPU gate already has one execution slot. Wait asynchronously before
+    # entering a worker thread so queued runs cannot exhaust Starlette's pool.
+    execution_limiter = anyio.CapacityLimiter(1)
     app = FastAPI(title="NPA RoboCasa")
     if resolved_auth_mode == "none":
         LOGGER.warning(
@@ -339,12 +344,13 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         if accepted:
             background_tasks.add_task(
-                _run_capability,
+                _dispatch_capability,
                 body,
                 run_id,
                 registry,
                 gpu_lock,
                 capability_executor,
+                execution_limiter,
             )
         return _run_response(current, manifest)
 
@@ -381,6 +387,44 @@ def _run_response(
         output_uri=status.output_uri,
         manifest_sha256=manifest_sha256,
     )
+
+
+async def _dispatch_capability(
+    body: RoboCasaRunRequest,
+    run_id: str,
+    registry: RunRegistry,
+    gpu_lock: Any,
+    capability_executor: Any,
+    execution_limiter: Any,
+) -> None:
+    execution = asyncio.create_task(
+        anyio.to_thread.run_sync(
+            _run_capability,
+            body,
+            run_id,
+            registry,
+            gpu_lock,
+            capability_executor,
+            limiter=execution_limiter,
+        )
+    )
+    try:
+        await asyncio.shield(execution)
+    except asyncio.CancelledError:
+        # Disconnecting an HTTP waiter must not abandon an accepted run or
+        # release its execution slot while its native worker is still alive.
+        await _drain_accepted_execution(execution)
+        raise
+
+
+async def _drain_accepted_execution(execution: asyncio.Task[None]) -> None:
+    with anyio.CancelScope(shield=True):
+        while not execution.done():
+            try:
+                await asyncio.shield(execution)
+            except asyncio.CancelledError:
+                continue
+    execution.result()
 
 
 def _run_capability(

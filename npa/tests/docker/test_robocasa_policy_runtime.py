@@ -95,6 +95,7 @@ def _run_recording_builder(
     source_sha: str,
     *,
     extra_env: dict[str, str] | None = None,
+    workflow_command: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
     binary = tmp_path / "bin"
     binary.mkdir()
@@ -110,14 +111,16 @@ def _run_recording_builder(
     archive = tmp_path / "context.tar"
     argv = tmp_path / "docker-argv.json"
     result = subprocess.run(
-        [
+        ["bash", "-c", workflow_command]
+        if workflow_command is not None
+        else [
             str(script),
             "--registry",
             "registry.example.invalid/npa",
             "--tag",
             f"dev-{source_sha}",
         ],
-        cwd=repo / "npa",
+        cwd=repo if workflow_command is not None else repo / "npa",
         env={
             **os.environ,
             **(extra_env or {}),
@@ -611,6 +614,54 @@ def test_robocasa_publication_uses_committed_tree_builder() -> None:
         'test "$IMAGE" = "$NPA_PUBLIC_REGISTRY/npa-robocasa:dev-$DEVELOPMENT_SHA"'
         in workflow
     )
+
+
+def test_robocasa_public_workflow_argv_uses_exact_committed_context(tmp_path):
+    import yaml
+
+    repo, script, source_sha = _committed_builder_fixture(tmp_path)
+    (repo / ".gitignore").write_bytes((ROOT / ".gitignore").read_bytes())
+    (repo / "npa/.venv/bin").mkdir(parents=True)
+    (repo / "npa/.venv/bin/private-state").write_text("excluded", encoding="utf-8")
+    workflow = yaml.safe_load(PUBLICATION_WORKFLOW.read_text(encoding="utf-8"))
+    steps = workflow["jobs"]["build-development"]["steps"]
+    command = next(
+        step["run"]
+        for step in steps
+        if step.get("name") == "Build immutable development image locally"
+    )
+    result, archive, argv = _run_recording_builder(
+        tmp_path,
+        repo,
+        script,
+        source_sha,
+        workflow_command=command,
+        extra_env={
+            "TOOL": "robocasa",
+            "DEVELOPMENT_SHA": source_sha,
+            "NPA_PUBLIC_REGISTRY": "registry.example.invalid/npa",
+            "IMAGE": f"registry.example.invalid/npa/npa-robocasa:dev-{source_sha}",
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(argv.read_text(encoding="utf-8")) == [
+        "build",
+        "--platform",
+        "linux/amd64",
+        "--provenance=false",
+        "--build-arg",
+        "ROBOCASA_VERSION=0.1.1",
+        "--build-arg",
+        f"NPA_SOURCE_SHA={source_sha}",
+        "-t",
+        f"registry.example.invalid/npa/npa-robocasa:dev-{source_sha}",
+        "-f",
+        "docker/workbench/robocasa/Dockerfile",
+        "-",
+    ]
+    with tarfile.open(archive) as context:
+        assert "tracked.txt" in context.getnames()
+        assert all(".venv" not in name for name in context.getnames())
 
 
 def test_robocasa_builder_ignores_replace_objects_and_custom_replace_base(

@@ -33,7 +33,7 @@ from pathlib import Path, PurePosixPath
 from zipfile import BadZipFile, ZipFile
 
 import numpy as np
-from typing import Any, BinaryIO, Callable
+from typing import Any, BinaryIO, Callable, Iterator
 
 from npa.clients.storage import safe_s3_download_target
 from npa.workbench.robocasa.asset_paths import HeldAssetDirectory, hold_asset_directory
@@ -971,7 +971,9 @@ def _replace_asset_tree(
         pass
     else:
         if stat.S_ISDIR(target_mode):
-            shutil.rmtree(target.name, dir_fd=parent.descriptor)
+            # Python 3.10 lacks rmtree(dir_fd=...). The held Linux descriptor
+            # keeps the same parent anchoring and rmtree's no-follow checks.
+            shutil.rmtree(parent.anchored_path / target.name)
         else:
             os.unlink(target.name, dir_fd=parent.descriptor)
     parent.verify()
@@ -3005,29 +3007,108 @@ def _put_s3_once(
     return False
 
 
-def _copy_s3_once(
+def _fill_verified_output_spool(
+    source: BinaryIO, spool: BinaryIO, *, digest: str, byte_count: int
+) -> None:
+    observed = hashlib.sha256()
+    copied = 0
+    while True:
+        chunk = source.read(min(1024 * 1024, byte_count - copied + 1))
+        if type(chunk) is not bytes:
+            raise RoboCasaError("RoboCasa output source returned invalid bytes")
+        if not chunk:
+            break
+        copied += len(chunk)
+        if copied > byte_count:
+            raise RoboCasaError("RoboCasa output source size changed")
+        observed.update(chunk)
+        if spool.write(chunk) != len(chunk):
+            raise RoboCasaError("RoboCasa output snapshot write was incomplete")
+    if copied != byte_count or observed.hexdigest() != digest:
+        raise RoboCasaError("RoboCasa output source size or digest changed")
+    spool.seek(0)
+
+
+def _output_source_identity(metadata: os.stat_result) -> tuple[int, ...]:
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_uid != os.geteuid()
+        or metadata.st_nlink != 1
+    ):
+        raise RoboCasaError("RoboCasa output source identity is unsafe")
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+@contextlib.contextmanager
+def _verified_output_spool(
+    root: Path,
+    path: Path,
+    root_identity: tuple[int, int],
+    *,
+    digest: str,
+    byte_count: int,
+) -> Iterator[BinaryIO]:
+    with contextlib.ExitStack() as stack:
+        held_root = stack.enter_context(hold_asset_directory(root))
+        root_info = os.fstat(held_root.descriptor)
+        if (root_info.st_dev, root_info.st_ino) != root_identity:
+            raise RoboCasaError("RoboCasa output root identity changed")
+        parent = stack.enter_context(hold_asset_directory(path.parent))
+        descriptor = os.open(
+            path.name,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+            dir_fd=parent.descriptor,
+        )
+        source = stack.enter_context(os.fdopen(descriptor, "rb"))
+        before = _output_source_identity(os.fstat(source.fileno()))
+        spool = stack.enter_context(tempfile.TemporaryFile(mode="w+b"))
+        _fill_verified_output_spool(
+            source,
+            spool,
+            digest=digest,
+            byte_count=byte_count,
+        )
+        _verify_output_source_binding(source, parent, path.name, before)
+        held_root.verify()
+        parent.verify()
+        yield spool
+
+
+def _verify_output_source_binding(
+    source: BinaryIO, parent: HeldAssetDirectory, name: str, before: tuple[int, ...]
+) -> None:
+    after = _output_source_identity(os.fstat(source.fileno()))
+    bound = os.stat(name, dir_fd=parent.descriptor, follow_symlinks=False)
+    if before != after or after != _output_source_identity(bound):
+        raise RoboCasaError("RoboCasa output source identity changed")
+
+
+def _put_output_file_once(
     s3: Any,
     *,
     bucket: str,
-    source_key: str,
-    source_etag: str,
+    body: BinaryIO,
     final_key: str,
     digest: str,
     byte_count: int,
 ) -> None:
-    if not source_etag:
-        raise RoboCasaError(
-            f"RoboCasa S3 staging identity is unavailable: {source_key}"
-        )
+    # CopyObject destination preconditions are not enforced by every provider.
+    # Conditional PUT of an already verified snapshot must never become a copy.
     try:
-        s3.copy_object(
+        s3.put_object(
             Bucket=bucket,
             Key=final_key,
-            CopySource={"Bucket": bucket, "Key": source_key},
-            CopySourceIfMatch=source_etag,
+            Body=body,
+            ContentLength=byte_count,
             IfNoneMatch="*",
             Metadata={"content-sha256": digest},
-            MetadataDirective="REPLACE",
         )
     except Exception as exc:
         code, status = _s3_error_code(exc)
@@ -3042,115 +3123,6 @@ def _copy_s3_once(
         content_sha256=digest,
         byte_count=byte_count,
     )
-
-
-_S3_DELETE_ERROR_CODE = re.compile(r"[0-9A-Za-z_.-]{1,64}")
-
-
-def _s3_delete_failure_response(
-    response: object,
-    pending: list[str],
-) -> tuple[list[str], set[str]]:
-    if type(response) is not dict:
-        return pending, {"malformed-response"}
-    errors = response.get("Errors", [])
-    if type(errors) is not list:
-        return pending, {"malformed-response"}
-    requested = set(pending)
-    failed: set[str] = set()
-    diagnostics: set[str] = set()
-    for error in errors:
-        if type(error) is not dict:
-            return pending, {"malformed-response"}
-        key = error.get("Key")
-        code = error.get("Code")
-        message = error.get("Message")
-        if (
-            type(key) is not str
-            or key not in requested
-            or type(code) is not str
-            or _S3_DELETE_ERROR_CODE.fullmatch(code) is None
-            or (message is not None and type(message) is not str)
-        ):
-            return pending, {"malformed-response"}
-        failed.add(key)
-        diagnostics.add(f"code={code}")
-        if type(message) is str:
-            try:
-                encoded_message = message.encode("utf-8")
-            except UnicodeEncodeError:
-                return pending, {"malformed-response"}
-            message_digest = hashlib.sha256(encoded_message).hexdigest()[:12]
-            diagnostics.add(f"message-sha256={message_digest}")
-    return [key for key in pending if key in failed], diagnostics
-
-
-def _s3_cleanup_exception_diagnostics(exc: BaseException) -> set[str]:
-    name = type(exc).__name__
-    details = {
-        f"exception={name}"
-        if _S3_DELETE_ERROR_CODE.fullmatch(name)
-        else "exception=unknown"
-    }
-    try:
-        response = getattr(exc, "response", None)
-    except BaseException:
-        return details
-    if type(response) is not dict:
-        return details
-    error = response.get("Error")
-    metadata = response.get("ResponseMetadata")
-    code = error.get("Code") if type(error) is dict else None
-    status = metadata.get("HTTPStatusCode") if type(metadata) is dict else None
-    if type(code) is str and _S3_DELETE_ERROR_CODE.fullmatch(code) is not None:
-        details.add(f"exception-code={code}")
-    if type(status) is int and 100 <= status <= 599:
-        details.add(f"http-status={status}")
-    return details
-
-
-def _bounded_s3_cleanup_diagnostics(diagnostics: set[str]) -> str:
-    ordered = sorted(diagnostics)
-    displayed = ordered[:8]
-    if len(ordered) > len(displayed):
-        displayed.append(f"+{len(ordered) - len(displayed)}-more")
-    return ",".join(displayed) if displayed else "unknown"
-
-
-def _delete_s3_staging_objects(
-    s3: Any,
-    bucket: str,
-    staged_keys: list[str],
-) -> None:
-    """Best-effort bounded cleanup that notices per-key DeleteObjects errors."""
-    for offset in range(0, len(staged_keys), 1000):
-        pending = staged_keys[offset : offset + 1000]
-        diagnostics: set[str] = set()
-        for _attempt in range(2):
-            try:
-                response = s3.delete_objects(
-                    Bucket=bucket,
-                    Delete={
-                        "Objects": [{"Key": key} for key in pending],
-                        "Quiet": True,
-                    },
-                )
-            except Exception as exc:  # pragma: no cover - exercised by fake provider.
-                diagnostics.update(_s3_cleanup_exception_diagnostics(exc))
-                continue
-            pending, response_diagnostics = _s3_delete_failure_response(
-                response, pending
-            )
-            diagnostics.update(response_diagnostics)
-            if not pending:
-                break
-        if pending:
-            LOGGER.warning(
-                "failed to remove %d RoboCasa S3 staging object(s) after retry; "
-                "diagnostics=%s",
-                len(pending),
-                _bounded_s3_cleanup_diagnostics(diagnostics),
-            )
 
 
 def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> None:
@@ -3292,73 +3264,44 @@ def upload_output(local_dir: Path, output_uri: str, result: dict[str, Any]) -> N
         )
         return
 
-    staging_prefix = f".npa-staging/robocasa/{commit_sha256}/{secrets.token_hex(16)}/"
-    staged_keys: list[str] = []
-    staged_etags: list[str] = []
-    try:
-        for item in files:
-            staging_key = staging_prefix + str(item["path"])
-            staged_keys.append(staging_key)
-            s3.upload_file(
-                str(item["source"]),
-                bucket,
-                staging_key,
-                ExtraArgs={
-                    "Metadata": {"content-sha256": str(item["sha256"])},
-                },
-            )
-            stage_head = _require_s3_object(
-                s3,
-                bucket,
-                staging_key,
-                digest_key="content-sha256",
-                digest=str(item["sha256"]),
-                content_sha256=str(item["sha256"]),
-                byte_count=int(item["bytes"]),
-            )
-            stage_etag = stage_head.get("ETag")
-            if not isinstance(stage_etag, str) or not stage_etag:
-                raise RoboCasaError(
-                    f"RoboCasa S3 staging identity is unavailable: {staging_key}"
-                )
-            staged_etags.append(stage_etag)
-        for item, staging_key, stage_etag in zip(
-            files, staged_keys, staged_etags, strict=True
-        ):
-            final_key = final_prefix + str(item["path"])
-            _copy_s3_once(
+    for item in files:
+        with _verified_output_spool(
+            root,
+            item["source"],
+            root_identity,
+            digest=str(item["sha256"]),
+            byte_count=int(item["bytes"]),
+        ) as spool:
+            _put_output_file_once(
                 s3,
                 bucket=bucket,
-                source_key=staging_key,
-                source_etag=stage_etag,
-                final_key=final_key,
+                body=spool,
+                final_key=final_prefix + str(item["path"]),
                 digest=str(item["sha256"]),
                 byte_count=int(item["bytes"]),
             )
-        _put_s3_once(
-            s3,
-            bucket=bucket,
-            key=complete_key,
-            body=commit_body,
-            content_type="application/json",
-            digest_key="commit-sha256",
-            digest=commit_sha256,
-        )
-        _require_committed_s3_tree(
-            s3,
-            bucket,
-            final_prefix=final_prefix,
-            allowed_keys=allowed_keys,
-            claim_key=claim_key,
-            claim_content_sha256=claim_content_sha256,
-            claim_bytes=len(claim_body),
-            complete_key=complete_key,
-            commit_sha256=commit_sha256,
-            commit_bytes=len(commit_body),
-            final_keys=final_keys,
-        )
-    finally:
-        _delete_s3_staging_objects(s3, bucket, staged_keys)
+    _put_s3_once(
+        s3,
+        bucket=bucket,
+        key=complete_key,
+        body=commit_body,
+        content_type="application/json",
+        digest_key="commit-sha256",
+        digest=commit_sha256,
+    )
+    _require_committed_s3_tree(
+        s3,
+        bucket,
+        final_prefix=final_prefix,
+        allowed_keys=allowed_keys,
+        claim_key=claim_key,
+        claim_content_sha256=claim_content_sha256,
+        claim_bytes=len(claim_body),
+        complete_key=complete_key,
+        commit_sha256=commit_sha256,
+        commit_bytes=len(commit_body),
+        final_keys=final_keys,
+    )
 
 
 def parse_s3_uri(uri: str) -> tuple[str, str]:

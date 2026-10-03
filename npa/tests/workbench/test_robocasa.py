@@ -557,6 +557,75 @@ def test_service_run_and_status(monkeypatch: pytest.MonkeyPatch) -> None:
     assert status_response.json()["status"] in {"running", "completed"}
 
 
+async def _wait_for_registry_size(registry, count):
+    while len(registry) != count:
+        await asyncio.sleep(0)
+
+
+def _queue_service_requests(client, count, identity):
+    tasks = []
+    for seed in range(count):
+        payload = _service_run_payload(*identity)
+        payload["seed"] = seed
+        tasks.append(asyncio.create_task(client.post("/run", json=payload)))
+    return tasks
+
+
+async def _exercise_saturated_service(
+    app, registry, started, release, executed, identity
+):
+    import anyio
+
+    count = int(anyio.to_thread.current_default_thread_limiter().total_tokens) + 1
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as client:
+        tasks = _queue_service_requests(client, count, identity)
+        try:
+            assert await asyncio.to_thread(started.wait, 2)
+            await asyncio.wait_for(_wait_for_registry_size(registry, count), timeout=3)
+            assert len(executed) == 1
+            probe = await asyncio.wait_for(client.get("/system-info"), timeout=2)
+            assert probe.status_code == 200
+            assert (await client.get("/health")).json()["status"] == "ok"
+            tasks[0].cancel()
+            tasks[-1].cancel()
+            await asyncio.sleep(0)
+            assert not tasks[0].done() and not tasks[-1].done()
+            assert len(executed) == 1
+        finally:
+            release.set()
+            await asyncio.gather(*tasks, return_exceptions=True)
+        assert len(executed) == count
+        assert sum(item.status == "completed" for item in registry.values()) == count
+
+
+def test_queued_runs_leave_shared_threadpool_available(monkeypatch):
+    from npa.workbench.robocasa import service
+
+    identity = _install_deployed_runtime_identity(monkeypatch)
+    started, release = threading.Event(), threading.Event()
+    registry = RunRegistry()
+    executed = []
+
+    def execute(body, **_kwargs):
+        executed.append(body.seed)
+        started.set()
+        assert release.wait(timeout=10)
+        return {"registration_ok": True}
+
+    app = create_app(
+        auth_mode="none",
+        runs=registry,
+        execution_lock=service.GpuExecutionGate(),
+        capability_executor=execute,
+    )
+    asyncio.run(
+        _exercise_saturated_service(app, registry, started, release, executed, identity)
+    )
+
+
 def test_service_rejects_identity_mismatch_before_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -3019,13 +3088,13 @@ class _TransactionalFakeS3:
         self,
         *,
         objects: dict[str, tuple[bytes, dict[str, str]]] | None = None,
-        fail_copy_number: int | None = None,
+        fail_publish_number: int | None = None,
         head_metadata_case: str = "preserve",
     ) -> None:
         self.objects = dict(objects or {})
-        self.fail_copy_number = fail_copy_number
+        self.fail_publish_number = fail_publish_number
         self.head_metadata_case = head_metadata_case
-        self.copy_count = 0
+        self.publish_count = 0
         self.events: list[tuple[str, str]] = []
         self.head_keys: list[str] = []
         self.list_requests: list[dict[str, object]] = []
@@ -3106,26 +3175,25 @@ class _TransactionalFakeS3:
         Metadata,
         **_kwargs,
     ):
-        self.copy_count += 1
-        if self.copy_count == self.fail_copy_number:
-            raise OSError("injected copy failure")
-        body, _source_metadata = self.objects[CopySource["Key"]]
-        source_etag = f'"{hashlib.sha256(body).hexdigest()}"'
-        if (
-            CopySourceIfMatch != source_etag
-            or IfNoneMatch != "*"
-            or Key in self.objects
-        ):
-            raise _S3PreconditionFailed()
-        self.objects[Key] = (body, dict(Metadata))
-        self.events.append(("copy", Key))
+        pytest.fail("unsafe CopyObject publication must never be used")
 
     def put_object(self, *, Key, Body, Metadata, IfNoneMatch, **_kwargs):
         assert IfNoneMatch == "*"
+        is_file = "content-sha256" in Metadata
+        if is_file:
+            self.publish_count += 1
+            if self.publish_count == self.fail_publish_number:
+                raise OSError("injected publication failure")
         if Key in self.objects:
             raise _S3PreconditionFailed()
-        self.objects[Key] = (bytes(Body), dict(Metadata))
+        body = Body.read() if is_file else bytes(Body)
+        if is_file:
+            assert Body.seekable()
+            assert _kwargs["ContentLength"] == len(body)
+        self.objects[Key] = (body, dict(Metadata))
         kind = "commit" if Key.endswith("_NPA_COMPLETE.json") else "claim"
+        if is_file:
+            kind = "publish"
         self.events.append((kind, Key))
 
     def delete_objects(self, *, Delete, **_kwargs):
@@ -3311,8 +3379,7 @@ def test_upload_output_publishes_commit_marker_last(
     capabilities.upload_output(tmp_path, "s3://bucket/runs/exact", result)
 
     assert result["output_uri"] == "s3://bucket/runs/exact"
-    assert s3.events[-2] == ("commit", "runs/exact/_NPA_COMPLETE.json")
-    assert s3.events[-1] == ("delete", "staging")
+    assert s3.events[-1] == ("commit", "runs/exact/_NPA_COMPLETE.json")
     assert all(
         event[0] != "commit"
         for event in s3.events[
@@ -3324,296 +3391,91 @@ def test_upload_output_publishes_commit_marker_last(
     assert [item["path"] for item in marker["files"]] == ["a.bin", "b.bin"]
 
 
-def test_upload_output_retries_partial_staging_delete(
+def test_upload_output_needs_no_remote_staging_or_delete_grant(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-) -> None:
-    for name in ("a.bin", "b.bin", "c.bin"):
-        (tmp_path / name).write_bytes(name.encode())
-
-    class PartialDeleteS3(_TransactionalFakeS3):
-        delete_calls = 0
-        delete_requests: list[list[str]] = []
-
-        def delete_objects(self, *, Delete, **kwargs):
-            self.delete_calls += 1
-            keys = [item["Key"] for item in Delete["Objects"]]
-            self.delete_requests.append(keys)
-            if self.delete_calls == 1:
-                key = keys[1]
-                for deleted in (keys[0], keys[2]):
-                    self.objects.pop(deleted)
-                self.events.append(("delete", "staging"))
-                return {
-                    "Errors": [
-                        {
-                            "Key": key,
-                            "Code": "InternalError",
-                            "Message": "retry this object",
-                        }
-                    ]
-                }
-            return super().delete_objects(Delete=Delete, **kwargs)
-
-    s3 = PartialDeleteS3()
-    monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
-
-    capabilities.upload_output(
-        tmp_path,
-        "s3://bucket/runs/delete-retry",
-        {"ok": True},
-    )
-
-    assert s3.delete_calls == 2
-    assert [len(keys) for keys in s3.delete_requests] == [3, 1]
-    assert s3.delete_requests[1] == [s3.delete_requests[0][1]]
-    assert not any(key.startswith(".npa-staging/") for key in s3.objects)
-    assert "runs/delete-retry/_NPA_COMPLETE.json" in s3.objects
-
-
-def test_s3_staging_delete_batches_at_provider_limit() -> None:
-    class RecordingDeleteS3:
-        requests: list[dict[str, object]] = []
-
-        def delete_objects(self, **request):
-            self.requests.append(request)
-            return {}
-
-    s3 = RecordingDeleteS3()
-    staged_keys = [f".npa-staging/object-{index:04d}" for index in range(1001)]
-
-    capabilities._delete_s3_staging_objects(s3, "bucket", staged_keys)
-
-    assert [
-        len(request["Delete"]["Objects"])  # type: ignore[index]
-        for request in s3.requests
-    ] == [1000, 1]
-    assert all(
-        request["Delete"]["Quiet"] is True  # type: ignore[index]
-        for request in s3.requests
-    )
-
-
-def test_upload_output_warns_on_persistent_partial_staging_delete(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
 ) -> None:
     (tmp_path / "artifact.bin").write_bytes(b"artifact")
 
-    class PersistentDeleteFailureS3(_TransactionalFakeS3):
-        delete_calls = 0
+    class PrefixOnlyS3(_TransactionalFakeS3):
+        def put_object(self, *, Key, **kwargs):
+            assert Key.startswith("runs/prefix-only/")
+            return super().put_object(Key=Key, **kwargs)
 
-        def delete_objects(self, *, Delete, **_kwargs):
-            self.delete_calls += 1
-            key = Delete["Objects"][0]["Key"]
-            return {
-                "Errors": [
-                    {
-                        "Key": key,
-                        "Code": "AccessDenied",
-                        "Message": "private provider detail",
-                    }
-                ]
-            }
+        def upload_file(self, *_args, **_kwargs):
+            pytest.fail("remote staging is forbidden")
 
-    s3 = PersistentDeleteFailureS3()
+        def copy_object(self, **_kwargs):
+            pytest.fail("CopyObject destination conditions are not portable")
+
+        def delete_objects(self, **_kwargs):
+            pytest.fail("publication must not need a delete grant")
+
+    s3 = PrefixOnlyS3()
     monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
+    capabilities.upload_output(tmp_path, "s3://bucket/runs/prefix-only", {"ok": True})
 
-    capabilities.upload_output(
-        tmp_path,
-        "s3://bucket/runs/delete-warning",
-        {"ok": True},
-    )
-
-    assert s3.delete_calls == 2
-    assert "failed to remove 1 RoboCasa S3 staging object(s) after retry" in caplog.text
-    assert "code=AccessDenied" in caplog.text
-    message_digest = hashlib.sha256(b"private provider detail").hexdigest()[:12]
-    assert f"message-sha256={message_digest}" in caplog.text
-    assert "private provider detail" not in caplog.text
-    assert any(key.startswith(".npa-staging/") for key in s3.objects)
-    assert "runs/delete-warning/_NPA_COMPLETE.json" in s3.objects
+    assert set(s3.objects) == {
+        "runs/prefix-only/artifact.bin",
+        "runs/prefix-only/_NPA_CLAIM.json",
+        "runs/prefix-only/_NPA_COMPLETE.json",
+    }
 
 
-def test_s3_staging_delete_warns_on_malformed_success_response(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    class MalformedDeleteS3:
-        calls = 0
+@pytest.mark.parametrize("matching_metadata", [False, True])
+def test_upload_output_preserves_concurrently_created_final_object(
+    monkeypatch,
+    tmp_path,
+    matching_metadata,
+):
+    (tmp_path / "artifact.bin").write_bytes(b"wanted")
 
-        def delete_objects(self, **_request):
-            self.calls += 1
-            return {"Errors": [{"Key": "staged", "Code": 500}]}
+    class ConflictingPutS3(_TransactionalFakeS3):
+        def put_object(self, *, Key, Metadata, **kwargs):
+            if "content-sha256" in Metadata:
+                metadata = Metadata if matching_metadata else {}
+                self.objects[Key] = (b"others", dict(metadata))
+            return super().put_object(Key=Key, Metadata=Metadata, **kwargs)
 
-    s3 = MalformedDeleteS3()
-
-    capabilities._delete_s3_staging_objects(s3, "bucket", ["staged"])
-
-    assert s3.calls == 2
-    assert "diagnostics=malformed-response" in caplog.text
-
-
-def test_s3_staging_delete_bounds_provider_diagnostics(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    class ManyDiagnosticsS3:
-        calls = 0
-
-        def delete_objects(self, **_request):
-            attempt = self.calls
-            self.calls += 1
-            return {
-                "Errors": [
-                    {"Key": "staged", "Code": f"Error{attempt}{index}"}
-                    for index in range(5)
-                ]
-            }
-
-    s3 = ManyDiagnosticsS3()
-
-    capabilities._delete_s3_staging_objects(s3, "bucket", ["staged"])
-
-    assert s3.calls == 2
-    assert "+2-more" in caplog.text
-    assert "code=Error13" not in caplog.text
-    assert "code=Error14" not in caplog.text
-
-
-def test_cleanup_failure_does_not_mask_publication_failure(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    (tmp_path / "artifact.bin").write_bytes(b"artifact")
-
-    class CleanupUnavailable(Exception):
-        def __init__(self) -> None:
-            self.response = {
-                "Error": {"Code": "SlowDown"},
-                "ResponseMetadata": {"HTTPStatusCode": 503},
-            }
-            super().__init__("private provider detail")
-
-    class FailingCleanupS3(_TransactionalFakeS3):
-        delete_calls = 0
-
-        def delete_objects(self, **_request):
-            self.delete_calls += 1
-            raise CleanupUnavailable()
-
-    s3 = FailingCleanupS3(fail_copy_number=1)
+    s3 = ConflictingPutS3()
     monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
-
-    with pytest.raises(OSError, match="injected copy failure"):
-        capabilities.upload_output(
-            tmp_path,
-            "s3://bucket/runs/copy-and-cleanup-failure",
-            {"ok": True},
-        )
-
-    assert s3.delete_calls == 2
-    assert "exception=CleanupUnavailable" in caplog.text
-    assert "exception-code=SlowDown" in caplog.text
-    assert "http-status=503" in caplog.text
-    assert "private provider detail" not in caplog.text
+    with pytest.raises(RoboCasaError, match="identity mismatch|bytes changed"):
+        capabilities.upload_output(tmp_path, "s3://bucket/runs/race", {"ok": True})
+    assert s3.objects["runs/race/artifact.bin"][0] == b"others"
+    assert "runs/race/_NPA_COMPLETE.json" not in s3.objects
+    assert not any(kind in {"stage", "copy", "delete"} for kind, _key in s3.events)
 
 
-def test_hostile_cleanup_exception_metadata_does_not_mask_original_failure(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    class HostileCleanup(Exception):
-        @property
-        def response(self):
-            raise RuntimeError("diagnostic property failed")
-
-    class HostileCleanupS3:
-        calls = 0
-
-        def delete_objects(self, **_request):
-            self.calls += 1
-            raise HostileCleanup("private provider detail")
-
-    s3 = HostileCleanupS3()
-
-    def fail_then_clean() -> None:
-        try:
-            raise OSError("original publication failure")
-        finally:
-            capabilities._delete_s3_staging_objects(s3, "bucket", ["staged"])
-
-    with pytest.raises(OSError, match="original publication failure"):
-        fail_then_clean()
-
-    assert s3.calls == 2
-    assert "exception=HostileCleanup" in caplog.text
-    assert "private provider detail" not in caplog.text
-    assert "diagnostic property failed" not in caplog.text
-
-
-def test_surrogate_cleanup_message_does_not_mask_original_failure(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    class SurrogateMessageS3:
-        calls = 0
-
-        def delete_objects(self, **_request):
-            self.calls += 1
-            return {
-                "Errors": [
-                    {
-                        "Key": "staged",
-                        "Code": "InternalError",
-                        "Message": "\ud800",
-                    }
-                ]
-            }
-
-    s3 = SurrogateMessageS3()
-
-    def fail_then_clean() -> None:
-        try:
-            raise OSError("original publication failure")
-        finally:
-            capabilities._delete_s3_staging_objects(s3, "bucket", ["staged"])
-
-    with pytest.raises(OSError, match="original publication failure"):
-        fail_then_clean()
-
-    assert s3.calls == 2
-    assert "diagnostics=malformed-response" in caplog.text
-
-
-def test_upload_output_copy_failure_never_publishes_commit_marker(
+def test_upload_output_publication_failure_never_publishes_commit_marker(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     (tmp_path / "a.bin").write_bytes(b"a")
     (tmp_path / "b.bin").write_bytes(b"b")
-    s3 = _TransactionalFakeS3(fail_copy_number=2)
+    s3 = _TransactionalFakeS3(fail_publish_number=2)
     monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
 
-    with pytest.raises(OSError, match="injected copy failure"):
+    with pytest.raises(OSError, match="injected publication failure"):
         capabilities.upload_output(tmp_path, "s3://bucket/runs/failure", {"ok": True})
 
     assert not any(kind == "commit" for kind, _key in s3.events)
-    assert ("delete", "staging") in s3.events
+    assert not any(kind in {"stage", "copy", "delete"} for kind, _key in s3.events)
 
 
-def test_upload_output_resumes_same_commit_after_partial_copy(
+def test_upload_output_resumes_same_commit_after_partial_publication(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     (tmp_path / "a.bin").write_bytes(b"a")
     (tmp_path / "b.bin").write_bytes(b"b")
-    s3 = _TransactionalFakeS3(fail_copy_number=2)
+    s3 = _TransactionalFakeS3(fail_publish_number=2)
     monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
     result = {"ok": True}
 
-    with pytest.raises(OSError, match="injected copy failure"):
+    with pytest.raises(OSError, match="injected publication failure"):
         capabilities.upload_output(tmp_path, "s3://bucket/runs/resume", result)
     assert "runs/resume/a.bin" in s3.objects
     assert "runs/resume/_NPA_COMPLETE.json" not in s3.objects
 
-    s3.fail_copy_number = None
+    s3.fail_publish_number = None
     capabilities.upload_output(tmp_path, "s3://bucket/runs/resume", result)
 
     assert "runs/resume/b.bin" in s3.objects
@@ -3631,16 +3493,16 @@ def test_upload_output_normalizes_provider_metadata_casing_across_resume(
     (tmp_path / "a.bin").write_bytes(b"a")
     (tmp_path / "b.bin").write_bytes(b"b")
     s3 = _TransactionalFakeS3(
-        fail_copy_number=2,
+        fail_publish_number=2,
         head_metadata_case=head_metadata_case,
     )
     monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
     result = {"ok": True}
     uri = "s3://bucket/runs/cased-metadata"
 
-    with pytest.raises(OSError, match="injected copy failure"):
+    with pytest.raises(OSError, match="injected publication failure"):
         capabilities.upload_output(tmp_path, uri, result)
-    s3.fail_copy_number = None
+    s3.fail_publish_number = None
     capabilities.upload_output(tmp_path, uri, result)
     capabilities.upload_output(tmp_path, uri, result)
 
@@ -3651,7 +3513,7 @@ def test_upload_output_normalizes_provider_metadata_casing_across_resume(
         "runs/cased-metadata/b.bin",
     }
     assert expected <= set(s3.head_keys)
-    assert sum(kind == "stage" for kind, _key in s3.events) == 4
+    assert sum(kind == "publish" for kind, _key in s3.events) == 2
     assert sum(kind == "claim" for kind, _key in s3.events) == 1
     assert sum(kind == "commit" for kind, _key in s3.events) == 1
 
@@ -3712,17 +3574,17 @@ def test_upload_output_rejects_different_commit_after_claim(
 ) -> None:
     (tmp_path / "a.bin").write_bytes(b"a")
     (tmp_path / "b.bin").write_bytes(b"b")
-    s3 = _TransactionalFakeS3(fail_copy_number=2)
+    s3 = _TransactionalFakeS3(fail_publish_number=2)
     monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
 
-    with pytest.raises(OSError, match="injected copy failure"):
+    with pytest.raises(OSError, match="injected publication failure"):
         capabilities.upload_output(
             tmp_path,
             "s3://bucket/runs/claimed",
             {"attempt": 1},
         )
     (tmp_path / "a.bin").write_bytes(b"different")
-    s3.fail_copy_number = None
+    s3.fail_publish_number = None
 
     with pytest.raises(RoboCasaError, match="object identity mismatch"):
         capabilities.upload_output(
@@ -3779,16 +3641,16 @@ def test_upload_output_never_replaces_a_corrupted_partial_final(
 ) -> None:
     (tmp_path / "a.bin").write_bytes(b"a")
     (tmp_path / "b.bin").write_bytes(b"b")
-    s3 = _TransactionalFakeS3(fail_copy_number=2)
+    s3 = _TransactionalFakeS3(fail_publish_number=2)
     monkeypatch.setattr("boto3.client", lambda *a, **k: s3)
     result = {"ok": True}
     uri = "s3://bucket/runs/immutable-partial"
 
-    with pytest.raises(OSError, match="injected copy failure"):
+    with pytest.raises(OSError, match="injected publication failure"):
         capabilities.upload_output(tmp_path, uri, result)
     body, metadata = s3.objects["runs/immutable-partial/a.bin"]
     s3.objects["runs/immutable-partial/a.bin"] = (b"x" * len(body), metadata)
-    s3.fail_copy_number = None
+    s3.fail_publish_number = None
 
     with pytest.raises(RoboCasaError, match="object bytes changed"):
         capabilities.upload_output(tmp_path, uri, result)
@@ -4001,13 +3863,11 @@ def test_sdk_local_run_uploads_produced_output(
     assert response.run_id == "local"
     assert response.output_uri == "s3://bucket/out"
     # The rollout produced a video artifact that was uploaded to S3.
-    staged = [key for kind, key in s3.events if kind == "stage"]
-    copied = [key for kind, key in s3.events if kind == "copy"]
+    published = [key for kind, key in s3.events if kind == "publish"]
     committed = [key for kind, key in s3.events if kind == "commit"]
-    assert staged, "expected at least one uploaded artifact"
-    assert all(key.startswith(".npa-staging/robocasa/") for key in staged)
-    assert copied
-    assert all(key.startswith("out/") for key in copied)
+    assert published, "expected at least one uploaded artifact"
+    assert all(key.startswith("out/") for key in published)
+    assert not any(kind in {"stage", "copy", "delete"} for kind, _key in s3.events)
     assert committed == ["out/_NPA_COMPLETE.json"]
 
 
