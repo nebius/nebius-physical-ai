@@ -114,3 +114,31 @@ model quality, temporal competence, physical correctness, global availability or
 robot safety. Provider hardware was unobserved, and the input-response association
 is collector-retained rather than server-attested. Labels, prompts, models and
 thresholds were frozen; no unfavorable model answer was retried or relabelled.
+
+## Landed caption and preference integration
+
+[incoming627-source-bridge.json](incoming627-source-bridge.json) records current
+integration execution `da86a7d6` on immutable main `7c09e0df`: 644 affected CPU
+controls passed with zero skips, and a distinct AI lane passed 55 independent
+controls. Preceding integration `ffa7c82b` on the actual landed #826 commit
+`47f33358` passed 420 affected controls with zero skips. The landed caption
+helper is bound byte-for-byte to original #826 execution `d5d146b2`; the actual
+client/default-contract path and all nine current feature/dependency bindings
+are separately hashed. This does not assert whole-tree equality to the earlier
+#839 hosted execution.
+
+At the preference boundary, only two existing evaluator function ASTs changed:
+task metadata resolution and comparison response retention. Scalar request,
+prompt, parser, capture and canonical writer ASTs remain unchanged; 68 new
+definitions belong to the landed audit feature. The two original `0b265c0c`
+responses replayed through the actual current scalar capture, canonical writer
+and grade gate, preserving exact request/raw-response bytes, scores 1.0/0.0 and
+threshold 0.8. Seven malformed-score controls still fail closed. Paired and
+preference artifacts remain audit-only, not scalar promotion reports.
+
+There were no new provider calls, full-suite executions or Claude passes for
+this integration. The original `cc8c408a` full gate and original `50111ebc`/
+`0b265c0c` hosted artifacts retain their execution identities and limitations.
+The published successor changes only this additive bridge and README relative
+to the executed current-main tree. Its exact-head CI and protected queue gates
+remain separate; private CPU execution is not presented as current inference.
