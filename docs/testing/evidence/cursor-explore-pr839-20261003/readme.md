@@ -63,6 +63,23 @@ and seven invalid-score negatives were independently reviewed. Those two source
 files are byte-identical at `380f1e7a` and reviewed `2cc3cefd`; this is a measured
 source/offline interface bridge, not new inference or final current-head CI.
 
+## Landed paired-audit integration
+
+[incoming622-source-bridge.json](incoming622-source-bridge.json) binds separate
+integration `8931a4ec` on externally landed main `cbd10457`. The four caption
+files, default-contract and live-test bytes remain unchanged. Three existing
+evaluator functions changed: task metadata resolution, response capture, and
+artifact writing. Request, prompt, parser and score functions retain their prior
+ASTs; blanket evaluator equality is not claimed.
+
+This integration passed 1,350 affected CPU tests and replayed the same two
+original `0b265c0c` responses through the actual scalar transport, canonical
+writer and grade gate, with identical serialized requests, raw responses,
+frames and indices, scores 1.0/0.0 and frozen threshold 0.8. Seven invalid-score
+negatives still refused promotion. The new paired audit artifact remains
+distinct from a scalar promotion report. This is offline integration with zero
+new hosted calls, not inference or a replacement for the original full suite.
+
 Exact reviewable media: [outside frame](outside-frame.png),
 [inside final frame](inside-frame.png), and the original
 [attribute frame](attribute-frame.png). Positive sequence = outside, outside,
