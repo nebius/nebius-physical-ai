@@ -41,12 +41,13 @@
       ]
     },
     "credentials": {
-      "status": "unverified",
-      "reason": "HF model access and S3 access passed in the live smoke. The operator federation session expired before the full run could pass mandatory Nebius project identity verification; interactive renewal is required.",
+      "status": "verified",
+      "reason": "The operator project and kubeconfig Nebius profiles were renewed and independently verified. Pinned HF downloads, S3 publication, and a refreshed task-owned registry pull Secret all passed live checks.",
       "evidence": [
-        "smoke pinned HF downloads and S3 publication PASS",
-        "full-run project IAM request timed out; no managed job launched",
-        "operator reauthentication requested"
+        "NPA Nebius identity and token preflight PASS",
+        "target kubeconfig authenticated and listed pods",
+        "fresh task-owned Secret target pull of exact private digest PASS",
+        "smoke pinned HF downloads and S3 publication PASS"
       ]
     },
     "source_image": {
@@ -62,13 +63,12 @@
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The four-microstep H100 smoke reached managed-job SUCCEEDED with finite loss, a step-4 checkpoint, six finite adapter action values, and a verified S3 completion marker. The requested 60,000-step run remains unlaunched because the operator Nebius federation session expired during mandatory project identity preflight.",
+      "reason": "The four-microstep H100 smoke reached terminal success with verified adapters and S3 artifacts. The requested 60,000-microstep managed job is live RUNNING on one H100 and has converted the pinned dataset; terminal success and final artifact validation remain pending.",
       "evidence": [
-        "managed H100 smoke job 3 terminal SUCCEEDED",
-        "four microsteps, one optimizer update, final loss 0.263, peak GPU memory 29 GiB",
-        "raw and EMA adapters each 471775248 bytes with independent SHA-256 verification",
-        "COMPLETE.json, train log, calibration report, and command read from S3",
-        "full-run prefix had zero objects after failed IAM preflight"
+        "managed H100 smoke job 3 terminal SUCCEEDED with final loss 0.263 and verified raw/EMA hashes",
+        "managed full job 4 live RUNNING, NPA manifest available",
+        "full job converted 60 pinned episodes and began pinned model download",
+        "full terminal status, 60,000 steps, and COMPLETE.json not yet verified"
       ]
     }
   }

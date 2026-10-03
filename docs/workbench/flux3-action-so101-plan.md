@@ -36,9 +36,8 @@ and splits CUDA dependencies into registry-friendly layers. The image passes
 dataset import and real AV1 decode. The exact private registry manifest, amd64
 pull, and target-cluster pull with a task-owned Secret passed. A four-microstep
 H100 smoke reached terminal success with finite loss, verified raw and EMA
-adapters, and a complete S3 artifact. The full 60,000-step run is pending
-operator federation reauthentication; its acceptance is recorded separately
-in the workflow readiness record.
+adapters, and a complete S3 artifact. The full 60,000-step run is live on one H100; terminal completion and
+artifacts remain to be verified in the workflow readiness record.
 
 ## Smallest implementation
 
