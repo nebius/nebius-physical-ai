@@ -272,6 +272,9 @@ def test_paired_results_preserve_effective_rubric_and_provider_disagreement(
         assert outcome.error is None and outcome.result is not None
         result = outcome.result
         assert result.rubric == rubric
+        assert result.provider_call_made is True
+        assert result.independent_human_label_calibration_established is False
+        assert "This score is a stub or caller-supplied" not in " ".join(result.limitations)
         assert result.passed is passed
         assert result.provider_success is provider_success
         assert result.provider_success_matches_score_gate is False

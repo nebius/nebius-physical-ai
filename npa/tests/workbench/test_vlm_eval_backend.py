@@ -12,6 +12,7 @@ import textwrap
 import time
 import uuid
 
+
 import numpy as np
 import httpx
 import pytest
@@ -119,6 +120,28 @@ def live_gpu_endpoint(tmp_path_factory: pytest.TempPathFactory) -> LiveGpuEndpoi
         yield _launch_live_gpu_endpoint(sky_bin, cluster_name, work_dir)
     finally:
         _sky_down(sky_bin, cluster_name)
+
+
+def test_owned_disclosure_live_protocol_requires_explicit_opt_in() -> None:
+    path = (
+        Path(vlm_eval.__file__).resolve().parents[4]
+        / "tests/e2e/test_vlm_disclosures_live_e2e.py"
+    )
+    module = ast.parse(path.read_text())
+    assignment = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "pytestmark"
+            for target in node.targets
+        )
+    )
+    assert {
+        node.attr
+        for node in ast.walk(assignment.value)
+        if isinstance(node, ast.Attribute)
+    } >= {"e2e", "token_factory_e2e"}
 
 
 def test_golden_set_scores_known_good_and_bad_rollouts(

@@ -1279,6 +1279,7 @@ def _comparison_success_outcome(
         frame_selection=context.frame_selection,
         frame_count=len(context.frames),
         structured=structured,
+        provider_call_made=True,
     )
     result = replace(
         result,

@@ -23,7 +23,7 @@ from npa.workbench.vlm_eval import (
     evaluate_vlm,
 )
 
-pytestmark = pytest.mark.token_factory_e2e
+pytestmark = [pytest.mark.e2e, pytest.mark.token_factory_e2e]
 _TASK = (
     "Identify the visible objects first. Score whether a single green disk is "
     "centered on a white background. A red disk or a blank image does not meet "
