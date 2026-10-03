@@ -224,7 +224,29 @@ RTXPRO-6000-BLACKWELL-SERVER-EDITION  1                         2 of 2 free
 
 def _stub_catalog(monkeypatch: pytest.MonkeyPatch, output: str) -> None:
     def fake_run(cmd, **kwargs):  # noqa: ANN001 - test stub
-        return subprocess.CompletedProcess(cmd, 0, stdout=output, stderr="")
+        response = output
+        if "get" in cmd and "nodes" in cmd:
+            response = json.dumps(
+                {
+                    "items": [
+                        {
+                            "metadata": {
+                                "name": "unit-node",
+                                "labels": {"nvidia.com/gpu.product": "RTXPRO6000"},
+                            },
+                            "spec": {},
+                            "status": {
+                                "conditions": [{"type": "Ready", "status": "True"}],
+                                "capacity": {"nvidia.com/gpu": "8"},
+                                "allocatable": {"nvidia.com/gpu": "8", "pods": "110"},
+                            },
+                        }
+                    ]
+                }
+            )
+        elif "get" in cmd and "pods" in cmd:
+            response = json.dumps({"items": []})
+        return subprocess.CompletedProcess(cmd, 0, stdout=response, stderr="")
 
     monkeypatch.setattr(subprocess, "run", fake_run)
 
@@ -593,12 +615,14 @@ def isolated_submit_discovery(owned_gpu_discovery, monkeypatch, tmp_path):
     )
     monkeypatch.setattr(local_api, "stop_isolated_api", stops.append)
     monkeypatch.setenv("NPA_SKYPILOT_ISOLATED_CONFIG_DIR", str(tmp_path / "ambient"))
+    _stub_catalog(monkeypatch, CATALOG_OUTPUT)
+    catalog_run = subprocess.run
 
     def run(command, **kwargs):
         if command[1] == "show-gpus":
             assert cluster_validation.current_validation_session() is not None
             clients.append(kwargs)
-        return subprocess.CompletedProcess(command, 0, CATALOG_OUTPUT, "")
+        return catalog_run(command, **kwargs)
 
     monkeypatch.setattr(subprocess, "run", run)
     return starts, stops, clients
