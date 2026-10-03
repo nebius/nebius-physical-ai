@@ -98,10 +98,24 @@ def test_asset_lock_rejects_existing_symlink_without_modifying_target(tmp_path):
     assert outside.read_text(encoding="utf-8") == "outside-owned"
 
 
-def test_receipt_fifo_is_rejected_without_waiting_for_a_writer(tmp_path):
-    archive, assets, receipt, _source, _outside, _marker = _candidate(tmp_path)
+def test_receipt_fifo_is_rejected_without_waiting_for_a_writer(tmp_path, monkeypatch):
+    archive, assets, receipt, source, _outside, _marker = _candidate(tmp_path)
+    capabilities._stage_publish_and_receipt(archive, source, assets, receipt)
+    assert capabilities._asset_receipt_is_valid(receipt, archive, assets)
+    validate_held_receipt = capabilities._held_asset_receipt_is_valid
+    held_receipt_checks = []
+
+    def record_held_receipt_check(*args):
+        held_receipt_checks.append(args)
+        return validate_held_receipt(*args)
+
+    monkeypatch.setattr(
+        capabilities, "_held_asset_receipt_is_valid", record_held_receipt_check
+    )
+    receipt.unlink()
     os.mkfifo(receipt)
     assert not capabilities._asset_receipt_is_valid(receipt, archive, assets)
+    assert len(held_receipt_checks) == 1
 
 
 def test_receipt_parent_swap_cannot_publish_outside(tmp_path, monkeypatch):
