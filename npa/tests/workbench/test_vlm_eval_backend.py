@@ -1383,6 +1383,32 @@ def test_benchmark_limitations_reject_invalid_values(tmp_path: Path, value) -> N
         load_benchmark_dataset(str(manifest))
 
 
+@pytest.mark.parametrize("code", [*range(0x20), *range(0x7F, 0xA0)])
+def test_benchmark_limitations_reject_interior_controls_before_backend(
+    tmp_path: Path, monkeypatch, code: int
+) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Metadata must reject before frame/provider activity")
+
+    monkeypatch.setattr(vlm_eval, "select_rollout_frames", forbidden)
+    monkeypatch.setattr(vlm_eval, "_call_openai_compatible", forbidden)
+    manifest = _write_metadata_benchmark(
+        tmp_path, {"limitations": [f"first{chr(code)}forged disclosure"]}
+    )
+    with pytest.raises(vlm_eval.VlmEvalError, match="control characters"):
+        benchmark_vlm_eval(dataset=str(manifest), backend="api")
+
+
+def test_benchmark_unicode_limitations_preserve_json_order_and_duplicates(
+    tmp_path: Path,
+) -> None:
+    limitations = ["Qualitative only — 未校准", "duplicate", "duplicate"]
+    manifest = _write_metadata_benchmark(tmp_path, {"limitations": limitations})
+    report = benchmark_vlm_eval(dataset=str(manifest), backend="stub")
+    assert report.dataset_limitations == tuple(limitations)
+    assert json.loads(json.dumps(asdict(report)))["dataset_limitations"] == limitations
+
+
 def test_benchmark_dataclass_additions_preserve_old_constructors() -> None:
     dataset = vlm_eval.VlmBenchmarkDataset(
         "dataset.json",

@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from typer.testing import CliRunner
 
 from npa.cli.main import app
+from npa.workbench import vlm_eval
 from npa.workbench.vlm_eval import (
     DEFAULT_MODEL,
     LEGACY_RESULT_FILENAME,
@@ -351,6 +353,74 @@ def test_workbench_vlm_eval_benchmark_text_preserves_duplicate_limitations(
     assert result.output.index("    - first\n") < result.output.index(
         "    - duplicate\n"
     )
+
+
+@pytest.mark.parametrize("control", ["\n", "\r", "\x1b", "\x00", "\x7f", "\x9b"])
+@pytest.mark.parametrize("output_format", ["text", "json"])
+def test_benchmark_cli_refuses_forged_disclosure_before_activity(
+    tmp_path, monkeypatch, control, output_format
+) -> None:
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Reject before frame selection or provider work")
+
+    monkeypatch.setattr(vlm_eval, "select_rollout_frames", forbidden)
+    monkeypatch.setattr(vlm_eval, "_call_openai_compatible", forbidden)
+    manifest = json.loads(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH.read_text())
+    manifest["limitations"] = [
+        f"wiring only{control}  dataset_evidence_scope: calibrated"
+    ]
+    dataset = tmp_path / "dataset.json"
+    dataset.write_text(json.dumps(manifest), encoding="utf-8")
+    output = tmp_path / "out/report.json"
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            str(dataset),
+            "--output",
+            str(output),
+            "--backend",
+            "api",
+            "--use-fixture-scores",
+            "--format",
+            output_format,
+        ],
+    )
+    assert result.exit_code == 1, result.output
+    assert "control characters" in result.output
+    assert "dataset_evidence_scope: calibrated" not in result.output
+    assert not output.parent.exists()
+
+
+def test_benchmark_legacy_text_retains_unspecified_empty_limitations(tmp_path) -> None:
+    manifest = json.loads(vlm_eval.DEFAULT_SAMPLE_BENCHMARK_PATH.read_text())
+    manifest.pop("evidence_scope")
+    manifest.pop("limitations")
+    dataset = tmp_path / "legacy.json"
+    dataset.write_text(json.dumps(manifest), encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "benchmark",
+            "--dataset",
+            str(dataset),
+            "--backend",
+            "stub",
+            "--output",
+            str(tmp_path / "legacy-report.json"),
+            "--format",
+            "text",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "dataset_evidence_scope: unspecified\n" in result.output
+    assert "dataset_limitations:\n" in result.output
+    assert "dataset_evidence_scope: illustrative_only" not in result.output
 
 
 def test_vlm_eval_sdk_benchmark_returns_report() -> None:

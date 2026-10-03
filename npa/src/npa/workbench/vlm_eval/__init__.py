@@ -1434,10 +1434,12 @@ def _coerce_benchmark_limitations(value: Any) -> tuple[str, ...]:
             not isinstance(limitation, str)
             or not limitation
             or limitation.strip() != limitation
+            or any(ord(char) < 0x20 or 0x7F <= ord(char) <= 0x9F for char in limitation)
         ):
             raise VlmEvalError(
                 "benchmark dataset limitation "
-                f"{index} must be a nonempty string without surrounding whitespace"
+                f"{index} must be a nonempty string without surrounding whitespace "
+                "or control characters"
             )
         limitations.append(limitation)
     return tuple(limitations)

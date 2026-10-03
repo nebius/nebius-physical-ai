@@ -343,7 +343,10 @@ as `dataset_evidence_scope` and `dataset_limitations`. The packaged default is
 `illustrative_only`: its four inputs are synthetic 2x2 color swatches whose
 caller labels are color-correlated, so its metrics prove benchmark wiring only.
 Custom manifests that omit the metadata remain `unspecified`; omission does not
-certify task validity.
+certify task validity. Invalid scope or limitation metadata rejects the dataset
+before frame selection or provider calls. Limitations must be nonempty strings
+without surrounding whitespace or control characters; valid order and duplicates
+are retained in JSON.
 
 These disclosure keys are additive. Consumers that reject unknown JSON keys
 must update their schema; consumers that ignore unknown keys retain the previous
