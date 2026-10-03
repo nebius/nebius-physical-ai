@@ -2394,13 +2394,44 @@ def test_grade_gate_rejects_compatibility_only_self_hosted_verdict(
     completion["choices"][0]["message"]["content"] = content
     report = _retained_report_with_completion(monkeypatch, tmp_path, completion)
 
-    assert report["passed"] is True
-    assert report["evidence"]["provider"]["parser_version"] in {
-        vlm_eval.SELF_HOSTED_RESPONSE_PARSER_VERSION,
-        vlm_eval.SELF_HOSTED_RESPONSE_PARSER_VERSION
-        + vlm_eval.MARKDOWN_FENCE_PARSER_SUFFIX,
-    }
+    # This is mutated retained content, not permissive current-producer output.
+    assert (
+        json.loads(report["evidence"]["provider"]["raw_response"])["choices"][0][
+            "message"
+        ]["content"]
+        == content
+    )
     _assert_completion_blocked(tmp_path, report, "provider_verdict_invalid")
+
+
+@pytest.mark.parametrize("fenced", [False, True])
+@pytest.mark.parametrize("superseded", [False, True])
+def test_grade_gate_pins_retained_parser_version_contract(
+    tmp_path: Path, monkeypatch, fenced: bool, superseded: bool
+) -> None:
+    completion = _provider_completion(success=True, metadata=True)
+    if fenced:
+        content = completion["choices"][0]["message"]["content"]
+        completion["choices"][0]["message"]["content"] = f"```json\n{content}\n```"
+    report = _provider_vlm_report(
+        monkeypatch, tmp_path, backend="self-hosted", completion=completion
+    )
+    suffix = vlm_eval.MARKDOWN_FENCE_PARSER_SUFFIX if fenced else ""
+    assert (
+        report["evidence"]["provider"]["parser_version"]
+        == vlm_eval.SELF_HOSTED_RESPONSE_PARSER_VERSION + suffix
+    )
+    if superseded:
+        report["evidence"]["provider"]["parser_version"] = (
+            "npa_vlm_eval_compatible_json_v1" + suffix
+        )
+        _assert_completion_blocked(tmp_path, report, "provider_metadata_mismatch")
+    else:
+        (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
+        assert (
+            dfs.grade_gate(str(tmp_path), str(tmp_path / "decision.json"))
+            == "promote_checkpoint"
+        )
 
 
 def _replace_retained_completion(report: dict, completion: dict) -> None:
@@ -2624,12 +2655,64 @@ def test_grade_gate_reads_legacy_vlm_result_when_canonical_is_absent(
 ) -> None:
     legacy = tmp_path / LEGACY_RESULT_FILENAME
     legacy.write_text(json.dumps(_provider_vlm_report(monkeypatch, tmp_path)))
+    assert not (tmp_path / RESULT_FILENAME).exists()
 
     decision = dfs.grade_gate(
         str(tmp_path), str(tmp_path / "decision.json"), threshold=0.5
     )
 
     assert decision == "promote_checkpoint"
+    # This is intentional historical-artifact compatibility, not evidence that
+    # a missing/failed current producer invocation succeeded.
+    assert json.loads((tmp_path / "decision.json").read_text())["report_sha256"]
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+def test_failed_current_producer_preserves_but_does_not_validate_legacy_history(
+    tmp_path: Path, monkeypatch, backend: str
+) -> None:
+    from typer.testing import CliRunner
+    from npa.cli.main import app
+
+    legacy = tmp_path / LEGACY_RESULT_FILENAME
+    historical = _provider_vlm_report(monkeypatch, tmp_path, backend=backend)
+    legacy.write_text(json.dumps(historical))
+    original_bytes = legacy.read_bytes()
+    incomplete = _provider_completion(success=True, metadata=True)
+    incomplete["choices"][0]["finish_reason"] = "length"
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **_: incomplete)
+    invocation = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "run",
+            "--input-path",
+            str(tmp_path / "rollout.png"),
+            "--output-path",
+            str(tmp_path),
+            "--backend",
+            backend,
+            "--model",
+            "hosted/unit-vision",
+            "--endpoint-url",
+            "https://provider.invalid/v1",
+            "--output",
+            "json",
+        ],
+    )
+    assert invocation.exit_code == 1
+    assert "finish_reason=stop" in invocation.output
+    assert not (tmp_path / RESULT_FILENAME).exists()
+    assert legacy.read_bytes() == original_bytes
+    # A manually invoked compatibility reader still grades the historical
+    # artifact. It cannot establish that the failed current invocation succeeded;
+    # the orchestrator must honor nonzero exit and use fresh run-scoped outputs.
+    assert (
+        dfs.grade_gate(str(tmp_path), str(tmp_path / "history-decision.json"))
+        == "promote_checkpoint"
+    )
+    assert legacy.read_bytes() == original_bytes
 
 
 @pytest.mark.parametrize("canonical", ['{"status": "passed"', "null", "[]", "{}"])

@@ -83,9 +83,13 @@ def test_sampling_judge_claims_use_effective_rubric_and_provider_boolean(
     monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", lambda **_: response)
     source, _ = suite.make_sampling_input(tmp_path / "input", "image-sequence")
     if not isinstance(provider_success, bool):
+
+        def forbidden_result(**_):
+            pytest.fail("Invalid provider success reached result construction")
+
+        monkeypatch.setattr(vlm_eval, "_result_from_structured", forbidden_result)
         with pytest.raises(VlmEvalError, match="success must be a boolean"):
             _sampling_judge_result(source, tmp_path)
-        assert not (tmp_path / "result.json").exists()
         return
     payload = asdict(_sampling_judge_result(source, tmp_path))
     suite._assert_self_hosted_judge_claims(payload)

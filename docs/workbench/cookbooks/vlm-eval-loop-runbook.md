@@ -17,6 +17,18 @@ Every scored response must report the exact value
 missing completion metadata before parsing the verdict, including parseable
 JSON from a truncated response. Update self-hosted adapters that omit the field.
 
+Incomplete judge output aborts `run`, the entire `loop`, or the benchmark sweep;
+it is not converted to a score-zero valid verdict. The CLI exits nonzero. In a
+two-rollout loop, a completed first rollout's artifact may remain, but an
+incomplete second rollout produces neither its result nor a new aggregate
+`task_success_report.json`. Treat those earlier artifacts as partial evidence,
+not a successful run. Do not continue promotion after a failed judge command.
+Use a new run-specific output location: the evaluator does not erase artifacts
+from previous runs, and an independently invoked historical-artifact reader
+cannot infer which producer invocation failed. In particular, an absent
+canonical report can permit a valid legacy report to be read; malformed or
+ineligible **present** canonical reports never fall back to favorable legacy.
+
 Successful real-backend results also contain an `evidence` record. It binds the
 requested and returned model to:
 
@@ -72,6 +84,16 @@ The promotion gate rejects compatibility-only results, requiring a completed,
 non-refused, strictly typed retained verdict for either backend.
 None of these fields turns a visual judgment into objective task, geometry,
 collision, or safety evidence.
+
+The strict self-hosted parser is `npa_vlm_eval_compatible_json_v2`. Retained
+parser-v1 evidence (with or without its framing suffix) no longer validates for
+promotion, even when its content contains otherwise valid literal fields. The
+grade decision is `loop_back` with `provider_metadata_mismatch`; a superseded
+parser contract can cause that reason, not only tampering. Preserve the old
+report and obtain a new evaluated report if promotion is required. Never change
+an old parser tag to claim new execution. A malformed numeric/type/success
+verdict also aborts the whole loop/sweep, without manufacturing score zero;
+correct the serving output contract before a new evaluation.
 
 The serialized result retains the effective `rubric`, so the exact prompt can
 be reconstructed from `task`, `rubric`, `frame_selection`, and `frame_count`.

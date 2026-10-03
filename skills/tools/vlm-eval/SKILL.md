@@ -86,11 +86,29 @@ Both real backends require the exact response value
 tool-call, aborted, empty, malformed, or missing completion metadata is rejected.
 Self-hosted adapters that omit this metadata must emit the standard field.
 
+An incomplete response aborts the whole `loop` or benchmark sweep and makes the
+CLI fail nonzero; never substitute a fabricated score-zero valid verdict.
+Previously completed per-rollout artifacts may remain, but no new aggregate
+report is written after the rejection. Retain these as partial evidence and do
+not run promotion after the failed producer. Use new run-scoped output paths;
+old artifacts are not deleted. A standalone historical report reader can accept
+a valid legacy file when the canonical file is absent, but cannot establish
+that a new producer invocation succeeded. Present malformed/ineligible canonical
+reports remain authoritative and fail closed, without favorable legacy fallback.
+
 The `self-hosted` backend preserves legacy JSON framing, including embedded
 objects and duplicate keys, while requiring literal boolean `success`, a finite
 numeric `score` in [0, 1], and a nonempty string `rationale`. Invalid verdict
 fields fail without coercion or clamping. Its parser version is
 `npa_vlm_eval_compatible_json_v2`, with the framing suffix when applicable.
+Retained self-hosted reports tagged `npa_vlm_eval_compatible_json_v1` (including
+its framing suffix) no longer satisfy the current promotion parser contract,
+even if their content has valid literal fields. The gate returns `loop_back`
+with `provider_metadata_mismatch`; this can mean a superseded parser, not
+tampering. Preserve the old artifact and obtain a new evaluated report when
+promotion is needed; never edit its parser tag to simulate new execution.
+Malformed score/type/success verdicts also abort the whole loop/sweep; no score
+is manufactured. Correct the serving output contract before a new evaluation.
 Completion evidence does not certify promotion eligibility. The operator
 provenance lane separately requires HTTP
 200, `finish_reason=stop`, expected served identity and verifiable framing.

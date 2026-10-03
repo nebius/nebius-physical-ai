@@ -1,5 +1,21 @@
 # Self-hosted VLM completion-state evidence
 
+## Historical scope and current-source addendum
+
+The original report below and [evidence.json](evidence.json) remain archived
+evidence for their named `59514b990` / `b6fcc3700` source pair. Their test counts,
+review verdict, refusal limitation, and integration-order notes are historical,
+not statements about the current PR head or current dependency status. In
+particular, current main has explicit refusal checks; the old base's limitation
+does not apply to current main. Original source identities and numeric evidence
+have not been rewritten to newer heads.
+
+[The current-source bridge](current-source-bridge.md) describes the canonical
+writer/promotion integration, unchanged inference functions, exact original
+hosted execution, fresh affected CPU controls, and whole-run-abort semantics.
+Neither report establishes calibrated model quality, operator GPU serving,
+current-head CI, or merge authorization.
+
 VLM-eval uses model scores as rollout gates. Before this change, a self-hosted
 response with valid verdict JSON could score `0.93` even when
 `finish_reason="length"` proved that generation was truncated. The hosted

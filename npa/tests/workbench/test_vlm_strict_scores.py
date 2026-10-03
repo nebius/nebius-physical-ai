@@ -1,11 +1,15 @@
 """Prove self-hosted verdict fields fail before result construction or repair."""
 
 import json
+import math
 
 import pytest
+import httpx
 from PIL import Image
+from typer.testing import CliRunner
 
 from npa.workbench import vlm_eval
+from npa.cli.main import app
 
 
 @pytest.mark.parametrize(
@@ -60,7 +64,7 @@ def test_validated_result_does_not_reach_legacy_clamp(monkeypatch):
 
 
 @pytest.mark.parametrize("score", [99, "99", True])
-def test_invalid_score_never_constructs_or_writes_result(monkeypatch, tmp_path, score):
+def test_invalid_score_never_constructs_result(monkeypatch, tmp_path, score):
     frame = tmp_path / "frame.png"
     Image.new("RGB", (16, 16), "green").save(frame)
     completion = {
@@ -89,4 +93,72 @@ def test_invalid_score_never_constructs_or_writes_result(monkeypatch, tmp_path, 
     with pytest.raises(vlm_eval.VlmEvalError, match="score must be a finite number"):
         vlm_eval.evaluate_vlm(input_path=str(frame), output_path=str(tmp_path / "out"))
     assert len(calls) == 1
-    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+@pytest.mark.parametrize(
+    "score", [99, "99", True, -0.1, 1.1, float("nan"), float("inf"), None, [], {}]
+)
+def test_invalid_score_cli_rejects_before_artifact_publication(
+    monkeypatch, tmp_path, backend, score
+):
+    source = tmp_path / "frame.png"
+    Image.new("RGB", (16, 16), "green").save(source)
+    calls = []
+
+    def completion(**kwargs):
+        calls.append(kwargs["request"])
+        return {
+            "model": kwargs["request"]["model"],
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "success": False,
+                                "score": score,
+                                "rationale": "synthetic invalid-score control",
+                            }
+                        )
+                    },
+                }
+            ],
+        }
+
+    def forbidden_network(*_, **__):
+        pytest.fail("Hermetic invalid-score control attempted networking")
+
+    monkeypatch.setattr(httpx.Client, "send", forbidden_network)
+    monkeypatch.setattr(vlm_eval, "_resolve_api_key", lambda **_: "")
+    monkeypatch.setattr(vlm_eval, "_post_with_readiness_retry", completion)
+    output = tmp_path / "out"
+    invocation = CliRunner().invoke(
+        app,
+        [
+            "workbench",
+            "vlm-eval",
+            "run",
+            "--input-path",
+            str(source),
+            "--output-path",
+            str(output),
+            "--backend",
+            backend,
+            "--model",
+            "MiniMaxAI/MiniMax-M3",
+            "--endpoint-url",
+            "https://example.test/v1",
+            "--output",
+            "json",
+        ],
+    )
+    assert invocation.exit_code == 1
+    expected = (
+        "JSON contains a non-finite number"
+        if backend == "api" and isinstance(score, float) and not math.isfinite(score)
+        else "score must be a finite number"
+    )
+    assert expected in invocation.output
+    assert len(calls) == 1
+    assert not output.exists()
