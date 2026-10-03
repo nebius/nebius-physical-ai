@@ -2286,8 +2286,8 @@ def test_grade_gate_preserves_provider_disagreement_as_score_gate_metadata(
 def test_grade_gate_rejects_self_hosted_missing_completion_status(
     tmp_path: Path, monkeypatch
 ) -> None:
-    report = _provider_vlm_report(
-        monkeypatch, tmp_path, backend="self-hosted", metadata=False
+    report = _retained_report_with_completion(
+        monkeypatch, tmp_path, _provider_completion(metadata=False)
     )
     (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
 
@@ -2341,9 +2341,7 @@ def test_grade_gate_rejects_self_hosted_incomplete_completion(
 ) -> None:
     completion = _provider_completion(success=True, metadata=True)
     completion["choices"][0]["finish_reason"] = finish
-    report = _provider_vlm_report(
-        monkeypatch, tmp_path, backend="self-hosted", completion=completion
-    )
+    report = _retained_report_with_completion(monkeypatch, tmp_path, completion)
     if legacy_schema:
         evidence = report["evidence"]
         request = evidence["request"]
@@ -2356,7 +2354,7 @@ def test_grade_gate_rejects_self_hosted_incomplete_completion(
     else:
         _as_v2_report(report)
 
-    assert report["passed"] is True  # The legacy reader still produces a score.
+    assert report["passed"] is True  # Preserve the otherwise favorable report.
     assert report["evidence"]["provider"]["finish_reason"] == finish
     detail = (
         "provider_completion_filtered"
@@ -2394,9 +2392,7 @@ def test_grade_gate_rejects_compatibility_only_self_hosted_verdict(
 ) -> None:
     completion = _provider_completion(success=True, metadata=True)
     completion["choices"][0]["message"]["content"] = content
-    report = _provider_vlm_report(
-        monkeypatch, tmp_path, backend="self-hosted", completion=completion
-    )
+    report = _retained_report_with_completion(monkeypatch, tmp_path, completion)
 
     assert report["passed"] is True
     assert report["evidence"]["provider"]["parser_version"] in {
@@ -2411,6 +2407,31 @@ def _replace_retained_completion(report: dict, completion: dict) -> None:
     provider = report["evidence"]["provider"]
     provider["raw_response"] = json.dumps(completion)
     provider["raw_response_sha256"] = vlm_eval._sha256_text(provider["raw_response"])
+
+
+def _retained_report_with_completion(monkeypatch, tmp_path: Path, completion: dict):
+    """Mutate valid evidence only at the retained consumer's historical boundary.
+
+    Current producers reject malformed completion/verdict fields before writing.
+    Consumer tests must still reject historical or tampered favorable reports.
+    """
+    report = _provider_vlm_report(monkeypatch, tmp_path, backend="self-hosted")
+    _replace_retained_completion(report, completion)
+    provider = report["evidence"]["provider"]
+    response = vlm_eval._VlmBackendResponse(
+        completion, provider["raw_response"], 200, None, 0.01
+    )
+    request_id, model, finish, usage = vlm_eval._provider_metadata(
+        response, completion["choices"][0]
+    )
+    provider.update(
+        provider_request_id=request_id,
+        returned_model=model,
+        finish_reason=finish,
+        usage=usage,
+    )
+    report["served_model"] = model
+    return report
 
 
 @pytest.mark.parametrize("backend", ["api", "self-hosted"])
@@ -2495,9 +2516,7 @@ def test_grade_gate_does_not_fall_back_from_ineligible_canonical_completion(
     (tmp_path / LEGACY_RESULT_FILENAME).write_text(json.dumps(valid))
     completion = _provider_completion(success=True, metadata=True)
     completion["choices"][0]["finish_reason"] = "length"
-    ineligible = _provider_vlm_report(
-        monkeypatch, tmp_path, backend="self-hosted", completion=completion
-    )
+    ineligible = _retained_report_with_completion(monkeypatch, tmp_path, completion)
 
     _assert_completion_blocked(tmp_path, ineligible, "provider_completion_incomplete")
 
@@ -2508,9 +2527,7 @@ def test_grade_gate_keeps_cosmos_priority_over_vlm_completion(
 ) -> None:
     completion = _provider_completion(success=True, metadata=True)
     completion["choices"][0]["finish_reason"] = "length"
-    report = _provider_vlm_report(
-        monkeypatch, tmp_path, backend="self-hosted", completion=completion
-    )
+    report = _retained_report_with_completion(monkeypatch, tmp_path, completion)
     (tmp_path / RESULT_FILENAME).write_text(json.dumps(report))
     (tmp_path / "cosmos_evaluator.json").write_text(
         json.dumps({"status": "completed", "score": 0.7, "passed": cosmos_passed})
