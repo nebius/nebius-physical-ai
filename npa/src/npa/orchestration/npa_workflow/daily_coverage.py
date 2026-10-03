@@ -35,9 +35,11 @@ from npa.orchestration.npa_workflow.skypilot_render import (
 MIN_COMPREHENSIVE_STEPS = 4
 
 #: Image tools a workflow *can* reference through a ``toolRef`` (the values of
-#: the renderer's toolRef -> image map). This is the universe the >= 4-step
-#: coverage requirement applies to.
-WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(TOOL_REF_IMAGE_TOOL.values())
+#: the renderer's toolRef -> image map). Explicit API-only routes have no image
+#: and are excluded; every actual image retains its >= 4-step coverage requirement.
+WORKFLOW_IMAGE_TOOLS: frozenset[str] = frozenset(
+    image for image in TOOL_REF_IMAGE_TOOL.values() if image is not None
+)
 
 #: Workflow-reachable images that are NOT yet exercised by a >= 4-step spec, or
 #: are not referenced by any spec toolRef today. Tracked explicitly so the gate
