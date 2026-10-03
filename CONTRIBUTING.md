@@ -254,7 +254,7 @@ Build scripts should follow the `--registry` and `--push` shape used by:
 
 - `npa/docker/workbench/lerobot/build.sh`
 - `npa/docker/workbench/groot/build.sh`
-- `npa/docker/workbench/base/cuda13-b300/build.sh`
+- `npa/docker/workbench/base/cuda13-blackwell/build.sh`
 
 Keep image entrypoints explicit. LeRobot runs `python -m npa.server.app`;
 FiftyOne intentionally uses `/bin/bash` because the CLI launches the app command

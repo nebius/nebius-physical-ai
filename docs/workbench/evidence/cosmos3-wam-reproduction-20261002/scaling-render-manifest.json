@@ -1,0 +1,10 @@
+{
+  "matplotlib": "3.11.2",
+  "numpy": "2.5.3",
+  "sha256": {
+    "cosmos3-wam-scaling/repeated-scaling.json": "36087e50cca3a3ac06bf33b63f07c6f3b896870622ed924cebcca949adb9f99d",
+    "cosmos3-wam-reproduction-20261002/repeated-scaling.json": "513feae5c46218bba1b8cd9f3a2e0e7dc2a6ade3ed3306f8cf6f0686a55eaad0",
+    "cosmos3-wam-reproduction-20261002/plot-scaling.py": "d5fe471118cd6d2773492cbcc5becba46f4f330e910cab75fcf184f00b271ce1",
+    "cosmos3-wam-reproduction-20261002/repeated-scaling.png": "de4b9dc0137d8b183cda005ee3380f6c4aa4235456569f1d289033443b8c7bd4"
+  }
+}
