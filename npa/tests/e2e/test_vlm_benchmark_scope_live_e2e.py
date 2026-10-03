@@ -110,6 +110,16 @@ def _assert_real_evidence(report, transports):
         assert provider.finish_reason == "stop"
         assert provider.returned_model == DEFAULT_VISION_MODEL
         assert provider.raw_response_sha256 == record["response_sha256"]
+        assert case.evidence.schema_version == "npa_vlm_eval_evidence_v2"
+        sampling = case.evidence.request.request_manifest["sampling"]
+        assert sampling["strategy"] == "keyframes"
+        assert sampling["max_frames"] == 4
+        assert sampling["source_kind"] == "image-sequence"
+        assert sampling["source_count"] == sampling["selected_count"] == 1
+        assert sampling["selected_indices"] == [0]
+        assert sampling["selected_timestamps_s"] == [None]
+        assert sampling["coverage_complete"] is True
+        assert case.evidence.request.frames[0].source_index == 0
     assert all("fixture" not in limitation for limitation in report.limitations)
 
 
