@@ -14,11 +14,11 @@ from npa.clients.token_factory import DEFAULT_BASE_URL
 
 PAIRED_MODELS = ("MiniMaxAI/MiniMax-M3", "google/gemma-3-27b-it")
 CONTROL_LABELS = {"inside": True, "outside": False, "blank": False}
-CONTROL_TASK = (
+PAIRED_CONTROL_TASK = (
     "Describe the visible shapes and their positions. Judge whether a red square "
     "is fully inside the green rectangular outline."
 )
-CONTROL_RUBRIC = (
+PAIRED_CONTROL_RUBRIC = (
     "Score 1 only if a red square is fully inside the green rectangular outline. "
     "Score 0 if the red square is outside, or either shape is absent. "
     "Judge only the submitted image. Return bare JSON without Markdown fences."
@@ -96,8 +96,8 @@ def _control_request(path: Path) -> dict[str, Any]:
         "secondary_model": PAIRED_MODELS[1],
         "endpoint_url": DEFAULT_BASE_URL,
         "api_key_env": "NEBIUS_TOKEN_FACTORY_KEY",
-        "task": CONTROL_TASK,
-        "rubric": CONTROL_RUBRIC,
+        "task": PAIRED_CONTROL_TASK,
+        "rubric": PAIRED_CONTROL_RUBRIC,
         "frame_selection": "final",
         "max_frames": 1,
         "success_threshold": 0.8,

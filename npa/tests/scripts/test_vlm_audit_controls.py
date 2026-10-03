@@ -9,6 +9,7 @@ from PIL import Image
 import pytest
 import yaml
 
+from npa.live_verification import vlm_audit_controls
 from npa.workbench.vlm_eval import _comparison_models
 from npa.live_verification.vlm_audit_controls import (
     CONTROL_LABELS,
@@ -52,6 +53,32 @@ def test_generated_controls_have_frozen_pixels_labels_and_shared_prompts(tmp_pat
     assert len(set(PAIRED_MODELS)) == 2
     assert _comparison_models(*PAIRED_MODELS) == PAIRED_MODELS
     assert "moonshotai/Kimi-K3" not in PAIRED_MODELS
+
+
+def test_generated_paired_controls_keep_exact_namespaced_prompts(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        vlm_audit_controls, "PREFERENCE_CONTROL_TASK", "unrelated task", raising=False
+    )
+    monkeypatch.setattr(
+        vlm_audit_controls,
+        "PREFERENCE_CONTROL_RUBRIC",
+        "unrelated rubric",
+        raising=False,
+    )
+    assert "CONTROL_TASK" not in vars(vlm_audit_controls)
+    assert "CONTROL_RUBRIC" not in vars(vlm_audit_controls)
+    config = generated_paired_config(tmp_path / "controls")
+    controls = audit_controls(config["cases"]["paired-judges"])
+    for control in controls.values():
+        assert control["request"]["task"] == (
+            "Describe the visible shapes and their positions. Judge whether a red square "
+            "is fully inside the green rectangular outline."
+        )
+        assert control["request"]["rubric"] == (
+            "Score 1 only if a red square is fully inside the green rectangular outline. "
+            "Score 0 if the red square is outside, or either shape is absent. "
+            "Judge only the submitted image. Return bare JSON without Markdown fences."
+        )
 
 
 def test_generated_config_selects_all_controls_and_private_outputs(
