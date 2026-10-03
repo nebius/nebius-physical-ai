@@ -1,6 +1,7 @@
 """Test configured audit lane failure gates without treating mocks as live evidence."""
 
 import importlib.util
+import copy
 import json
 import os
 from pathlib import Path
@@ -43,6 +44,41 @@ def _config(monkeypatch, tmp_path):
     monkeypatch.setenv("NPA_VLM_AUDIT_LIVE_CONFIG", str(config))
     monkeypatch.setenv("VLM_EVAL_API_KEY", "synthetic-test-credential")
     return config
+
+
+def _report():
+    return {
+        "status": "judges_agree_needs_iteration",
+        "passed": False,
+        "escalation_required": False,
+        "primary": {
+            "model": "first/model",
+            "result": {"passed": False, "score": 0},
+            "error": None,
+        },
+        "secondary": {
+            "model": "second/model",
+            "result": {"passed": False, "score": 0},
+            "error": None,
+        },
+    }
+
+
+def _write_passing_execution(target, count):
+    (target / "execution.json").write_text(
+        json.dumps(
+            {
+                "collected": count,
+                "executed": count,
+                "passed": count,
+                "failed": 0,
+                "skipped": 0,
+                "deselected": 0,
+                "xfail": False,
+            }
+        )
+    )
+    (target / "execution.json").chmod(0o600)
 
 
 @pytest.mark.parametrize(
@@ -119,6 +155,13 @@ def test_receipt_requires_real_execution_counts(
         (target / "execution.json").write_text(
             json.dumps({**counts, "deselected": 0, "xfail": False})
         )
+        (target / "execution.json").chmod(0o600)
+        directory = target / "paired-judges"
+        directory.mkdir()
+        (directory / runner.JUDGE_COMPARISON_RESULT_FILENAME).write_text(
+            json.dumps(_report())
+        )
+        (directory / runner.JUDGE_COMPARISON_RESULT_FILENAME).chmod(0o600)
         return exit_code
 
     monkeypatch.setattr(runner, "_execute", execute)
@@ -274,6 +317,29 @@ def test_unavailable_evidence_directory_is_sanitized(tmp_path, capsys):
     "mode", ["xpass", "skip", "deselection", "setup", "teardown", "collection"]
 )
 def test_actual_incomplete_execution_cannot_pass_lane(tmp_path, mode):
+    test_path = _incomplete_test(tmp_path, mode)
+    result = _run_incomplete_test(tmp_path, test_path)
+    expected = {
+        "xpass": "1 xpassed",
+        "skip": "1 skipped",
+        "deselection": "1 deselected",
+        "setup": "1 error",
+        "teardown": "1 error",
+        "collection": "1 error",
+    }
+    assert expected[mode] in result.stdout
+    assert result.returncode == 1
+    counts = json.loads((tmp_path / "execution.json").read_text())
+    if mode in ("setup", "teardown", "collection"):
+        assert counts["failed"] == 1
+        assert counts["passed"] == 0
+    if mode == "teardown":
+        assert counts["executed"] == 1
+    elif mode in ("setup", "collection"):
+        assert counts["executed"] == 0
+
+
+def _incomplete_test(tmp_path, mode):
     test_path = tmp_path / "test_expected.py"
     if mode == "deselection":
         test_path.write_text(
@@ -299,6 +365,10 @@ def test_actual_incomplete_execution_cannot_pass_lane(tmp_path, mode):
         test_path.write_text(
             f"import pytest\n@pytest.mark.{marker}\ndef test_control():\n    pass\n"
         )
+    return test_path
+
+
+def _run_incomplete_test(tmp_path, test_path):
     runner_path = (
         Path(__file__).resolve().parents[2] / "scripts/vlm_audit_live_recheck.py"
     )
@@ -312,31 +382,13 @@ spec.loader.exec_module(runner)
 runner.SUITES = (sys.argv[2],)
 raise SystemExit(runner._run_tests(Path(sys.argv[3])))
 """
-    result = subprocess.run(
+    return subprocess.run(
         [sys.executable, "-c", code, str(runner_path), str(test_path), str(tmp_path)],
         cwd=tmp_path,
         capture_output=True,
         text=True,
         env={"PATH": os.environ.get("PATH", ""), "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1"},
     )
-    expected = {
-        "xpass": "1 xpassed",
-        "skip": "1 skipped",
-        "deselection": "1 deselected",
-        "setup": "1 error",
-        "teardown": "1 error",
-        "collection": "1 error",
-    }
-    assert expected[mode] in result.stdout
-    assert result.returncode == 1
-    counts = json.loads((tmp_path / "execution.json").read_text())
-    if mode in ("setup", "teardown", "collection"):
-        assert counts["failed"] == 1
-        assert counts["passed"] == 0
-    if mode == "teardown":
-        assert counts["executed"] == 1
-    elif mode in ("setup", "collection"):
-        assert counts["executed"] == 0
 
 
 @pytest.mark.parametrize(
@@ -382,6 +434,7 @@ def test_falsy_malformed_xfail_cannot_pass_receipt(monkeypatch, tmp_path, invali
                 }
             )
         )
+        (target / "execution.json").chmod(0o600)
         return 0
 
     monkeypatch.setattr(runner, "_execute", execute)
@@ -422,19 +475,7 @@ def test_malformed_summary_scalar_fails_with_sanitized_receipt(
     _config(monkeypatch, tmp_path)
 
     def execute(root, target, config):
-        (target / "execution.json").write_text(
-            json.dumps(
-                {
-                    "collected": 1,
-                    "executed": 1,
-                    "passed": 1,
-                    "failed": 0,
-                    "skipped": 0,
-                    "deselected": 0,
-                    "xfail": False,
-                }
-            )
-        )
+        _write_passing_execution(target, 1)
         report = {
             "status": "judges_agree_passed",
             "passed": True,
@@ -453,6 +494,7 @@ def test_malformed_summary_scalar_fails_with_sanitized_receipt(
         (directory / runner.JUDGE_COMPARISON_RESULT_FILENAME).write_text(
             json.dumps(report)
         )
+        (directory / runner.JUDGE_COMPARISON_RESULT_FILENAME).chmod(0o600)
         return 0
 
     monkeypatch.setattr(runner, "_execute", execute)
@@ -510,6 +552,185 @@ def test_boolean_containers_fail_with_bounded_errors(monkeypatch, malformed):
     }
     with pytest.raises(ValueError, match="missing_frozen_judge_expectations"):
         runner._prepare_control(control, Path("unused"))
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing_first",
+        "wrong_index",
+        "extra",
+        "unknown_status",
+        "inconsistent_status",
+        "no_outcome",
+        "both_outcomes",
+        "unknown_error",
+        "typed_error",
+        "symlink",
+        "directory_symlink",
+        "wrong_expectation",
+        "wrong_model",
+        "mutated_config",
+        "fifo",
+        "readable_by_others",
+        "changed_bytes",
+        "execution_fifo",
+        "execution_symlink",
+        "config_fifo",
+        "config_symlink",
+    ],
+)
+def test_green_pytest_counts_cannot_mask_retained_artifact_faults(
+    monkeypatch, tmp_path, capsys, fault
+):
+    runner = _runner()
+    _three_controls(monkeypatch, tmp_path)
+    if fault == "changed_bytes":
+        _change_bytes_after_first_read(monkeypatch, runner)
+
+    def execute(root, target, config):
+        _write_passing_execution(target, 3)
+        _child_report_fault(config, target, fault)
+        if fault == "mutated_config":
+            _mutate_frozen_expectations(config)
+        _write_fault_artifacts(runner, target, fault)
+        return 0
+
+    monkeypatch.setattr(runner, "_execute", execute)
+    target = tmp_path / "private-evidence"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    receipt_text = (target / "receipt.json").read_text()
+    receipt = json.loads(receipt_text)
+    assert receipt["counts"]["passed"] == (0 if fault.startswith("execution_") else 3)
+    assert receipt["passed"] is False
+    assert str(tmp_path) not in receipt_text + capsys.readouterr().out
+    if fault == "missing_first":
+        assert [row["control_index"] for row in receipt["outcomes"]] == [1, 2]
+    elif fault == "typed_error":
+        assert receipt["outcomes"][0]["primary"]["score"] is None
+        assert receipt["outcomes"][0]["primary"]["error_type"] == "transport_error"
+
+
+def _three_controls(monkeypatch, tmp_path):
+    config_path = _config(monkeypatch, tmp_path)
+    case = json.loads(config_path.read_text())["cases"]["paired-judges"]
+    controls = {str(index): copy.deepcopy(case) for index in range(3)}
+    config_path.write_text(
+        json.dumps({"cases": {"paired-judges": {"controls": controls}}})
+    )
+
+
+def _child_report_fault(config, target, fault):
+    if not fault.startswith(("execution_", "config_")):
+        return
+    path = target / "execution.json" if fault.startswith("execution_") else config
+    content = path.read_bytes()
+    path.unlink()
+    if fault.endswith("fifo"):
+        os.mkfifo(path, mode=0o600)
+    else:
+        elsewhere = target / "private-report.json"
+        elsewhere.write_bytes(content)
+        elsewhere.chmod(0o600)
+        path.symlink_to(elsewhere)
+
+
+def _change_bytes_after_first_read(monkeypatch, runner):
+    original = runner._read_private_artifact
+    observed = set()
+
+    def read(path, target):
+        content = original(path, target)
+        if path not in observed:
+            observed.add(path)
+            path.write_bytes(content + b"\n")
+        return content
+
+    monkeypatch.setattr(runner, "_read_private_artifact", read)
+
+
+def _write_fault_artifacts(runner, target, fault):
+    if fault == "directory_symlink":
+        elsewhere = target / "private-elsewhere"
+        elsewhere.mkdir()
+        (target / "paired-judges").symlink_to(elsewhere, target_is_directory=True)
+    for index in range(4 if fault == "extra" else 3):
+        if index == 0 and fault == "missing_first":
+            continue
+        directory = (
+            target
+            / "paired-judges"
+            / str(7 if index == 0 and fault == "wrong_index" else index)
+        )
+        directory.mkdir(parents=True)
+        report = (
+            _fault_report(fault)
+            if index == 0 or fault == "mutated_config"
+            else _report()
+        )
+        path = directory / runner.JUDGE_COMPARISON_RESULT_FILENAME
+        if index == 0 and fault == "fifo":
+            os.mkfifo(path, mode=0o600)
+        elif index == 0 and fault == "symlink":
+            private = target / "private-artifact.json"
+            private.write_text(json.dumps(report))
+            path.symlink_to(private)
+        else:
+            path.write_text(json.dumps(report))
+            path.chmod(0o644 if index == 0 and fault == "readable_by_others" else 0o600)
+
+
+def _fault_report(fault):
+    report = _report()
+    if fault in ("wrong_expectation", "mutated_config"):
+        report.update(status="judges_agree_passed", passed=True)
+        for judge in ("primary", "secondary"):
+            report[judge]["result"].update(passed=True, score=1)
+    elif fault == "wrong_model":
+        report["primary"]["model"] = "different/model"
+    elif fault == "unknown_status":
+        report["status"] = "private-invalid-status"
+    elif fault == "inconsistent_status":
+        report["status"] = "judges_agree_passed"
+    elif fault == "no_outcome":
+        report["primary"] = {}
+    elif fault == "both_outcomes":
+        report["primary"]["error"] = {"error_type": "transport_error"}
+    elif fault in ("typed_error", "unknown_error"):
+        report["primary"] = {
+            "result": None,
+            "error": {
+                "error_type": "transport_error"
+                if fault == "typed_error"
+                else "private-invalid-error"
+            },
+        }
+        report.update(status="judge_error", escalation_required=True)
+    return report
+
+
+def _mutate_frozen_expectations(config):
+    mutable = json.loads(config.read_text())
+    for control in mutable["cases"]["paired-judges"]["controls"].values():
+        control["expectations"] = {
+            "primary.result.passed": True,
+            "secondary.result.passed": True,
+        }
+    config.write_text(json.dumps(mutable))
+
+
+def test_descriptor_reader_rejects_parent_symlink_without_path_precheck(tmp_path):
+    runner = _runner()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    private = outside / "private.json"
+    private.write_text("private-content")
+    private.chmod(0o600)
+    target = tmp_path / "evidence"
+    target.mkdir()
+    (target / "parent").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(OSError):
+        runner._read_private_artifact(target / "parent/private.json", target)
 
 
 @pytest.mark.parametrize("kind", [None, "preference", "unknown"])

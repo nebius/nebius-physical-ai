@@ -210,6 +210,7 @@ def test_public_outcomes_preserve_verdicts_without_provider_text(tmp_path):
     directory.mkdir(parents=True)
     path = directory / runner.JUDGE_COMPARISON_RESULT_FILENAME
     path.write_text(json.dumps(report))
+    path.chmod(0o600)
     summaries = runner._public_comparisons(tmp_path)
     assert private not in json.dumps(summaries)
     assert (
@@ -221,7 +222,8 @@ def test_public_outcomes_preserve_verdicts_without_provider_text(tmp_path):
     assert summaries[0]["secondary"]["error_type"] == "transport_error"
     secondary["error"]["error_type"] = private
     primary["result"]["score"] = float("inf")
-    assert runner._public_judge(secondary)["error_type"] is None
+    with pytest.raises(ValueError, match="invalid_audit_judge_error"):
+        runner._public_judge(secondary)
     with pytest.raises(ValueError, match="score must be finite"):
         runner._public_judge(primary)
 
@@ -245,6 +247,7 @@ def test_generated_lane_rejects_silently_removed_controls(monkeypatch, tmp_path)
                 }
             )
         )
+        (target / "execution.json").chmod(0o600)
         return 0
 
     monkeypatch.setattr(runner, "_execute", execute)
@@ -268,6 +271,7 @@ def test_generated_lane_rejects_silently_removed_controls(monkeypatch, tmp_path)
 
 def test_public_outcomes_keep_original_indices_after_missing_controls(tmp_path):
     runner = _module("npa/scripts/vlm_audit_live_recheck.py")
+    primary, secondary = _private_judges("synthetic-model")
     for index in (1, 2, 10):
         directory = tmp_path / "paired-judges" / str(index)
         directory.mkdir(parents=True)
@@ -277,11 +281,12 @@ def test_public_outcomes_keep_original_indices_after_missing_controls(tmp_path):
                     "status": "judge_error",
                     "passed": False,
                     "escalation_required": True,
-                    "primary": {},
-                    "secondary": {},
+                    "primary": primary,
+                    "secondary": secondary,
                 }
             )
         )
+        (directory / runner.JUDGE_COMPARISON_RESULT_FILENAME).chmod(0o600)
     assert [row["control_index"] for row in runner._public_comparisons(tmp_path)] == [
         1,
         2,

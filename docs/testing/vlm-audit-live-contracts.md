@@ -124,6 +124,12 @@ sharding, and dry-run settings, and invokes the entire audit test file in a
 fresh interpreter. Missing configuration/credentials/expectations, collection
 errors, zero tests, failed checks, xfail, xpass, skipped tests, and deselection
 cannot pass. Executed/passed counts must equal the configured control count.
+Counts alone cannot pass: every configured artifact must remain a private regular
+file under its original control index, match its recorded byte hash and frozen
+expectations, and contain valid typed outcomes and a consistent known status.
+Descriptor-based no-follow reads reject symlinked parents and non-regular files
+(including FIFOs) without reading or blocking on them. Prepared expectations are
+frozen before execution; changing the private config afterward cannot alter them.
 The tests require real successful responses from both judges; disagreement is
 preserved as an audit outcome and can satisfy a predeclared control expectation.
 Provider errors retain their private product artifact but fail this live gate.

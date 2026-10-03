@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 
@@ -240,30 +241,128 @@ def _verify(
     root: Path, target: Path, receipt: dict, *, generated: bool = False
 ) -> None:
     config_path = _prepare_config(target, generated=generated)
-    receipt["configuration_sha256"] = hashlib.sha256(
-        config_path.read_bytes()
-    ).hexdigest()
+    config_bytes = _read_private_artifact(config_path, target)
+    receipt["configuration_sha256"] = hashlib.sha256(config_bytes).hexdigest()
+    config = json.loads(config_bytes)
     if generated:
         _scheduled_preflight()
         receipt["credential_and_catalog_preflight_passed"] = True
     exit_code = _execute(root, target, config_path)
     receipt["pytest_exit_code"] = exit_code
-    execution = json.loads((target / "execution.json").read_text())
+    execution = json.loads(_read_private_artifact(target / "execution.json", target))
     counts = _counts(execution)
     receipt["counts"] = counts
-    config = json.loads(config_path.read_text())
+    if _read_private_artifact(config_path, target) != config_bytes:
+        raise _AuditConfigurationError("audit_configuration_changed")
     expected = sum(len(audit_controls(case)) for case in config["cases"].values())
+    outcomes = _public_comparisons(target)
+    receipt["outcomes"] = outcomes
+    complete = _artifacts_complete(config, outcomes, target)
+    if not complete:
+        receipt["failure"] = "missing_or_unexpected_audit_artifacts"
     receipt["passed"] = (
         exit_code == 0
         and counts["collected"] == counts["executed"] == counts["passed"] == expected
         and counts["failed"] == counts["skipped"] == counts["deselected"] == 0
         and not execution["xfail"]
+        and complete
+        and all(
+            outcome[judge]["error_type"] is None
+            for outcome in outcomes
+            for judge in ("primary", "secondary")
+        )
+        and all(outcome["status"] != "judge_identity_collision" for outcome in outcomes)
     )
-    receipt["outcomes"] = _public_comparisons(target)
+
+
+def _artifacts_complete(config: dict, outcomes: list[dict], target: Path) -> bool:
+    controls = audit_controls(config["cases"]["paired-judges"])
+    if [outcome["control_index"] for outcome in outcomes] != list(range(len(controls))):
+        return False
+    for index, control in enumerate(controls.values()):
+        path = (
+            Path(control["request"]["output_path"]) / JUDGE_COMPARISON_RESULT_FILENAME
+        )
+        _require_artifact_scope(path, target)
+        content = _read_private_artifact(path, target)
+        if hashlib.sha256(content).hexdigest() != outcomes[index]["artifact_sha256"]:
+            return False
+        if not _retained_matches(control, json.loads(content)):
+            return False
+    return True
+
+
+def _read_private_artifact(path: Path, target: Path) -> bytes:
+    parts = path.relative_to(target).parts
+    if not parts or any(part in (".", "..") for part in parts):
+        raise _AuditConfigurationError("invalid_audit_artifact_path")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    directory = os.open(target, flags)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, flags, dir_fd=directory)
+            os.close(directory)
+            directory = child
+        descriptor = os.open(
+            parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory
+        )
+        try:
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_mode & 0o077
+                or metadata.st_uid != os.getuid()
+            ):
+                raise _AuditConfigurationError("invalid_audit_artifact_file")
+            with os.fdopen(descriptor, "rb", closefd=False) as stream:
+                return stream.read()
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(directory)
+
+
+def _require_artifact_scope(path: Path, target: Path) -> None:
+    relative = path.relative_to(target)
+    current = target
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise _AuditConfigurationError("invalid_audit_artifact_path")
+
+
+def _retained_matches(control: dict, report: dict) -> bool:
+    for field, expected in control["expectations"].items():
+        actual = report
+        for part in field.split("."):
+            actual = actual[part]
+        if type(expected) is bool:
+            require_boolean(actual, field=field)
+        if actual != expected:
+            return False
+    return all(
+        report[judge]["model"] == control["request"][f"{judge}_model"]
+        for judge in ("primary", "secondary")
+    )
 
 
 def _public_comparisons(target: Path) -> list[dict]:
     summaries = []
+    directory = target / "paired-judges"
+    _require_artifact_scope(directory, target)
+    for path in directory.rglob(JUDGE_COMPARISON_RESULT_FILENAME):
+        _require_artifact_scope(path, target)
+        index = 0 if path.parent == directory else int(path.parent.name)
+        content = _read_private_artifact(path, target)
+        summary = _public_comparison(json.loads(content))
+        summary.update(
+            control_index=index, artifact_sha256=hashlib.sha256(content).hexdigest()
+        )
+        summaries.append(summary)
+    return sorted(summaries, key=lambda summary: summary["control_index"])
+
+
+def _public_comparison(report: dict) -> dict:
     statuses = {
         "judge_error",
         "judge_disagreement",
@@ -271,56 +370,46 @@ def _public_comparisons(target: Path) -> list[dict]:
         "judges_agree_passed",
         "judges_agree_needs_iteration",
     }
-    directory = target / "paired-judges"
-    for path in directory.rglob(JUDGE_COMPARISON_RESULT_FILENAME):
-        index = 0 if path.parent == directory else int(path.parent.name)
-        content = path.read_bytes()
-        report = json.loads(content)
-        summaries.append(
-            {
-                "control_index": index,
-                "artifact_sha256": hashlib.sha256(content).hexdigest(),
-                "status": report["status"]
-                if report["status"] in statuses
-                else "unknown",
-                "passed": require_boolean(report["passed"], field="passed"),
-                "escalation_required": require_boolean(
-                    report["escalation_required"], field="escalation_required"
-                ),
-                "primary": _public_judge(report["primary"]),
-                "secondary": _public_judge(report["secondary"]),
-            }
-        )
-    return sorted(summaries, key=lambda summary: summary["control_index"])
+    if report["status"] not in statuses:
+        raise _AuditConfigurationError("invalid_audit_report_status")
+    summary = {
+        "status": report["status"],
+        "passed": require_boolean(report["passed"], field="passed"),
+        "escalation_required": require_boolean(
+            report["escalation_required"], field="escalation_required"
+        ),
+        "primary": _public_judge(report["primary"]),
+        "secondary": _public_judge(report["secondary"]),
+    }
+    _validate_summary_status(summary)
+    return summary
+
+
+def _validate_summary_status(summary: dict) -> None:
+    primary, secondary = summary["primary"], summary["secondary"]
+    if primary["error_type"] is not None or secondary["error_type"] is not None:
+        status, passed, escalation = "judge_error", False, True
+    elif summary["status"] == "judge_identity_collision":
+        status, passed, escalation = "judge_identity_collision", False, True
+    elif primary["passed"] != secondary["passed"]:
+        status, passed, escalation = "judge_disagreement", False, True
+    else:
+        passed = primary["passed"]
+        status = "judges_agree_passed" if passed else "judges_agree_needs_iteration"
+        escalation = False
+    if (summary["status"], summary["passed"], summary["escalation_required"]) != (
+        status,
+        passed,
+        escalation,
+    ):
+        raise _AuditConfigurationError("inconsistent_audit_report_status")
 
 
 def _public_judge(outcome: dict) -> dict:
-    if not isinstance(outcome, dict):
-        raise _AuditConfigurationError("invalid_audit_judge_summary")
-    result = outcome.get("result")
-    if result is not None and not isinstance(result, dict):
-        raise _AuditConfigurationError("invalid_audit_judge_summary")
-    passed = (
-        require_boolean(result.get("passed"), field="judge.result.passed")
-        if result is not None
-        else None
-    )
-    result = {} if result is None else result
-    error = outcome.get("error") or {}
+    result, error, score, passed = _judge_result(outcome)
     provider = (
         (result.get("evidence") or {}).get("provider") or error.get("provider") or {}
     )
-    score = (
-        require_number(result.get("score"), field="score", minimum=0, maximum=1)
-        if outcome.get("result") is not None
-        else None
-    )
-    error_types = {
-        "transport_error",
-        "provider_http_status_error",
-        "provider_response_decode_error",
-        "response_contract_error",
-    }
     return {
         "requested_model_sha256": hashlib.sha256(
             str(outcome.get("model", "")).encode()
@@ -333,10 +422,32 @@ def _public_judge(outcome: dict) -> dict:
         ).hexdigest(),
         "score": score,
         "passed": passed,
-        "error_type": error.get("error_type")
-        if error.get("error_type") in error_types
-        else None,
+        "error_type": error.get("error_type"),
     }
+
+
+def _judge_result(outcome: dict) -> tuple[dict, dict, int | float | None, bool | None]:
+    if not isinstance(outcome, dict):
+        raise _AuditConfigurationError("invalid_audit_judge_summary")
+    result = outcome.get("result")
+    error = outcome.get("error")
+    if (result is None) == (error is None):
+        raise _AuditConfigurationError("invalid_audit_judge_summary")
+    if result is not None:
+        if not isinstance(result, dict):
+            raise _AuditConfigurationError("invalid_audit_judge_summary")
+        passed = require_boolean(result.get("passed"), field="judge.result.passed")
+        score = require_number(result.get("score"), field="score", minimum=0, maximum=1)
+        return result, {}, score, passed
+    error_types = {
+        "transport_error",
+        "provider_http_status_error",
+        "provider_response_decode_error",
+        "response_contract_error",
+    }
+    if not isinstance(error, dict) or error.get("error_type") not in error_types:
+        raise _AuditConfigurationError("invalid_audit_judge_error")
+    return {}, error, None, None
 
 
 def main(argv: list[str] | None = None) -> int:
