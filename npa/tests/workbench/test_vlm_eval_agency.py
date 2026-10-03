@@ -619,7 +619,7 @@ def test_duplicate_resolved_ids_fail_before_frame_or_evaluator_calls(
 
     with pytest.raises(
         VlmEvalError,
-        match="duplicate benchmark item id 'item-001'.*must be unique",
+        match="benchmark dataset item IDs must be unique; repeated: 'item-001'",
     ):
         benchmark_vlm_eval(dataset=str(manifest), backend="api")
 
@@ -641,7 +641,10 @@ def test_structured_duplicate_ids_fail_before_preflight(
         lambda *_args, **_kwargs: pytest.fail("structural evaluation was called"),
     )
 
-    with pytest.raises(VlmEvalError, match="duplicate benchmark item id"):
+    with pytest.raises(
+        VlmEvalError,
+        match="benchmark dataset item IDs must be unique; repeated:",
+    ):
         benchmark_vlm_eval(
             dataset=str(manifest),
             backend="api",
