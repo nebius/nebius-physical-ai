@@ -15,15 +15,20 @@ from npa.workflows.video_sweep.artifacts import (
     upload,
     write_json,
 )
+from npa.workflows.video_sweep import matrix
 from npa.workflows.video_sweep.vision import completion, sample_video, text_block
 
 
 def _validate_inputs(source: dict, sweep: dict) -> None:
     if source.get("schema") != "npa.video_sweep.sources.v1" or sweep.get(
         "schema"
-    ) not in {"npa.video_sweep.variants.v1", "npa.video_sweep.variants.v2"}:
+    ) not in {
+        "npa.video_sweep.variants.v1",
+        "npa.video_sweep.variants.v2",
+        "npa.video_sweep.variants.v3",
+    }:
         raise ValueError("Unrecognized source or variant schema")
-    clips, variants = source.get("clips"), sweep.get("variants")
+    clips, variants = source.get("clips"), _variant_rows(sweep)
     if (
         not isinstance(clips, list)
         or not clips
@@ -35,7 +40,7 @@ def _validate_inputs(source: dict, sweep: dict) -> None:
         set(clips)
     ) != len(clips):
         raise ValueError("Source URIs must be nonempty and unique")
-    native = sweep["schema"] == "npa.video_sweep.variants.v2"
+    native = sweep["schema"] != "npa.video_sweep.variants.v1"
     if native and sweep.get("generator") != "cosmos3-nano":
         raise ValueError("Native sweep requires the explicit cosmos3-nano generator")
     if (
@@ -52,6 +57,16 @@ def _validate_inputs(source: dict, sweep: dict) -> None:
             _validate_variant(variant)
     if len({digest(v) for v in variants}) != len(variants):
         raise ValueError("Duplicate generation variants")
+
+
+def _variant_rows(sweep):
+    if sweep.get("schema") == "npa.video_sweep.variants.v3":
+        if set(sweep) != {"schema", "generator", "sweep"}:
+            raise ValueError("Matrix manifests require generator and sweep only")
+        return matrix.expand(sweep["sweep"])
+    if "sweep" in sweep:
+        raise ValueError("A parameter sweep requires the v3 manifest")
+    return sweep.get("variants")
 
 
 def _validate_variant(variant: dict) -> None:
@@ -140,23 +155,23 @@ def prepare(args) -> None:
             "workers": args.workers,
             "generator": sweep.get("generator", "cosmos-transfer2.5"),
             "items": items,
+            **({"sweep": sweep["sweep"]} if "sweep" in sweep else {}),
         },
     )
 
 
 def _expand_items(args, source: dict, sweep: dict, client) -> list[dict]:
     items = []
+    variants = _variant_rows(sweep)
     for uri in source["clips"]:
         described = _describe_source(
             uri, args.root_uri, client, args.reasoner_model, args.samples
         )
-        for variant in sweep["variants"]:
-            if "prompt" in variant:
-                prompt, provenance = variant["prompt"], {"mode": "direct-user-prompt"}
-            else:
-                prompt, provenance = _merge(
-                    described, variant, client, args.merge_model
-                )
+        merged = {}
+        for variant in variants:
+            prompt, provenance = _variant_prompt(
+                described, variant, client, args, merged
+            )
             identity = digest({"source": described["sha256"], "variant": variant})
             items.append(
                 {
@@ -168,3 +183,12 @@ def _expand_items(args, source: dict, sweep: dict, client) -> list[dict]:
                 }
             )
     return items
+
+
+def _variant_prompt(source, variant, client, args, merged):
+    if "prompt" in variant:
+        return variant["prompt"], {"mode": "direct-user-prompt"}
+    # Hold prompt text fixed across sampling axes for a fair comparison.
+    if variant["hint"] not in merged:
+        merged[variant["hint"]] = _merge(source, variant, client, args.merge_model)
+    return merged[variant["hint"]]

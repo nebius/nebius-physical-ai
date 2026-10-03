@@ -11,6 +11,8 @@ from npa.workflows.video_sweep import (
     artifacts,
     checkpoints,
     execution,
+    matrix,
+    matrix_view,
     planning,
     publication,
 )
@@ -139,7 +141,16 @@ def _materialize(stage: Path, plan: dict, report: dict) -> dict:
         "judge": _MODEL_LABELS.get(plan["reasoner_model"], "Operator-selected model"),
         "evidence": "Verified media, review, lineage and publication receipts",
         "scope": "Component results; workflow completion is not inferred from artifacts.",
+        **_matrix_summary(plan),
     }
+
+
+def _matrix_summary(plan):
+    if "sweep" not in plan:
+        return {}
+    variants = matrix.expand(plan["sweep"])
+    sources = len(plan["items"]) // len(variants)
+    return {"matrix": matrix.describe(plan["sweep"], sources, plan["workers"])}
 
 
 def _candidate(stage, item, row, index, controls):
@@ -191,4 +202,6 @@ def _write_html(stage: Path, summary: dict) -> None:
             media[name] = f"data:{mime};base64,{encoded}"
     payload = json.dumps({"summary": summary, "media": media}).replace("<", "\\u003c")
     template = Path(__file__).with_name("demo.html").read_text()
+    panel = matrix_view.render(summary.get("matrix"), summary["candidates"])
+    template = template.replace("__MATRIX_PANEL__", panel)
     (stage / "index.html").write_text(template.replace("__DEMO_DATA__", payload))

@@ -20,6 +20,10 @@ cluster, project-owned S3 storage, and reachable Postgres/MLflow services:
 ```bash
 npa/.venv/bin/python -m npa.workflows.video_sweep.operator init \
   --config /private/video-sweep/sweep.json
+# Preview the full parameter fanout before any credential or provider call.
+npa/.venv/bin/python -m npa.workflows.video_sweep.operator plan \
+  --config /private/video-sweep/sweep.json \
+  --output-dir /private/video-sweep/matrix-preview
 # Fill in project, context, bucket, source URIs and exact accessible model IDs.
 npa/.venv/bin/python -m npa.workflows.video_sweep.operator check \
   --config /private/video-sweep/sweep.json
@@ -29,7 +33,8 @@ npa/.venv/bin/python -m npa.workflows.video_sweep.operator run \
 ```
 
 `init` creates a private configuration with `generator: cosmos3-nano`, one B200
-per worker, two appearance variants, eight frame samples, and threshold 0.8.
+per worker, a three-axis parameter sweep producing eight candidates per source,
+eight frame samples, and threshold 0.8.
 Set `accelerators` to a verified alternative such as `RTXPRO6000:1` when using
 that GPU family. GPU placement and model access are checked before submission;
 selecting a GPU does not establish its inference compatibility.
@@ -37,8 +42,60 @@ selecting a GPU does not establish its inference compatibility.
 The current graph has two parallel workers. Each processes a disjoint partition
 of **every source × variant** combination. This does not limit the number of
 sources or variants. Changing worker concurrency still requires corresponding
-worker states and output declarations. Parameter combinations are explicit rows;
-parameter-axis expansion is not yet part of the operator kit.
+worker states and output declarations. The declared worker count must match the
+parallel worker list. Each worker processes its partition sequentially; eight
+candidates on two workers means four generations per worker, not eight GPUs.
+
+## Configure a parameter matrix
+
+Use `sweep` in place of `variants` in the operator configuration:
+
+```json
+{
+  "sweep": {
+    "base": {
+      "hint": "Warm warehouse lighting; preserve the forklift, supported load and motion",
+      "edge_threshold": "medium",
+      "num_steps": 35,
+      "cfg_normalization": "enabled",
+      "first_chunk_conditional_frames": 1
+    },
+    "axes": {
+      "control_guidance": [1.0, 1.5],
+      "guidance": [3.0, 5.0],
+      "seed": [23, 41]
+    }
+  }
+}
+```
+
+This expands **every source × 2 structural guidance values × 2 text guidance
+values × 2 seeds**: eight candidates for one source, sixteen for two. Every
+candidate receives one complete native parameter set. Fixed fields belong in
+`base`; varying fields belong in `axes`. Do not put the same field in both.
+Any supported native variant field can be an axis, including `hint` or `prompt`.
+Each expanded row must contain exactly one of those text fields. Unknown fields,
+empty axes, repeated values and invalid combinations fail before GPU submission.
+There is no implicit truncation of the Cartesian product.
+
+`plan` writes a private `matrix.json` and standalone `index.html` showing the
+axis values, product size, all candidate rows and their worker assignments.
+It works before routing placeholders are filled and uses no credentials or
+network calls. The preview is clearly marked as planned, without generated
+footage. Prompt text and source locations are omitted.
+
+The live prepare stage expands the same configuration. Axis names are sorted
+for deterministic enumeration; value lists retain their declared order. Each
+source is described once, and each distinct hint is merged once per source,
+holding the final prompt fixed while sampling parameters vary. Direct prompts
+remain verbatim. The immutable plan retains the original sweep definition;
+workers verify complete matrix coverage before generating. Changing an input or
+axis value requires a new run ID, including when resuming a previous run.
+
+Direct workflow submissions use a `npa.video_sweep.variants.v3` manifest with
+`generator: cosmos3-nano` and this `sweep` object. Native v2 explicit variant
+rows remain supported. The result viewer shows the same matrix with recorded
+scores and a play button connecting every cell to its generated clip.
 
 `check` verifies operator prerequisites without submitting compute. `run` stages
 immutable inventories and the current NPA source, then submits the standard

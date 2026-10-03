@@ -5,7 +5,7 @@ metadata:
   name: video-variant-sweep-cosmos3
   executionMode: runtime
   description: >
-    Describe source videos, merge appearance hints, run conditioned Cosmos3-Nano variants in parallel, review paired video samples, record
+    Expand a Cartesian parameter sweep or explicit variants, describe source videos, merge appearance hints, run conditioned Cosmos3-Nano candidates in parallel, review paired video samples, record
     Postgres and MLflow lineage, and publish only accepted clips.
 
 config:
@@ -41,22 +41,23 @@ initial: prepare
 
 states:
   prepare:
-    description: Snapshot each source and merge each appearance hint with its visual description.
+    description: Expand every parameter combination, snapshot each source, and merge each distinct hint once per source.
     resources: cpu
     toolRef: workflow.video_sweep.prepare
     inputs:
       - uri: "{{config.sources_uri}}"
         schema: npa.video_sweep.sources.v1
       - uri: "{{config.variants_uri}}"
-        schema: npa.video_sweep.variants.v2
+        # The consuming stage validates native v2 explicit rows or v3 base/axes.
     outputs:
       - uri: "{{config.root_uri}}/plan.json"
         schema: npa.video_sweep.plan.v1
     next: generate
 
   generate:
-    description: Partition all source and parameter combinations across independent GPU workers.
+    description: Partition the full source-by-parameter Cartesian product across independent GPU workers.
     parallel: [worker-0, worker-1]
+    parallelCount: "{{config.workers}}"
     next: review
 
   worker-0:

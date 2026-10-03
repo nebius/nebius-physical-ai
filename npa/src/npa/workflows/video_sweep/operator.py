@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
-from npa.workflows.video_sweep import artifacts, planning
+from npa.workflows.video_sweep import artifacts, matrix, planning
 
 _REQUIRED_SECRETS = (
     "AWS_ACCESS_KEY_ID",
@@ -36,7 +36,6 @@ _FIELDS = {
     "run_id",
     "accelerators",
     "sources",
-    "variants",
     "reasoner_model",
     "merge_model",
     "samples",
@@ -55,7 +54,9 @@ def main(argv: list[str] | None = None) -> int:
         SystemExit: Arguments are invalid.
     """
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("init", "check", "run", "resume", "export"))
+    parser.add_argument(
+        "action", choices=("init", "plan", "check", "run", "resume", "export")
+    )
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args(argv)
@@ -77,7 +78,10 @@ def _operate(args):
             "Private configuration created. Fill in routing and source URIs; supply service secrets through the environment."
         )
         return
-    config = _load(args.config)
+    config = _load(args.config, offline=args.action == "plan")
+    if args.action == "plan":
+        _preview(args, config)
+        return
     print("Loading configured project storage.", flush=True)
     _credentials(config)
     output = args.output_dir or args.config.parent / (config["run_id"] + "-demo")
@@ -156,24 +160,19 @@ def _initialize(path):
         "merge_model": "nvidia/Nemotron-3_5-Lightning",
         "samples": 8,
         "threshold": 0.8,
-        "variants": [
-            {
-                "hint": "Warm evening light",
-                "seed": 7,
+        "sweep": {
+            "base": {
+                "hint": "Warm warehouse lighting; preserve the vehicle, load and motion",
                 "edge_threshold": "medium",
-                "control_guidance": 1.5,
-                "guidance": 5.0,
                 "num_steps": 35,
+                "cfg_normalization": "enabled",
             },
-            {
-                "hint": "Cool indoor light",
-                "seed": 11,
-                "edge_threshold": "medium",
-                "control_guidance": 1.5,
-                "guidance": 5.0,
-                "num_steps": 35,
+            "axes": {
+                "control_guidance": [1.0, 1.5],
+                "guidance": [3.0, 5.0],
+                "seed": [23, 41],
             },
-        ],
+        },
     }
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -182,9 +181,12 @@ def _initialize(path):
         stream.write("\n")
 
 
-def _load(path):
+def _load(path, *, offline=False):
     config = json.loads(path.read_text())
     _validate_fields(config)
+    planning._validate_inputs(_sources(config), _variants(config))
+    if offline:
+        return config
     for key in (
         "project",
         "infra",
@@ -204,7 +206,6 @@ def _load(path):
         or not 0 <= config["threshold"] <= 1
     ):
         raise ValueError("Threshold must be finite and between zero and one")
-    planning._validate_inputs(_sources(config), _variants(config))
     for uri in config["sources"]:
         artifacts._object(uri)
     artifacts._object(_root(config) + "/plan.json")
@@ -212,16 +213,31 @@ def _load(path):
 
 
 def _validate_fields(config):
-    if not isinstance(config, dict) or set(config) not in (
-        _FIELDS,
-        _FIELDS | {"generator"},
-    ):
+    if not isinstance(config, dict):
+        raise ValueError("Configuration must be an object")
+    selections = set(config) & {"variants", "sweep"}
+    if len(selections) != 1 or set(config) - selections - {"generator"} != _FIELDS:
         raise ValueError("Configuration fields differ from the generated template")
     if config.get("generator", "cosmos-transfer2.5") not in (
         "cosmos-transfer2.5",
         "cosmos3-nano",
     ):
         raise ValueError("Unknown generation backend")
+    if "sweep" in config and config.get("generator") != "cosmos3-nano":
+        raise ValueError("Parameter axes require the native Cosmos3 generator")
+
+
+def _preview(args, config):
+    from npa.workflows.video_sweep.matrix_view import write_preview
+
+    if "sweep" not in config:
+        raise ValueError("Matrix preview requires a sweep with base and axes")
+    summary = matrix.describe(config["sweep"], len(config["sources"]), 2)
+    output = args.output_dir or args.config.parent / "matrix-preview"
+    write_preview(output, summary)
+    print(
+        f"Planned {len(summary['jobs'])} candidates: {summary['sources']} sources × {summary['combinations']} parameter combinations across {summary['workers']} workers. No compute submitted."
+    )
 
 
 def _validate_location(config):
@@ -339,6 +355,12 @@ def _sources(config):
 
 
 def _variants(config):
+    if "sweep" in config:
+        return {
+            "schema": "npa.video_sweep.variants.v3",
+            "generator": "cosmos3-nano",
+            "sweep": config["sweep"],
+        }
     if config.get("generator") == "cosmos3-nano":
         return {
             "schema": "npa.video_sweep.variants.v2",
@@ -349,8 +371,17 @@ def _variants(config):
 
 
 def _stage_inputs(config):
-    artifacts.write_json(_root(config) + "/inputs/sources.json", _sources(config))
-    artifacts.write_json(_root(config) + "/inputs/variants.json", _variants(config))
+    inputs = {"sources": _sources(config), "variants": _variants(config)}
+    for name, content in inputs.items():
+        uri = _root(config) + f"/inputs/{name}.json"
+        if artifacts.exists(uri) and artifacts.digest(
+            artifacts.read_json(uri)
+        ) != artifacts.digest(content):
+            raise ValueError(
+                "Run inputs changed; use a new run ID for a different sweep"
+            )
+    for name, content in inputs.items():
+        artifacts.write_json(_root(config) + f"/inputs/{name}.json", content)
 
 
 def _submit_command(config, *, resume=False, state_dir=None):

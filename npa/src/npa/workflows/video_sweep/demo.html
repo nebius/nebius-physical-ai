@@ -562,6 +562,7 @@
           ><small>TRACKED IN POSTGRES + MLFLOW</small>
         </div>
       </div>
+      __MATRIX_PANEL__
       <div class="section-heading">
         <h2>One source → a world of variations</h2>
         <span class="subtle">Actual generated clips · click to inspect</span>
@@ -824,15 +825,17 @@
         if (index === 2) button.click();
       });
       S.candidates.forEach((row, index) => {
+        const parameters = row.parameters || {};
+        const settings = `Control ${parameters.control_guidance ?? parameters.control_weight ?? "—"} · Guidance ${parameters.guidance ?? "—"} · Seed ${row.seed}`;
         const option = document.createElement("option");
         option.value = index;
-        option.textContent = `Variant ${index + 1} · ${row.accepted ? "Accepted" : "Held out"}`;
+        option.textContent = `Variant ${index + 1} · ${settings} · ${row.accepted ? "Accepted" : "Held out"}`;
         $("selection").append(option);
         const card = document.createElement("button");
         card.setAttribute("aria-label", `Inspect variant ${index + 1}`);
         const label = document.createElement("div");
         label.className = "video-label";
-        label.textContent = `Variant ${index + 1} · Seed ${row.seed} · ${row.accepted ? "Accepted" : "Held out"}`;
+        label.textContent = `Variant ${index + 1} · ${settings} · ${row.accepted ? "Accepted" : "Held out"}`;
         const video = document.createElement("video");
         video.muted = true;
         video.playsInline = true;
@@ -849,6 +852,15 @@
         $("fanout").append(card);
       });
       $("selection").onchange = () => select(Number($("selection").value));
+      document.querySelectorAll("[data-matrix-candidate]").forEach(button => {
+        button.onclick = () => {
+          const index = Number(button.dataset.matrixCandidate);
+          $("selection").value = index;
+          select(index);
+          $("selection").scrollIntoView({behavior: "smooth", block: "center"});
+          play();
+        };
+      });
       text("sources-count", S.sources.length);
       text("variants-count", S.candidates.length);
       text("workers-count", `${S.workers} workers`);

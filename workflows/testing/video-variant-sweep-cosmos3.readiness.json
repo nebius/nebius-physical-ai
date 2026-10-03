@@ -1,6 +1,6 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "b57ac41ea896b5447401c3e0488a6e4136420de6dce09d69fb3a06fc6f5f239c",
+  "workflow_sha256": "30bd58948aced2c381adb980c58b4628c13ef75526f782a2c4ee585ee19591b6",
   "planning": {
     "validation": {
       "status": "verified",
@@ -11,9 +11,10 @@
     },
     "task_fidelity": {
       "status": "verified",
-      "reason": "Native Cosmos3 generation uses guarded complete-source edge conditioning, exact temporal alignment and retained control artifacts. Unit contracts cover native sampling, checkpoint integrity and direct prompts.",
+      "reason": "Native Cosmos3 generation expands all declared parameter axes before worker partitioning; unit contracts verify Cartesian coverage, fixed prompts, immutable inputs and recorded matrix display.",
       "evidence": [
-        "npa/tests/workflows/test_video_sweep_cosmos3.py"
+        "npa/tests/workflows/test_video_sweep_cosmos3.py",
+        "npa/tests/workflows/test_video_sweep_matrix.py"
       ]
     }
   },

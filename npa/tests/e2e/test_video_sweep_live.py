@@ -11,7 +11,14 @@ import av
 import numpy as np
 import pytest
 
-from npa.workflows.video_sweep import artifacts, execution, planning, tracking
+from npa.workflows.video_sweep import (
+    artifacts,
+    checkpoints,
+    execution,
+    matrix,
+    planning,
+    tracking,
+)
 
 pytestmark = pytest.mark.token_factory_e2e
 
@@ -183,3 +190,27 @@ def test_export_published_run(tmp_path):
     assert run_id not in (output / "index.html").read_text()
     with av.open(str(output / "demo.mp4")) as video:
         assert sum(1 for _ in video.decode(video=0)) > 24 * 9
+
+
+def test_reviewed_native_parameter_matrix():
+    """Verify an actual matrix run, including tracked all-rejected outcomes."""
+    from npa.workflows.video_sweep import publication
+
+    root = os.environ.get("NPA_VIDEO_SWEEP_MATRIX_ROOT_URI", "")
+    run_id = os.environ.get("NPA_VIDEO_SWEEP_MATRIX_RUN_ID", "")
+    if not root or not run_id:
+        pytest.skip("Select an existing private native matrix run")
+    stored = artifacts.read_json(root + "/plan.json")
+    args = SimpleNamespace(root_uri=root, run_id=run_id, workers=stored["workers"])
+    plan, report = execution.reviewed(args)
+    assert len(plan["sweep"]["axes"]) >= 2
+    matrix.validate_plan(plan)
+    generated = {row["id"]: row for row in execution._join(args, plan)}
+    assert len(generated) == len(plan["items"])
+    for item in plan["items"]:
+        checkpoints._verify(generated[item["id"]], item, root, plan)
+    _assert_native_transfer(args, report)
+    publication._verify_lineage(artifacts.read_json(root + "/lineage.json"), report)
+    if not any(row["accepted"] for row in report["items"]):
+        assert not artifacts.exists(root + "/dataset/manifest.json")
+        assert not artifacts.exists(root + "/dataset/next-sources.json")
