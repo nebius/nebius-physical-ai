@@ -39,8 +39,9 @@ H100 smoke reached terminal success with finite loss, verified raw and EMA
 adapters, and a complete S3 artifact. Full training was interrupted with exit 137 after saving step 50,000. Managed
 recovery was blocked by an expired registry credential, and the exact old job
 was reconciled and cancelled. A checkpoint-based successor is now live after target image/bootstrap preflight
-passed. Native GPU restoration and terminal acceptance remain pending in the
-workflow readiness record. The retained evidence does not identify
+passed. Native GPU resume restored the saved adapter, training state, data order,
+and EMA and advanced beyond 50,000 microsteps with finite reported losses. Final
+60,000-step acceptance remains pending in the workflow readiness record. The retained evidence does not identify
 the reason for signal 9. The workflow now requests 128 GiB host memory and
 105 GB ephemeral storage to fit the existing worker disks. Older local checkpoint
 copies are removed only after successful S3 uploads and hash readbacks; the latest

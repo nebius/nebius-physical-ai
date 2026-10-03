@@ -54,18 +54,19 @@
     },
     "source_image": {
       "status": "verified",
-      "reason": "The original private image passed an H100 smoke. The recovery overlay adds native checkpoint restoration and verified-upload local checkpoint pruning; its exact immutable OCI digest passed independent manifest hashing, a complete restricted-payload scan, and target-cluster image/bootstrap preflight. Recovery GPU training acceptance remains pending. Public publication remains quarantined.",
+      "reason": "The original private image passed an H100 smoke. The recovery overlay adds native checkpoint restoration and verified-upload local checkpoint pruning; its exact immutable OCI digest passed independent manifest hashing, a complete restricted-payload scan, and target-cluster image/bootstrap preflight. Native GPU resume restored the saved state and advanced with finite reported losses; final full-run acceptance remains pending. Public publication remains quarantined.",
       "evidence": [
         "original smoke digest sha256:ef3fd51f957dfd511aef853b393eee66639cca62bd2a73e3e46157b6f597497d reached SUCCEEDED",
         "recovery digest sha256:958f1a6c1cef792a55ef30f147f4ef455b7d8a635492a5e21d084af434d162e2",
         "recovery registry manifest independently hashed and matched OCI index digest",
         "recovery full image scan: 114314 entries, zero restricted payload/history hits",
-        "recovery target-cluster image pull and bootstrap compatibility preflight PASS"
+        "recovery target-cluster image pull and bootstrap compatibility preflight PASS",
+        "recovery digest on H100: native PEFT/data-order/EMA restoration and 64 remaining microsteps executed, first three losses finite"
       ]
     },
     "target_runtime": {
       "status": "unverified",
-      "reason": "The H100 smoke succeeded. Full training saved checkpoint 50,000 before exit 137; the precise signal-9 cause is unavailable. Expired registry credentials blocked managed recovery, and exact job 4 was reconciled and cancelled. A first recovery candidate failed disk-capacity preflight and was independently confirmed absent from the managed-job queue. After reducing disk to 105 GB and adding local checkpoint pruning, one checkpoint-based successor was submitted. Live NPA reports RUNNING, verified job 5, and a running worker pod. Native GPU restoration and final 60,000-step acceptance remain pending.",
+      "reason": "The H100 smoke succeeded. Full training saved checkpoint 50,000 before exit 137; the precise signal-9 cause is unavailable. Expired registry credentials blocked managed recovery, and exact job 4 was reconciled and cancelled. A first recovery candidate failed disk-capacity preflight and was independently confirmed absent from the managed-job queue. After reducing disk to 105 GB and adding local checkpoint pruning, one checkpoint-based successor was submitted. Live NPA reports RUNNING, verified job 5, and a running worker pod. Native GPU resume restored the saved adapter, training state, data order, and EMA, then advanced to total microstep 50,064. All three observed resumed losses are finite. Final 60,000-step training, adapter reload, checkpoint hashes, and terminal NPA success remain pending.",
       "evidence": [
         "live NPA job 4 PENDING after interruption; no training pod remained",
         "controller recorded exit 137 and recovery at 2026-10-03T15:29:50Z",
@@ -75,7 +76,10 @@
         "first recovery candidate: capacity preflight rejected before launch; exact-name managed job ABSENT",
         "native LeRobot CPU configuration validation accepted the real saved smoke checkpoint with restored step 4 and accumulation 4",
         "checkpoint-based successor: submit returned 0; live NPA status RUNNING, live_verified true, managed job 5",
-        "recovery worker pod Running and ready; dataset conversion completed; model inputs preparing"
+        "native trainer: PEFT checkpoint loaded, data order epoch 3/sample 17134 restored, EMA shadow restored",
+        "remaining-progress bar: 64/10000; total 50,064/60,000 microsteps",
+        "first three resumed losses: 0.117, 0.115, 0.120, all finite",
+        "original pre-interruption training logs unavailable; complete historical loss coverage is not established"
       ]
     }
   }
