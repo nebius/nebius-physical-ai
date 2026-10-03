@@ -213,6 +213,22 @@ SUBMIT_LIVE_MATRIX: tuple[SubmitLiveCase, ...] = (
         notes="Uses a qualified public GHCR image; exact-digest GPU evidence is recorded in the OSS solution catalog.",
     ),
     SubmitLiveCase(
+        "lingbot-va-libero-long.yaml",
+        "gpu",
+        secret_envs=("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"),
+        plan_only=True,
+        plan_only_justification=(
+            "requires an independently scanned immutable candidate image and an "
+            "operator-authorized CC BY-NC-SA LIBERO-Long dataset prefix before "
+            "the five genuine GPU stages may be submitted"
+        ),
+        notes=(
+            "Five-stage upstream LingBot-VA LIBERO-Long preparation, post-train, "
+            "closed-loop rollout, evaluation, and RRD/MP4 path; no live claim is "
+            "made until the exact image and authorized data are available."
+        ),
+    ),
+    SubmitLiveCase(
         "byof-depth-anything-v2.yaml",
         "gpu",
         plan_only=True,

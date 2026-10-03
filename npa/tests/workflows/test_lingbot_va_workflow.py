@@ -132,3 +132,15 @@ def test_source_only_image_pins_the_distinct_cuda_contract_without_extra_accepta
     assert "npa-wan2-2@sha256:" in dockerfile
     assert "install -d -m 0755 /opt/npa-native/npa/solutions" in dockerfile
     assert "/usr/share/doc/npa-lingbot-va" in dockerfile
+
+
+def test_visualization_binds_the_recording_to_the_workflow_run() -> None:
+    """Require the factual RRD to retain its exact workflow run identity."""
+    source = Path(L.__file__).read_text(encoding="utf-8")
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+
+    assert "NPA_WORKFLOW_RUN_ID" in source
+    assert 'recording_id=run_id' in source
+    assert workflow["states"]["visualize"]["outputs"][0]["schema"] == (
+        "application/vnd.rerun.rrd"
+    )

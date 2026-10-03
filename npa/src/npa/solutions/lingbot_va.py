@@ -658,7 +658,22 @@ def visualize(
     mp4_uri: str,
     output_uri: str,
 ) -> dict[str, Any]:
-    """Emit a Rerun recording and copied real MP4 from the completed rollout."""
+    """Emit a workflow-bound Rerun recording and MP4 from a completed rollout.
+
+    Args:
+        rollout_uri: Run-scoped URI of the native closed-loop rollout manifest.
+        evaluation_uri: Run-scoped URI of the numerical evaluation manifest.
+        output_uri: Run-scoped URI where visualization artifacts are written.
+
+    Returns:
+        Manifest identifying the generated Rerun recording, MP4, and provenance.
+
+    Raises:
+        RuntimeError: If the workflow did not supply its scoped run identifier.
+    """
+    run_id = os.environ.get("NPA_WORKFLOW_RUN_ID", "").strip()
+    if not run_id:
+        raise RuntimeError("Visualization requires the workflow-scoped NPA_WORKFLOW_RUN_ID")
     with tempfile.TemporaryDirectory(prefix="npa-lingbot-va-viz-") as temporary:
         work = Path(temporary)
         rollout_manifest = _read_json(rollout_uri, work / "rollout.json")
@@ -673,10 +688,29 @@ def visualize(
         import rerun as rr
 
         rrd = work / "libero-long.rrd"
-        rr.init("npa.lingbot_va", recording_id="libero-long", spawn=False)
+        rr.init("npa.lingbot_va", recording_id=run_id, spawn=False)
         rr.save(str(rrd))
+        rr.log(
+            "provenance/run",
+            rr.TextLog(
+                json.dumps(
+                    {
+                        "run_id": run_id,
+                        "producer": "npa.solutions.lingbot_va",
+                        "provenance": _provenance(),
+                        "limitation": (
+                            "Observed rollout camera frames and model-emitted action "
+                            "validity are recorded; this run does not claim aligned "
+                            "ground-truth video or action prediction accuracy."
+                        ),
+                    },
+                    sort_keys=True,
+                )
+            ),
+        )
         frame_count = 0
         for frame in iio.imiter(preview, plugin="pyav"):
+            rr.set_time_sequence("rollout_frame", frame_count)
             rr.log("rollout/cameras", rr.Image(frame))
             frame_count += 1
         rr.log(
@@ -700,6 +734,7 @@ def visualize(
             "source_rollout_mp4": str(videos[0].relative_to(rollout)),
             "decoded_frame_count": frame_count,
             "rollout_benchmark": rollout_manifest["benchmark"],
+            "recording_id": run_id,
             "provenance": _provenance(),
         }
         local = work / "visualization.json"
