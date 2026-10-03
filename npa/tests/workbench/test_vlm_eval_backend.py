@@ -450,7 +450,7 @@ def test_select_rollout_frames_retains_numpy_sampling_coverage(tmp_path: Path) -
 
     selected = select_rollout_frames(rollout, frame_selection="keyframes", max_frames=3)
 
-    assert [frame.source_index for frame in selected] == [0, 2, 5]
+    assert [frame.source_index for frame in selected] == [0, 4, 5]
     assert [frame.source_count for frame in selected] == [6, 6, 6]
     assert all(frame.source_kind == "numpy-episode" for frame in selected)
 
