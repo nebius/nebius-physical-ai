@@ -25,6 +25,10 @@ def metadata_live_contract() -> dict[str, object]:
 # These specialized suites intentionally remain operator-invoked. The reason is
 # machine-reviewed here instead of letting an environment gate silently rot.
 MANUAL_GATES = {
+    "NPA_ROS2_PREFLIGHT_LIVE": (
+        "requires an explicitly selected, sourced ROS 2 Jazzy runtime; "
+        "run with skills/tools/ros2/SKILL.md; no robot or cloud mutation"
+    ),
     "NPA_SPECIALISTS_LIVE": (
         "uses paid Token Factory inference with independent GLM and DeepSeek workers; "
         "run the restart and workflow-repair proof in docs/workbench/specialists.md"
