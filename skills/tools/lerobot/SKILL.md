@@ -14,7 +14,7 @@ Use it as the data standard and policy interface layer, not as a managed-service
 | Version | Role | Image tag | Notes |
 | --- | --- | --- | --- |
 | **0.5.1** | **Default package compatibility** | `npa-lerobot:cuda13-b300-0.5.1-sm80-sm90-sm100-sm103-sm120-20260803T034152Z` | Historical public image is publication-quarantined; use only a separately validated immutable replacement |
-| **0.6.0** | Selectable alternative | `npa-lerobot:0.6.0-d6-extras-20260912` | Published immutable pin/digest; lean extras (`training,evaluation,pusht,libero,diffusion,smolvla`); `--eval_freq` → `--env_eval_freq` |
+| **0.6.0** | Selectable alternative | `npa-lerobot:0.6.0-d6-extras-20260912` | Historical immutable pin/digest; lean extras (`training,evaluation,pusht,libero,diffusion,smolvla`); `--eval_freq` → `--env_eval_freq`. It is not FastWAM-qualified. |
 
 Select the package with `--lerobot-version`. `train --image` and container/BYOVM
 `deploy --image` accept a validated immutable operator override. The default
@@ -25,6 +25,16 @@ the container release. The September 12 release supersedes
 the anonymous September 5 audit that found no public 0.6.0 image. Its bare
 `0.6.0` tag is a compatibility alias; use the manifest's immutable pin and digest.
 The optional 0.6.0 image is validated on B200 and does not replace the 0.5.1 default.
+
+FastWAM requires a separately rebuilt immutable 0.6.0 image containing the
+`fastwam` extra; do not attribute that capability to the historical digest.
+Use `workflows/testing/fastwam-policy-qualification.yaml` for its native
+five-stage prepare → train → direct-action rollout → CUDA evaluation → RRD/MP4
+report path. FastWAM retains video world modeling during training but calls
+`select_action` at inference; it is not the Cosmos3 FastWAM-K2 experiment.
+The image must keep FastWAM, Wan, UMT5, data, checkpoints and outputs runtime
+side, pin their revisions in run provenance, and record the dataset's own
+terms. Do not add a FastWAM-specific EULA or acceptance environment variable.
 
 Canonical manifest: `npa/src/npa/deploy/lerobot_version_manifest.json`.
 
@@ -116,3 +126,8 @@ Output is a policy checkpoint on S3.
   benchmark. See the D3/D6 resolution in
   [the version audit](../../../docs/workbench/lerobot-version-support-audit-20260813.md#060-image-follow-up--2026-09-12)
   and merged [PR #462](https://github.com/nebius/nebius-physical-ai/pull/462).
+- FastWAM: the rebuilt local 0.6.0 image constructs `FastWAMConfig`, exposes
+  `policy.type=fastwam`, and has complete built-byte/no-baked-model evidence;
+  this is not B200 or end-to-end workflow evidence. Require independent GPU,
+  private pushed-digest, data/simulator, MP4/RRD, and measured-latency evidence
+  before a FastWAM live-ready claim.
