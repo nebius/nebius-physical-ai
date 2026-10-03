@@ -1,0 +1,69 @@
+{
+  "schema": "npa.public-evidence.caption-normalization-scope.v1",
+  "reviewed_source": {
+    "head": "f1b1f7e698b2fecdb27e5b4d2dd3ba5ac16cc537",
+    "tree": "b641fe8b988c27c988807aa83fb700b62ef0ac41",
+    "historical_nested_head": "3fdced71f6d42f3e1fa5e9375c305ae363101348",
+    "historical_one_layer_head": "15ebe402794d98793f297655f5d48713ce92233c"
+  },
+  "source_bindings": [
+    {
+      "path": "npa/tests/workbench/test_token_factory_tool.py",
+      "sha256": "d249c10583597f16787ec2e59176920086f4b5bdd89e009d2cc854cebe746a49",
+      "byte_equal_historical_nested_and_reviewed_source": true
+    },
+    {
+      "path": "npa/src/npa/workbench/token_factory/__init__.py",
+      "sha256": "e2e55a2e150fcdb1df8192c359e8bc588b7815504578dff27d32f835c33e8d1d"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+    },
+    {
+      "path": "npa/tests/e2e/test_token_factory_image_availability_live.py",
+      "sha256": "b4c54b5b0155bb923977bfdb2df60e3c8f7b0eddfd975f71f85d533b31e8e27f",
+      "change_scope": "Inherited credential check hoist before fixture read; request and inference assertions unchanged; no hosted execution at these test bytes"
+    }
+  ],
+  "current_pytest_population": {
+    "accepted": 183,
+    "completed_caption_negatives": 18,
+    "whole_path_cases": 201,
+    "classifier_only_nonmatches": 5,
+    "parameter_values_and_ids_sha256": "dbce02790c6e29f2d1ae13112a0f2d81e2425728fd7bb10080b4c58372a78b30",
+    "equal_at_historical_3fd_and_reviewed_f1": true,
+    "removed_pytest_rows_between_these_sources": 0,
+    "new_execution_claimed_by_this_addendum": false
+  },
+  "historical_standalone_population": {
+    "claimed_whole_path_cases": 202,
+    "status": "Distinct historical population; not reverified here and not interchangeable with current pytest201",
+    "original_artifacts_rewritten": false
+  },
+  "historical_pack_preservation": [
+    {
+      "path": "docs/testing/evidence/token-factory-image-unavailable-normalization/README.md",
+      "sha256": "334fc1568365ff66a4d985345adeec78013f0269225e5e1c936507a9a30fda2e"
+    },
+    {
+      "path": "docs/testing/evidence/token-factory-image-unavailable-normalization/evidence.json",
+      "sha256": "88e16d743f4d0f8d283b6dd1cfcd59a15d7a64bad0e49391e8762606666adb1a"
+    },
+    {
+      "path": "docs/testing/evidence/token-factory-image-unavailable-nested-normalization/README.md",
+      "sha256": "2852da419b61eb5324bd7f4936ff4f0983cc1d9514eb050f0f9d95cd5a62d5d6"
+    },
+    {
+      "path": "docs/testing/evidence/token-factory-image-unavailable-nested-normalization/evidence.json",
+      "sha256": "05ec3a86412a93e4f543127471edd721987e614177b64ebe6139bb1668467de8"
+    }
+  ],
+  "current_contract": "Recursively remove exact matching quote/emphasis pairs with strict shortening; case-insensitive whole-answer sentinel match and one optional trailing period, never substring matching",
+  "durability_scope": "Cooperative sentinel responses only; provider transport/empty-content abort and storage-write behavior are not broadened",
+  "original_hosted_execution": "d533859918d2fc03c898ca1a39aee94fc0943958",
+  "original_real_controls": 2,
+  "original_offline_response_replays": 1,
+  "new_provider_calls": 0,
+  "limits": "Synthetic normalization controls and retained source bindings are not calibrated vision quality, delivery reliability, universal refusal detection or robot safety"
+}

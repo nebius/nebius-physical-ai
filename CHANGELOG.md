@@ -7,19 +7,19 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
-### Paired VLM output contract
-
-- Paired judge requests explicitly require bare JSON, with the same instruction
-  and evidence binding for both models. Fenced responses remain retained errors;
-  this paired-only output instruction does not alter scalar prompts, parsers,
-  rubrics, or score thresholds.
-
 ### VLM evaluation discloses served-model identity enforcement
 
 - Single results, loop rows, and benchmark cases report requested and returned
   model identities and whether the shared hosted profile enforced exact equality.
   All current hosted profiles enforce equality; self-hosted and synthetic
   evaluations do not claim that check.
+
+### Paired VLM output contract
+
+- Paired judge requests explicitly require bare JSON, with the same instruction
+  and evidence binding for both models. Fenced responses remain retained errors;
+  this paired-only output instruction does not alter scalar prompts, parsers,
+  rubrics, or score thresholds.
 
 ### Open3D recordings verify persisted geometry inputs
 
@@ -133,6 +133,12 @@ a versioned heading when a release is cut.
   whole-answer match is retained as `image_unavailable`, makes the aggregate
   artifact fail, and exits nonzero after writing it. Later images are still
   attempted once; dry runs emit the failed result without writing.
+- Closed whole-answer matching now tolerates an omitted final period and nested
+  matching pairs of Markdown emphasis, ASCII quotes, or smart quotes. It still
+  rejects longer answers, mismatched or code wrappers, punctuation outside the
+  wrappers, other punctuation, and paraphrases. Hosted evidence observed only
+  the exact punctuated sentinel; the added formatting cases are deterministic
+  local controls.
 
 ### Studio videos accept S3 output paths
 

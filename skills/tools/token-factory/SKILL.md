@@ -123,11 +123,19 @@ npa workbench token-factory caption \
 ```
 
 Caption requests append `If you cannot see the image pixels, respond exactly:
-NO IMAGE RECEIVED.` after the operator instruction. An exact case-insensitive
-whole-answer match is retained with `status: image_unavailable`; the aggregate
-result is failed, is written before the CLI exits 1, and does not trigger a
-silent retry. Later selected images are still attempted once. `--dry-run` emits
-the same failed result and exits 1 without writing it.
+NO IMAGE RECEIVED.` after the operator instruction. The closed
+case-insensitive whole-answer match also accepts an omitted final period or one
+or more nested matching pairs of Markdown asterisk or underscore emphasis,
+ASCII quotes, or smart quotes. It does not accept longer answers, mismatched
+wrappers, code wrappers, punctuation outside the wrappers, other punctuation,
+or paraphrases, and it retains the exact stripped answer. Exact-answer
+induction can still false-fail, including when an image's only salient text is
+the sentinel. Retained hosted evidence observed only the exact punctuated
+sentinel; periodless, wrapped, nested, and emphasis variants are deterministic
+local controls, not observed hosted outputs. An unavailable item fails the
+aggregate, is written before the CLI exits 1, and does not trigger a silent
+retry. Later selected images are still attempted once. `--dry-run` emits the
+same failed result and exits 1 without writing it.
 
 **Batch text generation** over a JSONL/text prompt file — default model
 `nvidia/Nemotron-3_5-Lightning`:
