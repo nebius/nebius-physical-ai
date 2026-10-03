@@ -31,6 +31,11 @@ For **new creative pipelines**, also load `skills/workflows/generate-npa-workflo
 - **Tokens:** `{{config.key}}`, `{{run.id}}`, `{{run.prefix}}`, `{{state.NAME.uri}}` — no Jinja, no eval.
 - **Predicates:** closed set: `promote_checkpoint`, `loop_back`.
 - **Loops:** `loop.max: "{{config.attr}}"` or integer; `loop.until` for dynamic exit.
+- **Condition-only loops:** a sequence may omit `loop.max` when it declares
+  `loop.until`, uses `metadata.executionMode: runtime`, and ends in a
+  `writesDecision` child. Execution has no inferred iteration limit and fails
+  on missing/invalid measured decisions. Planning previews one iteration.
+  Use `{{loop.<state-name>}}` in every attempt's output paths.
 - **Parallel:** `parallel: [<leaf members>]` + optional `maxConcurrency`; the group's
   `next` state is the barrier. Members may not declare `next`/`transitions`.
   Use optional `parallelCount: "{{config.count}}"` when a public config count

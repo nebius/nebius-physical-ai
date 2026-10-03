@@ -63,6 +63,21 @@ PYPI_JSON = "https://pypi.org/pypi/lerobot/{version}/json"
 # (module, symbol, call-site provenance). symbol=None checks the module only.
 IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
+        "lerobot.envs.libero",
+        None,
+        ("npa/src/npa/workflows/policy_training/public_vla_eval.py",),
+    ),
+    (
+        "lerobot.scripts.lerobot_eval",
+        None,
+        ("npa/src/npa/workflows/policy_training/public_vla_eval.py",),
+    ),
+    (
+        "lerobot.scripts.lerobot_train",
+        None,
+        ("npa/src/npa/workflows/policy_training/public_vla_train.py",),
+    ),
+    (
         "lerobot.envs.configs",
         "PushtEnv",
         ("npa/src/npa/workflows/lerobot_transfer_eval.py",),
@@ -89,6 +104,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/demo/generate_observation.py",
             "npa/src/npa/workflows/behavior_challenge/comet_training_data.py",
             "npa/src/npa/workflows/lerobot_dataset.py",
+            "npa/src/npa/workflows/policy_training/public_vla_verify.py",
         ),
     ),
     (
@@ -167,6 +183,7 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
             "npa/src/npa/genesis/eval_student.py",
             "npa/src/npa/server/app.py",
             "npa/src/npa/workbench/robocasa/capabilities.py",
+            "npa/src/npa/workflows/policy_training/public_vla_verify.py",
             "research/lerobot-deploy/training/profile_train.py",
         ),
     ),
@@ -205,7 +222,10 @@ IMPORT_SURFACE: tuple[tuple[str, str | None, tuple[str, ...]], ...] = (
     (
         "lerobot.policies.smolvla.modeling_smolvla",
         "SmolVLAPolicy",
-        ("npa/src/npa/genesis/eval_student.py",),
+        (
+            "npa/src/npa/genesis/eval_student.py",
+            "npa/src/npa/workflows/policy_training/public_vla_verify.py",
+        ),
     ),
     (
         "lerobot.optim.factory",

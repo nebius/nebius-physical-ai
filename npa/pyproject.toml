@@ -41,6 +41,8 @@ dependencies = [
     # Official API client matched to the production Kubernetes 1.33 cluster.
     # Sim2Real uses typed Job/Pod conditions instead of parsing kubectl prose.
     "kubernetes==36.0.3",
+    # Kubernetes' OAuth transport must exclude the vulnerable 3.x releases.
+    "oauthlib>=4.0.0",
     "numpy>=1.24",
     "pyarrow>=23.0.1",
     "pillow>=12.3.0,<13.0",
@@ -75,6 +77,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+policy-demo = ["fiftyone==1.22.0", "graphql-core>=3.2.13,<3.3", "playwright>=1.63.0,<2"]
 mjlab = ["mjlab==1.6.0", "torch>=2.13.0", "uvicorn>=0.52.4"]
 encord = ["encord>=0.1.202,<0.2", "av>=14.0", "Pillow>=10.0"]
 studio = ["edge-tts==7.2.8"]

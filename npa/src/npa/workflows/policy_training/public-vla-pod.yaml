@@ -1,0 +1,42 @@
+# Pod resources for native LeRobot training; shared memory belongs to this pod.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pipeline
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containers:
+    - name: pipeline
+      env:
+        - name: NVIDIA_DRIVER_CAPABILITIES
+          value: compute,utility,graphics
+      resources:
+        requests:
+          cpu: "16"
+          memory: 96Gi
+        limits:
+          nvidia.com/gpu: "1"
+      volumeMounts:
+        - name: artifacts
+          mountPath: /work
+        - name: source
+          mountPath: /pipeline
+          readOnly: true
+        - name: shm
+          mountPath: /dev/shm
+  volumes:
+    - name: artifacts
+      persistentVolumeClaim:
+        claimName: pipeline
+    - name: source
+      configMap:
+        name: pipeline
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 16Gi

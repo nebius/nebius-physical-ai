@@ -205,6 +205,7 @@ ALL_GOLDEN_SPECS = sorted(
 
 DYNAMIC_SPECS = frozenset(
     {
+        "policy-training-slurm.yaml",
         "adversarial-scenario-hardening.yaml",
         "dataset-of-record-smoke.yaml",
         "dataset-ingest-curate.yaml",
