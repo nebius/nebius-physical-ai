@@ -232,6 +232,10 @@ def test_workbench_vlm_eval_compare_judges_writes_distinct_report(
             "openbmb/MiniCPM-V-4_5",
             "--rubric",
             "Require visible completion in both independent reviews.",
+            "--frame-selection",
+            "sequence",
+            "--max-frames",
+            "7",
             "--output",
             "json",
         ],
@@ -256,6 +260,10 @@ def test_workbench_vlm_eval_compare_judges_writes_distinct_report(
         assert retained[role]["result"]["rubric"] == retained["rubric"]
         assert retained[role]["result"]["provider_success"] is True
         assert retained[role]["result"]["provider_success_matches_score_gate"] is True
+        manifest = retained[role]["result"]["evidence"]["request"]["request_manifest"]
+        assert manifest["sampling"]["strategy"] == "sequence"
+        assert manifest["sampling"]["max_frames"] == 7
+        assert manifest["sampling"]["selected_count"] == 1
 
 
 def test_workbench_vlm_eval_compare_judges_rejects_same_model(
