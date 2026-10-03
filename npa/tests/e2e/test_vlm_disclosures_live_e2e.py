@@ -162,6 +162,7 @@ def _assert_disclosures(evidence, loop, benchmark, override, transports):
         assert payload["independent_human_label_calibration_established"] is False
         assert payload["provider_call_made"] is True
         assert len(payload["limitations"]) == 2
+        _assert_v2_sampling(payload["evidence"])
         provider = payload["evidence"]["provider"]
         assert (
             provider["raw_response_sha256"]
@@ -171,3 +172,31 @@ def _assert_disclosures(evidence, loop, benchmark, override, transports):
         case.item_id: case.predicted_label for case in benchmark.best_config.results
     }
     assert predictions == {"green": True, "red": False, "blank": False}
+    for case in benchmark.best_config.results:
+        _assert_v2_sampling(asdict(case.evidence))
+
+
+def _assert_v2_sampling(evidence):
+    assert evidence["schema_version"] == "npa_vlm_eval_evidence_v2"
+    request = evidence["request"]
+    manifest = request["request_manifest"]
+    assert manifest["sampling"] == {
+        "strategy": "keyframes",
+        "max_frames": 4,
+        "selected_count": 1,
+        "source_kind": "image-sequence",
+        "source_count": 1,
+        "selected_indices": [0],
+        "selected_timestamps_s": [None],
+        "coverage_complete": True,
+        "timestamps_complete": None,
+    }
+    assert request["frames"][0]["source_index"] == 0
+    assert request["frames"][0]["source_count"] == 1
+    assert request["frames"][0]["source_kind"] == "image-sequence"
+    assert (
+        request["request_manifest_sha256"]
+        == hashlib.sha256(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
