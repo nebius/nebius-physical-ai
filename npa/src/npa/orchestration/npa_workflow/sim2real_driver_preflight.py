@@ -210,21 +210,28 @@ def _placement_node(node):
     )
 
 
-def node_can_host_isaac(node, placements=None):
+def node_can_host_isaac(node, placements):
     """Check allocatable placement without claiming or reserving free capacity.
 
     Args:
         node: Authoritative Kubernetes node record.
-        placements: Effective Isaac stage placements; None uses canonical defaults.
+        placements: Nonempty effective Isaac stage placements from the resolved spec.
     Returns:
         Whether any Isaac task can be scheduled on this node.
     Raises:
-        ValueError: Node placement evidence is missing or malformed.
+        ValueError: Placement authority or node evidence is missing or malformed.
         RuntimeError: Placement constraints cannot be evaluated authoritatively.
     """
-    if placements is None:
-        placements = [{"accelerator": "RTXPRO6000:1", "pod_spec": _DEFAULT_POD}]
+    if not isinstance(placements, (list, tuple)) or not placements:
+        raise ValueError("effective Isaac stage placements are required")
     for placement in placements:
+        if (
+            not isinstance(placement, Mapping)
+            or not isinstance(placement.get("accelerator"), str)
+            or not placement["accelerator"]
+            or not isinstance(placement.get("pod_spec"), Mapping)
+        ):
+            raise ValueError("effective Isaac stage placement is malformed")
         if not _node_available(node, placement["pod_spec"]):
             continue
         record = _placement_node(node)

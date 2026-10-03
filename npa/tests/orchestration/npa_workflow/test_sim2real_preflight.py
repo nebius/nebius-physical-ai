@@ -472,10 +472,33 @@ _MANAGED_RTX_LABELS = {
 }
 
 
+def _isaac_placements():
+    return [
+        {
+            "accelerator": "RTXPRO6000:1",
+            "cpus": 16,
+            "memory": "128Gi",
+            "allowed_nodes": (),
+            "pod_spec": {
+                "nodeSelector": {"kubernetes.io/os": "linux"},
+                "tolerations": [
+                    {
+                        "key": "nvidia.com/gpu",
+                        "operator": "Exists",
+                        "effect": "NoSchedule",
+                    }
+                ],
+            },
+        }
+    ]
+
+
 def test_managed_driver_rtx_nodes_are_rejected_before_isaac_spends_gpu_time():
     # Managed drivers satisfy pure-compute CUDA, so Transfer/EnvGen pass and the
     # mismatch would otherwise only surface as a Warp illegal-memory-access in Stage 7.
-    assert _managed_driver_isaac_nodes(_rtx_nodes(**_MANAGED_RTX_LABELS)) == ["gpu-0"]
+    assert _managed_driver_isaac_nodes(
+        _rtx_nodes(**_MANAGED_RTX_LABELS), placements=_isaac_placements()
+    ) == ["gpu-0"]
 
 
 def test_operator_mounted_rtx_drivers_are_accepted():
@@ -521,7 +544,9 @@ def test_kubernetes_preflight_surfaces_managed_driver_isaac_nodes():
             stderr="",
         )
 
-    issues = kubernetes_prerequisites(_config(), runner=run)
+    issues = kubernetes_prerequisites(
+        _config(), runner=run, isaac_placements=_isaac_placements()
+    )
     rendered = "\n".join(item for item, _ in issues)
     remediation = "\n".join(fix for _, fix in issues)
     assert "gpu-0" in rendered
@@ -538,7 +563,9 @@ def test_kubernetes_preflight_blocks_unknown_managed_node_placement(missing):
         assert args == ["get", "nodes", "-o", "json"]
         return SimpleNamespace(returncode=0, stdout=json.dumps(payload))
 
-    issues = kubernetes_prerequisites({}, runner=run)
+    issues = kubernetes_prerequisites(
+        {}, runner=run, isaac_placements=_isaac_placements()
+    )
     assert any("placement could not be verified" in issue for issue, _ in issues)
 
 
@@ -549,7 +576,9 @@ def test_managed_driver_detection_uses_the_scheduler_gpu_label_aliases():
         if key not in {"nvidia.com/gpu.product", "nebius.com/gpu-name"}
     }
     labels["skypilot.co/accelerator"] = "rtxpro6000"
-    assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == ["gpu-0"]
+    assert _managed_driver_isaac_nodes(
+        _rtx_nodes(**labels), placements=_isaac_placements()
+    ) == ["gpu-0"]
     labels["skypilot.co/accelerator"] = "rtxpro6000-unreviewed-variant"
     assert _managed_driver_isaac_nodes(_rtx_nodes(**labels)) == []
 
