@@ -561,6 +561,8 @@ def test_workflow_limits_credentialed_code_to_reviewed_branches():
     assert uploads[0]["with"]["path"].splitlines() == [
         "${{ runner.temp }}/token-factory-live/receipt.json",
         "${{ runner.temp }}/token-factory-missing-key/receipt.json",
+        "${{ runner.temp }}/vlm-preference-audit/receipt.json",
+        "${{ runner.temp }}/vlm-preference-missing-key/receipt.json",
         "${{ runner.temp }}/vlm-paired-audit/receipt.json",
         "${{ runner.temp }}/vlm-paired-missing-key/receipt.json",
     ]
