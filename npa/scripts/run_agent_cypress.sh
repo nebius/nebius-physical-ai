@@ -127,6 +127,10 @@ if [[ ! -d "${BROWSER_DIR}/node_modules" ]]; then
 fi
 
 if [[ "${MODE}" == "mock" ]]; then
+  NATIVE_DIR="${ROOT}/npa/src/npa/tools/desktop/native"
+  if [[ ! -f "${NATIVE_DIR}/node_modules/immer/package.json" ]]; then
+    npm ci --prefix "${NATIVE_DIR}"
+  fi
   (cd "${BROWSER_DIR}" && npm run cy:mock)
   exit 0
 fi

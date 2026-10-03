@@ -20,7 +20,7 @@ import pytest
 
 SCRIPT = (
     Path(__file__).resolve().parents[2]
-    / "docker/workbench/base/cuda13-b300/scripts/check_torch_gpu_arch.py"
+    / "docker/workbench/base/cuda13-blackwell/scripts/check_torch_gpu_arch.py"
 )
 WRAPPER = Path(__file__).resolve().parents[2] / "scripts/validate_blackwell_image.sh"
 

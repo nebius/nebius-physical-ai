@@ -1,0 +1,348 @@
+{
+  "schema": "npa.public.workflow_full_qualification.v1",
+  "demo": "real-to-sim",
+  "source_sha": "de63c25f4009aa09b6ec68710170c462bedbd20c",
+  "qualified_at": "2026-09-29T15:49:47.603606+00:00",
+  "qualified_at_basis": "Completion of the combined scientific, native GPU/media, browser, visual and publication privacy reviews.",
+  "qualified": true,
+  "preset": "full",
+  "smoke": false,
+  "driver_exit": 0,
+  "native_source_bundle_sha256": "658024315893a1489a500e5a1dfa74b19e85ce884df99526c63007db1cd878c3",
+  "training": {
+    "updates": 500,
+    "control_transitions": 16000000,
+    "robots": 4000,
+    "final_native_iteration_index": 499,
+    "optimizer_states": 13,
+    "optimizer_steps_per_parameter": [
+      10000
+    ],
+    "actor_mean_network_changed": true,
+    "finite_optimizer_moments": true,
+    "actor_parameter_delta_l2_independent_float64": 6.710866128596239,
+    "critic_parameter_delta_l2_independent_float64": 23.334571810063274,
+    "native_learning_wall_seconds": 17306.149376232992,
+    "checkpoint_sha256": "46011887374f8aa2b2a94bfd986edf909d3feb471f0848272e68274ed9251487",
+    "authoritative_checkpoint_audit_torch_version": "2.11.0+cpu",
+    "cross_platform_review_scope": "A separate local Torch 2.14.0 check disclosed four scalar floating-point reduction differences; aggregate actor and critic norms matched exactly. The original Linux Torch 2.11.0+cpu receipt remains authoritative.",
+    "ppo_source_scope": "Retained same-version upstream wheel; the native runtime reports 5.0.1. This PPO source file was not newly read from the running pod."
+  },
+  "evaluation": {
+    "heldout_cases": 4000,
+    "successes": 3386,
+    "success_rate": 0.8465,
+    "required_success_rate": 0.8,
+    "episode_horizon_steps": 300,
+    "executed_native_control_steps": 20,
+    "all_episodes_terminal_by_last_snapshot": true,
+    "independently_recomputed_from_all_native_trajectories": true,
+    "absolute_quality_passed": true,
+    "mean_collision_steps": 0.1485,
+    "mean_physical_failure_steps": 0.01025,
+    "mean_final_goal_distance_m": 0.6231302008328684,
+    "early_completion_scope": "The fixed 300-step maximum remains unchanged. Frozen rollout stops when every case reaches its own terminal event; all 4,000 episodes terminated by step 20, so no 300-executed-step claim is made."
+  },
+  "shared_scene": {
+    "scene_instances": 1,
+    "native_physx_scenes": 1,
+    "robots": 4000,
+    "body_contact_sensors": 68000,
+    "collision_triangles": 921561,
+    "triangle_geometry_sha256": "3b6d0041f4cab011cd9b8b08b50450e7e10ac58899c853ba2f1dfe3108e4ee84",
+    "mutual_invisibility_scope": "Peer robots are excluded from the static range sensors used by the reference policy; full overlap controls preserve the focal measured observations within the unchanged .001 tolerance.",
+    "operator_camera_input_policy_qualified": false,
+    "rendered_camera_robot_invisibility_qualified": false
+  },
+  "physical_controls": {
+    "training": {
+      "separate_native_processes": 4,
+      "robots_in_each_control": 4000,
+      "control_actions": 30,
+      "tolerance": 0.001,
+      "all_native_processes_completed_without_physics_errors": true,
+      "maximum_focal_repeat_difference": 0.0,
+      "maximum_focal_peer_difference": 0.0,
+      "free_motion_m": 3.550214703743266,
+      "arm_maxima_all_4000_robots": {
+        "obstacle": {
+          "obstacle_contact": 2475.491455078125,
+          "peer_contact": 0.0,
+          "physical_failure": 1.0
+        },
+        "overlap": {
+          "obstacle_contact": 52.070125579833984,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "repeat": {
+          "obstacle_contact": 0.0,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "solo": {
+          "obstacle_contact": 0.0,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        }
+      },
+      "unchanged_physical_control_gates_passed": true,
+      "arm_specific_acceptance": "Solo must move without world/peer contact or physical failure across all robots. Repeat and overlap must preserve the focal measured state/observations within .001 and have no peer force above .001. Obstacle must register focal world contact above .001. Nonfocal overlap world contacts are measured and retained; this arm does not require zero world contact for every robot."
+    },
+    "evaluation": {
+      "separate_native_processes": 4,
+      "robots_in_each_control": 4000,
+      "control_actions": 30,
+      "tolerance": 0.001,
+      "all_native_processes_completed_without_physics_errors": true,
+      "maximum_focal_repeat_difference": 0.0,
+      "maximum_focal_peer_difference": 0.0,
+      "free_motion_m": 3.550214703743266,
+      "arm_maxima_all_4000_robots": {
+        "obstacle": {
+          "obstacle_contact": 2475.491455078125,
+          "peer_contact": 0.0,
+          "physical_failure": 1.0
+        },
+        "overlap": {
+          "obstacle_contact": 52.070125579833984,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "repeat": {
+          "obstacle_contact": 0.0,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        },
+        "solo": {
+          "obstacle_contact": 0.0,
+          "peer_contact": 0.0,
+          "physical_failure": 0.0
+        }
+      },
+      "unchanged_physical_control_gates_passed": true,
+      "arm_specific_acceptance": "Solo must move without world/peer contact or physical failure across all robots. Repeat and overlap must preserve the focal measured state/observations within .001 and have no peer force above .001. Obstacle must register focal world contact above .001. Nonfocal overlap world contacts are measured and retained; this arm does not require zero world contact for every robot."
+    }
+  },
+  "sample": {
+    "name": "TUM RGB-D fr3 long office household",
+    "license": "CC-BY-4.0",
+    "attribution_verified": true,
+    "capture_manifest_sha256": "90e822bc5021ecda749fdeb861d80b556200e9394e8b04385c2999e78a37104e",
+    "integration_frames": 1984,
+    "withheld_depth_frames": 501,
+    "native_physx_validation_rays": 501,
+    "depth_scope": "Depth sample identities/counts were independently checked. Native mean/p95 residuals were not independently raycast again."
+  },
+  "gpu": {
+    "evaluate": {
+      "driver_versions": [
+        "580.173.02"
+      ],
+      "first_observed_native_final_process": "2026-09-29T15:19:29.199236+00:00",
+      "last_observed_native_final_process": "2026-09-29T15:21:31.701720+00:00",
+      "models": [
+        "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+      ],
+      "native_final_process_pid_bound_to_owned_observer": true,
+      "native_image_reference": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+      "native_process_sha256": "4cba683bd0767f950122f843c5dae307e5862d13cac95376285ddf24c57892bb",
+      "peak_device_memory_used_mib": 28014.0,
+      "peak_device_utilization_percent": 85.0,
+      "pod_identity_and_run_id_bound_to_gpu_samples": true,
+      "samples": 4,
+      "samples_with_compute_processes": 4,
+      "sealed_process_receipt_sha256": "58de807f91d36270baafc2227faadd25c270599e248bcf481ad07a3e5a577566",
+      "total_memory_mib": [
+        97887.0
+      ]
+    },
+    "train": {
+      "driver_versions": [
+        "580.173.02"
+      ],
+      "first_observed_native_final_process": "2026-09-29T09:57:36.589259+00:00",
+      "last_observed_native_final_process": "2026-09-29T14:46:01.154277+00:00",
+      "models": [
+        "NVIDIA RTX PRO 6000 Blackwell Server Edition"
+      ],
+      "native_final_process_pid_bound_to_owned_observer": true,
+      "native_image_reference": "ghcr.io/nebius/nebius-physical-ai/npa-isaac-lab@sha256:e321e8631c7e318b5012dad210d9cd1001b7dc833cbff0369e420c5c12657ab6",
+      "native_process_sha256": "619cca29676cae954b127bf42286b9685c7ab7b5c35c9628ff1347bfe946431f",
+      "peak_device_memory_used_mib": 24809.0,
+      "peak_device_utilization_percent": 85.0,
+      "pod_identity_and_run_id_bound_to_gpu_samples": true,
+      "samples": 557,
+      "samples_with_compute_processes": 557,
+      "sealed_process_receipt_sha256": "96a58abd975c2227548ff05931eaf58dd3605efb03e491cad4c36215b918c030",
+      "total_memory_mib": [
+        97887.0
+      ]
+    }
+  },
+  "gpu_scope": "Sampled device activity in the same owned pod/container while sealed native main processes were observed active. No continuous GPU, host-to-container PID map, per-policy allocator or installed-PPO source claim.",
+  "continuous_gpu_coverage_claimed": false,
+  "payload_readback": {
+    "stages": 9,
+    "files": 5529,
+    "bytes": 2234165143,
+    "scope": "All materialized immutable publication payloads from nine bundles emitted by eight executable states were independently rehashed. This is not an inventory of every historical storage object."
+  },
+  "presentation": {
+    "canonical_report_sha256": "0b65689ecf20189e8cf62b950f96e27b4509ecf314fae64c0e9db1be9f4773bb",
+    "canonical_native_report_unmodified": true,
+    "actual_common_demo_view_identical_bytes": true,
+    "browser_widths": [
+      1440,
+      390
+    ],
+    "javascript_errors": 0,
+    "external_network_requests": 0,
+    "no_horizontal_overflow": true,
+    "play_pause_and_scrubbers_verified": true,
+    "scored_focal_steps": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "scored_focal_terminal_step": 7,
+    "post_terminal_observer_frames_excluded_from_html": true,
+    "full_native_video_frames": 21,
+    "full_native_video_duration_seconds": 4.2,
+    "video_and_all_native_pngs_decoded": true,
+    "first_native_frame_robot_visible": false,
+    "actual_thumbnail": {
+      "file": "preview-frames/000001.png",
+      "sha256": "6b57556a7884e79ab5737ce21a4479e9f9af53f3c2c253ff8103d19a777e7805",
+      "step": 1,
+      "simulation_seconds": 0.2,
+      "unmodified_native_png": true
+    },
+    "visual_review_sha256": "cc577166abab019b38b5b758c73979eaea7f51f5747048b035b102508d00ce20",
+    "root_visual_review_sha256": "7b1e9ccf1e38bff2390f52900dc5e0972107c02aa5e627e1535ed7b6d1fc948a"
+  },
+  "privacy": {
+    "text_and_image_metadata_review_passed": true,
+    "receipt_sha256": "0a010cd6ef4b735e497fcffc6e802fdab65daf864ecbeff5b62fd5060c9467a6",
+    "customer_data_used": false,
+    "fresh_report_compressed_image_pattern_hits": 0
+  },
+  "external_audit_corrections": {
+    "original_failures_preserved": true,
+    "original_watcher_success_claimed": false,
+    "stages": {
+      "training": {
+        "original_policy_auditor_exit": 1,
+        "original_invocation_sha256": "94298e783d1448edb663d6ba500cf62636f122e441ce7adc209ed588fc751a7e",
+        "original_policy_log_sha256": "ce4f664af2b8bce0bb3d8c06b4d5c33eb5809295b2e1d8fe568a9b094552f033",
+        "corrected_unchanged_auditor_exit": 0,
+        "corrected_result_sha256": "ecf491e10f0bfab1191c056757aad9d724eb938e40f7366f4a29f4c79758b650",
+        "correction_receipt_sha256": "9b13a23efdaf127cd9e8744523ece507ef846a4da4f68f4a3e3af2d2ecdce37b"
+      },
+      "evaluation": {
+        "original_policy_auditor_exit": 1,
+        "original_invocation_sha256": "9013ff9b970dbf0815ea43b64eb26f9f5843f5dac405ce4883b9d6ea06fe88d4",
+        "original_policy_log_sha256": "ec5f26e3c3acefe933d7fdaac51d137a8cd89daca48bf2ea9249a2ce28491661",
+        "corrected_unchanged_auditor_exit": 0,
+        "corrected_result_sha256": "b78562289304b4c7cb6f2f2f32b228e635b97b56557e2b6c422e4f5e2c3a1da5",
+        "correction_receipt_sha256": "4fa5fba6de29d6b883bf0c90b39ec5168a9c9b982e71816714f9fdba76143211"
+      }
+    },
+    "scope": "Only the explicit frozen payload PYTHONPATH and import preflight changed for the external CPU auditor invocation. The recorded interpreter and substantive auditor remained unchanged. Original failed invocations/logs and watcher failure remain preserved. No native source, cohort, workload budget or quality gate changed."
+  },
+  "after_load_asset_observations": [
+    {
+      "assets": {
+        "recurrent_actuator": {
+          "bytes": 16648,
+          "sha256": "21e596737788d7328f28513643e88775a62ef60bf31bdbd0b8fc796928bdb135"
+        },
+        "robot_root_usd": {
+          "bytes": 33947,
+          "sha256": "d2fc47e8a84b6e91adbfd8e5a4782dea14ab5561754597e4679650180a99cb93"
+        }
+      },
+      "named_cache_files": 1,
+      "native_setup_witness": "2026-09-29T09:57:36.589259+00:00",
+      "observation_sha256": "9d1dc53685de11d2c6a153c123ab5d4c0dbe8173bceb4afe8375544eb5347549",
+      "observed_at": "2026-09-29T09:57:37.358876+00:00",
+      "snapshot_sha256": "cf5b674b9f095ec435b1a294e2e5dca45180a92fd4719d1f5fae74390ef8492b",
+      "stage": "train"
+    },
+    {
+      "assets": {
+        "recurrent_actuator": {
+          "bytes": 16648,
+          "sha256": "21e596737788d7328f28513643e88775a62ef60bf31bdbd0b8fc796928bdb135"
+        },
+        "robot_root_usd": {
+          "bytes": 33947,
+          "sha256": "d2fc47e8a84b6e91adbfd8e5a4782dea14ab5561754597e4679650180a99cb93"
+        }
+      },
+      "named_cache_files": 1,
+      "native_setup_witness": "2026-09-29T15:19:29.199236+00:00",
+      "observation_sha256": "215fd5dbf86f658e96e1feaabd743e2395f108a6841bf2b27009816fcd29cd63",
+      "observed_at": "2026-09-29T15:19:29.998478+00:00",
+      "snapshot_sha256": "245265aa14fee8ce602c74a022d0993762dfe99322423bbf4a7da59b8bec9085",
+      "stage": "evaluate"
+    }
+  ],
+  "after_load_asset_scope": "Observed public remote bytes and one matching named cache file after setup in each stage. No complete loaded asset closure or pre-load identity proof; source records retain both limitations as false flags.",
+  "limitations": [
+    "Frame 0 has no visible robot; its original bytes are retained. The robot appears at step 1 (0.2 s).",
+    "This proves held-out navigation goals within the reconstructed public office, not unseen-building generalization or transfer to a physical robot.",
+    "Reference policy uses static ranges; operator camera-input policies and rendered robot invisibility are separate qualifications.",
+    "Metric scan collision geometry is independent of neural appearance reconstruction.",
+    "GPU activity is sampled device evidence, not continuous coverage, host/container PID mapping or per-policy allocation.",
+    "Public robot and actuator bytes were observed after setup; no complete loaded asset closure or pre-load identity proof is claimed."
+  ],
+  "historical_qualification": {
+    "source_sha": "39a662651f6b46db0ce57dbff5fb9828c9d22643",
+    "receipt": "history/39a662651/real-to-sim.json",
+    "receipt_sha256": "e1f61bfa4a68f33a5488f272fcf808446c42f017566308daaa35af1e66e466b9",
+    "visual_review": "history/39a662651/real-to-sim-visual-review.json",
+    "visual_review_sha256": "b9a475bd9e09b135878ca84f98dccdd59bf8ab7ebbd17c4de002cb63391ba74a",
+    "both_historical_files_byte_identical": true
+  },
+  "evidence_receipts": {
+    "assembled-audit-invocations.safe.json": "c3d25b0d5fe12df0ad21f5a5c7d962cad738d1c37396534c38d4a4b39960aa7f",
+    "browser/browser.json": "8215c39fffbe65d55f12a0361a304f40880f2409eafb99d5d7c71f08b146f30a",
+    "browser-visual-review.safe.json": "7b1e9ccf1e38bff2390f52900dc5e0972107c02aa5e627e1535ed7b6d1fc948a",
+    "cases-audit-invocations.safe.json": "291733f246fdf5e1d6c4095a578f17d720751b4fac8a32fd967ad2c123af5a46",
+    "complete-readback.safe.json": "0d34b5ec18274e8de99bfd620eb34328e8d5552f4f9783457cd6e334026ea723",
+    "demo-view/receipt.safe.json": "9c9beddb75f01ec9dc7dba8919ff52c2df1fd6993ef74fcb1dabc48314ba7cc1",
+    "evaluation-audit-invocations.safe.json": "9013ff9b970dbf0815ea43b64eb26f9f5843f5dac405ce4883b9d6ea06fe88d4",
+    "evaluation-controls-independent-audit.json": "58b2a0c4b5c94546825a69b5c6a9ffa49b3d8fd4334a569de67ec9627db10262",
+    "evaluation-independent-audit-v3.json": "b78562289304b4c7cb6f2f2f32b228e635b97b56557e2b6c422e4f5e2c3a1da5",
+    "evaluation-policy-import-correction-v1/receipt.safe.json": "4fa5fba6de29d6b883bf0c90b39ec5168a9c9b982e71816714f9fdba76143211",
+    "evaluation-structure-independent-audit.json": "4bad6415e72fada8dd9bf181f8d5b8d62b223eb161c42100101e558697d2e636",
+    "native-gpu-binding.safe.json": "00f7c528a95bfb7c88f1374e65930543808b485cdf1f0c6dd3d2a6e8665bc576",
+    "physics-audit-invocations.safe.json": "e2d1183c03368e70b6404a8334eb5dd1b1ef260e229b7b8a0659e14d283c3960",
+    "prepared-audit-invocations.safe.json": "f35db0451d3a88648d1db19762ca087718f454d0a9a0edfb1a10b0422ce1f82e",
+    "reconstructed-audit-invocations.safe.json": "9192af390a3e09e077448e1ae5d37290575e1ac10c1051063b78fd664effe025",
+    "report-independent-audit.safe.json": "d5266c80d8a6bb4ec980afbe08047fdefa501be25d8503a1e218cbd99dcea7fb",
+    "reports-audit-invocations.safe.json": "a3177e6b0f0276aedeb89925896443b02540690164e3f80123c60fe4785d1a11",
+    "sample-audit-invocations.safe.json": "f55a31a7c64ba8fe7f077a5c9603baa54254a5e593b75a2b49d9fd0764b5ee64",
+    "scan-checkpoint-integrity.safe.json": "e04b83445e6005e7c7a38a49f54570df5a041ba5dc5ea8f18118b4e0c5dabaf4",
+    "scan-complete-readback.private.py.invocation.safe.json": "9864065eb5236d3903e1bfe7bcc16a64a8234f4655dad86d42945e11b1b42664",
+    "scan-demo-view.private.py.invocation.safe.json": "0e4fcfafe93d44ac9bfbb525a6833187356f75248ee4afc572a11bab3ccf7afa",
+    "scene-cases-independent-audit.json": "26b72853a9d8f4742ec0c36b9b60ee2c94f51e250bd21fca50c1bfda9a9bc80f",
+    "training-audit-invocations.safe.json": "94298e783d1448edb663d6ba500cf62636f122e441ce7adc209ed588fc751a7e",
+    "training-controls-independent-audit.json": "ad1bfd064c780d5644e8eb3b98cc01c233863e8f436c7dc9fe58e19ed70aa234",
+    "training-independent-audit-v3.json": "ecf491e10f0bfab1191c056757aad9d724eb938e40f7366f4a29f4c79758b650",
+    "training-policy-import-correction-v1/receipt.safe.json": "9b13a23efdaf127cd9e8744523ece507ef846a4da4f68f4a3e3af2d2ecdce37b",
+    "training-structure-independent-audit.json": "8f8c3e0f545e49751a52ecaeef41ca18a665e5979e765525be9b4d0c1b1dba29",
+    "video-integrity.safe.json": "69071f5a9066757300530656cde33e55ed9e1cf3d7f11c9cf852e6804a747b17",
+    "scan-heldout-independent-acceptance.safe.json": "7684707ca2900c781513ecb120d4c682de74a1a9cb423c32bbe0b85ebbaad29f",
+    "scan-training-independent-acceptance.safe.json": "78ac9e47405bd9f4beb1e416b0773fd7fa3e2d021cc381cc324cd30ac6418449",
+    "scan-heldout-independent-privacy.safe.json": "5dd92d7d61ff8411d46fb5e1872c72e25eefcdc7a9ce67252b58a282f8085a6c",
+    "publication-privacy-prereview.safe.json": "0a010cd6ef4b735e497fcffc6e802fdab65daf864ecbeff5b62fd5060c9467a6",
+    "gallery-full-scan-e-22ac389cd.safe.json": "0e795f12b56e0e1101cc4ee76f6c5c914384ed82a440e3be82cf4d696d6c99ef"
+  }
+}

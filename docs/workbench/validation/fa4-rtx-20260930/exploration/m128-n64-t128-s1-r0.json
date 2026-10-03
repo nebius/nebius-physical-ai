@@ -1,0 +1,523 @@
+{
+  "configuration": {
+    "tile": [
+      128,
+      64
+    ],
+    "threads": 128,
+    "stages": 1,
+    "q_regs": false
+  },
+  "constructed": [
+    {
+      "is_causal": false,
+      "pack_gqa": false,
+      "tile_m": 128,
+      "tile_n": 64,
+      "num_stages": 1,
+      "num_threads": 128,
+      "Q_in_regs": false
+    },
+    {
+      "is_causal": true,
+      "pack_gqa": false,
+      "tile_m": 128,
+      "tile_n": 64,
+      "num_stages": 1,
+      "num_threads": 128,
+      "Q_in_regs": false
+    },
+    {
+      "is_causal": true,
+      "pack_gqa": false,
+      "tile_m": 128,
+      "tile_n": 64,
+      "num_stages": 1,
+      "num_threads": 128,
+      "Q_in_regs": false
+    }
+  ],
+  "results": [
+    {
+      "case": {
+        "name": "sdxl-q4096-k77",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 77,
+        "heads": 10,
+        "kv_heads": 10,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "correctness": {
+        "output": {
+          "relative_l2": 0.00026071982574649155,
+          "max_abs": 0.000516057014465332
+        }
+      },
+      "eager_samples": [
+        {
+          "cuda_ms": 0.0330841588973999,
+          "wall_ms": 0.036400120006874204
+        },
+        {
+          "cuda_ms": 0.03142015933990479,
+          "wall_ms": 0.03215516000636853
+        },
+        {
+          "cuda_ms": 0.030906879901885988,
+          "wall_ms": 0.0315381200016418
+        },
+        {
+          "cuda_ms": 0.029375998973846434,
+          "wall_ms": 0.029974440003570635
+        },
+        {
+          "cuda_ms": 0.030721280574798584,
+          "wall_ms": 0.031320839989348315
+        }
+      ],
+      "graph_ms": [
+        0.01306048035621643,
+        0.013154879808425904,
+        0.013066879510879516,
+        0.013037120103836059,
+        0.013109760284423828
+      ],
+      "kernels": [
+        "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrf16gmemalign16oi64div81i64div8i64div8_tensorptrf16gmemalign16oi64div81i64div8i64div8_tens_0"
+      ],
+      "median_wall_ms": 0.0315381200016418,
+      "median_graph_ms": 0.013066879510879516,
+      "status": "pass",
+      "elapsed_seconds": 1.5149129899996296
+    },
+    {
+      "case": {
+        "name": "sdxl-q4096-k4096",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 4096,
+        "heads": 10,
+        "kv_heads": 10,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "correctness": {
+        "output": {
+          "relative_l2": 0.00028172883321531117,
+          "max_abs": 0.0001010596752166748
+        }
+      },
+      "eager_samples": [
+        {
+          "cuda_ms": 0.2907200050354004,
+          "wall_ms": 0.2922999600014009
+        },
+        {
+          "cuda_ms": 0.2904473686218262,
+          "wall_ms": 0.2913490799983265
+        },
+        {
+          "cuda_ms": 0.2907929611206055,
+          "wall_ms": 0.29165739999371
+        },
+        {
+          "cuda_ms": 0.29087999343872073,
+          "wall_ms": 0.29168639999625157
+        },
+        {
+          "cuda_ms": 0.2927859115600586,
+          "wall_ms": 0.293686400000297
+        }
+      ],
+      "graph_ms": [
+        0.2729529571533203,
+        0.2685145568847656,
+        0.26851232528686525,
+        0.2685270309448242,
+        0.2685273551940918
+      ],
+      "kernels": [
+        "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrf16gmemalign16oi64div81i64div8i64div8_tensorptrf16gmemalign16oi64div81i64div8i64div8_tens_0"
+      ],
+      "median_wall_ms": 0.29168639999625157,
+      "median_graph_ms": 0.2685270309448242,
+      "status": "pass",
+      "elapsed_seconds": 0.21298252399992634
+    },
+    {
+      "case": {
+        "name": "sdxl-q6144-k6144",
+        "batch": 2,
+        "queries": 6144,
+        "keys": 6144,
+        "heads": 10,
+        "kv_heads": 10,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0002832818718161434,
+          "max_abs": 6.416440010070801e-05
+        }
+      },
+      "eager_samples": [
+        {
+          "cuda_ms": 0.6032115173339844,
+          "wall_ms": 0.6047915999988618
+        },
+        {
+          "cuda_ms": 0.5947673416137695,
+          "wall_ms": 0.5956646000049659
+        },
+        {
+          "cuda_ms": 0.5955033493041992,
+          "wall_ms": 0.5963422400054696
+        },
+        {
+          "cuda_ms": 0.5955123138427735,
+          "wall_ms": 0.5964354000025196
+        },
+        {
+          "cuda_ms": 0.5954431915283203,
+          "wall_ms": 0.5963619199974346
+        }
+      ],
+      "graph_ms": [
+        0.5924016189575195,
+        0.5923785781860351,
+        0.5925251388549805,
+        0.5926323318481446,
+        0.5927420806884766
+      ],
+      "kernels": [
+        "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrf16gmemalign16oi64div81i64div8i64div8_tensorptrf16gmemalign16oi64div81i64div8i64div8_tens_0"
+      ],
+      "median_wall_ms": 0.5963619199974346,
+      "median_graph_ms": 0.5925251388549805,
+      "status": "pass",
+      "elapsed_seconds": 0.4459981049999442
+    },
+    {
+      "case": {
+        "name": "transformer-s1024-kv4",
+        "batch": 2,
+        "queries": 1024,
+        "keys": 1024,
+        "heads": 16,
+        "kv_heads": 4,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "correctness": {
+        "output": {
+          "relative_l2": 0.001992938807234168,
+          "max_abs": 0.009195089340209961
+        }
+      },
+      "eager_samples": [
+        {
+          "cuda_ms": 0.06608255863189698,
+          "wall_ms": 0.06829695999840624
+        },
+        {
+          "cuda_ms": 0.06543615818023682,
+          "wall_ms": 0.06630871999732335
+        },
+        {
+          "cuda_ms": 0.06513152122497559,
+          "wall_ms": 0.0659812400044757
+        },
+        {
+          "cuda_ms": 0.06534016132354736,
+          "wall_ms": 0.06613728000957053
+        },
+        {
+          "cuda_ms": 0.06500991821289062,
+          "wall_ms": 0.06582944000911084
+        }
+      ],
+      "graph_ms": [
+        0.06233695983886719,
+        0.06222400188446045,
+        0.062477121353149416,
+        0.06246912002563477,
+        0.06249631881713867
+      ],
+      "kernels": [
+        "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrbf16gmemalign16oi64div81i64div8i64div8_tensorptrbf16gmemalign16oi64div81i64div8i64div8_te_0"
+      ],
+      "median_wall_ms": 0.06613728000957053,
+      "median_graph_ms": 0.06246912002563477,
+      "status": "pass",
+      "elapsed_seconds": 2.4249202559999503
+    },
+    {
+      "case": {
+        "name": "transformer-s4096-kv4",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 4096,
+        "heads": 16,
+        "kv_heads": 4,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0020557616371661425,
+          "max_abs": 0.008397817611694336
+        }
+      },
+      "eager_samples": [
+        {
+          "cuda_ms": 0.5717273712158203,
+          "wall_ms": 0.5733603199951176
+        },
+        {
+          "cuda_ms": 0.5711167907714844,
+          "wall_ms": 0.5719935999877634
+        },
+        {
+          "cuda_ms": 0.5713715362548828,
+          "wall_ms": 0.5722056400009023
+        },
+        {
+          "cuda_ms": 0.5720870590209961,
+          "wall_ms": 0.5729834399971878
+        },
+        {
+          "cuda_ms": 0.568271369934082,
+          "wall_ms": 0.5691576800018083
+        }
+      ],
+      "graph_ms": [
+        0.5273756790161133,
+        0.5273664093017578,
+        0.5273446273803711,
+        0.5273523330688477,
+        0.5273756790161133
+      ],
+      "kernels": [
+        "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrbf16gmemalign16oi64div81i64div8i64div8_tensorptrbf16gmemalign16oi64div81i64div8i64div8_te_0"
+      ],
+      "median_wall_ms": 0.5722056400009023,
+      "median_graph_ms": 0.5273664093017578,
+      "status": "pass",
+      "elapsed_seconds": 0.4065074480004114
+    },
+    {
+      "case": {
+        "name": "transformer-s4096-kv16",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 4096,
+        "heads": 16,
+        "kv_heads": 16,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "correctness": {
+        "output": {
+          "relative_l2": 0.002048672176897526,
+          "max_abs": 0.008957147598266602
+        }
+      },
+      "eager_samples": [
+        {
+          "cuda_ms": 0.5731801605224609,
+          "wall_ms": 0.5754793600135599
+        },
+        {
+          "cuda_ms": 0.5736217498779297,
+          "wall_ms": 0.5746858800011978
+        },
+        {
+          "cuda_ms": 0.5731187057495117,
+          "wall_ms": 0.5739930399977311
+        },
+        {
+          "cuda_ms": 0.5729177474975586,
+          "wall_ms": 0.5738303999896743
+        },
+        {
+          "cuda_ms": 0.5722048187255859,
+          "wall_ms": 0.5730115599908459
+        }
+      ],
+      "graph_ms": [
+        0.5291551971435546,
+        0.5287849426269531,
+        0.528806381225586,
+        0.5288560104370117,
+        0.5288444900512695
+      ],
+      "kernels": [
+        "kernel_cutlass_kernel_flash_attncuteflash_fwd_sm120FlashAttentionForwardSm120_object_at__tensorptrbf16gmemalign16oi64div81i64div8i64div8_tensorptrbf16gmemalign16oi64div81i64div8i64div8_te_0"
+      ],
+      "median_wall_ms": 0.5739930399977311,
+      "median_graph_ms": 0.5288444900512695,
+      "status": "pass",
+      "elapsed_seconds": 2.7206383739999183
+    }
+  ],
+  "source_sha256": "e618e0424c9f17ea5997b432e8ebb849ca0208ef2ade821f7f66a1aaea62a480",
+  "environment": {
+    "image_id": "sha256:6a94f7d90751f1679687d0f10d7eed122ab2a9998e5892c6b5ff63b1ab10dace",
+    "driver": "580.173.02",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "capability": [
+      12,
+      0
+    ],
+    "cuda": "13.0",
+    "flash_attention_commit": "eed1971f5132630dc296fe37601e834d4b57a248",
+    "benchmark_sources_sha256": {
+      "attention_benchmark_backend.py": "ddcabfb0eb0cbd0aab433fc92af66013e3d73fe39f6d5a7081c6fa482f5382d4",
+      "attention_kernel_benchmark.py": "4bfc3438b5fb4b1ff6721d5ddc83af05bb8011e82e8f5c14bd69ced4a9950dc1",
+      "attention_sdxl_benchmark.py": "7d602308c27f7fe0889086a031c875554c53653af0e71491cb789ce8b39563ff",
+      "fa4_sdxl_attention.py": "77de0e7c35e5a20f191dfa04feaa5df34b480dfcd77204be00815d8ab3c741d5",
+      "fa4_sdxl_validation.py": "a3053ff2021d23287d665e3b5f0c8f29871ef2e595318f6d17c936096c739f2c",
+      "fa4_sdxl_model.json": "9b79fe42d2b5693798a19aae6a79febe7e8c5783310d0ee8968c70e31c5ecb38"
+    },
+    "packages": {
+      "absl-py": "2.5.0",
+      "accelerate": "1.15.0",
+      "aiohappyeyeballs": "2.7.1",
+      "aiohttp": "3.14.3",
+      "aiosignal": "1.4.0",
+      "annotated-doc": "0.0.5",
+      "annotated-types": "0.8.0",
+      "anyio": "4.15.1",
+      "apache-tvm-ffi": "0.1.14.post1",
+      "attrs": "26.1.0",
+      "av": "18.1.0",
+      "boto3": "1.43.104",
+      "botocore": "1.43.104",
+      "certifi": "2026.7.22",
+      "charset-normalizer": "3.5.1",
+      "click": "8.5.0",
+      "cuda-bindings": "13.4.3",
+      "cuda-core": "1.2.1",
+      "cuda-pathfinder": "1.6.0",
+      "cuda-python": "13.4.1",
+      "cuda-toolkit": "13.0.3.0",
+      "datasets": "5.0.1",
+      "dill": "0.4.1",
+      "einops": "0.8.2",
+      "filelock": "3.32.3",
+      "flash-attn-4": "4.0.0b33.dev10+geed1971",
+      "frozenlist": "1.8.0",
+      "fsspec": "2026.6.0",
+      "googleapis-common-protos": "1.75.4",
+      "grpcio": "1.84.0",
+      "h11": "0.16.0",
+      "hf-xet": "1.6.0",
+      "httpcore": "1.0.9",
+      "httpx": "0.28.1",
+      "huggingface-hub": "1.33.0",
+      "idna": "3.20",
+      "jinja2": "3.1.6",
+      "jmespath": "1.1.0",
+      "markdown": "3.11",
+      "markdown-it-py": "4.2.0",
+      "markupsafe": "3.0.3",
+      "mdurl": "0.1.2",
+      "mpmath": "1.3.0",
+      "multidict": "6.9.1",
+      "multiprocess": "0.70.19",
+      "networkx": "3.6.1",
+      "numpy": "2.4.6",
+      "nvidia-cublas": "13.1.1.3",
+      "nvidia-cuda-cupti": "13.0.85",
+      "nvidia-cuda-nvdisasm": "13.4.92",
+      "nvidia-cuda-nvrtc": "13.0.88",
+      "nvidia-cuda-runtime": "13.0.96",
+      "nvidia-cudnn-cu13": "9.20.0.48",
+      "nvidia-cufft": "12.0.0.61",
+      "nvidia-cufile": "1.15.1.6",
+      "nvidia-curand": "10.4.0.35",
+      "nvidia-cusolver": "12.0.4.66",
+      "nvidia-cusparse": "12.6.3.3",
+      "nvidia-cusparselt-cu13": "0.8.1",
+      "nvidia-cutlass-dsl": "4.6.2",
+      "nvidia-cutlass-dsl-libs-base": "4.6.2",
+      "nvidia-cutlass-dsl-libs-core": "4.6.2",
+      "nvidia-cutlass-dsl-libs-cu12": "4.6.2",
+      "nvidia-cutlass-dsl-libs-cu13": "4.6.2",
+      "nvidia-nccl-cu13": "2.29.7",
+      "nvidia-nvjitlink": "13.3.33",
+      "nvidia-nvshmem-cu13": "3.4.5",
+      "nvidia-nvtx": "13.0.85",
+      "opencv-python-headless": "5.0.0.93",
+      "opentelemetry-api": "1.45.0",
+      "opentelemetry-exporter-http-transport": "0.66b0",
+      "opentelemetry-exporter-otlp-common": "0.66b0",
+      "opentelemetry-exporter-otlp-proto-common": "1.45.0",
+      "opentelemetry-exporter-otlp-proto-http": "1.45.0",
+      "opentelemetry-proto": "1.45.0",
+      "opentelemetry-sdk": "1.45.0",
+      "opentelemetry-semantic-conventions": "0.66b0",
+      "packaging": "26.3",
+      "pandas": "3.0.6",
+      "pillow": "12.3.0",
+      "pip": "26.2.1",
+      "platformdirs": "4.12.1",
+      "propcache": "0.5.4",
+      "protobuf": "6.33.6",
+      "psutil": "7.2.2",
+      "pyarrow": "25.0.1",
+      "pydantic": "2.13.5",
+      "pydantic-core": "2.46.5",
+      "pygments": "2.21.0",
+      "python-dateutil": "2.9.0.post0",
+      "pyyaml": "6.0.3",
+      "quack-kernels": "0.6.4",
+      "regex": "2026.9.29",
+      "requests": "2.34.2",
+      "rich": "15.0.0",
+      "s3transfer": "0.19.2",
+      "safetensors": "0.8.0",
+      "scipy": "1.17.1",
+      "setuptools": "84.0.0",
+      "shellingham": "1.5.4",
+      "six": "1.17.0",
+      "sympy": "1.14.0",
+      "tensorboard": "2.21.0",
+      "tensorboard-data-server": "0.7.2",
+      "tokenizers": "0.23.2",
+      "torch": "2.13.0+cu130",
+      "torch-c-dlpack-ext": "0.1.5",
+      "torchaudio": "2.11.0+cu130",
+      "torchvision": "0.28.0+cu130",
+      "tqdm": "4.70.1",
+      "transformers": "5.17.0",
+      "triton": "3.7.1",
+      "typer": "0.27.2",
+      "typing-extensions": "4.16.0",
+      "typing-inspection": "0.4.4",
+      "urllib3": "2.8.0",
+      "wandb": "0.30.0",
+      "werkzeug": "3.1.9",
+      "wheel": "0.48.0",
+      "xxhash": "4.0.1",
+      "yarl": "1.25.1"
+    }
+  },
+  "upstream_interface_sha256": "796b805a3ec831bfc91ed89a3d42cfdad3ec8706074386807a77c97ab58eecfa",
+  "cache_isolation": "private function globals and private compile dictionary for this configuration"
+}

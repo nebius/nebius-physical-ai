@@ -1,0 +1,140 @@
+{
+  "schema": "npa.cosmos3.wam-repeated-scaling.v1",
+  "status": "scaling_measured",
+  "comparison_contract": {
+    "sources": {
+      "framework": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+      "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+      "qwen": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+      "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+      "libero": "8f1084e3132a39270c3a13ebe37270a43ece2a01"
+    },
+    "steps": 200,
+    "samples_per_rank": 64,
+    "global_batch": 2048,
+    "seed": 42,
+    "profile": false
+  },
+  "hardware": {
+    "gpu_names": [
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200",
+      "NVIDIA B200"
+    ],
+    "torch": "2.10.0+cu130",
+    "cuda": "13.0"
+  },
+  "groups": {
+    "8": {
+      "repetitions": [
+        {
+          "measurement_sha256": "c4d4fb91a95fb8786218aa57f14c45ff9b98bc2245f414d014eb21f721f7af99",
+          "iteration_series_sha256": "f50991d73851f6502d27d891c66e0d8a8833c425a146305acd036b7a35f723db",
+          "measured_steps": 149,
+          "step_mean_seconds": 13.323557046979866,
+          "step_p50_seconds": 13.33,
+          "step_p95_seconds": 13.44,
+          "measured_tokens": 136131011,
+          "tokens_per_second": 68572.59987608364
+        },
+        {
+          "measurement_sha256": "e8c647015d1b13603cadd60db8c3cc1d717cf5ad01f452728e5fbf44f6056996",
+          "iteration_series_sha256": "4eb2c878123a01cc03cf10c749bca95a085054e59026142ce7f23890cd5f295b",
+          "measured_steps": 149,
+          "step_mean_seconds": 13.298456375838926,
+          "step_p50_seconds": 13.3,
+          "step_p95_seconds": 13.41,
+          "measured_tokens": 136131116,
+          "tokens_per_second": 68702.08279711528
+        },
+        {
+          "measurement_sha256": "f2602ec5a77cae6510d0dd397674efcc5517207a5da37b9f238c9e9fa1c90674",
+          "iteration_series_sha256": "0913b2242836d34d1f0c5e2e187885bde4f27cef7913d0896282361d55b66cf2",
+          "measured_steps": 149,
+          "step_mean_seconds": 13.301946308724832,
+          "step_p50_seconds": 13.3,
+          "step_p95_seconds": 13.436,
+          "measured_tokens": 136130595,
+          "tokens_per_second": 68683.79507464719
+        }
+      ],
+      "replicate_step_means_seconds": {
+        "mean": 13.307986577181207,
+        "sample_standard_deviation": 0.01359685828418573,
+        "minimum": 13.298456375838926,
+        "maximum": 13.323557046979866
+      },
+      "replicate_token_throughputs": {
+        "mean": 68652.8259159487,
+        "sample_standard_deviation": 70.0769099104016,
+        "minimum": 68572.59987608364,
+        "maximum": 68702.08279711528
+      },
+      "measured_steps": 447,
+      "measured_tokens": 408392722,
+      "pooled_tokens_per_second": 68652.77818403105
+    },
+    "16": {
+      "repetitions": [
+        {
+          "measurement_sha256": "6bd27c1269dbd39757108e54c84831d64c8de764204a3f22e43c55d2c2f96896",
+          "iteration_series_sha256": "37d0dabd4032d9aca4c19a0837987724bf60f6f193554745a532043aee85b4aa",
+          "measured_steps": 149,
+          "step_mean_seconds": 6.874026845637584,
+          "step_p50_seconds": 6.87,
+          "step_p95_seconds": 6.965999999999999,
+          "measured_tokens": 136146446,
+          "tokens_per_second": 132925.6573230622
+        },
+        {
+          "measurement_sha256": "400f0b6f67d955c3466ad3871f241a7c2e416163890b690e06e760131c086200",
+          "iteration_series_sha256": "16b1a319714e38beed9a1507927f4a30fe7d596fc8e583c2dbf3b6d2affd8243",
+          "measured_steps": 149,
+          "step_mean_seconds": 6.894228187919463,
+          "step_p50_seconds": 6.89,
+          "step_p95_seconds": 6.98,
+          "measured_tokens": 136145218,
+          "tokens_per_second": 132534.96553872514
+        },
+        {
+          "measurement_sha256": "ae6e4854b6e8f144d409e2fe61d53410a63e84b0b8231ea5de13412d3c8cc4ed",
+          "iteration_series_sha256": "4ab4a598619576073c430c19ed15d3b74588f0fa376b1dc3c742ad0a1d191b0d",
+          "measured_steps": 149,
+          "step_mean_seconds": 6.881677852348993,
+          "step_p50_seconds": 6.88,
+          "step_p95_seconds": 6.96,
+          "measured_tokens": 136145245,
+          "tokens_per_second": 132776.7001180062
+        }
+      ],
+      "replicate_step_means_seconds": {
+        "mean": 6.88331096196868,
+        "sample_standard_deviation": 0.01019920794816185,
+        "minimum": 6.874026845637584,
+        "maximum": 6.894228187919463
+      },
+      "replicate_token_throughputs": {
+        "mean": 132745.77432659784,
+        "sample_standard_deviation": 197.17332734878588,
+        "minimum": 132534.96553872514,
+        "maximum": 132925.6573230622
+      },
+      "measured_steps": 447,
+      "measured_tokens": 408436909,
+      "pooled_tokens_per_second": 132745.579555648
+    }
+  },
+  "comparison": {
+    "speedup_vs_8_gpus": 1.9333699509886768,
+    "scaling_efficiency": 0.9666849754943384,
+    "token_throughput_speedup": 1.9335791364452783,
+    "token_work_ratio": 1.000108197324829
+  },
+  "interpretation": "Variability is the sample standard deviation of three run means, not a confidence interval or a distribution over independent optimizer steps. Repetitions use the same training seed; they do not estimate policy-quality variation across seeds. Final checkpoint writing is outside these timed iterations. Full-schedule duration, allocation time and quality are separate."
+}

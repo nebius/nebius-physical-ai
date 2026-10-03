@@ -161,7 +161,7 @@ def test_blackwell_envgen_chain_uses_system_ffmpeg_without_bundled_payload() -> 
         / "docker"
         / "workbench"
         / "base"
-        / "cuda13-b300"
+        / "cuda13-blackwell"
         / "Dockerfile",
         REPO_ROOT / "npa" / "docker" / "workbench" / "genesis" / "Dockerfile.sm120",
         REPO_ROOT / "npa" / "docker" / "workbench" / "sim2real-envgen" / "Dockerfile",
@@ -317,6 +317,21 @@ def test_isaac_lab_dockerfile_excludes_bundled_imageio_ffmpeg_payload() -> None:
     assert "*/imageio_ffmpeg/binaries/ffmpeg*" in runtime_base_layer
     assert "-delete" in runtime_base_layer
     assert "imageio_ffmpeg.get_ffmpeg_exe()" in runtime_base_layer
+
+
+def test_mjlab_removes_bundled_ffmpeg_before_the_dependency_layer_commits() -> None:
+    dockerfile = (
+        REPO_ROOT / "npa" / "docker" / "workbench" / "mjlab" / "Dockerfile"
+    ).read_text(encoding="utf-8")
+    assert "IMAGEIO_FFMPEG_EXE=/usr/bin/ffmpeg" in dockerfile
+    dependency_layer = dockerfile.split("COPY pyproject.toml", 1)[0].rsplit("RUN ", 1)[
+        1
+    ]
+    assert "pip install --no-cache-dir --require-hashes" in dependency_layer
+    assert "*/imageio_ffmpeg/binaries/ffmpeg*' -delete" in dependency_layer
+    assert "imageio_ffmpeg.get_ffmpeg_exe()" in dependency_layer
+    assert "imageio_ffmpeg.write_frames" in dependency_layer
+    assert "imageio_ffmpeg.read_frames" in dependency_layer
 
 
 @pytest.mark.parametrize("path", PAYLOAD_PATHS)
@@ -482,6 +497,131 @@ def _saved_image_members(format_name):
     return members
 
 
+def _attested_saved_image_members(artifact, mutation):
+    members = {}
+
+    def blob(value, media_type):
+        raw = value if isinstance(value, bytes) else json.dumps(value).encode()
+        digest = hashlib.sha256(raw).hexdigest()
+        members["blobs/sha256/" + digest] = raw
+        return {"mediaType": media_type, "digest": "sha256:" + digest, "size": len(raw)}
+
+    manifest_type = "application/vnd.oci.image.manifest.v1+json"
+    config_type = "application/vnd.oci.image.config.v1+json"
+    layer = blob(
+        _tar_bytes({"opt/example/readme.txt": b"example"}),
+        "application/vnd.oci.image.layer.v1.tar",
+    )
+    config = blob(
+        {
+            "architecture": "amd64",
+            "os": "linux",
+            "rootfs": {"type": "layers", "diff_ids": [layer["digest"]]},
+        },
+        config_type,
+    )
+    runtime = blob(
+        {
+            "schemaVersion": 2,
+            "mediaType": manifest_type,
+            "config": config,
+            "layers": [layer],
+        },
+        manifest_type,
+    )
+    statement = {
+        "_type": "https://in-toto.io/Statement/v0.1",
+        "subject": [{"name": "fixture", "digest": {"sha256": runtime["digest"][7:]}}],
+        "predicateType": "https://slsa.dev/provenance/v0.2",
+        "predicate": {},
+    }
+    if mutation == "subject":
+        statement["subject"][0]["digest"]["sha256"] = "0" * 64
+    elif mutation == "schema":
+        statement["_type"] = "unsupported"
+    elif mutation == "predicate":
+        statement["predicate"] = "not an object"
+    raw_statement = (
+        _tar_bytes({"isaac-sim/kit/libcarb.so": b"payload"})
+        if mutation == "runtime-tar"
+        else statement
+    )
+    predicate = blob(raw_statement, "application/vnd.in-toto+json")
+    predicate["annotations"] = {"in-toto.io/predicate-type": statement["predicateType"]}
+    if mutation == "media-type":
+        predicate["mediaType"] = "application/octet-stream"
+    att_config = blob(
+        {}
+        if artifact
+        else {
+            "architecture": "unknown",
+            "os": "unknown",
+            "rootfs": {"type": "layers", "diff_ids": [predicate["digest"]]},
+        },
+        "application/vnd.oci.empty.v1+json" if artifact else config_type,
+    )
+    if mutation == "runtime-config":
+        att_config = config
+    attestation = {
+        "schemaVersion": 2,
+        "mediaType": manifest_type,
+        "config": att_config,
+        "layers": [predicate],
+    }
+    if artifact:
+        attestation.update(
+            artifactType="application/vnd.docker.attestation.manifest.v1+json",
+            subject=runtime.copy(),
+        )
+    descriptor = blob(attestation, manifest_type)
+    descriptor.update(
+        platform={"os": "unknown", "architecture": "unknown"},
+        annotations={
+            "vnd.docker.reference.type": "attestation-manifest",
+            "vnd.docker.reference.digest": runtime["digest"],
+        },
+    )
+    if mutation == "runtime-platform":
+        descriptor["platform"] = {"os": "linux", "architecture": "amd64"}
+    runtime["platform"] = {"os": "linux", "architecture": "amd64"}
+    members["index.json"] = json.dumps(
+        {"schemaVersion": 2, "manifests": [runtime, descriptor]}
+    ).encode()
+    members["oci-layout"] = b'{"imageLayoutVersion":"1.0.0"}'
+    if mutation == "missing":
+        del members["blobs/sha256/" + predicate["digest"][7:]]
+    return members
+
+
+@pytest.mark.parametrize("artifact", [False, True])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "missing",
+        "subject",
+        "schema",
+        "predicate",
+        "media-type",
+        "runtime-tar",
+        "runtime-config",
+        "runtime-platform",
+    ],
+)
+def test_saved_attestation_requires_metadata_schema_and_runtime_subject(
+    artifact, mutation
+):
+    members = _attested_saved_image_members(artifact, mutation)
+    if mutation:
+        with pytest.raises(RuntimeError, match="image archive"):
+            list(scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*"))
+    else:
+        paths = list(
+            scanner._iter_saved_image(io.BytesIO(_tar_bytes(members)), mode="r|*")
+        )
+        assert "opt/example/readme.txt" in paths
+
+
 @pytest.mark.parametrize("format_name", ["docker", "oci"])
 @pytest.mark.parametrize("reverse", [False, True])
 def test_saved_image_scans_all_layers_without_seeking(format_name, reverse) -> None:
@@ -616,7 +756,7 @@ def test_local_docker_scan_combines_streamed_layers_and_history(monkeypatch) -> 
     monkeypatch.setattr(
         scanner,
         "_iter_docker_save",
-        lambda image: iter(["isaac-sim/kit/libcarb.so"]),
+        lambda image, **_kwargs: iter(["isaac-sim/kit/libcarb.so"]),
     )
     monkeypatch.setattr(
         scanner,
@@ -1026,3 +1166,81 @@ def test_registry_digest_must_be_a_sha256(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="invalid linux/amd64 image digest"):
         scanner._image_history("registry.example/image:tag")
+
+
+@pytest.mark.parametrize("artifact", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_scan_reports_only_bound_metadata_descriptors(tmp_path, artifact, reverse):
+    members = _attested_saved_image_members(artifact, None)
+    index = json.loads(members["index.json"])
+    attestation = json.loads(
+        members["blobs/sha256/" + index["manifests"][1]["digest"][7:]]
+    )
+    statement = attestation["layers"][0]
+    # A nested image index must preserve reporting through recursive traversal.
+    inner = members["index.json"]
+    inner_digest = hashlib.sha256(inner).hexdigest()
+    members["blobs/sha256/" + inner_digest] = inner
+    members["index.json"] = json.dumps(
+        {
+            "schemaVersion": 2,
+            "manifests": [{"digest": "sha256:" + inner_digest, "size": len(inner)}],
+        }
+    ).encode()
+    if reverse:
+        members = dict(reversed(list(members.items())))
+    archive = tmp_path / "attested.tar"
+    archive.write_bytes(_tar_bytes(members))
+
+    report = scanner.scan(None, tarball=archive)
+
+    assert report.clean
+    assert report.entries_scanned > 0
+    assert report.to_dict()["validated_metadata_layers"] == [
+        {
+            "member": "blobs/sha256/" + statement["digest"][7:],
+            "media_type": "application/vnd.in-toto+json",
+            "statement_type": "https://in-toto.io/Statement/v0.1",
+        }
+    ]
+
+
+def test_filesystem_scan_does_not_claim_metadata_validation(tmp_path):
+    archive = tmp_path / "runtime.tar"
+    archive.write_bytes(_tar_bytes(_saved_image_members("oci")))
+    assert (
+        scanner.scan(None, tarball=archive).to_dict()["validated_metadata_layers"] == []
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation", ["schema", "subject", "predicate", "runtime-platform", "media-type"]
+)
+def test_invalid_metadata_is_not_reported_as_validated(mutation):
+    records = []
+    members = _attested_saved_image_members(False, mutation)
+    with pytest.raises(RuntimeError, match="image archive"):
+        list(
+            scanner._iter_saved_image(
+                io.BytesIO(_tar_bytes(members)), mode="r|*", attestations=records
+            )
+        )
+    assert records == []
+
+
+@pytest.mark.parametrize(
+    "source,history_only,expected",
+    [
+        ("registry", False, "not-inspected"),
+        ("local-docker-stream", True, "not-inspected"),
+        ("local-docker-stream", False, "saved-image-manifests"),
+        ("tarball", False, "saved-image-manifests"),
+    ],
+)
+def test_metadata_scope_distinguishes_uninspected_manifests(
+    source, history_only, expected
+):
+    report = scanner.ScanReport(
+        image="example", source=source, history_only=history_only
+    )
+    assert report.to_dict()["metadata_validation_scope"] == expected

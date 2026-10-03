@@ -1,0 +1,477 @@
+{
+  "cases": {
+    "voxel_1.0x_spacing": {
+      "edge_over_voxel": 2.827767265935343,
+      "floor_invented_area_fraction": 0.046664857777171734,
+      "median_edge": 0.025881855952401184,
+      "rows": [
+        {
+          "cap_degrees": 0.0,
+          "invented_area_fraction": 0.0,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.007354527172910292,
+          "unsupported_area_fraction": 0.8752511500669393
+        },
+        {
+          "cap_degrees": 10.0,
+          "invented_area_fraction": 0.00745596243608541,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.015393741109132386,
+          "unsupported_area_fraction": 0.8763996549372025
+        },
+        {
+          "cap_degrees": 15.0,
+          "invented_area_fraction": 0.01684584829131245,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.025941025199047358,
+          "unsupported_area_fraction": 0.8775720587554575
+        },
+        {
+          "cap_degrees": 20.0,
+          "invented_area_fraction": 0.030129751163651818,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.04088373213261622,
+          "unsupported_area_fraction": 0.8794125691131134
+        },
+        {
+          "cap_degrees": 25.0,
+          "invented_area_fraction": 0.046664857777171734,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.05877584627451874,
+          "unsupported_area_fraction": 0.881951536117657
+        },
+        {
+          "cap_degrees": 30.0,
+          "invented_area_fraction": 0.0670026535311481,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.08192544739601997,
+          "unsupported_area_fraction": 0.8840620760050425
+        },
+        {
+          "cap_degrees": 35.0,
+          "invented_area_fraction": 0.09052924880786664,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.10735211589599539,
+          "unsupported_area_fraction": 0.8874619187892412
+        },
+        {
+          "cap_degrees": 40.0,
+          "invented_area_fraction": 0.11716397172408681,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.13668827063984632,
+          "unsupported_area_fraction": 0.8907342861690385
+        },
+        {
+          "cap_degrees": 50.0,
+          "invented_area_fraction": 0.1787661971488383,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.20329019994141087,
+          "unsupported_area_fraction": 0.8985348972821009
+        },
+        {
+          "cap_degrees": 60.0,
+          "invented_area_fraction": 0.2500596252800675,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.2800170311597706,
+          "unsupported_area_fraction": 0.9075127278399199
+        },
+        {
+          "cap_degrees": 90.0,
+          "invented_area_fraction": 0.4984815806573146,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.5348438457850376,
+          "unsupported_area_fraction": 0.9376083899971412
+        }
+      ],
+      "spacing_over_voxel": 1.0,
+      "triangles": 81920,
+      "voxel": 0.009152753221308763,
+      "voxel_multiple_of_spacing": 1.0,
+      "zero_error_unsupported_fraction": 0.8752511500669393
+    },
+    "voxel_1.25x_spacing": {
+      "edge_over_voxel": 2.2622138127482745,
+      "floor_invented_area_fraction": 0.046664857777171734,
+      "median_edge": 0.025881855952401184,
+      "rows": [
+        {
+          "cap_degrees": 0.0,
+          "invented_area_fraction": 0.0,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.000214030844739308,
+          "unsupported_area_fraction": 0.7161360840937182
+        },
+        {
+          "cap_degrees": 10.0,
+          "invented_area_fraction": 0.00745596243608541,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.009549436003372373,
+          "unsupported_area_fraction": 0.7185934714961774
+        },
+        {
+          "cap_degrees": 15.0,
+          "invented_area_fraction": 0.01684584829131245,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.022262892530115732,
+          "unsupported_area_fraction": 0.7210939171204184
+        },
+        {
+          "cap_degrees": 20.0,
+          "invented_area_fraction": 0.030129751163651818,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.039669048349779856,
+          "unsupported_area_fraction": 0.7251647966416571
+        },
+        {
+          "cap_degrees": 25.0,
+          "invented_area_fraction": 0.046664857777171734,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.06127524928896373,
+          "unsupported_area_fraction": 0.7304242768062947
+        },
+        {
+          "cap_degrees": 30.0,
+          "invented_area_fraction": 0.0670026535311481,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.08851018175459782,
+          "unsupported_area_fraction": 0.7354508505486208
+        },
+        {
+          "cap_degrees": 35.0,
+          "invented_area_fraction": 0.09052924880786664,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.118359996518014,
+          "unsupported_area_fraction": 0.7425247508264159
+        },
+        {
+          "cap_degrees": 40.0,
+          "invented_area_fraction": 0.11716397172408681,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.15301722040186866,
+          "unsupported_area_fraction": 0.7503251754654833
+        },
+        {
+          "cap_degrees": 50.0,
+          "invented_area_fraction": 0.1787661971488383,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.2281487457630559,
+          "unsupported_area_fraction": 0.7686379507596431
+        },
+        {
+          "cap_degrees": 60.0,
+          "invented_area_fraction": 0.2500596252800675,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.3123205384713947,
+          "unsupported_area_fraction": 0.7888179766906898
+        },
+        {
+          "cap_degrees": 90.0,
+          "invented_area_fraction": 0.4984815806573146,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.5776018903968984,
+          "unsupported_area_fraction": 0.8585711610455194
+        }
+      ],
+      "spacing_over_voxel": 0.8,
+      "triangles": 81920,
+      "voxel": 0.011440941526635953,
+      "voxel_multiple_of_spacing": 1.25,
+      "zero_error_unsupported_fraction": 0.7161360840937182
+    },
+    "voxel_1.5x_spacing": {
+      "edge_over_voxel": 1.8851781772902287,
+      "floor_invented_area_fraction": 0.030129751163651818,
+      "median_edge": 0.025881855952401184,
+      "rows": [
+        {
+          "cap_degrees": 0.0,
+          "invented_area_fraction": 0.0,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.0,
+          "unsupported_area_fraction": 0.5058443186206538
+        },
+        {
+          "cap_degrees": 10.0,
+          "invented_area_fraction": 0.00745596243608541,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.012237143264374481,
+          "unsupported_area_fraction": 0.5101133766841839
+        },
+        {
+          "cap_degrees": 15.0,
+          "invented_area_fraction": 0.01684584829131245,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.029612941470835052,
+          "unsupported_area_fraction": 0.5151275818898513
+        },
+        {
+          "cap_degrees": 20.0,
+          "invented_area_fraction": 0.030129751163651818,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.05298021490430083,
+          "unsupported_area_fraction": 0.5219303392083018
+        },
+        {
+          "cap_degrees": 25.0,
+          "invented_area_fraction": 0.046664857777171734,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.0818679854239699,
+          "unsupported_area_fraction": 0.5309546985827351
+        },
+        {
+          "cap_degrees": 30.0,
+          "invented_area_fraction": 0.0670026535311481,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.11799792848206586,
+          "unsupported_area_fraction": 0.5401561257437864
+        },
+        {
+          "cap_degrees": 35.0,
+          "invented_area_fraction": 0.09052924880786664,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.15615340260644867,
+          "unsupported_area_fraction": 0.5523094498878798
+        },
+        {
+          "cap_degrees": 40.0,
+          "invented_area_fraction": 0.11716397172408681,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.19877001678345277,
+          "unsupported_area_fraction": 0.5652045181242751
+        },
+        {
+          "cap_degrees": 50.0,
+          "invented_area_fraction": 0.1787661971488383,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.29034361085148025,
+          "unsupported_area_fraction": 0.5967165873713616
+        },
+        {
+          "cap_degrees": 60.0,
+          "invented_area_fraction": 0.2500596252800675,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.3853671553881737,
+          "unsupported_area_fraction": 0.6327793384597029
+        },
+        {
+          "cap_degrees": 90.0,
+          "invented_area_fraction": 0.4984815806573146,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.6542571372044219,
+          "unsupported_area_fraction": 0.7536346449105312
+        }
+      ],
+      "spacing_over_voxel": 0.6666666666666666,
+      "triangles": 81920,
+      "voxel": 0.013729129831963144,
+      "voxel_multiple_of_spacing": 1.5,
+      "zero_error_unsupported_fraction": 0.5058443186206538
+    },
+    "voxel_2.0x_spacing": {
+      "edge_over_voxel": 1.4138836329676716,
+      "floor_invented_area_fraction": 0.01684584829131245,
+      "median_edge": 0.025881855952401184,
+      "rows": [
+        {
+          "cap_degrees": 0.0,
+          "invented_area_fraction": 0.0,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.0,
+          "unsupported_area_fraction": 0.16849113379621045
+        },
+        {
+          "cap_degrees": 10.0,
+          "invented_area_fraction": 0.00745596243608541,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.031052094535094783,
+          "unsupported_area_fraction": 0.17529809911881625
+        },
+        {
+          "cap_degrees": 15.0,
+          "invented_area_fraction": 0.01684584829131245,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.07580957798378403,
+          "unsupported_area_fraction": 0.18332181026914773
+        },
+        {
+          "cap_degrees": 20.0,
+          "invented_area_fraction": 0.030129751163651818,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.1332264237724508,
+          "unsupported_area_fraction": 0.19433633251526336
+        },
+        {
+          "cap_degrees": 25.0,
+          "invented_area_fraction": 0.046664857777171734,
+          "reads_as": "undecided",
+          "share_beyond_3_voxels": 0.19765942347542573,
+          "unsupported_area_fraction": 0.20860717469889475
+        },
+        {
+          "cap_degrees": 30.0,
+          "invented_area_fraction": 0.0670026535311481,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.27109226847940937,
+          "unsupported_area_fraction": 0.2247866784855838
+        },
+        {
+          "cap_degrees": 35.0,
+          "invented_area_fraction": 0.09052924880786664,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.3400914991134292,
+          "unsupported_area_fraction": 0.24455850359445114
+        },
+        {
+          "cap_degrees": 40.0,
+          "invented_area_fraction": 0.11716397172408681,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.4101428127366065,
+          "unsupported_area_fraction": 0.26652972156978355
+        },
+        {
+          "cap_degrees": 50.0,
+          "invented_area_fraction": 0.1787661971488383,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.5317986218893135,
+          "unsupported_area_fraction": 0.3181638466905314
+        },
+        {
+          "cap_degrees": 60.0,
+          "invented_area_fraction": 0.2500596252800675,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.6312101254410882,
+          "unsupported_area_fraction": 0.37884550109475756
+        },
+        {
+          "cap_degrees": 90.0,
+          "invented_area_fraction": 0.4984815806573146,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.8349229118288908,
+          "unsupported_area_fraction": 0.5837568185777047
+        }
+      ],
+      "spacing_over_voxel": 0.5,
+      "triangles": 81920,
+      "voxel": 0.018305506442617525,
+      "voxel_multiple_of_spacing": 2.0,
+      "zero_error_unsupported_fraction": 0.16849113379621045
+    },
+    "voxel_3.0x_spacing": {
+      "edge_over_voxel": 0.9425890886451144,
+      "floor_invented_area_fraction": 0.00745596243608541,
+      "median_edge": 0.025881855952401184,
+      "rows": [
+        {
+          "cap_degrees": 0.0,
+          "invented_area_fraction": 0.0,
+          "reads_as": "near-threshold surface",
+          "share_beyond_3_voxels": 0.0,
+          "unsupported_area_fraction": 0.006437058366288289
+        },
+        {
+          "cap_degrees": 10.0,
+          "invented_area_fraction": 0.00745596243608541,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.28944005473755163,
+          "unsupported_area_fraction": 0.013491069396236252
+        },
+        {
+          "cap_degrees": 15.0,
+          "invented_area_fraction": 0.01684584829131245,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.5006793976037996,
+          "unsupported_area_fraction": 0.022765118890155193
+        },
+        {
+          "cap_degrees": 20.0,
+          "invented_area_fraction": 0.030129751163651818,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.6322788149857611,
+          "unsupported_area_fraction": 0.03595366790967638
+        },
+        {
+          "cap_degrees": 25.0,
+          "invented_area_fraction": 0.046664857777171734,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.7169590529975167,
+          "unsupported_area_fraction": 0.05183744790842707
+        },
+        {
+          "cap_degrees": 30.0,
+          "invented_area_fraction": 0.0670026535311481,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.7724177540850825,
+          "unsupported_area_fraction": 0.07242718110256731
+        },
+        {
+          "cap_degrees": 35.0,
+          "invented_area_fraction": 0.09052924880786664,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.8121002799487652,
+          "unsupported_area_fraction": 0.09527091475914506
+        },
+        {
+          "cap_degrees": 40.0,
+          "invented_area_fraction": 0.11716397172408681,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.8414635361095972,
+          "unsupported_area_fraction": 0.12175292917606385
+        },
+        {
+          "cap_degrees": 50.0,
+          "invented_area_fraction": 0.1787661971488383,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.8825524090726078,
+          "unsupported_area_fraction": 0.18266333892281336
+        },
+        {
+          "cap_degrees": 60.0,
+          "invented_area_fraction": 0.2500596252800675,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.9048817928916646,
+          "unsupported_area_fraction": 0.2541190197894393
+        },
+        {
+          "cap_degrees": 90.0,
+          "invented_area_fraction": 0.4984815806573146,
+          "reads_as": "extrapolated shell",
+          "share_beyond_3_voxels": 0.9504374170154228,
+          "unsupported_area_fraction": 0.5014740771463885
+        }
+      ],
+      "spacing_over_voxel": 0.3333333333333333,
+      "triangles": 81920,
+      "voxel": 0.027458259663926288,
+      "voxel_multiple_of_spacing": 3.0,
+      "zero_error_unsupported_fraction": 0.006437058366288289
+    }
+  },
+  "held_fixed": "icosphere, uniform random sampling, 60000 samples",
+  "mechanism_under_test": "_support takes the maximum vertex distance over each triangle, so a coarse triangle reaches further from its nearest sample than a fine one covering the same surface. Coarse meshes should report more unsupported area everywhere, compressing the share's range and raising the floor.",
+  "question": "Resolution did not explain the gap between my floor near 0.017 and the review lane's 0.09: the floor stayed flat across edge/voxel 0.705 to 22.467. The remaining difference is the voxel convention. Every measurement in this tree used the tool's own voxel = 2x median nearest-neighbour spacing, which puts the zero-error unsupported fraction near 0.17; the review lane reported 0.75126, which implies a tighter voxel. This varies that multiple.",
+  "summary": {
+    "edge_over_voxel": {
+      "voxel_1.0x_spacing": 2.827767265935343,
+      "voxel_1.25x_spacing": 2.2622138127482745,
+      "voxel_1.5x_spacing": 1.8851781772902287,
+      "voxel_2.0x_spacing": 1.4138836329676716,
+      "voxel_3.0x_spacing": 0.9425890886451144
+    },
+    "floor_falls_as_voxel_loosens": true,
+    "floors": {
+      "voxel_1.0x_spacing": 0.046664857777171734,
+      "voxel_1.25x_spacing": 0.046664857777171734,
+      "voxel_1.5x_spacing": 0.030129751163651818,
+      "voxel_2.0x_spacing": 0.01684584829131245,
+      "voxel_3.0x_spacing": 0.00745596243608541
+    },
+    "interpretation": "The voxel-to-spacing ratio sets the floor, and it is the operator's own choice. The review lane's zero-error unsupported fraction of 0.75126 lands between the 1.0x and 1.25x cells here, so their construction used a voxel near 1.2x their sample spacing, where this sweep measures a floor of 0.0467 against their reported 0.09. Same order, and the residual is within the spread the geometry and sampling axes already showed. My earlier grid sat at the tool's 2.0x default throughout, which is why it measured 0.017. Resolution is ruled out separately in floor-vs-resolution.json, where the floor stayed flat across edge/voxel 0.705 to 22.467.",
+    "zero_error_unsupported_fraction": {
+      "voxel_1.0x_spacing": 0.8752511500669393,
+      "voxel_1.25x_spacing": 0.7161360840937182,
+      "voxel_1.5x_spacing": 0.5058443186206538,
+      "voxel_2.0x_spacing": 0.16849113379621045,
+      "voxel_3.0x_spacing": 0.006437058366288289
+    }
+  }
+}

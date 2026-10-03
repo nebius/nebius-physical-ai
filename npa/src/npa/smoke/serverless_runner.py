@@ -36,9 +36,11 @@ from npa.serverless_common import (
 
 from npa.smoke.manifest import UNLIMITED_SERVERLESS_ERROR, container
 
-# Nebius AI Jobs always require a GPU preset, even for CPU-only workloads, so a
-# small default is used when a golden eval does not pin its own serverless GPU.
-DEFAULT_SERVERLESS_GPU = "l40s"
+# Nebius AI Jobs always require a GPU preset, even for CPU-only workloads. L40S
+# is a valid public CLI target but is not offered in the shared golden-eval
+# project; H200 is its smallest generally compatible preset. Manifest entries
+# should still pin a different offered accelerator when their runtime needs one.
+DEFAULT_SERVERLESS_GPU = "h200"
 _TERMINAL_OK = {"completed", "succeeded", "success"}
 
 
@@ -140,7 +142,9 @@ def submit_golden_eval(
 
     run_id = f"golden-{tool}-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     output_path = f"{bucket}/golden-evals/{run_id}/"
-    platform, preset, gpu_count = resolve_gpu_platform(gpu, 1)
+    platform, preset, gpu_count = resolve_gpu_platform(
+        gpu, spec.golden_eval.serverless_gpu_count
+    )
     subnet_id = resolve_subnet(resolved_project)
 
     s3_credentials = {

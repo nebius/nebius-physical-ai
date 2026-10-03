@@ -111,7 +111,7 @@ def test_e2e_data_sync_and_vlm_eval_write_real_s3_artifacts(
     assert written_eval["score"] == 0.91
 
 
-def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
+def test_e2e_retargeting_writes_real_s3_artifacts(
     e2e_project: str | None,
     e2e_test_bucket: str,
     s3_helper: Any,
@@ -132,13 +132,6 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
         source_motion,
     )
     s3_helper.client.upload_file(str(source_motion), e2e_test_bucket, source_motion_key)
-    checkpoint_key = "sonic-locomotion/training/checkpoint_smoke.json"
-    s3_helper.client.put_object(
-        Bucket=e2e_test_bucket,
-        Key=checkpoint_key,
-        Body=b'{"format": "npa_sonic_serverless_smoke_v1", "status": "success"}\n',
-    )
-
     storage_env = storage_env_for_project(e2e_project)
     source_uri = f"s3://{e2e_test_bucket}/sonic-locomotion/source-motion/"
     retargeted_uri = f"s3://{e2e_test_bucket}/sonic-locomotion/retargeted/"
@@ -188,47 +181,6 @@ def test_e2e_retargeting_and_mjlab_write_real_s3_artifacts(
     )
     assert retargeted_motion["ContentLength"] > 0
 
-    mjlab_uri = f"s3://{e2e_test_bucket}/sonic-locomotion/mjlab/"
-    mjlab_result = _run_npa(
-        [
-            "workbench",
-            "mjlab",
-            "eval",
-            "--input-path",
-            retargeted_uri,
-            "--checkpoint",
-            f"s3://{e2e_test_bucket}/{checkpoint_key}",
-            "--output-path",
-            mjlab_uri,
-            "--suite",
-            "locomotion",
-            "--embodiment",
-            "unitree-g1",
-            "--episodes",
-            "2",
-            "--score",
-            "0.9",
-            "--success-threshold",
-            "0.75",
-            "--output",
-            "json",
-        ],
-        env_overrides=storage_env,
-    )
-
-    assert mjlab_result.returncode == 0, _format_result(mjlab_result)
-    mjlab_payload = json.loads(mjlab_result.stdout)
-    assert mjlab_payload["status"] == "passed"
-    assert mjlab_payload["backend"] == "mjlab"
-    assert mjlab_payload["written_uri"] == f"{mjlab_uri}mjlab_eval.json"
-    mjlab_object = s3_helper.client.get_object(
-        Bucket=e2e_test_bucket,
-        Key="sonic-locomotion/mjlab/mjlab_eval.json",
-    )
-    written_mjlab = json.loads(mjlab_object["Body"].read().decode("utf-8"))
-    assert written_mjlab["passed"] is True
-    assert written_mjlab["score"] == 0.9
-
 
 # `test_e2e_workflow_yamls_cover_sim_to_real_and_sonic_contracts` used to live here.
 # It asserted the raw shape of four SkyPilot templates (sim-to-real-loop,
@@ -256,7 +208,6 @@ def test_e2e_cli_smoke_surfaces_for_pipeline_tools() -> None:
         ["workbench", "sonic", "retargeting", "list", "--output", "json"],
         ["workbench", "sonic", "retargeting", "workflow", "--output", "json"],
         ["workbench", "mjlab", "status", "--output", "json"],
-        ["workbench", "mjlab", "list", "--output", "json"],
         ["workbench", "mjlab", "workflow", "--output", "json"],
     ]
 

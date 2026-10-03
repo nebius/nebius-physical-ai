@@ -16,7 +16,7 @@ review pass for the same commit and image digest.
 | Source and packaging | Source supports explicit H100/sample defaults and an opt-in B200/posterior-mode path; each new source requires its own qualified immutable image |
 | CUDA applicability | B200 requires the existing additive `90;100` FlashAttention and `9.0;10.0` Torch/Apex build options, actual native extension measurement, and kernel execution; Hopper-only images are rejected |
 | Actual 3B quality | The retained H100 sample run failed the fixed LPIPS-improvement and temporal-preservation gates; this change does not erase those failures |
-| Posterior-mode quality | Unproven hypothesis; CPU conditioning/RNG controls are not encoder, GPU, or quality acceptance |
+| Posterior-mode quality | The actual 3B B200 run failed the fixed LPIPS and temporal gates; the light and codec controls also failed. The experimental mode is not a repair or default |
 | Other models and GPUs | Private 7B diagnostics do not qualify this 3B tool. H200, L40S, RTX PRO 6000, and B300 remain outside this runtime contract |
 | VLM evidence | Descriptive review cannot override failed objective preservation gates |
 

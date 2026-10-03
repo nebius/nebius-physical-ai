@@ -8,7 +8,6 @@ updates:
   - package-ecosystem: pip
     directories:
       - /npa
-      - /npa/ci
       - /scripts
     patterns: ["*"]
     multi-ecosystem-group: dependencies

@@ -34,9 +34,11 @@ WAN_RUNTIME_REQUIREMENTS_PATH = (
 WAN_RUNTIME_SCRIPT_PATH = (
     ROOT / "npa" / "docker" / "workbench" / "wan2-2" / "wan_runtime.sh"
 )
+ROBOMIMIC_SMOKE_PATH = ROOT / "npa" / "docker" / "workbench" / "robomimic" / "smoke.py"
 SOLUTION_SPECS = sorted(
     path for path in WORKFLOW_DIR.glob("byof-*.yaml") if path.name != "byof.yaml"
 )
+ROBOTWIN_PHASE_A_SMOKE = "/opt/npa/robotwin/robotwin-runtime run"
 
 # Primary capability contracts for onboarded and pending-live solution candidates
 # (solution-specific ids; catalog status remains authoritative).
@@ -83,6 +85,17 @@ SOLUTION_CAPABILITY_CONTRACTS = {
         "spec": "byof-wan2.1-14b.yaml",
         "must_exercise": ["wan2.1-14b_text_to_video", "decoded_mp4_validation"],
     },
+    "libero": {
+        "capability_name": "libero_spatial_bc_rnn_train_reload_heldout",
+        "smoke_artifact_name": "libero-smoke.json",
+        "spec": "byof-libero.yaml",
+        "must_exercise": [
+            "libero_official_demo_sha256",
+            "libero_upstream_bert_task_conditioning",
+            "libero_trajectory_disjoint_heldout_split",
+            "libero_spatial_bc_rnn_train_reload_heldout",
+        ],
+    },
     "maniskill": {
         "capability_name": "gymnasium_pickcube_registration",
         "smoke_artifact_name": "maniskill_pickcube_step.json",
@@ -103,6 +116,19 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "train_jax_ppo_cartpole_smoke",  # attempted; may remain deferred
         ],
     },
+    "gymnasium-robotics": {
+        "capability_name": "HandManipulateBlockRotateXYZ_ContinuousTouchSensors-v1",
+        "smoke_artifact_name": "gymnasium-robotics-smoke.json",
+        "spec": "byof-gymnasium-robotics.yaml",
+        "must_exercise": [
+            "registered_shadow_hand_environment",
+            "mujoco_physics_steps",
+            "continuous_touch_sensor_response",
+            "mujoco_contacts",
+            "egl_rgb_rendering",
+            "rtx_pro_6000_blackwell_execution",
+        ],
+    },
     "robocasa": {
         "capability_name": "kitchen_task_registration",
         "smoke_artifact_name": "robocasa_kitchen_env_reset.json",
@@ -111,6 +137,19 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "kitchen_task_registration",
             "download_kitchen_assets_lw",
             "kitchen_egl_env_reset",
+        ],
+    },
+    "robotwin": {
+        "capability_name": "beat_block_hammer_successful_seed_replay_collection",
+        "smoke_artifact_name": "robotwin-smoke.json",
+        "spec": "byof-robotwin.yaml",
+        "must_exercise": [
+            "sapien_vulkan_rt_renderer",
+            "pinned_official_runtime_assets",
+            "beat_block_hammer_successful_seed_search",
+            "beat_block_hammer_successful_seed_replay",
+            "robotwin_native_hdf5_collection",
+            "robotwin_rendered_mp4",
         ],
     },
     "openpi": {
@@ -123,6 +162,19 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "pi05_droid_jointpos_polaris_served_infer",
         ],
     },
+    "apriltag": {
+        "capability_name": "apriltag_real_image_fiducial_detection",
+        "smoke_artifact_name": "apriltag_fiducial_evaluation.json",
+        "spec": "byof-apriltag.yaml",
+        "must_exercise": [
+            "native_apriltag_ctest",
+            "real_image_fiducial_detection",
+            "labeled_corner_accuracy",
+            "blank_and_noise_false_positive_controls",
+            "camera_consumer_observation_export",
+            "source_linked_annotation_capture",
+        ],
+    },
     "droid-policy-learning": {
         "capability_name": "rlds_config_generator_contract",
         "smoke_artifact_name": "droid_rlds_config_generator.json",
@@ -131,6 +183,28 @@ SOLUTION_CAPABILITY_CONTRACTS = {
             "rlds_config_generator_contract",
             "droid_100_download",
             "droid_100_config_gen",
+        ],
+    },
+    "evo": {
+        "capability_name": "evo_ape_rpe_trajectory_evaluation",
+        "smoke_artifact_name": "evo_trajectory_evaluation.json",
+        "spec": "byof-evo.yaml",
+        "must_exercise": [
+            "evo_ape",
+            "evo_rpe",
+            "evo_traj",
+            "trajectory_acceptance_controls",
+            "decoded_plot_validation",
+        ],
+    },
+    "robomimic": {
+        "capability_name": "lift_ph_lowdim_checkpoint_reload_action",
+        "smoke_artifact_name": "robomimic-smoke.json",
+        "spec": "byof-robomimic.yaml",
+        "must_exercise": [
+            "lift_ph_lowdim_bc_train",
+            "lift_ph_lowdim_heldout_validate",
+            "lift_ph_lowdim_checkpoint_reload_action",
         ],
     },
     "open-dreamer": {
@@ -186,6 +260,26 @@ def _load_config(path: Path) -> dict[str, object]:
     return config
 
 
+def _smoke_contract(path: Path, config: dict[str, object]) -> str:
+    """Read an embedded smoke or the fixed neutral-bootstrap hard gate."""
+
+    if path.name == "byof-robomimic.yaml":
+        assert config.get("smoke_command") == "robomimic-entrypoint train-smoke"
+        return ROBOMIMIC_SMOKE_PATH.read_text(encoding="utf-8")
+    smoke = str(config.get("smoke_command") or "")
+    if path.name == "byof-libero.yaml":
+        assert smoke == "/opt/npa/libero/smoke.sh"
+        return (ROOT / "npa/docker/workbench/libero/libero_smoke.py").read_text(
+            encoding="utf-8"
+        )
+    if path.name != "byof-gymnasium-robotics.yaml":
+        return smoke
+    expected = "/usr/local/bin/npa-gymnasium-entrypoint run-smoke"
+    assert expected in smoke
+    packaged = ROOT / "npa/docker/workbench/gymnasium-robotics/capability_smoke.py"
+    return smoke + "\n" + packaged.read_text(encoding="utf-8")
+
+
 def _load_wan_input_contract():
     spec = importlib.util.spec_from_file_location(
         "npa_wan_input_contract_test", WAN_INPUT_CONTRACT_PATH
@@ -205,20 +299,45 @@ def test_byof_solution_specs_have_capability_smokes() -> None:
         assert str(config.get("solution_name") or "").strip(), path.name
         assert str(config.get("capability_name") or "").strip(), path.name
         artifact = str(config.get("smoke_artifact_name") or "").strip()
-        smoke = str(config.get("smoke_command") or "")
+        smoke = _smoke_contract(path, config)
         assert artifact.endswith(".json"), path.name
+        if path.name == "byof-robotwin.yaml":
+            assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            continue
         assert "NPA_SMOKE_OUTPUT_DIR" in smoke, path.name
         assert artifact in smoke, path.name
 
 
 def test_byof_solution_smokes_are_not_import_only() -> None:
     for path in SOLUTION_SPECS:
-        smoke = str(_load_config(path).get("smoke_command") or "")
-        assert ".write_text(" in smoke, path.name
+        config = _load_config(path)
+        smoke = _smoke_contract(path, config)
+        if path.name == "byof-robotwin.yaml":
+            assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            continue
+        assert ".write_text(" in smoke or ".write_bytes(" in smoke, path.name
         assert "json.dumps(" in smoke, path.name
         assert '"capability"' in smoke or "'capability'" in smoke, path.name
         assert '"solution"' in smoke or "'solution'" in smoke, path.name
         assert "capabilities_exercised" in smoke, path.name
+
+
+def test_robotwin_solution_smoke_is_the_native_success_gate() -> None:
+    config = _load_config(WORKFLOW_DIR / "byof-robotwin.yaml")
+    build = str(config["build_command"])
+    smoke = str(config["smoke_command"])
+
+    assert config["repo_ref"] == "96c1feab536306b50c26af200044fcdf126e8904"
+    assert config["resource_profile_yaml"] == (
+        "byof-solution-smoke-robotwin-rtxpro-gpu"
+    )
+    assert config["task"] == "beat_block_hammer"
+    assert config["wait_timeout"] == -1
+    assert config["base_profile"] == "prebuilt"
+    assert config["base_image"] == "tool://robotwin"
+    assert config["runtime_context_env"] == "NPA_BYOF_ROBOTWIN_RUNTIME_CONTEXT"
+    assert build == ""
+    assert smoke == ROBOTWIN_PHASE_A_SMOKE
 
 
 def test_openpi_polaris_contract_is_runtime_only_and_position_targeted() -> None:
@@ -315,7 +434,18 @@ def test_solution_capability_contracts_match_specs() -> None:
         assert path.name == expected["spec"]
         assert config.get("capability_name") == expected["capability_name"]
         assert config.get("smoke_artifact_name") == expected["smoke_artifact_name"]
-        smoke = str(config.get("smoke_command") or "")
+        smoke = _smoke_contract(path, config)
+        if solution == "robotwin":
+            assert smoke == ROBOTWIN_PHASE_A_SMOKE
+            assert set(expected["must_exercise"]) == {
+                "sapien_vulkan_rt_renderer",
+                "pinned_official_runtime_assets",
+                "beat_block_hammer_successful_seed_search",
+                "beat_block_hammer_successful_seed_replay",
+                "robotwin_native_hdf5_collection",
+                "robotwin_rendered_mp4",
+            }
+            continue
         assert expected["capability_name"] in smoke
         assert expected["smoke_artifact_name"] in smoke
         for capability in expected["must_exercise"]:
@@ -332,6 +462,86 @@ def test_registry_skill_is_solution_specific_not_taxonomy() -> None:
         assert f"byof-{solution}.yaml" in text or expected["spec"] in text
 
 
+def test_evo_smoke_has_frozen_metric_and_failure_controls() -> None:
+    from npa.orchestration.npa_workflow import load_spec
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+
+    spec_path = WORKFLOW_DIR / "byof-evo.yaml"
+    spec = yaml.safe_load(spec_path.read_text(encoding="utf-8"))
+    config = spec["config"]
+    smoke = str(config["smoke_command"])
+
+    assert config["repo_ref"] == "8dd6cfe0ec1747f9e1b5b569edd82c54d1a3f422"
+    assert config["base_profile"] == "ubuntu"
+    assert config["resource_profile_yaml"] == "byof-container-smoke-rtxpro"
+    assert config["output_root"] == "s3://{{config.bucket}}/oss-solutions/evo"
+    assert config["summary_uri"] == (
+        "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+    )
+    assert config["dataset_uri"] == (
+        "{{config.output_root}}/{{run.id}}/evo_trajectory_evaluation.json"
+    )
+    assert config["checkpoint_uri"] == (
+        "{{config.output_root}}/{{run.id}}/capture-manifest.json"
+    )
+    assert "python3 -m pip install --no-cache-dir ." in config["build_command"]
+    assert "evo.__version__ == 'v1.35.1'" in config["build_command"]
+    assert "test/data/KITTI_00_gt.txt" in smoke
+    assert "test/data/KITTI_00_ORB.txt" in smoke
+    assert "test/data/KITTI_00_SPTAM.txt" in smoke
+    assert '"ape_translation_rmse_m_max": 0.05' in smoke
+    assert '"rpe_translation_rmse_m_max": 0.02' in smoke
+    assert '"minimum_matched_poses": 100' in smoke
+    assert "malformed_run.returncode != 0" in smoke
+    assert "not malformed_result.exists()" in smoke
+    assert "false_positives or false_negatives" in smoke
+    assert "recomputed_rmse" in smoke
+    assert "capture-manifest.json" in smoke
+    assert "width < 800 or height < 600" in smoke
+    assert "KITTI_00_ORB estimate vs KITTI_00_gt reference" in smoke
+    assert "KITTI_00_SPTAM estimate vs KITTI_00_gt reference" in smoke
+    assert '"kitti_orb_ape_native"' in smoke
+    assert '"kitti_sptam_ape_native"' in smoke
+    assert '"schema": "npa.evo.trajectory-evaluation.v1"' in smoke
+    assert '"run_id": os.environ["NPA_BYOF_RUN_ID"]' in smoke
+    assert '"image_reference": image_reference' in smoke
+    assert "stable_path(Path(info[key]))" in smoke
+
+    outputs = spec["states"]["byof-run"]["outputs"]
+    assert outputs == [
+        {
+            "uri": "{{config.dataset_uri}}",
+            "schema": "npa.evo.trajectory-evaluation.v1",
+        },
+        {
+            "uri": "{{config.checkpoint_uri}}",
+            "schema": "npa.evo.capture-manifest.v1",
+        },
+    ]
+
+    plan = build_plan(load_spec(spec_path), run_id="evo-contract")
+    assert plan.steps[0].outputs == [
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/evo/evo-contract/"
+                "evo_trajectory_evaluation.json"
+            ),
+            "schema": "npa.evo.trajectory-evaluation.v1",
+        },
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/evo/evo-contract/"
+                "capture-manifest.json"
+            ),
+            "schema": "npa.evo.capture-manifest.v1",
+        },
+    ]
+    output_root_index = plan.steps[0].argv.index("--output-root")
+    assert plan.steps[0].argv[output_root_index + 1] == (
+        "s3://example-bucket/oss-solutions/evo"
+    )
+
+
 def test_oss_catalog_lists_solution_specific_capabilities() -> None:
     text = CATALOG_PATH.read_text(encoding="utf-8")
     assert "Native Capabilities Per Container" in text
@@ -339,6 +549,98 @@ def test_oss_catalog_lists_solution_specific_capabilities() -> None:
     for solution, expected in SOLUTION_CAPABILITY_CONTRACTS.items():
         assert expected["capability_name"] in text, solution
         assert expected["smoke_artifact_name"] in text, solution
+
+
+def test_apriltag_smoke_has_real_labeled_images_and_failure_controls() -> None:
+    from npa.orchestration.npa_workflow import load_spec
+    from npa.orchestration.npa_workflow.interpreter import build_plan
+
+    path = WORKFLOW_DIR / "byof-apriltag.yaml"
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    config = payload["config"]
+    build = str(config["build_command"])
+    smoke = str(config["smoke_command"])
+
+    assert config["repo_ref"] == "94be783968e5091bcc9972c72c84fd63efce2935"
+    assert config["base_profile"] == "ubuntu"
+    assert config["base_image"] == "ubuntu:22.04"
+    assert config["resource_profile_yaml"] == "byof-container-smoke-rtxpro"
+    assert config["capability_name"] == "apriltag_real_image_fiducial_detection"
+    assert config["output_root"] == "s3://{{config.bucket}}/oss-solutions/apriltag"
+    assert config["summary_uri"] == (
+        "{{config.output_root}}/{{run.id}}/npa_byof_summary.json"
+    )
+    assert config["artifact_uri"] == (
+        "{{config.output_root}}/{{run.id}}/apriltag_fiducial_evaluation.json"
+    )
+    assert config["observations_uri"] == (
+        "{{config.output_root}}/{{run.id}}/fiducial_observations.json"
+    )
+    assert config["capture_uri"] == (
+        "{{config.output_root}}/{{run.id}}/capture-manifest.json"
+    )
+    assert "BUILD_TESTING=ON" in build
+    assert "ctest --test-dir build --output-on-failure" in build
+    assert "pjpeg_to_u8_baseline" in build
+    assert "-o /usr/local/bin/apriltag-pjpeg-gray" in build
+    assert 'runtime_ctest_dir = Path("/tmp/npa-apriltag-ctest-build")' in smoke
+    assert 'shutil.copytree(Path("build"), runtime_ctest_dir)' in smoke
+    assert "numpy==1.26.4" in build
+    assert "pillow==11.3.0" in build
+    for stem in (
+        "33369213973_9d9bb4cc96_c",
+        "34085369442_304b6bafd9_c",
+        "34139872896_defdb2f8d9_c",
+    ):
+        assert stem in smoke
+    assert 'family = "tag36h11"' in smoke
+    assert "maxhamming=2" in smoke
+    assert '"apriltag-pjpeg-gray"' in smoke
+    assert '"decoded_gray_sha256"' in smoke
+    assert "corner_absolute_error_px_max" in smoke
+    assert "corner_rmse_px" in smoke
+    assert "precision" in smoke and "recall" in smoke
+    assert "np.random.default_rng(20260920)" in smoke
+    assert '"blank"' in smoke and '"fixed_noise"' in smoke
+    assert "fiducial_observations.json" in smoke
+    assert "capture-manifest.json" in smoke
+    assert "source_sha256" in smoke
+    assert '"schema": "npa.workbench.apriltag.fiducial-evaluation.v1"' in smoke
+    assert '"run_id": os.environ["NPA_BYOF_RUN_ID"]' in smoke
+    assert '"image_reference": image_reference' in smoke
+    assert '"path": stable_path(destination)' in smoke
+    assert "cyan = expected corners | magenta = detected corners" in smoke
+    assert "542dae723ce69d9d61201a3e7e2753220eb8e1aeee600e5906772997fc92ccfd" in smoke
+    assert "accelerators" not in payload["resources"]["cpu"]
+
+    plan = build_plan(load_spec(path), run_id="apriltag-contract")
+    assert plan.steps[0].outputs == [
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/apriltag/apriltag-contract/"
+                "apriltag_fiducial_evaluation.json"
+            ),
+            "schema": "npa.workbench.apriltag.fiducial-evaluation.v1",
+        },
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/apriltag/apriltag-contract/"
+                "fiducial_observations.json"
+            ),
+            "schema": "npa.apriltag.fiducial-observations.v1",
+        },
+        {
+            "uri": (
+                "s3://example-bucket/oss-solutions/apriltag/apriltag-contract/"
+                "capture-manifest.json"
+            ),
+            "schema": "npa.apriltag.capture-manifest.v1",
+        },
+    ]
+    output_root_index = plan.steps[0].argv.index("--output-root")
+    assert plan.steps[0].argv[output_root_index + 1] == (
+        "s3://example-bucket/oss-solutions/apriltag"
+    )
 
 
 def test_ltx2_spec_fetches_nothing_before_the_refusal_is_proved() -> None:

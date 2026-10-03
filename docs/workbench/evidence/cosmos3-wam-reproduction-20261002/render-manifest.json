@@ -1,0 +1,16 @@
+{
+  "schema": "npa.cosmos3.wam-render.v1",
+  "inputs": {
+    "live-gpu-8.json": "5afccd6f461beb92e039bae92c4fe4e663581032d1a60c9206ece5c282ded76f"
+  },
+  "source": {
+    "plot-gpu.py": "9370b058e2ce81f25215f99207c608ae4f6e625a4e44e12c670e2608e59b5b81"
+  },
+  "outputs": {
+    "live-gpu-8.png": "6182a2a749ea7795c8e34f7d41783834177acbb954b71b6ed93a63ac16316fbb"
+  },
+  "matplotlib": "3.11.2",
+  "numpy": "2.5.3",
+  "second_render_identical": true,
+  "visually_inspected": true
+}

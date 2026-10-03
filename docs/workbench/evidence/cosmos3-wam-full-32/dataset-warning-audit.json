@@ -1,0 +1,177 @@
+{
+  "recorded_utc": "2026-09-30T07:51:43.731930+00:00",
+  "scope": "All four complete native training logs",
+  "world_sizes_and_ranks": [
+    [
+      32,
+      0
+    ],
+    [
+      32,
+      1
+    ],
+    [
+      32,
+      2
+    ],
+    [
+      32,
+      3
+    ],
+    [
+      32,
+      4
+    ],
+    [
+      32,
+      5
+    ],
+    [
+      32,
+      6
+    ],
+    [
+      32,
+      7
+    ],
+    [
+      32,
+      8
+    ],
+    [
+      32,
+      9
+    ],
+    [
+      32,
+      10
+    ],
+    [
+      32,
+      11
+    ],
+    [
+      32,
+      12
+    ],
+    [
+      32,
+      13
+    ],
+    [
+      32,
+      14
+    ],
+    [
+      32,
+      15
+    ],
+    [
+      32,
+      16
+    ],
+    [
+      32,
+      17
+    ],
+    [
+      32,
+      18
+    ],
+    [
+      32,
+      19
+    ],
+    [
+      32,
+      20
+    ],
+    [
+      32,
+      21
+    ],
+    [
+      32,
+      22
+    ],
+    [
+      32,
+      23
+    ],
+    [
+      32,
+      24
+    ],
+    [
+      32,
+      25
+    ],
+    [
+      32,
+      26
+    ],
+    [
+      32,
+      27
+    ],
+    [
+      32,
+      28
+    ],
+    [
+      32,
+      29
+    ],
+    [
+      32,
+      30
+    ],
+    [
+      32,
+      31
+    ]
+  ],
+  "nodes": [
+    {
+      "node_rank": 0,
+      "log_bytes": 166489205,
+      "sha256": "e01353e4193d303c2e38f859c071d1cd0e617538f2bb5fcf4dab4be2d1319f15",
+      "length_warnings": 270000,
+      "tracebacks": 0,
+      "skipped_optimizer_updates": 0,
+      "nccl_warnings": 0
+    },
+    {
+      "node_rank": 1,
+      "log_bytes": 165222012,
+      "sha256": "c49af712287d4a04a3d80a72c8ec3e063381d119c336783aad798d3d4990b42c",
+      "length_warnings": 270000,
+      "tracebacks": 0,
+      "skipped_optimizer_updates": 0,
+      "nccl_warnings": 0
+    },
+    {
+      "node_rank": 2,
+      "log_bytes": 165288401,
+      "sha256": "eb1c7473137b4a4733e1022910e454cfd71335776f622805e19d52a8ad83f033",
+      "length_warnings": 270000,
+      "tracebacks": 0,
+      "skipped_optimizer_updates": 0,
+      "nccl_warnings": 0
+    },
+    {
+      "node_rank": 3,
+      "log_bytes": 165355903,
+      "sha256": "8570d2ceeeed1616a84075e1c6b7822f4d76310a87463db517801596787a7ad2",
+      "length_warnings": 270000,
+      "tracebacks": 0,
+      "skipped_optimizer_updates": 0,
+      "nccl_warnings": 0
+    }
+  ],
+  "source_sha256": {
+    "framework/cosmos_framework/data/generator/action/datasets/action_sft_dataset.py": "8980e5ddb5606a74b342218c5fb540782a6e31217fc2d1ed9f6e9e244f93e8a8",
+    "framework/cosmos_framework/data/generator/joint_dataloader.py": "786c894b25451c4321431e597e3ce82926b4cbaf014d1fb9383c345cc855a5f1"
+  },
+  "interpretation": "Pinned ActionIterableShuffleDataset cycles indefinitely while __len__ returns the finite underlying dataset size. RankPartitionedDataLoader sets rank/worker sharding before constructing the PyTorch loader. This source audit explains the warning; it is not a sample-by-sample data-disjointness trace. Logs remain unsuppressed and the training configuration is unchanged."
+}

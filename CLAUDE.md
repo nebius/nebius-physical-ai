@@ -62,6 +62,8 @@ making architecture, review, or domain judgments.
 - `skills/tools/dataset/SKILL.md`: dataset-of-record — ingest, validate, curate,
  and query production sensor data as a versioned, lineage-tracked dataset
  (FiftyOne curation + LanceDB query index).
+- `skills/tools/encord/SKILL.md`: stateless Encord SaaS register, pull, and exact
+ roundtrip verification with S3-backed lineage artifacts.
 - `skills/tools/foxglove/SKILL.md`: Foxglove embedded viewer — the
  `@foxglove/embed` TypeScript SDK in the agent UI, MCAP recordings
  (convert/inspect/publish), and the `npa-foxglove-embed` container.
@@ -87,10 +89,6 @@ making architecture, review, or domain judgments.
 - `skills/tools/cosmos3-ray-serve/SKILL.md`: deploy and operate persistent
  Cosmos3-Nano generation through NVIDIA Cosmos Framework's native dynamically
  batched Ray Serve path, with guarded runtime weight fetch and S3 provenance.
-- `skills/tools/cosmos3-super-benchmark/SKILL.md`: reproduce the fixed
- Cosmos3-Super vLLM-Omni primary sweep on one eight-GPU B200 or H200 node across the
- 1x8, 2x4, 4x2, and 8x1 arrangements with strict MP4 validity and shared-window
- throughput accounting.
 - `skills/tools/seedvr2/SKILL.md`: package, run, validate, or review official
  SeedVR2-3B restoration of robot observation video, its S3 workflow, and
  objective/visual evidence without treating generated detail as sensor truth.
@@ -99,6 +97,10 @@ making architecture, review, or domain judgments.
 - `skills/tools/gpu-cluster-provisioning/SKILL.md`: managed-image vs GPU-Operator
  driver strategy (operator mode is unsafe on NVSwitch), the post-apply health
  gates, accelerator-name discovery, and triage for nodes whose GPUs do not work.
+- `skills/tools/open3d/SKILL.md`: point-cloud registration and surface
+  reconstruction — real RANSAC/FPFH + ICP, multiway `global_optimization`,
+  Poisson reconstruction, and a decode-verified `.rrd`. CPU-only by
+  construction (Open3D's registration APIs have no CUDA path).
 - `skills/tools/detection-training/SKILL.md`: Faster R-CNN detectors trained from
  LanceDB materialized views (BDD100K failure-mode slices).
 - `skills/tools/artifact-viz-share/SKILL.md`: sim demos → LeRobotDataset →

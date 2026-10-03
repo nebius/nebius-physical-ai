@@ -28,6 +28,7 @@ import subprocess
 import time
 import uuid
 
+from npa.literal_values import require_boolean
 from npa.orchestration.skypilot._bin import SkyBin, resolve_sky_bin
 from npa.orchestration.skypilot.gpu_catalog import (
     AcceleratorRequest,
@@ -318,6 +319,14 @@ def kubernetes_sky_environment(
             user_id=validation_user_id,
         ):
             raise
+        # Recovery archives the client configuration along with the stale API.
+        # Recreate the same verified bytes before starting its replacement.
+        with open(
+            config_path, "xb", opener=lambda path, flags: os.open(path, flags, 0o600)
+        ) as handle:
+            handle.write(config_bytes)
+            handle.flush()
+            os.fsync(handle.fileno())
         return start_validation_api()
 
 
@@ -438,6 +447,10 @@ class KubernetesGpuInventory:
     nodes: tuple[KubernetesGpuNode, ...] = ()
     unbound_pending_gpu_pods: int = 0
     unbound_pending_gpu_requests: int = 0
+    # Keep Kubernetes label keys: marketing-name aliases do not establish
+    # whether a pending pod can bind a particular candidate node.
+    unbound_pending_gpu_selectors: tuple[tuple[dict[str, str], int], ...] = ()
+    diagnostics: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         product = (
@@ -461,9 +474,13 @@ class KubernetesGpuInventory:
             else "blocked_missing_product_label",
             "node_labels": self.node_labels,
             "error": self.error,
+            "diagnostics": list(self.diagnostics),
             "nodes": [node.to_dict() for node in self.nodes],
             "unbound_pending_gpu_pods": self.unbound_pending_gpu_pods,
             "unbound_pending_gpu_requests": self.unbound_pending_gpu_requests,
+            "unbound_pending_gpu_selectors": [
+                list(entry) for entry in self.unbound_pending_gpu_selectors
+            ],
         }
 
 
@@ -587,13 +604,32 @@ def _pod_resource_commitment(containers, init_containers, overhead, resource):
     return max(regular, initial) + extra
 
 
+def _node_is_unschedulable(spec: Mapping[str, object], *, node_name: str) -> bool:
+    if "unschedulable" not in spec:
+        return False
+    value = spec["unschedulable"]
+    try:
+        return require_boolean(value, field="spec.unschedulable")
+    except ValueError as exc:
+        raise KubernetesGpuCatalogError(
+            f"Kubernetes node {node_name!r} has malformed spec.unschedulable: "
+            f"expected an exact boolean when present, got {type(value).__name__}; "
+            "refusing to infer node schedulability"
+        ) from exc
+
+
 def discover_kubernetes_gpu_inventory(
     *,
     context: str = "",
     kubeconfig: Kubeconfig = None,
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> KubernetesGpuInventory:
-    """Read Ready/schedulable nodes, GPU quantities, and raw product labels."""
+    """Read Ready/schedulable nodes, GPU quantities, and raw product labels.
+
+    Malformed cordon evidence quarantines its node with a diagnostic while
+    preserving healthy capacity. If no verified eligible capacity remains,
+    report an inventory error rather than claiming a verified zero-GPU pool.
+    """
 
     cmd = ["kubectl"]
     if kubeconfig is not None and os.fspath(kubeconfig).strip():
@@ -663,6 +699,7 @@ def discover_kubernetes_gpu_inventory(
         committed_by_node: dict[str, tuple[int, int, int, int, int]] = {}
         unbound_pending_gpu_pods = 0
         unbound_pending_gpu_requests = 0
+        unbound_pending_gpu_selectors: list[tuple[dict[str, str], int]] = []
         for pod in pod_payload.get("items", []):
             node_name, gpu, cpu, memory, pod_slots, storage = _pod_commitment(pod)
             if node_name:
@@ -681,6 +718,13 @@ def discover_kubernetes_gpu_inventory(
                 # still free for a new gang.
                 unbound_pending_gpu_pods += 1
                 unbound_pending_gpu_requests += gpu
+                selector = (pod.get("spec") or {}).get("nodeSelector") or {}
+                if not isinstance(selector, dict) or not all(
+                    isinstance(key, str) and isinstance(value, str)
+                    for key, value in selector.items()
+                ):
+                    selector = {}
+                unbound_pending_gpu_selectors.append((dict(selector), gpu))
     except (OSError, ValueError, subprocess.SubprocessError, KubernetesGpuCatalogError):
         return KubernetesGpuInventory(
             context,
@@ -700,9 +744,26 @@ def discover_kubernetes_gpu_inventory(
     products: set[str] = set()
     labels_by_node: dict[str, dict[str, str]] = {}
     node_records: list[KubernetesGpuNode] = []
+    diagnostics: list[str] = []
     for item in payload.get("items", []):
         metadata = item.get("metadata") or {}
-        spec = item.get("spec") or {}
+        name = str(metadata.get("name") or "")
+        spec = item.get("spec", {})
+        cordon_error = ""
+        if not isinstance(spec, dict):
+            cordon_error = (
+                f"Kubernetes node {name or '<unnamed>'!r} has malformed spec: "
+                "expected an object; refusing to infer node schedulability"
+            )
+            spec = {}
+        else:
+            try:
+                blocked = _node_is_unschedulable(spec, node_name=name or "<unnamed>")
+            except KubernetesGpuCatalogError as exc:
+                cordon_error = str(exc)
+        if cordon_error:
+            diagnostics.append(cordon_error)
+            blocked = True
         status = item.get("status") or {}
         ready = any(
             condition.get("type") == "Ready" and condition.get("status") == "True"
@@ -742,10 +803,9 @@ def discover_kubernetes_gpu_inventory(
             for key, value in all_labels.items()
             if "gpu" in str(key).casefold() or "accelerator" in str(key).casefold()
         }
-        name = str(metadata.get("name") or "")
         if name:
             labels_by_node[name] = raw_labels
-        blocked = bool(spec.get("unschedulable")) or disallowed_taint
+        blocked = blocked or disallowed_taint
         node_products: set[str] = set()
         for key, value in raw_labels.items():
             if (
@@ -773,7 +833,9 @@ def discover_kubernetes_gpu_inventory(
         free_memory = max(0, node_memory - committed_memory)
         free_pods = max(0, node_pods - committed_pods)
         exclusion = (
-            "not-ready"
+            cordon_error
+            if cordon_error
+            else "not-ready"
             if not ready
             else "cordoned-or-unsupported-taint"
             if blocked
@@ -846,8 +908,15 @@ def discover_kubernetes_gpu_inventory(
         products=tuple(sorted(products)),
         node_labels=labels_by_node,
         nodes=tuple(sorted(node_records, key=lambda item: item.name)),
+        diagnostics=tuple(diagnostics),
+        error=(
+            "No verified eligible GPU capacity; " + "; ".join(diagnostics)
+            if diagnostics and eligible_nodes == 0
+            else ""
+        ),
         unbound_pending_gpu_pods=unbound_pending_gpu_pods,
         unbound_pending_gpu_requests=unbound_pending_gpu_requests,
+        unbound_pending_gpu_selectors=tuple(unbound_pending_gpu_selectors),
     )
 
 
@@ -1021,6 +1090,34 @@ def _compatible_gang_nodes(inventory: KubernetesGpuInventory, shape: _GangRequir
     ]
 
 
+def _pending_gpu_contention(inventory, candidates) -> tuple[int, int]:
+    """Exclude demand only when exact node selectors prove non-contention."""
+    selectors = inventory.unbound_pending_gpu_selectors
+    if (
+        len(selectors) != inventory.unbound_pending_gpu_pods
+        or sum(count for _, count in selectors)
+        != inventory.unbound_pending_gpu_requests
+    ):
+        return (
+            inventory.unbound_pending_gpu_pods,
+            inventory.unbound_pending_gpu_requests,
+        )
+    contending = [
+        count
+        for selector, count in selectors
+        if not selector
+        or not isinstance(selector, Mapping)
+        or any(
+            not node.labels
+            or all(
+                dict(node.labels).get(key) == value for key, value in selector.items()
+            )
+            for node in candidates
+        )
+    ]
+    return len(contending), sum(contending)
+
+
 def _require_free_gang(inventory, shape, compatible_nodes, candidates):
     if len(candidates) < shape.nodes:
         error = (
@@ -1041,12 +1138,15 @@ def _require_free_gang(inventory, shape, compatible_nodes, candidates):
             "aggregate capacity on one node cannot satisfy multiple gang ranks."
         )
     if inventory.unbound_pending_gpu_pods:
-        raise PendingGpuPlacementError(
-            "free shared GPU capacity is indeterminate: Kubernetes has "
-            f"{inventory.unbound_pending_gpu_pods} active unbound GPU pod(s) "
-            f"requesting {inventory.unbound_pending_gpu_requests} GPU(s); wait for "
-            "authoritative placement or remove only the owned pending workload"
-        )
+        pending_pods, pending_requests = _pending_gpu_contention(inventory, candidates)
+        if pending_pods:
+            raise PendingGpuPlacementError(
+                "free shared GPU capacity is indeterminate: Kubernetes has "
+                f"{pending_pods} active unbound GPU pod(s) requesting "
+                f"{pending_requests} GPU(s); available placement evidence cannot "
+                f"rule out contention for {shape.accelerator.name}; wait "
+                "for authoritative placement or remove only the owned pending workload"
+            )
 
 
 def preflight_kubernetes_gpu_gang(
@@ -1140,7 +1240,7 @@ def _normalize(name: str) -> str:
 
 
 _EXPLICIT_ACCELERATOR_ALIASES = (
-    frozenset({"b200", "nvidiab200"}),
+    frozenset({"b200", "nvidiab200", "nvidiab200180gb"}),
     frozenset({"b300", "nvidiab300"}),
     frozenset({"h100", "h10080gb", "nvidiah10080gbhbm3"}),
     frozenset(
@@ -1272,9 +1372,15 @@ def discover_kubernetes_gpu_catalog(
     return parse_kubernetes_gpu_catalog(output, context=context)
 
 
+# Values are the SkyPilot ``skypilot.co/accelerator`` label value, which
+# SkyPilot's ``SkyPilotLabelFormatter`` derives as ``accelerator.lower()`` and
+# rejects unless it is all lowercase (``validate_label_value``). An uppercase
+# value such as "B200" is written to the node but never matches SkyPilot's
+# optimizer and fails ``FAILED_PRECHECKS``, so every value here must be
+# lowercase.
 _KNOWN_SKYPILOT_LABELS = {
-    "b200": "B200",
-    "nvidiab200": "B200",
+    "b200": "b200",
+    "nvidiab200": "b200",
     "rtx6000": "rtxpro6000",
     "rtxpro6000": "rtxpro6000",
     "rtxpro6000blackwellserveredition": "rtxpro6000",
@@ -1286,7 +1392,9 @@ def _known_skypilot_label(labels: dict[str, str]) -> str:
     for key in ("nvidia.com/gpu.product", "nebius.com/gpu-name"):
         normalized = _normalize(labels.get(key, ""))
         if normalized in _KNOWN_SKYPILOT_LABELS:
-            return _KNOWN_SKYPILOT_LABELS[normalized]
+            # Guard the SkyPilot lowercase invariant even if a future mapping
+            # entry is added in mixed case.
+            return _KNOWN_SKYPILOT_LABELS[normalized].lower()
     return ""
 
 
@@ -1315,9 +1423,10 @@ def label_known_kubernetes_gpus_for_skypilot(
     observed = inventory or discover_kubernetes_gpu_inventory(
         context=exact_context, kubeconfig=kubeconfig
     )
-    if observed.error:
+    if observed.error or observed.diagnostics:
         raise KubernetesGpuCatalogError(
-            f"Cannot label GPUs because Kubernetes inventory failed: {observed.error}"
+            "Cannot label GPUs because Kubernetes inventory failed: "
+            + (observed.error or "; ".join(observed.diagnostics))
         )
     execute = runner or subprocess.run
     labelled = 0
@@ -1480,6 +1589,8 @@ def wait_for_kubernetes_accelerators(
         count = (
             inventory.allocatable
             if inventory is not None and not inventory.error
+            else None
+            if inventory is not None
             else get_allocatable()
         )
         if on_status:
@@ -1489,6 +1600,8 @@ def wait_for_kubernetes_accelerators(
                 "SkyPilot discovery=pending"
             )
         try:
+            if inventory is not None and inventory.error:
+                raise KubernetesGpuCatalogError(inventory.error)
             required = max(
                 parse_accelerator_request(accelerator).quantity
                 for accelerator in requested
@@ -1545,11 +1658,47 @@ def wait_for_kubernetes_accelerators(
         sleeper(min(poll_interval, remaining))
 
 
+def accelerator_spec(value: object) -> str:
+    """Return one concrete accelerator request for Kubernetes preflight.
+
+    Args:
+        value: A string request or a resolved single-entry accelerator mapping.
+
+    Returns:
+        A concrete accelerator request, or an empty string when absent.
+
+    Raises:
+        ValueError: The mapping contains alternatives rather than one request.
+    """
+
+    if not isinstance(value, Mapping):
+        return str(value or "").strip()
+    if not value:
+        return ""
+    if len(value) != 1:
+        raise ValueError(
+            "Kubernetes submit requires one concrete accelerator; multi-key "
+            "accelerator mappings are SkyPilot alternatives and cannot be "
+            "preflighted before SkyPilot selects one"
+        )
+    name, count = next(iter(value.items()))
+    return f"{str(name).strip()}:{count}"
+
+
 def spec_accelerators(resources: object) -> list[str]:
     """Return the distinct Kubernetes accelerator specs declared by a spec's profiles.
 
     Only ``cloud: kubernetes`` profiles are considered; Nebius VM profiles are
     validated against the VM catalog instead.
+
+    Args:
+        resources: Workflow resource profiles, after resolving configuration.
+
+    Returns:
+        Distinct requests with each declared accelerator quantity preserved.
+
+    Raises:
+        ValueError: A Kubernetes profile declares unselected alternatives.
     """
 
     found: list[str] = []
@@ -1561,7 +1710,7 @@ def spec_accelerators(resources: object) -> list[str]:
         cloud = str(profile.get("cloud") or "").strip().casefold()
         if cloud not in {"kubernetes", "k8s"}:
             continue
-        accelerator = str(profile.get("accelerators") or "").strip()
+        accelerator = accelerator_spec(profile.get("accelerators"))
         if accelerator and accelerator not in found:
             found.append(accelerator)
     return found
