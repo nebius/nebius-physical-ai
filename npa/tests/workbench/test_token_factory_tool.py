@@ -13,6 +13,10 @@ from npa.clients.token_factory import (
     resolve_config,
 )
 from npa.workbench.token_factory import (
+    CAPTION_AVAILABILITY_DIRECTIVE,
+    DEFAULT_CAPTION_INSTRUCTION,
+    CaptionItem,
+    CaptionResult,
     TokenFactoryToolError,
     caption_images,
     generate_text,
@@ -48,6 +52,16 @@ def _write_image(path: Path, color: tuple[int, int, int]) -> None:
     Image.new("RGB", (32, 32), color).save(path)
 
 
+class _SequenceClient:
+    def __init__(self, replies: list[str]) -> None:
+        self.replies = replies
+        self.calls: list[dict] = []
+
+    def chat_completion_text(self, **kwargs) -> str:
+        self.calls.append(kwargs)
+        return self.replies[len(self.calls) - 1]
+
+
 def test_caption_images_writes_manifest(tmp_path: Path) -> None:
     images = tmp_path / "images"
     _write_image(images / "a.png", (10, 20, 30))
@@ -64,7 +78,115 @@ def test_caption_images_writes_manifest(tmp_path: Path) -> None:
     assert result.image_count == 2
     assert {item.image for item in result.captions} == {"a.png", "b.jpg"}
     assert all(item.caption == "a clear caption" for item in result.captions)
+    assert all(item.status == "completed" for item in result.captions)
+    assert result.failed_count == 0
     assert result.result_uri.endswith("/captions.json")
+
+
+@pytest.mark.parametrize(
+    ("instruction", "expected_instruction"),
+    [
+        (None, DEFAULT_CAPTION_INSTRUCTION),
+        ("Count the colored shapes.", "Count the colored shapes."),
+    ],
+)
+def test_caption_images_appends_availability_directive(
+    tmp_path: Path,
+    instruction: str | None,
+    expected_instruction: str,
+) -> None:
+    image = tmp_path / "frame.png"
+    _write_image(image, (10, 20, 30))
+    captured: dict = {}
+    kwargs = {} if instruction is None else {"instruction": instruction}
+
+    result = caption_images(
+        input_path=str(image),
+        output_path=str(tmp_path / "out"),
+        client=_capturing_client("grounded caption", captured),
+        **kwargs,
+    )
+
+    expected_request = f"{expected_instruction}\n\n{CAPTION_AVAILABILITY_DIRECTIVE}"
+    prompt = captured["body"]["messages"][0]["content"][0]["text"]
+    assert result.instruction == expected_instruction
+    assert result.availability_directive == CAPTION_AVAILABILITY_DIRECTIVE
+    assert result.request_instruction == expected_request
+    assert prompt == expected_request
+
+
+def test_caption_dataclasses_preserve_positional_bindings() -> None:
+    item = CaptionItem("frame.png", "grounded caption")
+    result = CaptionResult(
+        "completed",
+        "frames",
+        "output",
+        "output/captions.json",
+        "vision-model",
+        "caption instruction",
+        1,
+        "2026-01-01T00:00:00+00:00",
+        [item],
+    )
+
+    assert (item.image, item.caption, item.status) == (
+        "frame.png",
+        "grounded caption",
+        "completed",
+    )
+    assert result.captions == [item]
+    assert result.failed_count == 0
+    assert result.availability_directive == CAPTION_AVAILABILITY_DIRECTIVE
+    assert result.request_instruction == ""
+
+
+def test_caption_images_marks_exact_sentinel_and_continues(
+    tmp_path: Path,
+) -> None:
+    images = tmp_path / "images"
+    for name in ("a.png", "b.png", "c.png"):
+        _write_image(images / name, (10, 20, 30))
+    client = _SequenceClient(
+        ["first grounded caption", " \nno image received.\n ", "third grounded caption"]
+    )
+
+    result = caption_images(
+        input_path=str(images),
+        output_path=str(tmp_path / "out"),
+        client=client,
+    )
+
+    assert len(client.calls) == 3
+    assert result.status == "failed"
+    assert result.image_count == 3
+    assert result.failed_count == 1
+    assert [item.image for item in result.captions] == ["a.png", "b.png", "c.png"]
+    assert [item.status for item in result.captions] == [
+        "completed",
+        "image_unavailable",
+        "completed",
+    ]
+    assert result.captions[1].caption == "no image received."
+
+
+def test_caption_images_does_not_substring_match_sentinel(tmp_path: Path) -> None:
+    image = tmp_path / "images" / "frame.png"
+    _write_image(image, (10, 20, 30))
+    reply = 'The sign in the image says "NO IMAGE RECEIVED."'
+
+    result = caption_images(
+        input_path=str(image.parent),
+        output_path=str(tmp_path / "out"),
+        client=_client(reply),
+    )
+
+    assert result.status == "completed"
+    assert result.failed_count == 0
+    assert result.captions[0] == CaptionItem(
+        image="frame.png",
+        caption=reply,
+        status="completed",
+    )
 
 
 def test_caption_images_respects_max_images(tmp_path: Path) -> None:
