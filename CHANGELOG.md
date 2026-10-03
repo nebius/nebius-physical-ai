@@ -134,6 +134,12 @@ a versioned heading when a release is cut.
   whole-answer match is retained as `image_unavailable`, makes the aggregate
   artifact fail, and exits nonzero after writing it. Later images are still
   attempted once; dry runs emit the failed result without writing.
+- Closed whole-answer matching now tolerates an omitted final period and nested
+  matching pairs of Markdown emphasis, ASCII quotes, or smart quotes. It still
+  rejects longer answers, mismatched or code wrappers, punctuation outside the
+  wrappers, other punctuation, and paraphrases. Hosted evidence observed only
+  the exact punctuated sentinel; the added formatting cases are deterministic
+  local controls.
 
 ### Studio videos accept S3 output paths
 
