@@ -1,0 +1,1241 @@
+{
+  "schema_version": 1,
+  "backend": "fa2",
+  "tile": null,
+  "tuning": null,
+  "environment": {
+    "image_id": "sha256:b8bf7067f54bbce01a568d940a098733a1fc41c0bdd154d88e4a451605324718",
+    "driver": "580.173.02",
+    "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+    "capability": [
+      12,
+      0
+    ],
+    "cuda": "13.0",
+    "flash_attention_commit": "eed1971f5132630dc296fe37601e834d4b57a248",
+    "benchmark_sources_sha256": {
+      "attention_benchmark_backend.py": "b18fe00cc31d930e3c65d3170412904fb6b789ef53b501ee04a1000d29c9ac2c",
+      "attention_kernel_benchmark.py": "4bfc3438b5fb4b1ff6721d5ddc83af05bb8011e82e8f5c14bd69ced4a9950dc1",
+      "attention_sdxl_benchmark.py": "d8b536b77b7a60b3ce688555461360eb94755f7cc74660ce097d75bce44d1189",
+      "fa4_sdxl_attention.py": "77de0e7c35e5a20f191dfa04feaa5df34b480dfcd77204be00815d8ab3c741d5",
+      "fa4_sdxl_validation.py": "a3053ff2021d23287d665e3b5f0c8f29871ef2e595318f6d17c936096c739f2c",
+      "fa4_sdxl_model.json": "9b79fe42d2b5693798a19aae6a79febe7e8c5783310d0ee8968c70e31c5ecb38"
+    },
+    "attention_sources_sha256": {},
+    "packages": {
+      "absl-py": "2.5.0",
+      "accelerate": "1.15.0",
+      "aiohappyeyeballs": "2.7.1",
+      "aiohttp": "3.14.3",
+      "aiosignal": "1.4.0",
+      "annotated-doc": "0.0.5",
+      "annotated-types": "0.8.0",
+      "anyio": "4.15.1",
+      "apache-tvm-ffi": "0.1.14.post1",
+      "attrs": "26.1.0",
+      "av": "18.1.0",
+      "boto3": "1.43.104",
+      "botocore": "1.43.104",
+      "certifi": "2026.7.22",
+      "charset-normalizer": "3.5.1",
+      "click": "8.5.0",
+      "cuda-bindings": "13.4.3",
+      "cuda-core": "1.2.1",
+      "cuda-pathfinder": "1.6.0",
+      "cuda-python": "13.4.1",
+      "cuda-toolkit": "13.0.3.0",
+      "datasets": "5.0.1",
+      "dill": "0.4.1",
+      "einops": "0.8.2",
+      "filelock": "3.32.3",
+      "flash-attn": "2.8.4",
+      "frozenlist": "1.8.0",
+      "fsspec": "2026.6.0",
+      "googleapis-common-protos": "1.75.4",
+      "grpcio": "1.84.0",
+      "h11": "0.16.0",
+      "hf-xet": "1.6.0",
+      "httpcore": "1.0.9",
+      "httpx": "0.28.1",
+      "huggingface-hub": "1.33.0",
+      "idna": "3.20",
+      "jinja2": "3.1.6",
+      "jmespath": "1.1.0",
+      "markdown": "3.11",
+      "markdown-it-py": "4.2.0",
+      "markupsafe": "3.0.3",
+      "mdurl": "0.1.2",
+      "mpmath": "1.3.0",
+      "multidict": "6.9.1",
+      "multiprocess": "0.70.19",
+      "networkx": "3.6.1",
+      "numpy": "2.4.6",
+      "nvidia-cublas": "13.1.1.3",
+      "nvidia-cuda-cupti": "13.0.85",
+      "nvidia-cuda-nvdisasm": "13.4.92",
+      "nvidia-cuda-nvrtc": "13.0.88",
+      "nvidia-cuda-runtime": "13.0.96",
+      "nvidia-cudnn-cu13": "9.20.0.48",
+      "nvidia-cufft": "12.0.0.61",
+      "nvidia-cufile": "1.15.1.6",
+      "nvidia-curand": "10.4.0.35",
+      "nvidia-cusolver": "12.0.4.66",
+      "nvidia-cusparse": "12.6.3.3",
+      "nvidia-cusparselt-cu13": "0.8.1",
+      "nvidia-cutlass-dsl": "4.6.2",
+      "nvidia-cutlass-dsl-libs-base": "4.6.2",
+      "nvidia-cutlass-dsl-libs-core": "4.6.2",
+      "nvidia-cutlass-dsl-libs-cu12": "4.6.2",
+      "nvidia-cutlass-dsl-libs-cu13": "4.6.2",
+      "nvidia-nccl-cu13": "2.29.7",
+      "nvidia-nvjitlink": "13.3.33",
+      "nvidia-nvshmem-cu13": "3.4.5",
+      "nvidia-nvtx": "13.0.85",
+      "opencv-python-headless": "5.0.0.93",
+      "opentelemetry-api": "1.45.0",
+      "opentelemetry-exporter-http-transport": "0.66b0",
+      "opentelemetry-exporter-otlp-common": "0.66b0",
+      "opentelemetry-exporter-otlp-proto-common": "1.45.0",
+      "opentelemetry-exporter-otlp-proto-http": "1.45.0",
+      "opentelemetry-proto": "1.45.0",
+      "opentelemetry-sdk": "1.45.0",
+      "opentelemetry-semantic-conventions": "0.66b0",
+      "packaging": "26.3",
+      "pandas": "3.0.6",
+      "pillow": "12.3.0",
+      "pip": "26.2.1",
+      "platformdirs": "4.12.1",
+      "propcache": "0.5.4",
+      "protobuf": "6.33.6",
+      "psutil": "7.2.2",
+      "pyarrow": "25.0.1",
+      "pydantic": "2.13.5",
+      "pydantic-core": "2.46.5",
+      "pygments": "2.21.0",
+      "python-dateutil": "2.9.0.post0",
+      "pyyaml": "6.0.3",
+      "quack-kernels": "0.6.4",
+      "regex": "2026.9.29",
+      "requests": "2.34.2",
+      "rich": "15.0.0",
+      "s3transfer": "0.19.2",
+      "safetensors": "0.8.0",
+      "scipy": "1.17.1",
+      "setuptools": "84.0.0",
+      "shellingham": "1.5.4",
+      "six": "1.17.0",
+      "sympy": "1.14.0",
+      "tensorboard": "2.21.0",
+      "tensorboard-data-server": "0.7.2",
+      "tokenizers": "0.23.2",
+      "torch": "2.13.0+cu130",
+      "torch-c-dlpack-ext": "0.1.5",
+      "torchaudio": "2.11.0+cu130",
+      "torchvision": "0.28.0+cu130",
+      "tqdm": "4.70.1",
+      "transformers": "5.17.0",
+      "triton": "3.7.1",
+      "typer": "0.27.2",
+      "typing-extensions": "4.16.0",
+      "typing-inspection": "0.4.4",
+      "urllib3": "2.8.0",
+      "wandb": "0.30.0",
+      "werkzeug": "3.1.9",
+      "wheel": "0.48.0",
+      "xxhash": "4.0.1",
+      "yarl": "1.25.1"
+    }
+  },
+  "results": [
+    {
+      "case": {
+        "name": "sdxl-q1024-k77",
+        "batch": 2,
+        "queries": 1024,
+        "keys": 77,
+        "heads": 20,
+        "kv_heads": 20,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0002638477017171681,
+          "max_abs": 0.0004837512969970703
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.02449631929397583,
+          "wall_ms": 0.024775424999461393
+        },
+        {
+          "cuda_ms": 0.023577919006347658,
+          "wall_ms": 0.023674065000705014
+        },
+        {
+          "cuda_ms": 0.02360111951828003,
+          "wall_ms": 0.023696964999544434
+        },
+        {
+          "cuda_ms": 0.023480639457702637,
+          "wall_ms": 0.023562034998576564
+        },
+        {
+          "cuda_ms": 0.023478240966796876,
+          "wall_ms": 0.023561660000268603
+        },
+        {
+          "cuda_ms": 0.023249120712280275,
+          "wall_ms": 0.023333815001933544
+        },
+        {
+          "cuda_ms": 0.02360960006713867,
+          "wall_ms": 0.023693480002293654
+        },
+        {
+          "cuda_ms": 0.02327615976333618,
+          "wall_ms": 0.02335864500309981
+        },
+        {
+          "cuda_ms": 0.023363840579986573,
+          "wall_ms": 0.023442204997081717
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, false, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.023480639457702637,
+      "median_wall_ms": 0.023562034998576564
+    },
+    {
+      "case": {
+        "name": "sdxl-q1024-k1024",
+        "batch": 2,
+        "queries": 1024,
+        "keys": 1024,
+        "heads": 20,
+        "kv_heads": 20,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0002781276707537472,
+          "max_abs": 0.00013369321823120117
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.03912719964981079,
+          "wall_ms": 0.03935047499908251
+        },
+        {
+          "cuda_ms": 0.03911328077316284,
+          "wall_ms": 0.03922619499917346
+        },
+        {
+          "cuda_ms": 0.039083359241485593,
+          "wall_ms": 0.039193339998746524
+        },
+        {
+          "cuda_ms": 0.03909215927124023,
+          "wall_ms": 0.03920251999716129
+        },
+        {
+          "cuda_ms": 0.03911168098449707,
+          "wall_ms": 0.03922221500033629
+        },
+        {
+          "cuda_ms": 0.03908720016479492,
+          "wall_ms": 0.03919265499916946
+        },
+        {
+          "cuda_ms": 0.03907887935638428,
+          "wall_ms": 0.03921824999906676
+        },
+        {
+          "cuda_ms": 0.03908240079879761,
+          "wall_ms": 0.03919394000149623
+        },
+        {
+          "cuda_ms": 0.03910559892654419,
+          "wall_ms": 0.03921983500276838
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.03909215927124023,
+      "median_wall_ms": 0.03921824999906676
+    },
+    {
+      "case": {
+        "name": "sdxl-q1536-k77",
+        "batch": 2,
+        "queries": 1536,
+        "keys": 77,
+        "heads": 20,
+        "kv_heads": 20,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0002645748609211296,
+          "max_abs": 0.0005723237991333008
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.029144799709320067,
+          "wall_ms": 0.029339050001908618
+        },
+        {
+          "cuda_ms": 0.028994879722595214,
+          "wall_ms": 0.02909207000357128
+        },
+        {
+          "cuda_ms": 0.028967199325561525,
+          "wall_ms": 0.029062849998808815
+        },
+        {
+          "cuda_ms": 0.02942863941192627,
+          "wall_ms": 0.029522545000872924
+        },
+        {
+          "cuda_ms": 0.029272000789642334,
+          "wall_ms": 0.02936370000043098
+        },
+        {
+          "cuda_ms": 0.02920128107070923,
+          "wall_ms": 0.029350770000746707
+        },
+        {
+          "cuda_ms": 0.029034879207611084,
+          "wall_ms": 0.029132730001038
+        },
+        {
+          "cuda_ms": 0.029165279865264893,
+          "wall_ms": 0.029254035002850287
+        },
+        {
+          "cuda_ms": 0.029100480079650878,
+          "wall_ms": 0.029190894997555006
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, false, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.029144799709320067,
+      "median_wall_ms": 0.029254035002850287
+    },
+    {
+      "case": {
+        "name": "sdxl-q1536-k1536",
+        "batch": 2,
+        "queries": 1536,
+        "keys": 1536,
+        "heads": 20,
+        "kv_heads": 20,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0002800491638481617,
+          "max_abs": 0.00012817978858947754
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.08348560333251953,
+          "wall_ms": 0.08370987500256888
+        },
+        {
+          "cuda_ms": 0.08320992469787597,
+          "wall_ms": 0.08333037500051432
+        },
+        {
+          "cuda_ms": 0.08334624290466308,
+          "wall_ms": 0.0834542849997888
+        },
+        {
+          "cuda_ms": 0.08403152465820313,
+          "wall_ms": 0.08414451000135159
+        },
+        {
+          "cuda_ms": 0.0841152000427246,
+          "wall_ms": 0.08423072999903525
+        },
+        {
+          "cuda_ms": 0.08333472251892089,
+          "wall_ms": 0.08345548999841412
+        },
+        {
+          "cuda_ms": 0.08332287788391113,
+          "wall_ms": 0.0834248849969299
+        },
+        {
+          "cuda_ms": 0.08333328247070312,
+          "wall_ms": 0.08344461999968189
+        },
+        {
+          "cuda_ms": 0.08331616401672363,
+          "wall_ms": 0.083434365001267
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.08333472251892089,
+      "median_wall_ms": 0.0834542849997888
+    },
+    {
+      "case": {
+        "name": "sdxl-q4096-k77",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 77,
+        "heads": 10,
+        "kv_heads": 10,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.00026447695563547313,
+          "max_abs": 0.000516057014465332
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.028911519050598144,
+          "wall_ms": 0.029104559998813784
+        },
+        {
+          "cuda_ms": 0.02911664009094238,
+          "wall_ms": 0.02922526000020298
+        },
+        {
+          "cuda_ms": 0.02888751983642578,
+          "wall_ms": 0.02897488999678899
+        },
+        {
+          "cuda_ms": 0.028747520446777343,
+          "wall_ms": 0.028836765000050946
+        },
+        {
+          "cuda_ms": 0.028807361125946045,
+          "wall_ms": 0.028897709999000654
+        },
+        {
+          "cuda_ms": 0.028572640419006347,
+          "wall_ms": 0.02866412500225124
+        },
+        {
+          "cuda_ms": 0.028667678833007814,
+          "wall_ms": 0.02875677999782056
+        },
+        {
+          "cuda_ms": 0.028692638874053954,
+          "wall_ms": 0.028781954997612047
+        },
+        {
+          "cuda_ms": 0.02868544101715088,
+          "wall_ms": 0.028774100001101033
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, false, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.028747520446777343,
+      "median_wall_ms": 0.028836765000050946
+    },
+    {
+      "case": {
+        "name": "sdxl-q4096-k4096",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 4096,
+        "heads": 10,
+        "kv_heads": 10,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.00028194382321089506,
+          "max_abs": 0.0001010596752166748
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.2716188812255859,
+          "wall_ms": 0.27186556500055303
+        },
+        {
+          "cuda_ms": 0.27141536712646486,
+          "wall_ms": 0.27154571000210126
+        },
+        {
+          "cuda_ms": 0.27144527435302734,
+          "wall_ms": 0.2715756699990379
+        },
+        {
+          "cuda_ms": 0.27156543731689453,
+          "wall_ms": 0.2717005449994758
+        },
+        {
+          "cuda_ms": 0.27139375686645506,
+          "wall_ms": 0.2715238600012526
+        },
+        {
+          "cuda_ms": 0.271561279296875,
+          "wall_ms": 0.2716823499986276
+        },
+        {
+          "cuda_ms": 0.2714310455322266,
+          "wall_ms": 0.271557149999353
+        },
+        {
+          "cuda_ms": 0.2715284729003906,
+          "wall_ms": 0.2716542650023257
+        },
+        {
+          "cuda_ms": 0.27143951416015627,
+          "wall_ms": 0.2715654199982964
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.27144527435302734,
+      "median_wall_ms": 0.2715756699990379
+    },
+    {
+      "case": {
+        "name": "sdxl-q6144-k77",
+        "batch": 2,
+        "queries": 6144,
+        "keys": 77,
+        "heads": 10,
+        "kv_heads": 10,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0002655764401424676,
+          "max_abs": 0.0005854368209838867
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.029092159271240235,
+          "wall_ms": 0.02928290499767172
+        },
+        {
+          "cuda_ms": 0.029167680740356444,
+          "wall_ms": 0.029270100003486732
+        },
+        {
+          "cuda_ms": 0.030799999237060546,
+          "wall_ms": 0.030892695003785775
+        },
+        {
+          "cuda_ms": 0.031175200939178468,
+          "wall_ms": 0.03127552499790909
+        },
+        {
+          "cuda_ms": 0.02982367992401123,
+          "wall_ms": 0.02991479999764124
+        },
+        {
+          "cuda_ms": 0.029533441066741942,
+          "wall_ms": 0.029628105003212113
+        },
+        {
+          "cuda_ms": 0.02911328077316284,
+          "wall_ms": 0.029202229998190887
+        },
+        {
+          "cuda_ms": 0.02916543960571289,
+          "wall_ms": 0.029247920001580496
+        },
+        {
+          "cuda_ms": 0.029320640563964842,
+          "wall_ms": 0.029404820002127963
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, false, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.029320640563964842,
+      "median_wall_ms": 0.029404820002127963
+    },
+    {
+      "case": {
+        "name": "sdxl-q6144-k6144",
+        "batch": 2,
+        "queries": 6144,
+        "keys": 6144,
+        "heads": 10,
+        "kv_heads": 10,
+        "head_dim": 64,
+        "dtype": "float16",
+        "causal": false,
+        "backward": false
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.00028340829885564744,
+          "max_abs": 6.416440010070801e-05
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.5978139114379882,
+          "wall_ms": 0.5981281499998659
+        },
+        {
+          "cuda_ms": 0.5978996658325195,
+          "wall_ms": 0.598093250000602
+        },
+        {
+          "cuda_ms": 0.5978919982910156,
+          "wall_ms": 0.5980672949999644
+        },
+        {
+          "cuda_ms": 0.5978359985351562,
+          "wall_ms": 0.5980575149987999
+        },
+        {
+          "cuda_ms": 0.5978905487060547,
+          "wall_ms": 0.5982080200010387
+        },
+        {
+          "cuda_ms": 0.5980295944213867,
+          "wall_ms": 0.5983300300022165
+        },
+        {
+          "cuda_ms": 0.5980460739135742,
+          "wall_ms": 0.5982611950003047
+        },
+        {
+          "cuda_ms": 0.5981502532958984,
+          "wall_ms": 0.5983429949992569
+        },
+        {
+          "cuda_ms": 0.5979848098754883,
+          "wall_ms": 0.598162919995957
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<64, 128, 128, 4, false, false, cutlass::half_t, Flash_kernel_traits<64, 128, 128, 4, cutlass::half_t> >, false, false, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.5978996658325195,
+      "median_wall_ms": 0.598162919995957
+    },
+    {
+      "case": {
+        "name": "transformer-s1024-kv4",
+        "batch": 2,
+        "queries": 1024,
+        "keys": 1024,
+        "heads": 16,
+        "kv_heads": 4,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.001992938807234168,
+          "max_abs": 0.009195089340209961
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.05547935962677002,
+          "wall_ms": 0.05569139500039455
+        },
+        {
+          "cuda_ms": 0.05545760154724121,
+          "wall_ms": 0.0555855899983726
+        },
+        {
+          "cuda_ms": 0.055438880920410154,
+          "wall_ms": 0.05557519500143826
+        },
+        {
+          "cuda_ms": 0.05538447856903076,
+          "wall_ms": 0.05549942499783356
+        },
+        {
+          "cuda_ms": 0.05540688037872314,
+          "wall_ms": 0.05552203000206646
+        },
+        {
+          "cuda_ms": 0.05543439865112305,
+          "wall_ms": 0.05555283999910898
+        },
+        {
+          "cuda_ms": 0.05539440155029297,
+          "wall_ms": 0.0555000900021696
+        },
+        {
+          "cuda_ms": 0.05538512229919434,
+          "wall_ms": 0.05549423000047682
+        },
+        {
+          "cuda_ms": 0.055371360778808595,
+          "wall_ms": 0.05548176000047533
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.05540688037872314,
+      "median_wall_ms": 0.05552203000206646
+    },
+    {
+      "case": {
+        "name": "transformer-s1024-kv4",
+        "batch": 2,
+        "queries": 1024,
+        "keys": 1024,
+        "heads": 16,
+        "kv_heads": 4,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "mode": "forward+backward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.001992938807234168,
+          "max_abs": 0.009195089340209961
+        },
+        "dQ": {
+          "relative_l2": 0.0024744535330682993,
+          "max_abs": 0.013919353485107422
+        },
+        "dK": {
+          "relative_l2": 0.0029715693090111017,
+          "max_abs": 0.024789810180664062
+        },
+        "dV": {
+          "relative_l2": 0.002888253889977932,
+          "max_abs": 0.03829383850097656
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 1.3428158569335937,
+          "wall_ms": 1.3433065849994819
+        },
+        {
+          "cuda_ms": 1.3345375061035156,
+          "wall_ms": 1.33473953000248
+        },
+        {
+          "cuda_ms": 1.3528758239746095,
+          "wall_ms": 1.3530790450022323
+        },
+        {
+          "cuda_ms": 1.3333592224121094,
+          "wall_ms": 1.3335494049988483
+        },
+        {
+          "cuda_ms": 1.2944644165039063,
+          "wall_ms": 1.2946389599983377
+        },
+        {
+          "cuda_ms": 1.3159327697753906,
+          "wall_ms": 1.3160970750004708
+        },
+        {
+          "cuda_ms": 1.2914999389648438,
+          "wall_ms": 1.2916832249993604
+        },
+        {
+          "cuda_ms": 1.333378448486328,
+          "wall_ms": 1.3335931749998053
+        },
+        {
+          "cuda_ms": 1.3168023681640626,
+          "wall_ms": 1.316986720003115
+        }
+      ],
+      "kernels": [
+        "void at::native::reduce_kernel<128, 4, at::native::ReduceOp<c10::BFloat16, at::native::func_wrapper_t<c10::BFloat16, at::native::sum_functor<c10::BFloat16, float, c10::BFloat16>::operator()(at::TensorIterator&)::{lambda(float, float)#1}>, unsigned int, c10::BFloat16, 4, 8> >(at::native::ReduceOp<c10::BFloat16, at::native::func_wrapper_t<c10::BFloat16, at::native::sum_functor<c10::BFloat16, float, c10::BFloat16>::operator()(at::TensorIterator&)::{lambda(float, float)#1}>, unsigned int, c10::BFloat16, 4, 8>)",
+        "void flash::flash_bwd_convert_dq_kernel<Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> > >(flash::Flash_bwd_params, int)",
+        "void flash::flash_bwd_dot_do_o_kernel<true, Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> > >(flash::Flash_bwd_params)",
+        "void flash::flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel<Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(flash::Flash_bwd_params)",
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 1.3333592224121094,
+      "median_wall_ms": 1.3335494049988483
+    },
+    {
+      "case": {
+        "name": "transformer-s1024-kv16",
+        "batch": 2,
+        "queries": 1024,
+        "keys": 1024,
+        "heads": 16,
+        "kv_heads": 16,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.001996534178033471,
+          "max_abs": 0.009508371353149414
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.055173120498657226,
+          "wall_ms": 0.05537985000046319
+        },
+        {
+          "cuda_ms": 0.055195040702819824,
+          "wall_ms": 0.05532042000140791
+        },
+        {
+          "cuda_ms": 0.055182080268859866,
+          "wall_ms": 0.05529508499876101
+        },
+        {
+          "cuda_ms": 0.055048317909240724,
+          "wall_ms": 0.055159035000542644
+        },
+        {
+          "cuda_ms": 0.05522031784057617,
+          "wall_ms": 0.055331049998130766
+        },
+        {
+          "cuda_ms": 0.05514143943786621,
+          "wall_ms": 0.05525519499769871
+        },
+        {
+          "cuda_ms": 0.0551691198348999,
+          "wall_ms": 0.0552788100003454
+        },
+        {
+          "cuda_ms": 0.055113120079040526,
+          "wall_ms": 0.05522250499780057
+        },
+        {
+          "cuda_ms": 0.055349440574646,
+          "wall_ms": 0.05545750500004942
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.055173120498657226,
+      "median_wall_ms": 0.05529508499876101
+    },
+    {
+      "case": {
+        "name": "transformer-s1024-kv16",
+        "batch": 2,
+        "queries": 1024,
+        "keys": 1024,
+        "heads": 16,
+        "kv_heads": 16,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "mode": "forward+backward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.001996534178033471,
+          "max_abs": 0.009508371353149414
+        },
+        "dQ": {
+          "relative_l2": 0.0024817949160933495,
+          "max_abs": 0.01652240753173828
+        },
+        "dK": {
+          "relative_l2": 0.002466833684593439,
+          "max_abs": 0.013530373573303223
+        },
+        "dV": {
+          "relative_l2": 0.0022955485619604588,
+          "max_abs": 0.014386653900146484
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 1.213495330810547,
+          "wall_ms": 1.2138564149972808
+        },
+        {
+          "cuda_ms": 0.9108745574951171,
+          "wall_ms": 0.9110554249991765
+        },
+        {
+          "cuda_ms": 1.2014295959472656,
+          "wall_ms": 1.2016087450001578
+        },
+        {
+          "cuda_ms": 1.1914390563964843,
+          "wall_ms": 1.1917053900015162
+        },
+        {
+          "cuda_ms": 1.2507711791992187,
+          "wall_ms": 1.250973695000539
+        },
+        {
+          "cuda_ms": 1.3298017883300781,
+          "wall_ms": 1.3299801549965196
+        },
+        {
+          "cuda_ms": 1.2520500946044921,
+          "wall_ms": 1.252215044996774
+        },
+        {
+          "cuda_ms": 1.2411505889892578,
+          "wall_ms": 1.2413372750006602
+        },
+        {
+          "cuda_ms": 1.2707806396484376,
+          "wall_ms": 1.2711022150006102
+        }
+      ],
+      "kernels": [
+        "void flash::flash_bwd_convert_dq_kernel<Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> > >(flash::Flash_bwd_params, int)",
+        "void flash::flash_bwd_dot_do_o_kernel<true, Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> > >(flash::Flash_bwd_params)",
+        "void flash::flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel<Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(flash::Flash_bwd_params)",
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 1.2411505889892578,
+      "median_wall_ms": 1.2413372750006602
+    },
+    {
+      "case": {
+        "name": "transformer-s4096-kv4",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 4096,
+        "heads": 16,
+        "kv_heads": 4,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0020557616371661425,
+          "max_abs": 0.008397817611694336
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.485938720703125,
+          "wall_ms": 0.4863035399966975
+        },
+        {
+          "cuda_ms": 0.487563362121582,
+          "wall_ms": 0.4877313099996172
+        },
+        {
+          "cuda_ms": 0.48756736755371094,
+          "wall_ms": 0.4877439050005705
+        },
+        {
+          "cuda_ms": 0.486485595703125,
+          "wall_ms": 0.48668370000086725
+        },
+        {
+          "cuda_ms": 0.4858942413330078,
+          "wall_ms": 0.4860951599994223
+        },
+        {
+          "cuda_ms": 0.4856991958618164,
+          "wall_ms": 0.48589433999950415
+        },
+        {
+          "cuda_ms": 0.4856806564331055,
+          "wall_ms": 0.4858648549998179
+        },
+        {
+          "cuda_ms": 0.4857559967041016,
+          "wall_ms": 0.48595448000014585
+        },
+        {
+          "cuda_ms": 0.4858451080322266,
+          "wall_ms": 0.4860345050019532
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.4858942413330078,
+      "median_wall_ms": 0.4860951599994223
+    },
+    {
+      "case": {
+        "name": "transformer-s4096-kv4",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 4096,
+        "heads": 16,
+        "kv_heads": 4,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "mode": "forward+backward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0020557616371661425,
+          "max_abs": 0.008397817611694336
+        },
+        "dQ": {
+          "relative_l2": 0.0024520279839634895,
+          "max_abs": 0.015958070755004883
+        },
+        "dK": {
+          "relative_l2": 0.0029712587129324675,
+          "max_abs": 0.020863056182861328
+        },
+        "dV": {
+          "relative_l2": 0.0028558934573084116,
+          "max_abs": 0.03020477294921875
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 1.7618724060058595,
+          "wall_ms": 1.762396069998431
+        },
+        {
+          "cuda_ms": 1.762403564453125,
+          "wall_ms": 1.7627077650013234
+        },
+        {
+          "cuda_ms": 1.7624462890625,
+          "wall_ms": 1.7628282900022896
+        },
+        {
+          "cuda_ms": 1.7623788452148437,
+          "wall_ms": 1.7627826099987942
+        },
+        {
+          "cuda_ms": 1.8310093688964844,
+          "wall_ms": 1.8313183349982864
+        },
+        {
+          "cuda_ms": 1.7592225646972657,
+          "wall_ms": 1.7595161850022123
+        },
+        {
+          "cuda_ms": 1.7632553100585937,
+          "wall_ms": 1.7635907849989962
+        },
+        {
+          "cuda_ms": 1.76211669921875,
+          "wall_ms": 1.762434359998224
+        },
+        {
+          "cuda_ms": 1.7624656677246093,
+          "wall_ms": 1.7627271350011142
+        }
+      ],
+      "kernels": [
+        "void at::native::reduce_kernel<128, 4, at::native::ReduceOp<c10::BFloat16, at::native::func_wrapper_t<c10::BFloat16, at::native::sum_functor<c10::BFloat16, float, c10::BFloat16>::operator()(at::TensorIterator&)::{lambda(float, float)#1}>, unsigned int, c10::BFloat16, 4, 8> >(at::native::ReduceOp<c10::BFloat16, at::native::func_wrapper_t<c10::BFloat16, at::native::sum_functor<c10::BFloat16, float, c10::BFloat16>::operator()(at::TensorIterator&)::{lambda(float, float)#1}>, unsigned int, c10::BFloat16, 4, 8>)",
+        "void flash::flash_bwd_convert_dq_kernel<Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> > >(flash::Flash_bwd_params, int)",
+        "void flash::flash_bwd_dot_do_o_kernel<true, Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> > >(flash::Flash_bwd_params)",
+        "void flash::flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel<Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(flash::Flash_bwd_params)",
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 1.762403564453125,
+      "median_wall_ms": 1.7627271350011142
+    },
+    {
+      "case": {
+        "name": "transformer-s4096-kv16",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 4096,
+        "heads": 16,
+        "kv_heads": 16,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "mode": "forward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0020486710127443075,
+          "max_abs": 0.008957147598266602
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 0.489581298828125,
+          "wall_ms": 0.49002094000115903
+        },
+        {
+          "cuda_ms": 0.4894379043579102,
+          "wall_ms": 0.48971818999689276
+        },
+        {
+          "cuda_ms": 0.4893286514282227,
+          "wall_ms": 0.4895515999987765
+        },
+        {
+          "cuda_ms": 0.489376335144043,
+          "wall_ms": 0.48961369000153354
+        },
+        {
+          "cuda_ms": 0.4893065643310547,
+          "wall_ms": 0.48958520500036684
+        },
+        {
+          "cuda_ms": 0.48948177337646487,
+          "wall_ms": 0.4897599950027143
+        },
+        {
+          "cuda_ms": 0.48931854248046874,
+          "wall_ms": 0.4895451899983527
+        },
+        {
+          "cuda_ms": 0.48923648834228517,
+          "wall_ms": 0.4894513299996106
+        },
+        {
+          "cuda_ms": 0.48928558349609375,
+          "wall_ms": 0.4894994049982415
+        }
+      ],
+      "kernels": [
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 0.4893286514282227,
+      "median_wall_ms": 0.48958520500036684
+    },
+    {
+      "case": {
+        "name": "transformer-s4096-kv16",
+        "batch": 2,
+        "queries": 4096,
+        "keys": 4096,
+        "heads": 16,
+        "kv_heads": 16,
+        "head_dim": 128,
+        "dtype": "bfloat16",
+        "causal": true,
+        "backward": true
+      },
+      "mode": "forward+backward",
+      "correctness": {
+        "output": {
+          "relative_l2": 0.0020486710127443075,
+          "max_abs": 0.008957147598266602
+        },
+        "dQ": {
+          "relative_l2": 0.0024406774900853634,
+          "max_abs": 0.01053762435913086
+        },
+        "dK": {
+          "relative_l2": 0.0024167958181351423,
+          "max_abs": 0.013427257537841797
+        },
+        "dV": {
+          "relative_l2": 0.0023227310739457607,
+          "max_abs": 0.020658493041992188
+        }
+      },
+      "samples": [
+        {
+          "cuda_ms": 1.7266790771484375,
+          "wall_ms": 1.7272490899995319
+        },
+        {
+          "cuda_ms": 1.7250808715820312,
+          "wall_ms": 1.7254066299983606
+        },
+        {
+          "cuda_ms": 1.726262969970703,
+          "wall_ms": 1.7265747499959616
+        },
+        {
+          "cuda_ms": 1.7266645812988282,
+          "wall_ms": 1.7269756299992878
+        },
+        {
+          "cuda_ms": 1.7261817932128907,
+          "wall_ms": 1.7264910350013452
+        },
+        {
+          "cuda_ms": 1.7258624267578124,
+          "wall_ms": 1.7261771300036344
+        },
+        {
+          "cuda_ms": 1.7273844909667968,
+          "wall_ms": 1.7277091050027593
+        },
+        {
+          "cuda_ms": 1.7266067504882812,
+          "wall_ms": 1.7269274599993878
+        },
+        {
+          "cuda_ms": 1.7263075256347655,
+          "wall_ms": 1.7266149199986103
+        }
+      ],
+      "kernels": [
+        "void flash::flash_bwd_convert_dq_kernel<Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> > >(flash::Flash_bwd_params, int)",
+        "void flash::flash_bwd_dot_do_o_kernel<true, Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> > >(flash::Flash_bwd_params)",
+        "void flash::flash_bwd_dq_dk_dv_loop_seqk_parallel_kernel<Flash_bwd_kernel_traits<128, 64, 64, 8, 4, 2, 2, true, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 64, 64, 8, cutlass::bfloat16_t> >, false, true, false, false, true, true, false>(flash::Flash_bwd_params)",
+        "void flash::flash_fwd_kernel<Flash_fwd_kernel_traits<128, 128, 64, 4, false, false, cutlass::bfloat16_t, Flash_kernel_traits<128, 128, 64, 4, cutlass::bfloat16_t> >, false, true, false, false, true, true, false, false>(flash::Flash_fwd_params)"
+      ],
+      "median_cuda_ms": 1.7263075256347655,
+      "median_wall_ms": 1.7266149199986103
+    }
+  ],
+  "warmup": 1000,
+  "iterations": 200,
+  "repeats": 9,
+  "status": "passed"
+}

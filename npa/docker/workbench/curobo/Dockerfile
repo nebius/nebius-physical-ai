@@ -7,7 +7,7 @@ ARG NPA_SOURCE_SHA
 # Build-only commit epoch makes pip emit reproducible PEP 552 checked-hash pyc.
 ARG SOURCE_DATE_EPOCH
 LABEL npa.tool="curobo" \
-      npa.version="0.8.0-cuda13-b300-unbuilt" \
+      npa.version="0.8.0-cuda13-blackwell-unbuilt" \
       org.opencontainers.image.revision="${NPA_SOURCE_SHA}" \
       org.opencontainers.image.licenses="Apache-2.0 AND MIT AND BSD-3-Clause"
 

@@ -1,0 +1,300 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "images": {
+    "fa2": {
+      "source_revision": "8ab03390f2029bf7273d463b6528cf1747878a32",
+      "image_id": "sha256:b8bf7067f54bbce01a568d940a098733a1fc41c0bdd154d88e4a451605324718",
+      "architecture": "amd64",
+      "runtime_user": "ubuntu",
+      "published": false
+    },
+    "fa4": {
+      "source_revision": "522f5f9987af68cced326d1561b557e615cffcf6",
+      "image_id": "sha256:6a94f7d90751f1679687d0f10d7eed122ab2a9998e5892c6b5ff63b1ab10dace",
+      "architecture": "amd64",
+      "runtime_user": "ubuntu",
+      "published": false
+    }
+  },
+  "benchmark_source_revision": "522f5f9987af68cced326d1561b557e615cffcf6",
+  "build_cache_argument": "BUILD_TS=dev-5cdf2725da3d9df54afcb36ddcb050ff5b44f61d",
+  "build_cache_note": "Unchanged compilation layers were reused; final npa.build_ts and OCI revision labels identify each actual source revision. No registry push or release promotion.",
+  "gpu": "NVIDIA RTX PRO 6000 Blackwell Server Edition",
+  "driver": "580.173.02",
+  "upstream_flash_attention_commit": "eed1971f5132630dc296fe37601e834d4b57a248",
+  "model": "stabilityai/stable-diffusion-xl-base-1.0",
+  "model_revision": "462165984030d82259a11f4367a4eed129e94a7b",
+  "order": [
+    "final-0-fa2",
+    "final-1-default",
+    "final-2-tuned",
+    "final-3-tuned",
+    "final-4-default",
+    "final-5-fa2"
+  ],
+  "counts": {
+    "complete_generations": 108,
+    "warmup_generations": 18,
+    "timed_generations": 90,
+    "steps_per_generation": 30,
+    "attention_calls_per_generation": 4200
+  },
+  "comparisons": {
+    "default": {
+      "schema_version": 1,
+      "cases": [
+        {
+          "name": "robot-workcell",
+          "fa2": {
+            "median_seconds": 2.0234087000003456,
+            "block_medians": [
+              2.0220286500002658,
+              2.0247887500004254
+            ],
+            "minimum_seconds": 2.0195547049997913,
+            "maximum_seconds": 2.036106496999764
+          },
+          "fa4": {
+            "median_seconds": 2.028343363499971,
+            "block_medians": [
+              2.02646198299999,
+              2.030224743999952
+            ],
+            "minimum_seconds": 2.0146464269996613,
+            "maximum_seconds": 2.057914824999898
+          },
+          "fa2_time_over_fa4_time": 0.9975671458844569
+        },
+        {
+          "name": "warehouse",
+          "fa2": {
+            "median_seconds": 3.1592523409997284,
+            "block_medians": [
+              3.1563700889996653,
+              3.1621345929997915
+            ],
+            "minimum_seconds": 3.1505317030000697,
+            "maximum_seconds": 3.170481355999982
+          },
+          "fa4": {
+            "median_seconds": 3.156392020500107,
+            "block_medians": [
+              3.1573242099998424,
+              3.155459831000371
+            ],
+            "minimum_seconds": 3.1522526200001266,
+            "maximum_seconds": 3.1671364769999855
+          },
+          "fa2_time_over_fa4_time": 1.0009061993824102
+        },
+        {
+          "name": "sensor-rig",
+          "fa2": {
+            "median_seconds": 3.2063800434998484,
+            "block_medians": [
+              3.2079653719997623,
+              3.2047947149999345
+            ],
+            "minimum_seconds": 3.1943778690001636,
+            "maximum_seconds": 3.2144254649997492
+          },
+          "fa4": {
+            "median_seconds": 3.196834072499996,
+            "block_medians": [
+              3.196969753999838,
+              3.1966983910001545
+            ],
+            "minimum_seconds": 3.1856711489999725,
+            "maximum_seconds": 3.2073609959998066
+          },
+          "fa2_time_over_fa4_time": 1.0029860702130178
+        }
+      ],
+      "fa4_tile": null,
+      "fa4_tuning": null,
+      "images": {
+        "fa2": "sha256:b8bf7067f54bbce01a568d940a098733a1fc41c0bdd154d88e4a451605324718",
+        "fa4": "sha256:6a94f7d90751f1679687d0f10d7eed122ab2a9998e5892c6b5ff63b1ab10dace"
+      },
+      "interpretation": "Ratios above 1 favor FA4; below 1 favor FA2. Block variation is descriptive, not a significance test."
+    },
+    "tuned": {
+      "schema_version": 1,
+      "cases": [
+        {
+          "name": "robot-workcell",
+          "fa2": {
+            "median_seconds": 2.0234087000003456,
+            "block_medians": [
+              2.0220286500002658,
+              2.0247887500004254
+            ],
+            "minimum_seconds": 2.0195547049997913,
+            "maximum_seconds": 2.036106496999764
+          },
+          "fa4": {
+            "median_seconds": 2.0207592360000035,
+            "block_medians": [
+              2.0218173359999128,
+              2.0197011360000943
+            ],
+            "minimum_seconds": 2.0171912579999116,
+            "maximum_seconds": 2.0312771720000455
+          },
+          "fa2_time_over_fa4_time": 1.0013111230438252
+        },
+        {
+          "name": "warehouse",
+          "fa2": {
+            "median_seconds": 3.1592523409997284,
+            "block_medians": [
+              3.1563700889996653,
+              3.1621345929997915
+            ],
+            "minimum_seconds": 3.1505317030000697,
+            "maximum_seconds": 3.170481355999982
+          },
+          "fa4": {
+            "median_seconds": 3.1606174460000602,
+            "block_medians": [
+              3.161007909000091,
+              3.1602269830000296
+            ],
+            "minimum_seconds": 3.159376455999791,
+            "maximum_seconds": 3.167035369000132
+          },
+          "fa2_time_over_fa4_time": 0.9995680891396523
+        },
+        {
+          "name": "sensor-rig",
+          "fa2": {
+            "median_seconds": 3.2063800434998484,
+            "block_medians": [
+              3.2079653719997623,
+              3.2047947149999345
+            ],
+            "minimum_seconds": 3.1943778690001636,
+            "maximum_seconds": 3.2144254649997492
+          },
+          "fa4": {
+            "median_seconds": 3.197962017500231,
+            "block_medians": [
+              3.1956470080003783,
+              3.2002770270000838
+            ],
+            "minimum_seconds": 3.1793904629998906,
+            "maximum_seconds": 3.2080379080002785
+          },
+          "fa2_time_over_fa4_time": 1.0026323095626375
+        }
+      ],
+      "fa4_tile": null,
+      "fa4_tuning": "rtx6000-inference",
+      "images": {
+        "fa2": "sha256:b8bf7067f54bbce01a568d940a098733a1fc41c0bdd154d88e4a451605324718",
+        "fa4": "sha256:6a94f7d90751f1679687d0f10d7eed122ab2a9998e5892c6b5ff63b1ab10dace"
+      },
+      "interpretation": "Ratios above 1 favor FA4; below 1 favor FA2. Block variation is descriptive, not a significance test."
+    }
+  },
+  "quality": {
+    "status": "passed",
+    "cases": [
+      {
+        "name": "robot-workcell",
+        "deterministic_across_blocks_and_repeats": {
+          "fa2": true,
+          "default": true,
+          "tuned": true
+        },
+        "comparisons": {
+          "fa2_vs_default": {
+            "image_ssim": 0.9891629283441041,
+            "image_psnr_db": 43.811517220572384,
+            "latent_relative_l2": 0.01324812974780798
+          },
+          "fa2_vs_tuned": {
+            "image_ssim": 0.9909841138847796,
+            "image_psnr_db": 44.865180232405606,
+            "latent_relative_l2": 0.013001041486859322
+          },
+          "default_vs_tuned": {
+            "image_ssim": 0.9911506337784498,
+            "image_psnr_db": 44.694413074715236,
+            "latent_relative_l2": 0.011427906341850758
+          }
+        }
+      },
+      {
+        "name": "warehouse",
+        "deterministic_across_blocks_and_repeats": {
+          "fa2": true,
+          "default": true,
+          "tuned": true
+        },
+        "comparisons": {
+          "fa2_vs_default": {
+            "image_ssim": 0.9926262765856203,
+            "image_psnr_db": 44.74397230133809,
+            "latent_relative_l2": 0.010837453417479992
+          },
+          "fa2_vs_tuned": {
+            "image_ssim": 0.9934734204686198,
+            "image_psnr_db": 45.5537811685753,
+            "latent_relative_l2": 0.007687817327678204
+          },
+          "default_vs_tuned": {
+            "image_ssim": 0.9925179024493734,
+            "image_psnr_db": 44.55289682168498,
+            "latent_relative_l2": 0.010232964530587196
+          }
+        }
+      },
+      {
+        "name": "sensor-rig",
+        "deterministic_across_blocks_and_repeats": {
+          "fa2": true,
+          "default": true,
+          "tuned": true
+        },
+        "comparisons": {
+          "fa2_vs_default": {
+            "image_ssim": 0.9942616008911999,
+            "image_psnr_db": 47.13075636336619,
+            "latent_relative_l2": 0.007122035603970289
+          },
+          "fa2_vs_tuned": {
+            "image_ssim": 0.9929957274656002,
+            "image_psnr_db": 45.78757973003094,
+            "latent_relative_l2": 0.011746913194656372
+          },
+          "default_vs_tuned": {
+            "image_ssim": 0.9935199701058847,
+            "image_psnr_db": 46.482957240394775,
+            "latent_relative_l2": 0.01075866911560297
+          }
+        }
+      }
+    ]
+  },
+  "measurement_utc_date": "2026-09-29",
+  "operator_local_date": "2026-09-28",
+  "qualification_reports": {
+    "fa2": {
+      "report": "fa2-fa2-correctness.json",
+      "image_id": "sha256:b8bf7067f54bbce01a568d940a098733a1fc41c0bdd154d88e4a451605324718",
+      "sha256": "37584dbbe41d5767a2221cff3e3ea307ab487ed4e1a89901e3244b200195077d"
+    },
+    "fa4-native": {
+      "report": "final-fa4-flash_attn.cute-correctness.json",
+      "image_id": "sha256:6a94f7d90751f1679687d0f10d7eed122ab2a9998e5892c6b5ff63b1ab10dace",
+      "sha256": "9fe06fd0a0f5e1560ad46a1e78e006aa5174d589d309201c97254ed43ed033fe"
+    },
+    "fa4-root": {
+      "report": "final-fa4-flash_attn-correctness.json",
+      "image_id": "sha256:6a94f7d90751f1679687d0f10d7eed122ab2a9998e5892c6b5ff63b1ab10dace",
+      "sha256": "08cea1689e53e98d4000ff50f780e055025959b1dcf6e352a3ac377efaa63649"
+    }
+  }
+}
