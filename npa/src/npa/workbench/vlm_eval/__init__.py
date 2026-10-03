@@ -49,7 +49,14 @@ DEFAULT_RUBRIC = (
     "Score whether the rollout completes the requested physical task. "
     "Use 1.0 only for clear task completion, 0.0 for clear failure, and "
     "intermediate values for partial progress. Penalize unsafe, incomplete, "
-    "or ambiguous outcomes."
+    "or ambiguous outcomes. Assign score 0.0 and success false when the requested "
+    "terminal state is missing or ambiguous in the supplied frames. "
+    "Do not award partial-progress credit in that case. "
+    "Evidence that stops at intermediate progress "
+    "without showing the requested terminal state is incomplete, even if the "
+    "action appears likely to succeed. Do not infer placement, release, "
+    "stability, or completion from approach, contact, grasp, lift, transfer, "
+    "or disappearance alone."
 )
 RESULT_FILENAME = "vlm_eval_stub.json"
 #: The aggregate report a rollout-SET evaluation writes. Named for compatibility with

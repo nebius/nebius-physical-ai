@@ -90,7 +90,13 @@ npa workbench vlm-eval run \
   judge can actually see. A four-frame view of a long episode judges a summary.
 - `--rubric` / `--rubric-path` carry the scoring instructions. The default rubric
   reserves 1.0 for clear completion and 0.0 for clear failure, with intermediate
-  values for partial progress, and penalizes unsafe or ambiguous outcomes.
+  values for partial progress, and penalizes unsafe or ambiguous outcomes. It
+  instructs the judge to assign `0.0` and `success: false` when the requested
+  terminal state is missing or ambiguous in the supplied frames. That instruction
+  overrides partial-progress credit: approach, contact, grasp, lift, transfer,
+  or disappearance alone cannot prove placement, release, stability, or completion.
+  This is a prompt instruction, not an independent visual validator; the gate
+  still uses only the returned score and threshold. Custom rubrics replace it.
 - `--success-threshold` (default 0.8) is the gate. In `loop` it applies to the
   **mean** score across rollouts, which is a coarser claim than per-rollout
   success — do not report it as a per-rollout success rate.
@@ -121,6 +127,15 @@ npa workbench vlm-eval benchmark \
 the sweep runs but tells you nothing about your task. `--use-fixture-scores`
 honors recorded `fixture_score` values for non-stub backends; stub always uses
 them when present.
+
+The packaged sample's `progress-without-terminal-fail` case exercises an
+omitted-outcome negative, but its tiny synthetic frames and prerecorded score
+remain wiring-only. For a real rollout gate, retain a source-matched truncated
+case with plausible progress and no terminal outcome, plus a complete case,
+ambiguous terminal evidence, and blank or unrelated evidence under the same
+task and rubric. Run the [terminal-evidence live check](../../../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#terminal-evidence-live-check)
+and independently review retained rationales against pixels. Report sampling
+differences; these controls do not estimate error rates or qualify a model.
 
 ## In workflows
 

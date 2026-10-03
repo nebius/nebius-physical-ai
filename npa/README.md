@@ -567,6 +567,13 @@ running. Without an override, Make prefers the contributor environment
 `npa/.venv/bin/python`, then `python3` on `PATH`. Live and GPU tests are
 deselected from `make test`; `make test-e2e` is the explicit live-infrastructure
 target and needs the relevant credentials and resources.
+The VLM terminal-evidence live lane requires `NPA_INTEGRATION_E2E=1` and
+`NPA_VLM_TERMINAL_LIVE_CONFIG`, an owner-only JSON file defining frozen real
+complete, truncated, ambiguous, and blank controls and a new private output
+directory. There is no default config. An explicitly enabled run fails if its
+configuration is missing. See the [terminal-evidence live
+check](../docs/workbench/cookbooks/vlm-eval-loop-runbook.md#terminal-evidence-live-check)
+for preparation, credential preflight, execution, and evidence review.
 For the real Cosmos Ray batch check, set `NPA_COSMOS3_RAY_LIVE_OUTPUT_URI`
 to an operator-owned S3 prefix; it has no default. The check requires an existing
 authenticated GPU service and writes two synthetic images plus their provenance.
