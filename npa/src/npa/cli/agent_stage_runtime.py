@@ -290,19 +290,29 @@ def _publication_cache_open(path, identity):
     descriptor = _publication_os.open(
         path, _publication_os.O_RDONLY | getattr(_publication_os, "O_NOFOLLOW", 0)
     )
-    stream = _publication_os.fdopen(descriptor, "rb")
-    info = _publication_os.fstat(stream.fileno())
-    observed = (
-        info.st_dev,
-        info.st_ino,
-        info.st_size,
-        info.st_mtime_ns,
-        info.st_ctime_ns,
-    )
-    if not _publication_stat.S_ISREG(info.st_mode) or observed != identity:
-        stream.close()
-        raise PublicationConflict("verified publication cache identity changed")
-    return stream
+    stream = None
+    try:
+        stream = _publication_os.fdopen(descriptor, "rb")
+        info = _publication_os.fstat(stream.fileno())
+        observed = (
+            info.st_dev,
+            info.st_ino,
+            info.st_size,
+            info.st_mtime_ns,
+            info.st_ctime_ns,
+        )
+        if not _publication_stat.S_ISREG(info.st_mode) or observed != identity:
+            raise PublicationConflict("verified publication cache identity changed")
+        return stream
+    except BaseException:
+        try:
+            if stream is None:
+                _publication_os.close(descriptor)
+            else:
+                stream.close()
+        except OSError:
+            pass
+        raise
 
 
 def _publication_authenticate_cache_stream(stream, *, size_bytes, expected_sha256):
@@ -328,9 +338,22 @@ def _publication_authenticate_cache_stream(stream, *, size_bytes, expected_sha25
 
 def _publication_cache_drop(cache_key):
     # Caller holds the guard; only a process-owned, hash-derived leaf is unlinked.
-    entry = _PUBLICATION_CACHE_ENTRIES.pop(cache_key, None)
+    entry = _PUBLICATION_CACHE_ENTRIES.get(cache_key)
     if entry is not None:
         entry[0].unlink(missing_ok=True)
+        _PUBLICATION_CACHE_ENTRIES.pop(cache_key)
+
+
+def _publication_cache_discard_failed_install(cache_key, entry):
+    with _PUBLICATION_CACHE_GUARD:
+        if _PUBLICATION_CACHE_ENTRIES.get(cache_key) != entry:
+            return
+        try:
+            _publication_cache_drop(cache_key)
+        except OSError:
+            # Keep ownership indexed for a later clear/eviction retry; do not
+            # replace the authentication or installation error with cleanup.
+            pass
 
 
 def _clear_verified_publication_cache():
@@ -404,21 +427,32 @@ def _publication_cache_install(s3, staged, root, cache_key, target, epoch):
     staged.flush()
     name = hashlib.sha256(repr(cache_key).encode()).hexdigest()
     path = root / f"{name}-{target.sha256}.blob"
-    with _PUBLICATION_CACHE_GUARD:
-        if epoch != _PUBLICATION_CACHE_EPOCH or cache_key[
-            0
-        ] != _publication_client_scope(s3):
-            # Access invalidation during transport cannot repopulate old state.
-            return staged
-        _publication_cache_reclaim(cache_key, target.size_bytes)
-        staging_path.chmod(0o400)
-        staging_path.replace(path)
-        entry = (path, _publication_cache_identity(path))
-        _PUBLICATION_CACHE_ENTRIES[cache_key] = entry
-        stream = _publication_cache_open(*entry)
-    return _publication_authenticate_cache_stream(
-        stream, size_bytes=target.size_bytes, expected_sha256=target.sha256
-    )
+    entry = None
+    try:
+        with _PUBLICATION_CACHE_GUARD:
+            if epoch != _PUBLICATION_CACHE_EPOCH or cache_key[
+                0
+            ] != _publication_client_scope(s3):
+                # Access invalidation during transport cannot repopulate old state.
+                return staged
+            _publication_cache_reclaim(cache_key, target.size_bytes)
+            staging_path.chmod(0o400)
+            identity = _publication_cache_identity(staging_path)
+            staging_path.replace(path)
+            # Index owned bytes before observing the renamed leaf: a late stat
+            # failure must not orphan a blob outside retention accounting.
+            entry = (path, identity)
+            _PUBLICATION_CACHE_ENTRIES[cache_key] = entry
+            entry = (path, _publication_cache_identity(path))
+            _PUBLICATION_CACHE_ENTRIES[cache_key] = entry
+            stream = _publication_cache_open(*entry)
+        return _publication_authenticate_cache_stream(
+            stream, size_bytes=target.size_bytes, expected_sha256=target.sha256
+        )
+    except BaseException:
+        if entry is not None:
+            _publication_cache_discard_failed_install(cache_key, entry)
+        raise
 
 
 def _publication_cached_body(s3, bucket, key, target, conditions, cache_key):

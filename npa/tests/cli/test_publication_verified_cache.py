@@ -244,6 +244,83 @@ def test_eviction_does_not_corrupt_an_open_verified_reader(monkeypatch):
         held.close()
 
 
+def _fail_cache_install(monkeypatch, phase, opened):
+    identity = runtime._publication_cache_identity
+    original_open = runtime._publication_cache_open
+
+    def identity_failure(path):
+        if path.suffix == ".blob":
+            raise OSError("synthetic postrename identity failure")
+        return identity(path)
+
+    def tracked_open(*args):
+        stream = original_open(*args)
+        opened.append(stream)
+        if phase == "authentication":
+
+            def unreadable(*_args):
+                raise OSError("synthetic authentication read failure")
+
+            stream.read = unreadable
+        elif phase == "authentication-conflict":
+            stream.read = lambda *_args: b""
+        return stream
+
+    if phase == "identity":
+        monkeypatch.setattr(runtime, "_publication_cache_identity", identity_failure)
+    elif phase == "open":
+        fdopen = runtime._publication_os.fdopen
+
+        def tracked_fdopen(*args):
+            stream = fdopen(*args)
+            opened.append(stream)
+            return stream
+
+        def failed_stat(*_args):
+            raise OSError("synthetic postrename open failure")
+
+        monkeypatch.setattr(runtime._publication_os, "fdopen", tracked_fdopen)
+        monkeypatch.setattr(runtime._publication_os, "fstat", failed_stat)
+    else:
+        monkeypatch.setattr(runtime, "_publication_cache_open", tracked_open)
+
+
+@pytest.mark.parametrize(
+    "phase", ["identity", "open", "authentication", "authentication-conflict"]
+)
+def test_late_install_failure_reclaims_owned_leaf_and_preserves_readers(
+    monkeypatch, phase
+):
+    store = _VersionedStore(SimpleNamespace(objects={}))
+    monkeypatch.setattr(runtime, "HTTPException", HTTPException)
+    monkeypatch.setattr(runtime, "_PUBLICATION_CACHE_MAX_ENTRIES", 1)
+    monkeypatch.setattr(runtime, "_PUBLICATION_CACHE_MAX_BYTES", 20)
+    target = _cache_target(store, run="held", value=b"P" * 16)
+    held, _ = runtime._verified_publication_object_body(store, "demo-bucket", target)
+    opened = []
+    _fail_cache_install(monkeypatch, phase, opened)
+    try:
+        for index in range(3):
+            target = _cache_target(store, run=f"failed-{index}", value=b"V" * 16)
+            expected = (
+                runtime.PublicationConflict
+                if phase == "authentication-conflict"
+                else HTTPException
+            )
+            with pytest.raises(expected) as rejected:
+                runtime._verified_publication_object_body(store, "demo-bucket", target)
+            if phase != "authentication-conflict":
+                assert rejected.value.status_code == 503
+            assert not runtime._PUBLICATION_CACHE_ENTRIES
+            assert _cached_bytes() == 0
+            assert all(stream.closed for stream in opened)
+        runtime._clear_verified_publication_cache()
+        assert _cached_bytes() == 0 and held.read() == b"P" * 16
+        assert store.recording_reads == 4
+    finally:
+        held.close()
+
+
 def test_unidentified_client_and_oversize_object_are_verified_without_retention(
     monkeypatch,
 ):
@@ -269,6 +346,34 @@ def test_unidentified_client_and_oversize_object_are_verified_without_retention(
     body, _ = runtime._verified_publication_object_body(store, "demo-bucket", target)
     assert body.read() == b"verified"
     body.close()
+    assert not runtime._PUBLICATION_CACHE_ENTRIES and _cached_bytes() == 0
+
+
+def test_failed_install_cleanup_retains_ownership_and_primary_error(monkeypatch):
+    store = _VersionedStore(SimpleNamespace(objects={}))
+    target = _cache_target(store, value=b"V" * 16)
+    monkeypatch.setattr(runtime, "HTTPException", HTTPException)
+    monkeypatch.setattr(runtime, "_PUBLICATION_CACHE_MAX_ENTRIES", 1)
+    monkeypatch.setattr(runtime, "_PUBLICATION_CACHE_MAX_BYTES", 20)
+    unlink = Path.unlink
+
+    def failed_cleanup(path, **kwargs):
+        if path.suffix == ".blob":
+            raise OSError("synthetic cleanup failure")
+        return unlink(path, **kwargs)
+
+    with monkeypatch.context() as fault:
+        _fail_cache_install(fault, "identity", [])
+        fault.setattr(Path, "unlink", failed_cleanup)
+        with pytest.raises(HTTPException) as rejected:
+            runtime._verified_publication_object_body(store, "demo-bucket", target)
+        assert rejected.value.status_code == 503
+        assert (
+            str(rejected.value.__context__) == "synthetic postrename identity failure"
+        )
+        assert len(runtime._PUBLICATION_CACHE_ENTRIES) == 1
+        assert _cached_bytes() == 16
+    runtime._clear_verified_publication_cache()
     assert not runtime._PUBLICATION_CACHE_ENTRIES and _cached_bytes() == 0
 
 
