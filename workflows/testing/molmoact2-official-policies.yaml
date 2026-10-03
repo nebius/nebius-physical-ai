@@ -13,7 +13,9 @@ metadata:
 config:
   bucket: example-bucket
   prefix: "molmoact2/official-libero/{{run.id}}"
-  source_overlay: true
+  # The submission must execute the pushed immutable BYOF image, not a source
+  # overlay from the submitting checkout.
+  source_overlay: false
   # The operator must replace this neutral BYOF placeholder with the private,
   # immutable digest produced from npa/docker/workbench/molmoact2/Dockerfile.
   runtime_image: "registry.example.invalid/operator/molmoact2@sha256:0000000000000000000000000000000000000000000000000000000000000000"

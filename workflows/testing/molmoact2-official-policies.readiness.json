@@ -1,13 +1,13 @@
 {
   "schema_version": "workflow-readiness/v1",
-  "workflow_sha256": "0028ebd9df395c17c6ad74c8982ee369ac654a6626282e4966c0a8d4014fdc6f",
+  "workflow_sha256": "bdca9b94d52ef89b0f96bb0021405634b5743998b6fd3de4c0b7e7c4aae3ec7b",
   "planning": {
     "validation": {
       "status": "verified",
-      "reason": "The five-state spec passed schema validation and static planning with one run-scoped S3 lineage from preparation through factual visualization.",
+      "reason": "The five-state, source-overlay-free spec passed schema validation and static planning with one run-scoped S3 lineage from preparation through factual visualization.",
       "evidence": [
         "npa/.venv/bin/npa workbench workflow validate-spec workflows/testing/molmoact2-official-policies.yaml --json",
-        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/molmoact2-official-policies.yaml --run-id molmoact2-contract-plan --json"
+        "npa/.venv/bin/npa workbench workflow plan-spec workflows/testing/molmoact2-official-policies.yaml --run-id molmoact2-onboarding-20261002-static --json"
       ]
     },
     "task_fidelity": {
@@ -40,11 +40,12 @@
       ]
     },
     "source_image": {
-      "status": "unverified",
-      "reason": "The private BYOF Docker recipe is source-pinned and packaging-classified unvalidated, but no immutable image digest has yet completed build, scan, pullability, or functional validation.",
+      "status": "locally_verified",
+      "reason": "A local source-pinned BYOF image completed its Docker build-time and run-time pip checks; it includes the notices and starts the NPA adapter plus upstream LeRobot MolmoAct2/LIBERO CLI surfaces. It has not yet been pushed, pulled by a remote worker, or used by a real workflow.",
       "evidence": [
         "npa/docker/workbench/molmoact2/Dockerfile",
-        "npa/docker/workbench/molmoact2/REDISTRIBUTION.md"
+        "npa/docker/workbench/molmoact2/REDISTRIBUTION.md",
+        "Private local Docker evidence, 2026-10-03"
       ]
     },
     "target_runtime": {

@@ -49,9 +49,13 @@ RUN git lfs install --skip-smudge \
     && test -f experiments/lerobot/pyproject.toml \
     && rm -rf /opt/molmoact2/.git
 
+# The two upstream dependency sets both permit this current protobuf release;
+# installing it after LeRobot lets `pip check` verify the assembled runtime.
 RUN cd /opt/molmoact2/experiments \
     && pip install -e ".[all]" \
-    && pip install -e "./lerobot[async,libero]"
+    && pip install -e "./lerobot[async,libero]" \
+    && pip install "protobuf>=6.33.5,<7" \
+    && pip check
 
 COPY docker/workbench/molmoact2/THIRD_PARTY_NOTICES.md /usr/share/doc/molmoact2/THIRD_PARTY_NOTICES.md
 COPY docker/workbench/molmoact2/REDISTRIBUTION.md /usr/share/doc/molmoact2/REDISTRIBUTION.md
