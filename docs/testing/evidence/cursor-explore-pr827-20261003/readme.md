@@ -57,3 +57,20 @@ retain raw visible answers, continue sibling captions and persist a partial
 manifest. Provider transport/empty-content aborts and storage-write failures
 retain their pre-existing behavior; this is not a promise to publish a manifest
 after every possible failure.
+
+## Landed parent and current-main integration
+
+[landed-parent-source-bridge.json](landed-parent-source-bridge.json) separately
+records the actual landed #826 parent `47f33358` and the integration of main
+`7c09e0df`. Frozen execution `80004e84` passed 616 affected controls; subsequent
+execution `c3fc6779` passed 633 incoming metadata/audit/registration controls,
+both with zero skips and no new provider calls. Caption/client/SDK and the
+201-case normalization test file retain the exact prior-published source hashes.
+The inherited evaluator resolver and comparison-capture changes are explicitly
+distinguished from the unchanged scalar request/parser/writer paths.
+
+These are affected CPU integration executions, not new full-suite or hosted
+executions. The original `f1b1f7e6` full result, `d5338599` hosted controls,
+standalone 202-case limitation and all original evidence files remain unchanged.
+Main-target publication and current-head CI are separate integration gates;
+these private execution identities do not themselves claim queue admission.
