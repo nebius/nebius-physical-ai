@@ -20,7 +20,7 @@ Design notes
   already write. Nothing new is invented.
 * **Seam respected.** Waves are rendered through
   ``skypilot_render.render_skypilot_steps_yaml``, i.e. through
-  ``build_skypilot_task_doc`` -> ``build_scheduler_task``. The orchestrator never
+  ``build_skypilot_task_docs`` -> ``build_scheduler_task``. The orchestrator never
   reaches into rendering internals.
 * **Durable + resumable.** Every wave attempt is written to
   ``<config.prefix>/npa-workflow/runtime.json`` (``npa.workflow.runtime.v1``).
@@ -61,12 +61,18 @@ from npa.orchestration.npa_workflow.run_state import (
 from npa.orchestration.npa_workflow.skypilot_render import (
     SkypilotRenderOptions,
     assert_no_unresolved_placeholders,
-    build_skypilot_task_doc,
+    build_skypilot_task_docs,
     plan_images,
+    resolve_task_image,
     render_skypilot_steps_yaml,
 )
 from npa.orchestration.npa_workflow.spec import NpaWorkflowSpec, StateSpec
-from npa.orchestration.npa_workflow.supervisor import PreflightEvidence, RecoveryAction
+from npa.orchestration.npa_workflow.supervisor import (
+    SUPERVISOR_EVENT_PHASES,
+    PreflightEvidence,
+    RecoveryAction,
+    SupervisorEventPhase,
+)
 from npa.orchestration.npa_workflow.waves import split_into_batches
 from npa.orchestration.skypilot.launch_transaction import logical_launch_identity
 from npa.verification import sanitize_reason
@@ -88,6 +94,7 @@ TERMINAL_FAIL = frozenset(
 )
 SCHEDULER_OBSERVATION_SCHEMA = "npa.skypilot.managed-job-observation.v1"
 SCHEDULER_OBSERVATION_SOURCE = "exact_managed_job_status"
+_SUPERVISOR_RECOVERY_ACTIONS = frozenset(action.value for action in RecoveryAction)
 
 DEFAULT_POLL_SECONDS = 30
 DEFAULT_MAX_WAIT_SECONDS = 3600
@@ -216,15 +223,33 @@ def _source_identity() -> str:
 
 
 def _image_identity(render_options: SkypilotRenderOptions) -> str:
-    """Return the legacy digest-pin-set identity for an unversioned attempt."""
+    """Recompute the exact image-selection inputs and immutable bindings."""
 
-    digest_material = "\0".join(
-        sorted(str(value) for value in render_options.image_digest_pins.values())
+    bindings = sorted(
+        (str(reference), str(resolved))
+        for reference, resolved in render_options.image_digest_pins.items()
+    )
+    overrides = sorted(
+        (str(selector), str(reference))
+        for selector, reference in render_options.image_overrides.items()
+    )
+    digest_material = json.dumps(
+        {
+            "gpu_target": str(render_options.gpu_target),
+            "image_digest_pins": bindings,
+            "image_overrides": overrides,
+            "image_variant": str(render_options.image_variant),
+            "registry": str(render_options.registry),
+            "schema": "npa.workflow.image-selection/v3",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
     )
     return hashlib.sha256(digest_material.encode("utf-8")).hexdigest()
 
 
-IMAGE_IDENTITY_VERSION = "npa.workflow.image-reference-set.v1"
+IMAGE_IDENTITY_VERSION = "npa.workflow.image-selection-references.v1"
 
 
 def _wave_image_references(
@@ -241,6 +266,44 @@ def _wave_image_references(
 def _reference_set_identity(references: Sequence[str]) -> str:
     """Hash a canonical image-reference set without claiming content identity."""
     payload = json.dumps(sorted(set(references)), separators=(",", ":")).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _wave_image_bindings(
+    spec: NpaWorkflowSpec,
+    steps: Sequence[PlanStep],
+    render_options: SkypilotRenderOptions,
+    run_id: str,
+) -> list[list[str]]:
+    """Bind each state's tool to its exact selected image, including catalog defaults."""
+    from npa.orchestration.npa_workflow.scheduler import build_scheduler_task
+
+    bindings = []
+    for step in steps:
+        task = build_scheduler_task(spec, step, run_id=run_id)
+        tool = str(task.get("tool_ref") or "")
+        image = resolve_task_image(
+            tool, task.get("resources") or {}, options=render_options
+        )
+        if image:
+            bindings.append([step.state, tool, image])
+    return sorted(bindings)
+
+
+def _selection_reference_identity(
+    selection_sha256: str, references: Sequence[str], bindings: Sequence[Sequence[str]]
+) -> str:
+    """Bind complete v3 selection inputs to the effective images of one wave."""
+    payload = json.dumps(
+        {
+            "schema": IMAGE_IDENTITY_VERSION,
+            "selection_sha256": selection_sha256,
+            "references": sorted(set(references)),
+            "bindings": sorted(bindings),
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -264,9 +327,11 @@ def _image_identity_record(attempt: "WaveAttempt") -> dict[str, Any]:
         }
     return {
         "version": attempt.image_identity_version,
-        "kind": "resolved_reference_set",
-        "reference_set_sha256": attempt.image_digest,
+        "kind": "selection_and_resolved_references",
+        "selection_sha256": attempt.image_selection_sha256,
+        "reference_set_sha256": _reference_set_identity(attempt.image_references),
         "references": list(attempt.image_references),
+        "bindings": [list(row) for row in attempt.image_bindings],
         "all_references_content_addressed": bool(attempt.image_references)
         and all(_is_content_addressed_image(item) for item in attempt.image_references),
     }
@@ -282,7 +347,11 @@ def _loaded_image_identity(
     if not version:
         return "", []
     if version != IMAGE_IDENTITY_VERSION:
-        raise NpaWorkflowError(f"unsupported image identity version: {version}")
+        raise NpaWorkflowError(
+            f"IMMUTABLE_IDENTITY_MISMATCH: unsupported image identity version: {version}; "
+            "resume with the original controller/source/image, or use a new run ID "
+            "after the original attempt is terminal"
+        )
     raw_references = identity.get("references")
     if not isinstance(raw_references, list) or not raw_references:
         raise NpaWorkflowError("versioned image identity requires references")
@@ -292,9 +361,43 @@ def _loaded_image_identity(
     if references != sorted(set(references)):
         raise NpaWorkflowError("versioned image references are not canonical")
     digest = str((record.get("immutable_identity") or {}).get("image_digest") or "")
-    if _reference_set_identity(references) != digest:
-        raise NpaWorkflowError("versioned image reference-set identity differs")
+    _validate_image_binding_digest(identity, references, digest)
     return version, references
+
+
+def _validate_image_binding_digest(
+    identity: Mapping[str, Any], references: list[str], digest: str
+) -> None:
+    """Reject incomplete or inconsistent saved selection and per-state bindings."""
+    bindings = identity.get("bindings")
+    if not isinstance(bindings, list) or not bindings:
+        raise NpaWorkflowError("versioned image identity requires bindings")
+    if any(
+        not isinstance(row, list)
+        or len(row) != 3
+        or any(not isinstance(value, str) for value in row)
+        or not row[0]
+        or not row[2]
+        for row in bindings
+    ):
+        raise NpaWorkflowError("versioned image bindings have invalid members")
+    if bindings != sorted(bindings) or references != sorted(
+        {row[2] for row in bindings}
+    ):
+        raise NpaWorkflowError("versioned image bindings differ from references")
+    selection = identity.get("selection_sha256")
+    if (
+        not isinstance(selection, str)
+        or len(selection) != 64
+        or any(char not in "0123456789abcdef" for char in selection)
+    ):
+        raise NpaWorkflowError(
+            "versioned image selection identity is missing or invalid"
+        )
+    if _reference_set_identity(references) != identity.get("reference_set_sha256"):
+        raise NpaWorkflowError("versioned image reference-set identity differs")
+    if _selection_reference_identity(selection, references, bindings) != digest:
+        raise NpaWorkflowError("versioned image selection/reference identity differs")
 
 
 def _expected_image_identity(
@@ -304,13 +407,21 @@ def _expected_image_identity(
     version: str,
     run_id: str,
 ) -> str:
-    """Recompute a versioned image identity or the explicit legacy identity."""
-    if not version:
-        return _image_identity(render_options)
-    if version != IMAGE_IDENTITY_VERSION:
-        raise NpaWorkflowError(f"unsupported image identity version: {version}")
+    """Recompute a complete binding without upgrading weaker recorded evidence."""
     references = _wave_image_references(spec, steps, render_options, run_id)
-    return _reference_set_identity(references)
+    selection = _image_identity(render_options)
+    if not selection:
+        return ""
+    if not version and not references:
+        return selection
+    if version != IMAGE_IDENTITY_VERSION:
+        raise NpaWorkflowError(
+            "IMMUTABLE_IDENTITY_MISMATCH: missing or unsupported image identity "
+            "version; resume with the original controller/source/image, or use "
+            "a new run ID after the original attempt is terminal"
+        )
+    bindings = _wave_image_bindings(spec, steps, render_options, run_id)
+    return _selection_reference_identity(selection, references, bindings)
 
 
 @dataclass
@@ -424,6 +535,7 @@ class WaveAttempt:
     operator_remedy: str = ""
     primary_error: str = ""
     reconciliation_error: str = ""
+    output_reuse_error_type: str = ""
     cancellation_state: str = "not_applicable"
     cancellation_error: str = ""
     credential_names: list[str] = field(default_factory=list)
@@ -433,6 +545,8 @@ class WaveAttempt:
     source_sha256: str = ""
     image_digest: str = ""
     image_identity_version: str = ""
+    image_selection_sha256: str = ""
+    image_bindings: list[list[str]] = field(default_factory=list)
     image_references: list[str] = field(default_factory=list)
     infrastructure_recovery_count: int = 0
     infrastructure_recovery_limit: int = 1
@@ -480,6 +594,7 @@ class WaveAttempt:
             "operator_remedy": self.operator_remedy,
             "primary_error": self.primary_error,
             "reconciliation_error": self.reconciliation_error,
+            "output_reuse_error_type": self.output_reuse_error_type,
             "cancellation": {
                 "state": self.cancellation_state,
                 "error": self.cancellation_error,
@@ -579,11 +694,9 @@ def _resource_profiles_for_steps(
     run_id: str,
 ) -> dict[str, dict[str, Any]]:
     """Capture each wave state's exact resolved resource profile."""
+    tasks = build_skypilot_task_docs(spec, steps, run_id=run_id, options=render_options)
     profiles: dict[str, dict[str, Any]] = {}
-    for step in steps:
-        task = build_skypilot_task_doc(
-            spec, step, run_id=run_id, options=render_options
-        )
+    for step, task in zip(steps, tasks, strict=True):
         profile = dict(task.get("resources") or {})
         profile.pop("image_id", None)
         profile.pop("image_login_config", None)
@@ -859,6 +972,18 @@ class SkyPilotWaveExecutor:
                 return adopted
 
         replayed = self.ledger.completed(key) if self.options.resume else None
+        identity_mismatches = (
+            self._completed_replay_identity_mismatches(replayed, steps)
+            if replayed is not None
+            else []
+        )
+        if identity_mismatches:
+            raise NpaWorkflowError(
+                f"wave {key}: completed ledger replay blocked: "
+                f"IMMUTABLE_IDENTITY_MISMATCH ({', '.join(identity_mismatches)}). "
+                "Restore the original workflow, staged source, and image options; "
+                "use a new run ID for changed or unverifiable inputs."
+            )
         if replayed is not None:
             outputs = list(replayed.get("outputs") or [])
             if not self._outputs_exist(outputs):
@@ -904,6 +1029,12 @@ class SkyPilotWaveExecutor:
                 source_sha256=str(immutable.get("source_sha256") or ""),
                 image_digest=str(immutable.get("image_digest") or ""),
                 image_identity_version=image_version,
+                image_bindings=list(
+                    (replayed.get("image_identity") or {}).get("bindings") or []
+                ),
+                image_selection_sha256=str(
+                    (replayed.get("image_identity") or {}).get("selection_sha256") or ""
+                ),
                 image_references=image_references,
                 replayed=True,
             )
@@ -1240,6 +1371,7 @@ class SkyPilotWaveExecutor:
             operator_remedy=str(record.get("operator_remedy") or ""),
             primary_error=str(record.get("primary_error") or ""),
             reconciliation_error=str(record.get("reconciliation_error") or ""),
+            output_reuse_error_type=str(record.get("output_reuse_error_type") or ""),
             cancellation_state=str(cancel_record.get("state") or "not_applicable"),
             cancellation_error=str(cancel_record.get("error") or ""),
             credential_names=list((record.get("credentials") or {}).get("names") or []),
@@ -1259,6 +1391,12 @@ class SkyPilotWaveExecutor:
                 (record.get("immutable_identity") or {}).get("image_digest") or ""
             ),
             image_identity_version=image_version,
+            image_bindings=list(
+                (record.get("image_identity") or {}).get("bindings") or []
+            ),
+            image_selection_sha256=str(
+                (record.get("image_identity") or {}).get("selection_sha256") or ""
+            ),
             image_references=image_references,
             infrastructure_recovery_count=int(recovery_record.get("used") or 0),
             infrastructure_recovery_limit=int(recovery_record.get("limit") or 1),
@@ -1281,6 +1419,313 @@ class SkyPilotWaveExecutor:
                 for name, profile in (record.get("resource_profiles") or {}).items()
                 if isinstance(name, str) and isinstance(profile, Mapping)
             },
+        )
+
+    def _resume_durable_output_reuse(
+        self, attempt: WaveAttempt, steps: Sequence[PlanStep]
+    ) -> bool:
+        """Finish a verified reuse decision across the supervisor/runtime seam."""
+        if self.ledger.store is None or not attempt.logical_launch_id:
+            if attempt.recovery_decision == "reuse_completed_wave":
+                return self._block_output_reuse(
+                    attempt, "missing durable attempt identity"
+                )
+            return False
+        try:
+            event = self._read_output_reuse_event(attempt, steps)
+            if event is None:
+                return False
+            terminal_status = self._output_reuse_terminal_status(attempt, event)
+        except Exception as exc:  # noqa: BLE001 - history uncertainty fails closed
+            return self._block_output_reuse(
+                attempt, sanitize_reason(exc), error_type=type(exc).__name__
+            )
+
+        # Exact provider terminality remains factual when object access fails.
+        attempt.recovery_decision = "reuse_completed_wave"
+        attempt.sky_status = terminal_status
+        attempt.cancellation_state = "verified"
+        attempt.cancellation_error = ""
+        try:
+            self._validate_output_reuse_artifacts(attempt, event)
+        except Exception as exc:  # noqa: BLE001 - storage uncertainty fails closed
+            return self._block_output_reuse(
+                attempt,
+                f"declared output revalidation failed: {sanitize_reason(exc)}",
+                error_type=type(exc).__name__,
+            )
+        self._complete_output_reuse(attempt)
+        return True
+
+    def _read_output_reuse_event(
+        self, attempt: WaveAttempt, steps: Sequence[PlanStep]
+    ) -> Mapping[str, Any] | None:
+        from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
+
+        events = SupervisorLedger(self.ledger.store).events(attempt.logical_launch_id)
+        event = self._output_reuse_event(attempt, events, steps)
+        if event is not None:
+            self._validate_output_reuse_identity(attempt, event, steps)
+        return event
+
+    def _block_output_reuse(
+        self, attempt: WaveAttempt, reason: str, *, error_type: str = ""
+    ) -> bool:
+        reason = f"wave {attempt.key}: durable output-reuse blocked: {reason}"
+        attempt.status = "failed"
+        attempt.error_category = "controller"
+        attempt.error = reason
+        attempt.output_reuse_error_type = sanitize_reason(error_type)
+        attempt.reconciliation_error = reason
+        # Unreadable history cannot manufacture a completion claim.
+        if attempt.recovery_decision != "reuse_completed_wave":
+            attempt.recovery_decision = "block_output_reuse_evidence"
+        attempt.operator_remedy = (
+            "Restore authoritative supervisor and object-store evidence, then "
+            "resume the same run ID; do not launch replacement work."
+        )
+        attempt.supervisor_blocks_cancellation = True
+        self.ledger.record(attempt)
+        return True
+
+    def _output_reuse_event(
+        self,
+        attempt: WaveAttempt,
+        events: Sequence[Mapping[str, Any]],
+        steps: Sequence[PlanStep],
+    ) -> Mapping[str, Any] | None:
+        cancellations, decisions = self._output_reuse_cancellations(events)
+        reuse_claimed = attempt.recovery_decision == "reuse_completed_wave" or any(
+            event["recovery"]["action"] == "reuse_completed_wave"
+            for event in cancellations
+        )
+        if not reuse_claimed:
+            if not cancellations and decisions:
+                self._resume_incomplete_reuse_decision(attempt, decisions, steps)
+            else:
+                self._clear_output_reuse_evidence_block(attempt)
+            return None
+        if not cancellations:
+            raise ValueError(
+                "output-reuse decision has no immutable cancellation event"
+            )
+        for event in cancellations:
+            self._validate_output_reuse_identity(attempt, event, steps)
+            self._output_reuse_terminal_status(attempt, event)
+            self._validate_output_reuse_declaration(attempt, event)
+        proof_fields = ("cancellation", "outputs", "recovery")
+        first = cancellations[0]
+        if any(
+            event.get(field) != first.get(field)
+            for event in cancellations[1:]
+            for field in proof_fields
+        ):
+            raise ValueError("immutable output-reuse cancellation history is ambiguous")
+        return first
+
+    def _output_reuse_cancellations(
+        self, events: Sequence[Mapping[str, Any]]
+    ) -> tuple[list[Mapping[str, Any]], list[Mapping[str, Any]]]:
+        cancellations = []
+        decisions = []
+        for event in events:
+            phase = event.get("phase")
+            if phase not in SUPERVISOR_EVENT_PHASES:
+                raise ValueError("immutable output-reuse event has an unknown phase")
+            if phase not in {"decision", "cancellation"}:
+                continue
+            recovery = event.get("recovery")
+            if not isinstance(recovery, Mapping) or (
+                recovery.get("action") not in _SUPERVISOR_RECOVERY_ACTIONS
+            ):
+                raise ValueError("immutable output-reuse recovery is malformed")
+            if (
+                recovery.get("reason_code") == "DECLARED_OUTPUTS_VALID"
+                and recovery.get("action") != "reuse_completed_wave"
+            ):
+                raise ValueError(
+                    "immutable output-reuse decision contradicts its reason"
+                )
+            if phase == "cancellation":
+                cancellations.append(event)
+            elif recovery.get("action") == "reuse_completed_wave":
+                decisions.append(event)
+        return cancellations, decisions
+
+    @staticmethod
+    def _clear_output_reuse_evidence_block(attempt: WaveAttempt) -> None:
+        if attempt.recovery_decision != "block_output_reuse_evidence":
+            return
+        attempt.recovery_decision = ""
+        attempt.error = ""
+        attempt.error_category = ""
+        attempt.reconciliation_error = ""
+        attempt.output_reuse_error_type = ""
+        attempt.operator_remedy = ""
+        attempt.supervisor_blocks_cancellation = False
+
+    def _resume_incomplete_reuse_decision(
+        self,
+        attempt: WaveAttempt,
+        decisions: Sequence[Mapping[str, Any]],
+        steps: Sequence[PlanStep],
+    ) -> None:
+        for decision in decisions:
+            self._validate_output_reuse_identity(attempt, decision, steps)
+            if decision["recovery"].get("reason_code") != "DECLARED_OUTPUTS_VALID":
+                raise ValueError(
+                    "immutable output-reuse decision has an invalid reason"
+                )
+            self._validate_output_reuse_declaration(attempt, decision)
+        self._clear_output_reuse_evidence_block(attempt)
+        attempt.recovery_decision = "reconcile_output_reuse_decision"
+
+    def _terminalize_incomplete_reuse(
+        self, attempt: WaveAttempt, provider_status: str
+    ) -> WaveAttempt:
+        attempt.status = "failed"
+        attempt.sky_status = provider_status
+        attempt.ended_at = utc_now()
+        attempt.error_category = "workload"
+        attempt.error = (
+            f"wave {attempt.key}: exact provider attempt is terminal {provider_status}; "
+            "the output-reuse cancellation proof was not recorded"
+        )
+        attempt.recovery_decision = "terminalize"
+        attempt.operator_remedy = (
+            "Inspect the exact terminal attempt and its outputs. A later resume may "
+            "request an explicit workload retry; this resume submits no replacement."
+        )
+        attempt.supervisor_blocks_cancellation = False
+        self.ledger.record(attempt)
+        return attempt
+
+    def _validate_output_reuse_identity(
+        self,
+        attempt: WaveAttempt,
+        event: Mapping[str, Any],
+        steps: Sequence[PlanStep],
+    ) -> None:
+        identity = event.get("attempt_identity")
+        expected_identity = self._expected_output_reuse_identity(attempt, steps)
+        if not isinstance(identity, Mapping) or any(
+            not expected or identity.get(name) != expected
+            for name, expected in expected_identity.items()
+        ):
+            raise ValueError(
+                "immutable output-reuse identity does not match the attempt"
+            )
+        if any(
+            getattr(attempt, name) != expected_identity[name]
+            for name in ("workflow_sha256", "source_sha256", "image_digest")
+        ):
+            raise ValueError(
+                "runtime output-reuse identity does not match current inputs"
+            )
+
+    def _expected_output_reuse_identity(
+        self, attempt: WaveAttempt, steps: Sequence[PlanStep]
+    ) -> dict[str, Any]:
+        return {
+            "runtime": "skypilot",
+            "run_id": self.run_id,
+            "attempt": attempt.attempt,
+            "logical_attempt_id": attempt.logical_launch_id,
+            "provider_job_id": attempt.job_id,
+            "provider_job_name": attempt.job_name,
+            "workflow_sha256": _workflow_identity(self.spec),
+            "source_sha256": _source_identity(),
+            "image_digest": _expected_image_identity(
+                self.spec,
+                steps,
+                self.render_options,
+                attempt.image_identity_version,
+                self.run_id,
+            ),
+        }
+
+    def _output_reuse_terminal_status(
+        self, attempt: WaveAttempt, event: Mapping[str, Any]
+    ) -> str:
+        cancellation = event.get("cancellation")
+        recovery = event.get("recovery")
+        if not isinstance(cancellation, Mapping) or not isinstance(recovery, Mapping):
+            raise ValueError("immutable output-reuse event is incomplete")
+        terminal_status = str(
+            cancellation.get("provider_terminal_status") or ""
+        ).upper()
+        if (
+            event.get("phase") != "cancellation"
+            or cancellation.get("exact") is not True
+            or cancellation.get("provider_job_id") != attempt.job_id
+            or str(cancellation.get("status") or "").lower()
+            not in {"cancelled", "canceled"}
+            or not is_terminal(terminal_status)
+            or cancellation.get("error")
+            or recovery.get("action") != "reuse_completed_wave"
+            or recovery.get("reason_code") != "DECLARED_OUTPUTS_VALID"
+        ):
+            raise ValueError(
+                "output-reuse cancellation is not exactly verified terminal"
+            )
+        return terminal_status
+
+    def _validate_output_reuse_declaration(
+        self, attempt: WaveAttempt, event: Mapping[str, Any]
+    ) -> None:
+        outputs = event.get("outputs")
+        expected = sorted(
+            uri for output in attempt.outputs if (uri := _declared_output_uri(output))
+        )
+        if not isinstance(outputs, Mapping) or (
+            len(expected) != len(attempt.outputs)
+            or not expected
+            or outputs.get("status") != "valid"
+            or outputs.get("missing") != []
+            or not isinstance(outputs.get("declared"), list)
+            or not isinstance(outputs.get("valid"), list)
+            or sorted(outputs["declared"]) != expected
+            or sorted(outputs["valid"]) != expected
+        ):
+            raise ValueError(
+                "output-reuse artifact evidence differs from declared outputs"
+            )
+
+    def _validate_output_reuse_artifacts(
+        self, attempt: WaveAttempt, event: Mapping[str, Any]
+    ) -> None:
+        self._validate_output_reuse_declaration(attempt, event)
+        if not self._outputs_exist(attempt.outputs):
+            raise ValueError(
+                "declared outputs no longer validate for durable output reuse"
+            )
+
+    def _complete_output_reuse(self, attempt: WaveAttempt) -> None:
+        attempt.status = "succeeded"
+        attempt.recovery_decision = "reuse_completed_wave"
+        attempt.replayed = True
+        attempt.adopted = True
+        attempt.ended_at = utc_now()
+        attempt.error = ""
+        attempt.error_category = ""
+        attempt.primary_error = ""
+        attempt.reconciliation_error = ""
+        attempt.output_reuse_error_type = ""
+        attempt.operator_remedy = ""
+        attempt.supervisor_blocks_cancellation = False
+        attempt.reconciliation.append(
+            {
+                "outcome": "completed",
+                "source": "immutable_supervisor_output_reuse",
+                "provider_terminal_status": attempt.sky_status,
+                "declared_outputs_valid": True,
+                "checked_at": utc_now(),
+            }
+        )
+        self.ledger.record(attempt)
+        self._log(
+            f"wave {attempt.key}: resumed immutable output-reuse completion for "
+            f"exact job {attempt.job_id}; no replacement attempt submitted"
         )
 
     def _reconcile_in_flight(
@@ -1313,9 +1758,20 @@ class SkyPilotWaveExecutor:
         attempt.adopted = True
         self.attempts.append(attempt)
 
+        if self._resume_durable_output_reuse(attempt, steps):
+            return attempt
+
         evidence = self._reconcile_exact(job_name, job_id)
         outcome = str(getattr(evidence, "outcome", "") or "")
         if outcome == "found":
+            if attempt.recovery_decision == "reconcile_output_reuse_decision" and (
+                str(getattr(evidence, "job_id", "") or "") != job_id
+                or not bool(getattr(evidence, "workload_observable", True))
+            ):
+                self._block_output_reuse(
+                    attempt, "provider evidence is not exact and observable"
+                )
+                return attempt
             attempt.job_id = str(getattr(evidence, "job_id", "") or job_id)
             status = str(getattr(evidence, "status", "") or "UNKNOWN").upper()
             if not bool(getattr(evidence, "workload_observable", True)):
@@ -1387,6 +1843,7 @@ class SkyPilotWaveExecutor:
                 if outputs_valid:
                     attempt.status = "succeeded"
                     attempt.sky_status = "SUCCEEDED"
+                    attempt.replayed = True
                     attempt.ended_at = utc_now()
                     attempt.recovery_decision = (
                         "operator_authorized_absent_output_adoption"
@@ -1595,6 +2052,8 @@ class SkyPilotWaveExecutor:
             return attempt
 
         if is_terminal_fail(status):
+            if attempt.recovery_decision == "reconcile_output_reuse_decision":
+                return self._terminalize_incomplete_reuse(attempt, status)
             self._log(
                 f"wave {key}: in-flight job {attempt.job_id} ended {status}; preserving "
                 "the terminal workload outcome"
@@ -1652,6 +2111,30 @@ class SkyPilotWaveExecutor:
             if not uri or not self._output_checker(uri):
                 return False
         return True
+
+    def _completed_replay_identity_mismatches(
+        self, record: Mapping[str, Any], steps: Sequence[PlanStep]
+    ) -> list[str]:
+        identity = record.get("immutable_identity")
+        if not isinstance(identity, Mapping):
+            return ["workflow_sha256", "source_sha256", "image_digest"]
+        expected = {
+            "workflow_sha256": _workflow_identity(self.spec),
+            "source_sha256": _source_identity(),
+        }
+        try:
+            version, _ = _loaded_image_identity(record)
+            expected["image_digest"] = _expected_image_identity(
+                self.spec, steps, self.render_options, version, self.run_id
+            )
+        except NpaWorkflowError:
+            # Invalid stored image evidence uses the same fail-closed replay error.
+            expected["image_digest"] = ""
+        return [
+            name
+            for name, value in expected.items()
+            if not value or identity.get(name) != value
+        ]
 
     def _declared_outputs_absent(self, outputs: Sequence[Any]) -> tuple[bool, str]:
         """Prove every declared output absent for explicit in-flight recovery.
@@ -1766,7 +2249,13 @@ class SkyPilotWaveExecutor:
         if references:
             attempt.image_identity_version = IMAGE_IDENTITY_VERSION
             attempt.image_references = list(references)
-            attempt.image_digest = _reference_set_identity(references)
+            attempt.image_selection_sha256 = _image_identity(self.render_options)
+            attempt.image_bindings = _wave_image_bindings(
+                self.spec, steps, self.render_options, self.run_id
+            )
+            attempt.image_digest = _selection_reference_identity(
+                attempt.image_selection_sha256, references, attempt.image_bindings
+            )
         else:
             attempt.image_digest = _image_identity(self.render_options)
         from npa.orchestration.npa_workflow.launch_recovery import _check_consumption
@@ -2582,9 +3071,9 @@ class RuntimeLedger:
             from npa.orchestration.npa_workflow.supervisor import SupervisorLedger
 
             phase = (
-                "attempt_terminal"
+                SupervisorEventPhase.ATTEMPT_TERMINAL.value
                 if attempt.status in {"succeeded", "failed"}
-                else "launch"
+                else SupervisorEventPhase.LAUNCH.value
             )
             SupervisorLedger(self.store).record(
                 {

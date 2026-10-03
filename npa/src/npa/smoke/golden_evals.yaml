@@ -54,6 +54,7 @@ containers:
     golden_eval:
       kind: container-smoke
       command: bash /opt/npa/robotwin/smoke.sh
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 120
       status: needs-image-update
@@ -149,9 +150,10 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_antioch_functional
       command: python -m npa.smoke.test_antioch_functional
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 60
-      status: ready
+      status: needs-image-update
 
   openpi:
     image: npa-openpi
@@ -179,9 +181,10 @@ containers:
         --expected-gpu-type "RTX PRO 6000"
         --expected-gpu-count 1
         --expected-compute-capability 12.0
+      serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 7200
-      status: gpu-gated
+      status: needs-image-update
       artifact: /workspace/openpi-golden-eval/direct.json
 
   # Preserve the existing golden-eval ID; the canonical recipe is cuda13-blackwell.
@@ -235,6 +238,7 @@ containers:
     golden_eval:
       kind: build-import
       command: /opt/venv/bin/python /opt/ncore/bin/verify-packaging.py
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: unlimited
       status: needs-image-update
@@ -304,7 +308,7 @@ containers:
       module: npa.smoke.test_groot_functional
       env_module: npa.smoke.test_groot_env
       command: python -m npa.smoke.test_groot_functional
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: required
       timeout_seconds: 1800
       status: gpu-gated
@@ -337,7 +341,7 @@ containers:
       serverless_gpu: h200
       gpu: required
       timeout_seconds: 1800
-      status: gpu-gated
+      status: needs-image-update
 
   lerobot-policy:
     image: npa-lerobot-policy
@@ -382,10 +386,10 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_lerobot_vlm_rl_functional
       command: python -m npa.smoke.test_lerobot_vlm_rl_functional
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: required
       timeout_seconds: 1800
-      status: gpu-gated
+      status: needs-image-update
 
   habitat-sim:
     image: npa-habitat-sim
@@ -445,10 +449,10 @@ containers:
       module: npa.smoke.test_genesis_functional
       env_module: npa.smoke.test_genesis_env
       command: python -m npa.smoke.test_genesis_functional
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: required
       timeout_seconds: 1200
-      status: gpu-gated
+      status: needs-image-update
 
   isaac-lab:
     image: npa-isaac-lab
@@ -485,7 +489,7 @@ containers:
       serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 1800
-      status: gpu-gated
+      status: needs-image-update
 
   isaac-arena:
     image: npa-isaac-arena
@@ -577,7 +581,7 @@ containers:
       module: npa.smoke.test_cosmos_functional
       env_module: npa.smoke.test_cosmos_env
       command: python /opt/npa/docker/workbench/cosmos/smoke_functional.py
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: required
       timeout_seconds: 1800
       status: gpu-gated
@@ -607,7 +611,7 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_cosmos2_transfer_functional
       command: bash /opt/cosmos2-transfer/smoke_functional.sh
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: required
       timeout_seconds: 1800
       status: gpu-gated
@@ -638,10 +642,10 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_cosmos3_generate_functional
       command: bash /opt/cosmos3/smoke_functional.sh
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: required
       timeout_seconds: 3600
-      status: gpu-gated
+      status: needs-image-update
 
   cosmos3-serving:
     image: npa-cosmos3-serving
@@ -668,6 +672,7 @@ containers:
       command: /opt/npa-cosmos3-serving/smoke_serving.sh
       artifact: cosmos3_serving_smoke.json
       serverless_gpu: b200
+      serverless_gpu_count: 8
       gpu: required
       timeout_seconds: 3600
       status: ready
@@ -794,7 +799,7 @@ containers:
       serverless_gpu: b200
       gpu: required
       timeout_seconds: 3600
-      status: gpu-gated
+      status: needs-image-update
 
   cosmos3-reason:
     image: npa-cosmos3-reason
@@ -853,10 +858,10 @@ containers:
     golden_eval:
       kind: container-smoke
       command: python /opt/npa/docker/workbench/cosmos-curate/smoke_functional.py
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 900
-      status: ready
+      status: needs-image-update
 
   cosmos-evaluator:
     image: npa-cosmos-evaluator
@@ -884,10 +889,10 @@ containers:
     golden_eval:
       kind: container-smoke
       command: python /opt/npa/docker/workbench/cosmos-evaluator/smoke_functional.py
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: unlimited
-      status: ready
+      status: needs-image-update
 
   sonic:
     image: npa-sonic
@@ -898,12 +903,14 @@ containers:
         SONIC whole-body humanoid locomotion policy training/eval/export/serve
         (GR00T-WholeBodyControl).
     safety:
-      runs_as: ubuntu
-      base_image: nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 (baked) / npa-base:cuda13-b300 (k8s)
+      runs_as: root (quarantined public release; repaired release must be non-root)
+      base_image: quarantined operator-specific npa-base lineage (repaired release must use registry-neutral provenance)
       network: serve endpoint (when in serve mode); first run fetches Isaac from pypi.nvidia.com
       external_fetch: [github-gear-sonic, pypi, "pypi.nvidia.com (first run, operator EULA)", huggingface]
       notes: >-
-        Bakes NO NVIDIA Isaac Sim or Isaac Lab, and no NVIDIA driver userspace
+        The recorded public tag is not runnable by default: it violates the
+        non-root contract and exposes operator-specific build provenance in OCI
+        labels. Its recipe bakes NO NVIDIA Isaac Sim or Isaac Lab, and no NVIDIA driver userspace
         (the container runtime injects the host driver + Vulkan ICD given
         NVIDIA_DRIVER_CAPABILITIES=all). gear_sonic source is Apache-2.0; its
         weights are NVIDIA Open Model License and downloaded at run time with the
@@ -925,7 +932,7 @@ containers:
       serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 900
-      status: gpu-gated
+      status: needs-image-update
 
   sonic-mujoco:
     image: npa-sonic-mujoco
@@ -975,7 +982,7 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_retargeting_functional
       command: python -m npa.smoke.test_retargeting_functional
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 120
       status: ready
@@ -1003,7 +1010,7 @@ containers:
     golden_eval:
       kind: container-smoke
       command: python /opt/npa/docker/workbench/fiftyone/smoke_functional.py
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 300
       status: ready
@@ -1017,20 +1024,22 @@ containers:
         LanceDB vector store for AV/perception data (BDD100K import, CLIP
         embeddings, materialized views) feeding curation + detection training.
     safety:
-      runs_as: root
-      base_image: pytorch/pytorch:2.7.1-cuda12.8-cudnn9-runtime
-      network: FastAPI server on :8686 (/health, /tables, /query)
+      runs_as: ubuntu
+      base_image: ghcr.io/nebius/nebius-physical-ai/npa-detection-training@sha256:a432dd2a9e6bafed4b78466ac806f584c7fcf549cf3be0edaf75f2fecdadfdd9
+      network: FastAPI server on :8686 (/readyz, /health, /tables, /query)
       external_fetch: [pypi, s3]
       notes: >-
         Server smoke runs entirely on a temp table; no external data required for
-        the health/roundtrip golden eval. The image flattens the server modules
-        into /app, so the smoke ships there as a standalone script and targets
-        npa_lancedb_server:app via LANCEDB_SMOKE_APP.
+        the readiness/health/roundtrip golden eval. It also imports the copied
+        BDD100K UDF and computes a real dHash, proving the inherited Pillow runtime
+        supports the flattened-pixel API used by import and backfill. The image flattens the server
+        modules into /app, so the smoke ships there as a standalone script and
+        launches the real non-root entrypoint via LANCEDB_SMOKE_ENTRYPOINT.
     golden_eval:
       kind: server-smoke
       module: npa.smoke.test_lancedb_functional
       command: python /app/smoke_functional.py
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: optional
       timeout_seconds: 600
       status: ready
@@ -1057,7 +1066,7 @@ containers:
       kind: server-smoke
       module: npa.smoke.test_detection_training_functional
       command: python /app/smoke_functional.py
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: optional
       timeout_seconds: 300
       status: ready
@@ -1088,10 +1097,10 @@ containers:
       kind: server-smoke
       module: npa.smoke.test_robocasa_functional
       command: python /app/smoke_functional.py
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: optional
       timeout_seconds: 300
-      status: ready
+      status: needs-image-update
 
   diffusers:
     image: npa-diffusers
@@ -1158,7 +1167,7 @@ containers:
       command: python /opt/npa/sam3/runtime.py segment --input-path /inputs/video.mp4 --prompt person --output-path /tmp/npa-sam31-golden
       gpu: required
       timeout_seconds: unlimited
-      status: gpu-gated
+      status: needs-image-update
 
   sam2:
     image: npa-sam2
@@ -1251,19 +1260,21 @@ containers:
       runs_as: ubuntu
       base_image: python:3.10-slim-bookworm (digest pinned)
       network: runtime-only PyTorch CUDA, Hugging Face model/tokenizer, and S3
-      external_fetch: [pytorch-cu130-after-operator-acceptance, huggingface, s3]
+      external_fetch: [pytorch-cu130-runtime, huggingface, s3]
       notes: >-
         Ships no CUDA/NVIDIA Python distribution or model bytes. The no-GPU
         golden eval proves source/health, the current Torch 2.13.0/CUDA 13.0
-        metadata closure, and refusal. The exact public-dev digest has accepted
+        metadata closure, and offline refusal without downloading an absent
+        runtime cache. The exact public-dev digest has accepted
         Torch 2.13.0/CUDA 13.0 single-GPU evidence on RTX PRO 6000. The current
         four-GPU B200 path remains a separate unqualified live gate.
     golden_eval:
       kind: container-smoke
       command: bash /opt/npa/wan2-2/smoke.sh
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 120
-      status: ready
+      status: needs-image-update
 
   ltx2:
     image: npa-ltx2
@@ -1288,6 +1299,7 @@ containers:
     golden_eval:
       kind: container-smoke
       command: bash /opt/npa/ltx2/smoke.sh
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 120
       status: ready
@@ -1308,7 +1320,9 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_mjlab_functional
       command: python -m npa.smoke.test_mjlab_functional
-      serverless_gpu: h100
+      # The current CUDA 13 candidate was qualified on RTX PRO 6000, which is
+      # also available in the shared golden-eval project; H100 is not.
+      serverless_gpu: rtx6000
       gpu: required
       timeout_seconds: 600
       status: gpu-gated
@@ -1332,7 +1346,7 @@ containers:
       serverless_gpu: b200
       gpu: required
       timeout_seconds: 600
-      status: gpu-gated
+      status: needs-image-update
 
   alpamayo2-super:
     image: npa-alpamayo2-super
@@ -1408,6 +1422,7 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_sim2real_control_functional
       command: python -m npa.smoke.test_sim2real_control_functional
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 60
       status: ready
@@ -1425,12 +1440,15 @@ containers:
       base_image: npa-genesis
       network: none
       external_fetch: [pypi]
-      notes: Build py_compiles sim2real_envgen; no open ports.
+      notes: >-
+        Build py_compiles sim2real_envgen; the golden eval removes PYTHONPATH and
+        proves the exact source plus compatibility shim remain readable to the
+        non-root runtime user. No open ports.
     golden_eval:
       kind: container-smoke
       module: npa.smoke.test_sim2real_envgen_functional
       command: python -m npa.smoke.test_sim2real_envgen_functional
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: optional
       timeout_seconds: 600
       status: gpu-gated
@@ -1453,10 +1471,10 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_sim2real_policy_functional
       command: python -m npa.smoke.test_sim2real_policy_functional
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: optional
       timeout_seconds: 300
-      status: gpu-gated
+      status: needs-image-update
 
   loop-eval:
     image: npa-loop-eval
@@ -1476,10 +1494,10 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_sim2real_eval_functional
       command: python -m npa.smoke.test_sim2real_eval_functional
-      serverless_gpu: h100
+      serverless_gpu: h200
       gpu: optional
       timeout_seconds: 600
-      status: gpu-gated
+      status: needs-image-update
 
   rerun-viewer:
     image: npa-rerun-viewer
@@ -1502,6 +1520,7 @@ containers:
       kind: container-smoke
       module: npa.smoke.test_rerun_viewer_functional
       command: python -m npa.smoke.test_rerun_viewer_functional
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 120
       status: ready
@@ -1528,6 +1547,7 @@ containers:
     golden_eval:
       kind: server-smoke
       command: sh /usr/local/bin/npa-foxglove-smoke.sh
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 120
       status: ready
@@ -1553,6 +1573,7 @@ containers:
     golden_eval:
       kind: build-import
       command: 'sh -c "test -s /srv/index.html && grep -qx 1.26.0 /opt/npa/lichtblick/VERSION"'
+      serverless_gpu: h200
       gpu: none
       timeout_seconds: 60
       status: ready

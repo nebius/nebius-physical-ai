@@ -727,6 +727,7 @@ def test_inherited_topology_overrides_every_effective_terraform_input() -> None:
         "gpu_nodes_count": 99,
         "cpu_nodes_platform": "wrong-cpu",
         "cpu_nodes_preset": "wrong-cpu-preset",
+        "cpu_disk_size": 128,
         "gpu_nodes_platform": "wrong-gpu",
         "gpu_nodes_preset": "wrong-gpu-preset",
         "gpu_nodes_preemptible": False,
@@ -742,6 +743,7 @@ def test_inherited_topology_overrides_every_effective_terraform_input() -> None:
             gpu_nodes=2,
             cpu_platform="cpu-d3",
             cpu_preset="8vcpu-32gb",
+            cpu_disk_gib=512,
             gpu_platform="gpu-rtx6000",
             gpu_preset="1gpu-24vcpu-218gb",
             preemptible=True,
@@ -760,6 +762,7 @@ def test_inherited_topology_overrides_every_effective_terraform_input() -> None:
         "gpu_nodes_count": 2,
         "cpu_nodes_platform": "cpu-d3",
         "cpu_nodes_preset": "8vcpu-32gb",
+        "cpu_disk_size": 512,
         "gpu_nodes_platform": "gpu-rtx6000",
         "gpu_nodes_preset": "1gpu-24vcpu-218gb",
         "gpu_nodes_preemptible": True,
@@ -3075,10 +3078,15 @@ def test_terraform_env_mints_when_no_token_present(monkeypatch) -> None:
     assert env["TF_VAR_iam_token"] == "minted-token"
 
 
+@pytest.mark.parametrize(
+    ("configured_disk", "environment_disk", "expected_disk"),
+    [(None, None, 128), (None, "512", 512), ("384", "512", 384)],
+)
 def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
-    monkeypatch, tmp_path: Path
+    monkeypatch, tmp_path: Path, configured_disk, environment_disk, expected_disk
 ) -> None:
     from npa.cluster_backends.base import MaterializedPlan
+    from npa.cluster_backends.mk8s_render import render_tfvars
     from npa.fleet import lifecycle
 
     tf_dir = tmp_path / "deploy" / "cluster"
@@ -3095,6 +3103,7 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
                 'cluster_name = "fresh"',
                 "cpu_nodes_count = 1",
                 "gpu_nodes_count = 0",
+                f'cpu_disk_size = "{configured_disk}"' if configured_disk else "",
             ]
         )
     )
@@ -3140,6 +3149,7 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
             "TF_VAR_filesystem_csi_chart_repository": (
                 "oci://charts.example.invalid/nebius"
             ),
+            **({"TF_VAR_cpu_disk_size": environment_disk} if environment_disk else {}),
         },
     )
 
@@ -3156,6 +3166,8 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
     )
 
     assert result.exit_code == 0, result.output
+    assert applied["desired"].cpu_nodes.disk_size_gib == expected_disk
+    assert f'cpu_disk_size = "{expected_disk}"' in render_tfvars(applied["desired"])
     assert applied["desired"].subnet_id == "subnet-created"
     assert applied["desired"].filesystem_csi_chart_repository == (
         "oci://charts.example.invalid/nebius"
@@ -3187,6 +3199,7 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
             cpu_nodes=1,
             cpu_platform="cpu-d3",
             cpu_preset="8vcpu-32gb",
+            cpu_disk_gib=640,
             gpu_nodes=0,
             gpu_platform="gpu-rtx6000",
             gpu_preset="1gpu-24vcpu-218gb",
@@ -3201,6 +3214,7 @@ def test_fresh_shared_up_resolves_subnet_and_uses_id_backed_project(
 
     assert inherited_result.exit_code == 0, inherited_result.output
     assert preflight_requests[-1].provider_preflight is False
+    assert 'cpu_disk_size = "640"' in render_tfvars(applied["desired"])
 
     skipped = runner.invoke(
         app,

@@ -54,6 +54,8 @@ npa workbench golden-eval run cosmos        # print the eval command (dry run)
 npa workbench golden-eval run cosmos --execute       # run locally (needs runtime)
 npa workbench golden-eval run lerobot --serverless   # run on a Nebius GPU
 npa workbench golden-eval run genesis --serverless --gpu h100
+npa workbench golden-eval run wan2-2 --serverless \
+  --registry registry.example.invalid/team --tag candidate-full-sha
 ```
 
 ## Running on Nebius Serverless
@@ -65,9 +67,15 @@ GPU, then waits for the PASS/FAIL result. This CLI mode requires Nebius and
 storage credentials. It does not require a self-hosted GitHub runner or activate
 the staged nightly workflow.
 
-Each eval's GPU is taken from `golden_eval.serverless_gpu` in the manifest
-(falling back to `l40s`, since Nebius Jobs always require a GPU preset) and can
-be overridden with `--gpu`. Implementation: `npa.smoke.serverless_runner`.
+Each eval's GPU and cardinality come from `golden_eval.serverless_gpu` and
+`golden_eval.serverless_gpu_count` in the manifest (falling back to one H200,
+since Nebius Jobs always require a GPU preset). The GPU type can be overridden
+with `--gpu`; the count remains part of the capability contract. Implementation:
+`npa.smoke.serverless_runner`.
+
+Use `--registry` and/or `--tag` with `--serverless` to prove a candidate image
+before promoting its canonical tag. Candidate overrides fail closed in dry-run
+and local-execute modes because those modes do not resolve a container image.
 
 The same logic is available as a script for CI:
 `python npa/scripts/run_golden_evals.py {validate,list,run}`.
@@ -184,7 +192,9 @@ complete byte scan and the genuine one-RTX renderer workflow.
 host/serverless with the image), `blocked-on-upstream` (B300/CUDA13 family),
 `unvalidated` (the candidate is unbuilt or publication-quarantined, so no
 published image is implied), or `needs-image-update` (a published image exists
-but cannot run its eval yet — see the validation results below).
+but cannot run its eval yet — see the validation results below). Default batch
+runs exclude both blocked and needs-update entries; use the matching explicit
+include flag when validating a candidate.
 
 ## Validation results
 

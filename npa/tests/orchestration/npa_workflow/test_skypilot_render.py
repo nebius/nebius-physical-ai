@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -24,7 +25,9 @@ from npa.orchestration.npa_workflow.skypilot_render import (
     assert_literal_python_heredocs_compile,
     assert_no_unresolved_placeholders,
     normalize_resources,
+    plan_image_pull_requirements,
     plan_image_pull_secrets,
+    plan_images,
     render_task_run_script,
     render_skypilot_yaml,
     resolve_task_image,
@@ -360,7 +363,10 @@ def test_sonic_stage_setup_installs_torch_stack(
         spec,
         build_plan(spec, run_id="demo"),
         run_id="demo",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     docs = [d for d in yaml.safe_load_all(rendered) if d]
     assert docs, rendered
@@ -707,6 +713,27 @@ def test_render_ok_when_registry_matches_credentials(
     assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "registry.example"
 
 
+def test_render_uses_same_docker_hub_alias_as_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SKYPILOT_DOCKER_PASSWORD", "test-token")
+    monkeypatch.setenv("SKYPILOT_DOCKER_USERNAME", "operator")
+    monkeypatch.setenv("SKYPILOT_DOCKER_SERVER", "registry-1.docker.io")
+    spec, plan = _nebius_gpu_spec()
+
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="docker.io/operator"),
+    )
+
+    task = [doc for doc in yaml.safe_load_all(rendered) if doc is not None][1]
+    assert task["secrets"]["SKYPILOT_DOCKER_SERVER"] == "docker.io"
+    assert task["secrets"]["SKYPILOT_DOCKER_USERNAME"] == "operator"
+    assert task["secrets"]["SKYPILOT_DOCKER_PASSWORD"] == "test-token"
+
+
 def test_kubernetes_private_image_references_the_refreshed_pull_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -747,6 +774,236 @@ def test_public_plan_has_no_implicit_kubernetes_pull_authority() -> None:
     )
 
     assert set(authorities.values()) == {()}
+    requirements = plan_image_pull_requirements(
+        spec,
+        plan.steps,
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    assert all(
+        requirement.requires_kubernetes and not requirement.requires_operator
+        for requirement in requirements.values()
+    )
+
+
+def test_mixed_image_preserves_vm_and_kubernetes_pull_requirements() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+    kubernetes = replace(
+        step,
+        state="kubernetes-path",
+        resources_profile={
+            **step.resources_profile,
+            "cloud": "kubernetes",
+            "kubernetes": {
+                "pod_config": {
+                    "spec": {
+                        "imagePullSecrets": [{"name": "target-secret"}],
+                        "serviceAccountName": "task-service-account",
+                    }
+                }
+            },
+        },
+    )
+    operator = replace(
+        step,
+        state="vm-path",
+        resources_profile={**step.resources_profile, "cloud": "nebius"},
+    )
+    options = SkypilotRenderOptions(registry="registry.example/customer")
+
+    requirements = plan_image_pull_requirements(
+        spec, [kubernetes, operator], run_id="demo", options=options
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.requires_operator is True
+    assert requirement.requires_kubernetes is True
+    assert requirement.pull_secret_names == ("target-secret",)
+    assert requirement.pull_secret_name_sets == (("target-secret",),)
+    assert requirement.service_account_names == ("task-service-account",)
+    assert set(
+        plan_image_pull_secrets(
+            spec, [kubernetes, operator], run_id="demo", options=options
+        ).values()
+    ) == {()}
+
+
+def test_missing_cloud_preserves_unresolved_pull_target() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+    unresolved = replace(
+        step,
+        resources_profile={
+            key: value
+            for key, value in step.resources_profile.items()
+            if key != "cloud"
+        },
+    )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [unresolved],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.target_unresolved is True
+    assert requirement.requires_operator is False
+    assert requirement.requires_kubernetes is False
+
+
+def test_same_image_preserves_each_kubernetes_pull_secret_set() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+
+    def with_secret(state: str, name: str):
+        return replace(
+            step,
+            state=state,
+            resources_profile={
+                **step.resources_profile,
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "pod_config": {"spec": {"imagePullSecrets": [{"name": name}]}}
+                },
+            },
+        )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [with_secret("path-a", "secret-a"), with_secret("path-b", "secret-b")],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.pull_secret_name_sets == (
+        ("secret-a",),
+        ("secret-b",),
+    )
+    assert requirement.pull_secret_names == ("secret-a", "secret-b")
+
+
+def test_same_secret_preserves_distinct_service_account_paths() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+
+    def with_service_account(state: str, name: str):
+        return replace(
+            step,
+            state=state,
+            resources_profile={
+                **step.resources_profile,
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "imagePullSecrets": [{"name": "shared-secret"}],
+                            "serviceAccountName": name,
+                        }
+                    }
+                },
+            },
+        )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [
+            with_service_account("path-a", "service-account-a"),
+            with_service_account("path-b", "service-account-b"),
+        ],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.pull_secret_name_sets == (
+        ("shared-secret",),
+        ("shared-secret",),
+    )
+    assert requirement.service_account_names == (
+        "service-account-a",
+        "service-account-b",
+    )
+
+
+def test_same_authority_preserves_distinct_pod_placement_paths() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+
+    def with_node_selector(state: str, pool: str):
+        return replace(
+            step,
+            state=state,
+            resources_profile={
+                **step.resources_profile,
+                "cloud": "kubernetes",
+                "kubernetes": {
+                    "pod_config": {
+                        "spec": {
+                            "imagePullSecrets": [{"name": "shared-secret"}],
+                            "serviceAccountName": "shared-account",
+                            "nodeSelector": {"nebius.com/node-group": pool},
+                            "runtimeClassName": "nvidia",
+                        }
+                    }
+                },
+            },
+        )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [
+            with_node_selector("path-a", "pool-a"),
+            with_node_selector("path-b", "pool-b"),
+        ],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+    requirement = next(iter(requirements.values()))
+
+    assert requirement.pull_secret_name_sets == (
+        ("shared-secret",),
+        ("shared-secret",),
+    )
+    assert tuple(json.loads(item) for item in requirement.pod_placement_specs) == (
+        {
+            "nodeSelector": {"nebius.com/node-group": "pool-a"},
+            "runtimeClassName": "nvidia",
+        },
+        {
+            "nodeSelector": {"nebius.com/node-group": "pool-b"},
+            "runtimeClassName": "nvidia",
+        },
+    )
+
+
+def test_pull_requirements_preserve_explicit_empty_task_pull_secrets() -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    step = build_plan(spec, run_id="demo").steps[0]
+    kubernetes = replace(
+        step,
+        resources_profile={
+            **step.resources_profile,
+            "cloud": "kubernetes",
+            "kubernetes": {
+                "pod_config": {"spec": {"imagePullSecrets": []}},
+            },
+        },
+    )
+
+    requirements = plan_image_pull_requirements(
+        spec,
+        [kubernetes],
+        run_id="demo",
+        options=SkypilotRenderOptions(registry="registry.example/customer"),
+    )
+
+    requirement = next(iter(requirements.values()))
+    assert requirement.pull_secret_name_sets == ((),)
+    assert requirement.pull_secret_names == ()
 
 
 def test_nurec_plan_exposes_its_ngc_pull_authority_to_preflight() -> None:
@@ -843,7 +1100,10 @@ def test_render_transfer_forwards_explicit_runtime_tuning(
         spec,
         build_plan(spec, run_id="demo", assume_decision="promote_checkpoint"),
         run_id="demo",
-        options=SkypilotRenderOptions(materialize_registry_secrets=False),
+        options=SkypilotRenderOptions(
+            registry="registry.example.invalid/operator/validated",
+            materialize_registry_secrets=False,
+        ),
     )
     docs = [doc for doc in yaml.safe_load_all(rendered) if doc]
     transfer = next(doc for doc in docs if "cosmos2 transfer" in doc.get("run", ""))
@@ -1265,7 +1525,7 @@ def test_render_path_checks_literal_python_heredocs(mocker) -> None:  # noqa: AN
     spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
     plan = build_plan(spec, run_id="invalid-python-heredoc")
     mocker.patch(
-        "npa.orchestration.npa_workflow.skypilot_render.build_skypilot_task_doc",
+        "npa.orchestration.npa_workflow.skypilot_render._build_skypilot_task_doc",
         return_value={
             "name": "invalid-python-heredoc",
             "run": _malformed_python_heredoc("python3 -B -"),
@@ -1586,6 +1846,124 @@ def test_resolve_task_image_uses_override() -> None:
         options=SkypilotRenderOptions(image_overrides={"*": "cr.example/custom:1"}),
     )
     assert image == "cr.example/custom:1"
+
+
+def test_resolve_task_image_reports_quarantine_as_workflow_error() -> None:
+    with pytest.raises(NpaWorkflowError, match="no consumable public release"):
+        resolve_task_image(
+            "workbench.cosmos_evaluator.evaluate",
+            {},
+            options=SkypilotRenderOptions(),
+        )
+
+
+def test_resolve_task_image_rejects_quarantined_sonic_release() -> None:
+    with pytest.raises(NpaWorkflowError, match="quarantined public release"):
+        resolve_task_image(
+            "workbench.sonic.eval",
+            {},
+            options=SkypilotRenderOptions(gpu_target="gpu-rtx6000"),
+        )
+
+
+def test_resolve_task_image_rejects_glob_like_override_selector() -> None:
+    with pytest.raises(NpaWorkflowRenderError, match="bare '\\*'"):
+        resolve_task_image(
+            "workbench.fiftyone.curate_augmented",
+            {},
+            options=SkypilotRenderOptions(
+                image_overrides={"workbench.*": "cr.example/custom:1"}
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "selector",
+    ["workbench.vlm_eval.rnu", "workbench.vlm_eval.ru"],
+)
+@pytest.mark.parametrize("boundary", ["plan-images", "pull-secrets", "render"])
+def test_unmatched_image_override_selector_fails_before_output(
+    boundary: str,
+    selector: str,
+) -> None:
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="unmatched-image-override")
+    options = SkypilotRenderOptions(
+        image_overrides={selector: "cr.example/custom:1"},
+        materialize_registry_secrets=False,
+    )
+
+    with pytest.raises(NpaWorkflowRenderError, match="matched no workflow toolRef"):
+        if boundary == "plan-images":
+            plan_images(
+                spec,
+                plan.steps,
+                run_id="unmatched-image-override",
+                options=options,
+            )
+        elif boundary == "pull-secrets":
+            plan_image_pull_secrets(
+                spec,
+                plan.steps,
+                run_id="unmatched-image-override",
+                options=options,
+            )
+        else:
+            render_skypilot_yaml(
+                spec,
+                plan,
+                run_id="unmatched-image-override",
+                options=options,
+            )
+
+
+def _alternate_image_branch_spec(tmp_path: Path):
+    data = yaml.safe_load((NPA_SPECS / "vlm-eval-single.yaml").read_text())
+    data["initial"] = "route"
+    data["states"]["route"] = {
+        "run": {"shell": "echo route"},
+        "resources": "gpu",
+        "transitions": [
+            {"when": "promote_checkpoint", "goto": "selected"},
+            {"when": "loop_back", "goto": "score-rollouts"},
+        ],
+    }
+    data["states"]["selected"] = {
+        "run": {"shell": "echo selected"},
+        "resources": "gpu",
+        "terminal": True,
+    }
+    path = tmp_path / "alternate-image-branch.yaml"
+    path.write_text(yaml.safe_dump(data))
+    return load_spec(path)
+
+
+@pytest.mark.parametrize("decision", ["promote_checkpoint", "loop_back"])
+def test_image_override_selector_accepts_unselected_branch(
+    tmp_path: Path, decision: str
+) -> None:
+    spec = _alternate_image_branch_spec(tmp_path)
+    run_id = "alternate-image"
+    plan = build_plan(spec, run_id=run_id, assume_decision=decision)
+    options = SkypilotRenderOptions(
+        image_overrides={
+            "*": "cr.example/default:1",
+            "workbench.vlm_eval": "cr.example/alternate:1",
+        },
+        materialize_registry_secrets=False,
+    )
+    images = plan_images(spec, plan.steps, run_id=run_id, options=options)
+    selected = any(step.tool_ref == "workbench.vlm_eval.run" for step in plan.steps)
+    assert selected is (decision == "loop_back")
+    assert ("cr.example/alternate:1" in images) is selected
+    plan_image_pull_secrets(spec, plan.steps, run_id=run_id, options=options)
+    rendered = render_skypilot_yaml(spec, plan, run_id=run_id, options=options)
+    actual = {
+        task["resources"]["image_id"].removeprefix("docker:")
+        for task in yaml.safe_load_all(rendered)
+        if task and "resources" in task
+    }
+    assert actual == set(images)
 
 
 def test_first_party_image_rejects_uid_zero_pod_override(
@@ -2364,3 +2742,36 @@ def test_openpi_full_droid_prepare_forces_cpu_jax_before_cli_import() -> None:
     qualification = next(task for task in tasks if "qualify_full_droid" in task["name"])
     assert prepare["envs"]["JAX_PLATFORMS"] == "cpu"
     assert "JAX_PLATFORMS" not in qualification.get("envs", {})
+
+
+def test_single_task_builder_rejects_unmatched_image_selector() -> None:
+    from npa.orchestration.npa_workflow.skypilot_render import build_skypilot_task_doc
+
+    spec = load_spec(NPA_SPECS / "vlm-eval-single.yaml")
+    plan = build_plan(spec, run_id="single-task-selector")
+    with pytest.raises(NpaWorkflowRenderError, match="matched no workflow toolRef"):
+        build_skypilot_task_doc(
+            spec,
+            plan.steps[0],
+            run_id="single-task-selector",
+            options=SkypilotRenderOptions(
+                image_overrides={"workbench.vlm_eval.rnu": "cr.example/custom:1"}
+            ),
+        )
+
+
+def test_render_validates_complete_selector_set_once_per_batch(mocker) -> None:
+    from npa.orchestration.npa_workflow import skypilot_render
+
+    spec = load_spec(NPA_SPECS / "bdd100k-pipeline.yaml")
+    plan = build_plan(spec, run_id="selector-scan")
+    validate = mocker.spy(skypilot_render, "validate_image_override_selectors")
+    rendered = render_skypilot_yaml(
+        spec,
+        plan,
+        run_id="selector-scan",
+        options=SkypilotRenderOptions(registry="cr.example.invalid/reg"),
+    )
+    assert len(list(yaml.safe_load_all(rendered))) == len(plan.steps) + 1
+    assert len(plan.steps) >= 10
+    validate.assert_called_once()

@@ -34,7 +34,33 @@ npa workbench workflow preflight-images "$workflow_spec" \
 ```
 
 Review the resolved GPU shape, image, and output prefix. Image preflight may
-create and delete a temporary probe pod. Then run the workload:
+create and delete a temporary probe pod.
+
+Both `preflight-images` and `submit` accept
+`--image-pull-timeout-seconds` for each target pull and
+`--image-bootstrap-timeout-seconds` for each capability probe. Set the pull
+timeout to `0` to wait without a deadline for a large authenticated cold pull;
+interrupting the command still verifies deletion of its owned probe. When
+omitted, the pull timeout inherits the bootstrap timeout (default: 1800 seconds),
+preserving existing commands, including bootstrap timeout `0`. An explicit pull
+timeout changes only the pull probe. `timed_out` means observation expired; it
+does not prove an access failure. Recovery commands retain the selected value.
+The unlimited setting removes the NPA observation and Pod deadlines. Node
+container-runtime failures still report `image_pull_failed`, including canceled
+layer extraction; inspect the node's pull failure before retrying.
+
+Image preflight follows SkyPilot's resource override behavior. `--infra` replaces
+the declared target for a single task. SkyPilot ignores that override for
+multi-task YAML and JobGroups, while runtime workflows can also launch singleton
+waves. Preflight therefore checks both declared and selected pull authorities
+for a workflow with multiple reachable tasks, including parallel and mutually
+exclusive decision branches. Set an explicit cloud on every resource profile;
+a missing cloud cannot be certified through an override that SkyPilot may ignore.
+Kubernetes resource regions must agree with the complete selected context.
+This conservative check can require operator registry access even when a
+particular runtime execution uses only singleton Kubernetes waves.
+
+Then run the workload:
 
 ```bash
 npa workbench workflow submit "$workflow_spec" \
@@ -207,6 +233,13 @@ Check this contract with the artifacts each execution path actually produces.
 `validate-spec` and `plan-spec --check-render` cannot prove that a command will
 write its declared outputs.
 
+The schema is strict: omit optional fields instead of assigning `null`;
+collection fields must remain mappings/lists; integer fields reject booleans
+and every YAML float (including `1.0`); booleans accept only YAML `true`/`false`;
+and duplicate state names are rejected instead of being overwritten. Quote
+template tokens when they must remain strings, then run `validate-spec` again
+after generator output or configuration overrides.
+
 ## Tokens (no Jinja)
 
 | Token | Meaning |
@@ -296,12 +329,27 @@ declared S3 output evidence
 is authoritative, and any live prior attempt is cancelled by exact provider ID
 with terminal verification.
 
-New runtime attempts record a versioned identity for the canonical set of image
-references resolved after overrides and digest pins. The record states whether
-every reference is content-addressed with `@sha256:`. A hash over a mutable tag
-identifies that reference string; it is not evidence of the image bytes. Older,
-unversioned attempts retain their legacy digest-pin-set comparison alongside the
-exact workflow and source identities.
+New runtime attempts with rendered images record
+`npa.workflow.image-selection-references.v1`. This identity binds the complete
+v3 image selection (reference-to-digest pins, override selectors, registry, GPU
+target, and variant) to each state's tool and resolved image reference. The
+record also retains the canonical reference set and whether every reference is
+content-addressed with `@sha256:`. A hash over a mutable tag identifies that
+reference string; it is not evidence of the image bytes.
+
+Completed replay, durable output reuse, and supervised recovery reject older
+value-only, pin-only, reference-set-only, or unversioned image-bearing records
+that cannot prove this binding. They do not fall back to the old digest-pin-set
+comparison or rewrite saved identities. Ordinary in-flight provider adoption
+remains a separate legacy path; it is not a migration mechanism.
+
+For an upgrade, keep existing runs on their original controller, source, and
+images, and use the upgraded controller for new run IDs. Do not update an active
+controller in place or edit its ledger to bypass an identity mismatch. Retire
+the original controller only after its runs are terminal. Replacing an old run
+requires terminal evidence or verified exact cancellation before a new run ID
+is submitted. Follow the [controller rollout procedure](../run-lifecycle.md#controller-rollout-with-existing-runs)
+when merging and deploying these changes.
 
 Each wave also records its resolved per-state resource profiles before launch.
 Status uses those snapshots when the initial submission preview is unavailable,

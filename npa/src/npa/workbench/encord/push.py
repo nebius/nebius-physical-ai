@@ -42,6 +42,7 @@ from npa.workbench.encord.storage import (
     ArtifactVersion,
     ConditionalArtifactStore,
     ObjectStorageGateway,
+    ObjectMetadata,
     S3ObjectStorageGateway,
 )
 from npa.workbench.storage_scope import StorageAuthorizationError, authorize_uri
@@ -72,38 +73,79 @@ def object_url_for(endpoint_url: str, bucket: str, key: str) -> str:
 
 
 def discover_objects(
-    object_store: ObjectStorageGateway, input_uri: str, media: str
+    object_store: ObjectStorageGateway,
+    input_uri: str,
+    media: str,
+    *,
+    require_checksum: bool = False,
 ) -> tuple[list[PushItem], list[str]]:
-    allowed = FILTER_CATEGORIES.get(media)
-    if allowed is None:
-        raise EncordToolError(f"unknown media filter {media!r}")
+    """Discover exact media identities, optionally hashing registration sources.
+
+    Args:
+        object_store: Gateway for source listings, metadata, and content reads.
+        input_uri: Source S3 prefix.
+        media: Supported media category filter.
+        require_checksum: Read bytes when metadata has no full SHA-256.
+
+    Returns:
+        Supported source items and unsupported object keys.
+
+    Raises:
+        EncordToolError: The filter, source identity, or content is invalid.
+    """
+    allowed = _media_categories(media)
     items: list[PushItem] = []
     skipped: list[str] = []
     for metadata in object_store.list_objects(input_uri):
         target = authorize_uri(metadata.uri, operation="identify discovered object")
         if target.kind != "s3" or not target.bucket or not target.key:
             raise EncordToolError("discovered object did not have an exact S3 identity")
-        bucket, key = target.bucket, target.key
-        category = allowed.get(Path(key).suffix.lower())
+        category = allowed.get(Path(target.key).suffix.lower())
         if category is None:
-            skipped.append(key)
+            skipped.append(target.key)
             continue
-        items.append(
-            PushItem(
-                source_uri=canonical_s3_uri(bucket, key),
-                bucket=bucket,
-                object_key=key,
-                category=category,
-                source_size=metadata.size,
-                source_etag=metadata.etag,
-                source_etag_kind=metadata.etag_kind,
-                source_checksum=metadata.checksum,
-                source_checksum_kind=metadata.checksum_kind,
-            )
-        )
+        item = _source_item(metadata, target.bucket, target.key, category)
+        if require_checksum and category != "mcap":
+            _require_source_checksum(item, metadata, object_store)
+        items.append(item)
     if not items:
         raise EncordToolError(f"no supported media found under {input_uri}")
     return items, skipped
+
+
+def _media_categories(media: str) -> dict[str, str]:
+    allowed = FILTER_CATEGORIES.get(media)
+    if allowed is None:
+        raise EncordToolError(f"unknown media filter {media!r}")
+    return allowed
+
+
+def _source_item(
+    metadata: ObjectMetadata, bucket: str, key: str, category: str
+) -> PushItem:
+    return PushItem(
+        source_uri=canonical_s3_uri(bucket, key),
+        bucket=bucket,
+        object_key=key,
+        category=category,
+        source_size=metadata.size,
+        source_etag=metadata.etag,
+        source_etag_kind=metadata.etag_kind,
+        source_checksum=metadata.checksum,
+        source_checksum_kind=metadata.checksum_kind,
+    )
+
+
+def _require_source_checksum(
+    item: PushItem,
+    metadata: ObjectMetadata,
+    object_store: ObjectStorageGateway,
+) -> None:
+    if metadata.checksum and metadata.checksum_kind in {"sha256", "s3_checksum_sha256"}:
+        return
+    digest = object_store.hash_object(metadata)
+    item.source_checksum = digest.sha256
+    item.source_checksum_kind = "sha256"
 
 
 def build_upload_json(items: Iterable[PushItem]) -> dict[str, Any]:
@@ -195,7 +237,12 @@ def run_push(
     endpoint_url = resolve_public_endpoint(environ) if transfer == "register" else ""
     encord_domain = resolve_domain(environ)
 
-    items, skipped = discover_objects(object_store, input_path, media)
+    items, skipped = discover_objects(
+        object_store,
+        input_path,
+        media,
+        require_checksum=transfer == "register",
+    )
     for item in items:
         item.transfer_mode = transfer  # type: ignore[assignment]
         item.link_state = "unattempted" if dataset.strip() else "not_requested"
@@ -564,7 +611,9 @@ def _run_upload(
             continue
         try:
             with tempfile.TemporaryDirectory(prefix="npa-encord-upload-") as temporary:
-                local = Path(temporary) / "source.bin"
+                local = (
+                    Path(temporary) / f"source{Path(item.object_key).suffix.lower()}"
+                )
                 digest = object_store.download_to_file(item.source_uri, local)
                 client_metadata = {
                     "npa": {
