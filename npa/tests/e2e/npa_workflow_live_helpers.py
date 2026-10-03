@@ -1676,7 +1676,9 @@ def _nurec_rrd_review_settings(chunks: list) -> dict:
     assert settings.get("schema") == "npa.nurec.rrd-review.v2", (
         "unsupported RRD review settings schema"
     )
-    assert settings.get("timeline_policy") == "independent-entity-filename-indices"
+    assert settings.get("timeline_policy") == "independent-entity-filename-indices", (
+        "unsupported RRD timeline policy"
+    )
     for name in ("max_frames_per_entity", "max_frame_dim", "jpeg_quality"):
         assert type(settings.get(name)) is int, "invalid RRD review setting"
     return settings
