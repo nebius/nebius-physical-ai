@@ -10,6 +10,25 @@ NCore development images use the [attested OCI publication path](ncore-oci-publi
 to preserve the exact buildx index through local gates and anonymous readback.
 NCore remains quarantined pending its independent RTX acceptance.
 
+RoboTwin's `npa-robotwin:2.0-curobo-v0.7.8-rtfetch-unbuilt` entry is a
+zero-vendor-payload bootstrap with a working neutral build. It pins an official Ubuntu
+22.04 linux/amd64 manifest plus a signed immutable Jammy snapshot with 84 exact
+binary packages, 63 corresponding source packages, and a complete-empty public
+Python application lock. RoboTwin, CuRobo, CUDA/cuDNN, simulator/Python
+application runtime, assets, caches, credentials, and outputs stay runtime-side.
+Customer-authorized delivery now installs the locked closure and runs the pinned
+upstream seed search/replay. A retained development digest completed one RTX
+operator workload; see its [evidence scope](byof-robotwin.md#retained-operator-evidence-and-readiness).
+The trusted public development workflow requires its exact native content policy,
+complete-byte and payload scans, security gates, and public corresponding-source
+annex before push. Supported release quarantine remains while the public BYOF
+CLI and normal-submit worker bridge are blocked. The bounded
+operator statement is `noncommercial` validation/evaluation, not a general use
+grant; public artifacts use exact-revision payload probes, while gated artifacts
+require the customer's runtime-only credential and an exact entitlement probe
+before provisioning. The default planned cache is customer-isolated,
+node-local ephemeral storage, with durable reuse still unapproved.
+
 ## SkyPilot worker bootstrap contract
 
 Every workflow image must satisfy version `skypilot-0.12.2-v1`: a usable
@@ -18,6 +37,26 @@ and compatible service/init behavior; writable `/tmp` and home; and an
 entrypoint that forwards orchestrator arguments. Compliant first-party images
 record `org.nebius.npa.skypilot-bootstrap-contract=skypilot-0.12.2-v1` in OCI
 config, with Dockerfile behavior covered by build tests.
+
+Isaac-family builds also bake SkyPilot's early APT package set: `curl`, `fuse`,
+`netcat-openbsd`, `rsync`, and `wget`. Worker startup can then use those tools
+when an immutable Ubuntu snapshot is temporarily unavailable. The `fuse`
+package supplies the userspace helper only; it does not grant `/dev/fuse`, Linux
+capabilities, or a workload mount. A source change affects future image builds
+only. Existing image digests retain their original contents until a rebuilt,
+validated digest is explicitly promoted and recorded in the release manifest.
+
+Installing `openssh-server` generates host private keys during package setup.
+Every recipe must delete `/etc/ssh/ssh_host_*` in that same image layer and let
+SkyPilot's runtime `ssh-keygen -A` create per-pod keys. A later-layer deletion
+does not help: the reusable private keys remain recoverable from the install
+layer. The workbench prerequisite guard checks every Dockerfile and shared
+installer for this layer-local cleanup.
+
+For that reason, Isaac Lab deliberately has no
+`Dockerfile.k8s-prereqs` repair derivative. A historical Isaac Lab layer that
+contains generated host keys must be replaced by rebuilding its canonical
+Dockerfile; a child image cannot sanitize the ancestor blob.
 
 The accepted historical `npa-groot:0.1.0` artifact has
 the non-root `ubuntu` user, system Python, `rsync`, an SSH client, and
@@ -63,15 +102,18 @@ All first-class images live under `npa/docker/workbench/`:
 | `npa-groot` | `groot/Dockerfile` | job shell; `EXPOSE 8080` |
 | `npa-fiftyone` | `fiftyone/Dockerfile` | command-passthrough job entrypoint; `EXPOSE 5151` |
 | `npa-lancedb` | `lancedb/Dockerfile` | uvicorn `:8686`; non-root SkyPilot workflow host |
+| `npa-mjlab` (unpublished) | `mjlab/Dockerfile` | authenticated uvicorn `:8080`; native train/eval/export CLI |
 | `npa-sonic` | `sonic/Dockerfile` | `/entrypoint.sh` modes |
 | `npa-detection-training` | `detection-training/Dockerfile` | uvicorn `:8790` |
 | `npa-antioch` | `antioch/Dockerfile` | CPU-only uvicorn `:8789`; proprietary CLI is verified runtime-fetch only |
 | `npa-robocasa` | `robocasa/Dockerfile` | uvicorn `:8791`; non-root service with no sudo grant |
+| `npa-habitat-sim` | `habitat-sim/Dockerfile.bootstrap` | neutral runtime-fetch job; `workflow.habitat_sim.smoke`; release validation pending |
 | `npa-openarm` | `openarm/Dockerfile` | authenticated service `:8792`; MuJoCo baked, Isaac runtime-fetched |
+| `npa-robotwin` | `robotwin/Dockerfile` | neutral development bootstrap; supported release quarantined; CPU refusal verified |
 | `npa-retargeting` | `retargeting/Dockerfile` | job shell |
 | `npa-foxglove-embed` | `foxglove-embed/Dockerfile` | static host `:8099` (Foxglove embed SDK + MCAP data) |
 | Sim2Real stack | `sim2real-*/`, `cosmos3-reason/`, `lerobot-vlm-rl/` | workflow modules |
-| Base CUDA 13 | `base/cuda13-b300/Dockerfile` | build base only |
+| Base CUDA 13 | `base/cuda13-blackwell/Dockerfile` | build base only |
 | PAIDF AnomalyGen Sky compatibility (restricted) | `paidf-anomalygen-sky/Dockerfile` | operator-built job shell; never public GHCR |
 | PAIDF Qwen Image Edit Sky compatibility (restricted) | `paidf-image-edit-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
 | PAIDF Cosmos3 Super Image2Video Sky compatibility (restricted) | `paidf-event-video-sky/Dockerfile` | operator-built worker shell over the pinned upstream runtime; never public GHCR |
@@ -192,6 +234,15 @@ SSH host keys, forwards orchestrator arguments, and records the same
 `skypilot-0.12.2-v1` OCI attestation. Ad-hoc means the solution is not a catalog
 image; it does not exempt its runtime bytes from the worker bootstrap contract.
 
+Habitat-Sim uses a neutral runtime-fetch bootstrap image with exact corresponding
+Ubuntu package sources. Its public development digest and successful one-RTX
+standard-workflow validation are recorded in the
+[image catalog](container-image-catalog.md#habitat-sim-development-image).
+Supported release selection remains in `UNVALIDATED_PUBLICATION_TOOLS`.
+The official CC BY Skokloster scene is runtime data, never an image input.
+A rebuild must pass its own exact-image publication and capability gates;
+previous digest evidence does not automatically validate changed image bytes.
+
 ## Packaging tiers
 
 Every Dockerfile must declare one of:
@@ -221,6 +272,24 @@ Required for all workbench images:
    set `allowPrivilegeEscalation: false`, and use `RuntimeDefault` seccomp
    (detection-training is the reference template).
 
+Do not serialize the build-time base reference into OCI config. In particular,
+the retired `npa.base_image` label exposed operator registry paths when
+`BASE_IMAGE` selected a private or staging parent. A repository-wide guard scans
+every `Dockerfile*` variant and rejects that key. The public-release preflight
+also reads each exact-digest OCI config and refuses the label, including when it
+was inherited from an ancestor image. Registry-neutral lineage labels such as
+`npa.base.image="npa-envgen"` may name a logical public foundation without copying
+its resolved registry reference.
+
+A digest pin records exact ancestry; it does not imply a clean-source rebuild.
+`detection-training` currently chains from a previously accepted
+`npa-detection-training` digest, and `lancedb` shares that accepted detector
+foundation. Those rebuilds therefore retain and extend every ancestor layer.
+Treat this as an explicit release-lineage tradeoff: keep the parent digest and
+reason visible in the Dockerfile, scan the complete built image rather than only
+its final filesystem, and move to an independent reproducible foundation when
+one is available.
+
 Strongly recommended for `service` images:
 
 - `HEALTHCHECK` against `/health` (or documented probe path)
@@ -231,7 +300,7 @@ Strongly recommended for `service` images:
 
 The workbench is open source, and images should be pullable widely — but "widely"
 has a license boundary that the contract encodes in a `redistribution` field per
-image (`public` | `restricted`), enforced by
+image (`public` | `restricted` | `unvalidated`), enforced by
 `npa/tests/docker/test_packaging_contract.py`.
 
 - **`public`** — Every shipped component has reviewed permission for public
@@ -270,6 +339,12 @@ image (`public` | `restricted`), enforced by
   Review the [SSPL's distribution and service provisions](https://www.mongodb.com/legal/licensing/server-side-public-license)
   separately; an image's redistribution classification does not decide whether
   an operator's service use meets its obligations.
+
+- **`unvalidated`** — The intended packaging shape is recorded, but complete
+  corresponding-source closure, built-byte verification, or both remain
+  unproved. An `unvalidated` image is not eligible for public publication or
+  anonymous pull claims; keep it quarantined until the missing evidence passes.
+
 - **`restricted`** — bakes a runtime we are not licensed to redistribute. Such an
   image may be built and run by the operator who owns the registry (internal R&D,
   build-your-own), but hosting it **prebuilt on a public/anonymous registry** would
@@ -284,6 +359,12 @@ image (`public` | `restricted`), enforced by
   expressly listed as redistributable by their included SDK terms. Both current
   releases are bound to exact public development digests with accepted real-GPU
   evidence.
+
+- **`unvalidated`** — no restricted payload is asserted, but the complete exact
+  selected-byte base/package/wheel/license closure has not yet been accepted.
+  This fail-closed state is private and publication-quarantined; it becomes
+  `public` or `restricted` only after exact built-byte evidence supports that
+  decision.
 
 ## Manual gate audit (2026-08-16)
 
@@ -499,10 +580,19 @@ the workbench push filter. Explicit manual build selections remain available.
 
 Missing history, unknown shared workbench files, ambiguous metadata, and
 unsupported build-input syntax conservatively restore the full public build set.
+Catalog timestamps and glossary wording do not force unrelated rebuilds;
+changes to schema, targets, or glossary state names still do. Images that copy
+the catalog itself are rebuilt when its bytes change.
 An empty automatic selection performs no build or release preflight. Every
 selected image retains all pre-publication and exact-digest security checks;
 release promotion remains a separate manual operation. Selection lives in
 `npa.deploy.image_build_scope` and is tested using real Git histories.
+
+A failed development image is cleaned up inside its own build job, only after
+that image attempted a push. Successful sibling images retain their validated
+development tags. Cleanup still requires one exact tag and matching digest and
+refuses a digest shared with another tag. It does not create another runner
+matrix or add work to the PR or merge-queue gates.
 
 The public-plan inventory retains all 34 published release tags. The current
 Isaac Arena r3 tag is an exact-digest promotion of the public full-SHA candidate
@@ -603,10 +693,43 @@ build hook.
    operator build/BYOF destination.
 2. Build from the checked-in Dockerfile (`skills/atomic/build-and-push-image`).
 3. Tag from `npa/pyproject.toml` `[tool.npa.supported-tools]` and
-   `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-b300`).
+   `npa/docker/workbench/tags.yaml` (`cuda12` vs `cuda13-blackwell`, with
+   `cuda13-b300` retained as a legacy alias).
 4. SONIC variants: `npa/src/npa/deploy/sonic_image_manifest.json`.
 5. Blackwell fleet digests: `npa/docker/workbench/sm120-images.json`.
 6. Update golden evals when the image’s “does its job” command changes.
+
+### Neutral robomimic candidate
+
+`npa-robomimic` is a quarantined example of a split runtime boundary. The
+published development image bakes pinned MIT robomimic source and the neutral Debian closure
+on a digest-pinned Python base; its complete Python dependency map is fetched
+at runtime. It must contain no
+torch, torchvision, Triton, NVIDIA/CUDA runtime, weight, data, populated cache,
+credential, or output. `scan_image_robomimic_payload.py` must inspect every
+layer and OCI history for each build and publication.
+
+Its packaging class is `public` for the neutral bootstrap. The image delivers
+locked Debian and CPython source archives with the retained package notices.
+The trusted public development workflow verifies the archives against all
+distributed Debian package versions, including earlier versions in parent
+layers, and runs the robomimic payload scan before and after pushing.
+
+The CUDA-capable Python environment is a customer-owned runtime boundary. The
+bootstrap may fetch the exact inventory from its declared official endpoints
+only after the customer entitlement and credential checks, then independently
+verify installed files and `RECORD` before publishing a private runtime tree;
+it never accepts terms or logs the credential. Public PyPI/PyTorch requests are
+anonymous, while credentials are bound to their approved vendor origin. This
+packaging split does not supply distribution, use, or service rights. The
+producer-bound development image passed its publication gates, anonymous blob
+readback, and managed B200 smoke. Its separately declared supplemental runtime
+also completed full Lift training and rollout evaluation on RTX PRO 6000; this
+does not replace the committed standard runtime contract. See the
+[development qualification and immutable digest](container-image-catalog.md#intentionally-not-published-as-separate-images).
+The tool remains in `UNVALIDATED_PUBLICATION_TOOLS` and
+`PUBLICATION_QUARANTINE_TOOLS` until a supported release is explicitly accepted;
+it has no supported public release row or default-image promotion.
 
 ## Platform scope
 

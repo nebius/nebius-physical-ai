@@ -1,0 +1,48 @@
+{
+  "status": "passed",
+  "guards": [
+    {
+      "name": "enabled-gradients",
+      "passed": true
+    },
+    {
+      "name": "unsupported-scale",
+      "passed": true
+    },
+    {
+      "name": "invalid-causal",
+      "passed": true
+    },
+    {
+      "name": "cpu-key",
+      "passed": true
+    },
+    {
+      "name": "requires-grad-under-no-grad",
+      "passed": true
+    }
+  ],
+  "native_fa4_fallback_errors": [
+    {
+      "dtype": "torch.float16",
+      "causal": false,
+      "relative_l2": 0.00027156351782526525
+    },
+    {
+      "dtype": "torch.float16",
+      "causal": true,
+      "relative_l2": 0.0002417025762454595
+    },
+    {
+      "dtype": "torch.bfloat16",
+      "causal": false,
+      "relative_l2": 0.0021708435676015526
+    },
+    {
+      "dtype": "torch.bfloat16",
+      "causal": true,
+      "relative_l2": 0.001931458515144216
+    }
+  ],
+  "implementation_sha256": "26eeb17ba91d4f9bb1ba5bc450959bfa766226a6a37c363cd5a808bfa84408a1"
+}

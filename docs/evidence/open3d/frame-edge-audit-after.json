@@ -1,0 +1,295 @@
+{
+  "clipped_frames": [],
+  "content_tolerance": 6,
+  "frames": [
+    {
+      "background_rgb": [
+        16,
+        17,
+        20
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.21030381944444446,
+      "content_pixels": 145362,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.6802083333333333,
+        "vertical": 0.7777777777777778
+      },
+      "frame": "baseline_scan_and_surface__opposite.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.007347174639864614,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 137.2126
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        16,
+        17,
+        20
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.21092447916666668,
+      "content_pixels": 145791,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.725,
+        "vertical": 0.7125
+      },
+      "frame": "baseline_scan_and_surface__overview.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.01242875074593082,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 157.8138
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        16,
+        17,
+        20
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.2133174189814815,
+      "content_pixels": 147445,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.625,
+        "vertical": 0.8472222222222222
+      },
+      "frame": "baseline_scan_and_surface__topdown.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.011299128488588965,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 162.2848
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        16,
+        17,
+        20
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.2097974537037037,
+      "content_pixels": 145012,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.725,
+        "vertical": 0.7125
+      },
+      "frame": "baseline_surface_only__overview.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.00021377541169006703,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 159.28480000000002
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        16,
+        17,
+        20
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.11426070601851852,
+      "content_pixels": 78977,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.6802083333333333,
+        "vertical": 0.6555555555555556
+      },
+      "frame": "candidate_scan_and_surface__opposite.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.03651696063410866,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 156.28480000000002
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        16,
+        17,
+        20
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.11398582175925925,
+      "content_pixels": 78787,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.55,
+        "vertical": 0.6472222222222223
+      },
+      "frame": "candidate_scan_and_surface__overview.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.036706563265513345,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 152.28480000000002
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        16,
+        17,
+        20
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.12642650462962962,
+      "content_pixels": 87386,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.5520833333333334,
+        "vertical": 0.8361111111111111
+      },
+      "frame": "candidate_scan_and_surface__topdown.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.03252237200466894,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 169.357
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        16,
+        17,
+        20
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.11120370370370371,
+      "content_pixels": 76864,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.55,
+        "vertical": 0.6472222222222223
+      },
+      "frame": "candidate_surface_only__overview.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.0004033097418817652,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 155.2848
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    },
+    {
+      "background_rgb": [
+        16,
+        17,
+        20
+      ],
+      "border_width_examined": 2,
+      "clipped_edges": [],
+      "content_fraction": 0.09080584490740741,
+      "content_pixels": 62765,
+      "content_pixels_touching_edge": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0
+      },
+      "content_span_fraction": {
+        "horizontal": 0.55,
+        "vertical": 0.6472222222222223
+      },
+      "frame": "observed_scan_only__overview.png",
+      "is_clipped": false,
+      "legibility": {
+        "low_contrast_content_fraction": 0.07841950131442683,
+        "low_contrast_limit": 24,
+        "median_contrast_vs_background": 139.2848
+      },
+      "resolution": [
+        960,
+        720
+      ]
+    }
+  ],
+  "what": "Per-frame clipping and legibility measured from PNG bytes. A frame is clipped when content occupies a border row or column; content is low-contrast when its luminance sits within 24/255 of the background."
+}

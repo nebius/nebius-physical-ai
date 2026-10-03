@@ -16,11 +16,15 @@ from pathlib import Path
 from typing import Any, Callable
 
 
+from npa.literal_values import require_integer
+
 from npa.cluster.gpu_driver import (
     inspect_recipe_declared_variables,
     resolve_gpu_driver_strategy,
 )
 from npa.cluster.gpu_health import GpuHealthConfig, validate_gpu_health
+from npa.cluster_backends.provider_rpc import configure_provider_rpc_deadlines
+
 from npa.cluster_backends.kuberay import (
     KUBERAY_STATE_FILES,
     KubeRaySpec,
@@ -1048,7 +1052,7 @@ def _node_group_template_fingerprint(template: dict[str, Any]) -> dict[str, Any]
             "policy": reservation.get("policy"),
             "reservation_ids": reservation.get("reservation_ids") or [],
         },
-        "preemptible": bool(template.get("preemptible", False)),
+        "preemptible": template.get("preemptible"),
         "network_interfaces": [
             {"subnet_id": item.get("subnet_id")}
             for item in network_interfaces
@@ -1063,9 +1067,101 @@ def _node_group_template_fingerprint(template: dict[str, Any]) -> dict[str, Any]
             for item in filesystems
             if isinstance(item, dict)
         ],
-        "gpu_cluster": template.get("gpu_cluster") or None,
+        "gpu_cluster": template.get("gpu_cluster"),
         "gpu_settings": {"drivers_preset": gpu_settings.get("drivers_preset")},
     }
+
+
+def _decode_terraform_node_group_preemptibility(
+    attributes: dict[str, Any],
+) -> dict[str, Any]:
+    """Decode Terraform's optional empty message, retaining legacy booleans."""
+
+    template = attributes.get("template")
+    if not isinstance(template, dict):
+        return attributes
+    value = template.get("preemptible")
+    if value is None:
+        value = False
+    elif isinstance(value, dict) and not value:
+        value = True
+    else:
+        return attributes
+    return {**attributes, "template": {**template, "preemptible": value}}
+
+
+def _gpu_cluster_matches_desired(
+    value: Any, state_value: Any, *, enabled: bool
+) -> bool:
+    """Require one exact attachment ID when this pool needs a GPU cluster."""
+
+    if value != state_value:
+        return False
+    if not enabled:
+        return value is None
+    if not isinstance(value, dict) or set(value) != {"id"}:
+        return False
+    identifier = value["id"]
+    return (
+        isinstance(identifier, str)
+        and bool(identifier)
+        and identifier == identifier.strip()
+    )
+
+
+_NODE_GROUP_PROVIDER_ALIASES = {
+    "parentId": "parent_id",
+    "fixedNodeCount": "fixed_node_count",
+    "bootDisk": "boot_disk",
+    "sizeGibibytes": "size_gibibytes",
+    "reservationPolicy": "reservation_policy",
+    "reservationIds": "reservation_ids",
+    "networkInterfaces": "network_interfaces",
+    "subnetId": "subnet_id",
+    "existingFilesystem": "existing_filesystem",
+    "mountTag": "mount_tag",
+    "attachMode": "attach_mode",
+    "gpuCluster": "gpu_cluster",
+    "gpuSettings": "gpu_settings",
+    "driversPreset": "drivers_preset",
+}
+
+
+def _provider_node_group_integer(value: Any, *, field: str) -> int:
+    """Decode protobuf integer strings while refusing scalar coercion."""
+
+    if isinstance(value, str) and value.isascii() and value.isdecimal():
+        value = int(value)
+    return require_integer(value, field=field, minimum=0)
+
+
+def _normalize_node_group_provider_fields(value: Any) -> Any:
+    """Normalize known CLI spellings without discarding contradictory evidence."""
+
+    if isinstance(value, list):
+        return [_normalize_node_group_provider_fields(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    normalized: dict[str, Any] = {}
+    for key, item in value.items():
+        canonical = _NODE_GROUP_PROVIDER_ALIASES.get(key, key)
+        if canonical in {
+            "metadata",
+            "spec",
+            "template",
+            "boot_disk",
+            "reservation_policy",
+            "network_interfaces",
+            "filesystems",
+            "gpu_settings",
+        }:
+            item = _normalize_node_group_provider_fields(item)
+        if canonical in normalized and json.dumps(
+            normalized[canonical], sort_keys=True
+        ) != json.dumps(item, sort_keys=True):
+            raise ValueError(f"Conflicting provider spellings for {canonical}")
+        normalized[canonical] = item
+    return normalized
 
 
 def _tainted_node_group_matches_desired(
@@ -1080,6 +1176,11 @@ def _tainted_node_group_matches_desired(
 ) -> bool:
     """Prove a tainted state entry still owns the exact desired live pool."""
 
+    try:
+        provider_payload = _normalize_node_group_provider_fields(provider_payload)
+    except ValueError:
+        return False
+    state_attributes = _decode_terraform_node_group_preemptibility(state_attributes)
     metadata = provider_payload.get("metadata") or {}
     spec = provider_payload.get("spec") or {}
     status = provider_payload.get("status") or {}
@@ -1094,7 +1195,9 @@ def _tainted_node_group_matches_desired(
     if parent_id is _PROVIDER_FIELD_MISSING:
         return False
     try:
-        fixed_node_count = int(spec.get("fixed_node_count"))
+        fixed_node_count = _provider_node_group_integer(
+            spec.get("fixed_node_count"), field="fixed_node_count"
+        )
     except (TypeError, ValueError):
         return False
     if (
@@ -1120,14 +1223,18 @@ def _tainted_node_group_matches_desired(
         else (pool.disk_size_gib or 128)
     )
     try:
-        boot_disk_size = int((template.get("boot_disk") or {}).get("size_gibibytes"))
+        boot_disk_size = _provider_node_group_integer(
+            (template.get("boot_disk") or {}).get("size_gibibytes"),
+            field="boot_disk.size_gibibytes",
+        )
     except (TypeError, ValueError):
         return False
     if (
         resources.get("platform") != pool.platform
         or resources.get("preset") != pool.preset
         or boot_disk_size != expected_disk_size
-        or bool(template.get("preemptible", False)) != pool.preemptible
+        or template.get("preemptible") is not pool.preemptible
+        or state_template.get("preemptible") is not pool.preemptible
         or len(interfaces) != 1
         or not isinstance(interfaces[0], dict)
         or interfaces[0].get("subnet_id") != subnet_id
@@ -1151,7 +1258,11 @@ def _tainted_node_group_matches_desired(
             return False
     elif filesystems:
         return False
-    if bool(template.get("gpu_cluster")) != cluster.resolved_enable_gpu_cluster():
+    if not _gpu_cluster_matches_desired(
+        template.get("gpu_cluster"),
+        state_template.get("gpu_cluster"),
+        enabled=pool.is_gpu() and cluster.resolved_enable_gpu_cluster(),
+    ):
         return False
     if pool.is_gpu():
         driver = resolve_gpu_driver_strategy(
@@ -1233,14 +1344,24 @@ def _reconcile_tainted_node_groups(
         for instance in resource.get("instances", []):
             if not isinstance(instance, dict) or instance.get("status") != "tainted":
                 continue
-            if pool is None or pool.count <= 0:
-                raise RuntimeError(
-                    "refusing to reconcile a tainted node group with no exact desired pool"
-                )
             attributes = instance.get("attributes")
             if not isinstance(attributes, dict) or not attributes.get("id"):
                 raise RuntimeError(
                     "refusing to reconcile a tainted node group without exact state identity"
+                )
+            from npa.cluster_backends.mk8s_capacity_reuse import is_removed_cpu_taint
+
+            if is_removed_cpu_taint(
+                resource, instance, pool, cluster_ids, cluster.name
+            ):
+                _log(
+                    on_status,
+                    "retaining owned CPU taint for the requested pool removal",
+                )
+                continue
+            if pool is None or pool.count <= 0:
+                raise RuntimeError(
+                    "refusing to reconcile a tainted node group with no exact desired pool"
                 )
             tainted.append(
                 (_terraform_instance_address(resource, instance), attributes, pool)
@@ -1292,7 +1413,9 @@ def _reconcile_tainted_node_groups(
                 },
                 "spec": {
                     "fixed_node_count": attributes.get("fixed_node_count"),
-                    "template": attributes.get("template"),
+                    "template": _decode_terraform_node_group_preemptibility(
+                        attributes
+                    ).get("template"),
                 },
                 "status": {"state": "PROVISIONING"},
             }
@@ -1326,7 +1449,7 @@ def _reconcile_tainted_node_groups(
             or not isinstance(payload, dict)
             or not (
                 _tainted_node_group_matches_desired(
-                    provider_payload=payload,
+                    provider_payload=_decode_v1_node_group_preemptibility(payload),
                     state_attributes=attributes,
                     pool=pool,
                     cluster=cluster,
@@ -1588,7 +1711,7 @@ def _repair_exact_stopped_placeholder(
         if (
             not orphan_id
             or not _tainted_node_group_matches_desired(
-                provider_payload=orphan,
+                provider_payload=_decode_v1_node_group_preemptibility(orphan),
                 state_attributes=orphan_state,
                 pool=pool,
                 cluster=cluster,
@@ -1674,7 +1797,7 @@ def _repair_exact_stopped_placeholder(
         "could not read the exact node group before placeholder repair",
     )
     if not _tainted_node_group_matches_desired(
-        provider_payload=live_group,
+        provider_payload=_decode_v1_node_group_preemptibility(live_group),
         state_attributes=attributes,
         pool=pool,
         cluster=cluster,
@@ -2041,9 +2164,12 @@ def _is_verified_unchanged_target(
                 )
             )
 
-        if capacity_configuration(saved_tfvars) != capacity_configuration(
-            rendered_tfvars
-        ):
+        from npa.cluster_backends.mk8s_capacity_reuse import is_cpu_pool_removal
+
+        previous_capacity = capacity_configuration(saved_tfvars)
+        desired_capacity = capacity_configuration(rendered_tfvars)
+        removes_cpu_pool = is_cpu_pool_removal(previous_capacity, desired_capacity)
+        if previous_capacity != desired_capacity and not removes_cpu_pool:
             return False
         provider_project = _get_project(nebius_bin, project_id, env, profile)
     except (OSError, RuntimeError, ValueError):
@@ -2097,6 +2223,7 @@ def _is_verified_unchanged_target(
             "list",
             "--parent-id",
             cluster_id,
+            "--all",
             "--format",
             "json",
         ],
@@ -2128,7 +2255,7 @@ def _is_verified_unchanged_target(
     ):
         return False
     groups = groups_payload.get("items", [])
-    if not isinstance(groups, list):
+    if not isinstance(groups, list) or groups_payload.get("next_page_token"):
         return False
     expected_pools = [
         pool
@@ -2144,6 +2271,16 @@ def _is_verified_unchanged_target(
             expected_pools.extend(
                 replace(cluster.gpu_nodes, count=per_group) for _ in range(group_count)
             )
+    if removes_cpu_pool or (
+        cluster.cpu_count() == 0 and len(groups) > len(expected_pools)
+    ):
+        from npa.cluster_backends.mk8s_capacity_reuse import retained_node_groups
+
+        groups = retained_node_groups(
+            groups, tfvars_path.with_name("terraform.tfstate"), cluster_id
+        )
+        if groups is None:
+            return False
     if len(groups) != len(expected_pools):
         return False
 
@@ -2431,6 +2568,7 @@ def _deploy_one_cluster(
             ssh_public_key=ssh_public_key,
             on_status=on_status,
         )
+        rpc_deadlines = configure_provider_rpc_deadlines(workdir, timeout_minutes)
         env = _cluster_tf_env(
             nebius_bin,
             tenant_id=tenant_id,
@@ -2459,6 +2597,7 @@ def _deploy_one_cluster(
                 driver.managed_driver_preset if driver.uses_managed_image else ""
             ),
             "status": "provisioning",
+            "provider_rpc_deadlines": rpc_deadlines,
         }
         if guarded.kuberay and guarded.kuberay.enabled:
             sidecar.update(

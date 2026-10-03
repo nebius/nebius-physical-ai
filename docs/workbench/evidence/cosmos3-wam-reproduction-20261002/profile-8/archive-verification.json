@@ -1,0 +1,10 @@
+{
+  "schema": "npa.cosmos3.wam-archive-verification.v1",
+  "run": "profile-8",
+  "files": 77,
+  "total_bytes": 177357151412,
+  "complete_get_sha256_verification": true,
+  "private_receipt_sha256": "18e1ca2f83914da9c779eed28e681f10285efc12a21d2de3597044d59316f4ef",
+  "archive_wall_seconds": 790.8236691951752,
+  "scope": "Upload and complete-object read-back outside training; checkpoint files remain in private object storage after local pruning."
+}

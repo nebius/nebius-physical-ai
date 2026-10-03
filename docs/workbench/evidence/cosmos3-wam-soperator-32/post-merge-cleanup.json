@@ -1,0 +1,60 @@
+{
+  "schema": "npa.cosmos3.wam-post-merge-cleanup.v1",
+  "date": "2026-10-02",
+  "status": "complete",
+  "scope": "Original PR 797 campaign only; excludes subsequent reproduction projects.",
+  "deleted": {
+    "deleted_disks": 2,
+    "deleted_archive_buckets": 1,
+    "deleted_service_accounts": 1,
+    "deleted_access_keys": 1
+  },
+  "storage_group_and_permit_verified_absent": true,
+  "cloud_inventory": [
+    {
+      "resource_class": "instances",
+      "verified_empty": true,
+      "count": 0
+    },
+    {
+      "resource_class": "disks",
+      "verified_empty": true,
+      "count": 0
+    },
+    {
+      "resource_class": "filesystems",
+      "verified_empty": true,
+      "count": 0
+    },
+    {
+      "resource_class": "clusters",
+      "verified_empty": true,
+      "count": 0
+    },
+    {
+      "resource_class": "allocations",
+      "verified_empty": true,
+      "count": 0
+    },
+    {
+      "resource_class": "buckets",
+      "verified_empty": true,
+      "count": 0
+    },
+    {
+      "resource_class": "service_accounts",
+      "verified_empty": true,
+      "count": 0
+    }
+  ],
+  "retained": {
+    "project_retained": true,
+    "default_network_and_subnet_retained": true,
+    "reserved_capacity_contract_untouched": true,
+    "remaining_task_access_keys": 0
+  },
+  "published_evidence_retained": true,
+  "editorial_docx_preserved": true,
+  "raw_checkpoint_archive_retained": false,
+  "private_completion_receipt_sha256": "cfdadc7ea43e8b6297f98f65a8beff5710c28f0db902f1668598b9a3f5450f52"
+}

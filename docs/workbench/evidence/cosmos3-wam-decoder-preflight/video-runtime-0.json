@@ -1,0 +1,30 @@
+{
+  "at": "2026-09-28T02:11:58.972572+00:00",
+  "worker": 0,
+  "torchcodec": "0.10.0+cu130",
+  "ffmpeg": "ffmpeg version 6.1.1-3ubuntu5 Copyright (c) 2000-2023 the FFmpeg developers",
+  "recipe_sha256": "1a13340a53414b18e40b1ee3fe0a7acc54e6162cc262a2c5fafe9a15bd03b01e",
+  "decoded": [
+    {
+      "camera": "observation.images.image",
+      "shape": [
+        3,
+        256,
+        256
+      ],
+      "dtype": "torch.uint8",
+      "frame_sha256": "26a5e625bcc5dac1cc382bef15a4f21e5c5319b1ab2eee68893240615e322254"
+    },
+    {
+      "camera": "observation.images.wrist_image",
+      "shape": [
+        3,
+        256,
+        256
+      ],
+      "dtype": "torch.uint8",
+      "frame_sha256": "6cd2a40dd8569a86a017f0e812d123976bfa3707186166818c194da18649ec69"
+    }
+  ],
+  "status": "passed"
+}

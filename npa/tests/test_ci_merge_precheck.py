@@ -41,18 +41,22 @@ def repository(tmp_path: Path) -> Path:
         "[project.optional-dependencies]\ndev = []\nadapter = []\nsonic = []\ngenesis-test = []\n"
     )
     (tmp_path / "npa/ci/constraints.in").write_text("# constraints\n")
+    generated = "anyio==4.14.2\n"
     (tmp_path / "npa/ci/requirements.txt").write_text(
-        ci_requirements._FINGERPRINT_PREFIX
-        + ci_requirements._fingerprint(tmp_path)
-        + "\nanyio==4.14.2\n"
+        ci_requirements._render_requirements(tmp_path, generated)
     )
     _commit(tmp_path, "base")
     return tmp_path
 
 
+@pytest.mark.parametrize("force_legacy", [False, True])
 def test_clean_merge_preserves_checkout_index_and_untracked_work(
-    repository: Path,
+    repository: Path, monkeypatch, force_legacy: bool
 ) -> None:
+    if force_legacy:
+        monkeypatch.setattr(
+            ci_merge_precheck, "_supports_merge_tree_write_tree", lambda root: False
+        )
     base = _git(repository, "rev-parse", "HEAD")
     _git(repository, "checkout", "-qb", "candidate")
     (repository / "candidate.txt").write_text("candidate\n")
@@ -75,7 +79,14 @@ def test_clean_merge_preserves_checkout_index_and_untracked_work(
     assert _git(repository, "rev-parse", "HEAD") == head
 
 
-def test_conflicts_are_rejected_without_starting_a_merge(repository: Path) -> None:
+@pytest.mark.parametrize("force_legacy", [False, True])
+def test_conflicts_are_rejected_without_starting_a_merge(
+    repository: Path, monkeypatch, force_legacy: bool
+) -> None:
+    if force_legacy:
+        monkeypatch.setattr(
+            ci_merge_precheck, "_supports_merge_tree_write_tree", lambda root: False
+        )
     _git(repository, "checkout", "-qb", "candidate")
     path = repository / "npa/ci/constraints.in"
     path.write_text("candidate change\n")
@@ -87,6 +98,20 @@ def test_conflicts_are_rejected_without_starting_a_merge(repository: Path) -> No
         ci_merge_precheck.check_merge(repository, "main", "candidate")
     assert not (repository / ".git/MERGE_HEAD").exists()
     assert _git(repository, "status", "--porcelain") == ""
+
+
+def test_legacy_merge_tree_handles_unrelated_histories(repository: Path) -> None:
+    base = _git(repository, "rev-parse", "HEAD")
+    tree = _git(repository, "write-tree")
+    unrelated = subprocess.check_output(
+        ["git", "commit-tree", tree, "-m", "unrelated root"],
+        cwd=repository,
+        text=True,
+    ).strip()
+
+    merged_tree = ci_merge_precheck._legacy_merge_tree(repository, base, unrelated)
+
+    assert merged_tree == tree
 
 
 def test_wrong_fingerprint_after_conflict_resolution_is_rejected(

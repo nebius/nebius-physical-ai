@@ -1,0 +1,120 @@
+{
+  "schema": "npa.cosmos3.wam-validation-campaign-accounting.v1",
+  "jobs": {
+    "full-32-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 8124,
+      "allocated_gpus": 32,
+      "allocated_nodes": 4,
+      "allocated_cpus": 640,
+      "started_utc": "2026-09-30T02:27:37Z",
+      "ended_utc": "2026-09-30T04:43:01Z",
+      "allocated_gpu_hours": 72.21333333333334
+    },
+    "repeat-32-a-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 1376,
+      "allocated_gpus": 32,
+      "allocated_nodes": 4,
+      "allocated_cpus": 640,
+      "started_utc": "2026-09-30T04:43:56Z",
+      "ended_utc": "2026-09-30T05:06:52Z",
+      "allocated_gpu_hours": 12.231111111111112
+    },
+    "repeat-32-b-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 1361,
+      "allocated_gpus": 32,
+      "allocated_nodes": 4,
+      "allocated_cpus": 640,
+      "started_utc": "2026-09-30T05:07:23Z",
+      "ended_utc": "2026-09-30T05:30:04Z",
+      "allocated_gpu_hours": 12.097777777777777
+    },
+    "repeat-32-c-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 1376,
+      "allocated_gpus": 32,
+      "allocated_nodes": 4,
+      "allocated_cpus": 640,
+      "started_utc": "2026-09-30T05:30:33Z",
+      "ended_utc": "2026-09-30T05:53:29Z",
+      "allocated_gpu_hours": 12.231111111111112
+    },
+    "profile-32-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 1060,
+      "allocated_gpus": 32,
+      "allocated_nodes": 4,
+      "allocated_cpus": 640,
+      "started_utc": "2026-09-30T05:54:51Z",
+      "ended_utc": "2026-09-30T06:12:31Z",
+      "allocated_gpu_hours": 9.422222222222222
+    },
+    "quality-32-500-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 3763,
+      "allocated_gpus": 8,
+      "allocated_nodes": 1,
+      "allocated_cpus": 160,
+      "started_utc": "2026-09-30T06:13:01Z",
+      "ended_utc": "2026-09-30T07:15:44Z",
+      "allocated_gpu_hours": 8.362222222222222
+    },
+    "quality-32-1000-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 3572,
+      "allocated_gpus": 8,
+      "allocated_nodes": 1,
+      "allocated_cpus": 160,
+      "started_utc": "2026-09-30T06:15:10Z",
+      "ended_utc": "2026-09-30T07:14:42Z",
+      "allocated_gpu_hours": 7.937777777777778
+    },
+    "quality-32-1500-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 3310,
+      "allocated_gpus": 8,
+      "allocated_nodes": 1,
+      "allocated_cpus": 160,
+      "started_utc": "2026-09-30T06:15:11Z",
+      "ended_utc": "2026-09-30T07:10:21Z",
+      "allocated_gpu_hours": 7.355555555555555
+    },
+    "quality-32-2000-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 3289,
+      "allocated_gpus": 8,
+      "allocated_nodes": 1,
+      "allocated_cpus": 160,
+      "started_utc": "2026-09-30T06:15:11Z",
+      "ended_utc": "2026-09-30T07:10:00Z",
+      "allocated_gpu_hours": 7.308888888888889
+    },
+    "visual-32-2000-r1": {
+      "state": "COMPLETED",
+      "exit_code": "0:0",
+      "allocation_seconds": 620,
+      "allocated_gpus": 8,
+      "allocated_nodes": 1,
+      "allocated_cpus": 160,
+      "started_utc": "2026-09-30T07:16:09Z",
+      "ended_utc": "2026-09-30T07:26:29Z",
+      "allocated_gpu_hours": 1.3777777777777778
+    }
+  },
+  "started_utc": "2026-09-30T02:27:37+00:00",
+  "ended_utc": "2026-09-30T07:26:29+00:00",
+  "wall_seconds": 17932.0,
+  "allocated_gpu_hours_total": 150.5377777777778,
+  "scope": "First successful full-run allocation start through final visual allocation end: full training, three timing repeats, one profile, four evaluations and one visual pass, including gaps and overlap. Preparation, provisioning, excluded attempts, Soperator health jobs, CPU reduction, archival and idle reservation billing are excluded from the allocated-GPU-hour total. This is not a cloud bill."
+}

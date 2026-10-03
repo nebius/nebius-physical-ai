@@ -66,6 +66,32 @@ def test_opened_door_requires_real_progress_and_success_in_same_episode(tmp_path
     assert len(result["files"][0]["sha256"]) == 64
 
 
+@pytest.mark.parametrize("value", [0.0, 1.0, np.float32(1), np.complex128(1)])
+def test_success_dataset_rejects_non_boolean_numeric_types(tmp_path, value):
+    _write_episode(tmp_path, trace=[0.2, 0.4, 0.81])
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        episode = dataset["data/demo_0"]
+        del episode["success"]
+        episode.create_dataset("success", data=[value])
+        episode.attrs["success"] = bool(value)
+
+    with pytest.raises(IsaacArenaError, match="success flag must contain one boolean"):
+        _validate(tmp_path)
+
+
+@pytest.mark.parametrize("value", [True, False, np.int8(0), np.int64(1), np.uint64(1)])
+def test_success_dataset_preserves_boolean_and_binary_integer_types(tmp_path, value):
+    _write_episode(tmp_path, trace=[0.2, 0.4, 0.81], success=bool(value))
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        episode = dataset["data/demo_0"]
+        del episode["success"]
+        episode.create_dataset("success", data=[value])
+        episode.attrs["success"] = value
+
+    result = _validate(tmp_path, successes=int(value), required=False)
+    assert result["episodes"][0]["success"] is bool(value)
+
+
 @pytest.mark.parametrize(
     "trace,reason",
     [
@@ -109,6 +135,59 @@ def test_large_door_motion_does_not_override_upstream_failure(tmp_path):
     result = _validate(tmp_path, successes=0, required=False)
     assert result["successes"] == 0
     assert result["task_motion"] is None
+
+
+@pytest.mark.parametrize(
+    "success,metadata_success,expected_successes",
+    [(True, True, 1), (True, 1, 1), (False, False, 0), (False, 0, 0)],
+)
+@pytest.mark.parametrize("shape", [(), (1,), (1, 1)])
+def test_scalar_or_singleton_boolean_or_integer_success_metadata_is_accepted(
+    tmp_path, success, metadata_success, expected_successes, shape
+):
+    _write_episode(tmp_path, trace=[0.2, 0.5, 0.81], success=success)
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        dataset["data/demo_0"].attrs["success"] = np.asarray(metadata_success).reshape(
+            shape
+        )
+
+    result = _validate(tmp_path, successes=expected_successes, required=False)
+
+    assert result["successes"] == expected_successes
+
+
+@pytest.mark.parametrize(
+    "metadata_success",
+    [
+        "false",
+        1.0,
+        2,
+        np.array([1.0]),
+        np.array([1 + 0j]),
+        np.array([b"true"]),
+        np.array([2]),
+        np.array([-1]),
+        np.array([], dtype=bool),
+        np.array([True, True]),
+    ],
+)
+def test_malformed_success_metadata_is_rejected(tmp_path, metadata_success):
+    _write_episode(tmp_path, trace=[0.2, 0.5, 0.81])
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        dataset["data/demo_0"].attrs["success"] = metadata_success
+
+    with pytest.raises(IsaacArenaError, match="one boolean or 0/1"):
+        _validate(tmp_path, required=False)
+
+
+@pytest.mark.parametrize("metadata", [True, np.array([True]), np.array([[1]])])
+def test_valid_success_metadata_must_agree_with_success_signal(tmp_path, metadata):
+    _write_episode(tmp_path, trace=[0.2, 0.5, 0.81], success=False)
+    with h5py.File(tmp_path / "simulator_ground_truth_rank0.hdf5", "a") as dataset:
+        dataset["data/demo_0"].attrs["success"] = metadata
+
+    with pytest.raises(IsaacArenaError, match="success metadata disagrees"):
+        _validate(tmp_path, successes=0, required=False)
 
 
 def test_trace_cannot_exceed_source_actions_or_disagree_with_episode_length(tmp_path):

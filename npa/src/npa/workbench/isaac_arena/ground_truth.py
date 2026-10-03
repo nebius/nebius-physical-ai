@@ -9,6 +9,7 @@ from typing import Any
 
 from .errors import IsaacArenaError
 from .hashing import file_sha256
+from .success import success_flag
 from .task_progress import qualify_task_progress, task_progress_adapter
 
 
@@ -49,14 +50,13 @@ def _episode_record(path: Path, name: str, episode: Any) -> tuple[dict, dict[str
         raise IsaacArenaError(
             "simulator ground truth requires one success flag per episode"
         )
-    success_value = success_values.reshape(-1)[0]
-    if success_value not in (0, 1):
-        raise IsaacArenaError(
-            "simulator ground-truth success flag must be boolean or 0/1"
+    success = success_flag(success_values, source="simulator ground-truth success flag")
+    if "success" in episode.attrs:
+        metadata_success = success_flag(
+            episode.attrs["success"], source="simulator ground-truth success metadata"
         )
-    success = bool(success_value)
-    if "success" in episode.attrs and bool(episode.attrs["success"]) != success:
-        raise IsaacArenaError("simulator ground-truth success metadata disagrees")
+        if metadata_success != success:
+            raise IsaacArenaError("simulator ground-truth success metadata disagrees")
     record = {
         "file": path.name,
         "episode": name,

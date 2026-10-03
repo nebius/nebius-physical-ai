@@ -12,14 +12,20 @@ functions run against a fake reader injected in place of `_open_reader`.
 from __future__ import annotations
 
 import json
+import sys
+import types
 import zipfile
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from npa.workbench.nurec import ncore_rig
 from npa.workbench.nurec.ncore_rig import (
     DERIVED_POSES_GROUP,
+    DYNAMIC_POSE_SOURCE,
+    FRAME_POSE_FIELD,
+    FRAME_POSE_SOURCE,
     RIG_SIDECAR_NAME,
     RIG_FRAME,
     WORLD_FRAME,
@@ -94,12 +100,54 @@ class _FakePosesReader:
         return iter(self._static)
 
 
-class _FakeSequenceReader:
-    def __init__(self, dynamic: list, static: list) -> None:
-        self._reader = _FakePosesReader(dynamic, static)
+class _FakeCameraReader:
+    def __init__(
+        self, timestamps: list, poses: list, *, frames_count: int | None = None
+    ):
+        self.frames_timestamps_us = np.asarray(timestamps)
+        self.frames_count = len(timestamps) if frames_count is None else frames_count
+        self._poses = poses
 
-    def open_component_readers(self, _component_reader_type):
-        return {"default": self._reader}
+    def get_frame_generic_data_names(self, timestamp_us: int):
+        index = list(self.frames_timestamps_us[:, 1]).index(timestamp_us)
+        return [] if self._poses[index] is None else [FRAME_POSE_FIELD]
+
+    def get_frame_generic_data(self, timestamp_us: int, _name: str):
+        index = list(self.frames_timestamps_us[:, 1]).index(timestamp_us)
+        return self._poses[index]
+
+
+class _FakeSequenceReader:
+    def __init__(
+        self, dynamic: list, static: list, cameras: dict | None = None
+    ) -> None:
+        self._poses_reader = _FakePosesReader(dynamic, static)
+        self._cameras = cameras or {}
+        self.sequence_id = "scene"
+
+    def open_component_readers(self, component_reader_type):
+        if component_reader_type is _FakePosesComponent.Reader:
+            return {"default": self._poses_reader}
+        if component_reader_type is _FakeCameraComponent.Reader:
+            return self._cameras
+        raise AssertionError(f"unexpected component reader: {component_reader_type}")
+
+
+class _FakePosesComponent:
+    Reader = type("PosesReader", (), {})
+
+
+class _FakeCameraComponent:
+    Reader = type("CameraReader", (), {})
+
+
+def _install_ncore_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    module = types.ModuleType("ncore.data.v4")
+    module.PosesComponent = _FakePosesComponent
+    module.CameraSensorComponent = _FakeCameraComponent
+    monkeypatch.setitem(sys.modules, "ncore", types.ModuleType("ncore"))
+    monkeypatch.setitem(sys.modules, "ncore.data", types.ModuleType("ncore.data"))
+    monkeypatch.setitem(sys.modules, "ncore.data.v4", module)
 
 
 @pytest.fixture()
@@ -110,20 +158,27 @@ def fake_ncore(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             ncore_rig, "_open_reader", lambda _p: _FakeSequenceReader(dynamic, static)
         )
-        # camera_world_trajectories/has_rig_edge import PosesComponent purely to
-        # pass as a lookup key to the (faked) reader, so a stub suffices.
-        import sys
-        import types
-
-        module = types.ModuleType("ncore.data.v4")
-        module.PosesComponent = type("PosesComponent", (), {"Reader": object})
-        package = types.ModuleType("ncore.data")
-        root = types.ModuleType("ncore")
-        monkeypatch.setitem(sys.modules, "ncore", root)
-        monkeypatch.setitem(sys.modules, "ncore.data", package)
-        monkeypatch.setitem(sys.modules, "ncore.data.v4", module)
+        _install_ncore_module(monkeypatch)
 
     return _install
+
+
+@pytest.fixture()
+def fake_frame_ncore(monkeypatch: pytest.MonkeyPatch):
+    """Inject camera components carrying per-frame sensor-to-world poses."""
+
+    def _install(cameras: dict, dynamic: list | None = None) -> None:
+        reader = _FakeSequenceReader(dynamic or [], [], cameras)
+        monkeypatch.setattr(ncore_rig, "_open_reader", lambda _p: reader)
+        _install_ncore_module(monkeypatch)
+
+    return _install
+
+
+def _frame_camera(count: int, *, offset: int = 0) -> _FakeCameraReader:
+    timestamps = [[index, index + 1] for index in range(offset, offset + count)]
+    poses = [np.eye(4) for _index in range(count)]
+    return _FakeCameraReader(timestamps, poses)
 
 
 def test_camera_trajectories_keep_only_edges_pointing_at_world(fake_ncore) -> None:
@@ -151,6 +206,159 @@ def test_camera_trajectories_exclude_an_existing_rig_edge(fake_ncore) -> None:
     )
 
     assert sorted(camera_world_trajectories(Path("/x.json"))) == ["camera1"]
+
+
+def test_frame_poses_are_used_when_dynamic_edges_are_absent(fake_frame_ncore) -> None:
+    fake_frame_ncore({"camera1": _frame_camera(3)})
+
+    trajectories = camera_world_trajectories(Path("/x.json"))
+    poses, timestamps = trajectories["camera1"]
+
+    assert poses.shape == (3, 4, 4)
+    assert np.array_equal(timestamps, [1, 2, 3])
+
+
+def test_dynamic_poses_remain_preferred_over_frame_data(fake_frame_ncore) -> None:
+    dynamic = [(("camera1", WORLD_FRAME), _traj(2))]
+    malformed_camera = _FakeCameraReader([[0, 1]], [None])
+    fake_frame_ncore({"camera1": malformed_camera}, dynamic=dynamic)
+
+    trajectories, pose_source = ncore_rig._camera_world_trajectories(
+        ncore_rig._open_reader(Path("/x.json"))
+    )
+
+    assert trajectories == {"camera1": _traj(2)}
+    assert pose_source == DYNAMIC_POSE_SOURCE
+
+
+def test_frame_pose_camera_selection_is_explicit_or_longest(fake_frame_ncore) -> None:
+    fake_frame_ncore(
+        {
+            "cameraB": _frame_camera(3),
+            "cameraA": _frame_camera(3),
+            "cameraC": _frame_camera(2),
+        }
+    )
+    trajectories, pose_source = ncore_rig._camera_world_trajectories(
+        ncore_rig._open_reader(Path("/x.json"))
+    )
+
+    assert pose_source == FRAME_POSE_SOURCE
+    assert select_reference_camera(trajectories) == "cameraA"
+    assert select_reference_camera(trajectories, preferred="cameraC") == "cameraC"
+
+
+@pytest.mark.parametrize(
+    ("camera", "message"),
+    [
+        (_FakeCameraReader([[0, 1], [1, 2]], [np.eye(4), None]), "missing"),
+        (_FakeCameraReader([[0, 1], [1, 2]], [np.eye(4), np.eye(3)]), "malformed"),
+        (
+            _FakeCameraReader([[0, 1], [1, 2]], [np.eye(4), np.full((4, 4), np.nan)]),
+            "non-finite",
+        ),
+        (_FakeCameraReader([[0, 1], [1, 1]], [np.eye(4), np.eye(4)]), "duplicate"),
+        (
+            _FakeCameraReader([[0, 1], [1, 2]], [np.eye(4), np.eye(4)], frames_count=3),
+            "frame count disagrees",
+        ),
+    ],
+)
+def test_invalid_frame_pose_data_fails_closed(
+    tmp_path: Path, fake_frame_ncore, camera: _FakeCameraReader, message: str
+) -> None:
+    fake_frame_ncore({"camera1": camera})
+    source = tmp_path / "scene.json"
+    source.write_text("{}")
+    output = tmp_path / "derived"
+
+    with pytest.raises(NurecError, match=message):
+        ncore_rig.derive_rig_poses(source, output_dir=output)
+
+    assert not output.exists()
+
+
+def test_frame_pose_derivation_preserves_edges_stores_and_provenance(
+    tmp_path: Path, fake_frame_ncore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original_dynamic = [(("imu", "vehicle"), _traj(2))]
+    original_static = [(("camera1", "mount"), np.eye(4))]
+    camera = _frame_camera(2)
+    reader = _FakeSequenceReader(original_dynamic, original_static, {"camera1": camera})
+    source_store = tmp_path / "scene.ncore4.zarr.itar"
+    source_store.write_bytes(b"unchanged-source")
+    reader.component_store_paths = [source_store]
+    monkeypatch.setattr(ncore_rig, "_open_reader", lambda _path: reader)
+    monkeypatch.setattr(ncore_rig, "_upath", lambda path: path)
+    _install_ncore_module(monkeypatch)
+
+    stored_dynamic: list[dict] = []
+    stored_static: list[dict] = []
+
+    class _PosesWriter:
+        def store_dynamic_pose(self, **values):
+            stored_dynamic.append(values)
+
+        def store_static_pose(self, **values):
+            stored_static.append(values)
+
+    class _SequenceWriter:
+        output_dir: Path
+
+        @classmethod
+        def from_reader(cls, *, output_dir_path, **_kwargs):
+            instance = cls()
+            instance.output_dir = Path(str(output_dir_path))
+            return instance
+
+        def register_component_writer(self, *_args, **_kwargs):
+            return _PosesWriter()
+
+        def finalize(self):
+            derived = self.output_dir / "scene.ncore4-npa_rig.zarr.itar"
+            derived.write_bytes(b"derived")
+            return [derived]
+
+    class _SequenceMeta:
+        def __init__(self, paths):
+            self._paths = paths
+
+        def get_sequence_meta(self):
+            return self
+
+        def to_dict(self):
+            return {"component_stores": [{"path": path.name} for path in self._paths]}
+
+    module = sys.modules["ncore.data.v4"]
+    module.PosesComponent.Writer = object
+    module.SequenceComponentGroupsWriter = _SequenceWriter
+    module.SequenceComponentGroupsReader = _SequenceMeta
+    source = tmp_path / "scene.json"
+    source.write_text("{}")
+    output = tmp_path / "derived"
+
+    result = ncore_rig.derive_rig_poses(source, output_dir=output)
+
+    assert result.ok is True
+    assert result.pose_source == FRAME_POSE_SOURCE
+    assert [
+        (item["source_frame_id"], item["target_frame_id"]) for item in stored_dynamic
+    ] == [
+        ("imu", "vehicle"),
+        (RIG_FRAME, WORLD_FRAME),
+    ]
+    assert [
+        (item["source_frame_id"], item["target_frame_id"]) for item in stored_static
+    ] == [("camera1", "mount")]
+    assert source_store.read_bytes() == b"unchanged-source"
+    assert (output / source_store.name).is_symlink()
+    meta = json.loads(Path(result.output_meta).read_text())
+    assert all(
+        Path(store["path"]).name == store["path"] for store in meta["component_stores"]
+    )
+    sidecar = json.loads((output / RIG_SIDECAR_NAME).read_text())
+    assert sidecar["reference_camera"] == "camera1"
+    assert sidecar["pose_source"] == FRAME_POSE_SOURCE
 
 
 def test_has_rig_edge_detects_a_dynamic_rig_trajectory(fake_ncore) -> None:

@@ -1,0 +1,62 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: flex-pi-b300-multinode-public-training
+  description: >-
+    Train Flex-Pi's pinned real public YAM utensil workload on four B300 hosts with one GPU each,
+    validate the complete held-out split, and verify a fresh checkpoint resume.
+    This workload is non-comparable to the operator's private reference.
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/flex-pi-public-training"
+  output_uri: "s3://{{config.bucket}}/{{config.prefix}}/"
+  training_mode: train
+  training_nodes: "4"
+  normalization_path: ""
+  normalization_sha256: ""
+  num_workers: "4"
+  prefetch_factor: "4"
+  optimizer: default
+  memory_fill: "on"
+  activation_checkpointing: "on"
+  microbatch_per_rank: "1"
+  cuda_graphs: "off"
+  source_overlay: true
+  runtime_image: ghcr.io/nebius/nebius-physical-ai/npa-flex-pi@sha256:e27978b682056339fb332acfdd0df2369af1f180d93ba1e0fd86772d6649efe6
+resources:
+  gpu:
+    cloud: kubernetes
+    accelerators: B300:1
+    num_nodes: "{{config.training_nodes}}"
+    cpus: 16
+    memory: 192Gi
+    kubernetes:
+      pod_config:
+        spec:
+          containers:
+            - name: ray-node
+              env:
+                # Retain Blackwell PTX kernels across fresh qualification phases.
+                - {name: CUDA_CACHE_MAXSIZE, value: "4294967296"}
+                # Use NCCL sockets between the four independent one-GPU hosts.
+                - name: NPA_FLEX_PI_HOST_ID
+                  valueFrom:
+                    fieldRef: {fieldPath: spec.nodeName}
+                - {name: NCCL_CUMEM_ENABLE, value: "0"}
+                - {name: NCCL_CUMEM_HOST_ENABLE, value: "0"}
+                - {name: NCCL_NVLS_ENABLE, value: "0"}
+                - {name: NCCL_IB_DISABLE, value: "1"}
+                - {name: NCCL_SOCKET_IFNAME, value: "=eth0"}
+                - {name: NCCL_SOCKET_FAMILY, value: AF_INET}
+                - {name: NCCL_DEBUG, value: INFO}
+                - {name: NCCL_DEBUG_SUBSYS, value: "INIT,ENV"}
+initial: train
+states:
+  train:
+    description: Complete the immutable public epoch and acceptance gates.
+    toolRef: workbench.flex_pi.train
+    resources: gpu
+    outputs:
+      - uri: "{{config.output_uri}}result.json"
+        schema: npa.flex_pi.training.v1
+    terminal: true

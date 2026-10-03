@@ -1,0 +1,146 @@
+{
+  "schema": "npa.cosmos3.visual-evidence.v1",
+  "date": "2026-09-25",
+  "status": "real-base-model-generation-completed",
+  "scope": "Image-and-text-conditioned video from the base model; no action-conditioned WAM rollout, post-training checkpoint, Slurm training duration, or task-success measurement.",
+  "hardware": {
+    "gpu": "NVIDIA B200",
+    "count": 1,
+    "capacity_class": "reserved",
+    "driver": "580.173.02"
+  },
+  "runtime": {
+    "python": "3.13.15",
+    "pytorch": "2.10.0+cu130",
+    "cuda": "13.0",
+    "framework_revision": "cf5d68c00d97ccd2480a2320ed652b92dec63102",
+    "framework_clean": true
+  },
+  "sources": {
+    "model": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "dataset": "e5907374380b8f96511957e6ba5582be52a1e179",
+    "vae": "921dbaf3f1674a56f47e83fb80a34bac8a8f203e",
+    "guardrail": "d6d4bfa899a71454a700907664f3e88f503950cf",
+    "qwen_guard": "fada3b2f655b89601929198343c94cd2f64d93cc",
+    "audio_resolved_revision": "e59a53c25979a090fa8706c9acc0c254a6e89b92",
+    "audio_matches_staged_bytes": true
+  },
+  "input": {
+    "suite": "libero_10",
+    "episode": 0,
+    "frame": 0,
+    "camera": "observation.images.image",
+    "original_width": 256,
+    "original_height": 256,
+    "full_episode_frames": 214,
+    "full_episode_fps": 20
+  },
+  "generation": {
+    "mode": "image2video",
+    "width": 640,
+    "height": 640,
+    "frames": 121,
+    "fps": 24,
+    "container_duration_seconds": 5.041666666666667,
+    "seed": 42,
+    "num_steps": 35,
+    "guidance": 6.0,
+    "shift": 10.0,
+    "sampler": "UniPC",
+    "diffusion_cache": true,
+    "torch_compile": false,
+    "warmup": 0,
+    "iterations": 1,
+    "returncode": 0,
+    "precision": "bfloat16"
+  },
+  "timing": {
+    "process_seconds": 279.1039218000001,
+    "process_scope": "Includes guardrail downloads and checkpoint loading; excludes prior preparation and failed dependency attempt.",
+    "native_generate_batch_seconds": 21.97236394882202,
+    "native_generate_samples_seconds": 13.353293418884277,
+    "native_decode_seconds": 1.9566564559936523,
+    "limitations": "One generation, not a repeated inference benchmark or training measurement."
+  },
+  "gpu_telemetry": {
+    "sampler": "nvidia-smi",
+    "interval_seconds": 1,
+    "samples": 279,
+    "peak_sampled_utilization_percent": 100.0,
+    "peak_sampled_memory_gib": 42.0996,
+    "peak_sampled_power_watts": 973.99,
+    "data": "telemetry.json"
+  },
+  "guardrails": {
+    "requested": true,
+    "text_blocklist_executed": true,
+    "text_qwen3guard_executed": true,
+    "retinaface_postprocess_executed": true,
+    "video_content_classifier_enabled": false,
+    "note": "Native pinned upstream release disables its video content classifier; text checks and face blur remain enabled."
+  },
+  "verification": {
+    "native_video_frames_fully_decoded": 121,
+    "timestamps_strictly_increasing": true,
+    "remote_and_retrieved_video_hashes_match": true,
+    "agent_visual_inspection_times_seconds": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "visual_assessment": "Table and mugs remain recognizable. Robot arm geometry and contact are inconsistent; the prompted mug placement is not completed in the inspected frames. No policy success is claimed."
+  },
+  "presentation": {
+    "comparison": "Left: first 121 display frames from the recorded demonstration resampled from 20 to 24 fps. Right: all 121 generated frames. Both scaled to 512x512 for display.",
+    "dataset_preview": "Complete 214-frame front and wrist camera episode, synchronized, at original 20 fps."
+  },
+  "retained_native_output": {
+    "bytes": 10422115,
+    "sha256": "3196a6899d4ca03c5fd126827ad336309751090ec5731bd21ef951177cb9268a"
+  },
+  "files": {
+    "generated-contact.png": {
+      "bytes": 580279,
+      "sha256": "619260879bca7328a39fd0288ef0dc2af320aeda27cad2438f8567f8287d6ade"
+    },
+    "benchmark.json": {
+      "bytes": 551,
+      "sha256": "aa26a85c56bbe0e334ead02e7832d85eff50bbf2d394290374cb311581019b1b"
+    },
+    "comparison.png": {
+      "bytes": 488778,
+      "sha256": "b4b1e74b00803e12ebc92d3a4ed432cf28de5f6ce46e382a60f466d3dc11351a"
+    },
+    "gpu-telemetry.png": {
+      "bytes": 87513,
+      "sha256": "d77d822a417a69cdc282eea32fe38784be99b21d486639d21150a11859629ce3"
+    },
+    "dataset-preview.mp4": {
+      "bytes": 1728680,
+      "sha256": "d01f62a52060a8ef468689977249eb89d6bc71410917e536b0767e183df14038"
+    },
+    "dataset-preview.png": {
+      "bytes": 429745,
+      "sha256": "7ae683b98d956b66a6bc9b9f5735dac09d72897cf216b383faf88f33eafde771"
+    },
+    "telemetry.json": {
+      "bytes": 34877,
+      "sha256": "6d14d1bf5e81c9757c258e82d28c8c6d7f92c66423537bd5a4e2a50b43f1aad7"
+    },
+    "sample.json": {
+      "bytes": 769,
+      "sha256": "b6408b76bcbbb7dbaa47c5609f950bb1beae7f220b7f31a54bc36d22d85cc3ba"
+    },
+    "comparison.mp4": {
+      "bytes": 689530,
+      "sha256": "f14fd5560c72bece1bbc006618fdfa84ad44b841d3965d76a2f84519946d4868"
+    },
+    "input.png": {
+      "bytes": 45438,
+      "sha256": "88922f78aac5f57ddb9cd4f45767c6c31781828fd3346e56f15288553e368e03"
+    }
+  }
+}

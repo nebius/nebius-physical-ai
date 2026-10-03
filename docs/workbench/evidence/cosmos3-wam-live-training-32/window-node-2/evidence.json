@@ -1,0 +1,239 @@
+{
+  "schema": "npa.cosmos3.wam-node-window-telemetry.v1",
+  "node_rank": 2,
+  "window": {
+    "started_unix": 1790736100.9487202,
+    "ended_unix": 1790736220.9487202,
+    "duration_seconds": 120.0,
+    "gpus": 8,
+    "window_receipt_sha256": "c5d7eba7c37658e2425b900082fcfd1eca513d3c104c719db3474c706b7bc267"
+  },
+  "devices": {
+    "0": {
+      "samples": 103,
+      "first_elapsed_seconds": 0.9562797546386719,
+      "last_elapsed_seconds": 119.79827976226807,
+      "sampling_interval_median_seconds": 1.1690000295639038,
+      "sampling_interval_max_seconds": 1.2180001735687256,
+      "metrics": {
+        "memory_used_mib": {
+          "minimum": 59064.0,
+          "maximum": 59064.0,
+          "sample_mean": 59064.0,
+          "sample_median": 59064.0
+        },
+        "utilization_percent": {
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "sample_mean": 58.689320388349515,
+          "sample_median": 95.0
+        },
+        "power_watts": {
+          "minimum": 209.88,
+          "maximum": 994.12,
+          "sample_mean": 600.582427184466,
+          "sample_median": 618.42
+        }
+      }
+    },
+    "1": {
+      "samples": 103,
+      "first_elapsed_seconds": 0.9822797775268555,
+      "last_elapsed_seconds": 119.81827974319458,
+      "sampling_interval_median_seconds": 1.1689999103546143,
+      "sampling_interval_max_seconds": 1.2130000591278076,
+      "metrics": {
+        "memory_used_mib": {
+          "minimum": 60562.0,
+          "maximum": 60562.0,
+          "sample_mean": 60562.0,
+          "sample_median": 60562.0
+        },
+        "utilization_percent": {
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "sample_mean": 58.96116504854369,
+          "sample_median": 94.0
+        },
+        "power_watts": {
+          "minimum": 205.66,
+          "maximum": 991.38,
+          "sample_mean": 593.0370873786408,
+          "sample_median": 606.89
+        }
+      }
+    },
+    "2": {
+      "samples": 103,
+      "first_elapsed_seconds": 1.006279706954956,
+      "last_elapsed_seconds": 119.83627986907959,
+      "sampling_interval_median_seconds": 1.1665000915527344,
+      "sampling_interval_max_seconds": 1.2139999866485596,
+      "metrics": {
+        "memory_used_mib": {
+          "minimum": 60662.0,
+          "maximum": 60662.0,
+          "sample_mean": 60662.0,
+          "sample_median": 60662.0
+        },
+        "utilization_percent": {
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "sample_mean": 61.29126213592233,
+          "sample_median": 95.0
+        },
+        "power_watts": {
+          "minimum": 211.09,
+          "maximum": 987.96,
+          "sample_mean": 602.74,
+          "sample_median": 630.79
+        }
+      }
+    },
+    "3": {
+      "samples": 103,
+      "first_elapsed_seconds": 1.0302798748016357,
+      "last_elapsed_seconds": 119.84827971458435,
+      "sampling_interval_median_seconds": 1.1670000553131104,
+      "sampling_interval_max_seconds": 1.2160000801086426,
+      "metrics": {
+        "memory_used_mib": {
+          "minimum": 59582.0,
+          "maximum": 59582.0,
+          "sample_mean": 59582.0,
+          "sample_median": 59582.0
+        },
+        "utilization_percent": {
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "sample_mean": 58.44660194174757,
+          "sample_median": 95.0
+        },
+        "power_watts": {
+          "minimum": 193.6,
+          "maximum": 991.47,
+          "sample_mean": 587.5423300970874,
+          "sample_median": 612.39
+        }
+      }
+    },
+    "4": {
+      "samples": 103,
+      "first_elapsed_seconds": 1.0432798862457275,
+      "last_elapsed_seconds": 119.86027979850769,
+      "sampling_interval_median_seconds": 1.1655000448226929,
+      "sampling_interval_max_seconds": 1.2139999866485596,
+      "metrics": {
+        "memory_used_mib": {
+          "minimum": 58972.0,
+          "maximum": 58972.0,
+          "sample_mean": 58972.0,
+          "sample_median": 58972.0
+        },
+        "utilization_percent": {
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "sample_mean": 57.25242718446602,
+          "sample_median": 87.0
+        },
+        "power_watts": {
+          "minimum": 215.51,
+          "maximum": 991.75,
+          "sample_mean": 600.947281553398,
+          "sample_median": 633.25
+        }
+      }
+    },
+    "5": {
+      "samples": 103,
+      "first_elapsed_seconds": 1.0582797527313232,
+      "last_elapsed_seconds": 119.87627983093262,
+      "sampling_interval_median_seconds": 1.1635000705718994,
+      "sampling_interval_max_seconds": 1.2209999561309814,
+      "metrics": {
+        "memory_used_mib": {
+          "minimum": 59518.0,
+          "maximum": 59518.0,
+          "sample_mean": 59518.0,
+          "sample_median": 59518.0
+        },
+        "utilization_percent": {
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "sample_mean": 57.300970873786405,
+          "sample_median": 95.0
+        },
+        "power_watts": {
+          "minimum": 199.38,
+          "maximum": 989.55,
+          "sample_mean": 590.541067961165,
+          "sample_median": 620.03
+        }
+      }
+    },
+    "6": {
+      "samples": 103,
+      "first_elapsed_seconds": 1.071279764175415,
+      "last_elapsed_seconds": 119.89627981185913,
+      "sampling_interval_median_seconds": 1.1640000343322754,
+      "sampling_interval_max_seconds": 1.2239999771118164,
+      "metrics": {
+        "memory_used_mib": {
+          "minimum": 59528.0,
+          "maximum": 59528.0,
+          "sample_mean": 59528.0,
+          "sample_median": 59528.0
+        },
+        "utilization_percent": {
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "sample_mean": 56.25242718446602,
+          "sample_median": 86.0
+        },
+        "power_watts": {
+          "minimum": 210.83,
+          "maximum": 991.34,
+          "sample_mean": 595.0317475728156,
+          "sample_median": 634.95
+        }
+      }
+    },
+    "7": {
+      "samples": 103,
+      "first_elapsed_seconds": 1.0912797451019287,
+      "last_elapsed_seconds": 119.91927981376648,
+      "sampling_interval_median_seconds": 1.1670000553131104,
+      "sampling_interval_max_seconds": 1.2209999561309814,
+      "metrics": {
+        "memory_used_mib": {
+          "minimum": 60460.0,
+          "maximum": 60460.0,
+          "sample_mean": 60460.0,
+          "sample_median": 60460.0
+        },
+        "utilization_percent": {
+          "minimum": 0.0,
+          "maximum": 100.0,
+          "sample_mean": 55.077669902912625,
+          "sample_median": 80.0
+        },
+        "power_watts": {
+          "minimum": 194.81,
+          "maximum": 991.51,
+          "sample_mean": 585.9620388349515,
+          "sample_median": 608.2
+        }
+      }
+    }
+  },
+  "selected_original_rows_sha256": "c37f484bc17774403c2117c8139f6822ef9369cd1a259e16d079cbc82a82b47e",
+  "samples": {
+    "file": "gpu-samples.csv.gz",
+    "rows": 824,
+    "sha256": "fbe02d718a4f4bdb62d0ab4b880c7ab5d098bf707716249a61652d8ebb2d84de",
+    "uncompressed_sha256": "98d47ed8ea1fbabc2af910449f9031724e7c87eaf523c13dfcc4a6f55a34e01c",
+    "bytes": 8972
+  },
+  "exporter_sha256": "990134ea1b27fbeb6d603d579113edf3e87b00a1bab8c0c461be0cce475899d6",
+  "interpretation": "Sampled whole-device measurements across the recorded observation window. Memory maxima are sampled device-memory maxima, not allocator or subsecond peaks. Utilization is the recorder's GPU-utilization sample, not model FLOP utilization. Sample means are arithmetic means, not time-weighted integrals."
+}

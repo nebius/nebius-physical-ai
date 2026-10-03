@@ -61,6 +61,7 @@ def _nurec_run(root: Path) -> Path:
         json.dumps(
             {
                 "dataset_id": "nvidia/PhysicalAI-NuRec-PPISP",
+                "dataset_revision": "2521064a3af6ab1c1caa2ba1b01ddde7eecded69",
                 "scene": "struktur28",
                 "variant": "auto",
                 "shard_count": 4,
@@ -100,6 +101,152 @@ def test_build_run_rrd_logs_nurec_entities(tmp_path: Path) -> None:
     # 3 capture frames + 4 novel views + 1 validation render.
     assert result["frames_logged"] == 8
     assert out.is_file() and out.stat().st_size > 0
+
+
+def test_nurec_preview_embeds_actual_media_and_metric_scope(tmp_path: Path) -> None:
+    import hashlib
+
+    run = _nurec_run(tmp_path / "run")
+    output = tmp_path / "report" / "sim2real.rrd"
+    result = build_run_rrd(
+        str(run), str(output), app_id="neural-reconstruction", html_preview=True
+    )
+    preview = Path(result["html_preview_uri"])
+    assert preview == output.with_name("index.html")
+    assert (
+        result["html_preview_sha256"]
+        == hashlib.sha256(preview.read_bytes()).hexdigest()
+    )
+    content = preview.read_text()
+    assert "data:image/jpeg;base64," in content
+    assert "test/psnr" in content and "31.2" in content
+    assert "not paired with source image indices" in content
+    assert "collision geometry" in content
+    assert "Creative Commons Attribution 4.0" in content
+    assert "creativecommons.org/licenses/by/4.0/" in content
+    assert str(run) not in content
+
+
+def test_custom_capture_is_not_mislabeled_as_the_public_sample(tmp_path):
+    from npa.workbench.nurec.preview import write_nurec_preview
+
+    run = _nurec_run(tmp_path / "run")
+    (run / "ncore" / "manifest.json").write_text(
+        json.dumps({"dataset_id": "private/example"})
+    )
+    output = tmp_path / "index.html"
+    write_nurec_preview(run, output)
+    content = output.read_text()
+    assert "Creative Commons Attribution" not in content
+    assert "private/example" not in content
+
+
+def test_nurec_preview_displays_native_aggregated_metrics(tmp_path: Path) -> None:
+    from npa.workbench.nurec.preview import write_nurec_preview
+
+    run = _nurec_run(tmp_path / "run")
+    native_metrics = Path(__file__).parents[1] / "fixtures/nurec/nre-26.04-metrics.yaml"
+    (run / "reconstruction/metrics.yaml").write_bytes(native_metrics.read_bytes())
+    output = tmp_path / "index.html"
+    write_nurec_preview(run, output)
+    content = output.read_text()
+    for name, value in (
+        ("test/psnr", "31.012009"),
+        ("test/ssim", "0.832237"),
+        ("test/lpips", "0.268025"),
+    ):
+        assert name in content and value in content
+    assert "NRE quality metrics" not in content
+
+
+def test_nurec_validation_preview_separates_recorded_modalities(tmp_path):
+    import re
+    from npa.workbench.nurec.preview import write_nurec_preview
+
+    run = _nurec_run(tmp_path / "run")
+    validation = run / "reconstruction" / "val"
+    for modality, color in (
+        ("pred_rgb", (10, 20, 30)),
+        ("pred_distance", (40, 50, 60)),
+        ("pred_opacity", (70, 80, 90)),
+    ):
+        for index in range(2):
+            _write_image(validation / modality / "cam_00" / f"{index:06d}.png", color)
+    output = tmp_path / "index.html"
+    counts = write_nurec_preview(run, output)
+    data = re.search(
+        r'<script id="preview-data" type="application/json">(.*?)</script>',
+        output.read_text(),
+        re.S,
+    )[1]
+    groups = json.loads(data)[2:]
+    assert [group["title"].split(" · ")[1] for group in groups] == [
+        "Predicted RGB",
+        "Predicted distance",
+        "Predicted opacity",
+        "Unclassified validation output",
+    ]
+    assert [len(group["frames"]) for group in groups] == [2, 2, 2, 1]
+    assert counts["image_counts"]["validation images"] == 7
+    for group in groups:
+        for frame in group["frames"]:
+            assert frame["images"][0]["label"] == group["title"]
+        assert "diagnostic visualizations, not RGB photographs" in group["note"]
+
+
+def test_nurec_preview_does_not_display_invalid_aggregated_metrics(tmp_path):
+    from npa.workbench.nurec.preview import _quality
+
+    metrics = tmp_path / "metrics.yaml"
+    metrics.write_text(
+        "aggregated_metrics:\n"
+        "  test/psnr: {value: .inf}\n"
+        "  test/ssim: {value: true}\n"
+        "  test/lpips: {value: .nan}\n"
+    )
+    assert _quality(metrics) == {"NRE quality metrics": "unavailable"}
+
+
+def test_nurec_preview_fails_without_actual_novel_renders(tmp_path: Path) -> None:
+    from npa.workbench.nurec.preview import write_nurec_preview
+
+    run = _nurec_run(tmp_path / "run")
+    for path in (run / "novel_views").rglob("*.png"):
+        path.unlink()
+    with pytest.raises(ValueError, match="actual capture and novel-view"):
+        write_nurec_preview(run, tmp_path / "index.html")
+
+
+def test_nurec_preview_refuses_to_replace_existing_report():
+    from types import SimpleNamespace
+    from npa.workflows.data_factory_viz import (
+        DataFactoryVizError,
+        _publish_nurec_preview,
+    )
+
+    storage = SimpleNamespace(read_bytes_with_etag=lambda _uri: (b"existing", "etag"))
+    with pytest.raises(
+        DataFactoryVizError, match="existing NuRec HTML preview differs"
+    ):
+        _publish_nurec_preview(
+            b"replacement", "s3://example-bucket/run/reports/sim2real.rrd", storage
+        )
+    result = _publish_nurec_preview(
+        b"existing", "s3://example-bucket/run/reports/sim2real.rrd", storage
+    )
+    assert result["html_preview_uri"] == "s3://example-bucket/run/reports/index.html"
+
+
+def test_shared_visualizer_does_not_require_nurec_media_for_input_only_runs(tmp_path):
+    run = tmp_path / "run"
+    _write_image(run / "input" / "source.png", (10, 20, 30))
+    output = tmp_path / "reports" / "sim2real.rrd"
+    result = build_run_rrd(
+        str(run), str(output), app_id="neural-reconstruction", html_preview=True
+    )
+    assert result["status"] == "completed"
+    assert "html_preview_uri" not in result
+    assert not output.with_name("index.html").exists()
 
 
 def test_recording_bytes_carry_the_nurec_run_entities(tmp_path: Path) -> None:
