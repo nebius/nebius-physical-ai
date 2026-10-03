@@ -16,6 +16,8 @@ is Cosmos/Genesis/Isaac rollouts and whose reasoning half is
 npa workbench vlm-eval run   --input-path <one-rollout>  --output-path <eval.json>
 npa workbench vlm-eval loop  --input-path <prefix>       --output-path <prefix>
 npa workbench vlm-eval benchmark --dataset <manifest> --output <report.json>
+npa workbench vlm-eval compare-judges --input-path <one-rollout> \
+  --output-path <prefix> --primary-model <model-a> --secondary-model <model-b>
 npa workbench vlm-eval status
 npa workbench vlm-eval list
 npa workbench vlm-eval workflow
@@ -92,6 +94,20 @@ verdict for either backend. Compatibility-only parsing, surrounding prose,
 trailing output, duplicate keys, invalid types and partial fences cannot promote.
 This evidence proves judge traceability, not physical correctness or safety.
 
+`compare-judges` is an API-only audit path for consequential or disputed
+reviews. It selects and normalizes frames once, sends an otherwise identical
+request to two explicitly distinct hosted models, and writes
+`vlm_judge_disagreement.json`. It retains both complete outcomes, never emits a
+mean score, and sets `passed=false` plus `escalation_required=true` when the
+score-derived verdicts disagree or either judge errors. The artifact is always
+`deployment_status: audit_only`: agreement does not qualify either judge, and a
+weak judge can make disagreement common without making the scene intrinsically
+ambiguous. Unlike ordinary single-judge compatibility parsing, this path
+rejects Markdown-fenced JSON as a typed judge error instead of transforming the
+output. It also does not defend against in-image instructions or prove a
+critical visible defect absent. Full provider responses stay in the private
+artifact; CLI output is a bounded summary.
+
 `passed` and `status` come only from `score >= success_threshold`, using the
 serialized score rounded to four decimal places for every backend and override.
 The model's own `success` boolean is retained as `provider_success` when the
@@ -157,9 +173,24 @@ the sweep runs but tells you nothing about your task. `--use-fixture-scores`
 honors recorded `fixture_score` values for non-stub backends; stub always uses
 them when present.
 
+Each `npa_vlm_eval_benchmark_report_v2` configuration includes the full 2x2
+confusion matrix, false-positive and false-negative rates, and ordered
+`false_positive_item_ids` / `false_negative_item_ids`. Resolve those IDs in the
+same configuration's complete `results` list before choosing a threshold; an
+aggregate accuracy can hide the exact false pass that matters. Rates are null
+when the labeled dataset has no examples of the required class. Item IDs must
+be unique. Historical reports without `schema_version` are v1; their counts can
+be recomputed from retained per-item labels and predictions, but absent v2
+fields must not be presented as if the producer emitted them.
+Manually constructed reports retain the v1 constructor default even if optional
+calibration fields are supplied. Feature-detect a non-null `confusion_matrix`
+rather than inferring field absence from the version alone.
+
 ## In workflows
 
 toolRefs: `workbench.vlm_eval.run`, `.loop`, `.judge_against_plan`, `.benchmark`.
+The reusable audit-only paired primitive is
+`workbench.vlm_eval.compare_judges`.
 Specs under `workflows/testing/`: `vlm-eval-single.yaml`,
 `vlm-eval-loop.yaml`, `vlm-eval-benchmark.yaml`, `vlm-eval-token-factory.yaml`
 (the zero-GPU judge), plus the rollout-judge combinations listed in

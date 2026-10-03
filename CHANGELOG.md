@@ -30,6 +30,30 @@ a versioned heading when a release is cut.
   deletion no longer leaves private keys recoverable from an ancestor layer;
   clean containers continue to generate independent host keys when SSH starts.
 
+### VLM benchmarks expose calibration failures
+
+- `vlm-eval benchmark` reports an explicit 2x2 confusion matrix, false-positive
+  and false-negative rates, and ordered IDs for every false-positive and
+  false-negative example under each model/rubric/threshold configuration.
+  Reports carry schema `npa_vlm_eval_benchmark_report_v2`; historical
+  unversioned reports remain interpretable as v1 and can be recomputed from
+  their complete per-item results. Duplicate benchmark item IDs are rejected so
+  each failure ID resolves unambiguously.
+- F1 now uses exact counts before rounding, avoiding intermediate rounding
+  errors and returning zero for defined all-error cases. It remains null when
+  there are neither labeled nor predicted positives.
+
+### Paired VLM reviews preserve disagreement
+
+- New `vlm-eval compare-judges` API-only audit mode sends one immutable prompt
+  and normalized frame set to two explicitly distinct hosted models. Its
+  `vlm_judge_disagreement.json` artifact retains both complete outcomes or typed
+  errors, never averages scores, and requires escalation on disagreement or
+  judge error. Markdown-fenced output is retained as a typed error rather than
+  repaired. The report is explicitly audit-only and does not qualify either
+  model, defend against in-image instructions, prove a critical defect absent,
+  or establish physical correctness or safety.
+
 ### VLM result artifacts use a backend-neutral filename
 
 - New `vlm-eval run` directory and object-prefix outputs are named
@@ -66,6 +90,14 @@ a versioned heading when a release is cut.
   numbers, and null now return HTTP 400 before any policy update or output
   directory creation. External clients must send a JSON boolean. Update-result
   decoding enforces the same contract instead of coercing truthy values.
+
+### Token Factory captions expose unavailable images
+
+- Caption requests now ask the hosted vision model for the exact
+  `NO IMAGE RECEIVED.` sentinel when pixels are unavailable. An exact
+  whole-answer match is retained as `image_unavailable`, makes the aggregate
+  artifact fail, and exits nonzero after writing it. Later images are still
+  attempted once; dry runs emit the failed result without writing.
 
 ### Studio videos accept S3 output paths
 
