@@ -12,6 +12,21 @@ Each evaluation records the requested `model` and the endpoint's returned
 identity must be a nonempty string. Retain the serving deployment's checkpoint
 revision separately: a model name alone does not identify its weight bytes.
 
+Results, loop rows, and benchmark cases disclose
+`served_model_match_enforced`. It is true only when a real hosted response
+passed the shared profile's exact requested/returned identity check. Current
+profiles enforce this for every hosted model, including unknown identifiers.
+Self-hosted responses, stub scores, and score overrides report false. They
+must not be presented as exact identity enforcement.
+
+The aggregate model and each case's `requested_model` name the effective
+configured model after default/environment resolution. On a stub or score
+override, `requested_model` is configuration metadata, not proof that a request
+was sent; evidence remains absent and enforcement remains false. Promotion
+rechecks any present enforcement boolean against the retained backend/identity
+contract. A missing historical field remains compatible; nonliteral or false
+claims inconsistent with the retained real backend fail closed.
+
 Successful real-backend results also contain an `evidence` record. It binds the
 requested and returned model to:
 
@@ -262,9 +277,10 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
   per-rollout `rollout_id`, `success`, `score`, `rationale`, `status`,
-  `frame_count`, and `result_uri` records. Follow each `result_uri` to its
-  `rollouts/<rollout-id>/vlm_eval.json` for authoritative served-model identity
-  and provider evidence; those are not inline in these aggregate rows. The
+  `frame_count`, and `result_uri` records. Each row additionally discloses
+  `requested_model`, `served_model`, and `served_model_match_enforced`. Follow
+  each `result_uri` to its `rollouts/<rollout-id>/vlm_eval.json` for complete
+  provider evidence; that evidence is not inline in aggregate rows. The
   aggregate `model` names the caller-selected configuration, not a verified
   provider-served identity. The report also emits
   `independent_human_label_calibration_established: false` and ordered

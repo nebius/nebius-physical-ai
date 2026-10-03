@@ -443,7 +443,7 @@ def test_workbench_vlm_eval_benchmark_writes_report(tmp_path) -> None:
     assert payload["dataset_limitations"] == _SAMPLE_DATASET_LIMITATIONS
     assert payload["written_uri"] == str(output_path)
     persisted = json.loads(output_path.read_text(encoding="utf-8"))
-    assert persisted["item_count"] == 4
+    assert persisted["item_count"] == 5
     assert persisted["best_config"]["results"] == payload["best_config"]["results"]
     assert persisted["independent_human_label_calibration_established"] is False
     assert persisted["limitations"] == _BENCHMARK_FIXTURE_LIMITATIONS

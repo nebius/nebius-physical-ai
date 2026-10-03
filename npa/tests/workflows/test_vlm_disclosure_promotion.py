@@ -14,6 +14,42 @@ from npa.workflows import data_factory_stages
 from npa.workflows.vlm_grade_evidence import vlm_grade_block_details
 
 
+@pytest.mark.parametrize("positional_count", [11, 20, 23])
+def test_result_disclosures_append_after_inherited_constructor_fields(positional_count):
+    # The reviewed model-identity parent has20 fields; our three disclosure
+    # additions must not silently reinterpret valid inherited positional values.
+    values = {
+        "status": "passed",
+        "backend": "api",
+        "input_path": "input",
+        "output_path": "output",
+        "result_uri": "result",
+        "task": "task",
+        "model": "fixture-model",
+        "score": 0.9,
+        "success_threshold": 0.8,
+        "passed": True,
+        "generated_at": "2026-10-03T00:00:00Z",
+        "frame_selection": "final",
+        "frame_count": 1,
+        "rationale": "fixture",
+        "served_model": "fixture-model",
+        "evidence": None,
+        "rubric": "fixture",
+        "provider_success": True,
+        "provider_success_matches_score_gate": False,
+        "served_model_match_enforced": True,
+        "independent_human_label_calibration_established": False,
+        "limitations": ("fixture only",),
+        "provider_call_made": True,
+    }
+    selected = dict(list(values.items())[:positional_count])
+    positional = vlm_eval.VlmEvalResult(*selected.values())
+    assert asdict(positional) == asdict(vlm_eval.VlmEvalResult(**selected))
+    for name, value in selected.items():
+        assert getattr(positional, name) == value
+
+
 def _synthetic_provider_post(calls):
     def post(client, url, *args, **kwargs):
         calls.append(kwargs["json"])
