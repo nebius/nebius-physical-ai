@@ -7,6 +7,12 @@ a versioned heading when a release is cut.
 
 ## Unreleased
 
+### VLM gates reject incomplete self-hosted completions
+
+- Both real VLM-eval backends require exact `finish_reason="stop"` before
+  parsing a verdict. Truncated, filtered, aborted, tool-call, or metadata-missing
+  responses fail closed even when they contain valid-looking JSON.
+
 ### Open3D recordings verify persisted geometry inputs
 
 - Visualization rejects changed meshes, fused clouds, pose graphs, manifests,

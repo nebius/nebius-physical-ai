@@ -12,6 +12,11 @@ Each evaluation records the requested `model` and the endpoint's returned
 identity must be a nonempty string. Retain the serving deployment's checkpoint
 revision separately: a model name alone does not identify its weight bytes.
 
+Every scored response must report the exact value
+`choices[0].finish_reason="stop"`. Both real backends reject incomplete or
+missing completion metadata before parsing the verdict, including parseable
+JSON from a truncated response. Update self-hosted adapters that omit the field.
+
 Successful real-backend results also contain an `evidence` record. It binds the
 requested and returned model to:
 

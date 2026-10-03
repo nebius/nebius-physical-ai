@@ -263,12 +263,27 @@ def test_api_judge_rejects_non_literal_provider_success(monkeypatch, success) ->
         _call_completion(monkeypatch, _completion(content=content))
 
 
-@pytest.mark.parametrize("finish", ["length", "content_filter", None])
-def test_api_judge_rejects_incomplete_output_even_when_json_valid(
-    monkeypatch, finish
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+@pytest.mark.parametrize(
+    "finish",
+    [
+        "length",
+        "content_filter",
+        "tool_calls",
+        "abort",
+        None,
+        "",
+        "STOP",
+        " stop",
+        "stop ",
+        0,
+    ],
+)
+def test_judge_rejects_incomplete_output_even_when_json_valid(
+    monkeypatch, backend, finish
 ) -> None:
     with pytest.raises(VlmEvalError, match="finish_reason=stop"):
-        _call_completion(monkeypatch, _completion(finish=finish))
+        _call_completion(monkeypatch, _completion(finish=finish), backend=backend)
 
 
 @pytest.mark.parametrize("language", ["json", "JSON", ""])
@@ -311,11 +326,29 @@ def test_api_judge_rejects_partial_or_embedded_fences(monkeypatch, content) -> N
         _call_completion(monkeypatch, _completion(content=content))
 
 
-def test_api_judge_requires_completion_metadata(monkeypatch) -> None:
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+def test_judge_requires_completion_metadata(monkeypatch, backend) -> None:
     completion = _completion()
     del completion["choices"][0]["finish_reason"]
     with pytest.raises(VlmEvalError, match="finish_reason=stop"):
-        _call_completion(monkeypatch, completion)
+        _call_completion(monkeypatch, completion, backend=backend)
+
+
+@pytest.mark.parametrize("backend", ["api", "self-hosted"])
+def test_judge_checks_completion_before_parsing(monkeypatch, backend) -> None:
+    from npa.workbench import vlm_eval
+
+    def fail_if_called(*_args, **_kwargs):
+        pytest.fail("verdict parser called for an incomplete response")
+
+    monkeypatch.setattr(vlm_eval, "parse_structured_response", fail_if_called)
+    monkeypatch.setattr(vlm_eval, "_parse_api_structured_response", fail_if_called)
+    with pytest.raises(VlmEvalError, match="finish_reason=stop"):
+        _call_completion(
+            monkeypatch,
+            _completion(content="{malformed-json", finish="length"),
+            backend=backend,
+        )
 
 
 @pytest.mark.parametrize("model", [None, "", "  ", 7])
@@ -358,15 +391,16 @@ def test_api_judge_preserves_valid_scores(monkeypatch, score) -> None:
     assert result.rationale == "visible evidence"
 
 
-def test_self_hosted_judge_keeps_legacy_parsing_without_completion_metadata(
+def test_self_hosted_judge_keeps_legacy_parsing_for_completed_response(
     monkeypatch,
 ) -> None:
     completion = {
         "choices": [
             {
+                "finish_reason": "stop",
                 "message": {
                     "content": '```json\n{"success":"yes","score":7,"rationale":"legacy"}\n```'
-                }
+                },
             }
         ]
     }
@@ -385,8 +419,6 @@ def test_self_hosted_judge_keeps_legacy_parsing_without_completion_metadata(
 @pytest.mark.parametrize(
     ("content", "finish", "score"),
     [
-        (_VALID_CONTENT, "length", 0.9),
-        (_VALID_CONTENT, "content_filter", 0.9),
         ("Explanation: " + _VALID_CONTENT, "stop", 0.9),
         ("```json\n" + _VALID_CONTENT, "stop", 0.9),
         ('{"score":0.1,"score":0.9,"rationale":"duplicate"}', "stop", 0.9),

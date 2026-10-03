@@ -1593,10 +1593,6 @@ def _hosted_structured_response(
     model: str,
     profile: TokenFactoryChatProfile,
 ) -> VlmStructuredResponse:
-    if data["choices"][0].get("finish_reason") != "stop":
-        raise VlmEvalError(
-            "Hosted VLM response did not complete with finish_reason=stop"
-        )
     served_model = data.get("model")
     if not isinstance(served_model, str) or not served_model.strip():
         raise VlmEvalError("Hosted VLM response must identify the served model")
@@ -1655,6 +1651,10 @@ def _verdict_with_evidence(
     response: _VlmBackendResponse,
 ) -> VlmStructuredResponse:
     choice, message = _response_choice_and_content(response.data)
+    if choice.get("finish_reason") != "stop":
+        raise VlmEvalError(
+            "VLM backend response did not complete with finish_reason=stop"
+        )
     result = _parse_backend_verdict(
         backend=backend,
         requested_model=model,

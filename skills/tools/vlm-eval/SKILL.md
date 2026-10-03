@@ -69,11 +69,15 @@ de-framed; its retained parser version ends in `+markdown-fence-v1`. Do not
 accept surrounding prose, trailing output, duplicate keys, invalid types, or a
 partial fence on that hosted path.
 
+Both real backends require the exact response value
+`choices[0].finish_reason="stop"` before parsing a verdict. Truncated, filtered,
+tool-call, aborted, empty, malformed, or missing completion metadata is rejected.
+Self-hosted adapters that omit this metadata must emit the standard field.
+
 The `self-hosted` backend preserves its legacy compatibility parser: it can
-extract embedded JSON, accept duplicate keys and coerced types, clamp scores,
-and retain a verdict even when completion metadata is absent or not `stop`.
-Its evidence records those facts; it does not certify strict completion or
-promotion eligibility. The operator provenance lane separately requires HTTP
+extract embedded JSON, accept duplicate keys and coerced types, and clamp scores.
+Completion evidence does not certify promotion eligibility. The operator
+provenance lane separately requires HTTP
 200, `finish_reason=stop`, expected served identity and verifiable framing.
 This evidence proves judge traceability, not physical correctness or safety.
 
