@@ -1,0 +1,13 @@
+# PR647: audit-only visual review validation
+
+This feature provides a structured, qualitative visual review without changing a scalar score or pipeline gate. Paired input is reviewed in both neutral orders. Requests and original responses are retained privately before parsing, with no automatic hosted retries.
+
+The original hosted protocol ran at `28785e12c7169684d97a8a825bfde0a7b91382f7` with three calls exactly once: two neutral orders of complete versus incomplete diagrams, plus a gray absence control. All calls returned HTTP200 and stop. One paired order violated the strict bare-JSON response contract; the other paired order and gray control were structurally valid. The paired report therefore failed. Original live tests: one passed, one failed. Historical six-attempt contract failures are also preserved in the existing rich-review evidence document.
+
+After actual landed #612 provenance integration, offline preparation on `faf8cd4fa96c77a537a026644663378855591b6e` reproduced all three original requests byte-for-byte. Evidence schema/source metadata changed despite identical transport pixels and prompt. One separately frozen current-v2 gray control passed once at faf8; it does not retry or replace the paired failure.
+
+The sanitized [measurements](./measurements.json) retain execution identities, numeric contract outcomes, exact frame/source/request hashes and retained decoded-response-text hashes. The self-contained [source-media download](./media.html) embeds every original synthetic PNG with byte and decoded-RGB hashes. Download and open it locally to inspect the pixels; GitHub's source view is not a hosted HTML viewer. Provider bodies, credentials and operational details remain private.
+
+Retention limitation: original provider observations retain decoded response text and hashes of its UTF-8 re-encoding, not independently captured wire bytes. Independent finding 647-S1 reproduced loss of distinct invalid/non-UTF8 failure bodies. A source repair is in progress; original observations are not retroactively described as wire-byte exact. Request/source PNG bytes remain exactly retained.
+
+Limits: these are stylized diagrams, not robot execution, simulation or a rendered Isaac workload. Qualitative visual review is not calibrated model quality, causal grounding, physical correctness or safety. The frozen paired contract failure is unresolved; this PR remains a draft. Source/evidence review, final current-head CI and integration conditions are separately reported on the PR, not inferred from these measurements. Native Claude was not available; any independent review is explicitly a distinct AI lane, not human approval.

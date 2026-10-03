@@ -1,0 +1,198 @@
+{
+  "cases": {
+    "complete-keyframes": {
+      "evidence_checks": "passed",
+      "expectation_matches": true,
+      "expected_passed": true,
+      "finish_reason": "stop",
+      "offline_result_sha256": "c91caf2f89bb2854ee9e1d7b7412e7e69968cc13dcdfa4d461350503f6d58c18",
+      "passed": true,
+      "request_sha256": "c4afd7b221f618205394b01b5f8c663ace88f0aadf12e2be54004354733379ec",
+      "score": 1,
+      "status_code": 200,
+      "retained_response_text_sha256": "11016d5297b88238ef32b5e734492cacb324f0a50a3c1049a686cd133299c2ba"
+    },
+    "complete-sequence": {
+      "evidence_checks": "passed",
+      "expectation_matches": true,
+      "expected_passed": true,
+      "finish_reason": "stop",
+      "offline_result_sha256": "88b2b2c35a77c0900f14979e4fc1a4c115ccc508984e3adbaadae173d8b5c845",
+      "passed": true,
+      "request_sha256": "04b6d389d7101d3afec8a0253706e6d08b10700232ed8429fedc7c01928478ed",
+      "score": 1,
+      "status_code": 200,
+      "retained_response_text_sha256": "ac241a21a5927941e7d59af6d59341b333772504cfe9d95f0f2cd8add1814a28"
+    },
+    "gray-keyframes": {
+      "evidence_checks": "passed",
+      "expectation_matches": true,
+      "expected_passed": false,
+      "finish_reason": "stop",
+      "offline_result_sha256": "43bc227482fe479811b4295ca98bf4ecd23bc17711433446df37e3b78f9f1e99",
+      "passed": false,
+      "request_sha256": "84163a697bad32ea1df429256138777ecb2493b96b2e108d9fd0b5637edcc025",
+      "score": 0,
+      "status_code": 200,
+      "retained_response_text_sha256": "0b36521c404e655bbd226b33ad00cfd10aed62d921b17a79703f7801481dfede"
+    },
+    "gray-sequence": {
+      "evidence_checks": "passed",
+      "expectation_matches": true,
+      "expected_passed": false,
+      "finish_reason": "stop",
+      "offline_result_sha256": "10740621572b5e1d120ce187f5bb7de78ab2f864fef41bf3f37d799ac1ef228b",
+      "passed": false,
+      "request_sha256": "b29f4d9168b07b6b999620c756894aad4db799c660505c5ae31c0442c8808b69",
+      "score": 0,
+      "status_code": 200,
+      "retained_response_text_sha256": "64b43296f25504c7254ffb64441c6e97b4c403fd4f10499908f4cf13acf1aac2"
+    },
+    "incomplete-keyframes": {
+      "evidence_checks": "passed",
+      "expectation_matches": true,
+      "expected_passed": false,
+      "finish_reason": "stop",
+      "offline_result_sha256": "ee1f3dd09865a84bf3f1d11471e9780107c4700b595479f2ecc18e6d21ed378e",
+      "passed": false,
+      "request_sha256": "6dd9715384bc5ef501e579563130edd1863d7f5d802db11181a3b0510487998a",
+      "score": 0,
+      "status_code": 200,
+      "retained_response_text_sha256": "1f46df71842806383237ca56d4682a56830d18ab119bc46fe50fe49fcec37620"
+    },
+    "incomplete-sequence": {
+      "evidence_checks": "passed",
+      "expectation_matches": true,
+      "expected_passed": false,
+      "finish_reason": "stop",
+      "offline_result_sha256": "37ab0ea9bda93d8e007e68131de847554303c1fce75c6057afc6880f1219d5d2",
+      "passed": false,
+      "request_sha256": "801cd8b046b377046421276a88e13b60e4d95e69a701631c17e6aac2ecf73341",
+      "score": 0,
+      "status_code": 200,
+      "retained_response_text_sha256": "2fad8d8dbc9495f65d02f1a7f5bc1b6e57a1904faa914db4f259eea8c54cbd9b"
+    }
+  },
+  "configuration_sha256": "bc5a8ccca7ff19d591f9491b0c3a02287d6112c2aa0e00e8216ba67fa05c8b8d",
+  "execution_sha": "f4787965d19ae1269808802d5c44aabe17300eb2",
+  "keyframe_indices": [
+    0,
+    4,
+    5
+  ],
+  "known_source_count": 6,
+  "limitations": [
+    "Original six live tests failed in artifact writer after actual inference; recovered measurements are offline, not rewritten live passes",
+    "Historical real SO100 improvement acceptance failed and remains failed",
+    "Synthetic six controls do not establish improved-vs-sequence quality or calibrated policy/model quality",
+    "Strategy prompt wording differs; no pixel-only causal comparison",
+    "No retries or threshold tuning"
+  ],
+  "model": "MiniMaxAI/MiniMax-M3",
+  "offline_adjudication_sha": "289530b47e2b462841c4105e08eeca7bc5c8673b",
+  "offline_frozen_control_matches": 6,
+  "offline_provider_calls": 0,
+  "original_live_tests": {
+    "failed": 6,
+    "reason": "write_result missing result_uri after successful response parsing"
+  },
+  "pr": 830,
+  "schema": "cursor-explore.vlm-proof/v1",
+  "sequence_indices": [
+    0,
+    2,
+    5
+  ],
+  "source_bridge": [
+    {
+      "adjudication_sha256": "6387e0d88b9cf5eaac4d6f780bc9f8f2df4f73c3dca1fe1d8c43345813ef837d",
+      "byte_identical": true,
+      "original_sha256": "6387e0d88b9cf5eaac4d6f780bc9f8f2df4f73c3dca1fe1d8c43345813ef837d",
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py"
+    },
+    {
+      "adjudication_sha256": "58c3ac16a44c3f2a4e11dc3a9a1cc63bc2e967cbc32d55d3db1f35446648491a",
+      "byte_identical": false,
+      "original_sha256": "1a817c3300bd023870f62ca7ae24775118443ec7c9a60fba2ac41f431bf75017",
+      "path": "npa/tests/e2e/test_vlm_frame_selection_live.py"
+    }
+  ],
+  "threshold": 0.8,
+  "original_response_retention": "Original observations retain decoded response text and UTF-8 re-encoding hashes, not separately captured wire bytes. Reviewer finding 647-S1 identifies invalid/non-UTF8 failure-byte loss; repair pending. Existing observations are not retroactively labeled byte-exact wire retention.",
+  "successor_offline_bridge": {
+    "cases": {
+      "complete-keyframes": {
+        "evidence_checks": "passed",
+        "exact_original_transport": "matched",
+        "frozen_label": "matched",
+        "raw_response_sha256": "11016d5297b88238ef32b5e734492cacb324f0a50a3c1049a686cd133299c2ba",
+        "score": 1,
+        "writer_roundtrip": "passed"
+      },
+      "complete-sequence": {
+        "evidence_checks": "passed",
+        "exact_original_transport": "matched",
+        "frozen_label": "matched",
+        "raw_response_sha256": "ac241a21a5927941e7d59af6d59341b333772504cfe9d95f0f2cd8add1814a28",
+        "score": 1,
+        "writer_roundtrip": "passed"
+      },
+      "gray-keyframes": {
+        "evidence_checks": "passed",
+        "exact_original_transport": "matched",
+        "frozen_label": "matched",
+        "raw_response_sha256": "0b36521c404e655bbd226b33ad00cfd10aed62d921b17a79703f7801481dfede",
+        "score": 0,
+        "writer_roundtrip": "passed"
+      },
+      "gray-sequence": {
+        "evidence_checks": "passed",
+        "exact_original_transport": "matched",
+        "frozen_label": "matched",
+        "raw_response_sha256": "64b43296f25504c7254ffb64441c6e97b4c403fd4f10499908f4cf13acf1aac2",
+        "score": 0,
+        "writer_roundtrip": "passed"
+      },
+      "incomplete-keyframes": {
+        "evidence_checks": "passed",
+        "exact_original_transport": "matched",
+        "frozen_label": "matched",
+        "raw_response_sha256": "1f46df71842806383237ca56d4682a56830d18ab119bc46fe50fe49fcec37620",
+        "score": 0,
+        "writer_roundtrip": "passed"
+      },
+      "incomplete-sequence": {
+        "evidence_checks": "passed",
+        "exact_original_transport": "matched",
+        "frozen_label": "matched",
+        "raw_response_sha256": "2fad8d8dbc9495f65d02f1a7f5bc1b6e57a1904faa914db4f259eea8c54cbd9b",
+        "score": 0,
+        "writer_roundtrip": "passed"
+      }
+    },
+    "execution_sha": "f4787965d19ae1269808802d5c44aabe17300eb2",
+    "limitations": "All six original live tests remain failed in write_result. This proves corrected writer and unchanged requests/evaluator/client offline; not new hosted execution at successor SHA. Historical SO100 acceptance remains failed.",
+    "new_provider_calls": 0,
+    "source_bridge": [
+      {
+        "byte_identical": true,
+        "execution_sha256": "6387e0d88b9cf5eaac4d6f780bc9f8f2df4f73c3dca1fe1d8c43345813ef837d",
+        "path": "npa/src/npa/workbench/vlm_eval/__init__.py",
+        "successor_sha256": "6387e0d88b9cf5eaac4d6f780bc9f8f2df4f73c3dca1fe1d8c43345813ef837d"
+      },
+      {
+        "byte_identical": true,
+        "execution_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+        "path": "npa/src/npa/clients/token_factory.py",
+        "successor_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d"
+      },
+      {
+        "byte_identical": false,
+        "execution_sha256": "1a817c3300bd023870f62ca7ae24775118443ec7c9a60fba2ac41f431bf75017",
+        "path": "npa/tests/e2e/test_vlm_frame_selection_live.py",
+        "successor_sha256": "9e7be4b5a1a4ff4af04f57a947fe51f55663cd9eb0fad1a7abc2b235ec655ea5"
+      }
+    ],
+    "successor_sha": "8a531e01fb51864c593b6f73d585abac37e6f864"
+  }
+}

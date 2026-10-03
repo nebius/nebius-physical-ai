@@ -1,0 +1,395 @@
+{
+  "bridge_provider_calls": 0,
+  "calls": [
+    {
+      "case": "pair",
+      "execution_sha": "28785e12c7169684d97a8a825bfde0a7b91382f7",
+      "finish_reason": "stop",
+      "frame_evidence": [
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0001",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0002",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0003",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1929,
+          "height": 480,
+          "label": "A0004",
+          "media_type": "image/png",
+          "sha256": "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0001",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0002",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0003",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0004",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        }
+      ],
+      "order": "current_as_A",
+      "parser_version": "npa_vlm_visual_review_hosted_json_v1",
+      "report_status": "judge_error",
+      "status_code": 200,
+      "strict_contract_valid": true,
+      "transport_request_sha256": "1712814f44fdb55546c88101bad8cfcfd47048bd309b1302e05ceede4714d58a",
+      "retained_response_text_sha256": "61ea59d297ae0c5890b1715a04b10a4ca85f9bfb78d6f2b83940b969b7514f95"
+    },
+    {
+      "case": "pair",
+      "execution_sha": "28785e12c7169684d97a8a825bfde0a7b91382f7",
+      "finish_reason": "stop",
+      "frame_evidence": [
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0001",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0002",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0003",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "A0004",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0001",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0002",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1931,
+          "height": 480,
+          "label": "B0003",
+          "media_type": "image/png",
+          "sha256": "de22528f11b5bca16a57c154455f3f145ccb2993f3a947a581f775b8c5723707",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1929,
+          "height": 480,
+          "label": "B0004",
+          "media_type": "image/png",
+          "sha256": "89ff7a51cff347b206b6c98bd1cfaa9246c708567e22579db08a5a51984f786d",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        }
+      ],
+      "order": "baseline_as_A",
+      "parser_version": "npa_vlm_eval_unparsed_response_v1",
+      "report_status": "judge_error",
+      "status_code": 200,
+      "strict_contract_valid": false,
+      "transport_request_sha256": "73832fb3b2ccae1cbee7cc4c862d14725ad82ac41a910bb626f0abc19c2db4c9",
+      "retained_response_text_sha256": "932c852b97278c49cbe038e17f63ede8c87b0ec43be65d92b78ffe1d6cce1829"
+    },
+    {
+      "case": "gray",
+      "execution_sha": "28785e12c7169684d97a8a825bfde0a7b91382f7",
+      "finish_reason": "stop",
+      "frame_evidence": [
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0001",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0002",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0003",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0004",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        }
+      ],
+      "order": "single",
+      "parser_version": "npa_vlm_visual_review_hosted_json_v1",
+      "report_status": "completed",
+      "status_code": 200,
+      "strict_contract_valid": true,
+      "transport_request_sha256": "58a72fd19664693425e74fa82832e97eef57083a7546823f2e52615c9d1dd15c",
+      "retained_response_text_sha256": "9bc36473165f412aec4dfc5e6e136fc95ec8620548aa1fb1aa4b70bb7470e482"
+    },
+    {
+      "case": "current-v2-gray",
+      "execution_sha": "faf8cd4fa96c77a537a026644663378855591b6e",
+      "finish_reason": "stop",
+      "frame_evidence": [
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0001",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 0,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0002",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 1,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0003",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 2,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        },
+        {
+          "byte_count": 1580,
+          "height": 480,
+          "label": "A0004",
+          "media_type": "image/png",
+          "sha256": "bfb7ea326bc2adc164e180bb362bc97ec4b07a6523cc0fbce9e1ef55affb67da",
+          "source_count": 4,
+          "source_index": 3,
+          "source_kind": "image-sequence",
+          "source_timestamp_s": null,
+          "width": 640
+        }
+      ],
+      "order": "single",
+      "parser_version": "npa_vlm_visual_review_hosted_json_v1",
+      "report_status": "completed",
+      "status_code": 200,
+      "strict_contract_valid": true,
+      "transport_request_sha256": "58a72fd19664693425e74fa82832e97eef57083a7546823f2e52615c9d1dd15c",
+      "retained_response_text_sha256": "e3c4731b1863a9e56eddc36c04472220507448fe5e4b54f744e13d1ec4da4bc6"
+    }
+  ],
+  "current_v2_live_tests": {
+    "passed": 1
+  },
+  "deployment_status": "audit_only",
+  "limitations": [
+    "Paired BA strict bare-JSON response contract fails; draft retained",
+    "Historical six-attempt rich contract acceptance also failed",
+    "No replay or label changes",
+    "Synthetic controls and qualitative audit do not qualify model quality, physical correctness or safety"
+  ],
+  "model": "MiniMaxAI/MiniMax-M3",
+  "original_live_tests": {
+    "failed": 1,
+    "passed": 1
+  },
+  "original_request_transport_matches": 3,
+  "pr": 647,
+  "schema": "cursor-explore.vlm-proof/v1",
+  "score_gate_affected": false,
+  "source_bridge": [
+    {
+      "byte_identical": true,
+      "candidate_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "original_sha256": "4c2c60f217c61ddf4c4441b706a7b8c3c73273b8d241c9ee70e5e09e0a391f6d",
+      "path": "npa/src/npa/clients/token_factory.py"
+    },
+    {
+      "byte_identical": false,
+      "candidate_sha256": "44e36dd2fe89c8cd6be231866a92fd24f6bed6310edff4bc248843ce99b3f104",
+      "original_sha256": "4e06b49de6ff59a142e332ed54b07d47a2cc1d455f73625c5c8dcecc02362b6a",
+      "path": "npa/src/npa/workbench/vlm_eval/__init__.py"
+    },
+    {
+      "byte_identical": true,
+      "candidate_sha256": "88ce10e363f8ae01c05e94397bba8dad8be2ef60aad56a4aab2932586b8b2de3",
+      "original_sha256": "88ce10e363f8ae01c05e94397bba8dad8be2ef60aad56a4aab2932586b8b2de3",
+      "path": "npa/src/npa/workbench/vlm_eval/visual_review.py"
+    },
+    {
+      "byte_identical": true,
+      "candidate_sha256": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2",
+      "original_sha256": "adbd42173aa5b5bea303f3d57e94004a975623c13301628ba0a4047babd476c2",
+      "path": "npa/src/npa/workbench/vlm_eval/visual_review_schema.py"
+    }
+  ],
+  "original_response_retention": "Original observations retain decoded response text and UTF-8 re-encoding hashes, not separately captured wire bytes. Reviewer finding 647-S1 identifies invalid/non-UTF8 failure-byte loss; repair pending. Existing observations are not retroactively labeled byte-exact wire retention."
+}
