@@ -1,0 +1,93 @@
+apiVersion: npa.workflow/v0.0.1
+kind: Workflow
+metadata:
+  name: seedvr2-video-restoration
+  description: >-
+    Decode a low-resolution sensor clip, restore it with pinned official
+    SeedVR2-3B on explicitly selected H100 or B200, independently read back the result, and render a
+    non-blended bicubic-baseline versus candidate review package.
+config:
+  bucket: example-bucket
+  prefix: "runs/{{run.id}}/seedvr2"
+  seedvr2_input_uri: "s3://{{config.bucket}}/inputs/low-resolution.mp4"
+  seedvr2_probe_uri: "s3://{{config.bucket}}/{{config.prefix}}/probe.json"
+  seedvr2_output_uri: "s3://{{config.bucket}}/{{config.prefix}}/restoration/"
+  seedvr2_result_uri: "{{config.seedvr2_output_uri}}result.json"
+  seedvr2_verification_uri: >-
+    s3://{{config.bucket}}/{{config.prefix}}/verification.json
+  seedvr2_review_uri: "s3://{{config.bucket}}/{{config.prefix}}/review/"
+  seedvr2_output_height: "480"
+  seedvr2_output_width: "640"
+  seedvr2_seed: "666"
+  seedvr2_gpu: H100
+  seedvr2_conditioning_mode: sample
+resources:
+  cpu:
+    cloud: kubernetes
+    cpus: 4
+    memory: 16Gi
+    disk_size: 80
+  gpu:
+    cloud: kubernetes
+    accelerators: "{{config.seedvr2_gpu}}:1"
+    cpus: 8
+    memory: 64Gi
+    disk_size: 100
+initial: probe
+states:
+  probe:
+    toolRef: workbench.seedvr2.probe
+    resources: cpu
+    inputs:
+      - uri: "{{config.seedvr2_input_uri}}"
+        schema: video/mp4
+    outputs:
+      - uri: "{{config.seedvr2_probe_uri}}"
+        schema: npa.workbench.seedvr2.probe.v1
+    next: restore
+  restore:
+    toolRef: workbench.seedvr2.restore
+    resources: gpu
+    inputs:
+      - uri: "{{config.seedvr2_input_uri}}"
+        schema: video/mp4
+      - uri: "{{config.seedvr2_probe_uri}}"
+        schema: npa.workbench.seedvr2.probe.v1
+    outputs:
+      - uri: "{{config.seedvr2_result_uri}}"
+        schema: npa.workbench.seedvr2.result.v1
+      - uri: "{{config.seedvr2_output_uri}}restored.mp4"
+        schema: video/mp4
+      - uri: "{{config.seedvr2_output_uri}}upstream.log"
+        schema: text/plain
+    next: verify
+  verify:
+    toolRef: workbench.seedvr2.verify
+    resources: gpu
+    inputs:
+      - uri: "{{config.seedvr2_result_uri}}"
+        schema: npa.workbench.seedvr2.result.v1
+      - uri: "{{config.seedvr2_output_uri}}restored.mp4"
+        schema: video/mp4
+    outputs:
+      - uri: "{{config.seedvr2_verification_uri}}"
+        schema: npa.workbench.seedvr2.verification.v1
+    next: review
+  review:
+    toolRef: workbench.seedvr2.review
+    resources: cpu
+    inputs:
+      - uri: "{{config.seedvr2_result_uri}}"
+        schema: npa.workbench.seedvr2.result.v1
+      - uri: "{{config.seedvr2_output_uri}}restored.mp4"
+        schema: video/mp4
+    outputs:
+      - uri: "{{config.seedvr2_review_uri}}comparison.mp4"
+        schema: video/mp4
+      - uri: "{{config.seedvr2_review_uri}}contact-sheet.png"
+        schema: image/png
+      - uri: "{{config.seedvr2_review_uri}}review.json"
+        schema: npa.workbench.seedvr2.review.v1
+      - uri: "{{config.seedvr2_review_uri}}index.html"
+        schema: text/html
+    terminal: true
