@@ -31,6 +31,13 @@ deselection, or a mismatch between configured, collected, executed, and passed
 counts. Ambient pytest flags and CI shard selectors are removed. Synthetic
 images are inputs to real inference, not substitutes for provider responses.
 
+Passing test counts alone are insufficient: every preconfigured artifact must
+exist, contain valid retained outcomes, and meet its frozen expectations.
+Configuration changes during execution fail the lane. Missing or malformed
+artifacts retain their original control indices in sanitized failure rows;
+extra files cannot substitute for them. Typed provider errors remain visible
+as private evidence and bounded diagnostics, never successful inference proof.
+
 Raw requests, images, outputs, and pytest logs stay in an owner-only directory
 outside Git. Scheduled raw evidence stays on the ephemeral runner; only the
 allowlisted, confidentiality-scanned `receipt.json` reaches Actions artifacts

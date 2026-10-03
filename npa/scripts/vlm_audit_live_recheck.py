@@ -13,6 +13,7 @@ import subprocess
 import sys
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from npa.workbench.vlm_eval import (
     PREFERENCE_COMPARISON_RESULT_FILENAME,
@@ -26,6 +27,7 @@ from npa.clients.token_factory import (
 )
 from npa.guardrails.confidentiality import compile_builtin_nebius_infra, scan_text
 from npa.literal_values import require_boolean, require_integer
+from npa.workbench.vlm_eval.preference_schema import preference_response_schema
 from npa.live_verification.vlm_audit_controls import (
     PREFERENCE_MODELS,
     audit_controls,
@@ -34,6 +36,7 @@ from npa.live_verification.vlm_audit_controls import (
 
 SUITES = ("npa/tests/e2e/test_vlm_audits_live.py",)
 CONFIG_ENV = "NPA_VLM_AUDIT_LIVE_CONFIG"
+_VERDICT_VALIDATOR = Draft202012Validator(preference_response_schema())
 
 
 class _AuditConfigurationError(ValueError):
@@ -237,14 +240,25 @@ def _verify(
 ) -> None:
     config_path = _prepare_config(target, generated=generated, audit_kind=audit_kind)
     receipt["audit_kind"] = "preference"
-    receipt["configuration_sha256"] = hashlib.sha256(
-        config_path.read_bytes()
-    ).hexdigest()
+    configured_bytes = config_path.read_bytes()
+    receipt["configuration_sha256"] = hashlib.sha256(configured_bytes).hexdigest()
+    config = json.loads(configured_bytes)
+    controls = audit_controls(config["cases"]["blinded-preference"])
+    reports = tuple(
+        (
+            index,
+            Path(control["request"]["output_path"])
+            / PREFERENCE_COMPARISON_RESULT_FILENAME,
+            control["expectations"],
+        )
+        for index, control in enumerate(controls.values())
+    )
     if generated:
         _scheduled_preflight()
         receipt["credential_and_catalog_preflight_passed"] = True
     exit_code = _execute(root, target, config_path)
     receipt["pytest_exit_code"] = exit_code
+    receipt["outcomes"] = _public_comparisons(reports)
     execution = json.loads((target / "execution.json").read_text())
     try:
         counts = {
@@ -257,8 +271,11 @@ def _verify(
     except (KeyError, ValueError):
         raise _AuditConfigurationError("invalid_execution_counts") from None
     receipt["counts"] = counts
-    config = json.loads(config_path.read_text())
-    expected = sum(len(audit_controls(case)) for case in config["cases"].values())
+    if config_path.read_bytes() != configured_bytes:
+        raise _AuditConfigurationError("audit_configuration_changed_during_execution")
+    if any("failure" in outcome for outcome in receipt["outcomes"]):
+        raise _AuditConfigurationError("audit_artifact_contract_failed")
+    expected = len(reports)
     receipt["passed"] = (
         exit_code == 0
         and counts["collected"] == counts["executed"] == counts["passed"] == expected
@@ -266,11 +283,50 @@ def _verify(
         and counts["failed"] == counts["skipped"] == counts["deselected"] == 0
         and not xfail
     )
-    receipt["outcomes"] = _public_comparisons(target)
 
 
-def _public_comparisons(target: Path) -> list[dict]:
+def _public_comparisons(reports: tuple[tuple[int, Path, dict], ...]) -> list[dict]:
     summaries = []
+    for index, path, expectations in reports:
+        summary = {"control_index": index}
+        try:
+            if path.is_symlink():
+                raise ValueError("Audit artifact must be a regular file")
+            content = path.read_bytes()
+            summary["artifact_sha256"] = hashlib.sha256(content).hexdigest()
+            report = json.loads(content)
+            summary.update(_public_comparison(report))
+            if not _artifact_accepted(report, summary, expectations):
+                summary["failure"] = "audit_artifact_did_not_meet_contract"
+        except (OSError, ValueError, KeyError, TypeError):
+            summary["failure"] = "invalid_or_missing_audit_artifact"
+        summaries.append(summary)
+    return summaries
+
+
+def _artifact_accepted(report: dict, summary: dict, expectations: dict) -> bool:
+    # Typed errors are valid retained outcomes, never successful live proof.
+    if (
+        summary["first_order"]["error_type"] is not None
+        or summary["reversed_order"]["error_type"] is not None
+        or summary["requests_counterbalanced"] is not True
+        or report["deployment_status"] != "audit_only"
+        or require_boolean(
+            report["operational_rate_estimated"],
+            field="report.operational_rate_estimated",
+        )
+    ):
+        return False
+    for field, expected in expectations.items():
+        actual = report
+        for component in field.split("."):
+            actual = actual[component]
+        if actual != expected:
+            return False
+    return True
+
+
+def _public_comparison(report: dict) -> dict:
     statuses = {
         "judge_error",
         "unresolved",
@@ -280,58 +336,66 @@ def _public_comparisons(target: Path) -> list[dict]:
         "consistent_baseline_preference",
         "consistent_tie",
     }
-    directory = target / "blinded-preference"
-    for path in directory.rglob(PREFERENCE_COMPARISON_RESULT_FILENAME):
-        index = 0 if path.parent == directory else int(path.parent.name)
-        content = path.read_bytes()
-        report = json.loads(content)
-        summaries.append(
-            {
-                "control_index": index,
-                "artifact_sha256": hashlib.sha256(content).hexdigest(),
-                "status": report["status"]
-                if report["status"] in statuses
-                else "unknown",
-                "escalation_required": require_boolean(
-                    report["escalation_required"], field="report.escalation_required"
-                ),
-                "requests_counterbalanced": require_boolean(
-                    report["requests_counterbalanced"],
-                    field="report.requests_counterbalanced",
-                ),
-                "first_order": _public_order(report["first_order"]),
-                "reversed_order": _public_order(report["reversed_order"]),
-            }
-        )
-    return sorted(summaries, key=lambda summary: summary["control_index"])
+    if not isinstance(report, dict) or report["status"] not in statuses:
+        raise ValueError("Invalid audit status")
+    return {
+        "status": report["status"],
+        "escalation_required": require_boolean(
+            report["escalation_required"], field="report.escalation_required"
+        ),
+        "requests_counterbalanced": require_boolean(
+            report["requests_counterbalanced"], field="report.requests_counterbalanced"
+        ),
+        "first_order": _public_order(report["first_order"]),
+        "reversed_order": _public_order(report["reversed_order"]),
+    }
 
 
 def _public_order(outcome: dict) -> dict:
-    provider = outcome.get("provider") or {}
-    verdict = outcome.get("verdict") or {}
-    error = outcome.get("error") or {}
     error_types = {
         "transport_error",
         "provider_http_status_error",
         "provider_response_decode_error",
         "response_contract_error",
     }
+    if not isinstance(outcome, dict):
+        raise ValueError("Invalid audit order")
+    provider = outcome.get("provider")
+    verdict = outcome.get("verdict")
+    error = outcome.get("error")
+    if (verdict is None) == (error is None):
+        raise ValueError("Audit order needs exactly one verdict or error")
+    if verdict is not None and not _VERDICT_VALIDATOR.is_valid(verdict):
+        raise ValueError("Invalid audit verdict")
+    if error is not None and (
+        not isinstance(error, dict) or error.get("error_type") not in error_types
+    ):
+        raise ValueError("Invalid audit error")
+    if provider is None:
+        if error is None:
+            raise ValueError("Successful audit order needs provider evidence")
+        provider = {}
+    if not isinstance(provider, dict):
+        raise ValueError("Invalid audit provider evidence")
+    returned_model = provider.get("returned_model")
+    raw_response = provider.get("raw_response")
+    if any(
+        value is not None and not isinstance(value, str)
+        for value in (returned_model, raw_response)
+    ):
+        raise ValueError("Invalid audit provider evidence")
+    if error is None and (not returned_model or not raw_response):
+        raise ValueError("Successful audit order needs provider evidence")
     return {
         "returned_model_sha256": hashlib.sha256(
-            str(provider.get("returned_model", "")).encode()
+            (returned_model if returned_model is not None else "").encode()
         ).hexdigest(),
         "raw_response_sha256": hashlib.sha256(
-            str(provider.get("raw_response", "")).encode()
+            (raw_response if raw_response is not None else "").encode()
         ).hexdigest(),
-        "preference": verdict.get("preference")
-        if verdict.get("preference") in ("A", "B", "tie", "unresolved")
-        else None,
-        "confidence": verdict.get("confidence")
-        if verdict.get("confidence") in ("high", "medium", "low")
-        else None,
-        "error_type": error.get("error_type")
-        if error.get("error_type") in error_types
-        else None,
+        "preference": verdict["preference"] if verdict is not None else None,
+        "confidence": verdict["confidence"] if verdict is not None else None,
+        "error_type": error["error_type"] if error is not None else None,
     }
 
 

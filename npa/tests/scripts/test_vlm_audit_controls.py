@@ -178,7 +178,13 @@ def test_public_outcomes_preserve_verdicts_without_provider_text(tmp_path):
     private = "private-provider-content"
     first = {
         "provider": {"returned_model": private, "raw_response": private},
-        "verdict": {"preference": "A", "confidence": "high", "uncertainty": private},
+        "verdict": {
+            "preference": "A",
+            "confidence": "high",
+            "uncertainty": private,
+            "observable_support": [private],
+            "critical_defects": {"A": [private], "B": [private]},
+        },
     }
     second = {"error": {"error_type": "transport_error", "message": private}}
     report = {
@@ -193,7 +199,7 @@ def test_public_outcomes_preserve_verdicts_without_provider_text(tmp_path):
     directory.mkdir(parents=True)
     path = directory / runner.PREFERENCE_COMPARISON_RESULT_FILENAME
     path.write_text(json.dumps(report))
-    summaries = runner._public_comparisons(tmp_path)
+    summaries = runner._public_comparisons(((0, path, {}),))
     assert private not in json.dumps(summaries)
     assert (
         summaries[0]["artifact_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
@@ -205,9 +211,10 @@ def test_public_outcomes_preserve_verdicts_without_provider_text(tmp_path):
     second["error"]["error_type"] = private
     first["verdict"]["preference"] = private
     first["verdict"]["confidence"] = private
-    assert runner._public_order(second)["error_type"] is None
-    assert runner._public_order(first)["preference"] is None
-    assert runner._public_order(first)["confidence"] is None
+    with pytest.raises(ValueError, match="Invalid audit error"):
+        runner._public_order(second)
+    with pytest.raises(ValueError, match="Invalid audit verdict"):
+        runner._public_order(first)
 
 
 def test_generated_lane_rejects_silently_removed_controls(monkeypatch, tmp_path):
@@ -264,12 +271,25 @@ def test_public_outcomes_keep_original_indices_after_missing_controls(tmp_path):
                     "status": "judge_error",
                     "requests_counterbalanced": True,
                     "escalation_required": True,
-                    "first_order": {},
-                    "reversed_order": {},
+                    "first_order": {"error": {"error_type": "transport_error"}},
+                    "reversed_order": {"error": {"error_type": "transport_error"}},
                 }
             )
         )
-    assert [row["control_index"] for row in runner._public_comparisons(tmp_path)] == [
+    reports = tuple(
+        (
+            index,
+            tmp_path
+            / "blinded-preference"
+            / str(index)
+            / runner.PREFERENCE_COMPARISON_RESULT_FILENAME,
+            {},
+        )
+        for index in range(11)
+    )
+    summaries = runner._public_comparisons(reports)
+    assert [row["control_index"] for row in summaries] == list(range(11))
+    assert [row["control_index"] for row in summaries if "status" in row] == [
         1,
         2,
         10,
