@@ -3295,10 +3295,20 @@ def parse_pax(data, *, key_limit=TAR_PAX_KEY_LIMIT):
     return result
 
 
-def walk_tar(reader, sink, scope, file_handler):
-    """Read every physical tar byte, including extension records and EOF padding."""
+def walk_tar(reader, sink, scope, file_handler, *, encoded_layer_sizes=None):
+    """Read all tar bytes; graph-bound outer layers are decoded by their handler.
+
+    Only the outer Docker-save walk may receive exact encoded layer sizes from
+    the verified graph. Their compressed container size is not a logical-record
+    allocation; each decoded file still passes the unchanged complete-record cap.
+    Unknown outer files and other walks receive no such exception.
+    """
     index, zero_headers = 0, 0
     layer_scope = scope.get("scope") in {"layer", "docker_save_layer"}
+    require(
+        encoded_layer_sizes is None or scope.get("scope") == "outer",
+        "encoded_layer_scope",
+    )
     seen = set()
     pending, pending_keys = {}, set()
     extension_chain_bytes = 0
@@ -3371,8 +3381,6 @@ def walk_tar(reader, sink, scope, file_handler):
             },
             "unsupported_tar_entry_type",
         )
-        if info.isreg():
-            _admit_complete_record(info.size)
         if info.type in {
             tarfile.XHDTYPE,
             tarfile.XGLTYPE,
@@ -3452,6 +3460,14 @@ def walk_tar(reader, sink, scope, file_handler):
             )
             require(name not in seen, "duplicate_tar_path")
             seen.add(name)
+            if info.isreg():
+                if encoded_layer_sizes is not None and name in encoded_layer_sizes:
+                    require(
+                        info.size == encoded_layer_sizes[name],
+                        "encoded_layer_size_binding",
+                    )
+                else:
+                    _admit_complete_record(info.size)
             sink.data(name.encode("utf-8"), "logical_tar_path", context)
             if link:
                 sink.data(link.encode("utf-8"), "logical_tar_link", context)
@@ -4095,7 +4111,17 @@ def _scan(authorization, directory, detector_type=Detector, *, record_observer=N
                 sink.send(reader, size, "outer_regular_content", context)
 
         outer = HashedReader(Slice(fd, 0, initial.st_size))
-        report["outer"] = walk_tar(outer, sink, {"scope": "outer"}, outer_file)
+        report["outer"] = walk_tar(
+            outer,
+            sink,
+            {"scope": "outer"},
+            outer_file,
+            encoded_layer_sizes=(
+                {row["name"]: row["size"] for row in layers}
+                if "oci_graph" not in report
+                else None
+            ),
+        )
         require(
             outer.position == initial.st_size
             and outer.digest.hexdigest() == authorization["archive"]["sha256"],
