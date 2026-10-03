@@ -251,7 +251,9 @@ def test_unrelated_resolve_runtime_error_is_not_swallowed(monkeypatch, tmp_path)
         runner._prepare_evidence_directory(tmp_path, tmp_path / "run")
 
 
-@pytest.mark.parametrize("mode", ["xpass", "skip", "deselection"])
+@pytest.mark.parametrize(
+    "mode", ["xpass", "xfail", "skip", "deselection", "setup", "teardown", "missing"]
+)
 def test_actual_incomplete_execution_cannot_pass_lane(tmp_path, mode):
     test_path = tmp_path / "test_expected.py"
     if mode == "deselection":
@@ -262,10 +264,26 @@ def test_actual_incomplete_execution_cannot_pass_lane(tmp_path, mode):
             "def pytest_collection_modifyitems(config, items):\n"
             "    config.hook.pytest_deselected(items=[items.pop()])\n"
         )
+    elif mode in ("setup", "teardown"):
+        failure = "    pytest.fail('fixture boundary')\n"
+        body = failure + "    yield\n" if mode == "setup" else "    yield\n" + failure
+        test_path.write_text(
+            "import pytest\n@pytest.fixture(autouse=True)\ndef boundary():\n"
+            + body
+            + "def test_control():\n    pass\n"
+        )
+    elif mode == "missing":
+        test_path.write_text("def test_control():\n    pass\n")
+        (tmp_path / "conftest.py").write_text(
+            "def pytest_runtestloop(session):\n    return True\n"
+        )
     else:
         marker = "xfail(strict=False)" if mode == "xpass" else "skip(reason='contract')"
+        if mode == "xfail":
+            marker = "xfail(reason='contract')"
+        body = "assert False" if mode == "xfail" else "pass"
         test_path.write_text(
-            f"import pytest\n@pytest.mark.{marker}\ndef test_control():\n    pass\n"
+            f"import pytest\n@pytest.mark.{marker}\ndef test_control():\n    {body}\n"
         )
     runner_path = (
         Path(__file__).resolve().parents[2] / "scripts/vlm_audit_live_recheck.py"
@@ -291,7 +309,51 @@ raise SystemExit(runner._run_tests(Path(sys.argv[3])))
         "xpass": "1 xpassed",
         "skip": "1 skipped",
         "deselection": "1 deselected",
+        "xfail": "1 xfailed",
+        "setup": "1 error",
+        "teardown": "1 error",
+        "missing": "no tests ran",
     }
     assert expected[mode] in result.stdout
     assert result.returncode == 1
     assert (tmp_path / "pytest.xml").is_file()
+
+
+@pytest.mark.parametrize("bad_count", [True, -1, "1", None])
+def test_malformed_execution_counts_fail_closed(monkeypatch, tmp_path, bad_count):
+    runner = _runner()
+    _config(monkeypatch, tmp_path)
+
+    def execute(root, target, config):
+        (target / "execution.json").write_text(
+            json.dumps(
+                {
+                    "collected": bad_count,
+                    "executed": 1,
+                    "passed": 1,
+                    "failed": 0,
+                    "skipped": 0,
+                    "deselected": 0,
+                    "xfail": False,
+                }
+            )
+        )
+        return 0
+
+    monkeypatch.setattr(runner, "_execute", execute)
+    target = tmp_path / "run"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["failure"] == "invalid_execution_counts"
+    assert receipt["passed"] is False
+
+
+def test_missing_execution_report_fails_closed(monkeypatch, tmp_path):
+    runner = _runner()
+    _config(monkeypatch, tmp_path)
+    monkeypatch.setattr(runner, "_execute", lambda *_: 0)
+    target = tmp_path / "run"
+    assert runner.main(["--evidence-dir", str(target)]) == 1
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["failure"] == "audit_configuration_or_execution_failed"
+    assert receipt["passed"] is False
