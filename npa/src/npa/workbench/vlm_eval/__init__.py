@@ -3522,6 +3522,7 @@ class VlmPreferenceOutcome:
         provider: Provider metadata and raw response when any response was received.
         verdict: Strict parsed preference when successful.
         error: Typed failure when no verdict was produced.
+        response_bytes: Reversible HTTP bytes, absent for historical/text-only adapters.
 
     Returns:
         None.
@@ -3539,6 +3540,7 @@ class VlmPreferenceOutcome:
     provider: VlmProviderEvidence | None
     verdict: VlmPreferenceVerdict | None
     error: VlmPreferenceError | None
+    response_bytes: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -3906,6 +3908,7 @@ def _execute_preference_orders(
             request,
             *order,
             transport_sink=transport_sink,
+            response_bytes_sink=_preference_response_bytes_sink(journal, index),
         )
         _write_preference_journal(
             journal, f"response-{index:02d}.json", asdict(outcome)
@@ -3920,6 +3923,16 @@ def _preference_transport_sink(
 ) -> Callable[[_VlmBackendResponse], None]:
     def retain(response: _VlmBackendResponse) -> None:
         _journal_preference_transport(journal, index, response)
+
+    return retain
+
+
+def _preference_response_bytes_sink(
+    journal: _VlmPreferenceJournal,
+    index: int,
+) -> Callable[[dict[str, Any]], None]:
+    def retain(wire: dict[str, Any]) -> None:
+        _write_preference_journal(journal, f"response-bytes-{index:02d}.json", wire)
 
     return retain
 
@@ -4107,6 +4120,7 @@ def _call_preference_order(
     frames: tuple[SelectedFrame, SelectedFrame],
     *,
     transport_sink: Callable[[_VlmBackendResponse], None] | None = None,
+    response_bytes_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> VlmPreferenceOutcome:
     request_evidence = _preference_request_evidence(context, request, frames)
     headers = {
@@ -4119,6 +4133,7 @@ def _call_preference_order(
         request=request,
         timeout_s=context.timeout_s,
         response_sink=transport_sink,
+        response_bytes_sink=response_bytes_sink,
     )
     if error is not None:
         return _preference_transport_error(
@@ -4190,6 +4205,7 @@ def _preference_transport_error(
         stage=stage,
         error_type=error_type,
         error=error,
+        response=response,
     )
 
 
@@ -4226,6 +4242,7 @@ def _parse_preference_outcome(
         stage="",
         error_type="",
         error=None,
+        response=response,
     )
 
 
@@ -4250,6 +4267,7 @@ def _preference_response_error(
         stage="response_contract",
         error_type="response_contract_error",
         error=error,
+        response=response,
     )
 
 
@@ -4265,6 +4283,7 @@ def _preference_outcome(
     stage: str,
     error_type: str,
     error: VlmEvalError | None,
+    response: _VlmBackendResponse | None = None,
 ) -> VlmPreferenceOutcome:
     failure = (
         VlmPreferenceError(stage, error_type, str(error)[:1000])
@@ -4281,7 +4300,36 @@ def _preference_outcome(
         provider=provider,
         verdict=verdict,
         error=failure,
+        response_bytes=_backend_response_byte_evidence(response),
     )
+
+
+def _backend_response_byte_evidence(
+    response: _VlmBackendResponse | None,
+) -> dict[str, Any] | None:
+    if response is None or response.raw_body_base64 is None:
+        return None
+    if response.raw_body_bytes_sha256 is None or response.raw_body_byte_count is None:
+        raise VlmEvalError("provider response byte metadata is incomplete")
+    try:
+        body = base64.b64decode(response.raw_body_base64, validate=True)
+    except ValueError as exc:
+        raise VlmEvalError("provider response byte encoding is invalid") from exc
+    if (
+        len(body) != response.raw_body_byte_count
+        or hashlib.sha256(body).hexdigest() != response.raw_body_bytes_sha256
+    ):
+        raise VlmEvalError("provider response byte metadata does not match its body")
+    return {
+        "schema_version": "npa_vlm_http_response_bytes_v1",
+        "encoding": "base64",
+        "body_base64": response.raw_body_base64,
+        "body_sha256": response.raw_body_bytes_sha256,
+        "byte_count": response.raw_body_byte_count,
+        "status_code": response.status_code,
+        "request_id_header": response.request_id_header,
+        "latency_s": response.latency_s,
+    }
 
 
 def _strict_preference_verdict(
@@ -4669,6 +4717,7 @@ def _journal_preference_transport(
             "latency_s": round(response.latency_s, 6),
             "raw_body": response.raw_body,
             "raw_body_sha256": _sha256_text(response.raw_body),
+            "response_bytes": _backend_response_byte_evidence(response),
         },
     )
 
