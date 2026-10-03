@@ -1,0 +1,507 @@
+{
+  "schema": "npa.specialists.nurec_repair_summary.v1",
+  "date": "2026-09-23",
+  "source_base_commit": "39b9508b2ce616dd07bbdc8eaaf084303128b6a4",
+  "trusted_runtime_tree": "b86e2b537bbfcf5a48a436939ed9b3fdcdda0ad1",
+  "frozen_protocol_sha256": "9ab65aa64141be8496d8dfe5cc4149c3477d244b7f953cca4f1225384b721731",
+  "frozen_files_checked": 61,
+  "frozen_files_changed": 0,
+  "task_scope": "Repair two supplied source defects, rerun affected real Workbench stages and verify current-source artifacts.",
+  "arms": {
+    "astra-only": {
+      "verified_repairs": 2,
+      "required_repairs": 2,
+      "verified_before_coordinator_exit": true,
+      "operator_interventions_during_arm": 0,
+      "lifecycle_seconds": 657.612223921984,
+      "coordinator_seconds": 657.61155211,
+      "model_price_equivalent_usd": {
+        "minimum": 2.929564,
+        "maximum": 5.769128
+      },
+      "pricing_relevant_usage_complete": true,
+      "usage_totals": {
+        "usage_records": 1,
+        "tokens": {
+          "input_tokens": 1834534,
+          "output_tokens": 3600,
+          "cached_input_tokens": 1732864,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 155
+        },
+        "known_tokens": {
+          "input_tokens": 1834534,
+          "output_tokens": 3600,
+          "cached_input_tokens": 1732864,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 155
+        },
+        "missing_counter_records": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 0
+        },
+        "priced_records": 1,
+        "unpriced_records": 0,
+        "priced_recorded_cost_usd": {
+          "minimum": 2.929564,
+          "maximum": 5.769128
+        }
+      },
+      "models": {
+        "gpt-6-astra": {
+          "usage_records": 1,
+          "record_granularity": [
+            "coordinator-turn"
+          ],
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "itemized",
+          "rate_options": 2,
+          "tokens": {
+            "input_tokens": 1834534,
+            "output_tokens": 3600,
+            "cached_input_tokens": 1732864,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 155
+          },
+          "known_tokens": {
+            "input_tokens": 1834534,
+            "output_tokens": 3600,
+            "cached_input_tokens": 1732864,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 155
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "priced_records": 1,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 2.929564,
+            "maximum": 5.769128
+          }
+        }
+      },
+      "matched_tool_scope": true,
+      "gpu_allocation": {
+        "gpu_allocation_seconds_lower": 262.0,
+        "gpu_allocation_seconds_upper": 262.4408710002899,
+        "complete_pods": 1,
+        "incomplete_pods": 0
+      },
+      "render": {
+        "successful_source_edits": 2,
+        "author": "gpt-6-astra",
+        "native_launches": 1,
+        "source_checks_passed": 7,
+        "decoded_pngs": 45,
+        "decoded_video_frames": 45,
+        "identical_native_selected_published_files": 49,
+        "previous_bytes_preserved": true
+      },
+      "viewer": {
+        "successful_source_edits": 2,
+        "author": "gpt-6-astra",
+        "artifact_cases_passed": 8,
+        "artifact_cases_total": 8,
+        "decoded_rrd_rows": 322,
+        "genuine_source_rows": 200,
+        "held_out_synthetic_rows": 122,
+        "paidf_regressions_passed": 24,
+        "source_sha256": "d9f66db32ffc758e7f1c976ea7071ec0856cccb824998f8782fbadb0d0aa2b2b"
+      },
+      "cancelled_worker_tasks_after_takeover": 0,
+      "unresolved_required_repairs": 0,
+      "audits_sha256": {
+        "viewer": "c2f570eb1898838fc3b33faa89f10cab80c41cefa76e3dade0e7298acc641380",
+        "render": "fee9b9d45587928837e394cba7b4630c4d581554e406d2d622d5e6553d3a6e6f"
+      },
+      "accounting_sha256": "751f3c9648901d28eae1ecb94488489474a75e2f6a24f2af294ffd1a696c1d20"
+    },
+    "astra-tofa": {
+      "verified_repairs": 2,
+      "required_repairs": 2,
+      "verified_before_coordinator_exit": true,
+      "operator_interventions_during_arm": 0,
+      "lifecycle_seconds": 632.0985245469492,
+      "coordinator_seconds": 631.9381231009611,
+      "model_price_equivalent_usd": {
+        "minimum": 6.14418684,
+        "maximum": 8.89688784
+      },
+      "pricing_relevant_usage_complete": true,
+      "usage_totals": {
+        "usage_records": 43,
+        "tokens": {
+          "input_tokens": 4152050,
+          "output_tokens": 29291,
+          "cached_input_tokens": 3750976,
+          "cache_write_input_tokens": null,
+          "reasoning_output_tokens": null
+        },
+        "known_tokens": {
+          "input_tokens": 4152050,
+          "output_tokens": 29291,
+          "cached_input_tokens": 3750976,
+          "cache_write_input_tokens": 0,
+          "reasoning_output_tokens": 204
+        },
+        "missing_counter_records": {
+          "input_tokens": 0,
+          "output_tokens": 0,
+          "cached_input_tokens": 0,
+          "cache_write_input_tokens": 42,
+          "reasoning_output_tokens": 42
+        },
+        "priced_records": 43,
+        "unpriced_records": 0,
+        "priced_recorded_cost_usd": {
+          "minimum": 6.14418684,
+          "maximum": 8.89688784
+        }
+      },
+      "models": {
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "usage_records": 13,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 13,
+          "accepted_specialist_responses": 12,
+          "rejected_specialist_responses": 1,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 533412,
+            "output_tokens": 11340,
+            "cached_input_tokens": 360448,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 533412,
+            "output_tokens": 11340,
+            "cached_input_tokens": 360448,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 13,
+            "reasoning_output_tokens": 13
+          },
+          "priced_records": 13,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.74901024,
+            "maximum": 0.74901024
+          }
+        },
+        "gpt-6-astra": {
+          "usage_records": 1,
+          "record_granularity": [
+            "coordinator-turn"
+          ],
+          "recorded_api_calls": null,
+          "accepted_specialist_responses": 0,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "itemized",
+          "rate_options": 2,
+          "tokens": {
+            "input_tokens": 1841177,
+            "output_tokens": 3643,
+            "cached_input_tokens": 1750016,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 204
+          },
+          "known_tokens": {
+            "input_tokens": 1841177,
+            "output_tokens": 3643,
+            "cached_input_tokens": 1750016,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 204
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "priced_records": 1,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 2.843776,
+            "maximum": 5.596477
+          }
+        },
+        "zai-org/GLM-5.3": {
+          "usage_records": 29,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 29,
+          "accepted_specialist_responses": 28,
+          "rejected_specialist_responses": 1,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 1777461,
+            "output_tokens": 14308,
+            "cached_input_tokens": 1640512,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 1777461,
+            "output_tokens": 14308,
+            "cached_input_tokens": 1640512,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 29,
+            "reasoning_output_tokens": 29
+          },
+          "priced_records": 29,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 2.5514006,
+            "maximum": 2.5514006
+          }
+        }
+      },
+      "matched_tool_scope": true,
+      "gpu_allocation": {
+        "gpu_allocation_seconds_lower": 260.0,
+        "gpu_allocation_seconds_upper": 260.28876996040344,
+        "complete_pods": 1,
+        "incomplete_pods": 0
+      },
+      "render": {
+        "successful_source_edits": 2,
+        "author": "zai-org/GLM-5.3",
+        "native_launches": 1,
+        "source_checks_passed": 7,
+        "decoded_pngs": 45,
+        "decoded_video_frames": 45,
+        "identical_native_selected_published_files": 49,
+        "previous_bytes_preserved": true
+      },
+      "viewer": {
+        "successful_source_edits": 2,
+        "author": "gpt-6-astra",
+        "artifact_cases_passed": 8,
+        "artifact_cases_total": 8,
+        "decoded_rrd_rows": 322,
+        "genuine_source_rows": 200,
+        "held_out_synthetic_rows": 122,
+        "paidf_regressions_passed": 24,
+        "source_sha256": "e74d677722eac437fd2d9a5a6539fa94cb0b3dab6bd5dfa6a372c1ac58033775",
+        "recovery": {
+          "primary_model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+          "primary_calls": 13,
+          "primary_successful_edits": 0,
+          "denied_directory_listings": 5,
+          "fallback_model": "zai-org/GLM-5.3",
+          "fallback_calls": 1,
+          "fallback_successful_edits": 0,
+          "rejected_truncated_responses": 2,
+          "completion_tokens_per_truncated_response": 8192,
+          "client_max_tokens_sent": false,
+          "astra_takeovers": 1,
+          "original_worker_status": "cancelled"
+        }
+      },
+      "cancelled_worker_tasks_after_takeover": 1,
+      "unresolved_required_repairs": 0,
+      "audits_sha256": {
+        "viewer": "5ef9604d41fc6d376c44de0b22acb917f82dd04f54e47586985d3ebe618e4fcc",
+        "render": "9ae20928db3f3f0a9369cd24450eaee48510f2d32eefd794273c31468ed6567d"
+      },
+      "accounting_sha256": "187a4915b91e896e74d326d3488fd16f5c6af8c1cd288ee8d682553e935c025b"
+    }
+  },
+  "winner": null,
+  "general_parity_demonstrated": false,
+  "savings_demonstrated": false,
+  "causal_speed_claim_allowed": false,
+  "reconstruction_quality_improvement_measured": false,
+  "setup": {
+    "gpu_allocation": {
+      "gpu_allocation_seconds_lower": 777.0,
+      "gpu_allocation_seconds_upper": 777.8649380207062,
+      "complete_pods": 3,
+      "incomplete_pods": 0
+    },
+    "model_readiness_smokes": [
+      {
+        "lifecycle_seconds": 33.00185691198567,
+        "model_price_equivalent_usd": {
+          "minimum": 0.45335951999999996,
+          "maximum": 0.8802235199999999
+        }
+      },
+      {
+        "lifecycle_seconds": 36.233044477994554,
+        "model_price_equivalent_usd": {
+          "minimum": 0.46530052,
+          "maximum": 0.9021075199999999
+        }
+      }
+    ],
+    "frozen_pair_changed_by_postreview_work": false
+  },
+  "cost_basis": {
+    "kind": "Recorded API-price equivalents, not invoices.",
+    "token_factory_input": "Full input rate; no cache discount assumed.",
+    "astra_range": "Aggregate turn counters do not identify every request context tier.",
+    "prices_observed": "2026-09-23",
+    "sources": [
+      "https://developers.openai.com/api/docs/models/gpt-6-astra",
+      "https://tokenfactory.nebius.com/api/public/models_info"
+    ],
+    "excluded": [
+      "development-agent inference outside measured runners",
+      "human effort",
+      "host compute",
+      "storage",
+      "network",
+      "original retained-checkpoint training, outside both these arm and setup totals"
+    ],
+    "gpu_allocation": "Requested allocation intervals on shared hosts, not kernel time or full-host billing."
+  },
+  "limitations": [
+    "One pair, baseline first; shared-host load and cache warmth uncontrolled.",
+    "Known defects and narrow source grants; not autonomous bug discovery.",
+    "Candidate Python ran in CPU sandbox with real native GPU execution through a trusted broker.",
+    "Final production hardening and runtime improvements were made after measurement.",
+    "Exact operator configuration and raw operational evidence remain outside Git."
+  ],
+  "post_review_validation": {
+    "code_commit": "e5360fc302cce5d7c926fee58d7abdc42809f40c",
+    "included_in_measured_outcomes": false,
+    "render": {
+      "source_checks_passed": 7,
+      "native_launches": 1,
+      "decoded_pngs": 45,
+      "decoded_video_frames": 45,
+      "matching_files": 49,
+      "gpu_allocation_seconds_lower": 262.0,
+      "gpu_allocation_seconds_upper": 262.286229,
+      "collector_path_failure_retained": true,
+      "unchanged_graders_applied_to_retained_evidence": true,
+      "gpu_retry": false,
+      "owned_resources_cleaned": true,
+      "private_verification_sha256": "e51f97a3f108fa4dd38b6a18a4ed094eff36cc481caf629cd6ce20081f672051"
+    },
+    "viewer": {
+      "artifact_cases_passed": 8,
+      "decoded_rrd_rows": 322,
+      "paidf_regressions_passed": 24,
+      "public_verifier_genuine_input_recordings_passed": 2,
+      "viewer_source_sha256": "e37c3d7221292d6b6bc95eb618b62e424be185fd9879eb0c7e261cdc633b9798",
+      "private_verification_sha256": "b11d9859fde18254a1b277819acf0269f4e013f4eb03ca94e35b667ab8fd74dd"
+    },
+    "live_specialist_smoke": {
+      "tasks_completed": 2,
+      "worker_restarts": 2,
+      "model_responses": 11,
+      "models": {
+        "deepseek-ai/DeepSeek-V4-Pro-0813": {
+          "usage_records": 6,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 6,
+          "accepted_specialist_responses": 6,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 52959,
+            "output_tokens": 605,
+            "cached_input_tokens": 9728,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 52959,
+            "output_tokens": 605,
+            "cached_input_tokens": 9728,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 6,
+            "reasoning_output_tokens": 6
+          },
+          "priced_records": 6,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.07230168000000001,
+            "maximum": 0.07230168000000001
+          }
+        },
+        "zai-org/GLM-5.3": {
+          "usage_records": 5,
+          "record_granularity": [
+            "specialist-response"
+          ],
+          "recorded_api_calls": 5,
+          "accepted_specialist_responses": 5,
+          "rejected_specialist_responses": 0,
+          "cache_policy": "full-input",
+          "rate_options": 1,
+          "tokens": {
+            "input_tokens": 27085,
+            "output_tokens": 258,
+            "cached_input_tokens": 16320,
+            "cache_write_input_tokens": null,
+            "reasoning_output_tokens": null
+          },
+          "known_tokens": {
+            "input_tokens": 27085,
+            "output_tokens": 258,
+            "cached_input_tokens": 16320,
+            "cache_write_input_tokens": 0,
+            "reasoning_output_tokens": 0
+          },
+          "missing_counter_records": {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cached_input_tokens": 0,
+            "cache_write_input_tokens": 5,
+            "reasoning_output_tokens": 5
+          },
+          "priced_records": 5,
+          "unpriced_records": 0,
+          "priced_recorded_cost_usd": {
+            "minimum": 0.0390542,
+            "maximum": 0.0390542
+          }
+        }
+      },
+      "model_price_equivalent_usd": 0.11135588,
+      "usage_complete": true,
+      "gpu_workloads": 0,
+      "work": "Repair broken transitions in Cosmos3 PAIDF and Sim2Real workflow copies; validate and plan."
+    }
+  }
+}

@@ -29,6 +29,10 @@ MANUAL_GATES = {
         "requires an explicitly selected, sourced ROS 2 Jazzy runtime; "
         "run with skills/tools/ros2/SKILL.md; no robot or cloud mutation"
     ),
+    "NPA_SPECIALISTS_LIVE": (
+        "uses paid Token Factory inference with independent GLM and DeepSeek workers; "
+        "run the restart and workflow-repair proof in docs/workbench/specialists.md"
+    ),
     "NPA_AGENT_PROVISION_BOOLEAN_LIVE_CONFIG": (
         "requires private connection credentials for an operator-selected isolated CPU agent; "
         "run with npa/tests/e2e/README.md"

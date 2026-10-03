@@ -30,18 +30,27 @@ SUITES = (
     "npa/tests/e2e/test_hosted_rollout_e2e.py",
     "npa/tests/e2e/test_agent_token_factory_e2e.py",
 )
+PROVENANCE_SUITE = "npa/tests/e2e/test_vlm_served_model_live.py"
 
 
 class Results:
-    def __init__(self) -> None:
+    def __init__(
+        self, suites: tuple[str, ...] | None = None, *, provider_contract: bool = True
+    ) -> None:
+        self.suites = SUITES if suites is None else suites
+        self.require_provider_contract = provider_contract
         self.collected: list[str] = []
         self.reports: dict[str, dict[str, Any]] = {}
         self.contract: dict[str, Any] = {}
         self.collection_errors = 0
+        self.deselected = 0
         self.failure_diagnostics: dict[str, list[dict[str, Any]]] = {}
 
     def pytest_collection_finish(self, session: pytest.Session) -> None:
         self.collected = [item.nodeid for item in session.items]
+
+    def pytest_deselected(self, items: list[pytest.Item]) -> None:
+        self.deselected += len(items)
 
     def pytest_collectreport(self, report: pytest.CollectReport) -> None:
         if report.failed:
@@ -83,7 +92,7 @@ class Results:
             "source": None,
             "source_line": None,
         }
-        suite_paths = {Path(suite).resolve(): suite for suite in SUITES}
+        suite_paths = {Path(suite).resolve(): suite for suite in self.suites}
         for entry in call.excinfo.traceback:
             source = suite_paths.get(Path(str(entry.path)).resolve())
             if source is not None:
@@ -123,6 +132,7 @@ class Results:
             "failed": sum(row["failed"] for row in rows),
             "skipped": sum(row["skipped"] for row in rows),
             "collection_errors": self.collection_errors,
+            "deselected": self.deselected,
         }
 
     def complete(self, exit_code: int) -> bool:
@@ -132,7 +142,7 @@ class Results:
                 node.startswith((suite + "::", suite.removeprefix("npa/") + "::"))
                 for node in self.collected
             )
-            for suite in SUITES
+            for suite in self.suites
         )
         return bool(
             exit_code == 0
@@ -142,8 +152,9 @@ class Results:
             and counts["failed"]
             == counts["skipped"]
             == counts["collection_errors"]
+            == counts["deselected"]
             == 0
-            and self.contract.get("passed")
+            and (not self.require_provider_contract or self.contract.get("passed"))
         )
 
 

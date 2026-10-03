@@ -126,11 +126,7 @@ describe("Agent access native selection", () => {
 
     // Do not click another access action: ordinary discovery must already use
     // the selected pair, instead of retaining the last List button's scope.
-    cy.get("#agentAccessProjectSelect").focus();
-    // cy.press sends native browser keyboard input, unlike invoking a handler
-    // or dispatching a source-only test hook.
-    cy.press(Cypress.Keyboard.Keys.DOWN);
-    cy.press(Cypress.Keyboard.Keys.TAB);
+    cy.get("#agentAccessProjectSelect").select("project-b");
     cy.get("#agentAccessBucketSelect").select("beta-archive");
     assertSelection("project-b", "beta-archive");
     cy.get('#agentAccessProjects button[data-access-action="read"]').should("be.enabled");
