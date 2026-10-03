@@ -24,7 +24,10 @@ from typing import Any
 import pytest
 
 from npa.workbench import vlm_eval
-from npa.live_verification.vlm_audit_controls import audit_controls
+from npa.live_verification.vlm_audit_controls import (
+    audit_controls,
+    configured_audit_cases,
+)
 
 pytestmark = [pytest.mark.e2e, pytest.mark.token_factory_e2e]
 AUDIT_CASES = ("paired-judges",)
@@ -125,7 +128,7 @@ def _audit_parameters() -> list[tuple[str, str]]:
     config = json.loads(Path(path).read_text())
     return [
         (case, control)
-        for case in AUDIT_CASES
+        for case in configured_audit_cases(config, available_cases=AUDIT_CASES)
         for control in audit_controls(config["cases"][case])
     ]
 

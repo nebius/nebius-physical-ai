@@ -14,6 +14,8 @@ from npa.clients.token_factory import DEFAULT_BASE_URL
 
 PAIRED_MODELS = ("MiniMaxAI/MiniMax-M3", "google/gemma-3-27b-it")
 CONTROL_LABELS = {"inside": True, "outside": False, "blank": False}
+AUDIT_CASES_BY_KIND = {"paired": "paired-judges"}
+GENERATED_CONTROL_NAMES_BY_KIND = {"paired": tuple(CONTROL_LABELS)}
 PAIRED_CONTROL_TASK = (
     "Describe the visible shapes and their positions. Judge whether a red square "
     "is fully inside the green rectangular outline."
@@ -41,6 +43,51 @@ def audit_controls(case: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if any(not isinstance(value, dict) for value in controls.values()):
         raise ValueError("audit control must be an object")
     return controls
+
+
+def configured_audit_cases(
+    config: dict[str, Any],
+    *,
+    available_cases: tuple[str, ...],
+    required_kind: str | None = None,
+) -> tuple[str, ...]:
+    """Select one validated audit family without collecting unrelated operations.
+
+    Args:
+        config: Private generated or operator audit configuration.
+        available_cases: Operations implemented by the caller.
+        required_kind: Explicit runner selection, if supplied.
+    Returns:
+        The single configured case; generated controls retain their frozen order.
+    Raises:
+        ValueError: Selection is unknown, mixed, unavailable, or inconsistent.
+    """
+    cases = config.get("cases") if isinstance(config, dict) else None
+    if not isinstance(cases, dict) or len(cases) != 1:
+        raise ValueError("invalid_audit_case_selection")
+    case = next(iter(cases))
+    kind = next(
+        (key for key, value in AUDIT_CASES_BY_KIND.items() if value == case), None
+    )
+    if kind is None or case not in available_cases or not isinstance(cases[case], dict):
+        raise ValueError("invalid_audit_case_selection")
+    if (required_kind is not None and required_kind != kind) or (
+        "audit_kind" in config and config["audit_kind"] != kind
+    ):
+        raise ValueError("invalid_audit_case_selection")
+    if "control_schema" in config:
+        _validate_generated_controls(config, case, kind)
+    return (case,)
+
+
+def _validate_generated_controls(config: dict[str, Any], case: str, kind: str) -> None:
+    controls = audit_controls(config["cases"][case])
+    if (
+        config.get("audit_kind") != kind
+        or config["control_schema"] != f"npa.{kind}_visual_controls.v1"
+        or tuple(controls) != GENERATED_CONTROL_NAMES_BY_KIND.get(kind)
+    ):
+        raise ValueError("invalid_generated_audit_controls")
 
 
 def _control_png(name: str) -> bytes:
@@ -84,6 +131,7 @@ def generated_paired_config(directory: Path) -> dict[str, Any]:
             },
         }
     return {
+        "audit_kind": "paired",
         "control_schema": "npa.paired_visual_controls.v1",
         "cases": {"paired-judges": {"controls": controls}},
     }

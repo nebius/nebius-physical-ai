@@ -64,6 +64,32 @@ def _report():
     }
 
 
+@pytest.mark.parametrize(
+    "mutation", ["wrong-kind", "unknown-kind", "mixed", "unknown-case"]
+)
+def test_invalid_audit_selection_cannot_execute_or_pass(
+    monkeypatch, tmp_path, mutation
+):
+    runner = _runner()
+    path = _config(monkeypatch, tmp_path)
+    config = json.loads(path.read_text())
+    if mutation == "wrong-kind":
+        config["audit_kind"] = "preference"
+    elif mutation == "unknown-kind":
+        config["audit_kind"] = "unknown"
+    elif mutation == "mixed":
+        config["cases"]["blinded-preference"] = config["cases"]["paired-judges"]
+    else:
+        config["cases"] = {"unknown": config["cases"]["paired-judges"]}
+    path.write_text(json.dumps(config))
+    monkeypatch.setattr(runner, "_execute", lambda *_: pytest.fail("must not execute"))
+    target = tmp_path / "evidence"
+    assert runner.main(["--audit-kind", "paired", "--evidence-dir", str(target)]) == 1
+    receipt = json.loads((target / "receipt.json").read_text())
+    assert receipt["failure"] == "invalid_audit_case_selection"
+    assert receipt["passed"] is False and not any(receipt["counts"].values())
+
+
 def _write_passing_execution(target, count):
     (target / "execution.json").write_text(
         json.dumps(

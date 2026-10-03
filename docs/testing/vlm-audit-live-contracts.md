@@ -85,6 +85,14 @@ Keep the configuration outside Git and owner-readable only (`0600`). Set
 }
 ```
 
+Configurations must contain exactly one supported case family. The optional
+top-level `audit_kind` is `paired` for this lane and must match `paired-judges`;
+unknown or mixed families fail before execution. Generated configurations require
+`audit_kind: paired`, `control_schema: npa.paired_visual_controls.v1`, and exactly
+the ordered `inside`, `outside`, `blank` controls. Collection selects this
+validated family even when other audit operations are installed; it never
+collects an unrelated lane or ignores an extra configured case.
+
 Replace the task, rubric, and expectations with the frozen control definition;
 do not change them to make a response pass. The runner assigns `output_path`
 inside its new evidence directory, leaving the source configuration unchanged.

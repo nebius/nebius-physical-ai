@@ -102,6 +102,61 @@ def test_generated_config_selects_all_controls_and_private_outputs(
     ]
 
 
+def test_combined_registry_collects_only_the_configured_generated_kind(
+    monkeypatch, tmp_path
+):
+    monkeypatch.delenv("NPA_VLM_AUDIT_LIVE_CONFIG", raising=False)
+    suite = _module("npa/tests/e2e/test_vlm_audits_live.py")
+    monkeypatch.setattr(suite, "AUDIT_CASES", ("paired-judges", "blinded-preference"))
+    monkeypatch.setitem(
+        vlm_audit_controls.AUDIT_CASES_BY_KIND, "preference", "blinded-preference"
+    )
+    config = generated_paired_config(tmp_path / "controls")
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config))
+    monkeypatch.setenv("NPA_VLM_AUDIT_LIVE_CONFIG", str(path))
+    monkeypatch.setenv("NPA_INTEGRATION_E2E", "1")
+    assert suite._audit_parameters() == [
+        ("paired-judges", name) for name in ("inside", "outside", "blank")
+    ]
+
+
+@pytest.mark.parametrize("kind", ["preference", "unknown", None, False])
+def test_collection_rejects_mismatched_or_malformed_kind(monkeypatch, tmp_path, kind):
+    monkeypatch.delenv("NPA_VLM_AUDIT_LIVE_CONFIG", raising=False)
+    suite = _module("npa/tests/e2e/test_vlm_audits_live.py")
+    config = generated_paired_config(tmp_path / "controls")
+    config["audit_kind"] = kind
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config))
+    monkeypatch.setenv("NPA_VLM_AUDIT_LIVE_CONFIG", str(path))
+    monkeypatch.setenv("NPA_INTEGRATION_E2E", "1")
+    with pytest.raises(ValueError, match="invalid_audit_case_selection"):
+        suite._audit_parameters()
+
+
+@pytest.mark.parametrize(
+    "mutation", ["missing", "extra", "reordered", "schema", "missing_kind"]
+)
+def test_generated_collection_rejects_changed_cardinality_or_order(tmp_path, mutation):
+    config = generated_paired_config(tmp_path / "controls")
+    controls = config["cases"]["paired-judges"]["controls"]
+    if mutation == "missing":
+        controls.pop("blank")
+    elif mutation == "extra":
+        controls["extra"] = controls["blank"]
+    elif mutation == "reordered":
+        controls["inside"] = controls.pop("inside")
+    elif mutation == "missing_kind":
+        config.pop("audit_kind")
+    else:
+        config["control_schema"] = "npa.preference_visual_controls.v1"
+    with pytest.raises(ValueError, match="invalid_generated_audit_controls"):
+        vlm_audit_controls.configured_audit_cases(
+            config, available_cases=("paired-judges",), required_kind="paired"
+        )
+
+
 def test_generated_lane_does_not_fall_back_to_saved_key(monkeypatch, tmp_path):
     runner = _module("npa/scripts/vlm_audit_live_recheck.py")
     monkeypatch.setenv("NEBIUS_TOKEN_FACTORY_KEY", "")

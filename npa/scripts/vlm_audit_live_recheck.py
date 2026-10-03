@@ -29,6 +29,7 @@ from npa.literal_values import require_boolean, require_integer, require_number
 from npa.live_verification.vlm_audit_controls import (
     PAIRED_MODELS,
     audit_controls,
+    configured_audit_cases,
     generated_paired_config,
 )
 
@@ -63,7 +64,13 @@ def _prepare_config(target: Path, *, generated: bool = False) -> Path:
         if generated
         else _operator_config()
     )
-    case = config["cases"]["paired-judges"]
+    try:
+        selected = configured_audit_cases(
+            config, available_cases=("paired-judges",), required_kind="paired"
+        )
+    except ValueError:
+        raise _AuditConfigurationError("invalid_audit_case_selection") from None
+    case = config["cases"][selected[0]]
     controls = audit_controls(case)
     for index, control in enumerate(controls.values()):
         output = target / "paired-judges"

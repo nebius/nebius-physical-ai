@@ -475,7 +475,9 @@ The input bundle must come from real policy rollouts; this check does not launch
 training, establish policy quality, or claim a complete Sim2Real pipeline run.
 Use `NPA_CONFIG_DIR` to select an isolated operator configuration.
 
-Paired hosted VLM audits have a separate executable lane:
+Paired hosted VLM audits have a separate executable lane. Configurations select
+exactly one supported case family; optional `audit_kind: paired` must match it.
+Generated controls require that kind and the exact inside/outside/blank panel:
 `npa/.venv/bin/python npa/scripts/vlm_audit_live_recheck.py --evidence-dir "$NPA_PRIVATE_EVIDENCE_DIR"`.
 Set `NPA_VLM_AUDIT_LIVE_CONFIG` to an owner-only JSON file with the two exact
 model IDs, input fixture, credential environment-variable name, task/rubric, and
