@@ -245,13 +245,23 @@ def test_paused_profile_and_task_do_not_block_other_specialist(configuration):
 
 
 @pytest.mark.parametrize(
-    "mutation", ["model", "length", "empty", "invalid_arguments", "missing_choices"]
+    "mutation",
+    [
+        "model",
+        "versioned_model",
+        "length",
+        "empty",
+        "invalid_arguments",
+        "missing_choices",
+    ],
 )
 def test_unusable_model_response_never_executes_tools(configuration, mutation):
     model = configuration.profiles[0].model
     response = _response(model, tool="run_operation", arguments={"name": "check"})
     if mutation == "model":
         response["model"] = "different/model"
+    elif mutation == "versioned_model":
+        response["model"] = model + "-20261002"
     elif mutation == "length":
         response["choices"][0]["finish_reason"] = "length"
     elif mutation == "empty":
@@ -364,6 +374,82 @@ def test_followup_and_authentication_share_real_coordinator(configuration, monke
             "synthetic-service-credential-long"
             not in client.get("/api/status", headers=headers).text
         )
+
+
+@pytest.mark.parametrize("credential", ["wrong", "synthetic-service-credential-lonX"])
+def test_wrong_bearer_cannot_read_or_submit(configuration, monkeypatch, credential):
+    team = _team(configuration, [])
+    token = "synthetic-service-credential-long"
+    monkeypatch.setenv("NPA_SPECIALISTS_TOKEN", token)
+    with TestClient(create_app("unused", with_workers=False, team=team)) as client:
+        headers = {"Authorization": "Bearer " + credential}
+        responses = [
+            client.get("/api/status", headers=headers),
+            client.post("/api/tasks", headers=headers, json={"goal": "inspect"}),
+        ]
+        for response in responses:
+            assert response.status_code == 401
+            assert response.headers["WWW-Authenticate"] == "Bearer"
+        assert team.store._list() == []
+        assert (
+            client.get(
+                "/api/status", headers={"Authorization": "Bearer " + token}
+            ).status_code
+            == 200
+        )
+
+
+@pytest.mark.parametrize(
+    "identity", ["..", "../escape", "valid/escape", "task\nname", "-task", "a" * 129]
+)
+def test_unsafe_task_identity_is_rejected_before_enqueue(configuration, identity):
+    team = _team(configuration, [])
+    with pytest.raises(ValueError, match="task id"):
+        team.submit("Inspect", task_id=identity, specialist="simulation")
+    assert team.store._list() == []
+
+
+def test_parent_segment_cannot_read_sibling_outside_scope(configuration):
+    profile = configuration.profiles[0]
+    sibling = profile.workspace / "outside.txt"
+    sibling.write_text("outside the granted source directory")
+    team = _team(configuration, [])
+    tools = WorkbenchTools(profile, team.store, "scope")
+    call = _response(
+        profile.model, tool="read_file", arguments={"path": "src/../outside.txt"}
+    )["choices"][0]["message"]["tool_calls"][0]
+    result = tools.execute(call)
+    assert result["ok"] is False
+    assert sibling.read_text() not in json.dumps(result)
+
+
+@pytest.mark.parametrize("unsafe", ["owner", "permissions", "hardlink"])
+@pytest.mark.parametrize("filename", ["tasks.sqlite", "journal-initialize.lock"])
+def test_store_rejects_unsafe_runtime_files(tmp_path, monkeypatch, unsafe, filename):
+    import os
+    from types import SimpleNamespace
+
+    from npa.agent_backend.specialists import store
+
+    directory = tmp_path / "state"
+    store.TaskStore(directory)
+    path = directory / filename
+    if unsafe == "owner":
+        actual_fstat = os.fstat
+
+        def other_owner(descriptor):
+            info = actual_fstat(descriptor)
+            return SimpleNamespace(
+                st_uid=info.st_uid + 1, st_mode=info.st_mode, st_nlink=info.st_nlink
+            )
+
+        monkeypatch.setattr(store.os, "fstat", other_owner)
+    elif unsafe == "permissions":
+        path.chmod(0o640)
+    else:
+        os.link(path, tmp_path / "linked-runtime-file")
+    with pytest.raises(ValueError, match="private and singly linked"):
+        store.TaskStore(directory)
 
 
 def test_jev_fallback_and_explicit_assignment(configuration, monkeypatch):

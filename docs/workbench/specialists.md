@@ -58,6 +58,12 @@ configuration location and adjust the workspace directories. The example gives
 GLM a Cosmos role and DeepSeek V4 a Sim2Real role. Model availability depends on
 your Token Factory account; verify exact IDs before running.
 
+The response must echo the exact configured model ID. Providers that return a
+different version-stamped name for an alias are not supported by this check;
+the task enters `needs_attention` before executing its tools, without automatic
+fallback. Configure a concrete model ID only if the endpoint both accepts and
+echoes it. This keeps unexpected model selection visible in the journal.
+
 Separate checkouts let roles edit and run concurrently on one host; a VM per
 specialist is not required. Give each role separate run and output locations.
 Keep per-profile ownership locks: they protect one role from duplicate workers
@@ -93,6 +99,12 @@ Choose a specialist or automatic routing, enter a goal, and submit. The monitor
 shows durable task state, the actual responding model, token usage, tool
 receipts, failures, final answers and source patches. The CLI and Python SDK
 share exactly the same coordinator.
+
+Finite CLI commands (`submit`, `status`, `pause`, `cancel`, `reconcile`) accept
+`--output-format json`, which is also the default and currently the only format.
+Their stdout contract emits one JSON document, including command errors;
+incidental command diagnostics are removed from stdout. The long-running
+`serve` and `worker` commands retain their service/logging behavior.
 
 For large source files, agents can request an inclusive, 1-based range with
 `read_file(path, start_line=100, end_line=160)`. Omitting the range reads the whole

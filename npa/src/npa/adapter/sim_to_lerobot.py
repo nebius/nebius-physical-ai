@@ -10,6 +10,11 @@ each with:
 
 The output is a valid LeRobotDataset v3.0 directory that can be loaded
 with ``LeRobotDataset("path/to/output")``.
+
+Preflight maps and validates all episodes before output creation, then conversion
+loads one episode at a time and merges statistics without retaining camera data.
+Input files must remain unchanged during conversion. Scalar parquet rows and
+episode metadata still accumulate with dataset length.
 """
 
 from __future__ import annotations
@@ -227,10 +232,12 @@ def discover_episodes(input_dir: Path) -> list[Path]:
     return episodes
 
 
-def _load_episode_array(ep_dir: Path, ep_idx: int, name: str) -> np.ndarray:
+def _load_episode_array(
+    ep_dir: Path, ep_idx: int, name: str, *, mmap_mode: str | None = None
+) -> np.ndarray:
     """Load one episode array, mapping unreadable files onto AdapterError."""
     try:
-        return np.load(ep_dir / f"{name}.npy")
+        return np.load(ep_dir / f"{name}.npy", mmap_mode=mmap_mode)
     except FileNotFoundError:
         raise
     except OSError as error:
@@ -277,10 +284,12 @@ def _validate_camera_stream(
         )
 
 
-def _load_episode_arrays(ep_dir: Path, ep_idx: int) -> dict[str, np.ndarray]:
+def _load_episode_arrays(
+    ep_dir: Path, ep_idx: int, *, mmap_mode: str | None = None
+) -> dict[str, np.ndarray]:
     """Load the four required episode arrays and validate their streams."""
     arrays = {
-        name: _load_episode_array(ep_dir, ep_idx, name)
+        name: _load_episode_array(ep_dir, ep_idx, name, mmap_mode=mmap_mode)
         for name in ("obs_workspace", "obs_wrist", "state", "actions")
     }
     ep_len = int(arrays["state"].shape[0]) if arrays["state"].ndim == 2 else -1
@@ -334,7 +343,11 @@ def _check_episode_matches_reference(
 
 
 def _load_and_validate_episode(
-    ep_dir: Path, ep_idx: int, reference: dict[str, int] | None
+    ep_dir: Path,
+    ep_idx: int,
+    reference: dict[str, int] | None,
+    *,
+    mmap_mode: str | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, int]]:
     """Load and fully validate one episode against the dataset-wide contract.
 
@@ -342,18 +355,52 @@ def _load_and_validate_episode(
         ep_dir: Episode directory holding the four numpy arrays.
         ep_idx: Zero-based episode position used in error messages.
         reference: Shapes of the first episode, or None to become the reference.
+        mmap_mode: Optional NumPy mapping mode for bounded preflight reads.
     Returns:
         The loaded arrays and the dataset-wide shape reference.
     Raises:
         AdapterError: Lengths, dtypes, dimensions or finiteness violate the contract.
     """
-    arrays = _load_episode_arrays(ep_dir, ep_idx)
+    arrays = _load_episode_arrays(ep_dir, ep_idx, mmap_mode=mmap_mode)
     _check_cameras_agree(arrays, ep_idx)
     shapes = _episode_shape_reference(arrays)
     if reference is None:
         return arrays, shapes
     _check_episode_matches_reference(arrays, ep_idx, reference)
     return arrays, reference
+
+
+def _preflight_episodes(episodes: list[Path]) -> dict[str, int]:
+    """Validate all inputs before output creation, retaining only shape metadata."""
+    reference = None
+    for index, directory in enumerate(episodes):
+        arrays, reference = _load_and_validate_episode(
+            directory, index, reference, mmap_mode="r"
+        )
+        del arrays
+    return reference
+
+
+def _merge_feature_stats(previous: dict | None, current: dict) -> dict:
+    """Merge per-episode population moments without retaining source arrays."""
+    if previous is None:
+        return current
+    before, added = previous["count"][0], current["count"][0]
+    count = before + added
+    mean_before, mean_added = np.asarray(previous["mean"]), np.asarray(current["mean"])
+    delta = mean_added - mean_before
+    squared_deviations = (
+        np.square(previous["std"]) * before
+        + np.square(current["std"]) * added
+        + delta * delta * (before * added / count)
+    )
+    return {
+        "min": np.minimum(previous["min"], current["min"]).tolist(),
+        "max": np.maximum(previous["max"], current["max"]).tolist(),
+        "mean": (mean_before + delta * (added / count)).tolist(),
+        "std": np.sqrt(squared_deviations / count).tolist(),
+        "count": [count],
+    }
 
 
 def _validate_fps(fps: Any) -> float:
@@ -422,12 +469,7 @@ def convert(
     tasks = list(dict.fromkeys(episode_tasks))
     task_indices = {name: index for index, name in enumerate(tasks)}
 
-    # Validate every episode fully before creating any output or encoding video.
-    loaded: list[dict[str, np.ndarray]] = []
-    reference: dict[str, int] | None = None
-    for ep_idx, ep_dir in enumerate(episodes):
-        arrays, reference = _load_and_validate_episode(ep_dir, ep_idx, reference)
-        loaded.append(arrays)
+    reference = _preflight_episodes(episodes)
     n_state = reference["n_state"]
     n_actions = reference["n_actions"]
     img_h, img_w = reference["img_h"], reference["img_w"]
@@ -442,27 +484,18 @@ def convert(
 
     all_data_rows: list[dict[str, Any]] = []
     episode_meta_rows: list[dict[str, Any]] = []
-    global_stats: dict[str, list[np.ndarray]] = {
-        "observation.images.workspace": [],
-        "observation.images.wrist": [],
-        "observation.state": [],
-        "action": [],
-        "timestamp": [],
-        "frame_index": [],
-        "episode_index": [],
-        "index": [],
-        "task_index": [],
-    }
+    global_stats: dict[str, dict[str, Any]] = {}
     global_index = 0
     total_frames = 0
 
     for ep_idx, ep_dir in enumerate(episodes):
         _print_progress(f"Processing episode {ep_idx}/{n_episodes}")
 
-        obs_workspace = loaded[ep_idx]["obs_workspace"]
-        obs_wrist = loaded[ep_idx]["obs_wrist"]
-        state = loaded[ep_idx]["state"]
-        actions = loaded[ep_idx]["actions"]
+        arrays, _ = _load_and_validate_episode(ep_dir, ep_idx, reference)
+        obs_workspace = arrays["obs_workspace"]
+        obs_wrist = arrays["obs_wrist"]
+        state = arrays["state"]
+        actions = arrays["actions"]
 
         ep_len = state.shape[0]
         # ── Encode videos ───────────────────────────────────────────
@@ -510,8 +543,10 @@ def convert(
         }
         ep_stats = _compute_episode_stats(ep_arrays, video_keys)
 
-        for key in global_stats:
-            global_stats[key].append(ep_arrays[key])
+        for key, feature_stats in ep_stats.items():
+            global_stats[key] = _merge_feature_stats(
+                global_stats.get(key), feature_stats
+            )
 
         # ── Episode metadata row ────────────────────────────────────
         ep_meta: dict[str, Any] = {
@@ -583,13 +618,9 @@ def convert(
     _print_progress("Computing global stats...")
 
     # ── Compute and write global stats ──────────────────────────────
-    stats: dict[str, dict[str, Any]] = {}
-    for key, arr_list in global_stats.items():
-        stats[key] = _compute_feature_stats(arr_list, is_video=key in video_keys)
-
     stats_path = output_dir / "meta" / "stats.json"
     with stats_path.open("w") as f:
-        json.dump(stats, f, indent=2)
+        json.dump(global_stats, f, indent=2)
 
     _print_progress("Writing info.json...")
 
