@@ -1,0 +1,418 @@
+{
+  "schema": "npa.sanitized-caption-thinking-evidence/v1",
+  "original_execution_head": "26e6f8abec78d4c7bf0bd988c61b0a21d65d5122",
+  "original_execution_tree": "f9a26b42c6733e843f618c2a628e7a3e90a57fd0",
+  "current_source_bridge_head": "634ff18dcef5a18bb843ac5f375b7cdb92450824",
+  "main_bridge": "f1ecd4255131374c417cdbb1f6c3e0d84b2a3514",
+  "source_bindings": [
+    {
+      "path": "npa/src/npa/workbench/token_factory/__init__.py",
+      "sha256": "271157275009cf01d2c9152e22826d5e4bdfc0054edc0bd30fc4a67b2b770d49"
+    },
+    {
+      "path": "npa/src/npa/clients/token_factory.py",
+      "sha256": "841c125019303b0910000270d2279756118d808bcd68da868822411776ece211"
+    },
+    {
+      "path": "npa/src/npa/cli/workbench/token_factory.py",
+      "sha256": "7ba8623f6308cf6cae1ce523a6657b74807f923a29d4ddb460fef4024d0993a0"
+    },
+    {
+      "path": "npa/src/npa/sdk/workbench/token_factory.py",
+      "sha256": "58fc897fbc3a93eca88618eb14a1ce47a7d8b3cd8e92593e8e59c1f57ad4bbc0"
+    }
+  ],
+  "protocol": {
+    "instruction": "Describe only the visible shapes and their colors. State when no shape is visible.",
+    "thinking": [
+      null,
+      false,
+      true
+    ],
+    "temperature": 0,
+    "models": [
+      "MiniMaxAI/MiniMax-M3",
+      "openbmb/MiniCPM-V-4_5"
+    ],
+    "blank_controls_thinking": false
+  },
+  "cases": [
+    {
+      "case_index": 1,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "thinking": null,
+      "image_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "status": "completed",
+      "item_status": "completed",
+      "failed_count": 0,
+      "decoded_caption": "A green circle is visible in the center of the image.",
+      "response_sha256": "ffa7439ca1aae65a8181b45fac0d8303cac8a109133bdf979c8948cd962db41c",
+      "http_status": 200,
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 13,
+        "prompt_tokens": 246,
+        "total_tokens": 259,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": null,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 246
+      },
+      "generation_controls": {
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        },
+        "temperature": 0,
+        "max_tokens": 512
+      }
+    },
+    {
+      "case_index": 2,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "thinking": false,
+      "image_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "status": "completed",
+      "item_status": "completed",
+      "failed_count": 0,
+      "decoded_caption": "A green circle is visible in the center of the image.",
+      "response_sha256": "88c22985c8e7815d867f7462761a25205bb072a244ffe1bca3bba81acb7a7659",
+      "http_status": 200,
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 13,
+        "prompt_tokens": 246,
+        "total_tokens": 259,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": null,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 246
+      },
+      "generation_controls": {
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        },
+        "temperature": 0,
+        "max_tokens": 512
+      }
+    },
+    {
+      "case_index": 3,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "thinking": true,
+      "image_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "status": "completed",
+      "item_status": "completed",
+      "failed_count": 0,
+      "decoded_caption": "A green circle is visible on a white background.",
+      "response_sha256": "782679417a12f6724b5fc955e3f25d6ffddf3bff7978c78cf8212674c65e414d",
+      "http_status": 200,
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 40,
+        "prompt_tokens": 256,
+        "total_tokens": 296,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 28,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": null,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 256
+      },
+      "generation_controls": {
+        "chat_template_kwargs": {
+          "thinking_mode": "enabled"
+        },
+        "temperature": 0,
+        "max_tokens": 512
+      }
+    },
+    {
+      "case_index": 4,
+      "model": "MiniMaxAI/MiniMax-M3",
+      "thinking": false,
+      "image_sha256": "c69f9803560153189c600c15cc7cc4dd5310e927098a96e08c70a762ad40969e",
+      "status": "failed",
+      "item_status": "image_unavailable",
+      "failed_count": 1,
+      "decoded_caption": "NO IMAGE RECEIVED",
+      "response_sha256": "e39900520171d38712dc1be2ebdf40d88233ef847c4864e418b838cdaa7debd4",
+      "http_status": 200,
+      "served_model": "MiniMaxAI/MiniMax-M3",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 5,
+        "prompt_tokens": 246,
+        "total_tokens": 251,
+        "completion_tokens_details": {
+          "accepted_prediction_tokens": null,
+          "audio_tokens": null,
+          "reasoning_tokens": 0,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": null,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": 246
+      },
+      "generation_controls": {
+        "chat_template_kwargs": {
+          "thinking_mode": "disabled"
+        },
+        "temperature": 0,
+        "max_tokens": 512
+      }
+    },
+    {
+      "case_index": 5,
+      "model": "openbmb/MiniCPM-V-4_5",
+      "thinking": null,
+      "image_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "status": "completed",
+      "item_status": "completed",
+      "failed_count": 0,
+      "decoded_caption": "A green circle is visible on a white background.",
+      "response_sha256": "c761cbce0e03129b48ff9c35025ec9b9fa159f7c7313fbd738529f5d8953d685",
+      "http_status": 200,
+      "served_model": "openbmb/MiniCPM-V-4_5",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 11,
+        "prompt_tokens": 110,
+        "total_tokens": 121,
+        "completion_tokens_details": null,
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 80
+        }
+      },
+      "generation_controls": {
+        "chat_template_kwargs": null,
+        "temperature": 0,
+        "max_tokens": 512
+      }
+    },
+    {
+      "case_index": 6,
+      "model": "openbmb/MiniCPM-V-4_5",
+      "thinking": false,
+      "image_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "status": "completed",
+      "item_status": "completed",
+      "failed_count": 0,
+      "decoded_caption": "A green circle is visible on a white background.",
+      "response_sha256": "7fbdeccce9bb156679bca8e22ec813ef94cee166fad97233563a6b2ad48e4009",
+      "http_status": 200,
+      "served_model": "openbmb/MiniCPM-V-4_5",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 11,
+        "prompt_tokens": 110,
+        "total_tokens": 121,
+        "completion_tokens_details": null,
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 96
+        }
+      },
+      "generation_controls": {
+        "chat_template_kwargs": {
+          "thinking": false
+        },
+        "temperature": 0,
+        "max_tokens": 512
+      }
+    },
+    {
+      "case_index": 7,
+      "model": "openbmb/MiniCPM-V-4_5",
+      "thinking": true,
+      "image_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "status": "completed",
+      "item_status": "completed",
+      "failed_count": 0,
+      "decoded_caption": "A green circle is visible on a white background.",
+      "response_sha256": "f536870ddbcdd1e45af300d0272a4a7fb009dc6cd9e27b901f36395be4e36c1e",
+      "http_status": 200,
+      "served_model": "openbmb/MiniCPM-V-4_5",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 11,
+        "prompt_tokens": 110,
+        "total_tokens": 121,
+        "completion_tokens_details": null,
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 96
+        }
+      },
+      "generation_controls": {
+        "chat_template_kwargs": {
+          "thinking": true
+        },
+        "temperature": 0,
+        "max_tokens": 512
+      }
+    },
+    {
+      "case_index": 8,
+      "model": "openbmb/MiniCPM-V-4_5",
+      "thinking": false,
+      "image_sha256": "c69f9803560153189c600c15cc7cc4dd5310e927098a96e08c70a762ad40969e",
+      "status": "failed",
+      "item_status": "image_unavailable",
+      "failed_count": 1,
+      "decoded_caption": "NO IMAGE RECEIVED.",
+      "response_sha256": "99035aaf9b28fc4738bb56d1bd638adfac3d36f8befe11d429bee673d8bbf2e8",
+      "http_status": 200,
+      "served_model": "openbmb/MiniCPM-V-4_5",
+      "finish_reason": "stop",
+      "usage": {
+        "completion_tokens": 6,
+        "prompt_tokens": 110,
+        "total_tokens": 116,
+        "completion_tokens_details": null,
+        "prompt_tokens_details": {
+          "audio_tokens": null,
+          "cached_tokens": 80
+        }
+      },
+      "generation_controls": {
+        "chat_template_kwargs": {
+          "thinking": false
+        },
+        "temperature": 0,
+        "max_tokens": 512
+      }
+    }
+  ],
+  "limitations": [
+    "Synthetic visual caption capability and request-control propagation, not model-quality calibration.",
+    "MiniMax enabled case reports 28 reasoning tokens; no reasoning trace published.",
+    "Generic MiniCPM thinking field reached actual provider requests; absent reasoning metadata cannot prove it was honored.",
+    "Both blank controls produced unavailable-image sentinels and persisted failures; not a successful blank caption.",
+    "Only these fixed executions are measured; no label/threshold tuning or retry-until-favorable.",
+    "Independent AI composition review is not independent human approval."
+  ],
+  "request_image_bindings": [
+    {
+      "case_index": 1,
+      "source_png_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "submitted_png_sha256": "03abc6318e68c8ebca196ce72c33505ffdbc65f44e3e996c6ffcfafd153a26e5",
+      "decoded_rgb_sha256": "b9dbdeb4d8c688fc0c370f78b42740dadcd31b31675c798e9d91acf7e0e8a00c",
+      "decoded_dimensions": [
+        192,
+        192
+      ],
+      "parsed_request_canonical_sha256": "791614b1207bcfc38eaa7b9143f323e59475ca95ed6db6d4861ef8fb3d946bb3",
+      "source_and_submitted_decoded_pixels_equal": true,
+      "not_request_wire_hash": true
+    },
+    {
+      "case_index": 2,
+      "source_png_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "submitted_png_sha256": "03abc6318e68c8ebca196ce72c33505ffdbc65f44e3e996c6ffcfafd153a26e5",
+      "decoded_rgb_sha256": "b9dbdeb4d8c688fc0c370f78b42740dadcd31b31675c798e9d91acf7e0e8a00c",
+      "decoded_dimensions": [
+        192,
+        192
+      ],
+      "parsed_request_canonical_sha256": "791614b1207bcfc38eaa7b9143f323e59475ca95ed6db6d4861ef8fb3d946bb3",
+      "source_and_submitted_decoded_pixels_equal": true,
+      "not_request_wire_hash": true
+    },
+    {
+      "case_index": 3,
+      "source_png_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "submitted_png_sha256": "03abc6318e68c8ebca196ce72c33505ffdbc65f44e3e996c6ffcfafd153a26e5",
+      "decoded_rgb_sha256": "b9dbdeb4d8c688fc0c370f78b42740dadcd31b31675c798e9d91acf7e0e8a00c",
+      "decoded_dimensions": [
+        192,
+        192
+      ],
+      "parsed_request_canonical_sha256": "9c73f5aa17337aa79537226cf3863de7e96e124a8475e9d5f13696a4925cb038",
+      "source_and_submitted_decoded_pixels_equal": true,
+      "not_request_wire_hash": true
+    },
+    {
+      "case_index": 4,
+      "source_png_sha256": "c69f9803560153189c600c15cc7cc4dd5310e927098a96e08c70a762ad40969e",
+      "submitted_png_sha256": "726bfe3d027b84c8500f73dcc02ed54d818ec7d6158ea2485fbc4a7579e68561",
+      "decoded_rgb_sha256": "be1e5a32fff9f186f58214b34b996d6336fd87609116d7eb7fe643b81a68bb10",
+      "decoded_dimensions": [
+        192,
+        192
+      ],
+      "parsed_request_canonical_sha256": "a5f9fb9836c76dda90e91e65f5a9f8029b771af1bdd041f66e9d6361417bdb2a",
+      "source_and_submitted_decoded_pixels_equal": true,
+      "not_request_wire_hash": true
+    },
+    {
+      "case_index": 5,
+      "source_png_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "submitted_png_sha256": "03abc6318e68c8ebca196ce72c33505ffdbc65f44e3e996c6ffcfafd153a26e5",
+      "decoded_rgb_sha256": "b9dbdeb4d8c688fc0c370f78b42740dadcd31b31675c798e9d91acf7e0e8a00c",
+      "decoded_dimensions": [
+        192,
+        192
+      ],
+      "parsed_request_canonical_sha256": "ff28ea5345b13b017bab09b1701ce0b057eb5d78239bc47fa5e5a3f2b4af888b",
+      "source_and_submitted_decoded_pixels_equal": true,
+      "not_request_wire_hash": true
+    },
+    {
+      "case_index": 6,
+      "source_png_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "submitted_png_sha256": "03abc6318e68c8ebca196ce72c33505ffdbc65f44e3e996c6ffcfafd153a26e5",
+      "decoded_rgb_sha256": "b9dbdeb4d8c688fc0c370f78b42740dadcd31b31675c798e9d91acf7e0e8a00c",
+      "decoded_dimensions": [
+        192,
+        192
+      ],
+      "parsed_request_canonical_sha256": "5934d5c4d6eb620611640bef81f5c51d1593c1022c9225323ff548d14e4a86db",
+      "source_and_submitted_decoded_pixels_equal": true,
+      "not_request_wire_hash": true
+    },
+    {
+      "case_index": 7,
+      "source_png_sha256": "14d38988a04f60c0f600ba45a18601640a28bb567ea6c7f742c2d6454adc6656",
+      "submitted_png_sha256": "03abc6318e68c8ebca196ce72c33505ffdbc65f44e3e996c6ffcfafd153a26e5",
+      "decoded_rgb_sha256": "b9dbdeb4d8c688fc0c370f78b42740dadcd31b31675c798e9d91acf7e0e8a00c",
+      "decoded_dimensions": [
+        192,
+        192
+      ],
+      "parsed_request_canonical_sha256": "5b33485639b2b2ce305c2ac8691219224b47c0e86ab89ed112f611c1bc080db0",
+      "source_and_submitted_decoded_pixels_equal": true,
+      "not_request_wire_hash": true
+    },
+    {
+      "case_index": 8,
+      "source_png_sha256": "c69f9803560153189c600c15cc7cc4dd5310e927098a96e08c70a762ad40969e",
+      "submitted_png_sha256": "726bfe3d027b84c8500f73dcc02ed54d818ec7d6158ea2485fbc4a7579e68561",
+      "decoded_rgb_sha256": "be1e5a32fff9f186f58214b34b996d6336fd87609116d7eb7fe643b81a68bb10",
+      "decoded_dimensions": [
+        192,
+        192
+      ],
+      "parsed_request_canonical_sha256": "5a112d14c6319048c06a9ef0a53e8c105749c08b2c0547f6701c3314f5cd437d",
+      "source_and_submitted_decoded_pixels_equal": true,
+      "not_request_wire_hash": true
+    }
+  ],
+  "request_binding_limit": "Parsed JSON/canonical request hashes, not exact wire bytes; original source PNG hashes differ from normalized submitted encoding while decoded RGB pixels match."
+}
