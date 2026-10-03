@@ -8,7 +8,7 @@ renders an 18-hectare site with native Blender OptiX. Its cutaway robotics and
 fulfillment halls, freight terminal, operations tower, solar field and process
 yard share one OpenUSD/glTF scene. The offline HTML provides four inspection
 routes, thumbnails, scrubbing, keyboard navigation, playback and fullscreen views.
-Scene counts come from the exported model; they do not represent live operations.
+Scene counts come from native geometry; they do not represent live operations.
 
 Use the RTX path to reconstruct a real capture into a Gaussian USDZ scene, render
 new camera views on a GPU, and inspect the results in a portable HTML file.
@@ -213,7 +213,7 @@ scene. The adjacent readiness record distinguishes planning from live execution.
 
 The campus workflow completed on one preemptible NVIDIA RTX PRO 6000 with
 Blender 4.5.3 Cycles OptiX. It produced all 32 distinct 2560 × 1440 views at 128
-samples, with CPU rendering disabled. The exported scene contains 8,404 mesh
+samples, with CPU rendering disabled. The native scene contains 8,404 mesh
 objects, 22 shared meshes and 208,984 instanced triangles, including 139 freight
 containers. Native execution, including scene setup and exports, took 247.162
 seconds. Device-wide observations covered 238 samples and reached 98% utilization
@@ -223,7 +223,10 @@ Immutable publication and independent readback passed. Live acceptance verified
 both executed scene-source hashes, native OptiX selection, decoded original
 frames and populated scene exports. Desktop and mobile browser checks passed
 for all four routes, thumbnails, scrubbing, play/pause and fullscreen, with no
-horizontal mobile overflow, network requests or JavaScript errors. Exact resource
+horizontal mobile overflow, network requests or JavaScript errors. An independent
+OpenUSD 26.8 reader loaded 8,409 mesh primitives, including converted lettering,
+and verified the foundation's 500 × 360 metre extent at one metre per scene unit.
+Exact resource
 identities and operational receipts remain in access-controlled evidence.
 
 ## Render the authored CUDA reference scene
