@@ -277,9 +277,10 @@ file supported by the `vlm-eval` frame loader. If the task text is not supplied,
 - `task_success_report.json`: aggregate report with `total_rollouts`,
   `passed_rollouts`, `success_rate`, `mean_score`, `task_success`, and the
   per-rollout `rollout_id`, `success`, `score`, `rationale`, `status`,
-  `frame_count`, and `result_uri` records. Follow each `result_uri` to its
-  `rollouts/<rollout-id>/vlm_eval.json` for authoritative served-model identity
-  and provider evidence; those are not inline in these aggregate rows. The
+  `frame_count`, and `result_uri` records. Each row additionally discloses
+  `requested_model`, `served_model`, and `served_model_match_enforced`. Follow
+  each `result_uri` to its `rollouts/<rollout-id>/vlm_eval.json` for complete
+  provider evidence; that evidence is not inline in aggregate rows. The
   aggregate `model` names the caller-selected configuration, not a verified
   provider-served identity. The report also emits
   `independent_human_label_calibration_established: false` and ordered
