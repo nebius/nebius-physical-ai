@@ -199,7 +199,7 @@ def test_public_outcomes_preserve_verdicts_without_provider_text(tmp_path):
     directory.mkdir(parents=True)
     path = directory / runner.PREFERENCE_COMPARISON_RESULT_FILENAME
     path.write_text(json.dumps(report))
-    summaries = runner._public_comparisons(((0, path, {}),))
+    summaries = runner._public_comparisons(tmp_path, ((0, path, {}),))
     assert private not in json.dumps(summaries)
     assert (
         summaries[0]["artifact_sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
@@ -287,7 +287,7 @@ def test_public_outcomes_keep_original_indices_after_missing_controls(tmp_path):
         )
         for index in range(11)
     )
-    summaries = runner._public_comparisons(reports)
+    summaries = runner._public_comparisons(tmp_path, reports)
     assert [row["control_index"] for row in summaries] == list(range(11))
     assert [row["control_index"] for row in summaries if "status" in row] == [
         1,
